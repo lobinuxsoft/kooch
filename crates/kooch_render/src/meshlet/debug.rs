@@ -251,6 +251,28 @@ pub enum MeshletDebugMode {
     /// 1.0 means no tap of the 3x3 can land in the kernel's positive
     /// lobe, and the accumulation can never take a new sample.
     Fsr3Weights = 25,
+    /// What the VIRTUAL SHADOW PAGES see, as colour (#866).
+    ///
+    /// The sibling of [`Self::ShadowCascades`], for the other technique.
+    /// A missing paged shadow is one of three things that look identical
+    /// in a shaded frame, and they have three different fixes:
+    ///
+    /// - the reader finds **no page** at any clipmap level, so marking
+    ///   and sampling disagree about which page covers this point;
+    /// - it finds a page that was **allocated and never drawn into**, so
+    ///   the cull or the expansion dropped the caster for that page;
+    /// - it finds a page with real depth and the **comparison** says
+    ///   lit, so the bias or the depth space is wrong.
+    ///
+    /// Red, yellow and green respectively; blue is a point the pages do
+    /// shadow, and magenta means the paged path is not running at all.
+    /// Brightness is the clipmap level the answer came from, so the
+    /// bands are visible without losing the classification.
+    ///
+    /// 🎯 Built after guessing twice — starvation, then winding — and
+    /// being right only once. Three causes that look alike need a view
+    /// that separates them, not a third hypothesis.
+    VirtualPages = 26,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -314,6 +336,7 @@ impl MeshletDebugMode {
             Self::LightsPerPixel,
             Self::PointShadowFactor,
             Self::PointCubeFaces,
+            Self::VirtualPages,
             Self::TextureMipLevel,
             Self::Fsr3Input,
             Self::Fsr3Motion,
@@ -416,6 +439,7 @@ impl MeshletDebugMode {
             Self::LightsPerPixel => "Lights per pixel",
             Self::PointShadowFactor => "Point shadow factor",
             Self::PointCubeFaces => "Point cube faces",
+            Self::VirtualPages => "Virtual shadow pages",
             Self::TextureMipLevel => "Texture mip level",
             Self::Fsr3Input => "FSR 3.1 — 1 input colour",
             Self::Fsr3Motion => "FSR 3.1 — 2 dilated motion",

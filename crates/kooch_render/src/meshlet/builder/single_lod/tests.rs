@@ -86,3 +86,51 @@ fn single_lod_meshes_keep_root_sentinel_and_zero_error() {
         assert_eq!(m.lod_error, 0.0);
     }
 }
+
+/// Every meshlet triangle still faces the way its mesh did.
+///
+/// 🔴 The layer the shadow raster actually reads, and the one the
+/// primitives' own `assert_outward_facing` cannot reach. That test walks
+/// `mesh.indices`; this walks `meshlet_triangles`, three bytes a
+/// triangle, through `meshlet_vertices` — the same double indirection
+/// `page_depth.wgsl` does. A `meshopt` pass that reordered a corner
+/// would be invisible to the source test and would show up on screen as
+/// a shadow with holes in it, which is the shape of a bug that is
+/// expensive to chase from the wrong end.
+#[test]
+fn a_meshlet_triangle_faces_the_way_its_mesh_did() {
+    use crate::mesh::primitives::Primitive;
+    use glam::Vec3;
+
+    for (name, primitive) in Primitive::CANONICAL {
+        let mesh = primitive.build();
+        let built = build_default_meshlets(&mesh).expect("the primitive builds meshlets");
+        let mut checked = 0usize;
+        for (m, desc) in built.meshlets.iter().enumerate() {
+            for t in 0..desc.triangle_count as usize {
+                let corner = |k: usize| {
+                    let byte = desc.triangle_offset as usize + t * 3 + k;
+                    let local = built.meshlet_triangles[byte] as usize;
+                    let global = built.meshlet_vertices[desc.vertex_offset as usize + local];
+                    built.vertices[global as usize]
+                };
+                let (a, b, c) = (corner(0), corner(1), corner(2));
+                let pos = |v: &crate::mesh::MeshVertex| Vec3::from_array(v.position);
+                let geometric = (pos(&b) - pos(&a)).cross(pos(&c) - pos(&a));
+                if geometric.length() < 1e-6 {
+                    continue;
+                }
+                let shading = Vec3::from_array(a.normal)
+                    + Vec3::from_array(b.normal)
+                    + Vec3::from_array(c.normal);
+                assert!(
+                    geometric.normalize().dot(shading.normalize_or_zero()) > 0.0,
+                    "{name}: meshlet {m} triangle {t} winds inward — \
+                     geometric {geometric:?} against shading {shading:?}"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "{name} produced no triangles to check");
+    }
+}

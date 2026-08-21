@@ -35,6 +35,7 @@ const INTI_DEBUG_SINGLE_LIGHT: u32 = 14u;
 const INTI_DEBUG_LIGHT_COUNT: u32 = 15u;
 const INTI_DEBUG_POINT_SHADOW: u32 = 16u;
 const INTI_DEBUG_POINT_CUBE: u32 = 17u;
+const INTI_DEBUG_VIRTUAL_PAGES: u32 = 26u;
 // Lowest discriminant handled here. Modes below it are resolved by the
 // shading path itself before the surface is even reconstructed.
 const INTI_DEBUG_FIRST: u32 = INTI_DEBUG_NORMALS;
@@ -438,13 +439,119 @@ fn inti_count_heatmap(t: f32) -> vec3<f32> {
     return vec3<f32>(r, g, b);
 }
 
+/// What the virtual shadow pages see at this point, as colour (#866).
+///
+/// # Three causes that look like one missing shadow
+///
+/// A hole in a paged shadow is one of three unrelated bugs, and a shaded
+/// frame cannot tell them apart:
+///
+/// - **red** — the walk reached the coarsest level without finding a
+///   resident page. Marking and sampling disagree about which page
+///   covers this point.
+/// - **yellow** — a page IS mapped here and holds the clear value, so
+///   nothing was ever rasterised into it. The cull or the expansion
+///   dropped the caster for that page.
+/// - **green** — a page with real depth, and the comparison says lit.
+///   If a caster is visibly overhead, the bias or the depth space is
+///   wrong.
+///
+/// **blue** is a point the pages really do shadow, and **magenta** means
+/// the paged path is not running at all — no sun, or the atlas is
+/// unbound and the cascades are answering instead.
+///
+/// Brightness is the clipmap level the answer came from, so the bands
+/// stay visible without drowning the classification.
+///
+/// 🔴 The walk is repeated here rather than shared, the way
+/// `inti_shadow_debug` repeats `inti_pick_cascade`: the production
+/// function returns one scalar and this needs to know WHY it is that
+/// scalar. What is NOT repeated is the lookup, the basis or the page
+/// arithmetic — those are the shared functions, so a drift between the
+/// view and the thing it describes cannot come from them.
+fn inti_page_debug(world_position: vec3<f32>) -> vec3<f32> {
+    if (inti.shadows_enabled == 0u || inti_pages.sun.w <= 0.5) {
+        return vec3<f32>(1.0, 0.0, 1.0);
+    }
+    let basis = sun_basis(inti_pages.sun.xyz);
+    let offset = world_position - inti_pages.eye.xyz;
+    let local = vec3<f32>(
+        dot(offset, basis[0]),
+        dot(offset, basis[1]),
+        dot(offset, basis[2]),
+    );
+
+    let base = inti_pages.world.x;
+    let span = inti_pages.world.y;
+    let side = inti_pages.space.z;
+    let page_texels = inti_pages.pool.w;
+    let levels = inti_pages.chain.x;
+
+    let reach = max(abs(local.x), abs(local.y)) * 2.0;
+    var level = 0u;
+    if (reach > base) {
+        level = u32(ceil(log2(max(reach / base, 1.0))));
+    }
+    let receiver = 1.0 - (local.z + span) / (2.0 * span);
+
+    for (; level < levels; level = level + 1u) {
+        let extent = base * exp2(f32(level));
+        let uv = clamp(
+            local.xy / extent + vec2<f32>(0.5),
+            vec2<f32>(0.0),
+            vec2<f32>(0.99999),
+        );
+        let cell = vec2<u32>(uv * f32(side));
+        let page = inti_pages.views.x * inti_pages.views.y
+            + inti_pages.space.w * inti_pages.space.x
+            + level * side * side
+            + cell.y * side
+            + cell.x;
+        let slot = inti_page_lookup(page);
+        if (slot == PAGE_MISS) {
+            continue;
+        }
+        // Level as brightness, so the clipmap bands read at a glance.
+        let shade = 0.45 + 0.55 * f32(levels - min(level, levels - 1u)) / f32(max(levels, 1u));
+
+        let rect = sun_page_rect(level, cell, base, side);
+        let within = (local.xy - rect.xy) / rect.z + vec2<f32>(0.5);
+        let place = page_place(slot, inti_pages.views.z, inti_pages.pool.z, page_texels);
+        let texel = clamp(
+            floor(within * f32(page_texels)),
+            vec2<f32>(0.0),
+            vec2<f32>(f32(page_texels) - 1.0),
+        );
+        let at = vec2<i32>(vec2<f32>(place.xy) + texel);
+        let stored = textureLoad(inti_page_atlas, at, i32(place.z), 0);
+
+        // Reversed-Z: the pass clears to 0 and 0 is FAR, so a page that
+        // nothing drew into reads exactly 0 everywhere.
+        if (stored <= 0.0) {
+            return vec3<f32>(shade, shade, 0.0);
+        }
+        if (stored > receiver) {
+            return vec3<f32>(0.0, 0.0, shade);
+        }
+        return vec3<f32>(0.0, shade, 0.0);
+    }
+    return vec3<f32>(1.0, 0.0, 0.0);
+}
+
 /// 🔴 The production build concatenates `INTI_DEBUG_STUB` instead, where
 /// this returns a literal `false`. That is what deletes every view above
 /// from the game's shader: the call inlines to `if (false)`, and the
 /// branch — with its cascade sampling and its screen-space march — is
 /// folded away before register allocation ever sees it.
 fn inti_debug_is_view(mode: u32) -> bool {
-    return mode >= INTI_DEBUG_FIRST && mode <= INTI_DEBUG_LAST;
+    // 🔴 The virtual-page view is named, not folded into the range.
+    // Stretching `INTI_DEBUG_LAST` up to 26 would swallow 18 through 25
+    // — the texture mip level and every FSR intermediate — and those are
+    // answered by other passes entirely. Claiming them here paints their
+    // surface BLACK before the pass that owns them ever runs, which is
+    // the exact failure the comment on `INTI_DEBUG_LAST` exists for.
+    return (mode >= INTI_DEBUG_FIRST && mode <= INTI_DEBUG_LAST)
+        || mode == INTI_DEBUG_VIRTUAL_PAGES;
 }
 
 /// The selected view, as colour. Called once, from the one place in each
@@ -476,6 +583,9 @@ fn inti_debug_view(
     }
     if (mode == INTI_DEBUG_POINT_CUBE) {
         return inti_point_cube_debug(frag_coord);
+    }
+    if (mode == INTI_DEBUG_VIRTUAL_PAGES) {
+        return inti_page_debug(world_position);
     }
     // A mode the shader does not know. Black rather than a guess: an
     // unimplemented view that renders *something* is one somebody
