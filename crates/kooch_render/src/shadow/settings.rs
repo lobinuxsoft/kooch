@@ -86,8 +86,6 @@ pub struct ShadowSettings {
     pub page_density: u32,
     /// Physical pages the pool holds, which is the memory budget.
     pub pool_pages: u32,
-    /// Paints the page each pixel reads over the scene.
-    pub page_debug: bool,
 }
 
 impl ShadowSettings {
@@ -113,7 +111,6 @@ impl Default for ShadowSettings {
             virtual_pages: false,
             page_density: 100,
             pool_pages: crate::shadow::pages::pool::DEFAULT_PAGES,
-            page_debug: false,
         }
     }
 }

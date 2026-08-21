@@ -154,16 +154,6 @@ pub struct RenderSettings {
     #[serde(default = "default_shadow_pool_pages")]
     #[reflect(group = "Shadows: virtual pages", choices = SHADOW_POOL_CHOICES)]
     pub shadow_pool_pages: u32,
-    /// Paints the page each pixel reads over the scene.
-    ///
-    /// Hue is the clipmap level — where the frame is spending detail —
-    /// and brightness is the page identity, hashed, so the tiling is
-    /// visible. A page covering a quarter of the screen is a page too
-    /// coarse for it; a mosaic too fine to resolve is detail nobody
-    /// sees.
-    #[serde(default)]
-    #[reflect(group = "Shadows: virtual pages")]
-    pub virtual_shadow_debug: bool,
     /// Whether the sun casts shadows. Off frees the atlas entirely —
     /// 64 MiB at the default resolution.
     #[serde(default = "default_shadows_enabled")]
@@ -798,7 +788,6 @@ impl Default for RenderSettings {
             shadow_density: default_shadow_density(),
             virtual_shadows: default_virtual_shadows(),
             shadow_pool_pages: default_shadow_pool_pages(),
-            virtual_shadow_debug: false,
             sharpening: default_sharpening(),
             anisotropy: default_anisotropy(),
             vsync: default_vsync(),
@@ -844,7 +833,6 @@ impl RenderSettings {
                 || crate::shadow::pages::mark::enabled_by_environment(),
             page_density: self.shadow_density,
             pool_pages: self.shadow_pool_pages,
-            page_debug: self.virtual_shadow_debug,
         }
     }
 

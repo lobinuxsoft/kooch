@@ -205,6 +205,7 @@ impl MeshletRenderStage {
             cam_pos,
             scene_params,
             meshlet_bg,
+            debug_mode,
         );
 
         if timer_slot.is_some() {

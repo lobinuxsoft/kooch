@@ -296,14 +296,12 @@ fn virtual_shadows_reaches_the_published_settings() {
         virtual_shadows: true,
         shadow_density: 50,
         shadow_pool_pages: 4096,
-        virtual_shadow_debug: true,
         ..Default::default()
     };
     let published = settings.shadows();
     assert!(published.virtual_pages);
     assert_eq!(published.page_density, 50);
     assert_eq!(published.pool_pages, 4096);
-    assert!(published.page_debug);
 }
 
 #[test]

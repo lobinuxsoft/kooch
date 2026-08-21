@@ -101,7 +101,9 @@ fn page_settings(resources: &Resources) -> PageSettings {
         // settings file, on a handheld, over SSH. A force is a force
         // wherever the settings came from.
         enabled: shadows.virtual_pages || crate::shadow::pages::mark::enabled_by_environment(),
-        paint: shadows.page_debug,
+        // Overwritten by `page_settings_for_views` from the debug view
+        // selector. `ShadowSettings` has no say: it is a debug view.
+        paint: false,
         density: shadows.page_density,
         pool: PoolConfig {
             pages: shadows.pool_pages.clamp(PAGES_RANGE.0, PAGES_RANGE.1),
@@ -129,8 +131,9 @@ impl MeshletRenderStage {
         eye: Vec3,
         scene_params: &SceneCullParams,
         meshlet_bg: &wgpu::BindGroup,
+        debug: crate::meshlet::MeshletDebugMode,
     ) {
-        let settings = self.page_settings_for_views(resources);
+        let settings = self.page_settings_for_views(resources, debug);
         if !settings.enabled {
             self.forget_page_marking();
             // 🔴 Unbind, do not merely stop drawing. The atlas still
@@ -202,8 +205,18 @@ impl MeshletRenderStage {
     /// 🔴 `views` is part of the pool's LAYOUT — the atlas is an array
     /// with a layer each — so opening a second viewport rebuilds it, the
     /// same way changing the page budget does.
-    fn page_settings_for_views(&self, resources: &Resources) -> PageSettings {
+    fn page_settings_for_views(
+        &self,
+        resources: &Resources,
+        debug: crate::meshlet::MeshletDebugMode,
+    ) -> PageSettings {
         let mut settings = page_settings(resources);
+        // 🔴 The tile paint is a DEBUG VIEW, so it is driven by the
+        // debug view selector and by nothing else. It used to be a
+        // separate checkbox in the settings panel, which put the two
+        // halves of one question — what marking chose, what the reader
+        // found — in two different places for no reason.
+        settings.paint = debug == crate::meshlet::MeshletDebugMode::VirtualPageTiles;
         let slices = self
             .views
             .keys()
@@ -526,6 +539,5 @@ mod tests {
         let defaults = crate::shadow::ShadowSettings::default();
         assert_eq!(settings.density, defaults.page_density);
         assert_eq!(settings.pool.pages, defaults.pool_pages);
-        assert_eq!(settings.paint, defaults.page_debug);
     }
 }

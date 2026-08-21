@@ -273,6 +273,20 @@ pub enum MeshletDebugMode {
     /// being right only once. Three causes that look alike need a view
     /// that separates them, not a third hypothesis.
     VirtualPages = 26,
+    /// The page each pixel MARKED, painted over the scene.
+    ///
+    /// Hue is the clipmap level — where the frame is spending detail —
+    /// and brightness is the page identity, hashed, so the tiling is
+    /// visible. A page covering a quarter of the screen is a page too
+    /// coarse for it; a mosaic too fine to resolve is detail nobody
+    /// sees.
+    ///
+    /// 🔴 The other half of [`Self::VirtualPages`], and it lives HERE
+    /// rather than in `RenderSettings` because a debug view that is a
+    /// checkbox in the settings panel is a debug view nobody finds. Two
+    /// halves of one question belong in one list: this one is what the
+    /// marking pass CHOSE, that one is what the reader FOUND.
+    VirtualPageTiles = 27,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -337,6 +351,7 @@ impl MeshletDebugMode {
             Self::PointShadowFactor,
             Self::PointCubeFaces,
             Self::VirtualPages,
+            Self::VirtualPageTiles,
             Self::TextureMipLevel,
             Self::Fsr3Input,
             Self::Fsr3Motion,
@@ -440,6 +455,7 @@ impl MeshletDebugMode {
             Self::PointShadowFactor => "Point shadow factor",
             Self::PointCubeFaces => "Point cube faces",
             Self::VirtualPages => "Virtual shadow pages",
+            Self::VirtualPageTiles => "Virtual shadow page tiles",
             Self::TextureMipLevel => "Texture mip level",
             Self::Fsr3Input => "FSR 3.1 — 1 input colour",
             Self::Fsr3Motion => "FSR 3.1 — 2 dilated motion",
