@@ -1120,11 +1120,21 @@ is why marking was built first and why it was affordable.
 ### So the table is sized to what is resident, not to what is addressable
 
 Open addressing over `2 × pool_pages` entries — 8192 slots for Epic's
-4096-page pool, **64 KiB**, keys and physical indices together. UE5
-hashes its table for the same reason.
+4096-page pool, **64 KiB**, keys and physical indices together.
 
-- **Keys are `page + 1`,** so `PAGE_EMPTY` is 0 and the per-frame reset
-  is `clear_buffer` rather than a pass.
+> ⚠️ **UE5 does not hash its table, and an earlier version of this page
+> said it did.** `CalcPageOffset` in
+> `VirtualShadowMapPageAccessCommon.ush` is flat arithmetic —
+> `id * VSM_PAGE_TABLE_SIZE + level_offset + x + y * dims` — over 21 845
+> entries, **87 KiB per shadow map**. It stays affordable because Epic
+> never hands a distant light a full virtual space:
+> `VSM_MAX_SINGLE_PAGE_SHADOW_MAPS` is 8192 maps of *one* entry each.
+> The 108 MiB above is what a flat table costs **given our decision to
+> give every light the whole space** — a decision, not a law, and the
+> one worth revisiting before the hash is defended again.
+
+- **Keys are `page + 1`,** so `PAGE_EMPTY` is 0 and an empty table is a
+  zeroed buffer.
 - **The load factor never passes 0.5,** where the expected probe count is
   under two. `PoolCounts::probes` reports any insert that walked 32 slots
   without finding room; a non-zero number there is a statement about the
@@ -1153,22 +1163,58 @@ The panel also cross-checks `claims` against `resident`. Both count the
 same 0→1 transitions by two different mechanisms, and a disagreement
 means one of them is broken.
 
+### The camera is part of the key, and the pool is sliced
+
+One editor frame draws the same world from two cameras. A clipmap is
+centred on **its** camera, so the same world position is a different page
+in each — and a table keyed without the camera hands the second one the
+pages the first marked. The measured symptom was exact: shadows in one
+viewport and none in the other.
+
+So a page id carries the camera above everything else:
+
+```
+page = view * view_span + light * stride + <chain offset>
+```
+
+which is UE5's `VirtualShadowMapId` written as a multiply instead of a
+table per id. The hash is what makes widening the address space free.
+
+Three things follow, and none of them is optional:
+
+- **The table is emptied by a pass, not by `clear_buffer`.**
+  `clear_view` zeroes only the entries whose key belongs to the camera
+  about to mark. It has to be per camera because the raster is **fused
+  with the shading** — a camera samples an atlas a frame old, so wiping
+  the whole table at the top of a frame leaves whichever camera marks
+  second reading what the first just erased.
+- **The pool is sliced, not shared,** and the atlas is an **array with a
+  layer per camera**. A layer is an attachment a camera clears on its
+  own; the alternatives — a scissor, a stencil, a clearing draw — all
+  partition one surface and all of them are a rule somebody has to keep.
+  The budget does not multiply: a layer is `pages / views` rounded up to
+  a square, so two viewports cost what one did.
+- **The uniform has a slice per camera.** `Queue::write_buffer` is not
+  ordered against the encoder, so writing one range twice in a frame
+  hands *both* passes the second value — the engine shipped that bug once
+  already. A camera writing its own range cannot be overwritten.
+
 ### What is deliberately not built yet
 
-- 🔴 **The atlas texture.** 4096 pages at `Depth32Float` is 256 MiB, and
-  nothing writes or reads it until the depth raster lands. Allocating it
-  now would be a quarter of a gigabyte spent to make a diagram look
-  finished. Its layout is fixed and tested regardless — `page_origin` in
-  the shader, `PoolConfig::per_row` in Rust.
 - ⚠️ **Caching across frames**, which is the optimisation virtual shadow
-  maps exist for: the table is emptied every frame, so a static shadow is
-  re-rasterised every frame. That needs an eviction policy and an
-  invalidation rule, and neither can be designed before anything renders.
-- **The pool size is `KOOCH_SHADOW_POOL_PAGES`, not a setting.** #477
-  asks that nothing on the shadow side grow a public setting before the
-  pool's shape is decided, and a knob that sizes an atlas nobody
-  allocates yet promises memory nothing spends. It becomes a setting when
-  the raster does.
+  maps exist for — and the prior art is clear that it is the *mechanism*,
+  not a refinement. UE5 keeps a page alive while
+  `PhysicalPageRequestedAge <= MaxPageAgeSinceLastRequest` and allocates
+  by popping an **LRU** list; when that list is empty it simply writes
+  nothing and the sampler falls back to a coarser level. There is no
+  priority by light, by level or by distance anywhere in it. Our pool is
+  refilled from scratch every frame, so a static shadow is re-rasterised
+  every frame, and allocation is first-come — which means *whichever
+  thread the GPU scheduled first*.
+- 🔴 **Allocation still does not know what the raster can draw.** Local
+  lights claim slots for pages nothing rasterises yet; measured, they
+  took 2008 of 2048. The slice bounds camera against camera and nothing
+  else.
 
 ## Rasterising into the pages — the depth raster (#866)
 

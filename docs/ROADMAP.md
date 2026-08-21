@@ -803,6 +803,33 @@ vistas alternando a 409x403, `many_lights`:
 y más pares no cierra; hay que mirar el mapeo página↔meshlet de la expansión antes de tocar
 nada más.
 
+✅ **2026-08-21 — el prior art quedó LEÍDO, y desmintió tres cosas que dábamos por ciertas.**
+Del paper de Chalmers (_More Efficient Virtual Shadow Maps for Many Lights_, TVCG 2015) y del
+source de UE 5.5 — `VirtualShadowMapPageAccessCommon.ush`,
+`VirtualShadowMapPhysicalPageManagement.usf`, `VirtualShadowMapPageMarking.usf`,
+`VirtualShadowMapBuildPerPageDrawCommands.usf`, `VirtualShadowMapPerPageDispatch.ush`:
+
+1. **Cuando el pool se llena no se tira nada, y no hay prioridad por luz ni por nivel ni por
+   distancia: es LRU puro sobre un pool que PERSISTE entre frames.** Cuatro listas de
+   `MaxPhysicalPages` — `LRU`, `AVAILABLE`, `EMPTY`, `REQUESTED` — y una página no pedida
+   sobrevive mientras `PhysicalPageRequestedAge <= MaxPageAgeSinceLastRequest`. Si
+   `PopPhysicalPageList(AVAILABLE)` vuelve vacío, Epic sencillamente **no escribe nada** y el
+   sampler cae a un nivel más basto. El overflow es degradación, no pérdida.
+2. **🔴 UE5 NO hashea la tabla de páginas.** `CalcPageOffset` es aritmética plana:
+   `id * VSM_PAGE_TABLE_SIZE + level_offset + x + y * dims`, **21 845 entradas = 87 KiB por
+   shadow map**. Se mantiene chica porque una luz lejana **no recibe espacio virtual completo**:
+   `VSM_MAX_SINGLE_PAGE_SHADOW_MAPS` son 8192 mapas de UNA entrada. Nuestros 108 MiB salían de
+   asumir el espacio completo para las 101 luces — una decisión nuestra, no una ley.
+3. **No se marcan páginas para consumidores que no existen**: `PruneLightGridCS` reescribe la
+   light grid dejando sólo luces con `VirtualShadowMapId` y manda las distantes al final.
+   Marcar y dibujar leen **la misma lista**.
+4. **No hay pares (página, meshlet) ni loop de niveles en la CPU.** `FPerPageDispatchSetup` usa
+   `DispatchThreadId.y` como índice en un buffer `VirtualShadowMapIds` — todos los mapas y todos
+   los niveles en **un dispatch**. Y `CullPerPageDrawCommandsCs` emite **un comando por
+   (instancia, nivel)** con un RECT de páginas, no uno por página.
+
+⚖️ El source de UE está bajo su EULA: se estudia el **diseño**, no se copia una línea a Kóoch.
+
 ⏭️ **NEXT — y va PRIMERO: leer cómo lo hace quien lo hizo bien.** Los cuatro defectos de
 arriba son de **arquitectura**, no de aritmética, y ya se demostró que este track adivina mal
 cuando diseña sin fuente. Antes de tocar código:
@@ -821,8 +848,36 @@ cuando diseña sin fuente. Antes de tocar código:
 3. ¿La tabla es **por vista** o hay una sola con la vista adentro de la clave?
 4. ¿Cómo se construye la lista de pares sin un bind group por nivel por vista por frame?
 
-Recién después: (a) que el marcado **no asigne** páginas que el ráster no va a dibujar, (b)
-pool y tabla **por vista**, (c) sacar los bind groups del loop, (d) re-medir.
+✅ **(b) y (c) hechos: la VISTA entra en la clave y los bind groups salieron del loop.**
+
+- **El id de página lleva la cámara arriba**: `page = view * view_span + light * stride + …`,
+  que es el `VirtualShadowMapId` de UE con un multiply en lugar de una tabla por id. El hash
+  hace que agrandar el espacio de direcciones salga gratis.
+- **La tabla ya no se vacía con `clear_buffer`**: un pase `clear_view` borra **sólo** las
+  entradas de la cámara que va a marcar. Tenía que ser un pase porque el ráster está fusionado
+  con el shading — una vista samplea un atlas de un frame atrás, así que vaciar la tabla entera
+  al principio del frame deja a la segunda cámara leyendo lo que la primera acababa de borrar.
+  **Ése era el "en una view se ve y en la otra no".**
+- **El pool se SLICEA, no se comparte**: cada cámara tiene su rebanada y el atlas pasó a ser un
+  **array con una capa por vista** — una capa es un attachment que una cámara limpia sola. Dos
+  viewports cuestan lo que costaba uno: la rebanada es `pages / views` redondeado al cuadrado.
+- **Los bind groups se construyen UNA vez** y se invalidan comparando los buffers que hay
+  detrás. Lo que cambia por vista y por nivel viaja como **dynamic offset**. Eran 34 por cámara
+  por frame sólo en el loop de niveles.
+- 🔴 **El uniform del ráster tiene una rebanada por cámara.** `Queue::write_buffer` no está
+  ordenado contra el encoder (#853): escribir el mismo rango dos veces en un frame le da a AMBOS
+  pases el segundo valor — o sea que la cámara A rasterizaba su clipmap **con el ojo de la
+  cámara B**.
+- **El binding del lector se hace ANTES del pase fusionado**, no después: el pase fusionado ES
+  el shading.
+
+⚠️ **Todavía sin verificar en pantalla.** Los tests cubren el mecanismo — uno de ellos falla con
+el comportamiento viejo y pasa con el nuevo — pero nadie miró un frame con dos viewports.
+
+⏭️ Falta: (a) que el marcado **no asigne** páginas que el ráster no va a dibujar, (d) el
+misterio de los pares, (e) re-medir. Y encima de todo eso, **lo que el prior art dice que es el
+mecanismo y no una optimización: persistencia entre frames con LRU**, más una clase "una sola
+página" para las luces lejanas.
 
 **Phase 3 — the consumers, on top of #866 and not before.**
 
