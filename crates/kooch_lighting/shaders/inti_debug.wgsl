@@ -463,13 +463,24 @@ fn inti_count_heatmap(t: f32) -> vec3<f32> {
 /// Brightness is the clipmap level the answer came from, so the bands
 /// stay visible without drowning the classification.
 ///
+/// 🔴 The comparison is the SHADING PASS'S, bias and 2x2 filter
+/// included. The first version of this view compared raw, and what it
+/// produced was a screenful of green-and-blue moiré with the answer
+/// drowned underneath — the identical mistake `inti_shadow_debug`
+/// already carries a paragraph about, made two files away from where it
+/// is written down. A view whose own noise hides its answer is not a
+/// view.
+///
 /// 🔴 The walk is repeated here rather than shared, the way
 /// `inti_shadow_debug` repeats `inti_pick_cascade`: the production
 /// function returns one scalar and this needs to know WHY it is that
 /// scalar. What is NOT repeated is the lookup, the basis or the page
 /// arithmetic — those are the shared functions, so a drift between the
 /// view and the thing it describes cannot come from them.
-fn inti_page_debug(world_position: vec3<f32>) -> vec3<f32> {
+fn inti_page_debug(world_position: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    // The same term the shading pass feeds the bias, so a surface at a
+    // grazing angle is judged the way the frame judges it.
+    let n_dot_l = clamp(dot(n, -normalize(inti_pages.sun.xyz)), 0.0, 1.0);
     if (inti.shadows_enabled == 0u || inti_pages.sun.w <= 0.5) {
         return vec3<f32>(1.0, 0.0, 1.0);
     }
@@ -482,7 +493,6 @@ fn inti_page_debug(world_position: vec3<f32>) -> vec3<f32> {
     );
 
     let base = inti_pages.world.x;
-    let span = inti_pages.world.y;
     let side = inti_pages.space.z;
     let page_texels = inti_pages.pool.w;
     let levels = inti_pages.chain.x;
@@ -492,7 +502,6 @@ fn inti_page_debug(world_position: vec3<f32>) -> vec3<f32> {
     if (reach > base) {
         level = u32(ceil(log2(max(reach / base, 1.0))));
     }
-    let receiver = 1.0 - (local.z + span) / (2.0 * span);
 
     for (; level < levels; level = level + 1u) {
         let extent = base * exp2(f32(level));
@@ -530,10 +539,11 @@ fn inti_page_debug(world_position: vec3<f32>) -> vec3<f32> {
         if (stored <= 0.0) {
             return vec3<f32>(shade, shade, 0.0);
         }
-        if (stored > receiver) {
-            return vec3<f32>(0.0, 0.0, shade);
-        }
-        return vec3<f32>(0.0, shade, 0.0);
+        // 🔴 `inti_page_shadow`'s own answer, not a second comparison —
+        // bias, filter and all. Anything else measures a shadow this
+        // engine does not draw.
+        let lit = inti_page_shadow(world_position, n_dot_l);
+        return mix(vec3<f32>(0.0, 0.0, shade), vec3<f32>(0.0, shade, 0.0), lit);
     }
     return vec3<f32>(1.0, 0.0, 0.0);
 }
@@ -585,7 +595,7 @@ fn inti_debug_view(
         return inti_point_cube_debug(frag_coord);
     }
     if (mode == INTI_DEBUG_VIRTUAL_PAGES) {
-        return inti_page_debug(world_position);
+        return inti_page_debug(world_position, n);
     }
     // A mode the shader does not know. Black rather than a guess: an
     // unimplemented view that renders *something* is one somebody
