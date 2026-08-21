@@ -83,3 +83,142 @@ fn page_step(probe: u32, entries: u32) -> u32 {
 fn page_origin(slot: u32, per_row: u32, page: u32) -> vec2<u32> {
     return vec2<u32>(slot % per_row, slot / per_row) * page;
 }
+
+// ---------------------------------------------------------------------
+// Decoding a virtual page, and the geometry it stands for.
+//
+// The MARKING pass encodes these indices and the RASTER decodes them.
+// Both live here for the same reason the hash does: an encoder and a
+// decoder that drift produce pages rasterised somewhere other than where
+// they were asked for, and nothing about that failure says which half is
+// wrong.
+// ---------------------------------------------------------------------
+
+/// A virtual page taken apart. `light` is the sun's slot when
+/// `is_sun` is true, in which case `face` is meaningless.
+struct PageId {
+    light: u32,
+    face: u32,
+    level: u32,
+    cell: vec2<u32>,
+    is_sun: bool,
+}
+
+/// Inverts the arithmetic in `mark_local` and `mark_sun`.
+///
+/// `stride` is the pages one light addresses, `face_pages` one face's
+/// whole mip chain, `side` the pages across level 0.
+fn page_decode(page: u32, stride: u32, face_pages: u32, side: u32, sun_slot: u32) -> PageId {
+    var id: PageId;
+    id.light = page / stride;
+    var rest = page % stride;
+    id.is_sun = id.light == sun_slot;
+
+    if id.is_sun {
+        // A clipmap's levels are all the same size, so the level is a
+        // divide where a mip chain's is a walk.
+        let per_level = side * side;
+        id.face = 0u;
+        id.level = rest / per_level;
+        let cell = rest % per_level;
+        id.cell = vec2<u32>(cell % side, cell / side);
+        return id;
+    }
+
+    id.face = rest / face_pages;
+    rest = rest % face_pages;
+    // The chain's levels are not the same size; walk it the way
+    // `level_base` builds it.
+    var level = 0u;
+    var span = side;
+    loop {
+        let count = span * span;
+        if rest < count || span == 1u {
+            break;
+        }
+        rest = rest - count;
+        span = max(span / 2u, 1u);
+        level = level + 1u;
+    }
+    id.level = level;
+    id.cell = vec2<u32>(rest % span, rest / span);
+    return id;
+}
+
+/// The sun's basis. Built rather than uploaded, and built the SAME way
+/// in both passes: the sun has no position, so this is the only place
+/// its orientation means anything, and a second copy free to pick a
+/// different `up` would rasterise into pages nobody marked.
+fn sun_basis(direction: vec3<f32>) -> mat3x3<f32> {
+    let f = normalize(direction);
+    var up = vec3<f32>(0.0, 1.0, 0.0);
+    if abs(f.y) > 0.99 {
+        up = vec3<f32>(0.0, 0.0, 1.0);
+    }
+    let s = normalize(cross(f, up));
+    let u = cross(s, f);
+    return mat3x3<f32>(s, u, f);
+}
+
+/// Where one clipmap page sits in the sun's plane: `xy` its centre,
+/// `z` its width. All three in metres, relative to the camera.
+fn sun_page_rect(level: u32, cell: vec2<u32>, base: f32, side: u32) -> vec3<f32> {
+    let extent = base * exp2(f32(level));
+    let width = extent / f32(side);
+    // `mark_sun` maps the plane to `uv = plane / extent + 0.5`, so the
+    // cell's low corner is this and the centre is half a page past it.
+    let low = (vec2<f32>(cell) / f32(side) - vec2<f32>(0.5)) * extent;
+    return vec3<f32>(low + vec2<f32>(width * 0.5), width);
+}
+
+/// A page's rect inside the atlas, in texels: `xy` the origin, `zw` the
+/// size.
+fn page_atlas_rect(slot: u32, per_row: u32, page: u32) -> vec4<f32> {
+    let origin = vec2<f32>(page_origin(slot, per_row, page));
+    return vec4<f32>(origin, vec2<f32>(f32(page)));
+}
+
+/// Places a page's own clip position inside the atlas.
+///
+/// The atlas is ONE render target and every page is a sub-rect of it, so
+/// the draw is one pass rather than one pass per page — the difference
+/// between 17 render passes and 1681 of them.
+///
+/// ⚠️ It does NOT clip. A triangle wider than its page still rasterises
+/// past the rect and into a neighbour that belongs to another level or
+/// another light. The fragment shader is what stops that, and it is the
+/// reason this pipeline has one at all.
+fn page_clip(local: vec2<f32>, depth: f32, rect: vec4<f32>, atlas: f32) -> vec4<f32> {
+    let half = rect.zw / atlas;
+    let centre = (rect.xy + rect.zw * 0.5) / atlas * 2.0 - vec2<f32>(1.0);
+    // Clip space is Y-up and a texel row is Y-down.
+    let at = vec2<f32>(centre.x, -centre.y) + local * vec2<f32>(half.x, -half.y);
+    return vec4<f32>(at, depth, 1.0);
+}
+
+// ---------------------------------------------------------------------
+// What every raster pass needs to know. One declaration for the three of
+// them — compaction, expansion and the draw — because they walk the same
+// page ids and a field that means one thing in one pass and another in
+// the next is a page rasterised into someone else's rect.
+// ---------------------------------------------------------------------
+
+struct PageRaster {
+    // x the per-light stride in pages, y one face's whole chain,
+    // z pages across level 0, w the sun's slot.
+    space: vec4<u32>,
+    // x table entries, y physical pool pages, z pages across the atlas,
+    // w page texels.
+    pool: vec4<u32>,
+    // x levels in the clipmap, y the pair list's capacity, z pages one
+    // level may list, w meshlets one draw covers.
+    chain: vec4<u32>,
+    // x the clipmap's level-0 extent in metres, y the orthographic half
+    // span, z the atlas side in texels, w unused.
+    world: vec4<f32>,
+    // xyz the camera, w unused.
+    eye: vec4<f32>,
+    // xyz the sun's direction, w 1 when there is one.
+    sun: vec4<f32>,
+}
+

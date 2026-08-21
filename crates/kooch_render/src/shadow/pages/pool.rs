@@ -42,10 +42,23 @@ pub fn pages_from_environment() -> u32 {
         std::env::var("KOOCH_SHADOW_POOL_PAGES")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(super::POOL_PAGES)
+            .unwrap_or(DEFAULT_PAGES)
             .clamp(PAGES_RANGE.0, PAGES_RANGE.1)
     })
 }
+
+/// What the pool is sized to when nobody says otherwise.
+///
+/// 🔴 Half of Epic's 4096, and the reason is that the atlas is now
+/// REAL: 4096 pages at `Depth32Float` is 256 MiB, and this engine's
+/// existing fixed shadow allocations are 152 MiB. 2048 pages is **128
+/// MiB — less than what stands today for four casting lights**, which
+/// is the comparison that matters on a handheld with shared memory.
+///
+/// The measurement it has to hold: 1681 pages for a hundred and one
+/// lights at 400x400. `KOOCH_SHADOW_POOL_PAGES` raises it to Epic's
+/// figure, or past it.
+pub const DEFAULT_PAGES: u32 = 2048;
 
 /// What the pool may be sized to.
 ///

@@ -65,6 +65,7 @@ pub(crate) fn draw_performance_content(
                     cluster_settings,
                     page_marking,
                     meshlet_stats.page_marking,
+                    meshlet_stats.page_raster,
                     specular_floor,
                     meshlet_stats.cluster_occupancy,
                     viewport,
@@ -417,6 +418,7 @@ fn debug_controls(
     cluster_settings: &mut ClusterSettings,
     page_marking: &mut kooch_render::shadow::pages::PageMarkingSettings,
     page_counts: Option<kooch_render::shadow::pages::mark::MarkCounts>,
+    raster_counts: Option<kooch_render::shadow::pages::raster::RasterCounts>,
     specular_floor: &mut SpecularFloor,
     cluster_occupancy: Option<(u32, f32)>,
     viewport: egui::Vec2,
@@ -661,7 +663,7 @@ fn debug_controls(
         );
     });
 
-    shadow_page_controls(ui, page_marking, page_counts);
+    shadow_page_controls(ui, page_marking, page_counts, raster_counts);
 }
 
 /// The shadow-page marking pass and what it found (#866).
@@ -676,6 +678,7 @@ fn shadow_page_controls(
     ui: &mut egui::Ui,
     page_marking: &mut kooch_render::shadow::pages::PageMarkingSettings,
     page_counts: Option<kooch_render::shadow::pages::mark::MarkCounts>,
+    raster_counts: Option<kooch_render::shadow::pages::raster::RasterCounts>,
 ) {
     use kooch_render::shadow::pages::{PageConfig, mark::RATE_RANGE};
 
@@ -829,6 +832,53 @@ fn shadow_page_controls(
              missing shadows, which is exactly the kind of failure nobody recognises by \
              sight — so it is named here instead.",
         );
+    }
+    if let Some(raster) = raster_counts {
+        // 🔴 What was actually DRAWN, against what was asked for. The
+        // marking count above is a request; this is the answer, and the
+        // two differing is the single most useful thing this panel can
+        // say.
+        ui.label(
+            egui::RichText::new(format!(
+                "{} sun pages rastered · {} meshlet/page pairs",
+                raster.pages, raster.pairs
+            ))
+            .small()
+            .weak(),
+        )
+        .on_hover_text(
+            "The pages the depth raster actually filled, and the meshlet/page pairs it \
+             drew to fill them. A pair is one meshlet rasterised into one page: drawing \
+             every meshlet into every page is the cost a virtual shadow map exists to \
+             avoid, so this number IS the feature working.",
+        );
+        if raster.local > 0 {
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} local-light pages marked and not drawn yet",
+                    raster.local
+                ))
+                .small()
+                .weak(),
+            )
+            .on_hover_text(
+                "Local lights get pages marked and allocated, and the raster does not draw \
+                 them yet. A cull runs per view: the sun's clipmap is 17 views, a hundred \
+                 point lights with six faces and an eight-level chain are 4848. That needs \
+                 the cull itself moved onto the GPU as one multi-view dispatch, which is \
+                 the next piece and not a bigger version of this one.",
+            );
+        }
+        if raster.dropped > 0 || raster.overflow > 0 {
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} pages dropped · {} pairs past the list — shadows are missing",
+                    raster.dropped, raster.overflow
+                ))
+                .small()
+                .color(egui::Color32::from_rgb(220, 120, 90)),
+            );
+        }
     }
     if counts.pool.probes > 0 {
         ui.label(

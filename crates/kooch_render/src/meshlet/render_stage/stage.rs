@@ -164,6 +164,11 @@ pub struct MeshletRenderStage {
     /// The last count reported, so the log fires on a change rather than
     /// sixty times a second.
     pub(super) page_marking_last: Option<crate::shadow::pages::mark::MarkCounts>,
+    /// The paged depth raster and its atlas. 🔴 Built with the marker
+    /// and never before it: the atlas is a hundred megabytes and it has
+    /// nothing to hold until pages are being marked.
+    pub(super) page_raster: Option<crate::shadow::pages::raster::PageRasterizer>,
+    pub(super) page_raster_last: Option<crate::shadow::pages::raster::RasterCounts>,
 
     pub(super) instance_capacity: u32,
 
