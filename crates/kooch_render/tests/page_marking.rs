@@ -29,7 +29,7 @@ use kooch_lighting::{ClusterCamera, GpuLights};
 use kooch_render::meshlet::DEFERRED_COLOR_FORMAT;
 use kooch_render::projection::perspective_infinite_rh_reverse_z;
 use kooch_render::shadow::pages::mark::{MarkCounts, PAINT_FORMAT, PageMarker, Paint};
-use kooch_render::shadow::pages::pool::PoolConfig;
+use kooch_render::shadow::pages::pool::{PAGE_CELL, PoolConfig};
 use kooch_render::shadow::{ClipmapConfig, PageConfig, SHADOW_DEPTH_FORMAT};
 
 const SIZE: u32 = 128;
@@ -761,10 +761,20 @@ fn a_full_pool_reports_overflow() {
         small.slice()
     );
     assert_eq!(counts.pool.allocated(), small.slice(), "the pool filled");
+    // 🔴 `claims` counts the ones that GOT a slot now, not the ones that
+    // asked: `page_touch` allocates before it inserts, so a request the
+    // pool could not answer never reaches the table and never counts.
+    // `overflow` is the rest, and the two together are the requests.
     assert_eq!(
-        counts.pool.claims - counts.pool.overflow,
+        counts.pool.claims + counts.pool.reused,
         small.slice(),
-        "every claim either got a slot or was counted as overflow"
+        "the pool handed out every slot it had"
+    );
+    assert!(
+        counts.pool.overflow > 0,
+        "a pool of {} could not answer {} requests and said nothing",
+        small.slice(),
+        counts.resident
     );
 }
 
@@ -796,11 +806,14 @@ fn the_table_holds_every_claim() {
     let mut seen_keys = std::collections::HashSet::new();
     let mut seen_slots = std::collections::HashSet::new();
     for (entry, &key) in keys.iter().enumerate() {
-        if key == 0 {
+        // 0 is EMPTY and `PAGE_DEAD` is an evicted entry: neither names
+        // a slot anyone owns.
+        if key == 0 || key == 0xffff_fffe {
             continue;
         }
         assert!(seen_keys.insert(key), "key {key} filed twice");
-        let slot = slots[entry];
+        // TWO words an entry — slot, then age. See `PAGE_CELL`.
+        let slot = slots[entry * PAGE_CELL as usize];
         assert!(slot < capacity, "slot {slot} past the pool");
         assert!(seen_slots.insert(slot), "slot {slot} handed out twice");
     }
@@ -900,4 +913,237 @@ fn a_view_clears_only_its_own_pages() {
         "camera 0's pages were wiped by camera 1: {per_view:?}"
     );
     assert!(per_view[1] > 0, "camera 1 marked nothing: {per_view:?}");
+}
+
+// ---------------------------------------------------------------------
+// Persistence (#866 A). The pool outlives the frame that filled it.
+// ---------------------------------------------------------------------
+
+/// Marks the same view `frames` times through one marker, returning what
+/// each frame counted.
+///
+/// The camera does not move, so after the first frame every request is
+/// for a page that is already there. That is the whole point: a scene
+/// standing still should stop allocating.
+fn run_frames(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    resources: &Resources,
+    frames: u32,
+    max_age: u32,
+    pool: PoolConfig,
+) -> Vec<MarkCounts> {
+    let eye = Vec3::ZERO;
+    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let proj = projection();
+    let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+
+    let mut lights = GpuLights::new(device);
+    let mut frame = kooch_lighting::LightFrame::extract(resources);
+    lights.update(device, queue, resources, camera, None, &mut frame);
+
+    let depth_view = depth_texture(device, queue, 0.01);
+    let target = paint_target(device);
+    let mut marker = PageMarker::new(device, PageConfig::default(), ClipmapConfig::default());
+    marker.set_pool(device, pool);
+    marker.set_max_age(max_age);
+
+    let mut out = Vec::new();
+    for index in 0..frames {
+        marker.set_frame(index);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            device,
+            queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            Some(Vec3::new(0.3, -1.0, 0.2)),
+            (SIZE, SIZE),
+            /* view */ 0,
+            /* rate */ 1,
+            100,
+            Paint {
+                target: &target,
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        marker.poll();
+        wait(device);
+        marker.poll();
+        out.push(marker.last().expect("the counters came back"));
+    }
+    out
+}
+
+/// A page nothing stopped wanting is still there next frame, and cost
+/// nothing to have.
+///
+/// 🔴 The reading the whole change exists for. Frame 0 allocates; every
+/// frame after it reuses, allocates nothing, and therefore has nothing
+/// to rasterise. Before this, every frame allocated every page again.
+#[test]
+fn a_page_survives_a_frame_that_wants_it() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+    let frames = run_frames(&device, &queue, &resources, 3, 8, PoolConfig::default());
+
+    let first = frames[0];
+    assert!(first.resident > 0, "the frame needs pages");
+    assert_eq!(first.pool.reused, 0, "nothing was resident before frame 0");
+    assert_eq!(
+        first.pool.claims, first.resident,
+        "frame 0 allocates them all"
+    );
+
+    for (index, counts) in frames.iter().enumerate().skip(1) {
+        assert_eq!(
+            counts.pool.claims, 0,
+            "frame {index} allocated {} pages it already had",
+            counts.pool.claims
+        );
+        assert_eq!(
+            counts.pool.reused, counts.resident,
+            "frame {index} reused {} of {} requests",
+            counts.pool.reused, counts.resident
+        );
+    }
+}
+
+/// Every request is answered exactly once, whether by a reuse or by an
+/// allocation.
+///
+/// ⚠️ This is the tombstone test. A lookup that stopped at a freed entry
+/// would declare a resident page missing and allocate a SECOND slot for
+/// it, which shows up here as the two halves summing past `resident` —
+/// and nowhere else, because both pages then rasterise correctly and
+/// only the pool runs out early.
+#[test]
+fn a_request_is_answered_once() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+    // Age 0 evicts everything every frame, so every frame after the
+    // first walks a table made entirely of tombstones. That is the
+    // hostile case on purpose.
+    for max_age in [0u32, 1, 8] {
+        let frames = run_frames(
+            &device,
+            &queue,
+            &resources,
+            4,
+            max_age,
+            PoolConfig::default(),
+        );
+        for (index, counts) in frames.iter().enumerate() {
+            assert_eq!(
+                counts.pool.claims + counts.pool.reused,
+                counts.resident,
+                "age {max_age} frame {index}: {} claims + {} reuses is not {} requests",
+                counts.pool.claims,
+                counts.pool.reused,
+                counts.resident
+            );
+            assert_eq!(
+                counts.pool.leaked, 0,
+                "age {max_age} frame {index} double-freed a slot"
+            );
+        }
+    }
+}
+
+/// A slot freed by eviction is handed out again.
+///
+/// 🔴 Without recycling the pool is a bump allocator over the session
+/// rather than over the frame: it runs out after `slice` distinct pages
+/// have EVER been asked for. Four frames at age 0 request roughly four
+/// times what one frame does, so a pool sized for one frame proves it.
+#[test]
+fn an_evicted_slot_comes_back() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+    // A pool sized so that ONE frame fits and six do not, which is what
+    // makes recycling the only way through.
+    let pool = PoolConfig { pages: 8, views: 1 };
+    let frames = run_frames(&device, &queue, &resources, 6, 0, pool);
+
+    let first = frames[0];
+    assert!(
+        first.pool.claims * frames.len() as u32 > pool.slice(),
+        "the run has to ask for more pages than the pool holds, or it proves nothing: \
+         {} claims over {} frames against {} slots",
+        first.pool.claims,
+        frames.len(),
+        pool.slice()
+    );
+    for (index, counts) in frames.iter().enumerate() {
+        assert_eq!(
+            counts.pool.overflow, 0,
+            "frame {index} ran out of pool with {} evictions behind it",
+            counts.pool.evicted
+        );
+    }
+    assert!(
+        frames[1..].iter().any(|c| c.pool.evicted > 0),
+        "age 0 has to evict every frame"
+    );
+}
+
+/// Ageing is measured in FRAMES, and `max_age` decides how many.
+///
+/// 🔴 `age_view` runs BEFORE the marking, so a page requested last frame
+/// is already one frame old when it is judged. At `max_age` 0 that is
+/// too old and it is evicted and immediately re-requested — which is
+/// exactly the behaviour that came before persistence, produced by the
+/// machine that replaces it. At 1 or more it survives. Both directions
+/// are asserted, because a threshold nothing tests off-by-one is a
+/// threshold nobody knows the meaning of.
+#[test]
+fn max_age_decides_whether_a_page_is_kept() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+
+    let churn = run_frames(&device, &queue, &resources, 3, 0, PoolConfig::default());
+    for (index, counts) in churn.iter().enumerate().skip(1) {
+        assert!(
+            counts.pool.evicted > 0,
+            "age 0, frame {index}: nothing was evicted"
+        );
+        assert_eq!(
+            counts.pool.alive, 0,
+            "age 0, frame {index} kept pages alive"
+        );
+        assert_eq!(
+            counts.pool.claims, counts.resident,
+            "age 0, frame {index} should re-allocate everything"
+        );
+    }
+
+    let kept = run_frames(&device, &queue, &resources, 3, 1, PoolConfig::default());
+    for (index, counts) in kept.iter().enumerate().skip(1) {
+        assert_eq!(
+            counts.pool.evicted, 0,
+            "age 1, frame {index} evicted a page the frame was still asking for"
+        );
+        assert!(
+            counts.pool.alive > 0,
+            "age 1, frame {index} kept nothing alive"
+        );
+    }
 }

@@ -27,15 +27,16 @@ use glam::{Mat4, Vec3};
 
 use kooch_lighting::{CLUSTER_COMMON, GpuLights, PAGE_TABLE};
 
-use super::pool::{PagePool, PoolConfig, PoolCounts};
+use super::pool::{PagePool, PoolConfig, PoolCounts, PoolLife};
 use super::{ClipmapConfig, PageConfig};
 
 const SOURCE: &str = include_str!("../../../shaders/page_mark.wgsl");
 const GROUP: u32 = 8;
-/// 0 resident, 1 samples, 2 pairs, 3 mark overflow, 4 claims, 5 pool
-/// overflow, 6 probe overflow. 7 spare, because a storage buffer is
-/// rounded up anyway.
-const COUNTERS: u64 = 8;
+/// 0 resident, 1 samples, 2 pairs, 3 mark overflow, 4 unused, 5 pool
+/// overflow, 6 probe overflow, 7 reuses, 8 fresh claims, 9 holes walked,
+/// 10 free-list overflow, 11 pages kept alive, 12 pages evicted. 13
+/// through 15 spare, because a storage buffer is rounded up anyway.
+const COUNTERS: u64 = 16;
 
 /// `KOOCH_PAGE_MARKING=1`, read once.
 ///
@@ -131,6 +132,7 @@ struct PageMarkView {
     sampling: [u32; 4],
     pool: [u32; 4],
     paint: [f32; 4],
+    life: [u32; 4],
     density: [f32; 4],
 }
 
@@ -138,9 +140,9 @@ struct PageMarkView {
 pub struct PageMarker {
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
-    /// Empties this view's table entries, and only this view's. See
-    /// `clear_view` in the shader for why that cannot be a
-    /// `clear_buffer`.
+    /// Ages this view's table entries and evicts what went unrequested,
+    /// and only this view's. See `age_view` in the shader for why that
+    /// cannot be a `clear_buffer`.
     clear: wgpu::ComputePipeline,
     view: wgpu::Buffer,
     marks: wgpu::Buffer,
@@ -161,6 +163,8 @@ pub struct PageMarker {
     clipmap: ClipmapConfig,
     /// Slots and views the mark buffer is sized for.
     capacity: (u32, u32),
+    /// The frame index and the eviction threshold. See [`PoolLife`].
+    life: PoolLife,
     last: Option<MarkCounts>,
 }
 
@@ -189,7 +193,7 @@ impl PageMarker {
             })
         };
         let pipeline = compute("mark_main");
-        let clear = compute("clear_view");
+        let clear = compute("age_view");
 
         Self {
             layout,
@@ -212,6 +216,12 @@ impl PageMarker {
                 mapped_at_creation: false,
             }),
             readback: Readback::new(device),
+            // The first frame is a rebuild: every buffer above was just
+            // created and `clear_buffer` has not run over any of them.
+            life: PoolLife {
+                rebuilt: true,
+                ..Default::default()
+            },
             pending: None,
             config,
             clipmap,
@@ -232,10 +242,45 @@ impl PageMarker {
 
     /// Resizes the pool, and reports whether anything changed.
     ///
-    /// The table is rebuilt, not migrated: it is emptied every frame
-    /// anyway, so there is nothing in it worth carrying across.
+    /// 🔴 The table is rebuilt, not migrated, and the NEXT frame is
+    /// flagged as a rebuild so `age_view` evicts everything before
+    /// anything reads it. A resize changes how a slot maps to an atlas
+    /// texel — `per_row` and `slice` both move — so a carried-over entry
+    /// points at a page that now belongs to someone else. Every buffer
+    /// here is fresh, so this only has to say so out loud.
     pub fn set_pool(&mut self, device: &wgpu::Device, config: PoolConfig) -> bool {
-        self.pool.resize(device, config)
+        let changed = self.pool.resize(device, config);
+        self.life.rebuilt |= changed;
+        changed
+    }
+
+    /// Stamps the frame every page requested from here on belongs to.
+    ///
+    /// 🔴 Takes the count rather than counting itself, and that is the
+    /// point: `record` runs once per CAMERA and a page's age has to be
+    /// measured in frames. A marker that incremented on its own would
+    /// age the first view's pages out from under it while the second
+    /// view marked, in the same frame — silently, and only in the
+    /// editor. `Time::frame_count` is already the stamp the light frame
+    /// is shared on.
+    pub fn set_frame(&mut self, frame: u32) {
+        // A rebuild is consumed by the frame that follows it, not by the
+        // camera that follows it: both views have to evict.
+        if frame != self.life.frame {
+            self.life.rebuilt = false;
+            self.life.frame = frame;
+        }
+    }
+
+    /// This frame's residency policy.
+    pub fn life(&self) -> PoolLife {
+        self.life
+    }
+
+    /// Frames a page may go unrequested before it is evicted. See
+    /// [`PoolLife`] for why the default is zero.
+    pub fn set_max_age(&mut self, frames: u32) {
+        self.life.max_age = frames;
     }
 
     /// Drops the cached count.
@@ -324,12 +369,14 @@ impl PageMarker {
                     count,
                 ],
                 sampling: [rate, count, u32::from(paint.on), view],
+
                 pool: [
                     self.pool.config().entries(),
                     self.pool.config().total(),
                     self.pool.config().per_row(),
                     self.pool.config().slice(),
                 ],
+                life: self.life.words(),
                 // How many output pixels one depth pixel covers, per
                 // axis. 1 when nothing is upscaling.
                 paint: [
@@ -365,6 +412,7 @@ impl PageMarker {
                 },
                 buffer_entry(9, self.pool.keys()),
                 buffer_entry(10, self.pool.slots()),
+                buffer_entry(11, self.pool.alloc()),
             ],
         });
 
@@ -513,6 +561,7 @@ fn layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             },
             storage(9, false),
             storage(10, false),
+            storage(11, false),
         ],
     })
 }
@@ -637,9 +686,14 @@ impl Readback {
                     pairs: words[2],
                     overflow: words[3],
                     pool: PoolCounts {
-                        claims: words[4],
+                        claims: words[8],
                         overflow: words[5],
                         probes: words[6],
+                        reused: words[7],
+                        holes: words[9],
+                        leaked: words[10],
+                        alive: words[11],
+                        evicted: words[12],
                         capacity,
                     },
                     size,
@@ -705,6 +759,7 @@ mod tests {
             ("sampling", std::mem::offset_of!(PageMarkView, sampling)),
             ("pool", std::mem::offset_of!(PageMarkView, pool)),
             ("paint", std::mem::offset_of!(PageMarkView, paint)),
+            ("life", std::mem::offset_of!(PageMarkView, life)),
             ("density", std::mem::offset_of!(PageMarkView, density)),
         ];
         let source = format!("{CLUSTER_COMMON}\n{PAGE_TABLE}\n{SOURCE}");

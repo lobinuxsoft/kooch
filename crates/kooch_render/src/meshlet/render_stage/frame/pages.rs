@@ -143,9 +143,24 @@ impl MeshletRenderStage {
             self.lights.unbind_shadow_pages(device);
             return;
         }
+        // 🔴 Stamped BEFORE the pool is touched, and once per frame
+        // rather than once per camera. `set_pool` sets the rebuild flag
+        // and `set_frame` is what clears it, so the other order would
+        // clear a rebuild the same frame it was asked for.
+        //
+        // ⚠️ Without a `Time` — every headless test — the stamp stands
+        // still, which means nothing ages and everything stays resident.
+        // That is the safe direction to be wrong in: a test sees a pool
+        // that never evicts rather than one that evicts constantly.
+        if let Some(marker) = self.page_marker.as_mut()
+            && let Some(time) = resources.get::<kooch_core::time::Time>()
+        {
+            marker.set_frame(time.frame_count() as u32);
+        }
         // The pool is the memory budget, and changing it changes the
-        // atlas. Rebuilt rather than resized: it is emptied every frame
-        // anyway, so there is nothing in it worth carrying across.
+        // atlas. Rebuilt rather than resized: a slot recorded against
+        // the old atlas names a different page in the new one, so the
+        // rebuild flag evicts every entry before anything reads it.
         if self.page_pool_config != Some(settings.pool) {
             self.page_pool_config = Some(settings.pool);
             self.page_raster = None;

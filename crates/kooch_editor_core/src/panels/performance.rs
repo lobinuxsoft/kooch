@@ -786,6 +786,36 @@ fn shadow_page_readout(
              moves the day the local raster lands.",
         );
     }
+    // 🔴 The reading persistence exists to produce. A still camera
+    // should sit at 100 %: every page it wants is one it already has,
+    // so the raster draws nothing and the atlas is last frame's.
+    ui.label(
+        egui::RichText::new(format!(
+            "{} reused · {} new · {} evicted · {:.0}% hit",
+            counts.pool.reused,
+            counts.pool.claims,
+            counts.pool.evicted,
+            counts.pool.hit_rate()
+        ))
+        .small()
+        .weak(),
+    )
+    .on_hover_text(
+        "The pool PERSISTS between frames: a page is freed when nothing has asked for it in          `max_age` frames, which is Epic's `MaxPageAgeSinceLastRequest`, and not because a          frame ended. A reused page is one whose depth is already in the atlas and does not          have to be rasterised again.          ⚠️ `max_age` DEFAULTS TO ZERO, so everything is evicted every frame and the hit          rate reads 0 %: keeping a page longer is only correct once something invalidates          the ones a moving caster passed through, and that pass does not exist yet.          `KOOCH_SHADOW_PAGE_AGE` raises it to try it.",
+    );
+    if counts.pool.leaked > 0 {
+        ui.label(
+            egui::RichText::new(format!(
+                "{} slots fell out of the free list — a double free",
+                counts.pool.leaked
+            ))
+            .small()
+            .color(egui::Color32::from_rgb(220, 120, 90)),
+        )
+        .on_hover_text(
+            "The free list cannot hold more slots than the slice has, so this is the              allocator releasing a slot twice. Always zero, or the allocator is wrong.",
+        );
+    }
     if counts.pool.overflow > 0 {
         ui.label(
             egui::RichText::new(format!(
@@ -848,6 +878,18 @@ fn shadow_page_readout(
                 .color(egui::Color32::from_rgb(220, 120, 90)),
             );
         }
+    }
+    // The cost of eviction, and the one that grows silently.
+    if counts.pool.holes > 0 && counts.pool.requests() > 0 {
+        let per = counts.pool.holes as f32 / counts.pool.requests() as f32;
+        ui.label(
+            egui::RichText::new(format!("{per:.1} dead entries walked per request"))
+                .small()
+                .weak(),
+        )
+        .on_hover_text(
+            "An evicted entry leaves a TOMBSTONE rather than an empty slot, because open              addressing proves a key is absent by finding an empty one — writing empty over              a freed key would make every key whose probe run passed through it unfindable              while it is still resident. The hole keeps the run intact and lengthens it.              Climbing towards 32, which is where a lookup gives up, means the table is              turning into holes and wants a rehash.",
+        );
     }
     if counts.pool.probes > 0 {
         ui.label(

@@ -61,6 +61,32 @@
 // has to run. Keys are therefore stored as `page + 1`.
 const PAGE_EMPTY: u32 = 0u;
 
+/// An entry whose page was EVICTED, and the reason persistence needs a
+/// third state at all.
+///
+/// 🔴 Open addressing resolves a collision by walking, so a lookup stops
+/// at the first EMPTY entry: an empty slot proves the key was never
+/// inserted, because inserting it would have taken that slot. Writing
+/// EMPTY over an evicted key breaks that proof — every key whose probe
+/// run passed through the freed entry becomes unfindable while still
+/// sitting in the table, and the symptom is a page that is resident,
+/// rasterised, and never sampled.
+///
+/// A tombstone keeps the run intact. Readers walk past it; an insert may
+/// reuse it. This costs a probe per hole, which `counters[9]` counts so
+/// that a table degrading into holes is a number rather than a mystery.
+const PAGE_DEAD: u32 = 0xfffffffeu;
+
+/// Words per table entry: the physical slot, then the frame it was last
+/// requested in.
+///
+/// 🔴 Interleaved because `max_storage_buffers_per_shader_stage` is
+/// eight on the downlevel defaults and the marking pass was already
+/// there. Declared here rather than in the marking pass because the
+/// SHADING pass indexes the same buffer and a stride the two disagree on
+/// reads an age as a slot.
+const PAGE_CELL: u32 = 2u;
+
 /// No physical page: either the pool is full or the probe gave up.
 const PAGE_MISS: u32 = 0xffffffffu;
 

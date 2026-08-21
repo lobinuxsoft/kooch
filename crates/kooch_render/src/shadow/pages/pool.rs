@@ -31,6 +31,10 @@
 
 use super::PageConfig;
 
+/// Words per table entry — the slot and its age. Mirrors `PAGE_CELL` in
+/// `page_table.wgsl`, which is where the reason lives.
+pub const PAGE_CELL: u32 = 2;
+
 /// `KOOCH_SHADOW_POOL_PAGES`, read once.
 ///
 /// An environment variable and **not** a `.rendersettings` field, on
@@ -185,30 +189,106 @@ impl PoolConfig {
     }
 
     /// What the table costs, which is the number the flat answer lost
-    /// to: keys and slots, one `u32` each.
+    /// to: a key, plus [`PAGE_CELL`] words of slot and age.
     pub fn table_bytes(&self) -> u64 {
-        self.entries() as u64 * 8
+        self.entries() as u64 * (1 + PAGE_CELL as u64) * 4
     }
 }
 
-/// The page table's two buffers, rebuilt when the pool is resized.
+/// How long a page outlives the frame that asked for it.
 ///
-/// 🔴 Emptied **one view at a time, by a pass** — `clear_view` in
+/// # 🔴 `max_age` defaults to ZERO, and that is not timidity
+///
+/// A resident page holds the depth of the last frame that DREW it.
+/// Keeping it alive past the frame that requested it is correct exactly
+/// as long as nothing inside it moved — and nothing here knows when
+/// something did. Epic pairs `MaxPageAgeSinceLastRequest` with an
+/// invalidation pass that walks every primitive whose transform changed
+/// and marks the pages its old and new bounds cover; without that half,
+/// a rolling ball leaves its shadow behind it on the ground.
+///
+/// So the mechanism ships whole and the policy ships off: at zero, a
+/// page not requested this frame is evicted, which is the behaviour that
+/// came before, produced by the machine that replaces it. Raising it is
+/// one number and `KOOCH_SHADOW_PAGE_AGE` is the way to try it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PoolLife {
+    /// This frame's index, counting up for the process's lifetime.
+    pub frame: u32,
+    /// Frames a page may go unrequested before it is evicted.
+    pub max_age: u32,
+    /// Set when the pool was just rebuilt, which evicts everything: a
+    /// slot recorded against the old atlas names a different page in the
+    /// new one.
+    pub rebuilt: bool,
+}
+
+impl Default for PoolLife {
+    fn default() -> Self {
+        Self {
+            frame: 0,
+            max_age: age_from_environment(),
+            rebuilt: false,
+        }
+    }
+}
+
+impl PoolLife {
+    /// The uniform's `life` field.
+    pub fn words(&self) -> [u32; 4] {
+        [self.frame, self.max_age, u32::from(self.rebuilt), 0]
+    }
+}
+
+/// `KOOCH_SHADOW_PAGE_AGE`, read once. See [`PoolLife`] for why the
+/// default is zero and why it is an environment variable rather than a
+/// setting.
+pub fn age_from_environment() -> u32 {
+    static AGE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *AGE.get_or_init(|| {
+        std::env::var("KOOCH_SHADOW_PAGE_AGE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+            .min(1024)
+    })
+}
+
+/// The page table and the allocator's state, rebuilt when the pool is
+/// resized.
+///
+/// 🔴 Aged **one view at a time, by a pass** — `age_view` in
 /// `page_mark.wgsl` — and not by `clear_buffer`. The table is shared
 /// between the cameras and the raster is fused with the shading, so a
 /// view samples an atlas a frame old: wiping the whole table at the top
 /// of a frame leaves whichever view marks second reading what the first
 /// one just erased. [`Self::clear`] remains for the one caller that
-/// really does own the whole table — a test.
+/// really does own the whole table — a test, or a rebuild.
 ///
-/// ⚠️ Nothing is cached across frames, which is the optimisation real
-/// VSM exists for: UE5 keeps a page alive until it goes unrequested for
-/// `MaxPageAgeSinceLastRequest` frames and allocates in LRU order, so a
-/// static shadow is rasterised once. That needs an eviction policy and
-/// an invalidation rule, and it is the next machine.
+/// # 🔴 It PERSISTS, and that is what the third buffer is for
+///
+/// A page is not freed because a frame ended. It is freed because
+/// `max_age` frames passed with nothing asking for it — Epic's
+/// `MaxPageAgeSinceLastRequest` — so a shadow that does not change is
+/// rasterised once and then read for as long as the camera keeps
+/// wanting it. `ages` records when each entry was last requested and
+/// `alloc` holds the per-view free list the eviction pushes onto.
+///
+/// ⚠️ What that buys has a matching cost: a resident page's depth is as
+/// old as the last time it was drawn. Nothing here invalidates a page
+/// because a caster inside it MOVED, so with `max_age` above zero a
+/// moving object leaves its shadow behind. That is the next machine and
+/// [`PoolLife`] is the knob that keeps it off until it exists.
 pub struct PagePool {
     keys: wgpu::Buffer,
+    /// TWO words per entry: the slot, then the frame it was last
+    /// requested in. See `PAGE_CELL` in `page_table.wgsl` for why they
+    /// share a buffer rather than getting one each.
     slots: wgpu::Buffer,
+
+    /// `[high, free_count, free_slots...]` per view — see `alloc_base`
+    /// in the shader.
+    alloc: wgpu::Buffer,
     config: PoolConfig,
 }
 
@@ -216,7 +296,12 @@ impl PagePool {
     pub fn new(device: &wgpu::Device, config: PoolConfig) -> Self {
         Self {
             keys: table_buffer(device, "shadow_page_keys", config.entries()),
-            slots: table_buffer(device, "shadow_page_slots", config.entries()),
+            slots: table_buffer(device, "shadow_page_cells", config.entries() * PAGE_CELL),
+            alloc: table_buffer(
+                device,
+                "shadow_page_alloc",
+                config.slices() * (config.slice() + 2),
+            ),
             config,
         }
     }
@@ -242,14 +327,24 @@ impl PagePool {
         &self.slots
     }
 
-    /// Empties the WHOLE table, every view's entries included.
+    pub fn alloc(&self) -> &wgpu::Buffer {
+        &self.alloc
+    }
+
+    /// Empties the WHOLE table and resets the allocator, every view's
+    /// entries included.
     ///
-    /// ⚠️ Only correct where there is exactly one view — a test, or a
-    /// pool being rebuilt. The per-frame reset is `clear_view`. Only
-    /// the keys need it: a slot is never read without its key matching
-    /// first.
+    /// ⚠️ Only correct where there is exactly one view — a test — or
+    /// where the pool has just been rebuilt and no entry in it names a
+    /// slot that still exists. The per-frame reset is `age_view`.
+    ///
+    /// 🔴 `alloc` has to go with the keys. A free list that outlives the
+    /// table it was built for hands out slots two entries both believe
+    /// they own, and the second one wins silently.
     pub fn clear(&self, encoder: &mut wgpu::CommandEncoder) {
         encoder.clear_buffer(&self.keys, 0, None);
+        encoder.clear_buffer(&self.slots, 0, None);
+        encoder.clear_buffer(&self.alloc, 0, None);
     }
 }
 
@@ -276,6 +371,29 @@ pub struct PoolCounts {
     /// exactly the pages the frame would need if the local raster
     /// existed, which is the number the whole census was for.
     pub claims: u32,
+    /// Requests that found their page ALREADY RESIDENT, so nothing was
+    /// allocated and nothing has to be rasterised again.
+    ///
+    /// 🔴 The number persistence exists to produce. `claims` against
+    /// this is the whole reading: a frame where almost every request is
+    /// a reuse is a frame whose shadow atlas is mostly last frame's,
+    /// which is what makes a hundred casting lights affordable at all.
+    pub reused: u32,
+    /// Entries a lookup walked past because their page was evicted.
+    ///
+    /// ⚠️ The cost of eviction, and the one that grows silently. See
+    /// `PAGE_DEAD`: a hole keeps a probe run intact and lengthens it. A
+    /// number climbing towards `PAGE_PROBES` per request means the table
+    /// is turning into holes and wants a rehash.
+    pub holes: u32,
+    /// Resident pages this view carried over — requested recently enough
+    /// not to be evicted.
+    pub alive: u32,
+    /// Pages freed this frame for going unrequested past `max_age`.
+    pub evicted: u32,
+    /// Slots the free list could not hold, which is a double free.
+    /// 🔴 Always zero, or the allocator is wrong.
+    pub leaked: u32,
     /// Claims past the end of the pool. Non-zero means pages went
     /// unshadowed this frame; Epic's own overflow shows up as
     /// checkerboard corruption, so the counter exists to name it before
@@ -298,15 +416,39 @@ pub struct PoolCounts {
 }
 
 impl PoolCounts {
-    /// Slots actually handed out, which is `claims` capped by the pool.
+    /// Slots the pool is holding after this frame: what survived the
+    /// ageing, plus what was allocated on top of it.
+    ///
+    /// 🔴 NOT `claims`. Since the pool persists, `claims` is what was
+    /// NEW this frame — a number that falls to zero on a still camera
+    /// while the pool stays exactly as full as it was.
     pub fn allocated(&self) -> u32 {
-        self.claims.min(self.capacity)
+        (self.alive + self.claims).min(self.capacity)
     }
 
     /// Pages the frame marked and could not spend a slot on, because
     /// nothing draws them yet.
     pub fn unspent(&self, resident: u32) -> u32 {
-        resident.saturating_sub(self.claims)
+        resident.saturating_sub(self.claims + self.reused)
+    }
+
+    /// Requests that reached the pool at all — a reuse or an allocation.
+    pub fn requests(&self) -> u32 {
+        self.claims + self.reused
+    }
+
+    /// How much of this frame's work the pool answered from what it
+    /// already had, as a percentage.
+    ///
+    /// 🔴 The one number that says whether persistence is doing
+    /// anything. 100 % is a frame that rasterised no shadow at all
+    /// because every page it wanted was already drawn.
+    pub fn hit_rate(&self) -> f32 {
+        let requests = self.requests();
+        if requests == 0 {
+            return 0.0;
+        }
+        self.reused as f32 / requests as f32 * 100.0
     }
 
     /// How full the pool ran, as a percentage.

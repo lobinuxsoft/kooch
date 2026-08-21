@@ -61,6 +61,16 @@ struct PageView {
     // size. They differ whenever `render_scale` is below 100, and one
     // thread then owns a block rather than a pixel.
     paint: vec4<f32>,
+    // x THIS FRAME's index, y how many frames a page may go unrequested
+    // before it is evicted, z 1 when the pool is being rebuilt from
+    // nothing, w unused.
+    //
+    // 🔴 The frame index is what makes the pool persistent. A page is
+    // not freed because a frame ended; it is freed because `max_age`
+    // frames passed without anything asking for it. That is Epic's
+    // `MaxPageAgeSinceLastRequest` and it is the whole mechanism — a
+    // page that survives is a page nothing has to rasterise again.
+    life: vec4<u32>,
     // x the RECIPROCAL of `shadow_density`, as a fraction of 1.
     //
     // 🔴 The one lever the census found. It multiplies the world size a
@@ -117,7 +127,45 @@ struct PageCell {
 // Keys are `virtual_page + 1` so that a cleared buffer is an empty
 // table: the reset is `clear_buffer`, not a pass.
 @group(0) @binding(9) var<storage, read_write> table_keys: array<atomic<u32>>;
-@group(0) @binding(10) var<storage, read_write> table_slots: array<u32>;
+// TWO words per entry: the physical slot, then the frame it was last
+// REQUESTED in. `page_slot` and `page_age` are the accessors.
+//
+// 🔴 Interleaved rather than two buffers, and the reason is a hard
+// limit: `max_storage_buffers_per_shader_stage` is EIGHT on the
+// downlevel defaults, and this pass was already at eight. A ninth
+// binding fails `create_bind_group_layout` outright — the age has to
+// live beside the slot or the pass does not exist.
+//
+// It also happens to be the better layout: a hit reads the slot and
+// writes the age, and now they share a cache line.
+@group(0) @binding(10) var<storage, read_write> table_cells: array<atomic<u32>>;
+// The allocator's own state, laid out per view: `[high, free_count,
+// free_slots...]` repeated every `slice + 2` words.
+//
+// 🔴 NOT cleared between frames, which is the difference between this
+// and what came before. The bump high-water mark and the free list are
+// what a page's residency survives on; a `clear_buffer` over them every
+// frame is exactly the non-persistent pool this replaces.
+@group(0) @binding(11) var<storage, read_write> alloc: array<atomic<u32>>;
+
+// The two words of a table entry. `PAGE_CELL` is in `page_table.wgsl`
+// because the READER indexes the same buffer.
+fn page_slot(entry: u32) -> u32 {
+    return atomicLoad(&table_cells[entry * PAGE_CELL]);
+}
+
+fn page_age(entry: u32) -> u32 {
+    return atomicLoad(&table_cells[entry * PAGE_CELL + 1u]);
+}
+
+fn page_stamp(entry: u32, slot: u32, frame: u32) {
+    atomicStore(&table_cells[entry * PAGE_CELL], slot);
+    atomicStore(&table_cells[entry * PAGE_CELL + 1u], frame);
+}
+
+fn page_refresh(entry: u32, frame: u32) {
+    atomicStore(&table_cells[entry * PAGE_CELL + 1u], frame);
+}
 
 const NO_PAGE: u32 = 0xffffffffu;
 
@@ -141,49 +189,145 @@ fn view_base() -> u32 {
     return pages.sampling.w * view_span();
 }
 
-// Hands `page` a physical slot and files it in the table.
+// Where this view's allocator state starts in `alloc`.
 //
-// 🔴 Called from ONE thread per page — the one `mark_bit` reports as
-// having flipped the bit — which is what makes the plain store to
-// `table_slots` safe. The compare-exchange below is for two DIFFERENT
-// keys landing on the same entry, never for two threads fighting over
-// one page.
+// `[high, free_count, free_slots...]`, one run per view, so a camera
+// allocates and frees without touching another camera's list.
+fn alloc_base() -> u32 {
+    return pages.sampling.w * (pages.pool.w + 2u);
+}
+
+// A physical slot out of this view's slice, recycled first.
 //
-// 🔴 The slot comes out of THIS VIEW'S slice of the pool. A shared bump
-// allocator hands every page to whichever camera the GPU scheduled
-// first; a slice is a budget a camera cannot overspend and cannot be
-// robbed of.
-//
-// ⚠️ It bounds camera against camera and NOTHING else. Inside one slice
-// the local lights still race the sun for it — 2008 slots of 2048,
-// measured — because allocation still has no priority and still does
-// not know the raster cannot draw a local page. That is the next fix,
-// and this one does not pretend to be it.
-fn page_claim(page: u32) -> u32 {
+// 🔴 Free list BEFORE the bump, and that ordering is the point of the
+// whole change. A pool that only ever bumps runs out after `slice`
+// distinct pages have EVER been requested — which, with a camera that
+// moves, is a matter of seconds. Recycling is what turns "pages this
+// session needed" into "pages this moment needs".
+fn page_alloc() -> u32 {
+    let base = alloc_base();
     let slice = pages.pool.w;
-    let local = atomicAdd(&counters[4], 1u);
+
+    // Pop. `atomicSub` returning the OLD value is what makes the test
+    // and the take one operation: a thread that sees a count of zero or
+    // less pushed it below zero and puts it back.
+    let taken = atomicSub(&alloc[base + 1u], 1u);
+    if taken != 0u && taken <= slice {
+        return atomicLoad(&alloc[base + 2u + taken - 1u]);
+    }
+    atomicAdd(&alloc[base + 1u], 1u);
+
+    let local = atomicAdd(&alloc[base], 1u);
     if local >= slice {
+        atomicSub(&alloc[base], 1u);
         atomicAdd(&counters[5], 1u);
         return PAGE_MISS;
     }
-    let slot = pages.sampling.w * slice + local;
+    return pages.sampling.w * slice + local;
+}
+
+// Gives a slot back to this view's free list.
+fn page_release(slot: u32) {
+    let base = alloc_base();
+    let slice = pages.pool.w;
+    let at = atomicAdd(&alloc[base + 1u], 1u);
+    if at >= slice {
+        // The list cannot hold more than the slice does, so this cannot
+        // happen without the slice having been double-freed. Undo and
+        // leak the slot rather than write past the run.
+        atomicSub(&alloc[base + 1u], 1u);
+        atomicAdd(&counters[10], 1u);
+        return;
+    }
+    atomicStore(&alloc[base + 2u + at], slot);
+}
+
+// Finds `page` in the table, or puts it there, and stamps it with this
+// frame either way.
+//
+// 🔴 This REPLACED a function that only ever inserted, because the pool
+// used to be emptied every frame and every page was therefore new. Now
+// the common case is the first branch: the page is already resident,
+// its age is refreshed, and NOTHING is allocated and nothing has to be
+// rasterised again. `counters[7]` counts those and `counters[8]` counts
+// the ones that really are new — the two together are what says whether
+// persistence is doing anything.
+//
+// ⚠️ The lookup walks PAST tombstones and stops only at EMPTY. See
+// `PAGE_DEAD`: stopping at a freed entry would declare a resident page
+// missing and allocate a second slot for it.
+fn page_touch(page: u32) -> u32 {
     let entries = pages.pool.x;
+    if entries == 0u {
+        return PAGE_MISS;
+    }
+    let frame = pages.life.x;
     var probe = page_probe(page, entries);
+    var dead = PAGE_MISS;
+    for (var i = 0u; i < PAGE_PROBES; i = i + 1u) {
+        let key = atomicLoad(&table_keys[probe]);
+        if key == page + 1u {
+            page_refresh(probe, frame);
+            atomicAdd(&counters[7], 1u);
+            return page_slot(probe);
+        }
+        if key == PAGE_DEAD && dead == PAGE_MISS {
+            // Remember the first hole; the run still has to be walked to
+            // the end in case the key lives further along it.
+            dead = probe;
+            atomicAdd(&counters[9], 1u);
+        }
+        if key == PAGE_EMPTY {
+            break;
+        }
+        probe = page_step(probe, entries);
+    }
+
+    // Not resident. Take a slot first: an entry claimed with no slot to
+    // put in it is an entry a reader finds and dereferences.
+    let slot = page_alloc();
+    if slot == PAGE_MISS {
+        return PAGE_MISS;
+    }
+
+    // Reuse the hole when there was one, otherwise resume the walk. A
+    // tombstone is claimed with the same compare-exchange as an empty
+    // entry, so two threads cannot both take it.
+    if dead != PAGE_MISS {
+        let outcome = atomicCompareExchangeWeak(&table_keys[dead], PAGE_DEAD, page + 1u);
+        if outcome.exchanged {
+            page_stamp(dead, slot, frame);
+            atomicAdd(&counters[8], 1u);
+            return slot;
+        }
+        probe = dead;
+    }
+
     for (var i = 0u; i < PAGE_PROBES; i = i + 1u) {
         let outcome = atomicCompareExchangeWeak(&table_keys[probe], PAGE_EMPTY, page + 1u);
         if outcome.exchanged {
-            table_slots[probe] = slot;
+            page_stamp(probe, slot, frame);
+            atomicAdd(&counters[8], 1u);
             return slot;
         }
         // A failure with EMPTY still there is the "weak" in the name —
         // spurious, retry the same entry. Anything else is another key
         // holding it, and the sequence moves on.
         if outcome.old_value != PAGE_EMPTY {
+            // Including our own key, if another thread inserted it while
+            // this one was allocating. Hand the spare slot back.
+            if outcome.old_value == page + 1u {
+                page_release(slot);
+                page_refresh(probe, frame);
+                atomicAdd(&counters[7], 1u);
+                return page_slot(probe);
+            }
             probe = page_step(probe, entries);
         }
     }
     // The pool had room and the table did not, which is a statement
     // about the hash rather than about the scene.
+    page_release(slot);
     atomicAdd(&counters[6], 1u);
     return PAGE_MISS;
 }
@@ -222,7 +366,7 @@ fn mark_bit(index: u32, claim: bool) -> bool {
     if claim {
         // WGSL has no call statement for a function that returns; the
         // slot is the sampling pass's business, not this one's.
-        _ = page_claim(index);
+        _ = page_touch(index);
     }
     return true;
 }
@@ -495,18 +639,39 @@ fn paint_page(pixel: vec2<u32>, painted: vec2<u32>) {
 // Keys are `page + 1` and a page carries its view in the high part, so
 // ownership is a divide. No decode: the level and cell do not matter to
 // a pass that only asks *whose is this*.
+// Ages this view's table entries, and evicts the ones nothing has asked
+// for in `max_age` frames.
+//
+// 🔴 This REPLACED `clear_view`, which emptied the whole table every
+// frame. That is the change: a page nothing requested this frame is not
+// gone, it is one frame older, and it stays resident — with its depth
+// still in the atlas — until it has been unwanted for long enough to be
+// worth the slot. Epic calls the threshold
+// `MaxPageAgeSinceLastRequest`.
+//
+// It writes `PAGE_DEAD` rather than `PAGE_EMPTY`, which is not a detail:
+// see the constant's own doc.
 @compute @workgroup_size(MARK_GROUP * MARK_GROUP, 1, 1)
-fn clear_view(@builtin(global_invocation_id) id: vec3<u32>) {
+fn age_view(@builtin(global_invocation_id) id: vec3<u32>) {
     let entry = id.x;
-    if entry >= pages.pool.x {
-        return;
-    }
+    if entry >= pages.pool.x { return; }
     let key = atomicLoad(&table_keys[entry]);
-    if key == PAGE_EMPTY {
-        return;
+    if key == PAGE_EMPTY || key == PAGE_DEAD { return; }
+    if (key - 1u) / view_span() != pages.sampling.w { return; }
+
+    // A rebuild empties the view outright — the pool's shape changed
+    // under it, so a slot in an old entry names a page in a new atlas.
+    if pages.life.z == 0u {
+        let age = page_age(entry);
+        // Unsigned, so a frame index that ran backwards (a rebuild, a
+        // wrap) reads as enormous and evicts. That is the safe way for
+        // this comparison to be wrong.
+        if pages.life.x - age <= pages.life.y {
+            atomicAdd(&counters[11], 1u);
+            return;
+        }
     }
-    if (key - 1u) / view_span() != pages.sampling.w {
-        return;
-    }
-    atomicStore(&table_keys[entry], PAGE_EMPTY);
+    atomicStore(&table_keys[entry], PAGE_DEAD);
+    page_release(page_slot(entry));
+    atomicAdd(&counters[12], 1u);
 }
