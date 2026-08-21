@@ -705,8 +705,8 @@ fn shadow_page_readout(
     let mib = counts.resident as f64 * config.page_bytes() as f64 / (1024.0 * 1024.0);
     ui.label(
         egui::RichText::new(format!(
-            "{} pages · {mib:.1} MiB · at {}x{}",
-            counts.resident, counts.size.0, counts.size.1
+            "view {} · {} pages · {mib:.1} MiB · at {}x{}",
+            counts.view, counts.resident, counts.size.0, counts.size.1
         ))
         .small(),
     )
@@ -744,7 +744,7 @@ fn shadow_page_readout(
     // capacity.
     ui.label(
         egui::RichText::new(format!(
-            "{} of {} pool pages allocated · {:.0}% full",
+            "{} of {} pages in this view's slice · {:.0}% full",
             counts.pool.allocated(),
             counts.pool.capacity,
             counts.pool.load()
@@ -755,6 +755,9 @@ fn shadow_page_readout(
     .on_hover_text(
         "The physical pool the pages are allocated out of, in the same dispatch that marks \
          them: the thread that flips a page's mark bit is the one that claims its slot. \
+         The pool is SLICED between the cameras — a layer of the atlas each — so this is \
+         what THIS view may spend, not the whole budget: a camera cannot take another \
+         camera's pages and cannot be robbed of its own. \
          Epic's default pool is 4096 pages for the WHOLE scene — 6144 for open worlds, 8192 \
          thrashes — and `KOOCH_SHADOW_POOL_PAGES` moves this one.",
     );
@@ -794,8 +797,8 @@ fn shadow_page_readout(
         // say.
         ui.label(
             egui::RichText::new(format!(
-                "{} sun pages rastered · {} meshlet/page pairs",
-                raster.pages, raster.pairs
+                "{} sun pages rastered · {} meshlet/page pairs · {} owned by another view",
+                raster.pages, raster.pairs, raster.others
             ))
             .small()
             .weak(),

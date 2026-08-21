@@ -115,6 +115,8 @@ pub struct MarkCounts {
     /// with 720p. It also explains the two figures the editor logs: the
     /// View and the Game tab are two cameras at two sizes.
     pub size: (u32, u32),
+    /// Which camera produced it, for the same reason as `size`.
+    pub view: u32,
 }
 
 /// Mirrors `PageView` in `page_mark.wgsl`, field for field.
@@ -136,6 +138,10 @@ struct PageMarkView {
 pub struct PageMarker {
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
+    /// Empties this view's table entries, and only this view's. See
+    /// `clear_view` in the shader for why that cannot be a
+    /// `clear_buffer`.
+    clear: wgpu::ComputePipeline,
     view: wgpu::Buffer,
     marks: wgpu::Buffer,
     counters: wgpu::Buffer,
@@ -153,10 +159,8 @@ pub struct PageMarker {
     pending: Option<usize>,
     config: PageConfig,
     clipmap: ClipmapConfig,
-    /// Lights the mark buffer is sized for.
-    capacity: u32,
-    /// The render size of the dispatch now in flight.
-    size: (u32, u32),
+    /// Slots and views the mark buffer is sized for.
+    capacity: (u32, u32),
     last: Option<MarkCounts>,
 }
 
@@ -174,25 +178,30 @@ impl PageMarker {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("page_mark"),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some("mark_main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let compute = |entry: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&pipeline_layout),
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let pipeline = compute("mark_main");
+        let clear = compute("clear_view");
 
         Self {
             layout,
             pipeline,
+            clear,
             view: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_mark_view"),
                 size: std::mem::size_of::<PageMarkView>() as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
-            marks: marks_buffer(device, config, clipmap, 1),
+            marks: marks_buffer(device, config, clipmap, 1, 1),
             pool: PagePool::new(device, PoolConfig::default()),
             counters: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_mark_counters"),
@@ -206,8 +215,7 @@ impl PageMarker {
             pending: None,
             config,
             clipmap,
-            capacity: 1,
-            size: (0, 0),
+            capacity: (1, 1),
             last: None,
         }
     }
@@ -261,6 +269,10 @@ impl PageMarker {
         eye: Vec3,
         sun: Option<Vec3>,
         viewport: (u32, u32),
+        // Which camera this dispatch is for. Decides the slice of the
+        // pool it allocates from, its region of the mark bitmap and the
+        // high part of every page id it writes.
+        view: u32,
         rate: u32,
         // Shadow texels per screen pixel, as a percentage.
         density: u32,
@@ -271,16 +283,17 @@ impl PageMarker {
         // — it has no position to cluster — so it gets a stride of its
         // own rather than a light index.
         let slots = count + 1;
-        if slots > self.capacity {
-            self.marks = marks_buffer(device, self.config, self.clipmap, slots);
-            self.capacity = slots;
+        let views = self.pool.config().slices();
+        let view = view.min(views - 1);
+        if (slots, views) != self.capacity {
+            self.marks = marks_buffer(device, self.config, self.clipmap, slots, views);
+            self.capacity = (slots, views);
         }
 
         // 🔴 Painting forces one thread per pixel. At any coarser rate
         // the view would be a grid of dots over an unpainted frame,
         // which reads as "the pass is broken" rather than as "you asked
         // for one sample in sixteen".
-        self.size = viewport;
         let rate = if paint.on {
             1
         } else {
@@ -310,12 +323,12 @@ impl PageMarker {
                     self.stride(),
                     count,
                 ],
-                sampling: [rate, count, u32::from(paint.on), 0],
+                sampling: [rate, count, u32::from(paint.on), view],
                 pool: [
                     self.pool.config().entries(),
-                    self.pool.config().pages,
+                    self.pool.config().total(),
                     self.pool.config().per_row(),
-                    0,
+                    self.pool.config().slice(),
                 ],
                 // How many output pixels one depth pixel covers, per
                 // axis. 1 when nothing is upscaling.
@@ -355,20 +368,38 @@ impl PageMarker {
             ],
         });
 
-        encoder.clear_buffer(&self.marks, 0, None);
+        // 🔴 This VIEW'S bits, not the whole bitmap. A view's pages are
+        // a contiguous run — that is what `stride` is rounded to a
+        // multiple of 32 for — so the reset is an offset clear.
+        let words = span(self.config, self.clipmap, slots).div_ceil(32) * 4;
+        encoder.clear_buffer(&self.marks, words * view as u64, Some(words));
+        // Every counter here is a per-view quantity now, the pool's
+        // claims included: a view allocates out of its own slice.
         encoder.clear_buffer(&self.counters, 0, None);
-        self.pool.clear(encoder);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("shadow pages: mark"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipeline);
+            // The table is shared, so its reset is a pass that reads
+            // each key's owner rather than a `clear_buffer` that would
+            // take the other view's entries with it.
+            pass.set_pipeline(&self.clear);
             pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(self.pool.config().entries().div_ceil(GROUP * GROUP), 1, 1);
+            pass.set_pipeline(&self.pipeline);
             let threads = (viewport.0.div_ceil(rate), viewport.1.div_ceil(rate));
             pass.dispatch_workgroups(threads.0.div_ceil(GROUP), threads.1.div_ceil(GROUP), 1);
         }
-        self.pending = self.readback.record(encoder, &self.counters);
+        self.pending = self.readback.record(
+            encoder,
+            &self.counters,
+            Label {
+                size: viewport,
+                view,
+                capacity: self.pool.config().slice(),
+            },
+        );
     }
 
     /// Maps what this frame recorded and picks up whatever earlier
@@ -379,7 +410,7 @@ impl PageMarker {
         if let Some(slot) = self.pending.take() {
             self.readback.submit(slot);
         }
-        if let Some(counts) = self.readback.take(self.size, self.pool.config().pages) {
+        if let Some(counts) = self.readback.take() {
             self.last = Some(counts);
         }
     }
@@ -390,10 +421,20 @@ impl PageMarker {
 ///
 /// Mirrors `PageCensus::new`. One stride for every light — a per-kind
 /// stride would save bits and cost a prefix sum to find a light's base.
+///
+/// 🔴 Rounded up to a multiple of 32. The mark bitmap is emptied one
+/// VIEW at a time and `clear_buffer` takes byte offsets, so a view's
+/// first bit has to land on a word boundary or the clear reaches into
+/// the neighbour's. The rounding costs at most 31 bits per light.
 pub(super) fn stride(config: PageConfig, clipmap: ClipmapConfig) -> u32 {
     let local = config.face_pages() * super::CUBE_FACES as u32;
     let sun = clipmap.levels * config.side(0).pow(2);
-    local.max(sun)
+    local.max(sun).div_ceil(32) * 32
+}
+
+/// Pages one VIEW addresses: every light plus the sun.
+pub(super) fn span(config: PageConfig, clipmap: ClipmapConfig, slots: u32) -> u64 {
+    stride(config, clipmap) as u64 * slots.max(1) as u64
 }
 
 fn marks_buffer(
@@ -401,8 +442,9 @@ fn marks_buffer(
     config: PageConfig,
     clipmap: ClipmapConfig,
     slots: u32,
+    views: u32,
 ) -> wgpu::Buffer {
-    let bits = stride(config, clipmap) as u64 * slots as u64;
+    let bits = span(config, clipmap, slots) * views.max(1) as u64;
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("page_mark_bits"),
         size: bits.div_ceil(32).max(1) * 4,
@@ -482,7 +524,23 @@ fn layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
 /// synchronously would stall the frame.
 struct Readback {
     slots: Vec<(wgpu::Buffer, Arc<Mutex<SlotState>>)>,
+    /// What each slot's dispatch was: its render size, its camera and
+    /// the pool slice it allocated from.
+    ///
+    /// 🔴 Captured when the copy is RECORDED, not when it comes back.
+    /// The ring is two or three frames deep and two cameras take turns,
+    /// so reading the marker's current view at map time labels every
+    /// number with whichever camera happened to run last — a reading
+    /// attributed to the wrong camera is worse than no reading.
+    labels: Vec<Label>,
     next: usize,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Label {
+    size: (u32, u32),
+    view: u32,
+    capacity: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -507,7 +565,11 @@ impl Readback {
                 )
             })
             .collect();
-        Self { slots, next: 0 }
+        Self {
+            slots,
+            labels: vec![Label::default(); 3],
+            next: 0,
+        }
     }
 
     /// Copies the counters into a free slot, if there is one.
@@ -519,9 +581,11 @@ impl Readback {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         counters: &wgpu::Buffer,
+        label: Label,
     ) -> Option<usize> {
         let index = self.acquire()?;
         encoder.copy_buffer_to_buffer(counters, 0, &self.slots[index].0, 0, COUNTERS * 4);
+        self.labels[index] = label;
         Some(index)
     }
 
@@ -554,14 +618,19 @@ impl Readback {
         None
     }
 
-    fn take(&mut self, size: (u32, u32), capacity: u32) -> Option<MarkCounts> {
-        for (buffer, state) in &self.slots {
+    fn take(&mut self) -> Option<MarkCounts> {
+        for (index, (buffer, state)) in self.slots.iter().enumerate() {
             if *state.lock().unwrap() != SlotState::Ready {
                 continue;
             }
+            let Label {
+                size,
+                view,
+                capacity,
+            } = self.labels[index];
             let counts = {
-                let view = buffer.slice(..).get_mapped_range();
-                let words: &[u32] = bytemuck::cast_slice(&view);
+                let mapped = buffer.slice(..).get_mapped_range();
+                let words: &[u32] = bytemuck::cast_slice(&mapped);
                 MarkCounts {
                     resident: words[0],
                     samples: words[1],
@@ -574,6 +643,7 @@ impl Readback {
                         capacity,
                     },
                     size,
+                    view,
                 }
             };
             buffer.unmap();
@@ -611,5 +681,66 @@ mod tests {
             .map(|(handle, _)| layouter[handle].size)
             .expect("`PageView` is declared");
         assert_eq!(size as usize, std::mem::size_of::<PageMarkView>());
+    }
+
+    /// Same size, wrong order — the failure a size check waves through.
+    ///
+    /// 🔴 It has already happened here: `pool` went in after `paint` on
+    /// one side and before it on the other, and what broke was the page
+    /// DEBUG VIEW, which the change never touched.
+    #[test]
+    fn the_view_fields_line_up() {
+        let mine = [
+            (
+                "world_from_clip",
+                std::mem::offset_of!(PageMarkView, world_from_clip),
+            ),
+            (
+                "eye_and_base",
+                std::mem::offset_of!(PageMarkView, eye_and_base),
+            ),
+            ("sun", std::mem::offset_of!(PageMarkView, sun)),
+            ("chain", std::mem::offset_of!(PageMarkView, chain)),
+            ("strides", std::mem::offset_of!(PageMarkView, strides)),
+            ("sampling", std::mem::offset_of!(PageMarkView, sampling)),
+            ("pool", std::mem::offset_of!(PageMarkView, pool)),
+            ("paint", std::mem::offset_of!(PageMarkView, paint)),
+            ("density", std::mem::offset_of!(PageMarkView, density)),
+        ];
+        let source = format!("{CLUSTER_COMMON}\n{PAGE_TABLE}\n{SOURCE}");
+        let module = naga::front::wgsl::parse_str(&source).expect("the shader parses");
+        let theirs: Vec<(String, u32)> = module
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref() == Some("PageView"))
+            .and_then(|(_, ty)| match &ty.inner {
+                naga::TypeInner::Struct { members, .. } => Some(
+                    members
+                        .iter()
+                        .map(|m| (m.name.clone().unwrap_or_default(), m.offset))
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .expect("`PageView` is a struct");
+        assert_eq!(theirs.len(), mine.len(), "field count");
+        for ((name, offset), (their_name, their_offset)) in mine.iter().zip(&theirs) {
+            assert_eq!(name, their_name, "field order");
+            assert_eq!(*offset as u32, *their_offset, "`{name}` starts elsewhere");
+        }
+    }
+
+    /// A view's bits have to start on a word boundary, or emptying one
+    /// camera's region reaches into the other's.
+    #[test]
+    fn a_views_bits_start_on_a_word() {
+        for levels in [1u32, 5, 17, 22] {
+            let clipmap = ClipmapConfig { base: 1.28, levels };
+            let stride = stride(PageConfig::default(), clipmap);
+            assert_eq!(stride % 32, 0, "{levels} levels give a stride of {stride}");
+            for slots in [1u32, 2, 102] {
+                assert_eq!(span(PageConfig::default(), clipmap, slots) % 32, 0);
+            }
+        }
     }
 }

@@ -41,12 +41,17 @@ struct PageView {
     chain: vec4<u32>,
     // x pages per side at level 0, y pages in one face's whole chain,
     // z the per-light stride in pages, w the light count.
+    //
+    // 🔴 `z` is a multiple of 32 by construction. The mark bitmap is
+    // emptied one VIEW at a time and a view's bits have to start on a
+    // word boundary — `clear_buffer` takes byte offsets, so a stride
+    // that put a view's first bit mid-word would clear the neighbour's.
     strides: vec4<u32>,
-    // x the sampling rate in pixels, y the sun's slot, z 1 when the
-    // debug view is painting, w unused.
+    // x the sampling rate in pixels, y the sun's slot WITHIN a view,
+    // z 1 when the debug view is painting, w which view this is.
     sampling: vec4<u32>,
     // x entries in the page table, y physical pages the pool holds,
-    // z pages across the atlas, w unused.
+    // z pages across the atlas, w the pool slots ONE VIEW owns.
     pool: vec4<u32>,
     // xy how many output pixels one depth pixel covers, zw the output
     // size.
@@ -122,6 +127,20 @@ const MARK_GROUP: u32 = 8u;
 // reads the same constants from that file.
 const LIGHT_KIND_SPOT: u32 = 2u;
 
+// The pages one view addresses, and where its own start.
+//
+// A view's slots run `[0, sun_slot]` — every light plus the sun — so the
+// span is one more than the sun's own index times the per-light stride.
+// Derived rather than uploaded: a second copy of it in the uniform is a
+// second thing to keep in step with `strides.z`.
+fn view_span() -> u32 {
+    return (pages.sampling.y + 1u) * pages.strides.z;
+}
+
+fn view_base() -> u32 {
+    return pages.sampling.w * view_span();
+}
+
 // Hands `page` a physical slot and files it in the table.
 //
 // 🔴 Called from ONE thread per page — the one `mark_bit` reports as
@@ -129,12 +148,25 @@ const LIGHT_KIND_SPOT: u32 = 2u;
 // `table_slots` safe. The compare-exchange below is for two DIFFERENT
 // keys landing on the same entry, never for two threads fighting over
 // one page.
+//
+// 🔴 The slot comes out of THIS VIEW'S slice of the pool. A shared bump
+// allocator hands every page to whichever camera the GPU scheduled
+// first; a slice is a budget a camera cannot overspend and cannot be
+// robbed of.
+//
+// ⚠️ It bounds camera against camera and NOTHING else. Inside one slice
+// the local lights still race the sun for it — 2008 slots of 2048,
+// measured — because allocation still has no priority and still does
+// not know the raster cannot draw a local page. That is the next fix,
+// and this one does not pretend to be it.
 fn page_claim(page: u32) -> u32 {
-    let slot = atomicAdd(&counters[4], 1u);
-    if slot >= pages.pool.y {
+    let slice = pages.pool.w;
+    let local = atomicAdd(&counters[4], 1u);
+    if local >= slice {
         atomicAdd(&counters[5], 1u);
         return PAGE_MISS;
     }
+    let slot = pages.sampling.w * slice + local;
     let entries = pages.pool.x;
     var probe = page_probe(page, entries);
     for (var i = 0u; i < PAGE_PROBES; i = i + 1u) {
@@ -253,7 +285,8 @@ fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let face = select(u32(hit.w), 0u, record.kind == LIGHT_KIND_SPOT);
     let cell = vec2<u32>(clamp(hit.xy, vec2<f32>(0.0), vec2<f32>(0.99999)) * f32(side));
 
-    let index = light * pages.strides.z
+    let index = view_base()
+        + light * pages.strides.z
         + face * pages.strides.y
         + level_base(level)
         + cell.y * side
@@ -295,7 +328,11 @@ fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let uv = clamp(plane / extent + vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(0.99999));
     let cell = vec2<u32>(uv * f32(side));
 
-    let index = slot * pages.strides.z + level * side * side + cell.y * side + cell.x;
+    let index = view_base()
+        + slot * pages.strides.z
+        + level * side * side
+        + cell.y * side
+        + cell.x;
     mark_bit(index);
     return vec2<u32>(index, level);
 }
@@ -425,4 +462,33 @@ fn paint_page(pixel: vec2<u32>, painted: vec2<u32>) {
             textureStore(color_out, vec2<i32>(vec2<u32>(x, y)), color);
         }
     }
+}
+
+// Empties THIS VIEW'S entries, and only this view's (#866).
+//
+// 🔴 A pass instead of a `clear_buffer`, and the reason is the fused
+// raster. `vbuf64.render` rasterises and shades in one fragment shader,
+// so a view samples an atlas that is a frame old. Emptying the whole
+// table once at the top of a frame would therefore leave whichever view
+// marks SECOND reading a table the first one had just wiped — which is
+// exactly the measured symptom: shadows in one viewport and none in the
+// other.
+//
+// Keys are `page + 1` and a page carries its view in the high part, so
+// ownership is a divide. No decode: the level and cell do not matter to
+// a pass that only asks *whose is this*.
+@compute @workgroup_size(MARK_GROUP * MARK_GROUP, 1, 1)
+fn clear_view(@builtin(global_invocation_id) id: vec3<u32>) {
+    let entry = id.x;
+    if entry >= pages.pool.x {
+        return;
+    }
+    let key = atomicLoad(&table_keys[entry]);
+    if key == PAGE_EMPTY {
+        return;
+    }
+    if (key - 1u) / view_span() != pages.sampling.w {
+        return;
+    }
+    atomicStore(&table_keys[entry], PAGE_EMPTY);
 }

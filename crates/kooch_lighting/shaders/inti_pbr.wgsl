@@ -298,7 +298,11 @@ struct IntiClusterCell {
 // 🔴 `textureLoad`, never a sampler. A filter cannot cross a page
 // border: the neighbouring texels belong to another clipmap level, and
 // hardware filtering has no way to be told where a page ends.
-@group({{INTI_GROUP}}) @binding(11) var inti_page_atlas: texture_depth_2d;
+//
+// 🔴 An ARRAY, with a layer per view. A layer is an attachment a camera
+// can clear on its own, which is what lets two viewports share one pool
+// without one of them wiping the pages the other is still sampling.
+@group({{INTI_GROUP}}) @binding(11) var inti_page_atlas: texture_depth_2d_array;
 
 // GGX / Trowbridge-Reitz, in Filament's reassociated form. The naïve
 // `a2 / (π·((NdotH²)(a2-1)+1)²)` loses catastrophic precision in f32 at
@@ -874,7 +878,12 @@ fn inti_page_shadow(world_position: vec3<f32>, n_dot_l: f32) -> f32 {
             vec2<f32>(0.99999),
         );
         let cell = vec2<u32>(uv * f32(side));
-        let page = inti_pages.space.w * inti_pages.space.x
+        // 🔴 The VIEW is the high part of the key. Two viewports over
+        // one world are two clipmaps centred on two cameras, so the
+        // same world position is a different page in each — and a
+        // lookup without the view finds whichever camera marked last.
+        let page = inti_pages.views.x * inti_pages.views.y
+            + inti_pages.space.w * inti_pages.space.x
             + level * side * side
             + cell.y * side
             + cell.x;
@@ -886,7 +895,9 @@ fn inti_page_shadow(world_position: vec3<f32>, n_dot_l: f32) -> f32 {
         // Where the point sits inside its own page, in texels.
         let rect = sun_page_rect(level, cell, base, side);
         let within = (local.xy - rect.xy) / rect.z + vec2<f32>(0.5);
-        let origin = vec2<f32>(page_origin(slot, inti_pages.pool.z, page_texels));
+        let place = page_place(slot, inti_pages.views.z, inti_pages.pool.z, page_texels);
+        let origin = vec2<f32>(place.xy);
+        let layer = i32(place.z);
         let texel = within * f32(page_texels);
 
         // 2x2, and CLAMPED INSIDE THE PAGE. A tap that walked off the
@@ -904,7 +915,7 @@ fn inti_page_shadow(world_position: vec3<f32>, n_dot_l: f32) -> f32 {
                     vec2<f32>(last),
                 );
                 let at = vec2<i32>(origin + tap);
-                let stored = textureLoad(inti_page_atlas, at, 0);
+                let stored = textureLoad(inti_page_atlas, at, layer, 0);
                 // Reversed-Z: a LARGER stored depth is closer to the
                 // light, so it is an occluder.
                 lit = lit + select(1.0, 0.0, stored > receiver + bias);

@@ -44,10 +44,6 @@ impl MeshletRenderStage {
         instance_count: u32,
     ) -> MeshletRenderStats {
         let gpu_pool = self.gpu_pool.as_ref().expect("checked by render() prelude");
-        let vbuf64 = self.views[view_id]
-            .vbuf64_stage
-            .as_ref()
-            .expect("path selected only when vbuf64_stage is Some");
 
         profiling::scope!("path: R64 atomic vbuf");
 
@@ -103,6 +99,13 @@ impl MeshletRenderStage {
             MeshletDebugMode::Overdraw => 2,
             _ => 0,
         };
+        // 🔴 Before the fused pass, because the fused pass IS the
+        // shading: `vbuf64.render` rasterises and lights in one fragment
+        // shader, so the page bind group it reads has to be this
+        // camera's before it starts, not after it (#866). Bound here
+        // rather than three lines lower because everything below holds a
+        // borrow of the view.
+        self.bind_page_shadows(device, resources, view_id);
         let density_view = self.views[view_id]
             .triangle_density_view
             .as_ref()
@@ -130,6 +133,10 @@ impl MeshletRenderStage {
         // 🔴 The block's value, not a mutable binding written from
         // inside it: DLSS hands back a command buffer that has to reach
         // the single submit at the bottom of this function (#536).
+        let vbuf64 = self.views[view_id]
+            .vbuf64_stage
+            .as_ref()
+            .expect("path selected only when vbuf64_stage is Some");
         let frame_dlss_commands = {
             profiling::scope!("raster + shade (fused)");
             // The prime suspect for the 96 % (#769): one fragment shader

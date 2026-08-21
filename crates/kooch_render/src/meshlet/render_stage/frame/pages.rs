@@ -38,6 +38,18 @@ struct PageSettings {
     pool: PoolConfig,
 }
 
+/// A camera's index into the pool's slices.
+///
+/// The slot map's own index, minus the sentinel it reserves at zero.
+/// Dense while views live and stable across frames — the two properties
+/// a slice needs. Deliberately NOT the position in an iteration order,
+/// which would move a camera onto the other one's pages the moment a
+/// view was destroyed.
+pub(super) fn page_view_index(id: crate::meshlet::render_stage::ViewId) -> u32 {
+    use slotmap::Key;
+    ((id.data().as_ffi() & 0xffff_ffff) as u32).saturating_sub(1)
+}
+
 fn page_settings(resources: &Resources) -> PageSettings {
     // 🔴 `ShadowSettings`, not `RenderSettings`, and `unwrap_or_default`
     // rather than an early return. Both halves of that were the bug.
@@ -72,6 +84,9 @@ fn page_settings(resources: &Resources) -> PageSettings {
         density: shadows.page_density,
         pool: PoolConfig {
             pages: shadows.pool_pages.clamp(PAGES_RANGE.0, PAGES_RANGE.1),
+            // Filled in by the caller, which is the only place that
+            // knows how many cameras are alive.
+            views: 1,
         },
     }
 }
@@ -94,7 +109,7 @@ impl MeshletRenderStage {
         scene_params: &SceneCullParams,
         meshlet_bg: &wgpu::BindGroup,
     ) {
-        let settings = page_settings(resources);
+        let settings = self.page_settings_for_views(resources);
         if !settings.enabled {
             self.forget_page_marking();
             // 🔴 Unbind, do not merely stop drawing. The atlas still
@@ -122,6 +137,7 @@ impl MeshletRenderStage {
             marker
         });
         let sun = self.light_frame.as_ref().and_then(|(_, frame)| frame.sun());
+        let slice = page_view_index(view_id);
         let view = &self.views[view_id];
         marker.record(
             device,
@@ -133,6 +149,7 @@ impl MeshletRenderStage {
             eye,
             sun,
             view.render_size,
+            slice,
             // 🔴 Always one sample per pixel. While this was an
             // instrument a coarser rate traded accuracy for threads;
             // now it decides which pages EXIST, and one sample in
@@ -151,10 +168,66 @@ impl MeshletRenderStage {
             queue,
             encoder,
             settings,
+            slice,
             sun,
             eye,
             scene_params,
             meshlet_bg,
+        );
+    }
+
+    /// The settings, with the live camera count folded in.
+    ///
+    /// 🔴 `views` is part of the pool's LAYOUT — the atlas is an array
+    /// with a layer each — so opening a second viewport rebuilds it, the
+    /// same way changing the page budget does.
+    fn page_settings_for_views(&self, resources: &Resources) -> PageSettings {
+        let mut settings = page_settings(resources);
+        let slices = self
+            .views
+            .keys()
+            .map(page_view_index)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        settings.pool = settings.pool.with_views(slices);
+        settings
+    }
+
+    /// Points the shading model at THIS camera's pages.
+    ///
+    /// 🔴 Called before the fused raster, not after it. `vbuf64.render`
+    /// rasterises and shades in one fragment shader, so the bind group
+    /// it reads is whatever was left there — and what was left there was
+    /// the OTHER camera's slice of the uniform, whose clipmap is centred
+    /// on the other camera. One viewport with shadows and one without
+    /// is what that looks like.
+    ///
+    /// The table and atlas it points at are a frame old, which is the
+    /// standing limitation of a fused raster and not this call's doing.
+    pub(super) fn bind_page_shadows(
+        &mut self,
+        device: &wgpu::Device,
+        resources: &Resources,
+        view_id: crate::meshlet::render_stage::ViewId,
+    ) {
+        if !page_settings(resources).enabled {
+            return;
+        }
+        let (Some(raster), Some(marker)) = (self.page_raster.as_ref(), self.page_marker.as_ref())
+        else {
+            return;
+        };
+        let pool = marker.pool();
+        self.lights.bind_shadow_pages(
+            device,
+            kooch_lighting::PageBinding {
+                uniform: raster.uniform_buffer(),
+                uniform_span: raster.uniform_span(page_view_index(view_id)),
+                keys: pool.keys(),
+                slots: pool.slots(),
+                atlas: raster.atlas(),
+            },
         );
     }
 
@@ -170,6 +243,7 @@ impl MeshletRenderStage {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         settings: PageSettings,
+        slice: u32,
         sun: Option<Vec3>,
         eye: Vec3,
         scene_params: &SceneCullParams,
@@ -217,17 +291,22 @@ impl MeshletRenderStage {
             self.scene.instance_buffer(),
             page_pool,
             scene_params,
+            slice,
             eye,
             sun,
             lights,
             lod_target,
         );
         // Idempotent, and this is the one call site that runs after
-        // every possible rebuild of either side.
+        // every possible rebuild of either side. The binding the
+        // SHADING reads is set by `bind_page_shadows` before the fused
+        // pass; this one only makes sure a rebuilt atlas or table is
+        // picked up at all.
         self.lights.bind_shadow_pages(
             device,
             kooch_lighting::PageBinding {
                 uniform: raster.uniform_buffer(),
+                uniform_span: raster.uniform_span(slice),
                 keys: page_pool.keys(),
                 slots: page_pool.slots(),
                 atlas: raster.atlas(),
@@ -281,6 +360,7 @@ impl MeshletRenderStage {
             return;
         }
         tracing::info!(
+            view = counts.view,
             resident = counts.resident,
             samples = counts.samples,
             pairs = counts.pairs,
@@ -315,9 +395,11 @@ impl MeshletRenderStage {
             return;
         }
         tracing::info!(
+            view = counts.view,
             pages = counts.pages,
             pairs = counts.pairs,
             local = counts.local,
+            others = counts.others,
             "shadow pages rastered"
         );
     }
@@ -342,6 +424,27 @@ impl MeshletRenderStage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The first camera owns the first slice.
+    ///
+    /// 🔴 A slot map reserves index zero for its null key, so the first
+    /// real view is index 1 — and a slice numbering that forgot it would
+    /// leave slice 0 permanently unused and put the last camera one past
+    /// the end of the pool.
+    #[test]
+    fn the_first_view_owns_the_first_slice() {
+        let mut views: slotmap::SlotMap<crate::meshlet::render_stage::ViewId, u32> =
+            slotmap::SlotMap::with_key();
+        let first = views.insert(0);
+        let second = views.insert(1);
+        assert_eq!(page_view_index(first), 0);
+        assert_eq!(page_view_index(second), 1);
+        // Destroying and recreating hands the slot back, so a camera's
+        // slice is stable rather than a position in an iteration order.
+        views.remove(first);
+        let third = views.insert(2);
+        assert_eq!(page_view_index(third), 0);
+    }
 
     #[test]
     fn no_settings_asset_means_defaults_not_disabled() {

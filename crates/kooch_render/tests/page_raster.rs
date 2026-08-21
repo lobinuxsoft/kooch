@@ -26,8 +26,15 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
 /// quarter of a gigabyte: every test here is about arithmetic, not
 /// about capacity.
 fn small() -> PoolConfig {
-    PoolConfig { pages: 64 }
+    PoolConfig {
+        pages: 64,
+        views: VIEWS,
+    }
 }
+
+/// Cameras the pool is sliced between. Two, because one is the case
+/// that never showed the bug.
+const VIEWS: u32 = 2;
 
 fn rasterizer(device: &wgpu::Device) -> PageRasterizer {
     let bgl = GpuGlobalMeshPool::bind_group_layout(device);
@@ -63,9 +70,17 @@ fn the_atlas_holds_the_pool() {
     assert_eq!(texture.format(), PAGE_DEPTH_FORMAT);
     let page = PageConfig::default().page;
     let across = texture.size().width / page;
+    // A LAYER per camera, and the budget is the layers together: the
+    // whole point of slicing is that two viewports cost what one did.
+    assert_eq!(
+        texture.size().depth_or_array_layers,
+        VIEWS,
+        "one layer per camera"
+    );
+    assert_eq!(across * across, small().slice(), "a layer is one slice");
     assert!(
-        across * across >= small().pages,
-        "{across} pages across cannot hold {}",
+        across * across * VIEWS >= small().pages,
+        "{across} across on {VIEWS} layers cannot hold {}",
         small().pages
     );
     assert_eq!(
@@ -84,17 +99,20 @@ fn the_counters_name_every_level() {
     let raster = rasterizer(&device);
     let levels = ClipmapConfig::default().levels;
     // Per level, then bucket overflow, local pages, pairs, pair
-    // overflow.
-    assert_eq!(raster.count_slots(), levels + 4);
+    // overflow, pages owned by another camera.
+    assert_eq!(raster.count_slots(), levels + 5);
     let mut words = vec![0u32; raster.count_slots() as usize];
     words[0] = 7;
     words[1] = 5;
     words[levels as usize + 1] = 42;
     words[levels as usize + 2] = 900;
-    let counts = raster.decode(&words);
+    words[levels as usize + 4] = 31;
+    let counts = raster.decode(&words, 1);
     assert_eq!(counts.pages, 12, "levels sum");
     assert_eq!(counts.local, 42, "local pages are reported, not hidden");
     assert_eq!(counts.pairs, 900);
+    assert_eq!(counts.others, 31, "the other camera's pages are named");
+    assert_eq!(counts.view, 1);
 }
 
 /// Pages one light addresses. Recomputed from the public config rather
@@ -102,23 +120,35 @@ fn the_counters_name_every_level() {
 fn stride(config: PageConfig, clipmap: ClipmapConfig) -> u32 {
     let local = config.face_pages() * 6;
     let sun = clipmap.levels * config.side(0).pow(2);
-    local.max(sun)
+    // A multiple of 32, so a camera's bits start on a word boundary and
+    // its region of the mark bitmap can be cleared on its own.
+    local.max(sun).div_ceil(32) * 32
 }
 
-/// The virtual page `mark_sun` would write for this level and cell.
-fn sun_page(level: u32, cell: (u32, u32), lights: u32) -> u32 {
+/// Pages one camera addresses: every light plus the sun.
+fn span(lights: u32) -> u32 {
+    (lights + 1) * stride(PageConfig::default(), ClipmapConfig::default())
+}
+
+/// The virtual page `mark_sun` would write for this camera, level and
+/// cell.
+fn sun_page(view: u32, level: u32, cell: (u32, u32), lights: u32) -> u32 {
     let config = PageConfig::default();
     let clipmap = ClipmapConfig::default();
     let side = config.side(0);
-    lights * stride(config, clipmap) + level * side * side + cell.1 * side + cell.0
+    view * span(lights)
+        + lights * stride(config, clipmap)
+        + level * side * side
+        + cell.1 * side
+        + cell.0
 }
 
 /// A page belonging to light 0, which this raster does not draw.
-fn local_page(level: u32, cell: (u32, u32)) -> u32 {
+fn local_page(view: u32, level: u32, cell: (u32, u32), lights: u32) -> u32 {
     let config = PageConfig::default();
     let side = config.side(level);
     let base: u32 = (0..level).map(|l| config.side(l).pow(2)).sum();
-    base + cell.1 * side + cell.0
+    view * span(lights) + base + cell.1 * side + cell.0
 }
 
 fn read_words(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Vec<u32> {
@@ -152,13 +182,16 @@ fn a_page_compacts_into_the_level_it_came_from() {
     let levels = ClipmapConfig::default().levels;
     const LIGHTS: u32 = 1;
 
-    // Three sun pages on two levels, and one local page that this
-    // raster does not draw. Keys are `page + 1`; where they sit in the
-    // table is the hash's business and compaction reads all of it.
+    // Camera 1's table, seen from camera 1: three sun pages on two
+    // levels, one local page this raster does not draw, and two pages
+    // belonging to the OTHER camera. Keys are `page + 1`; where they
+    // sit in the table is the hash's business and compaction reads all
+    // of it.
+    const VIEW: u32 = 1;
     let planted = [
-        (sun_page(0, (3, 4), LIGHTS), 11u32),
-        (sun_page(0, (5, 6), LIGHTS), 12),
-        (sun_page(5, (7, 8), LIGHTS), 13),
+        (sun_page(VIEW, 0, (3, 4), LIGHTS), 11u32),
+        (sun_page(VIEW, 0, (5, 6), LIGHTS), 12),
+        (sun_page(VIEW, 5, (7, 8), LIGHTS), 13),
     ];
     let mut keys = vec![0u32; small().entries() as usize];
     let mut slots = vec![0u32; small().entries() as usize];
@@ -166,8 +199,15 @@ fn a_page_compacts_into_the_level_it_came_from() {
         keys[i * 7] = page + 1;
         slots[i * 7] = *slot;
     }
-    keys[97] = local_page(2, (1, 1)) + 1;
+    keys[97] = local_page(VIEW, 2, (1, 1), LIGHTS) + 1;
     slots[97] = 20;
+    // 🔴 The other camera's pages, on levels this one also uses. Before
+    // the view entered the key these were indistinguishable, and each
+    // camera rasterised the other's clipmap with its own matrices.
+    keys[43] = sun_page(0, 0, (3, 4), LIGHTS) + 1;
+    slots[43] = 30;
+    keys[61] = sun_page(0, 5, (7, 8), LIGHTS) + 1;
+    slots[61] = 31;
     queue.write_buffer(pool.keys(), 0, bytemuck::cast_slice(&keys));
     queue.write_buffer(pool.slots(), 0, bytemuck::cast_slice(&slots));
 
@@ -177,6 +217,7 @@ fn a_page_compacts_into_the_level_it_came_from() {
         &queue,
         &mut encoder,
         &pool,
+        VIEW,
         glam::Vec3::ZERO,
         glam::Vec3::NEG_Y,
         LIGHTS,
@@ -193,10 +234,15 @@ fn a_page_compacts_into_the_level_it_came_from() {
         1,
         "the local light's page is counted, not silently dropped"
     );
+    assert_eq!(
+        counts[levels as usize + 4],
+        2,
+        "the other camera's pages are counted and left alone"
+    );
 
     // The list is bucketed: level L owns `[L * bucket, (L+1) * bucket)`.
     let list = read_words(&device, &queue, raster.page_list_buffer());
-    let bucket = small().pages as usize;
+    let bucket = small().slice() as usize;
     let level0: Vec<(u32, u32)> = (0..2).map(|i| (list[i * 2], list[i * 2 + 1])).collect();
     assert!(
         level0.contains(&planted[0]) && level0.contains(&planted[1]),

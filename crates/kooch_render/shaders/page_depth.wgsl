@@ -106,12 +106,13 @@ fn vs_page(
 
     let id = page_decode(
         entry.x,
+        raster.views.y,
         raster.space.x,
         raster.space.y,
         raster.space.z,
         raster.space.w,
     );
-    out.rect = page_atlas_rect(entry.y, raster.pool.z, raster.pool.w);
+    out.rect = page_atlas_rect(entry.y, raster.views.z, raster.pool.z, raster.pool.w);
 
     let triangle_idx = vertex_index / 3u;
     let corner_idx = vertex_index % 3u;

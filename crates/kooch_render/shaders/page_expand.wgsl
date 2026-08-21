@@ -115,6 +115,7 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let id = page_decode(
         entry.x,
+        raster.views.y,
         raster.space.x,
         raster.space.y,
         raster.space.z,

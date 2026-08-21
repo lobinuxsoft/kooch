@@ -214,6 +214,7 @@ fn run_pool(
         eye,
         sun,
         (SIZE, SIZE),
+        /* view */ 0,
         /* rate */ 1,
         /* density */ 100,
         Paint {
@@ -353,6 +354,7 @@ fn a_stopped_pass_reports_nothing() {
         eye,
         None,
         (SIZE, SIZE),
+        /* view */ 0,
         1,
         /* density */ 100,
         Paint {
@@ -485,6 +487,7 @@ fn paint(
         eye,
         None,
         (SIZE, SIZE),
+        /* view */ 0,
         1,
         /* density */ 100,
         Paint {
@@ -608,6 +611,7 @@ fn half_density_is_a_quarter_of_the_pages() {
             eye,
             None,
             (SIZE, SIZE),
+            /* view */ 0,
             1,
             density,
             Paint {
@@ -667,18 +671,18 @@ fn a_full_pool_reports_overflow() {
     };
     let mut resources = world();
     add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
-    let small = PoolConfig { pages: 4 };
+    let small = PoolConfig { pages: 4, views: 1 };
     let (_marker, counts) = run_pool(&device, &queue, &resources, 0.01, None, small);
     assert!(
-        counts.resident > small.pages,
+        counts.resident > small.slice(),
         "the frame asks for more than the pool holds: {} of {}",
         counts.resident,
-        small.pages
+        small.slice()
     );
-    assert_eq!(counts.pool.allocated(), small.pages, "the pool filled");
+    assert_eq!(counts.pool.allocated(), small.slice(), "the pool filled");
     assert_eq!(
         counts.pool.claims - counts.pool.overflow,
-        small.pages,
+        small.slice(),
         "every claim either got a slot or was counted as overflow"
     );
 }
@@ -719,4 +723,95 @@ fn the_table_holds_every_claim() {
         counts.pool.allocated(),
         "the table holds exactly what was allocated"
     );
+}
+
+/// Two cameras, one table.
+///
+/// 🔴 The defect this whole change exists for. `PageMarker` lives on the
+/// stage, so both viewports marked into the same table — and the second
+/// one to run had just emptied it with a `clear_buffer`. What the user
+/// saw was shadows in one viewport and none in the other.
+///
+/// So: mark for camera 0, mark for camera 1, and camera 0's entries have
+/// to still be there. The camera lives in the high part of the page id
+/// and the reset is a pass that reads it.
+#[test]
+fn a_view_clears_only_its_own_pages() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 40.0);
+
+    let eye = Vec3::ZERO;
+    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let proj = projection();
+    let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+    let mut lights = GpuLights::new(&device);
+    let mut frame = kooch_lighting::LightFrame::extract(&resources);
+    lights.update(&device, &queue, &resources, camera, None, &mut frame);
+
+    let depth_view = depth_texture(&device, &queue, 0.02);
+    let config = PageConfig::default();
+    let clipmap = ClipmapConfig::default();
+    let mut marker = PageMarker::new(&device, config, clipmap);
+    marker.set_pool(
+        &device,
+        PoolConfig {
+            pages: 512,
+            views: 2,
+        },
+    );
+
+    for slice in 0..2u32 {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            Some(Vec3::new(0.3, -1.0, 0.2)),
+            (SIZE, SIZE),
+            slice,
+            1,
+            100,
+            Paint {
+                target: &paint_target(&device),
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        wait(&device);
+    }
+
+    // A page carries its camera in the high part: `page / span`, with
+    // the span one stride per light plus one for the sun.
+    let lights_count = lights.light_count().max(1);
+    let stride = {
+        let local = config.face_pages() * 6;
+        let sun = clipmap.levels * config.side(0).pow(2);
+        local.max(sun).div_ceil(32) * 32
+    };
+    let span = stride as u64 * (lights_count + 1) as u64;
+
+    let mut per_view = [0u32; 2];
+    for key in read_words(&device, &queue, marker.pool().keys()) {
+        if key == 0 {
+            continue;
+        }
+        let owner = ((key - 1) as u64 / span) as usize;
+        assert!(owner < 2, "a key belongs to camera {owner}");
+        per_view[owner] += 1;
+    }
+    assert!(
+        per_view[0] > 0,
+        "camera 0's pages were wiped by camera 1: {per_view:?}"
+    );
+    assert!(per_view[1] > 0, "camera 1 marked nothing: {per_view:?}");
 }

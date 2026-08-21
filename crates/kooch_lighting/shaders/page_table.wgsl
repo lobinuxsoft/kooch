@@ -24,7 +24,29 @@
 // So the table is sized to what is RESIDENT, not to what is
 // addressable: open addressing over `2 x pool_pages` entries, which for
 // Epic's 4096-page pool is 8192 slots — **64 KiB**, and one probe in the
-// common case. UE5 hashes it too.
+// common case.
+//
+// ⚠️ **UE5 does NOT hash it**, and an earlier version of this comment
+// said it did. `CalcPageOffset` in `VirtualShadowMapPageAccessCommon.ush`
+// is flat arithmetic — `id * VSM_PAGE_TABLE_SIZE + level_offset + x + y
+// * dims` — over 21 845 entries per shadow map. Epic pays 87 KiB per map
+// and stays small by never handing a distant light a full virtual space:
+// `VSM_MAX_SINGLE_PAGE_SHADOW_MAPS` is 8192 maps of ONE entry each. The
+// 108 MiB above is what a flat table costs *given our decision to give
+// every light the full space*, which is a decision, not a law.
+//
+// # The VIEW is part of the key, and that is not a detail
+//
+// One editor frame draws the same world from two cameras. A clipmap is
+// centred on ITS camera, so the same world position is a different page
+// in each — and a table keyed without the view hands view B the pages
+// view A marked. The symptom is exact and was measured: shadows in one
+// viewport and none in the other.
+//
+// UE5's answer is the `VirtualShadowMapId`: every (view, light, clipmap
+// level) triple gets its own id and the id IS the high part of the page
+// address. This does the same with a multiply — `view * view_span` —
+// because the hash makes the size of the address space free.
 //
 // # The insert has no race, and that is not luck
 //
@@ -74,7 +96,7 @@ fn page_step(probe: u32, entries: u32) -> u32 {
     return (probe + 1u) & (entries - 1u);
 }
 
-/// The texel a physical page starts at, in the atlas.
+/// The texel a physical page starts at, inside its layer.
 ///
 /// The atlas is a plain grid of pages. `per_row` is a constant of the
 /// pool, not of the light, so nothing about a page's ADDRESS survives
@@ -82,6 +104,19 @@ fn page_step(probe: u32, entries: u32) -> u32 {
 /// without anything that samples it noticing.
 fn page_origin(slot: u32, per_row: u32, page: u32) -> vec2<u32> {
     return vec2<u32>(slot % per_row, slot / per_row) * page;
+}
+
+/// A physical slot taken apart: `xy` the page's origin in texels inside
+/// its layer, `z` the layer.
+///
+/// 🔴 The atlas is an array with a LAYER PER VIEW, so a view renders
+/// into its own attachment and clears it without a scissor, a stencil
+/// or a clearing draw — the three ways a shared surface is normally
+/// partitioned, all of which this avoids. Slots stay GLOBAL so a table
+/// entry says where its page lives without being told whose it is.
+fn page_place(slot: u32, slice: u32, per_row: u32, page: u32) -> vec3<u32> {
+    let width = max(slice, 1u);
+    return vec3<u32>(page_origin(slot % width, per_row, page), slot / width);
 }
 
 // ---------------------------------------------------------------------
@@ -97,6 +132,9 @@ fn page_origin(slot: u32, per_row: u32, page: u32) -> vec2<u32> {
 /// A virtual page taken apart. `light` is the sun's slot when
 /// `is_sun` is true, in which case `face` is meaningless.
 struct PageId {
+    /// Which camera asked for it. Two viewports over one world are two
+    /// clipmaps, and a page of one is not a page of the other.
+    view: u32,
     light: u32,
     face: u32,
     level: u32,
@@ -106,12 +144,22 @@ struct PageId {
 
 /// Inverts the arithmetic in `mark_local` and `mark_sun`.
 ///
-/// `stride` is the pages one light addresses, `face_pages` one face's
-/// whole mip chain, `side` the pages across level 0.
-fn page_decode(page: u32, stride: u32, face_pages: u32, side: u32, sun_slot: u32) -> PageId {
+/// `span` is the pages one VIEW addresses, `stride` the pages one light
+/// addresses, `face_pages` one face's whole mip chain, `side` the pages
+/// across level 0.
+fn page_decode(
+    page: u32,
+    span: u32,
+    stride: u32,
+    face_pages: u32,
+    side: u32,
+    sun_slot: u32,
+) -> PageId {
     var id: PageId;
-    id.light = page / stride;
-    var rest = page % stride;
+    id.view = page / span;
+    let within = page % span;
+    id.light = within / stride;
+    var rest = within % stride;
     id.is_sun = id.light == sun_slot;
 
     if id.is_sun {
@@ -130,18 +178,18 @@ fn page_decode(page: u32, stride: u32, face_pages: u32, side: u32, sun_slot: u32
     // The chain's levels are not the same size; walk it the way
     // `level_base` builds it.
     var level = 0u;
-    var span = side;
+    var wide = side;
     loop {
-        let count = span * span;
-        if rest < count || span == 1u {
+        let count = wide * wide;
+        if rest < count || wide == 1u {
             break;
         }
         rest = rest - count;
-        span = max(span / 2u, 1u);
+        wide = max(wide / 2u, 1u);
         level = level + 1u;
     }
     id.level = level;
-    id.cell = vec2<u32>(rest % span, rest / span);
+    id.cell = vec2<u32>(rest % wide, rest / wide);
     return id;
 }
 
@@ -171,10 +219,10 @@ fn sun_page_rect(level: u32, cell: vec2<u32>, base: f32, side: u32) -> vec3<f32>
     return vec3<f32>(low + vec2<f32>(width * 0.5), width);
 }
 
-/// A page's rect inside the atlas, in texels: `xy` the origin, `zw` the
-/// size.
-fn page_atlas_rect(slot: u32, per_row: u32, page: u32) -> vec4<f32> {
-    let origin = vec2<f32>(page_origin(slot, per_row, page));
+/// A page's rect inside its atlas layer, in texels: `xy` the origin,
+/// `zw` the size.
+fn page_atlas_rect(slot: u32, slice: u32, per_row: u32, page: u32) -> vec4<f32> {
+    let origin = vec2<f32>(page_place(slot, slice, per_row, page).xy);
     return vec4<f32>(origin, vec2<f32>(f32(page)));
 }
 
@@ -205,8 +253,17 @@ fn page_clip(local: vec2<f32>, depth: f32, rect: vec4<f32>, atlas: f32) -> vec4<
 
 struct PageRaster {
     // x the per-light stride in pages, y one face's whole chain,
-    // z pages across level 0, w the sun's slot.
+    // z pages across level 0, w the sun's slot WITHIN a view.
     space: vec4<u32>,
+    // x the view these pages belong to, y the pages one view addresses,
+    // z the pool slots one view owns, w unused.
+    //
+    // 🔴 The pool is SLICED, not shared, and the slice is what lets a
+    // view empty and refill its own pages without touching the other
+    // view's — which is what the other view is still reading, because
+    // raster and shading are fused and the atlas it samples is a frame
+    // old.
+    views: vec4<u32>,
     // x table entries, y physical pool pages, z pages across the atlas,
     // w page texels.
     pool: vec4<u32>,
