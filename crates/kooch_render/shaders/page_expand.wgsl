@@ -56,9 +56,18 @@ struct MeshInstance {
 
 /// Which level this dispatch is expanding. A dynamic uniform offset,
 /// the way the cascade matrix already is.
+///
+/// 🔴 THREE separate `u32` and not a `vec3<u32>`. A `vec3<u32>` aligns
+/// to 16, so the padding would start at offset 16 and the struct would
+/// measure **32** bytes against the Rust mirror's 16 — which is exactly
+/// what it did. It compiles, it validates, and it fails at bind time
+/// with *"bound with size 16 where the shader expects 32"*, once per
+/// frame forever.
 struct ExpandLevel {
     level: u32,
-    _pad: vec3<u32>,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 @group(0) @binding(0) var<uniform> raster: PageRaster;

@@ -916,3 +916,51 @@ impl RasterReadback {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What the shader says a struct measures, per WGSL's own layout
+    /// rules.
+    fn shader_size(body: &str, name: &str) -> u32 {
+        let source = format!("{TABLE}\n{body}");
+        let module = naga::front::wgsl::parse_str(&source).expect("the shader parses");
+        let mut layouter = naga::proc::Layouter::default();
+        layouter
+            .update(module.to_ctx())
+            .expect("the shader has a layout");
+        for (handle, ty) in module.types.iter() {
+            if ty.name.as_deref() == Some(name) {
+                return layouter[handle].size;
+            }
+        }
+        panic!("`{name}` is not declared in this shader");
+    }
+
+    /// 🔴 The bug class this exists for cost a frame that rendered
+    /// nothing but validation errors, once per frame forever.
+    ///
+    /// `ExpandLevel` held a `vec3<u32>` for padding. A `vec3<u32>`
+    /// **aligns to 16**, so the field started at offset 16 and the
+    /// struct measured 32 bytes against the Rust mirror's 16. It
+    /// compiles. It validates. It fails at BIND time — *"bound with
+    /// size 16 where the shader expects 32"* — which is the one place
+    /// no test was looking.
+    ///
+    /// A comment saying "mirrors X field for field" is not a check.
+    /// This is.
+    #[test]
+    fn the_uniform_mirrors_match_the_shader() {
+        assert_eq!(
+            shader_size(COMPACT, "PageRaster") as usize,
+            std::mem::size_of::<RasterUniform>(),
+            "PageRaster",
+        );
+        assert_eq!(
+            shader_size(EXPAND, "ExpandLevel") as usize,
+            std::mem::size_of::<ExpandLevel>(),
+            "ExpandLevel",
+        );
+    }
+}

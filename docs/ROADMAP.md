@@ -772,6 +772,40 @@ lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings
 `Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
 decidía cuántos hilos, ahora decide qué páginas EXISTEN.
 
+🔴 **2026-08-21 — MEDIDO EN EL EDITOR: la VSM anda mal, y los números dicen por qué.** Dos
+vistas alternando a 409x403, `many_lights`:
+
+| | View | Game |
+|---|---|---|
+| `resident` (marcadas) | 2520 | 1666 |
+| `local` (marcadas, NO dibujadas) | **2008** | 1646 |
+| **páginas del SOL rasterizadas** | **40** | **20** |
+| pares meshlet/página | 930 | 1064 |
+
+**Cuatro defectos, en orden de gravedad:**
+
+1. 🔴 **El pool se llena y desborda.** El panel lo dice solo: *"539 pages went unallocated —
+   the pool is full"*, *"2048 of 2048 pool pages allocated · 100% full"*. `resident` 2520
+   contra 2048 de capacidad: **472–539 páginas nunca reciben slot**, y por eso la compactación
+   ve muchas menos de las marcadas.
+2. 🔴 **Las luces locales se comen el pool y NADIE las dibuja.** 2008 de 2048 slots son
+   locales, que el ráster todavía no soporta. Al sol —el único consumidor real— le quedan
+   **40 páginas**. Por eso la escena casi no tiene sombra. **La asignación no tiene prioridad
+   ni excluye lo que el ráster no puede usar**: marca, asigna y tira.
+3. 🔴 **UN pool para DOS vistas.** `PageMarker`/`PageRasterizer` viven en el stage, no en la
+   vista. Cada vista limpia y rellena la MISMA tabla cada frame, así que **lo que una vista
+   samplea lo llenó la otra** — que es exactamente el "en una view se ve y en la otra no".
+4. 🔴 **Tormenta de allocations.** Los bind groups se crean **dentro del loop de niveles**:
+   17 `visible_bg` + 17 `expand_bg` por vista por frame, más los de los culls. Con dos vistas
+   son >70 bind groups por frame sólo de este pase.
+
+⚠️ **Sin explicar todavía**: 40 páginas dan 930 pares y 20 páginas dan **1064**. Menos páginas
+y más pares no cierra; hay que mirar el mapeo página↔meshlet de la expansión antes de tocar
+nada más.
+
+⏭️ **NEXT**: (a) que el marcado **no asigne** páginas que el ráster no va a dibujar, (b) pool y
+tabla **por vista**, (c) sacar los bind groups del loop, (d) recién ahí re-medir.
+
 **Phase 3 — the consumers, on top of #866 and not before.**
 
 | | | Why it waits for the pool |
