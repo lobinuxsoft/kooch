@@ -44,7 +44,11 @@ fn rasterizer(device: &wgpu::Device) -> PageRasterizer {
         PageConfig::default(),
         ClipmapConfig::default(),
         small(),
-        64,
+        // 🔴 The engine's own cap, not a round number. The test used to
+        // pass 64 and the builder really emits meshlets of up to 98
+        // triangles, so a helper configured for less would have hidden
+        // the very thing `the_draw_covers_a_whole_meshlet` asserts.
+        kooch_render::meshlet::DEFAULT_MAX_TRIANGLES as u32,
     )
 }
 
@@ -221,7 +225,6 @@ fn a_page_compacts_into_the_level_it_came_from() {
         glam::Vec3::ZERO,
         glam::Vec3::NEG_Y,
         LIGHTS,
-        64,
     );
     queue.submit([encoder.finish()]);
 
@@ -386,4 +389,74 @@ fn a_light_facing_triangle_is_the_front_face() {
          raster declares {PAGE_FRONT_FACE:?} — so back-face culling throws away every \
          surface that casts"
     );
+}
+
+/// The indirect draw has to issue enough vertices for a WHOLE meshlet.
+///
+/// 🔴 The defect, and it looked like everything except what it was. The
+/// draw is indirect with a FIXED vertex count and the vertex shader
+/// discards the tail past `desc.triangle_count`, so the count has to be
+/// `max_triangles_per_meshlet * 3` — the figure `MeshletCull::new`
+/// documents for the cascades' own draw, which is why theirs was right.
+///
+/// The page raster was issuing `meshlets_per_mesh * 3` instead: the
+/// meshlet count of the registered mesh, a completely different
+/// quantity. At the engine's defaults that is about a third of what a
+/// 124-triangle meshlet needs, so every meshlet was drawn up to its
+/// fortieth triangle or so and cut.
+///
+/// On screen it read as a shadow made of fragments that followed the
+/// meshlet structure and rearranged themselves whenever the clipmap
+/// level — and with it the LOD — changed. Three sessions' worth of
+/// hypotheses went past it: page starvation, inverted meshlet faces,
+/// the sampling bias.
+#[test]
+fn the_draw_covers_a_whole_meshlet() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let raster = rasterizer(&device);
+    let pool = PagePool::new(&device, small());
+
+    let mut encoder = device.create_command_encoder(&Default::default());
+    raster.record_compaction(
+        &device,
+        &queue,
+        &mut encoder,
+        &pool,
+        0,
+        glam::Vec3::ZERO,
+        glam::Vec3::NEG_Y,
+        1,
+    );
+    queue.submit([encoder.finish()]);
+
+    let args = read_words(&device, &queue, raster.draw_args_buffer());
+    assert_eq!(
+        args[0],
+        raster.triangles_per_meshlet() * 3,
+        "the draw issues {} vertices for meshlets of up to {} triangles",
+        args[0],
+        raster.triangles_per_meshlet()
+    );
+
+    // And the cap itself has to cover what the builder really produces,
+    // or the bug simply moves one layer down.
+    use kooch_render::mesh::primitives::Primitive;
+    use kooch_render::meshlet::build_default_meshlets;
+    for (name, primitive) in Primitive::CANONICAL {
+        let built = build_default_meshlets(&primitive.build()).expect("the primitive builds");
+        let biggest = built
+            .meshlets
+            .iter()
+            .map(|m| m.triangle_count)
+            .max()
+            .unwrap_or(0);
+        assert!(
+            biggest <= raster.triangles_per_meshlet(),
+            "{name} has a {biggest}-triangle meshlet and the draw covers {}",
+            raster.triangles_per_meshlet()
+        );
+    }
 }

@@ -268,7 +268,14 @@ struct PageRaster {
     // w page texels.
     pool: vec4<u32>,
     // x levels in the clipmap, y the pair list's capacity, z pages one
-    // level may list, w meshlets one draw covers.
+    // level may list, w TRIANGLES A MESHLET MAY HOLD.
+    //
+    // 🔴 `w` is the fixed vertex count the indirect draw issues, over
+    // three. It is the builder's `max_triangles_per_meshlet` and NOT
+    // the meshlet count of a mesh — confusing the two issues about a
+    // third of the vertices a meshlet needs, which cuts every meshlet
+    // short and turns a shadow into fragments that follow the meshlet
+    // structure.
     chain: vec4<u32>,
     // x the clipmap's level-0 extent in metres, y the orthographic half
     // span, z the atlas side in texels, w unused.

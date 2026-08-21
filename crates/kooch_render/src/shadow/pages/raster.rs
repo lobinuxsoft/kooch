@@ -165,6 +165,9 @@ pub struct PageRasterizer {
     depth_bgl: wgpu::BindGroupLayout,
     depth: wgpu::RenderPipeline,
 
+    /// Triangles a meshlet may hold — the builder's cap, and the fixed
+    /// vertex count the indirect draw issues.
+    triangles: u32,
     culls: Vec<MeshletCull>,
     /// The bind groups that never change once built.
     ///
@@ -379,7 +382,7 @@ impl PageRasterizer {
             draw_args: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_draw_args"),
                 size: 16,
-                usage: storage | wgpu::BufferUsages::INDIRECT,
+                usage: storage | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
             pairs: device.create_buffer(&wgpu::BufferDescriptor {
@@ -410,6 +413,7 @@ impl PageRasterizer {
             expand,
             depth_bgl,
             depth,
+            triangles: max_triangles_per_meshlet.max(1),
             culls: (0..levels)
                 .map(|_| MeshletCull::new(device, 1, max_triangles_per_meshlet))
                 .collect(),
@@ -454,6 +458,18 @@ impl PageRasterizer {
     /// The counters, for whoever reads them back.
     pub fn counts_buffer(&self) -> &wgpu::Buffer {
         &self.counts
+    }
+
+    /// Triangles a meshlet may hold, which is the vertex count the
+    /// indirect draw issues divided by three.
+    pub fn triangles_per_meshlet(&self) -> u32 {
+        self.triangles
+    }
+
+    /// The draw arguments the compaction wrote, for whoever reads them
+    /// back. `COPY_SRC` so a test can.
+    pub fn draw_args_buffer(&self) -> &wgpu::Buffer {
+        &self.draw_args
     }
 
     /// Slots in [`Self::counts_buffer`].
@@ -528,15 +544,7 @@ fn atlas_texture(device: &wgpu::Device, config: PageConfig, pool: PoolConfig) ->
 impl PageRasterizer {
     /// The uniform every raster pass reads. Written once a frame,
     /// before any of them.
-    fn write_uniform(
-        &self,
-        queue: &wgpu::Queue,
-        view: u32,
-        eye: Vec3,
-        sun: Vec3,
-        lights: u32,
-        meshlets_per_mesh: u32,
-    ) {
+    fn write_uniform(&self, queue: &wgpu::Queue, view: u32, eye: Vec3, sun: Vec3, lights: u32) {
         let d = sun.normalize_or(Vec3::NEG_Y);
         // The sun's slot is one past the last light, the way marking
         // assigns it, so a view addresses one more slot than there are
@@ -569,7 +577,19 @@ impl PageRasterizer {
                     self.clipmap.levels,
                     PAIR_CAPACITY,
                     bucket(self.pool),
-                    meshlets_per_mesh.max(1),
+                    // 🔴 Triangles a MESHLET may hold, which is the
+                    // fixed vertex count the indirect draw issues —
+                    // `max_triangles_per_meshlet * 3`, the same figure
+                    // `MeshletCull::new` documents for the cascades'
+                    // draw. It used to be `meshlets_per_mesh`, which is
+                    // a different quantity entirely: the meshlet count
+                    // of the registered mesh. At the engine's defaults
+                    // that issued about a third of the vertices a
+                    // meshlet needs, so every meshlet was drawn up to
+                    // its fortieth triangle and cut. The shadows were
+                    // fragments that followed the meshlet structure and
+                    // rearranged themselves whenever the LOD changed.
+                    self.triangles,
                 ],
                 world: [
                     self.clipmap.base,
@@ -602,9 +622,8 @@ impl PageRasterizer {
         eye: Vec3,
         sun: Vec3,
         lights: u32,
-        meshlets_per_mesh: u32,
     ) {
-        self.write_uniform(queue, view, eye, sun, lights, meshlets_per_mesh);
+        self.write_uniform(queue, view, eye, sun, lights);
         encoder.clear_buffer(&self.counts, 0, None);
         encoder.clear_buffer(&self.expand_args, 0, None);
         encoder.clear_buffer(&self.draw_args, 0, None);
@@ -619,6 +638,10 @@ impl PageRasterizer {
         pass.dispatch_workgroups(self.pool.entries().div_ceil(64), 1, 1);
         pass.set_pipeline(&self.expand_args_pass);
         pass.dispatch_workgroups(self.clipmap.levels.div_ceil(64), 1, 1);
+        // Without a pair list this only fixes the vertex count, which is
+        // exactly the half worth asserting on without a scene.
+        pass.set_pipeline(&self.draw_args_pass);
+        pass.dispatch_workgroups(1, 1, 1);
     }
 
     fn compact_bind_group(&self, device: &wgpu::Device, page_pool: &PagePool) -> wgpu::BindGroup {
@@ -797,14 +820,7 @@ impl PageRasterizer {
     ) {
         let levels = self.clipmap.levels;
         let view = view.min(atlas_layers(self.pool) - 1);
-        self.write_uniform(
-            queue,
-            view,
-            eye,
-            sun,
-            lights,
-            scene_params.meshlets_per_mesh,
-        );
+        self.write_uniform(queue, view, eye, sun, lights);
         let uniform_offset = self.uniform_span(view).0 as u32;
 
         // 1. One cull per level. A level is a texel density and a
