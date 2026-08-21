@@ -882,6 +882,29 @@ luces proyectando es la medición que justifica todo este track; simplemente no 
 que algo las rasterice. Epic dice la misma regla como pase: `PruneLightGridCS` poda la light grid
 a las luces que **tienen** un shadow map **antes** de que nada marque.
 
+🔴 **2026-08-21 — el ráster de páginas culleaba EXACTAMENTE la geometría que proyecta.** Lo
+intuyó el user mirando el editor: *"creo que las caras de las meshlets pueden estar invertidas"*.
+Tenía razón, y no eran las meshlets. Entre un triángulo del mundo y el clip space de una página
+hay **dos flips**, y sólo uno de ellos entra en el mapa 2D por el que el rasterizador decide el
+winding:
+
+- `sun_basis` devuelve `(s, u, f)` con `u = cross(s, f)` → determinante **-1**, base
+  **zurda**, a diferencia del `look_to_rh` de las cascadas.
+- `page_clip` niega la Y porque el rect de una página está en filas de téxeles —que van hacia
+  abajo— y el clip space va hacia arriba. **El lector está de acuerdo con ese flip**, así que
+  sacarlo espejaría todas las sombras en lugar de arreglarlas.
+
+Medido en la GPU a través de esas mismas funciones: un triángulo que mira al sol sale con área
+con signo **-0.25**, o sea `Cw`. El pipeline declaraba `Ccw`, así que `cull_mode: Back` tiraba
+todas las caras que proyectan y dejaba **la cáscara trasera de cada malla cerrada**. Sombras
+como manchas con agujeros que cambiaban de forma con el nivel del clipmap — y con él, con el LOD
+del meshlet. De ahí el *"se rompe en base al meshlet"*.
+
+⚠️ **Y el cull de meshlets empeoraba el cuadro**: `camera_in_cone` con la "cámara" en
+`eye - sol * SUN_SPAN` conserva los meshlets que **miran al sol**, y el ráster tiraba los
+triángulos que miran al sol. Lo que sobrevivía era un subconjunto casi arbitrario, agrupado por
+meshlet.
+
 ⏭️ Falta: (d) el misterio de los pares, (e) re-medir. Y encima de todo eso, **lo que el prior art
 dice que es el mecanismo y no una optimización: persistencia entre frames con LRU**, más una
 clase "una sola página" para las luces lejanas.

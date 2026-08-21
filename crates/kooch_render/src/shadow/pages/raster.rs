@@ -46,6 +46,30 @@ const DEPTH: &str = include_str!("../../../shaders/page_depth.wgsl");
 /// rather than for a second one.
 pub const PAGE_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+/// Which winding the page transform calls a front face.
+///
+/// 🔴 **`Cw`, and the cascades' `Ccw` is not a discrepancy to tidy up.**
+/// Two flips sit between a world triangle and this page's clip space,
+/// and only one of them is part of the 2D map the rasteriser winds by:
+///
+/// - `sun_basis` returns `(s, u, f)` with `u = cross(s, f)`, whose
+///   determinant is **-1**. It is left-handed, unlike the cascades'
+///   `look_to_rh`.
+/// - `page_clip` negates Y, because a page's rect is in texel rows —
+///   which run down — and clip space runs up. The reader agrees with
+///   that flip, so removing it would mirror every shadow instead.
+///
+/// Measured on the GPU through those very functions: a triangle facing
+/// the light comes out with a signed area of **-0.25**. Declaring `Ccw`
+/// therefore made `cull_mode: Back` discard every surface that casts and
+/// keep the far shell of every closed mesh — blobby shadows, full of
+/// holes, changing shape with the clipmap level.
+///
+/// A constant rather than a literal in the descriptor because it is half
+/// of a pair: `a_light_facing_triangle_is_the_front_face` asserts the
+/// shader and this agree.
+pub const PAGE_FRONT_FACE: wgpu::FrontFace = wgpu::FrontFace::Cw;
+
 /// How far a caster may be from a page along the sun's own axis, in
 /// metres, before it stops writing into it.
 ///
@@ -292,6 +316,7 @@ impl PageRasterizer {
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: PAGE_FRONT_FACE,
                 cull_mode: Some(wgpu::Face::Back),
                 ..Default::default()
             },

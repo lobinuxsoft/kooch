@@ -7,7 +7,7 @@
 
 use kooch_render::meshlet::GpuGlobalMeshPool;
 use kooch_render::shadow::pages::pool::{PagePool, PoolConfig};
-use kooch_render::shadow::pages::raster::{PAGE_DEPTH_FORMAT, PageRasterizer};
+use kooch_render::shadow::pages::raster::{PAGE_DEPTH_FORMAT, PAGE_FRONT_FACE, PageRasterizer};
 use kooch_render::shadow::pages::{ClipmapConfig, PageConfig};
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -253,5 +253,137 @@ fn a_page_compacts_into_the_level_it_came_from() {
         (list[at], list[at + 1]),
         planted[2],
         "level 5's bucket holds its page and its physical slot"
+    );
+}
+
+/// Which way a light-facing triangle winds after the page transform.
+///
+/// 🔴 Run through the SHADER'S OWN `sun_basis`, `sun_page_rect` and
+/// `page_clip` — not a Rust mirror of them. A mirror is what let this
+/// ship: three separate flips, each individually right, and nobody ever
+/// multiplied them out.
+const WINDING: &str = r#"
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
+
+@compute @workgroup_size(1, 1, 1)
+fn cs_winding() {
+    // The sun travels straight down, so a floor faces it.
+    let dir = vec3<f32>(0.0, -1.0, 0.0);
+    let basis = sun_basis(dir);
+
+    // A triangle whose normal is +Y — towards the light — wound
+    // counter-clockwise seen from above, which is what a front face is
+    // everywhere else in this engine.
+    var tri = array<vec3<f32>, 3>(
+        vec3<f32>(0.0, 0.0, 0.0),
+        vec3<f32>(1.0, 0.0, 0.0),
+        vec3<f32>(0.0, 0.0, -1.0),
+    );
+
+    let rect = sun_page_rect(0u, vec2<u32>(0u, 0u), 64.0, 128u);
+    var clip = array<vec2<f32>, 3>();
+    for (var i = 0u; i < 3u; i = i + 1u) {
+        let p = tri[i];
+        let local = vec3<f32>(
+            dot(p, basis[0]),
+            dot(p, basis[1]),
+            dot(p, basis[2]),
+        );
+        let ndc = (local.xy - rect.xy) / (rect.z * 0.5);
+        clip[i] = page_clip(ndc, 0.5, vec4<f32>(0.0, 0.0, 128.0, 128.0), 1024.0).xy;
+    }
+    let a = clip[1] - clip[0];
+    let b = clip[2] - clip[0];
+    // Positive is counter-clockwise in clip space, which is Y-up.
+    out[0] = a.x * b.y - a.y * b.x;
+}
+"#;
+
+/// The pipeline's front face has to be the one the transform produces.
+///
+/// 🔴 The defect, measured: the sun's basis `(s, u, f)` has a
+/// determinant of **-1** — `u = cross(s, f)` makes it left-handed — and
+/// `page_clip` flips Y again to turn a texel row into a clip position.
+/// Two flips do not cancel here, because only the second one is part of
+/// the 2D map the rasteriser winds by. A triangle FACING the light comes
+/// out clockwise, so `FrontFace::Ccw` called it a back face and
+/// `cull_mode: Back` threw away exactly the geometry that casts.
+///
+/// What survived was the far shell of every closed mesh, which is why
+/// the shadows were blobs with holes in them that changed shape as the
+/// clipmap level — and with it the meshlet LOD — changed.
+#[test]
+fn a_light_facing_triangle_is_the_front_face() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("page_winding"),
+        source: wgpu::ShaderSource::Wgsl(
+            format!("{}\n{WINDING}", kooch_lighting::PAGE_TABLE).into(),
+        ),
+    });
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[Some(&bgl)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(&layout),
+        module: &module,
+        entry_point: Some("cs_winding"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 4,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    queue.submit([encoder.finish()]);
+
+    let area = f32::from_bits(read_words(&device, &queue, &buffer)[0]);
+    assert!(area != 0.0, "the triangle came out degenerate");
+    let wound = if area > 0.0 {
+        wgpu::FrontFace::Ccw
+    } else {
+        wgpu::FrontFace::Cw
+    };
+    assert_eq!(
+        wound, PAGE_FRONT_FACE,
+        "a triangle facing the light winds {wound:?} (signed area {area}), but the page \
+         raster declares {PAGE_FRONT_FACE:?} — so back-face culling throws away every \
+         surface that casts"
     );
 }
