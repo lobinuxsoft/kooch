@@ -92,8 +92,10 @@ impl MeshletRenderStage {
             // variable set; see the field's doc.
             page_marker: None,
             page_marking_last: None,
+            page_marking_logged: Vec::new(),
             page_raster: None,
             page_raster_last: None,
+            page_raster_logged: Vec::new(),
             page_pool_config: None,
             // Allocated on the first frame that finds a sun; see the
             // field's doc for why not here.

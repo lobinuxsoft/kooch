@@ -161,14 +161,24 @@ pub struct MeshletRenderStage {
     /// measurement that runs whether or not anyone asked is a cost
     /// nobody attributed.
     pub(super) page_marker: Option<crate::shadow::pages::mark::PageMarker>,
-    /// The last count reported, so the log fires on a change rather than
-    /// sixty times a second.
+    /// The last count read back, for the panel.
     pub(super) page_marking_last: Option<crate::shadow::pages::mark::MarkCounts>,
+    /// The last count LOGGED, per camera.
+    ///
+    /// 🔴 Per camera, and compared with a threshold rather than for
+    /// equality. Two things conspired: the cameras alternate, so one
+    /// slot always disagreed with the frame before it, and the counts
+    /// move every frame anyway because the temporal jitter shifts
+    /// sub-pixel sample positions into other pages. "Log on change"
+    /// therefore fired twice a frame — 8000 lines with 2404 dropped,
+    /// measured — and buried the console it was meant to inform.
+    pub(super) page_marking_logged: Vec<Option<crate::shadow::pages::mark::MarkCounts>>,
     /// The paged depth raster and its atlas. 🔴 Built with the marker
     /// and never before it: the atlas is a hundred megabytes and it has
     /// nothing to hold until pages are being marked.
     pub(super) page_raster: Option<crate::shadow::pages::raster::PageRasterizer>,
     pub(super) page_raster_last: Option<crate::shadow::pages::raster::RasterCounts>,
+    pub(super) page_raster_logged: Vec<Option<crate::shadow::pages::raster::RasterCounts>>,
     /// The pool the atlas was built for. A change rebuilds it.
     pub(super) page_pool_config: Option<crate::shadow::pages::pool::PoolConfig>,
 

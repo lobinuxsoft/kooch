@@ -50,6 +50,27 @@ pub(super) fn page_view_index(id: crate::meshlet::render_stage::ViewId) -> u32 {
     ((id.data().as_ffi() & 0xffff_ffff) as u32).saturating_sub(1)
 }
 
+/// How far a count has to move before it is worth another line.
+///
+/// An eighth. Below that the reader learns nothing the last line did not
+/// already say, and the console holds two thousand lines.
+const LOG_STEP: u32 = 8;
+
+/// Whether two readings differ by enough to be worth reporting.
+fn moved(before: u32, now: u32) -> bool {
+    before.abs_diff(now) * LOG_STEP > before.max(now)
+}
+
+/// The slot a camera's last logged count lives in, growing the list to
+/// reach it.
+fn logged<T: Copy>(slots: &mut Vec<Option<T>>, view: u32) -> &mut Option<T> {
+    let index = view as usize;
+    if slots.len() <= index {
+        slots.resize(index + 1, None);
+    }
+    &mut slots[index]
+}
+
 fn page_settings(resources: &Resources) -> PageSettings {
     // 🔴 `ShadowSettings`, not `RenderSettings`, and `unwrap_or_default`
     // rather than an early return. Both halves of that were the bug.
@@ -343,14 +364,23 @@ impl MeshletRenderStage {
         let Some(counts) = marker.last() else {
             return;
         };
-        // 🔴 On change, not every frame. The count moves with the camera
-        // and a per-frame log at sixty hertz is a log nobody reads —
-        // the same reason the point-shadow warning is a flag rather than
-        // a count.
-        if self.page_marking_last == Some(counts) {
+        self.page_marking_last = Some(counts);
+        // 🔴 On a MEANINGFUL change, not on any change. The count moves
+        // every frame even with the camera still — the temporal jitter
+        // shifts sub-pixel samples into other pages — and the cameras
+        // alternate, so an equality check against one shared slot fired
+        // twice a frame. The panel has the exact number; this log is for
+        // the runs that have no panel.
+        let before = logged(&mut self.page_marking_logged, counts.view);
+        let notable = before.is_none_or(|last| {
+            moved(last.resident, counts.resident)
+                || (last.overflow > 0) != (counts.overflow > 0)
+                || (last.pool.overflow > 0) != (counts.pool.overflow > 0)
+        });
+        if !notable {
             return;
         }
-        self.page_marking_last = Some(counts);
+        *logged(&mut self.page_marking_logged, counts.view) = Some(counts);
         if counts.overflow > 0 {
             tracing::warn!(
                 resident = counts.resident,
@@ -382,10 +412,18 @@ impl MeshletRenderStage {
         let Some(counts) = raster.poll() else {
             return;
         };
-        if self.page_raster_last == Some(counts) {
+        self.page_raster_last = Some(counts);
+        let before = logged(&mut self.page_raster_logged, counts.view);
+        let notable = before.is_none_or(|last| {
+            moved(last.pages, counts.pages)
+                || moved(last.local, counts.local)
+                || (last.dropped > 0) != (counts.dropped > 0)
+                || (last.overflow > 0) != (counts.overflow > 0)
+        });
+        if !notable {
             return;
         }
-        self.page_raster_last = Some(counts);
+        *logged(&mut self.page_raster_logged, counts.view) = Some(counts);
         if counts.dropped > 0 || counts.overflow > 0 {
             tracing::warn!(
                 dropped = counts.dropped,
@@ -409,6 +447,8 @@ impl MeshletRenderStage {
     fn forget_page_marking(&mut self) {
         self.page_marking_last = None;
         self.page_raster_last = None;
+        self.page_marking_logged.clear();
+        self.page_raster_logged.clear();
         if let Some(marker) = self.page_marker.as_mut() {
             marker.forget();
         }
@@ -424,6 +464,34 @@ impl MeshletRenderStage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The jitter moves the count a few pages a frame; that is not news.
+    ///
+    /// 🔴 The measured flood: `resident` walked 2260, 2268, 2273, 2261
+    /// with the camera still, because the temporal jitter puts sub-pixel
+    /// samples in other pages. An equality check calls every one of
+    /// those a change.
+    #[test]
+    fn the_log_ignores_jitter_and_not_a_real_move() {
+        for (before, now) in [(2260u32, 2268u32), (2273, 2261), (1669, 1674)] {
+            assert!(!moved(before, now), "{before} -> {now} is jitter");
+        }
+        for (before, now) in [(2260u32, 1600u32), (0, 40), (40, 0), (1024, 512)] {
+            assert!(moved(before, now), "{before} -> {now} is news");
+        }
+    }
+
+    /// A camera's slot is its own, and asking for a far one grows the
+    /// list rather than reaching past it.
+    #[test]
+    fn a_camera_logs_against_its_own_last() {
+        let mut slots: Vec<Option<u32>> = Vec::new();
+        *logged(&mut slots, 0) = Some(7);
+        *logged(&mut slots, 3) = Some(9);
+        assert_eq!(*logged(&mut slots, 0), Some(7));
+        assert_eq!(*logged(&mut slots, 1), None);
+        assert_eq!(*logged(&mut slots, 3), Some(9));
+    }
 
     /// The first camera owns the first slice.
     ///

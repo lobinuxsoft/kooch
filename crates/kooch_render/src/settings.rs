@@ -387,8 +387,15 @@ pub struct RenderSettings {
     /// handheld measured as bandwidth-bound that is the expensive kind,
     /// so 1 is the default and the number is chosen by looking at a
     /// floor and at a capture, not by picking the largest.
+    // 🔴 Its OWN group, and not "Shading". The panel opens one egui
+    // Grid per RUN of fields sharing a group name, so a second
+    // "Shading" run after "Temporal" opened a second grid with the same
+    // id — which egui reports on screen as "First use of Grid ID ..." in
+    // red. Renaming beats moving the field: this is panel metadata, so
+    // it carries no data risk, and anisotropy is texture filtering
+    // rather than shading anyway.
     #[serde(default = "default_anisotropy")]
-    #[reflect(group = "Shading", choices = ANISOTROPY_CHOICES)]
+    #[reflect(group = "Texture filtering", choices = ANISOTROPY_CHOICES)]
     pub anisotropy: u32,
 
     /// Whether the surface waits for the vblank before presenting.
