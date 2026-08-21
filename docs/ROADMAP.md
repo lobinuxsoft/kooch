@@ -874,10 +874,17 @@ cuando diseña sin fuente. Antes de tocar código:
 ⚠️ **Todavía sin verificar en pantalla.** Los tests cubren el mecanismo — uno de ellos falla con
 el comportamiento viejo y pasa con el nuevo — pero nadie miró un frame con dos viewports.
 
-⏭️ Falta: (a) que el marcado **no asigne** páginas que el ráster no va a dibujar, (d) el
-misterio de los pares, (e) re-medir. Y encima de todo eso, **lo que el prior art dice que es el
-mecanismo y no una optimización: persistencia entre frames con LRU**, más una clase "una sola
-página" para las luces lejanas.
+✅ **(a) hecho: el marcado ya no le reclama pool a las luces locales.** Medido en el editor con
+las dos vistas: **991 y 1004 de los 1024 slots de cada cámara eran locales**, y al sol —el único
+consumidor que el ráster tiene— le quedaban **33 y 20 páginas**. El pool se declaraba 100% lleno
+sin producir sombra. Las páginas locales **se siguen marcando**, porque lo que costarían cien
+luces proyectando es la medición que justifica todo este track; simplemente no gastan pool hasta
+que algo las rasterice. Epic dice la misma regla como pase: `PruneLightGridCS` poda la light grid
+a las luces que **tienen** un shadow map **antes** de que nada marque.
+
+⏭️ Falta: (d) el misterio de los pares, (e) re-medir. Y encima de todo eso, **lo que el prior art
+dice que es el mecanismo y no una optimización: persistencia entre frames con LRU**, más una
+clase "una sola página" para las luces lejanas.
 
 **Phase 3 — the consumers, on top of #866 and not before.**
 

@@ -192,7 +192,22 @@ fn page_claim(page: u32) -> u32 {
 // set it, which is what makes the counter a count of DISTINCT pages
 // rather than of marking attempts — and what makes it the right place
 // to allocate from.
-fn mark_bit(index: u32) -> bool {
+//
+// 🔴 `claim` is what separates a page the frame NEEDS from a page the
+// frame can USE. Marking a local light's page is a measurement — this
+// track's whole justification is what a hundred casting lights would
+// cost — but the raster only draws the sun, so a slot handed to a local
+// page is a slot nothing ever writes and nothing ever samples.
+//
+// Measured before this split, on `many_lights` with two viewports:
+// **991 and 1004 of each camera's 1024 slots were local**, leaving the
+// sun 33 and 20 pages. The scene had almost no shadow, and the pool
+// reported itself 100 % full while doing nothing.
+//
+// Epic states the same rule as a pass: `PruneLightGridCS` rewrites the
+// light grid down to the lights that HAVE a virtual shadow map before
+// anything marks. The gate moves here the day the local raster lands.
+fn mark_bit(index: u32, claim: bool) -> bool {
     let word = index / 32u;
     if word >= arrayLength(&marks) {
         atomicAdd(&counters[3], 1u);
@@ -204,9 +219,11 @@ fn mark_bit(index: u32) -> bool {
         return false;
     }
     atomicAdd(&counters[0], 1u);
-    // WGSL has no call statement for a function that returns; the slot
-    // is the sampling pass's business, not this one's.
-    _ = page_claim(index);
+    if claim {
+        // WGSL has no call statement for a function that returns; the
+        // slot is the sampling pass's business, not this one's.
+        _ = page_claim(index);
+    }
     return true;
 }
 
@@ -291,7 +308,8 @@ fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
         + level_base(level)
         + cell.y * side
         + cell.x;
-    mark_bit(index);
+    // Marked, NOT claimed: nothing rasterises a local light's pages yet.
+    mark_bit(index, false);
     return vec2<u32>(index, level);
 }
 
@@ -333,7 +351,7 @@ fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
         + level * side * side
         + cell.y * side
         + cell.x;
-    mark_bit(index);
+    mark_bit(index, true);
     return vec2<u32>(index, level);
 }
 

@@ -1211,10 +1211,13 @@ Three things follow, and none of them is optional:
   refilled from scratch every frame, so a static shadow is re-rasterised
   every frame, and allocation is first-come — which means *whichever
   thread the GPU scheduled first*.
-- 🔴 **Allocation still does not know what the raster can draw.** Local
-  lights claim slots for pages nothing rasterises yet; measured, they
-  took 2008 of 2048. The slice bounds camera against camera and nothing
-  else.
+- 🔴 **Priority inside a slice.** Allocation is still first-come, which
+  on a GPU means *whichever thread the scheduler ran first*. What it no
+  longer does is spend the pool on pages nothing draws: a local light's
+  page is marked — the census is what says what a hundred casting lights
+  would cost — but only the sun's pages claim a physical slot, because
+  only the sun is rasterised. Before that split, local pages held 991 of
+  each camera's 1024 slots and the sun was left 33.
 
 ## Rasterising into the pages — the depth raster (#866)
 

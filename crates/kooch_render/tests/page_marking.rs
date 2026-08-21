@@ -177,16 +177,29 @@ fn run(
     depth: f32,
     sun: Option<Vec3>,
 ) -> MarkCounts {
-    run_pool(device, queue, resources, depth, sun, PoolConfig::default()).1
+    run_pool(
+        device,
+        queue,
+        resources,
+        depth,
+        sun,
+        100,
+        PoolConfig::default(),
+    )
+    .1
 }
 
 /// The same run, keeping the marker so the page table can be read back.
+#[allow(clippy::too_many_arguments)]
 fn run_pool(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     resources: &Resources,
     depth: f32,
     sun: Option<Vec3>,
+    // Shadow texels per screen pixel, as a percentage. The one lever
+    // that moves the page count without moving the camera.
+    density: u32,
     pool: PoolConfig,
 ) -> (PageMarker, MarkCounts) {
     let eye = Vec3::ZERO;
@@ -216,7 +229,7 @@ fn run_pool(
         (SIZE, SIZE),
         /* view */ 0,
         /* rate */ 1,
-        /* density */ 100,
+        density,
         Paint {
             target: &paint_target(device),
             on: false,
@@ -643,14 +656,23 @@ fn half_density_is_a_quarter_of_the_pages() {
 }
 
 #[test]
-fn every_page_claims_a_slot() {
+fn every_drawable_page_claims_a_slot() {
     let Some((device, queue)) = device() else {
         eprintln!("no adapter; skipping");
         return;
     };
-    let mut resources = world();
-    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
-    let counts = run(&device, &queue, &resources, 0.01, None);
+    // 🔴 The sun ALONE, because it is the only thing the raster draws
+    // and therefore the only thing that spends the pool. With a local
+    // light in the scene the two counts are meant to differ — that is
+    // `a_local_light_marks_but_does_not_claim`.
+    let resources = world();
+    let counts = run(
+        &device,
+        &queue,
+        &resources,
+        0.01,
+        Some(Vec3::new(0.3, -1.0, 0.2)),
+    );
     assert!(counts.resident > 0, "the frame needs pages");
     // Two mechanisms counting the same 0->1 transitions: the mark bit's
     // atomicOr and the allocator's atomicAdd. They agree or one of them
@@ -663,16 +685,75 @@ fn every_page_claims_a_slot() {
     assert_eq!(counts.pool.probes, 0, "no insert ran out of probes");
 }
 
+/// A page nothing draws does not get a page nothing writes.
+///
+/// 🔴 The measured defect: on `many_lights` with two viewports, local
+/// lights held **991 and 1004 of each camera's 1024 slots** and the sun
+/// — the only consumer the raster has — was left 33 and 20 pages. The
+/// pool reported itself 100 % full while producing almost no shadow.
+///
+/// Local pages are still MARKED, because what a hundred casting lights
+/// would cost is the measurement this whole track is justified by. They
+/// simply do not spend the pool until something rasterises them.
+#[test]
+fn a_local_light_marks_but_does_not_claim() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 40.0);
+
+    let dark = run(&device, &queue, &resources, 0.02, None);
+    assert!(dark.resident > 0, "the point light marked nothing");
+    assert_eq!(
+        dark.pool.claims, 0,
+        "{} local pages took a slot the raster cannot fill",
+        dark.pool.claims
+    );
+    assert_eq!(dark.pool.unspent(dark.resident), dark.resident);
+
+    let sunny = run(
+        &device,
+        &queue,
+        &resources,
+        0.02,
+        Some(Vec3::new(0.3, -1.0, 0.2)),
+    );
+    assert!(sunny.pool.claims > 0, "the sun claimed nothing");
+    assert!(
+        sunny.pool.claims < sunny.resident,
+        "the local pages stopped being counted: {} claims of {} resident",
+        sunny.pool.claims,
+        sunny.resident
+    );
+    assert_eq!(sunny.pool.overflow, 0, "the sun overflowed a default pool");
+}
+
 #[test]
 fn a_full_pool_reports_overflow() {
     let Some((device, queue)) = device() else {
         eprintln!("no adapter; skipping");
         return;
     };
-    let mut resources = world();
-    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+    // The SUN fills it: it is the only thing that spends the pool. A
+    // NEAR surface, because a far one is one coarse clipmap level and a
+    // handful of pages — not enough to overflow even a four-page pool.
+    let resources = world();
     let small = PoolConfig { pages: 4, views: 1 };
-    let (_marker, counts) = run_pool(&device, &queue, &resources, 0.01, None, small);
+    let (_marker, counts) = run_pool(
+        &device,
+        &queue,
+        &resources,
+        0.6,
+        Some(Vec3::new(0.3, -1.0, 0.2)),
+        // Four times the screen's density, so the clipmap picks a level
+        // fine enough for the frustum to cover more than a handful of
+        // pages. Containment is a floor on the level and a far surface
+        // pins it coarse whatever the density says.
+        400,
+        small,
+    );
     assert!(
         counts.resident > small.slice(),
         "the frame asks for more than the pool holds: {} of {}",
@@ -695,17 +776,22 @@ fn the_table_holds_every_claim() {
     };
     let mut resources = world();
     add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+    // 🔴 A sun, and the point light alongside it. Only the sun's pages
+    // claim a slot, so a scene without one fills no table and this test
+    // would pass by having nothing to check.
     let (marker, counts) = run_pool(
         &device,
         &queue,
         &resources,
         0.01,
-        None,
+        Some(Vec3::new(0.3, -1.0, 0.2)),
+        100,
         PoolConfig::default(),
     );
+    assert!(counts.pool.claims > 0, "the sun claimed nothing");
     let keys = read_words(&device, &queue, marker.pool().keys());
     let slots = read_words(&device, &queue, marker.pool().slots());
-    let capacity = marker.pool().config().pages;
+    let capacity = marker.pool().config().total();
 
     let mut seen_keys = std::collections::HashSet::new();
     let mut seen_slots = std::collections::HashSet::new();

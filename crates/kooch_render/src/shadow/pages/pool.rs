@@ -269,10 +269,12 @@ fn table_buffer(device: &wgpu::Device, label: &str, entries: u32) -> wgpu::Buffe
 pub struct PoolCounts {
     /// Pages that asked for a physical slot.
     ///
-    /// 🔴 Equal to `MarkCounts::resident` when the allocator is sound —
-    /// both count the 0→1 transitions, by two different mechanisms. A
-    /// disagreement means one of them is broken, and that cross-check is
-    /// why this is reported rather than derived.
+    /// 🔴 **Fewer than `MarkCounts::resident`, on purpose.** Marking a
+    /// local light's page is a measurement — this track exists to say
+    /// what a hundred casting lights would cost — but only the sun's
+    /// pages are rasterised, so only they claim. The difference is
+    /// exactly the pages the frame would need if the local raster
+    /// existed, which is the number the whole census was for.
     pub claims: u32,
     /// Claims past the end of the pool. Non-zero means pages went
     /// unshadowed this frame; Epic's own overflow shows up as
@@ -299,6 +301,12 @@ impl PoolCounts {
     /// Slots actually handed out, which is `claims` capped by the pool.
     pub fn allocated(&self) -> u32 {
         self.claims.min(self.capacity)
+    }
+
+    /// Pages the frame marked and could not spend a slot on, because
+    /// nothing draws them yet.
+    pub fn unspent(&self, resident: u32) -> u32 {
+        resident.saturating_sub(self.claims)
     }
 
     /// How full the pool ran, as a percentage.

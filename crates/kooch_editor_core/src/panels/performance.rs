@@ -761,17 +761,29 @@ fn shadow_page_readout(
          Epic's default pool is 4096 pages for the WHOLE scene — 6144 for open worlds, 8192 \
          thrashes — and `KOOCH_SHADOW_POOL_PAGES` moves this one.",
     );
-    if counts.pool.claims != counts.resident {
-        // Two mechanisms counting the same 0→1 transitions. They agree
-        // or one of them is broken, and a panel is a better place to
-        // find that out than a frame that renders wrong.
+    // 🔴 The split that explains everything else on this panel. Marking
+    // counts what a hundred casting lights WOULD need; only the sun's
+    // pages are rasterised, so only they spend the pool. Before the two
+    // were separated, local pages took 991 of each camera's 1024 slots
+    // and the sun got 33 — a pool reporting itself full while doing
+    // nothing.
+    let unspent = counts.pool.unspent(counts.resident);
+    if unspent > 0 {
         ui.label(
             egui::RichText::new(format!(
-                "{} claims against {} pages marked — the allocator disagrees with the bitmap",
-                counts.pool.claims, counts.resident
+                "{} of them are local lights — marked, not allocated",
+                unspent
             ))
             .small()
-            .color(egui::Color32::from_rgb(220, 120, 90)),
+            .weak(),
+        )
+        .on_hover_text(
+            "Local lights are counted so the census stays honest about what many casting \
+             lights would cost, but the raster only draws the sun, so they claim no physical \
+             page: a slot handed to one is a slot nothing writes and nothing samples. Epic \
+             states the same rule as a pass — `PruneLightGridCS` prunes the light grid down \
+             to the lights that HAVE a virtual shadow map before anything marks. The gate \
+             moves the day the local raster lands.",
         );
     }
     if counts.pool.overflow > 0 {
