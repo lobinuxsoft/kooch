@@ -286,6 +286,20 @@ struct IntiClusterCell {
 @group({{INTI_GROUP}}) @binding(6) var<storage, read> inti_clusters: array<IntiClusterCell>;
 @group({{INTI_GROUP}}) @binding(7) var<storage, read> inti_cluster_indices: array<u32>;
 
+// Virtual shadow maps (#866). `PageRaster`, `page_decode`, `sun_basis`,
+// `sun_page_rect`, `page_origin` and the probe sequence all come from
+// `page_table.wgsl`, concatenated ahead of this file — the same
+// arrangement the froxel grid uses, and for the same reason: the four
+// passes that FILL this table live in another crate, and a page id
+// encoded one way and decoded another samples somebody else's shadow.
+@group({{INTI_GROUP}}) @binding(8) var<uniform> inti_pages: PageRaster;
+@group({{INTI_GROUP}}) @binding(9) var<storage, read> inti_page_keys: array<u32>;
+@group({{INTI_GROUP}}) @binding(10) var<storage, read> inti_page_slots: array<u32>;
+// 🔴 `textureLoad`, never a sampler. A filter cannot cross a page
+// border: the neighbouring texels belong to another clipmap level, and
+// hardware filtering has no way to be told where a page ends.
+@group({{INTI_GROUP}}) @binding(11) var inti_page_atlas: texture_depth_2d;
+
 // GGX / Trowbridge-Reitz, in Filament's reassociated form. The naïve
 // `a2 / (π·((NdotH²)(a2-1)+1)²)` loses catastrophic precision in f32 at
 // low roughness — the highlight breaks into blocks. `a` is linear.
@@ -781,6 +795,129 @@ fn inti_sample_cascade_record(
 /// samples the next cascade too across an overlap band and mixes — twice
 /// the cost, in a band, and it is the difference between cascades you
 /// cannot see and cascades you can point at.
+// Where a virtual page lives, or `PAGE_MISS`.
+//
+// Open addressing, the read half of what the marking pass writes. Keys
+// are stored as `page + 1` so that a cleared buffer is an empty table.
+fn inti_page_lookup(page: u32) -> u32 {
+    let entries = inti_pages.pool.x;
+    if entries == 0u {
+        return PAGE_MISS;
+    }
+    var probe = page_probe(page, entries);
+    for (var i = 0u; i < PAGE_PROBES; i = i + 1u) {
+        let key = inti_page_keys[probe];
+        if key == PAGE_EMPTY {
+            return PAGE_MISS;
+        }
+        if key == page + 1u {
+            return inti_page_slots[probe];
+        }
+        probe = page_step(probe, entries);
+    }
+    return PAGE_MISS;
+}
+
+/// The sun's shadow, out of the page pool.
+///
+/// # 🔴 It walks levels instead of recomputing which one was marked
+///
+/// The marking pass chose a level from the screen's pixel density, which
+/// needs the camera's focal length and the render size. Reproducing that
+/// arithmetic here would be a third copy of it, free to drift by a
+/// rounding step — and a level off by one is a lookup that MISSES, which
+/// reads as a shadow that disappears rather than as a shadow at the
+/// wrong scale.
+///
+/// So it starts at the coarsest level that could possibly contain the
+/// point and walks outward, taking the first page that is resident. Any
+/// resident page containing the point holds correct depth, whatever
+/// level marked it — the stored value is a distance along the sun's
+/// axis, and that does not depend on how finely the page was diced.
+/// Typically the first probe hits.
+fn inti_page_shadow(world_position: vec3<f32>, n_dot_l: f32) -> f32 {
+    let basis = sun_basis(inti_pages.sun.xyz);
+    let offset = world_position - inti_pages.eye.xyz;
+    let local = vec3<f32>(
+        dot(offset, basis[0]),
+        dot(offset, basis[1]),
+        dot(offset, basis[2]),
+    );
+
+    let base = inti_pages.world.x;
+    let span = inti_pages.world.y;
+    let side = inti_pages.space.z;
+    let atlas = inti_pages.world.z;
+    let page_texels = inti_pages.pool.w;
+
+    // Containment is a floor on the level: a point outside a level's
+    // extent has no page there to find. Mirrors `mark_sun`'s `contain`.
+    let reach = max(abs(local.x), abs(local.y)) * 2.0;
+    var level = 0u;
+    if reach > base {
+        level = u32(ceil(log2(max(reach / base, 1.0))));
+    }
+
+    // Reversed-Z along the sun's axis, matching `page_depth.wgsl`.
+    let receiver = 1.0 - (local.z + span) / (2.0 * span);
+    // Slope-scaled, in the depth units this span defines. World space,
+    // like every other bias in this shader: `shadow_depth.wgsl` sets no
+    // rasteriser bias at all, and running both is how a shadow ends up
+    // detached from its object AND still showing acne elsewhere.
+    let bias = (0.5 + 4.0 * (1.0 - clamp(n_dot_l, 0.0, 1.0))) / (2.0 * span);
+
+    for (; level < inti_pages.chain.x; level = level + 1u) {
+        let extent = base * exp2(f32(level));
+        let uv = clamp(
+            local.xy / extent + vec2<f32>(0.5),
+            vec2<f32>(0.0),
+            vec2<f32>(0.99999),
+        );
+        let cell = vec2<u32>(uv * f32(side));
+        let page = inti_pages.space.w * inti_pages.space.x
+            + level * side * side
+            + cell.y * side
+            + cell.x;
+        let slot = inti_page_lookup(page);
+        if slot == PAGE_MISS {
+            continue;
+        }
+
+        // Where the point sits inside its own page, in texels.
+        let rect = sun_page_rect(level, cell, base, side);
+        let within = (local.xy - rect.xy) / rect.z + vec2<f32>(0.5);
+        let origin = vec2<f32>(page_origin(slot, inti_pages.pool.z, page_texels));
+        let texel = within * f32(page_texels);
+
+        // 2x2, and CLAMPED INSIDE THE PAGE. A tap that walked off the
+        // edge would read a texel belonging to another clipmap level or
+        // another light: not a softer edge, a shadow from somewhere
+        // else. This is the border handling a paged shadow map cannot
+        // do without.
+        let last = f32(page_texels) - 1.0;
+        var lit = 0.0;
+        for (var y = 0; y < 2; y = y + 1) {
+            for (var x = 0; x < 2; x = x + 1) {
+                let tap = clamp(
+                    floor(texel) + vec2<f32>(f32(x), f32(y)) - vec2<f32>(0.5),
+                    vec2<f32>(0.0),
+                    vec2<f32>(last),
+                );
+                let at = vec2<i32>(origin + tap);
+                let stored = textureLoad(inti_page_atlas, at, 0);
+                // Reversed-Z: a LARGER stored depth is closer to the
+                // light, so it is an occluder.
+                lit = lit + select(1.0, 0.0, stored > receiver + bias);
+            }
+        }
+        return lit * 0.25;
+    }
+    // No page anywhere in the chain. Lit, not shadowed: a point nobody
+    // marked is a point the frame never looked at, and guessing dark
+    // there would put shadow where no data exists.
+    return 1.0;
+}
+
 fn inti_shadow(
     world_position: vec3<f32>,
     normal: vec3<f32>,
@@ -790,6 +927,13 @@ fn inti_shadow(
 ) -> f32 {
     if (inti.shadows_enabled == 0u) {
         return 1.0;
+    }
+    // 🔴 The virtual shadow map REPLACES the cascades rather than
+    // blending with them. Two techniques over one surface disagree at
+    // their own boundaries, and the disagreement reads as a seam that
+    // belongs to neither.
+    if (inti_pages.sun.w > 0.5) {
+        return inti_page_shadow(world_position, n_dot_l);
     }
     let picked = inti_pick_cascade(view_depth);
     let index = u32(picked.x);

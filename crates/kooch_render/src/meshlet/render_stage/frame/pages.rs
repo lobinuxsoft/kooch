@@ -12,27 +12,53 @@ use glam::{Mat4, Vec3};
 use kooch_core::resource::Resources;
 
 use crate::meshlet::SceneCullParams;
-use crate::shadow::pages::PageMarkingSettings;
 use crate::shadow::pages::mark::{MarkCounts, PageMarker, Paint};
-use crate::shadow::pages::pool::PoolConfig;
+use crate::shadow::pages::pool::{PAGES_RANGE, PoolConfig};
 use crate::shadow::pages::raster::{PageRasterizer, RasterCounts};
 use crate::shadow::{ClipmapConfig, PageConfig};
 
 use super::super::stage::MeshletRenderStage;
 
-/// The panel owns this; the environment variable is only its default.
+/// What the project's render settings say about virtual shadow maps.
+///
+/// 🔴 A public setting now, where #866 kept it a panel-only diagnostic.
+/// That restraint was right while nothing read what marking wrote: a
+/// knob promising memory nobody spent. The pass is load-bearing now —
+/// it decides which shadows exist — so it belongs where the rest of the
+/// shadow settings live, in its own group beside the cascades it
+/// replaces.
 ///
 /// Absent means nobody inserted the resource, which is every headless
-/// test — and off is the right answer there.
-fn page_marking_settings(resources: &Resources) -> PageMarkingSettings {
-    resources
-        .get::<PageMarkingSettings>()
-        .copied()
-        .unwrap_or(PageMarkingSettings {
+/// test, and off is the right answer there.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct PageSettings {
+    enabled: bool,
+    paint: bool,
+    density: u32,
+    pool: PoolConfig,
+}
+
+fn page_settings(resources: &Resources) -> PageSettings {
+    let Some(render) = resources.get::<crate::settings::RenderSettings>() else {
+        return PageSettings {
             enabled: false,
-            rate: 1,
             paint: false,
-        })
+            density: 100,
+            pool: PoolConfig::default(),
+        };
+    };
+    PageSettings {
+        // 🔴 `KOOCH_PAGE_MARKING=1` still forces it on, and it survives
+        // as a FORCE rather than as a default: the comparison it exists
+        // for is made on a handheld, over SSH, against a build nobody
+        // wants to make twice.
+        enabled: render.virtual_shadows || crate::shadow::pages::mark::enabled_by_environment(),
+        paint: render.virtual_shadow_debug,
+        density: render.shadow_density,
+        pool: PoolConfig {
+            pages: render.shadow_pool_pages.clamp(PAGES_RANGE.0, PAGES_RANGE.1),
+        },
+    }
 }
 
 impl MeshletRenderStage {
@@ -53,13 +79,32 @@ impl MeshletRenderStage {
         scene_params: &SceneCullParams,
         meshlet_bg: &wgpu::BindGroup,
     ) {
-        let settings = page_marking_settings(resources);
+        let settings = page_settings(resources);
         if !settings.enabled {
             self.forget_page_marking();
+            // 🔴 Unbind, do not merely stop drawing. The atlas still
+            // holds the last frame it filled, and a shading pass that
+            // kept sampling it would show a shadow frozen in place —
+            // silent, and blamed on everything else first.
+            self.lights.unbind_shadow_pages(device);
             return;
         }
+        // The pool is the memory budget, and changing it changes the
+        // atlas. Rebuilt rather than resized: it is emptied every frame
+        // anyway, so there is nothing in it worth carrying across.
+        if self.page_pool_config != Some(settings.pool) {
+            self.page_pool_config = Some(settings.pool);
+            self.page_raster = None;
+            self.lights.unbind_shadow_pages(device);
+            if let Some(marker) = self.page_marker.as_mut() {
+                marker.set_pool(device, settings.pool);
+            }
+        }
         let marker = self.page_marker.get_or_insert_with(|| {
-            PageMarker::new(device, PageConfig::default(), ClipmapConfig::default())
+            let mut marker =
+                PageMarker::new(device, PageConfig::default(), ClipmapConfig::default());
+            marker.set_pool(device, settings.pool);
+            marker
         });
         let sun = self.light_frame.as_ref().and_then(|(_, frame)| frame.sun());
         let view = &self.views[view_id];
@@ -73,10 +118,13 @@ impl MeshletRenderStage {
             eye,
             sun,
             view.render_size,
-            settings.rate,
-            resources
-                .get::<crate::settings::RenderSettings>()
-                .map_or(100, |r| r.shadow_density),
+            // 🔴 Always one sample per pixel. While this was an
+            // instrument a coarser rate traded accuracy for threads;
+            // now it decides which pages EXIST, and one sample in
+            // sixteen is fifteen pixels whose shadow was never
+            // rasterised.
+            1,
+            settings.density,
             Paint {
                 target: &view.color_view,
                 on: settings.paint,
@@ -87,7 +135,7 @@ impl MeshletRenderStage {
             device,
             queue,
             encoder,
-            resources,
+            settings,
             sun,
             eye,
             scene_params,
@@ -106,7 +154,7 @@ impl MeshletRenderStage {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-        resources: &Resources,
+        settings: PageSettings,
         sun: Option<Vec3>,
         eye: Vec3,
         scene_params: &SceneCullParams,
@@ -120,12 +168,12 @@ impl MeshletRenderStage {
         let (Some(pool), Some(marker)) = (self.gpu_pool.as_ref(), self.page_marker.as_ref()) else {
             return;
         };
-        let lod_target = resources
-            .get::<crate::meshlet::MeshletLodSettings>()
-            .copied()
-            .unwrap_or_default()
-            .target_error_pixels
-            .max(0.01);
+        // 🔴 One texel of simplification error, and NOT the camera's
+        // LOD target. A clipmap level is already a texel density, and
+        // the cull is handed that density directly — applying the
+        // screen's target on top would be the relaxation this project
+        // already removed from the cascades for being applied twice.
+        let lod_target = 1.0_f32;
         let page_pool = marker.pool();
         let lights = self.lights.light_count().max(1);
         let raster = self.page_raster.get_or_insert_with(|| {
@@ -134,7 +182,7 @@ impl MeshletRenderStage {
                 self.cull_pipelines.meshlet_bind_group_layout(),
                 PageConfig::default(),
                 ClipmapConfig::default(),
-                PoolConfig::default(),
+                settings.pool,
                 super::super::super::DEFAULT_MAX_TRIANGLES as u32,
             )
         });
@@ -159,6 +207,17 @@ impl MeshletRenderStage {
             lights,
             lod_target,
         );
+        // Idempotent, and this is the one call site that runs after
+        // every possible rebuild of either side.
+        self.lights.bind_shadow_pages(
+            device,
+            kooch_lighting::PageBinding {
+                uniform: raster.uniform_buffer(),
+                keys: page_pool.keys(),
+                slots: page_pool.slots(),
+                atlas: raster.atlas(),
+            },
+        );
     }
 
     /// What the raster did, for the panel.
@@ -179,7 +238,7 @@ impl MeshletRenderStage {
         // cached one, and "did it change?" then answered yes every
         // single frame. A guard on the recording half is not a guard on
         // the reporting half.
-        if !page_marking_settings(resources).enabled {
+        if !page_settings(resources).enabled {
             self.forget_page_marking();
             return;
         }
@@ -218,7 +277,7 @@ impl MeshletRenderStage {
 
     /// The same, for the raster's own counters.
     pub(super) fn report_page_raster(&mut self, resources: &Resources) {
-        if !page_marking_settings(resources).enabled {
+        if !page_settings(resources).enabled {
             self.page_raster_last = None;
             return;
         }

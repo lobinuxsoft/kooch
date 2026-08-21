@@ -1244,6 +1244,79 @@ before anything renders.
 ⚠️ **Nothing samples the atlas yet.** That is #477, and it is what turns
 this into shadows on screen.
 
+## Sampling a page — where the shadow finally appears (#477)
+
+`inti_shadow` takes one branch: if the page uniform's sun flag is set,
+the sun's shadow comes from the pool and the cascades are not consulted
+at all.
+
+🔴 **It replaces the cascades rather than blending with them.** Two
+techniques over one surface disagree at their own boundaries, and the
+disagreement reads as a seam that belongs to neither.
+
+### It walks levels instead of recomputing which one was marked
+
+The marking pass chose a level from the screen's pixel density, which
+needs the camera's focal length and the render size. Reproducing that
+arithmetic in the shading pass would be a **third** copy of it, free to
+drift by a rounding step — and a level off by one is a lookup that
+*misses*, which reads as a shadow that disappears rather than as a
+shadow at the wrong scale.
+
+So the reader starts at the coarsest level that could contain the point
+and walks outward, taking the first resident page. **Any** resident page
+containing the point holds correct depth, whatever level marked it: the
+stored value is a distance along the sun's axis and does not depend on
+how finely the page was diced. Typically the first probe hits.
+
+That walk is also what absorbs the frame of latency below.
+
+### ⚠️ The pages sampled this frame were filled the previous one
+
+The raster and the shading here are **one fused fragment shader**, so
+there is no depth buffer to mark from until shading is over. Marking and
+the page raster therefore run at the end of the frame, and what the next
+frame samples is what this one left.
+
+The failure mode is the right one: a page that appears suddenly — a fast
+camera turn, an object entering frame — is **lit** for one frame rather
+than wrong. `inti_page_shadow` returns lit when no page in the chain is
+resident, because a point nobody marked is a point the frame never
+looked at, and guessing dark there would put shadow where no data exists.
+
+### The filter is clamped inside the page, and that is not optional
+
+Taps are `textureLoad`, never a sampler. A hardware filter has no way to
+be told where a page ends, and the texels past that border belong to
+another clipmap level: not a softer edge, **a shadow from somewhere
+else**. The 2×2 taps are clamped to the page's own rect.
+
+That is also why the atlas is `Depth32Float` read as a plain texture
+rather than through the comparison sampler the cascades use.
+
+### Where the settings live
+
+Everything that was a panel diagnostic in #866 is now a project setting,
+in a `Shadows: virtual pages` group beside `Shadows: sun cascades` and
+`Shadows: contact` — one run per technique, adjacent, so what belongs to
+which is never in doubt.
+
+| Setting | What it decides |
+|---|---|
+| `virtual_shadows` | pages instead of cascades. **Off by default** — every scene in the project was authored against the cascades |
+| `shadow_density` | texels per screen pixel; the page count falls with its square |
+| `shadow_pool_pages` | the memory budget, 1024–6144 pages |
+| `virtual_shadow_debug` | paints the page each pixel reads |
+
+🔴 **The marking rate is gone.** While marking was an instrument, a
+coarser rate traded accuracy for threads. It decides which pages *exist*
+now, so one sample in sixteen is fifteen pixels whose shadow was never
+rasterised. It is pinned at one per pixel.
+
+`KOOCH_PAGE_MARKING=1` survives as a **force** on top of the setting, not
+as its default — the comparison it exists for is made on a handheld, over
+SSH, against a build nobody wants to make twice.
+
 ## What Inti does not do yet
 
 - **Nothing but lights is clustered.** The grid reserves a range per cell

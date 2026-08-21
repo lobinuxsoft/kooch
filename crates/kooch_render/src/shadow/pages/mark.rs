@@ -25,14 +25,12 @@ use std::sync::{Arc, Mutex};
 
 use glam::{Mat4, Vec3};
 
-use kooch_lighting::{CLUSTER_COMMON, GpuLights};
+use kooch_lighting::{CLUSTER_COMMON, GpuLights, PAGE_TABLE};
 
 use super::pool::{PagePool, PoolConfig, PoolCounts};
 use super::{ClipmapConfig, PageConfig};
 
 const SOURCE: &str = include_str!("../../../shaders/page_mark.wgsl");
-/// The page table's arithmetic, shared with whatever reads the table.
-const TABLE: &str = include_str!("../../../shaders/page_table.wgsl");
 const GROUP: u32 = 8;
 /// 0 resident, 1 samples, 2 pairs, 3 mark overflow, 4 claims, 5 pool
 /// overflow, 6 probe overflow. 7 spare, because a storage buffer is
@@ -41,9 +39,10 @@ const COUNTERS: u64 = 8;
 
 /// `KOOCH_PAGE_MARKING=1`, read once.
 ///
-/// Only the **default** of [`PageMarkingSettings`](super::PageMarkingSettings):
-/// the panel owns it after that, the way the froxel grid's checkbox
-/// owns `ClusterSettings::enabled`.
+/// 🔴 A FORCE on top of `RenderSettings::virtual_shadows`, not its
+/// default. The comparison it exists for is made on a handheld, over
+/// SSH, against a build nobody wants to make twice — the same reason
+/// `KOOCH_CLUSTERING` is one.
 pub fn enabled_by_environment() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
@@ -52,20 +51,11 @@ pub fn enabled_by_environment() -> bool {
     })
 }
 
-/// `KOOCH_PAGE_MARKING_RATE`, read once. The default of
-/// [`PageMarkingSettings::rate`](super::PageMarkingSettings::rate).
-pub fn rate_from_environment() -> u32 {
-    static RATE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *RATE.get_or_init(|| {
-        std::env::var("KOOCH_PAGE_MARKING_RATE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1)
-            .clamp(RATE_RANGE.0, RATE_RANGE.1)
-    })
-}
-
-/// What the panel's slider allows, and what `record` clamps to.
+/// What `record` clamps the sampling rate to.
+///
+/// ⚠️ Only 1 is correct now that the marks drive a raster: a coarser
+/// rate is pixels whose shadow page was never allocated. The range
+/// survives for the tests that measure how the count moves with it.
 pub const RATE_RANGE: (u32, u32) = (1, 16);
 
 /// What the debug view paints into.
@@ -175,7 +165,9 @@ impl PageMarker {
         let layout = layout(device);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("page_mark"),
-            source: wgpu::ShaderSource::Wgsl(format!("{CLUSTER_COMMON}\n{TABLE}\n{SOURCE}").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{CLUSTER_COMMON}\n{PAGE_TABLE}\n{SOURCE}").into(),
+            ),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("page_mark_pipeline_layout"),

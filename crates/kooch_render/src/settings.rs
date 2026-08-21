@@ -92,10 +92,82 @@ pub struct RenderSettings {
     #[reflect(group = "Ambient light")]
     pub ambient_intensity: f32,
 
+    /// Whether the sun's shadow comes from the VIRTUAL page pool
+    /// instead of the four cascades (#866).
+    ///
+    /// 🔴 It REPLACES the cascades rather than blending with them. Two
+    /// techniques over one surface disagree at their own boundaries, and
+    /// the disagreement reads as a seam that belongs to neither.
+    ///
+    /// A page is allocated where the frame actually needs one, so detail
+    /// follows the screen instead of following four fixed distances —
+    /// and the budget becomes memory rather than a count of slots.
+    ///
+    /// ⚠️ The pages sampled this frame were marked and rasterised the
+    /// PREVIOUS one. The raster and the shading are a single fused
+    /// fragment shader here, so there is no depth buffer to mark from
+    /// until shading is over. A page that appears suddenly — a fast
+    /// camera turn, an object entering frame — is lit for one frame
+    /// rather than wrong, which is the failure mode to have.
+    ///
+    /// ⚠️ Local lights still use their cube maps: their pages are
+    /// marked and allocated, and rasterising them needs a cull per
+    /// view, which is 4848 views against the sun's 17.
+    #[serde(default = "default_virtual_shadows")]
+    #[reflect(group = "Shadows: virtual pages")]
+    pub virtual_shadows: bool,
+    /// Shadow texels per screen pixel, as a PERCENTAGE.
+    ///
+    /// 🔴 **The lever the page census found, and the only one that
+    /// moved.** A virtual shadow map allocates pages to match the
+    /// screen's detail, so this — not the page size, not the virtual
+    /// size — is what decides the bill: page count falls roughly with
+    /// its square, because a coarser texel is a level coarser in both
+    /// axes.
+    ///
+    /// 100 is Epic's ask, one shadow texel per screen pixel, and it is
+    /// what every figure measured for #866 was taken at. Measured on
+    /// `many_lights.scene` with **all 101 lights casting**, a 400x400
+    /// view already wanted 2581 pages — 161 MiB, past this engine's
+    /// 152 MiB of fixed allocations, at a resolution smaller than a
+    /// thumbnail.
+    ///
+    /// ⚠️ Below 100 a shadow's edge is softer than the surface it falls
+    /// on, which reads as blur rather than as a lower setting. 50 is a
+    /// quarter of the pages and the point where it starts to show.
+    #[serde(default = "default_shadow_density")]
+    #[reflect(group = "Shadows: virtual pages", choices = SHADOW_DENSITY_CHOICES)]
+    pub shadow_density: u32,
+    /// Physical pages the pool holds, which IS the memory budget: one
+    /// page is 64 KiB at 128 texels and `Depth32Float`.
+    ///
+    /// 🔴 Read it against what stands today — **152 MiB of fixed shadow
+    /// allocations for four casting lights**, whether or not they cast.
+    /// 2048 pages is 128 MiB and adapts to the frame. Epic's own default
+    /// is 4096 for a whole scene, 6144 for open worlds, and 8192 is
+    /// where their notes say it thrashes.
+    ///
+    /// ⚠️ Overflow is not graceful anywhere: pages the pool cannot seat
+    /// render unshadowed, and Epic's shows up as checkerboard
+    /// corruption. The performance panel names it rather than leaving it
+    /// to be recognised by sight.
+    #[serde(default = "default_shadow_pool_pages")]
+    #[reflect(group = "Shadows: virtual pages", choices = SHADOW_POOL_CHOICES)]
+    pub shadow_pool_pages: u32,
+    /// Paints the page each pixel reads over the scene.
+    ///
+    /// Hue is the clipmap level — where the frame is spending detail —
+    /// and brightness is the page identity, hashed, so the tiling is
+    /// visible. A page covering a quarter of the screen is a page too
+    /// coarse for it; a mosaic too fine to resolve is detail nobody
+    /// sees.
+    #[serde(default)]
+    #[reflect(group = "Shadows: virtual pages")]
+    pub virtual_shadow_debug: bool,
     /// Whether the sun casts shadows. Off frees the atlas entirely —
     /// 64 MiB at the default resolution.
     #[serde(default = "default_shadows_enabled")]
-    #[reflect(group = "Sun shadows")]
+    #[reflect(group = "Shadows: sun cascades")]
     pub shadows_enabled: bool,
     /// Shadow texels per screen pixel, as a PERCENTAGE.
     ///
@@ -115,12 +187,6 @@ pub struct RenderSettings {
     /// does not fit, and lowering this is the answer that does not cap
     /// how many lights may cast.
     ///
-    /// ⚠️ Below 100 a shadow's edge is softer than the surface it falls
-    /// on, which reads as blur rather than as a lower setting. 50 is a
-    /// quarter of the pages and the point where it starts to show.
-    #[serde(default = "default_shadow_density")]
-    #[reflect(group = "Sun shadows", choices = SHADOW_DENSITY_CHOICES)]
-    pub shadow_density: u32,
     /// How far from the camera shadows are drawn, in METRES.
     ///
     /// Raising this does not add shadows in the distance so much as move
@@ -128,12 +194,12 @@ pub struct RenderSettings {
     /// are given, so a larger distance blurs the shadows near the
     /// camera, which are the ones being looked at.
     #[serde(default = "default_shadow_distance")]
-    #[reflect(group = "Sun shadows")]
+    #[reflect(group = "Shadows: sun cascades")]
     pub shadow_distance: f32,
     /// Side of one shadow cascade in TEXELS. The atlas is twice this on
     /// each axis: 2048 costs 64 MiB, 1024 costs 16.
     #[serde(default = "default_cascade_texels")]
-    #[reflect(group = "Sun shadows")]
+    #[reflect(group = "Shadows: sun cascades")]
     pub shadow_cascade_texels: u32,
     /// How soft shadow edges get with distance: the TANGENT of the sun's
     /// angular radius, so 0.03 widens a shadow by three centimetres per
@@ -143,7 +209,7 @@ pub struct RenderSettings {
     /// shadow is indistinguishable from a hard one. Raise it for an
     /// overcast look; drop it to zero for a hard edge.
     #[serde(default = "default_sun_softness")]
-    #[reflect(group = "Sun shadows")]
+    #[reflect(group = "Shadows: sun cascades")]
     pub sun_softness: f32,
     /// Where the first shadow cascade ends, in METRES. The other three
     /// follow logarithmically out to `shadow_distance`.
@@ -153,7 +219,7 @@ pub struct RenderSettings {
     /// the same texels; raise it and everything close gets coarser.
     /// Unity ships 10.05 and Godot 10.
     #[serde(default = "default_first_cascade")]
-    #[reflect(group = "Sun shadows")]
+    #[reflect(group = "Shadows: sun cascades")]
     pub shadow_first_cascade_distance: f32,
 
     /// How many point lights may cast a cube map at once (#849).
@@ -167,7 +233,7 @@ pub struct RenderSettings {
     /// that memory is the system's, so this is a real trade and not a
     /// quality slider.
     #[serde(default = "default_point_shadows")]
-    #[reflect(group = "Sun shadows")]
+    #[reflect(group = "Shadows: sun cascades")]
     pub point_shadows: u32,
 
     /// Steps a contact-shadow ray takes. **Zero turns contact shadows
@@ -177,13 +243,13 @@ pub struct RenderSettings {
     /// resolve — where an object meets the floor. Cost is per light that
     /// opted in, per pixel it touches.
     #[serde(default = "default_contact_steps")]
-    #[reflect(group = "Contact shadows")]
+    #[reflect(group = "Shadows: contact")]
     pub contact_shadow_steps: u32,
     /// How far a contact-shadow ray travels, in METRES. Longer grounds
     /// objects that hover further from what they stand on, and costs the
     /// same — the steps just spread wider.
     #[serde(default = "default_contact_length")]
-    #[reflect(group = "Contact shadows")]
+    #[reflect(group = "Shadows: contact")]
     pub contact_shadow_length: f32,
     /// Thickness the march assumes every surface has, in METRES.
     ///
@@ -192,7 +258,7 @@ pub struct RenderSettings {
     /// detach from thin geometry; too large and a railing shadows
     /// everything behind it.
     #[serde(default = "default_contact_thickness")]
-    #[reflect(group = "Contact shadows")]
+    #[reflect(group = "Shadows: contact")]
     pub contact_shadow_thickness: f32,
     /// March once per pixel — for the light that lit it hardest —
     /// instead of once for every light that reaches it (#845).
@@ -206,7 +272,7 @@ pub struct RenderSettings {
     /// contact is visible. Under a dozen, the second-brightest lamp's
     /// contact is diluted past seeing anyway.
     #[serde(default = "default_contact_dominant")]
-    #[reflect(group = "Contact shadows")]
+    #[reflect(group = "Shadows: contact")]
     pub contact_shadow_dominant: bool,
 
     /// Shading as a COMPUTE pass over the visibility buffer (#824)
@@ -536,6 +602,45 @@ fn default_shadow_density() -> u32 {
     100
 }
 
+/// 🔴 Off. The cascades are what every scene in the project was authored
+/// against, and a technique that replaces them cannot become the default
+/// on the frame it first renders.
+fn default_virtual_shadows() -> bool {
+    false
+}
+
+fn default_shadow_pool_pages() -> u32 {
+    kooch_render_pool_default()
+}
+
+/// Indirection so the default and the pool agree without this module
+/// reaching into the shadow tree for a constant it would then have to
+/// keep in step by hand.
+fn kooch_render_pool_default() -> u32 {
+    crate::shadow::pages::pool::DEFAULT_PAGES
+}
+
+/// Powers of two, because the atlas is a square grid of pages and the
+/// labels are the only place the megabytes are ever stated.
+const SHADOW_POOL_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
+    kooch_ecs::reflect::FieldChoice {
+        label: "1024 pages — 64 MiB",
+        value: 1024,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "2048 pages — 128 MiB, under today's fixed 152",
+        value: 2048,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "4096 pages — 256 MiB, Epic's default pool",
+        value: 4096,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "6144 pages — 384 MiB, Epic's open-world figure",
+        value: 6144,
+    },
+];
+
 /// 🔴 Powers of two below 100, because the level chosen for a page is a
 /// power of two: anything between two of these rounds to one of them and
 /// the slider would lie about what it did.
@@ -684,6 +789,9 @@ impl Default for RenderSettings {
             upscale: 0,
             render_scale: default_render_scale(),
             shadow_density: default_shadow_density(),
+            virtual_shadows: default_virtual_shadows(),
+            shadow_pool_pages: default_shadow_pool_pages(),
+            virtual_shadow_debug: false,
             sharpening: default_sharpening(),
             anisotropy: default_anisotropy(),
             vsync: default_vsync(),
