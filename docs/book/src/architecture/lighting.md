@@ -1170,6 +1170,80 @@ means one of them is broken.
   allocates yet promises memory nothing spends. It becomes a setting when
   the raster does.
 
+## Rasterising into the pages — the depth raster (#866)
+
+Four passes, and their shape *is* the feature.
+
+| Pass | Threads | What it produces |
+|---|---|---|
+| **Cull** | per level, the engine's existing meshlet cull | which meshlets survive at that texel density |
+| **Compact** | one per table entry | the resident pages, dense and bucketed by level |
+| **Expand** | pages × survivors, dispatched indirectly | `(page, meshlet)` pairs |
+| **Draw** | one `draw_indirect` over every pair | depth in the atlas |
+
+### One render pass for the whole clipmap
+
+The atlas is a single depth attachment and every page is a sub-rect of
+it. `page_clip` places a page's own clip space inside its rect, so 1681
+pages are **one** `begin_render_pass` and **one** `draw_indirect` rather
+than 1681 of each. The hardware depth test does winner-takes-all exactly
+as it does for a cascade.
+
+🔴 **That is why this pipeline has a fragment shader where
+`shadow_depth.wgsl` has none.** A triangle wider than its page keeps
+rasterising past the rect and into the neighbouring page, which belongs
+to another level — a caster would appear in a shadow map it was never
+meant to be in, at the wrong scale, and nothing about the result would
+say why. A scissor would fix it and cannot: scissor is pass state and the
+page changes per instance. So the fragment shader `discard`s outside the
+rect, and the cost is early-Z. That is the price of one pass instead of
+one per page.
+
+### The pair list is the whole trick
+
+A shadow page is a 128-texel view of the world and a scene has thousands
+of meshlets. Rasterising every meshlet into every page is the cost
+virtual shadow maps exist to avoid; rasterising a meshlet once, into the
+pages it actually touches, is what makes 1681 pages affordable. The
+expansion is where *actually touches* is decided, and it is one sphere
+against one box.
+
+The pair carries the cull's own packed `(instance << 16 | meshlet)`, so
+it is self-describing — the draw never learns which level produced it,
+which is what lets every level share one indirect draw.
+
+### 🔴 The sun only, and the seam is not arbitrary
+
+A cull is **per view**, and a view is where the LOD is chosen. The sun's
+clipmap is **17** views. A hundred local lights with six faces and an
+eight-level chain each are **4848**, and the LOD selector is a two-pass
+reduction over the meshlet DAG that cannot simply be inlined per page.
+
+Local pages are marked and allocated today, counted as `local` in the
+panel, and not drawn. Drawing them needs the cull itself moved onto the
+GPU as one multi-view dispatch. That is the next machine, not a bigger
+version of this one — and reporting the count is what keeps a pool that
+looks full from being read as a pool that is full for the reason someone
+assumed.
+
+### What it costs
+
+The pool defaults to **2048 pages = 128 MiB**, half of Epic's 4096, and
+the comparison that decided it is this engine's own: **152 MiB of fixed
+shadow allocations stand today for four casting lights.** The pool is
+less than that, adapts to the frame, and caps by memory rather than by a
+count of slots. `KOOCH_SHADOW_POOL_PAGES` raises it.
+
+⚠️ **Nothing is cached across frames.** The table is emptied every frame,
+so a static shadow is re-rasterised every frame — and caching is the
+optimisation virtual shadow maps exist for. Epic measures a cached local
+shadow map at 0.05 ms against 0.4–0.8 ms invalidated. It needs an
+eviction policy and an invalidation rule, and neither can be designed
+before anything renders.
+
+⚠️ **Nothing samples the atlas yet.** That is #477, and it is what turns
+this into shadows on screen.
+
 ## What Inti does not do yet
 
 - **Nothing but lights is clustered.** The grid reserves a range per cell

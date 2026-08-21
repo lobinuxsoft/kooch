@@ -354,6 +354,7 @@ impl MeshletRenderStage {
             // if it described the frame on screen (#703).
             cluster_occupancy: self.lights.clusters().occupancy(),
             page_marking: None,
+            page_raster: None,
             cull_stage_counts: if cull_params.debug_active != 0 {
                 self.stage_counters.last_frame_counts()
             } else {

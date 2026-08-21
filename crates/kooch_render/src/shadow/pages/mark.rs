@@ -398,7 +398,7 @@ impl PageMarker {
 ///
 /// Mirrors `PageCensus::new`. One stride for every light — a per-kind
 /// stride would save bits and cost a prefix sum to find a light's base.
-fn stride(config: PageConfig, clipmap: ClipmapConfig) -> u32 {
+pub(super) fn stride(config: PageConfig, clipmap: ClipmapConfig) -> u32 {
     let local = config.face_pages() * super::CUBE_FACES as u32;
     let sun = clipmap.levels * config.side(0).pow(2);
     local.max(sun)

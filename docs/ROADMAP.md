@@ -748,6 +748,18 @@ Epic's 4096-page pool, which is what UE5 does too. The allocation itself is free
 there is an `atomicAdd` on a rare branch. ⚠️ The atlas texture is **not** allocated yet: 256
 MiB that nothing writes until the raster lands.
 
+🎯 **The raster landed for the SUN, and the seam is the cull (PR #931).** Four passes: cull
+per clipmap level, compact the table into a dense per-level list, expand into
+`(page, meshlet)` pairs, and **one** `draw_indirect` into an atlas where every page is a
+sub-rect — 1681 pages as one render pass instead of 1681. 🔴 **A cull is per view, and that
+is where the sun stops and the locals begin**: the clipmap is 17 views, 101 point lights
+with six faces and an eight-level chain are **4848**, and the LOD selector is a two-pass
+reduction over the meshlet DAG. Local pages are marked, allocated and **reported as not
+drawn**; drawing them needs the cull moved onto the GPU as one multi-view dispatch. Pool
+default dropped to **2048 pages = 128 MiB**, against the **152 MiB of fixed allocations
+standing today for four lights**. ⚠️ No cross-frame caching yet, and nothing samples the
+atlas — that is #477.
+
 **Phase 3 — the consumers, on top of #866 and not before.**
 
 | | | Why it waits for the pool |

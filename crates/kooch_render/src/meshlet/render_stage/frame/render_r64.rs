@@ -196,6 +196,8 @@ impl MeshletRenderStage {
             view_id,
             unjittered_view_proj,
             cam_pos,
+            scene_params,
+            meshlet_bg,
         );
 
         if timer_slot.is_some() {
@@ -271,6 +273,7 @@ impl MeshletRenderStage {
         // The counters' ring maps after the submit, the way every other
         // readback here does.
         self.report_page_marking(resources);
+        self.report_page_raster(resources);
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.submit_readback(slot_idx);
         }
@@ -308,6 +311,7 @@ impl MeshletRenderStage {
             // if it described the frame on screen (#703).
             cluster_occupancy: self.lights.clusters().occupancy(),
             page_marking: self.page_marking(),
+            page_raster: self.page_raster(),
             cull_stage_counts: if cull_params.debug_active != 0 {
                 self.stage_counters.last_frame_counts()
             } else {

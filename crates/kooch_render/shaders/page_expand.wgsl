@@ -1,0 +1,141 @@
+// page_expand.wgsl — which meshlet has to be drawn into which page
+// (#866).
+//
+// CONCATENATED after `page_table.wgsl`. One dispatch per clipmap level,
+// sized indirectly by `cs_expand_args`, because the two numbers it
+// multiplies — resident pages and surviving meshlets — only exist on the
+// GPU.
+//
+// # Why the pair list is the whole trick
+//
+// A shadow page is a 128-texel view of the world and a scene has
+// thousands of meshlets. Rasterising every meshlet into every page is
+// the cost virtual shadow maps exist to avoid; rasterising a meshlet
+// once, into the pages it actually touches, is what makes 1681 pages
+// affordable. This pass is where "actually touches" is decided, and it
+// is one sphere against one box.
+//
+// The pair carries the cull's own packed `(instance << 16 | meshlet)`,
+// so it is self-describing: the draw never learns which level produced
+// it, which is what lets every level share ONE `draw_indirect`.
+
+struct MeshletDescriptor {
+    vertex_offset: u32,
+    triangle_offset: u32,
+    vertex_count: u32,
+    triangle_count: u32,
+    aabb_min: vec3<f32>,
+    parent_meshlet_index: u32,
+    aabb_max: vec3<f32>,
+    lod_error: f32,
+    bounds_center: vec3<f32>,
+    bounding_radius: f32,
+    cone_apex: vec3<f32>,
+    cone_cutoff: f32,
+    cone_axis: vec3<f32>,
+    group_index: u32,
+    children_group_index: u32,
+    lod_level: u32,
+    _pad4: u32,
+    _pad5: u32,
+}
+
+// Stride 96 B, mirroring the cull side. A mismatch here reads a
+// transform from the middle of the previous instance.
+struct MeshInstance {
+    transform: mat4x4<f32>,
+    mesh_id: u32,
+    material_id: u32,
+    lod_bias: f32,
+    lod_force_level: i32,
+    group_base: u32,
+    flags: u32,
+    _pad1: u32,
+    _pad2: u32,
+}
+
+/// Which level this dispatch is expanding. A dynamic uniform offset,
+/// the way the cascade matrix already is.
+struct ExpandLevel {
+    level: u32,
+    _pad: vec3<u32>,
+}
+
+@group(0) @binding(0) var<uniform> raster: PageRaster;
+@group(0) @binding(1) var<storage, read> page_list: array<vec2<u32>>;
+@group(0) @binding(2) var<storage, read_write> page_counts: array<atomic<u32>>;
+// x the index into `page_list`, y the cull's packed `(instance, meshlet)`.
+@group(0) @binding(3) var<storage, read_write> pairs: array<vec2<u32>>;
+@group(0) @binding(4) var<storage, read> visible_counts: array<u32>;
+@group(0) @binding(5) var<uniform> expand: ExpandLevel;
+
+@group(1) @binding(0) var<storage, read> descriptors: array<MeshletDescriptor>;
+@group(2) @binding(0) var<storage, read> visible_meshlets: array<u32>;
+@group(3) @binding(0) var<storage, read> instances: array<MeshInstance>;
+
+const EXPAND_GROUP: u32 = 64u;
+
+/// The largest axis scale a transform applies, which is what a bounding
+/// radius has to be multiplied by. Mirrors `instance_world_scale` in the
+/// cull.
+fn transform_scale(m: mat4x4<f32>) -> f32 {
+    return max(length(m[0].xyz), max(length(m[1].xyz), length(m[2].xyz)));
+}
+
+@compute @workgroup_size(EXPAND_GROUP, 1, 1)
+fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let level = expand.level;
+    let levels = raster.chain.x;
+    let pages = min(atomicLoad(&page_counts[level]), raster.chain.z);
+    let meshlets = visible_counts[level];
+    if pages == 0u || meshlets == 0u {
+        return;
+    }
+    if gid.x >= pages * meshlets {
+        return;
+    }
+    // Page-major, so the threads that share a page share its rect and
+    // the divergent half is the meshlet fetch.
+    let entry = page_list[level * raster.chain.z + gid.x / meshlets];
+    let packed = visible_meshlets[gid.x % meshlets];
+
+    let inst = instances[packed >> 16u];
+    let desc = descriptors[packed & 0xffffu];
+    let centre = (inst.transform * vec4<f32>(desc.bounds_center, 1.0)).xyz;
+    let radius = desc.bounding_radius * transform_scale(inst.transform);
+
+    let id = page_decode(
+        entry.x,
+        raster.space.x,
+        raster.space.y,
+        raster.space.z,
+        raster.space.w,
+    );
+    let rect = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z);
+
+    // Sphere against the page's box, in the sun's own frame. The depth
+    // axis is the orthographic span rather than the page's width: a
+    // caster far above the page still writes into it, which is the whole
+    // point of a shadow.
+    let basis = sun_basis(raster.sun.xyz);
+    let offset = centre - raster.eye.xyz;
+    let local = vec3<f32>(
+        dot(offset, basis[0]),
+        dot(offset, basis[1]),
+        dot(offset, basis[2]),
+    );
+    let half = rect.z * 0.5 + radius;
+    if abs(local.x - rect.x) > half || abs(local.y - rect.y) > half {
+        return;
+    }
+    if abs(local.z) > raster.world.y + radius {
+        return;
+    }
+
+    let slot = atomicAdd(&page_counts[levels + 2u], 1u);
+    if slot >= raster.chain.y {
+        atomicAdd(&page_counts[levels + 3u], 1u);
+        return;
+    }
+    pairs[slot] = vec2<u32>(level * raster.chain.z + gid.x / meshlets, packed);
+}

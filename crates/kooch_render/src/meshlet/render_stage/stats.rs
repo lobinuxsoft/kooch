@@ -57,6 +57,8 @@ pub struct MeshletRenderStats {
     /// What the shadow-page marking pass found, when it is running
     /// (#866). `None` when it is off, which is the default.
     pub page_marking: Option<crate::shadow::pages::mark::MarkCounts>,
+    /// What the paged depth raster drew, a frame or two old.
+    pub page_raster: Option<crate::shadow::pages::raster::RasterCounts>,
     /// Per-stage cull survivor counts (#454.6).
     /// `[after_frustum, after_backface, after_hi_z, total_visible]`.
     /// `None` when no debug-active mode has been selected yet (the
