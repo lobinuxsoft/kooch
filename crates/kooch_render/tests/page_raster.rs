@@ -6,7 +6,7 @@
 //! belongs here rather than in a frame.
 
 use kooch_render::meshlet::GpuGlobalMeshPool;
-use kooch_render::shadow::pages::pool::{PagePool, PoolConfig};
+use kooch_render::shadow::pages::pool::{PAGE_CELL, PagePool, PoolConfig};
 use kooch_render::shadow::pages::raster::{PAGE_DEPTH_FORMAT, PAGE_FRONT_FACE, PageRasterizer};
 use kooch_render::shadow::pages::{ClipmapConfig, PageConfig};
 
@@ -198,20 +198,29 @@ fn a_page_compacts_into_the_level_it_came_from() {
         (sun_page(VIEW, 5, (7, 8), LIGHTS), 13),
     ];
     let mut keys = vec![0u32; small().entries() as usize];
-    let mut slots = vec![0u32; small().entries() as usize];
+    // TWO words an entry — the slot, then its age. See `PAGE_CELL`.
+    let cell = PAGE_CELL as usize;
+    let mut slots = vec![0u32; small().entries() as usize * cell];
     for (i, (page, slot)) in planted.iter().enumerate() {
         keys[i * 7] = page + 1;
-        slots[i * 7] = *slot;
+        slots[i * 7 * cell] = *slot;
     }
     keys[97] = local_page(VIEW, 2, (1, 1), LIGHTS) + 1;
-    slots[97] = 20;
+    slots[97 * cell] = 20;
+    // 🔴 A tombstone, on a level this camera uses. An evicted entry is
+    // not an empty one — `PAGE_DEAD - 1` decodes into a well-formed page
+    // that stands for nothing — and compaction that only skips EMPTY
+    // rasterises it. This planted one is the whole reason the test
+    // exists in this shape.
+    keys[71] = 0xffff_fffe;
+    slots[71 * cell] = 42;
     // 🔴 The other camera's pages, on levels this one also uses. Before
     // the view entered the key these were indistinguishable, and each
     // camera rasterised the other's clipmap with its own matrices.
     keys[43] = sun_page(0, 0, (3, 4), LIGHTS) + 1;
-    slots[43] = 30;
+    slots[43 * cell] = 30;
     keys[61] = sun_page(0, 5, (7, 8), LIGHTS) + 1;
-    slots[61] = 31;
+    slots[61 * cell] = 31;
     queue.write_buffer(pool.keys(), 0, bytemuck::cast_slice(&keys));
     queue.write_buffer(pool.slots(), 0, bytemuck::cast_slice(&slots));
 
@@ -522,5 +531,55 @@ fn the_page_reader_biases_in_texels() {
     assert!(
         !body.contains("receiver + bias"),
         "a constant added to the compared depth is what detaches a shadow"
+    );
+}
+
+/// Every pass that reads the page table reads it the SAME way.
+///
+/// 🔴 Written after breaking it. The table grew a second word per entry
+/// and a third key state in one change, and the marking pass and the
+/// shading pass were both updated while `page_compact.wgsl` was not. It
+/// kept compiling, kept running, and rasterised `PAGE_DEAD - 1` — which
+/// decodes into a perfectly well-formed view, light, level and cell,
+/// none of which mean anything — into a slot read off the wrong word.
+/// The frame filled with squares in the wrong places and nothing said
+/// why.
+///
+/// A grep, because the alternative is running four passes against a
+/// table hand-built into a hostile state. What it pins is exactly the
+/// two things that drifted: the stride on the slot, and the dead key.
+#[test]
+fn every_table_reader_agrees_on_the_layout() {
+    // (source, whether it is allowed to skip the dead check)
+    let readers = [
+        (
+            "page_compact.wgsl",
+            include_str!("../shaders/page_compact.wgsl"),
+        ),
+        ("page_mark.wgsl", include_str!("../shaders/page_mark.wgsl")),
+    ];
+    for (name, source) in readers {
+        assert!(
+            !source.contains("table_slots[entry]") && !source.contains("table_slots[probe]"),
+            "{name} indexes the table's slots without PAGE_CELL"
+        );
+        assert!(
+            source.contains("PAGE_DEAD"),
+            "{name} reads the table without knowing an entry can be evicted"
+        );
+    }
+
+    // The shading pass is the third reader and it lives in the other
+    // crate. It walks PAST a tombstone rather than skipping it — a
+    // lookup stops at EMPTY — so it needs the stride and not the
+    // constant.
+    let shading = kooch_lighting::inti_pbr_shader(1);
+    assert!(
+        shading.contains("inti_page_slots[probe * PAGE_CELL]"),
+        "the shading pass indexes the table's slots without PAGE_CELL"
+    );
+    assert!(
+        !shading.contains("if key == PAGE_DEAD"),
+        "a lookup that skips a tombstone stops walking a run it has to finish"
     );
 }
