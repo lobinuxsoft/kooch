@@ -460,3 +460,67 @@ fn the_draw_covers_a_whole_meshlet() {
         );
     }
 }
+
+/// A clipmap texel is not one size, so a bias in metres cannot serve
+/// both ends of the chain.
+///
+/// This is the argument the reader's bias is built on, in numbers: at
+/// the defaults, level 0's texel and the last level's differ by four
+/// orders of magnitude. Half a metre — what the reader used to add flat
+/// — is six thousand texels at the near end and a fraction of one at
+/// the far end. The near end is where an object meets the ground.
+#[test]
+fn a_clipmap_texel_is_not_one_size() {
+    let clipmap = ClipmapConfig::default();
+    let config = PageConfig::default();
+    let across = config.side(0) * config.page;
+
+    let finest = clipmap.extent(0) / across as f32;
+    let coarsest = clipmap.extent(clipmap.levels - 1) / across as f32;
+
+    assert!(
+        coarsest / finest > 1000.0,
+        "levels 0 and {} differ by {finest} vs {coarsest} metres per texel",
+        clipmap.levels - 1
+    );
+    // And the constant that used to be added flat, measured in each.
+    assert!(
+        0.5 / finest > 1000.0,
+        "half a metre is {} texels at level 0",
+        0.5 / finest
+    );
+}
+
+/// The page reader offsets its SAMPLE by the texel, the way the cascade
+/// does — it does not add a constant to the depth it compares.
+///
+/// 🔴 A grep, because the alternative is a GPU test that reproduces the
+/// whole shading bind group to observe one term. What it guards is
+/// narrow and exact: `INTI_NORMAL_BIAS` has to be multiplied by a
+/// per-level texel size inside the walk, and the comparison has to be
+/// against `receiver` alone. Both halves regressed together once.
+#[test]
+fn the_page_reader_biases_in_texels() {
+    let source = kooch_lighting::inti_pbr_shader(1);
+    let start = source
+        .find("fn inti_page_shadow(")
+        .expect("the reader is in the shader");
+    let end = source[start..]
+        .find("\nfn inti_shadow(")
+        .expect("the reader ends")
+        + start;
+    let body = &source[start..end];
+
+    assert!(
+        body.contains("texel_world * INTI_NORMAL_BIAS"),
+        "the offset has to scale with the level's texel"
+    );
+    assert!(
+        body.contains("to_light * INTI_DEPTH_BIAS"),
+        "and carry the cascade's depth term too"
+    );
+    assert!(
+        !body.contains("receiver + bias"),
+        "a constant added to the compared depth is what detaches a shadow"
+    );
+}

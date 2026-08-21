@@ -542,7 +542,7 @@ fn inti_page_debug(world_position: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
         // 🔴 `inti_page_shadow`'s own answer, not a second comparison —
         // bias, filter and all. Anything else measures a shadow this
         // engine does not draw.
-        let lit = inti_page_shadow(world_position, n_dot_l);
+        let lit = inti_page_shadow(world_position, n, -normalize(inti_pages.sun.xyz), n_dot_l);
         return mix(vec3<f32>(0.0, 0.0, shade), vec3<f32>(0.0, shade, 0.0), lit);
     }
     return vec3<f32>(1.0, 0.0, 0.0);
