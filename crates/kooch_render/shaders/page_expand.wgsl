@@ -94,7 +94,7 @@ fn transform_scale(m: mat4x4<f32>) -> f32 {
 @compute @workgroup_size(EXPAND_GROUP, 1, 1)
 fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     let level = expand.level;
-    let buckets = raster.local.y;
+    let buckets = raster.chain.x;
     let pages = min(atomicLoad(&page_counts[level]), raster.chain.z);
     let meshlets = visible_counts[level];
     if pages == 0u || meshlets == 0u {

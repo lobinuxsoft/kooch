@@ -37,6 +37,11 @@ use super::pool::{PagePool, PoolConfig};
 use super::{ClipmapConfig, PageConfig};
 
 use kooch_lighting::PAGE_TABLE as TABLE;
+// 🔴 The compaction reads a light's `range` to place its pages on the
+// sun's density scale, and `ClusterLight` is declared here — the same
+// concatenation the marking pass already uses. Only this pass needs it;
+// the expansion and the depth pass get `TABLE` alone.
+use kooch_lighting::CLUSTER_COMMON;
 const COMPACT: &str = include_str!("../../../shaders/page_compact.wgsl");
 const EXPAND: &str = include_str!("../../../shaders/page_expand.wgsl");
 const DEPTH: &str = include_str!("../../../shaders/page_depth.wgsl");
@@ -159,7 +164,6 @@ struct RasterUniform {
     world: [f32; 4],
     eye: [f32; 4],
     sun: [f32; 4],
-    local: [u32; 4],
 }
 
 #[repr(C)]
@@ -245,6 +249,11 @@ struct BoundKeys {
     slots: wgpu::Buffer,
     instances: wgpu::Buffer,
     descriptors: wgpu::Buffer,
+    // 🔴 In the key because it GROWS. The lights buffer is reallocated
+    // when the scene outgrows it, and a cached bind group holding the
+    // old one reads a lamp's range out of freed memory — or out of a
+    // buffer that is simply somebody else's now.
+    lights: wgpu::Buffer,
     visible: Vec<wgpu::Buffer>,
 }
 
@@ -274,7 +283,6 @@ impl PageRasterizer {
             })
             .collect();
         let levels = clipmap.levels;
-        let buckets = levels + config.levels();
 
         let module = |label: &str, body: &str| {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -282,7 +290,12 @@ impl PageRasterizer {
                 source: wgpu::ShaderSource::Wgsl(format!("{TABLE}\n{body}").into()),
             })
         };
-        let compact_module = module("page_compact", COMPACT);
+        let compact_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("page_compact"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{CLUSTER_COMMON}\n{TABLE}\n{COMPACT}").into(),
+            ),
+        });
         let expand_module = module("page_expand", EXPAND);
         let depth_module = module("page_depth", DEPTH);
 
@@ -401,7 +414,7 @@ impl PageRasterizer {
             uniform_stride,
             page_list: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_list"),
-                size: bucket(pool) as u64 * buckets as u64 * 8,
+                size: bucket(pool) as u64 * levels as u64 * 8,
                 // 🔴 COPY_SRC because `page_list_buffer` is public and the
                 // only reason to expose a GPU buffer is to read it back.
                 usage: storage | wgpu::BufferUsages::COPY_SRC,
@@ -409,13 +422,13 @@ impl PageRasterizer {
             }),
             counts: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_counts"),
-                size: count_slots(buckets) as u64 * 4,
+                size: count_slots(levels) as u64 * 4,
                 usage: storage | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
             expand_args: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_expand_args"),
-                size: buckets as u64 * 12,
+                size: levels as u64 * 12,
                 usage: storage | wgpu::BufferUsages::INDIRECT,
                 mapped_at_creation: false,
             }),
@@ -433,7 +446,7 @@ impl PageRasterizer {
             }),
             visible_counts: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_visible_counts"),
-                size: buckets as u64 * 4,
+                size: levels as u64 * 4,
                 // 🔴 COPY_SRC: the survivor counts ride home in the same
                 // readback as the page counts, so the expansion's cost
                 // can be read as the product it is. See `count_slots`.
@@ -462,7 +475,7 @@ impl PageRasterizer {
                 .map(|_| MeshletCull::new(device, 1, max_triangles_per_meshlet))
                 .collect(),
             bound: None,
-            readback: RasterReadback::new(device, count_slots(buckets)),
+            readback: RasterReadback::new(device, count_slots(levels)),
             config,
             clipmap,
             pool,
@@ -536,15 +549,17 @@ impl PageRasterizer {
         &self.draw_args
     }
 
-    /// Buckets in `page_list`: the sun's clipmap levels, then a local
-    /// light's chain levels.
+    /// Buckets in `page_list`: one OCTAVE of world texel size each.
     ///
-    /// 🔴 A bucket is a LOD and NOT a light. Every lamp shares the local
-    /// run, because a page carries the light it belongs to in its own
-    /// key — nothing downstream needs the list split by lamp. A bucket
-    /// per light per level is the 4848-view shape this avoids.
+    /// 🔴 The same count as the clipmap's levels, and that is the point
+    /// rather than a coincidence. `page_octave` is anchored so the sun's
+    /// level `L` lands on bucket `L`, so a local light's pages fall into
+    /// buckets the sun's culls already fill — a lamp and the sun that
+    /// want the same fineness want the same LOD, and share a list.
+    /// Bucketing by chain instead needs a cull per light to fill the
+    /// lamps' own buckets, which is the cost that grows with the scene.
     pub fn buckets(&self) -> u32 {
-        self.clipmap.levels + self.config.levels()
+        self.clipmap.levels
     }
 
     /// Slots in [`Self::counts_buffer`].
@@ -554,7 +569,6 @@ impl PageRasterizer {
 
     /// Reads the counters out of a mapped copy of [`Self::counts_buffer`].
     pub fn decode(&self, words: &[u32], view: u32) -> RasterCounts {
-        let sun_levels = self.clipmap.levels as usize;
         let levels = self.buckets() as usize;
         let cap = bucket(self.pool);
         let mut tests = 0u64;
@@ -582,8 +596,12 @@ impl PageRasterizer {
             worst,
             scatter,
             hybrid,
-            pages: words[..sun_levels].iter().map(|&n| n.min(cap)).sum(),
-            listed: words[sun_levels..levels].iter().map(|&n| n.min(cap)).sum(),
+            pages: words[..levels].iter().map(|&n| n.min(cap)).sum(),
+            // 🔴 Every listed page, the sun's and the lamps' alike,
+            // because they share buckets now: a lamp and the sun that
+            // want the same fineness are in the same list. `local` still
+            // says how many of them came from lamps.
+            listed: words[..levels].iter().map(|&n| n.min(cap)).sum(),
             dropped: words[levels],
             local: words[levels + 1],
             pairs: words[levels + 2].min(PAIR_CAPACITY),
@@ -718,7 +736,6 @@ impl PageRasterizer {
                 ],
                 eye: [eye.x, eye.y, eye.z, 0.0],
                 sun: [d.x, d.y, d.z, 1.0],
-                local: [self.config.levels(), self.buckets(), 0, 0],
             }),
         );
     }
@@ -740,13 +757,14 @@ impl PageRasterizer {
         view: u32,
         eye: Vec3,
         sun: Vec3,
-        lights: u32,
+        light_count: u32,
+        lights: &wgpu::Buffer,
     ) {
-        self.write_uniform(queue, view, eye, sun, lights);
+        self.write_uniform(queue, view, eye, sun, light_count);
         encoder.clear_buffer(&self.counts, 0, None);
         encoder.clear_buffer(&self.expand_args, 0, None);
         encoder.clear_buffer(&self.draw_args, 0, None);
-        let bind_group = self.compact_bind_group(device, page_pool);
+        let bind_group = self.compact_bind_group(device, page_pool, lights);
         let offset = [self.uniform_span(view).0 as u32];
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("shadow pages: compact"),
@@ -763,7 +781,12 @@ impl PageRasterizer {
         pass.dispatch_workgroups(1, 1, 1);
     }
 
-    fn compact_bind_group(&self, device: &wgpu::Device, page_pool: &PagePool) -> wgpu::BindGroup {
+    fn compact_bind_group(
+        &self,
+        device: &wgpu::Device,
+        page_pool: &PagePool,
+        lights: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("page_compact_bg"),
             layout: &self.compact_bgl,
@@ -776,6 +799,10 @@ impl PageRasterizer {
                 entry(5, &self.expand_args),
                 entry(6, &self.visible_counts),
                 entry(7, &self.draw_args),
+                // 🔴 For one field: a light's `range`. Without it a
+                // lamp's pages have no place on the density scale the
+                // sun's are on. See `page_octave`.
+                entry(8, lights),
             ],
         })
     }
@@ -808,12 +835,14 @@ impl PageRasterizer {
         page_pool: &PagePool,
         instances: &wgpu::Buffer,
         descriptors: &wgpu::Buffer,
+        lights: &wgpu::Buffer,
     ) {
         let keys = BoundKeys {
             keys: page_pool.keys().clone(),
             slots: page_pool.slots().clone(),
             instances: instances.clone(),
             descriptors: descriptors.clone(),
+            lights: lights.clone(),
             visible: self
                 .culls
                 .iter()
@@ -831,7 +860,7 @@ impl PageRasterizer {
             })
         };
         self.bound = Some(Bound {
-            compact: self.compact_bind_group(device, page_pool),
+            compact: self.compact_bind_group(device, page_pool, lights),
             expand: device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("page_expand_bg"),
                 layout: &self.expand_bgl,
@@ -935,13 +964,17 @@ impl PageRasterizer {
         view: u32,
         eye: Vec3,
         sun: Vec3,
-        lights: u32,
+        light_count: u32,
+        // The uploaded lights. The compaction reads one field —
+        // `range` — to place a lamp's pages on the same density scale
+        // as the sun's. See `page_octave`.
+        lights: &wgpu::Buffer,
         lod_target: f32,
     ) {
         let levels = self.clipmap.levels;
         let buckets = self.buckets();
         let view = view.min(atlas_layers(self.pool) - 1);
-        self.write_uniform(queue, view, eye, sun, lights);
+        self.write_uniform(queue, view, eye, sun, light_count);
         let uniform_offset = self.uniform_span(view).0 as u32;
 
         // 1. One cull per level. A level is a texel density and a
@@ -1008,7 +1041,7 @@ impl PageRasterizer {
         encoder.clear_buffer(&self.expand_args, 0, None);
         encoder.clear_buffer(&self.draw_args, 0, None);
 
-        self.ensure_bound(device, page_pool, instances, &mesh_pool.meshlets);
+        self.ensure_bound(device, page_pool, instances, &mesh_pool.meshlets, lights);
         let bound = self.bound.as_ref().expect("just built");
 
         {
@@ -1173,6 +1206,10 @@ fn compact_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             buffer_entry(5, false, c),
             buffer_entry(6, true, c),
             buffer_entry(7, false, c),
+            // 🔴 The eighth storage buffer, which is the whole downlevel
+            // budget: `max_storage_buffers_per_shader_stage` is 8. Any
+            // future reader of this pass has to displace something.
+            buffer_entry(8, true, c),
         ],
     })
 }
@@ -1323,6 +1360,15 @@ mod tests {
 
     /// What the shader says a struct measures, per WGSL's own layout
     /// rules.
+    /// The compaction as the device sees it: the cluster records, the
+    /// page table, then the pass. Parsing the pass alone stopped working
+    /// the moment it reached for `ClusterLight`.
+    fn compact_source() -> String {
+        // `shader_size` and `shader_offsets` prepend `TABLE` themselves,
+        // so this adds only what the pass reaches for beyond it.
+        format!("{CLUSTER_COMMON}\n{COMPACT}")
+    }
+
     fn shader_size(body: &str, name: &str) -> u32 {
         let source = format!("{TABLE}\n{body}");
         let module = naga::front::wgsl::parse_str(&source).expect("the shader parses");
@@ -1379,7 +1425,7 @@ mod tests {
     #[test]
     fn the_uniform_mirrors_match_the_shader() {
         assert_eq!(
-            shader_size(COMPACT, "PageRaster") as usize,
+            shader_size(&compact_source(), "PageRaster") as usize,
             std::mem::size_of::<RasterUniform>(),
             "PageRaster",
         );
@@ -1401,9 +1447,8 @@ mod tests {
             ("world", std::mem::offset_of!(RasterUniform, world)),
             ("eye", std::mem::offset_of!(RasterUniform, eye)),
             ("sun", std::mem::offset_of!(RasterUniform, sun)),
-            ("local", std::mem::offset_of!(RasterUniform, local)),
         ];
-        let theirs = shader_offsets(COMPACT, "PageRaster");
+        let theirs = shader_offsets(&compact_source(), "PageRaster");
         assert_eq!(theirs.len(), mine.len(), "field count");
         for ((name, offset), (their_name, their_offset)) in mine.iter().zip(&theirs) {
             assert_eq!(name, their_name, "field order");

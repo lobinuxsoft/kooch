@@ -369,8 +369,13 @@ struct PageRaster {
     // x table entries, y physical pool pages, z pages across the atlas,
     // w page texels.
     pool: vec4<u32>,
-    // x levels in the clipmap, y the pair list's capacity, z pages one
-    // level may list, w TRIANGLES A MESHLET MAY HOLD.
+    // x buckets in `page_list`, y the pair list's capacity, z pages one
+    // bucket may list, w TRIANGLES A MESHLET MAY HOLD.
+    //
+    // 🔴 `x` is the clipmap's level count AND the bucket count, and that
+    // is `page_octave`'s anchor rather than a coincidence: the sun's
+    // level L is bucket L, so a lamp's pages land in buckets the sun's
+    // culls already fill.
     //
     // 🔴 `w` is the fixed vertex count the indirect draw issues, over
     // three. It is the builder's `max_triangles_per_meshlet` and NOT
@@ -386,30 +391,6 @@ struct PageRaster {
     eye: vec4<f32>,
     // xyz the sun's direction, w 1 when there is one.
     sun: vec4<f32>,
-    // x levels in a LOCAL light's mip chain, y buckets in `page_list`,
-    // z unused, w unused.
-    //
-    // 🔴 A bucket is a LOD, not a light. `page_list` holds the sun's
-    // clipmap levels first and a local light's chain levels after them,
-    // and every local light shares those — a page carries the light it
-    // belongs to in its own key, so nothing downstream needs the list
-    // partitioned by lamp. Partitioning by light instead would mean a
-    // bucket per light per level, which is the 4848-view shape this
-    // design exists to avoid.
-    local: vec4<u32>,
-}
-
-/// Which bucket of `page_list` a page belongs in, by its chain.
-///
-/// ⚠️ SUPERSEDED by `page_octave`, and kept only until the compaction
-/// can reach a light's range. Bucketing by chain level puts a lamp and
-/// the sun in different lists even when they want the same fineness,
-/// which needs a cull per light to fill the second.
-fn page_bucket(id: PageId, sun_levels: u32) -> u32 {
-    if id.is_sun {
-        return id.level;
-    }
-    return sun_levels + id.level;
 }
 
 /// What one texel of this page covers, in metres.

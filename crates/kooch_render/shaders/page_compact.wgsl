@@ -49,6 +49,12 @@
 // its draw arguments.
 @group(0) @binding(6) var<storage, read> visible_counts: array<u32>;
 @group(0) @binding(7) var<storage, read_write> draw_args: array<u32>;
+// 🔴 The lights, for ONE field: `range`. A local page's texel size is
+// `2 * range / texels(level)`, so without it a lamp's pages cannot be
+// placed on the same density scale as the sun's and the bucketing falls
+// back to chain level — which is the cost that grows with the scene.
+// See `page_octave`.
+@group(0) @binding(8) var<storage, read> lights: array<ClusterLight>;
 
 const COMPACT_GROUP: u32 = 64u;
 const EXPAND_GROUP: u32 = 64u;
@@ -83,8 +89,7 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         raster.space.z,
         raster.space.w,
     );
-    let sun_levels = raster.chain.x;
-    let buckets = raster.local.y;
+    let buckets = raster.chain.x;
     // 🔴 Not a cap and not a failure: the table holds every view's
     // pages, and each view compacts its own. Counted anyway, because
     // "the pool is full and my view got forty pages" is unreadable
@@ -94,11 +99,20 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         atomicAdd(&page_counts[buckets + 4u], 1u);
         return;
     }
-    let slot = page_bucket(id, sun_levels);
-    if slot >= buckets {
-        atomicAdd(&page_counts[buckets], 1u);
-        return;
+    // 🔴 The bucket is an OCTAVE of world texel size, so a lamp and the
+    // sun land in the same list whenever they want the same fineness —
+    // and the sun's culls have already filled it. The anchor puts the
+    // clipmap's level L on bucket L exactly; see `page_octave`.
+    var range = 0.0;
+    if !id.is_sun && id.light < arrayLength(&lights) {
+        range = lights[id.light].range;
     }
+    // Virtual TEXELS across level 0, which is pages across it times a
+    // page's side — `space.y` is a face's page count and would be off
+    // by the page size squared.
+    let virtual_texels = raster.space.z * raster.pool.w;
+    let texel = page_texel_world(id, raster.world.x, virtual_texels, range);
+    let slot = page_octave(texel, raster.world.x, virtual_texels, buckets);
     // Local pages are still counted separately, because "listed" and
     // "drawn" are different claims and the panel states both.
     if !id.is_sun {
@@ -125,7 +139,7 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
 @compute @workgroup_size(EXPAND_GROUP, 1, 1)
 fn cs_expand_args(@builtin(global_invocation_id) gid: vec3<u32>) {
     let level = gid.x;
-    if level >= raster.local.y {
+    if level >= raster.chain.x {
         return;
     }
     let pages = min(atomicLoad(&page_counts[level]), raster.chain.z);
@@ -145,7 +159,7 @@ fn cs_expand_args(@builtin(global_invocation_id) gid: vec3<u32>) {
 // came from.
 @compute @workgroup_size(1, 1, 1)
 fn cs_draw_args() {
-    let pairs = min(atomicLoad(&page_counts[raster.local.y + 2u]), raster.chain.y);
+    let pairs = min(atomicLoad(&page_counts[raster.chain.x + 2u]), raster.chain.y);
     // Vertex count is fixed per meshlet: the draw is indirect over a
     // triangle budget and the tail of a shorter meshlet is discarded in
     // the vertex shader.

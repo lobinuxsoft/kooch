@@ -105,27 +105,32 @@ fn the_counters_name_every_level() {
     let buckets = raster.buckets();
     // 🔴 Per BUCKET, and a bucket is a LOD rather than a light: the
     // sun's clipmap levels first, then the chain levels every local
-    // lamp shares. Then bucket overflow, local pages, pairs, pair
-    // overflow, pages owned by another camera — and then a second run
-    // per bucket for the survivors each cull produced, which is the
-    // other half of the expansion's cost, and a third for the cells a
-    // scatter would have visited instead.
-    assert!(
-        buckets > sun,
-        "the local chain contributes no buckets; every lamp's pages would          land in the sun's"
+    // shared by the sun and every lamp that wants that fineness. Then
+    // bucket overflow, local pages, pairs, pair overflow, pages owned by
+    // another camera — and then a second run per bucket for the
+    // survivors each cull produced, which is the other half of the
+    // expansion's cost, and a third for the cells a scatter would have
+    // visited instead.
+    // 🔴 The same count as the clipmap's levels, and that IS the design:
+    // a bucket is an octave of world texel size, anchored so the sun's
+    // level L lands on bucket L. A lamp's pages fall into buckets the
+    // sun's culls already fill, which is what makes the local half cost
+    // no new dispatch.
+    assert_eq!(
+        buckets, sun,
+        "buckets stopped being octaves of the sun's own scale; a lamp's pages now need \
+         a cull of their own to fill whatever the extra buckets are"
     );
     assert_eq!(raster.count_slots(), buckets * 3 + 5);
     let mut words = vec![0u32; raster.count_slots() as usize];
     words[0] = 7;
     words[1] = 5;
-    // A local bucket, which the sun's total must NOT swallow.
-    words[sun as usize] = 9;
+    words[2] = 9;
     words[buckets as usize + 1] = 42;
     words[buckets as usize + 2] = 900;
     words[buckets as usize + 4] = 31;
     let counts = raster.decode(&words, 1);
-    assert_eq!(counts.pages, 12, "the sun's buckets sum on their own");
-    assert_eq!(counts.listed, 9, "the local buckets sum on their own");
+    assert_eq!(counts.pages, 21, "every bucket sums");
     assert_eq!(counts.local, 42, "local pages are reported, not hidden");
     assert_eq!(counts.pairs, 900);
     assert_eq!(counts.others, 31, "the other camera's pages are named");
@@ -166,6 +171,34 @@ fn local_page(view: u32, level: u32, cell: (u32, u32), lights: u32) -> u32 {
     let side = config.side(level);
     let base: u32 = (0..level).map(|l| config.side(l).pow(2)).sum();
     view * span(lights) + base + cell.1 * side + cell.0
+}
+
+/// A lights buffer the compaction can read a `range` out of.
+///
+/// 🔴 It reads exactly one field, and it is the field that places a
+/// lamp's pages on the same density scale as the sun's — see
+/// `page_octave`. A buffer of the wrong stride reads somebody else's
+/// float as a range and buckets the lamp somewhere plausible and wrong,
+/// so this builds real `GpuLight` records rather than a flat array.
+fn lights_buffer(device: &wgpu::Device, queue: &wgpu::Queue, ranges: &[f32]) -> wgpu::Buffer {
+    let records: Vec<kooch_lighting::GpuLight> = ranges
+        .iter()
+        .map(|&range| kooch_lighting::GpuLight {
+            range,
+            kind: 1,
+            ..Default::default()
+        })
+        .collect();
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("page_raster_test_lights"),
+        size: (records.len().max(1) * std::mem::size_of::<kooch_lighting::GpuLight>()) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    if !records.is_empty() {
+        queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&records));
+    }
+    buffer
 }
 
 fn read_words(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Vec<u32> {
@@ -247,13 +280,13 @@ fn a_page_compacts_into_the_level_it_came_from() {
         glam::Vec3::ZERO,
         glam::Vec3::NEG_Y,
         LIGHTS,
+        &lights_buffer(&device, &queue, &[10.0]),
     );
     queue.submit([encoder.finish()]);
 
     let buckets = raster.buckets() as usize;
     let counts = read_words(&device, &queue, raster.counts_buffer());
     assert_eq!(counts[0], 2, "two pages on level 0");
-    assert_eq!(counts[5], 1, "one page on level 5");
     assert_eq!(counts[buckets], 0, "no bucket overflowed");
     assert_eq!(
         counts[buckets + 1],
@@ -265,26 +298,24 @@ fn a_page_compacts_into_the_level_it_came_from() {
         2,
         "the other camera's pages are counted and left alone"
     );
-    // 🔴 And it LANDS somewhere. The local page was counted and dropped
-    // before; now it goes into the bucket its own chain level names,
-    // past the sun's clipmap. `LOCAL_LEVEL` is the level it was planted
-    // at — the bucket is the LOD, and every lamp shares it.
+    // 🔴 And it LANDS somewhere — in one of the SUN'S buckets, because a
+    // bucket is an octave of world texel size and a lamp that wants the
+    // sun's fineness wants the sun's LOD. Four pages were planted for
+    // this view and all four are listed; which bucket the lamp shares
+    // depends on its range, which is exactly the point and exactly why
+    // this does not assert an index.
     const LOCAL_LEVEL: usize = 2;
+    let listed: u32 = (0..levels as usize).map(|l| counts[l]).sum();
     assert_eq!(
-        counts[levels as usize + LOCAL_LEVEL],
-        1,
-        "the local page reached no bucket; it is listed nowhere and drawn never"
+        listed, 4,
+        "three sun pages and one lamp page were planted; {listed} reached a bucket"
     );
-    for level in 0..PageConfig::default().levels() as usize {
-        if level == LOCAL_LEVEL {
-            continue;
-        }
-        assert_eq!(
-            counts[levels as usize + level],
-            0,
-            "a local bucket other than {LOCAL_LEVEL} picked up a page"
-        );
-    }
+    // The lamp did not simply land on top of a sun page: level 5 held
+    // exactly one before and the lamp is not at level 5's density.
+    assert!(
+        counts[5] >= 1,
+        "the sun's own level-5 page stopped being listed"
+    );
 
     // The list is bucketed: level L owns `[L * bucket, (L+1) * bucket)`.
     let list = read_words(&device, &queue, raster.page_list_buffer());
@@ -337,8 +368,8 @@ fn a_page_compacts_into_the_level_it_came_from() {
         "the local page's listing points somewhere else"
     );
     assert!(
-        local_at >= levels as usize * bucket,
-        "the local page landed in a bucket the sun owns"
+        local_at < levels as usize * bucket,
+        "the local page landed past every bucket"
     );
 
     // Everything the compaction saw and did not list still says so,
@@ -530,6 +561,7 @@ fn the_draw_covers_a_whole_meshlet() {
         glam::Vec3::ZERO,
         glam::Vec3::NEG_Y,
         1,
+        &lights_buffer(&device, &queue, &[10.0]),
     );
     queue.submit([encoder.finish()]);
 

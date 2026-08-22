@@ -13,7 +13,7 @@ use kooch_core::resource::Resources;
 
 use crate::meshlet::SceneCullParams;
 use crate::shadow::pages::mark::{MarkCounts, PageMarker, Paint};
-use crate::shadow::pages::pool::{PAGES_RANGE, PoolConfig};
+use crate::shadow::pages::pool::{PoolConfig, PAGES_RANGE};
 use crate::shadow::pages::raster::{PageRasterizer, RasterCounts};
 use crate::shadow::{ClipmapConfig, PageConfig};
 
@@ -401,6 +401,7 @@ impl MeshletRenderStage {
             eye,
             sun,
             lights,
+            self.lights.light_buffer(),
             lod_target,
         );
         // Idempotent, and this is the one call site that runs after
