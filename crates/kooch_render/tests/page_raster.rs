@@ -582,4 +582,8 @@ fn every_table_reader_agrees_on_the_layout() {
         !shading.contains("if key == PAGE_DEAD"),
         "a lookup that skips a tombstone stops walking a run it has to finish"
     );
+    assert!(
+        shading.contains("PAGE_FRESH"),
+        "the shading pass samples pages the raster has not drawn into yet"
+    );
 }

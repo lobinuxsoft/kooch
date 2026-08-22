@@ -815,6 +815,13 @@ fn inti_page_lookup(page: u32) -> u32 {
             return PAGE_MISS;
         }
         if key == page + 1u {
+            // 🔴 A page allocated this frame has not been drawn into
+            // yet, and this pass samples an atlas a frame old. See
+            // `PAGE_FRESH`: a miss sends the reader one level coarser,
+            // which is a page that DOES hold depth.
+            if (inti_page_slots[probe * PAGE_CELL + 1u] & PAGE_FRESH) != 0u {
+                return PAGE_MISS;
+            }
             return inti_page_slots[probe * PAGE_CELL];
         }
         probe = page_step(probe, entries);

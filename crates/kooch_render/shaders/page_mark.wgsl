@@ -296,7 +296,8 @@ fn page_touch(page: u32) -> u32 {
     if dead != PAGE_MISS {
         let outcome = atomicCompareExchangeWeak(&table_keys[dead], PAGE_DEAD, page + 1u);
         if outcome.exchanged {
-            page_stamp(dead, slot, frame);
+            // Fresh: allocated, not yet drawn. See `PAGE_FRESH`.
+            page_stamp(dead, slot, frame | PAGE_FRESH);
             atomicAdd(&counters[8], 1u);
             return slot;
         }
@@ -306,7 +307,7 @@ fn page_touch(page: u32) -> u32 {
     for (var i = 0u; i < PAGE_PROBES; i = i + 1u) {
         let outcome = atomicCompareExchangeWeak(&table_keys[probe], PAGE_EMPTY, page + 1u);
         if outcome.exchanged {
-            page_stamp(probe, slot, frame);
+            page_stamp(probe, slot, frame | PAGE_FRESH);
             atomicAdd(&counters[8], 1u);
             return slot;
         }
@@ -662,7 +663,7 @@ fn age_view(@builtin(global_invocation_id) id: vec3<u32>) {
     // A rebuild empties the view outright — the pool's shape changed
     // under it, so a slot in an old entry names a page in a new atlas.
     if pages.life.z == 0u {
-        let age = page_age(entry);
+        let age = page_age(entry) & PAGE_AGE_MASK;
         // Unsigned, so a frame index that ran backwards (a rebuild, a
         // wrap) reads as enormous and evicts. That is the safe way for
         // this comparison to be wrong.

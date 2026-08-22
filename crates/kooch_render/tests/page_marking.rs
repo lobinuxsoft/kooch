@@ -1379,3 +1379,86 @@ fn a_resident_page_keeps_its_slot() {
         }
     }
 }
+
+/// A page allocated this frame is flagged until the frame after it.
+///
+/// 🔴 The fused raster shades against an atlas a frame old. A page that
+/// was already resident holds its own depth there; a page allocated this
+/// frame holds whatever the page that used to own its slot left behind,
+/// because the slot came off a free list. That is a shadow from
+/// somewhere else in the world, for one frame, every time the camera
+/// moves — which is exactly what "artefacts that flash and vanish" is.
+///
+/// It did not show before the pool persisted, and the reason is not the
+/// ordering: the allocator was a bump from zero, so a page got the same
+/// slot every frame and the stale atlas happened to hold its own depth.
+#[test]
+fn a_fresh_page_is_flagged_until_it_is_drawn() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    const FRESH: u32 = 0x8000_0000;
+    let resources = world();
+    let eye = Vec3::ZERO;
+    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let proj = projection();
+    let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+    let mut lights = GpuLights::new(&device);
+    let mut frame = kooch_lighting::LightFrame::extract(&resources);
+    lights.update(&device, &queue, &resources, camera, None, &mut frame);
+    let depth_view = depth_texture(&device, &queue, 0.01);
+    let target = paint_target(&device);
+    let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
+    marker.set_pool(&device, PoolConfig::default());
+
+    let mut fresh_per_frame = Vec::new();
+    for index in 0..3u32 {
+        marker.set_frame(index);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            Some(Vec3::new(0.3, -1.0, 0.2)),
+            (SIZE, SIZE),
+            0,
+            1,
+            100,
+            Paint {
+                target: &target,
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        let keys = read_words(&device, &queue, marker.pool().keys());
+        let cells = read_words(&device, &queue, marker.pool().slots());
+        let (mut fresh, mut live) = (0u32, 0u32);
+        for (entry, &key) in keys.iter().enumerate() {
+            if key == 0 || key == 0xffff_fffe {
+                continue;
+            }
+            live += 1;
+            if cells[entry * PAGE_CELL as usize + 1] & FRESH != 0 {
+                fresh += 1;
+            }
+        }
+        assert!(live > 0, "frame {index} filed nothing");
+        fresh_per_frame.push((fresh, live));
+    }
+
+    let (fresh, live) = fresh_per_frame[0];
+    assert_eq!(fresh, live, "every page of frame 0 is new and undrawn");
+    for (index, (fresh, _)) in fresh_per_frame.iter().enumerate().skip(1) {
+        assert_eq!(
+            *fresh, 0,
+            "frame {index} still flags {fresh} pages the raster has drawn"
+        );
+    }
+}
