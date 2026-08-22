@@ -103,8 +103,10 @@ fn the_counters_name_every_level() {
     let raster = rasterizer(&device);
     let levels = ClipmapConfig::default().levels;
     // Per level, then bucket overflow, local pages, pairs, pair
-    // overflow, pages owned by another camera.
-    assert_eq!(raster.count_slots(), levels + 5);
+    // overflow, pages owned by another camera — and then a second run
+    // per level for the survivors each cull produced, which is the other
+    // half of the expansion's cost.
+    assert_eq!(raster.count_slots(), levels * 2 + 5);
     let mut words = vec![0u32; raster.count_slots() as usize];
     words[0] = 7;
     words[1] = 5;
@@ -930,4 +932,52 @@ fn the_paged_shadow_resolves_like_a_cascade() {
         "the default is finer than the cascade at only {finer} of {} distances",
         distances.len()
     );
+}
+
+/// The expansion's cost is reported as the product it is.
+///
+/// 🔴 Written after guessing this number instead of measuring it. The
+/// scatter form was built on the assumption that a meshlet touches "a
+/// handful" of pages; at the finest clipmap levels a page is a
+/// centimetre across and a one-metre meshlet's rect covers 16384 cells,
+/// so the frame went from 200 fps to 30. The assumption was never in a
+/// test because it was never a measurement.
+///
+/// Now both halves come home in the same readback — pages per level from
+/// the compaction, survivors per level copied in from the culls — and
+/// the product is exact rather than assumed.
+#[test]
+fn the_counters_carry_the_expansions_cost() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let raster = rasterizer(&device);
+    let levels = ClipmapConfig::default().levels as usize;
+
+    // The layout has to have room for both runs, or `decode` reads a
+    // survivor count out of a slot that holds an overflow flag.
+    assert!(
+        raster.count_slots() as usize >= levels * 2 + 5,
+        "the counter buffer has no room for the survivor counts"
+    );
+
+    // Planted rather than rendered: what is under test is that `decode`
+    // multiplies the right two runs, not what a scene happens to hold.
+    let mut words = vec![0u32; raster.count_slots() as usize];
+    words[3] = 7; // level 3: seven pages
+    words[9] = 2; // level 9: two pages
+    words[levels + 2] = 40; // pairs emitted
+    words[levels + 5 + 3] = 100; // level 3: a hundred survivors
+    words[levels + 5 + 9] = 500; // level 9: five hundred survivors
+
+    let counts = raster.decode(&words, 0);
+    assert_eq!(counts.tests, 7 * 100 + 2 * 500, "the product is wrong");
+    assert_eq!(
+        counts.worst,
+        (9, 1000),
+        "the worst level is the one that walks the most, not the one with the most pages"
+    );
+    assert_eq!(counts.pairs, 40);
+    let _ = queue;
 }

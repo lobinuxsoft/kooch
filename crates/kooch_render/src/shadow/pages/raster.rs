@@ -113,6 +113,16 @@ pub struct RasterCounts {
     pub others: u32,
     /// Which camera this is.
     pub view: u32,
+    /// Meshlet/page tests the expansion ran, summed over the levels.
+    ///
+    /// 🔴 The expansion is a product — this level's pages times this
+    /// level's survivors — so its cost is not the pairs it emits but
+    /// the combinations it walks to find them. A ratio of tests to
+    /// pairs is how much of the pass is spent proving a miss, and it is
+    /// the number that decides the shape of the local-light raster.
+    pub tests: u64,
+    /// The level that ran the most tests, and how many.
+    pub worst: (u32, u64),
 }
 
 #[repr(C)]
@@ -503,7 +513,21 @@ impl PageRasterizer {
     /// Reads the counters out of a mapped copy of [`Self::counts_buffer`].
     pub fn decode(&self, words: &[u32], view: u32) -> RasterCounts {
         let levels = self.clipmap.levels as usize;
+        let cap = bucket(self.pool);
+        let mut tests = 0u64;
+        let mut worst = (0u32, 0u64);
+        for level in 0..levels {
+            let pages = words[level].min(cap) as u64;
+            let meshlets = words.get(levels + 5 + level).copied().unwrap_or(0) as u64;
+            let work = pages * meshlets;
+            tests += work;
+            if work > worst.1 {
+                worst = (level as u32, work);
+            }
+        }
         RasterCounts {
+            tests,
+            worst,
             pages: words[..levels]
                 .iter()
                 .map(|&n| n.min(bucket(self.pool)))
@@ -533,8 +557,16 @@ pub const PAIR_CAPACITY: u32 = 1 << 20;
 
 fn count_slots(levels: u32) -> u32 {
     // Per level, then: bucket overflow, local pages skipped, pairs, pair
-    // overflow, pages owned by another view.
-    levels + 5
+    // overflow, pages owned by another view — and THEN the survivors
+    // each level's cull produced, copied in from `visible_counts`.
+    //
+    // 🔴 The second run is what makes the expansion's cost readable. Its
+    // work is pages TIMES meshlets per level, and both halves were
+    // already on the GPU in different buffers, so the only thing missing
+    // was bringing them home together. Nothing is counted at dispatch
+    // time: an atomic per thread would cost more than the number is
+    // worth, and the product is exact anyway.
+    levels * 2 + 5
 }
 
 /// The atlas: one square layer per camera.
@@ -971,6 +1003,16 @@ impl PageRasterizer {
             pass.draw_indirect(&self.draw_args, 0);
         }
 
+        // The survivor counts, brought home alongside the page counts so
+        // the expansion's cost can be read as the product it is. See
+        // `count_slots`.
+        encoder.copy_buffer_to_buffer(
+            &self.visible_counts,
+            0,
+            &self.counts,
+            (self.clipmap.levels as u64 + 5) * 4,
+            self.clipmap.levels as u64 * 4,
+        );
         self.readback.record(encoder, &self.counts, view);
     }
 
