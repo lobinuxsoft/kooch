@@ -891,7 +891,7 @@ fn inti_page_shadow(
         let texel_world = extent / f32(side * page_texels);
         let sampled = world_position
             + normal * (texel_world * INTI_NORMAL_BIAS)
-            + to_light * INTI_DEPTH_BIAS;
+            + to_light * INTI_POINT_DEPTH_BIAS;
 
         // The plane is ABSOLUTE and the grid is snapped, so a texel's
         // footprint does not slide with the camera. See `sun_centre`.
@@ -1006,9 +1006,16 @@ fn inti_local_page_shadow(
         // same identity `page_level` inverts, and the reason the offset
         // is computed inside the walk rather than once before it.
         let texel_world = 2.0 * distance / f32(side * page_texels);
+        // 🔴 The POINT pair, not the sun's. `INTI_POINT_DEPTH_BIAS` is
+        // FOUR TIMES `INTI_DEPTH_BIAS` and its doc says exactly why: a
+        // cube face is 90 degrees and its texels are coarse, so a lamp
+        // needs more depth push than a cascade. Borrowing the sun's
+        // prints a stair-stepped square on an empty floor under a lamp
+        // — the floor shadowing itself — which is what this reader
+        // shipped doing.
         let sampled = world_position
-            + normal * (texel_world * INTI_NORMAL_BIAS)
-            + to_light * INTI_DEPTH_BIAS;
+            + normal * (texel_world * INTI_POINT_NORMAL_BIAS)
+            + to_light * INTI_POINT_DEPTH_BIAS;
 
         let offset = sampled - light_position;
         let hit = cube_face(offset);

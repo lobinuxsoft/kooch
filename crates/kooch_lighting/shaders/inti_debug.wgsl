@@ -728,9 +728,18 @@ fn inti_lamp_page_debug(world_position: vec3<f32>, n: vec3<f32>, faces: bool) ->
     for (var level = 0u; level < levels; level = level + 1u) {
         let side = level_side_of(level, side0);
         let texel_world = 2.0 * max(distance, PAGE_NEAR) / f32(side * page_texels);
-        let sampled = world_position
-            + n * (texel_world * INTI_NORMAL_BIAS)
-            + to_light * INTI_DEPTH_BIAS;
+        // 🔴 The FACE view reads the raw position and the OCCLUSION view
+        // reads the biased one, and the split is the point. A bias moves
+        // the sample across a face boundary near a seam, so a face view
+        // that applied it would draw seams that are an artefact of the
+        // bias rather than of the cube — and the whole reason to look at
+        // faces is to judge the cube's own arithmetic.
+        var sampled = world_position;
+        if (!faces) {
+            sampled = world_position
+                + n * (texel_world * INTI_POINT_NORMAL_BIAS)
+                + to_light * INTI_POINT_DEPTH_BIAS;
+        }
         let offset = sampled - light.position;
         let hit = cube_face(offset);
         let face = select(u32(hit.w), 0u, is_spot);

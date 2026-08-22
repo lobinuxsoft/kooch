@@ -476,6 +476,38 @@ fn a_lamp_reads_its_pages_without_a_cube_slot() {
         );
     }
 
+    // 🔴 And it biases like a LAMP. `INTI_POINT_DEPTH_BIAS` is four
+    // times `INTI_DEPTH_BIAS`, and the doc beside those constants says
+    // why and what borrowing the sun's looks like: a stair-stepped
+    // square printed on an empty floor under a lamp, the floor
+    // shadowing itself. That doc exists because it already happened
+    // once to the cube reader; the page reader shipped repeating it.
+    let reader = shading
+        .find("fn inti_local_page_shadow(")
+        .expect("the page reader is gone");
+    let end = shading[reader..]
+        .find("\n}\n")
+        .map(|e| reader + e)
+        .unwrap_or(shading.len());
+    // Comments stripped: this one NAMES the cascade constants to explain
+    // why it does not use them, and a scan that reads prose finds what
+    // the prose is warning about.
+    let body: String = shading[reader..end]
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        body.contains("INTI_POINT_DEPTH_BIAS") && body.contains("INTI_POINT_NORMAL_BIAS"),
+        "the page reader biases with the sun's constants; a cube face is 90 degrees and \
+         its texels are coarse, so a quarter of the depth push it needs prints the floor \
+         on itself"
+    );
+    assert!(
+        !body.contains("* INTI_DEPTH_BIAS") && !body.contains("* INTI_NORMAL_BIAS"),
+        "the page reader still reaches for a cascade's bias somewhere"
+    );
+
     // And the reader agrees with the writer on depth. `page_depth.wgsl`
     // stores `PAGE_NEAR / distance`; a reader reconstructing it any
     // other way is wrong by the whole non-linearity of the projection.
