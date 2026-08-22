@@ -376,7 +376,7 @@ impl PageRasterizer {
             page_list: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_list"),
                 size: bucket(pool) as u64 * levels as u64 * 8,
-                usage: storage | wgpu::BufferUsages::COPY_SRC,
+                usage: storage,
                 mapped_at_creation: false,
             }),
             counts: device.create_buffer(&wgpu::BufferDescriptor {
@@ -406,7 +406,10 @@ impl PageRasterizer {
             visible_counts: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_visible_counts"),
                 size: levels as u64 * 4,
-                usage: storage,
+                // 🔴 COPY_SRC: the survivor counts ride home in the same
+                // readback as the page counts, so the expansion's cost
+                // can be read as the product it is. See `count_slots`.
+                usage: storage | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
             levels: device.create_buffer(&wgpu::BufferDescriptor {
@@ -1323,6 +1326,72 @@ mod tests {
             assert_eq!(name, their_name, "field order");
             assert_eq!(*offset as u32, *their_offset, "`{name}` starts elsewhere");
         }
+    }
+
+    /// Every buffer this pass copies OUT of declares that it can be.
+    ///
+    /// 🔴 Written after shipping a `copy_buffer_to_buffer` whose source
+    /// lacked `COPY_SRC`. It compiles; it passes every test that plants
+    /// words and decodes them; and it fails at RUNTIME, once per view
+    /// per frame forever, with the shadow pass producing nothing. The
+    /// tests around it never ran `record`, which is where the copy is.
+    ///
+    /// A source check rather than a GPU one, because the question is
+    /// about a declaration and answering it on a device would mean
+    /// building a whole frame to observe one flag.
+    #[test]
+    fn every_copied_buffer_can_be_copied_from() {
+        let source = include_str!("raster.rs");
+        // The buffers this pass copies out of, by the field name the
+        // copy uses.
+        let copied = copied_fields(source);
+        assert!(
+            !copied.is_empty(),
+            "the scan found no copies at all; it has stopped matching the source"
+        );
+        for field in copied {
+            // Buffers are labelled `page_raster_<field>`; find that
+            // descriptor and read the usage line under it.
+            let label = format!("page_raster_{field}");
+            let at = source
+                .find(&format!("Some(\"{label}\")"))
+                .unwrap_or_else(|| panic!("{label} has no buffer descriptor"));
+            let body = &source[at..at + 400];
+            let usage = body
+                .find("usage:")
+                .map(|i| &body[i..body[i..].find(',').map(|j| i + j).unwrap_or(body.len())])
+                .unwrap_or("");
+            assert!(
+                usage.contains("COPY_SRC"),
+                "{label} is copied out of and its usage is `{usage}`"
+            );
+        }
+    }
+
+    /// The field each `copy_buffer_to_buffer` reads FROM — the first
+    /// `&self.<field>` after the call, whatever the formatter did to the
+    /// whitespace between them.
+    fn copied_fields(source: &str) -> std::collections::BTreeSet<&str> {
+        let mut out = std::collections::BTreeSet::new();
+        let mut rest = source;
+        while let Some(at) = rest.find("copy_buffer_to_buffer(") {
+            let tail = &rest[at + "copy_buffer_to_buffer(".len()..];
+            // 🔴 The FIRST argument only. The destination is the third,
+            // and it needs COPY_DST rather than COPY_SRC — a scan that
+            // took whichever `&self.` came first would demand the wrong
+            // flag of the wrong buffer.
+            let first = &tail[..tail.find(',').unwrap_or(0)];
+            if let Some(field) = first.trim().strip_prefix("&self.") {
+                let end = field
+                    .find(|c: char| !c.is_alphanumeric() && c != '_')
+                    .unwrap_or(field.len());
+                if end > 0 {
+                    out.insert(&field[..end]);
+                }
+            }
+            rest = tail;
+        }
+        out
     }
 
     /// A camera's slice is its own, and nothing else's.
