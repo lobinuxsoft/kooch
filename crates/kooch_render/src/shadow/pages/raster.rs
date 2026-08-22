@@ -376,7 +376,9 @@ impl PageRasterizer {
             page_list: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_list"),
                 size: bucket(pool) as u64 * levels as u64 * 8,
-                usage: storage,
+                // 🔴 COPY_SRC because `page_list_buffer` is public and the
+                // only reason to expose a GPU buffer is to read it back.
+                usage: storage | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
             counts: device.create_buffer(&wgpu::BufferDescriptor {
@@ -674,6 +676,7 @@ impl PageRasterizer {
     /// scene: hand it a table and the buckets say whether a page
     /// decodes back to the level it was encoded from.
     #[allow(clippy::too_many_arguments)]
+    #[profiling::function]
     pub fn record_compaction(
         &self,
         device: &wgpu::Device,
@@ -862,6 +865,7 @@ impl PageRasterizer {
     /// Culls, compacts, expands and draws. Call **after** the marking
     /// pass: it reads the table marking filled.
     #[allow(clippy::too_many_arguments)]
+    #[profiling::function]
     pub fn record(
         &mut self,
         device: &wgpu::Device,
@@ -887,45 +891,53 @@ impl PageRasterizer {
 
         // 1. One cull per level. A level is a texel density and a
         //    density is a LOD.
-        for level in 0..levels {
-            queue.write_buffer(
-                &self.levels,
-                level as u64 * self.level_stride,
-                bytemuck::bytes_of(&ExpandLevel {
-                    level,
-                    _pad: [0; 3],
-                }),
-            );
-            let clip = self.level_clip(level, eye, sun);
-            let params = CullParams::new(
-                clip,
-                eye - sun.normalize_or(Vec3::NEG_Y) * SUN_SPAN,
-                scene_params.meshlets_per_mesh,
-            )
-            .with_orthographic_lod(
-                self.clipmap.extent(level),
-                self.config.virtual_size as f32,
-                lod_target.max(0.01),
-            );
-            self.culls[level as usize].dispatch_scene_pool_atomic(
-                cull_pipelines,
-                device,
-                queue,
-                encoder,
-                mesh_pool,
-                scene,
-                &params,
-                scene_params,
-            );
-            // The expansion's dispatch size is pages times survivors,
-            // and the survivor count only exists on the GPU.
-            encoder.copy_buffer_to_buffer(
-                self.culls[level as usize].visible_count_buffer(),
-                0,
-                &self.visible_counts,
-                level as u64 * 4,
-                4,
-            );
+        //
+        // 🔴 Seventeen full cull dispatches per view per frame, each
+        // writing a uniform and recording its own passes. This is the
+        // only part of the track that is CPU work rather than GPU work,
+        // and it was invisible to the profiler until this scope existed.
+        {
+            profiling::scope!("cull: clipmap levels");
+            for level in 0..levels {
+                queue.write_buffer(
+                    &self.levels,
+                    level as u64 * self.level_stride,
+                    bytemuck::bytes_of(&ExpandLevel {
+                        level,
+                        _pad: [0; 3],
+                    }),
+                );
+                let clip = self.level_clip(level, eye, sun);
+                let params = CullParams::new(
+                    clip,
+                    eye - sun.normalize_or(Vec3::NEG_Y) * SUN_SPAN,
+                    scene_params.meshlets_per_mesh,
+                )
+                .with_orthographic_lod(
+                    self.clipmap.extent(level),
+                    self.config.virtual_size as f32,
+                    lod_target.max(0.01),
+                );
+                self.culls[level as usize].dispatch_scene_pool_atomic(
+                    cull_pipelines,
+                    device,
+                    queue,
+                    encoder,
+                    mesh_pool,
+                    scene,
+                    &params,
+                    scene_params,
+                );
+                // The expansion's dispatch size is pages times survivors,
+                // and the survivor count only exists on the GPU.
+                encoder.copy_buffer_to_buffer(
+                    self.culls[level as usize].visible_count_buffer(),
+                    0,
+                    &self.visible_counts,
+                    level as u64 * 4,
+                    4,
+                );
+            }
         }
 
         // Per view, all of it: the page list, the pair list and the
@@ -1344,15 +1356,32 @@ mod tests {
         let source = include_str!("raster.rs");
         // The buffers this pass copies out of, by the field name the
         // copy uses.
-        let copied = copied_fields(source);
+        let mut copied = copied_fields(source);
         assert!(
             !copied.is_empty(),
             "the scan found no copies at all; it has stopped matching the source"
         );
-        for field in copied {
-            // Buffers are labelled `page_raster_<field>`; find that
-            // descriptor and read the usage line under it.
-            let label = format!("page_raster_{field}");
+        // 🔴 And every buffer this module hands OUT. The only reason to
+        // expose a GPU buffer is for something to read it back, and a
+        // reader outside this file is a copy this scan cannot see — that
+        // is exactly how `page_list` shipped without the flag, failing
+        // only sometimes, because wgpu reports the error whenever it
+        // gets round to it.
+        let mut labels: Vec<String> = copied
+            .iter()
+            .map(|field| format!("page_raster_{field}"))
+            .collect();
+        // The label a buffer carries is not always its field name.
+        labels.extend(
+            [
+                "page_raster_list",
+                "page_raster_counts",
+                "page_raster_draw_args",
+            ]
+            .into_iter()
+            .map(String::from),
+        );
+        for label in labels {
             let at = source
                 .find(&format!("Some(\"{label}\")"))
                 .unwrap_or_else(|| panic!("{label} has no buffer descriptor"));

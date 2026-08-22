@@ -981,3 +981,48 @@ fn the_counters_carry_the_expansions_cost() {
     assert_eq!(counts.pairs, 40);
     let _ = queue;
 }
+
+/// The shadow page track is visible to the profiler.
+///
+/// 🔴 It ran completely UNSCOPED: not one `profiling::scope!` across the
+/// marking, the seventeen per-level culls, the compaction, the expansion
+/// or the draw. In a capture that is time that simply goes missing, and
+/// the CPU cost of this track was argued about for an hour without a
+/// single measurement because there was nothing to measure.
+///
+/// A source check, because a scope's whole purpose is to exist in a
+/// build a test does not run.
+#[test]
+fn the_page_passes_are_profiled() {
+    for (name, source, wanted) in [
+        (
+            "frame/pages.rs",
+            include_str!("../src/meshlet/render_stage/frame/pages.rs"),
+            "shadow pages",
+        ),
+        (
+            "pages/raster.rs",
+            include_str!("../src/shadow/pages/raster.rs"),
+            "cull: clipmap levels",
+        ),
+    ] {
+        assert!(
+            source.contains(&format!("profiling::scope!(\"{wanted}\")")),
+            "{name} has no `{wanted}` scope; the pass is invisible in a capture"
+        );
+    }
+
+    // And the two entry points that record the GPU work.
+    for (name, source) in [
+        ("pages/mark.rs", include_str!("../src/shadow/pages/mark.rs")),
+        (
+            "pages/raster.rs",
+            include_str!("../src/shadow/pages/raster.rs"),
+        ),
+    ] {
+        assert!(
+            source.contains("#[profiling::function]"),
+            "{name} records GPU work in a function the profiler cannot see"
+        );
+    }
+}

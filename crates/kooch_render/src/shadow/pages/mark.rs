@@ -320,6 +320,7 @@ impl PageMarker {
     /// Call **after** the pass that writes depth and after the froxel
     /// grid: this reads both.
     #[allow(clippy::too_many_arguments)]
+    #[profiling::function]
     pub fn record(
         &mut self,
         device: &wgpu::Device,

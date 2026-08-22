@@ -150,6 +150,12 @@ impl MeshletRenderStage {
         meshlet_bg: &wgpu::BindGroup,
         debug: crate::meshlet::MeshletDebugMode,
     ) {
+        // 🔴 The whole track ran UNPROFILED until now: not one scope
+        // between the marking, the four raster passes and the readback,
+        // so in the profiler it was time that simply went missing. A
+        // pass that cannot be seen cannot be blamed, and the CPU cost of
+        // this track was argued about for an hour without one.
+        profiling::scope!("shadow pages");
         let settings = self.page_settings_for_views(resources, debug);
         if !settings.enabled {
             self.forget_page_marking();
@@ -193,30 +199,36 @@ impl MeshletRenderStage {
         let sun = self.light_frame.as_ref().and_then(|(_, frame)| frame.sun());
         let slice = page_view_index(view_id);
         let view = &self.views[view_id];
-        marker.record(
-            device,
-            queue,
-            encoder,
-            &self.lights,
-            &view.depth_sample_view,
-            clip_from_world.inverse(),
-            eye,
-            sun,
-            view.render_size,
-            slice,
-            // 🔴 Always one sample per pixel. While this was an
-            // instrument a coarser rate traded accuracy for threads;
-            // now it decides which pages EXIST, and one sample in
-            // sixteen is fifteen pixels whose shadow was never
-            // rasterised.
-            1,
-            settings.density,
-            Paint {
-                target: &view.color_view,
-                on: settings.paint,
-                size: view.size,
-            },
-        );
+        // 🔴 Braced. A `profiling::scope!` lives until the end of its
+        // BLOCK, so an unbraced one here would swallow the raster too
+        // and the two would be one number again.
+        {
+            profiling::scope!("mark");
+            marker.record(
+                device,
+                queue,
+                encoder,
+                &self.lights,
+                &view.depth_sample_view,
+                clip_from_world.inverse(),
+                eye,
+                sun,
+                view.render_size,
+                slice,
+                // 🔴 Always one sample per pixel. While this was an
+                // instrument a coarser rate traded accuracy for threads;
+                // now it decides which pages EXIST, and one sample in
+                // sixteen is fifteen pixels whose shadow was never
+                // rasterised.
+                1,
+                settings.density,
+                Paint {
+                    target: &view.color_view,
+                    on: settings.paint,
+                    size: view.size,
+                },
+            );
+        }
         self.record_page_raster(
             device,
             queue,
