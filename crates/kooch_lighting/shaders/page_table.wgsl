@@ -282,7 +282,11 @@ struct PageRaster {
     // z pages across level 0, w the sun's slot WITHIN a view.
     space: vec4<u32>,
     // x the view these pages belong to, y the pages one view addresses,
-    // z the pool slots one view owns, w unused.
+    // z the pool slots one view owns, w THIS FRAME's index.
+    //
+    // 🔴 `w` is read by one thing: the page age debug view, which paints
+    // how many frames ago each page the reader lands on was last
+    // requested. Nothing in the shading path depends on it.
     //
     // 🔴 The pool is SLICED, not shared, and the slice is what lets a
     // view empty and refill its own pages without touching the other

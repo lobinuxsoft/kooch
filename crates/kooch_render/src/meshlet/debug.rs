@@ -287,6 +287,29 @@ pub enum MeshletDebugMode {
     /// halves of one question belong in one list: this one is what the
     /// marking pass CHOSE, that one is what the reader FOUND.
     VirtualPageTiles = 27,
+    /// How old the page each pixel reads is, and which clipmap level it
+    /// came from.
+    ///
+    /// 🔴 Built to make a FLICKER readable. A shadow that blinks while
+    /// the camera moves is four faults wearing one coat, and
+    /// [`Self::VirtualPages`] cannot separate them because it answers a
+    /// still frame. This answers what CHANGED, on three independent
+    /// signals:
+    ///
+    /// - **White** — allocated this frame. A sweep of white travelling
+    ///   with the camera is the allocator churning, and a flicker that
+    ///   rides that sweep is an allocation fault.
+    /// - **Hue** — the clipmap level the walk stopped at. A band that
+    ///   jumps between two colours frame to frame is the reader crossing
+    ///   a level boundary, which moves the texel size and the rect under
+    ///   it.
+    /// - **Brightness** — frames since the page was last requested, full
+    ///   at one and dim by sixteen. A page dimming while still on screen
+    ///   is marking having stopped asking for it while the reader keeps
+    ///   finding it.
+    ///
+    /// Black is no page at any level; magenta is the paged path off.
+    VirtualPageAge = 28,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -352,6 +375,7 @@ impl MeshletDebugMode {
             Self::PointCubeFaces,
             Self::VirtualPages,
             Self::VirtualPageTiles,
+            Self::VirtualPageAge,
             Self::TextureMipLevel,
             Self::Fsr3Input,
             Self::Fsr3Motion,
@@ -456,6 +480,7 @@ impl MeshletDebugMode {
             Self::PointCubeFaces => "Point cube faces",
             Self::VirtualPages => "Virtual shadow pages",
             Self::VirtualPageTiles => "Virtual shadow page tiles",
+            Self::VirtualPageAge => "Virtual shadow page age",
             Self::TextureMipLevel => "Texture mip level",
             Self::Fsr3Input => "FSR 3.1 — 1 input colour",
             Self::Fsr3Motion => "FSR 3.1 — 2 dilated motion",

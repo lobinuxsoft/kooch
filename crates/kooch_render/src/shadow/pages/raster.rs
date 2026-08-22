@@ -165,6 +165,8 @@ pub struct PageRasterizer {
     depth_bgl: wgpu::BindGroupLayout,
     depth: wgpu::RenderPipeline,
 
+    /// This frame's index, for the age debug view. See `views.w`.
+    frame: u32,
     /// Triangles a meshlet may hold — the builder's cap, and the fixed
     /// vertex count the indirect draw issues.
     triangles: u32,
@@ -413,6 +415,7 @@ impl PageRasterizer {
             expand,
             depth_bgl,
             depth,
+            frame: 0,
             triangles: max_triangles_per_meshlet.max(1),
             culls: (0..levels)
                 .map(|_| MeshletCull::new(device, 1, max_triangles_per_meshlet))
@@ -462,6 +465,11 @@ impl PageRasterizer {
 
     /// Triangles a meshlet may hold, which is the vertex count the
     /// indirect draw issues divided by three.
+    /// Stamps the frame the age debug view measures against.
+    pub fn set_frame(&mut self, frame: u32) {
+        self.frame = frame;
+    }
+
     pub fn triangles_per_meshlet(&self) -> u32 {
         self.triangles
     }
@@ -565,7 +573,11 @@ impl PageRasterizer {
                     view.min(atlas_layers(self.pool) - 1),
                     stride * (sun_slot + 1),
                     self.pool.slice(),
-                    0,
+                    // 🔴 Only the age debug view reads this. A page's age
+                    // is a difference against the current frame, and the
+                    // shading pass has no other way to know what frame
+                    // it is in.
+                    self.frame,
                 ],
                 pool: [
                     self.pool.entries(),

@@ -36,6 +36,11 @@ const INTI_DEBUG_LIGHT_COUNT: u32 = 15u;
 const INTI_DEBUG_POINT_SHADOW: u32 = 16u;
 const INTI_DEBUG_POINT_CUBE: u32 = 17u;
 const INTI_DEBUG_VIRTUAL_PAGES: u32 = 26u;
+/// Mirrors `MeshletDebugMode::VirtualPageTiles`. Painted by the MARKING
+/// pass, not here — named so the range check lets it through.
+const INTI_DEBUG_VIRTUAL_TILES: u32 = 27u;
+/// Mirrors `MeshletDebugMode::VirtualPageAge`.
+const INTI_DEBUG_VIRTUAL_AGE: u32 = 28u;
 // Lowest discriminant handled here. Modes below it are resolved by the
 // shading path itself before the surface is even reconstructed.
 const INTI_DEBUG_FIRST: u32 = INTI_DEBUG_NORMALS;
@@ -477,6 +482,112 @@ fn inti_count_heatmap(t: f32) -> vec3<f32> {
 /// scalar. What is NOT repeated is the lookup, the basis or the page
 /// arithmetic — those are the shared functions, so a drift between the
 /// view and the thing it describes cannot come from them.
+/// Which page the reader lands on, how old it is, and which clipmap
+/// level it came from.
+///
+/// # 🔴 Built to make a FLICKER readable
+///
+/// A shadow that blinks while the camera moves is four different faults
+/// wearing the same coat, and the residency view cannot tell them apart
+/// because it answers a still frame. This one answers "what changed":
+///
+/// - **White** — the page was allocated THIS frame. A sweep of white
+///   moving with the camera is the allocator churning; if the flicker
+///   rides that sweep, the fault is in allocation.
+/// - **Hue** — the clipmap LEVEL the walk stopped at, cycling every six.
+///   A band of hue that jumps between two colours frame to frame is the
+///   reader crossing a level boundary, which changes the texel size and
+///   the rect underneath it. That is a fault in level selection, not in
+///   the pool.
+/// - **Brightness** — how many frames since the page was last requested,
+///   full at one and dim by sixteen. A page dimming while still on
+///   screen means marking stopped asking for it while the reader kept
+///   finding it.
+/// - **Black** — no page at any level. **Magenta** — the paged path is
+///   not running.
+///
+/// The three signals are independent on purpose: the useless version of
+/// this view is one colour ramp that every fault can produce.
+fn inti_page_age_debug(world_position: vec3<f32>) -> vec3<f32> {
+    if (inti.shadows_enabled == 0u || inti_pages.sun.w <= 0.5) {
+        return vec3<f32>(1.0, 0.0, 1.0);
+    }
+    let basis = sun_basis(inti_pages.sun.xyz);
+    let raw = world_position - inti_pages.eye.xyz;
+    let base = inti_pages.world.x;
+    let side = inti_pages.space.z;
+
+    let reach = max(abs(dot(raw, basis[0])), abs(dot(raw, basis[1]))) * 2.0;
+    var level = 0u;
+    if reach > base {
+        level = u32(ceil(log2(max(reach / base, 1.0))));
+    }
+
+    for (; level < inti_pages.chain.x; level = level + 1u) {
+        let extent = base * exp2(f32(level));
+        let plane = vec2<f32>(dot(raw, basis[0]), dot(raw, basis[1]));
+        let uv = clamp(
+            plane / extent + vec2<f32>(0.5),
+            vec2<f32>(0.0),
+            vec2<f32>(0.99999),
+        );
+        let cell = vec2<u32>(uv * f32(side));
+        let page = inti_pages.views.x * inti_pages.views.y
+            + inti_pages.space.w * inti_pages.space.x
+            + level * side * side
+            + cell.y * side
+            + cell.x;
+
+        // The probe is walked here rather than through `inti_page_lookup`
+        // because the entry INDEX is what carries the age, and the
+        // production lookup returns only the slot.
+        let entries = inti_pages.pool.x;
+        if entries == 0u {
+            return vec3<f32>(0.0);
+        }
+        var probe = page_probe(page, entries);
+        var found = false;
+        for (var i = 0u; i < PAGE_PROBES; i = i + 1u) {
+            let key = inti_page_keys[probe];
+            if key == PAGE_EMPTY {
+                break;
+            }
+            if key == page + 1u {
+                found = true;
+                break;
+            }
+            probe = page_step(probe, entries);
+        }
+        if !found {
+            continue;
+        }
+
+        let age = inti_page_slots[probe * PAGE_CELL + 1u];
+        let since = inti_pages.views.w - age;
+        // Allocated this frame. White, and deliberately the loudest
+        // thing on screen: it is the signal a flicker has to be
+        // correlated against.
+        if since == 0u {
+            return vec3<f32>(1.0);
+        }
+
+        var hue = vec3<f32>(0.6);
+        switch level % 6u {
+            case 0u: { hue = vec3<f32>(1.0, 0.25, 0.25); }
+            case 1u: { hue = vec3<f32>(1.0, 0.65, 0.2); }
+            case 2u: { hue = vec3<f32>(0.9, 0.95, 0.25); }
+            case 3u: { hue = vec3<f32>(0.3, 0.9, 0.4); }
+            case 4u: { hue = vec3<f32>(0.3, 0.6, 1.0); }
+            default: { hue = vec3<f32>(0.75, 0.4, 1.0); }
+        }
+        // Full at one frame, a fifth by sixteen.
+        let fade = clamp(1.0 - f32(since - 1u) / 16.0, 0.2, 1.0);
+        return hue * fade;
+    }
+    // Nothing at any level.
+    return vec3<f32>(0.0);
+}
+
 fn inti_page_debug(world_position: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     // The same term the shading pass feeds the bias, so a surface at a
     // grazing angle is judged the way the frame judges it.
@@ -561,7 +672,8 @@ fn inti_debug_is_view(mode: u32) -> bool {
     // surface BLACK before the pass that owns them ever runs, which is
     // the exact failure the comment on `INTI_DEBUG_LAST` exists for.
     return (mode >= INTI_DEBUG_FIRST && mode <= INTI_DEBUG_LAST)
-        || mode == INTI_DEBUG_VIRTUAL_PAGES;
+        || mode == INTI_DEBUG_VIRTUAL_PAGES
+        || mode == INTI_DEBUG_VIRTUAL_AGE;
 }
 
 /// The selected view, as colour. Called once, from the one place in each
@@ -593,6 +705,9 @@ fn inti_debug_view(
     }
     if (mode == INTI_DEBUG_POINT_CUBE) {
         return inti_point_cube_debug(frag_coord);
+    }
+    if (mode == INTI_DEBUG_VIRTUAL_AGE) {
+        return inti_page_age_debug(world_position);
     }
     if (mode == INTI_DEBUG_VIRTUAL_PAGES) {
         return inti_page_debug(world_position, n);

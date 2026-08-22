@@ -327,6 +327,9 @@ impl MeshletRenderStage {
         // Groups are bounded by meshlets, and a slot is four bytes: the
         // bound costs less than threading the exact figure through a
         // second call path would.
+        // The age debug view measures against this. Stamped before the
+        // uniform is written, which `record` does.
+        raster.set_frame(marker.life().frame);
         let threads = scene_params.instance_count * scene_params.meshlets_per_mesh;
         raster.ensure_capacity(device, threads, threads);
         raster.record(
