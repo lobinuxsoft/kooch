@@ -29,7 +29,7 @@ use kooch_lighting::{ClusterCamera, GpuLights};
 use kooch_render::meshlet::DEFERRED_COLOR_FORMAT;
 use kooch_render::projection::perspective_infinite_rh_reverse_z;
 use kooch_render::shadow::pages::mark::{MarkCounts, PAINT_FORMAT, PageMarker, Paint};
-use kooch_render::shadow::pages::pool::{PAGE_CELL, PoolConfig};
+use kooch_render::shadow::pages::pool::{DEFAULT_MAX_AGE, PAGE_CELL, PoolConfig};
 use kooch_render::shadow::{ClipmapConfig, PageConfig, SHADOW_DEPTH_FORMAT};
 
 const SIZE: u32 = 128;
@@ -1380,85 +1380,47 @@ fn a_resident_page_keeps_its_slot() {
     }
 }
 
-/// A page allocated this frame is flagged until the frame after it.
+/// A camera that keeps moving does not run the pool dry.
 ///
-/// 🔴 The fused raster shades against an atlas a frame old. A page that
-/// was already resident holds its own depth there; a page allocated this
-/// frame holds whatever the page that used to own its slot left behind,
-/// because the slot came off a free list. That is a shadow from
-/// somewhere else in the world, for one frame, every time the camera
-/// moves — which is exactly what "artefacts that flash and vanish" is.
+/// 🔴 The measurement, not a guess. With a long `max_age` a page stays
+/// resident for a second after the last frame that wanted it, so a
+/// camera sweeping across a scene accumulates the pages of everywhere it
+/// has been. If that fills the slice, new pages get no slot, render
+/// unshadowed, and come back when something finally ages out — a shadow
+/// that blinks in and out, which is what the user reported.
 ///
-/// It did not show before the pool persisted, and the reason is not the
-/// ordering: the allocator was a bump from zero, so a page got the same
-/// slot every frame and the stale atlas happened to hold its own depth.
+/// What it pins is the failure, not a policy: if it fires, the pool
+/// needs eviction under PRESSURE — Epic's `PHYSICAL_PAGE_LIST_LRU` —
+/// rather than eviction by age alone.
 #[test]
-fn a_fresh_page_is_flagged_until_it_is_drawn() {
+fn a_moving_camera_does_not_exhaust_the_pool() {
     let Some((device, queue)) = device() else {
         eprintln!("no adapter; skipping");
         return;
     };
-    const FRESH: u32 = 0x8000_0000;
     let resources = world();
-    let eye = Vec3::ZERO;
-    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
-    let proj = projection();
-    let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
-    let mut lights = GpuLights::new(&device);
-    let mut frame = kooch_lighting::LightFrame::extract(&resources);
-    lights.update(&device, &queue, &resources, camera, None, &mut frame);
-    let depth_view = depth_texture(&device, &queue, 0.01);
-    let target = paint_target(&device);
-    let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
-    marker.set_pool(&device, PoolConfig::default());
+    let frames = run_frames(
+        &device,
+        &queue,
+        &resources,
+        90,
+        DEFAULT_MAX_AGE,
+        PoolConfig::default(),
+        &|_| 100,
+        // A metre and a half a second at 60 Hz, which is a walk.
+        &|i| Vec3::new(i as f32 * 0.025, 0.0, i as f32 * -0.025),
+        &|_| Vec3::new(0.3, -1.0, 0.2),
+    );
 
-    let mut fresh_per_frame = Vec::new();
-    for index in 0..3u32 {
-        marker.set_frame(index);
-        let mut encoder = device.create_command_encoder(&Default::default());
-        lights.record_clusters(&mut encoder);
-        marker.record(
-            &device,
-            &queue,
-            &mut encoder,
-            &lights,
-            &depth_view,
-            (proj * view).inverse(),
-            eye,
-            Some(Vec3::new(0.3, -1.0, 0.2)),
-            (SIZE, SIZE),
-            0,
-            1,
-            100,
-            Paint {
-                target: &target,
-                on: false,
-                size: (SIZE, SIZE),
-            },
-        );
-        queue.submit([encoder.finish()]);
-        let keys = read_words(&device, &queue, marker.pool().keys());
-        let cells = read_words(&device, &queue, marker.pool().slots());
-        let (mut fresh, mut live) = (0u32, 0u32);
-        for (entry, &key) in keys.iter().enumerate() {
-            if key == 0 || key == 0xffff_fffe {
-                continue;
-            }
-            live += 1;
-            if cells[entry * PAGE_CELL as usize + 1] & FRESH != 0 {
-                fresh += 1;
-            }
-        }
-        assert!(live > 0, "frame {index} filed nothing");
-        fresh_per_frame.push((fresh, live));
-    }
-
-    let (fresh, live) = fresh_per_frame[0];
-    assert_eq!(fresh, live, "every page of frame 0 is new and undrawn");
-    for (index, (fresh, _)) in fresh_per_frame.iter().enumerate().skip(1) {
-        assert_eq!(
-            *fresh, 0,
-            "frame {index} still flags {fresh} pages the raster has drawn"
-        );
-    }
+    let peak = frames.iter().map(|c| c.pool.allocated()).max().unwrap_or(0);
+    let spilled: u32 = frames.iter().map(|c| c.pool.overflow).sum();
+    eprintln!(
+        "peak {peak} of {} slots, {spilled} pages went unallocated",
+        frames[0].pool.capacity
+    );
+    assert_eq!(
+        spilled, 0,
+        "{spilled} pages found no slot; the pool peaked at {peak} of {}",
+        frames[0].pool.capacity
+    );
 }

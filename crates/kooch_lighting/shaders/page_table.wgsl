@@ -87,33 +87,6 @@ const PAGE_DEAD: u32 = 0xfffffffeu;
 /// reads an age as a slot.
 const PAGE_CELL: u32 = 2u;
 
-/// Set in a table entry's AGE while its page has been allocated and not
-/// yet drawn into.
-///
-/// # 🔴 A page's slot is older than the page
-///
-/// `vbuf64.render` rasterises and shades in one fragment shader, so the
-/// shading samples an atlas a frame old against a table filed THIS
-/// frame. For a page that was already resident that is fine — the slot
-/// holds its own depth from last frame. For a page allocated this frame
-/// it is not: the slot came off the free list and what is in it is
-/// whatever the page that used to own it left there, which is a shadow
-/// from somewhere else in the world.
-///
-/// It did not show before the pool persisted, and not because the
-/// ordering was different. The allocator was a bump from zero, so a page
-/// got the same slot every frame and the stale atlas happened to hold
-/// its own depth. A free list has no such order.
-///
-/// So a lookup treats a fresh page as a MISS and the reader walks on to
-/// the next clipmap level, which does have depth in it. One frame of
-/// coarser shadow instead of one frame of somebody else's — and only
-/// while the camera is moving, which is the only time pages are new.
-const PAGE_FRESH: u32 = 0x80000000u;
-
-/// The age itself, without [`PAGE_FRESH`].
-const PAGE_AGE_MASK: u32 = 0x7fffffffu;
-
 /// No physical page: either the pool is full or the probe gave up.
 const PAGE_MISS: u32 = 0xffffffffu;
 
