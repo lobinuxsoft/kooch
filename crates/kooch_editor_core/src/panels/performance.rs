@@ -469,6 +469,39 @@ fn debug_controls(
             }
         }
     }
+    // 🔴 The same problem the note above solves, for the two views that
+    // shipped painting the whole screen one colour: a code the reader
+    // has to remember is a code the reader does not have. Orange means
+    // "pick a lamp", and saying so is one line.
+    let lamp_view = matches!(
+        *meshlet_debug_mode,
+        MeshletDebugMode::LocalPageFaces | MeshletDebugMode::LocalPageDepth
+    );
+    if lamp_view {
+        match single_light_note {
+            Some(note) => {
+                ui.label(egui::RichText::new(note).small().weak());
+                let legend = if *meshlet_debug_mode == MeshletDebugMode::LocalPageFaces {
+                    "6 hues = cube face · brightness = chain level · white = no page"
+                } else {
+                    "red = occluded · green = lit · blue = no page"
+                };
+                ui.label(egui::RichText::new(legend).small().weak())
+                    .on_hover_text(
+                        "One lamp at a time, because a hundred averaged together is the                          signal this view exists to show. Faces answers which page was                          READ; occlusion answers what that page CONTAINED — a wrong                          shadow is one or the other and no single view separates them.                          Black is outside the lamp's range; magenta is the paged shadow                          path switched off.",
+                    );
+            }
+            None => {
+                ui.label(
+                    egui::RichText::new(
+                        "Orange everywhere = select a point or spot light in the World panel",
+                    )
+                    .small()
+                    .weak(),
+                );
+            }
+        }
+    }
     // A legend, because this view's whole value is that its three cases
     // are different faults and not different amounts of the same one.
     // Left to be inferred, blue reads as "very dark shadow".
