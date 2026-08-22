@@ -583,3 +583,59 @@ fn every_table_reader_agrees_on_the_layout() {
         "a lookup that skips a tombstone stops walking a run it has to finish"
     );
 }
+
+/// The slice the shading reads is not the slice the raster is writing.
+///
+/// 🔴 `Queue::write_buffer` is NOT ordered with the encoder — wgpu
+/// applies every one of them at the top of the submit, ahead of every
+/// command in it. The fused pass is recorded before the marking, so it
+/// samples a table and an atlas the last frame filled, which really are
+/// last frame's because those are encoder commands. The uniform is not:
+/// a single-slice uniform hands the shading THIS frame's eye and sun
+/// against LAST frame's pages.
+///
+/// Standing still the two agree and nothing shows. Move the camera or
+/// turn the sun and the reader re-bases the clipmap while the table it
+/// searches was built on the old basis: the keys stop matching, the
+/// lookups miss, and the shadow drops out for as long as the motion
+/// lasts.
+///
+/// The same hazard as #853, and it earns the same fix — parity, not a
+/// comment.
+#[test]
+fn the_shading_reads_the_slice_the_raster_is_not_writing() {
+    let Some((device, _queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut raster = rasterizer(&device);
+
+    for frame in 0..4u32 {
+        raster.set_frame(frame);
+        for view in 0..2u32 {
+            let writing = raster.uniform_span(view);
+            let reading = raster.uniform_span_previous(view);
+            assert_ne!(
+                writing.0, reading.0,
+                "frame {frame}, view {view}: the shading reads the offset the raster writes"
+            );
+        }
+    }
+
+    // And what one frame writes is what the next one reads, or the
+    // shading is looking at a slice two frames old.
+    for view in 0..2u32 {
+        raster.set_frame(7);
+        let written = raster.uniform_span(view).0;
+        raster.set_frame(8);
+        assert_eq!(
+            raster.uniform_span_previous(view).0,
+            written,
+            "view {view}: frame 8 does not read what frame 7 wrote"
+        );
+    }
+
+    // Views still do not collide, which is what the slicing was for.
+    raster.set_frame(0);
+    assert_ne!(raster.uniform_span(0).0, raster.uniform_span(1).0);
+}

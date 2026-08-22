@@ -71,6 +71,23 @@ fn logged<T: Copy>(slots: &mut Vec<Option<T>>, view: u32) -> &mut Option<T> {
     &mut slots[index]
 }
 
+/// This frame's index, from the one clock every camera shares.
+///
+/// 🔴 Read in two places that run in a fixed order — `bind_page_shadows`
+/// before the fused pass and `record_page_marking` after it — so it has
+/// to come from the same source in both. `Time::frame_count` is already
+/// the stamp the light frame is shared on.
+///
+/// ⚠️ Without a `Time` — every headless test — it stands still, which
+/// pins the uniform's parity. That is the safe direction: both halves
+/// then agree on one slice rather than alternating out of step.
+fn page_frame(resources: &Resources) -> u32 {
+    resources
+        .get::<kooch_core::time::Time>()
+        .map(|t| t.frame_count() as u32)
+        .unwrap_or(0)
+}
+
 fn page_settings(resources: &Resources) -> PageSettings {
     // 🔴 `ShadowSettings`, not `RenderSettings`, and `unwrap_or_default`
     // rather than an early return. Both halves of that were the bug.
@@ -152,10 +169,8 @@ impl MeshletRenderStage {
         // still, which means nothing ages and everything stays resident.
         // That is the safe direction to be wrong in: a test sees a pool
         // that never evicts rather than one that evicts constantly.
-        if let Some(marker) = self.page_marker.as_mut()
-            && let Some(time) = resources.get::<kooch_core::time::Time>()
-        {
-            marker.set_frame(time.frame_count() as u32);
+        if let Some(marker) = self.page_marker.as_mut() {
+            marker.set_frame(page_frame(resources));
         }
         // The pool is the memory budget, and changing it changes the
         // atlas. Rebuilt rather than resized: a slot recorded against
@@ -263,16 +278,26 @@ impl MeshletRenderStage {
         if !page_settings(resources).enabled {
             return;
         }
-        let (Some(raster), Some(marker)) = (self.page_raster.as_ref(), self.page_marker.as_ref())
+        let frame = page_frame(resources);
+        let (Some(raster), Some(marker)) = (self.page_raster.as_mut(), self.page_marker.as_ref())
         else {
             return;
         };
+        // 🔴 BEFORE the span is asked for, and this is the only place
+        // that can do it: the marking that stamps everything else runs
+        // after the fused pass, and the parity has to be right now.
+        raster.set_frame(frame);
         let pool = marker.pool();
         self.lights.bind_shadow_pages(
             device,
             kooch_lighting::PageBinding {
                 uniform: raster.uniform_buffer(),
-                uniform_span: raster.uniform_span(page_view_index(view_id)),
+                // 🔴 The PREVIOUS frame's slice. The table and atlas
+                // this pass samples are last frame's, and
+                // `Queue::write_buffer` is not ordered with the encoder
+                // — without this the reader re-bases the clipmap a frame
+                // ahead of the pages it is searching.
+                uniform_span: raster.uniform_span_previous(page_view_index(view_id)),
                 keys: pool.keys(),
                 slots: pool.slots(),
                 atlas: raster.atlas(),
@@ -327,8 +352,9 @@ impl MeshletRenderStage {
         // Groups are bounded by meshlets, and a slot is four bytes: the
         // bound costs less than threading the exact figure through a
         // second call path would.
-        // The age debug view measures against this. Stamped before the
-        // uniform is written, which `record` does.
+        // Already stamped by `bind_page_shadows`, which runs first. Kept
+        // here for the frame where the rasteriser was only just built
+        // and that call found nothing to stamp.
         raster.set_frame(marker.life().frame);
         let threads = scene_params.instance_count * scene_params.meshlets_per_mesh;
         raster.ensure_capacity(device, threads, threads);
