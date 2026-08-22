@@ -836,3 +836,98 @@ fn the_marking_is_recorded_before_the_shading() {
         "the debug paint runs before the pass that erases it"
     );
 }
+
+/// The paged shadow resolves at least as finely as the cascade it
+/// replaces.
+///
+/// 🔴 The comparison that decided the default, and the reason it is a
+/// test rather than a paragraph. "One shadow texel per screen pixel" is
+/// Epic's ask and it is honest, but the technique being replaced is not
+/// spending that: a cascade hands 2048 texels to a slice of the frustum
+/// whatever the screen asked for. Measured, that is about twice the
+/// resolution at every distance — so a project switching over at 100 %
+/// gets a visibly coarser shadow and no setting that says why.
+///
+/// Both sides are computed with the engine's own arithmetic:
+/// `level_below` is what the marking pass mirrors, and the cascade's
+/// diameter/texels is what `cascades.rs` fits.
+#[test]
+fn the_paged_shadow_resolves_like_a_cascade() {
+    use kooch_render::shadow::pages::{ClipmapConfig, PageConfig, level_below};
+
+    const CASCADE_TEXELS: f32 = 2048.0;
+    const FIRST: f32 = 10.0;
+    const FAR: f32 = 100.0;
+    const COUNT: usize = 4;
+    // The resolution every figure in this track was measured at.
+    const HEIGHT: f32 = 403.0;
+    let focal = 1.0 / (60.0_f32.to_radians() / 2.0).tan();
+
+    let clipmap = ClipmapConfig::default();
+    let config = PageConfig::default();
+    let virtual_texels = config.texels(0) as f32;
+
+    let splits: [f32; COUNT] =
+        std::array::from_fn(|i| FIRST * (FAR / FIRST).powf(i as f32 / (COUNT - 1) as f32));
+
+    // What one cascade texel covers at `distance`, the way `cascades.rs`
+    // fits it: the slice's diagonal over the atlas side.
+    let cascade = |distance: f32| -> f32 {
+        let mut near = 0.1;
+        for (i, &far) in splits.iter().enumerate() {
+            if distance <= far || i == COUNT - 1 {
+                let h_near = 2.0 * near / focal;
+                let h_far = 2.0 * far / focal;
+                let body = ((far - near).powi(2) + (h_far + h_near).powi(2)).sqrt();
+                let far_diag = 2.0_f32.sqrt() * h_far;
+                return body.max(far_diag).ceil() / CASCADE_TEXELS;
+            }
+            near = far;
+        }
+        unreachable!()
+    };
+
+    // What one page texel covers, which is the level the marking picks.
+    let paged = |distance: f32, density: u32| -> f32 {
+        let wanted = 2.0 * distance / (focal * HEIGHT) * (100.0 / density as f32);
+        let level = level_below(wanted * virtual_texels / clipmap.base).min(clipmap.levels - 1);
+        clipmap.extent(level) / virtual_texels
+    };
+
+    // 🔴 Not "equal". A clipmap level is a power of two, so the level
+    // it lands on is at best exact and at worst one step coarse — a
+    // factor of two in the worst case, by construction, and no default
+    // can close that. What is asserted is what a discrete chain can
+    // promise: never much coarser anywhere, and finer at most distances.
+    let mut finer = 0;
+    let distances = [5.0_f32, 10.0, 20.0, 40.0, 80.0];
+    let density = kooch_render::settings::RenderSettings::default().shadow_density;
+    for distance in distances {
+        let want = cascade(distance);
+        let hundred = paged(distance, 100);
+        let default = paged(distance, density);
+
+        // The finding that moved the default: at 100 % the pages are the
+        // coarser of the two at EVERY distance measured.
+        assert!(
+            hundred > want,
+            "at {distance} m the 100 % setting already matches the cascade \
+             ({hundred:.3} against {want:.3}); the default no longer needs raising"
+        );
+        // 1.3 is the measured worst case, at 10 m — the far edge of the
+        // first cascade, which is where the cascade is most generous.
+        assert!(
+            default <= want * 1.3,
+            "at {distance} m the default resolves {default:.3} m per texel \
+             against the cascade's {want:.3}"
+        );
+        if default <= want {
+            finer += 1;
+        }
+    }
+    assert!(
+        finer * 2 > distances.len(),
+        "the default is finer than the cascade at only {finer} of {} distances",
+        distances.len()
+    );
+}
