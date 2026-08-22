@@ -399,14 +399,65 @@ struct PageRaster {
     local: vec4<u32>,
 }
 
-/// Which bucket of `page_list` a page belongs in.
+/// Which bucket of `page_list` a page belongs in, by its chain.
 ///
-/// The sun's clipmap owns `[0, sun_levels)` and every local light's
-/// chain shares `[sun_levels, sun_levels + local_levels)`.
+/// ⚠️ SUPERSEDED by `page_octave`, and kept only until the compaction
+/// can reach a light's range. Bucketing by chain level puts a lamp and
+/// the sun in different lists even when they want the same fineness,
+/// which needs a cull per light to fill the second.
 fn page_bucket(id: PageId, sun_levels: u32) -> u32 {
     if id.is_sun {
         return id.level;
     }
     return sun_levels + id.level;
+}
+
+/// What one texel of this page covers, in metres.
+///
+/// The two chains measure it differently and both are exact. The sun's
+/// clipmap level spans a known extent, so a texel is that over the
+/// virtual texels across it. A local light's face is a 90-degree
+/// perspective, so at the light's range it covers `2 * range` and a
+/// texel is that over the level's texel count — the same identity
+/// `page_level` inverts when the marking picks the level.
+fn page_texel_world(
+    id: PageId,
+    base: f32,
+    virtual_texels: u32,
+    range: f32,
+) -> f32 {
+    if id.is_sun {
+        return base * exp2(f32(id.level)) / f32(max(virtual_texels, 1u));
+    }
+    return 2.0 * range / f32(max(virtual_texels >> id.level, 1u));
+}
+
+/// Which bucket of `page_list` a page belongs in: an OCTAVE of world
+/// texel size.
+///
+/// # 🔴 A bucket is a density, not a light and not a chain
+///
+/// The expansion pairs a bucket's pages against a bucket's surviving
+/// meshlets, so what a bucket has to mean is "everything that wants
+/// geometry at this fineness". A lamp two metres from a wall and the sun
+/// forty metres out can want the same texel size, and when they do they
+/// want the same LOD — so they belong in the same list. Bucketing by
+/// chain level instead puts them in different ones and needs a cull per
+/// light to fill the second, which is the cost that grows with the
+/// scene.
+///
+/// The scale is anchored so the sun's clipmap level `L` lands on bucket
+/// `L` exactly: its texel is `base * 2^L / virtual`, and the finest is
+/// `base / virtual`, so the ratio IS `2^L`. That is what lets a local
+/// light's pages fall into buckets the sun's culls already fill —
+/// without one new dispatch.
+///
+/// ⚠️ Clamped at both ends. A lamp finer than the sun's level 0 draws
+/// from level 0's survivors, which is geometry finer than it needs
+/// rather than coarser — the safe direction.
+fn page_octave(texel: f32, base: f32, virtual_texels: u32, levels: u32) -> u32 {
+    let finest = base / f32(max(virtual_texels, 1u));
+    let octave = floor(log2(max(texel, 1e-9) / max(finest, 1e-9)));
+    return u32(clamp(octave, 0.0, f32(max(levels, 1u) - 1u)));
 }
 

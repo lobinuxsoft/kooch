@@ -1152,3 +1152,173 @@ fn the_page_passes_are_profiled() {
         );
     }
 }
+
+/// The octave a page asks for, run through the SHADER'S OWN arithmetic.
+///
+/// 🔴 The anchor is the whole claim. A bucket is a density, so the
+/// expansion can pair a lamp's pages against the sun's survivors — but
+/// only if the sun's clipmap level `L` lands on bucket `L` exactly.
+/// Off by one and every page draws geometry from the wrong LOD; off by a
+/// scale factor and the local pages pile into one bucket.
+///
+/// A Rust mirror of `page_octave` would prove the mirror. This runs the
+/// shader.
+const OCTAVE: &str = r#"
+@group(0) @binding(0) var<storage, read_write> out: array<u32>;
+
+const BASE: f32 = 64.0;
+const VIRTUAL: u32 = 16384u;
+const LEVELS: u32 = 17u;
+
+fn sun_at(level: u32) -> PageId {
+    var id: PageId;
+    id.is_sun = true;
+    id.level = level;
+    return id;
+}
+
+fn local_at(level: u32) -> PageId {
+    var id: PageId;
+    id.is_sun = false;
+    id.level = level;
+    return id;
+}
+
+@compute @workgroup_size(1, 1, 1)
+fn cs_octave() {
+    // Every clipmap level, which must land on its own index.
+    for (var l = 0u; l < LEVELS; l = l + 1u) {
+        let texel = page_texel_world(sun_at(l), BASE, VIRTUAL, 0.0);
+        out[l] = page_octave(texel, BASE, VIRTUAL, LEVELS);
+    }
+    // A ten-metre lamp across its chain: finer than the sun at the top
+    // of the chain, coarser at the bottom, and monotonic between.
+    for (var l = 0u; l < 8u; l = l + 1u) {
+        let texel = page_texel_world(local_at(l), BASE, VIRTUAL, 10.0);
+        out[LEVELS + l] = page_octave(texel, BASE, VIRTUAL, LEVELS);
+    }
+    // A hundred-metre lamp, which asks for coarser buckets than the
+    // ten-metre one at the same chain level.
+    out[LEVELS + 8u] = page_octave(
+        page_texel_world(local_at(0u), BASE, VIRTUAL, 100.0), BASE, VIRTUAL, LEVELS);
+    out[LEVELS + 9u] = page_octave(
+        page_texel_world(local_at(4u), BASE, VIRTUAL, 100.0), BASE, VIRTUAL, LEVELS);
+}
+"#;
+
+#[test]
+fn a_page_asks_for_the_octave_its_texels_are() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    const LEVELS: usize = 17;
+    let out = run_page_table_shader(&device, &queue, OCTAVE, "cs_octave", (LEVELS + 10) * 4);
+
+    // 🔴 The anchor: the sun's level IS its bucket. Everything else
+    // rests on this, because it is what lets a lamp's pages reach the
+    // survivor lists the sun's culls already produce.
+    for level in 0..LEVELS {
+        assert_eq!(
+            out[level], level as u32,
+            "the sun's clipmap level {level} landed on bucket {}; a local page reaching \
+             that bucket would draw geometry culled for a different density",
+            out[level]
+        );
+    }
+
+    // A local light's chain is monotonic in the same direction: a
+    // coarser chain level is a coarser bucket, never a finer one.
+    let lamp: Vec<u32> = (0..8).map(|i| out[LEVELS + i]).collect();
+    for pair in lamp.windows(2) {
+        assert!(
+            pair[1] >= pair[0],
+            "a lamp's chain is not monotonic across buckets: {lamp:?}"
+        );
+    }
+    assert!(
+        lamp.iter().any(|&b| b != lamp[0]),
+        "every level of a lamp's chain landed in one bucket ({lamp:?}); the octave is \
+         not separating them and one list would serve densities 128x apart"
+    );
+
+    // And range moves it. A hundred-metre lamp covers ten times the
+    // world with the same texels, so it asks for coarser geometry than
+    // a ten-metre one at the same chain level — which is the reason the
+    // bucket cannot be read off the chain level alone.
+    assert!(
+        out[LEVELS + 8] > lamp[0],
+        "a 100 m lamp asked for bucket {} at chain level 0, the same as a 10 m lamp's {}",
+        out[LEVELS + 8],
+        lamp[0]
+    );
+    assert!(out[LEVELS + 9] > lamp[4], "and the same at chain level 4");
+    // Measured: a 10 m lamp's chain lands on buckets [0,0,0,1,2,3,4,5]
+    // and a 100 m lamp's on [1,..,5,..] — inside the sun's range, where
+    // its culls already produce survivor lists. That is the claim C
+    // rests on and it is checked rather than assumed.
+}
+
+/// Runs a snippet concatenated after `page_table.wgsl`, with one
+/// writable buffer at `@group(0) @binding(0)`, and reads it back.
+fn run_page_table_shader(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    body: &str,
+    entry: &str,
+    bytes: usize,
+) -> Vec<u32> {
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some(entry),
+        source: wgpu::ShaderSource::Wgsl(format!("{}\n{body}", kooch_lighting::PAGE_TABLE).into()),
+    });
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[Some(&bgl)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(&layout),
+        module: &module,
+        entry_point: Some(entry),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: bytes as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    queue.submit([encoder.finish()]);
+    read_words(device, queue, &buffer)
+}
