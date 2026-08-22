@@ -403,34 +403,6 @@ fn page_level(distance: f32, wanted: f32) -> u32 {
     return min(u32(max(level, 0.0)), pages.chain.z - 1u);
 }
 
-// Which of the six cube faces a direction lands on, and its position
-// across that face. Mirrors what `face_view_proj` produces without
-// building the matrix: the major axis picks the face, and the other two
-// divided by it are the face's normalised coordinates.
-fn cube_face(dir: vec3<f32>) -> vec4<f32> {
-    let a = abs(dir);
-    var face = 0u;
-    var uv = vec2<f32>(0.0);
-    var major = 0.0;
-    if a.x >= a.y && a.x >= a.z {
-        major = a.x;
-        face = select(1u, 0u, dir.x > 0.0);
-        uv = select(vec2<f32>(dir.z, -dir.y), vec2<f32>(-dir.z, -dir.y), dir.x > 0.0);
-    } else if a.y >= a.z {
-        major = a.y;
-        face = select(3u, 2u, dir.y > 0.0);
-        uv = select(vec2<f32>(dir.x, -dir.z), vec2<f32>(dir.x, dir.z), dir.y > 0.0);
-    } else {
-        major = a.z;
-        face = select(5u, 4u, dir.z < 0.0);
-        uv = select(vec2<f32>(dir.x, -dir.y), vec2<f32>(-dir.x, -dir.y), dir.z < 0.0);
-    }
-    if major <= 0.0 {
-        return vec4<f32>(0.5, 0.5, 0.0, f32(face));
-    }
-    return vec4<f32>(uv / major * 0.5 + vec2<f32>(0.5), 0.0, f32(face));
-}
-
 // One page of a local light's mip chain.
 // Which page of a local light's chain a point belongs to, WITHOUT
 // marking it. Split for the same reason as `sun_page_for`.
@@ -460,8 +432,19 @@ fn local_page_for(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
 // One page of a local light's mip chain, marked.
 fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let page = local_page_for(light, world, wanted);
-    // Marked, NOT claimed: nothing rasterises a local light's pages yet.
-    mark_bit(page.x, false);
+    // 🔴 CLAIMED now, and the flag was a guard rather than an oversight.
+    // A page claimed is a page in the table, and a page in the table
+    // takes a pool slot from whoever else wanted one — with the census
+    // asking for a thousand-odd local pages against a slice of a few
+    // hundred, claiming them while nothing drew them evicted the sun
+    // and left the frame with no shadows at all.
+    //
+    // What makes it safe is that the rest of the chain now exists: the
+    // compaction buckets them by octave, the expansion tests them
+    // against the lamp's own frustum, and the depth pass builds that
+    // frustum from the light the page names. Turned on last, on
+    // purpose.
+    mark_bit(page.x, true);
     return page;
 }
 

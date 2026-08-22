@@ -296,8 +296,17 @@ impl PageRasterizer {
                 format!("{CLUSTER_COMMON}\n{TABLE}\n{COMPACT}").into(),
             ),
         });
-        let expand_module = module("page_expand", EXPAND);
-        let depth_module = module("page_depth", DEPTH);
+        // The expansion reaches for `ClusterLight` too: a lamp's page is
+        // a frustum from the light's own position and range, not a slab.
+        let expand_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("page_expand"),
+            source: wgpu::ShaderSource::Wgsl(format!("{CLUSTER_COMMON}\n{TABLE}\n{EXPAND}").into()),
+        });
+        // The depth pass builds a lamp's frustum from the light record.
+        let depth_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("page_depth"),
+            source: wgpu::ShaderSource::Wgsl(format!("{CLUSTER_COMMON}\n{TABLE}\n{DEPTH}").into()),
+        });
 
         let compact_bgl = compact_layout(device);
         let compact_layout_pipeline =
@@ -440,7 +449,7 @@ impl PageRasterizer {
             }),
             pairs: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_pairs"),
-                size: PAIR_CAPACITY as u64 * 8,
+                size: PAIR_CAPACITY as u64 * 16,
                 usage: storage,
                 mapped_at_creation: false,
             }),
@@ -620,10 +629,17 @@ fn atlas_layers(pool: PoolConfig) -> u32 {
 
 /// Pairs one frame may draw.
 ///
-/// 8 MiB, and a ceiling rather than a guess: `RasterCounts::overflow`
-/// says when it was reached, which is the difference between a bound
-/// and a silent truncation.
-pub const PAIR_CAPACITY: u32 = 1 << 20;
+/// 4 MiB at four words a pair, and a ceiling rather than a guess:
+/// `RasterCounts::overflow` says when it was reached, which is the
+/// difference between a bound and a silent truncation.
+///
+/// 🔴 A quarter of what it was, and still two orders of magnitude past
+/// what a frame emits — the roll-a-ball stress scene measures around a
+/// thousand. It came down when the pair grew to carry its page and slot
+/// directly: the indirection through `page_list` cost the vertex stage
+/// a storage binding it did not have, and 1M pairs was a number nobody
+/// had ever approached.
+pub const PAIR_CAPACITY: u32 = 1 << 18;
 
 fn count_slots(buckets: u32) -> u32 {
     // Per level, then: bucket overflow, local pages skipped, pairs, pair
@@ -880,6 +896,7 @@ impl PageRasterizer {
                             ),
                         }),
                     },
+                    entry(6, lights),
                 ],
             }),
             depth: device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -887,7 +904,7 @@ impl PageRasterizer {
                 layout: &self.depth_bgl,
                 entries: &[
                     self.uniform_entry(0),
-                    entry(1, &self.page_list),
+                    entry(1, lights),
                     entry(2, &self.pairs),
                 ],
             }),
@@ -1225,6 +1242,11 @@ fn expand_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             buffer_entry(3, false, c),
             buffer_entry(4, true, c),
             uniform_entry(5, true, c),
+            // 🔴 Here rather than in a group of its own: `max_bind_groups`
+            // is FOUR and this pass already binds four. It is also the
+            // eighth storage buffer of the stage, which is the entire
+            // downlevel budget.
+            buffer_entry(6, true, c),
         ],
     })
 }
@@ -1363,6 +1385,12 @@ mod tests {
     /// The compaction as the device sees it: the cluster records, the
     /// page table, then the pass. Parsing the pass alone stopped working
     /// the moment it reached for `ClusterLight`.
+    /// The expansion as the device sees it. Same reason as
+    /// `compact_source`: it reaches for `ClusterLight`.
+    fn expand_source() -> String {
+        format!("{CLUSTER_COMMON}\n{EXPAND}")
+    }
+
     fn compact_source() -> String {
         // `shader_size` and `shader_offsets` prepend `TABLE` themselves,
         // so this adds only what the pass reaches for beyond it.
@@ -1430,7 +1458,7 @@ mod tests {
             "PageRaster",
         );
         assert_eq!(
-            shader_size(EXPAND, "ExpandLevel") as usize,
+            shader_size(&expand_source(), "ExpandLevel") as usize,
             std::mem::size_of::<ExpandLevel>(),
             "ExpandLevel",
         );

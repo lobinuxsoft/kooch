@@ -393,6 +393,164 @@ struct PageRaster {
     sun: vec4<f32>,
 }
 
+// Which of the six cube faces a direction lands on, and its position
+// across that face. Mirrors what `face_view_proj` produces without
+// building the matrix: the major axis picks the face, and the other two
+// divided by it are the face's normalised coordinates.
+fn cube_face(dir: vec3<f32>) -> vec4<f32> {
+    let a = abs(dir);
+    var face = 0u;
+    var uv = vec2<f32>(0.0);
+    var major = 0.0;
+    if a.x >= a.y && a.x >= a.z {
+        major = a.x;
+        face = select(1u, 0u, dir.x > 0.0);
+        uv = select(vec2<f32>(dir.z, -dir.y), vec2<f32>(-dir.z, -dir.y), dir.x > 0.0);
+    } else if a.y >= a.z {
+        major = a.y;
+        face = select(3u, 2u, dir.y > 0.0);
+        uv = select(vec2<f32>(dir.x, -dir.z), vec2<f32>(dir.x, dir.z), dir.y > 0.0);
+    } else {
+        major = a.z;
+        face = select(5u, 4u, dir.z < 0.0);
+        uv = select(vec2<f32>(dir.x, -dir.y), vec2<f32>(-dir.x, -dir.y), dir.z < 0.0);
+    }
+    if major <= 0.0 {
+        return vec4<f32>(0.5, 0.5, 0.0, f32(face));
+    }
+    return vec4<f32>(uv / major * 0.5 + vec2<f32>(0.5), 0.0, f32(face));
+}
+
+/// The direction a point on a cube face stands for — the inverse of
+/// `cube_face`.
+///
+/// 🔴 Here, beside the forward map, for the reason the page arithmetic
+/// is all in this file: an encoder and a decoder that drift produce
+/// pages rasterised somewhere other than where they were asked for, and
+/// nothing about the result says which half is wrong. A cube face's
+/// axis conventions are six sign choices and every one of them is
+/// invisible until a shadow lands on the wrong wall.
+///
+/// `uv` runs `[0, 1]` across the face, the way `cube_face` returns it.
+/// The result is NOT normalised: it is the direction scaled so its major
+/// axis is 1, which is what a face's own frustum wants.
+fn face_dir(face: u32, uv: vec2<f32>) -> vec3<f32> {
+    let t = uv * 2.0 - vec2<f32>(1.0);
+    switch face {
+        case 0u: { return vec3<f32>(1.0, -t.y, -t.x); }
+        case 1u: { return vec3<f32>(-1.0, -t.y, t.x); }
+        case 2u: { return vec3<f32>(t.x, 1.0, t.y); }
+        case 3u: { return vec3<f32>(t.x, -1.0, -t.y); }
+        case 4u: { return vec3<f32>(-t.x, -t.y, -1.0); }
+        default: { return vec3<f32>(t.x, -t.y, 1.0); }
+    }
+}
+
+/// Pages across one side of a local chain's `level`. Mirrors
+/// `PageConfig::side`, and takes the level-0 side rather than reading
+/// the marking pass's uniform so the raster can call it too.
+fn level_side_of(level: u32, side: u32) -> u32 {
+    return max(side >> level, 1u);
+}
+
+/// The near plane every local page is rasterised with.
+///
+/// 🔴 Shared with `SPOT_SHADOW_NEAR_Z` and the cube pass by value, not
+/// by import — the reader reconstructs depth as `near / distance`, so a
+/// near the writer and the reader disagree on is a depth comparison that
+/// is wrong by a constant factor everywhere.
+const PAGE_NEAR: f32 = 0.05;
+
+/// Where a world offset from a lamp lands inside ONE cell of ONE face,
+/// in that cell's own clip space.
+///
+/// `xy` runs `[-1, 1]` across the cell and `z` is the distance along the
+/// face's major axis — negative or zero means the point is behind the
+/// face and belongs to another one.
+///
+/// The cell is a sub-rect of the face, so this is the face's own
+/// projection with the cell's rect mapped back out to full clip: the
+/// same narrowing `page_clip` does in texels, done in angle.
+fn cell_face(face: u32, cell: vec2<u32>, side: u32, offset: vec3<f32>) -> vec3<f32> {
+    let hit = cube_face(offset);
+    // A different face entirely: report it behind so the caller drops
+    // it rather than folding it into this cell.
+    if u32(hit.w) != face {
+        return vec3<f32>(0.0, 0.0, -1.0);
+    }
+    let step = 1.0 / f32(max(side, 1u));
+    let low = vec2<f32>(cell) * step;
+    // The cell's own [0,1], then to [-1,1].
+    let within = (hit.xy - low) / step;
+    return vec3<f32>(within * 2.0 - vec2<f32>(1.0), 1.0);
+}
+
+/// Whether a sphere can reach the cell of a cube face a local page
+/// stands for.
+///
+/// # 🔴 A cone, not a box
+///
+/// The sun's page is a slab: parallel sides, one width, and a sphere
+/// against it is two absolute values. A lamp's page is a FRUSTUM from a
+/// point — it gets wider with distance and it has no width of its own —
+/// so the same test against a box is wrong at every distance except the
+/// one the box was built at.
+///
+/// The cell's circumscribing cone is conservative: it covers the square
+/// cell plus the corners, so a meshlet that only clips a corner is
+/// admitted and rejected later by the raster's own clip. Over-emitting a
+/// pair costs a rasterised triangle that discards; under-emitting costs
+/// a missing shadow with nothing to say why.
+///
+/// `axis` is the cell's centre direction and `cos_half` the cosine of
+/// the angle from it to the cell's corner — both from `face_dir`, so the
+/// cell this covers is the cell the marking assigned.
+fn cell_reaches(
+    axis: vec3<f32>,
+    cos_half: f32,
+    to_centre: vec3<f32>,
+    radius: f32,
+    range: f32,
+) -> bool {
+    let distance = length(to_centre);
+    // Past the lamp's reach entirely, and the near case where the
+    // sphere swallows the apex: every direction is inside it.
+    if distance > range + radius {
+        return false;
+    }
+    if distance <= radius {
+        return true;
+    }
+    // The sphere subtends `asin(radius / distance)` from the apex, so
+    // it reaches the cone when the angle between them is under the sum.
+    // Compared as cosines to keep it to one `acos` per test rather than
+    // two.
+    let cos_to = dot(to_centre / distance, axis);
+    let angle = acos(clamp(cos_to, -1.0, 1.0));
+    let half = acos(clamp(cos_half, -1.0, 1.0));
+    return angle <= half + asin(clamp(radius / distance, 0.0, 1.0));
+}
+
+/// The cell's centre direction and the cosine of its corner half-angle.
+///
+/// `xyz` the axis, `w` the cosine — one call because both come from the
+/// same four `face_dir` evaluations and a caller that recomputed them
+/// separately is a caller that can disagree with itself.
+fn cell_cone(face: u32, cell: vec2<u32>, side: u32) -> vec4<f32> {
+    let step = 1.0 / f32(max(side, 1u));
+    let low = vec2<f32>(cell) * step;
+    let axis = normalize(face_dir(face, low + vec2<f32>(step * 0.5)));
+    // The corner furthest from the axis. A face's mapping is not
+    // angle-linear, so the four corners are not equidistant and the
+    // smallest cosine is the one that bounds them all.
+    var cos_half = 1.0;
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        let corner = low + vec2<f32>(f32(i & 1u), f32(i >> 1u)) * step;
+        cos_half = min(cos_half, dot(normalize(face_dir(face, corner)), axis));
+    }
+    return vec4<f32>(axis, cos_half);
+}
+
 /// What one texel of this page covers, in metres.
 ///
 /// The two chains measure it differently and both are exact. The sun's

@@ -74,9 +74,16 @@ struct ExpandLevel {
 @group(0) @binding(1) var<storage, read> page_list: array<vec2<u32>>;
 @group(0) @binding(2) var<storage, read_write> page_counts: array<atomic<u32>>;
 // x the index into `page_list`, y the cull's packed `(instance, meshlet)`.
-@group(0) @binding(3) var<storage, read_write> pairs: array<vec2<u32>>;
+// Four words: the page, its slot, the cull's packed pair, a spare.
+@group(0) @binding(3) var<storage, read_write> pairs: array<vec4<u32>>;
 @group(0) @binding(4) var<storage, read> visible_counts: array<u32>;
 @group(0) @binding(5) var<uniform> expand: ExpandLevel;
+// 🔴 In group 0 and not a group of its own: `max_bind_groups` is FOUR
+// and the meshlet pool, the survivor list and the instances already own
+// the other three. This is also the eighth storage buffer the stage
+// binds, which is the whole downlevel budget — the next reader of this
+// pass has to displace something.
+@group(0) @binding(6) var<storage, read> lights: array<ClusterLight>;
 
 @group(1) @binding(0) var<storage, read> descriptors: array<MeshletDescriptor>;
 @group(2) @binding(0) var<storage, read> visible_meshlets: array<u32>;
@@ -121,6 +128,29 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
         raster.space.z,
         raster.space.w,
     );
+
+    // 🔴 A lamp's page is a FRUSTUM from a point and the sun's is a
+    // slab. The same sphere test against a box is wrong at every
+    // distance except the one the box was built at, which is why the
+    // two branches here are two shapes rather than two constants.
+    if !id.is_sun {
+        if id.light >= arrayLength(&lights) {
+            return;
+        }
+        let light = lights[id.light];
+        let cone = cell_cone(id.face, id.cell, level_side_of(id.level, raster.space.z));
+        if !cell_reaches(cone.xyz, cone.w, bounds - light.position, radius, light.range) {
+            return;
+        }
+        let slot = atomicAdd(&page_counts[buckets + 2u], 1u);
+        if slot >= raster.chain.y {
+            atomicAdd(&page_counts[buckets + 3u], 1u);
+            return;
+        }
+        pairs[slot] = vec4<u32>(entry.x, entry.y, packed, 0u);
+        return;
+    }
+
     let basis = sun_basis(raster.sun.xyz);
     let centre = sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
     let rect = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z, centre);
@@ -152,7 +182,7 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
         atomicAdd(&page_counts[buckets + 3u], 1u);
         return;
     }
-    pairs[slot] = vec2<u32>(level * raster.chain.z + gid.x / meshlets, packed);
+    pairs[slot] = vec4<u32>(entry.x, entry.y, packed, 0u);
 }
 
 /// What the OTHER shape of this pass would have cost, counted without

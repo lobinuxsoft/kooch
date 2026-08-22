@@ -28,8 +28,8 @@ use kooch_ecs::spot_light::SpotLight;
 use kooch_lighting::{ClusterCamera, GpuLights};
 use kooch_render::meshlet::DEFERRED_COLOR_FORMAT;
 use kooch_render::projection::perspective_infinite_rh_reverse_z;
-use kooch_render::shadow::pages::mark::{MarkCounts, PAINT_FORMAT, PageMarker, Paint};
-use kooch_render::shadow::pages::pool::{DEFAULT_MAX_AGE, PAGE_CELL, PoolConfig};
+use kooch_render::shadow::pages::mark::{MarkCounts, PageMarker, Paint, PAINT_FORMAT};
+use kooch_render::shadow::pages::pool::{PoolConfig, DEFAULT_MAX_AGE, PAGE_CELL};
 use kooch_render::shadow::{ClipmapConfig, PageConfig, SHADOW_DEPTH_FORMAT};
 
 const SIZE: u32 = 128;
@@ -691,18 +691,27 @@ fn every_drawable_page_claims_a_slot() {
     assert_eq!(counts.pool.probes, 0, "no insert ran out of probes");
 }
 
-/// A page nothing draws does not get a page nothing writes.
+/// A local light claims its pages, now that something draws them.
 ///
-/// 🔴 The measured defect: on `many_lights` with two viewports, local
-/// lights held **991 and 1004 of each camera's 1024 slots** and the sun
-/// — the only consumer the raster has — was left 33 and 20 pages. The
-/// pool reported itself 100 % full while producing almost no shadow.
+/// # 🔴 The guard this replaces, and why it was there
 ///
-/// Local pages are still MARKED, because what a hundred casting lights
-/// would cost is the measurement this whole track is justified by. They
-/// simply do not spend the pool until something rasterises them.
+/// Local pages used to be marked and NOT claimed. Measured on
+/// `many_lights` with two viewports, claiming them held **991 and 1004
+/// of each camera's 1024 slots**, leaving the sun — the raster's only
+/// consumer at the time — 33 and 20 pages. The pool reported itself
+/// 100 % full while producing almost no shadow.
+///
+/// What makes claiming safe is that the rest of the chain now exists:
+/// the compaction buckets a lamp's pages by octave, the expansion tests
+/// them against the lamp's own frustum, and the depth pass builds that
+/// frustum from the light the page names. A claimed page is a drawn
+/// page.
+///
+/// ⚠️ The pressure is real and did not go away. What changed is that
+/// the pages bought something — `RasterCounts::local` and the pool's own
+/// overflow counter are what say when the budget stops covering it.
 #[test]
-fn a_local_light_marks_but_does_not_claim() {
+fn a_local_light_claims_its_pages() {
     let Some((device, queue)) = device() else {
         eprintln!("no adapter; skipping");
         return;
@@ -713,12 +722,18 @@ fn a_local_light_marks_but_does_not_claim() {
     let dark = run(&device, &queue, &resources, 0.02, None);
     assert!(dark.resident > 0, "the point light marked nothing");
     assert_eq!(
-        dark.pool.claims, 0,
-        "{} local pages took a slot the raster cannot fill",
-        dark.pool.claims
+        dark.pool.claims, dark.resident,
+        "one claim per distinct page: {} claims of {} resident",
+        dark.pool.claims, dark.resident
     );
-    assert_eq!(dark.pool.unspent(dark.resident), dark.resident);
+    assert_eq!(
+        dark.pool.unspent(dark.resident),
+        0,
+        "a marked local page is no longer a page nothing spends"
+    );
 
+    // And with a sun as well: both chains draw from one pool, which is
+    // the budget line this whole track is measured against.
     let sunny = run(
         &device,
         &queue,
@@ -726,14 +741,14 @@ fn a_local_light_marks_but_does_not_claim() {
         0.02,
         Some(Vec3::new(0.3, -1.0, 0.2)),
     );
-    assert!(sunny.pool.claims > 0, "the sun claimed nothing");
+    assert!(sunny.pool.claims > 0, "nothing claimed with a sun in frame");
     assert!(
-        sunny.pool.claims < sunny.resident,
-        "the local pages stopped being counted: {} claims of {} resident",
-        sunny.pool.claims,
-        sunny.resident
+        sunny.resident > dark.resident,
+        "adding a sun did not add pages: {} against {}",
+        sunny.resident,
+        dark.resident
     );
-    assert_eq!(sunny.pool.overflow, 0, "the sun overflowed a default pool");
+    assert_eq!(sunny.pool.overflow, 0, "a default pool overflowed");
 }
 
 #[test]

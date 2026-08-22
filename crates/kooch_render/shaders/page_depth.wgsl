@@ -67,8 +67,21 @@ struct MeshInstance {
 }
 
 @group(0) @binding(0) var<uniform> raster: PageRaster;
-@group(0) @binding(1) var<storage, read> page_list: array<vec2<u32>>;
-@group(0) @binding(2) var<storage, read> pairs: array<vec2<u32>>;
+// 🔴 FOUR words a pair — the virtual page, its physical slot, the
+// cull's packed `(instance, meshlet)`, and a spare. It used to be two,
+// with the page and slot fetched through `page_list`, and that
+// indirection cost this stage a storage binding it does not have:
+// `max_storage_buffers_per_shader_stage` is 8 and the mesh pool alone
+// spends five.
+//
+// It also costs LESS memory, because the capacity came down with it.
+@group(0) @binding(2) var<storage, read> pairs: array<vec4<u32>>;
+// 🔴 A lamp's page is a frustum from the light's own position, so its
+// transform cannot come from a uniform the way the sun's does: apex,
+// axis and reach are all properties of the light the page names. In
+// group 0 because group 2 is the shared one-buffer instance layout and
+// widening it would widen every pass that uses it.
+@group(0) @binding(1) var<storage, read> lights: array<ClusterLight>;
 
 @group(1) @binding(0) var<storage, read> vertices: array<MeshVertexStored>;
 @group(1) @binding(1) var<storage, read> meshlet_vertices: array<u32>;
@@ -99,20 +112,19 @@ fn vs_page(
 ) -> PageVertex {
     var out: PageVertex;
     let pair = pairs[instance_index];
-    let entry = page_list[pair.x];
-    let inst_id = pair.y >> 16u;
-    let meshlet_id = pair.y & 0xffffu;
+    let inst_id = pair.z >> 16u;
+    let meshlet_id = pair.z & 0xffffu;
     let desc = descriptors[meshlet_id];
 
     let id = page_decode(
-        entry.x,
+        pair.x,
         raster.views.y,
         raster.space.x,
         raster.space.y,
         raster.space.z,
         raster.space.w,
     );
-    out.rect = page_atlas_rect(entry.y, raster.views.z, raster.pool.z, raster.pool.w);
+    out.rect = page_atlas_rect(pair.y, raster.views.z, raster.pool.z, raster.pool.w);
 
     let triangle_idx = vertex_index / 3u;
     let corner_idx = vertex_index % 3u;
@@ -132,22 +144,52 @@ fn vs_page(
     let pos = vec3<f32>(v.position[0], v.position[1], v.position[2]);
     let world = (instances[inst_id].transform * vec4<f32>(pos, 1.0)).xyz;
 
-    let basis = sun_basis(raster.sun.xyz);
-    // 🔴 The plane is ABSOLUTE and the rect carries the snapped centre.
-    // Measuring from the camera instead would put the geometry on a grid
-    // that slides with it, which is the shadow crawl `sun_centre`
-    // exists to remove.
-    let centre = sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
-    let plane = sun_plane(world, basis);
-    let along = dot(world - raster.eye.xyz, basis[2]);
-    let page = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z, centre);
-    let ndc = (plane - page.xy) / (page.z * 0.5);
+    var ndc = vec2<f32>(2.0);
+    var depth = 0.0;
 
-    // 🔴 Reversed-Z (ADR 0002): 1 is the near plane and 0 is far, so an
-    // empty page reads as "nothing between here and the light" rather
-    // than as "everything is shadowed". The clear matches.
-    let span = raster.world.y;
-    let depth = 1.0 - (along + span) / (2.0 * span);
+    if id.is_sun {
+        let basis = sun_basis(raster.sun.xyz);
+        // 🔴 The plane is ABSOLUTE and the rect carries the snapped
+        // centre. Measuring from the camera instead would put the
+        // geometry on a grid that slides with it, which is the shadow
+        // crawl `sun_centre` exists to remove.
+        let centre = sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
+        let plane = sun_plane(world, basis);
+        let along = dot(world - raster.eye.xyz, basis[2]);
+        let page = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z, centre);
+        ndc = (plane - page.xy) / (page.z * 0.5);
+
+        // 🔴 Reversed-Z (ADR 0002): 1 is the near plane and 0 is far, so
+        // an empty page reads as "nothing between here and the light"
+        // rather than as "everything is shadowed". The clear matches.
+        let span = raster.world.y;
+        depth = 1.0 - (along + span) / (2.0 * span);
+    } else {
+        // A lamp's page: a perspective frustum from the light, narrowed
+        // to the one cell of the one face the page names.
+        //
+        // Built here rather than uploaded because there is no per-page
+        // uniform to upload it into — a draw covers every page of every
+        // light at once, and which page an instance belongs to is only
+        // known from the pair it read.
+        let light = lights[id.light];
+        let offset = world - light.position;
+        let side = level_side_of(id.level, raster.space.z);
+        let face = cell_face(id.face, id.cell, side, offset);
+        // Behind the face's plane: outside this page by construction,
+        // and dividing by it would fold the geometry back in front.
+        if face.z <= 1e-4 {
+            out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+            return out;
+        }
+        ndc = face.xy;
+        // 🔴 Reversed-Z again, and a RECIPROCAL rather than a ratio: a
+        // perspective page stores `near / distance`, which is what
+        // `inti_point_shadow` already reconstructs depth from. A linear
+        // ratio here would disagree with the reader by the whole
+        // non-linearity of the projection.
+        depth = clamp(PAGE_NEAR / max(length(offset), PAGE_NEAR), 0.0, 1.0);
+    }
 
     out.clip = page_clip(ndc, depth, out.rect, raster.world.z);
     return out;

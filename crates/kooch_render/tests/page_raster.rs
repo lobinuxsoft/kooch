@@ -1362,3 +1362,61 @@ fn run_page_table_shader(
     queue.submit([encoder.finish()]);
     read_words(device, queue, &buffer)
 }
+
+/// `face_dir` really is `cube_face`'s inverse, on all six faces.
+///
+/// 🔴 A cube face's axis conventions are six sign choices, and every one
+/// of them is invisible until a shadow lands on the wrong wall — at
+/// which point it looks like a bad matrix, a bad cull, or a bad page
+/// key. The expansion and the depth pass both build a face's frustum
+/// from `face_dir` while the marking picks the face with `cube_face`;
+/// one flipped sign between them puts a caster in a page it never
+/// touches, on the opposite side of the lamp.
+const FACE_ROUNDTRIP: &str = r#"
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
+
+@compute @workgroup_size(1, 1, 1)
+fn cs_faces() {
+    var worst = 0.0;
+    var wrong_face = 0.0;
+    for (var face = 0u; face < 6u; face = face + 1u) {
+        // Corners, edges and the middle: a sign error that survives the
+        // centre still shows at a corner.
+        for (var i = 0u; i < 9u; i = i + 1u) {
+            let uv = vec2<f32>(f32(i % 3u), f32(i / 3u)) * 0.5;
+            // Pulled off the exact edge: a direction on the seam is
+            // genuinely ambiguous and belongs to either face.
+            let inset = clamp(uv, vec2<f32>(0.02), vec2<f32>(0.98));
+            let dir = face_dir(face, inset);
+            let back = cube_face(dir);
+            if u32(back.w) != face {
+                wrong_face = wrong_face + 1.0;
+            }
+            worst = max(worst, max(abs(back.x - inset.x), abs(back.y - inset.y)));
+        }
+    }
+    out[0] = worst;
+    out[1] = wrong_face;
+}
+"#;
+
+#[test]
+fn a_cube_face_maps_back_to_itself() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let out = run_page_table_shader(&device, &queue, FACE_ROUNDTRIP, "cs_faces", 8);
+    let worst = f32::from_bits(out[0]);
+    let wrong = f32::from_bits(out[1]);
+    assert_eq!(
+        wrong, 0.0,
+        "{wrong} of 54 directions came back on a different face than they were built \
+         from; a caster would be rasterised into a page on the other side of the lamp"
+    );
+    assert!(
+        worst < 1e-5,
+        "the round trip drifts by {worst} across a face, so a page's own frustum does \
+         not cover the cell the marking assigned it"
+    );
+}
