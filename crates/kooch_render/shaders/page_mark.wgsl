@@ -675,3 +675,42 @@ fn age_view(@builtin(global_invocation_id) id: vec3<u32>) {
     page_release(page_slot(entry));
     atomicAdd(&counters[12], 1u);
 }
+
+// Turns tombstones back into empty entries, wherever that is provably
+// safe.
+//
+// # 🔴 Without this the table saturates, and quickly
+//
+// Eviction leaves a hole and an insert only fills one if its own probe
+// run happens to cross it. At the load factor this table is designed for
+// a run is a slot or two long, so almost every insert reaches an EMPTY
+// entry first and the hole survives. Fifty evictions a frame with none
+// consumed is a table made entirely of holes inside a minute — measured
+// in the editor as "1.0 dead entries walked per request" climbing until
+// inserts ran out of probes and pages went unshadowed.
+//
+// # Why the condition is enough
+//
+// A tombstone whose NEXT entry is empty cannot be holding a run
+// together: any key that probed through it would have stopped at that
+// empty entry anyway. So nothing live can depend on it, and it can be
+// emptied outright. Runs shrink from the tail, a layer per frame, which
+// converges because the runs are short — and a hole in the middle of a
+// live run is the case an insert reuses.
+//
+// ⚠️ Runs AFTER the marking, so the holes it removes are last frame's
+// and this frame's inserts have already had their chance at them.
+@compute @workgroup_size(MARK_GROUP * MARK_GROUP, 1, 1)
+fn sweep_view(@builtin(global_invocation_id) id: vec3<u32>) {
+    let entries = pages.pool.x;
+    let entry = id.x;
+    if entry >= entries { return; }
+    if atomicLoad(&table_keys[entry]) != PAGE_DEAD { return; }
+    if atomicLoad(&table_keys[page_step(entry, entries)]) != PAGE_EMPTY { return; }
+    // A compare-exchange rather than a store: another thread may have
+    // just claimed this hole for a real page.
+    let outcome = atomicCompareExchangeWeak(&table_keys[entry], PAGE_DEAD, PAGE_EMPTY);
+    if outcome.exchanged {
+        atomicAdd(&counters[13], 1u);
+    }
+}

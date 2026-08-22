@@ -197,20 +197,39 @@ impl PoolConfig {
 
 /// How long a page outlives the frame that asked for it.
 ///
-/// # 🔴 `max_age` defaults to ZERO, and that is not timidity
+/// # 🔴 Zero is the DANGEROUS value, which is the opposite of the guess
 ///
-/// A resident page holds the depth of the last frame that DREW it.
-/// Keeping it alive past the frame that requested it is correct exactly
-/// as long as nothing inside it moved — and nothing here knows when
-/// something did. Epic pairs `MaxPageAgeSinceLastRequest` with an
-/// invalidation pass that walks every primitive whose transform changed
-/// and marks the pages its old and new bounds cover; without that half,
-/// a rolling ball leaves its shadow behind it on the ground.
+/// The instinct is that keeping a page longer is the risky half — a
+/// resident page holds the depth of the last frame that drew it, so
+/// surely a short age is the safe default. It is exactly backwards here,
+/// and it took a measurement to see why.
 ///
-/// So the mechanism ships whole and the policy ships off: at zero, a
-/// page not requested this frame is evicted, which is the behaviour that
-/// came before, produced by the machine that replaces it. Raising it is
-/// one number and `KOOCH_SHADOW_PAGE_AGE` is the way to try it.
+/// The raster redraws every resident page every frame, so a page's
+/// CONTENT is never stale no matter how long it lives. What a short age
+/// costs is the page's ADDRESS: at zero, every page is evicted and
+/// re-taken each frame, its slot comes back off a free list in whatever
+/// order the GPU's threads got there, and the same page lands somewhere
+/// new. `a_resident_page_keeps_its_slot` measures it — page 450494
+/// moved from slot 2 to slot 1 with the camera and the sun standing
+/// still.
+///
+/// That matters because `vbuf64.render` rasterises and shades in ONE
+/// pass: the shading samples an atlas a frame old while reading this
+/// frame's table. The two agree only while a page's slot holds. Before
+/// persistence they agreed by accident — the allocator was a bump from
+/// zero and handed the same page the same slot. A free list has no such
+/// order, and the symptom is what the user saw: artefacts that flash and
+/// vanish whenever the camera or the lights move.
+///
+/// So the default is long. A page nothing stops asking for is never
+/// freed, never moves, and the fused pass keeps its guarantee.
+/// `KOOCH_SHADOW_PAGE_AGE` moves it; zero is reachable and is what the
+/// eviction tests use, but it is not a setting to ship.
+///
+/// ⚠️ The thing this genuinely still waits on is the NEXT step, not this
+/// one: rasterising only the pages that changed. That needs something to
+/// mark the pages a moving caster passed through, and until it exists
+/// the raster's answer is to redraw them all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PoolLife {
     /// This frame's index, counting up for the process's lifetime.
@@ -240,16 +259,22 @@ impl PoolLife {
     }
 }
 
+/// Frames a page survives unrequested when nobody says otherwise.
+///
+/// A second at 60 Hz. Long enough that a camera sweeping across a scene
+/// and back finds its pages still there; short enough that the pool is
+/// not holding a minute of somewhere else.
+pub const DEFAULT_MAX_AGE: u32 = 60;
+
 /// `KOOCH_SHADOW_PAGE_AGE`, read once. See [`PoolLife`] for why the
-/// default is zero and why it is an environment variable rather than a
-/// setting.
+/// default is long rather than short.
 pub fn age_from_environment() -> u32 {
     static AGE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     *AGE.get_or_init(|| {
         std::env::var("KOOCH_SHADOW_PAGE_AGE")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(0)
+            .unwrap_or(DEFAULT_MAX_AGE)
             .min(1024)
     })
 }
@@ -391,6 +416,12 @@ pub struct PoolCounts {
     pub alive: u32,
     /// Pages freed this frame for going unrequested past `max_age`.
     pub evicted: u32,
+    /// Tombstones the sweep turned back into empty entries.
+    ///
+    /// 🔴 It has to keep pace with `evicted`, or the table is filling
+    /// with holes it cannot reuse and inserts will start running out of
+    /// probes. That failure was measured before the sweep existed.
+    pub swept: u32,
     /// Slots the free list could not hold, which is a double free.
     /// 🔴 Always zero, or the allocator is wrong.
     pub leaked: u32,

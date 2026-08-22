@@ -34,8 +34,9 @@ const SOURCE: &str = include_str!("../../../shaders/page_mark.wgsl");
 const GROUP: u32 = 8;
 /// 0 resident, 1 samples, 2 pairs, 3 mark overflow, 4 unused, 5 pool
 /// overflow, 6 probe overflow, 7 reuses, 8 fresh claims, 9 holes walked,
-/// 10 free-list overflow, 11 pages kept alive, 12 pages evicted. 13
-/// through 15 spare, because a storage buffer is rounded up anyway.
+/// 10 free-list overflow, 11 pages kept alive, 12 pages evicted, 13
+/// tombstones swept. 14 and 15 spare, because a storage buffer is
+/// rounded up anyway.
 const COUNTERS: u64 = 16;
 
 /// `KOOCH_PAGE_MARKING=1`, read once.
@@ -144,6 +145,10 @@ pub struct PageMarker {
     /// and only this view's. See `age_view` in the shader for why that
     /// cannot be a `clear_buffer`.
     clear: wgpu::ComputePipeline,
+    /// Turns tombstones back into empty entries where that is provably
+    /// safe. Without it the table saturates with holes in under a
+    /// minute. See `sweep_view` in the shader.
+    sweep: wgpu::ComputePipeline,
     view: wgpu::Buffer,
     marks: wgpu::Buffer,
     counters: wgpu::Buffer,
@@ -194,11 +199,13 @@ impl PageMarker {
         };
         let pipeline = compute("mark_main");
         let clear = compute("age_view");
+        let sweep = compute("sweep_view");
 
         Self {
             layout,
             pipeline,
             clear,
+            sweep,
             view: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_mark_view"),
                 size: std::mem::size_of::<PageMarkView>() as u64,
@@ -424,6 +431,7 @@ impl PageMarker {
         // Every counter here is a per-view quantity now, the pool's
         // claims included: a view allocates out of its own slice.
         encoder.clear_buffer(&self.counters, 0, None);
+        let entries = self.pool.config().entries();
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("shadow pages: mark"),
@@ -434,10 +442,15 @@ impl PageMarker {
             // take the other view's entries with it.
             pass.set_pipeline(&self.clear);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(self.pool.config().entries().div_ceil(GROUP * GROUP), 1, 1);
+            pass.dispatch_workgroups(entries.div_ceil(GROUP * GROUP), 1, 1);
             pass.set_pipeline(&self.pipeline);
             let threads = (viewport.0.div_ceil(rate), viewport.1.div_ceil(rate));
             pass.dispatch_workgroups(threads.0.div_ceil(GROUP), threads.1.div_ceil(GROUP), 1);
+            // 🔴 AFTER the marking, not before it: this frame's inserts
+            // get first refusal on the holes, and what it removes is
+            // whatever they left behind.
+            pass.set_pipeline(&self.sweep);
+            pass.dispatch_workgroups(entries.div_ceil(GROUP * GROUP), 1, 1);
         }
         self.pending = self.readback.record(
             encoder,
@@ -694,6 +707,7 @@ impl Readback {
                         leaked: words[10],
                         alive: words[11],
                         evicted: words[12],
+                        swept: words[13],
                         capacity,
                     },
                     size,
