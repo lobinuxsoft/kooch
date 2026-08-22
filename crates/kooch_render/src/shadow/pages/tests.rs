@@ -297,13 +297,24 @@ fn the_table_is_kilobytes_not_megabytes() {
     // address 28 409 856 pages; a `u32` each is 108 MiB, 42 % of the
     // pool it would index. Sized to residency instead, Epic's own
     // 4096-page pool costs this.
+    //
+    // 128 KiB with three words an entry — slot, age, listing. The third
+    // word cost 32 KiB and bought the route back from a page key to its
+    // place in the compacted list; the comparison that matters is
+    // against the 108 MiB, not against the previous kilobyte count.
     let config = PoolConfig {
         pages: POOL_PAGES,
         views: 1,
     };
+    let flat = 28_409_856u64 * 4;
     assert!(
-        config.table_bytes() < 128 * 1024,
+        config.table_bytes() < 256 * 1024,
         "the table is {} bytes",
+        config.table_bytes()
+    );
+    assert!(
+        config.table_bytes() * 800 < flat,
+        "the table is {} bytes against the flat answer's {flat}; it has          stopped being three orders of magnitude cheaper",
         config.table_bytes()
     );
 }

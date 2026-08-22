@@ -28,7 +28,7 @@
 // TWO words an entry — the slot, then the frame it was last requested
 // in. See `PAGE_CELL`: it is the marking pass's buffer and this reads it
 // with the same stride or it reads an age as a slot.
-@group(0) @binding(2) var<storage, read> table_slots: array<u32>;
+@group(0) @binding(2) var<storage, read_write> table_slots: array<u32>;
 // `x` the virtual page, `y` its physical slot. Bucketed: level `L`
 // owns `[L * chain.z, (L + 1) * chain.z)`.
 @group(0) @binding(3) var<storage, read_write> page_list: array<vec2<u32>>;
@@ -62,6 +62,10 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
     if key == PAGE_EMPTY || key == PAGE_DEAD {
         return;
     }
+    // Whatever listing this entry carried belongs to a compaction that
+    // is over. Cleared before the reasons to return below, so a page
+    // this view does not own never keeps another view's index.
+    table_slots[entry * PAGE_CELL + 2u] = PAGE_UNLISTED;
     // Keys are stored as `page + 1` so that a cleared buffer is empty.
     let page = key - 1u;
     let id = page_decode(
@@ -98,7 +102,12 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         atomicAdd(&page_counts[levels], 1u);
         return;
     }
-    page_list[id.level * raster.chain.z + index] = vec2<u32>(page, table_slots[entry * PAGE_CELL]);
+    let listing = id.level * raster.chain.z + index;
+    page_list[listing] = vec2<u32>(page, table_slots[entry * PAGE_CELL]);
+    // The way back: a pass that computes a page KEY can now reach the
+    // entry the draw indexes, without walking every resident page to
+    // find it. See `PAGE_CELL`.
+    table_slots[entry * PAGE_CELL + 2u] = listing;
 }
 
 // One thread per level: the expansion's dispatch size is pages TIMES

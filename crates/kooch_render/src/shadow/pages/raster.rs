@@ -1129,7 +1129,10 @@ fn compact_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             // second allocation.
             uniform_entry(0, true, c),
             buffer_entry(1, true, c),
-            buffer_entry(2, true, c),
+            // 🔴 Writable now: the compaction records each page's place
+            // in `page_list` back into its table entry, which is the
+            // only pass that knows both. See `PAGE_CELL`.
+            buffer_entry(2, false, c),
             buffer_entry(3, false, c),
             buffer_entry(4, false, c),
             buffer_entry(5, false, c),

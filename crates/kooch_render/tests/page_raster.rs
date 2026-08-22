@@ -269,7 +269,51 @@ fn a_page_compacts_into_the_level_it_came_from() {
         planted[2],
         "level 5's bucket holds its page and its physical slot"
     );
+
+    // 🔴 And the way BACK. `page_list` is dense and per view, so a pass
+    // that computes a page KEY — rather than reading one out of the list
+    // — has no route to the entry the draw indexes by. The compaction is
+    // the only pass holding both, so it writes the listing into the
+    // table's third word. Without it, finding pages by walking cells
+    // means walking every resident page to identify each one, which is
+    // the pairing this was meant to replace.
+    let cells = read_words(&device, &queue, pool.slots());
+    let listing = |entry: usize| cells[entry * cell + 2];
+    for (i, planted_page) in planted.iter().enumerate() {
+        let at = listing(i * 7) as usize;
+        assert_ne!(
+            at as u32,
+            PAGE_UNLISTED,
+            "the sun page at entry {} kept no listing",
+            i * 7
+        );
+        assert_eq!(
+            (list[at * 2], list[at * 2 + 1]),
+            *planted_page,
+            "entry {}'s listing points at the wrong page",
+            i * 7
+        );
+    }
+    // Everything the compaction saw and did not list says so, rather
+    // than keeping an index into another view's list — which would be a
+    // perfectly well-formed number pointing at somebody else's page.
+    assert_eq!(
+        listing(97),
+        PAGE_UNLISTED,
+        "the local light's page kept a listing it does not have"
+    );
+    for entry in [43usize, 61] {
+        assert_eq!(
+            listing(entry),
+            PAGE_UNLISTED,
+            "the other camera's page at entry {entry} carries a listing into THIS view's list"
+        );
+    }
 }
+
+/// A table entry that is resident but not in this view's `page_list`.
+/// Mirrors `PAGE_UNLISTED` in `page_table.wgsl`.
+const PAGE_UNLISTED: u32 = 0xffff_ffff;
 
 /// Which way a light-facing triangle winds after the page transform.
 ///
