@@ -310,6 +310,49 @@ pub enum MeshletDebugMode {
     ///
     /// Black is no page at any level; magenta is the paged path off.
     VirtualPageAge = 28,
+    /// Which CUBE FACE of one lamp each pixel reads its shadow page
+    /// from, and at which chain level.
+    ///
+    /// 🔴 The sun has one direction and a lamp has SIX, so a lamp's page
+    /// arithmetic carries six sign choices the sun's does not — and
+    /// every one of them is invisible in the shaded image. A shadow on
+    /// the wrong wall, a shadow that vanishes when the camera crosses an
+    /// axis, a shadow that mirrors: all of them look like a bad matrix
+    /// and all of them are a face.
+    ///
+    /// The lamp is fixed by `debug_light`, on purpose. Painting a
+    /// hundred lamps at once averages exactly the signal being looked
+    /// for.
+    ///
+    /// - **Six hues** — the face. A sphere around the lamp should read
+    ///   as six clean patches with straight seams. Torn seams, mirrored
+    ///   patches or a face appearing twice is a sign error in
+    ///   `face_dir` / `cube_face`.
+    /// - **Brightness** — the chain level the walk stopped at.
+    /// - **White** — the lamp reaches this pixel and there is NO page.
+    ///   That separates a marking fault from a residency one: white
+    ///   where the lamp clearly lights means the page was never
+    ///   allocated, not that the face is wrong.
+    /// - **Black** — outside the lamp's range. **Magenta** — paged path
+    ///   off.
+    LocalPageFaces = 29,
+    /// What one lamp's page ANSWERS at each pixel, before the shading
+    /// mixes it with ninety-nine others.
+    ///
+    /// 🔴 The other half of [`Self::LocalPageFaces`], and the split is
+    /// the same one that made the sun's flicker readable: that view says
+    /// which page was found, this one says what it contained. A shadow
+    /// that looks wrong is either reading the wrong page or reading the
+    /// right page and comparing wrong, and no single view can say which.
+    ///
+    /// - **Red** — the page says occluded. **Green** — lit.
+    /// - **Blue** — the lamp reaches here and no page does.
+    /// - **Black** — out of range. **Magenta** — paged path off.
+    ///
+    /// A lamp whose faces are clean here and whose shadow is still wrong
+    /// in the frame is a lamp the SHADING is mixing wrong, which is a
+    /// different pass entirely.
+    LocalPageDepth = 30,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -376,6 +419,8 @@ impl MeshletDebugMode {
             Self::VirtualPages,
             Self::VirtualPageTiles,
             Self::VirtualPageAge,
+            Self::LocalPageFaces,
+            Self::LocalPageDepth,
             Self::TextureMipLevel,
             Self::Fsr3Input,
             Self::Fsr3Motion,
@@ -478,6 +523,8 @@ impl MeshletDebugMode {
             Self::LightsPerPixel => "Lights per pixel",
             Self::PointShadowFactor => "Point shadow factor",
             Self::PointCubeFaces => "Point cube faces",
+            Self::LocalPageFaces => "Lamp shadow pages: faces",
+            Self::LocalPageDepth => "Lamp shadow pages: occlusion",
             Self::VirtualPages => "Virtual shadow pages",
             Self::VirtualPageTiles => "Virtual shadow page tiles",
             Self::VirtualPageAge => "Virtual shadow page age",

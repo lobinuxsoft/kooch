@@ -29,6 +29,14 @@ fn discriminants_match_the_shader() {
         ),
         (MeshletDebugMode::SingleLight, "INTI_DEBUG_SINGLE_LIGHT"),
         (MeshletDebugMode::LightsPerPixel, "INTI_DEBUG_LIGHT_COUNT"),
+        (MeshletDebugMode::VirtualPages, "INTI_DEBUG_VIRTUAL_PAGES"),
+        (
+            MeshletDebugMode::VirtualPageTiles,
+            "INTI_DEBUG_VIRTUAL_TILES",
+        ),
+        (MeshletDebugMode::VirtualPageAge, "INTI_DEBUG_VIRTUAL_AGE"),
+        (MeshletDebugMode::LocalPageFaces, "INTI_DEBUG_LAMP_FACES"),
+        (MeshletDebugMode::LocalPageDepth, "INTI_DEBUG_LAMP_DEPTH"),
     ] {
         let declaration = format!("const {name}: u32 = {}u;", mode.as_u32());
         assert!(
@@ -51,6 +59,35 @@ fn every_inti_view_is_above_the_dispatch_floor() {
         MeshletDebugMode::LightsPerPixel,
     ] {
         assert!(mode.as_u32() >= floor, "{mode:?} is below INTI_DEBUG_FIRST");
+    }
+}
+
+/// A mode the dropdown offers that the shader's own gate rejects paints
+/// BLACK, silently.
+///
+/// 🔴 The gate is not a range: modes 18 through 25 are resolved by other
+/// passes, so `inti_debug.wgsl` lists the high ones by name. Adding a
+/// variant to the enum and forgetting the gate gives a menu entry that
+/// blanks the screen, and the comment on `INTI_DEBUG_LAST` is there
+/// because it happened.
+#[test]
+fn every_paged_view_passes_the_shader_gate() {
+    let source = kooch_lighting::inti_debug_shader();
+    let gate = source
+        .find("return (mode >= INTI_DEBUG_FIRST")
+        .expect("the dispatch gate moved");
+    let block = &source[gate..source[gate..].find(';').unwrap() + gate];
+    for name in [
+        "INTI_DEBUG_VIRTUAL_PAGES",
+        "INTI_DEBUG_VIRTUAL_AGE",
+        "INTI_DEBUG_LAMP_FACES",
+        "INTI_DEBUG_LAMP_DEPTH",
+    ] {
+        assert!(
+            block.contains(name),
+            "`{name}` is above INTI_DEBUG_LAST and not named in the gate, so selecting \
+             it paints black instead of the view"
+        );
     }
 }
 
@@ -136,17 +173,13 @@ fn reject_reason_code_tracks_cull_shader_constants() {
     // Non-reject modes never write into reject_reasons[] — the
     // orchestrator must NOT lift `debug_active` for them.
     assert!(MeshletDebugMode::Off.reject_reason_code().is_none());
-    assert!(
-        MeshletDebugMode::TriangleDensity
-            .reject_reason_code()
-            .is_none()
-    );
+    assert!(MeshletDebugMode::TriangleDensity
+        .reject_reason_code()
+        .is_none());
     assert!(MeshletDebugMode::Overdraw.reject_reason_code().is_none());
-    assert!(
-        MeshletDebugMode::CullPassthrough
-            .reject_reason_code()
-            .is_none()
-    );
+    assert!(MeshletDebugMode::CullPassthrough
+        .reject_reason_code()
+        .is_none());
     assert!(MeshletDebugMode::OnlyLod0.reject_reason_code().is_none());
     assert!(MeshletDebugMode::OnlyRoots.reject_reason_code().is_none());
     assert!(MeshletDebugMode::MeshletIds.reject_reason_code().is_none());

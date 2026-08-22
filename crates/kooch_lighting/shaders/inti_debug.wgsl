@@ -41,6 +41,10 @@ const INTI_DEBUG_VIRTUAL_PAGES: u32 = 26u;
 const INTI_DEBUG_VIRTUAL_TILES: u32 = 27u;
 /// Mirrors `MeshletDebugMode::VirtualPageAge`.
 const INTI_DEBUG_VIRTUAL_AGE: u32 = 28u;
+/// Mirrors `MeshletDebugMode::LocalPageFaces`.
+const INTI_DEBUG_LAMP_FACES: u32 = 29u;
+/// Mirrors `MeshletDebugMode::LocalPageDepth`.
+const INTI_DEBUG_LAMP_DEPTH: u32 = 30u;
 // Lowest discriminant handled here. Modes below it are resolved by the
 // shading path itself before the surface is even reconstructed.
 const INTI_DEBUG_FIRST: u32 = INTI_DEBUG_NORMALS;
@@ -663,7 +667,119 @@ fn inti_debug_is_view(mode: u32) -> bool {
     // the exact failure the comment on `INTI_DEBUG_LAST` exists for.
     return (mode >= INTI_DEBUG_FIRST && mode <= INTI_DEBUG_LAST)
         || mode == INTI_DEBUG_VIRTUAL_PAGES
-        || mode == INTI_DEBUG_VIRTUAL_AGE;
+        || mode == INTI_DEBUG_VIRTUAL_AGE
+        || mode == INTI_DEBUG_LAMP_FACES
+        || mode == INTI_DEBUG_LAMP_DEPTH;
+}
+
+/// One lamp's shadow pages, taken apart.
+///
+/// # 🔴 Why the lamp is FIXED and why there are two views
+///
+/// A lamp's page arithmetic carries six sign choices the sun's does not
+/// — one per cube face — and every one is invisible in the shaded
+/// image. Painting all hundred lamps at once averages exactly the signal
+/// being looked for, so this reads `debug_light` and answers about that
+/// one.
+///
+/// `faces` picks which question: the face and level a pixel READS
+/// (`true`), or what that page CONTAINED (`false`). A shadow that looks
+/// wrong is either reading the wrong page or reading the right page and
+/// comparing wrong, and no single view can separate those.
+///
+/// Deliberately a SECOND walk of the chain rather than a hook inside
+/// `inti_local_page_shadow`: a debug view that shares the reader's early
+/// returns cannot show what the reader skipped.
+fn inti_lamp_page_debug(world_position: vec3<f32>, n: vec3<f32>, faces: bool) -> vec3<f32> {
+    if (inti.shadows_enabled == 0u || inti_pages.sun.w <= 0.5) {
+        return vec3<f32>(1.0, 0.0, 1.0);
+    }
+    let light_index = inti.debug_light;
+    if (light_index >= inti.light_count) {
+        return vec3<f32>(1.0, 0.0, 1.0);
+    }
+    let light = inti_lights[light_index];
+    if (light.kind == INTI_KIND_DIRECTIONAL) {
+        return vec3<f32>(1.0, 0.0, 1.0);
+    }
+
+    let raw = world_position - light.position;
+    let distance = length(raw);
+    // Out of the lamp's reach: nothing to say, and saying something
+    // would fill the screen with a colour that means "not applicable".
+    if (distance > light.range) {
+        return vec3<f32>(0.0);
+    }
+    let to_light = -raw / max(distance, 1e-6);
+    let is_spot = light.kind == INTI_KIND_SPOT;
+
+    let side0 = inti_pages.space.z;
+    let page_texels = inti_pages.pool.w;
+    let stride = inti_pages.space.x;
+    let face_pages = inti_pages.space.y;
+    let levels = u32(log2(f32(max(side0, 1u)))) + 1u;
+    let view_base = inti_pages.views.x * inti_pages.views.y;
+
+    for (var level = 0u; level < levels; level = level + 1u) {
+        let side = level_side_of(level, side0);
+        let texel_world = 2.0 * max(distance, PAGE_NEAR) / f32(side * page_texels);
+        let sampled = world_position
+            + n * (texel_world * INTI_NORMAL_BIAS)
+            + to_light * INTI_DEPTH_BIAS;
+        let offset = sampled - light.position;
+        let hit = cube_face(offset);
+        let face = select(u32(hit.w), 0u, is_spot);
+        let cell = vec2<u32>(
+            clamp(hit.xy, vec2<f32>(0.0), vec2<f32>(0.99999)) * f32(side)
+        );
+        let page = view_base
+            + light_index * stride
+            + face * face_pages
+            + level_base_of(level, side0)
+            + cell.y * side
+            + cell.x;
+        let slot = inti_page_lookup(page);
+        if (slot == PAGE_MISS) {
+            continue;
+        }
+
+        let place = page_place(slot, inti_pages.views.z, inti_pages.pool.z, page_texels);
+        let step = 1.0 / f32(side);
+        let within = (hit.xy - vec2<f32>(cell) * step) / step;
+        let texel = clamp(
+            floor(within * f32(page_texels)),
+            vec2<f32>(0.0),
+            vec2<f32>(f32(page_texels) - 1.0),
+        );
+        let stored = textureLoad(
+            inti_page_atlas, vec2<i32>(vec2<f32>(place.xy) + texel), i32(place.z), 0);
+        let receiver = clamp(PAGE_NEAR / max(length(offset), PAGE_NEAR), 0.0, 1.0);
+
+        if (!faces) {
+            // Red occluded, green lit. One tap, not the reader's 2x2:
+            // a filtered answer cannot say which texel disagreed.
+            return select(vec3<f32>(0.1, 0.9, 0.1), vec3<f32>(0.9, 0.1, 0.1), stored > receiver);
+        }
+        // Six hues, evenly spaced, so no two adjacent faces share one.
+        var hue = vec3<f32>(0.0);
+        switch face {
+            case 0u: { hue = vec3<f32>(1.0, 0.25, 0.25); }
+            case 1u: { hue = vec3<f32>(0.25, 1.0, 0.25); }
+            case 2u: { hue = vec3<f32>(0.25, 0.4, 1.0); }
+            case 3u: { hue = vec3<f32>(1.0, 1.0, 0.3); }
+            case 4u: { hue = vec3<f32>(1.0, 0.35, 1.0); }
+            default: { hue = vec3<f32>(0.3, 1.0, 1.0); }
+        }
+        // Level as brightness, finest brightest, so the chain bands read
+        // without competing with the face hue.
+        let shade = 0.4 + 0.6 * f32(levels - min(level, levels - 1u)) / f32(max(levels, 1u));
+        return hue * shade;
+    }
+
+    // The lamp reaches here and no level held a page. WHITE for the face
+    // view and BLUE for the depth one — the distinction that separates a
+    // page never allocated from a page that answered wrong.
+    return select(vec3<f32>(0.2, 0.3, 1.0), vec3<f32>(1.0), faces);
 }
 
 /// The selected view, as colour. Called once, from the one place in each
@@ -698,6 +814,12 @@ fn inti_debug_view(
     }
     if (mode == INTI_DEBUG_VIRTUAL_AGE) {
         return inti_page_age_debug(world_position);
+    }
+    if (mode == INTI_DEBUG_LAMP_FACES) {
+        return inti_lamp_page_debug(world_position, n, true);
+    }
+    if (mode == INTI_DEBUG_LAMP_DEPTH) {
+        return inti_lamp_page_debug(world_position, n, false);
     }
     if (mode == INTI_DEBUG_VIRTUAL_PAGES) {
         return inti_page_debug(world_position, n);
