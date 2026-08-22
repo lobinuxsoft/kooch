@@ -132,6 +132,11 @@ pub struct RenderSettings {
     /// 152 MiB of fixed allocations, at a resolution smaller than a
     /// thumbnail.
     ///
+    /// 🔴 100 is the CEILING. It is a quality option and the top of one
+    /// is the top; the values above it existed to reach the cascade's
+    /// resolution and their absence is the honest statement that this
+    /// path does not, yet. See `default_shadow_density`.
+    ///
     /// ⚠️ Below 100 a shadow's edge is softer than the surface it falls
     /// on, which reads as blur rather than as a lower setting. 50 is a
     /// quarter of the pages and the point where it starts to show.
@@ -593,33 +598,35 @@ fn default_render_scale() -> u32 {
     100
 }
 
-/// Level with the cascades, measured rather than chosen.
+/// One shadow texel per screen pixel, which is Epic's ask and the
+/// ceiling of the list.
 ///
-/// # 🔴 Why not 100, which is Epic's ask
+/// # 🔴 The cascades are finer than this, and the setting does not
+/// reach them
 ///
-/// One shadow texel per screen pixel is what every figure measured for
-/// #866 was taken at, and it is honest — but the technique it replaces
-/// is not spending that. A cascade hands 2048 texels to a slice of the
-/// frustum whatever the screen asked for, and the result is roughly
-/// TWICE the resolution, at every distance:
+/// A cascade hands 2048 texels to a slice of the frustum whatever the
+/// screen asked for, so it spends roughly TWICE this resolution at
+/// every distance:
 ///
-/// | distance | cascade | pages @100 | pages @200 |
-/// |---|---|---|---|
-/// | 5 m | 0.8 cm | 1.0 cm | 0.5 cm |
-/// | 10 m | 0.8 cm | 2.0 cm | 1.0 cm |
-/// | 40 m | 4.1 cm | 8.0 cm | 4.0 cm |
-/// | 80 m | 8.7 cm | 16.0 cm | 8.0 cm |
+/// | distance | cascade | pages @100 |
+/// |---|---|---|
+/// | 5 m | 0.8 cm | 1.0 cm |
+/// | 10 m | 0.8 cm | 2.0 cm |
+/// | 40 m | 4.1 cm | 8.0 cm |
+/// | 80 m | 8.7 cm | 16.0 cm |
 ///
-/// So a project switching to virtual shadows at 100 gets a visibly
-/// coarser shadow and no setting that says why — the choice list
-/// stopped at 100. `the_paged_shadow_resolves_like_a_cascade` pins the
-/// table.
+/// The list used to go to 400 to close that gap. It no longer does, on
+/// purpose: a quality option whose maximum is not the maximum reads as
+/// broken, and reaching for 200 % to match the technique being replaced
+/// is an admission that the number is anchored wrong, not a setting
+/// anybody would find. What closes the gap honestly is a filter — the
+/// cascade path runs a blocker search and a wide kernel while the page
+/// path samples a raw 2x2 — and that is a different piece of work.
 ///
-/// It costs a clipmap level in both axes, which is four times the pages:
-/// measured at 20 pages of a 1024-page slice, so 2 % becomes 8 %. That
-/// is the trade, and it is the cheap side of it.
+/// `the_paged_shadow_resolves_like_a_cascade` pins the table so the gap
+/// is a measured number rather than an impression.
 fn default_shadow_density() -> u32 {
-    200
+    100
 }
 
 /// 🔴 Off. The cascades are what every scene in the project was authored
@@ -661,9 +668,23 @@ const SHADOW_POOL_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     },
 ];
 
-/// 🔴 Powers of two below 100, because the level chosen for a page is a
-/// power of two: anything between two of these rounds to one of them and
-/// the slider would lie about what it did.
+/// The density options, so a test can assert that the top of the list
+/// is the default rather than trusting a comment that says so.
+pub fn shadow_density_choices() -> &'static [kooch_ecs::reflect::FieldChoice] {
+    SHADOW_DENSITY_CHOICES
+}
+
+/// 100 is the ceiling and the rest go down from it, because that is
+/// what a quality setting means: nobody reaches for a graphics option
+/// hoping to find something ABOVE maximum.
+///
+/// 🔴 The values below 100 are not all powers of two, and 75 is the
+/// interesting one. A page's level is `floor(log2(...))`, so 75 % does
+/// NOT make every texel three quarters the size — it moves the RADIUS
+/// at which the chain steps to the next level. Part of the scene lands
+/// on the level 100 % would have picked and part on the level 50 %
+/// would have, and the page count falls somewhere between the two. The
+/// rings move; they do not blur.
 const SHADOW_DENSITY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
         label: "Quarter — 25 %, a sixteenth of the pages",
@@ -674,16 +695,12 @@ const SHADOW_DENSITY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
         value: 50,
     },
     kooch_ecs::reflect::FieldChoice {
+        label: "Three quarters — 75 %, the level steps move outward",
+        value: 75,
+    },
+    kooch_ecs::reflect::FieldChoice {
         label: "Full — 100 %, one texel per screen pixel",
         value: 100,
-    },
-    kooch_ecs::reflect::FieldChoice {
-        label: "Double — 200 %, level with the cascades",
-        value: 200,
-    },
-    kooch_ecs::reflect::FieldChoice {
-        label: "Quadruple — 400 %, twice the cascades",
-        value: 400,
     },
 ];
 

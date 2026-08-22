@@ -897,42 +897,52 @@ fn the_paged_shadow_resolves_like_a_cascade() {
         clipmap.extent(level) / virtual_texels
     };
 
-    // 🔴 Not "equal". A clipmap level is a power of two, so the level
-    // it lands on is at best exact and at worst one step coarse — a
-    // factor of two in the worst case, by construction, and no default
-    // can close that. What is asserted is what a discrete chain can
-    // promise: never much coarser anywhere, and finer at most distances.
-    let mut finer = 0;
+    // 🔴 The gap is SIZED, not closed. A quality setting's maximum is
+    // its maximum, so the list stops at 100 % — and at 100 % the pages
+    // are the coarser of the two at every distance measured. The number
+    // below is how much coarser, and it is here so the day somebody
+    // claims the page path "looks about the same" there is a figure to
+    // answer with.
     let distances = [5.0_f32, 10.0, 20.0, 40.0, 80.0];
     let density = kooch_render::settings::RenderSettings::default().shadow_density;
+    assert_eq!(density, 100, "the default is the top of the list");
+
+    let mut worst: (f32, f32) = (0.0, 0.0);
     for distance in distances {
         let want = cascade(distance);
-        let hundred = paged(distance, 100);
-        let default = paged(distance, density);
-
-        // The finding that moved the default: at 100 % the pages are the
-        // coarser of the two at EVERY distance measured.
+        let ratio = paged(distance, density) / want;
         assert!(
-            hundred > want,
-            "at {distance} m the 100 % setting already matches the cascade \
-             ({hundred:.3} against {want:.3}); the default no longer needs raising"
+            ratio > 1.0,
+            "at {distance} m the pages already match the cascade \
+             ({ratio:.2}x); the gap this test sizes has closed and the \
+             doc on `default_shadow_density` is now wrong"
         );
-        // 1.3 is the measured worst case, at 10 m — the far edge of the
-        // first cascade, which is where the cascade is most generous.
-        assert!(
-            default <= want * 1.3,
-            "at {distance} m the default resolves {default:.3} m per texel \
-             against the cascade's {want:.3}"
-        );
-        if default <= want {
-            finer += 1;
+        if ratio > worst.1 {
+            worst = (distance, ratio);
         }
     }
+    // Measured. A clipmap level is a power of two, so where the chain
+    // steps decides this as much as the density does — which is why the
+    // worst case is not at the far end.
+    // Measured at 2.41x, at 10 m — the far edge of the first cascade,
+    // which is where a cascade is most generous and the chain has just
+    // stepped. Pinned with a little slack so the number is a fact under
+    // guard, not a tripwire on rounding.
     assert!(
-        finer * 2 > distances.len(),
-        "the default is finer than the cascade at only {finer} of {} distances",
-        distances.len()
+        worst.1 <= 2.5,
+        "the pages fell to {:.2}x the cascade at {} m",
+        worst.1,
+        worst.0,
     );
+
+    // And the ceiling really is the ceiling: a list with something
+    // above the default is a list whose maximum is a lie.
+    let top = kooch_render::settings::shadow_density_choices()
+        .iter()
+        .map(|choice| choice.value)
+        .max()
+        .expect("the density list is empty");
+    assert_eq!(top, density as i64, "the list offers more than the default");
 }
 
 /// The expansion's cost is reported as the product it is.
