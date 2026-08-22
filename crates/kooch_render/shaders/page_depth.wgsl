@@ -67,8 +67,11 @@ struct MeshInstance {
 }
 
 @group(0) @binding(0) var<uniform> raster: PageRaster;
-@group(0) @binding(1) var<storage, read> page_list: array<vec2<u32>>;
-@group(0) @binding(2) var<storage, read> pairs: array<vec2<u32>>;
+// x the virtual page, y its physical slot, z the packed
+// `(instance, meshlet)`, w unused. Self-describing since the expansion
+// became a scatter, so the draw reads ONE buffer where it used to read
+// a pair and then the list the pair indexed.
+@group(0) @binding(1) var<storage, read> pairs: array<vec4<u32>>;
 
 @group(1) @binding(0) var<storage, read> vertices: array<MeshVertexStored>;
 @group(1) @binding(1) var<storage, read> meshlet_vertices: array<u32>;
@@ -99,20 +102,19 @@ fn vs_page(
 ) -> PageVertex {
     var out: PageVertex;
     let pair = pairs[instance_index];
-    let entry = page_list[pair.x];
-    let inst_id = pair.y >> 16u;
-    let meshlet_id = pair.y & 0xffffu;
+    let inst_id = pair.z >> 16u;
+    let meshlet_id = pair.z & 0xffffu;
     let desc = descriptors[meshlet_id];
 
     let id = page_decode(
-        entry.x,
+        pair.x,
         raster.views.y,
         raster.space.x,
         raster.space.y,
         raster.space.z,
         raster.space.w,
     );
-    out.rect = page_atlas_rect(entry.y, raster.views.z, raster.pool.z, raster.pool.w);
+    out.rect = page_atlas_rect(pair.y, raster.views.z, raster.pool.z, raster.pool.w);
 
     let triangle_idx = vertex_index / 3u;
     let corner_idx = vertex_index % 3u;

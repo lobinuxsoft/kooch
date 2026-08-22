@@ -16,16 +16,32 @@
 //!    attachment and every page is a sub-rect of it, so 1681 pages are
 //!    ONE render pass instead of 1681.
 //!
-//! # 🔴 The sun only, and the seam is not arbitrary
+//! # 🔴 The expansion SCATTERS, and that is what makes step 3 scale
 //!
-//! A cull is per view. The sun's clipmap is **17** views. A hundred
-//! local lights with six faces and an eight-level chain each are
-//! **4848**, and the LOD selector is a two-pass reduction over the
-//! meshlet DAG that cannot simply be inlined per page. Local pages are
-//! marked and allocated today and counted as skipped here; rasterising
-//! them needs the cull itself moved onto the GPU as one multi-view
-//! dispatch, which is the next machine and not a bigger version of this
-//! one.
+//! It used to be a cartesian product: `pages x meshlets` threads, each
+//! asking whether one meshlet touched one page. For the sun's twenty
+//! pages against a thousand meshlets that is twenty thousand tests and
+//! nobody notices. For the seventeen hundred pages a hundred local
+//! lights mark, it is millions of tests to emit a few thousand pairs.
+//!
+//! Inverted, a thread projects its OWN meshlet's bounding sphere into
+//! the light's plane and walks the cells that rect covers, looking each
+//! one up in the page table. A meshlet touches a handful of pages at a
+//! level, so the work follows the meshlets and not the pages — the same
+//! shape Chalmers describes, and the reason the local raster is a
+//! bigger version of this machine rather than a different one.
+//!
+//! # The cull is indexed by DENSITY, not by view
+//!
+//! A cull is nominally per view, and the sun's clipmap is 17 views
+//! while a hundred local lights with six faces and an eight-level chain
+//! are 4865. But a cull's output depends only on the texel DENSITY it
+//! is given — a density is a LOD — and densities are powers of two. A
+//! clipmap level of the sun and a face of a local light with the same
+//! texel size choose the same LOD, so they share a cull. Quantised to
+//! octaves there are **seventeen** distinct densities across the sun
+//! and every local light, which is exactly the number already
+//! dispatched.
 
 use glam::{Mat4, Vec3};
 
@@ -389,7 +405,10 @@ impl PageRasterizer {
             }),
             pairs: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_pairs"),
-                size: PAIR_CAPACITY as u64 * 8,
+                // FOUR words a pair — page, slot, packed, spare — since
+                // the expansion became a scatter and the pair stopped
+                // being an index into `page_list`.
+                size: PAIR_CAPACITY as u64 * 16,
                 usage: storage,
                 mapped_at_creation: false,
             }),
@@ -745,7 +764,7 @@ impl PageRasterizer {
                 layout: &self.expand_bgl,
                 entries: &[
                     self.uniform_entry(0),
-                    entry(1, &self.page_list),
+                    entry(1, page_pool.keys()),
                     entry(2, &self.counts),
                     entry(3, &self.pairs),
                     entry(4, &self.visible_counts),
@@ -759,16 +778,13 @@ impl PageRasterizer {
                             ),
                         }),
                     },
+                    entry(6, page_pool.slots()),
                 ],
             }),
             depth: device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("page_depth_bg"),
                 layout: &self.depth_bgl,
-                entries: &[
-                    self.uniform_entry(0),
-                    entry(1, &self.page_list),
-                    entry(2, &self.pairs),
-                ],
+                entries: &[self.uniform_entry(0), entry(1, &self.pairs)],
             }),
             visible: self
                 .culls
@@ -1061,6 +1077,7 @@ fn expand_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             buffer_entry(3, false, c),
             buffer_entry(4, true, c),
             uniform_entry(5, true, c),
+            buffer_entry(6, true, c),
         ],
     })
 }
@@ -1069,11 +1086,7 @@ fn depth_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     let v = wgpu::ShaderStages::VERTEX;
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("page_depth_bgl"),
-        entries: &[
-            uniform_entry(0, true, v),
-            buffer_entry(1, true, v),
-            buffer_entry(2, true, v),
-        ],
+        entries: &[uniform_entry(0, true, v), buffer_entry(1, true, v)],
     })
 }
 

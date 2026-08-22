@@ -71,12 +71,23 @@ struct ExpandLevel {
 }
 
 @group(0) @binding(0) var<uniform> raster: PageRaster;
-@group(0) @binding(1) var<storage, read> page_list: array<vec2<u32>>;
+// The page table, read directly. The expansion now SCATTERS — it asks
+// which pages a meshlet touches — so it looks pages up by key instead of
+// walking a compacted list.
+@group(0) @binding(1) var<storage, read> table_keys: array<u32>;
 @group(0) @binding(2) var<storage, read_write> page_counts: array<atomic<u32>>;
-// x the index into `page_list`, y the cull's packed `(instance, meshlet)`.
-@group(0) @binding(3) var<storage, read_write> pairs: array<vec2<u32>>;
+// x the virtual page, y its physical slot, z the cull's packed
+// `(instance, meshlet)`, w unused.
+//
+// 🔴 Self-describing, where it used to be an index into `page_list`.
+// The scatter finds a page by key and already holds everything the draw
+// needs, so carrying an index would mean the draw reading a second
+// buffer to recover what this pass just had in a register.
+@group(0) @binding(3) var<storage, read_write> pairs: array<vec4<u32>>;
 @group(0) @binding(4) var<storage, read> visible_counts: array<u32>;
 @group(0) @binding(5) var<uniform> expand: ExpandLevel;
+// TWO words an entry — slot then age. See `PAGE_CELL`.
+@group(0) @binding(6) var<storage, read> table_cells: array<u32>;
 
 @group(1) @binding(0) var<storage, read> descriptors: array<MeshletDescriptor>;
 @group(2) @binding(0) var<storage, read> visible_meshlets: array<u32>;
@@ -91,58 +102,107 @@ fn transform_scale(m: mat4x4<f32>) -> f32 {
     return max(length(m[0].xyz), max(length(m[1].xyz), length(m[2].xyz)));
 }
 
+// Where a virtual page lives, or `PAGE_MISS`. The read half of what the
+// marking writes; see `PAGE_DEAD` for why an evicted entry is walked
+// past rather than stopped at.
+fn expand_lookup(page: u32) -> u32 {
+    let entries = raster.pool.x;
+    if entries == 0u {
+        return PAGE_MISS;
+    }
+    var probe = page_probe(page, entries);
+    for (var i = 0u; i < PAGE_PROBES; i = i + 1u) {
+        let key = table_keys[probe];
+        if key == PAGE_EMPTY {
+            return PAGE_MISS;
+        }
+        if key == page + 1u {
+            return table_cells[probe * PAGE_CELL];
+        }
+        probe = page_step(probe, entries);
+    }
+    return PAGE_MISS;
+}
+
+// Which pages a meshlet touches, one thread per meshlet.
+//
+// # 🔴 It SCATTERS. It used to be a cartesian product
+//
+// The old shape was `pages x meshlets` threads, each asking "does this
+// meshlet touch this page". For the sun that is 20 x 1000 and fine. For
+// a hundred local lights it is ~1700 pages against thousands of
+// meshlets — millions of tests to emit a few thousand pairs, and the
+// reason the local raster was written off as "a different machine".
+//
+// Inverted, a thread projects its own meshlet's bounding sphere into the
+// light's plane, walks the CELLS that rect covers, and looks each one up
+// in the page table. A meshlet touches one to four pages at a level, so
+// the work is `meshlets x 4` rather than `meshlets x pages` — the same
+// change Chalmers describes, and what makes local lights affordable at
+// all rather than a bigger version of this.
 @compute @workgroup_size(EXPAND_GROUP, 1, 1)
 fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     let level = expand.level;
     let levels = raster.chain.x;
-    let pages = min(atomicLoad(&page_counts[level]), raster.chain.z);
     let meshlets = visible_counts[level];
-    if pages == 0u || meshlets == 0u {
+    if gid.x >= meshlets {
         return;
     }
-    if gid.x >= pages * meshlets {
-        return;
-    }
-    // Page-major, so the threads that share a page share its rect and
-    // the divergent half is the meshlet fetch.
-    let entry = page_list[level * raster.chain.z + gid.x / meshlets];
-    let packed = visible_meshlets[gid.x % meshlets];
-
+    let packed = visible_meshlets[gid.x];
     let inst = instances[packed >> 16u];
     let desc = descriptors[packed & 0xffffu];
     let bounds = (inst.transform * vec4<f32>(desc.bounds_center, 1.0)).xyz;
     let radius = desc.bounding_radius * transform_scale(inst.transform);
 
-    let id = page_decode(
-        entry.x,
-        raster.views.y,
-        raster.space.x,
-        raster.space.y,
-        raster.space.z,
-        raster.space.w,
-    );
     let basis = sun_basis(raster.sun.xyz);
-    let centre = sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
-    let rect = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z, centre);
-
-    // Sphere against the page's box, in the sun's own frame. The depth
-    // axis is the orthographic span rather than the page's width: a
-    // caster far above the page still writes into it, which is the whole
-    // point of a shadow.
-    let plane = sun_plane(bounds, basis);
+    // A caster far above a page still writes into it — that is what a
+    // shadow is — so only the plane bounds the search, and the depth
+    // axis is the orthographic span.
     let along = dot(bounds - raster.eye.xyz, basis[2]);
-    let half = rect.z * 0.5 + radius;
-    if abs(plane.x - rect.x) > half || abs(plane.y - rect.y) > half {
-        return;
-    }
     if abs(along) > raster.world.y + radius {
         return;
     }
 
-    let slot = atomicAdd(&page_counts[levels + 2u], 1u);
-    if slot >= raster.chain.y {
-        atomicAdd(&page_counts[levels + 3u], 1u);
+    let base = raster.world.x;
+    let side = raster.space.z;
+    let extent = base * exp2(f32(level));
+    let width = extent / f32(side);
+    let centre = sun_centre(raster.eye.xyz, basis, base, side, level);
+    let plane = sun_plane(bounds, basis) - centre;
+
+    // The cells the sphere's rect covers at this level. `sun_page_rect`
+    // puts cell (0,0) at `centre - extent/2`, so this inverts it.
+    let lo = (plane - vec2<f32>(radius)) / extent + vec2<f32>(0.5);
+    let hi = (plane + vec2<f32>(radius)) / extent + vec2<f32>(0.5);
+    if hi.x < 0.0 || hi.y < 0.0 || lo.x >= 1.0 || lo.y >= 1.0 {
         return;
     }
-    pairs[slot] = vec2<u32>(level * raster.chain.z + gid.x / meshlets, packed);
+    let first = vec2<i32>(floor(clamp(lo, vec2<f32>(0.0), vec2<f32>(0.99999)) * f32(side)));
+    let last = vec2<i32>(floor(clamp(hi, vec2<f32>(0.0), vec2<f32>(0.99999)) * f32(side)));
+
+    let sun_slot = raster.space.w;
+    let base_page = raster.views.x * raster.views.y
+        + sun_slot * raster.space.x
+        + level * side * side;
+
+    for (var y = first.y; y <= last.y; y = y + 1) {
+        for (var x = first.x; x <= last.x; x = x + 1) {
+            let page = base_page + u32(y) * side + u32(x);
+            let slot = expand_lookup(page);
+            if slot == PAGE_MISS {
+                continue;
+            }
+            let out = atomicAdd(&page_counts[levels + 2u], 1u);
+            if out >= raster.chain.y {
+                atomicAdd(&page_counts[levels + 3u], 1u);
+                return;
+            }
+            pairs[out] = vec4<u32>(page, slot, packed, 0u);
+        }
+    }
+    // The rect is a bound, not a hit: a sphere's rect can cover cells the
+    // sphere itself misses. `width` is here so the cost of that is
+    // visible — a level whose page is far smaller than a caster spends
+    // most of these on cells the caster only brushes.
+    _ = width;
 }
