@@ -258,6 +258,23 @@ impl MeshletRenderStage {
         settings
     }
 
+    /// Records the debug paint, which is the half of the marking that
+    /// cannot run at the top of the frame.
+    ///
+    /// See `PageMarker::record_paint`: it writes the view's FINAL colour
+    /// buffer, and at the top of the frame that still holds the last
+    /// frame's image.
+    pub(super) fn record_page_paint(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view_id: crate::meshlet::render_stage::ViewId,
+    ) {
+        let Some(marker) = self.page_marker.as_ref() else {
+            return;
+        };
+        marker.record_paint(encoder, self.views[view_id].render_size);
+    }
+
     /// Points the shading model at THIS camera's pages.
     ///
     /// 🔴 Called before the fused raster, not after it. `vbuf64.render`
@@ -292,12 +309,11 @@ impl MeshletRenderStage {
             device,
             kooch_lighting::PageBinding {
                 uniform: raster.uniform_buffer(),
-                // 🔴 The PREVIOUS frame's slice. The table and atlas
-                // this pass samples are last frame's, and
-                // `Queue::write_buffer` is not ordered with the encoder
-                // — without this the reader re-bases the clipmap a frame
-                // ahead of the pages it is searching.
-                uniform_span: raster.uniform_span_previous(page_view_index(view_id)),
+                // 🔴 THIS frame's slice, now that the raster runs before
+                // the shading rather than after it. The parity that used
+                // to be needed here is gone with the reason for it: the
+                // table, the atlas and the uniform are all this frame's.
+                uniform_span: raster.uniform_span(page_view_index(view_id)),
                 keys: pool.keys(),
                 slots: pool.slots(),
                 atlas: raster.atlas(),

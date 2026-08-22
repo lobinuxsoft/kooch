@@ -586,60 +586,43 @@ fn every_table_reader_agrees_on_the_layout() {
     );
 }
 
-/// The slice the shading reads is not the slice the raster is writing.
+/// The shading reads the slice this frame's raster wrote.
 ///
-/// 🔴 `Queue::write_buffer` is NOT ordered with the encoder — wgpu
-/// applies every one of them at the top of the submit, ahead of every
-/// command in it. The fused pass is recorded before the marking, so it
-/// samples a table and an atlas the last frame filled, which really are
-/// last frame's because those are encoder commands. The uniform is not:
-/// a single-slice uniform hands the shading THIS frame's eye and sun
-/// against LAST frame's pages.
+/// 🔴 This assertion is the INVERSE of the one that stood here for an
+/// hour, and the flip is the point. While the marking ran after the
+/// fused pass, the shading sampled a table and an atlas that were a
+/// frame old — but `Queue::write_buffer` is applied at the top of the
+/// submit, ahead of every command in it, so the uniform it read was
+/// THIS frame's. The reader re-based the clipmap a frame ahead of the
+/// pages it was searching, and the fix was to double-buffer by parity.
 ///
-/// Standing still the two agree and nothing shows. Move the camera or
-/// turn the sun and the reader re-bases the clipmap while the table it
-/// searches was built on the old basis: the keys stop matching, the
-/// lookups miss, and the shadow drops out for as long as the motion
-/// lasts.
-///
-/// The same hazard as #853, and it earns the same fix — parity, not a
-/// comment.
+/// The marking now runs BEFORE the fused pass, so all three are this
+/// frame's and the parity is gone. What has to hold instead is that the
+/// cameras still do not collide, and that the offset does not depend on
+/// the frame at all — a leftover parity would now split the uniform
+/// from the atlas it describes.
 #[test]
-fn the_shading_reads_the_slice_the_raster_is_not_writing() {
+fn the_uniform_slice_is_per_camera_and_not_per_frame() {
     let Some((device, _queue)) = device() else {
         eprintln!("no adapter; skipping");
         return;
     };
     let mut raster = rasterizer(&device);
 
-    for frame in 0..4u32 {
+    raster.set_frame(0);
+    let first: Vec<u64> = (0..2).map(|v| raster.uniform_span(v).0).collect();
+    assert_ne!(first[0], first[1], "the cameras share a slice");
+
+    for frame in 1..5u32 {
         raster.set_frame(frame);
         for view in 0..2u32 {
-            let writing = raster.uniform_span(view);
-            let reading = raster.uniform_span_previous(view);
-            assert_ne!(
-                writing.0, reading.0,
-                "frame {frame}, view {view}: the shading reads the offset the raster writes"
+            assert_eq!(
+                raster.uniform_span(view).0,
+                first[view as usize],
+                "frame {frame} moved view {view}'s slice"
             );
         }
     }
-
-    // And what one frame writes is what the next one reads, or the
-    // shading is looking at a slice two frames old.
-    for view in 0..2u32 {
-        raster.set_frame(7);
-        let written = raster.uniform_span(view).0;
-        raster.set_frame(8);
-        assert_eq!(
-            raster.uniform_span_previous(view).0,
-            written,
-            "view {view}: frame 8 does not read what frame 7 wrote"
-        );
-    }
-
-    // Views still do not collide, which is what the slicing was for.
-    raster.set_frame(0);
-    assert_ne!(raster.uniform_span(0).0, raster.uniform_span(1).0);
 }
 
 /// The clipmap's texel grid does not slide with the camera.
@@ -805,4 +788,51 @@ fn cs_snap(@builtin(global_invocation_id) id: vec3<u32>) {
         "the cameras never crossed a page; the test proves nothing"
     );
     assert_eq!(LEVEL, 3, "the level the shader hardcodes");
+}
+
+/// The page marking is recorded BEFORE the pass that shades with it.
+///
+/// 🔴 A source check, because the failure it guards has no test that can
+/// see it: swapping the two lines compiles, runs, and produces a frame
+/// that is correct for everything standing still. What breaks is
+/// geometry that MOVES — the atlas is then a frame old, so an object is
+/// compared against its own caster from the previous frame and shadows
+/// itself while it travels. That was the reported symptom, and it took
+/// the whole ordering to explain it.
+///
+/// The trade is Epic's and it is deliberate: the marking reads a depth
+/// buffer the fused pass has not refilled yet, so LAST frame's depth
+/// decides which pages exist — off by however far the camera moved, and
+/// costing a page at the edge of the screen. THIS frame's geometry fills
+/// them, which is what the shading compares against.
+#[test]
+fn the_marking_is_recorded_before_the_shading() {
+    let source = include_str!("../src/meshlet/render_stage/frame/render_r64.rs");
+
+    let mark = source
+        .find("self.record_page_marking(")
+        .expect("the frame marks pages");
+    let bind = source
+        .find("self.bind_page_shadows(")
+        .expect("the frame binds them");
+    let shade = source.find(".render(").expect("the frame has a fused pass");
+
+    assert!(
+        mark < bind,
+        "the shading is pointed at the pages before they are marked"
+    );
+    assert!(
+        bind < shade,
+        "the fused pass runs before it is pointed at this camera's pages"
+    );
+
+    // And the paint is the half that stays behind, because it writes the
+    // colour buffer the fused pass is about to overwrite.
+    let paint = source
+        .find("self.record_page_paint(")
+        .expect("the frame paints the debug view");
+    assert!(
+        shade < paint,
+        "the debug paint runs before the pass that erases it"
+    );
 }

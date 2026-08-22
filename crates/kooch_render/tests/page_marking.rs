@@ -509,6 +509,12 @@ fn paint(
             size: (SIZE, SIZE),
         },
     );
+    // 🔴 A dispatch of its own now, recorded where the frame records it:
+    // after the shading. The marking moved to the top of the frame so
+    // the raster can fill the atlas before anything samples it, and the
+    // paint could not go with it — it writes the view's FINAL colour,
+    // which at that point still holds the last frame.
+    marker.record_paint(&mut encoder, (SIZE, SIZE));
     queue.submit([encoder.finish()]);
     wait(device);
     read_paint(device, queue, &target)

@@ -149,6 +149,13 @@ pub struct PageMarker {
     /// safe. Without it the table saturates with holes in under a
     /// minute. See `sweep_view` in the shader.
     sweep: wgpu::ComputePipeline,
+    /// Paints the debug view, in a dispatch of its own that runs AFTER
+    /// the shading. See `paint_view` in the shader for why it cannot go
+    /// with the marking any more.
+    paint: wgpu::ComputePipeline,
+    /// The bind group the marking built, kept so the paint dispatch can
+    /// reuse it without rebuilding every resource binding.
+    bound: Option<wgpu::BindGroup>,
     view: wgpu::Buffer,
     marks: wgpu::Buffer,
     counters: wgpu::Buffer,
@@ -200,12 +207,15 @@ impl PageMarker {
         let pipeline = compute("mark_main");
         let clear = compute("age_view");
         let sweep = compute("sweep_view");
+        let paint = compute("paint_view");
 
         Self {
             layout,
             pipeline,
             clear,
             sweep,
+            paint,
+            bound: None,
             view: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_mark_view"),
                 size: std::mem::size_of::<PageMarkView>() as u64,
@@ -452,6 +462,10 @@ impl PageMarker {
             pass.set_pipeline(&self.sweep);
             pass.dispatch_workgroups(entries.div_ceil(GROUP * GROUP), 1, 1);
         }
+        // Kept for `record_paint`, which runs after the shading and needs
+        // every one of these bindings — the depth, the view uniform and
+        // the colour target included.
+        self.bound = Some(bind_group);
         self.pending = self.readback.record(
             encoder,
             &self.counters,
@@ -461,6 +475,30 @@ impl PageMarker {
                 capacity: self.pool.config().slice(),
             },
         );
+    }
+
+    /// Paints the debug view over the frame's FINAL colour.
+    ///
+    /// 🔴 A dispatch of its own, recorded after the shading. The marking
+    /// runs at the top of the frame now so the raster can fill the atlas
+    /// before anything samples it — but at the top of the frame the
+    /// colour buffer still holds the last frame's image, which the fused
+    /// pass is about to overwrite. Painted there, the view would be
+    /// erased every frame and read as broken.
+    ///
+    /// Does nothing when the view is off, and nothing before the first
+    /// [`Self::record`] has built the bindings.
+    pub fn record_paint(&self, encoder: &mut wgpu::CommandEncoder, viewport: (u32, u32)) {
+        let Some(bound) = self.bound.as_ref() else {
+            return;
+        };
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("shadow pages: paint"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.paint);
+        pass.set_bind_group(0, bound, &[]);
+        pass.dispatch_workgroups(viewport.0.div_ceil(GROUP), viewport.1.div_ceil(GROUP), 1);
     }
 
     /// Maps what this frame recorded and picks up whatever earlier

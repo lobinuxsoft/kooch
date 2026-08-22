@@ -358,8 +358,7 @@ impl PageRasterizer {
             layers,
             uniform: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_uniform"),
-                // TWICE a slice per camera: see `uniform_span_previous`.
-                size: uniform_stride * atlas_layers(pool) as u64 * 2,
+                size: uniform_stride * atlas_layers(pool) as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
@@ -436,43 +435,25 @@ impl PageRasterizer {
     }
 
     /// Where a camera's slice of the uniform starts and how far it runs.
+    /// Where this camera's slice of the uniform starts.
+    ///
+    /// # 🔴 One slice per camera, and no longer one per frame
+    ///
+    /// This was briefly double-buffered by frame parity, because the
+    /// marking ran AFTER the fused pass: the table and atlas the shading
+    /// sampled were then a frame old, while `Queue::write_buffer` — which
+    /// wgpu applies at the top of the submit, ahead of every command in
+    /// it — handed that same pass this frame's eye and sun. The reader
+    /// re-based the clipmap a frame ahead of the pages it was searching.
+    ///
+    /// The marking now runs BEFORE the fused pass, so the table, the
+    /// atlas and the uniform are all this frame's and the hazard is
+    /// gone with the ordering that caused it. The write jumping to the
+    /// front of the submit is now exactly what is wanted.
     pub fn uniform_span(&self, view: u32) -> (u64, u64) {
-        self.uniform_at(view, self.frame)
-    }
-
-    /// The slice the PREVIOUS frame wrote, which is the one the shading
-    /// pass has to read.
-    ///
-    /// # 🔴 `Queue::write_buffer` is not ordered with the encoder
-    ///
-    /// The fused pass is recorded before the marking, so it samples a
-    /// table and an atlas the last frame filled — and those are commands
-    /// in an encoder, so they really are last frame's. The uniform is
-    /// not. `write_uniform` is a `Queue::write_buffer`, and wgpu applies
-    /// every one of those at the top of the submit, ahead of every
-    /// command in it. So the shading read THIS frame's eye and sun
-    /// against LAST frame's pages.
-    ///
-    /// Standing still that is invisible: the two frames agree. Move the
-    /// camera or turn the sun and the reader re-bases the clipmap while
-    /// the table it is searching was built on the old basis — the keys
-    /// no longer match, the lookups miss, and the shadow drops out for
-    /// as long as the motion lasts. Exactly the flicker reported, and
-    /// exactly the black patches the page age view showed.
-    ///
-    /// The same hazard as #853, which is written up in the same words:
-    /// two writes to one buffer in a frame give both dispatches the
-    /// second value. So the uniform is double-buffered by frame parity
-    /// and the shading binds the half the raster is not writing.
-    pub fn uniform_span_previous(&self, view: u32) -> (u64, u64) {
-        self.uniform_at(view, self.frame.wrapping_add(1))
-    }
-
-    fn uniform_at(&self, view: u32, frame: u32) -> (u64, u64) {
         let layers = atlas_layers(self.pool);
-        let slot = view.min(layers - 1) * 2 + (frame & 1);
         (
-            self.uniform_stride * slot as u64,
+            self.uniform_stride * view.min(layers - 1) as u64,
             std::mem::size_of::<RasterUniform>() as u64,
         )
     }

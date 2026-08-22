@@ -432,7 +432,9 @@ fn cube_face(dir: vec3<f32>) -> vec4<f32> {
 }
 
 // One page of a local light's mip chain.
-fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
+// Which page of a local light's chain a point belongs to, WITHOUT
+// marking it. Split for the same reason as `sun_page_for`.
+fn local_page_for(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let record = lights[light];
     let offset = world - record.position;
     let distance = max(length(offset), 0.05);
@@ -452,9 +454,15 @@ fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
         + level_base(level)
         + cell.y * side
         + cell.x;
-    // Marked, NOT claimed: nothing rasterises a local light's pages yet.
-    mark_bit(index, false);
     return vec2<u32>(index, level);
+}
+
+// One page of a local light's mip chain, marked.
+fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
+    let page = local_page_for(light, world, wanted);
+    // Marked, NOT claimed: nothing rasterises a local light's pages yet.
+    mark_bit(page.x, false);
+    return page;
 }
 
 // One page of the sun's clipmap.
@@ -462,7 +470,14 @@ fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
 // Every level is a full grid rather than half of the last — that is what
 // a clipmap is and what a mip chain is not — so the offset is a multiply
 // where `mark_local`'s is a running sum.
-fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
+// Which page of the sun's clipmap a point belongs to, WITHOUT marking
+// it.
+//
+// 🔴 Split out so the paint pass can ask the same question a frame
+// later. The paint runs after the shading now — see `paint_view` — and
+// a second copy of this arithmetic there is a debug view that draws a
+// page the marking never chose, which is worse than no view at all.
+fn sun_page_for(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let basis = sun_basis(pages.sun.xyz);
     let eye = pages.eye_and_base.xyz;
     let base = pages.eye_and_base.w;
@@ -493,8 +508,14 @@ fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
         + level * side * side
         + cell.y * side
         + cell.x;
-    mark_bit(index, true);
     return vec2<u32>(index, level);
+}
+
+// One page of the sun's clipmap, marked.
+fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
+    let page = sun_page_for(slot, world, wanted);
+    mark_bit(page.x, true);
+    return page;
 }
 
 // The colour a page is painted.
@@ -568,17 +589,11 @@ fn mark_main(@builtin(global_invocation_id) id: vec3<u32>) {
     // page it needs has to cover all of them.
     wanted = wanted * f32(rate) * pages.density.x;
 
-    // 🔴 One page per pixel is painted, and the sun wins when there is
-    // one: a pixel is lit by many lights and painting the last one
-    // walked would make the view depend on the light list's order.
-    var painted = vec2<u32>(NO_PAGE, 0u);
-
     if pages.sun.w > 0.5 {
-        painted = mark_sun(pages.sampling.y, world, wanted);
+        _ = mark_sun(pages.sampling.y, world, wanted);
     }
 
     if view.dimensions.w == 0u {
-        paint_page(pixel, painted);
         return;
     }
     let cell = cluster_of_ndc(view, ndc, view_pos.z);
@@ -597,13 +612,77 @@ fn mark_main(@builtin(global_invocation_id) id: vec3<u32>) {
             continue;
         }
         atomicAdd(&counters[2], 1u);
-        let marked = mark_local(light, world, wanted);
-        if painted.x == NO_PAGE {
-            painted = marked;
-        }
+        _ = mark_local(light, world, wanted);
     }
+}
 
-    paint_page(pixel, painted);
+// Paints the page each pixel chose, over the frame's final colour.
+//
+// # 🔴 Its own dispatch, and it runs AFTER the shading
+//
+// The marking moved to the top of the frame so the raster can fill the
+// atlas before anything samples it. The paint cannot go with it: it
+// writes the view's FINAL colour buffer, and at the top of the frame
+// that buffer still holds the last frame's image, which the fused pass
+// is about to overwrite. So the debug view would be painted and then
+// erased, every frame, and read as "the view does not work".
+//
+// It asks `sun_page_for` the same question the marking asked, rather
+// than carrying the answer forward in a buffer the size of the screen.
+@compute @workgroup_size(MARK_GROUP, MARK_GROUP, 1)
+fn paint_view(@builtin(global_invocation_id) id: vec3<u32>) {
+    if pages.sampling.z == 0u {
+        return;
+    }
+    let pixel = id.xy;
+    let size = vec2<u32>(view.viewport.xy);
+    if pixel.x >= size.x || pixel.y >= size.y {
+        return;
+    }
+    let depth = textureLoad(depth_tex, vec2<i32>(pixel), 0);
+    if depth <= 0.0 {
+        return;
+    }
+    let uv = (vec2<f32>(pixel) + vec2<f32>(0.5)) / view.viewport.xy;
+    let ndc = vec3<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth);
+    let hom = pages.world_from_clip * vec4<f32>(ndc, 1.0);
+    if abs(hom.w) < 1e-9 {
+        return;
+    }
+    let world = hom.xyz / hom.w;
+    let view_pos = view.view_from_world * vec4<f32>(world, 1.0);
+    let focal = view.clip_from_view[1][1];
+    var wanted = 0.0;
+    if abs(focal) > 1e-9 {
+        wanted = 2.0 * abs(view_pos.z) / (focal * max(view.viewport.y, 1.0));
+    }
+    wanted = wanted * pages.density.x;
+
+    // 🔴 One page per pixel, and the sun wins when there is one: a pixel
+    // is lit by many lights, and painting the last one walked would make
+    // the view depend on the light list's order.
+    if pages.sun.w > 0.5 {
+        paint_page(pixel, sun_page_for(pages.sampling.y, world, wanted));
+        return;
+    }
+    if view.dimensions.w == 0u {
+        return;
+    }
+    let cell = cluster_of_ndc(view, ndc, view_pos.z);
+    let record = cells[cluster_index(cell, view.dimensions)];
+    let count = record.point_count + record.spot_count;
+    for (var i = 0u; i < count; i = i + 1u) {
+        let slot = record.offset + i;
+        if slot >= arrayLength(&indices) {
+            break;
+        }
+        let light = indices[slot];
+        if light >= pages.strides.w {
+            continue;
+        }
+        paint_page(pixel, local_page_for(light, world, wanted));
+        return;
+    }
 }
 
 // Writes the debug colour, when the view is on and a page was chosen.

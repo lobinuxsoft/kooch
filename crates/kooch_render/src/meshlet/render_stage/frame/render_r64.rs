@@ -99,12 +99,34 @@ impl MeshletRenderStage {
             MeshletDebugMode::Overdraw => 2,
             _ => 0,
         };
-        // 🔴 Before the fused pass, because the fused pass IS the
-        // shading: `vbuf64.render` rasterises and lights in one fragment
-        // shader, so the page bind group it reads has to be this
-        // camera's before it starts, not after it (#866). Bound here
-        // rather than three lines lower because everything below holds a
-        // borrow of the view.
+        // 🔴 Shadow pages (#866), BEFORE the fused pass and not after
+        // it. `vbuf64.render` rasterises and lights in one fragment
+        // shader, so whatever it samples has to be finished by the time
+        // it starts.
+        //
+        // The marking reads the depth buffer, which at this point still
+        // holds the LAST frame — the fused pass is what clears and
+        // refills it. That is Epic's arrangement and the trade is
+        // deliberate: last frame's depth decides which pages EXIST,
+        // which is off by however far the camera moved in a frame and
+        // costs a page at the edge of the screen; this frame's geometry
+        // fills them, which is what the shading compares against.
+        //
+        // The other way round — marking after the shading — meant the
+        // atlas was a frame old, so a moving object was compared against
+        // its OWN caster from the previous frame and shadowed itself.
+        self.record_page_marking(
+            device,
+            queue,
+            &mut encoder,
+            resources,
+            view_id,
+            unjittered_view_proj,
+            cam_pos,
+            scene_params,
+            meshlet_bg,
+            debug_mode,
+        );
         self.bind_page_shadows(device, resources, view_id);
         let density_view = self.views[view_id]
             .triangle_density_view
@@ -190,23 +212,11 @@ impl MeshletRenderStage {
             queue.submit([encoder.finish(), deferred.dlss]);
             encoder = deferred.post;
         }
-        // Shadow-page marking (#866). After the raster, because it reads
-        // the depth the raster just wrote; after the froxel grid, which
-        // `render` recorded before the path split; and after the DLSS
-        // cut, because the debug view paints the view's FINAL colour and
-        // everything downstream of that cut reads the upscaled image.
-        self.record_page_marking(
-            device,
-            queue,
-            &mut encoder,
-            resources,
-            view_id,
-            unjittered_view_proj,
-            cam_pos,
-            scene_params,
-            meshlet_bg,
-            debug_mode,
-        );
+        // The debug paint, which is all that is left here. See
+        // `PageMarker::record_paint`: the marking itself moved to the
+        // top of the frame, but the paint writes the view's FINAL colour
+        // and has to land after the fused pass and after the DLSS cut.
+        self.record_page_paint(&mut encoder, view_id);
 
         if timer_slot.is_some() {
             self.gpu_timers.write_stage_end(&mut encoder, 1);
