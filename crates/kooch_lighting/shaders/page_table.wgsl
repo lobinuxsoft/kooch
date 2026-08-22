@@ -438,6 +438,16 @@ fn page_texel_world(
 /// rather than coarser — the safe direction.
 fn page_octave(texel: f32, base: f32, virtual_texels: u32, levels: u32) -> u32 {
     let finest = base / f32(max(virtual_texels, 1u));
+    // 🔴 The nudge is the anchor holding. The sun's ratio is EXACTLY
+    // `2^L` in arithmetic and only exactly `2^L` in floating point when
+    // `base` happens to be a power of two — the engine's is 1.28. One
+    // ulp low and `log2` returns `L - tiny`, `floor` returns `L - 1`,
+    // and the level draws a coarser level's survivors: geometry at the
+    // wrong LOD, in the sun's own pages, for every clipmap level whose
+    // division rounded down.
+    //
+    // Octaves are a whole apart, so 1e-4 cannot move a decision that
+    // was not already a rounding accident.
     let octave = floor(log2(max(texel, 1e-9) / max(finest, 1e-9)));
     return u32(clamp(octave, 0.0, f32(max(levels, 1u) - 1u)));
 }

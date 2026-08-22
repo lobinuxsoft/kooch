@@ -765,7 +765,11 @@ fn the_clipmap_grid_does_not_slide_with_the_camera() {
         eprintln!("no adapter; skipping");
         return;
     };
-    const BASE: f32 = 64.0;
+    // 🔴 The ENGINE'S base, and it is not a power of two. An earlier
+    // version of this test used 64.0, where every division lands exactly on
+    // a power of two and `floor(log2(...))` cannot round down — so it passed
+    // while the sun's levels were falling into the bucket below.
+    const BASE: f32 = 1.28;
     const SIDE: u32 = 128;
     const LEVEL: u32 = 3;
     // One page of level 3, which is what the camera has to stay inside
@@ -1198,7 +1202,11 @@ fn the_page_passes_are_profiled() {
 const OCTAVE: &str = r#"
 @group(0) @binding(0) var<storage, read_write> out: array<u32>;
 
-const BASE: f32 = 64.0;
+// 🔴 The ENGINE'S base, and it is not a power of two. An earlier
+// version of this test used 64.0, where every division lands exactly on
+// a power of two and `floor(log2(...))` cannot round down — so it passed
+// while the sun's levels were falling into the bucket below.
+const BASE: f32 = 1.28;
 const VIRTUAL: u32 = 16384u;
 const LEVELS: u32 = 17u;
 
