@@ -101,21 +101,18 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
     page_list[id.level * raster.chain.z + index] = vec2<u32>(page, table_slots[entry * PAGE_CELL]);
 }
 
-// One thread per level: the expansion's dispatch size is the MESHLET
-// count, which only exists on the GPU.
-//
-// 🔴 It used to be pages times meshlets. The expansion scatters now — a
-// thread asks which pages its own meshlet touches — so the page count
-// does not enter the dispatch size at all, which is what stops a
-// hundred local lights from multiplying it.
+// One thread per level: the expansion's dispatch size is pages TIMES
+// meshlets, and both numbers only exist on the GPU.
 @compute @workgroup_size(EXPAND_GROUP, 1, 1)
 fn cs_expand_args(@builtin(global_invocation_id) gid: vec3<u32>) {
     let level = gid.x;
     if level >= raster.chain.x {
         return;
     }
+    let pages = min(atomicLoad(&page_counts[level]), raster.chain.z);
     let meshlets = visible_counts[level];
-    expand_args[level * 3u + 0u] = (meshlets + EXPAND_GROUP - 1u) / EXPAND_GROUP;
+    let threads = pages * meshlets;
+    expand_args[level * 3u + 0u] = (threads + EXPAND_GROUP - 1u) / EXPAND_GROUP;
     expand_args[level * 3u + 1u] = 1u;
     expand_args[level * 3u + 2u] = 1u;
 }

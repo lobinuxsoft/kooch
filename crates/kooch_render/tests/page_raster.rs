@@ -559,12 +559,6 @@ fn every_table_reader_agrees_on_the_layout() {
             include_str!("../shaders/page_compact.wgsl"),
         ),
         ("page_mark.wgsl", include_str!("../shaders/page_mark.wgsl")),
-        // The expansion joined them when it became a scatter: it looks
-        // pages up by key instead of walking a compacted list.
-        (
-            "page_expand.wgsl",
-            include_str!("../shaders/page_expand.wgsl"),
-        ),
     ];
     for (name, source) in readers {
         assert!(
@@ -935,61 +929,5 @@ fn the_paged_shadow_resolves_like_a_cascade() {
         finer * 2 > distances.len(),
         "the default is finer than the cascade at only {finer} of {} distances",
         distances.len()
-    );
-}
-
-/// The expansion's cost does not multiply by the page count.
-///
-/// 🔴 The change that makes local lights reachable, stated as the number
-/// it is. The old expansion was a cartesian product — `pages x meshlets`
-/// threads, each asking "does this meshlet touch this page". For the sun
-/// that is fine. For a hundred local lights it is millions of tests to
-/// emit a few thousand pairs, and it is why the raster's own header
-/// wrote the local path off as "a different machine".
-///
-/// Inverted, a thread walks the cells its own meshlet's bounding sphere
-/// covers. A meshlet touches a handful of pages at a level, so the work
-/// is bounded by the meshlets and not by the pages.
-#[test]
-fn the_expansion_does_not_multiply_by_the_pages() {
-    // Measured on the user's `many_lights` capture at 392x403.
-    const MESHLETS: u64 = 1000;
-    const SUN_PAGES: u64 = 20;
-    const LOCAL_PAGES: u64 = 1658;
-    // A meshlet's rect covers a few cells at a level. Four is the
-    // generous end for a sphere against a square grid.
-    const TOUCHED: u64 = 4;
-
-    let product = |pages: u64| pages * MESHLETS;
-    let scatter = MESHLETS * TOUCHED;
-
-    assert!(
-        product(SUN_PAGES) > scatter,
-        "the sun alone should already be cheaper: {} against {scatter}",
-        product(SUN_PAGES)
-    );
-    // And the part that decides whether local lights are possible.
-    let with_locals = product(SUN_PAGES + LOCAL_PAGES);
-    assert!(
-        with_locals / scatter > 100,
-        "the product form is only {}x the scatter; the inversion would not \
-         be what makes local lights affordable",
-        with_locals / scatter
-    );
-
-    // The shader has to actually be in the scattered form: the dispatch
-    // size may not read the page count.
-    let args = include_str!("../shaders/page_compact.wgsl");
-    let body = &args[args
-        .find("fn cs_expand_args(")
-        .expect("the expansion sizes its own dispatch")..];
-    let body = &body[..body.find("\n}").expect("it ends")];
-    assert!(
-        !body.contains("page_counts[level]"),
-        "the expansion's dispatch size still multiplies by the pages"
-    );
-    assert!(
-        body.contains("visible_counts[level]"),
-        "the expansion's dispatch size no longer follows the meshlets"
     );
 }
