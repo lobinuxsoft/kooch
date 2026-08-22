@@ -529,9 +529,21 @@ fn a_lamp_reads_its_pages_without_a_cube_slot() {
         "the lamp draw stopped handing the rasteriser a w; its triangles are being \
          filled by linear interpolation between separately-divided corners"
     );
+    // `depth * w` handed in as the constant PAGE_NEAR: the rasteriser's
+    // own divide is what reconstructs `PAGE_NEAR / z` per fragment.
     assert!(
-        depth.contains("PAGE_NEAR / max(face.z, PAGE_NEAR)"),
-        "the depth pass stopped storing along the major axis"
+        depth.contains("            PAGE_NEAR,\n"),
+        "the depth pass stopped handing PAGE_NEAR in as depth-times-w"
+    );
+    // 🔴 And it no longer rejects a vertex for landing on another face.
+    // A triangle has three, and pushing one outside the clip volume
+    // while the other two project normally makes the clipper interpolate
+    // between them — a wedge of geometry along every seam, which reads
+    // as a straight bar of false occlusion across the lamp's pool.
+    assert!(
+        !depth.contains("if face.z <= 1e-4"),
+        "the lamp draw is rejecting vertices by face again; a seam-straddling triangle \
+         gets one corner pushed out and the clipper fills in the rest"
     );
     assert!(
         shading.contains("PAGE_NEAR / max(major, PAGE_NEAR)"),

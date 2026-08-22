@@ -1489,3 +1489,80 @@ fn a_lamp_cannot_ask_for_the_suns_finest_levels() {
         );
     }
 }
+
+/// `face_local` and `cube_face` agree, and a point behind a face comes
+/// back with a negative `w` rather than being rejected.
+///
+/// 🔴 The bar. A triangle straddling a cube seam has vertices on two
+/// faces, and rejecting one of them per vertex does not remove the
+/// triangle — it pushes one corner outside the clip volume and lets the
+/// clipper interpolate the rest, drawing a wedge of geometry into a page
+/// it never touched. The fix is to project unconditionally and let `w`
+/// carry the answer, so this pins BOTH halves: the projection agrees
+/// with the face selection where they overlap, and disagrees by SIGN
+/// where the point is behind.
+const FACE_LOCAL: &str = r#"
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
+
+@compute @workgroup_size(1, 1, 1)
+fn cs_face_local() {
+    var worst_uv = 0.0;
+    var wrong_sign = 0.0;
+    var behind_positive = 0.0;
+    for (var face = 0u; face < 6u; face = face + 1u) {
+        for (var i = 0u; i < 9u; i = i + 1u) {
+            let uv = clamp(
+                vec2<f32>(f32(i % 3u), f32(i / 3u)) * 0.5,
+                vec2<f32>(0.05), vec2<f32>(0.95));
+            let dir = face_dir(face, uv);
+            let local = face_local(face, dir);
+            // In front of its own face, and the uv it reconstructs is
+            // the uv it was built from.
+            if local.z <= 0.0 {
+                wrong_sign = wrong_sign + 1.0;
+            }
+            let back = local.xy / max(local.z, 1e-6) * 0.5 + vec2<f32>(0.5);
+            worst_uv = max(worst_uv, max(abs(back.x - uv.x), abs(back.y - uv.y)));
+
+            // And the OPPOSITE face has to report it behind. Rejecting
+            // that per vertex is the defect; reporting it as negative w
+            // is the fix.
+            let opposite = select(face - 1u, face + 1u, face % 2u == 0u);
+            if face_local(opposite, dir).z > 0.0 {
+                behind_positive = behind_positive + 1.0;
+            }
+        }
+    }
+    out[0] = worst_uv;
+    out[1] = wrong_sign;
+    out[2] = behind_positive;
+}
+"#;
+
+#[test]
+fn a_point_behind_a_face_gets_a_negative_w() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let out = run_page_table_shader(&device, &queue, FACE_LOCAL, "cs_face_local", 12);
+    let worst = f32::from_bits(out[0]);
+    let wrong_sign = f32::from_bits(out[1]);
+    let behind = f32::from_bits(out[2]);
+
+    assert_eq!(
+        wrong_sign, 0.0,
+        "{wrong_sign} directions came back BEHIND the face they were built on; the \
+         clipper would drop geometry that belongs in the page"
+    );
+    assert!(
+        worst < 1e-5,
+        "the projection reconstructs a uv off by {worst}; it disagrees with the face \
+         selection the marking pass used, so pages are drawn where nothing looks"
+    );
+    assert_eq!(
+        behind, 0.0,
+        "{behind} directions read as IN FRONT of the opposite face; a point behind a \
+         face has to come back with a negative w or it rasterises into the wrong one"
+    );
+}

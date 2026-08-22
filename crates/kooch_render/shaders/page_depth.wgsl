@@ -175,24 +175,21 @@ fn vs_page(
         let light = lights[id.light];
         let offset = world - light.position;
         let side = level_side_of(id.level, raster.space.z);
+        // 🔴 NOT rejected per vertex. `cell_face` projects whatever it
+        // is given and returns a NEGATIVE `w` for a point behind this
+        // face — which is what the clipper is for. Rejecting per vertex
+        // pushed one corner of a seam-straddling triangle outside the
+        // clip volume while the other two projected normally, and the
+        // interpolation between them drew a wedge along every seam. On
+        // screen: a straight bar of false occlusion across the pool.
         let face = cell_face(id.face, id.cell, side, offset);
-        // Behind the face's plane: outside this page by construction,
-        // and dividing by it would fold the geometry back in front.
-        if face.z <= 1e-4 {
-            out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
-            return out;
-        }
-        // 🔴 Reversed-Z, and along the MAJOR AXIS rather than the radial
-        // distance. `face.z` is that magnitude and it is the projection's
-        // `w`, so `depth * w` is the constant `PAGE_NEAR` and the
-        // rasteriser's divide reconstructs `PAGE_NEAR / major` exactly at
-        // every fragment. A radial `1 / length` is not projective: it
-        // interpolates wrong across a triangle, worst on the few large
-        // ones a floor is made of. It is also the identity
-        // `GpuPointShadow` already documents for the cube path.
+        // Reversed-Z along the face's axis. `depth * w` is the constant
+        // PAGE_NEAR, so the rasteriser's own divide reconstructs
+        // `PAGE_NEAR / z` exactly at every fragment — the identity
+        // `GpuPointShadow` documents for the cube path.
         out.clip = page_clip_w(
             face.xy,
-            clamp(PAGE_NEAR / max(face.z, PAGE_NEAR), 0.0, 1.0),
+            PAGE_NEAR,
             out.rect,
             raster.world.z,
             face.z,

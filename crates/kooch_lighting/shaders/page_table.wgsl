@@ -335,6 +335,8 @@ fn page_atlas_rect(slot: u32, slice: u32, per_row: u32, page: u32) -> vec4<f32> 
 /// another light. The fragment shader is what stops that, and it is the
 /// reason this pipeline has one at all.
 fn page_clip(local: vec2<f32>, depth: f32, rect: vec4<f32>, atlas: f32) -> vec4<f32> {
+    // The sun's page is orthographic: `w` really is 1, so the local
+    // position is already its own scaled form.
     return page_clip_w(local, depth, rect, atlas, 1.0);
 }
 
@@ -357,19 +359,21 @@ fn page_clip(local: vec2<f32>, depth: f32, rect: vec4<f32>, atlas: f32) -> vec4<
 /// — and wrong in a coherent, directional way that reads as every
 /// shadow leaning the same direction.
 fn page_clip_w(
-    local: vec2<f32>,
-    depth: f32,
+    // The page-local position ALREADY multiplied by `w`, so nothing on
+    // this path is ever divided before the rasteriser does it.
+    local_w: vec2<f32>,
+    depth_w: f32,
     rect: vec4<f32>,
     atlas: f32,
     w: f32,
 ) -> vec4<f32> {
     let half = rect.zw / atlas;
     let centre = (rect.xy + rect.zw * 0.5) / atlas * 2.0 - vec2<f32>(1.0);
-    // Clip space is Y-up and a texel row is Y-down.
-    let at = vec2<f32>(centre.x, -centre.y) + local * vec2<f32>(half.x, -half.y);
-    // Everything scaled by `w`, because the rasteriser divides the whole
-    // vector by it. At `w == 1` this is the orthographic case unchanged.
-    return vec4<f32>(at * w, depth * w, w);
+    // Clip space is Y-up and a texel row is Y-down. The constant part
+    // scales by `w` and the already-scaled part does not.
+    let at = vec2<f32>(centre.x, -centre.y) * w
+        + local_w * vec2<f32>(half.x, -half.y);
+    return vec4<f32>(at, depth_w, w);
 }
 
 // ---------------------------------------------------------------------
@@ -562,25 +566,48 @@ const PAGE_NEAR: f32 = 0.05;
 /// The cell is a sub-rect of the face, so this is the face's own
 /// projection with the cell's rect mapped back out to full clip: the
 /// same narrowing `page_clip` does in texels, done in angle.
-fn cell_face(face: u32, cell: vec2<u32>, side: u32, offset: vec3<f32>) -> vec3<f32> {
-    let hit = cube_face(offset);
-    // A different face entirely: report it behind so the caller drops
-    // it rather than folding it into this cell.
-    if u32(hit.w) != face {
-        return vec3<f32>(0.0, 0.0, -1.0);
+/// A world offset from a lamp, rotated into ONE cube face's own space:
+/// `xy` across the face and `z` along its axis, positive in front.
+///
+/// 🔴 The inverse of the face selection, applied UNCONDITIONALLY. It
+/// does not ask which face the offset belongs to — a point behind this
+/// face simply comes back with a negative `z`, which is what a
+/// projection's `w` is for.
+///
+/// That distinction is the whole reason this exists. Asking the face and
+/// rejecting a mismatch works per POINT and a triangle has three of
+/// them: a triangle straddling a seam had one vertex pushed outside the
+/// clip volume while the other two projected normally, and the clipper
+/// interpolated between them — producing a wedge of geometry along
+/// every seam, rasterised into a page it never touched. On screen that
+/// is a straight bar of false occlusion crossing the lamp's pool.
+fn face_local(face: u32, offset: vec3<f32>) -> vec3<f32> {
+    switch face {
+        case 0u: { return vec3<f32>(-offset.z, -offset.y, offset.x); }
+        case 1u: { return vec3<f32>(offset.z, -offset.y, -offset.x); }
+        case 2u: { return vec3<f32>(offset.x, offset.z, offset.y); }
+        case 3u: { return vec3<f32>(offset.x, -offset.z, -offset.y); }
+        case 4u: { return vec3<f32>(-offset.x, -offset.y, -offset.z); }
+        default: { return vec3<f32>(offset.x, -offset.y, offset.z); }
     }
+}
+
+/// Where a world offset from a lamp lands in ONE cell of ONE face, in
+/// that cell's clip space — `xy` ALREADY multiplied by `w`, and `z` the
+/// `w` itself.
+///
+/// Handing back the undivided form is the point: the rasteriser divides
+/// per fragment, and a vertex shader that divides first fills a triangle
+/// with straight lines between three separately-divided corners.
+fn cell_face(face: u32, cell: vec2<u32>, side: u32, offset: vec3<f32>) -> vec3<f32> {
+    let local = face_local(face, offset);
     let step = 1.0 / f32(max(side, 1u));
     let low = vec2<f32>(cell) * step;
-    // The cell's own [0,1], then to [-1,1].
-    let within = (hit.xy - low) / step;
-    // 🔴 `z` is the MAJOR AXIS magnitude and it is the `w` the caller
-    // needs, not a flag. A face's projection divides by it, and doing
-    // that here — per vertex — and handing the rasteriser a `w` of 1
-    // fills the triangle by linear interpolation between three
-    // separately-divided corners. Correct at the corners and wrong
-    // everywhere else, worst on the few big triangles a floor is.
-    let major = max(max(abs(offset.x), abs(offset.y)), abs(offset.z));
-    return vec3<f32>(within * 2.0 - vec2<f32>(1.0), major);
+    // `uv = local.xy / local.z * 0.5 + 0.5`, then `(uv - low) / step`
+    // mapped to `[-1, 1]` — all of it multiplied through by `local.z`
+    // so nothing is divided here.
+    let scaled = (local.xy * 0.5 + local.z * (vec2<f32>(0.5) - low)) / step;
+    return vec3<f32>(scaled * 2.0 - vec2<f32>(local.z), local.z);
 }
 
 /// Whether a sphere can reach the cell of a cube face a local page
