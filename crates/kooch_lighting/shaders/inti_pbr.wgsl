@@ -1040,11 +1040,14 @@ fn inti_local_page_shadow(
             continue;
         }
 
-        // Reversed-Z, and a RECIPROCAL: `page_depth.wgsl` stores
-        // `PAGE_NEAR / distance`, so this has to reconstruct the same
-        // way or the comparison is wrong by the whole non-linearity of
-        // the projection.
-        let receiver = clamp(PAGE_NEAR / max(length(offset), PAGE_NEAR), 0.0, 1.0);
+        // Reversed-Z, and along the MAJOR AXIS — `page_depth.wgsl` stores
+        // `PAGE_NEAR / major`, the same identity `GpuPointShadow`
+        // documents for the cube path. A radial distance here would be
+        // wrong by the ratio between the two, which is 1 at the centre
+        // of a face and 1.73 at its corner: a shadow that is correct
+        // straight ahead of the lamp and drifts towards every edge.
+        let major = max(max(abs(offset.x), abs(offset.y)), abs(offset.z));
+        let receiver = clamp(PAGE_NEAR / max(major, PAGE_NEAR), 0.0, 1.0);
 
         // Where the point sits inside its own cell, in texels.
         let step = 1.0 / f32(side);

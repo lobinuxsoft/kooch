@@ -767,7 +767,8 @@ fn inti_lamp_page_debug(world_position: vec3<f32>, n: vec3<f32>, faces: bool) ->
         );
         let stored = textureLoad(
             inti_page_atlas, vec2<i32>(vec2<f32>(place.xy) + texel), i32(place.z), 0);
-        let receiver = clamp(PAGE_NEAR / max(length(offset), PAGE_NEAR), 0.0, 1.0);
+        let major = max(max(abs(offset.x), abs(offset.y)), abs(offset.z));
+        let receiver = clamp(PAGE_NEAR / max(major, PAGE_NEAR), 0.0, 1.0);
 
         if (!faces) {
             // Red occluded, green lit. One tap, not the reader's 2x2:

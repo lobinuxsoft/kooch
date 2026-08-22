@@ -335,11 +335,41 @@ fn page_atlas_rect(slot: u32, slice: u32, per_row: u32, page: u32) -> vec4<f32> 
 /// another light. The fragment shader is what stops that, and it is the
 /// reason this pipeline has one at all.
 fn page_clip(local: vec2<f32>, depth: f32, rect: vec4<f32>, atlas: f32) -> vec4<f32> {
+    return page_clip_w(local, depth, rect, atlas, 1.0);
+}
+
+/// The same, for a page whose projection has a `w`.
+///
+/// # 🔴 The sun's page has no `w` and a lamp's does
+///
+/// A clipmap page is ORTHOGRAPHIC: parallel rays, no foreshortening, and
+/// `w = 1` is not a simplification but the truth. A lamp's page is a
+/// perspective frustum from a point, so its `w` is the distance along
+/// the face's major axis — and dividing by it at the vertex instead of
+/// letting the rasteriser do it per fragment is not a rounding
+/// difference. It is the difference between a projection and a
+/// mapping.
+///
+/// Screen-space interpolation without a `w` is LINEAR. A triangle whose
+/// vertices were each divided separately gets its interior filled by
+/// straight lines between three correct points, which for the two large
+/// triangles a floor is made of is wrong everywhere except the corners
+/// — and wrong in a coherent, directional way that reads as every
+/// shadow leaning the same direction.
+fn page_clip_w(
+    local: vec2<f32>,
+    depth: f32,
+    rect: vec4<f32>,
+    atlas: f32,
+    w: f32,
+) -> vec4<f32> {
     let half = rect.zw / atlas;
     let centre = (rect.xy + rect.zw * 0.5) / atlas * 2.0 - vec2<f32>(1.0);
     // Clip space is Y-up and a texel row is Y-down.
     let at = vec2<f32>(centre.x, -centre.y) + local * vec2<f32>(half.x, -half.y);
-    return vec4<f32>(at, depth, 1.0);
+    // Everything scaled by `w`, because the rasteriser divides the whole
+    // vector by it. At `w == 1` this is the orthographic case unchanged.
+    return vec4<f32>(at * w, depth * w, w);
 }
 
 // ---------------------------------------------------------------------
@@ -543,7 +573,14 @@ fn cell_face(face: u32, cell: vec2<u32>, side: u32, offset: vec3<f32>) -> vec3<f
     let low = vec2<f32>(cell) * step;
     // The cell's own [0,1], then to [-1,1].
     let within = (hit.xy - low) / step;
-    return vec3<f32>(within * 2.0 - vec2<f32>(1.0), 1.0);
+    // 🔴 `z` is the MAJOR AXIS magnitude and it is the `w` the caller
+    // needs, not a flag. A face's projection divides by it, and doing
+    // that here — per vertex — and handing the rasteriser a `w` of 1
+    // fills the triangle by linear interpolation between three
+    // separately-divided corners. Correct at the corners and wrong
+    // everywhere else, worst on the few big triangles a floor is.
+    let major = max(max(abs(offset.x), abs(offset.y)), abs(offset.z));
+    return vec3<f32>(within * 2.0 - vec2<f32>(1.0), major);
 }
 
 /// Whether a sphere can reach the cell of a cube face a local page

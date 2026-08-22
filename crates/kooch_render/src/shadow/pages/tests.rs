@@ -508,16 +508,37 @@ fn a_lamp_reads_its_pages_without_a_cube_slot() {
         "the page reader still reaches for a cascade's bias somewhere"
     );
 
-    // And the reader agrees with the writer on depth. `page_depth.wgsl`
-    // stores `PAGE_NEAR / distance`; a reader reconstructing it any
-    // other way is wrong by the whole non-linearity of the projection.
+    // 🔴 And the reader agrees with the writer on depth, ALONG THE MAJOR
+    // AXIS. Two claims in one:
+    //
+    // The `w` is what makes a lamp's page a projection instead of a
+    // mapping. Dividing at the vertex and handing the rasteriser `w = 1`
+    // fills the triangle by straight lines between three
+    // separately-divided corners — correct at the corners, wrong
+    // everywhere else, and worst on the two big triangles a floor is
+    // made of. It reads as every shadow leaning the same way.
+    //
+    // And the depth has to be `PAGE_NEAR / major`, not `/ length`. Only
+    // the first is projective: `depth * w` is then the constant
+    // PAGE_NEAR, so the rasteriser's own divide reconstructs it exactly
+    // at every fragment. The radial form is off by the ratio between
+    // them — 1 straight ahead of the lamp, 1.73 at a face's corner.
     let depth = include_str!("../../../shaders/page_depth.wgsl");
     assert!(
-        depth.contains("PAGE_NEAR / max(length(offset), PAGE_NEAR)"),
-        "the depth pass stopped storing a reciprocal"
+        depth.contains("page_clip_w("),
+        "the lamp draw stopped handing the rasteriser a w; its triangles are being \
+         filled by linear interpolation between separately-divided corners"
     );
     assert!(
-        shading.contains("PAGE_NEAR / max(length(offset), PAGE_NEAR)"),
+        depth.contains("PAGE_NEAR / max(face.z, PAGE_NEAR)"),
+        "the depth pass stopped storing along the major axis"
+    );
+    assert!(
+        shading.contains("PAGE_NEAR / max(major, PAGE_NEAR)"),
         "the reader stopped reconstructing depth the way the raster writes it"
+    );
+    assert!(
+        !depth.contains("length(offset)") && !body.contains("PAGE_NEAR / max(length"),
+        "a radial distance is back on one side of the comparison"
     );
 }

@@ -182,13 +182,22 @@ fn vs_page(
             out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
             return out;
         }
-        ndc = face.xy;
-        // 🔴 Reversed-Z again, and a RECIPROCAL rather than a ratio: a
-        // perspective page stores `near / distance`, which is what
-        // `inti_point_shadow` already reconstructs depth from. A linear
-        // ratio here would disagree with the reader by the whole
-        // non-linearity of the projection.
-        depth = clamp(PAGE_NEAR / max(length(offset), PAGE_NEAR), 0.0, 1.0);
+        // 🔴 Reversed-Z, and along the MAJOR AXIS rather than the radial
+        // distance. `face.z` is that magnitude and it is the projection's
+        // `w`, so `depth * w` is the constant `PAGE_NEAR` and the
+        // rasteriser's divide reconstructs `PAGE_NEAR / major` exactly at
+        // every fragment. A radial `1 / length` is not projective: it
+        // interpolates wrong across a triangle, worst on the few large
+        // ones a floor is made of. It is also the identity
+        // `GpuPointShadow` already documents for the cube path.
+        out.clip = page_clip_w(
+            face.xy,
+            clamp(PAGE_NEAR / max(face.z, PAGE_NEAR), 0.0, 1.0),
+            out.rect,
+            raster.world.z,
+            face.z,
+        );
+        return out;
     }
 
     out.clip = page_clip(ndc, depth, out.rect, raster.world.z);
