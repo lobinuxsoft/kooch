@@ -438,10 +438,18 @@ impl MeshletDebugMode {
     /// that reads `IntiFrame::debug_light` and is not listed here gets
     /// `None` and renders its "nothing selected" branch forever, with
     /// nothing to suggest the fault is in another crate. That already
-    /// happened once, to a view since removed.
+    /// happened once, to a view since removed — and then again to both
+    /// lamp page views, which shipped painting the screen magenta.
+    ///
+    /// `every_view_that_reads_the_selected_light_is_listed` is what
+    /// stops the third time: it scans the shader rather than trusting
+    /// this list to be maintained.
     #[inline]
     pub const fn needs_selected_light(self) -> bool {
-        matches!(self, Self::SingleLight)
+        matches!(
+            self,
+            Self::SingleLight | Self::LocalPageFaces | Self::LocalPageDepth
+        )
     }
 
     /// Reject-reason code the cull shader writes when this mode is

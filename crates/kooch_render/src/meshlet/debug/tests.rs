@@ -91,6 +91,65 @@ fn every_paged_view_passes_the_shader_gate() {
     }
 }
 
+/// Every view whose shader reads `inti.debug_light` is listed in
+/// `needs_selected_light`.
+///
+/// # 🔴 The third time this happened
+///
+/// A view not listed gets `None` for the selection and renders its
+/// "nothing picked" branch forever, with nothing on screen to suggest
+/// the fault is in another crate entirely. It cost a removed view once,
+/// and then both lamp page views — which shipped painting the whole
+/// screen a flat colour, in the same commit that added a test for the
+/// dispatch gate and missed this.
+///
+/// The list cannot be trusted to be maintained, so this reads the
+/// shader: a mode whose branch touches `debug_light` has to be in it.
+#[test]
+fn every_view_that_reads_the_selected_light_is_listed() {
+    let source = kooch_lighting::inti_debug_shader();
+    for &mode in MeshletDebugMode::all_implemented() {
+        // The constant this mode dispatches on, and the function that
+        // constant calls.
+        let Some(name) = source
+            .lines()
+            .zip(source.lines().skip(1))
+            .find(|(doc, _)| doc.contains(&format!("MeshletDebugMode::{mode:?}`")))
+            .and_then(|(_, decl)| decl.split_whitespace().nth(1))
+            .map(|c| c.trim_end_matches(':').to_owned())
+        else {
+            continue;
+        };
+        let Some(at) = source.find(&format!("mode == {name}) {{")) else {
+            continue;
+        };
+        let call = &source[at..(at + 200).min(source.len())];
+        let Some(open) = call.find("return inti_") else {
+            continue;
+        };
+        let func = call[open + 7..]
+            .split('(')
+            .next()
+            .expect("a call has a name")
+            .to_owned();
+        let Some(body) = source.find(&format!("fn {func}(")) else {
+            continue;
+        };
+        let end = source[body..]
+            .find("\n}\n")
+            .map(|e| body + e)
+            .unwrap_or(source.len());
+        let reads = source[body..end].contains("inti.debug_light");
+        assert_eq!(
+            reads,
+            mode.needs_selected_light(),
+            "`{func}` reads debug_light = {reads} but {mode:?}.needs_selected_light() = {}; \
+             an unlisted view gets no selection and paints one flat colour forever",
+            mode.needs_selected_light(),
+        );
+    }
+}
+
 #[test]
 fn normals_is_selectable_on_every_device() {
     // It reads no atomic texture — it is the old production path.

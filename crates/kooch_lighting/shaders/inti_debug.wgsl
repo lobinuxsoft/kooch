@@ -694,13 +694,18 @@ fn inti_lamp_page_debug(world_position: vec3<f32>, n: vec3<f32>, faces: bool) ->
     if (inti.shadows_enabled == 0u || inti_pages.sun.w <= 0.5) {
         return vec3<f32>(1.0, 0.0, 1.0);
     }
+    // 🔴 ORANGE, not magenta. Three different reasons to show nothing
+    // wearing one colour is how a whole view reads as broken: "the
+    // paged path is off" and "you have not picked a lamp" have
+    // different fixes and the second one is a click. Select a point or
+    // spot light in the World panel.
     let light_index = inti.debug_light;
     if (light_index >= inti.light_count) {
-        return vec3<f32>(1.0, 0.0, 1.0);
+        return vec3<f32>(1.0, 0.55, 0.1);
     }
     let light = inti_lights[light_index];
     if (light.kind == INTI_KIND_DIRECTIONAL) {
-        return vec3<f32>(1.0, 0.0, 1.0);
+        return vec3<f32>(1.0, 0.55, 0.1);
     }
 
     let raw = world_position - light.position;
