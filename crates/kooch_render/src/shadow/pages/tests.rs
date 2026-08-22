@@ -428,3 +428,64 @@ fn the_sampling_switch_is_not_the_drawing_switch() {
         "`with_optional_shadows` no longer gates `with_shadows` on `cascades_enabled`;          the coupling this test exists for has moved"
     );
 }
+
+/// A lamp's pages are READ, and read without a cube slot.
+///
+/// # 🔴 The half that made the other three invisible
+///
+/// The expansion tested lamp pages, the depth pass drew them, the pool
+/// claimed them — and `inti_point_shadow` sampled the cube atlas anyway.
+/// A pass that costs and shows nothing, with 7937 meshlet/page pairs a
+/// frame to prove it was running.
+///
+/// The second claim matters as much as the first: the cube path returns
+/// fully lit for any lamp past `MAX_POINT_SHADOWS`, which is 32 against
+/// a scene of a hundred. Gating the PAGE path on the same slot would
+/// carry that ceiling straight into the technique built to remove it.
+///
+/// A source check because the alternative is a GPU rig with a hundred
+/// lamps to observe the hundredth one — and what is being asserted is a
+/// branch, not a pixel.
+#[test]
+fn a_lamp_reads_its_pages_without_a_cube_slot() {
+    let shading = include_str!("../../../../kooch_lighting/shaders/inti_pbr.wgsl");
+
+    for kind in ["INTI_KIND_POINT", "INTI_KIND_SPOT"] {
+        // `else if`, so this is the SHADOW branch and not the cone
+        // falloff that tests the same discriminant earlier in the file.
+        let at = shading
+            .find(&format!("}} else if (light.kind == {kind}) {{"))
+            .unwrap_or_else(|| panic!("the {kind} shadow branch is gone from the shading"));
+        let branch = &shading[at..(at + 1400).min(shading.len())];
+        assert!(
+            branch.contains("inti_local_page_shadow("),
+            "{kind} never reaches the page reader; its pages are drawn and never sampled"
+        );
+        // The page call must come BEFORE the slot test, or it inherits
+        // the cube budget it exists to replace.
+        let page = branch
+            .find("inti_local_page_shadow(")
+            .expect("checked above");
+        let slot = branch
+            .find("light.shadow_slot != INTI_NO_SHADOW_SLOT")
+            .unwrap_or(usize::MAX);
+        assert!(
+            page < slot,
+            "{kind} gates its page read on a cube slot; a lamp past the 32-cube budget \
+             would stay fully lit with its own pages sitting drawn in the pool"
+        );
+    }
+
+    // And the reader agrees with the writer on depth. `page_depth.wgsl`
+    // stores `PAGE_NEAR / distance`; a reader reconstructing it any
+    // other way is wrong by the whole non-linearity of the projection.
+    let depth = include_str!("../../../shaders/page_depth.wgsl");
+    assert!(
+        depth.contains("PAGE_NEAR / max(length(offset), PAGE_NEAR)"),
+        "the depth pass stopped storing a reciprocal"
+    );
+    assert!(
+        shading.contains("PAGE_NEAR / max(length(offset), PAGE_NEAR)"),
+        "the reader stopped reconstructing depth the way the raster writes it"
+    );
+}

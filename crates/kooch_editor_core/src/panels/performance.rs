@@ -916,24 +916,22 @@ fn shadow_page_readout(
         if raster.local > 0 {
             ui.label(
                 egui::RichText::new(format!(
-                    "{} local-light pages · {} listed, none drawn yet",
+                    "{} local-light pages drawn",
                     thousands(raster.local as u64),
-                    thousands(raster.listed as u64),
                 ))
                 .small()
                 .weak(),
             )
             .on_hover_text(
-                "Local lights get pages marked, allocated and now BUCKETED — the second \
-                 number is how many reached a bucket of the page list, grouped by the LOD \
-                 their chain level asks for rather than by which lamp they belong to. \
-                 Every lamp shares those buckets, because a page carries its light in its \
-                 own key; a bucket per light per level would be the 4848-view shape this \
-                 exists to avoid. \
-                 ⚠️ Listed is not drawn. Those buckets have no survivor list, so their \
-                 expansion dispatches nothing — the open question is where a local page's \
-                 meshlets come from, and this number is what it has to be answered \
-                 against.",
+                "Pages belonging to point and spot lights, rasterised this frame. They \
+                 share the sun's buckets: a bucket is an OCTAVE of world texel size, so a \
+                 lamp and the sun that want the same fineness draw from the same survivor \
+                 list — which is what lets the local half cost no cull of its own. \
+                 A page carries its light in its own key, so nothing downstream needs the \
+                 list split by lamp; a bucket per light per level would be the 4848-view \
+                 shape this exists to avoid. \
+                 ⚠️ They spend the same pool the sun does. When the pool fills, the \
+                 overflow line above says so.",
             );
         }
         if raster.dropped > 0 || raster.overflow > 0 {

@@ -453,6 +453,24 @@ fn level_side_of(level: u32, side: u32) -> u32 {
     return max(side >> level, 1u);
 }
 
+/// Where `level` starts inside one face's chain. Mirrors
+/// `PageConfig::level_base`: a mip chain's levels are not the same size,
+/// so the offset is a running sum and not a multiply.
+///
+/// Takes the level-0 side rather than reading the marking pass's
+/// uniform, so the reader and the raster can call it too — a page key
+/// built with one base and looked up with another finds a page that
+/// belongs to a different level.
+fn level_base_of(level: u32, side: u32) -> u32 {
+    var base = 0u;
+    var wide = side;
+    for (var l = 0u; l < level; l = l + 1u) {
+        base = base + wide * wide;
+        wide = max(wide / 2u, 1u);
+    }
+    return base;
+}
+
 /// The near plane every local page is rasterised with.
 ///
 /// 🔴 Shared with `SPOT_SHADOW_NEAR_Z` and the cube pass by value, not

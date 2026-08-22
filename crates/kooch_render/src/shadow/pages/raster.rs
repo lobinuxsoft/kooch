@@ -102,18 +102,15 @@ pub struct RasterCounts {
     /// are missing.
     pub dropped: u32,
     /// 🔴 Pages belonging to local lights, which are marked and
-    /// allocated but not yet rasterised. Reported rather than ignored:
-    /// a pool that looks full for a reason nobody stated is how a
-    /// budget gets mis-read.
+    /// allocated and rasterised. Reported rather than ignored: a pool
+    /// that looks full for a reason nobody stated is how a budget gets
+    /// mis-read, and lamps are what fills this one.
     pub local: u32,
-    /// Local-light pages that DID reach a bucket of `page_list`.
+    /// Pages listed for THIS view, the sun's and the lamps' together.
     ///
-    /// 🔴 Listed is not drawn. The compaction now buckets them by their
-    /// chain level, which is what makes the shape of the local half
-    /// visible for the first time — how many pages sit at each LOD, and
-    /// therefore how much geometry each one will ask for. Nothing
-    /// expands them yet: their buckets have no survivor list, so their
-    /// dispatch is sized zero.
+    /// They share buckets: a bucket is an octave of world texel size, so
+    /// a lamp and the sun that want the same fineness are in the same
+    /// list. [`Self::local`] is how many of them came from lamps.
     pub listed: u32,
     /// `(page, meshlet)` pairs the draw covered.
     pub pairs: u32,
