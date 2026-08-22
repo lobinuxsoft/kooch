@@ -12,8 +12,8 @@ use crate::meshlet::{GpuGlobalMeshPool, MeshletCullPipelines, MeshletScene};
 use crate::view_camera::ViewCamera;
 
 use super::atlas::ShadowAtlas;
-use super::cascades::{CASCADE_BLEND_FRACTION, CASCADE_COUNT, Cascade, build_cascades};
-use super::cube::{DEFAULT_CUBE_SIZE, PointShadowCubes};
+use super::cascades::{build_cascades, Cascade, CASCADE_BLEND_FRACTION, CASCADE_COUNT};
+use super::cube::{PointShadowCubes, DEFAULT_CUBE_SIZE};
 use super::point::PointShadowDraw;
 use super::raster::ShadowRasterizer;
 
@@ -209,20 +209,32 @@ impl ShadowPass {
         max_meshlets_per_mesh: u32,
         lod_target: f32,
     ) {
-        self.rasterizer.render(
-            device,
-            queue,
-            encoder,
-            &self.atlas,
-            &prepared.cascades,
-            cull_pipelines,
-            pool,
-            scene,
-            meshlet_bg,
-            instance_count,
-            max_meshlets_per_mesh,
-            lod_target,
-        );
+        // 🔴 Skipped outright when the cascades have no reader. The flag
+        // already existed and already reached the shading — `inti_shadow`
+        // returns before touching a cascade layer when the virtual pages
+        // are on — but nothing here consulted it, so four culls and four
+        // depth passes ran every frame to fill layers nobody sampled.
+        //
+        // The call below is the ONLY thing gated. The spots and the
+        // point cubes that follow share this atlas and this rasteriser
+        // and have no page raster yet, so the allocation stays and so do
+        // their draws.
+        if prepared.frame.cascades_enabled {
+            self.rasterizer.render(
+                device,
+                queue,
+                encoder,
+                &self.atlas,
+                &prepared.cascades,
+                cull_pipelines,
+                pool,
+                scene,
+                meshlet_bg,
+                instance_count,
+                max_meshlets_per_mesh,
+                lod_target,
+            );
+        }
         self.rasterizer.render_points(
             device,
             queue,

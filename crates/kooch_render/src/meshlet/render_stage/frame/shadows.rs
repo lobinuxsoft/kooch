@@ -133,7 +133,15 @@ impl MeshletRenderStage {
         // lights fits no cascades and still renders their maps; the
         // cascades' own `shadows_enabled` flag stays off, which is what
         // stops the shading model from sampling four empty layers.
-        let cascades_enabled = sun.is_some();
+        //
+        // 🔴 And neither is "the virtual pages are on". `inti_shadow`
+        // takes the page branch and never reads a cascade layer, so
+        // every cascade cull, every cascade draw and the whole fit were
+        // work with no reader — all four layers, every frame, for as
+        // long as the feature has existed. The atlas itself STAYS: its
+        // trailing layers are the spot lights, which have no page
+        // raster yet.
+        let cascades_enabled = sun.is_some() && !settings.virtual_pages;
         let sun = sun.unwrap_or(glam::Vec3::NEG_Y);
 
         let shadows = match self.shadows.as_mut() {
