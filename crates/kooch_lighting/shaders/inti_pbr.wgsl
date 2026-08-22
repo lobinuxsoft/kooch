@@ -877,12 +877,9 @@ fn inti_page_shadow(
     // and it is measured from the UNOFFSET position on purpose — the
     // offset below is one texel wide and the boundary it would have to
     // cross is a whole page.
-    let raw = world_position - inti_pages.eye.xyz;
-    let reach = max(abs(dot(raw, basis[0])), abs(dot(raw, basis[1]))) * 2.0;
-    var level = 0u;
-    if reach > base {
-        level = u32(ceil(log2(max(reach / base, 1.0))));
-    }
+    let raw = sun_plane(world_position, basis) - sun_plane(inti_pages.eye.xyz, basis);
+    let reach = max(abs(raw.x), abs(raw.y)) * 2.0;
+    var level = sun_level(reach, base, side);
 
     for (; level < inti_pages.chain.x; level = level + 1u) {
         let extent = base * exp2(f32(level));
@@ -896,19 +893,18 @@ fn inti_page_shadow(
             + normal * (texel_world * INTI_NORMAL_BIAS)
             + to_light * INTI_DEPTH_BIAS;
 
-        let offset = sampled - inti_pages.eye.xyz;
-        let local = vec3<f32>(
-            dot(offset, basis[0]),
-            dot(offset, basis[1]),
-            dot(offset, basis[2]),
-        );
+        // The plane is ABSOLUTE and the grid is snapped, so a texel's
+        // footprint does not slide with the camera. See `sun_centre`.
+        let centre = sun_centre(inti_pages.eye.xyz, basis, base, side, level);
+        let plane = sun_plane(sampled, basis) - centre;
+        let along = dot(sampled - inti_pages.eye.xyz, basis[2]);
         // Reversed-Z along the sun's axis, matching `page_depth.wgsl`.
         // Nothing is added to it: the offset above already moved the
         // point towards the light, which is the depth half of the bias.
-        let receiver = 1.0 - (local.z + span) / (2.0 * span);
+        let receiver = 1.0 - (along + span) / (2.0 * span);
 
         let uv = clamp(
-            local.xy / extent + vec2<f32>(0.5),
+            plane / extent + vec2<f32>(0.5),
             vec2<f32>(0.0),
             vec2<f32>(0.99999),
         );
@@ -928,8 +924,8 @@ fn inti_page_shadow(
         }
 
         // Where the point sits inside its own page, in texels.
-        let rect = sun_page_rect(level, cell, base, side);
-        let within = (local.xy - rect.xy) / rect.z + vec2<f32>(0.5);
+        let rect = sun_page_rect(level, cell, base, side, centre);
+        let within = (sun_plane(sampled, basis) - rect.xy) / rect.z + vec2<f32>(0.5);
         let place = page_place(slot, inti_pages.views.z, inti_pages.pool.z, page_texels);
         let origin = vec2<f32>(place.xy);
         let layer = i32(place.z);

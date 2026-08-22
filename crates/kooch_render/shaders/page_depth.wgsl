@@ -133,20 +133,21 @@ fn vs_page(
     let world = (instances[inst_id].transform * vec4<f32>(pos, 1.0)).xyz;
 
     let basis = sun_basis(raster.sun.xyz);
-    let offset = world - raster.eye.xyz;
-    let local = vec3<f32>(
-        dot(offset, basis[0]),
-        dot(offset, basis[1]),
-        dot(offset, basis[2]),
-    );
-    let page = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z);
-    let ndc = (local.xy - page.xy) / (page.z * 0.5);
+    // 🔴 The plane is ABSOLUTE and the rect carries the snapped centre.
+    // Measuring from the camera instead would put the geometry on a grid
+    // that slides with it, which is the shadow crawl `sun_centre`
+    // exists to remove.
+    let centre = sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
+    let plane = sun_plane(world, basis);
+    let along = dot(world - raster.eye.xyz, basis[2]);
+    let page = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z, centre);
+    let ndc = (plane - page.xy) / (page.z * 0.5);
 
     // 🔴 Reversed-Z (ADR 0002): 1 is the near plane and 0 is far, so an
     // empty page reads as "nothing between here and the light" rather
     // than as "everything is shadowed". The clear matches.
     let span = raster.world.y;
-    let depth = 1.0 - (local.z + span) / (2.0 * span);
+    let depth = 1.0 - (along + span) / (2.0 * span);
 
     out.clip = page_clip(ndc, depth, out.rect, raster.world.z);
     return out;

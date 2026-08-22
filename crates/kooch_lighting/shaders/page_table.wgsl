@@ -234,14 +234,72 @@ fn sun_basis(direction: vec3<f32>) -> mat3x3<f32> {
     return mat3x3<f32>(s, u, f);
 }
 
+/// The clipmap's centre for one level, SNAPPED to that level's page
+/// grid.
+///
+/// # 🔴 This is what stops a shadow edge from crawling
+///
+/// A clipmap is centred on the camera, so without this every texel of it
+/// slides through the world as the camera moves. A shadow edge is
+/// decided per texel, so the edge is re-quantised every frame and the
+/// whole silhouette shimmers — the classic shadow-map crawl, and the
+/// reason it looks like the shadow is vibrating rather than moving.
+///
+/// Snapping the centre to whole pages pins the texels to world space:
+/// the grid only jumps when the camera crosses a page, and a texel's
+/// footprint never changes between jumps, so what it stores does not
+/// change either. Every shipping implementation does this — it is not a
+/// filter over the symptom, it removes the cause, and no amount of
+/// temporal blending gets the same result without also smearing.
+///
+/// A page rather than a texel because a page is a whole number of
+/// texels: aligning to it aligns both, and it also keeps a page's KEY
+/// stable until the camera crosses a page, which a texel-grained snap
+/// would not.
+fn sun_centre(eye: vec3<f32>, basis: mat3x3<f32>, base: f32, side: u32, level: u32) -> vec2<f32> {
+    let width = base * exp2(f32(level)) / f32(max(side, 1u));
+    let plane = vec2<f32>(dot(eye, basis[0]), dot(eye, basis[1]));
+    return floor(plane / width) * width;
+}
+
+/// A world position in the sun's plane, which is what every page lookup
+/// is really indexing.
+fn sun_plane(world: vec3<f32>, basis: mat3x3<f32>) -> vec2<f32> {
+    return vec2<f32>(dot(world, basis[0]), dot(world, basis[1]));
+}
+
+/// The finest clipmap level whose extent still contains `reach`.
+///
+/// ⚠️ Carries slack for [`sun_centre`]: the snap moves the centre by up
+/// to one page, so a point that fits a level measured from the camera
+/// can fall outside the same level measured from the snapped grid. Two
+/// pages of margin covers it, and costs a level only for points already
+/// within a percent of the boundary.
+fn sun_level(reach: f32, base: f32, side: u32) -> u32 {
+    let slack = reach * (1.0 + 4.0 / f32(max(side, 1u)));
+    if slack <= base {
+        return 0u;
+    }
+    return u32(ceil(log2(max(slack / base, 1.0))));
+}
+
 /// Where one clipmap page sits in the sun's plane: `xy` its centre,
-/// `z` its width. All three in metres, relative to the camera.
-fn sun_page_rect(level: u32, cell: vec2<u32>, base: f32, side: u32) -> vec3<f32> {
+/// `z` its width. All three in metres, in the SUN'S PLANE — absolute,
+/// not relative to the camera, because the grid the cell indexes is
+/// snapped and the camera is not on it.
+fn sun_page_rect(
+    level: u32,
+    cell: vec2<u32>,
+    base: f32,
+    side: u32,
+    centre: vec2<f32>,
+) -> vec3<f32> {
     let extent = base * exp2(f32(level));
     let width = extent / f32(side);
-    // `mark_sun` maps the plane to `uv = plane / extent + 0.5`, so the
-    // cell's low corner is this and the centre is half a page past it.
-    let low = (vec2<f32>(cell) / f32(side) - vec2<f32>(0.5)) * extent;
+    // `mark_sun` maps the plane to `uv = (plane - centre) / extent +
+    // 0.5`, so the cell's low corner is this and its centre is half a
+    // page past it.
+    let low = (vec2<f32>(cell) / f32(side) - vec2<f32>(0.5)) * extent + centre;
     return vec3<f32>(low + vec2<f32>(width * 0.5), width);
 }
 

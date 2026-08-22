@@ -513,19 +513,16 @@ fn inti_page_age_debug(world_position: vec3<f32>) -> vec3<f32> {
         return vec3<f32>(1.0, 0.0, 1.0);
     }
     let basis = sun_basis(inti_pages.sun.xyz);
-    let raw = world_position - inti_pages.eye.xyz;
     let base = inti_pages.world.x;
     let side = inti_pages.space.z;
-
-    let reach = max(abs(dot(raw, basis[0])), abs(dot(raw, basis[1]))) * 2.0;
-    var level = 0u;
-    if reach > base {
-        level = u32(ceil(log2(max(reach / base, 1.0))));
-    }
+    let raw = sun_plane(world_position, basis) - sun_plane(inti_pages.eye.xyz, basis);
+    let reach = max(abs(raw.x), abs(raw.y)) * 2.0;
+    var level = sun_level(reach, base, side);
 
     for (; level < inti_pages.chain.x; level = level + 1u) {
         let extent = base * exp2(f32(level));
-        let plane = vec2<f32>(dot(raw, basis[0]), dot(raw, basis[1]));
+        let centre = sun_centre(inti_pages.eye.xyz, basis, base, side, level);
+        let plane = sun_plane(world_position, basis) - centre;
         let uv = clamp(
             plane / extent + vec2<f32>(0.5),
             vec2<f32>(0.0),
@@ -596,28 +593,21 @@ fn inti_page_debug(world_position: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
         return vec3<f32>(1.0, 0.0, 1.0);
     }
     let basis = sun_basis(inti_pages.sun.xyz);
-    let offset = world_position - inti_pages.eye.xyz;
-    let local = vec3<f32>(
-        dot(offset, basis[0]),
-        dot(offset, basis[1]),
-        dot(offset, basis[2]),
-    );
-
     let base = inti_pages.world.x;
     let side = inti_pages.space.z;
     let page_texels = inti_pages.pool.w;
     let levels = inti_pages.chain.x;
 
-    let reach = max(abs(local.x), abs(local.y)) * 2.0;
-    var level = 0u;
-    if (reach > base) {
-        level = u32(ceil(log2(max(reach / base, 1.0))));
-    }
+    let raw = sun_plane(world_position, basis) - sun_plane(inti_pages.eye.xyz, basis);
+    let reach = max(abs(raw.x), abs(raw.y)) * 2.0;
+    var level = sun_level(reach, base, side);
 
     for (; level < levels; level = level + 1u) {
         let extent = base * exp2(f32(level));
+        let centre = sun_centre(inti_pages.eye.xyz, basis, base, side, level);
+        let plane = sun_plane(world_position, basis) - centre;
         let uv = clamp(
-            local.xy / extent + vec2<f32>(0.5),
+            plane / extent + vec2<f32>(0.5),
             vec2<f32>(0.0),
             vec2<f32>(0.99999),
         );
@@ -634,8 +624,8 @@ fn inti_page_debug(world_position: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
         // Level as brightness, so the clipmap bands read at a glance.
         let shade = 0.45 + 0.55 * f32(levels - min(level, levels - 1u)) / f32(max(levels, 1u));
 
-        let rect = sun_page_rect(level, cell, base, side);
-        let within = (local.xy - rect.xy) / rect.z + vec2<f32>(0.5);
+        let rect = sun_page_rect(level, cell, base, side, centre);
+        let within = (sun_plane(world_position, basis) - rect.xy) / rect.z + vec2<f32>(0.5);
         let place = page_place(slot, inti_pages.views.z, inti_pages.pool.z, page_texels);
         let texel = clamp(
             floor(within * f32(page_texels)),

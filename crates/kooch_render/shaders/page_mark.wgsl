@@ -463,31 +463,29 @@ fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
 // a clipmap is and what a mip chain is not — so the offset is a multiply
 // where `mark_local`'s is a running sum.
 fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
-    let direction = normalize(pages.sun.xyz);
-    var up = vec3<f32>(0.0, 1.0, 0.0);
-    if abs(direction.y) > 0.99 {
-        up = vec3<f32>(0.0, 0.0, 1.0);
-    }
-    // The light's basis, built rather than uploaded: the sun has no
-    // position, so this is the only place it means anything.
-    let f = direction;
-    let s = normalize(cross(f, up));
-    let u = cross(s, f);
-    let offset = world - pages.eye_and_base.xyz;
-    let plane = vec2<f32>(dot(offset, s), dot(offset, u));
-
+    let basis = sun_basis(pages.sun.xyz);
+    let eye = pages.eye_and_base.xyz;
     let base = pages.eye_and_base.w;
+    let side = pages.strides.x;
     let texels = f32(pages.chain.y);
+
+    // Containment is judged from the camera and the cell from the
+    // SNAPPED grid — see `sun_level` for the slack that costs.
+    let plane = sun_plane(world, basis) - sun_plane(eye, basis);
     let reach = max(abs(plane.x), abs(plane.y)) * 2.0;
+    let contain = f32(sun_level(reach, base, side));
     // Containment is a ceiling on how far the sample is, density a floor
     // on how fine the level may be. Mirrors `mark_sun_cell`.
-    let contain = select(0.0, ceil(log2(max(reach / base, 1.0))), reach > base);
     let density = select(0.0, floor(log2(max(wanted * texels / base, 1.0))), wanted * texels > base);
     let level = min(u32(max(contain, density)), pages.chain.w - 1u);
 
     let extent = base * exp2(f32(level));
-    let side = pages.strides.x;
-    let uv = clamp(plane / extent + vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(0.99999));
+    let centre = sun_centre(eye, basis, base, side, level);
+    let uv = clamp(
+        (sun_plane(world, basis) - centre) / extent + vec2<f32>(0.5),
+        vec2<f32>(0.0),
+        vec2<f32>(0.99999),
+    );
     let cell = vec2<u32>(uv * f32(side));
 
     let index = view_base()

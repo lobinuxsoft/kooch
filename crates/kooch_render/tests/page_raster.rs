@@ -292,7 +292,9 @@ fn cs_winding() {
         vec3<f32>(0.0, 0.0, -1.0),
     );
 
-    let rect = sun_page_rect(0u, vec2<u32>(0u, 0u), 64.0, 128u);
+    // Centre at the origin: the snap is irrelevant to winding, which is
+    // what this measures.
+    let rect = sun_page_rect(0u, vec2<u32>(0u, 0u), 64.0, 128u, vec2<f32>(0.0));
     var clip = array<vec2<f32>, 3>();
     for (var i = 0u; i < 3u; i = i + 1u) {
         let p = tri[i];
@@ -301,7 +303,7 @@ fn cs_winding() {
             dot(p, basis[1]),
             dot(p, basis[2]),
         );
-        let ndc = (local.xy - rect.xy) / (rect.z * 0.5);
+        let ndc = (sun_plane(p, basis) - rect.xy) / (rect.z * 0.5);
         clip[i] = page_clip(ndc, 0.5, vec4<f32>(0.0, 0.0, 128.0, 128.0), 1024.0).xy;
     }
     let a = clip[1] - clip[0];
@@ -638,4 +640,169 @@ fn the_shading_reads_the_slice_the_raster_is_not_writing() {
     // Views still do not collide, which is what the slicing was for.
     raster.set_frame(0);
     assert_ne!(raster.uniform_span(0).0, raster.uniform_span(1).0);
+}
+
+/// The clipmap's texel grid does not slide with the camera.
+///
+/// 🔴 The property that stops a shadow edge from crawling, and it is
+/// only a property if it is measured. A clipmap is centred on the
+/// camera, so without a snap every texel of it slides through the world
+/// as the camera moves — a shadow edge is decided per texel, so the
+/// silhouette is re-quantised every frame and shimmers. Temporal
+/// blending hides that at the price of smearing; snapping removes it.
+///
+/// Runs the real WGSL on the GPU rather than a copy of the arithmetic:
+/// five camera positions inside one page, and the page a fixed world
+/// point lands in has to be identical in all of them.
+#[test]
+fn the_clipmap_grid_does_not_slide_with_the_camera() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    const BASE: f32 = 64.0;
+    const SIDE: u32 = 128;
+    const LEVEL: u32 = 3;
+    // One page of level 3, which is what the camera has to stay inside
+    // for the grid to hold still.
+    let page = BASE * 8.0 / SIDE as f32;
+
+    let source = format!(
+        "{}\n{}",
+        kooch_lighting::PAGE_TABLE,
+        r#"
+@group(0) @binding(0) var<storage, read> eyes: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read_write> cells: array<vec4<f32>>;
+
+@compute @workgroup_size(1, 1, 1)
+fn cs_snap(@builtin(global_invocation_id) id: vec3<u32>) {
+    let basis = sun_basis(vec3<f32>(0.3, -1.0, 0.2));
+    // A world point that never moves.
+    let world = vec3<f32>(11.0, 0.0, -7.0);
+    let base = 64.0;
+    let side = 128u;
+    let level = 3u;
+    let extent = base * exp2(f32(level));
+
+    let centre = sun_centre(eyes[id.x].xyz, basis, base, side, level);
+    let uv = clamp(
+        (sun_plane(world, basis) - centre) / extent + vec2<f32>(0.5),
+        vec2<f32>(0.0),
+        vec2<f32>(0.99999),
+    );
+    let cell = floor(uv * f32(side));
+    // 🔴 A FIXED cell's rect, not the rect of whichever cell the point
+    // fell in. The second moves whenever the point changes cell, which
+    // it is supposed to do; the first is the GRID, and the grid moving
+    // by a fraction of a page is the crawl.
+    let rect = sun_page_rect(level, vec2<u32>(0u, 0u), base, side, centre);
+    cells[id.x] = vec4<f32>(cell, rect.xy);
+}
+"#
+    );
+
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("page_snap"),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("page_snap"),
+        layout: None,
+        module: &module,
+        entry_point: Some("cs_snap"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+
+    // Five camera positions spread across a fraction of one page.
+    let eyes: Vec<[f32; 4]> = (0..9)
+        .map(|i| {
+            // Across several pages, in fractional steps: the fractional
+            // part is what a grid that slides would carry into the rect.
+            let t = i as f32 * page * 0.37;
+            [t, 3.0, -t * 0.6, 0.0]
+        })
+        .collect();
+    let eye_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("eyes"),
+        size: (eyes.len() * 16) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&eye_buf, 0, bytemuck::cast_slice(&eyes));
+    let out = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("cells"),
+        size: (eyes.len() * 16) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("cells_read"),
+        size: (eyes.len() * 16) as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("page_snap"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: eye_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: out.as_entire_binding(),
+            },
+        ],
+    });
+
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind, &[]);
+        pass.dispatch_workgroups(eyes.len() as u32, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&out, 0, &staging, 0, (eyes.len() * 16) as u64);
+    queue.submit([encoder.finish()]);
+    staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    let _ = device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: Some(std::time::Duration::from_secs(30)),
+    });
+    let read: Vec<[f32; 4]> =
+        bytemuck::cast_slice::<u8, [f32; 4]>(&staging.slice(..).get_mapped_range()).to_vec();
+    staging.unmap();
+
+    // 🔴 The property is NOT that the cell index holds — the camera
+    // moves in world space and a page is measured in the sun's plane, so
+    // it crosses page boundaries and the index is supposed to change.
+    // What may never happen is the grid moving by a FRACTION of a page:
+    // that is what re-quantises a shadow edge and makes it crawl. A jump
+    // of exactly one page moves the index and leaves every texel's
+    // footprint where it was.
+    let first = read[0];
+    let mut moved = false;
+    for (i, got) in read.iter().enumerate().skip(1) {
+        for axis in 0..2 {
+            let slid = got[2 + axis] - first[2 + axis];
+            let pages = slid / page;
+            assert!(
+                (pages - pages.round()).abs() < 1e-3,
+                "camera {i} slid the grid {slid} metres on axis {axis}, \
+                 which is {pages} pages of {page}"
+            );
+            if pages.round() != 0.0 {
+                moved = true;
+            }
+        }
+    }
+    // And the run has to actually cross a boundary, or it proves that a
+    // grid nobody moved did not move.
+    assert!(
+        moved,
+        "the cameras never crossed a page; the test proves nothing"
+    );
+    assert_eq!(LEVEL, 3, "the level the shader hardcodes");
 }
