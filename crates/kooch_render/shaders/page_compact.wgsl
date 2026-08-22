@@ -25,12 +25,16 @@
 
 @group(0) @binding(0) var<uniform> raster: PageRaster;
 @group(0) @binding(1) var<storage, read> table_keys: array<u32>;
+// TWO words an entry — the slot, then the frame it was last requested
+// in. See `PAGE_CELL`: it is the marking pass's buffer and this reads it
+// with the same stride or it reads an age as a slot.
 @group(0) @binding(2) var<storage, read> table_slots: array<u32>;
 // `x` the virtual page, `y` its physical slot. Bucketed: level `L`
 // owns `[L * chain.z, (L + 1) * chain.z)`.
 @group(0) @binding(3) var<storage, read_write> page_list: array<vec2<u32>>;
 // x..levels the pages listed per level, then: the sun pages that did
-// not fit a bucket, and the local-light pages skipped.
+// not fit a bucket, the local-light pages skipped, the pairs, the pairs
+// that overflowed, and the pages belonging to ANOTHER view.
 @group(0) @binding(4) var<storage, read_write> page_counts: array<atomic<u32>>;
 // One `dispatch_workgroups_indirect` argument triple per level.
 @group(0) @binding(5) var<storage, read_write> expand_args: array<u32>;
@@ -49,19 +53,35 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let key = table_keys[entry];
-    if key == PAGE_EMPTY {
+    // 🔴 DEAD as well as EMPTY. The pool persists, so eviction leaves a
+    // tombstone rather than an empty entry — and `PAGE_DEAD - 1` decodes
+    // into a perfectly well-formed view, light, level and cell, none of
+    // which mean anything. Skipping only EMPTY rasterises that garbage
+    // into a slot nobody owns, which is what a scene full of squares in
+    // the wrong places looks like.
+    if key == PAGE_EMPTY || key == PAGE_DEAD {
         return;
     }
     // Keys are stored as `page + 1` so that a cleared buffer is empty.
     let page = key - 1u;
     let id = page_decode(
         page,
+        raster.views.y,
         raster.space.x,
         raster.space.y,
         raster.space.z,
         raster.space.w,
     );
     let levels = raster.chain.x;
+    // 🔴 Not a cap and not a failure: the table holds every view's
+    // pages, and each view compacts its own. Counted anyway, because
+    // "the pool is full and my view got forty pages" is unreadable
+    // without knowing how many belong to somebody else — which is the
+    // exact number that would have named the last defect on sight.
+    if id.view != raster.views.x {
+        atomicAdd(&page_counts[levels + 4u], 1u);
+        return;
+    }
     if !id.is_sun {
         atomicAdd(&page_counts[levels + 1u], 1u);
         return;
@@ -78,7 +98,7 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         atomicAdd(&page_counts[levels], 1u);
         return;
     }
-    page_list[id.level * raster.chain.z + index] = vec2<u32>(page, table_slots[entry]);
+    page_list[id.level * raster.chain.z + index] = vec2<u32>(page, table_slots[entry * PAGE_CELL]);
 }
 
 // One thread per level: the expansion's dispatch size is pages TIMES

@@ -66,6 +66,10 @@ pub struct GpuLights {
     /// grows, and rebuilding against the dummies would drop the atlas
     /// the moment a scene crossed a capacity boundary.
     page_uniform: Option<wgpu::Buffer>,
+    /// Where this view's slice of the raster uniform starts and how far
+    /// it runs. The buffer holds one slice per camera, so the offset is
+    /// part of the binding's identity.
+    page_uniform_span: (u64, u64),
     page_keys: Option<wgpu::Buffer>,
     page_slots: Option<wgpu::Buffer>,
     page_atlas: Option<wgpu::TextureView>,
@@ -262,7 +266,8 @@ impl GpuLights {
                     visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                        // One layer per camera. See `page_place`.
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
                         multisampled: false,
                     },
                     count: None,
@@ -328,6 +333,7 @@ impl GpuLights {
             &clusters,
             PageBinding {
                 uniform: &dummy_page_buffer,
+                uniform_span: (0, 0),
                 keys: &dummy_page_buffer,
                 slots: &dummy_page_buffer,
                 atlas: &dummy_page_atlas,
@@ -343,6 +349,7 @@ impl GpuLights {
             dummy_shadow,
             dummy_cubes,
             page_uniform: None,
+            page_uniform_span: (0, 0),
             page_keys: None,
             page_slots: None,
             page_atlas: None,
@@ -387,10 +394,16 @@ impl GpuLights {
             && self
                 .page_uniform
                 .as_ref()
-                .is_some_and(|b| b == pages.uniform);
+                .is_some_and(|b| b == pages.uniform)
+            // 🔴 The offset is part of the identity. Two cameras share
+            // one buffer and differ only here; comparing the handle
+            // alone would leave the second one reading the first one's
+            // slice, which is the whole bug this binding exists to fix.
+            && self.page_uniform_span == pages.uniform_span;
         if unchanged {
             return;
         }
+        self.page_uniform_span = pages.uniform_span;
         self.page_uniform = Some(pages.uniform.clone());
         self.page_keys = Some(pages.keys.clone());
         self.page_slots = Some(pages.slots.clone());
@@ -408,6 +421,7 @@ impl GpuLights {
             return;
         }
         self.page_uniform = None;
+        self.page_uniform_span = (0, 0);
         self.page_keys = None;
         self.page_slots = None;
         self.page_atlas = None;
@@ -434,6 +448,11 @@ impl GpuLights {
                     .page_uniform
                     .as_ref()
                     .unwrap_or(&self.dummy_page_buffer),
+                uniform_span: if self.page_uniform.is_some() {
+                    self.page_uniform_span
+                } else {
+                    (0, 0)
+                },
                 keys: self.page_keys.as_ref().unwrap_or(&self.dummy_page_buffer),
                 slots: self.page_slots.as_ref().unwrap_or(&self.dummy_page_buffer),
                 atlas: self.page_atlas.as_ref().unwrap_or(&self.dummy_page_atlas),
@@ -700,6 +719,16 @@ fn create_dummy_shadow(device: &wgpu::Device) -> wgpu::TextureView {
 #[derive(Clone, Copy)]
 pub struct PageBinding<'a> {
     pub uniform: &'a wgpu::Buffer,
+    /// Where this camera's slice of `uniform` starts, and how long it
+    /// is. `(0, 0)` binds the whole buffer, which is what the dummy
+    /// wants.
+    ///
+    /// 🔴 One buffer with a slice per camera, not one write per frame.
+    /// `Queue::write_buffer` is not ordered against the encoder, so two
+    /// writes to the same range in one frame hand BOTH passes the second
+    /// value — the engine has already shipped that bug once (#853). A
+    /// camera writing its own range cannot be overwritten by the other.
+    pub uniform_span: (u64, u64),
     pub keys: &'a wgpu::Buffer,
     pub slots: &'a wgpu::Buffer,
     pub atlas: &'a wgpu::TextureView,
@@ -756,7 +785,11 @@ fn create_bind_group(
             },
             wgpu::BindGroupEntry {
                 binding: 8,
-                resource: pages.uniform.as_entire_binding(),
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: pages.uniform,
+                    offset: pages.uniform_span.0,
+                    size: std::num::NonZeroU64::new(pages.uniform_span.1),
+                }),
             },
             wgpu::BindGroupEntry {
                 binding: 9,
@@ -791,5 +824,11 @@ fn create_dummy_page_atlas(device: &wgpu::Device) -> wgpu::TextureView {
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     });
-    texture.create_view(&Default::default())
+    // Declared as an array of one, because the layout says array and a
+    // 2D view against a `D2Array` entry is a validation error rather
+    // than a silently different picture.
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    })
 }

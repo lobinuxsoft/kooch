@@ -689,7 +689,7 @@ fn level_above(ratio: f32) -> u32 {
 }
 
 /// The largest level whose doubling still fits inside `ratio`.
-fn level_below(ratio: f32) -> u32 {
+pub fn level_below(ratio: f32) -> u32 {
     if ratio.is_nan() || ratio <= 1.0 {
         return 0;
     }

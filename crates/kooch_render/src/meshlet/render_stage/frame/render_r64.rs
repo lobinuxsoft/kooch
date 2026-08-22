@@ -44,10 +44,6 @@ impl MeshletRenderStage {
         instance_count: u32,
     ) -> MeshletRenderStats {
         let gpu_pool = self.gpu_pool.as_ref().expect("checked by render() prelude");
-        let vbuf64 = self.views[view_id]
-            .vbuf64_stage
-            .as_ref()
-            .expect("path selected only when vbuf64_stage is Some");
 
         profiling::scope!("path: R64 atomic vbuf");
 
@@ -103,6 +99,35 @@ impl MeshletRenderStage {
             MeshletDebugMode::Overdraw => 2,
             _ => 0,
         };
+        // 🔴 Shadow pages (#866), BEFORE the fused pass and not after
+        // it. `vbuf64.render` rasterises and lights in one fragment
+        // shader, so whatever it samples has to be finished by the time
+        // it starts.
+        //
+        // The marking reads the depth buffer, which at this point still
+        // holds the LAST frame — the fused pass is what clears and
+        // refills it. That is Epic's arrangement and the trade is
+        // deliberate: last frame's depth decides which pages EXIST,
+        // which is off by however far the camera moved in a frame and
+        // costs a page at the edge of the screen; this frame's geometry
+        // fills them, which is what the shading compares against.
+        //
+        // The other way round — marking after the shading — meant the
+        // atlas was a frame old, so a moving object was compared against
+        // its OWN caster from the previous frame and shadowed itself.
+        self.record_page_marking(
+            device,
+            queue,
+            &mut encoder,
+            resources,
+            view_id,
+            unjittered_view_proj,
+            cam_pos,
+            scene_params,
+            meshlet_bg,
+            debug_mode,
+        );
+        self.bind_page_shadows(device, resources, view_id);
         let density_view = self.views[view_id]
             .triangle_density_view
             .as_ref()
@@ -130,6 +155,10 @@ impl MeshletRenderStage {
         // 🔴 The block's value, not a mutable binding written from
         // inside it: DLSS hands back a command buffer that has to reach
         // the single submit at the bottom of this function (#536).
+        let vbuf64 = self.views[view_id]
+            .vbuf64_stage
+            .as_ref()
+            .expect("path selected only when vbuf64_stage is Some");
         let frame_dlss_commands = {
             profiling::scope!("raster + shade (fused)");
             // The prime suspect for the 96 % (#769): one fragment shader
@@ -183,22 +212,11 @@ impl MeshletRenderStage {
             queue.submit([encoder.finish(), deferred.dlss]);
             encoder = deferred.post;
         }
-        // Shadow-page marking (#866). After the raster, because it reads
-        // the depth the raster just wrote; after the froxel grid, which
-        // `render` recorded before the path split; and after the DLSS
-        // cut, because the debug view paints the view's FINAL colour and
-        // everything downstream of that cut reads the upscaled image.
-        self.record_page_marking(
-            device,
-            queue,
-            &mut encoder,
-            resources,
-            view_id,
-            unjittered_view_proj,
-            cam_pos,
-            scene_params,
-            meshlet_bg,
-        );
+        // The debug paint, which is all that is left here. See
+        // `PageMarker::record_paint`: the marking itself moved to the
+        // top of the frame, but the paint writes the view's FINAL colour
+        // and has to land after the fused pass and after the DLSS cut.
+        self.record_page_paint(&mut encoder, view_id);
 
         if timer_slot.is_some() {
             self.gpu_timers.write_stage_end(&mut encoder, 1);

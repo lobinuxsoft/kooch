@@ -251,6 +251,65 @@ pub enum MeshletDebugMode {
     /// 1.0 means no tap of the 3x3 can land in the kernel's positive
     /// lobe, and the accumulation can never take a new sample.
     Fsr3Weights = 25,
+    /// What the VIRTUAL SHADOW PAGES see, as colour (#866).
+    ///
+    /// The sibling of [`Self::ShadowCascades`], for the other technique.
+    /// A missing paged shadow is one of three things that look identical
+    /// in a shaded frame, and they have three different fixes:
+    ///
+    /// - the reader finds **no page** at any clipmap level, so marking
+    ///   and sampling disagree about which page covers this point;
+    /// - it finds a page that was **allocated and never drawn into**, so
+    ///   the cull or the expansion dropped the caster for that page;
+    /// - it finds a page with real depth and the **comparison** says
+    ///   lit, so the bias or the depth space is wrong.
+    ///
+    /// Red, yellow and green respectively; blue is a point the pages do
+    /// shadow, and magenta means the paged path is not running at all.
+    /// Brightness is the clipmap level the answer came from, so the
+    /// bands are visible without losing the classification.
+    ///
+    /// 🎯 Built after guessing twice — starvation, then winding — and
+    /// being right only once. Three causes that look alike need a view
+    /// that separates them, not a third hypothesis.
+    VirtualPages = 26,
+    /// The page each pixel MARKED, painted over the scene.
+    ///
+    /// Hue is the clipmap level — where the frame is spending detail —
+    /// and brightness is the page identity, hashed, so the tiling is
+    /// visible. A page covering a quarter of the screen is a page too
+    /// coarse for it; a mosaic too fine to resolve is detail nobody
+    /// sees.
+    ///
+    /// 🔴 The other half of [`Self::VirtualPages`], and it lives HERE
+    /// rather than in `RenderSettings` because a debug view that is a
+    /// checkbox in the settings panel is a debug view nobody finds. Two
+    /// halves of one question belong in one list: this one is what the
+    /// marking pass CHOSE, that one is what the reader FOUND.
+    VirtualPageTiles = 27,
+    /// How old the page each pixel reads is, and which clipmap level it
+    /// came from.
+    ///
+    /// 🔴 Built to make a FLICKER readable. A shadow that blinks while
+    /// the camera moves is four faults wearing one coat, and
+    /// [`Self::VirtualPages`] cannot separate them because it answers a
+    /// still frame. This answers what CHANGED, on three independent
+    /// signals:
+    ///
+    /// - **White** — allocated this frame. A sweep of white travelling
+    ///   with the camera is the allocator churning, and a flicker that
+    ///   rides that sweep is an allocation fault.
+    /// - **Hue** — the clipmap level the walk stopped at. A band that
+    ///   jumps between two colours frame to frame is the reader crossing
+    ///   a level boundary, which moves the texel size and the rect under
+    ///   it.
+    /// - **Brightness** — frames since the page was last requested, full
+    ///   at one and dim by sixteen. A page dimming while still on screen
+    ///   is marking having stopped asking for it while the reader keeps
+    ///   finding it.
+    ///
+    /// Black is no page at any level; magenta is the paged path off.
+    VirtualPageAge = 28,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -314,6 +373,9 @@ impl MeshletDebugMode {
             Self::LightsPerPixel,
             Self::PointShadowFactor,
             Self::PointCubeFaces,
+            Self::VirtualPages,
+            Self::VirtualPageTiles,
+            Self::VirtualPageAge,
             Self::TextureMipLevel,
             Self::Fsr3Input,
             Self::Fsr3Motion,
@@ -416,6 +478,9 @@ impl MeshletDebugMode {
             Self::LightsPerPixel => "Lights per pixel",
             Self::PointShadowFactor => "Point shadow factor",
             Self::PointCubeFaces => "Point cube faces",
+            Self::VirtualPages => "Virtual shadow pages",
+            Self::VirtualPageTiles => "Virtual shadow page tiles",
+            Self::VirtualPageAge => "Virtual shadow page age",
             Self::TextureMipLevel => "Texture mip level",
             Self::Fsr3Input => "FSR 3.1 — 1 input colour",
             Self::Fsr3Motion => "FSR 3.1 — 2 dilated motion",

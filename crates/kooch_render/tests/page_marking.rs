@@ -29,7 +29,7 @@ use kooch_lighting::{ClusterCamera, GpuLights};
 use kooch_render::meshlet::DEFERRED_COLOR_FORMAT;
 use kooch_render::projection::perspective_infinite_rh_reverse_z;
 use kooch_render::shadow::pages::mark::{MarkCounts, PAINT_FORMAT, PageMarker, Paint};
-use kooch_render::shadow::pages::pool::PoolConfig;
+use kooch_render::shadow::pages::pool::{DEFAULT_MAX_AGE, PAGE_CELL, PoolConfig};
 use kooch_render::shadow::{ClipmapConfig, PageConfig, SHADOW_DEPTH_FORMAT};
 
 const SIZE: u32 = 128;
@@ -177,16 +177,29 @@ fn run(
     depth: f32,
     sun: Option<Vec3>,
 ) -> MarkCounts {
-    run_pool(device, queue, resources, depth, sun, PoolConfig::default()).1
+    run_pool(
+        device,
+        queue,
+        resources,
+        depth,
+        sun,
+        100,
+        PoolConfig::default(),
+    )
+    .1
 }
 
 /// The same run, keeping the marker so the page table can be read back.
+#[allow(clippy::too_many_arguments)]
 fn run_pool(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     resources: &Resources,
     depth: f32,
     sun: Option<Vec3>,
+    // Shadow texels per screen pixel, as a percentage. The one lever
+    // that moves the page count without moving the camera.
+    density: u32,
     pool: PoolConfig,
 ) -> (PageMarker, MarkCounts) {
     let eye = Vec3::ZERO;
@@ -214,8 +227,9 @@ fn run_pool(
         eye,
         sun,
         (SIZE, SIZE),
+        /* view */ 0,
         /* rate */ 1,
-        /* density */ 100,
+        density,
         Paint {
             target: &paint_target(device),
             on: false,
@@ -353,6 +367,7 @@ fn a_stopped_pass_reports_nothing() {
         eye,
         None,
         (SIZE, SIZE),
+        /* view */ 0,
         1,
         /* density */ 100,
         Paint {
@@ -485,6 +500,7 @@ fn paint(
         eye,
         None,
         (SIZE, SIZE),
+        /* view */ 0,
         1,
         /* density */ 100,
         Paint {
@@ -493,6 +509,12 @@ fn paint(
             size: (SIZE, SIZE),
         },
     );
+    // 🔴 A dispatch of its own now, recorded where the frame records it:
+    // after the shading. The marking moved to the top of the frame so
+    // the raster can fill the atlas before anything samples it, and the
+    // paint could not go with it — it writes the view's FINAL colour,
+    // which at that point still holds the last frame.
+    marker.record_paint(&mut encoder, (SIZE, SIZE));
     queue.submit([encoder.finish()]);
     wait(device);
     read_paint(device, queue, &target)
@@ -608,6 +630,7 @@ fn half_density_is_a_quarter_of_the_pages() {
             eye,
             None,
             (SIZE, SIZE),
+            /* view */ 0,
             1,
             density,
             Paint {
@@ -639,14 +662,23 @@ fn half_density_is_a_quarter_of_the_pages() {
 }
 
 #[test]
-fn every_page_claims_a_slot() {
+fn every_drawable_page_claims_a_slot() {
     let Some((device, queue)) = device() else {
         eprintln!("no adapter; skipping");
         return;
     };
-    let mut resources = world();
-    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
-    let counts = run(&device, &queue, &resources, 0.01, None);
+    // 🔴 The sun ALONE, because it is the only thing the raster draws
+    // and therefore the only thing that spends the pool. With a local
+    // light in the scene the two counts are meant to differ — that is
+    // `a_local_light_marks_but_does_not_claim`.
+    let resources = world();
+    let counts = run(
+        &device,
+        &queue,
+        &resources,
+        0.01,
+        Some(Vec3::new(0.3, -1.0, 0.2)),
+    );
     assert!(counts.resident > 0, "the frame needs pages");
     // Two mechanisms counting the same 0->1 transitions: the mark bit's
     // atomicOr and the allocator's atomicAdd. They agree or one of them
@@ -659,27 +691,96 @@ fn every_page_claims_a_slot() {
     assert_eq!(counts.pool.probes, 0, "no insert ran out of probes");
 }
 
+/// A page nothing draws does not get a page nothing writes.
+///
+/// 🔴 The measured defect: on `many_lights` with two viewports, local
+/// lights held **991 and 1004 of each camera's 1024 slots** and the sun
+/// — the only consumer the raster has — was left 33 and 20 pages. The
+/// pool reported itself 100 % full while producing almost no shadow.
+///
+/// Local pages are still MARKED, because what a hundred casting lights
+/// would cost is the measurement this whole track is justified by. They
+/// simply do not spend the pool until something rasterises them.
+#[test]
+fn a_local_light_marks_but_does_not_claim() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 40.0);
+
+    let dark = run(&device, &queue, &resources, 0.02, None);
+    assert!(dark.resident > 0, "the point light marked nothing");
+    assert_eq!(
+        dark.pool.claims, 0,
+        "{} local pages took a slot the raster cannot fill",
+        dark.pool.claims
+    );
+    assert_eq!(dark.pool.unspent(dark.resident), dark.resident);
+
+    let sunny = run(
+        &device,
+        &queue,
+        &resources,
+        0.02,
+        Some(Vec3::new(0.3, -1.0, 0.2)),
+    );
+    assert!(sunny.pool.claims > 0, "the sun claimed nothing");
+    assert!(
+        sunny.pool.claims < sunny.resident,
+        "the local pages stopped being counted: {} claims of {} resident",
+        sunny.pool.claims,
+        sunny.resident
+    );
+    assert_eq!(sunny.pool.overflow, 0, "the sun overflowed a default pool");
+}
+
 #[test]
 fn a_full_pool_reports_overflow() {
     let Some((device, queue)) = device() else {
         eprintln!("no adapter; skipping");
         return;
     };
-    let mut resources = world();
-    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
-    let small = PoolConfig { pages: 4 };
-    let (_marker, counts) = run_pool(&device, &queue, &resources, 0.01, None, small);
+    // The SUN fills it: it is the only thing that spends the pool. A
+    // NEAR surface, because a far one is one coarse clipmap level and a
+    // handful of pages — not enough to overflow even a four-page pool.
+    let resources = world();
+    let small = PoolConfig { pages: 4, views: 1 };
+    let (_marker, counts) = run_pool(
+        &device,
+        &queue,
+        &resources,
+        0.6,
+        Some(Vec3::new(0.3, -1.0, 0.2)),
+        // Four times the screen's density, so the clipmap picks a level
+        // fine enough for the frustum to cover more than a handful of
+        // pages. Containment is a floor on the level and a far surface
+        // pins it coarse whatever the density says.
+        400,
+        small,
+    );
     assert!(
-        counts.resident > small.pages,
+        counts.resident > small.slice(),
         "the frame asks for more than the pool holds: {} of {}",
         counts.resident,
-        small.pages
+        small.slice()
     );
-    assert_eq!(counts.pool.allocated(), small.pages, "the pool filled");
+    assert_eq!(counts.pool.allocated(), small.slice(), "the pool filled");
+    // 🔴 `claims` counts the ones that GOT a slot now, not the ones that
+    // asked: `page_touch` allocates before it inserts, so a request the
+    // pool could not answer never reaches the table and never counts.
+    // `overflow` is the rest, and the two together are the requests.
     assert_eq!(
-        counts.pool.claims - counts.pool.overflow,
-        small.pages,
-        "every claim either got a slot or was counted as overflow"
+        counts.pool.claims + counts.pool.reused,
+        small.slice(),
+        "the pool handed out every slot it had"
+    );
+    assert!(
+        counts.pool.overflow > 0,
+        "a pool of {} could not answer {} requests and said nothing",
+        small.slice(),
+        counts.resident
     );
 }
 
@@ -691,26 +792,34 @@ fn the_table_holds_every_claim() {
     };
     let mut resources = world();
     add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+    // 🔴 A sun, and the point light alongside it. Only the sun's pages
+    // claim a slot, so a scene without one fills no table and this test
+    // would pass by having nothing to check.
     let (marker, counts) = run_pool(
         &device,
         &queue,
         &resources,
         0.01,
-        None,
+        Some(Vec3::new(0.3, -1.0, 0.2)),
+        100,
         PoolConfig::default(),
     );
+    assert!(counts.pool.claims > 0, "the sun claimed nothing");
     let keys = read_words(&device, &queue, marker.pool().keys());
     let slots = read_words(&device, &queue, marker.pool().slots());
-    let capacity = marker.pool().config().pages;
+    let capacity = marker.pool().config().total();
 
     let mut seen_keys = std::collections::HashSet::new();
     let mut seen_slots = std::collections::HashSet::new();
     for (entry, &key) in keys.iter().enumerate() {
-        if key == 0 {
+        // 0 is EMPTY and `PAGE_DEAD` is an evicted entry: neither names
+        // a slot anyone owns.
+        if key == 0 || key == 0xffff_fffe {
             continue;
         }
         assert!(seen_keys.insert(key), "key {key} filed twice");
-        let slot = slots[entry];
+        // TWO words an entry — slot, then age. See `PAGE_CELL`.
+        let slot = slots[entry * PAGE_CELL as usize];
         assert!(slot < capacity, "slot {slot} past the pool");
         assert!(seen_slots.insert(slot), "slot {slot} handed out twice");
     }
@@ -718,5 +827,606 @@ fn the_table_holds_every_claim() {
         seen_keys.len() as u32,
         counts.pool.allocated(),
         "the table holds exactly what was allocated"
+    );
+}
+
+/// Two cameras, one table.
+///
+/// 🔴 The defect this whole change exists for. `PageMarker` lives on the
+/// stage, so both viewports marked into the same table — and the second
+/// one to run had just emptied it with a `clear_buffer`. What the user
+/// saw was shadows in one viewport and none in the other.
+///
+/// So: mark for camera 0, mark for camera 1, and camera 0's entries have
+/// to still be there. The camera lives in the high part of the page id
+/// and the reset is a pass that reads it.
+#[test]
+fn a_view_clears_only_its_own_pages() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 40.0);
+
+    let eye = Vec3::ZERO;
+    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let proj = projection();
+    let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+    let mut lights = GpuLights::new(&device);
+    let mut frame = kooch_lighting::LightFrame::extract(&resources);
+    lights.update(&device, &queue, &resources, camera, None, &mut frame);
+
+    let depth_view = depth_texture(&device, &queue, 0.02);
+    let config = PageConfig::default();
+    let clipmap = ClipmapConfig::default();
+    let mut marker = PageMarker::new(&device, config, clipmap);
+    marker.set_pool(
+        &device,
+        PoolConfig {
+            pages: 512,
+            views: 2,
+        },
+    );
+
+    for slice in 0..2u32 {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            Some(Vec3::new(0.3, -1.0, 0.2)),
+            (SIZE, SIZE),
+            slice,
+            1,
+            100,
+            Paint {
+                target: &paint_target(&device),
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        wait(&device);
+    }
+
+    // A page carries its camera in the high part: `page / span`, with
+    // the span one stride per light plus one for the sun.
+    let lights_count = lights.light_count().max(1);
+    let stride = {
+        let local = config.face_pages() * 6;
+        let sun = clipmap.levels * config.side(0).pow(2);
+        local.max(sun).div_ceil(32) * 32
+    };
+    let span = stride as u64 * (lights_count + 1) as u64;
+
+    let mut per_view = [0u32; 2];
+    for key in read_words(&device, &queue, marker.pool().keys()) {
+        if key == 0 {
+            continue;
+        }
+        let owner = ((key - 1) as u64 / span) as usize;
+        assert!(owner < 2, "a key belongs to camera {owner}");
+        per_view[owner] += 1;
+    }
+    assert!(
+        per_view[0] > 0,
+        "camera 0's pages were wiped by camera 1: {per_view:?}"
+    );
+    assert!(per_view[1] > 0, "camera 1 marked nothing: {per_view:?}");
+}
+
+// ---------------------------------------------------------------------
+// Persistence (#866 A). The pool outlives the frame that filled it.
+// ---------------------------------------------------------------------
+
+/// Marks the same view `frames` times through one marker, returning what
+/// each frame counted.
+///
+/// The camera does not move, so after the first frame every request is
+/// for a page that is already there. That is the whole point: a scene
+/// standing still should stop allocating.
+fn run_frames(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    resources: &Resources,
+    frames: u32,
+    max_age: u32,
+    pool: PoolConfig,
+    // Shadow texels per screen pixel, per frame. Varying it moves which
+    // clipmap levels are marked, which is a standing camera's cheapest
+    // way to ask for DIFFERENT pages each frame — the case where an
+    // unreused hole is left behind for good.
+    density: &dyn Fn(u32) -> u32,
+    // Where the camera stands on each frame. A clipmap is centred on it,
+    // so moving it is what makes a frame ask for DIFFERENT pages than
+    // the last one — the case a standing camera cannot produce.
+    eye_of: &dyn Fn(u32) -> Vec3,
+    // Where the sun points on each frame.
+    //
+    // 🔴 The most hostile input there is, and the user's suggestion.
+    // `sun_basis` is built from this direction, so rotating it moves
+    // EVERY page's identity at once — a frame after a rotation shares
+    // nothing with the frame before it, and every entry the last frame
+    // filed becomes a hole nobody will ever probe through again.
+    sun_of: &dyn Fn(u32) -> Vec3,
+) -> Vec<MarkCounts> {
+    let proj = projection();
+    let mut lights = GpuLights::new(device);
+    let depth_view = depth_texture(device, queue, 0.01);
+    let target = paint_target(device);
+    let mut marker = PageMarker::new(device, PageConfig::default(), ClipmapConfig::default());
+    marker.set_pool(device, pool);
+    marker.set_max_age(max_age);
+
+    let mut out = Vec::new();
+    for index in 0..frames {
+        let eye = eye_of(index);
+        let view = Mat4::look_at_rh(eye, eye + Vec3::NEG_Z, Vec3::Y);
+        let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+        let mut frame = kooch_lighting::LightFrame::extract(resources);
+        lights.update(device, queue, resources, camera, None, &mut frame);
+
+        marker.set_frame(index);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            device,
+            queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            Some(sun_of(index)),
+            (SIZE, SIZE),
+            /* view */ 0,
+            /* rate */ 1,
+            density(index),
+            Paint {
+                target: &target,
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        marker.poll();
+        wait(device);
+        marker.poll();
+        out.push(marker.last().expect("the counters came back"));
+    }
+    out
+}
+
+/// A page nothing stopped wanting is still there next frame, and cost
+/// nothing to have.
+///
+/// 🔴 The reading the whole change exists for. Frame 0 allocates; every
+/// frame after it reuses, allocates nothing, and therefore has nothing
+/// to rasterise. Before this, every frame allocated every page again.
+#[test]
+fn a_page_survives_a_frame_that_wants_it() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+    let frames = run_frames(
+        &device,
+        &queue,
+        &resources,
+        3,
+        8,
+        PoolConfig::default(),
+        &|_| 100,
+        &|_| Vec3::ZERO,
+        &|_| Vec3::new(0.3, -1.0, 0.2),
+    );
+
+    let first = frames[0];
+    assert!(first.resident > 0, "the frame needs pages");
+    assert_eq!(first.pool.reused, 0, "nothing was resident before frame 0");
+    assert_eq!(
+        first.pool.claims, first.resident,
+        "frame 0 allocates them all"
+    );
+
+    for (index, counts) in frames.iter().enumerate().skip(1) {
+        assert_eq!(
+            counts.pool.claims, 0,
+            "frame {index} allocated {} pages it already had",
+            counts.pool.claims
+        );
+        assert_eq!(
+            counts.pool.reused, counts.resident,
+            "frame {index} reused {} of {} requests",
+            counts.pool.reused, counts.resident
+        );
+    }
+}
+
+/// Every request is answered exactly once, whether by a reuse or by an
+/// allocation.
+///
+/// ⚠️ This is the tombstone test. A lookup that stopped at a freed entry
+/// would declare a resident page missing and allocate a SECOND slot for
+/// it, which shows up here as the two halves summing past `resident` —
+/// and nowhere else, because both pages then rasterise correctly and
+/// only the pool runs out early.
+#[test]
+fn a_request_is_answered_once() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+    // Age 0 evicts everything every frame, so every frame after the
+    // first walks a table made entirely of tombstones. That is the
+    // hostile case on purpose.
+    for max_age in [0u32, 1, 8] {
+        let frames = run_frames(
+            &device,
+            &queue,
+            &resources,
+            4,
+            max_age,
+            PoolConfig::default(),
+            &|_| 100,
+            &|_| Vec3::ZERO,
+            &|_| Vec3::new(0.3, -1.0, 0.2),
+        );
+        for (index, counts) in frames.iter().enumerate() {
+            assert_eq!(
+                counts.pool.claims + counts.pool.reused,
+                counts.resident,
+                "age {max_age} frame {index}: {} claims + {} reuses is not {} requests",
+                counts.pool.claims,
+                counts.pool.reused,
+                counts.resident
+            );
+            assert_eq!(
+                counts.pool.leaked, 0,
+                "age {max_age} frame {index} double-freed a slot"
+            );
+        }
+    }
+}
+
+/// A slot freed by eviction is handed out again.
+///
+/// 🔴 Without recycling the pool is a bump allocator over the session
+/// rather than over the frame: it runs out after `slice` distinct pages
+/// have EVER been asked for. Four frames at age 0 request roughly four
+/// times what one frame does, so a pool sized for one frame proves it.
+#[test]
+fn an_evicted_slot_comes_back() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+    // A pool sized so that ONE frame fits and six do not, which is what
+    // makes recycling the only way through.
+    let pool = PoolConfig { pages: 8, views: 1 };
+    let frames = run_frames(
+        &device,
+        &queue,
+        &resources,
+        6,
+        0,
+        pool,
+        &|_| 100,
+        &|_| Vec3::ZERO,
+        &|_| Vec3::new(0.3, -1.0, 0.2),
+    );
+
+    let first = frames[0];
+    assert!(
+        first.pool.claims * frames.len() as u32 > pool.slice(),
+        "the run has to ask for more pages than the pool holds, or it proves nothing: \
+         {} claims over {} frames against {} slots",
+        first.pool.claims,
+        frames.len(),
+        pool.slice()
+    );
+    for (index, counts) in frames.iter().enumerate() {
+        assert_eq!(
+            counts.pool.overflow, 0,
+            "frame {index} ran out of pool with {} evictions behind it",
+            counts.pool.evicted
+        );
+    }
+    assert!(
+        frames[1..].iter().any(|c| c.pool.evicted > 0),
+        "age 0 has to evict every frame"
+    );
+}
+
+/// Ageing is measured in FRAMES, and `max_age` decides how many.
+///
+/// 🔴 `age_view` runs BEFORE the marking, so a page requested last frame
+/// is already one frame old when it is judged. At `max_age` 0 that is
+/// too old and it is evicted and immediately re-requested — which is
+/// exactly the behaviour that came before persistence, produced by the
+/// machine that replaces it. At 1 or more it survives. Both directions
+/// are asserted, because a threshold nothing tests off-by-one is a
+/// threshold nobody knows the meaning of.
+#[test]
+fn max_age_decides_whether_a_page_is_kept() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+
+    let churn = run_frames(
+        &device,
+        &queue,
+        &resources,
+        3,
+        0,
+        PoolConfig::default(),
+        &|_| 100,
+        &|_| Vec3::ZERO,
+        &|_| Vec3::new(0.3, -1.0, 0.2),
+    );
+    for (index, counts) in churn.iter().enumerate().skip(1) {
+        assert!(
+            counts.pool.evicted > 0,
+            "age 0, frame {index}: nothing was evicted"
+        );
+        assert_eq!(
+            counts.pool.alive, 0,
+            "age 0, frame {index} kept pages alive"
+        );
+        assert_eq!(
+            counts.pool.claims, counts.resident,
+            "age 0, frame {index} should re-allocate everything"
+        );
+    }
+
+    let kept = run_frames(
+        &device,
+        &queue,
+        &resources,
+        3,
+        1,
+        PoolConfig::default(),
+        &|_| 100,
+        &|_| Vec3::ZERO,
+        &|_| Vec3::new(0.3, -1.0, 0.2),
+    );
+    for (index, counts) in kept.iter().enumerate().skip(1) {
+        assert_eq!(
+            counts.pool.evicted, 0,
+            "age 1, frame {index} evicted a page the frame was still asking for"
+        );
+        assert!(
+            counts.pool.alive > 0,
+            "age 1, frame {index} kept nothing alive"
+        );
+    }
+}
+
+/// The table does not fill up with holes.
+///
+/// 🔴 Measured failing in the editor: the panel showed "1.0 dead entries
+/// walked per request" and then "1 inserts ran out of probes" — pages
+/// the frame needed and could not file, which render unshadowed.
+///
+/// ⚠️ A STANDING camera does not reproduce it, and finding that out is
+/// most of what this test is worth. It asks for the same pages every
+/// frame, so a hole is left exactly where the next request's probe run
+/// starts and is reused immediately: a steady 1.00 that never grows, and
+/// the first version of this test asserted against it and failed on a
+/// system that was working. The leak needs the requested pages to MOVE,
+/// which is what a camera turning does and what varying the density
+/// stands in for.
+#[test]
+fn holes_do_not_accumulate() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+    // Four densities on rotation, so a page abandoned on one frame is
+    // not asked for again until three frames later — long enough that
+    // its hole is nobody's probe start in between.
+    let frames = run_frames(
+        &device,
+        &queue,
+        &resources,
+        150,
+        0,
+        PoolConfig {
+            pages: 16,
+            views: 1,
+        },
+        &|i| [100u32, 40, 70, 25][(i % 4) as usize],
+        &|i| Vec3::new(i as f32 * 0.35, 0.0, i as f32 * -0.2),
+        // 🔴 And the sun turns, which the user pointed at: it re-bases the
+        // whole clipmap, so every page the last frame filed is orphaned
+        // where it stands.
+        &|i| {
+            let a = i as f32 * 0.11;
+            Vec3::new(a.sin() * 0.6, -1.0, a.cos() * 0.6)
+        },
+    );
+
+    for (index, counts) in frames.iter().enumerate() {
+        if index % 25 == 0 || counts.pool.probes > 0 {
+            eprintln!(
+                "frame {index}: holes {} probes {} evicted {} swept {} requests {}",
+                counts.pool.holes,
+                counts.pool.probes,
+                counts.pool.evicted,
+                counts.pool.swept,
+                counts.pool.requests()
+            );
+        }
+    }
+    for (index, counts) in frames.iter().enumerate() {
+        assert_eq!(
+            counts.pool.probes, 0,
+            "frame {index}: {} inserts ran out of probes",
+            counts.pool.probes
+        );
+    }
+    // Growth, not level: a hole a request walks and then reuses is the
+    // healthy case. What is not healthy is the number climbing.
+    let walked = |window: &[MarkCounts]| -> f32 {
+        let holes: u32 = window.iter().map(|c| c.pool.holes).sum();
+        let requests: u32 = window.iter().map(|c| c.pool.requests()).sum();
+        holes as f32 / requests.max(1) as f32
+    };
+    let early = walked(&frames[4..20]);
+    let late = walked(&frames[frames.len() - 16..]);
+    assert!(
+        late <= early + 0.5,
+        "dead entries walked per request went {early:.2} -> {late:.2} over {} frames",
+        frames.len()
+    );
+    // And the sweep has to keep pace with the eviction that feeds it.
+    let evicted: u32 = frames[1..].iter().map(|c| c.pool.evicted).sum();
+    let swept: u32 = frames[1..].iter().map(|c| c.pool.swept).sum();
+    assert!(
+        swept * 4 >= evicted,
+        "{swept} tombstones swept against {evicted} evicted"
+    );
+}
+
+/// A page that stays resident keeps the SAME physical slot.
+///
+/// 🔴 The property the fused raster depends on and nobody wrote down.
+/// `vbuf64.render` rasterises and shades in one pass, so the shading
+/// samples an atlas a frame old while reading THIS frame's table. That
+/// only works if the two agree about where a page lives — and before
+/// persistence they did by accident, because the allocator was a bump
+/// from zero every frame and handed the same page the same slot as long
+/// as the marking order held.
+///
+/// A free list has no such order. If a page can be freed and re-taken
+/// into a different slot, the table says slot 7 and last frame's atlas
+/// has that page in slot 3, with something else in 7.
+#[test]
+fn a_resident_page_keeps_its_slot() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+    let pool = PoolConfig::default();
+
+    // Two frames, camera and sun still, reading the table after each.
+    let mut placements: Vec<std::collections::HashMap<u32, u32>> = Vec::new();
+    let eye = Vec3::ZERO;
+    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let proj = projection();
+    let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+    let mut lights = GpuLights::new(&device);
+    let mut frame = kooch_lighting::LightFrame::extract(&resources);
+    lights.update(&device, &queue, &resources, camera, None, &mut frame);
+    let depth_view = depth_texture(&device, &queue, 0.01);
+    let target = paint_target(&device);
+    let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
+    marker.set_pool(&device, pool);
+
+    for index in 0..4u32 {
+        marker.set_frame(index);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            Some(Vec3::new(0.3, -1.0, 0.2)),
+            (SIZE, SIZE),
+            0,
+            1,
+            100,
+            Paint {
+                target: &target,
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        let keys = read_words(&device, &queue, marker.pool().keys());
+        let cells = read_words(&device, &queue, marker.pool().slots());
+        let mut placed = std::collections::HashMap::new();
+        for (entry, &key) in keys.iter().enumerate() {
+            if key == 0 || key == 0xffff_fffe {
+                continue;
+            }
+            placed.insert(key - 1, cells[entry * PAGE_CELL as usize]);
+        }
+        placements.push(placed);
+    }
+
+    let first = &placements[1];
+    assert!(!first.is_empty(), "the frame filed no pages");
+    for (index, later) in placements.iter().enumerate().skip(2) {
+        for (page, slot) in first {
+            if let Some(now) = later.get(page) {
+                assert_eq!(
+                    now, slot,
+                    "page {page} moved from slot {slot} to {now} by frame {index}"
+                );
+            }
+        }
+    }
+}
+
+/// A camera that keeps moving does not run the pool dry.
+///
+/// 🔴 The measurement, not a guess. With a long `max_age` a page stays
+/// resident for a second after the last frame that wanted it, so a
+/// camera sweeping across a scene accumulates the pages of everywhere it
+/// has been. If that fills the slice, new pages get no slot, render
+/// unshadowed, and come back when something finally ages out — a shadow
+/// that blinks in and out, which is what the user reported.
+///
+/// What it pins is the failure, not a policy: if it fires, the pool
+/// needs eviction under PRESSURE — Epic's `PHYSICAL_PAGE_LIST_LRU` —
+/// rather than eviction by age alone.
+#[test]
+fn a_moving_camera_does_not_exhaust_the_pool() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+    let frames = run_frames(
+        &device,
+        &queue,
+        &resources,
+        90,
+        DEFAULT_MAX_AGE,
+        PoolConfig::default(),
+        &|_| 100,
+        // A metre and a half a second at 60 Hz, which is a walk.
+        &|i| Vec3::new(i as f32 * 0.025, 0.0, i as f32 * -0.025),
+        &|_| Vec3::new(0.3, -1.0, 0.2),
+    );
+
+    let peak = frames.iter().map(|c| c.pool.allocated()).max().unwrap_or(0);
+    let spilled: u32 = frames.iter().map(|c| c.pool.overflow).sum();
+    eprintln!(
+        "peak {peak} of {} slots, {spilled} pages went unallocated",
+        frames[0].pool.capacity
+    );
+    assert_eq!(
+        spilled, 0,
+        "{spilled} pages found no slot; the pool peaked at {peak} of {}",
+        frames[0].pool.capacity
     );
 }

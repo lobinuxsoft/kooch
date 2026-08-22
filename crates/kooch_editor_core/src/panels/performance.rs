@@ -705,8 +705,8 @@ fn shadow_page_readout(
     let mib = counts.resident as f64 * config.page_bytes() as f64 / (1024.0 * 1024.0);
     ui.label(
         egui::RichText::new(format!(
-            "{} pages · {mib:.1} MiB · at {}x{}",
-            counts.resident, counts.size.0, counts.size.1
+            "view {} · {} pages · {mib:.1} MiB · at {}x{}",
+            counts.view, counts.resident, counts.size.0, counts.size.1
         ))
         .small(),
     )
@@ -744,7 +744,7 @@ fn shadow_page_readout(
     // capacity.
     ui.label(
         egui::RichText::new(format!(
-            "{} of {} pool pages allocated · {:.0}% full",
+            "{} of {} pages in this view's slice · {:.0}% full",
             counts.pool.allocated(),
             counts.pool.capacity,
             counts.pool.load()
@@ -755,20 +755,65 @@ fn shadow_page_readout(
     .on_hover_text(
         "The physical pool the pages are allocated out of, in the same dispatch that marks \
          them: the thread that flips a page's mark bit is the one that claims its slot. \
+         The pool is SLICED between the cameras — a layer of the atlas each — so this is \
+         what THIS view may spend, not the whole budget: a camera cannot take another \
+         camera's pages and cannot be robbed of its own. \
          Epic's default pool is 4096 pages for the WHOLE scene — 6144 for open worlds, 8192 \
          thrashes — and `KOOCH_SHADOW_POOL_PAGES` moves this one.",
     );
-    if counts.pool.claims != counts.resident {
-        // Two mechanisms counting the same 0→1 transitions. They agree
-        // or one of them is broken, and a panel is a better place to
-        // find that out than a frame that renders wrong.
+    // 🔴 The split that explains everything else on this panel. Marking
+    // counts what a hundred casting lights WOULD need; only the sun's
+    // pages are rasterised, so only they spend the pool. Before the two
+    // were separated, local pages took 991 of each camera's 1024 slots
+    // and the sun got 33 — a pool reporting itself full while doing
+    // nothing.
+    let unspent = counts.pool.unspent(counts.resident);
+    if unspent > 0 {
         ui.label(
             egui::RichText::new(format!(
-                "{} claims against {} pages marked — the allocator disagrees with the bitmap",
-                counts.pool.claims, counts.resident
+                "{} of them are local lights — marked, not allocated",
+                unspent
+            ))
+            .small()
+            .weak(),
+        )
+        .on_hover_text(
+            "Local lights are counted so the census stays honest about what many casting \
+             lights would cost, but the raster only draws the sun, so they claim no physical \
+             page: a slot handed to one is a slot nothing writes and nothing samples. Epic \
+             states the same rule as a pass — `PruneLightGridCS` prunes the light grid down \
+             to the lights that HAVE a virtual shadow map before anything marks. The gate \
+             moves the day the local raster lands.",
+        );
+    }
+    // 🔴 The reading persistence exists to produce. A still camera
+    // should sit at 100 %: every page it wants is one it already has,
+    // so the raster draws nothing and the atlas is last frame's.
+    ui.label(
+        egui::RichText::new(format!(
+            "{} reused · {} new · {} evicted · {:.0}% hit",
+            counts.pool.reused,
+            counts.pool.claims,
+            counts.pool.evicted,
+            counts.pool.hit_rate()
+        ))
+        .small()
+        .weak(),
+    )
+    .on_hover_text(
+        "The pool PERSISTS between frames: a page is freed when nothing has asked for it in          `max_age` frames, which is Epic's `MaxPageAgeSinceLastRequest`, and not because a          frame ended. A reused page is one whose depth is already in the atlas and does not          have to be rasterised again.          ⚠️ `max_age` DEFAULTS TO ZERO, so everything is evicted every frame and the hit          rate reads 0 %: keeping a page longer is only correct once something invalidates          the ones a moving caster passed through, and that pass does not exist yet.          `KOOCH_SHADOW_PAGE_AGE` raises it to try it.",
+    );
+    if counts.pool.leaked > 0 {
+        ui.label(
+            egui::RichText::new(format!(
+                "{} slots fell out of the free list — a double free",
+                counts.pool.leaked
             ))
             .small()
             .color(egui::Color32::from_rgb(220, 120, 90)),
+        )
+        .on_hover_text(
+            "The free list cannot hold more slots than the slice has, so this is the              allocator releasing a slot twice. Always zero, or the allocator is wrong.",
         );
     }
     if counts.pool.overflow > 0 {
@@ -794,8 +839,8 @@ fn shadow_page_readout(
         // say.
         ui.label(
             egui::RichText::new(format!(
-                "{} sun pages rastered · {} meshlet/page pairs",
-                raster.pages, raster.pairs
+                "{} sun pages rastered · {} meshlet/page pairs · {} owned by another view",
+                raster.pages, raster.pairs, raster.others
             ))
             .small()
             .weak(),
@@ -833,6 +878,18 @@ fn shadow_page_readout(
                 .color(egui::Color32::from_rgb(220, 120, 90)),
             );
         }
+    }
+    // The cost of eviction, and the one that grows silently.
+    if counts.pool.holes > 0 && counts.pool.requests() > 0 {
+        let per = counts.pool.holes as f32 / counts.pool.requests() as f32;
+        ui.label(
+            egui::RichText::new(format!("{per:.1} dead entries walked per request"))
+                .small()
+                .weak(),
+        )
+        .on_hover_text(
+            "An evicted entry leaves a TOMBSTONE rather than an empty slot, because open              addressing proves a key is absent by finding an empty one — writing empty over              a freed key would make every key whose probe run passed through it unfindable              while it is still resident. The hole keeps the run intact and lengthens it.              Climbing towards 32, which is where a lookup gives up, means the table is              turning into holes and wants a rehash.",
+        );
     }
     if counts.pool.probes > 0 {
         ui.label(

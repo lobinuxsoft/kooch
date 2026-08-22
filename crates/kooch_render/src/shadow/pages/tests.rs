@@ -281,7 +281,7 @@ fn the_table_stays_half_empty() {
     // expected count is under two. A table sized to the pool rather than
     // to twice it would spend most inserts walking.
     for pages in [64u32, 1000, 4096, 6144] {
-        let config = PoolConfig { pages };
+        let config = PoolConfig { pages, views: 1 };
         let entries = config.entries();
         assert!(entries.is_power_of_two(), "the mask has to be an `and`");
         assert!(
@@ -297,7 +297,10 @@ fn the_table_is_kilobytes_not_megabytes() {
     // address 28 409 856 pages; a `u32` each is 108 MiB, 42 % of the
     // pool it would index. Sized to residency instead, Epic's own
     // 4096-page pool costs this.
-    let config = PoolConfig { pages: POOL_PAGES };
+    let config = PoolConfig {
+        pages: POOL_PAGES,
+        views: 1,
+    };
     assert!(
         config.table_bytes() < 128 * 1024,
         "the table is {} bytes",
@@ -311,7 +314,7 @@ fn the_atlas_is_square_enough() {
     // wider than a handful of texels.
     let page = PageConfig::default();
     for pages in [64u32, 1000, 4096, 8192] {
-        let config = PoolConfig { pages };
+        let config = PoolConfig { pages, views: 1 };
         let side = config.per_row() * page.page;
         assert!(side <= 16384, "{pages} pages want a {side}-texel atlas");
         assert!(

@@ -803,6 +803,33 @@ vistas alternando a 409x403, `many_lights`:
 y más pares no cierra; hay que mirar el mapeo página↔meshlet de la expansión antes de tocar
 nada más.
 
+✅ **2026-08-21 — el prior art quedó LEÍDO, y desmintió tres cosas que dábamos por ciertas.**
+Del paper de Chalmers (_More Efficient Virtual Shadow Maps for Many Lights_, TVCG 2015) y del
+source de UE 5.5 — `VirtualShadowMapPageAccessCommon.ush`,
+`VirtualShadowMapPhysicalPageManagement.usf`, `VirtualShadowMapPageMarking.usf`,
+`VirtualShadowMapBuildPerPageDrawCommands.usf`, `VirtualShadowMapPerPageDispatch.ush`:
+
+1. **Cuando el pool se llena no se tira nada, y no hay prioridad por luz ni por nivel ni por
+   distancia: es LRU puro sobre un pool que PERSISTE entre frames.** Cuatro listas de
+   `MaxPhysicalPages` — `LRU`, `AVAILABLE`, `EMPTY`, `REQUESTED` — y una página no pedida
+   sobrevive mientras `PhysicalPageRequestedAge <= MaxPageAgeSinceLastRequest`. Si
+   `PopPhysicalPageList(AVAILABLE)` vuelve vacío, Epic sencillamente **no escribe nada** y el
+   sampler cae a un nivel más basto. El overflow es degradación, no pérdida.
+2. **🔴 UE5 NO hashea la tabla de páginas.** `CalcPageOffset` es aritmética plana:
+   `id * VSM_PAGE_TABLE_SIZE + level_offset + x + y * dims`, **21 845 entradas = 87 KiB por
+   shadow map**. Se mantiene chica porque una luz lejana **no recibe espacio virtual completo**:
+   `VSM_MAX_SINGLE_PAGE_SHADOW_MAPS` son 8192 mapas de UNA entrada. Nuestros 108 MiB salían de
+   asumir el espacio completo para las 101 luces — una decisión nuestra, no una ley.
+3. **No se marcan páginas para consumidores que no existen**: `PruneLightGridCS` reescribe la
+   light grid dejando sólo luces con `VirtualShadowMapId` y manda las distantes al final.
+   Marcar y dibujar leen **la misma lista**.
+4. **No hay pares (página, meshlet) ni loop de niveles en la CPU.** `FPerPageDispatchSetup` usa
+   `DispatchThreadId.y` como índice en un buffer `VirtualShadowMapIds` — todos los mapas y todos
+   los niveles en **un dispatch**. Y `CullPerPageDrawCommandsCs` emite **un comando por
+   (instancia, nivel)** con un RECT de páginas, no uno por página.
+
+⚖️ El source de UE está bajo su EULA: se estudia el **diseño**, no se copia una línea a Kóoch.
+
 ⏭️ **NEXT — y va PRIMERO: leer cómo lo hace quien lo hizo bien.** Los cuatro defectos de
 arriba son de **arquitectura**, no de aritmética, y ya se demostró que este track adivina mal
 cuando diseña sin fuente. Antes de tocar código:
@@ -821,8 +848,66 @@ cuando diseña sin fuente. Antes de tocar código:
 3. ¿La tabla es **por vista** o hay una sola con la vista adentro de la clave?
 4. ¿Cómo se construye la lista de pares sin un bind group por nivel por vista por frame?
 
-Recién después: (a) que el marcado **no asigne** páginas que el ráster no va a dibujar, (b)
-pool y tabla **por vista**, (c) sacar los bind groups del loop, (d) re-medir.
+✅ **(b) y (c) hechos: la VISTA entra en la clave y los bind groups salieron del loop.**
+
+- **El id de página lleva la cámara arriba**: `page = view * view_span + light * stride + …`,
+  que es el `VirtualShadowMapId` de UE con un multiply en lugar de una tabla por id. El hash
+  hace que agrandar el espacio de direcciones salga gratis.
+- **La tabla ya no se vacía con `clear_buffer`**: un pase `clear_view` borra **sólo** las
+  entradas de la cámara que va a marcar. Tenía que ser un pase porque el ráster está fusionado
+  con el shading — una vista samplea un atlas de un frame atrás, así que vaciar la tabla entera
+  al principio del frame deja a la segunda cámara leyendo lo que la primera acababa de borrar.
+  **Ése era el "en una view se ve y en la otra no".**
+- **El pool se SLICEA, no se comparte**: cada cámara tiene su rebanada y el atlas pasó a ser un
+  **array con una capa por vista** — una capa es un attachment que una cámara limpia sola. Dos
+  viewports cuestan lo que costaba uno: la rebanada es `pages / views` redondeado al cuadrado.
+- **Los bind groups se construyen UNA vez** y se invalidan comparando los buffers que hay
+  detrás. Lo que cambia por vista y por nivel viaja como **dynamic offset**. Eran 34 por cámara
+  por frame sólo en el loop de niveles.
+- 🔴 **El uniform del ráster tiene una rebanada por cámara.** `Queue::write_buffer` no está
+  ordenado contra el encoder (#853): escribir el mismo rango dos veces en un frame le da a AMBOS
+  pases el segundo valor — o sea que la cámara A rasterizaba su clipmap **con el ojo de la
+  cámara B**.
+- **El binding del lector se hace ANTES del pase fusionado**, no después: el pase fusionado ES
+  el shading.
+
+⚠️ **Todavía sin verificar en pantalla.** Los tests cubren el mecanismo — uno de ellos falla con
+el comportamiento viejo y pasa con el nuevo — pero nadie miró un frame con dos viewports.
+
+✅ **(a) hecho: el marcado ya no le reclama pool a las luces locales.** Medido en el editor con
+las dos vistas: **991 y 1004 de los 1024 slots de cada cámara eran locales**, y al sol —el único
+consumidor que el ráster tiene— le quedaban **33 y 20 páginas**. El pool se declaraba 100% lleno
+sin producir sombra. Las páginas locales **se siguen marcando**, porque lo que costarían cien
+luces proyectando es la medición que justifica todo este track; simplemente no gastan pool hasta
+que algo las rasterice. Epic dice la misma regla como pase: `PruneLightGridCS` poda la light grid
+a las luces que **tienen** un shadow map **antes** de que nada marque.
+
+🔴 **2026-08-21 — el ráster de páginas culleaba EXACTAMENTE la geometría que proyecta.** Lo
+intuyó el user mirando el editor: *"creo que las caras de las meshlets pueden estar invertidas"*.
+Tenía razón, y no eran las meshlets. Entre un triángulo del mundo y el clip space de una página
+hay **dos flips**, y sólo uno de ellos entra en el mapa 2D por el que el rasterizador decide el
+winding:
+
+- `sun_basis` devuelve `(s, u, f)` con `u = cross(s, f)` → determinante **-1**, base
+  **zurda**, a diferencia del `look_to_rh` de las cascadas.
+- `page_clip` niega la Y porque el rect de una página está en filas de téxeles —que van hacia
+  abajo— y el clip space va hacia arriba. **El lector está de acuerdo con ese flip**, así que
+  sacarlo espejaría todas las sombras en lugar de arreglarlas.
+
+Medido en la GPU a través de esas mismas funciones: un triángulo que mira al sol sale con área
+con signo **-0.25**, o sea `Cw`. El pipeline declaraba `Ccw`, así que `cull_mode: Back` tiraba
+todas las caras que proyectan y dejaba **la cáscara trasera de cada malla cerrada**. Sombras
+como manchas con agujeros que cambiaban de forma con el nivel del clipmap — y con él, con el LOD
+del meshlet. De ahí el *"se rompe en base al meshlet"*.
+
+⚠️ **Y el cull de meshlets empeoraba el cuadro**: `camera_in_cone` con la "cámara" en
+`eye - sol * SUN_SPAN` conserva los meshlets que **miran al sol**, y el ráster tiraba los
+triángulos que miran al sol. Lo que sobrevivía era un subconjunto casi arbitrario, agrupado por
+meshlet.
+
+⏭️ Falta: (d) el misterio de los pares, (e) re-medir. Y encima de todo eso, **lo que el prior art
+dice que es el mecanismo y no una optimización: persistencia entre frames con LRU**, más una
+clase "una sola página" para las luces lejanas.
 
 **Phase 3 — the consumers, on top of #866 and not before.**
 

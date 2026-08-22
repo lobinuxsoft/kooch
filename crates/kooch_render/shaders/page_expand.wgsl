@@ -110,34 +110,32 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let inst = instances[packed >> 16u];
     let desc = descriptors[packed & 0xffffu];
-    let centre = (inst.transform * vec4<f32>(desc.bounds_center, 1.0)).xyz;
+    let bounds = (inst.transform * vec4<f32>(desc.bounds_center, 1.0)).xyz;
     let radius = desc.bounding_radius * transform_scale(inst.transform);
 
     let id = page_decode(
         entry.x,
+        raster.views.y,
         raster.space.x,
         raster.space.y,
         raster.space.z,
         raster.space.w,
     );
-    let rect = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z);
+    let basis = sun_basis(raster.sun.xyz);
+    let centre = sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
+    let rect = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z, centre);
 
     // Sphere against the page's box, in the sun's own frame. The depth
     // axis is the orthographic span rather than the page's width: a
     // caster far above the page still writes into it, which is the whole
     // point of a shadow.
-    let basis = sun_basis(raster.sun.xyz);
-    let offset = centre - raster.eye.xyz;
-    let local = vec3<f32>(
-        dot(offset, basis[0]),
-        dot(offset, basis[1]),
-        dot(offset, basis[2]),
-    );
+    let plane = sun_plane(bounds, basis);
+    let along = dot(bounds - raster.eye.xyz, basis[2]);
     let half = rect.z * 0.5 + radius;
-    if abs(local.x - rect.x) > half || abs(local.y - rect.y) > half {
+    if abs(plane.x - rect.x) > half || abs(plane.y - rect.y) > half {
         return;
     }
-    if abs(local.z) > raster.world.y + radius {
+    if abs(along) > raster.world.y + radius {
         return;
     }
 

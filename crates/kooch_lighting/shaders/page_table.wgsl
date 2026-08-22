@@ -24,7 +24,29 @@
 // So the table is sized to what is RESIDENT, not to what is
 // addressable: open addressing over `2 x pool_pages` entries, which for
 // Epic's 4096-page pool is 8192 slots — **64 KiB**, and one probe in the
-// common case. UE5 hashes it too.
+// common case.
+//
+// ⚠️ **UE5 does NOT hash it**, and an earlier version of this comment
+// said it did. `CalcPageOffset` in `VirtualShadowMapPageAccessCommon.ush`
+// is flat arithmetic — `id * VSM_PAGE_TABLE_SIZE + level_offset + x + y
+// * dims` — over 21 845 entries per shadow map. Epic pays 87 KiB per map
+// and stays small by never handing a distant light a full virtual space:
+// `VSM_MAX_SINGLE_PAGE_SHADOW_MAPS` is 8192 maps of ONE entry each. The
+// 108 MiB above is what a flat table costs *given our decision to give
+// every light the full space*, which is a decision, not a law.
+//
+// # The VIEW is part of the key, and that is not a detail
+//
+// One editor frame draws the same world from two cameras. A clipmap is
+// centred on ITS camera, so the same world position is a different page
+// in each — and a table keyed without the view hands view B the pages
+// view A marked. The symptom is exact and was measured: shadows in one
+// viewport and none in the other.
+//
+// UE5's answer is the `VirtualShadowMapId`: every (view, light, clipmap
+// level) triple gets its own id and the id IS the high part of the page
+// address. This does the same with a multiply — `view * view_span` —
+// because the hash makes the size of the address space free.
 //
 // # The insert has no race, and that is not luck
 //
@@ -38,6 +60,32 @@
 // 0 is EMPTY, so a cleared buffer is an empty table and no reset pass
 // has to run. Keys are therefore stored as `page + 1`.
 const PAGE_EMPTY: u32 = 0u;
+
+/// An entry whose page was EVICTED, and the reason persistence needs a
+/// third state at all.
+///
+/// 🔴 Open addressing resolves a collision by walking, so a lookup stops
+/// at the first EMPTY entry: an empty slot proves the key was never
+/// inserted, because inserting it would have taken that slot. Writing
+/// EMPTY over an evicted key breaks that proof — every key whose probe
+/// run passed through the freed entry becomes unfindable while still
+/// sitting in the table, and the symptom is a page that is resident,
+/// rasterised, and never sampled.
+///
+/// A tombstone keeps the run intact. Readers walk past it; an insert may
+/// reuse it. This costs a probe per hole, which `counters[9]` counts so
+/// that a table degrading into holes is a number rather than a mystery.
+const PAGE_DEAD: u32 = 0xfffffffeu;
+
+/// Words per table entry: the physical slot, then the frame it was last
+/// requested in.
+///
+/// 🔴 Interleaved because `max_storage_buffers_per_shader_stage` is
+/// eight on the downlevel defaults and the marking pass was already
+/// there. Declared here rather than in the marking pass because the
+/// SHADING pass indexes the same buffer and a stride the two disagree on
+/// reads an age as a slot.
+const PAGE_CELL: u32 = 2u;
 
 /// No physical page: either the pool is full or the probe gave up.
 const PAGE_MISS: u32 = 0xffffffffu;
@@ -74,7 +122,7 @@ fn page_step(probe: u32, entries: u32) -> u32 {
     return (probe + 1u) & (entries - 1u);
 }
 
-/// The texel a physical page starts at, in the atlas.
+/// The texel a physical page starts at, inside its layer.
 ///
 /// The atlas is a plain grid of pages. `per_row` is a constant of the
 /// pool, not of the light, so nothing about a page's ADDRESS survives
@@ -82,6 +130,19 @@ fn page_step(probe: u32, entries: u32) -> u32 {
 /// without anything that samples it noticing.
 fn page_origin(slot: u32, per_row: u32, page: u32) -> vec2<u32> {
     return vec2<u32>(slot % per_row, slot / per_row) * page;
+}
+
+/// A physical slot taken apart: `xy` the page's origin in texels inside
+/// its layer, `z` the layer.
+///
+/// 🔴 The atlas is an array with a LAYER PER VIEW, so a view renders
+/// into its own attachment and clears it without a scissor, a stencil
+/// or a clearing draw — the three ways a shared surface is normally
+/// partitioned, all of which this avoids. Slots stay GLOBAL so a table
+/// entry says where its page lives without being told whose it is.
+fn page_place(slot: u32, slice: u32, per_row: u32, page: u32) -> vec3<u32> {
+    let width = max(slice, 1u);
+    return vec3<u32>(page_origin(slot % width, per_row, page), slot / width);
 }
 
 // ---------------------------------------------------------------------
@@ -97,6 +158,9 @@ fn page_origin(slot: u32, per_row: u32, page: u32) -> vec2<u32> {
 /// A virtual page taken apart. `light` is the sun's slot when
 /// `is_sun` is true, in which case `face` is meaningless.
 struct PageId {
+    /// Which camera asked for it. Two viewports over one world are two
+    /// clipmaps, and a page of one is not a page of the other.
+    view: u32,
     light: u32,
     face: u32,
     level: u32,
@@ -106,12 +170,22 @@ struct PageId {
 
 /// Inverts the arithmetic in `mark_local` and `mark_sun`.
 ///
-/// `stride` is the pages one light addresses, `face_pages` one face's
-/// whole mip chain, `side` the pages across level 0.
-fn page_decode(page: u32, stride: u32, face_pages: u32, side: u32, sun_slot: u32) -> PageId {
+/// `span` is the pages one VIEW addresses, `stride` the pages one light
+/// addresses, `face_pages` one face's whole mip chain, `side` the pages
+/// across level 0.
+fn page_decode(
+    page: u32,
+    span: u32,
+    stride: u32,
+    face_pages: u32,
+    side: u32,
+    sun_slot: u32,
+) -> PageId {
     var id: PageId;
-    id.light = page / stride;
-    var rest = page % stride;
+    id.view = page / span;
+    let within = page % span;
+    id.light = within / stride;
+    var rest = within % stride;
     id.is_sun = id.light == sun_slot;
 
     if id.is_sun {
@@ -130,18 +204,18 @@ fn page_decode(page: u32, stride: u32, face_pages: u32, side: u32, sun_slot: u32
     // The chain's levels are not the same size; walk it the way
     // `level_base` builds it.
     var level = 0u;
-    var span = side;
+    var wide = side;
     loop {
-        let count = span * span;
-        if rest < count || span == 1u {
+        let count = wide * wide;
+        if rest < count || wide == 1u {
             break;
         }
         rest = rest - count;
-        span = max(span / 2u, 1u);
+        wide = max(wide / 2u, 1u);
         level = level + 1u;
     }
     id.level = level;
-    id.cell = vec2<u32>(rest % span, rest / span);
+    id.cell = vec2<u32>(rest % wide, rest / wide);
     return id;
 }
 
@@ -160,21 +234,79 @@ fn sun_basis(direction: vec3<f32>) -> mat3x3<f32> {
     return mat3x3<f32>(s, u, f);
 }
 
+/// The clipmap's centre for one level, SNAPPED to that level's page
+/// grid.
+///
+/// # 🔴 This is what stops a shadow edge from crawling
+///
+/// A clipmap is centred on the camera, so without this every texel of it
+/// slides through the world as the camera moves. A shadow edge is
+/// decided per texel, so the edge is re-quantised every frame and the
+/// whole silhouette shimmers — the classic shadow-map crawl, and the
+/// reason it looks like the shadow is vibrating rather than moving.
+///
+/// Snapping the centre to whole pages pins the texels to world space:
+/// the grid only jumps when the camera crosses a page, and a texel's
+/// footprint never changes between jumps, so what it stores does not
+/// change either. Every shipping implementation does this — it is not a
+/// filter over the symptom, it removes the cause, and no amount of
+/// temporal blending gets the same result without also smearing.
+///
+/// A page rather than a texel because a page is a whole number of
+/// texels: aligning to it aligns both, and it also keeps a page's KEY
+/// stable until the camera crosses a page, which a texel-grained snap
+/// would not.
+fn sun_centre(eye: vec3<f32>, basis: mat3x3<f32>, base: f32, side: u32, level: u32) -> vec2<f32> {
+    let width = base * exp2(f32(level)) / f32(max(side, 1u));
+    let plane = vec2<f32>(dot(eye, basis[0]), dot(eye, basis[1]));
+    return floor(plane / width) * width;
+}
+
+/// A world position in the sun's plane, which is what every page lookup
+/// is really indexing.
+fn sun_plane(world: vec3<f32>, basis: mat3x3<f32>) -> vec2<f32> {
+    return vec2<f32>(dot(world, basis[0]), dot(world, basis[1]));
+}
+
+/// The finest clipmap level whose extent still contains `reach`.
+///
+/// ⚠️ Carries slack for [`sun_centre`]: the snap moves the centre by up
+/// to one page, so a point that fits a level measured from the camera
+/// can fall outside the same level measured from the snapped grid. Two
+/// pages of margin covers it, and costs a level only for points already
+/// within a percent of the boundary.
+fn sun_level(reach: f32, base: f32, side: u32) -> u32 {
+    let slack = reach * (1.0 + 4.0 / f32(max(side, 1u)));
+    if slack <= base {
+        return 0u;
+    }
+    return u32(ceil(log2(max(slack / base, 1.0))));
+}
+
 /// Where one clipmap page sits in the sun's plane: `xy` its centre,
-/// `z` its width. All three in metres, relative to the camera.
-fn sun_page_rect(level: u32, cell: vec2<u32>, base: f32, side: u32) -> vec3<f32> {
+/// `z` its width. All three in metres, in the SUN'S PLANE — absolute,
+/// not relative to the camera, because the grid the cell indexes is
+/// snapped and the camera is not on it.
+fn sun_page_rect(
+    level: u32,
+    cell: vec2<u32>,
+    base: f32,
+    side: u32,
+    centre: vec2<f32>,
+) -> vec3<f32> {
     let extent = base * exp2(f32(level));
     let width = extent / f32(side);
-    // `mark_sun` maps the plane to `uv = plane / extent + 0.5`, so the
-    // cell's low corner is this and the centre is half a page past it.
-    let low = (vec2<f32>(cell) / f32(side) - vec2<f32>(0.5)) * extent;
+    // `mark_sun` maps the plane to `uv = (plane - centre) / extent +
+    // 0.5`, so the cell's low corner is this and its centre is half a
+    // page past it.
+    let low = (vec2<f32>(cell) / f32(side) - vec2<f32>(0.5)) * extent + centre;
     return vec3<f32>(low + vec2<f32>(width * 0.5), width);
 }
 
-/// A page's rect inside the atlas, in texels: `xy` the origin, `zw` the
-/// size.
-fn page_atlas_rect(slot: u32, per_row: u32, page: u32) -> vec4<f32> {
-    let origin = vec2<f32>(page_origin(slot, per_row, page));
+/// A page's rect inside its atlas layer, in texels: `xy` the origin,
+/// `zw` the size.
+fn page_atlas_rect(slot: u32, slice: u32, per_row: u32, page: u32) -> vec4<f32> {
+    let origin = vec2<f32>(page_place(slot, slice, per_row, page).xy);
     return vec4<f32>(origin, vec2<f32>(f32(page)));
 }
 
@@ -205,13 +337,33 @@ fn page_clip(local: vec2<f32>, depth: f32, rect: vec4<f32>, atlas: f32) -> vec4<
 
 struct PageRaster {
     // x the per-light stride in pages, y one face's whole chain,
-    // z pages across level 0, w the sun's slot.
+    // z pages across level 0, w the sun's slot WITHIN a view.
     space: vec4<u32>,
+    // x the view these pages belong to, y the pages one view addresses,
+    // z the pool slots one view owns, w THIS FRAME's index.
+    //
+    // 🔴 `w` is read by one thing: the page age debug view, which paints
+    // how many frames ago each page the reader lands on was last
+    // requested. Nothing in the shading path depends on it.
+    //
+    // 🔴 The pool is SLICED, not shared, and the slice is what lets a
+    // view empty and refill its own pages without touching the other
+    // view's — which is what the other view is still reading, because
+    // raster and shading are fused and the atlas it samples is a frame
+    // old.
+    views: vec4<u32>,
     // x table entries, y physical pool pages, z pages across the atlas,
     // w page texels.
     pool: vec4<u32>,
     // x levels in the clipmap, y the pair list's capacity, z pages one
-    // level may list, w meshlets one draw covers.
+    // level may list, w TRIANGLES A MESHLET MAY HOLD.
+    //
+    // 🔴 `w` is the fixed vertex count the indirect draw issues, over
+    // three. It is the builder's `max_triangles_per_meshlet` and NOT
+    // the meshlet count of a mesh — confusing the two issues about a
+    // third of the vertices a meshlet needs, which cuts every meshlet
+    // short and turns a shadow into fragments that follow the meshlet
+    // structure.
     chain: vec4<u32>,
     // x the clipmap's level-0 extent in metres, y the orthographic half
     // span, z the atlas side in texels, w unused.

@@ -154,16 +154,6 @@ pub struct RenderSettings {
     #[serde(default = "default_shadow_pool_pages")]
     #[reflect(group = "Shadows: virtual pages", choices = SHADOW_POOL_CHOICES)]
     pub shadow_pool_pages: u32,
-    /// Paints the page each pixel reads over the scene.
-    ///
-    /// Hue is the clipmap level — where the frame is spending detail —
-    /// and brightness is the page identity, hashed, so the tiling is
-    /// visible. A page covering a quarter of the screen is a page too
-    /// coarse for it; a mosaic too fine to resolve is detail nobody
-    /// sees.
-    #[serde(default)]
-    #[reflect(group = "Shadows: virtual pages")]
-    pub virtual_shadow_debug: bool,
     /// Whether the sun casts shadows. Off frees the atlas entirely —
     /// 64 MiB at the default resolution.
     #[serde(default = "default_shadows_enabled")]
@@ -387,8 +377,15 @@ pub struct RenderSettings {
     /// handheld measured as bandwidth-bound that is the expensive kind,
     /// so 1 is the default and the number is chosen by looking at a
     /// floor and at a capture, not by picking the largest.
+    // 🔴 Its OWN group, and not "Shading". The panel opens one egui
+    // Grid per RUN of fields sharing a group name, so a second
+    // "Shading" run after "Temporal" opened a second grid with the same
+    // id — which egui reports on screen as "First use of Grid ID ..." in
+    // red. Renaming beats moving the field: this is panel metadata, so
+    // it carries no data risk, and anisotropy is texture filtering
+    // rather than shading anyway.
     #[serde(default = "default_anisotropy")]
-    #[reflect(group = "Shading", choices = ANISOTROPY_CHOICES)]
+    #[reflect(group = "Texture filtering", choices = ANISOTROPY_CHOICES)]
     pub anisotropy: u32,
 
     /// Whether the surface waits for the vblank before presenting.
@@ -596,10 +593,33 @@ fn default_render_scale() -> u32 {
     100
 }
 
-/// One shadow texel per screen pixel — Epic's ask, and what every
-/// figure measured for #866 was taken at.
+/// Level with the cascades, measured rather than chosen.
+///
+/// # 🔴 Why not 100, which is Epic's ask
+///
+/// One shadow texel per screen pixel is what every figure measured for
+/// #866 was taken at, and it is honest — but the technique it replaces
+/// is not spending that. A cascade hands 2048 texels to a slice of the
+/// frustum whatever the screen asked for, and the result is roughly
+/// TWICE the resolution, at every distance:
+///
+/// | distance | cascade | pages @100 | pages @200 |
+/// |---|---|---|---|
+/// | 5 m | 0.8 cm | 1.0 cm | 0.5 cm |
+/// | 10 m | 0.8 cm | 2.0 cm | 1.0 cm |
+/// | 40 m | 4.1 cm | 8.0 cm | 4.0 cm |
+/// | 80 m | 8.7 cm | 16.0 cm | 8.0 cm |
+///
+/// So a project switching to virtual shadows at 100 gets a visibly
+/// coarser shadow and no setting that says why — the choice list
+/// stopped at 100. `the_paged_shadow_resolves_like_a_cascade` pins the
+/// table.
+///
+/// It costs a clipmap level in both axes, which is four times the pages:
+/// measured at 20 pages of a 1024-page slice, so 2 % becomes 8 %. That
+/// is the trade, and it is the cheap side of it.
 fn default_shadow_density() -> u32 {
-    100
+    200
 }
 
 /// 🔴 Off. The cascades are what every scene in the project was authored
@@ -656,6 +676,14 @@ const SHADOW_DENSITY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
         label: "Full — 100 %, one texel per screen pixel",
         value: 100,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Double — 200 %, level with the cascades",
+        value: 200,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Quadruple — 400 %, twice the cascades",
+        value: 400,
     },
 ];
 
@@ -791,7 +819,6 @@ impl Default for RenderSettings {
             shadow_density: default_shadow_density(),
             virtual_shadows: default_virtual_shadows(),
             shadow_pool_pages: default_shadow_pool_pages(),
-            virtual_shadow_debug: false,
             sharpening: default_sharpening(),
             anisotropy: default_anisotropy(),
             vsync: default_vsync(),
@@ -837,7 +864,6 @@ impl RenderSettings {
                 || crate::shadow::pages::mark::enabled_by_environment(),
             page_density: self.shadow_density,
             pool_pages: self.shadow_pool_pages,
-            page_debug: self.virtual_shadow_debug,
         }
     }
 

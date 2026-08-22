@@ -38,6 +38,56 @@ struct PageSettings {
     pool: PoolConfig,
 }
 
+/// A camera's index into the pool's slices.
+///
+/// The slot map's own index, minus the sentinel it reserves at zero.
+/// Dense while views live and stable across frames — the two properties
+/// a slice needs. Deliberately NOT the position in an iteration order,
+/// which would move a camera onto the other one's pages the moment a
+/// view was destroyed.
+pub(super) fn page_view_index(id: crate::meshlet::render_stage::ViewId) -> u32 {
+    use slotmap::Key;
+    ((id.data().as_ffi() & 0xffff_ffff) as u32).saturating_sub(1)
+}
+
+/// How far a count has to move before it is worth another line.
+///
+/// An eighth. Below that the reader learns nothing the last line did not
+/// already say, and the console holds two thousand lines.
+const LOG_STEP: u32 = 8;
+
+/// Whether two readings differ by enough to be worth reporting.
+fn moved(before: u32, now: u32) -> bool {
+    before.abs_diff(now) * LOG_STEP > before.max(now)
+}
+
+/// The slot a camera's last logged count lives in, growing the list to
+/// reach it.
+fn logged<T: Copy>(slots: &mut Vec<Option<T>>, view: u32) -> &mut Option<T> {
+    let index = view as usize;
+    if slots.len() <= index {
+        slots.resize(index + 1, None);
+    }
+    &mut slots[index]
+}
+
+/// This frame's index, from the one clock every camera shares.
+///
+/// 🔴 Read in two places that run in a fixed order — `bind_page_shadows`
+/// before the fused pass and `record_page_marking` after it — so it has
+/// to come from the same source in both. `Time::frame_count` is already
+/// the stamp the light frame is shared on.
+///
+/// ⚠️ Without a `Time` — every headless test — it stands still, which
+/// pins the uniform's parity. That is the safe direction: both halves
+/// then agree on one slice rather than alternating out of step.
+fn page_frame(resources: &Resources) -> u32 {
+    resources
+        .get::<kooch_core::time::Time>()
+        .map(|t| t.frame_count() as u32)
+        .unwrap_or(0)
+}
+
 fn page_settings(resources: &Resources) -> PageSettings {
     // 🔴 `ShadowSettings`, not `RenderSettings`, and `unwrap_or_default`
     // rather than an early return. Both halves of that were the bug.
@@ -68,10 +118,15 @@ fn page_settings(resources: &Resources) -> PageSettings {
         // settings file, on a handheld, over SSH. A force is a force
         // wherever the settings came from.
         enabled: shadows.virtual_pages || crate::shadow::pages::mark::enabled_by_environment(),
-        paint: shadows.page_debug,
+        // Overwritten by `page_settings_for_views` from the debug view
+        // selector. `ShadowSettings` has no say: it is a debug view.
+        paint: false,
         density: shadows.page_density,
         pool: PoolConfig {
             pages: shadows.pool_pages.clamp(PAGES_RANGE.0, PAGES_RANGE.1),
+            // Filled in by the caller, which is the only place that
+            // knows how many cameras are alive.
+            views: 1,
         },
     }
 }
@@ -93,8 +148,9 @@ impl MeshletRenderStage {
         eye: Vec3,
         scene_params: &SceneCullParams,
         meshlet_bg: &wgpu::BindGroup,
+        debug: crate::meshlet::MeshletDebugMode,
     ) {
-        let settings = page_settings(resources);
+        let settings = self.page_settings_for_views(resources, debug);
         if !settings.enabled {
             self.forget_page_marking();
             // 🔴 Unbind, do not merely stop drawing. The atlas still
@@ -104,9 +160,22 @@ impl MeshletRenderStage {
             self.lights.unbind_shadow_pages(device);
             return;
         }
+        // 🔴 Stamped BEFORE the pool is touched, and once per frame
+        // rather than once per camera. `set_pool` sets the rebuild flag
+        // and `set_frame` is what clears it, so the other order would
+        // clear a rebuild the same frame it was asked for.
+        //
+        // ⚠️ Without a `Time` — every headless test — the stamp stands
+        // still, which means nothing ages and everything stays resident.
+        // That is the safe direction to be wrong in: a test sees a pool
+        // that never evicts rather than one that evicts constantly.
+        if let Some(marker) = self.page_marker.as_mut() {
+            marker.set_frame(page_frame(resources));
+        }
         // The pool is the memory budget, and changing it changes the
-        // atlas. Rebuilt rather than resized: it is emptied every frame
-        // anyway, so there is nothing in it worth carrying across.
+        // atlas. Rebuilt rather than resized: a slot recorded against
+        // the old atlas names a different page in the new one, so the
+        // rebuild flag evicts every entry before anything reads it.
         if self.page_pool_config != Some(settings.pool) {
             self.page_pool_config = Some(settings.pool);
             self.page_raster = None;
@@ -122,6 +191,7 @@ impl MeshletRenderStage {
             marker
         });
         let sun = self.light_frame.as_ref().and_then(|(_, frame)| frame.sun());
+        let slice = page_view_index(view_id);
         let view = &self.views[view_id];
         marker.record(
             device,
@@ -133,6 +203,7 @@ impl MeshletRenderStage {
             eye,
             sun,
             view.render_size,
+            slice,
             // 🔴 Always one sample per pixel. While this was an
             // instrument a coarser rate traded accuracy for threads;
             // now it decides which pages EXIST, and one sample in
@@ -151,10 +222,102 @@ impl MeshletRenderStage {
             queue,
             encoder,
             settings,
+            slice,
             sun,
             eye,
             scene_params,
             meshlet_bg,
+        );
+    }
+
+    /// The settings, with the live camera count folded in.
+    ///
+    /// 🔴 `views` is part of the pool's LAYOUT — the atlas is an array
+    /// with a layer each — so opening a second viewport rebuilds it, the
+    /// same way changing the page budget does.
+    fn page_settings_for_views(
+        &self,
+        resources: &Resources,
+        debug: crate::meshlet::MeshletDebugMode,
+    ) -> PageSettings {
+        let mut settings = page_settings(resources);
+        // 🔴 The tile paint is a DEBUG VIEW, so it is driven by the
+        // debug view selector and by nothing else. It used to be a
+        // separate checkbox in the settings panel, which put the two
+        // halves of one question — what marking chose, what the reader
+        // found — in two different places for no reason.
+        settings.paint = debug == crate::meshlet::MeshletDebugMode::VirtualPageTiles;
+        let slices = self
+            .views
+            .keys()
+            .map(page_view_index)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        settings.pool = settings.pool.with_views(slices);
+        settings
+    }
+
+    /// Records the debug paint, which is the half of the marking that
+    /// cannot run at the top of the frame.
+    ///
+    /// See `PageMarker::record_paint`: it writes the view's FINAL colour
+    /// buffer, and at the top of the frame that still holds the last
+    /// frame's image.
+    pub(super) fn record_page_paint(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view_id: crate::meshlet::render_stage::ViewId,
+    ) {
+        let Some(marker) = self.page_marker.as_ref() else {
+            return;
+        };
+        marker.record_paint(encoder, self.views[view_id].render_size);
+    }
+
+    /// Points the shading model at THIS camera's pages.
+    ///
+    /// 🔴 Called before the fused raster, not after it. `vbuf64.render`
+    /// rasterises and shades in one fragment shader, so the bind group
+    /// it reads is whatever was left there — and what was left there was
+    /// the OTHER camera's slice of the uniform, whose clipmap is centred
+    /// on the other camera. One viewport with shadows and one without
+    /// is what that looks like.
+    ///
+    /// The table and atlas it points at are a frame old, which is the
+    /// standing limitation of a fused raster and not this call's doing.
+    pub(super) fn bind_page_shadows(
+        &mut self,
+        device: &wgpu::Device,
+        resources: &Resources,
+        view_id: crate::meshlet::render_stage::ViewId,
+    ) {
+        if !page_settings(resources).enabled {
+            return;
+        }
+        let frame = page_frame(resources);
+        let (Some(raster), Some(marker)) = (self.page_raster.as_mut(), self.page_marker.as_ref())
+        else {
+            return;
+        };
+        // 🔴 BEFORE the span is asked for, and this is the only place
+        // that can do it: the marking that stamps everything else runs
+        // after the fused pass, and the parity has to be right now.
+        raster.set_frame(frame);
+        let pool = marker.pool();
+        self.lights.bind_shadow_pages(
+            device,
+            kooch_lighting::PageBinding {
+                uniform: raster.uniform_buffer(),
+                // 🔴 THIS frame's slice, now that the raster runs before
+                // the shading rather than after it. The parity that used
+                // to be needed here is gone with the reason for it: the
+                // table, the atlas and the uniform are all this frame's.
+                uniform_span: raster.uniform_span(page_view_index(view_id)),
+                keys: pool.keys(),
+                slots: pool.slots(),
+                atlas: raster.atlas(),
+            },
         );
     }
 
@@ -170,6 +333,7 @@ impl MeshletRenderStage {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         settings: PageSettings,
+        slice: u32,
         sun: Option<Vec3>,
         eye: Vec3,
         scene_params: &SceneCullParams,
@@ -204,6 +368,10 @@ impl MeshletRenderStage {
         // Groups are bounded by meshlets, and a slot is four bytes: the
         // bound costs less than threading the exact figure through a
         // second call path would.
+        // Already stamped by `bind_page_shadows`, which runs first. Kept
+        // here for the frame where the rasteriser was only just built
+        // and that call found nothing to stamp.
+        raster.set_frame(marker.life().frame);
         let threads = scene_params.instance_count * scene_params.meshlets_per_mesh;
         raster.ensure_capacity(device, threads, threads);
         raster.record(
@@ -217,17 +385,22 @@ impl MeshletRenderStage {
             self.scene.instance_buffer(),
             page_pool,
             scene_params,
+            slice,
             eye,
             sun,
             lights,
             lod_target,
         );
         // Idempotent, and this is the one call site that runs after
-        // every possible rebuild of either side.
+        // every possible rebuild of either side. The binding the
+        // SHADING reads is set by `bind_page_shadows` before the fused
+        // pass; this one only makes sure a rebuilt atlas or table is
+        // picked up at all.
         self.lights.bind_shadow_pages(
             device,
             kooch_lighting::PageBinding {
                 uniform: raster.uniform_buffer(),
+                uniform_span: raster.uniform_span(slice),
                 keys: page_pool.keys(),
                 slots: page_pool.slots(),
                 atlas: raster.atlas(),
@@ -264,14 +437,23 @@ impl MeshletRenderStage {
         let Some(counts) = marker.last() else {
             return;
         };
-        // 🔴 On change, not every frame. The count moves with the camera
-        // and a per-frame log at sixty hertz is a log nobody reads —
-        // the same reason the point-shadow warning is a flag rather than
-        // a count.
-        if self.page_marking_last == Some(counts) {
+        self.page_marking_last = Some(counts);
+        // 🔴 On a MEANINGFUL change, not on any change. The count moves
+        // every frame even with the camera still — the temporal jitter
+        // shifts sub-pixel samples into other pages — and the cameras
+        // alternate, so an equality check against one shared slot fired
+        // twice a frame. The panel has the exact number; this log is for
+        // the runs that have no panel.
+        let before = logged(&mut self.page_marking_logged, counts.view);
+        let notable = before.is_none_or(|last| {
+            moved(last.resident, counts.resident)
+                || (last.overflow > 0) != (counts.overflow > 0)
+                || (last.pool.overflow > 0) != (counts.pool.overflow > 0)
+        });
+        if !notable {
             return;
         }
-        self.page_marking_last = Some(counts);
+        *logged(&mut self.page_marking_logged, counts.view) = Some(counts);
         if counts.overflow > 0 {
             tracing::warn!(
                 resident = counts.resident,
@@ -281,6 +463,7 @@ impl MeshletRenderStage {
             return;
         }
         tracing::info!(
+            view = counts.view,
             resident = counts.resident,
             samples = counts.samples,
             pairs = counts.pairs,
@@ -302,10 +485,18 @@ impl MeshletRenderStage {
         let Some(counts) = raster.poll() else {
             return;
         };
-        if self.page_raster_last == Some(counts) {
+        self.page_raster_last = Some(counts);
+        let before = logged(&mut self.page_raster_logged, counts.view);
+        let notable = before.is_none_or(|last| {
+            moved(last.pages, counts.pages)
+                || moved(last.local, counts.local)
+                || (last.dropped > 0) != (counts.dropped > 0)
+                || (last.overflow > 0) != (counts.overflow > 0)
+        });
+        if !notable {
             return;
         }
-        self.page_raster_last = Some(counts);
+        *logged(&mut self.page_raster_logged, counts.view) = Some(counts);
         if counts.dropped > 0 || counts.overflow > 0 {
             tracing::warn!(
                 dropped = counts.dropped,
@@ -315,9 +506,11 @@ impl MeshletRenderStage {
             return;
         }
         tracing::info!(
+            view = counts.view,
             pages = counts.pages,
             pairs = counts.pairs,
             local = counts.local,
+            others = counts.others,
             "shadow pages rastered"
         );
     }
@@ -327,6 +520,8 @@ impl MeshletRenderStage {
     fn forget_page_marking(&mut self) {
         self.page_marking_last = None;
         self.page_raster_last = None;
+        self.page_marking_logged.clear();
+        self.page_raster_logged.clear();
         if let Some(marker) = self.page_marker.as_mut() {
             marker.forget();
         }
@@ -343,6 +538,55 @@ impl MeshletRenderStage {
 mod tests {
     use super::*;
 
+    /// The jitter moves the count a few pages a frame; that is not news.
+    ///
+    /// 🔴 The measured flood: `resident` walked 2260, 2268, 2273, 2261
+    /// with the camera still, because the temporal jitter puts sub-pixel
+    /// samples in other pages. An equality check calls every one of
+    /// those a change.
+    #[test]
+    fn the_log_ignores_jitter_and_not_a_real_move() {
+        for (before, now) in [(2260u32, 2268u32), (2273, 2261), (1669, 1674)] {
+            assert!(!moved(before, now), "{before} -> {now} is jitter");
+        }
+        for (before, now) in [(2260u32, 1600u32), (0, 40), (40, 0), (1024, 512)] {
+            assert!(moved(before, now), "{before} -> {now} is news");
+        }
+    }
+
+    /// A camera's slot is its own, and asking for a far one grows the
+    /// list rather than reaching past it.
+    #[test]
+    fn a_camera_logs_against_its_own_last() {
+        let mut slots: Vec<Option<u32>> = Vec::new();
+        *logged(&mut slots, 0) = Some(7);
+        *logged(&mut slots, 3) = Some(9);
+        assert_eq!(*logged(&mut slots, 0), Some(7));
+        assert_eq!(*logged(&mut slots, 1), None);
+        assert_eq!(*logged(&mut slots, 3), Some(9));
+    }
+
+    /// The first camera owns the first slice.
+    ///
+    /// 🔴 A slot map reserves index zero for its null key, so the first
+    /// real view is index 1 — and a slice numbering that forgot it would
+    /// leave slice 0 permanently unused and put the last camera one past
+    /// the end of the pool.
+    #[test]
+    fn the_first_view_owns_the_first_slice() {
+        let mut views: slotmap::SlotMap<crate::meshlet::render_stage::ViewId, u32> =
+            slotmap::SlotMap::with_key();
+        let first = views.insert(0);
+        let second = views.insert(1);
+        assert_eq!(page_view_index(first), 0);
+        assert_eq!(page_view_index(second), 1);
+        // Destroying and recreating hands the slot back, so a camera's
+        // slice is stable rather than a position in an iteration order.
+        views.remove(first);
+        let third = views.insert(2);
+        assert_eq!(page_view_index(third), 0);
+    }
+
     #[test]
     fn no_settings_asset_means_defaults_not_disabled() {
         // 🔴 The half of the bug that is testable without touching the
@@ -355,6 +599,5 @@ mod tests {
         let defaults = crate::shadow::ShadowSettings::default();
         assert_eq!(settings.density, defaults.page_density);
         assert_eq!(settings.pool.pages, defaults.pool_pages);
-        assert_eq!(settings.paint, defaults.page_debug);
     }
 }

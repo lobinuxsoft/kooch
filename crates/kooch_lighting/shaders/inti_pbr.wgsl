@@ -298,7 +298,11 @@ struct IntiClusterCell {
 // 🔴 `textureLoad`, never a sampler. A filter cannot cross a page
 // border: the neighbouring texels belong to another clipmap level, and
 // hardware filtering has no way to be told where a page ends.
-@group({{INTI_GROUP}}) @binding(11) var inti_page_atlas: texture_depth_2d;
+//
+// 🔴 An ARRAY, with a layer per view. A layer is an attachment a camera
+// can clear on its own, which is what lets two viewports share one pool
+// without one of them wiping the pages the other is still sampling.
+@group({{INTI_GROUP}}) @binding(11) var inti_page_atlas: texture_depth_2d_array;
 
 // GGX / Trowbridge-Reitz, in Filament's reassociated form. The naïve
 // `a2 / (π·((NdotH²)(a2-1)+1)²)` loses catastrophic precision in f32 at
@@ -811,7 +815,7 @@ fn inti_page_lookup(page: u32) -> u32 {
             return PAGE_MISS;
         }
         if key == page + 1u {
-            return inti_page_slots[probe];
+            return inti_page_slots[probe * PAGE_CELL];
         }
         probe = page_step(probe, entries);
     }
@@ -835,46 +839,82 @@ fn inti_page_lookup(page: u32) -> u32 {
 /// level marked it — the stored value is a distance along the sun's
 /// axis, and that does not depend on how finely the page was diced.
 /// Typically the first probe hits.
-fn inti_page_shadow(world_position: vec3<f32>, n_dot_l: f32) -> f32 {
+///
+/// # 🔴 The bias is measured in TEXELS, because a clipmap's texel is not
+/// one size
+///
+/// A cascade covers its whole range at one resolution, so a bias in
+/// metres and a bias in texels are the same number twice and either
+/// works. A clipmap is the opposite by construction: level 0's texel is
+/// sub-millimetre and the last level's is metres across. One constant in
+/// metres is therefore invisible at the far end of the chain and
+/// enormous at the near end — and the near end is where an object meets
+/// the ground.
+///
+/// So this does what `inti_sample_cascade_record` does, with the same
+/// two constants: it moves the SAMPLED POSITION along the surface
+/// normal by a multiple of the texel that is about to be read, instead
+/// of adding to the depth it compares against. `INTI_NORMAL_BIAS`'s own
+/// doc says why — *"moving along the surface instead of pushing depth is
+/// what stops acne without detaching the shadow"* — and a detached
+/// shadow is exactly what a depth-only bias produces where the gap
+/// between caster and receiver is smaller than the bias itself.
+fn inti_page_shadow(
+    world_position: vec3<f32>,
+    normal: vec3<f32>,
+    to_light: vec3<f32>,
+    n_dot_l: f32,
+) -> f32 {
     let basis = sun_basis(inti_pages.sun.xyz);
-    let offset = world_position - inti_pages.eye.xyz;
-    let local = vec3<f32>(
-        dot(offset, basis[0]),
-        dot(offset, basis[1]),
-        dot(offset, basis[2]),
-    );
 
     let base = inti_pages.world.x;
     let span = inti_pages.world.y;
     let side = inti_pages.space.z;
-    let atlas = inti_pages.world.z;
     let page_texels = inti_pages.pool.w;
 
     // Containment is a floor on the level: a point outside a level's
-    // extent has no page there to find. Mirrors `mark_sun`'s `contain`.
-    let reach = max(abs(local.x), abs(local.y)) * 2.0;
-    var level = 0u;
-    if reach > base {
-        level = u32(ceil(log2(max(reach / base, 1.0))));
-    }
-
-    // Reversed-Z along the sun's axis, matching `page_depth.wgsl`.
-    let receiver = 1.0 - (local.z + span) / (2.0 * span);
-    // Slope-scaled, in the depth units this span defines. World space,
-    // like every other bias in this shader: `shadow_depth.wgsl` sets no
-    // rasteriser bias at all, and running both is how a shadow ends up
-    // detached from its object AND still showing acne elsewhere.
-    let bias = (0.5 + 4.0 * (1.0 - clamp(n_dot_l, 0.0, 1.0))) / (2.0 * span);
+    // extent has no page there to find. Mirrors `mark_sun`'s `contain`,
+    // and it is measured from the UNOFFSET position on purpose — the
+    // offset below is one texel wide and the boundary it would have to
+    // cross is a whole page.
+    let raw = sun_plane(world_position, basis) - sun_plane(inti_pages.eye.xyz, basis);
+    let reach = max(abs(raw.x), abs(raw.y)) * 2.0;
+    var level = sun_level(reach, base, side);
 
     for (; level < inti_pages.chain.x; level = level + 1u) {
         let extent = base * exp2(f32(level));
+        // What one texel of THIS level covers, in metres: `side` pages
+        // across the extent, `page_texels` texels across a page. This is
+        // the clipmap's answer to `IntiCascade::texel_world_size`, and
+        // the only reason the offset has to be computed inside the walk
+        // rather than once before it.
+        let texel_world = extent / f32(side * page_texels);
+        let sampled = world_position
+            + normal * (texel_world * INTI_NORMAL_BIAS)
+            + to_light * INTI_DEPTH_BIAS;
+
+        // The plane is ABSOLUTE and the grid is snapped, so a texel's
+        // footprint does not slide with the camera. See `sun_centre`.
+        let centre = sun_centre(inti_pages.eye.xyz, basis, base, side, level);
+        let plane = sun_plane(sampled, basis) - centre;
+        let along = dot(sampled - inti_pages.eye.xyz, basis[2]);
+        // Reversed-Z along the sun's axis, matching `page_depth.wgsl`.
+        // Nothing is added to it: the offset above already moved the
+        // point towards the light, which is the depth half of the bias.
+        let receiver = 1.0 - (along + span) / (2.0 * span);
+
         let uv = clamp(
-            local.xy / extent + vec2<f32>(0.5),
+            plane / extent + vec2<f32>(0.5),
             vec2<f32>(0.0),
             vec2<f32>(0.99999),
         );
         let cell = vec2<u32>(uv * f32(side));
-        let page = inti_pages.space.w * inti_pages.space.x
+        // 🔴 The VIEW is the high part of the key. Two viewports over
+        // one world are two clipmaps centred on two cameras, so the
+        // same world position is a different page in each — and a
+        // lookup without the view finds whichever camera marked last.
+        let page = inti_pages.views.x * inti_pages.views.y
+            + inti_pages.space.w * inti_pages.space.x
             + level * side * side
             + cell.y * side
             + cell.x;
@@ -884,9 +924,11 @@ fn inti_page_shadow(world_position: vec3<f32>, n_dot_l: f32) -> f32 {
         }
 
         // Where the point sits inside its own page, in texels.
-        let rect = sun_page_rect(level, cell, base, side);
-        let within = (local.xy - rect.xy) / rect.z + vec2<f32>(0.5);
-        let origin = vec2<f32>(page_origin(slot, inti_pages.pool.z, page_texels));
+        let rect = sun_page_rect(level, cell, base, side, centre);
+        let within = (sun_plane(sampled, basis) - rect.xy) / rect.z + vec2<f32>(0.5);
+        let place = page_place(slot, inti_pages.views.z, inti_pages.pool.z, page_texels);
+        let origin = vec2<f32>(place.xy);
+        let layer = i32(place.z);
         let texel = within * f32(page_texels);
 
         // 2x2, and CLAMPED INSIDE THE PAGE. A tap that walked off the
@@ -904,10 +946,10 @@ fn inti_page_shadow(world_position: vec3<f32>, n_dot_l: f32) -> f32 {
                     vec2<f32>(last),
                 );
                 let at = vec2<i32>(origin + tap);
-                let stored = textureLoad(inti_page_atlas, at, 0);
+                let stored = textureLoad(inti_page_atlas, at, layer, 0);
                 // Reversed-Z: a LARGER stored depth is closer to the
                 // light, so it is an occluder.
-                lit = lit + select(1.0, 0.0, stored > receiver + bias);
+                lit = lit + select(1.0, 0.0, stored > receiver);
             }
         }
         return lit * 0.25;
@@ -917,7 +959,6 @@ fn inti_page_shadow(world_position: vec3<f32>, n_dot_l: f32) -> f32 {
     // there would put shadow where no data exists.
     return 1.0;
 }
-
 fn inti_shadow(
     world_position: vec3<f32>,
     normal: vec3<f32>,
@@ -933,7 +974,7 @@ fn inti_shadow(
     // their own boundaries, and the disagreement reads as a seam that
     // belongs to neither.
     if (inti_pages.sun.w > 0.5) {
-        return inti_page_shadow(world_position, n_dot_l);
+        return inti_page_shadow(world_position, normal, to_light, n_dot_l);
     }
     let picked = inti_pick_cascade(view_depth);
     let index = u32(picked.x);
