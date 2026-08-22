@@ -12,12 +12,12 @@ use kooch_ecs::reflect::{FieldMeta, ReflectValue};
 use crate::actions::EditorAction;
 use crate::state::{EntityDisplayInfo, EulerCacheKey};
 
-use super::RotationContext;
 use super::rotation::{draw_quat_with_cache, is_transform_rotation};
 use super::widgets::{
-    AssetCatalogEntry, FieldContext, bits_for, choices_for, draw_readonly_value, draw_value_widget,
-    requires_for,
+    bits_for, choices_for, draw_readonly_value, draw_value_widget, requires_for, AssetCatalogEntry,
+    FieldContext,
 };
+use super::RotationContext;
 
 /// Draws an editable name field for the Name component (shown above the component list).
 pub(super) fn draw_name_editor(
@@ -197,6 +197,12 @@ fn integer_value(value: &ReflectValue) -> Option<i64> {
         ReflectValue::I16(v) => Some(*v as i64),
         ReflectValue::I32(v) => Some(*v as i64),
         ReflectValue::I64(v) => Some(*v),
+        ReflectValue::Bool(v) => Some(i64::from(*v)),
+        // 🔴 A bool IS a discriminant with two values, and leaving it
+        // out does not fail loudly: `is_met(None)` reads as SHOWN, so a
+        // `shown_when` pointing at a toggle silently never hides
+        // anything. The absent-field case is meant to look like a typo;
+        // an unsupported TYPE looked like a working rule instead.
         _ => None,
     }
 }

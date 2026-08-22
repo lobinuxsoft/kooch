@@ -132,11 +132,20 @@ pub struct RenderSettings {
     /// 152 MiB of fixed allocations, at a resolution smaller than a
     /// thumbnail.
     ///
+    /// 🔴 100 is the CEILING. It is a quality option and the top of one
+    /// is the top; the values above it existed to reach the cascade's
+    /// resolution and their absence is the honest statement that this
+    /// path does not, yet. See `default_shadow_density`.
+    ///
     /// ⚠️ Below 100 a shadow's edge is softer than the surface it falls
     /// on, which reads as blur rather than as a lower setting. 50 is a
     /// quarter of the pages and the point where it starts to show.
     #[serde(default = "default_shadow_density")]
-    #[reflect(group = "Shadows: virtual pages", choices = SHADOW_DENSITY_CHOICES)]
+    #[reflect(
+        group = "Shadows: virtual pages",
+        choices = SHADOW_DENSITY_CHOICES,
+        shown_when = PAGES_ON
+    )]
     pub shadow_density: u32,
     /// Physical pages the pool holds, which IS the memory budget: one
     /// page is 64 KiB at 128 texels and `Depth32Float`.
@@ -152,45 +161,35 @@ pub struct RenderSettings {
     /// corruption. The performance panel names it rather than leaving it
     /// to be recognised by sight.
     #[serde(default = "default_shadow_pool_pages")]
-    #[reflect(group = "Shadows: virtual pages", choices = SHADOW_POOL_CHOICES)]
+    #[reflect(
+        group = "Shadows: virtual pages",
+        choices = SHADOW_POOL_CHOICES,
+        shown_when = PAGES_ON
+    )]
     pub shadow_pool_pages: u32,
-    /// Whether the sun casts shadows. Off frees the atlas entirely —
-    /// 64 MiB at the default resolution.
+    /// Whether shadows are drawn at all. Off frees the atlas entirely
+    /// — 64 MiB at the default resolution — and the cube maps with it.
+    ///
+    /// 🔴 It governs BOTH techniques, not just the cascades its group
+    /// used to sit in: `inti_shadow` returns fully lit on this flag
+    /// before it ever reaches the branch that picks pages over
+    /// cascades, and the whole shadow pass returns early on it.
     #[serde(default = "default_shadows_enabled")]
-    #[reflect(group = "Shadows: sun cascades")]
+    #[reflect(group = "Shadows")]
     pub shadows_enabled: bool,
-    /// Shadow texels per screen pixel, as a PERCENTAGE.
-    ///
-    /// 🔴 **The lever the page census found, and the only one that
-    /// moved.** A virtual shadow map allocates pages to match the
-    /// screen's detail, so this — not the page size, not the virtual
-    /// size — is what decides the bill: page count falls roughly with
-    /// its square, because a coarser texel is a level coarser in both
-    /// axes.
-    ///
-    /// 100 is Epic's ask, one shadow texel per screen pixel, and it is
-    /// what every figure measured for #866 was taken at. Measured on
-    /// `many_lights.scene` with **all 101 lights casting**, a 400x400
-    /// view already wanted 2581 pages — 161 MiB, past this engine's
-    /// 152 MiB of fixed allocations and 63 % of Unreal's whole default
-    /// pool, at a resolution smaller than a thumbnail. At 1280x720 it
-    /// does not fit, and lowering this is the answer that does not cap
-    /// how many lights may cast.
-    ///
     /// How far from the camera shadows are drawn, in METRES.
     ///
     /// Raising this does not add shadows in the distance so much as move
     /// texels there: the four cascades are fitted to whatever range they
     /// are given, so a larger distance blurs the shadows near the
     /// camera, which are the ones being looked at.
+    ///
+    /// ⚠️ Cascades ONLY. It reaches `build_cascades` and nothing else —
+    /// spot and point maps are fitted from their own light's range, and
+    /// the page clipmap carries its own reach.
     #[serde(default = "default_shadow_distance")]
-    #[reflect(group = "Shadows: sun cascades")]
+    #[reflect(group = "Shadows: sun cascades", shown_when = PAGES_OFF)]
     pub shadow_distance: f32,
-    /// Side of one shadow cascade in TEXELS. The atlas is twice this on
-    /// each axis: 2048 costs 64 MiB, 1024 costs 16.
-    #[serde(default = "default_cascade_texels")]
-    #[reflect(group = "Shadows: sun cascades")]
-    pub shadow_cascade_texels: u32,
     /// How soft shadow edges get with distance: the TANGENT of the sun's
     /// angular radius, so 0.03 widens a shadow by three centimetres per
     /// metre of gap between the object and what its shadow lands on.
@@ -198,8 +197,14 @@ pub struct RenderSettings {
     /// The honest value for our sun is 0.005, and at that width a soft
     /// shadow is indistinguishable from a hard one. Raise it for an
     /// overcast look; drop it to zero for a hard edge.
+    ///
+    /// ⚠️ Cascades ONLY. The page reader samples a raw 2x2 and has no
+    /// blocker search to widen, so a softness set here does nothing
+    /// while the virtual pages are on — which is the whole reason the
+    /// page path is sharper-edged than the cascade path at the same
+    /// resolution.
     #[serde(default = "default_sun_softness")]
-    #[reflect(group = "Shadows: sun cascades")]
+    #[reflect(group = "Shadows: sun cascades", shown_when = PAGES_OFF)]
     pub sun_softness: f32,
     /// Where the first shadow cascade ends, in METRES. The other three
     /// follow logarithmically out to `shadow_distance`.
@@ -208,9 +213,24 @@ pub struct RenderSettings {
     /// camera.** Lower it and the near cascade covers less ground with
     /// the same texels; raise it and everything close gets coarser.
     /// Unity ships 10.05 and Godot 10.
+    ///
+    /// ⚠️ Cascades ONLY: there are no splits to place when the sun's
+    /// shadow comes from the page clipmap.
     #[serde(default = "default_first_cascade")]
-    #[reflect(group = "Shadows: sun cascades")]
+    #[reflect(group = "Shadows: sun cascades", shown_when = PAGES_OFF)]
     pub shadow_first_cascade_distance: f32,
+
+    /// Side of one atlas layer in TEXELS. The atlas is twice this on
+    /// each axis: 2048 costs 64 MiB, 1024 costs 16.
+    ///
+    /// 🔴 NOT cascade-only, whatever the name says. `ShadowAtlas` is one
+    /// texture array and this is the side of every layer in it — the
+    /// four cascades AND the layer each casting spot light draws into.
+    /// It keeps acting while the virtual pages are on, which is why it
+    /// is here and not under the cascades that no longer run.
+    #[serde(default = "default_cascade_texels")]
+    #[reflect(group = "Shadows: atlas")]
+    pub shadow_cascade_texels: u32,
 
     /// How many point lights may cast a cube map at once (#849).
     ///
@@ -222,8 +242,11 @@ pub struct RenderSettings {
     /// **6 MiB of VRAM each.** 4 is 24 MiB, 32 is 192 — on a handheld
     /// that memory is the system's, so this is a real trade and not a
     /// quality slider.
+    ///
+    /// ⚠️ Unaffected by the virtual pages: the local lights still cast
+    /// from these cubes, because the page raster is the sun's only.
     #[serde(default = "default_point_shadows")]
-    #[reflect(group = "Shadows: sun cascades")]
+    #[reflect(group = "Shadows: atlas")]
     pub point_shadows: u32,
 
     /// Steps a contact-shadow ray takes. **Zero turns contact shadows
@@ -593,33 +616,35 @@ fn default_render_scale() -> u32 {
     100
 }
 
-/// Level with the cascades, measured rather than chosen.
+/// One shadow texel per screen pixel, which is Epic's ask and the
+/// ceiling of the list.
 ///
-/// # 🔴 Why not 100, which is Epic's ask
+/// # 🔴 The cascades are finer than this, and the setting does not
+/// reach them
 ///
-/// One shadow texel per screen pixel is what every figure measured for
-/// #866 was taken at, and it is honest — but the technique it replaces
-/// is not spending that. A cascade hands 2048 texels to a slice of the
-/// frustum whatever the screen asked for, and the result is roughly
-/// TWICE the resolution, at every distance:
+/// A cascade hands 2048 texels to a slice of the frustum whatever the
+/// screen asked for, so it spends roughly TWICE this resolution at
+/// every distance:
 ///
-/// | distance | cascade | pages @100 | pages @200 |
-/// |---|---|---|---|
-/// | 5 m | 0.8 cm | 1.0 cm | 0.5 cm |
-/// | 10 m | 0.8 cm | 2.0 cm | 1.0 cm |
-/// | 40 m | 4.1 cm | 8.0 cm | 4.0 cm |
-/// | 80 m | 8.7 cm | 16.0 cm | 8.0 cm |
+/// | distance | cascade | pages @100 |
+/// |---|---|---|
+/// | 5 m | 0.8 cm | 1.0 cm |
+/// | 10 m | 0.8 cm | 2.0 cm |
+/// | 40 m | 4.1 cm | 8.0 cm |
+/// | 80 m | 8.7 cm | 16.0 cm |
 ///
-/// So a project switching to virtual shadows at 100 gets a visibly
-/// coarser shadow and no setting that says why — the choice list
-/// stopped at 100. `the_paged_shadow_resolves_like_a_cascade` pins the
-/// table.
+/// The list used to go to 400 to close that gap. It no longer does, on
+/// purpose: a quality option whose maximum is not the maximum reads as
+/// broken, and reaching for 200 % to match the technique being replaced
+/// is an admission that the number is anchored wrong, not a setting
+/// anybody would find. What closes the gap honestly is a filter — the
+/// cascade path runs a blocker search and a wide kernel while the page
+/// path samples a raw 2x2 — and that is a different piece of work.
 ///
-/// It costs a clipmap level in both axes, which is four times the pages:
-/// measured at 20 pages of a 1024-page slice, so 2 % becomes 8 %. That
-/// is the trade, and it is the cheap side of it.
+/// `the_paged_shadow_resolves_like_a_cascade` pins the table so the gap
+/// is a measured number rather than an impression.
 fn default_shadow_density() -> u32 {
-    200
+    100
 }
 
 /// 🔴 Off. The cascades are what every scene in the project was authored
@@ -661,9 +686,46 @@ const SHADOW_POOL_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     },
 ];
 
-/// 🔴 Powers of two below 100, because the level chosen for a page is a
-/// power of two: anything between two of these rounds to one of them and
-/// the slider would lie about what it did.
+/// 🔴 A control that silently does nothing is worse than an absent one:
+/// it invites the reading that the setting was tried and did not help.
+/// The two techniques do not share knobs — the page reader has no
+/// blocker search for `sun_softness` to widen and no splits for
+/// `shadow_first_cascade_distance` to place — so each side's fields
+/// appear only in its own mode.
+///
+/// ⚠️ What stays visible in BOTH is deliberate and was checked in the
+/// code rather than assumed: `shadow_cascade_texels` sizes every layer
+/// of the shared atlas including the spot lights', `point_shadows` is
+/// the cube budget the local lights still use, and `shadows_enabled`
+/// gates the whole pass.
+const PAGES_ON: kooch_ecs::reflect::FieldCondition = kooch_ecs::reflect::FieldCondition {
+    field: "virtual_shadows",
+    values: &[1],
+};
+
+/// The other side of [`PAGES_ON`].
+const PAGES_OFF: kooch_ecs::reflect::FieldCondition = kooch_ecs::reflect::FieldCondition {
+    field: "virtual_shadows",
+    values: &[0],
+};
+
+/// The density options, so a test can assert that the top of the list
+/// is the default rather than trusting a comment that says so.
+pub fn shadow_density_choices() -> &'static [kooch_ecs::reflect::FieldChoice] {
+    SHADOW_DENSITY_CHOICES
+}
+
+/// 100 is the ceiling and the rest go down from it, because that is
+/// what a quality setting means: nobody reaches for a graphics option
+/// hoping to find something ABOVE maximum.
+///
+/// 🔴 The values below 100 are not all powers of two, and 75 is the
+/// interesting one. A page's level is `floor(log2(...))`, so 75 % does
+/// NOT make every texel three quarters the size — it moves the RADIUS
+/// at which the chain steps to the next level. Part of the scene lands
+/// on the level 100 % would have picked and part on the level 50 %
+/// would have, and the page count falls somewhere between the two. The
+/// rings move; they do not blur.
 const SHADOW_DENSITY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
         label: "Quarter — 25 %, a sixteenth of the pages",
@@ -674,16 +736,12 @@ const SHADOW_DENSITY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
         value: 50,
     },
     kooch_ecs::reflect::FieldChoice {
+        label: "Three quarters — 75 %, the level steps move outward",
+        value: 75,
+    },
+    kooch_ecs::reflect::FieldChoice {
         label: "Full — 100 %, one texel per screen pixel",
         value: 100,
-    },
-    kooch_ecs::reflect::FieldChoice {
-        label: "Double — 200 %, level with the cascades",
-        value: 200,
-    },
-    kooch_ecs::reflect::FieldChoice {
-        label: "Quadruple — 400 %, twice the cascades",
-        value: 400,
     },
 ];
 

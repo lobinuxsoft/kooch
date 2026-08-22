@@ -77,15 +77,29 @@ const PAGE_EMPTY: u32 = 0u;
 /// that a table degrading into holes is a number rather than a mystery.
 const PAGE_DEAD: u32 = 0xfffffffeu;
 
-/// Words per table entry: the physical slot, then the frame it was last
-/// requested in.
+/// Words per table entry: the physical slot, the frame it was last
+/// requested in, and its index in this view's compacted `page_list`.
 ///
 /// 🔴 Interleaved because `max_storage_buffers_per_shader_stage` is
 /// eight on the downlevel defaults and the marking pass was already
 /// there. Declared here rather than in the marking pass because the
 /// SHADING pass indexes the same buffer and a stride the two disagree on
 /// reads an age as a slot.
-const PAGE_CELL: u32 = 2u;
+///
+/// The third word is the compaction's answer to a question only it can
+/// answer: `page_list` is dense and per view, so a pass holding a page
+/// KEY has no way back to the entry the draw indexes by. Writing it
+/// down while the compaction already has both is what lets a pass find
+/// pages by walking cells instead of by walking every resident page —
+/// see `cs_expand`. Only valid for the view that compacted this frame.
+const PAGE_CELL: u32 = 3u;
+
+/// A table entry that is resident but not in THIS view's `page_list`.
+///
+/// The third word is per view and the table is shared, so a page
+/// belonging to another camera carries a listing from a compaction that
+/// was not this one. Cleared to this rather than left stale.
+const PAGE_UNLISTED: u32 = 0xffffffffu;
 
 /// No physical page: either the pool is full or the probe gave up.
 const PAGE_MISS: u32 = 0xffffffffu;

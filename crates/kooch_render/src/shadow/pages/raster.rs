@@ -113,6 +113,31 @@ pub struct RasterCounts {
     pub others: u32,
     /// Which camera this is.
     pub view: u32,
+    /// Meshlet/page tests the expansion ran, summed over the levels.
+    ///
+    /// 🔴 The expansion is a product — this level's pages times this
+    /// level's survivors — so its cost is not the pairs it emits but
+    /// the combinations it walks to find them. A ratio of tests to
+    /// pairs is how much of the pass is spent proving a miss, and it is
+    /// the number that decides the shape of the local-light raster.
+    pub tests: u64,
+    /// The level that ran the most tests, and how many.
+    pub worst: (u32, u64),
+    /// What the OTHER shape of the expansion would have cost: cells a
+    /// scatter would visit, summed over the levels.
+    ///
+    /// 🔴 Measured, not run. See `count_scatter` in `page_expand.wgsl`
+    /// for why the two shapes win at opposite ends of the chain and why
+    /// shipping one of them for every level cost two thirds of the
+    /// frame rate the last time it was guessed at.
+    pub scatter: u64,
+    /// Tests a per-level hybrid would run: the cheaper of the two
+    /// shapes at every level, summed.
+    ///
+    /// The gap between this and [`Self::tests`] is the entire prize on
+    /// offer, and it is the only number that says whether the hybrid is
+    /// worth building.
+    pub hybrid: u64,
 }
 
 #[repr(C)]
@@ -366,6 +391,8 @@ impl PageRasterizer {
             page_list: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_list"),
                 size: bucket(pool) as u64 * levels as u64 * 8,
+                // 🔴 COPY_SRC because `page_list_buffer` is public and the
+                // only reason to expose a GPU buffer is to read it back.
                 usage: storage | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
@@ -396,7 +423,10 @@ impl PageRasterizer {
             visible_counts: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_visible_counts"),
                 size: levels as u64 * 4,
-                usage: storage,
+                // 🔴 COPY_SRC: the survivor counts ride home in the same
+                // readback as the page counts, so the expansion's cost
+                // can be read as the product it is. See `count_slots`.
+                usage: storage | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
             levels: device.create_buffer(&wgpu::BufferDescriptor {
@@ -503,7 +533,32 @@ impl PageRasterizer {
     /// Reads the counters out of a mapped copy of [`Self::counts_buffer`].
     pub fn decode(&self, words: &[u32], view: u32) -> RasterCounts {
         let levels = self.clipmap.levels as usize;
+        let cap = bucket(self.pool);
+        let mut tests = 0u64;
+        let mut worst = (0u32, 0u64);
+        let mut scatter = 0u64;
+        let mut hybrid = 0u64;
+        for level in 0..levels {
+            let pages = words[level].min(cap) as u64;
+            let meshlets = words.get(levels + 5 + level).copied().unwrap_or(0) as u64;
+            let cells = words.get(levels * 2 + 5 + level).copied().unwrap_or(0) as u64;
+            let work = pages * meshlets;
+            tests += work;
+            scatter += cells;
+            // The choice a hybrid would make at this level, which is
+            // the only place the choice can be made: the two shapes
+            // cross over somewhere in the middle of the chain and
+            // neither end knows where.
+            hybrid += work.min(cells);
+            if work > worst.1 {
+                worst = (level as u32, work);
+            }
+        }
         RasterCounts {
+            tests,
+            worst,
+            scatter,
+            hybrid,
             pages: words[..levels]
                 .iter()
                 .map(|&n| n.min(bucket(self.pool)))
@@ -533,8 +588,22 @@ pub const PAIR_CAPACITY: u32 = 1 << 20;
 
 fn count_slots(levels: u32) -> u32 {
     // Per level, then: bucket overflow, local pages skipped, pairs, pair
-    // overflow, pages owned by another view.
-    levels + 5
+    // overflow, pages owned by another view — and THEN the survivors
+    // each level's cull produced, copied in from `visible_counts`.
+    //
+    // 🔴 The second run is what makes the expansion's cost readable. Its
+    // work is pages TIMES meshlets per level, and both halves were
+    // already on the GPU in different buffers, so the only thing missing
+    // was bringing them home together. Nothing is counted at dispatch
+    // time: an atomic per thread would cost more than the number is
+    // worth, and the product is exact anyway.
+    //
+    // The THIRD run is the cost of the shape this pass does not use —
+    // the cells a scatter would visit — so the two can be compared per
+    // level instead of guessed at. That one IS counted at dispatch
+    // time, because unlike the product it is not a number two buffers
+    // already hold.
+    levels * 3 + 5
 }
 
 /// The atlas: one square layer per camera.
@@ -639,6 +708,7 @@ impl PageRasterizer {
     /// scene: hand it a table and the buckets say whether a page
     /// decodes back to the level it was encoded from.
     #[allow(clippy::too_many_arguments)]
+    #[profiling::function]
     pub fn record_compaction(
         &self,
         device: &wgpu::Device,
@@ -827,6 +897,7 @@ impl PageRasterizer {
     /// Culls, compacts, expands and draws. Call **after** the marking
     /// pass: it reads the table marking filled.
     #[allow(clippy::too_many_arguments)]
+    #[profiling::function]
     pub fn record(
         &mut self,
         device: &wgpu::Device,
@@ -852,45 +923,53 @@ impl PageRasterizer {
 
         // 1. One cull per level. A level is a texel density and a
         //    density is a LOD.
-        for level in 0..levels {
-            queue.write_buffer(
-                &self.levels,
-                level as u64 * self.level_stride,
-                bytemuck::bytes_of(&ExpandLevel {
-                    level,
-                    _pad: [0; 3],
-                }),
-            );
-            let clip = self.level_clip(level, eye, sun);
-            let params = CullParams::new(
-                clip,
-                eye - sun.normalize_or(Vec3::NEG_Y) * SUN_SPAN,
-                scene_params.meshlets_per_mesh,
-            )
-            .with_orthographic_lod(
-                self.clipmap.extent(level),
-                self.config.virtual_size as f32,
-                lod_target.max(0.01),
-            );
-            self.culls[level as usize].dispatch_scene_pool_atomic(
-                cull_pipelines,
-                device,
-                queue,
-                encoder,
-                mesh_pool,
-                scene,
-                &params,
-                scene_params,
-            );
-            // The expansion's dispatch size is pages times survivors,
-            // and the survivor count only exists on the GPU.
-            encoder.copy_buffer_to_buffer(
-                self.culls[level as usize].visible_count_buffer(),
-                0,
-                &self.visible_counts,
-                level as u64 * 4,
-                4,
-            );
+        //
+        // 🔴 Seventeen full cull dispatches per view per frame, each
+        // writing a uniform and recording its own passes. This is the
+        // only part of the track that is CPU work rather than GPU work,
+        // and it was invisible to the profiler until this scope existed.
+        {
+            profiling::scope!("cull: clipmap levels");
+            for level in 0..levels {
+                queue.write_buffer(
+                    &self.levels,
+                    level as u64 * self.level_stride,
+                    bytemuck::bytes_of(&ExpandLevel {
+                        level,
+                        _pad: [0; 3],
+                    }),
+                );
+                let clip = self.level_clip(level, eye, sun);
+                let params = CullParams::new(
+                    clip,
+                    eye - sun.normalize_or(Vec3::NEG_Y) * SUN_SPAN,
+                    scene_params.meshlets_per_mesh,
+                )
+                .with_orthographic_lod(
+                    self.clipmap.extent(level),
+                    self.config.virtual_size as f32,
+                    lod_target.max(0.01),
+                );
+                self.culls[level as usize].dispatch_scene_pool_atomic(
+                    cull_pipelines,
+                    device,
+                    queue,
+                    encoder,
+                    mesh_pool,
+                    scene,
+                    &params,
+                    scene_params,
+                );
+                // The expansion's dispatch size is pages times survivors,
+                // and the survivor count only exists on the GPU.
+                encoder.copy_buffer_to_buffer(
+                    self.culls[level as usize].visible_count_buffer(),
+                    0,
+                    &self.visible_counts,
+                    level as u64 * 4,
+                    4,
+                );
+            }
         }
 
         // Per view, all of it: the page list, the pair list and the
@@ -971,6 +1050,16 @@ impl PageRasterizer {
             pass.draw_indirect(&self.draw_args, 0);
         }
 
+        // The survivor counts, brought home alongside the page counts so
+        // the expansion's cost can be read as the product it is. See
+        // `count_slots`.
+        encoder.copy_buffer_to_buffer(
+            &self.visible_counts,
+            0,
+            &self.counts,
+            (self.clipmap.levels as u64 + 5) * 4,
+            self.clipmap.levels as u64 * 4,
+        );
         self.readback.record(encoder, &self.counts, view);
     }
 
@@ -1040,7 +1129,10 @@ fn compact_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             // second allocation.
             uniform_entry(0, true, c),
             buffer_entry(1, true, c),
-            buffer_entry(2, true, c),
+            // 🔴 Writable now: the compaction records each page's place
+            // in `page_list` back into its table entry, which is the
+            // only pass that knows both. See `PAGE_CELL`.
+            buffer_entry(2, false, c),
             buffer_entry(3, false, c),
             buffer_entry(4, false, c),
             buffer_entry(5, false, c),
@@ -1281,6 +1373,131 @@ mod tests {
             assert_eq!(name, their_name, "field order");
             assert_eq!(*offset as u32, *their_offset, "`{name}` starts elsewhere");
         }
+    }
+
+    /// The three runs of counters do not overlap, and the shader that
+    /// writes the third one agrees with the Rust that reads it.
+    ///
+    /// 🔴 A counter buffer is one flat array of `u32` shared by four
+    /// shaders and one `copy_buffer_to_buffer`, addressed by arithmetic
+    /// written out twice. The first run is per level, the second is
+    /// filled by a copy from `visible_counts`, the third is written by
+    /// `count_scatter`. Getting the base of the third wrong does not
+    /// fail: it lands in the survivor counts, which are plausible
+    /// numbers, and the panel reports a comparison built on the wrong
+    /// half of the buffer.
+    ///
+    /// This session already shipped one defect of exactly this shape —
+    /// `page_compact.wgsl` reading a two-word table entry with a
+    /// one-word stride — and it took a screen full of squares to find.
+    #[test]
+    fn the_counter_runs_do_not_overlap() {
+        for levels in [1u32, 4, 17, 32] {
+            let n = levels as usize;
+            let slots = count_slots(levels) as usize;
+            // Run one: the pages per level. Run two: the survivors,
+            // written by the copy at the end of `record`. Run three:
+            // the scatter's cells.
+            let survivors = n + 5;
+            let scatter = n * 2 + 5;
+            assert!(
+                survivors + n <= scatter,
+                "the survivor run runs into the scatter run at {levels} levels",
+            );
+            assert!(
+                scatter + n <= slots,
+                "the scatter run runs off the end at {levels} levels",
+            );
+        }
+        // And the shader addresses the third run the same way `decode`
+        // does. A comment claiming they match is not a check.
+        assert!(
+            EXPAND.contains("page_counts[levels * 2u + 5u + level]"),
+            "`count_scatter` no longer writes where `decode` reads",
+        );
+    }
+
+    /// Every buffer this pass copies OUT of declares that it can be.
+    ///
+    /// 🔴 Written after shipping a `copy_buffer_to_buffer` whose source
+    /// lacked `COPY_SRC`. It compiles; it passes every test that plants
+    /// words and decodes them; and it fails at RUNTIME, once per view
+    /// per frame forever, with the shadow pass producing nothing. The
+    /// tests around it never ran `record`, which is where the copy is.
+    ///
+    /// A source check rather than a GPU one, because the question is
+    /// about a declaration and answering it on a device would mean
+    /// building a whole frame to observe one flag.
+    #[test]
+    fn every_copied_buffer_can_be_copied_from() {
+        let source = include_str!("raster.rs");
+        // The buffers this pass copies out of, by the field name the
+        // copy uses.
+        let mut copied = copied_fields(source);
+        assert!(
+            !copied.is_empty(),
+            "the scan found no copies at all; it has stopped matching the source"
+        );
+        // 🔴 And every buffer this module hands OUT. The only reason to
+        // expose a GPU buffer is for something to read it back, and a
+        // reader outside this file is a copy this scan cannot see — that
+        // is exactly how `page_list` shipped without the flag, failing
+        // only sometimes, because wgpu reports the error whenever it
+        // gets round to it.
+        let mut labels: Vec<String> = copied
+            .iter()
+            .map(|field| format!("page_raster_{field}"))
+            .collect();
+        // The label a buffer carries is not always its field name.
+        labels.extend(
+            [
+                "page_raster_list",
+                "page_raster_counts",
+                "page_raster_draw_args",
+            ]
+            .into_iter()
+            .map(String::from),
+        );
+        for label in labels {
+            let at = source
+                .find(&format!("Some(\"{label}\")"))
+                .unwrap_or_else(|| panic!("{label} has no buffer descriptor"));
+            let body = &source[at..at + 400];
+            let usage = body
+                .find("usage:")
+                .map(|i| &body[i..body[i..].find(',').map(|j| i + j).unwrap_or(body.len())])
+                .unwrap_or("");
+            assert!(
+                usage.contains("COPY_SRC"),
+                "{label} is copied out of and its usage is `{usage}`"
+            );
+        }
+    }
+
+    /// The field each `copy_buffer_to_buffer` reads FROM — the first
+    /// `&self.<field>` after the call, whatever the formatter did to the
+    /// whitespace between them.
+    fn copied_fields(source: &str) -> std::collections::BTreeSet<&str> {
+        let mut out = std::collections::BTreeSet::new();
+        let mut rest = source;
+        while let Some(at) = rest.find("copy_buffer_to_buffer(") {
+            let tail = &rest[at + "copy_buffer_to_buffer(".len()..];
+            // 🔴 The FIRST argument only. The destination is the third,
+            // and it needs COPY_DST rather than COPY_SRC — a scan that
+            // took whichever `&self.` came first would demand the wrong
+            // flag of the wrong buffer.
+            let first = &tail[..tail.find(',').unwrap_or(0)];
+            if let Some(field) = first.trim().strip_prefix("&self.") {
+                let end = field
+                    .find(|c: char| !c.is_alphanumeric() && c != '_')
+                    .unwrap_or(field.len());
+                if end > 0 {
+                    out.insert(&field[..end]);
+                }
+            }
+            rest = tail;
+        }
+        out
     }
 
     /// A camera's slice is its own, and nothing else's.

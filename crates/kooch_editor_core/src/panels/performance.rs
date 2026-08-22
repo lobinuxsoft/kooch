@@ -407,6 +407,20 @@ pub(crate) fn draw_performance_content(
         });
 }
 
+/// Digit groups, because a pair-test count runs to seven figures and an
+/// unbroken run of digits is a number nobody reads.
+fn thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(' ');
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn debug_controls(
     ui: &mut egui::Ui,
     meshlet_debug_mode: &mut MeshletDebugMode,
@@ -851,6 +865,54 @@ fn shadow_page_readout(
              every meshlet into every page is the cost a virtual shadow map exists to \
              avoid, so this number IS the feature working.",
         );
+        // 🔴 The number that decides the shape of the local-light
+        // raster. The expansion is a product — a level's pages times a
+        // level's surviving meshlets — so what it costs is the
+        // combinations it walks, not the pairs it finds.
+        if raster.tests > 0 {
+            let per_pair = raster.tests as f32 / raster.pairs.max(1) as f32;
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} pair tests · {per_pair:.0} per pair · worst level {} at {}",
+                    thousands(raster.tests),
+                    raster.worst.0,
+                    thousands(raster.worst.1)
+                ))
+                .small()
+                .weak(),
+            )
+            .on_hover_text(
+                "The expansion asks, for every page of a level and every meshlet that \
+                 survived that level's cull, whether the two touch. So its cost is pages \
+                 TIMES meshlets, and the pairs it emits are what is left after the \
+                 question is answered — the ratio is how much of the pass is spent \
+                 proving a miss. \
+                 ⚠️ It is also the number that decides whether local lights are \
+                 affordable: they multiply the page side by roughly eighty, and the \
+                 inverse form — asking which pages a meshlet touches — was measured \
+                 WORSE for the sun, because a meshlet's rect covers up to 16384 cells at \
+                 the finest clipmap levels while only twenty pages are resident there.",
+            );
+            // 🔴 The counted cost of the shape this pass does NOT use.
+            // Both numbers are measured every frame so the choice
+            // between them is arithmetic instead of an opinion — which
+            // is the thing that was missing the last time one of them
+            // shipped everywhere at once.
+            let save = raster.tests.saturating_sub(raster.hybrid);
+            let cut = save as f32 / raster.tests.max(1) as f32 * 100.0;
+            ui.label(
+                egui::RichText::new(format!(
+                    "scatter would run {} · per-level best {} ({cut:.0}% off)",
+                    thousands(raster.scatter),
+                    thousands(raster.hybrid),
+                ))
+                .small()
+                .weak(),
+            )
+            .on_hover_text(
+                "There are two ways to find which meshlet belongs in which page.                  PAIRING walks every resident page against every survivor, which is                  what runs today. SCATTERING walks the cells each meshlet's bounds                  cover and looks them up, which is what the first number would cost —                  counted here without being run.                  Neither wins everywhere: a page at level 0 is centimetres wide so one                  meshlet covers thousands of cells against a handful of resident pages,                  while at level 12 a page is hundreds of metres and every meshlet lands                  in exactly one cell.                  The second number takes the cheaper shape at each level separately, and                  the percentage is the whole prize a hybrid has to offer.",
+            );
+        }
         if raster.local > 0 {
             ui.label(
                 egui::RichText::new(format!(

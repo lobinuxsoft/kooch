@@ -297,13 +297,24 @@ fn the_table_is_kilobytes_not_megabytes() {
     // address 28 409 856 pages; a `u32` each is 108 MiB, 42 % of the
     // pool it would index. Sized to residency instead, Epic's own
     // 4096-page pool costs this.
+    //
+    // 128 KiB with three words an entry — slot, age, listing. The third
+    // word cost 32 KiB and bought the route back from a page key to its
+    // place in the compacted list; the comparison that matters is
+    // against the 108 MiB, not against the previous kilobyte count.
     let config = PoolConfig {
         pages: POOL_PAGES,
         views: 1,
     };
+    let flat = 28_409_856u64 * 4;
     assert!(
-        config.table_bytes() < 128 * 1024,
+        config.table_bytes() < 256 * 1024,
         "the table is {} bytes",
+        config.table_bytes()
+    );
+    assert!(
+        config.table_bytes() * 800 < flat,
+        "the table is {} bytes against the flat answer's {flat}; it has          stopped being three orders of magnitude cheaper",
         config.table_bytes()
     );
 }
@@ -323,4 +334,55 @@ fn the_atlas_is_square_enough() {
             config.per_row()
         );
     }
+}
+
+/// The cascades stop being rasterised when the pages replace them.
+///
+/// # 🔴 The flag existed and nobody asked it
+///
+/// `FrameShadows::cascades_enabled` already reached the shading, and
+/// `inti_shadow` already returned from the page branch without touching
+/// a cascade layer. What no code path consulted was whether to DRAW
+/// them: four culls and four depth passes ran every frame filling
+/// layers with no reader, for as long as the feature has existed.
+///
+/// A source check rather than a GPU one. The claim is "this call is
+/// gated", and answering it on a device would mean standing up a whole
+/// frame to observe an absence — which is the shape of assertion that
+/// passes for the wrong reason.
+#[test]
+fn the_cascades_are_not_drawn_for_a_paged_sun() {
+    let pass = include_str!("../pass.rs");
+    let gate = pass
+        .find("if prepared.frame.cascades_enabled {")
+        .expect("`ShadowPass::record` no longer gates on the flag");
+    let render = pass[gate..]
+        .find("self.rasterizer.render(")
+        .expect("the cascade raster left `record`; this test now guards nothing");
+    // The spot and point draws follow and must NOT be inside the gate:
+    // they share this atlas and have no page raster to replace them.
+    let closes = pass[gate..]
+        .find("\n        }\n")
+        .expect("the gate never closes");
+    assert!(
+        render < closes,
+        "the cascade raster is outside the gate it was supposed to be inside"
+    );
+    for other in ["render_points(", "render_spots("] {
+        let at = pass[gate..]
+            .find(other)
+            .unwrap_or_else(|| panic!("`{other}` is gone from `record`"));
+        assert!(
+            at > closes,
+            "`{other}` was pulled inside the cascade gate; the local lights \
+             have no page raster yet and would stop casting"
+        );
+    }
+
+    // And the decision itself: the pages are what turns the flag off.
+    let frame = include_str!("../../meshlet/render_stage/frame/shadows.rs");
+    assert!(
+        frame.contains("sun.is_some() && !settings.virtual_pages"),
+        "`cascades_enabled` stopped consulting `virtual_pages`"
+    );
 }

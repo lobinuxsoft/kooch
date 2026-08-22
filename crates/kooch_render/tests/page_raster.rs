@@ -6,8 +6,8 @@
 //! belongs here rather than in a frame.
 
 use kooch_render::meshlet::GpuGlobalMeshPool;
-use kooch_render::shadow::pages::pool::{PAGE_CELL, PagePool, PoolConfig};
-use kooch_render::shadow::pages::raster::{PAGE_DEPTH_FORMAT, PAGE_FRONT_FACE, PageRasterizer};
+use kooch_render::shadow::pages::pool::{PagePool, PoolConfig, PAGE_CELL};
+use kooch_render::shadow::pages::raster::{PageRasterizer, PAGE_DEPTH_FORMAT, PAGE_FRONT_FACE};
 use kooch_render::shadow::pages::{ClipmapConfig, PageConfig};
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -103,8 +103,11 @@ fn the_counters_name_every_level() {
     let raster = rasterizer(&device);
     let levels = ClipmapConfig::default().levels;
     // Per level, then bucket overflow, local pages, pairs, pair
-    // overflow, pages owned by another camera.
-    assert_eq!(raster.count_slots(), levels + 5);
+    // overflow, pages owned by another camera — and then a second run
+    // per level for the survivors each cull produced, which is the other
+    // half of the expansion's cost, and a third for the cells a scatter
+    // would have visited instead.
+    assert_eq!(raster.count_slots(), levels * 3 + 5);
     let mut words = vec![0u32; raster.count_slots() as usize];
     words[0] = 7;
     words[1] = 5;
@@ -266,7 +269,51 @@ fn a_page_compacts_into_the_level_it_came_from() {
         planted[2],
         "level 5's bucket holds its page and its physical slot"
     );
+
+    // 🔴 And the way BACK. `page_list` is dense and per view, so a pass
+    // that computes a page KEY — rather than reading one out of the list
+    // — has no route to the entry the draw indexes by. The compaction is
+    // the only pass holding both, so it writes the listing into the
+    // table's third word. Without it, finding pages by walking cells
+    // means walking every resident page to identify each one, which is
+    // the pairing this was meant to replace.
+    let cells = read_words(&device, &queue, pool.slots());
+    let listing = |entry: usize| cells[entry * cell + 2];
+    for (i, planted_page) in planted.iter().enumerate() {
+        let at = listing(i * 7) as usize;
+        assert_ne!(
+            at as u32,
+            PAGE_UNLISTED,
+            "the sun page at entry {} kept no listing",
+            i * 7
+        );
+        assert_eq!(
+            (list[at * 2], list[at * 2 + 1]),
+            *planted_page,
+            "entry {}'s listing points at the wrong page",
+            i * 7
+        );
+    }
+    // Everything the compaction saw and did not list says so, rather
+    // than keeping an index into another view's list — which would be a
+    // perfectly well-formed number pointing at somebody else's page.
+    assert_eq!(
+        listing(97),
+        PAGE_UNLISTED,
+        "the local light's page kept a listing it does not have"
+    );
+    for entry in [43usize, 61] {
+        assert_eq!(
+            listing(entry),
+            PAGE_UNLISTED,
+            "the other camera's page at entry {entry} carries a listing into THIS view's list"
+        );
+    }
 }
+
+/// A table entry that is resident but not in this view's `page_list`.
+/// Mirrors `PAGE_UNLISTED` in `page_table.wgsl`.
+const PAGE_UNLISTED: u32 = 0xffff_ffff;
 
 /// Which way a light-facing triangle winds after the page transform.
 ///
@@ -853,7 +900,7 @@ fn the_marking_is_recorded_before_the_shading() {
 /// diameter/texels is what `cascades.rs` fits.
 #[test]
 fn the_paged_shadow_resolves_like_a_cascade() {
-    use kooch_render::shadow::pages::{ClipmapConfig, PageConfig, level_below};
+    use kooch_render::shadow::pages::{level_below, ClipmapConfig, PageConfig};
 
     const CASCADE_TEXELS: f32 = 2048.0;
     const FIRST: f32 = 10.0;
@@ -894,40 +941,168 @@ fn the_paged_shadow_resolves_like_a_cascade() {
         clipmap.extent(level) / virtual_texels
     };
 
-    // 🔴 Not "equal". A clipmap level is a power of two, so the level
-    // it lands on is at best exact and at worst one step coarse — a
-    // factor of two in the worst case, by construction, and no default
-    // can close that. What is asserted is what a discrete chain can
-    // promise: never much coarser anywhere, and finer at most distances.
-    let mut finer = 0;
+    // 🔴 The gap is SIZED, not closed. A quality setting's maximum is
+    // its maximum, so the list stops at 100 % — and at 100 % the pages
+    // are the coarser of the two at every distance measured. The number
+    // below is how much coarser, and it is here so the day somebody
+    // claims the page path "looks about the same" there is a figure to
+    // answer with.
     let distances = [5.0_f32, 10.0, 20.0, 40.0, 80.0];
     let density = kooch_render::settings::RenderSettings::default().shadow_density;
+    assert_eq!(density, 100, "the default is the top of the list");
+
+    let mut worst: (f32, f32) = (0.0, 0.0);
     for distance in distances {
         let want = cascade(distance);
-        let hundred = paged(distance, 100);
-        let default = paged(distance, density);
-
-        // The finding that moved the default: at 100 % the pages are the
-        // coarser of the two at EVERY distance measured.
+        let ratio = paged(distance, density) / want;
         assert!(
-            hundred > want,
-            "at {distance} m the 100 % setting already matches the cascade \
-             ({hundred:.3} against {want:.3}); the default no longer needs raising"
+            ratio > 1.0,
+            "at {distance} m the pages already match the cascade \
+             ({ratio:.2}x); the gap this test sizes has closed and the \
+             doc on `default_shadow_density` is now wrong"
         );
-        // 1.3 is the measured worst case, at 10 m — the far edge of the
-        // first cascade, which is where the cascade is most generous.
-        assert!(
-            default <= want * 1.3,
-            "at {distance} m the default resolves {default:.3} m per texel \
-             against the cascade's {want:.3}"
-        );
-        if default <= want {
-            finer += 1;
+        if ratio > worst.1 {
+            worst = (distance, ratio);
         }
     }
+    // Measured. A clipmap level is a power of two, so where the chain
+    // steps decides this as much as the density does — which is why the
+    // worst case is not at the far end.
+    // Measured at 2.41x, at 10 m — the far edge of the first cascade,
+    // which is where a cascade is most generous and the chain has just
+    // stepped. Pinned with a little slack so the number is a fact under
+    // guard, not a tripwire on rounding.
     assert!(
-        finer * 2 > distances.len(),
-        "the default is finer than the cascade at only {finer} of {} distances",
-        distances.len()
+        worst.1 <= 2.5,
+        "the pages fell to {:.2}x the cascade at {} m",
+        worst.1,
+        worst.0,
     );
+
+    // And the ceiling really is the ceiling: a list with something
+    // above the default is a list whose maximum is a lie.
+    let top = kooch_render::settings::shadow_density_choices()
+        .iter()
+        .map(|choice| choice.value)
+        .max()
+        .expect("the density list is empty");
+    assert_eq!(top, density as i64, "the list offers more than the default");
+}
+
+/// The expansion's cost is reported as the product it is.
+///
+/// 🔴 Written after guessing this number instead of measuring it. The
+/// scatter form was built on the assumption that a meshlet touches "a
+/// handful" of pages; at the finest clipmap levels a page is a
+/// centimetre across and a one-metre meshlet's rect covers 16384 cells,
+/// so the frame went from 200 fps to 30. The assumption was never in a
+/// test because it was never a measurement.
+///
+/// Now both halves come home in the same readback — pages per level from
+/// the compaction, survivors per level copied in from the culls — and
+/// the product is exact rather than assumed.
+#[test]
+fn the_counters_carry_the_expansions_cost() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let raster = rasterizer(&device);
+    let levels = ClipmapConfig::default().levels as usize;
+
+    // The layout has to have room for both runs, or `decode` reads a
+    // survivor count out of a slot that holds an overflow flag.
+    assert!(
+        raster.count_slots() as usize >= levels * 2 + 5,
+        "the counter buffer has no room for the survivor counts"
+    );
+
+    // Planted rather than rendered: what is under test is that `decode`
+    // multiplies the right two runs, not what a scene happens to hold.
+    let mut words = vec![0u32; raster.count_slots() as usize];
+    words[3] = 7; // level 3: seven pages
+    words[9] = 2; // level 9: two pages
+    words[levels + 2] = 40; // pairs emitted
+    words[levels + 5 + 3] = 100; // level 3: a hundred survivors
+    words[levels + 5 + 9] = 500; // level 9: five hundred survivors
+
+    let counts = raster.decode(&words, 0);
+    assert_eq!(counts.tests, 7 * 100 + 2 * 500, "the product is wrong");
+    assert_eq!(
+        counts.worst,
+        (9, 1000),
+        "the worst level is the one that walks the most, not the one with the most pages"
+    );
+    assert_eq!(counts.pairs, 40);
+
+    // And the third run: what the OTHER shape would have cost, and the
+    // choice between them.
+    //
+    // 🔴 The numbers are picked so a GLOBAL choice and a PER-LEVEL one
+    // disagree. Level 3 is cheaper to scatter, level 9 is cheaper to
+    // pair; summed, pairing wins outright (1700 against 4050), so a
+    // hybrid that compared totals would pick pairing everywhere and
+    // save nothing. Comparing per level saves the 650 that level 3 was
+    // wasting. That distinction IS the feature — the last attempt at
+    // this picked one shape for the whole chain and cost two thirds of
+    // the frame rate.
+    words[levels * 2 + 5 + 3] = 50; // level 3: cheap to scatter
+    words[levels * 2 + 5 + 9] = 4000; // level 9: ruinous to scatter
+    let counts = raster.decode(&words, 0);
+    assert_eq!(counts.scatter, 4050, "the scatter's cells are summed raw");
+    assert_eq!(
+        counts.hybrid,
+        50 + 1000,
+        "the cheaper shape is chosen per level, not for the whole chain"
+    );
+    assert!(
+        counts.hybrid < counts.tests && counts.hybrid < counts.scatter,
+        "a per-level choice is at least as good as either shape alone"
+    );
+    let _ = queue;
+}
+
+/// The shadow page track is visible to the profiler.
+///
+/// 🔴 It ran completely UNSCOPED: not one `profiling::scope!` across the
+/// marking, the seventeen per-level culls, the compaction, the expansion
+/// or the draw. In a capture that is time that simply goes missing, and
+/// the CPU cost of this track was argued about for an hour without a
+/// single measurement because there was nothing to measure.
+///
+/// A source check, because a scope's whole purpose is to exist in a
+/// build a test does not run.
+#[test]
+fn the_page_passes_are_profiled() {
+    for (name, source, wanted) in [
+        (
+            "frame/pages.rs",
+            include_str!("../src/meshlet/render_stage/frame/pages.rs"),
+            "shadow pages",
+        ),
+        (
+            "pages/raster.rs",
+            include_str!("../src/shadow/pages/raster.rs"),
+            "cull: clipmap levels",
+        ),
+    ] {
+        assert!(
+            source.contains(&format!("profiling::scope!(\"{wanted}\")")),
+            "{name} has no `{wanted}` scope; the pass is invisible in a capture"
+        );
+    }
+
+    // And the two entry points that record the GPU work.
+    for (name, source) in [
+        ("pages/mark.rs", include_str!("../src/shadow/pages/mark.rs")),
+        (
+            "pages/raster.rs",
+            include_str!("../src/shadow/pages/raster.rs"),
+        ),
+    ] {
+        assert!(
+            source.contains("#[profiling::function]"),
+            "{name} records GPU work in a function the profiler cannot see"
+        );
+    }
 }

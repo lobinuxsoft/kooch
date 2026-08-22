@@ -102,3 +102,82 @@ fn hidden_fields_are_still_stored_and_reflected() {
         "test is not exercising a hidden field"
     );
 }
+
+/// A `bool` works as a discriminant, and the shadow settings show only
+/// the knobs the selected technique reads.
+///
+/// # 🔴 Two defects, one test
+///
+/// `integer_value` handled every integer width and **not `Bool`**, and
+/// the failure was silent in the worst direction: an unreadable
+/// discriminant reads as `None`, `FieldCondition::is_met(None)` reads as
+/// SHOWN, so a `shown_when` pointing at a toggle hid nothing, ever. The
+/// absent-field case is meant to look like a typo — an unsupported TYPE
+/// looked like a working rule.
+///
+/// The other half is what the rule says. Which fields survive the switch
+/// was read out of the code, not guessed: `shadow_cascade_texels` sizes
+/// every layer of the shared atlas including the spot lights',
+/// `point_shadows` is the cube budget the local lights still use, and
+/// `shadows_enabled` returns the shading fully lit before either branch.
+#[test]
+fn the_shadow_knobs_follow_the_technique() {
+    use kooch_render::settings::RenderSettings;
+
+    let shown = |virtual_shadows: bool| -> Vec<String> {
+        let settings = RenderSettings {
+            virtual_shadows,
+            ..Default::default()
+        };
+        let fields: Vec<(String, ReflectValue)> = settings
+            .reflect_fields()
+            .iter()
+            .filter_map(|meta| {
+                settings
+                    .reflect_get(meta.name)
+                    .map(|value| (meta.name.to_owned(), value))
+            })
+            .collect();
+        let metas = Some(settings.reflect_fields());
+        fields
+            .iter()
+            .filter(|(name, _)| field_is_shown(metas, name, &fields))
+            .map(|(name, _)| name.clone())
+            .collect()
+    };
+
+    let pages = shown(true);
+    let cascades = shown(false);
+    let has = |list: &[String], name: &str| list.iter().any(|n| n == name);
+
+    // The half that proves a bool reaches the condition at all: if it
+    // did not, both lists would be identical and every assert below
+    // would pass for the wrong reason.
+    assert_ne!(
+        pages, cascades,
+        "the technique toggle changed nothing; a bool discriminant is \
+         being read as absent and every `shown_when` on it is inert"
+    );
+
+    for field in ["shadow_density", "shadow_pool_pages"] {
+        assert!(has(&pages, field), "{field} is missing with pages on");
+        assert!(!has(&cascades, field), "{field} shows with pages off");
+    }
+    for field in [
+        "shadow_distance",
+        "sun_softness",
+        "shadow_first_cascade_distance",
+    ] {
+        assert!(has(&cascades, field), "{field} is missing with pages off");
+        assert!(!has(&pages, field), "{field} shows with pages on");
+    }
+    for field in [
+        "shadows_enabled",
+        "shadow_cascade_texels",
+        "point_shadows",
+        "virtual_shadows",
+    ] {
+        assert!(has(&pages, field), "{field} vanished with pages on");
+        assert!(has(&cascades, field), "{field} vanished with pages off");
+    }
+}
