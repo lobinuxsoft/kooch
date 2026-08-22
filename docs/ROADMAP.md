@@ -772,6 +772,65 @@ lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings
 `Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
 decidía cuántos hilos, ahora decide qué páginas EXISTEN.
 
+🎉 **2026-08-22 — LAS POINT Y SPOT LIGHTS DIBUJAN Y SE SAMPLEAN.** Cinco piezas, ninguna
+útil suelta, y por eso `mark_local` reclamaba `false` hasta que estuvieron las cinco:
+
+| pieza | qué era |
+|---|---|
+| **bucket = OCTAVA** | Un bucket es una densidad, no una luz ni una cadena. `page_octave` está anclada para que el nivel L del clipmap del sol caiga en el bucket L **exacto**, así una lámpara cae en listas de supervivientes que los culls del sol **ya llenaron**. Medido: una lámpara de 10 m ocupa `[0,0,0,1,2,3,4,5]`. **Cero culls nuevos, y el costo no crece con la cantidad de luces** |
+| **cono en `cs_expand`** | Una página de lámpara es un frustum desde un punto, no una losa; el test esfera-caja es incorrecto a toda distancia salvo la que la caja usó |
+| **`page_clip_w`** | La página era un **mapeo, no una proyección**: se dividía por vértice y el rasterizador recibía `w = 1`, así que el interior del triángulo se rellenaba con rectas entre tres esquinas divididas por separado. Wrong de forma coherente y direccional — se leía como *todas las sombras apuntando al mismo lado* |
+| **`face_local`** | Rechazar un vértice por caer en otra cara **no elimina el triángulo**: el clipper interpola y dibuja una cuña en cada costura. En pantalla, una **barra recta de oclusión falsa** cruzando el pool. Ahora se proyecta sin preguntar y un punto detrás vuelve con `w` negativo |
+| **el LECTOR** | `inti_point_shadow` sampleaba el cubemap pase lo que pase. 7937 pares por frame rasterizados y **nadie los leía**. Y el camino de páginas **no** se gatea con `shadow_slot`: ese slot es un índice de cubo y hay 32, que es el techo que las páginas existen para borrar |
+
+`LOCAL_MAX_TEXELS = 2048` corta la cadena de una lámpara tres niveles — **factor 64 en las
+páginas que puede direccionar**. Sin eso, 455 de 504 slots residentes eran de lámparas, al sol
+le quedaban 49, y la tabla caminaba **9 tumbas por lookup**.
+
+🔴 **2026-08-22 — EL COSTO NO ESTÁ DONDE LO BUSCÁBAMOS, Y LA TABLA HASH ES EL DEFECTO.**
+Profiling de 1096 frames, con las lámparas dibujando:
+
+```
+raster + shade                   12.398 ms
+  shade: compute (half rate)      6.432      ← el lector
+  shade: compute                  4.011      ← el lector
+shadows                           0.884      ← TODO el track: marcado, cull, compact, expand, draw
+```
+
+**El sombreado se come 10.4 ms y todo el track de sombras 0.88.** El híbrido de la expansión
+—medido en **245×** de ahorro sobre 254 898 pair tests— optimizaría el 7 % del frame. No es ahí.
+
+Lo que cambió: `inti_point_shadow` era **un `textureSampleCompareLevel`** — una instrucción de
+textura con hardware dedicado. `inti_local_page_shadow` es un **walk en software**: hasta 5
+niveles de cadena, cada uno con un lookup de hash abierto de hasta 32 sondeos, **por píxel y
+por luz**. Se cambió una instrucción por un bucle anidado.
+
+**Las tres fuentes del prior art coinciden en que el lookup es UNA lectura indexada:**
+
+| fuente | qué dice |
+|---|---|
+| Chalmers, *More Efficient VSM for Many Lights* | *"virtual shadow maps are quite fast because they only require **a single texture lookup** in the final pass"* |
+| Stephano, *Sparse Virtual Shadow Maps* | `pageTable[ivec2(floor(virtualTexCoords * numPagesXY))]` — **una indirección por píxel**, entrada de 32 bits con coordenada física + índice de pool + residencia |
+| UE 5.8 | `SampleVirtualShadowMapLevel` → `VirtualToPhysicalTexel`, **un solo lookup** |
+
+🎯 **Y el recorte de hoy destrabó la decisión que estaba bloqueada por memoria.** La tabla plana
+se había descartado por costar **108 MiB** — pero ese número asumía darle a cada luz el espacio
+virtual completo. Con `LOCAL_MAX_TEXELS`:
+
+| | páginas virtuales | tabla plana |
+|---|---|---|
+| antes (cadena completa por lámpara) | 28 409 856 | **108 MiB** 🔴 |
+| **después del floor** | **~485 000** | **~1.9 MiB** ✅ |
+
+**Sesenta veces menos.** La razón por la que la tabla es un hash abierto desapareció, y con ella
+el walk de 32 sondeos por píxel por luz. ⏭️ **SIGUIENTE = la tabla plana indexada.** El walk de
+niveles también se va: con una tabla plana el lector indexa el nivel que quiere en vez de
+probar cinco.
+
+⚠️ Y lo que el prior art dice del ráster y todavía no tenemos: **caché de páginas entre
+frames**. StraySpark: *"cached pages are effectively free"*; el juego entero de optimización es
+mantenerlas cacheadas. Nuestro pool se vacía y se rellena cada frame.
+
 🔴 **2026-08-21 — MEDIDO EN EL EDITOR: la VSM anda mal, y los números dicen por qué.** Dos
 vistas alternando a 409x403, `many_lights`:
 
