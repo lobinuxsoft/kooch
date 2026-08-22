@@ -391,16 +391,21 @@ fn level_side(level: u32) -> u32 {
 // The coarsest level whose texels are still at least as dense as the
 // screen's pixels. A cube face spans 90 degrees, so at `distance` it
 // covers `2 * distance` world units across its texels.
+//
+// 🔴 FLOORED at `local_level_floor`. A pixel next to a lamp asks for a
+// texel the lamp has no business providing, and the pool pays for every
+// page of it — see `LOCAL_MAX_TEXELS` for what that measured.
 fn page_level(distance: f32, wanted: f32) -> u32 {
+    let base = local_level_floor(pages.chain.y);
     if wanted <= 0.0 {
-        return 0u;
+        return base;
     }
     let texels = 2.0 * distance / wanted;
     if texels <= 0.0 {
         return pages.chain.z - 1u;
     }
     let level = floor(log2(f32(pages.chain.y) / texels));
-    return min(u32(max(level, 0.0)), pages.chain.z - 1u);
+    return clamp(u32(max(level, 0.0)), base, pages.chain.z - 1u);
 }
 
 // One page of a local light's mip chain.

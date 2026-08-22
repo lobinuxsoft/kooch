@@ -725,7 +725,7 @@ fn inti_lamp_page_debug(world_position: vec3<f32>, n: vec3<f32>, faces: bool) ->
     let levels = u32(log2(f32(max(side0, 1u)))) + 1u;
     let view_base = inti_pages.views.x * inti_pages.views.y;
 
-    for (var level = 0u; level < levels; level = level + 1u) {
+    for (var level = local_level_floor(side0 * page_texels); level < levels; level = level + 1u) {
         let side = level_side_of(level, side0);
         let texel_world = 2.0 * max(distance, PAGE_NEAR) / f32(side * page_texels);
         // 🔴 The FACE view reads the raw position and the OCCLUSION view

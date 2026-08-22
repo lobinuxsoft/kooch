@@ -886,7 +886,7 @@ fn shadow_page_readout(
         // say.
         ui.label(
             egui::RichText::new(format!(
-                "{} sun pages rastered · {} meshlet/page pairs · {} owned by another view",
+                "{} pages rastered · {} meshlet/page pairs · {} owned by another view",
                 raster.pages, raster.pairs, raster.others
             ))
             .small()

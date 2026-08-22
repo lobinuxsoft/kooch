@@ -891,7 +891,7 @@ fn inti_page_shadow(
         let texel_world = extent / f32(side * page_texels);
         let sampled = world_position
             + normal * (texel_world * INTI_NORMAL_BIAS)
-            + to_light * INTI_POINT_DEPTH_BIAS;
+            + to_light * INTI_DEPTH_BIAS;
 
         // The plane is ABSOLUTE and the grid is snapped, so a texel's
         // footprint does not slide with the camera. See `sun_centre`.
@@ -997,7 +997,10 @@ fn inti_local_page_shadow(
     let levels = u32(log2(f32(max(side0, 1u)))) + 1u;
     let view_base = inti_pages.views.x * inti_pages.views.y;
 
-    for (var level = 0u; level < levels; level = level + 1u) {
+    // 🔴 Starts at the floor, not at zero. The marking cannot pick a
+    // level below it, so the levels under it hold no pages for anybody —
+    // walking them is three table lookups a pixel that can only miss.
+    for (var level = local_level_floor(side0 * page_texels); level < levels; level = level + 1u) {
         let side = level_side_of(level, side0);
         let raw = world_position - light_position;
         let distance = max(length(raw), PAGE_NEAR);

@@ -1420,3 +1420,72 @@ fn a_cube_face_maps_back_to_itself() {
          not cover the cell the marking assigned it"
     );
 }
+
+/// A lamp's chain is floored, and every pass agrees on where.
+///
+/// 🔴 The marking picks a level, the reader walks from one and the
+/// debug view walks from one. A floor the three disagree on is a reader
+/// looking for pages in levels nothing marks — three table lookups a
+/// pixel that can only miss — or, worse, a marking that allocates
+/// levels the reader never visits, which is pool spent on pages nobody
+/// can sample.
+const FLOOR: &str = r#"
+@group(0) @binding(0) var<storage, read_write> out: array<u32>;
+
+@compute @workgroup_size(1, 1, 1)
+fn cs_floor() {
+    // The engine's own virtual size, and two others so the derivation
+    // is exercised rather than a single lucky value.
+    out[0] = local_level_floor(16384u);
+    out[1] = local_level_floor(2048u);
+    out[2] = local_level_floor(1024u);
+    out[3] = LOCAL_MAX_TEXELS;
+    // Pages a lamp can address across one face, before and after.
+    out[4] = 128u * 128u;
+    out[5] = level_side_of(local_level_floor(16384u), 128u)
+        * level_side_of(local_level_floor(16384u), 128u);
+}
+"#;
+
+#[test]
+fn a_lamp_cannot_ask_for_the_suns_finest_levels() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let out = run_page_table_shader(&device, &queue, FLOOR, "cs_floor", 24);
+
+    assert_eq!(
+        out[0], 3,
+        "16384 virtual texels should give up three levels"
+    );
+    assert_eq!(out[1], 0, "a chain already at the cap gives up nothing");
+    assert_eq!(out[2], 0, "and a finer cap is not raised back up");
+    assert_eq!(out[3], 2048, "the cap moved without this test being read");
+
+    // The whole point, as a ratio: what the floor takes off the table.
+    assert_eq!(
+        out[4] / out[5].max(1),
+        64,
+        "the floor should be 64x in pages"
+    );
+
+    // Every pass starts its walk there. A floor one pass ignores is a
+    // pass looking in levels nobody marks.
+    for (file, source) in [
+        (
+            "inti_pbr.wgsl",
+            include_str!("../../kooch_lighting/shaders/inti_pbr.wgsl"),
+        ),
+        (
+            "inti_debug.wgsl",
+            include_str!("../../kooch_lighting/shaders/inti_debug.wgsl"),
+        ),
+        ("page_mark.wgsl", include_str!("../shaders/page_mark.wgsl")),
+    ] {
+        assert!(
+            source.contains("local_level_floor("),
+            "{file} does not consult the lamp chain's floor"
+        );
+    }
+}

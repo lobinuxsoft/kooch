@@ -446,6 +446,49 @@ fn face_dir(face: u32, uv: vec2<f32>) -> vec3<f32> {
     }
 }
 
+/// The finest a LOCAL light's chain is allowed to go, in virtual texels
+/// across one cube face.
+///
+/// # 🔴 A lamp does not get the sun's whole virtual map
+///
+/// The sun's clipmap is 16384 texels because it has to cover the world
+/// and its finest level is centimetres from the camera. A four-metre
+/// lamp asking for the same chain can request a HALF-MILLIMETRE texel,
+/// and nobody looks at a shadow at that resolution — but the pool pays
+/// for every page of it. Measured on `many_lights`: 455 of 504 resident
+/// pages belonged to lamps and the sun was left forty-nine, with the
+/// hash table walking nine tombstones per lookup because the pool never
+/// stopped churning.
+///
+/// Epic caps this the same way and for the same reason —
+/// `VSM_MAX_SINGLE_PAGE_SHADOW_MAPS` hands a distant light ONE page
+/// rather than a chain — and exposes it as
+/// `r.Shadow.Virtual.ResolutionLodBiasLocal`.
+///
+/// 2048 is three levels of the chain given up, which is a factor of
+/// SIXTY-FOUR in the pages a lamp can address. The texel it leaves at
+/// four metres is two millimetres.
+const LOCAL_MAX_TEXELS: u32 = 2048u;
+
+/// The finest chain level a local light may use.
+///
+/// Derived rather than uploaded: the marking picks a level, the reader
+/// walks from one, and the raster sizes a cell from one — three places
+/// that have to agree, and a number in a uniform is a number one of them
+/// can be handed stale.
+fn local_level_floor(virtual_texels: u32) -> u32 {
+    var floor_level = 0u;
+    var texels = virtual_texels;
+    loop {
+        if texels <= LOCAL_MAX_TEXELS || texels <= 1u {
+            break;
+        }
+        texels = texels >> 1u;
+        floor_level = floor_level + 1u;
+    }
+    return floor_level;
+}
+
 /// Pages across one side of a local chain's `level`. Mirrors
 /// `PageConfig::side`, and takes the level-0 side rather than reading
 /// the marking pass's uniform so the raster can call it too.
