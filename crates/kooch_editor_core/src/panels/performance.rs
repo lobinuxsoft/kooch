@@ -916,18 +916,24 @@ fn shadow_page_readout(
         if raster.local > 0 {
             ui.label(
                 egui::RichText::new(format!(
-                    "{} local-light pages marked and not drawn yet",
-                    raster.local
+                    "{} local-light pages · {} listed, none drawn yet",
+                    thousands(raster.local as u64),
+                    thousands(raster.listed as u64),
                 ))
                 .small()
                 .weak(),
             )
             .on_hover_text(
-                "Local lights get pages marked and allocated, and the raster does not draw \
-                 them yet. A cull runs per view: the sun's clipmap is 17 views, a hundred \
-                 point lights with six faces and an eight-level chain are 4848. That needs \
-                 the cull itself moved onto the GPU as one multi-view dispatch, which is \
-                 the next piece and not a bigger version of this one.",
+                "Local lights get pages marked, allocated and now BUCKETED — the second \
+                 number is how many reached a bucket of the page list, grouped by the LOD \
+                 their chain level asks for rather than by which lamp they belong to. \
+                 Every lamp shares those buckets, because a page carries its light in its \
+                 own key; a bucket per light per level would be the 4848-view shape this \
+                 exists to avoid. \
+                 ⚠️ Listed is not drawn. Those buckets have no survivor list, so their \
+                 expansion dispatches nothing — the open question is where a local page's \
+                 meshlets come from, and this number is what it has to be answered \
+                 against.",
             );
         }
         if raster.dropped > 0 || raster.overflow > 0 {

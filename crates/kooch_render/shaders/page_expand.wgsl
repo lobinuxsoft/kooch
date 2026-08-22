@@ -94,7 +94,7 @@ fn transform_scale(m: mat4x4<f32>) -> f32 {
 @compute @workgroup_size(EXPAND_GROUP, 1, 1)
 fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     let level = expand.level;
-    let levels = raster.chain.x;
+    let buckets = raster.local.y;
     let pages = min(atomicLoad(&page_counts[level]), raster.chain.z);
     let meshlets = visible_counts[level];
     if pages == 0u || meshlets == 0u {
@@ -134,7 +134,7 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     // below: the cost being counted is what the other shape would pay
     // whether or not this pair survives.
     if gid.x < meshlets {
-        count_scatter(level, levels, bounds, radius);
+        count_scatter(level, buckets, bounds, radius);
     }
 
     let plane = sun_plane(bounds, basis);
@@ -147,9 +147,9 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let slot = atomicAdd(&page_counts[levels + 2u], 1u);
+    let slot = atomicAdd(&page_counts[buckets + 2u], 1u);
     if slot >= raster.chain.y {
-        atomicAdd(&page_counts[levels + 3u], 1u);
+        atomicAdd(&page_counts[buckets + 3u], 1u);
         return;
     }
     pairs[slot] = vec2<u32>(level * raster.chain.z + gid.x / meshlets, packed);
@@ -183,7 +183,7 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
 ///
 /// Free to run: it rides the threads that already exist for page index
 /// zero, so it adds arithmetic to `meshlets` threads and no dispatch.
-fn count_scatter(level: u32, levels: u32, bounds: vec3<f32>, radius: f32) {
+fn count_scatter(level: u32, buckets: u32, bounds: vec3<f32>, radius: f32) {
     let side = raster.space.z;
     let basis = sun_basis(raster.sun.xyz);
     let centre = sun_centre(raster.eye.xyz, basis, raster.world.x, side, level);
@@ -201,5 +201,5 @@ fn count_scatter(level: u32, levels: u32, bounds: vec3<f32>, radius: f32) {
     let first = clamp(floor(lo * f32(side)), vec2<f32>(0.0), vec2<f32>(top));
     let last = clamp(floor(hi * f32(side)), vec2<f32>(0.0), vec2<f32>(top));
     let span = last - first + vec2<f32>(1.0);
-    atomicAdd(&page_counts[levels * 2u + 5u + level], u32(span.x * span.y));
+    atomicAdd(&page_counts[buckets * 2u + 5u + level], u32(span.x * span.y));
 }

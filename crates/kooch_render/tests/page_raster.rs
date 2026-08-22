@@ -101,21 +101,31 @@ fn the_counters_name_every_level() {
         return;
     };
     let raster = rasterizer(&device);
-    let levels = ClipmapConfig::default().levels;
-    // Per level, then bucket overflow, local pages, pairs, pair
+    let sun = ClipmapConfig::default().levels;
+    let buckets = raster.buckets();
+    // 🔴 Per BUCKET, and a bucket is a LOD rather than a light: the
+    // sun's clipmap levels first, then the chain levels every local
+    // lamp shares. Then bucket overflow, local pages, pairs, pair
     // overflow, pages owned by another camera — and then a second run
-    // per level for the survivors each cull produced, which is the other
-    // half of the expansion's cost, and a third for the cells a scatter
-    // would have visited instead.
-    assert_eq!(raster.count_slots(), levels * 3 + 5);
+    // per bucket for the survivors each cull produced, which is the
+    // other half of the expansion's cost, and a third for the cells a
+    // scatter would have visited instead.
+    assert!(
+        buckets > sun,
+        "the local chain contributes no buckets; every lamp's pages would          land in the sun's"
+    );
+    assert_eq!(raster.count_slots(), buckets * 3 + 5);
     let mut words = vec![0u32; raster.count_slots() as usize];
     words[0] = 7;
     words[1] = 5;
-    words[levels as usize + 1] = 42;
-    words[levels as usize + 2] = 900;
-    words[levels as usize + 4] = 31;
+    // A local bucket, which the sun's total must NOT swallow.
+    words[sun as usize] = 9;
+    words[buckets as usize + 1] = 42;
+    words[buckets as usize + 2] = 900;
+    words[buckets as usize + 4] = 31;
     let counts = raster.decode(&words, 1);
-    assert_eq!(counts.pages, 12, "levels sum");
+    assert_eq!(counts.pages, 12, "the sun's buckets sum on their own");
+    assert_eq!(counts.listed, 9, "the local buckets sum on their own");
     assert_eq!(counts.local, 42, "local pages are reported, not hidden");
     assert_eq!(counts.pairs, 900);
     assert_eq!(counts.others, 31, "the other camera's pages are named");
@@ -240,20 +250,41 @@ fn a_page_compacts_into_the_level_it_came_from() {
     );
     queue.submit([encoder.finish()]);
 
+    let buckets = raster.buckets() as usize;
     let counts = read_words(&device, &queue, raster.counts_buffer());
     assert_eq!(counts[0], 2, "two pages on level 0");
     assert_eq!(counts[5], 1, "one page on level 5");
-    assert_eq!(counts[levels as usize], 0, "no bucket overflowed");
+    assert_eq!(counts[buckets], 0, "no bucket overflowed");
     assert_eq!(
-        counts[levels as usize + 1],
+        counts[buckets + 1],
         1,
         "the local light's page is counted, not silently dropped"
     );
     assert_eq!(
-        counts[levels as usize + 4],
+        counts[buckets + 4],
         2,
         "the other camera's pages are counted and left alone"
     );
+    // 🔴 And it LANDS somewhere. The local page was counted and dropped
+    // before; now it goes into the bucket its own chain level names,
+    // past the sun's clipmap. `LOCAL_LEVEL` is the level it was planted
+    // at — the bucket is the LOD, and every lamp shares it.
+    const LOCAL_LEVEL: usize = 2;
+    assert_eq!(
+        counts[levels as usize + LOCAL_LEVEL],
+        1,
+        "the local page reached no bucket; it is listed nowhere and drawn never"
+    );
+    for level in 0..PageConfig::default().levels() as usize {
+        if level == LOCAL_LEVEL {
+            continue;
+        }
+        assert_eq!(
+            counts[levels as usize + level],
+            0,
+            "a local bucket other than {LOCAL_LEVEL} picked up a page"
+        );
+    }
 
     // The list is bucketed: level L owns `[L * bucket, (L+1) * bucket)`.
     let list = read_words(&device, &queue, raster.page_list_buffer());
@@ -294,14 +325,26 @@ fn a_page_compacts_into_the_level_it_came_from() {
             i * 7
         );
     }
-    // Everything the compaction saw and did not list says so, rather
-    // than keeping an index into another view's list — which would be a
-    // perfectly well-formed number pointing at somebody else's page.
-    assert_eq!(
-        listing(97),
-        PAGE_UNLISTED,
-        "the local light's page kept a listing it does not have"
+    // The local page is listed now, so it has a listing like any other.
+    let local_at = listing(97) as usize;
+    assert_ne!(
+        local_at as u32, PAGE_UNLISTED,
+        "the local page is bucketed but carries no listing"
     );
+    assert_eq!(
+        list[local_at * 2],
+        local_page(VIEW, LOCAL_LEVEL as u32, (1, 1), LIGHTS),
+        "the local page's listing points somewhere else"
+    );
+    assert!(
+        local_at >= levels as usize * bucket,
+        "the local page landed in a bucket the sun owns"
+    );
+
+    // Everything the compaction saw and did not list still says so,
+    // rather than keeping an index into another view's list — which
+    // would be a perfectly well-formed number pointing at somebody
+    // else's page.
     for entry in [43usize, 61] {
         assert_eq!(
             listing(entry),
@@ -1008,7 +1051,10 @@ fn the_counters_carry_the_expansions_cost() {
         return;
     };
     let raster = rasterizer(&device);
-    let levels = ClipmapConfig::default().levels as usize;
+    // Every run is per BUCKET, so the offsets follow the buckets and
+    // not the clipmap's levels — planting at the clipmap's stride lands
+    // the survivors inside the overflow flags.
+    let levels = raster.buckets() as usize;
 
     // The layout has to have room for both runs, or `decode` reads a
     // survivor count out of a slot that holds an overflow flag.

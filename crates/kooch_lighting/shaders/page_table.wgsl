@@ -386,5 +386,27 @@ struct PageRaster {
     eye: vec4<f32>,
     // xyz the sun's direction, w 1 when there is one.
     sun: vec4<f32>,
+    // x levels in a LOCAL light's mip chain, y buckets in `page_list`,
+    // z unused, w unused.
+    //
+    // 🔴 A bucket is a LOD, not a light. `page_list` holds the sun's
+    // clipmap levels first and a local light's chain levels after them,
+    // and every local light shares those — a page carries the light it
+    // belongs to in its own key, so nothing downstream needs the list
+    // partitioned by lamp. Partitioning by light instead would mean a
+    // bucket per light per level, which is the 4848-view shape this
+    // design exists to avoid.
+    local: vec4<u32>,
+}
+
+/// Which bucket of `page_list` a page belongs in.
+///
+/// The sun's clipmap owns `[0, sun_levels)` and every local light's
+/// chain shares `[sun_levels, sun_levels + local_levels)`.
+fn page_bucket(id: PageId, sun_levels: u32) -> u32 {
+    if id.is_sun {
+        return id.level;
+    }
+    return sun_levels + id.level;
 }
 

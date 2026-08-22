@@ -18,10 +18,17 @@
 // level 12, so the levels are culled separately and the pages have to
 // be grouped the same way.
 //
-// 🔴 Local lights are counted and skipped. Their pages are marked and
-// allocated — that half works — but rasterising them needs a cull per
-// (light, face, level), which is 4848 views against the sun's 17. That
-// is a different machine and it is the next one.
+// 🔴 Local lights are LISTED now, in buckets of their own — the sun's
+// clipmap levels first, then a local light's chain levels, shared by
+// every lamp. A page carries the light it belongs to in its own key, so
+// nothing downstream needs the list split by lamp; splitting it that way
+// would mean a bucket per light per level, which is the 4848-view shape
+// this design exists to avoid.
+//
+// ⚠️ Listed is not drawn. Their buckets have no survivor list yet, so
+// their expansion dispatches zero threads. What this buys is the SHAPE
+// of the local half: how many pages sit at each LOD, which is the number
+// the survivor question has to be answered against.
 
 @group(0) @binding(0) var<uniform> raster: PageRaster;
 @group(0) @binding(1) var<storage, read> table_keys: array<u32>;
@@ -76,33 +83,36 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         raster.space.z,
         raster.space.w,
     );
-    let levels = raster.chain.x;
+    let sun_levels = raster.chain.x;
+    let buckets = raster.local.y;
     // 🔴 Not a cap and not a failure: the table holds every view's
     // pages, and each view compacts its own. Counted anyway, because
     // "the pool is full and my view got forty pages" is unreadable
     // without knowing how many belong to somebody else — which is the
     // exact number that would have named the last defect on sight.
     if id.view != raster.views.x {
-        atomicAdd(&page_counts[levels + 4u], 1u);
+        atomicAdd(&page_counts[buckets + 4u], 1u);
         return;
     }
+    let slot = page_bucket(id, sun_levels);
+    if slot >= buckets {
+        atomicAdd(&page_counts[buckets], 1u);
+        return;
+    }
+    // Local pages are still counted separately, because "listed" and
+    // "drawn" are different claims and the panel states both.
     if !id.is_sun {
-        atomicAdd(&page_counts[levels + 1u], 1u);
-        return;
+        atomicAdd(&page_counts[buckets + 1u], 1u);
     }
-    if id.level >= levels {
-        atomicAdd(&page_counts[levels], 1u);
-        return;
-    }
-    let index = atomicAdd(&page_counts[id.level], 1u);
+    let index = atomicAdd(&page_counts[slot], 1u);
     if index >= raster.chain.z {
         // The bucket is full. Undoing the add would race; the count is
         // left high on purpose so the overflow is visible rather than
         // silently clamped.
-        atomicAdd(&page_counts[levels], 1u);
+        atomicAdd(&page_counts[buckets], 1u);
         return;
     }
-    let listing = id.level * raster.chain.z + index;
+    let listing = slot * raster.chain.z + index;
     page_list[listing] = vec2<u32>(page, table_slots[entry * PAGE_CELL]);
     // The way back: a pass that computes a page KEY can now reach the
     // entry the draw indexes, without walking every resident page to
@@ -115,7 +125,7 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
 @compute @workgroup_size(EXPAND_GROUP, 1, 1)
 fn cs_expand_args(@builtin(global_invocation_id) gid: vec3<u32>) {
     let level = gid.x;
-    if level >= raster.chain.x {
+    if level >= raster.local.y {
         return;
     }
     let pages = min(atomicLoad(&page_counts[level]), raster.chain.z);
@@ -135,8 +145,7 @@ fn cs_expand_args(@builtin(global_invocation_id) gid: vec3<u32>) {
 // came from.
 @compute @workgroup_size(1, 1, 1)
 fn cs_draw_args() {
-    let levels = raster.chain.x;
-    let pairs = min(atomicLoad(&page_counts[levels + 2u]), raster.chain.y);
+    let pairs = min(atomicLoad(&page_counts[raster.local.y + 2u]), raster.chain.y);
     // Vertex count is fixed per meshlet: the draw is indirect over a
     // triangle budget and the tail of a shorter meshlet is discarded in
     // the vertex shader.

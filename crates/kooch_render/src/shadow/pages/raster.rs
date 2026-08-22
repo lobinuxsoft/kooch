@@ -101,6 +101,15 @@ pub struct RasterCounts {
     /// a pool that looks full for a reason nobody stated is how a
     /// budget gets mis-read.
     pub local: u32,
+    /// Local-light pages that DID reach a bucket of `page_list`.
+    ///
+    /// 🔴 Listed is not drawn. The compaction now buckets them by their
+    /// chain level, which is what makes the shape of the local half
+    /// visible for the first time — how many pages sit at each LOD, and
+    /// therefore how much geometry each one will ask for. Nothing
+    /// expands them yet: their buckets have no survivor list, so their
+    /// dispatch is sized zero.
+    pub listed: u32,
     /// `(page, meshlet)` pairs the draw covered.
     pub pairs: u32,
     /// Pairs past the list's capacity.
@@ -150,6 +159,7 @@ struct RasterUniform {
     world: [f32; 4],
     eye: [f32; 4],
     sun: [f32; 4],
+    local: [u32; 4],
 }
 
 #[repr(C)]
@@ -264,6 +274,7 @@ impl PageRasterizer {
             })
             .collect();
         let levels = clipmap.levels;
+        let buckets = levels + config.levels();
 
         let module = |label: &str, body: &str| {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -390,7 +401,7 @@ impl PageRasterizer {
             uniform_stride,
             page_list: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_list"),
-                size: bucket(pool) as u64 * levels as u64 * 8,
+                size: bucket(pool) as u64 * buckets as u64 * 8,
                 // 🔴 COPY_SRC because `page_list_buffer` is public and the
                 // only reason to expose a GPU buffer is to read it back.
                 usage: storage | wgpu::BufferUsages::COPY_SRC,
@@ -398,13 +409,13 @@ impl PageRasterizer {
             }),
             counts: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_counts"),
-                size: count_slots(levels) as u64 * 4,
+                size: count_slots(buckets) as u64 * 4,
                 usage: storage | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
             expand_args: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_expand_args"),
-                size: levels as u64 * 12,
+                size: buckets as u64 * 12,
                 usage: storage | wgpu::BufferUsages::INDIRECT,
                 mapped_at_creation: false,
             }),
@@ -422,7 +433,7 @@ impl PageRasterizer {
             }),
             visible_counts: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_visible_counts"),
-                size: levels as u64 * 4,
+                size: buckets as u64 * 4,
                 // 🔴 COPY_SRC: the survivor counts ride home in the same
                 // readback as the page counts, so the expansion's cost
                 // can be read as the product it is. See `count_slots`.
@@ -451,7 +462,7 @@ impl PageRasterizer {
                 .map(|_| MeshletCull::new(device, 1, max_triangles_per_meshlet))
                 .collect(),
             bound: None,
-            readback: RasterReadback::new(device, count_slots(levels)),
+            readback: RasterReadback::new(device, count_slots(buckets)),
             config,
             clipmap,
             pool,
@@ -525,14 +536,26 @@ impl PageRasterizer {
         &self.draw_args
     }
 
+    /// Buckets in `page_list`: the sun's clipmap levels, then a local
+    /// light's chain levels.
+    ///
+    /// 🔴 A bucket is a LOD and NOT a light. Every lamp shares the local
+    /// run, because a page carries the light it belongs to in its own
+    /// key — nothing downstream needs the list split by lamp. A bucket
+    /// per light per level is the 4848-view shape this avoids.
+    pub fn buckets(&self) -> u32 {
+        self.clipmap.levels + self.config.levels()
+    }
+
     /// Slots in [`Self::counts_buffer`].
     pub fn count_slots(&self) -> u32 {
-        count_slots(self.clipmap.levels)
+        count_slots(self.buckets())
     }
 
     /// Reads the counters out of a mapped copy of [`Self::counts_buffer`].
     pub fn decode(&self, words: &[u32], view: u32) -> RasterCounts {
-        let levels = self.clipmap.levels as usize;
+        let sun_levels = self.clipmap.levels as usize;
+        let levels = self.buckets() as usize;
         let cap = bucket(self.pool);
         let mut tests = 0u64;
         let mut worst = (0u32, 0u64);
@@ -559,10 +582,8 @@ impl PageRasterizer {
             worst,
             scatter,
             hybrid,
-            pages: words[..levels]
-                .iter()
-                .map(|&n| n.min(bucket(self.pool)))
-                .sum(),
+            pages: words[..sun_levels].iter().map(|&n| n.min(cap)).sum(),
+            listed: words[sun_levels..levels].iter().map(|&n| n.min(cap)).sum(),
             dropped: words[levels],
             local: words[levels + 1],
             pairs: words[levels + 2].min(PAIR_CAPACITY),
@@ -586,7 +607,7 @@ fn atlas_layers(pool: PoolConfig) -> u32 {
 /// and a silent truncation.
 pub const PAIR_CAPACITY: u32 = 1 << 20;
 
-fn count_slots(levels: u32) -> u32 {
+fn count_slots(buckets: u32) -> u32 {
     // Per level, then: bucket overflow, local pages skipped, pairs, pair
     // overflow, pages owned by another view — and THEN the survivors
     // each level's cull produced, copied in from `visible_counts`.
@@ -603,7 +624,7 @@ fn count_slots(levels: u32) -> u32 {
     // level instead of guessed at. That one IS counted at dispatch
     // time, because unlike the product it is not a number two buffers
     // already hold.
-    levels * 3 + 5
+    buckets * 3 + 5
 }
 
 /// The atlas: one square layer per camera.
@@ -697,6 +718,7 @@ impl PageRasterizer {
                 ],
                 eye: [eye.x, eye.y, eye.z, 0.0],
                 sun: [d.x, d.y, d.z, 1.0],
+                local: [self.config.levels(), self.buckets(), 0, 0],
             }),
         );
     }
@@ -917,6 +939,7 @@ impl PageRasterizer {
         lod_target: f32,
     ) {
         let levels = self.clipmap.levels;
+        let buckets = self.buckets();
         let view = view.min(atlas_layers(self.pool) - 1);
         self.write_uniform(queue, view, eye, sun, lights);
         let uniform_offset = self.uniform_span(view).0 as u32;
@@ -928,6 +951,11 @@ impl PageRasterizer {
         // writing a uniform and recording its own passes. This is the
         // only part of the track that is CPU work rather than GPU work,
         // and it was invisible to the profiler until this scope existed.
+        // 🔴 The local buckets have no cull, so nothing ever writes
+        // their survivor count — and an unwritten storage buffer is not
+        // zero, it is whatever the allocator handed over. `cs_expand_args`
+        // multiplies that by a page count and dispatches the result.
+        encoder.clear_buffer(&self.visible_counts, 0, None);
         {
             profiling::scope!("cull: clipmap levels");
             for level in 0..levels {
@@ -994,7 +1022,7 @@ impl PageRasterizer {
             pass.set_bind_group(0, &bound.compact, &[uniform_offset]);
             pass.dispatch_workgroups(self.pool.entries().div_ceil(64), 1, 1);
             pass.set_pipeline(&self.expand_args_pass);
-            pass.dispatch_workgroups(levels.div_ceil(64), 1, 1);
+            pass.dispatch_workgroups(buckets.div_ceil(64), 1, 1);
 
             // 3. Pairs. One indirect dispatch per level, sized by the
             //    pass above rather than by a CPU guess. The only thing
@@ -1003,6 +1031,13 @@ impl PageRasterizer {
             pass.set_pipeline(&self.expand);
             pass.set_bind_group(1, &bound.descriptors, &[]);
             pass.set_bind_group(3, &bound.instances, &[]);
+            // 🔴 The SUN's buckets only. A local light's pages are
+            // listed and bucketed by their chain level, but no cull
+            // produces a survivor list for those buckets yet, so there
+            // is no `visible` bind group to hand them and their
+            // `expand_args` are zero either way. The loop bound says
+            // which half is missing; a bound of `buckets` would hand
+            // them the wrong level's survivors instead.
             for level in 0..levels {
                 pass.set_bind_group(
                     0,
@@ -1057,8 +1092,8 @@ impl PageRasterizer {
             &self.visible_counts,
             0,
             &self.counts,
-            (self.clipmap.levels as u64 + 5) * 4,
-            self.clipmap.levels as u64 * 4,
+            (self.buckets() as u64 + 5) * 4,
+            self.buckets() as u64 * 4,
         );
         self.readback.record(encoder, &self.counts, view);
     }
@@ -1366,6 +1401,7 @@ mod tests {
             ("world", std::mem::offset_of!(RasterUniform, world)),
             ("eye", std::mem::offset_of!(RasterUniform, eye)),
             ("sun", std::mem::offset_of!(RasterUniform, sun)),
+            ("local", std::mem::offset_of!(RasterUniform, local)),
         ];
         let theirs = shader_offsets(COMPACT, "PageRaster");
         assert_eq!(theirs.len(), mine.len(), "field count");
@@ -1377,6 +1413,10 @@ mod tests {
 
     /// The three runs of counters do not overlap, and the shader that
     /// writes the third one agrees with the Rust that reads it.
+    ///
+    /// Per BUCKET rather than per clipmap level: the sun's levels and a
+    /// local light's chain levels both get one, so a run sized to the
+    /// clipmap alone puts the survivors inside the overflow flags.
     ///
     /// 🔴 A counter buffer is one flat array of `u32` shared by four
     /// shaders and one `copy_buffer_to_buffer`, addressed by arithmetic
@@ -1392,9 +1432,9 @@ mod tests {
     /// one-word stride — and it took a screen full of squares to find.
     #[test]
     fn the_counter_runs_do_not_overlap() {
-        for levels in [1u32, 4, 17, 32] {
-            let n = levels as usize;
-            let slots = count_slots(levels) as usize;
+        for buckets in [1u32, 4, 25, 40] {
+            let n = buckets as usize;
+            let slots = count_slots(buckets) as usize;
             // Run one: the pages per level. Run two: the survivors,
             // written by the copy at the end of `record`. Run three:
             // the scatter's cells.
@@ -1402,17 +1442,17 @@ mod tests {
             let scatter = n * 2 + 5;
             assert!(
                 survivors + n <= scatter,
-                "the survivor run runs into the scatter run at {levels} levels",
+                "the survivor run runs into the scatter run at {buckets} buckets",
             );
             assert!(
                 scatter + n <= slots,
-                "the scatter run runs off the end at {levels} levels",
+                "the scatter run runs off the end at {buckets} buckets",
             );
         }
         // And the shader addresses the third run the same way `decode`
         // does. A comment claiming they match is not a check.
         assert!(
-            EXPAND.contains("page_counts[levels * 2u + 5u + level]"),
+            EXPAND.contains("page_counts[buckets * 2u + 5u + level]"),
             "`count_scatter` no longer writes where `decode` reads",
         );
     }
