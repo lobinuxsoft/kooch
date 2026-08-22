@@ -123,6 +123,21 @@ pub struct RasterCounts {
     pub tests: u64,
     /// The level that ran the most tests, and how many.
     pub worst: (u32, u64),
+    /// What the OTHER shape of the expansion would have cost: cells a
+    /// scatter would visit, summed over the levels.
+    ///
+    /// 🔴 Measured, not run. See `count_scatter` in `page_expand.wgsl`
+    /// for why the two shapes win at opposite ends of the chain and why
+    /// shipping one of them for every level cost two thirds of the
+    /// frame rate the last time it was guessed at.
+    pub scatter: u64,
+    /// Tests a per-level hybrid would run: the cheaper of the two
+    /// shapes at every level, summed.
+    ///
+    /// The gap between this and [`Self::tests`] is the entire prize on
+    /// offer, and it is the only number that says whether the hybrid is
+    /// worth building.
+    pub hybrid: u64,
 }
 
 #[repr(C)]
@@ -521,11 +536,20 @@ impl PageRasterizer {
         let cap = bucket(self.pool);
         let mut tests = 0u64;
         let mut worst = (0u32, 0u64);
+        let mut scatter = 0u64;
+        let mut hybrid = 0u64;
         for level in 0..levels {
             let pages = words[level].min(cap) as u64;
             let meshlets = words.get(levels + 5 + level).copied().unwrap_or(0) as u64;
+            let cells = words.get(levels * 2 + 5 + level).copied().unwrap_or(0) as u64;
             let work = pages * meshlets;
             tests += work;
+            scatter += cells;
+            // The choice a hybrid would make at this level, which is
+            // the only place the choice can be made: the two shapes
+            // cross over somewhere in the middle of the chain and
+            // neither end knows where.
+            hybrid += work.min(cells);
             if work > worst.1 {
                 worst = (level as u32, work);
             }
@@ -533,6 +557,8 @@ impl PageRasterizer {
         RasterCounts {
             tests,
             worst,
+            scatter,
+            hybrid,
             pages: words[..levels]
                 .iter()
                 .map(|&n| n.min(bucket(self.pool)))
@@ -571,7 +597,13 @@ fn count_slots(levels: u32) -> u32 {
     // was bringing them home together. Nothing is counted at dispatch
     // time: an atomic per thread would cost more than the number is
     // worth, and the product is exact anyway.
-    levels * 2 + 5
+    //
+    // The THIRD run is the cost of the shape this pass does not use —
+    // the cells a scatter would visit — so the two can be compared per
+    // level instead of guessed at. That one IS counted at dispatch
+    // time, because unlike the product it is not a number two buffers
+    // already hold.
+    levels * 3 + 5
 }
 
 /// The atlas: one square layer per camera.
@@ -1338,6 +1370,48 @@ mod tests {
             assert_eq!(name, their_name, "field order");
             assert_eq!(*offset as u32, *their_offset, "`{name}` starts elsewhere");
         }
+    }
+
+    /// The three runs of counters do not overlap, and the shader that
+    /// writes the third one agrees with the Rust that reads it.
+    ///
+    /// 🔴 A counter buffer is one flat array of `u32` shared by four
+    /// shaders and one `copy_buffer_to_buffer`, addressed by arithmetic
+    /// written out twice. The first run is per level, the second is
+    /// filled by a copy from `visible_counts`, the third is written by
+    /// `count_scatter`. Getting the base of the third wrong does not
+    /// fail: it lands in the survivor counts, which are plausible
+    /// numbers, and the panel reports a comparison built on the wrong
+    /// half of the buffer.
+    ///
+    /// This session already shipped one defect of exactly this shape —
+    /// `page_compact.wgsl` reading a two-word table entry with a
+    /// one-word stride — and it took a screen full of squares to find.
+    #[test]
+    fn the_counter_runs_do_not_overlap() {
+        for levels in [1u32, 4, 17, 32] {
+            let n = levels as usize;
+            let slots = count_slots(levels) as usize;
+            // Run one: the pages per level. Run two: the survivors,
+            // written by the copy at the end of `record`. Run three:
+            // the scatter's cells.
+            let survivors = n + 5;
+            let scatter = n * 2 + 5;
+            assert!(
+                survivors + n <= scatter,
+                "the survivor run runs into the scatter run at {levels} levels",
+            );
+            assert!(
+                scatter + n <= slots,
+                "the scatter run runs off the end at {levels} levels",
+            );
+        }
+        // And the shader addresses the third run the same way `decode`
+        // does. A comment claiming they match is not a check.
+        assert!(
+            EXPAND.contains("page_counts[levels * 2u + 5u + level]"),
+            "`count_scatter` no longer writes where `decode` reads",
+        );
     }
 
     /// Every buffer this pass copies OUT of declares that it can be.

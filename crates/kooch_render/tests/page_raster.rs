@@ -6,8 +6,8 @@
 //! belongs here rather than in a frame.
 
 use kooch_render::meshlet::GpuGlobalMeshPool;
-use kooch_render::shadow::pages::pool::{PAGE_CELL, PagePool, PoolConfig};
-use kooch_render::shadow::pages::raster::{PAGE_DEPTH_FORMAT, PAGE_FRONT_FACE, PageRasterizer};
+use kooch_render::shadow::pages::pool::{PagePool, PoolConfig, PAGE_CELL};
+use kooch_render::shadow::pages::raster::{PageRasterizer, PAGE_DEPTH_FORMAT, PAGE_FRONT_FACE};
 use kooch_render::shadow::pages::{ClipmapConfig, PageConfig};
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -105,8 +105,9 @@ fn the_counters_name_every_level() {
     // Per level, then bucket overflow, local pages, pairs, pair
     // overflow, pages owned by another camera — and then a second run
     // per level for the survivors each cull produced, which is the other
-    // half of the expansion's cost.
-    assert_eq!(raster.count_slots(), levels * 2 + 5);
+    // half of the expansion's cost, and a third for the cells a scatter
+    // would have visited instead.
+    assert_eq!(raster.count_slots(), levels * 3 + 5);
     let mut words = vec![0u32; raster.count_slots() as usize];
     words[0] = 7;
     words[1] = 5;
@@ -855,7 +856,7 @@ fn the_marking_is_recorded_before_the_shading() {
 /// diameter/texels is what `cascades.rs` fits.
 #[test]
 fn the_paged_shadow_resolves_like_a_cascade() {
-    use kooch_render::shadow::pages::{ClipmapConfig, PageConfig, level_below};
+    use kooch_render::shadow::pages::{level_below, ClipmapConfig, PageConfig};
 
     const CASCADE_TEXELS: f32 = 2048.0;
     const FIRST: f32 = 10.0;
@@ -979,6 +980,31 @@ fn the_counters_carry_the_expansions_cost() {
         "the worst level is the one that walks the most, not the one with the most pages"
     );
     assert_eq!(counts.pairs, 40);
+
+    // And the third run: what the OTHER shape would have cost, and the
+    // choice between them.
+    //
+    // 🔴 The numbers are picked so a GLOBAL choice and a PER-LEVEL one
+    // disagree. Level 3 is cheaper to scatter, level 9 is cheaper to
+    // pair; summed, pairing wins outright (1700 against 4050), so a
+    // hybrid that compared totals would pick pairing everywhere and
+    // save nothing. Comparing per level saves the 650 that level 3 was
+    // wasting. That distinction IS the feature — the last attempt at
+    // this picked one shape for the whole chain and cost two thirds of
+    // the frame rate.
+    words[levels * 2 + 5 + 3] = 50; // level 3: cheap to scatter
+    words[levels * 2 + 5 + 9] = 4000; // level 9: ruinous to scatter
+    let counts = raster.decode(&words, 0);
+    assert_eq!(counts.scatter, 4050, "the scatter's cells are summed raw");
+    assert_eq!(
+        counts.hybrid,
+        50 + 1000,
+        "the cheaper shape is chosen per level, not for the whole chain"
+    );
+    assert!(
+        counts.hybrid < counts.tests && counts.hybrid < counts.scatter,
+        "a per-level choice is at least as good as either shape alone"
+    );
     let _ = queue;
 }
 

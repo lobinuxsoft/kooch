@@ -129,6 +129,14 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     // axis is the orthographic span rather than the page's width: a
     // caster far above the page still writes into it, which is the whole
     // point of a shadow.
+    // Page index zero, which is one thread per survivor and exactly the
+    // fan-out a scatter would run at. Placed BEFORE the rejections
+    // below: the cost being counted is what the other shape would pay
+    // whether or not this pair survives.
+    if gid.x < meshlets {
+        count_scatter(level, levels, bounds, radius);
+    }
+
     let plane = sun_plane(bounds, basis);
     let along = dot(bounds - raster.eye.xyz, basis[2]);
     let half = rect.z * 0.5 + radius;
@@ -145,4 +153,53 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     pairs[slot] = vec2<u32>(level * raster.chain.z + gid.x / meshlets, packed);
+}
+
+/// What the OTHER shape of this pass would have cost, counted without
+/// running it.
+///
+/// # The two shapes
+///
+/// A meshlet has to reach the pages it overlaps, and there are exactly
+/// two ways to find them. The pass above PAIRS: every resident page
+/// against every survivor, one sphere-box test each, `pages ×
+/// meshlets` of them. The alternative SCATTERS: one thread per
+/// survivor walks the cells its own bounding sphere covers and looks
+/// each one up in the table, `sum over meshlets of cells` of them.
+///
+/// Neither wins everywhere, and that is the point. A page at level 0 is
+/// `base / side` wide — centimetres — so a metre-wide meshlet covers
+/// thousands of cells while only a handful of pages are resident:
+/// pairing wins by orders of magnitude. At level 12 a page is hundreds
+/// of metres wide, every meshlet lands in one cell, and pairing spends
+/// the whole level proving misses against pages the meshlet was never
+/// near.
+///
+/// 🔴 This counts the scatter's cells and does NOT scatter. The
+/// previous attempt at this shipped the scatter for every level at once
+/// on an unmeasured guess and cost two thirds of the frame rate. The
+/// number below is what decides the shape per level — and it is
+/// measured before anything is chosen, not after.
+///
+/// Free to run: it rides the threads that already exist for page index
+/// zero, so it adds arithmetic to `meshlets` threads and no dispatch.
+fn count_scatter(level: u32, levels: u32, bounds: vec3<f32>, radius: f32) {
+    let side = raster.space.z;
+    let basis = sun_basis(raster.sun.xyz);
+    let centre = sun_centre(raster.eye.xyz, basis, raster.world.x, side, level);
+    let extent = raster.world.x * exp2(f32(level));
+    let plane = sun_plane(bounds, basis);
+
+    // The same mapping `sun_page_for` marks with, widened by the
+    // sphere: the cells a scatter would have to visit.
+    let lo = (plane - vec2<f32>(radius) - centre) / extent + vec2<f32>(0.5);
+    let hi = (plane + vec2<f32>(radius) - centre) / extent + vec2<f32>(0.5);
+    if hi.x < 0.0 || hi.y < 0.0 || lo.x >= 1.0 || lo.y >= 1.0 {
+        return;
+    }
+    let top = f32(side) - 1.0;
+    let first = clamp(floor(lo * f32(side)), vec2<f32>(0.0), vec2<f32>(top));
+    let last = clamp(floor(hi * f32(side)), vec2<f32>(0.0), vec2<f32>(top));
+    let span = last - first + vec2<f32>(1.0);
+    atomicAdd(&page_counts[levels * 2u + 5u + level], u32(span.x * span.y));
 }

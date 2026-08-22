@@ -893,6 +893,25 @@ fn shadow_page_readout(
                  WORSE for the sun, because a meshlet's rect covers up to 16384 cells at \
                  the finest clipmap levels while only twenty pages are resident there.",
             );
+            // 🔴 The counted cost of the shape this pass does NOT use.
+            // Both numbers are measured every frame so the choice
+            // between them is arithmetic instead of an opinion — which
+            // is the thing that was missing the last time one of them
+            // shipped everywhere at once.
+            let save = raster.tests.saturating_sub(raster.hybrid);
+            let cut = save as f32 / raster.tests.max(1) as f32 * 100.0;
+            ui.label(
+                egui::RichText::new(format!(
+                    "scatter would run {} · per-level best {} ({cut:.0}% off)",
+                    thousands(raster.scatter),
+                    thousands(raster.hybrid),
+                ))
+                .small()
+                .weak(),
+            )
+            .on_hover_text(
+                "There are two ways to find which meshlet belongs in which page.                  PAIRING walks every resident page against every survivor, which is                  what runs today. SCATTERING walks the cells each meshlet's bounds                  cover and looks them up, which is what the first number would cost —                  counted here without being run.                  Neither wins everywhere: a page at level 0 is centimetres wide so one                  meshlet covers thousands of cells against a handful of resident pages,                  while at level 12 a page is hundreds of metres and every meshlet lands                  in exactly one cell.                  The second number takes the cheaper shape at each level separately, and                  the percentage is the whole prize a hybrid has to offer.",
+            );
         }
         if raster.local > 0 {
             ui.label(
