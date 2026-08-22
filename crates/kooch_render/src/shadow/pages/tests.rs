@@ -354,7 +354,7 @@ fn the_atlas_is_square_enough() {
 fn the_cascades_are_not_drawn_for_a_paged_sun() {
     let pass = include_str!("../pass.rs");
     let gate = pass
-        .find("if prepared.frame.cascades_enabled {")
+        .find("if prepared.draw_cascades {")
         .expect("`ShadowPass::record` no longer gates on the flag");
     let render = pass[gate..]
         .find("self.rasterizer.render(")
@@ -379,10 +379,52 @@ fn the_cascades_are_not_drawn_for_a_paged_sun() {
         );
     }
 
-    // And the decision itself: the pages are what turns the flag off.
+    // 🔴 And the gate is its OWN flag. `cascades_enabled` means the
+    // sun's data in the frame uniform is valid, and
+    // `IntiFrame::with_optional_shadows` turns `shadows_enabled` on
+    // when it is — a flag `inti_shadow` checks BEFORE it branches to
+    // the pages. Folding the raster's decision into it turned the whole
+    // sun off: fully lit everywhere, cascades and pages alike, which is
+    // exactly what shipped.
     let frame = include_str!("../../meshlet/render_stage/frame/shadows.rs");
     assert!(
-        frame.contains("sun.is_some() && !settings.virtual_pages"),
-        "`cascades_enabled` stopped consulting `virtual_pages`"
+        frame.contains("let draw_cascades = cascades_enabled && !settings.virtual_pages;"),
+        "the raster's gate stopped consulting `virtual_pages`"
+    );
+    assert!(
+        frame.contains("let cascades_enabled = sun.is_some();"),
+        "`cascades_enabled` is deciding something other than whether there is a sun; \
+         `shadows_enabled` rides on it and turning it off turns the PAGES off too"
+    );
+}
+
+/// The flag the raster's gate must not borrow.
+///
+/// 🔴 What shipped: gating the cascade draw on `cascades_enabled` and
+/// then computing that flag from `virtual_pages`. `with_optional_shadows`
+/// only calls `with_shadows` — the one place `shadows_enabled` is set —
+/// when it is true, and `inti_shadow` returns fully lit on
+/// `shadows_enabled` BEFORE it reaches the branch that picks pages over
+/// cascades. So turning the cascade DRAW off turned every shadow in the
+/// scene off, which is a whole-frame regression with no error anywhere.
+#[test]
+fn the_sampling_switch_is_not_the_drawing_switch() {
+    let reader = include_str!("../../../../kooch_lighting/shaders/inti_pbr.wgsl");
+    let branch = reader
+        .find("inti_pages.sun.w > 0.5")
+        .expect("the page branch is gone from `inti_shadow`");
+    let guard = reader
+        .find("inti.shadows_enabled == 0u")
+        .expect("the master switch is gone from `inti_shadow`");
+    assert!(
+        guard < branch,
+        "the page branch now runs before the `shadows_enabled` check; this test          guards an ordering that no longer exists"
+    );
+
+    // The one place that flag is set, and the condition it rides on.
+    let frame = include_str!("../../../../kooch_lighting/src/frame.rs");
+    assert!(
+        frame.contains("let frame = if s.cascades_enabled {"),
+        "`with_optional_shadows` no longer gates `with_shadows` on `cascades_enabled`;          the coupling this test exists for has moved"
     );
 }

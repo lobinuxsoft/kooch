@@ -37,6 +37,13 @@ pub struct PreparedShadows {
     /// One per shadow-casting point light this frame (#778). Six draws
     /// each, so an empty list is worth having.
     pub points: Vec<PointShadowDraw>,
+    /// Whether the cascade layers get filled.
+    ///
+    /// 🔴 NOT `frame.cascades_enabled`. That one says the sun's data in
+    /// the frame uniform is valid, and `shadows_enabled` — which
+    /// `inti_shadow` checks before it branches to the pages — rides on
+    /// it. Reusing it to skip the draw turned every shadow off.
+    draw_cascades: bool,
     /// What goes in the frame UBO. Handed to
     /// [`kooch_lighting::GpuLights::update`].
     pub frame: kooch_lighting::FrameShadows,
@@ -113,6 +120,10 @@ impl ShadowPass {
         aspect: f32,
         sun_direction: Vec3,
         cascades_enabled: bool,
+        // Whether the cascade layers are worth filling. Distinct from
+        // `cascades_enabled`, which says the frame uniform's sun data is
+        // valid — see the call site.
+        draw_cascades: bool,
         max_distance: f32,
         first_cascade_distance: f32,
         sun_softness: f32,
@@ -181,6 +192,7 @@ impl ShadowPass {
             cascades,
             spots: draws,
             points: point_draws,
+            draw_cascades,
         }
     }
 
@@ -219,7 +231,7 @@ impl ShadowPass {
         // point cubes that follow share this atlas and this rasteriser
         // and have no page raster yet, so the allocation stays and so do
         // their draws.
-        if prepared.frame.cascades_enabled {
+        if prepared.draw_cascades {
             self.rasterizer.render(
                 device,
                 queue,
