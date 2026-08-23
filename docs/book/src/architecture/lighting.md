@@ -1200,25 +1200,50 @@ Three things follow, and none of them is optional:
   hands *both* passes the second value — the engine shipped that bug once
   already. A camera writing its own range cannot be overwritten.
 
-### What is deliberately not built yet
+### The seating plan — who gets a slot under pressure (#942)
 
-- ⚠️ **Caching across frames**, which is the optimisation virtual shadow
-  maps exist for — and the prior art is clear that it is the *mechanism*,
-  not a refinement. UE5 keeps a page alive while
-  `PhysicalPageRequestedAge <= MaxPageAgeSinceLastRequest` and allocates
-  by popping an **LRU** list; when that list is empty it simply writes
-  nothing and the sampler falls back to a coarser level. There is no
-  priority by light, by level or by distance anywhere in it. Our pool is
-  refilled from scratch every frame, so a static shadow is re-rasterised
-  every frame, and allocation is first-come — which means *whichever
-  thread the GPU scheduled first*.
-- 🔴 **Priority inside a slice.** Allocation is still first-come, which
-  on a GPU means *whichever thread the scheduler ran first*. What it no
-  longer does is spend the pool on pages nothing draws: a local light's
-  page is marked — the census is what says what a hundred casting lights
-  would cost — but only the sun's pages claim a physical slot, because
-  only the sun is rasterised. Before that split, local pages held 991 of
-  each camera's 1024 slots and the sun was left 33.
+Both of the gaps this section used to list are closed: pages persist
+across frames (see *Cached pages are effectively free* below), and
+allocation is no longer first-come. What replaced first-come is worth
+stating precisely, because the failure it ended was measured: **7 674
+pages wanted against a 1 024-page slice**, a steady state of `1022
+reused · 0 new · 0 evicted`, and 6 652 requests starving *forever* —
+whoever claimed a slot first kept it, because a resident page is
+re-marked every frame and never ages. Moving the camera produced
+requests that never landed; the shadows visibly lagged the view.
+
+Three dispatches at the tail of the marking pass, in an order that IS
+the algorithm:
+
+| Pass | Threads | What it decides |
+|---|---|---|
+| `plan_view` | one | prefix-sums the frame's demand histogram against the slice's budget: the **cutoff rank**, the quota within it, and the spare the cache may keep |
+| `preempt_view` | one per table entry | evicts every resident the plan did not fund — and lets residents of the cutoff rank take the quota **before** any newcomer, so a page with content beats one without |
+| `adopt_view` | one per table entry | seats every marked page the plan funded; what is past the cutoff is **denied and counted** |
+
+The rank is the level, coarsest first: the sun's clipmap (ranks
+`0..17`) ahead of every local light, and within any chain the coarse
+levels ahead of the fine — so under pressure a consumer loses its
+finest detail before it loses coverage, and the sun (the one consumer
+every frame has) never loses to a lamp. The demand histogram is
+recorded where the mark bit is won, which makes the plan one 32-bucket
+loop rather than a sort.
+
+Two consequences the counters pin:
+
+- **The arithmetic closes.** The plan funds exactly `slice` seats and
+  the preemption frees everything unfunded, so `page_alloc` never
+  misses: `overflow` stays zero and every shortfall is a *denial* with
+  a rank on it — the panel says what was sacrificed, not just how much.
+- **A move reseats in one frame.** Stale pages stop being marked, the
+  plan stops funding them, and `preempt_view` hands their seats to the
+  new view the same frame — not `max_age` frames later.
+
+What #942 does **not** do is make 7 674 fit into 1 024. That is #943's
+resolution bias (serve every light coarser until the demand fits) and
+#944's coverage gate (a light lighting forty pixels casts no pages);
+until those land, a denial means the finest levels render from a
+coarser resident page when one exists, and unshadowed when none does.
 
 ## Rasterising into the pages — the depth raster (#866)
 

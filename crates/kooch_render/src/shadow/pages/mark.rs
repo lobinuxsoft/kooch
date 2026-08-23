@@ -39,6 +39,10 @@ const GROUP: u32 = 8;
 /// swept). The rest spare, because a storage buffer is rounded up
 /// anyway.
 const COUNTERS: u64 = 16;
+/// Words per view in the rank-state buffer: a 32-bucket demand
+/// histogram, the cutoff, the quota and the spare, padded to 36.
+/// Mirrors `RANK_WORDS` in the shader.
+const RANK_WORDS: u64 = 36;
 
 /// `KOOCH_PAGE_MARKING=1`, read once.
 ///
@@ -150,12 +154,21 @@ pub struct PageMarker {
     /// the shading. See `paint_view` in the shader for why it cannot go
     /// with the marking any more.
     paint: wgpu::ComputePipeline,
+    /// The three seat passes (#942): rank the frame's demand, clear the
+    /// seats the plan does not fund, then seat what it does. Allocation
+    /// lives HERE now, not in the marking — first-come is not an order.
+    plan: wgpu::ComputePipeline,
+    preempt: wgpu::ComputePipeline,
+    adopt: wgpu::ComputePipeline,
     /// The bind group the marking built, kept so the paint dispatch can
     /// reuse it without rebuilding every resource binding.
     bound: Option<wgpu::BindGroup>,
     view: wgpu::Buffer,
     marks: wgpu::Buffer,
     counters: wgpu::Buffer,
+    /// The seating plan (#942): per-view demand histogram by rank plus
+    /// the cutoff the plan chose. Cleared per view per frame.
+    rank: wgpu::Buffer,
     /// The physical pool and its table, written by the same dispatch
     /// that marks. See [`pool`](super::pool) for why the allocation
     /// happens here and not in a pass of its own.
@@ -204,12 +217,18 @@ impl PageMarker {
         let pipeline = compute("mark_main");
         let clear = compute("age_view");
         let paint = compute("paint_view");
+        let plan = compute("plan_view");
+        let preempt = compute("preempt_view");
+        let adopt = compute("adopt_view");
 
         Self {
             layout,
             pipeline,
             clear,
             paint,
+            plan,
+            preempt,
+            adopt,
             bound: None,
             view: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_mark_view"),
@@ -218,6 +237,7 @@ impl PageMarker {
                 mapped_at_creation: false,
             }),
             marks: marks_buffer(device, config, clipmap, 1, 1),
+            rank: rank_buffer(device, 1),
             pool: PagePool::new(device, PoolConfig::default()),
             counters: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_mark_counters"),
@@ -348,6 +368,7 @@ impl PageMarker {
         let view = view.min(views - 1);
         if (slots, views) != self.capacity {
             self.marks = marks_buffer(device, self.config, self.clipmap, slots, views);
+            self.rank = rank_buffer(device, views);
             self.capacity = (slots, views);
         }
         // The flat table is one entry per addressable page, so its size
@@ -439,6 +460,7 @@ impl PageMarker {
                     binding: 8,
                     resource: wgpu::BindingResource::TextureView(paint.target),
                 },
+                buffer_entry(9, &self.rank),
                 buffer_entry(10, self.pool.slots()),
                 buffer_entry(11, self.pool.alloc()),
             ],
@@ -449,6 +471,13 @@ impl PageMarker {
         // multiple of 32 for — so the reset is an offset clear.
         let words = view_span.div_ceil(32) * 4;
         encoder.clear_buffer(&self.marks, words * view as u64, Some(words));
+        // This view's demand histogram and plan. Demand is a frame's
+        // question; the residency it decides persists in the table.
+        encoder.clear_buffer(
+            &self.rank,
+            view as u64 * RANK_WORDS * 4,
+            Some(RANK_WORDS * 4),
+        );
         // Every counter here is a per-view quantity now, the pool's
         // claims included: a view allocates out of its own slice.
         encoder.clear_buffer(&self.counters, 0, None);
@@ -472,6 +501,19 @@ impl PageMarker {
             pass.set_pipeline(&self.pipeline);
             let threads = (viewport.0.div_ceil(rate), viewport.1.div_ceil(rate));
             pass.dispatch_workgroups(threads.0.div_ceil(GROUP), threads.1.div_ceil(GROUP), 1);
+            // The seat passes (#942), in an order that is the
+            // algorithm: rank the demand, clear what the plan does not
+            // fund, seat what it does. Dispatch boundaries are the
+            // barriers between them.
+            let entries = u32::try_from(view_span)
+                .unwrap_or(u32::MAX)
+                .div_ceil(GROUP * GROUP);
+            pass.set_pipeline(&self.plan);
+            pass.dispatch_workgroups(1, 1, 1);
+            pass.set_pipeline(&self.preempt);
+            pass.dispatch_workgroups(entries, 1, 1);
+            pass.set_pipeline(&self.adopt);
+            pass.dispatch_workgroups(entries, 1, 1);
         }
         // Kept for `record_paint`, which runs after the shading and needs
         // every one of these bindings — the depth, the view uniform and
@@ -579,6 +621,16 @@ fn marks_buffer(
     })
 }
 
+/// One `RANK_WORDS` run per view. Persistent only within a frame.
+fn rank_buffer(device: &wgpu::Device, views: u32) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("page_rank_state"),
+        size: views as u64 * RANK_WORDS * 4,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
 fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry {
         binding,
@@ -637,10 +689,12 @@ fn layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 },
                 count: None,
             },
-            // Binding 9 held the hash table's keys and is retired: the
-            // flat table needs only its cells (10) and the allocator
-            // (11), and the freed slot is headroom against the
-            // eight-per-stage storage-buffer limit this pass sits on.
+            // Binding 9 held the hash table's keys, was retired with the
+            // flat table, and is spent again on the seating plan (#942)
+            // — which puts this layout AT the eight-per-stage
+            // storage-buffer downlevel limit. The next buffer this pass
+            // wants has to fold into an existing one.
+            storage(9, false),
             storage(10, false),
             storage(11, false),
         ],
@@ -773,6 +827,9 @@ impl Readback {
                         leaked: words[10],
                         alive: words[11],
                         evicted: words[12],
+                        denied: words[13],
+                        preempted: words[14],
+                        cutoff: words[15],
                         capacity,
                     },
                     size,

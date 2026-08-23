@@ -751,7 +751,7 @@ fn a_local_light_claims_its_pages() {
 }
 
 #[test]
-fn a_full_pool_reports_overflow() {
+fn a_full_pool_denies_by_rank() {
     let Some((device, queue)) = device() else {
         eprintln!("no adapter; skipping");
         return;
@@ -781,20 +781,28 @@ fn a_full_pool_reports_overflow() {
         small.slice()
     );
     assert_eq!(counts.pool.allocated(), small.slice(), "the pool filled");
-    // 🔴 `claims` counts the ones that GOT a slot now, not the ones that
-    // asked: `page_touch` allocates before it inserts, so a request the
-    // pool could not answer never reaches the table and never counts.
-    // `overflow` is the rest, and the two together are the requests.
+    // 🔴 With the seating plan (#942) a request the slice cannot fund is
+    // DENIED at its rank, not dropped at the allocator: the plan funds
+    // exactly `slice` seats, so the free list never runs dry and
+    // `overflow` — the allocator's own miss — stays zero.
     assert_eq!(
         counts.pool.claims + counts.pool.reused,
         small.slice(),
         "the pool handed out every slot it had"
     );
     assert!(
-        counts.pool.overflow > 0,
+        counts.pool.denied > 0,
         "a pool of {} could not answer {} requests and said nothing",
         small.slice(),
         counts.resident
+    );
+    assert!(
+        counts.pool.cutoff < 32,
+        "denials without a cutoff: the plan did not run"
+    );
+    assert_eq!(
+        counts.pool.overflow, 0,
+        "the allocator missed — the plan's arithmetic does not close"
     );
 }
 
@@ -1327,9 +1335,10 @@ fn a_resident_page_keeps_its_slot() {
 /// unshadowed, and come back when something finally ages out — a shadow
 /// that blinks in and out, which is what the user reported.
 ///
-/// What it pins is the failure, not a policy: if it fires, the pool
-/// needs eviction under PRESSURE — Epic's `PHYSICAL_PAGE_LIST_LRU` —
-/// rather than eviction by age alone.
+/// What it pins is the failure, not a policy. Eviction under pressure
+/// exists now — `preempt_view`, #942 — so a walking camera's stale
+/// pages are reseated the frame the plan stops funding them; what this
+/// asserts is that the reseating actually keeps up.
 #[test]
 fn a_moving_camera_does_not_exhaust_the_pool() {
     let Some((device, queue)) = device() else {
@@ -1351,7 +1360,8 @@ fn a_moving_camera_does_not_exhaust_the_pool() {
     );
 
     let peak = frames.iter().map(|c| c.pool.allocated()).max().unwrap_or(0);
-    let spilled: u32 = frames.iter().map(|c| c.pool.overflow).sum();
+    // A denial is starvation with a name on it — it counts the same.
+    let spilled: u32 = frames.iter().map(|c| c.pool.overflow + c.pool.denied).sum();
     eprintln!(
         "peak {peak} of {} slots, {spilled} pages went unallocated",
         frames[0].pool.capacity
@@ -1360,5 +1370,142 @@ fn a_moving_camera_does_not_exhaust_the_pool() {
         spilled, 0,
         "{spilled} pages found no slot; the pool peaked at {peak} of {}",
         frames[0].pool.capacity
+    );
+}
+
+/// The CPU mirror of `entry_rank` in `page_mark.wgsl`, decode for
+/// decode, so the test can name the rank of every survivor.
+fn entry_rank(config: &PageConfig, clip_levels: u32, within: u32) -> u32 {
+    let stride = (config.local_face_pages() * 6).div_ceil(32) * 32;
+    // The tests run well under 64 lights, so the padded slot count is
+    // the first step: 64.
+    let sun_base = 64 * stride;
+    if within >= sun_base {
+        let cell = config.side(0).pow(2);
+        let level = ((within - sun_base) / cell).min(clip_levels - 1);
+        return (clip_levels - 1 - level).min(31);
+    }
+    let face = (within % stride) % config.local_face_pages();
+    let mut level = config.local_floor();
+    let mut next = config.side(level).pow(2);
+    while level + 1 < config.levels() && face >= next {
+        level += 1;
+        next += config.side(level).pow(2);
+    }
+    (clip_levels + (config.levels() - 1 - level)).min(31)
+}
+
+/// Under pressure, what survives is the top of the ranking — never a
+/// page the plan ranked below one it turned away. The issue's own
+/// acceptance test: plant more requests than slots, read the table,
+/// and check every resident against the cutoff the plan reported.
+#[test]
+fn the_survivors_are_the_top_ranks() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    // A lamp alongside the sun, so the demand spans both classes and
+    // the local ranks are really in the contest they are meant to lose.
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+    let small = PoolConfig { pages: 4, views: 1 };
+    let (marker, counts) = run_pool(
+        &device,
+        &queue,
+        &resources,
+        0.6,
+        Some(Vec3::new(0.3, -1.0, 0.2)),
+        400,
+        small,
+    );
+    assert!(counts.pool.denied > 0, "no pressure, nothing to rank");
+    let cutoff = counts.pool.cutoff;
+    assert!(cutoff < 32, "denials without a cutoff");
+
+    let config = PageConfig::default();
+    let clip_levels = ClipmapConfig::default().levels;
+    let cells = read_words(&device, &queue, marker.pool().slots());
+    let mut residents = 0;
+    for entry in 0..cells.len() / PAGE_CELL as usize {
+        if cells[entry * PAGE_CELL as usize] == 0 {
+            continue;
+        }
+        residents += 1;
+        let rank = entry_rank(&config, clip_levels, entry as u32);
+        assert!(
+            rank <= cutoff,
+            "entry {entry} of rank {rank} kept its seat past the cutoff {cutoff}"
+        );
+    }
+    assert_eq!(residents, small.slice(), "the slice seated exactly itself");
+}
+
+/// A saturated pool reseats the frame the camera moves: the new view's
+/// pages take their seats from the stale ones IN THE SAME FRAME, not
+/// after `max_age` lets them go. The starvation this replaces sat at
+/// `0 new` forever while 6 652 requests waited.
+#[test]
+fn a_saturated_pool_reseats_on_move() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+    let small = PoolConfig { pages: 4, views: 1 };
+    let eye = Vec3::ZERO;
+    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let proj = projection();
+    let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+    let mut lights = GpuLights::new(&device);
+    let mut frame = kooch_lighting::LightFrame::extract(&resources);
+    lights.update(&device, &queue, &resources, camera, None, &mut frame);
+    let target = paint_target(&device);
+    let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
+    marker.set_pool(&device, small);
+
+    // Two frames at two depths: the surface moves, so the second frame
+    // wants pages the first one never marked — against a full slice.
+    let mut last = None;
+    for (index, depth) in [0.6f32, 0.15].into_iter().enumerate() {
+        marker.set_frame(index as u32);
+        let depth_view = depth_texture(&device, &queue, depth);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            Some(Vec3::new(0.3, -1.0, 0.2)),
+            (SIZE, SIZE),
+            0,
+            1,
+            400,
+            Paint {
+                target: &target,
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        marker.poll();
+        wait(&device);
+        marker.poll();
+        last = marker.last();
+    }
+    let counts = last.expect("the counters came back");
+    assert!(
+        counts.pool.claims > 0,
+        "the camera moved against a full pool and nothing reseated: {:?}",
+        counts.pool
+    );
+    assert!(
+        counts.pool.preempted > 0,
+        "new pages were seated but no stale resident paid for them: {:?}",
+        counts.pool
     );
 }

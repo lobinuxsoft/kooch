@@ -142,6 +142,42 @@ struct PageCell {
 // what a page's residency survives on; a `clear_buffer` over them every
 // frame is exactly the non-persistent pool this replaces.
 @group(0) @binding(11) var<storage, read_write> alloc: array<atomic<u32>>;
+// The seating plan, one run of `RANK_WORDS` per view: a demand
+// histogram by rank, then the cutoff the plan chose, the quota left
+// within the cutoff rank, and the spare the unmarked cache may keep.
+// Cleared per view per frame — demand is a frame's question. #942.
+//
+// ⚠️ This spends the last storage-buffer slot under the
+// eight-per-stage downlevel limit the layout's own comment reserves.
+@group(0) @binding(9) var<storage, read_write> rank_state: array<atomic<u32>>;
+
+// ── Rank: who is seated when the frame wants more than the slice ──
+//
+// Smaller rank = seated first. The sun's clipmap ranks ahead of every
+// local light — the one consumer every frame has, and the consumer
+// whose loss the last starvation made unmissable — and within any
+// chain the COARSE levels rank ahead of the fine, so under pressure a
+// consumer loses its finest detail before it loses coverage. The
+// alternative — interleaving sun and local octaves — would trade
+// near-camera sun detail for lamp pages, which is a regression against
+// what the pool does today; revisit when #943's bias makes demand fit.
+const RANKS: u32 = 32u;
+const RANK_WORDS: u32 = 36u;
+const RANK_CUTOFF: u32 = 32u;
+const RANK_QUOTA: u32 = 33u;
+const RANK_SPARE: u32 = 34u;
+
+fn rank_base() -> u32 {
+    return pages.sampling.w * RANK_WORDS;
+}
+
+fn rank_sun(level: u32) -> u32 {
+    return min(pages.chain.w - 1u - level, RANKS - 1u);
+}
+
+fn rank_local(level: u32) -> u32 {
+    return min(pages.chain.w + (pages.chain.z - 1u - level), RANKS - 1u);
+}
 
 // The words of a table entry. `PAGE_CELL` is in `page_table.wgsl`
 // because the READER indexes the same buffer. The first word stores
@@ -264,13 +300,13 @@ fn page_touch(page: u32) -> u32 {
         atomicAdd(&counters[7], 1u);
         return stored - 1u;
     }
-    let slot = page_alloc();
-    if slot == PAGE_MISS {
-        return PAGE_MISS;
-    }
-    page_stamp(page, slot, frame);
-    atomicAdd(&counters[8], 1u);
-    return slot;
+    // Absent: demand only. Allocating here would be first-come-forever
+    // — the request that happened to run first keeps its slot for the
+    // rest of the session while everyone else starves (#942, measured
+    // at 6 652 requests starving against a 1 024 slice). `adopt_view`
+    // seats the frame's marked pages AFTER `plan_view` has ranked the
+    // whole frame's demand.
+    return PAGE_MISS;
 }
 
 // One bit, set once. The return says whether this thread is the one that
@@ -391,7 +427,9 @@ fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     // against the lamp's own frustum, and the depth pass builds that
     // frustum from the light the page names. Turned on last, on
     // purpose.
-    mark_bit(page.x, true);
+    if mark_bit(page.x, true) {
+        atomicAdd(&rank_state[rank_base() + rank_local(page.y)], 1u);
+    }
     return page;
 }
 
@@ -444,7 +482,9 @@ fn sun_page_for(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
 // One page of the sun's clipmap, marked.
 fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let page = sun_page_for(slot, world, wanted);
-    mark_bit(page.x, true);
+    if mark_bit(page.x, true) {
+        atomicAdd(&rank_state[rank_base() + rank_sun(page.y)], 1u);
+    }
     return page;
 }
 
@@ -670,4 +710,139 @@ fn age_view(@builtin(global_invocation_id) id: vec3<u32>) {
     atomicStore(&table_cells[entry * PAGE_CELL], PAGE_ABSENT);
     page_release(stored - 1u);
     atomicAdd(&counters[12], 1u);
+}
+
+// Whether the frame marked this page, without claiming the bit.
+fn mark_test(index: u32) -> bool {
+    let word = index / 32u;
+    if word >= arrayLength(&marks) {
+        return false;
+    }
+    return (atomicLoad(&marks[word]) & (1u << (index % 32u))) != 0u;
+}
+
+// The rank of a table entry, decoded from its index within the view —
+// the inverse of `local_page_for`/`sun_page_for`'s address arithmetic.
+// The seat passes walk entries, and an entry does not carry its level.
+fn entry_rank(within: u32) -> u32 {
+    let sun_base = pages.sampling.y * pages.strides.z;
+    if within >= sun_base {
+        let cell = pages.strides.x * pages.strides.x;
+        let level = min((within - sun_base) / cell, pages.chain.w - 1u);
+        return rank_sun(level);
+    }
+    // Which level of a face's chain the offset falls in: the running
+    // sum `level_base` climbs from the floor, at most `chain.z` steps.
+    let face = (within % pages.strides.z) % pages.strides.y;
+    var level = local_level_floor(pages.chain.y);
+    var next = level_base(level) + level_side(level) * level_side(level);
+    while level + 1u < pages.chain.z && face >= next {
+        level = level + 1u;
+        next = level_base(level) + level_side(level) * level_side(level);
+    }
+    return rank_local(level);
+}
+
+// Turns the demand histogram into a seating plan: how deep down the
+// ranks this view's slice reaches. One thread — RANKS is 32 and the
+// loop IS the prefix sum; a parallel scan here would cost more to
+// coordinate than it computes.
+@compute @workgroup_size(1, 1, 1)
+fn plan_view() {
+    let base = rank_base();
+    let budget = pages.pool.w;
+    var used = 0u;
+    var cutoff = RANKS;
+    var quota = 0u;
+    for (var r = 0u; r < RANKS; r = r + 1u) {
+        let d = atomicLoad(&rank_state[base + r]);
+        if used + d > budget {
+            cutoff = r;
+            quota = budget - used;
+            used = budget;
+            break;
+        }
+        used = used + d;
+    }
+    atomicStore(&rank_state[base + RANK_CUTOFF], cutoff);
+    atomicStore(&rank_state[base + RANK_QUOTA], quota);
+    atomicStore(&rank_state[base + RANK_SPARE], budget - used);
+    atomicStore(&counters[15], cutoff);
+}
+
+// Clears the seats the plan did not fund. Runs AFTER the plan and
+// BEFORE `adopt_view`, and that order is the stability: a resident of
+// the cutoff rank claims the quota ahead of any newcomer, so at equal
+// importance a page WITH content beats a page without and a constant
+// demand keeps a constant resident set.
+@compute @workgroup_size(MARK_GROUP * MARK_GROUP, 1, 1)
+fn preempt_view(@builtin(global_invocation_id) id: vec3<u32>) {
+    let within = id.x;
+    if within >= view_span() { return; }
+    let entry = view_base() + within;
+    let stored = atomicLoad(&table_cells[entry * PAGE_CELL]);
+    if stored == PAGE_ABSENT { return; }
+    let base = rank_base();
+    if mark_test(entry) {
+        let cutoff = atomicLoad(&rank_state[base + RANK_CUTOFF]);
+        let rank = entry_rank(within);
+        if rank < cutoff { return; }
+        if rank == cutoff {
+            // Same take-then-test as `page_alloc`: the old value says
+            // whether the take was funded.
+            let quota = atomicSub(&rank_state[base + RANK_QUOTA], 1u);
+            if quota != 0u && quota <= pages.pool.w { return; }
+            atomicAdd(&rank_state[base + RANK_QUOTA], 1u);
+        }
+    } else {
+        // Unrequested this frame. It stays as CACHE only while the
+        // slice has room after the frame's own demand is seated —
+        // `age_view` already dropped what went stale, this is the
+        // pressure valve on the rest. Epic keeps cached pages the same
+        // way: only in the space the requests leave over.
+        let spare = atomicSub(&rank_state[base + RANK_SPARE], 1u);
+        if spare != 0u && spare <= pages.pool.w { return; }
+        atomicAdd(&rank_state[base + RANK_SPARE], 1u);
+    }
+    atomicStore(&table_cells[entry * PAGE_CELL], PAGE_ABSENT);
+    page_release(stored - 1u);
+    atomicAdd(&counters[14], 1u);
+}
+
+// Seats this frame's marked pages: everything under the cutoff gets a
+// slot, the cutoff rank competes for what the residents left of the
+// quota, and everything past it is DENIED and counted — the panel's
+// answer to who the slice turned away. The arithmetic closes by
+// construction: the plan funded at most `budget` seats and the
+// preemption freed everything unfunded, so a funded request cannot
+// find the free list empty.
+@compute @workgroup_size(MARK_GROUP * MARK_GROUP, 1, 1)
+fn adopt_view(@builtin(global_invocation_id) id: vec3<u32>) {
+    let within = id.x;
+    if within >= view_span() { return; }
+    let entry = view_base() + within;
+    if !mark_test(entry) { return; }
+    if atomicLoad(&table_cells[entry * PAGE_CELL]) != PAGE_ABSENT { return; }
+    let base = rank_base();
+    let cutoff = atomicLoad(&rank_state[base + RANK_CUTOFF]);
+    let rank = entry_rank(within);
+    if rank > cutoff {
+        atomicAdd(&counters[13], 1u);
+        return;
+    }
+    if rank == cutoff {
+        let quota = atomicSub(&rank_state[base + RANK_QUOTA], 1u);
+        if quota == 0u || quota > pages.pool.w {
+            atomicAdd(&rank_state[base + RANK_QUOTA], 1u);
+            atomicAdd(&counters[13], 1u);
+            return;
+        }
+    }
+    let slot = page_alloc();
+    if slot == PAGE_MISS {
+        atomicAdd(&counters[13], 1u);
+        return;
+    }
+    page_stamp(entry, slot, pages.life.x);
+    atomicAdd(&counters[8], 1u);
 }

@@ -879,23 +879,37 @@ fn shadow_page_readout(
     // were separated, local pages took 991 of each camera's 1024 slots
     // and the sun got 33 — a pool reporting itself full while doing
     // nothing.
-    let unspent = counts.pool.unspent(counts.resident);
-    if unspent > 0 {
+    if counts.pool.denied > 0 {
         ui.label(
             egui::RichText::new(format!(
-                "{} of them are local lights — marked, not allocated",
-                unspent
+                "{} denied by rank — the plan funded down to rank {}",
+                counts.pool.denied, counts.pool.cutoff
+            ))
+            .small()
+            .color(egui::Color32::from_rgb(230, 190, 90)),
+        )
+        .on_hover_text(
+            "The frame wanted more pages than this view's slice holds, so the seating plan \
+             (#942) ranked the demand and funded it coarsest-first: the sun's clipmap ahead \
+             of every local light, and within any chain the coarse levels ahead of the fine. \
+             What was denied is the finest detail, never a whole light's coverage — and the \
+             number to shrink it is #943's resolution bias, not a bigger pool.",
+        );
+    }
+    if counts.pool.preempted > 0 {
+        ui.label(
+            egui::RichText::new(format!(
+                "{} residents preempted — their seat went to a higher rank",
+                counts.pool.preempted
             ))
             .small()
             .weak(),
         )
         .on_hover_text(
-            "Local lights are counted so the census stays honest about what many casting \
-             lights would cost, but the raster only draws the sun, so they claim no physical \
-             page: a slot handed to one is a slot nothing writes and nothing samples. Epic \
-             states the same rule as a pass — `PruneLightGridCS` prunes the light grid down \
-             to the lights that HAVE a virtual shadow map before anything marks. The gate \
-             moves the day the local raster lands.",
+            "Pages evicted by PRESSURE rather than by age: the plan did not fund their rank \
+             this frame. A camera that stopped moving should drive this to zero within a \
+             frame — persistent churn here means the demand is oscillating around the \
+             cutoff rank.",
         );
     }
     // 🔴 The reading persistence exists to produce. A still camera
@@ -913,7 +927,12 @@ fn shadow_page_readout(
         .weak(),
     )
     .on_hover_text(
-        "The pool PERSISTS between frames: a page is freed when nothing has asked for it in          `max_age` frames, which is Epic's `MaxPageAgeSinceLastRequest`, and not because a          frame ended. A reused page is one whose depth is already in the atlas and does not          have to be rasterised again.          ⚠️ `max_age` DEFAULTS TO ZERO, so everything is evicted every frame and the hit          rate reads 0 %: keeping a page longer is only correct once something invalidates          the ones a moving caster passed through, and that pass does not exist yet.          `KOOCH_SHADOW_PAGE_AGE` raises it to try it.",
+        "The pool PERSISTS between frames: a page is freed when nothing has asked for it in \
+         `max_age` frames (60 by default — Epic's `MaxPageAgeSinceLastRequest`, \
+         `KOOCH_SHADOW_PAGE_AGE` overrides it), or the moment the seating plan stops \
+         funding its rank under pressure (#942). A reused page is one whose depth is \
+         already in the atlas and does not have to be rasterised again; movement \
+         invalidation re-lists what a caster passed through.",
     );
     if counts.pool.leaked > 0 {
         ui.label(

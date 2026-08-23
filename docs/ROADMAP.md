@@ -772,6 +772,29 @@ lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings
 `Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
 decidía cuántos hilos, ahora decide qué páginas EXISTEN.
 
+🎉 **2026-08-23 (6) — EL POOL ASIGNA POR RANGO, NO POR ORDEN DE LLEGADA (#942).** El
+diagnóstico salió del propio panel: **7 674 páginas pedidas contra un slice de 1 024** y un
+estado estacionario `1022 reused · 0 new · 0 evicted` — el que agarró un slot primero lo
+retiene para siempre (residente → re-marcado → edad refrescada) y 6 652 requests hacen
+inanición eterna; mover la cámara producía pedidos que jamás aterrizaban. Tres dispatches
+nuevos al final del marking: `plan_view` (prefix-sum del histograma de demanda por rango
+contra el presupuesto del slice → rango de corte + quota + spare), `preempt_view` (desaloja
+lo que el plan no financia; los residentes del rango de corte toman la quota ANTES que los
+nuevos — a igual importancia, una página CON contenido le gana a una sin), `adopt_view`
+(asienta lo financiado; lo demás se DENIEGA y se cuenta). El rango es el nivel, grueso
+primero: el clipmap del sol (rangos 0..17) delante de toda lámpara, y dentro de cada chain lo
+grueso delante de lo fino — bajo presión se pierde detalle, nunca cobertura, y el sol nunca
+pierde contra una lámpara. `page_touch` ya NO asigna: la demanda se anota donde se gana el
+bit y la asignación es del plan. La aritmética cierra por construcción (el plan financia
+exactamente `slice` asientos y la preempción libera lo no financiado → `overflow` del
+allocator = 0 SIEMPRE; toda escasez es una *denial* con rango). Dos tests de aceptación:
+`the_survivors_are_the_top_ranks` (más demanda que slots → todo residente ≤ cutoff, espejo
+CPU de `entry_rank`) y `a_saturated_pool_reseats_on_move` (pool saturado + cámara movida →
+`claims > 0` y `preempted > 0` EN EL MISMO FRAME, no a los `max_age`). El binding 9 (libre
+desde la tabla plana) se gasta en el rank state: el layout queda EN el límite downlevel de 8
+storage buffers. ⚠️ #942 no hace que 7 674 entren en 1 024 — eso es el bias de resolución
+(#943) y el gate por cobertura (#944).
+
 🎉 **2026-08-23 (5) — BLUR CONFIGURABLE (#941): `shadow_softness` en RenderSettings.** El
 filtro de páginas generaliza de bilineal fijo a caja Castano-class de ancho configurable en
 téxeles (1 = bilineal exacto del cube path, el default; 2/3/5 con pesos de borde `frac`-clipped

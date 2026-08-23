@@ -436,6 +436,21 @@ pub struct PoolCounts {
     /// checkerboard corruption, so the counter exists to name it before
     /// anyone has to recognise it by sight.
     pub overflow: u32,
+    /// Marked pages the seating plan turned away: their rank was past
+    /// the cutoff the slice's budget reaches (#942). The honest number
+    /// for "the frame wanted more than the pool holds" — unlike a
+    /// first-come miss, a denial names WHAT was sacrificed: the finest
+    /// levels first, the sun never before the locals.
+    pub denied: u32,
+    /// Residents evicted by pressure rather than by age: the plan did
+    /// not fund their rank this frame, so their seat went to a higher
+    /// rank. Persistent churn here with a still camera means the
+    /// demand is oscillating around the cutoff.
+    pub preempted: u32,
+    /// The rank the plan funded down to. `RANKS` (32) when everything
+    /// fit; the sun's clipmap occupies ranks 0..17, the local chains
+    /// the ranks after it, coarsest first.
+    pub cutoff: u32,
     /// Physical pages THIS VIEW owns, so the two numbers above are
     /// readable without knowing how the build was configured.
     ///
@@ -453,7 +468,11 @@ impl PoolCounts {
     /// NEW this frame — a number that falls to zero on a still camera
     /// while the pool stays exactly as full as it was.
     pub fn allocated(&self) -> u32 {
-        (self.alive + self.claims).min(self.capacity)
+        // `alive` is counted by the ageing, BEFORE the seat passes run;
+        // what pressure then preempted is no longer held.
+        (self.alive + self.claims)
+            .saturating_sub(self.preempted)
+            .min(self.capacity)
     }
 
     /// Pages the frame marked and could not spend a slot on, because
