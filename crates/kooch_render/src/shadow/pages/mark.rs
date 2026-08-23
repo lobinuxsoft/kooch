@@ -40,9 +40,9 @@ const GROUP: u32 = 8;
 /// anyway.
 const COUNTERS: u64 = 16;
 /// Words per view in the rank-state buffer: a 32-bucket demand
-/// histogram, the cutoff, the quota and the spare, padded to 36.
-/// Mirrors `RANK_WORDS` in the shader.
-const RANK_WORDS: u64 = 36;
+/// histogram, the plan's three words, then the persistent bias and
+/// patience (#943), padded to 40. Mirrors `RANK_WORDS` in the shader.
+const RANK_WORDS: u64 = 40;
 
 /// `KOOCH_PAGE_MARKING=1`, read once.
 ///
@@ -160,6 +160,9 @@ pub struct PageMarker {
     plan: wgpu::ComputePipeline,
     preempt: wgpu::ComputePipeline,
     adopt: wgpu::ComputePipeline,
+    /// The resolution feedback (#943): one step per frame toward the
+    /// coarsest marking that fits the slice.
+    bias: wgpu::ComputePipeline,
     /// The bind group the marking built, kept so the paint dispatch can
     /// reuse it without rebuilding every resource binding.
     bound: Option<wgpu::BindGroup>,
@@ -220,6 +223,7 @@ impl PageMarker {
         let plan = compute("plan_view");
         let preempt = compute("preempt_view");
         let adopt = compute("adopt_view");
+        let bias = compute("bias_view");
 
         Self {
             layout,
@@ -229,6 +233,7 @@ impl PageMarker {
             plan,
             preempt,
             adopt,
+            bias,
             bound: None,
             view: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_mark_view"),
@@ -471,13 +476,11 @@ impl PageMarker {
         // multiple of 32 for — so the reset is an offset clear.
         let words = view_span.div_ceil(32) * 4;
         encoder.clear_buffer(&self.marks, words * view as u64, Some(words));
-        // This view's demand histogram and plan. Demand is a frame's
-        // question; the residency it decides persists in the table.
-        encoder.clear_buffer(
-            &self.rank,
-            view as u64 * RANK_WORDS * 4,
-            Some(RANK_WORDS * 4),
-        );
+        // Only the demand histogram: the plan's words are stored anew
+        // every frame before anything reads them, and the bias and its
+        // patience (#943) PERSIST — they are what one frame teaches the
+        // next.
+        encoder.clear_buffer(&self.rank, view as u64 * RANK_WORDS * 4, Some(32 * 4));
         // Every counter here is a per-view quantity now, the pool's
         // claims included: a view allocates out of its own slice.
         encoder.clear_buffer(&self.counters, 0, None);
@@ -514,6 +517,8 @@ impl PageMarker {
             pass.dispatch_workgroups(entries, 1, 1);
             pass.set_pipeline(&self.adopt);
             pass.dispatch_workgroups(entries, 1, 1);
+            pass.set_pipeline(&self.bias);
+            pass.dispatch_workgroups(1, 1, 1);
         }
         // Kept for `record_paint`, which runs after the shading and needs
         // every one of these bindings — the depth, the view uniform and
@@ -830,6 +835,8 @@ impl Readback {
                         denied: words[13],
                         preempted: words[14],
                         cutoff: words[15],
+                        bias_local: words[4] & 0xff,
+                        bias_sun: words[4] >> 8,
                         capacity,
                     },
                     size,

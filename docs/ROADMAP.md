@@ -772,6 +772,25 @@ lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings
 `Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
 decidía cuántos hilos, ahora decide qué páginas EXISTEN.
 
+🎉 **2026-08-23 (7) — EL BIAS DE RESOLUCIÓN HACE QUE LA DEMANDA QUEPA (#943).** Feedback
+GPU-only, cero readback: `bias_view` (1 hilo, al final del marking) lee el cutoff del plan y
+mueve un bias persistente por vista un paso por frame — bajo presión las LOCALES pagan primero
+(hasta 4 niveles), el sol recién cuando ellas no tienen más que dar (hasta 2); cada nivel es
+un cuarto de las páginas. Los lectores NO cambiaron: ambos caminan su chain desde lo fino y
+toman la primera página residente, así que un marcado más grueso es simplemente lo que
+encuentran (el debug paint aplica el mismo bias o pintaría páginas que el marking nunca
+eligió). La vuelta es de dos vías y esa asimetría ES la histéresis: si la aritmética PRUEBA
+que un nivel más fino entra (slack ≥ 3× la demanda de esa parte) baja al instante; donde no
+puede probarlo — los niveles gruesos del clipmap NO cuadruplican, el ×4 sobre-bloquea, lo
+midió el test — PRUEBA un paso tras 16 frames de paciencia y el raise ordinario revierte el
+trial fallido al frame siguiente (las páginas gruesas aún residentes atajan a los lectores
+mientras tanto: un trial fallido cuesta un frame de fallback, no uno de sombra faltante).
+Test de aceptación `the_bias_settles_the_denials`: pool de 4 con demanda de ~11 → el bias
+escala hasta que `denied == 0`, se queda quieto 3 frames (sin oscilación), y con la demanda
+relajada vuelve a (0,0) solo. El panel imprime el bias vigente; uno que queda alto es el pool
+diciendo que es chico para la escena. `RANK_WORDS` 36→40 (bias + paciencia persistentes; el
+clear por frame ahora borra SOLO el histograma).
+
 🎉 **2026-08-23 (6) — EL POOL ASIGNA POR RANGO, NO POR ORDEN DE LLEGADA (#942).** El
 diagnóstico salió del propio panel: **7 674 páginas pedidas contra un slice de 1 024** y un
 estado estacionario `1022 reused · 0 new · 0 evicted` — el que agarró un slot primero lo

@@ -451,6 +451,14 @@ pub struct PoolCounts {
     /// fit; the sun's clipmap occupies ranks 0..17, the local chains
     /// the ranks after it, coarsest first.
     pub cutoff: u32,
+    /// Levels of resolution the LOCAL lights are marked coarser than
+    /// the screen asked for (#943). Zero when the demand fits; each
+    /// step is a quarter of the pages. Locals pay before the sun.
+    pub bias_local: u32,
+    /// Levels the SUN is marked coarser. Paid only once the locals
+    /// have given up `LOCAL_BIAS_MAX` levels and the demand still does
+    /// not fit — the shadow everyone sees degrades last.
+    pub bias_sun: u32,
     /// Physical pages THIS VIEW owns, so the two numbers above are
     /// readable without knowing how the build was configured.
     ///

@@ -1509,3 +1509,132 @@ fn a_saturated_pool_reseats_on_move() {
         counts.pool
     );
 }
+
+/// The pressure bias settles the denials (#943): a pool too small for
+/// the frame converges, one level per frame, to a marking that fits —
+/// and then HOLDS, because the step down needs slack the settled state
+/// does not have. The acceptance criteria of the issue, in order:
+/// denials reach zero, the bias is the reason, and it does not
+/// oscillate.
+#[test]
+fn the_bias_settles_the_denials() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+    let small = PoolConfig { pages: 4, views: 1 };
+    let eye = Vec3::ZERO;
+    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let proj = projection();
+    let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+    let mut lights = GpuLights::new(&device);
+    let mut frame = kooch_lighting::LightFrame::extract(&resources);
+    lights.update(&device, &queue, &resources, camera, None, &mut frame);
+    let depth_view = depth_texture(&device, &queue, 0.6);
+    let target = paint_target(&device);
+    let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
+    marker.set_pool(&device, small);
+
+    // A near surface at four times the screen's density wants more sun
+    // pages than four slots hold; the bias has up to six steps (four
+    // local, two sun) plus the readback lag to settle in.
+    let mut series = Vec::new();
+    for index in 0..12u32 {
+        marker.set_frame(index);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            Some(Vec3::new(0.3, -1.0, 0.2)),
+            (SIZE, SIZE),
+            0,
+            1,
+            400,
+            Paint {
+                target: &target,
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        marker.poll();
+        wait(&device);
+        marker.poll();
+        if let Some(counts) = marker.last() {
+            series.push(counts);
+        }
+    }
+    let last = series.last().expect("counters came back");
+    assert!(
+        last.pool.bias_sun > 0,
+        "the demand never fit and the sun never paid: {:?}",
+        last.pool
+    );
+    assert_eq!(
+        last.pool.denied, 0,
+        "the bias settled at +{} local +{} sun and pages still starve",
+        last.pool.bias_local, last.pool.bias_sun
+    );
+    // No oscillation: once settled, a constant demand is a constant
+    // bias. The last three frames have to agree.
+    let tail: Vec<_> = series
+        .iter()
+        .rev()
+        .take(3)
+        .map(|c| (c.pool.bias_local, c.pool.bias_sun))
+        .collect();
+    assert!(
+        tail.windows(2).all(|w| w[0] == w[1]),
+        "the bias oscillates at the end: {tail:?}"
+    );
+
+    // And it unwinds: drop the demand to almost nothing and the bias
+    // walks back to zero on its own — quality is only ever borrowed.
+    // Two trial steps 16 frames of patience apart, plus the readback
+    // ring's lag: 48 relaxed frames is the controller's own arithmetic.
+    let mut relaxed = None;
+    for index in 12..60u32 {
+        marker.set_frame(index);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            Some(Vec3::new(0.3, -1.0, 0.2)),
+            (SIZE, SIZE),
+            0,
+            1,
+            25,
+            Paint {
+                target: &target,
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        marker.poll();
+        wait(&device);
+        marker.poll();
+        relaxed = marker.last();
+    }
+    let relaxed = relaxed.expect("counters came back");
+    assert_eq!(
+        (relaxed.pool.bias_local, relaxed.pool.bias_sun),
+        (0, 0),
+        "the demand shrank and the bias never gave the quality back: {:?}",
+        relaxed.pool
+    );
+    assert_eq!(relaxed.pool.denied, 0, "relaxed and still denying");
+}

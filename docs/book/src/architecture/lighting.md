@@ -1239,11 +1239,36 @@ Two consequences the counters pin:
   plan stops funding them, and `preempt_view` hands their seats to the
   new view the same frame — not `max_age` frames later.
 
-What #942 does **not** do is make 7 674 fit into 1 024. That is #943's
-resolution bias (serve every light coarser until the demand fits) and
-#944's coverage gate (a light lighting forty pixels casts no pages);
-until those land, a denial means the finest levels render from a
-coarser resident page when one exists, and unshadowed when none does.
+What #942 does **not** do is make 7 674 fit into 1 024 — that is the
+next section's job.
+
+### The resolution bias — making the demand fit (#943)
+
+When the plan reports pressure, a persistent per-view bias walks the
+marking coarser, one level per frame: the LOCAL lights pay first (up to
+four levels), the sun only when they have nothing left to give (up to
+two). Each level quarters that party's page demand, and the readers
+need no change at all — both walk their chains from the fine end and
+take the first resident page, so a coarser marking is simply what they
+find. UE5 runs the same loop as its page-pool-overflow bias; Olsson
+caps every light by projected area (Eq. 1) for the same reason: when
+demand cannot fit, serve *everyone* coarser rather than turn 87 % of
+the requests away.
+
+Unwinding is two-tracked, and the asymmetry is the hysteresis. Where
+the arithmetic can *prove* a finer marking fits (slack ≥ 3× the
+party's demand), the bias steps down immediately. Where it cannot —
+coarse clipmap levels do not quadruple, so the ×4 estimate over-blocks
+— it **tries** a step once 16 quiet frames of patience run out, and the
+ordinary raise reverts a failed trial the next frame. The still-resident
+coarser pages catch the readers meanwhile, so a failed trial costs one
+frame of fallback, not one of missing shadow. The panel prints the
+standing bias; one that sits high is the pool saying it is too small
+for the scene.
+
+Still open: #944's coverage gate (a light lighting forty pixels casts
+no pages at all), which shrinks the demand before any of this has to
+price it.
 
 ## Rasterising into the pages — the depth raster (#866)
 

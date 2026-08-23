@@ -162,10 +162,33 @@ struct PageCell {
 // near-camera sun detail for lamp pages, which is a regression against
 // what the pool does today; revisit when #943's bias makes demand fit.
 const RANKS: u32 = 32u;
-const RANK_WORDS: u32 = 36u;
+const RANK_WORDS: u32 = 40u;
 const RANK_CUTOFF: u32 = 32u;
 const RANK_QUOTA: u32 = 33u;
 const RANK_SPARE: u32 = 34u;
+// The resolution bias (#943), PERSISTENT across frames — the one word
+// of a view's run the per-frame clear leaves alone. Low byte the local
+// lights' bias in levels, next byte the sun's: each step doubles the
+// world size a screen pixel may ask a shadow texel to match, which is
+// one level coarser and a QUARTER of the pages. `bias_view` moves it
+// one step per frame; the readers walk their chains from the fine end,
+// so a coarser marking is found without their code knowing a bias
+// exists.
+const RANK_BIAS: u32 = 35u;
+// Frames spent without pressure, also persistent. The strict unwind
+// only fires when the arithmetic PROVES a finer marking fits; where it
+// cannot prove it (coarse clipmap levels do not quadruple), the bias
+// TRIES a step down once the patience runs out, and the ordinary raise
+// reverts a failed trial the next frame. The still-resident coarser
+// pages catch the readers while it fails, so a failed trial costs one
+// frame of fallback, not a frame of missing shadow.
+const RANK_PATIENCE: u32 = 36u;
+const PATIENCE_FRAMES: u32 = 16u;
+// Locals give up four levels before the sun gives up one, and the sun
+// stops at two: past that the pool is simply too small for the scene,
+// and the panel says so through the denials that remain.
+const LOCAL_BIAS_MAX: u32 = 4u;
+const SUN_BIAS_MAX: u32 = 2u;
 
 fn rank_base() -> u32 {
     return pages.sampling.w * RANK_WORDS;
@@ -558,9 +581,13 @@ fn mark_main(@builtin(global_invocation_id) id: vec3<u32>) {
     // A sample is `rate` pixels wide when the pass runs coarse, and the
     // page it needs has to cover all of them.
     wanted = wanted * f32(rate) * pages.density.x;
+    // The pressure bias (#943): what last frame's plan learned, applied
+    // to what this frame asks for.
+    let bias = atomicLoad(&rank_state[rank_base() + RANK_BIAS]);
+    let local_wanted = wanted * exp2(f32(bias & 0xffu));
 
     if pages.sun.w > 0.5 {
-        _ = mark_sun(pages.sampling.y, world, wanted);
+        _ = mark_sun(pages.sampling.y, world, wanted * exp2(f32(bias >> 8u)));
     }
 
     if view.dimensions.w == 0u {
@@ -582,7 +609,7 @@ fn mark_main(@builtin(global_invocation_id) id: vec3<u32>) {
             continue;
         }
         atomicAdd(&counters[2], 1u);
-        _ = mark_local(light, world, wanted);
+        _ = mark_local(light, world, local_wanted);
     }
 }
 
@@ -627,12 +654,18 @@ fn paint_view(@builtin(global_invocation_id) id: vec3<u32>) {
         wanted = 2.0 * abs(view_pos.z) / (focal * max(view.viewport.y, 1.0));
     }
     wanted = wanted * pages.density.x;
+    // The same bias the marking applied, or the view paints pages the
+    // marking never chose — the failure `sun_page_for` was split to end.
+    let bias = atomicLoad(&rank_state[rank_base() + RANK_BIAS]);
 
     // 🔴 One page per pixel, and the sun wins when there is one: a pixel
     // is lit by many lights, and painting the last one walked would make
     // the view depend on the light list's order.
     if pages.sun.w > 0.5 {
-        paint_page(pixel, sun_page_for(pages.sampling.y, world, wanted));
+        paint_page(
+            pixel,
+            sun_page_for(pages.sampling.y, world, wanted * exp2(f32(bias >> 8u))),
+        );
         return;
     }
     if view.dimensions.w == 0u {
@@ -650,7 +683,10 @@ fn paint_view(@builtin(global_invocation_id) id: vec3<u32>) {
         if light >= pages.strides.w {
             continue;
         }
-        paint_page(pixel, local_page_for(light, world, wanted));
+        paint_page(
+            pixel,
+            local_page_for(light, world, wanted * exp2(f32(bias & 0xffu))),
+        );
         return;
     }
 }
@@ -845,4 +881,72 @@ fn adopt_view(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     page_stamp(entry, slot, pages.life.x);
     atomicAdd(&counters[8], 1u);
+}
+
+// Moves the resolution bias one step per frame toward the coarsest
+// marking that fits the slice (#943). UE5 runs the same loop as its
+// page-pool-overflow bias; Olsson caps every light's resolution by
+// projected area (Eq. 1) for the same reason: when demand cannot fit,
+// the answer is to serve EVERYONE coarser, not to turn 87 % of the
+// requests away.
+//
+// Under pressure the locals pay first and the sun only when they have
+// nothing left to give; with headroom the sun recovers first. A step
+// down is taken only when the slack covers ~3x that party's current
+// demand — one level finer is four times the pages, and that margin is
+// the hysteresis that keeps a constant demand at a constant bias.
+@compute @workgroup_size(1, 1, 1)
+fn bias_view() {
+    let base = rank_base();
+    let word = atomicLoad(&rank_state[base + RANK_BIAS]);
+    var local_bias = word & 0xffu;
+    var sun_bias = word >> 8u;
+    let cutoff = atomicLoad(&rank_state[base + RANK_CUTOFF]);
+    var patience = atomicLoad(&rank_state[base + RANK_PATIENCE]);
+    if cutoff < RANKS {
+        if local_bias < LOCAL_BIAS_MAX {
+            local_bias = local_bias + 1u;
+        } else if sun_bias < SUN_BIAS_MAX {
+            sun_bias = sun_bias + 1u;
+        }
+        patience = 0u;
+    } else {
+        patience = patience + 1u;
+        var sun_demand = 0u;
+        var local_demand = 0u;
+        var total = 0u;
+        for (var r = 0u; r < RANKS; r = r + 1u) {
+            let d = atomicLoad(&rank_state[base + r]);
+            total = total + d;
+            if r < pages.chain.w {
+                sun_demand = sun_demand + d;
+            } else {
+                local_demand = local_demand + d;
+            }
+        }
+        let budget = pages.pool.w;
+        // Strict: the slack covers ~3x that party's demand, so one
+        // level finer (at most four times the pages) provably fits.
+        if sun_bias > 0u && total + 3u * sun_demand <= budget {
+            sun_bias = sun_bias - 1u;
+            patience = 0u;
+        } else if local_bias > 0u && total + 3u * local_demand <= budget {
+            local_bias = local_bias - 1u;
+            patience = 0u;
+        } else if patience >= PATIENCE_FRAMES && (sun_bias > 0u || local_bias > 0u) {
+            // Trial: the proof is unavailable — coarse levels do not
+            // quadruple — so probe, and let the raise arbitrate.
+            if sun_bias > 0u {
+                sun_bias = sun_bias - 1u;
+            } else {
+                local_bias = local_bias - 1u;
+            }
+            patience = 0u;
+        }
+    }
+    atomicStore(&rank_state[base + RANK_PATIENCE], patience);
+    let packed = local_bias | (sun_bias << 8u);
+    atomicStore(&rank_state[base + RANK_BIAS], packed);
+    // What the pool is converging to, for the panel.
+    atomicStore(&counters[4], packed);
 }

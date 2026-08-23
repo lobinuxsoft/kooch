@@ -896,6 +896,23 @@ fn shadow_page_readout(
              number to shrink it is #943's resolution bias, not a bigger pool.",
         );
     }
+    if counts.pool.bias_local > 0 || counts.pool.bias_sun > 0 {
+        ui.label(
+            egui::RichText::new(format!(
+                "resolution bias: locals +{} · sun +{} levels",
+                counts.pool.bias_local, counts.pool.bias_sun
+            ))
+            .small()
+            .weak(),
+        )
+        .on_hover_text(
+            "The demand did not fit the slice, so the marking asks coarser (#943): each \
+             level is a quarter of the pages. Locals pay up to four levels before the sun \
+             pays one, and it unwinds on its own when the demand shrinks. A bias that sits \
+             high is the pool saying it is too small for the scene — raise \
+             `shadow_pool_pages` or lower `shadow_density`.",
+        );
+    }
     if counts.pool.preempted > 0 {
         ui.label(
             egui::RichText::new(format!(
