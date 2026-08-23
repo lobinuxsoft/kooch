@@ -819,6 +819,56 @@ fn inti_page_lookup(page: u32) -> u32 {
     return stored - 1u;
 }
 
+/// Occlusion at `texel` inside one page, bilinear-PCF filtered.
+///
+/// # 🔴 Weighted, not averaged — this is why the shadow stopped looking
+/// like the geometry
+///
+/// The first reader averaged four binary taps flat, and the measured
+/// look was "the shadow IS the mesh": a hard staircase at texel scale,
+/// against the smooth edge every other shadow path resolves. The cube
+/// path got its smoothness for free — `textureSampleCompareLevel` is
+/// comparison-BILINEAR in hardware. A page cannot use that sampler,
+/// because hardware filtering cannot be told where a page ends: the
+/// neighbour texel may belong to another level or another light. So
+/// the same filter is done by hand — the taps CLAMP to the page and
+/// only the weights cross the border. Costs nothing: the four loads
+/// were already paid for.
+///
+/// ⚠️ Parity with the CUBE path, not with the cascades: the Castano
+/// soft filter (blocker search, penumbra width) is #477's remaining
+/// quality step, for the sun's pages and the lamps' alike.
+fn inti_page_filter(
+    origin: vec2<f32>,
+    layer: i32,
+    texel: vec2<f32>,
+    receiver: f32,
+    page_texels: u32,
+) -> f32 {
+    let last = f32(page_texels) - 1.0;
+    let corner = floor(texel - vec2<f32>(0.5));
+    let frac = texel - vec2<f32>(0.5) - corner;
+    var lit = 0.0;
+    for (var y = 0; y < 2; y = y + 1) {
+        for (var x = 0; x < 2; x = x + 1) {
+            let tap = clamp(
+                corner + vec2<f32>(f32(x), f32(y)),
+                vec2<f32>(0.0),
+                vec2<f32>(last),
+            );
+            let at = vec2<i32>(origin + tap);
+            let stored = textureLoad(inti_page_atlas, at, layer, 0);
+            // Reversed-Z: a LARGER stored depth is closer to the light,
+            // so it is an occluder.
+            let hit = select(1.0, 0.0, stored > receiver);
+            let w = select(1.0 - frac.x, frac.x, x == 1)
+                * select(1.0 - frac.y, frac.y, y == 1);
+            lit = lit + hit * w;
+        }
+    }
+    return lit;
+}
+
 /// The sun's shadow, out of the page pool.
 ///
 /// # 🔴 It walks levels instead of recomputing which one was marked
@@ -928,28 +978,9 @@ fn inti_page_shadow(
         let layer = i32(place.z);
         let texel = within * f32(page_texels);
 
-        // 2x2, and CLAMPED INSIDE THE PAGE. A tap that walked off the
-        // edge would read a texel belonging to another clipmap level or
-        // another light: not a softer edge, a shadow from somewhere
-        // else. This is the border handling a paged shadow map cannot
-        // do without.
-        let last = f32(page_texels) - 1.0;
-        var lit = 0.0;
-        for (var y = 0; y < 2; y = y + 1) {
-            for (var x = 0; x < 2; x = x + 1) {
-                let tap = clamp(
-                    floor(texel) + vec2<f32>(f32(x), f32(y)) - vec2<f32>(0.5),
-                    vec2<f32>(0.0),
-                    vec2<f32>(last),
-                );
-                let at = vec2<i32>(origin + tap);
-                let stored = textureLoad(inti_page_atlas, at, layer, 0);
-                // Reversed-Z: a LARGER stored depth is closer to the
-                // light, so it is an occluder.
-                lit = lit + select(1.0, 0.0, stored > receiver);
-            }
-        }
-        return lit * 0.25;
+        // Bilinear PCF, clamped inside the page — see
+        // `inti_page_filter` for both halves of that sentence.
+        return inti_page_filter(origin, layer, texel, receiver, page_texels);
     }
     // No page anywhere in the chain. Lit, not shadowed: a point nobody
     // marked is a point the frame never looked at, and guessing dark
@@ -1061,25 +1092,9 @@ fn inti_local_page_shadow(
         let layer = i32(place.z);
         let texel = within * f32(page_texels);
 
-        // 2x2, CLAMPED INSIDE THE PAGE: a tap off the edge reads a texel
-        // belonging to another face, another level or another lamp —
-        // not a softer edge, a shadow from somewhere else.
-        let last = f32(page_texels) - 1.0;
-        var lit = 0.0;
-        for (var y = 0; y < 2; y = y + 1) {
-            for (var x = 0; x < 2; x = x + 1) {
-                let tap = clamp(
-                    floor(texel) + vec2<f32>(f32(x), f32(y)) - vec2<f32>(0.5),
-                    vec2<f32>(0.0),
-                    vec2<f32>(last),
-                );
-                let at = vec2<i32>(origin + tap);
-                let stored = textureLoad(inti_page_atlas, at, layer, 0);
-                // A LARGER stored depth is closer to the light.
-                lit = lit + select(1.0, 0.0, stored > receiver);
-            }
-        }
-        return lit * 0.25;
+        // Bilinear PCF, clamped inside the page — see
+        // `inti_page_filter` for both halves of that sentence.
+        return inti_page_filter(origin, layer, texel, receiver, page_texels);
     }
     // No page anywhere in the chain: lit, for the same reason the sun's
     // reader is. A point nobody marked is a point the frame never looked
