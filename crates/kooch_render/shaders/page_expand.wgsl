@@ -139,8 +139,15 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
             return;
         }
         let light = lights[id.light];
+        var to_centre = bounds - light.position;
+        // The cell's cone is built in the face's own frame, so a spot's
+        // candidates rotate into it the way every other pass does — see
+        // `spot_local`.
+        if light.kind == PAGE_KIND_SPOT {
+            to_centre = spot_local(light.direction, to_centre);
+        }
         let cone = cell_cone(id.face, id.cell, level_side_of(id.level, raster.space.z));
-        if !cell_reaches(cone.xyz, cone.w, bounds - light.position, radius, light.range) {
+        if !cell_reaches(cone.xyz, cone.w, to_centre, radius, light.range) {
             return;
         }
         let slot = atomicAdd(&page_counts[buckets + 2u], 1u);

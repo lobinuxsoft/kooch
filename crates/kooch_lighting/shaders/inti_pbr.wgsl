@@ -981,6 +981,9 @@ fn inti_local_page_shadow(
     light: u32,
     is_spot: bool,
     light_position: vec3<f32>,
+    // The spot's axis; unread for a point. A spot's one face is
+    // aligned with it — see `spot_local`.
+    light_direction: vec3<f32>,
     world_position: vec3<f32>,
     normal: vec3<f32>,
     to_light: vec3<f32>,
@@ -1017,7 +1020,10 @@ fn inti_local_page_shadow(
             + normal * (texel_world * INTI_POINT_NORMAL_BIAS)
             + to_light * INTI_POINT_DEPTH_BIAS;
 
-        let offset = sampled - light_position;
+        var offset = sampled - light_position;
+        if is_spot {
+            offset = spot_local(light_direction, offset);
+        }
         let hit = cube_face(offset);
         let face = select(u32(hit.w), 0u, is_spot);
         let cell = vec2<u32>(
@@ -1397,7 +1403,8 @@ fn inti_light_lit(
             // keyed by the light's own index.
             if (inti_pages.sun.w > 0.5) {
                 shadow = inti_local_page_shadow(
-                    index, false, light.position, surf.world_position, surf.n, s.to_light);
+                    index, false, light.position, light.direction,
+                    surf.world_position, surf.n, s.to_light);
             } else if (light.shadow_slot != INTI_NO_SHADOW_SLOT) {
                 // Six faces of one cube (#778).
                 shadow = inti_point_shadow(
@@ -1405,9 +1412,10 @@ fn inti_light_lit(
             }
         } else if (light.kind == INTI_KIND_SPOT) {
             if (inti_pages.sun.w > 0.5) {
-                // One face, the way `mark_local` assigns it.
+                // One face, aligned with the spot's own axis.
                 shadow = inti_local_page_shadow(
-                    index, true, light.position, surf.world_position, surf.n, s.to_light);
+                    index, true, light.position, light.direction,
+                    surf.world_position, surf.n, s.to_light);
             } else if (light.shadow_slot != INTI_NO_SHADOW_SLOT) {
                 // A spot casts into a layer of the same array the
                 // cascades use (#777). Along the cone axis, the same

@@ -350,11 +350,19 @@ impl MeshletRenderStage {
         scene_params: &SceneCullParams,
         meshlet_bg: &wgpu::BindGroup,
     ) {
-        // No sun is no clipmap. Local lights are marked and allocated
-        // and their raster is the next machine — see `pages::raster`.
-        let Some(sun) = sun else {
-            return;
-        };
+        // 🔴 No sun does NOT skip the raster. This gate predated the
+        // local raster ("their raster is the next machine") and
+        // outlived it: a scene lit only by lamps marked pages, claimed
+        // pool slots, and never compacted, drew or aged a thing — the
+        // reader then sampled whatever the atlas held last, which in
+        // the editor is another scene's pages. Measured as shadows
+        // completely broken in every lamp-only scene.
+        //
+        // The clipmap still wants an orientation for its cull volumes
+        // and bucket scale; with no sun the default is straight down,
+        // which only has to be CONSISTENT with the marking's own
+        // no-sun default — both are `Vec3::NEG_Y`.
+        let sun = sun.unwrap_or(Vec3::NEG_Y);
         let (Some(pool), Some(marker)) = (self.gpu_pool.as_ref(), self.page_marker.as_ref()) else {
             return;
         };
@@ -473,7 +481,12 @@ impl MeshletRenderStage {
             );
             return;
         }
-        tracing::info!(
+        // `debug!`, not `info!`: the throttle above still passes most
+        // frames — the counts breathe past an eighth on their own — and
+        // at editor rates that is hundreds of console lines a second,
+        // which is cost and noise in exactly the runs the panel already
+        // serves. The warns above stay loud.
+        tracing::debug!(
             view = counts.view,
             resident = counts.resident,
             samples = counts.samples,
@@ -516,7 +529,7 @@ impl MeshletRenderStage {
             );
             return;
         }
-        tracing::info!(
+        tracing::debug!(
             view = counts.view,
             pages = counts.pages,
             pairs = counts.pairs,

@@ -49,7 +49,19 @@ impl MeshletRenderStage {
         // Already capped at the budget during the walk, and numbered in
         // the order the slots were handed out — there is no second place
         // that decides which spots fit.
-        let spots = lights.spot_shadows().to_vec();
+        // 🔴 With virtual pages on, every lamp samples the PAGE pool —
+        // `inti_light_lit` takes the page branch whenever the pages are
+        // bound — so the cube maps and the spot layers would be drawn
+        // for nobody. Six faces per lamp is the single most expensive
+        // shadow this engine draws, and it was running in parallel with
+        // the pages that replaced it. Empty lists skip those passes
+        // wholesale, and the atlas releases through the same
+        // `nothing_casts` door a lamp-less scene uses.
+        let spots = if settings.virtual_pages {
+            Vec::new()
+        } else {
+            lights.spot_shadows().to_vec()
+        };
         // Point lights, likewise (#778) — ranked by what a cube would
         // show, because past the limit a light stops casting and which
         // one should not depend on spawn order.
@@ -71,11 +83,16 @@ impl MeshletRenderStage {
         // of the frame — the union of every active view's frustum, or one
         // selection reused by all of them — not of whoever is rendering.
         let ranked = lights.ranked_points(camera.position(), usize::MAX);
-        let points = crate::shadow::select_point_casters(
-            &ranked,
-            settings.point_budget(),
-            &self.point_shadow_holders,
-        );
+        let points = if settings.virtual_pages {
+            // The page pool shadows them; see `spots` above.
+            Vec::new()
+        } else {
+            crate::shadow::select_point_casters(
+                &ranked,
+                settings.point_budget(),
+                &self.point_shadow_holders,
+            )
+        };
         // Next frame's hysteresis is this frame's answer. Written even
         // when the list is empty: a light that lost its cube must not be
         // handed the bonus back the moment it returns.
@@ -93,7 +110,13 @@ impl MeshletRenderStage {
         // alternating in the roll-a-ball stress scene — because the cull
         // ran before the budget; now the count is a property of the
         // scene, so the line is printed once and stays true.
-        let dropped = ranked.len().saturating_sub(points.len());
+        let dropped = if settings.virtual_pages {
+            // Nothing was dropped: the pages shadow every caster, which
+            // is the ceiling this warn exists to name the loss of.
+            0
+        } else {
+            ranked.len().saturating_sub(points.len())
+        };
         if (dropped > 0) != self.point_shadows_over_budget {
             if dropped > 0 {
                 tracing::warn!(

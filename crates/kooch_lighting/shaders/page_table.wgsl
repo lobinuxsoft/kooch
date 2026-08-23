@@ -518,6 +518,39 @@ fn local_level_base(level: u32, side: u32, page_texels: u32) -> u32 {
     return base;
 }
 
+/// A spot light's kind, as `GpuLight` stores it. Here because the
+/// marking, the expansion, the depth raster and the reader all branch
+/// on it, and a constant that drifts sends a spot's pages through a
+/// point's projection.
+const PAGE_KIND_SPOT: u32 = 2u;
+
+/// A world offset from a SPOT light, rotated so the spot's axis is the
+/// +X cube face — the one face `mark_local` assigns a spot.
+///
+/// # 🔴 A spot's face is ITS OWN axis, not the world's
+///
+/// `cube_face` is world-axis aligned. The first spot implementation
+/// forced `face = 0` while keeping the world-axis uv, and the depth
+/// raster projected through the world's +X — three different mappings
+/// of the same page, and the measured result was occlusion the shape
+/// of nothing that exists. Rotating the offset FIRST makes face 0 the
+/// natural answer for every point inside a cone up to 90 degrees, and
+/// every pass then agrees by construction.
+///
+/// Shared here for the same reason `sun_basis` is: the writer, the
+/// raster and the reader must build the SAME basis, or a page is
+/// rasterised somewhere other than where it is read.
+fn spot_local(direction: vec3<f32>, offset: vec3<f32>) -> vec3<f32> {
+    let d = normalize(direction);
+    var up = vec3<f32>(0.0, 1.0, 0.0);
+    if abs(d.y) > 0.99 {
+        up = vec3<f32>(0.0, 0.0, 1.0);
+    }
+    let s = normalize(cross(d, up));
+    let u = cross(s, d);
+    return vec3<f32>(dot(offset, d), dot(offset, u), dot(offset, s));
+}
+
 /// The near plane every local page is rasterised with.
 ///
 /// 🔴 Shared with `SPOT_SHADOW_NEAR_Z` and the cube pass by value, not

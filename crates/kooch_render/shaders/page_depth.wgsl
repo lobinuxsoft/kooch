@@ -174,7 +174,13 @@ fn vs_page(
         // light at once, and which page an instance belongs to is only
         // known from the pair it read.
         let light = lights[id.light];
-        let offset = world - light.position;
+        var offset = world - light.position;
+        // A spot's page projects along the SPOT's axis. See
+        // `spot_local`: the writer, this raster and the reader rotate
+        // with the same basis or the page holds someone else's depth.
+        if light.kind == PAGE_KIND_SPOT {
+            offset = spot_local(light.direction, offset);
+        }
         let side = level_side_of(id.level, raster.space.z);
         // 🔴 NOT rejected per vertex. `cell_face` projects whatever it
         // is given and returns a NEGATIVE `w` for a point behind this

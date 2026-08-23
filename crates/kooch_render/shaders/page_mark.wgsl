@@ -167,10 +167,6 @@ const NO_PAGE: u32 = 0xffffffffu;
 
 const MARK_GROUP: u32 = 8u;
 
-// Mirrors `gpu_light.rs`. Spelled out because the census's twin in Rust
-// reads the same constants from that file.
-const LIGHT_KIND_SPOT: u32 = 2u;
-
 // The pages one view addresses, and where its own start.
 //
 // The pages one view addresses: `sun_slot` locals at `strides.z` pages
@@ -349,16 +345,23 @@ fn page_level(distance: f32, wanted: f32) -> u32 {
 // marking it. Split for the same reason as `sun_page_for`.
 fn local_page_for(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let record = lights[light];
-    let offset = world - record.position;
+    var offset = world - record.position;
     let distance = max(length(offset), 0.05);
     let level = page_level(distance, wanted);
     let side = level_side(level);
 
+    // A spot's one face is aligned with ITS axis, not the world's —
+    // see `spot_local` for the three-way disagreement this rotation
+    // ended.
+    let spot = record.kind == PAGE_KIND_SPOT;
+    if spot {
+        offset = spot_local(record.direction, offset);
+    }
     let hit = cube_face(offset);
     // A spot writes one face, like `CensusKind::Spot`. `kind` mirrors
     // `GpuLight::kind`, and the order there is DIRECTIONAL 0, POINT 1,
     // SPOT 2 — not the order a reader guesses.
-    let face = select(u32(hit.w), 0u, record.kind == LIGHT_KIND_SPOT);
+    let face = select(u32(hit.w), 0u, spot);
     let cell = vec2<u32>(clamp(hit.xy, vec2<f32>(0.0), vec2<f32>(0.99999)) * f32(side));
 
     let index = view_base()

@@ -156,8 +156,7 @@ fn padded(lights: u32) -> u32 {
 fn span(lights: u32) -> u32 {
     let config = PageConfig::default();
     let clipmap = ClipmapConfig::default();
-    (padded(lights) * stride(config, clipmap) + clipmap.levels * config.side(0).pow(2))
-        .div_ceil(32)
+    (padded(lights) * stride(config, clipmap) + clipmap.levels * config.side(0).pow(2)).div_ceil(32)
         * 32
 }
 
@@ -1433,6 +1432,93 @@ fn a_cube_face_maps_back_to_itself() {
 /// pixel that can only miss — or, worse, a marking that allocates
 /// levels the reader never visits, which is pool spent on pages nobody
 /// can sample.
+const SPOT: &str = r#"
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
+
+@compute @workgroup_size(1, 1, 1)
+fn cs_spot() {
+    // A spot pointing straight DOWN, a floor point below and ahead of
+    // it — the exact shape of the scene that shipped broken.
+    let dir = vec3<f32>(0.0, -1.0, 0.0);
+    let below = vec3<f32>(0.4, -3.0, 0.2);
+
+    // 1. The rotated offset lands on face 0 — the spot's one face.
+    let rotated = spot_local(dir, below);
+    let hit = cube_face(rotated);
+    out[0] = hit.w;
+    out[1] = hit.x;
+    out[2] = hit.y;
+
+    // 2. The raster projects the SAME rotated offset with a positive w
+    //    through the whole-face cell, so writer and reader share one
+    //    mapping by construction.
+    let face = cell_face(0u, vec2<u32>(0u, 0u), 1u, rotated);
+    out[3] = face.z;
+
+    // 3. A point ON the axis is the face's centre, at its distance.
+    let centred = spot_local(dir, dir * 5.0);
+    out[4] = centred.x;
+    out[5] = length(centred.yz);
+    let centre_uv = cube_face(centred);
+    out[6] = centre_uv.x;
+    out[7] = centre_uv.y;
+
+    // 4. The basis is orthonormal: rotation preserves length, which is
+    //    what keeps `distance` and the level choice frame-independent.
+    out[8] = length(rotated) - length(below);
+}
+"#;
+
+/// A spot's page frame follows the SPOT's axis, through the shader's
+/// own `spot_local`, `cube_face` and `cell_face` — not a Rust mirror.
+///
+/// 🔴 Written after the defect shipped: the marking and the reader
+/// forced `face = 0` while keeping the WORLD-axis uv, and the depth
+/// raster projected through the world's +X. Three mappings of one page;
+/// on screen, occlusion the shape of nothing that exists.
+#[test]
+fn a_spot_page_rotates_with_its_axis() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let out = run_page_table_shader_f32(&device, &queue, SPOT, "cs_spot", 36);
+    assert_eq!(out[0], 0.0, "a point in the cone lands on face 0");
+    assert!(
+        (out[1] - 0.5).abs() < 0.1 && (out[2] - 0.5).abs() < 0.1,
+        "a near-axis point maps near the face's centre, got ({}, {})",
+        out[1],
+        out[2]
+    );
+    assert!(
+        out[3] > 0.0,
+        "the raster's w is positive in front of the spot"
+    );
+    assert!(
+        (out[4] - 5.0).abs() < 1e-4 && out[5].abs() < 1e-4,
+        "the axis maps to the face's axis"
+    );
+    assert!(
+        (out[6] - 0.5).abs() < 1e-4 && (out[7] - 0.5).abs() < 1e-4,
+        "the axis is the face's centre"
+    );
+    assert!(out[8].abs() < 1e-4, "the basis is orthonormal");
+}
+
+/// The same harness, reading floats.
+fn run_page_table_shader_f32(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    body: &str,
+    entry: &str,
+    bytes: usize,
+) -> Vec<f32> {
+    run_page_table_shader(device, queue, body, entry, bytes)
+        .into_iter()
+        .map(f32::from_bits)
+        .collect()
+}
+
 const FLOOR: &str = r#"
 @group(0) @binding(0) var<storage, read_write> out: array<u32>;
 

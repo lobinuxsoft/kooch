@@ -677,7 +677,12 @@ fn inti_debug_is_view(mode: u32) -> bool {
 /// `inti_local_page_shadow`: a debug view that shares the reader's early
 /// returns cannot show what the reader skipped.
 fn inti_lamp_page_debug(world_position: vec3<f32>, n: vec3<f32>, faces: bool) -> vec3<f32> {
-    if (inti.shadows_enabled == 0u || inti_pages.sun.w <= 0.5) {
+    // Pages BOUND is the gate — NOT `shadows_enabled`, which is the
+    // cascade-validity flag and is 0 in any scene without a sun. Gating
+    // on it blinded this view in exactly the scene it exists for: a
+    // lamp samples its pages whether or not a sun exists, so the view
+    // that inspects them must run there too.
+    if (inti_pages.sun.w <= 0.5) {
         return vec3<f32>(1.0, 0.0, 1.0);
     }
     // 🔴 ORANGE, not magenta. Three different reasons to show nothing
@@ -726,7 +731,10 @@ fn inti_lamp_page_debug(world_position: vec3<f32>, n: vec3<f32>, faces: bool) ->
                 + n * (texel_world * INTI_POINT_NORMAL_BIAS)
                 + to_light * INTI_POINT_DEPTH_BIAS;
         }
-        let offset = sampled - light.position;
+        var offset = sampled - light.position;
+        if (is_spot) {
+            offset = spot_local(light.direction, offset);
+        }
         let hit = cube_face(offset);
         let face = select(u32(hit.w), 0u, is_spot);
         let cell = vec2<u32>(
