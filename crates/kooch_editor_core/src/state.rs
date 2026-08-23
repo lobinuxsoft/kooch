@@ -128,8 +128,16 @@ impl EditorTab {
     pub(crate) fn label(&self) -> String {
         match self {
             Self::World => format!("{} World", crate::icons::GLOBE),
-            Self::View => format!("{} View", crate::icons::EYE),
-            Self::Game => format!("{} Game", crate::icons::GAME_CONTROLLER),
+            // "Edit View" / "Game View", the user's naming: both are
+            // real views of the same world, one through the authoring
+            // camera and one through the gameplay camera. NOT "World
+            // View" — the entity-hierarchy panel is already called
+            // World, and two near-homonym tabs cost more than they
+            // say. The VARIANTS stay `View`/`Game`: they are the names
+            // serialized into saved dock layouts, and renaming a
+            // serialized name breaks data silently.
+            Self::View => format!("{} Edit View", crate::icons::EYE),
+            Self::Game => format!("{} Game View", crate::icons::GAME_CONTROLLER),
             Self::Inspector => format!("{} Inspector", crate::icons::SLIDERS),
             Self::Archetypes => format!("{} Archetypes", crate::icons::TREE_STRUCTURE),
             Self::Components => format!("{} Components", crate::icons::LIST_BULLETS),
