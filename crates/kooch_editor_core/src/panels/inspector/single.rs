@@ -12,12 +12,12 @@ use kooch_ecs::reflect::{FieldMeta, ReflectValue};
 use crate::actions::EditorAction;
 use crate::state::{EntityDisplayInfo, EulerCacheKey};
 
+use super::RotationContext;
 use super::rotation::{draw_quat_with_cache, is_transform_rotation};
 use super::widgets::{
-    bits_for, choices_for, draw_readonly_value, draw_value_widget, requires_for, AssetCatalogEntry,
-    FieldContext,
+    AssetCatalogEntry, FieldContext, bits_for, choices_for, draw_readonly_value, draw_value_widget,
+    requires_for,
 };
-use super::RotationContext;
 
 /// Draws an editable name field for the Name component (shown above the component list).
 pub(super) fn draw_name_editor(

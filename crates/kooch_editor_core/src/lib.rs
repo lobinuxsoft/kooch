@@ -211,6 +211,7 @@ impl Plugin for EditorPlugin {
         // Which gizmo groups draw, restored from disk. After the
         // visualizers are registered so the panel has something to list.
         app.add_system(Stage::Startup, gizmos::load_visibility_system);
+        app.add_system(Stage::Startup, perf::persistence::load_overlays_system);
         // Rebuild the gizmo line batch from current selection. Runs after
         // transform propagation (PostUpdate) so GlobalTransform is fresh.
         app.add_system(Stage::PreRender, gizmos::build_gizmo_batch_system);
@@ -222,6 +223,7 @@ impl Plugin for EditorPlugin {
         // Same cheap fast-path as the layout: re-serialize, compare, and
         // only touch disk when a choice actually changed.
         app.add_system(Stage::Last, gizmos::save_visibility_system);
+        app.add_system(Stage::Last, perf::persistence::save_overlays_system);
     }
 
     fn name(&self) -> &str {

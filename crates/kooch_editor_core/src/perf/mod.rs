@@ -11,6 +11,7 @@
 //! single `resources.get::<EditorPerfStats>()` from the View toolbar.
 
 pub(crate) mod breakdown;
+pub(crate) mod persistence;
 pub(crate) mod sys_metrics;
 pub(crate) mod timing;
 
@@ -159,10 +160,12 @@ mod tests;
 /// metric refreshed twice a second that lag is invisible, and the
 /// alternative — asking the UI mid-`PreRender` what it is about to draw —
 /// does not exist.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub(crate) struct HudVisibility {
     /// The **System** section inside it, which is the only reader of the
     /// sysinfo poll.
+    #[serde(skip)]
     pub(crate) system_section: bool,
     /// The shadow-pages readout, as its OWN floating window: inlined in
     /// the Debug section it sat translucent over the 3D view and could
@@ -173,6 +176,7 @@ pub(crate) struct HudVisibility {
     /// most one frame stale. Gates the sysinfo poll alongside `sidebar`,
     /// and decides which surface hosts the pinned floating windows —
     /// two hosts drawing the same window id would clash.
+    #[serde(skip)]
     pub(crate) panel_visible: bool,
     /// Which sections have been pinned out into floating windows.
     pub(crate) pinned: PinnedSections,
@@ -187,7 +191,8 @@ pub(crate) struct HudVisibility {
 /// One flag per pinnable section of the performance readout. A fixed
 /// struct rather than a set: the sections are a closed list, and
 /// `HudVisibility` stays `Copy` for the `PreRender` readers.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub(crate) struct PinnedSections {
     pub(crate) debug: bool,
     pub(crate) frame: bool,
@@ -208,10 +213,13 @@ impl Default for HudVisibility {
     fn default() -> Self {
         Self {
             system_section: true,
-            shadow_pages_window: true,
+            shadow_pages_window: false,
             panel_visible: false,
             pinned: PinnedSections::default(),
-            frame_time_card: false,
+            // The one card a fresh layout shows: frame timings are what
+            // everyone wants first, and everything else is a toggle
+            // away in the View menu. The user's spec, verbatim.
+            frame_time_card: true,
             info_card: false,
         }
     }
