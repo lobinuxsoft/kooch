@@ -497,6 +497,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &connect_output,
         prefab_overwrite.as_ref(),
         &build_panel,
+        crate::editor_camera::editor_camera_rotation(resources),
     );
     stages.ui_ms = crate::perf::ms_since(ui_start);
     let input_start = std::time::Instant::now();

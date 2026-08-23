@@ -141,6 +141,9 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Per-frame perf HUD counters (#463). Read-only, surfaced
     /// through the View toolbar's perf overlay (always visible).
     pub(crate) perf_stats: crate::perf::EditorPerfStats,
+    /// The editor camera's rotation this frame, for the View panel's
+    /// navigation gizmo. `None` before the camera spawns.
+    pub(crate) editor_camera_rotation: Option<glam::Quat>,
 }
 
 impl<'a> TabViewer for EditorTabViewer<'a> {
@@ -279,6 +282,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.gizmo_groups,
                 self.physics_debug,
                 self.actions,
+                self.editor_camera_rotation,
             ),
             EditorTab::Console => {
                 crate::panels::console::draw_console(ui, focused, self.log_buffer, self.console)

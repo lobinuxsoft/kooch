@@ -178,6 +178,12 @@ pub(crate) struct HudVisibility {
     pub(crate) panel_visible: bool,
     /// Which sections have been pinned out into floating windows.
     pub(crate) pinned: PinnedSections,
+    /// The Godot-style anchored cards on the game viewport, toggled
+    /// from its View menu: frame timings top-right, render information
+    /// bottom-right. Small, fixed, and out of the picture's way — the
+    /// full readout lives in the Performance tab.
+    pub(crate) frame_time_card: bool,
+    pub(crate) info_card: bool,
 }
 
 /// One flag per pinnable section of the performance readout. A fixed
@@ -208,6 +214,8 @@ impl Default for HudVisibility {
             shadow_pages_window: true,
             panel_visible: false,
             pinned: PinnedSections::default(),
+            frame_time_card: false,
+            info_card: false,
         }
     }
 }

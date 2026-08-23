@@ -101,6 +101,7 @@ pub(super) fn run_editor_ui(
     connect_output: &[String],
     prefab_overwrite: Option<&PendingPrefabOverwrite>,
     build: &crate::panels::build::BuildPanel,
+    editor_camera_rotation: Option<glam::Quat>,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     // 🔴 One frame boundary per editor frame, and it has to be exactly
     // here. puffin builds its flamegraph out of the scopes that closed
@@ -230,6 +231,7 @@ pub(super) fn run_editor_ui(
             }
 
             let mut tab_viewer = EditorTabViewer {
+                editor_camera_rotation,
                 build,
                 build_selection: &mut overlay.build_selection,
                 pinned: &mut pinned_gizmos,

@@ -88,6 +88,10 @@ pub struct ViewportInputDelta {
     pub ctrl_held: bool,
     pub shift_held: bool,
     pub alt_held: bool,
+    /// `Some(orientation)` when the axis gizmo was clicked this frame:
+    /// the camera snaps to that orientation, keeping its focus point
+    /// and distance — Godot's navigation-gizmo behaviour.
+    pub snap_orientation: Option<glam::Quat>,
 }
 
 impl ViewportInputDelta {
@@ -106,6 +110,7 @@ impl ViewportInputDelta {
             && self.fly_pitch == 0.0
             && !self.fly_keys.any()
             && !self.focus_pressed
+            && self.snap_orientation.is_none()
     }
 }
 

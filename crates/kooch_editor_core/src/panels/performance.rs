@@ -1259,45 +1259,11 @@ pub(crate) fn draw_perf_sidebar(
     // systems that pay for these metrics run in `PreRender` and cannot
     // read egui's memory, so a flag kept only there meant nothing could
     // ask whether anyone was looking (#703).
-    let mut sidebar_visible = hud_visibility.sidebar;
-
+    // No chevron any more: the Game viewport's View menu is the way in
+    // and out, the way Godot's is. The overlay itself is unchanged.
+    let sidebar_visible = hud_visibility.sidebar;
     let panel_top_right =
         panel_origin + egui::vec2(available.x - TOOLBAR_OFFSET.x, TOOLBAR_OFFSET.y);
-
-    // Toggle chevron — left-pointing when expanded (click to
-    // collapse to the right), right-pointing when collapsed (click
-    // to expand back). Always rendered so the user has a way back
-    // even after hiding the panel.
-    let toggle_size = egui::vec2(TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
-    let toggle_pos = panel_top_right - egui::vec2(toggle_size.x, 0.0);
-    let toggle_rect = egui::Rect::from_min_size(toggle_pos, toggle_size);
-    let mut toggle_ui = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(toggle_rect)
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
-    egui::Frame::new()
-        .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
-        .corner_radius(egui::CornerRadius::same(6))
-        .show(&mut toggle_ui, |ui| {
-            let glyph = if sidebar_visible {
-                "\u{27e9}"
-            } else {
-                "\u{27e8}"
-            };
-            let button = egui::Button::new(egui::RichText::new(glyph).size(16.0))
-                .min_size(toggle_size)
-                .fill(egui::Color32::TRANSPARENT)
-                .stroke(egui::Stroke::NONE);
-            let resp = ui.add(button).on_hover_text(if sidebar_visible {
-                "Hide performance sidebar"
-            } else {
-                "Show performance sidebar"
-            });
-            if resp.clicked() {
-                sidebar_visible = !sidebar_visible;
-            }
-        });
 
     if sidebar_visible {
         // Panel sits below the toggle chevron, anchored to the
@@ -1307,9 +1273,8 @@ pub(crate) fn draw_perf_sidebar(
         // Frame tight around the actually-visible content so
         // collapsing every section doesn't leave a giant black
         // box on the viewport.
-        let panel_top = toggle_pos.y + toggle_size.y + 4.0;
-        let panel_max_height =
-            (available.y - 2.0 * TOOLBAR_OFFSET.y - toggle_size.y - 4.0).max(0.0);
+        let panel_top = panel_top_right.y;
+        let panel_max_height = (available.y - 2.0 * TOOLBAR_OFFSET.y).max(0.0);
         let sidebar_max_rect = egui::Rect::from_min_size(
             egui::pos2(panel_top_right.x - PERF_SIDEBAR_WIDTH, panel_top),
             egui::vec2(PERF_SIDEBAR_WIDTH, panel_max_height),
@@ -1346,18 +1311,4 @@ pub(crate) fn draw_perf_sidebar(
                 );
             });
     }
-
-    // Written after drawing, so it records what was actually on screen
-    // this frame rather than what was asked for. A collapsed sidebar
-    // leaves `system_section` at whatever it last was, which is correct:
-    // an invisible section is not an open one, and `wants_system_metrics`
-    // requires both.
-    hud_visibility.sidebar = sidebar_visible;
-
-    // Written after drawing, so it records what was actually on screen
-    // this frame rather than what was asked for. A collapsed sidebar
-    // leaves `system_section` at whatever it last was, which is correct:
-    // an invisible section is not an open one, and `wants_system_metrics`
-    // requires both.
-    hud_visibility.sidebar = sidebar_visible;
 }

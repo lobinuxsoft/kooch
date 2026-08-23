@@ -63,6 +63,14 @@ pub fn apply_viewport_input(
         return;
     };
 
+    // --- Axis-gizmo snap ---------------------------------------------------
+    // Before the orbit so a click and a stray drag in the same frame
+    // resolve to the clicked view. Focus point and distance survive;
+    // only the orientation jumps, which is what the gizmo promises.
+    if let Some(snap) = delta.snap_orientation {
+        rotation = snap;
+    }
+
     // --- Orbit (MMB drag, no Shift) ---------------------------------------
     if delta.orbit_yaw != 0.0 || delta.orbit_pitch != 0.0 {
         rotation = apply_yaw_pitch(rotation, delta.orbit_yaw, delta.orbit_pitch);
