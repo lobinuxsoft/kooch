@@ -232,13 +232,17 @@ fn reject_reason_code_tracks_cull_shader_constants() {
     // Non-reject modes never write into reject_reasons[] — the
     // orchestrator must NOT lift `debug_active` for them.
     assert!(MeshletDebugMode::Off.reject_reason_code().is_none());
-    assert!(MeshletDebugMode::TriangleDensity
-        .reject_reason_code()
-        .is_none());
+    assert!(
+        MeshletDebugMode::TriangleDensity
+            .reject_reason_code()
+            .is_none()
+    );
     assert!(MeshletDebugMode::Overdraw.reject_reason_code().is_none());
-    assert!(MeshletDebugMode::CullPassthrough
-        .reject_reason_code()
-        .is_none());
+    assert!(
+        MeshletDebugMode::CullPassthrough
+            .reject_reason_code()
+            .is_none()
+    );
     assert!(MeshletDebugMode::OnlyLod0.reject_reason_code().is_none());
     assert!(MeshletDebugMode::OnlyRoots.reject_reason_code().is_none());
     assert!(MeshletDebugMode::MeshletIds.reject_reason_code().is_none());
@@ -353,11 +357,22 @@ fn every_inti_view_still_replaces_the_shading() {
 /// a gap silently shows the wrong intermediate.
 #[test]
 fn the_fsr_stages_are_one_to_six() {
-    let stages: Vec<u32> = MeshletDebugMode::all_implemented()
-        .iter()
-        .map(|m| m.fsr3_stage())
-        .filter(|s| *s != 0)
-        .collect();
+    // Enumerated directly: the views retired from the DROPDOWN (the
+    // upscaler works and the user asked for the clutter gone), but the
+    // variants and their shader stages remain the diagnosis tools for
+    // the next regression, and this contract still guards them.
+    let stages: Vec<u32> = [
+        MeshletDebugMode::Fsr3Input,
+        MeshletDebugMode::Fsr3Motion,
+        MeshletDebugMode::Fsr3Masks,
+        MeshletDebugMode::Fsr3Upsample,
+        MeshletDebugMode::Fsr3History,
+        MeshletDebugMode::Fsr3Locks,
+        MeshletDebugMode::Fsr3Weights,
+    ]
+    .iter()
+    .map(|m| m.fsr3_stage())
+    .collect();
     assert_eq!(stages, [1, 2, 3, 4, 5, 6, 7]);
 }
 

@@ -149,10 +149,14 @@ fn overlay_stack(
         origin + egui::vec2(available.x - WIDTH - 10.0, 10.0),
         egui::vec2(WIDTH, (available.y - 20.0).max(0.0)),
     );
+    // Align::Min, deliberately: a Max (right-aligned) cross axis leaks
+    // into every row of every card and renders "✕ Debug" instead of
+    // "Debug … ✕". The column already sits at the right edge because
+    // its RECT does; the content inside reads left-to-right.
     let mut column = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(rect)
-            .layout(egui::Layout::top_down(egui::Align::Max)),
+            .layout(egui::Layout::top_down(egui::Align::Min)),
     );
     let column = &mut column;
     if hud.frame_time_card {

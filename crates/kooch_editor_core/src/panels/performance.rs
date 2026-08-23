@@ -45,16 +45,22 @@ pub(crate) fn draw_performance_content(
     single_light_note: Option<&str>,
     surface: PerfSurface,
 ) {
-    // auto_shrink=[true, true] lets the ScrollArea report only the
-    // height its content actually needs, so the surrounding Frame
-    // sizes to the visible sections (collapsing one shrinks the
-    // dark container too). Width is bounded by the parent's
-    // `set_max_width`; vertical scroll kicks in only when the
-    // sections together exceed the viewport.
-    egui::ScrollArea::vertical()
-        .id_salt("performance_body")
-        .auto_shrink([true, true])
-        .show(ui, |ui| {
+    // The panel scrolls; the overlay stack does not — a scroll area
+    // inside the viewport-anchored column reserved space its cards did
+    // not use, which read as panels "longer than their content".
+    let scroll = |ui: &mut egui::Ui, body: Box<dyn FnOnce(&mut egui::Ui) + '_>| {
+        if surface == PerfSurface::Panel {
+            egui::ScrollArea::vertical()
+                .id_salt("performance_body")
+                .auto_shrink([true, true])
+                .show(ui, body);
+        } else {
+            body(ui);
+        }
+    };
+    scroll(
+        ui,
+        Box::new(|ui| {
             let mut pin_debug = hud_visibility.pinned.debug;
             section(ui, &mut pin_debug, surface, "Debug", true, |ui| {
                 debug_controls(
@@ -467,7 +473,8 @@ pub(crate) fn draw_performance_content(
                     },
                 );
             }
-        });
+        }),
+    );
 }
 
 /// Digit groups, because a pair-test count runs to seven figures and an

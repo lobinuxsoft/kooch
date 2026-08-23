@@ -641,7 +641,14 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         game.has_camera = false;
     }
 
-    {
+    // The View panel, gated the way the Game panel above already is:
+    // `viewport_request` is `Some` this frame iff the tab was actually
+    // drawn. View and Game ship as sibling tabs, so the common case is
+    // one of them hidden — and a hidden view must cost NOTHING: no
+    // cull, no raster, no sky, no shadow-page slice. The user's rule,
+    // stated verbatim: "todo lo que no es visible, no tiene que
+    // consumir".
+    if viewport_request.is_some() {
         // The meshlet stage + blit are constructed at startup and live
         // for the whole editor session; if either is missing, another
         // system removed them mid-frame. Reconstruct minimal

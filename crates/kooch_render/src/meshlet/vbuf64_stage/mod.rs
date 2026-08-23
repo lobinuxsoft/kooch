@@ -811,6 +811,15 @@ impl Vbuf64Stage {
                 // half-rate interpolation — is cheaper somewhere else in
                 // this frame, and the two numbers have to be subtractable.
                 let mut source = self.tonemap.hdr_view();
+                // While `source` is the render-resolution HDR texture,
+                // the tonemap must stretch its written region to the
+                // target — a debug view that skips the upscaler used to
+                // show the scene at half size in a corner. An upscaler
+                // output already matches the target and resets this.
+                let mut source_scale = [
+                    self.size.0 as f32 / self.output_size.0.max(1) as f32,
+                    self.size.1 as f32 / self.output_size.1.max(1) as f32,
+                ];
                 if self.technique.is_temporal() && !replaces_shading(debug_mode) {
                     // 🔴 The scope carries the technique's name rather
                     // than a shared "temporal". A capture has to say
@@ -889,6 +898,7 @@ impl Vbuf64Stage {
                     if let (Some(scopes), Some(query)) = (scopes, query) {
                         scopes.end(encoder, query);
                     }
+                    source_scale = [1.0, 1.0];
                 }
                 // 🔴 Everything below reads the image the resolve just
                 // produced — and when that resolve was DLSS, it has not
@@ -946,6 +956,7 @@ impl Vbuf64Stage {
                     // turns a dim scene into a black frame, which is why
                     // FSR's colour steps answer this differently.
                     !is_display_referred(debug_mode),
+                    source_scale,
                 );
                 if let (Some(scopes), Some(query)) = (scopes, query) {
                     scopes.end(encoder, query);

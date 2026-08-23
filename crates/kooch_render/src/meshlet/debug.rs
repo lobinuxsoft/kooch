@@ -422,13 +422,12 @@ impl MeshletDebugMode {
             Self::LocalPageFaces,
             Self::LocalPageDepth,
             Self::TextureMipLevel,
-            Self::Fsr3Input,
-            Self::Fsr3Motion,
-            Self::Fsr3Masks,
-            Self::Fsr3Upsample,
-            Self::Fsr3History,
-            Self::Fsr3Locks,
-            Self::Fsr3Weights,
+            // The Fsr3* views are deliberately NOT offered any more:
+            // the upscaler's bring-up is done and they earned their
+            // retirement from the dropdown (the user's words: "ya los
+            // podemos sacar porque andan bien"). The variants stay —
+            // the taps and the tests behind them are how the next
+            // upscaler regression gets diagnosed — but out of the way.
         ]
     }
 
