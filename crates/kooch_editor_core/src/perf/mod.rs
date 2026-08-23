@@ -161,8 +161,6 @@ mod tests;
 /// does not exist.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct HudVisibility {
-    /// The perf sidebar as a whole.
-    pub(crate) sidebar: bool,
     /// The **System** section inside it, which is the only reader of the
     /// sysinfo poll.
     pub(crate) system_section: bool,
@@ -209,7 +207,6 @@ impl Default for HudVisibility {
     /// `sys_metrics_system`'s re-warm on visibility transitions.
     fn default() -> Self {
         Self {
-            sidebar: false,
             system_section: true,
             shadow_pages_window: true,
             panel_visible: false,
@@ -222,7 +219,10 @@ impl Default for HudVisibility {
 
 impl HudVisibility {
     /// Whether the OS is worth asking about CPU and memory this frame.
+    /// Whether the OS is worth asking about CPU and memory this frame:
+    /// the Performance tab is open with its System section expanded, or
+    /// the System overlay card is on the game viewport.
     pub(crate) fn wants_system_metrics(self) -> bool {
-        (self.sidebar || self.panel_visible) && self.system_section
+        (self.panel_visible && self.system_section) || self.pinned.system
     }
 }

@@ -43,10 +43,7 @@ pub(crate) fn draw_performance_content(
     viewport: egui::Vec2,
     hud_visibility: &mut crate::perf::HudVisibility,
     single_light_note: Option<&str>,
-    // Whether THIS surface hosts the pinned floating windows. Two
-    // surfaces can draw the content (the dock tab and the overlay
-    // sidebar); only one may own a window id per frame.
-    floats: bool,
+    surface: PerfSurface,
 ) {
     // auto_shrink=[true, true] lets the ScrollArea report only the
     // height its content actually needs, so the surrounding Frame
@@ -59,7 +56,7 @@ pub(crate) fn draw_performance_content(
         .auto_shrink([true, true])
         .show(ui, |ui| {
             let mut pin_debug = hud_visibility.pinned.debug;
-            section(ui, &mut pin_debug, floats, "Debug", true, |ui| {
+            section(ui, &mut pin_debug, surface, "Debug", true, |ui| {
                 debug_controls(
                     ui,
                     meshlet_debug_mode,
@@ -72,46 +69,24 @@ pub(crate) fn draw_performance_content(
                     viewport,
                     single_light_note,
                 );
-                // The shadow-pages readout lives in its OWN window —
-                // inlined here it sat translucent over the 3D view and
-                // could not be read. The checkbox is the way back after
-                // closing it.
-                ui.checkbox(
-                    &mut hud_visibility.shadow_pages_window,
-                    egui::RichText::new("shadow pages window").small(),
-                )
-                .on_hover_text(
-                    "The virtual-shadow-map readout — marking, residency, raster and \
-                     cache counters — as a separate movable window.",
-                );
             });
 
             hud_visibility.pinned.debug = pin_debug;
 
-            if floats && hud_visibility.shadow_pages_window {
-                let mut open = true;
-                egui::Window::new("Shadow pages")
-                    .open(&mut open)
-                    .default_pos(egui::pos2(40.0, 80.0))
-                    .default_width(340.0)
-                    .resizable(true)
-                    .collapsible(true)
-                    .show(ui.ctx(), |ui| {
-                        shadow_page_readout(
-                            ui,
-                            meshlet_stats.page_marking,
-                            meshlet_stats.page_raster,
-                        );
-                    });
-                if !open {
-                    hud_visibility.shadow_pages_window = false;
-                }
-            }
+            // The shadow-pages readout, a section like any other: in
+            // the tab it collapses, on the viewport it is one more
+            // card in the stack. The floating window it once was is
+            // retired — the stack IS the way overlays live now.
+            let mut pin_pages = hud_visibility.shadow_pages_window;
+            section(ui, &mut pin_pages, surface, "Shadow pages", true, |ui| {
+                shadow_page_readout(ui, meshlet_stats.page_marking, meshlet_stats.page_raster);
+            });
+            hud_visibility.shadow_pages_window = pin_pages;
 
             section(
                 ui,
                 &mut hud_visibility.pinned.frame,
-                floats,
+                surface,
                 "Frame",
                 true,
                 |ui| {
@@ -161,7 +136,7 @@ pub(crate) fn draw_performance_content(
                 section(
                     ui,
                     &mut hud_visibility.pinned.project,
-                    floats,
+                    surface,
                     "Project",
                     true,
                     |ui| {
@@ -209,7 +184,7 @@ pub(crate) fn draw_performance_content(
             // every time it runs (#703). Recorded so `sys_metrics_system`
             // can skip the frames nobody is reading.
             let mut pin_system = hud_visibility.pinned.system;
-            let system_shown = section(ui, &mut pin_system, floats, "System", true, |ui| {
+            let system_shown = section(ui, &mut pin_system, surface, "System", true, |ui| {
                 grid(ui, "perf_grid_system", |ui| {
                     // {:.2} so sub-1 % (typical for an idle editor
                     // at 60 FPS waiting on vsync) is visible
@@ -228,11 +203,17 @@ pub(crate) fn draw_performance_content(
             });
 
             hud_visibility.pinned.system = pin_system;
-            hud_visibility.system_section = system_shown;
+            // Only the PANEL surface votes on the section's openness:
+            // the overlay writes the same flag through `pinned.system`,
+            // and letting it overwrite here would turn the poll off
+            // while the tab still shows the numbers.
+            if surface == PerfSurface::Panel {
+                hud_visibility.system_section = system_shown;
+            }
             section(
                 ui,
                 &mut hud_visibility.pinned.render,
-                floats,
+                surface,
                 "Render",
                 true,
                 |ui| {
@@ -264,7 +245,7 @@ pub(crate) fn draw_performance_content(
             section(
                 ui,
                 &mut hud_visibility.pinned.meshlet,
-                floats,
+                surface,
                 "Meshlet pipeline",
                 true,
                 |ui| {
@@ -309,7 +290,7 @@ pub(crate) fn draw_performance_content(
             section(
                 ui,
                 &mut hud_visibility.pinned.cpu_frame,
-                floats,
+                surface,
                 "CPU frame",
                 false,
                 |ui| {
@@ -435,7 +416,7 @@ pub(crate) fn draw_performance_content(
                 section(
                     ui,
                     &mut hud_visibility.pinned.remote,
-                    floats,
+                    surface,
                     "Remote",
                     true,
                     |ui| {
@@ -1108,58 +1089,56 @@ pub(crate) fn draw_performance_panel(
         viewport,
         hud_visibility,
         single_light_note,
-        true,
+        PerfSurface::Panel,
     );
 }
 
-/// One section of the readout: a collapsing header with a PIN toggle,
-/// or — pinned — a floating `egui::Window` of its own, the user's ask
-/// after the shadow-pages window ("¿podemos hacer eso con todo?").
+/// Which surface is rendering the sections: the Performance dock tab,
+/// or the semi-transparent card stack on the game viewport.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum PerfSurface {
+    Panel,
+    Overlay,
+}
+
+/// One section of the readout.
 ///
-/// Returns whether the body actually rendered somewhere this call, which
-/// is what the System section's poll gate needs. A pinned section whose
-/// window is hosted by the OTHER surface (`floats == false`) reports
-/// `false` — claiming visibility for a window it did not draw would keep
-/// the sysinfo poll alive after the host closed it.
+/// On the PANEL every section renders, as a collapsing header whose pin
+/// toggle mirrors it onto the game viewport. On the OVERLAY only the
+/// toggled sections render, each as a semi-transparent card in the
+/// stack, with a ✕ to dismiss — Godot's viewport overlays, the user's
+/// ask. Returns whether the body rendered, which the System section's
+/// poll gate reads.
 fn section(
     ui: &mut egui::Ui,
     pinned: &mut bool,
-    floats: bool,
+    surface: PerfSurface,
     title: &str,
     default_open: bool,
     body: impl FnOnce(&mut egui::Ui),
 ) -> bool {
-    let id = ui.make_persistent_id(format!("perf_section_{title}"));
-    if *pinned {
-        ui.horizontal(|ui| {
-            if ui
-                .small_button(crate::icons::MAP_PIN_SIMPLE_AREA)
-                .on_hover_text("Unpin back into the panel")
-                .clicked()
-            {
-                *pinned = false;
-            }
-            ui.label(egui::RichText::new(format!("{title} — pinned")).weak());
-        });
-        if !floats {
+    if surface == PerfSurface::Overlay {
+        if !*pinned {
             return false;
         }
-        let mut open = true;
-        let mut shown = false;
-        egui::Window::new(title)
-            .id(id.with("float"))
-            .open(&mut open)
-            .default_width(340.0)
-            .resizable(true)
-            .show(ui.ctx(), |ui| {
-                shown = true;
-                body(ui);
+        stack_card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(title).strong().small());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button(crate::icons::X)
+                        .on_hover_text("Hide this overlay")
+                        .clicked()
+                    {
+                        *pinned = false;
+                    }
+                });
             });
-        if !open {
-            *pinned = false;
-        }
-        return shown;
+            body(ui);
+        });
+        return true;
     }
+    let id = ui.make_persistent_id(format!("perf_section_{title}"));
     let state = egui::collapsing_header::CollapsingState::load_with_default_open(
         ui.ctx(),
         id,
@@ -1169,17 +1148,31 @@ fn section(
         .show_header(ui, |ui| {
             ui.label(egui::RichText::new(title).strong());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mut on = *pinned;
                 if ui
-                    .small_button(crate::icons::MAP_PIN_SIMPLE_AREA)
-                    .on_hover_text("Pin as a floating window")
+                    .toggle_value(&mut on, crate::icons::MAP_PIN_SIMPLE_AREA)
+                    .on_hover_text("Show as an overlay card on the game viewport")
                     .clicked()
                 {
-                    *pinned = true;
+                    *pinned = on;
                 }
             });
         })
         .body(body);
     body_response.is_some()
+}
+
+/// A semi-transparent card in the game viewport's overlay stack.
+pub(crate) fn stack_card(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 170))
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_width(264.0);
+            body(ui);
+        });
+    ui.add_space(6.0);
 }
 
 /// Two-column grid for label / value rows.
@@ -1209,15 +1202,6 @@ fn metric_with_tooltip(ui: &mut egui::Ui, label: &str, value: &str, tooltip: &st
     ui.end_row();
 }
 
-/// Width of the perf sidebar overlay anchored to the right edge of
-/// the panel. 260 px fits the widest "n/a (TIMESTAMP_QUERY
-/// unavailable)" GPU-frame-time row without wrapping while leaving
-/// room to read the actual image behind it.
-pub(crate) const PERF_SIDEBAR_WIDTH: f32 = 260.0;
-const TOOLBAR_BUTTON_SIZE: f32 = 28.0;
-const TOOLBAR_PADDING: f32 = 6.0;
-const TOOLBAR_OFFSET: egui::Vec2 = egui::vec2(8.0, 8.0);
-
 /// A froxel's depth as the panel should state it.
 ///
 /// The two clamped ends are the ones that matter: an unbounded last
@@ -1228,87 +1212,5 @@ fn depth_label(metres: f32) -> String {
     match metres.is_finite() {
         true => format!("{metres:.1} m"),
         false => "unbounded".to_owned(),
-    }
-}
-
-/// Draws the vertical perf sidebar anchored to the right edge of a
-/// panel, with its always-visible toggle chevron.
-///
-/// Lives beside the Game panel rather than the View: every number in it
-/// — frame time, cull dispatch, pool meshlets, remote snapshot — is the
-/// cost of drawing the game, and the View shows an authoring camera that
-/// nobody ships.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn draw_perf_sidebar(
-    ui: &mut egui::Ui,
-    panel_origin: egui::Pos2,
-    available: egui::Vec2,
-    perf_stats: crate::perf::EditorPerfStats,
-    meshlet_stats: kooch_render::meshlet::MeshletRenderStats,
-    meshlet_debug_mode: &mut kooch_render::meshlet::MeshletDebugMode,
-    meshlet_debug_caps: kooch_render::meshlet::MeshletDebugCaps,
-    meshlet_lod_settings: &mut kooch_render::meshlet::MeshletLodSettings,
-    lights_hot: &mut LightsHot,
-    cluster_settings: &mut ClusterSettings,
-    specular_floor: &mut SpecularFloor,
-    viewport: egui::Vec2,
-    hud_visibility: &mut crate::perf::HudVisibility,
-    single_light_note: Option<&str>,
-) {
-    // State lives in `HudVisibility` rather than in egui memory: the
-    // systems that pay for these metrics run in `PreRender` and cannot
-    // read egui's memory, so a flag kept only there meant nothing could
-    // ask whether anyone was looking (#703).
-    // No chevron any more: the Game viewport's View menu is the way in
-    // and out, the way Godot's is. The overlay itself is unchanged.
-    let sidebar_visible = hud_visibility.sidebar;
-    let panel_top_right =
-        panel_origin + egui::vec2(available.x - TOOLBAR_OFFSET.x, TOOLBAR_OFFSET.y);
-
-    if sidebar_visible {
-        // Panel sits below the toggle chevron, anchored to the
-        // right edge. max_rect height is bounded by the viewport
-        // so the inner ScrollArea can clip when sections overflow;
-        // auto_shrink in `draw_performance_content` keeps the
-        // Frame tight around the actually-visible content so
-        // collapsing every section doesn't leave a giant black
-        // box on the viewport.
-        let panel_top = panel_top_right.y;
-        let panel_max_height = (available.y - 2.0 * TOOLBAR_OFFSET.y).max(0.0);
-        let sidebar_max_rect = egui::Rect::from_min_size(
-            egui::pos2(panel_top_right.x - PERF_SIDEBAR_WIDTH, panel_top),
-            egui::vec2(PERF_SIDEBAR_WIDTH, panel_max_height),
-        );
-        let mut sidebar_ui = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(sidebar_max_rect)
-                .layout(egui::Layout::top_down(egui::Align::Min)),
-        );
-        egui::Frame::new()
-            .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
-            .corner_radius(egui::CornerRadius::same(6))
-            .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
-            .show(&mut sidebar_ui, |ui| {
-                ui.set_max_width(PERF_SIDEBAR_WIDTH - TOOLBAR_PADDING * 2.0);
-                // The dock tab hosts the pinned windows whenever it is
-                // open; the sidebar only steps in when it is not, so no
-                // window id is ever drawn twice a frame.
-                let floats = !hud_visibility.panel_visible;
-                draw_performance_content(
-                    ui,
-                    perf_stats,
-                    meshlet_stats,
-                    meshlet_debug_mode,
-                    meshlet_debug_caps,
-                    meshlet_lod_settings,
-                    lights_hot,
-                    cluster_settings,
-                    specular_floor,
-                    viewport,
-                    hud_visibility,
-                    single_light_note,
-                    floats,
-                );
-            });
     }
 }
