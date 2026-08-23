@@ -120,24 +120,19 @@ struct PageCell {
 // format ..." rather than as a wrong image.
 @group(0) @binding(8) var color_out: texture_storage_2d<rgba8unorm, write>;
 
-// The page table, open-addressed. `page_table.wgsl` holds the hash, the
-// probe sequence and the atlas layout — everything the READER of this
-// table has to agree with, kept in one file so the two cannot drift.
+// The page table, FLAT: the entry index IS the virtual page id, so the
+// lookup the shading pass runs per pixel per light is one load.
+// `page_table.wgsl` holds the id arithmetic and the atlas layout —
+// everything the READER has to agree with, kept in one file so the two
+// cannot drift.
 //
-// Keys are `virtual_page + 1` so that a cleared buffer is an empty
-// table: the reset is `clear_buffer`, not a pass.
-@group(0) @binding(9) var<storage, read_write> table_keys: array<atomic<u32>>;
-// TWO words per entry: the physical slot, then the frame it was last
-// REQUESTED in. `page_slot` and `page_age` are the accessors.
-//
-// 🔴 Interleaved rather than two buffers, and the reason is a hard
-// limit: `max_storage_buffers_per_shader_stage` is EIGHT on the
-// downlevel defaults, and this pass was already at eight. A ninth
-// binding fails `create_bind_group_layout` outright — the age has to
-// live beside the slot or the pass does not exist.
-//
-// It also happens to be the better layout: a hit reads the slot and
-// writes the age, and now they share a cache line.
+// `PAGE_CELL` words per entry: `slot + 1` (`PAGE_ABSENT` = no page, so
+// a cleared buffer is an empty table), the frame it was last REQUESTED
+// in, and its index in this view's compacted `page_list`. Interleaved
+// rather than three buffers because
+// `max_storage_buffers_per_shader_stage` is EIGHT on the downlevel
+// defaults and this pass was already there — and a hit reads the slot
+// and writes the age, so they share a cache line anyway.
 @group(0) @binding(10) var<storage, read_write> table_cells: array<atomic<u32>>;
 // The allocator's own state, laid out per view: `[high, free_count,
 // free_slots...]` repeated every `slice + 2` words.
@@ -148,10 +143,11 @@ struct PageCell {
 // frame is exactly the non-persistent pool this replaces.
 @group(0) @binding(11) var<storage, read_write> alloc: array<atomic<u32>>;
 
-// The two words of a table entry. `PAGE_CELL` is in `page_table.wgsl`
-// because the READER indexes the same buffer.
+// The words of a table entry. `PAGE_CELL` is in `page_table.wgsl`
+// because the READER indexes the same buffer. The first word stores
+// `slot + 1`; this unwraps it and is only called on a resident entry.
 fn page_slot(entry: u32) -> u32 {
-    return atomicLoad(&table_cells[entry * PAGE_CELL]);
+    return atomicLoad(&table_cells[entry * PAGE_CELL]) - 1u;
 }
 
 fn page_age(entry: u32) -> u32 {
@@ -159,7 +155,7 @@ fn page_age(entry: u32) -> u32 {
 }
 
 fn page_stamp(entry: u32, slot: u32, frame: u32) {
-    atomicStore(&table_cells[entry * PAGE_CELL], slot);
+    atomicStore(&table_cells[entry * PAGE_CELL], slot + 1u);
     atomicStore(&table_cells[entry * PAGE_CELL + 1u], frame);
 }
 
@@ -177,12 +173,16 @@ const LIGHT_KIND_SPOT: u32 = 2u;
 
 // The pages one view addresses, and where its own start.
 //
-// A view's slots run `[0, sun_slot]` — every light plus the sun — so the
-// span is one more than the sun's own index times the per-light stride.
+// The pages one view addresses: `sun_slot` locals at `strides.z` pages
+// each, then the sun's clipmap — `chain.w` levels of a full grid.
 // Derived rather than uploaded: a second copy of it in the uniform is a
 // second thing to keep in step with `strides.z`.
 fn view_span() -> u32 {
-    return (pages.sampling.y + 1u) * pages.strides.z;
+    let raw = pages.sampling.y * pages.strides.z
+        + pages.chain.w * pages.strides.x * pages.strides.x;
+    // On a word boundary, mirroring `span` on the CPU: view N's bits
+    // start at `N * span` and the bitmap is cleared per view.
+    return (raw + 31u) / 32u * 32u;
 }
 
 fn view_base() -> u32 {
@@ -245,91 +245,33 @@ fn page_release(slot: u32) {
 // Finds `page` in the table, or puts it there, and stamps it with this
 // frame either way.
 //
-// 🔴 This REPLACED a function that only ever inserted, because the pool
-// used to be emptied every frame and every page was therefore new. Now
-// the common case is the first branch: the page is already resident,
+// 🔴 The common case is the first branch: the page is already resident,
 // its age is refreshed, and NOTHING is allocated and nothing has to be
 // rasterised again. `counters[7]` counts those and `counters[8]` counts
 // the ones that really are new — the two together are what says whether
 // persistence is doing anything.
 //
-// ⚠️ The lookup walks PAST tombstones and stops only at EMPTY. See
-// `PAGE_DEAD`: stopping at a freed entry would declare a resident page
-// missing and allocate a second slot for it.
+// No compare-exchange. Only the thread that flipped the page's mark bit
+// calls this, so the entry is this thread's own — and the eviction runs
+// in an earlier dispatch of the same pass, which is a barrier.
 fn page_touch(page: u32) -> u32 {
-    let entries = pages.pool.x;
-    if entries == 0u {
+    if page >= pages.pool.x {
         return PAGE_MISS;
     }
     let frame = pages.life.x;
-    var probe = page_probe(page, entries);
-    var dead = PAGE_MISS;
-    for (var i = 0u; i < PAGE_PROBES; i = i + 1u) {
-        let key = atomicLoad(&table_keys[probe]);
-        if key == page + 1u {
-            page_refresh(probe, frame);
-            atomicAdd(&counters[7], 1u);
-            return page_slot(probe);
-        }
-        if key == PAGE_DEAD && dead == PAGE_MISS {
-            // Remember the first hole; the run still has to be walked to
-            // the end in case the key lives further along it.
-            dead = probe;
-            atomicAdd(&counters[9], 1u);
-        }
-        if key == PAGE_EMPTY {
-            break;
-        }
-        probe = page_step(probe, entries);
+    let stored = atomicLoad(&table_cells[page * PAGE_CELL]);
+    if stored != PAGE_ABSENT {
+        page_refresh(page, frame);
+        atomicAdd(&counters[7], 1u);
+        return stored - 1u;
     }
-
-    // Not resident. Take a slot first: an entry claimed with no slot to
-    // put in it is an entry a reader finds and dereferences.
     let slot = page_alloc();
     if slot == PAGE_MISS {
         return PAGE_MISS;
     }
-
-    // Reuse the hole when there was one, otherwise resume the walk. A
-    // tombstone is claimed with the same compare-exchange as an empty
-    // entry, so two threads cannot both take it.
-    if dead != PAGE_MISS {
-        let outcome = atomicCompareExchangeWeak(&table_keys[dead], PAGE_DEAD, page + 1u);
-        if outcome.exchanged {
-            page_stamp(dead, slot, frame);
-            atomicAdd(&counters[8], 1u);
-            return slot;
-        }
-        probe = dead;
-    }
-
-    for (var i = 0u; i < PAGE_PROBES; i = i + 1u) {
-        let outcome = atomicCompareExchangeWeak(&table_keys[probe], PAGE_EMPTY, page + 1u);
-        if outcome.exchanged {
-            page_stamp(probe, slot, frame);
-            atomicAdd(&counters[8], 1u);
-            return slot;
-        }
-        // A failure with EMPTY still there is the "weak" in the name —
-        // spurious, retry the same entry. Anything else is another key
-        // holding it, and the sequence moves on.
-        if outcome.old_value != PAGE_EMPTY {
-            // Including our own key, if another thread inserted it while
-            // this one was allocating. Hand the spare slot back.
-            if outcome.old_value == page + 1u {
-                page_release(slot);
-                page_refresh(probe, frame);
-                atomicAdd(&counters[7], 1u);
-                return page_slot(probe);
-            }
-            probe = page_step(probe, entries);
-        }
-    }
-    // The pool had room and the table did not, which is a statement
-    // about the hash rather than about the scene.
-    page_release(slot);
-    atomicAdd(&counters[6], 1u);
-    return PAGE_MISS;
+    page_stamp(page, slot, frame);
+    atomicAdd(&counters[8], 1u);
+    return slot;
 }
 
 // One bit, set once. The return says whether this thread is the one that
@@ -371,17 +313,11 @@ fn mark_bit(index: u32, claim: bool) -> bool {
     return true;
 }
 
-// Where `level` starts inside one face's chain. Mirrors
-// `PageConfig::level_base`: a mip chain's levels are not the same size,
-// so the offset is a running sum and not a multiply.
+// Where `level` starts inside one face's chain, measured from the
+// FLOOR: the levels under `local_level_floor` are not addressed at all.
+// See `local_level_base` for why the offset is a running sum.
 fn level_base(level: u32) -> u32 {
-    var base = 0u;
-    var side = pages.strides.x;
-    for (var l = 0u; l < level; l = l + 1u) {
-        base = base + side * side;
-        side = max(side / 2u, 1u);
-    }
-    return base;
+    return local_level_base(level, pages.strides.x, pages.chain.x);
 }
 
 fn level_side(level: u32) -> u32 {
@@ -691,38 +627,27 @@ fn paint_page(pixel: vec2<u32>, painted: vec2<u32>) {
     }
 }
 
-// Empties THIS VIEW'S entries, and only this view's (#866).
+// Ages this view's table entries, and evicts the ones nothing has
+// asked for in `max_age` frames.
 //
-// 🔴 A pass instead of a `clear_buffer`, and the reason is the fused
-// raster. `vbuf64.render` rasterises and shades in one fragment shader,
-// so a view samples an atlas that is a frame old. Emptying the whole
-// table once at the top of a frame would therefore leave whichever view
-// marks SECOND reading a table the first one had just wiped — which is
-// exactly the measured symptom: shadows in one viewport and none in the
-// other.
-//
-// Keys are `page + 1` and a page carries its view in the high part, so
-// ownership is a divide. No decode: the level and cell do not matter to
-// a pass that only asks *whose is this*.
-// Ages this view's table entries, and evicts the ones nothing has asked
-// for in `max_age` frames.
-//
-// 🔴 This REPLACED `clear_view`, which emptied the whole table every
-// frame. That is the change: a page nothing requested this frame is not
-// gone, it is one frame older, and it stays resident — with its depth
-// still in the atlas — until it has been unwanted for long enough to be
-// worth the slot. Epic calls the threshold
+// One thread per entry of THIS VIEW'S span — the table is flat and a
+// view's entries are a contiguous run, so ownership is the dispatch
+// range rather than a decode. A page nothing requested this frame is
+// not gone, it is one frame older, and it stays resident — with its
+// depth still in the atlas — until it has been unwanted for long
+// enough to be worth the slot. Epic calls the threshold
 // `MaxPageAgeSinceLastRequest`.
 //
-// It writes `PAGE_DEAD` rather than `PAGE_EMPTY`, which is not a detail:
-// see the constant's own doc.
+// Eviction stores `PAGE_ABSENT`, and that is the whole of it: nothing
+// probes past an entry any more, so there is nothing a freed entry can
+// break and no tombstone or sweep to keep the walk honest.
 @compute @workgroup_size(MARK_GROUP * MARK_GROUP, 1, 1)
 fn age_view(@builtin(global_invocation_id) id: vec3<u32>) {
-    let entry = id.x;
-    if entry >= pages.pool.x { return; }
-    let key = atomicLoad(&table_keys[entry]);
-    if key == PAGE_EMPTY || key == PAGE_DEAD { return; }
-    if (key - 1u) / view_span() != pages.sampling.w { return; }
+    let within = id.x;
+    if within >= view_span() { return; }
+    let entry = view_base() + within;
+    let stored = atomicLoad(&table_cells[entry * PAGE_CELL]);
+    if stored == PAGE_ABSENT { return; }
 
     // A rebuild empties the view outright — the pool's shape changed
     // under it, so a slot in an old entry names a page in a new atlas.
@@ -736,46 +661,7 @@ fn age_view(@builtin(global_invocation_id) id: vec3<u32>) {
             return;
         }
     }
-    atomicStore(&table_keys[entry], PAGE_DEAD);
-    page_release(page_slot(entry));
+    atomicStore(&table_cells[entry * PAGE_CELL], PAGE_ABSENT);
+    page_release(stored - 1u);
     atomicAdd(&counters[12], 1u);
-}
-
-// Turns tombstones back into empty entries, wherever that is provably
-// safe.
-//
-// # 🔴 Without this the table saturates, and quickly
-//
-// Eviction leaves a hole and an insert only fills one if its own probe
-// run happens to cross it. At the load factor this table is designed for
-// a run is a slot or two long, so almost every insert reaches an EMPTY
-// entry first and the hole survives. Fifty evictions a frame with none
-// consumed is a table made entirely of holes inside a minute — measured
-// in the editor as "1.0 dead entries walked per request" climbing until
-// inserts ran out of probes and pages went unshadowed.
-//
-// # Why the condition is enough
-//
-// A tombstone whose NEXT entry is empty cannot be holding a run
-// together: any key that probed through it would have stopped at that
-// empty entry anyway. So nothing live can depend on it, and it can be
-// emptied outright. Runs shrink from the tail, a layer per frame, which
-// converges because the runs are short — and a hole in the middle of a
-// live run is the case an insert reuses.
-//
-// ⚠️ Runs AFTER the marking, so the holes it removes are last frame's
-// and this frame's inserts have already had their chance at them.
-@compute @workgroup_size(MARK_GROUP * MARK_GROUP, 1, 1)
-fn sweep_view(@builtin(global_invocation_id) id: vec3<u32>) {
-    let entries = pages.pool.x;
-    let entry = id.x;
-    if entry >= entries { return; }
-    if atomicLoad(&table_keys[entry]) != PAGE_DEAD { return; }
-    if atomicLoad(&table_keys[page_step(entry, entries)]) != PAGE_EMPTY { return; }
-    // A compare-exchange rather than a store: another thread may have
-    // just claimed this hole for a real page.
-    let outcome = atomicCompareExchangeWeak(&table_keys[entry], PAGE_DEAD, PAGE_EMPTY);
-    if outcome.exchanged {
-        atomicAdd(&counters[13], 1u);
-    }
 }

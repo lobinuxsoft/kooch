@@ -1,81 +1,55 @@
 // page_table.wgsl — the virtual page id and where it lands (#866).
 //
 // CONCATENATED into every pass that touches the page table: the marking
-// pass that WRITES it and, later, the shading pass that READS it. This
-// file holds what the two must agree on and nothing else.
+// pass that WRITES it and the shading pass that READS it. This file
+// holds what the two must agree on and nothing else.
 //
-// # Why a hash, and why the obvious answer is dead
+// # A FLAT table, and why the hash it replaced is dead
 //
-// With 128-texel pages over a 16384 virtual map, a mip chain per cube
-// face and a 17-level clipmap, one light addresses 278 528 pages. A
-// hundred lights and a sun make the virtual space **28 409 856 pages**.
+// The lookup runs per pixel PER LIGHT in the shading pass, and prior
+// art is unanimous that it must be ONE indexed read: Chalmers ("quite
+// fast because they only require a single texture lookup"), Stephano's
+// sparse VSM (`pageTable[ivec2(floor(uv * numPagesXY))]`, one
+// indirection) and UE5 (`CalcPageOffset` is flat arithmetic over
+// 21 845 entries per shadow map). This table hashed instead — open
+// addressing with tombstones — and the measurement that killed it:
+// shading 10.4 ms against 0.884 ms for the ENTIRE shadow track, on a
+// walk of up to 5 chain levels times up to 32 probes, per pixel per
+// light.
 //
-// - The MARK bitmap is one bit each: 3.4 MiB. Affordable, and that is
-//   why marking was built first.
-// - A FLAT table is one `u32` each: **108 MiB, 42 % of the 256 MiB pool
-//   it indexes**, to describe pages that are 99.99 % empty. Dead on
-//   arrival, and it also kills the obvious allocator — a sweep over the
-//   virtual space is a 28-million-thread dispatch to find ~2000 set
-//   bits.
-// - A HIERARCHICAL table is small, but it pays an indirection per
-//   lookup, and the lookup is per pixel per light in the shading pass.
-//   That is the hot path the froxel grid exists to keep short.
+// The hash existed because the virtual space was 28 409 856 pages — a
+// flat u32 each would be 108 MiB. Two decisions shrank the space to
+// ~485 000 and the table to a few MiB, which is what made flat viable:
 //
-// So the table is sized to what is RESIDENT, not to what is
-// addressable: open addressing over `2 x pool_pages` entries, which for
-// Epic's 4096-page pool is 8192 slots — **64 KiB**, and one probe in the
-// common case.
+// - `LOCAL_MAX_TEXELS` caps a lamp's chain three levels below the
+//   sun's, a factor of 64 in pages per lamp.
+// - The address space stops PAYING for the capped levels: a lamp's
+//   chain is addressed from `local_level_floor` up, so its stride is
+//   2 046 pages instead of 131 070 — see `local_face_pages`.
 //
-// ⚠️ **UE5 does NOT hash it**, and an earlier version of this comment
-// said it did. `CalcPageOffset` in `VirtualShadowMapPageAccessCommon.ush`
-// is flat arithmetic — `id * VSM_PAGE_TABLE_SIZE + level_offset + x + y
-// * dims` — over 21 845 entries per shadow map. Epic pays 87 KiB per map
-// and stays small by never handing a distant light a full virtual space:
-// `VSM_MAX_SINGLE_PAGE_SHADOW_MAPS` is 8192 maps of ONE entry each. The
-// 108 MiB above is what a flat table costs *given our decision to give
-// every light the full space*, which is a decision, not a law.
+// The entry's first word is `slot + 1`, 0 meaning "no page", so a
+// cleared buffer is an empty table and no reset pass has to run.
+// Eviction writes 0 — no tombstones, because nothing probes.
 //
 // # The VIEW is part of the key, and that is not a detail
 //
 // One editor frame draws the same world from two cameras. A clipmap is
 // centred on ITS camera, so the same world position is a different page
-// in each — and a table keyed without the view hands view B the pages
+// in each — and a table indexed without the view hands view B the pages
 // view A marked. The symptom is exact and was measured: shadows in one
-// viewport and none in the other.
-//
-// UE5's answer is the `VirtualShadowMapId`: every (view, light, clipmap
-// level) triple gets its own id and the id IS the high part of the page
-// address. This does the same with a multiply — `view * view_span` —
-// because the hash makes the size of the address space free.
+// viewport and none in the other. So the table is `views x span`
+// entries and a page id carries its view in the high part.
 //
 // # The insert has no race, and that is not luck
 //
 // Only the thread that flipped a page's mark bit from 0 to 1 ever
-// inserts it — `mark_bit` already returns exactly that. So a key is
-// claimed by one thread, and the compare-exchange below is there for
-// DIFFERENT keys landing on the same slot, never for two threads
-// fighting over one page. That is what makes the physical index safe to
-// write with a plain store right after.
+// inserts it — `mark_bit` already returns exactly that. A key is
+// claimed by one thread and the entry it writes is its own, so the
+// stores are plain rather than compare-exchanges.
 
-// 0 is EMPTY, so a cleared buffer is an empty table and no reset pass
-// has to run. Keys are therefore stored as `page + 1`.
-const PAGE_EMPTY: u32 = 0u;
-
-/// An entry whose page was EVICTED, and the reason persistence needs a
-/// third state at all.
-///
-/// 🔴 Open addressing resolves a collision by walking, so a lookup stops
-/// at the first EMPTY entry: an empty slot proves the key was never
-/// inserted, because inserting it would have taken that slot. Writing
-/// EMPTY over an evicted key breaks that proof — every key whose probe
-/// run passed through the freed entry becomes unfindable while still
-/// sitting in the table, and the symptom is a page that is resident,
-/// rasterised, and never sampled.
-///
-/// A tombstone keeps the run intact. Readers walk past it; an insert may
-/// reuse it. This costs a probe per hole, which `counters[9]` counts so
-/// that a table degrading into holes is a number rather than a mystery.
-const PAGE_DEAD: u32 = 0xfffffffeu;
+/// First word of an entry holding no page. Entries store `slot + 1`
+/// so that a cleared buffer is an empty table; eviction stores this.
+const PAGE_ABSENT: u32 = 0u;
 
 /// Words per table entry: the physical slot, the frame it was last
 /// requested in, and its index in this view's compacted `page_list`.
@@ -103,38 +77,6 @@ const PAGE_UNLISTED: u32 = 0xffffffffu;
 
 /// No physical page: either the pool is full or the probe gave up.
 const PAGE_MISS: u32 = 0xffffffffu;
-
-/// How far a lookup walks before calling it a miss.
-///
-/// At a load factor of 0.5 the expected probe count is under 2; 32 is
-/// the point where something is wrong with the hash rather than with
-/// the load.
-const PAGE_PROBES: u32 = 32u;
-
-/// Murmur3's finalizer. Any bijection on 32 bits would do; what matters
-/// is that page indices are DENSE and highly structured — consecutive
-/// ids differ in the low bits and share every high one — so the low bits
-/// alone would pile every page of a level onto one run of slots.
-fn page_hash(key: u32) -> u32 {
-    var h = key;
-    h = h ^ (h >> 16u);
-    h = h * 0x7feb352du;
-    h = h ^ (h >> 15u);
-    h = h * 0x846ca68bu;
-    h = h ^ (h >> 16u);
-    return h;
-}
-
-/// Where a key's probe sequence starts. `entries` is a power of two.
-fn page_probe(key: u32, entries: u32) -> u32 {
-    return page_hash(key + 1u) & (entries - 1u);
-}
-
-/// The next slot in the sequence. Linear, because at load factor 0.5 the
-/// clustering costs less than the cache misses a smarter sequence buys.
-fn page_step(probe: u32, entries: u32) -> u32 {
-    return (probe + 1u) & (entries - 1u);
-}
 
 /// The texel a physical page starts at, inside its layer.
 ///
@@ -184,9 +126,18 @@ struct PageId {
 
 /// Inverts the arithmetic in `mark_local` and `mark_sun`.
 ///
-/// `span` is the pages one VIEW addresses, `stride` the pages one light
-/// addresses, `face_pages` one face's whole mip chain, `side` the pages
-/// across level 0.
+/// `span` is the pages one VIEW addresses, `stride` the pages one LOCAL
+/// light addresses, `face_pages` one face's chain from the floor up,
+/// `side` the pages across the sun's level 0. The sun's region sits
+/// after the locals, at `sun_slot * stride`, and is `clipmap levels x
+/// side^2` — nothing below needs its size because it is the tail.
+///
+/// 🔴 A local chain is addressed from `local_level_floor` UP. The
+/// marking cannot pick a level below the floor, so addressing the
+/// levels under it would spend table entries — most of the chain, the
+/// fine levels are the wide ones — on pages that cannot exist. That is
+/// the difference between a 131 070-page stride and a 2 046-page one,
+/// and the flat table is only affordable with the second.
 fn page_decode(
     page: u32,
     span: u32,
@@ -194,31 +145,35 @@ fn page_decode(
     face_pages: u32,
     side: u32,
     sun_slot: u32,
+    page_texels: u32,
 ) -> PageId {
     var id: PageId;
     id.view = page / span;
     let within = page % span;
-    id.light = within / stride;
-    var rest = within % stride;
-    id.is_sun = id.light == sun_slot;
+    let sun_base = sun_slot * stride;
+    id.is_sun = within >= sun_base;
 
     if id.is_sun {
         // A clipmap's levels are all the same size, so the level is a
         // divide where a mip chain's is a walk.
         let per_level = side * side;
+        id.light = sun_slot;
         id.face = 0u;
+        let rest = within - sun_base;
         id.level = rest / per_level;
         let cell = rest % per_level;
         id.cell = vec2<u32>(cell % side, cell / side);
         return id;
     }
 
+    id.light = within / stride;
+    var rest = within % stride;
     id.face = rest / face_pages;
     rest = rest % face_pages;
     // The chain's levels are not the same size; walk it the way
-    // `level_base` builds it.
-    var level = 0u;
-    var wide = side;
+    // `local_level_base` builds it — starting at the floor.
+    var level = local_level_floor(side * page_texels);
+    var wide = level_side_of(level, side);
     loop {
         let count = wide * wide;
         if rest < count || wide == 1u {
@@ -530,18 +485,33 @@ fn level_side_of(level: u32, side: u32) -> u32 {
     return max(side >> level, 1u);
 }
 
-/// Where `level` starts inside one face's chain. Mirrors
-/// `PageConfig::level_base`: a mip chain's levels are not the same size,
-/// so the offset is a running sum and not a multiply.
+/// Pages in one face's chain, from the floor up — a LOCAL light's
+/// face stride.
 ///
-/// Takes the level-0 side rather than reading the marking pass's
-/// uniform, so the reader and the raster can call it too — a page key
-/// built with one base and looked up with another finds a page that
-/// belongs to a different level.
-fn level_base_of(level: u32, side: u32) -> u32 {
+/// Derived rather than uploaded for the same reason `local_level_floor`
+/// is: the encoder, the decoder and the reader all need it, and a
+/// number in a uniform is a number one of them can be handed stale.
+fn local_face_pages(side: u32, page_texels: u32) -> u32 {
+    var pages = 0u;
+    var wide = level_side_of(local_level_floor(side * page_texels), side);
+    loop {
+        pages = pages + wide * wide;
+        if wide == 1u {
+            break;
+        }
+        wide = max(wide / 2u, 1u);
+    }
+    return pages;
+}
+
+/// Where `level` starts inside one face's chain, measured FROM THE
+/// FLOOR. Mirrors `page_decode`'s walk: a mip chain's levels are not
+/// the same size, so the offset is a running sum and not a multiply.
+fn local_level_base(level: u32, side: u32, page_texels: u32) -> u32 {
     var base = 0u;
-    var wide = side;
-    for (var l = 0u; l < level; l = l + 1u) {
+    var l = local_level_floor(side * page_texels);
+    var wide = level_side_of(l, side);
+    for (; l < level; l = l + 1u) {
         base = base + wide * wide;
         wide = max(wide / 2u, 1u);
     }
@@ -731,7 +701,7 @@ fn page_octave(texel: f32, base: f32, virtual_texels: u32, levels: u32) -> u32 {
     //
     // Octaves are a whole apart, so 1e-4 cannot move a decision that
     // was not already a rounding accident.
-    let octave = floor(log2(max(texel, 1e-9) / max(finest, 1e-9)));
+    let octave = floor(log2(max(texel, 1e-9) / max(finest, 1e-9)) + 1e-4);
     return u32(clamp(octave, 0.0, f32(max(levels, 1u) - 1u)));
 }
 

@@ -886,8 +886,8 @@ fn shadow_page_readout(
         // say.
         ui.label(
             egui::RichText::new(format!(
-                "{} pages rastered · {} meshlet/page pairs · {} owned by another view",
-                raster.pages, raster.pairs, raster.others
+                "{} pages rastered · {} meshlet/page pairs",
+                raster.pages, raster.pairs
             ))
             .small()
             .weak(),
@@ -978,33 +978,9 @@ fn shadow_page_readout(
             );
         }
     }
-    // The cost of eviction, and the one that grows silently.
-    if counts.pool.holes > 0 && counts.pool.requests() > 0 {
-        let per = counts.pool.holes as f32 / counts.pool.requests() as f32;
-        ui.label(
-            egui::RichText::new(format!("{per:.1} dead entries walked per request"))
-                .small()
-                .weak(),
-        )
-        .on_hover_text(
-            "An evicted entry leaves a TOMBSTONE rather than an empty slot, because open              addressing proves a key is absent by finding an empty one — writing empty over              a freed key would make every key whose probe run passed through it unfindable              while it is still resident. The hole keeps the run intact and lengthens it.              Climbing towards 32, which is where a lookup gives up, means the table is              turning into holes and wants a rehash.",
-        );
-    }
-    if counts.pool.probes > 0 {
-        ui.label(
-            egui::RichText::new(format!(
-                "{} inserts ran out of probes — the table, not the pool",
-                counts.pool.probes
-            ))
-            .small()
-            .color(egui::Color32::from_rgb(220, 120, 90)),
-        )
-        .on_hover_text(
-            "The page table is open-addressed at a load factor of 0.5, where the expected \
-             probe count is under two. Anything here is a statement about the hash rather \
-             than about the scene.",
-        );
-    }
+    // The hash's two failure meters — tombstones walked and inserts out
+    // of probes — are gone with the hash: the flat table has no probe
+    // run to degrade. See `page_table.wgsl`.
 }
 
 /// Default-open collapsing header — section toggles with the chevron

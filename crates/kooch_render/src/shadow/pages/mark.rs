@@ -33,10 +33,11 @@ use super::{ClipmapConfig, PageConfig};
 const SOURCE: &str = include_str!("../../../shaders/page_mark.wgsl");
 const GROUP: u32 = 8;
 /// 0 resident, 1 samples, 2 pairs, 3 mark overflow, 4 unused, 5 pool
-/// overflow, 6 probe overflow, 7 reuses, 8 fresh claims, 9 holes walked,
-/// 10 free-list overflow, 11 pages kept alive, 12 pages evicted, 13
-/// tombstones swept. 14 and 15 spare, because a storage buffer is
-/// rounded up anyway.
+/// overflow, 6 unused (was the hash's probe overflow), 7 reuses, 8
+/// fresh claims, 9 unused (was holes walked), 10 free-list overflow,
+/// 11 pages kept alive, 12 pages evicted, 13 unused (was tombstones
+/// swept). The rest spare, because a storage buffer is rounded up
+/// anyway.
 const COUNTERS: u64 = 16;
 
 /// `KOOCH_PAGE_MARKING=1`, read once.
@@ -145,10 +146,6 @@ pub struct PageMarker {
     /// and only this view's. See `age_view` in the shader for why that
     /// cannot be a `clear_buffer`.
     clear: wgpu::ComputePipeline,
-    /// Turns tombstones back into empty entries where that is provably
-    /// safe. Without it the table saturates with holes in under a
-    /// minute. See `sweep_view` in the shader.
-    sweep: wgpu::ComputePipeline,
     /// Paints the debug view, in a dispatch of its own that runs AFTER
     /// the shading. See `paint_view` in the shader for why it cannot go
     /// with the marking any more.
@@ -206,14 +203,12 @@ impl PageMarker {
         };
         let pipeline = compute("mark_main");
         let clear = compute("age_view");
-        let sweep = compute("sweep_view");
         let paint = compute("paint_view");
 
         Self {
             layout,
             pipeline,
             clear,
-            sweep,
             paint,
             bound: None,
             view: device.create_buffer(&wgpu::BufferDescriptor {
@@ -343,14 +338,27 @@ impl PageMarker {
     ) {
         let count = lights.light_count().max(1);
         // One slot past the lights, for the sun: it is not in the grid
-        // — it has no position to cluster — so it gets a stride of its
-        // own rather than a light index.
-        let slots = count + 1;
+        // — it has no position to cluster — so it gets a region of its
+        // own at the tail rather than a light index. PADDED, so a light
+        // added or removed does not move every page id in the table —
+        // see `padded_lights`.
+        let padded = padded_lights(count);
+        let slots = padded + 1;
         let views = self.pool.config().slices();
         let view = view.min(views - 1);
         if (slots, views) != self.capacity {
             self.marks = marks_buffer(device, self.config, self.clipmap, slots, views);
             self.capacity = (slots, views);
+        }
+        // The flat table is one entry per addressable page, so its size
+        // follows the address space. A growth replaces the buffers —
+        // every entry gone — so the next frame is flagged as a rebuild
+        // and `age_view` evicts the nothing that is left, keeping the
+        // allocator honest.
+        let view_span = span(self.config, self.clipmap, slots);
+        let entries = u32::try_from(view_span * views as u64).unwrap_or(u32::MAX);
+        if self.pool.ensure_entries(device, entries) {
+            self.life.rebuilt = true;
         }
 
         // 🔴 Painting forces one thread per pixel. At any coarser rate
@@ -382,14 +390,17 @@ impl PageMarker {
                 ],
                 strides: [
                     self.config.side(0),
-                    self.config.face_pages(),
+                    self.config.local_face_pages(),
                     self.stride(),
                     count,
                 ],
-                sampling: [rate, count, u32::from(paint.on), view],
+                // 🔴 `sampling.y` is the SUN'S SLOT — the padded light
+                // count, not the real one. The real count stays in
+                // `strides.w` for the marking loop's guard.
+                sampling: [rate, padded, u32::from(paint.on), view],
 
                 pool: [
-                    self.pool.config().entries(),
+                    self.pool.entries(),
                     self.pool.config().total(),
                     self.pool.config().per_row(),
                     self.pool.config().slice(),
@@ -428,7 +439,6 @@ impl PageMarker {
                     binding: 8,
                     resource: wgpu::BindingResource::TextureView(paint.target),
                 },
-                buffer_entry(9, self.pool.keys()),
                 buffer_entry(10, self.pool.slots()),
                 buffer_entry(11, self.pool.alloc()),
             ],
@@ -437,31 +447,31 @@ impl PageMarker {
         // 🔴 This VIEW'S bits, not the whole bitmap. A view's pages are
         // a contiguous run — that is what `stride` is rounded to a
         // multiple of 32 for — so the reset is an offset clear.
-        let words = span(self.config, self.clipmap, slots).div_ceil(32) * 4;
+        let words = view_span.div_ceil(32) * 4;
         encoder.clear_buffer(&self.marks, words * view as u64, Some(words));
         // Every counter here is a per-view quantity now, the pool's
         // claims included: a view allocates out of its own slice.
         encoder.clear_buffer(&self.counters, 0, None);
-        let entries = self.pool.config().entries();
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("shadow pages: mark"),
                 timestamp_writes: None,
             });
-            // The table is shared, so its reset is a pass that reads
-            // each key's owner rather than a `clear_buffer` that would
-            // take the other view's entries with it.
+            // The table is flat and a view's entries are contiguous, so
+            // the ageing walks exactly this view's span — the other
+            // camera's pages are outside the dispatch.
             pass.set_pipeline(&self.clear);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(entries.div_ceil(GROUP * GROUP), 1, 1);
+            pass.dispatch_workgroups(
+                u32::try_from(view_span)
+                    .unwrap_or(u32::MAX)
+                    .div_ceil(GROUP * GROUP),
+                1,
+                1,
+            );
             pass.set_pipeline(&self.pipeline);
             let threads = (viewport.0.div_ceil(rate), viewport.1.div_ceil(rate));
             pass.dispatch_workgroups(threads.0.div_ceil(GROUP), threads.1.div_ceil(GROUP), 1);
-            // 🔴 AFTER the marking, not before it: this frame's inserts
-            // get first refusal on the holes, and what it removes is
-            // whatever they left behind.
-            pass.set_pipeline(&self.sweep);
-            pass.dispatch_workgroups(entries.div_ceil(GROUP * GROUP), 1, 1);
         }
         // Kept for `record_paint`, which runs after the shading and needs
         // every one of these bindings — the depth, the view uniform and
@@ -516,25 +526,41 @@ impl PageMarker {
     }
 }
 
-/// Pages one light can address: the six faces of a mip chain, or the
-/// clipmap, whichever is longer.
-///
-/// Mirrors `PageCensus::new`. One stride for every light — a per-kind
-/// stride would save bits and cost a prefix sum to find a light's base.
+/// Pages one LOCAL light addresses: six faces of a chain that starts at
+/// `local_floor` — the levels under the floor cannot be marked, so
+/// addressing them would spend table entries on pages that cannot
+/// exist. At the defaults this is 2 046 pages against the 131 070 a
+/// full chain would cost, and the flat table is only affordable at the
+/// small number.
 ///
 /// 🔴 Rounded up to a multiple of 32. The mark bitmap is emptied one
 /// VIEW at a time and `clear_buffer` takes byte offsets, so a view's
 /// first bit has to land on a word boundary or the clear reaches into
 /// the neighbour's. The rounding costs at most 31 bits per light.
-pub(super) fn stride(config: PageConfig, clipmap: ClipmapConfig) -> u32 {
-    let local = config.face_pages() * super::CUBE_FACES as u32;
-    let sun = clipmap.levels * config.side(0).pow(2);
-    local.max(sun).div_ceil(32) * 32
+pub(super) fn stride(config: PageConfig, _clipmap: ClipmapConfig) -> u32 {
+    let local = config.local_face_pages() * super::CUBE_FACES as u32;
+    local.div_ceil(32) * 32
 }
 
-/// Pages one VIEW addresses: every light plus the sun.
+/// Light slots the address space is laid out for, PADDED so that adding
+/// a light does not move every page id.
+///
+/// 🔴 The sun's region starts at `padded * stride` and view N's span
+/// starts at `N * span`: a raw count would shift both on every light
+/// added or removed, which is a full pool rebuild per change. Padding
+/// to a step makes the layout stable until the scene crosses the step.
+pub(super) fn padded_lights(count: u32) -> u32 {
+    count.max(1).next_multiple_of(64)
+}
+
+/// Pages one VIEW addresses: `slots - 1` padded light slots, then the
+/// sun's clipmap — every level a full grid, at the tail.
 pub(super) fn span(config: PageConfig, clipmap: ClipmapConfig, slots: u32) -> u64 {
-    stride(config, clipmap) as u64 * slots.max(1) as u64
+    let lights = slots.max(2) as u64 - 1;
+    let sun = clipmap.levels as u64 * (config.side(0) as u64).pow(2);
+    // The whole span on a word boundary, like the stride: view N's bits
+    // start at `N * span` and the bitmap is cleared per view.
+    (lights * stride(config, clipmap) as u64 + sun).div_ceil(32) * 32
 }
 
 fn marks_buffer(
@@ -611,7 +637,10 @@ fn layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 },
                 count: None,
             },
-            storage(9, false),
+            // Binding 9 held the hash table's keys and is retired: the
+            // flat table needs only its cells (10) and the allocator
+            // (11), and the freed slot is headroom against the
+            // eight-per-stage storage-buffer limit this pass sits on.
             storage(10, false),
             storage(11, false),
         ],
@@ -740,13 +769,10 @@ impl Readback {
                     pool: PoolCounts {
                         claims: words[8],
                         overflow: words[5],
-                        probes: words[6],
                         reused: words[7],
-                        holes: words[9],
                         leaked: words[10],
                         alive: words[11],
                         evicted: words[12],
-                        swept: words[13],
                         capacity,
                     },
                     size,

@@ -123,6 +123,7 @@ fn vs_page(
         raster.space.y,
         raster.space.z,
         raster.space.w,
+        raster.pool.w,
     );
     out.rect = page_atlas_rect(pair.y, raster.views.z, raster.pool.z, raster.pool.w);
 

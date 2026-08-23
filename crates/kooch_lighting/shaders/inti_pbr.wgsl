@@ -287,13 +287,15 @@ struct IntiClusterCell {
 @group({{INTI_GROUP}}) @binding(7) var<storage, read> inti_cluster_indices: array<u32>;
 
 // Virtual shadow maps (#866). `PageRaster`, `page_decode`, `sun_basis`,
-// `sun_page_rect`, `page_origin` and the probe sequence all come from
-// `page_table.wgsl`, concatenated ahead of this file — the same
+// `sun_page_rect` and `page_origin` all come from `page_table.wgsl`,
+// concatenated ahead of this file — the same
 // arrangement the froxel grid uses, and for the same reason: the four
 // passes that FILL this table live in another crate, and a page id
 // encoded one way and decoded another samples somebody else's shadow.
 @group({{INTI_GROUP}}) @binding(8) var<uniform> inti_pages: PageRaster;
-@group({{INTI_GROUP}}) @binding(9) var<storage, read> inti_page_keys: array<u32>;
+// The FLAT page table: `PAGE_CELL` words per virtual page, indexed by
+// the page id itself — `slot + 1` first, `PAGE_ABSENT` meaning "not
+// resident". Binding 9 held the hash's key array and is retired.
 @group({{INTI_GROUP}}) @binding(10) var<storage, read> inti_page_slots: array<u32>;
 // 🔴 `textureLoad`, never a sampler. A filter cannot cross a page
 // border: the neighbouring texels belong to another clipmap level, and
@@ -801,25 +803,20 @@ fn inti_sample_cascade_record(
 /// cannot see and cascades you can point at.
 // Where a virtual page lives, or `PAGE_MISS`.
 //
-// Open addressing, the read half of what the marking pass writes. Keys
-// are stored as `page + 1` so that a cleared buffer is an empty table.
+// ONE indexed read — the whole point of #477's flat table. This runs
+// per pixel PER LIGHT, and the open-addressed walk it replaced (up to
+// 32 probes, times up to 5 chain levels) measured 10.4 ms of shading
+// against 0.884 ms for the entire shadow track. Chalmers, Stephano and
+// UE5 all land on the same shape: a single lookup in the final pass.
 fn inti_page_lookup(page: u32) -> u32 {
-    let entries = inti_pages.pool.x;
-    if entries == 0u {
+    if page >= inti_pages.pool.x {
         return PAGE_MISS;
     }
-    var probe = page_probe(page, entries);
-    for (var i = 0u; i < PAGE_PROBES; i = i + 1u) {
-        let key = inti_page_keys[probe];
-        if key == PAGE_EMPTY {
-            return PAGE_MISS;
-        }
-        if key == page + 1u {
-            return inti_page_slots[probe * PAGE_CELL];
-        }
-        probe = page_step(probe, entries);
+    let stored = inti_page_slots[page * PAGE_CELL];
+    if stored == PAGE_ABSENT {
+        return PAGE_MISS;
     }
-    return PAGE_MISS;
+    return stored - 1u;
 }
 
 /// The sun's shadow, out of the page pool.
@@ -1032,7 +1029,7 @@ fn inti_local_page_shadow(
         let page = view_base
             + light * stride
             + face * face_pages
-            + level_base_of(level, side0)
+            + local_level_base(level, side0, page_texels)
             + cell.y * side
             + cell.x;
         let slot = inti_page_lookup(page);

@@ -116,12 +116,6 @@ pub struct RasterCounts {
     pub pairs: u32,
     /// Pairs past the list's capacity.
     pub overflow: u32,
-    /// Resident pages belonging to ANOTHER camera.
-    ///
-    /// 🔴 Not a failure — the table is shared and every view compacts
-    /// its own — but the number without which "the pool is full and my
-    /// view got forty pages" cannot be read.
-    pub others: u32,
     /// Which camera this is.
     pub view: u32,
     /// Meshlet/page tests the expansion ran, summed over the levels.
@@ -242,7 +236,6 @@ struct Bound {
 /// leans on to decide whether its own bind group has to be rebuilt.
 #[derive(PartialEq)]
 struct BoundKeys {
-    keys: wgpu::Buffer,
     slots: wgpu::Buffer,
     instances: wgpu::Buffer,
     descriptors: wgpu::Buffer,
@@ -612,7 +605,6 @@ impl PageRasterizer {
             local: words[levels + 1],
             pairs: words[levels + 2].min(PAIR_CAPACITY),
             overflow: words[levels + 3],
-            others: words[levels + 4],
             view,
         }
     }
@@ -686,28 +678,35 @@ fn atlas_texture(device: &wgpu::Device, config: PageConfig, pool: PoolConfig) ->
 }
 
 impl PageRasterizer {
+    /// Threads the compaction needs: one per entry of one view's span.
+    fn compact_threads(&self, light_count: u32) -> u32 {
+        let slots = super::mark::padded_lights(light_count) + 1;
+        u32::try_from(super::mark::span(self.config, self.clipmap, slots)).unwrap_or(u32::MAX)
+    }
+
     /// The uniform every raster pass reads. Written once a frame,
     /// before any of them.
     fn write_uniform(&self, queue: &wgpu::Queue, view: u32, eye: Vec3, sun: Vec3, lights: u32) {
         let d = sun.normalize_or(Vec3::NEG_Y);
-        // The sun's slot is one past the last light, the way marking
-        // assigns it, so a view addresses one more slot than there are
-        // lights.
-        let sun_slot = lights.max(1);
+        // The sun's region starts after the PADDED light slots, the way
+        // marking lays the space out — see `padded_lights` for why the
+        // padding and not the raw count.
+        let sun_slot = super::mark::padded_lights(lights);
         let stride = super::mark::stride(self.config, self.clipmap);
+        let view_span = super::mark::span(self.config, self.clipmap, sun_slot + 1);
         queue.write_buffer(
             &self.uniform,
             self.uniform_span(view).0,
             bytemuck::bytes_of(&RasterUniform {
                 space: [
                     stride,
-                    self.config.face_pages(),
+                    self.config.local_face_pages(),
                     self.config.side(0),
                     sun_slot,
                 ],
                 views: [
                     view.min(atlas_layers(self.pool) - 1),
-                    stride * (sun_slot + 1),
+                    u32::try_from(view_span).unwrap_or(u32::MAX),
                     self.pool.slice(),
                     // 🔴 Only the age debug view reads this. A page's age
                     // is a difference against the current frame, and the
@@ -716,7 +715,7 @@ impl PageRasterizer {
                     self.frame,
                 ],
                 pool: [
-                    self.pool.entries(),
+                    u32::try_from(view_span * atlas_layers(self.pool) as u64).unwrap_or(u32::MAX),
                     self.pool.total(),
                     self.pool.per_row(),
                     self.config.page,
@@ -785,7 +784,7 @@ impl PageRasterizer {
         });
         pass.set_pipeline(&self.compact);
         pass.set_bind_group(0, &bind_group, &offset);
-        pass.dispatch_workgroups(self.pool.entries().div_ceil(64), 1, 1);
+        pass.dispatch_workgroups(self.compact_threads(light_count).div_ceil(64), 1, 1);
         pass.set_pipeline(&self.expand_args_pass);
         pass.dispatch_workgroups(self.clipmap.levels.div_ceil(64), 1, 1);
         // Without a pair list this only fixes the vertex count, which is
@@ -805,7 +804,6 @@ impl PageRasterizer {
             layout: &self.compact_bgl,
             entries: &[
                 self.uniform_entry(0),
-                entry(1, page_pool.keys()),
                 entry(2, page_pool.slots()),
                 entry(3, &self.page_list),
                 entry(4, &self.counts),
@@ -851,7 +849,6 @@ impl PageRasterizer {
         lights: &wgpu::Buffer,
     ) {
         let keys = BoundKeys {
-            keys: page_pool.keys().clone(),
             slots: page_pool.slots().clone(),
             instances: instances.clone(),
             descriptors: descriptors.clone(),
@@ -1063,11 +1060,12 @@ impl PageRasterizer {
                 label: Some("shadow pages: compact and expand"),
                 timestamp_writes: None,
             });
-            // 2. The hash table becomes a dense list, bucketed by level
-            //    — this camera's pages only, the rest counted and left.
+            // 2. The flat table becomes a dense list, bucketed by
+            //    octave — the dispatch covers exactly this camera's
+            //    span, so the other view's pages are never walked.
             pass.set_pipeline(&self.compact);
             pass.set_bind_group(0, &bound.compact, &[uniform_offset]);
-            pass.dispatch_workgroups(self.pool.entries().div_ceil(64), 1, 1);
+            pass.dispatch_workgroups(self.compact_threads(light_count).div_ceil(64), 1, 1);
             pass.set_pipeline(&self.expand_args_pass);
             pass.dispatch_workgroups(buckets.div_ceil(64), 1, 1);
 
@@ -1210,7 +1208,8 @@ fn compact_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             // of the uniform travels as an offset instead of as a
             // second allocation.
             uniform_entry(0, true, c),
-            buffer_entry(1, true, c),
+            // Binding 1 held the hash table's keys and is retired: the
+            // flat table's entry index IS the page id.
             // 🔴 Writable now: the compaction records each page's place
             // in `page_list` back into its table entry, which is the
             // only pass that knows both. See `PAGE_CELL`.

@@ -28,8 +28,8 @@ use kooch_ecs::spot_light::SpotLight;
 use kooch_lighting::{ClusterCamera, GpuLights};
 use kooch_render::meshlet::DEFERRED_COLOR_FORMAT;
 use kooch_render::projection::perspective_infinite_rh_reverse_z;
-use kooch_render::shadow::pages::mark::{MarkCounts, PageMarker, Paint, PAINT_FORMAT};
-use kooch_render::shadow::pages::pool::{PoolConfig, DEFAULT_MAX_AGE, PAGE_CELL};
+use kooch_render::shadow::pages::mark::{MarkCounts, PAINT_FORMAT, PageMarker, Paint};
+use kooch_render::shadow::pages::pool::{DEFAULT_MAX_AGE, PAGE_CELL, PoolConfig};
 use kooch_render::shadow::{ClipmapConfig, PageConfig, SHADOW_DEPTH_FORMAT};
 
 const SIZE: u32 = 128;
@@ -688,7 +688,6 @@ fn every_drawable_page_claims_a_slot() {
         "one claim per distinct page"
     );
     assert_eq!(counts.pool.overflow, 0, "the pool held them");
-    assert_eq!(counts.pool.probes, 0, "no insert ran out of probes");
 }
 
 /// A local light claims its pages, now that something draws them.
@@ -820,26 +819,24 @@ fn the_table_holds_every_claim() {
         PoolConfig::default(),
     );
     assert!(counts.pool.claims > 0, "the sun claimed nothing");
-    let keys = read_words(&device, &queue, marker.pool().keys());
     let slots = read_words(&device, &queue, marker.pool().slots());
     let capacity = marker.pool().config().total();
 
-    let mut seen_keys = std::collections::HashSet::new();
+    let mut resident = 0u32;
     let mut seen_slots = std::collections::HashSet::new();
-    for (entry, &key) in keys.iter().enumerate() {
-        // 0 is EMPTY and `PAGE_DEAD` is an evicted entry: neither names
-        // a slot anyone owns.
-        if key == 0 || key == 0xffff_fffe {
+    for entry in 0..slots.len() / PAGE_CELL as usize {
+        // The first word is `slot + 1`; `PAGE_ABSENT` (0) names nothing.
+        let stored = slots[entry * PAGE_CELL as usize];
+        if stored == 0 {
             continue;
         }
-        assert!(seen_keys.insert(key), "key {key} filed twice");
-        // TWO words an entry — slot, then age. See `PAGE_CELL`.
-        let slot = slots[entry * PAGE_CELL as usize];
+        resident += 1;
+        let slot = stored - 1;
         assert!(slot < capacity, "slot {slot} past the pool");
         assert!(seen_slots.insert(slot), "slot {slot} handed out twice");
     }
     assert_eq!(
-        seen_keys.len() as u32,
+        resident,
         counts.pool.allocated(),
         "the table holds exactly what was allocated"
     );
@@ -910,23 +907,25 @@ fn a_view_clears_only_its_own_pages() {
         wait(&device);
     }
 
-    // A page carries its camera in the high part: `page / span`, with
-    // the span one stride per light plus one for the sun.
+    // The table is flat and a view's entries are a contiguous run, so
+    // ownership is the entry's position against the span — the same
+    // arithmetic `view_base` uses, rebuilt here so the two can disagree.
     let lights_count = lights.light_count().max(1);
-    let stride = {
-        let local = config.face_pages() * 6;
-        let sun = clipmap.levels * config.side(0).pow(2);
-        local.max(sun).div_ceil(32) * 32
-    };
-    let span = stride as u64 * (lights_count + 1) as u64;
+    let padded = lights_count.max(1).next_multiple_of(64);
+    let stride = (config.local_face_pages() * 6).div_ceil(32) * 32;
+    let span = (padded as u64 * stride as u64
+        + clipmap.levels as u64 * (config.side(0) as u64).pow(2))
+    .div_ceil(32)
+        * 32;
 
+    let slots = read_words(&device, &queue, marker.pool().slots());
     let mut per_view = [0u32; 2];
-    for key in read_words(&device, &queue, marker.pool().keys()) {
-        if key == 0 {
+    for entry in 0..slots.len() / PAGE_CELL as usize {
+        if slots[entry * PAGE_CELL as usize] == 0 {
             continue;
         }
-        let owner = ((key - 1) as u64 / span) as usize;
-        assert!(owner < 2, "a key belongs to camera {owner}");
+        let owner = (entry as u64 / span) as usize;
+        assert!(owner < 2, "an entry belongs to camera {owner}");
         per_view[owner] += 1;
     }
     assert!(
@@ -1228,92 +1227,9 @@ fn max_age_decides_whether_a_page_is_kept() {
     }
 }
 
-/// The table does not fill up with holes.
-///
-/// 🔴 Measured failing in the editor: the panel showed "1.0 dead entries
-/// walked per request" and then "1 inserts ran out of probes" — pages
-/// the frame needed and could not file, which render unshadowed.
-///
-/// ⚠️ A STANDING camera does not reproduce it, and finding that out is
-/// most of what this test is worth. It asks for the same pages every
-/// frame, so a hole is left exactly where the next request's probe run
-/// starts and is reused immediately: a steady 1.00 that never grows, and
-/// the first version of this test asserted against it and failed on a
-/// system that was working. The leak needs the requested pages to MOVE,
-/// which is what a camera turning does and what varying the density
-/// stands in for.
-#[test]
-fn holes_do_not_accumulate() {
-    let Some((device, queue)) = device() else {
-        eprintln!("no adapter; skipping");
-        return;
-    };
-    let resources = world();
-    // Four densities on rotation, so a page abandoned on one frame is
-    // not asked for again until three frames later — long enough that
-    // its hole is nobody's probe start in between.
-    let frames = run_frames(
-        &device,
-        &queue,
-        &resources,
-        150,
-        0,
-        PoolConfig {
-            pages: 16,
-            views: 1,
-        },
-        &|i| [100u32, 40, 70, 25][(i % 4) as usize],
-        &|i| Vec3::new(i as f32 * 0.35, 0.0, i as f32 * -0.2),
-        // 🔴 And the sun turns, which the user pointed at: it re-bases the
-        // whole clipmap, so every page the last frame filed is orphaned
-        // where it stands.
-        &|i| {
-            let a = i as f32 * 0.11;
-            Vec3::new(a.sin() * 0.6, -1.0, a.cos() * 0.6)
-        },
-    );
-
-    for (index, counts) in frames.iter().enumerate() {
-        if index % 25 == 0 || counts.pool.probes > 0 {
-            eprintln!(
-                "frame {index}: holes {} probes {} evicted {} swept {} requests {}",
-                counts.pool.holes,
-                counts.pool.probes,
-                counts.pool.evicted,
-                counts.pool.swept,
-                counts.pool.requests()
-            );
-        }
-    }
-    for (index, counts) in frames.iter().enumerate() {
-        assert_eq!(
-            counts.pool.probes, 0,
-            "frame {index}: {} inserts ran out of probes",
-            counts.pool.probes
-        );
-    }
-    // Growth, not level: a hole a request walks and then reuses is the
-    // healthy case. What is not healthy is the number climbing.
-    let walked = |window: &[MarkCounts]| -> f32 {
-        let holes: u32 = window.iter().map(|c| c.pool.holes).sum();
-        let requests: u32 = window.iter().map(|c| c.pool.requests()).sum();
-        holes as f32 / requests.max(1) as f32
-    };
-    let early = walked(&frames[4..20]);
-    let late = walked(&frames[frames.len() - 16..]);
-    assert!(
-        late <= early + 0.5,
-        "dead entries walked per request went {early:.2} -> {late:.2} over {} frames",
-        frames.len()
-    );
-    // And the sweep has to keep pace with the eviction that feeds it.
-    let evicted: u32 = frames[1..].iter().map(|c| c.pool.evicted).sum();
-    let swept: u32 = frames[1..].iter().map(|c| c.pool.swept).sum();
-    assert!(
-        swept * 4 >= evicted,
-        "{swept} tombstones swept against {evicted} evicted"
-    );
-}
+// `holes_do_not_accumulate` lived here and is retired with the hash it
+// measured: the flat table has no probe runs, so an eviction cannot
+// leave a hole for a lookup to walk. See `page_table.wgsl`.
 
 /// A page that stays resident keeps the SAME physical slot.
 ///
@@ -1375,14 +1291,15 @@ fn a_resident_page_keeps_its_slot() {
             },
         );
         queue.submit([encoder.finish()]);
-        let keys = read_words(&device, &queue, marker.pool().keys());
         let cells = read_words(&device, &queue, marker.pool().slots());
         let mut placed = std::collections::HashMap::new();
-        for (entry, &key) in keys.iter().enumerate() {
-            if key == 0 || key == 0xffff_fffe {
+        for entry in 0..cells.len() / PAGE_CELL as usize {
+            let stored = cells[entry * PAGE_CELL as usize];
+            if stored == 0 {
                 continue;
             }
-            placed.insert(key - 1, cells[entry * PAGE_CELL as usize]);
+            // The entry index IS the page id; the word is `slot + 1`.
+            placed.insert(entry as u32, stored - 1);
         }
         placements.push(placed);
     }

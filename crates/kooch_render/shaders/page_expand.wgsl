@@ -127,6 +127,7 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
         raster.space.y,
         raster.space.z,
         raster.space.w,
+        raster.pool.w,
     );
 
     // 🔴 A lamp's page is a FRUSTUM from a point and the sun's is a

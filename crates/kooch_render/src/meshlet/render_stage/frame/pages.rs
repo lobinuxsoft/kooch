@@ -13,7 +13,7 @@ use kooch_core::resource::Resources;
 
 use crate::meshlet::SceneCullParams;
 use crate::shadow::pages::mark::{MarkCounts, PageMarker, Paint};
-use crate::shadow::pages::pool::{PoolConfig, PAGES_RANGE};
+use crate::shadow::pages::pool::{PAGES_RANGE, PoolConfig};
 use crate::shadow::pages::raster::{PageRasterizer, RasterCounts};
 use crate::shadow::{ClipmapConfig, PageConfig};
 
@@ -326,7 +326,6 @@ impl MeshletRenderStage {
                 // to be needed here is gone with the reason for it: the
                 // table, the atlas and the uniform are all this frame's.
                 uniform_span: raster.uniform_span(page_view_index(view_id)),
-                keys: pool.keys(),
                 slots: pool.slots(),
                 atlas: raster.atlas(),
             },
@@ -414,7 +413,6 @@ impl MeshletRenderStage {
             kooch_lighting::PageBinding {
                 uniform: raster.uniform_buffer(),
                 uniform_span: raster.uniform_span(slice),
-                keys: page_pool.keys(),
                 slots: page_pool.slots(),
                 atlas: raster.atlas(),
             },
@@ -523,7 +521,6 @@ impl MeshletRenderStage {
             pages = counts.pages,
             pairs = counts.pairs,
             local = counts.local,
-            others = counts.others,
             "shadow pages rastered"
         );
     }

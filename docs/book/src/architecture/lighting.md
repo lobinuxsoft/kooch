@@ -1098,59 +1098,59 @@ The alternative — sweep the mark bitmap afterwards and allocate what is
 set — is a dispatch over the *virtual* space. See the next section for
 how large that is.
 
-### 🔴 The flat page table is dead, and the number is why
+### 🔴 The table is FLAT, and the number that used to forbid it is dead
 
-With 128-texel pages over a 16384 virtual map, a mip chain per cube face
-and a 17-level clipmap, one light addresses **278 528** pages. A hundred
-lights and a sun address **28 409 856**.
+The lookup runs **per pixel per light** in the shading pass, and prior
+art is unanimous that it must be one indexed read: Chalmers (*"quite
+fast because they only require a single texture lookup"*), Stephano's
+sparse VSM (`pageTable[ivec2(floor(uv * numPagesXY))]`), UE 5.8
+(`CalcPageOffset` is flat arithmetic over 21 845 entries per map). The
+first table here hashed instead — open addressing with tombstones —
+and the measurement that killed it, on `many_lights` at 1096 frames:
+**shading 10.4 ms against 0.884 ms for the entire shadow track**, on a
+walk of up to 5 chain levels × up to 32 probes, per pixel per light.
 
-| Structure | One page costs | Total |
-|---|---|---|
-| The mark bitmap | 1 bit | **3.4 MiB** ✅ |
-| A flat `u32` table | 32 bits | **108 MiB** 🔴 |
-| The pool it would index | — | 256 MiB |
+The hash had existed for a real reason. With 128-texel pages over a
+16384 virtual map, a mip chain per cube face and a 17-level clipmap,
+one light addressed **278 528** pages; a hundred lights and a sun,
+**28 409 856** — a flat `u32` table was **108 MiB, 42 % of the pool it
+would index**, describing pages that are 99.99 % empty. Two decisions
+shrank the space by a factor of ~58 and made flat affordable:
 
-A flat table spends **42 % of the pool on describing pages that are
-99.99 % empty**. It also kills the sweep: 28 million threads to find
-about two thousand set bits.
+- **`LOCAL_MAX_TEXELS` caps a lamp's chain** three levels below the
+  sun's — a factor of 64 in the pages one lamp can address, and the
+  texel it gives up at four metres is two millimetres.
+- **The address space stops *paying* for the capped levels.** A lamp's
+  chain is addressed from `local_level_floor` up, so its stride is
+  **2 046 pages instead of 131 070**, and the sun's clipmap sits at the
+  tail of the view's span. 101 lights and a sun now address ~485 000
+  pages — a few MiB of table at `PAGE_CELL` words per entry.
 
-The bitmap survives the same arithmetic only because a bit is a bit. That
-is why marking was built first and why it was affordable.
+This is Epic's own shape: UE5 stays flat by never handing a distant
+light a full virtual space (`VSM_MAX_SINGLE_PAGE_SHADOW_MAPS` is 8192
+maps of *one* entry each).
 
-### So the table is sized to what is resident, not to what is addressable
+### The entry index IS the page id
 
-Open addressing over `2 × pool_pages` entries — 8192 slots for Epic's
-4096-page pool, **64 KiB**, keys and physical indices together.
+- **The first word is `slot + 1`,** so `PAGE_ABSENT` is 0 and an empty
+  table is a zeroed buffer. Eviction stores 0 — **no tombstones**,
+  because nothing probes past an entry any more, and the sweep pass
+  that kept the hash's holes in check is deleted outright.
+- **The insert is a plain store,** not a compare-exchange: only the
+  thread that flipped a page's mark bit inserts, and marking already
+  guaranteed there is exactly one.
+- **Light slots are padded** (`padded_lights`, steps of 64) so adding a
+  light does not shift the sun's region or the next view's base — the
+  layout, and every resident page with it, survives scene edits until
+  the count crosses a step.
+- **The reader is one load per level tried.** The sun's walk starts at
+  its containment level and typically resolves on the first; a lamp's
+  starts at the floor and has at most five levels to try, each a
+  single indexed load where the hash paid a probe run.
 
-> ⚠️ **UE5 does not hash its table, and an earlier version of this page
-> said it did.** `CalcPageOffset` in
-> `VirtualShadowMapPageAccessCommon.ush` is flat arithmetic —
-> `id * VSM_PAGE_TABLE_SIZE + level_offset + x + y * dims` — over 21 845
-> entries, **87 KiB per shadow map**. It stays affordable because Epic
-> never hands a distant light a full virtual space:
-> `VSM_MAX_SINGLE_PAGE_SHADOW_MAPS` is 8192 maps of *one* entry each.
-> The 108 MiB above is what a flat table costs **given our decision to
-> give every light the whole space** — a decision, not a law, and the
-> one worth revisiting before the hash is defended again.
-
-- **Keys are `page + 1`,** so `PAGE_EMPTY` is 0 and an empty table is a
-  zeroed buffer.
-- **The load factor never passes 0.5,** where the expected probe count is
-  under two. `PoolCounts::probes` reports any insert that walked 32 slots
-  without finding room; a non-zero number there is a statement about the
-  hash, not about the scene.
-- **The compare-exchange is for collisions between different keys,**
-  never for two threads fighting over one page — marking already
-  guaranteed there is only one. That is what makes the physical index
-  safe to write with a plain store immediately after.
-- **A hierarchical table** would also be small, but it pays an
-  indirection per lookup, and the lookup is per pixel per light in the
-  shading pass. That is the hot path the froxel grid exists to keep
-  short.
-
-`page_table.wgsl` holds the hash, the probe sequence and the atlas
-layout, and is concatenated into every pass that touches the table, so
-the writer and the reader cannot drift apart.
+`page_table.wgsl` holds the id arithmetic and the atlas layout, and is
+concatenated into every pass that touches the table, so the writer and
+the reader cannot drift apart.
 
 ### Overflow has a name here because it has none on screen
 
@@ -1178,16 +1178,17 @@ page = view * view_span + light * stride + <chain offset>
 ```
 
 which is UE5's `VirtualShadowMapId` written as a multiply instead of a
-table per id. The hash is what makes widening the address space free.
+table per id — and with a flat table the multiply is the address.
 
 Three things follow, and none of them is optional:
 
-- **The table is emptied by a pass, not by `clear_buffer`.**
-  `clear_view` zeroes only the entries whose key belongs to the camera
-  about to mark. It has to be per camera because the raster is **fused
-  with the shading** — a camera samples an atlas a frame old, so wiping
-  the whole table at the top of a frame leaves whichever camera marks
-  second reading what the first just erased.
+- **The table is aged by a pass, not wiped by `clear_buffer`.**
+  `age_view` walks only this camera's contiguous run of entries and
+  evicts what went unrequested past `max_age`. It has to be per camera
+  because the raster is **fused with the shading** — a camera samples
+  an atlas a frame old, so wiping the whole table at the top of a frame
+  leaves whichever camera marks second reading what the first just
+  erased.
 - **The pool is sliced, not shared,** and the atlas is an **array with a
   layer per camera**. A layer is an attachment a camera clears on its
   own; the alternatives — a scissor, a stencil, a clearing draw — all
@@ -1316,7 +1317,8 @@ So the reader starts at the coarsest level that could contain the point
 and walks outward, taking the first resident page. **Any** resident page
 containing the point holds correct depth, whatever level marked it: the
 stored value is a distance along the sun's axis and does not depend on
-how finely the page was diced. Typically the first probe hits.
+how finely the page was diced. Typically the first level tried hits,
+and each try is one indexed load.
 
 That walk is also what absorbs the frame of latency below.
 

@@ -6,8 +6,8 @@
 //! belongs here rather than in a frame.
 
 use kooch_render::meshlet::GpuGlobalMeshPool;
-use kooch_render::shadow::pages::pool::{PagePool, PoolConfig, PAGE_CELL};
-use kooch_render::shadow::pages::raster::{PageRasterizer, PAGE_DEPTH_FORMAT, PAGE_FRONT_FACE};
+use kooch_render::shadow::pages::pool::{PAGE_CELL, PagePool, PoolConfig};
+use kooch_render::shadow::pages::raster::{PAGE_DEPTH_FORMAT, PAGE_FRONT_FACE, PageRasterizer};
 use kooch_render::shadow::pages::{ClipmapConfig, PageConfig};
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -106,8 +106,9 @@ fn the_counters_name_every_level() {
     // 🔴 Per BUCKET, and a bucket is a LOD rather than a light: the
     // sun's clipmap levels first, then the chain levels every local
     // shared by the sun and every lamp that wants that fineness. Then
-    // bucket overflow, local pages, pairs, pair overflow, pages owned by
-    // another camera — and then a second run per bucket for the
+    // bucket overflow, local pages, pairs, pair overflow, a retired
+    // slot (it counted the other camera's pages when the compaction
+    // walked the whole shared table) — and then a second run per bucket for the
     // survivors each cull produced, which is the other half of the
     // expansion's cost, and a third for the cells a scatter would have
     // visited instead.
@@ -128,28 +129,36 @@ fn the_counters_name_every_level() {
     words[2] = 9;
     words[buckets as usize + 1] = 42;
     words[buckets as usize + 2] = 900;
-    words[buckets as usize + 4] = 31;
     let counts = raster.decode(&words, 1);
     assert_eq!(counts.pages, 21, "every bucket sums");
     assert_eq!(counts.local, 42, "local pages are reported, not hidden");
     assert_eq!(counts.pairs, 900);
-    assert_eq!(counts.others, 31, "the other camera's pages are named");
     assert_eq!(counts.view, 1);
 }
 
-/// Pages one light addresses. Recomputed from the public config rather
-/// than read off the marking pass, so the two derivations have to agree.
-fn stride(config: PageConfig, clipmap: ClipmapConfig) -> u32 {
-    let local = config.face_pages() * 6;
-    let sun = clipmap.levels * config.side(0).pow(2);
-    // A multiple of 32, so a camera's bits start on a word boundary and
-    // its region of the mark bitmap can be cleared on its own.
-    local.max(sun).div_ceil(32) * 32
+/// Pages one LOCAL light addresses. Recomputed from the public config
+/// rather than read off the marking pass, so the two derivations have
+/// to agree: six faces of a chain from the floor up, on a word
+/// boundary.
+fn stride(config: PageConfig, _clipmap: ClipmapConfig) -> u32 {
+    (config.local_face_pages() * 6).div_ceil(32) * 32
 }
 
-/// Pages one camera addresses: every light plus the sun.
+/// Light slots the address space is laid out for. Mirrors
+/// `padded_lights`: the layout pads so adding a light does not move
+/// every page id.
+fn padded(lights: u32) -> u32 {
+    lights.max(1).next_multiple_of(64)
+}
+
+/// Pages one camera addresses: the padded light slots, then the sun's
+/// clipmap at the tail.
 fn span(lights: u32) -> u32 {
-    (lights + 1) * stride(PageConfig::default(), ClipmapConfig::default())
+    let config = PageConfig::default();
+    let clipmap = ClipmapConfig::default();
+    (padded(lights) * stride(config, clipmap) + clipmap.levels * config.side(0).pow(2))
+        .div_ceil(32)
+        * 32
 }
 
 /// The virtual page `mark_sun` would write for this camera, level and
@@ -159,17 +168,24 @@ fn sun_page(view: u32, level: u32, cell: (u32, u32), lights: u32) -> u32 {
     let clipmap = ClipmapConfig::default();
     let side = config.side(0);
     view * span(lights)
-        + lights * stride(config, clipmap)
+        + padded(lights) * stride(config, clipmap)
         + level * side * side
         + cell.1 * side
         + cell.0
 }
 
 /// A page belonging to light 0, which this raster does not draw.
+///
+/// `level` has to be at or above the floor: the address space stops at
+/// `local_floor` on the fine side, which is what made the flat table
+/// affordable.
 fn local_page(view: u32, level: u32, cell: (u32, u32), lights: u32) -> u32 {
     let config = PageConfig::default();
+    assert!(level >= config.local_floor(), "below the addressable floor");
     let side = config.side(level);
-    let base: u32 = (0..level).map(|l| config.side(l).pow(2)).sum();
+    let base: u32 = (config.local_floor()..level)
+        .map(|l| config.side(l).pow(2))
+        .sum();
     view * span(lights) + base + cell.1 * side + cell.0
 }
 
@@ -234,40 +250,36 @@ fn a_page_compacts_into_the_level_it_came_from() {
 
     // Camera 1's table, seen from camera 1: three sun pages on two
     // levels, one local page this raster does not draw, and two pages
-    // belonging to the OTHER camera. Keys are `page + 1`; where they
-    // sit in the table is the hash's business and compaction reads all
-    // of it.
+    // belonging to the OTHER camera. The table is flat — the entry
+    // index IS the page id and the first word is `slot + 1`.
     const VIEW: u32 = 1;
+    // The finest addressable local level — the floor itself.
+    const LOCAL_LEVEL: u32 = 3;
     let planted = [
         (sun_page(VIEW, 0, (3, 4), LIGHTS), 11u32),
         (sun_page(VIEW, 0, (5, 6), LIGHTS), 12),
         (sun_page(VIEW, 5, (7, 8), LIGHTS), 13),
     ];
-    let mut keys = vec![0u32; small().entries() as usize];
-    // TWO words an entry — the slot, then its age. See `PAGE_CELL`.
+    let entries = ((VIEW + 1) * span(LIGHTS)) as usize;
+    let mut pool = pool;
+    pool.ensure_entries(&device, entries as u32);
     let cell = PAGE_CELL as usize;
-    let mut slots = vec![0u32; small().entries() as usize * cell];
-    for (i, (page, slot)) in planted.iter().enumerate() {
-        keys[i * 7] = page + 1;
-        slots[i * 7 * cell] = *slot;
+    let mut slots = vec![0u32; entries * cell];
+    for (page, slot) in planted.iter() {
+        slots[*page as usize * cell] = *slot + 1;
     }
-    keys[97] = local_page(VIEW, 2, (1, 1), LIGHTS) + 1;
-    slots[97 * cell] = 20;
-    // 🔴 A tombstone, on a level this camera uses. An evicted entry is
-    // not an empty one — `PAGE_DEAD - 1` decodes into a well-formed page
-    // that stands for nothing — and compaction that only skips EMPTY
-    // rasterises it. This planted one is the whole reason the test
-    // exists in this shape.
-    keys[71] = 0xffff_fffe;
-    slots[71 * cell] = 42;
-    // 🔴 The other camera's pages, on levels this one also uses. Before
-    // the view entered the key these were indistinguishable, and each
-    // camera rasterised the other's clipmap with its own matrices.
-    keys[43] = sun_page(0, 0, (3, 4), LIGHTS) + 1;
-    slots[43 * cell] = 30;
-    keys[61] = sun_page(0, 5, (7, 8), LIGHTS) + 1;
-    slots[61 * cell] = 31;
-    queue.write_buffer(pool.keys(), 0, bytemuck::cast_slice(&keys));
+    let local = local_page(VIEW, LOCAL_LEVEL, (1, 1), LIGHTS);
+    slots[local as usize * cell] = 20 + 1;
+    // 🔴 The other camera's pages, on levels this one also uses. The
+    // dispatch covers only THIS view's span, so they are outside it —
+    // and their listings have to come through untouched.
+    let foreign = [
+        sun_page(0, 0, (3, 4), LIGHTS),
+        sun_page(0, 5, (7, 8), LIGHTS),
+    ];
+    for (i, page) in foreign.iter().enumerate() {
+        slots[*page as usize * cell] = 30 + i as u32 + 1;
+    }
     queue.write_buffer(pool.slots(), 0, bytemuck::cast_slice(&slots));
 
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -295,8 +307,8 @@ fn a_page_compacts_into_the_level_it_came_from() {
     );
     assert_eq!(
         counts[buckets + 4],
-        2,
-        "the other camera's pages are counted and left alone"
+        0,
+        "the other camera's pages are outside the dispatch, so the retired          counter stays zero"
     );
     // 🔴 And it LANDS somewhere — in one of the SUN'S buckets, because a
     // bucket is an octave of world texel size and a lamp that wants the
@@ -304,7 +316,6 @@ fn a_page_compacts_into_the_level_it_came_from() {
     // this view and all four are listed; which bucket the lamp shares
     // depends on its range, which is exactly the point and exactly why
     // this does not assert an index.
-    const LOCAL_LEVEL: usize = 2;
     let listed: u32 = (0..levels as usize).map(|l| counts[l]).sum();
     assert_eq!(
         listed, 4,
@@ -340,31 +351,28 @@ fn a_page_compacts_into_the_level_it_came_from() {
     // means walking every resident page to identify each one, which is
     // the pairing this was meant to replace.
     let cells = read_words(&device, &queue, pool.slots());
-    let listing = |entry: usize| cells[entry * cell + 2];
-    for (i, planted_page) in planted.iter().enumerate() {
-        let at = listing(i * 7) as usize;
+    let listing = |page: u32| cells[page as usize * cell + 2];
+    for (planted_page, slot) in planted.iter() {
+        let at = listing(*planted_page) as usize;
         assert_ne!(
-            at as u32,
-            PAGE_UNLISTED,
-            "the sun page at entry {} kept no listing",
-            i * 7
+            at as u32, PAGE_UNLISTED,
+            "the sun page {planted_page} kept no listing"
         );
         assert_eq!(
             (list[at * 2], list[at * 2 + 1]),
-            *planted_page,
-            "entry {}'s listing points at the wrong page",
-            i * 7
+            (*planted_page, *slot),
+            "page {planted_page}'s listing points at the wrong page"
         );
     }
     // The local page is listed now, so it has a listing like any other.
-    let local_at = listing(97) as usize;
+    let local_at = listing(local) as usize;
     assert_ne!(
         local_at as u32, PAGE_UNLISTED,
         "the local page is bucketed but carries no listing"
     );
     assert_eq!(
         list[local_at * 2],
-        local_page(VIEW, LOCAL_LEVEL as u32, (1, 1), LIGHTS),
+        local,
         "the local page's listing points somewhere else"
     );
     assert!(
@@ -372,15 +380,14 @@ fn a_page_compacts_into_the_level_it_came_from() {
         "the local page landed past every bucket"
     );
 
-    // Everything the compaction saw and did not list still says so,
-    // rather than keeping an index into another view's list — which
-    // would be a perfectly well-formed number pointing at somebody
-    // else's page.
-    for entry in [43usize, 61] {
+    // The other camera's entries are outside the dispatch, so whatever
+    // they carried — a cleared buffer says zero — comes through
+    // untouched rather than being re-stamped with THIS view's indices.
+    for page in foreign {
         assert_eq!(
-            listing(entry),
-            PAGE_UNLISTED,
-            "the other camera's page at entry {entry} carries a listing into THIS view's list"
+            listing(page),
+            0,
+            "the other camera's page {page} was touched by this view's compaction"
         );
     }
 }
@@ -660,21 +667,19 @@ fn the_page_reader_biases_in_texels() {
 
 /// Every pass that reads the page table reads it the SAME way.
 ///
-/// 🔴 Written after breaking it. The table grew a second word per entry
-/// and a third key state in one change, and the marking pass and the
-/// shading pass were both updated while `page_compact.wgsl` was not. It
-/// kept compiling, kept running, and rasterised `PAGE_DEAD - 1` — which
-/// decodes into a perfectly well-formed view, light, level and cell,
-/// none of which mean anything — into a slot read off the wrong word.
-/// The frame filled with squares in the wrong places and nothing said
-/// why.
+/// 🔴 Written after breaking it, under the hash: the table grew a word
+/// per entry and the compaction was not updated — it kept compiling,
+/// kept running, and rasterised garbage into slots read off the wrong
+/// word. The hash is gone; what can still drift is the entry STRIDE
+/// and the flat contract itself — an entry is `PAGE_CELL` words, its
+/// index is the page id, and the first word is `slot + 1` with zero
+/// meaning absent. A reader that grows a probe loop back, or indexes
+/// without the stride, reads an age as a slot again.
 ///
 /// A grep, because the alternative is running four passes against a
-/// table hand-built into a hostile state. What it pins is exactly the
-/// two things that drifted: the stride on the slot, and the dead key.
+/// table hand-built into a hostile state.
 #[test]
 fn every_table_reader_agrees_on_the_layout() {
-    // (source, whether it is allowed to skip the dead check)
     let readers = [
         (
             "page_compact.wgsl",
@@ -684,27 +689,26 @@ fn every_table_reader_agrees_on_the_layout() {
     ];
     for (name, source) in readers {
         assert!(
-            !source.contains("table_slots[entry]") && !source.contains("table_slots[probe]"),
+            !source.contains("table_slots[entry]") && !source.contains("table_slots[page]"),
             "{name} indexes the table's slots without PAGE_CELL"
         );
         assert!(
-            source.contains("PAGE_DEAD"),
-            "{name} reads the table without knowing an entry can be evicted"
+            !source.contains("PAGE_DEAD") && !source.contains("page_probe"),
+            "{name} still speaks the hash's dialect — tombstones and probe             runs died with it"
         );
     }
 
     // The shading pass is the third reader and it lives in the other
-    // crate. It walks PAST a tombstone rather than skipping it — a
-    // lookup stops at EMPTY — so it needs the stride and not the
-    // constant.
+    // crate. Its lookup is ONE indexed load — the whole point of the
+    // flat table — so it must index by the page id, with the stride.
     let shading = kooch_lighting::inti_pbr_shader(1);
     assert!(
-        shading.contains("inti_page_slots[probe * PAGE_CELL]"),
+        shading.contains("inti_page_slots[page * PAGE_CELL]"),
         "the shading pass indexes the table's slots without PAGE_CELL"
     );
     assert!(
-        !shading.contains("if key == PAGE_DEAD"),
-        "a lookup that skips a tombstone stops walking a run it has to finish"
+        !shading.contains("page_probe"),
+        "the shading lookup grew a probe loop back; the flat table is one load"
     );
 }
 
@@ -979,7 +983,7 @@ fn the_marking_is_recorded_before_the_shading() {
 /// diameter/texels is what `cascades.rs` fits.
 #[test]
 fn the_paged_shadow_resolves_like_a_cascade() {
-    use kooch_render::shadow::pages::{level_below, ClipmapConfig, PageConfig};
+    use kooch_render::shadow::pages::{ClipmapConfig, PageConfig, level_below};
 
     const CASCADE_TEXELS: f32 = 2048.0;
     const FIRST: f32 = 10.0;

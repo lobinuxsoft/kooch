@@ -3,13 +3,13 @@
 //
 // CONCATENATED after `page_table.wgsl`.
 //
-// # Why the hash gets compacted at all
+// # Why the flat table gets compacted at all
 //
-// The table is 8192 entries for a 4096-page pool and a frame makes a
-// couple of thousand of them resident. Every pass after this one runs
-// per page TIMES per meshlet, so walking the empty entries would
-// multiply the emptiness by the scene's whole geometry. One 8192-thread
-// pass turns it into a dense list.
+// The table is one entry per VIRTUAL page — ~half a million per view —
+// and a frame makes a couple of thousand of them resident. Every pass
+// after this one runs per page TIMES per meshlet, so walking the empty
+// entries would multiply the emptiness by the scene's whole geometry.
+// One pass over this view's span turns it into a dense list.
 //
 // # Bucketed by level, because the cull is
 //
@@ -31,10 +31,10 @@
 // the survivor question has to be answered against.
 
 @group(0) @binding(0) var<uniform> raster: PageRaster;
-@group(0) @binding(1) var<storage, read> table_keys: array<u32>;
-// TWO words an entry — the slot, then the frame it was last requested
-// in. See `PAGE_CELL`: it is the marking pass's buffer and this reads it
-// with the same stride or it reads an age as a slot.
+// The flat table: `PAGE_CELL` words per virtual page — `slot + 1`
+// (`PAGE_ABSENT` = not resident), the age, the listing. It is the
+// marking pass's buffer and this reads it with the same stride or it
+// reads an age as a slot.
 @group(0) @binding(2) var<storage, read_write> table_slots: array<u32>;
 // `x` the virtual page, `y` its physical slot. Bucketed: level `L`
 // owns `[L * chain.z, (L + 1) * chain.z)`.
@@ -61,26 +61,23 @@ const EXPAND_GROUP: u32 = 64u;
 
 @compute @workgroup_size(COMPACT_GROUP, 1, 1)
 fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let entry = gid.x;
-    if entry >= raster.pool.x {
+    // One thread per entry of THIS VIEW'S span. The table is flat and a
+    // view's entries are a contiguous run, so the other cameras' pages
+    // are outside the dispatch rather than a decode-and-skip — which is
+    // also why the "belongs to another view" counter is gone.
+    if gid.x >= raster.views.y {
         return;
     }
-    let key = table_keys[entry];
-    // 🔴 DEAD as well as EMPTY. The pool persists, so eviction leaves a
-    // tombstone rather than an empty entry — and `PAGE_DEAD - 1` decodes
-    // into a perfectly well-formed view, light, level and cell, none of
-    // which mean anything. Skipping only EMPTY rasterises that garbage
-    // into a slot nobody owns, which is what a scene full of squares in
-    // the wrong places looks like.
-    if key == PAGE_EMPTY || key == PAGE_DEAD {
+    let entry = raster.views.x * raster.views.y + gid.x;
+    let stored = table_slots[entry * PAGE_CELL];
+    if stored == PAGE_ABSENT {
         return;
     }
     // Whatever listing this entry carried belongs to a compaction that
-    // is over. Cleared before the reasons to return below, so a page
-    // this view does not own never keeps another view's index.
+    // is over.
     table_slots[entry * PAGE_CELL + 2u] = PAGE_UNLISTED;
-    // Keys are stored as `page + 1` so that a cleared buffer is empty.
-    let page = key - 1u;
+    // The entry index IS the virtual page id.
+    let page = entry;
     let id = page_decode(
         page,
         raster.views.y,
@@ -88,17 +85,9 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         raster.space.y,
         raster.space.z,
         raster.space.w,
+        raster.pool.w,
     );
     let buckets = raster.chain.x;
-    // 🔴 Not a cap and not a failure: the table holds every view's
-    // pages, and each view compacts its own. Counted anyway, because
-    // "the pool is full and my view got forty pages" is unreadable
-    // without knowing how many belong to somebody else — which is the
-    // exact number that would have named the last defect on sight.
-    if id.view != raster.views.x {
-        atomicAdd(&page_counts[buckets + 4u], 1u);
-        return;
-    }
     // 🔴 The bucket is an OCTAVE of world texel size, so a lamp and the
     // sun land in the same list whenever they want the same fineness —
     // and the sun's culls have already filled it. The anchor puts the
@@ -127,7 +116,7 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let listing = slot * raster.chain.z + index;
-    page_list[listing] = vec2<u32>(page, table_slots[entry * PAGE_CELL]);
+    page_list[listing] = vec2<u32>(page, stored - 1u);
     // The way back: a pass that computes a page KEY can now reach the
     // entry the draw indexes, without walking every resident page to
     // find it. See `PAGE_CELL`.

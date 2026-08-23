@@ -70,7 +70,6 @@ pub struct GpuLights {
     /// it runs. The buffer holds one slice per camera, so the offset is
     /// part of the binding's identity.
     page_uniform_span: (u64, u64),
-    page_keys: Option<wgpu::Buffer>,
     page_slots: Option<wgpu::Buffer>,
     page_atlas: Option<wgpu::TextureView>,
     /// Bound when nothing is paging. The uniform is zeroed, and its
@@ -241,16 +240,8 @@ impl GpuLights {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                // Binding 9 held the page hash's key array and is
+                // retired: the flat table is indexed by the page id.
                 wgpu::BindGroupLayoutEntry {
                     binding: 10,
                     visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
@@ -334,7 +325,6 @@ impl GpuLights {
             PageBinding {
                 uniform: &dummy_page_buffer,
                 uniform_span: (0, 0),
-                keys: &dummy_page_buffer,
                 slots: &dummy_page_buffer,
                 atlas: &dummy_page_atlas,
             },
@@ -350,7 +340,6 @@ impl GpuLights {
             dummy_cubes,
             page_uniform: None,
             page_uniform_span: (0, 0),
-            page_keys: None,
             page_slots: None,
             page_atlas: None,
             dummy_page_buffer,
@@ -399,13 +388,17 @@ impl GpuLights {
             // one buffer and differ only here; comparing the handle
             // alone would leave the second one reading the first one's
             // slice, which is the whole bug this binding exists to fix.
-            && self.page_uniform_span == pages.uniform_span;
+            && self.page_uniform_span == pages.uniform_span
+            // 🔴 The table buffer is REPLACED when the light count
+            // outgrows the address space, with the uniform and the
+            // atlas standing still — a bind group that kept the old
+            // one reads freed memory the frame after the growth.
+            && self.page_slots.as_ref().is_some_and(|b| b == pages.slots);
         if unchanged {
             return;
         }
         self.page_uniform_span = pages.uniform_span;
         self.page_uniform = Some(pages.uniform.clone());
-        self.page_keys = Some(pages.keys.clone());
         self.page_slots = Some(pages.slots.clone());
         self.page_atlas = Some(pages.atlas.clone());
         self.rebuild_bind_group(device);
@@ -422,7 +415,6 @@ impl GpuLights {
         }
         self.page_uniform = None;
         self.page_uniform_span = (0, 0);
-        self.page_keys = None;
         self.page_slots = None;
         self.page_atlas = None;
         self.rebuild_bind_group(device);
@@ -453,7 +445,6 @@ impl GpuLights {
                 } else {
                     (0, 0)
                 },
-                keys: self.page_keys.as_ref().unwrap_or(&self.dummy_page_buffer),
                 slots: self.page_slots.as_ref().unwrap_or(&self.dummy_page_buffer),
                 atlas: self.page_atlas.as_ref().unwrap_or(&self.dummy_page_atlas),
             },
@@ -729,7 +720,6 @@ pub struct PageBinding<'a> {
     /// value — the engine has already shipped that bug once (#853). A
     /// camera writing its own range cannot be overwritten by the other.
     pub uniform_span: (u64, u64),
-    pub keys: &'a wgpu::Buffer,
     pub slots: &'a wgpu::Buffer,
     pub atlas: &'a wgpu::TextureView,
 }
@@ -790,10 +780,6 @@ fn create_bind_group(
                     offset: pages.uniform_span.0,
                     size: std::num::NonZeroU64::new(pages.uniform_span.1),
                 }),
-            },
-            wgpu::BindGroupEntry {
-                binding: 9,
-                resource: pages.keys.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 10,

@@ -823,9 +823,16 @@ virtual completo. Con `LOCAL_MAX_TEXELS`:
 | **después del floor** | **~485 000** | **~1.9 MiB** ✅ |
 
 **Sesenta veces menos.** La razón por la que la tabla es un hash abierto desapareció, y con ella
-el walk de 32 sondeos por píxel por luz. ⏭️ **SIGUIENTE = la tabla plana indexada.** El walk de
-niveles también se va: con una tabla plana el lector indexa el nivel que quiere en vez de
-probar cinco.
+el walk de 32 sondeos por píxel por luz.
+
+✅ **2026-08-22 — LA TABLA PLANA ESTÁ.** `page_table.wgsl` ya no tiene hash: el índice de la
+entrada ES la página virtual, la primera palabra es `slot + 1` (0 = ausente), y el lookup del
+sombreado es **una lectura indexada** — la forma de Chalmers/Stephano/UE5. Con ella murieron
+los tombstones, el `sweep_view` entero, el buffer de keys (un binding menos en tres pasadas) y
+los tres contadores del hash (`holes`/`probes`/`swept`). El espacio local se re-basó en el piso
+— stride por lámpara **2 048 páginas contra 131 070** — y los slots de luces van acolchados de
+a 64 para que agregar una luz no mueva ni una página residente. El walk del lector quedó en ≤5
+niveles × una lectura cada uno (el del sol resuelve típicamente en el primero).
 
 ⚠️ Y lo que el prior art dice del ráster y todavía no tenemos: **caché de páginas entre
 frames**. StraySpark: *"cached pages are effectively free"*; el juego entero de optimización es

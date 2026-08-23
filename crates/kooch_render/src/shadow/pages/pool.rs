@@ -133,20 +133,6 @@ impl PoolConfig {
         )
     }
 
-    /// Entries in the hash table.
-    ///
-    /// Twice the pool, rounded up to a power of two, so the load factor
-    /// never passes 0.5 and the mask is an `and` rather than a modulo.
-    /// The expected probe count at that load is under two.
-    ///
-    /// Sized against [`Self::total`] rather than `pages`: every view's
-    /// entries live in the SAME table, keyed by a page id that carries
-    /// the view, and a table sized for one view's worth would run at a
-    /// load factor of 1.0 the moment a second viewport opened.
-    pub fn entries(&self) -> u32 {
-        self.total().next_power_of_two() * 2
-    }
-
     /// Pages across one view's layer, in both axes.
     ///
     /// Square, because a long strip wastes the second dimension of
@@ -187,12 +173,6 @@ impl PoolConfig {
     /// What the atlas costs, at `Depth32Float`.
     pub fn atlas_bytes(&self, config: PageConfig) -> u64 {
         self.total() as u64 * config.page_bytes()
-    }
-
-    /// What the table costs, which is the number the flat answer lost
-    /// to: a key, plus [`PAGE_CELL`] words of slot and age.
-    pub fn table_bytes(&self) -> u64 {
-        self.entries() as u64 * (1 + PAGE_CELL as u64) * 4
     }
 }
 
@@ -306,29 +286,35 @@ pub fn age_from_environment() -> u32 {
 /// moving object leaves its shadow behind. That is the next machine and
 /// [`PoolLife`] is the knob that keeps it off until it exists.
 pub struct PagePool {
-    keys: wgpu::Buffer,
-    /// TWO words per entry: the slot, then the frame it was last
-    /// requested in. See `PAGE_CELL` in `page_table.wgsl` for why they
-    /// share a buffer rather than getting one each.
+    /// The FLAT page table: `PAGE_CELL` words per VIRTUAL page, indexed
+    /// by the page id itself. See `page_table.wgsl` for the entry
+    /// layout and for why the hash this replaced is gone.
     slots: wgpu::Buffer,
 
     /// `[high, free_count, free_slots...]` per view — see `alloc_base`
     /// in the shader.
     alloc: wgpu::Buffer,
     config: PoolConfig,
+    /// Virtual pages the table holds entries for, across every view.
+    ///
+    /// 🔴 A function of the LIGHT COUNT, not of the pool: the table is
+    /// one entry per addressable page. [`Self::ensure_entries`] grows
+    /// it, and the marker owns the number because the marker owns the
+    /// address space.
+    entries: u32,
 }
 
 impl PagePool {
     pub fn new(device: &wgpu::Device, config: PoolConfig) -> Self {
         Self {
-            keys: table_buffer(device, "shadow_page_keys", config.entries()),
-            slots: table_buffer(device, "shadow_page_cells", config.entries() * PAGE_CELL),
+            slots: table_buffer(device, "shadow_page_cells", PAGE_CELL),
             alloc: table_buffer(
                 device,
                 "shadow_page_alloc",
                 config.slices() * (config.slice() + 2),
             ),
             config,
+            entries: 1,
         }
     }
 
@@ -336,17 +322,49 @@ impl PagePool {
         self.config
     }
 
+    /// Virtual pages the table holds entries for.
+    pub fn entries(&self) -> u32 {
+        self.entries
+    }
+
+    /// What the table costs: [`PAGE_CELL`] words per virtual page. The
+    /// number that used to make a flat table impossible — 108 MiB over
+    /// the full chain — and that the floored local stride brought to a
+    /// few MiB. See `page_table.wgsl`.
+    pub fn table_bytes(&self) -> u64 {
+        self.entries as u64 * PAGE_CELL as u64 * 4
+    }
+
     /// Resizes if the pool changed, and reports whether it did.
     pub fn resize(&mut self, device: &wgpu::Device, config: PoolConfig) -> bool {
         if config == self.config {
             return false;
         }
+        let entries = self.entries;
         *self = Self::new(device, config);
+        self.ensure_entries(device, entries);
         true
     }
 
-    pub fn keys(&self) -> &wgpu::Buffer {
-        &self.keys
+    /// Grows the table to `entries` virtual pages, and reports whether
+    /// the buffers were replaced — in which case every entry is gone
+    /// and the caller flags a rebuild.
+    ///
+    /// 🔴 The allocator goes with the table. A free list that outlives
+    /// the table it was built for hands out slots two entries both
+    /// believe they own, and the second one wins silently.
+    pub fn ensure_entries(&mut self, device: &wgpu::Device, entries: u32) -> bool {
+        if entries <= self.entries {
+            return false;
+        }
+        self.slots = table_buffer(device, "shadow_page_cells", entries * PAGE_CELL);
+        self.alloc = table_buffer(
+            device,
+            "shadow_page_alloc",
+            self.config.slices() * (self.config.slice() + 2),
+        );
+        self.entries = entries;
+        true
     }
 
     pub fn slots(&self) -> &wgpu::Buffer {
@@ -364,11 +382,10 @@ impl PagePool {
     /// where the pool has just been rebuilt and no entry in it names a
     /// slot that still exists. The per-frame reset is `age_view`.
     ///
-    /// 🔴 `alloc` has to go with the keys. A free list that outlives the
-    /// table it was built for hands out slots two entries both believe
-    /// they own, and the second one wins silently.
+    /// 🔴 `alloc` has to go with the table. A free list that outlives
+    /// the table it was built for hands out slots two entries both
+    /// believe they own, and the second one wins silently.
     pub fn clear(&self, encoder: &mut wgpu::CommandEncoder) {
-        encoder.clear_buffer(&self.keys, 0, None);
         encoder.clear_buffer(&self.slots, 0, None);
         encoder.clear_buffer(&self.alloc, 0, None);
     }
@@ -405,24 +422,11 @@ pub struct PoolCounts {
     /// a reuse is a frame whose shadow atlas is mostly last frame's,
     /// which is what makes a hundred casting lights affordable at all.
     pub reused: u32,
-    /// Entries a lookup walked past because their page was evicted.
-    ///
-    /// ⚠️ The cost of eviction, and the one that grows silently. See
-    /// `PAGE_DEAD`: a hole keeps a probe run intact and lengthens it. A
-    /// number climbing towards `PAGE_PROBES` per request means the table
-    /// is turning into holes and wants a rehash.
-    pub holes: u32,
     /// Resident pages this view carried over — requested recently enough
     /// not to be evicted.
     pub alive: u32,
     /// Pages freed this frame for going unrequested past `max_age`.
     pub evicted: u32,
-    /// Tombstones the sweep turned back into empty entries.
-    ///
-    /// 🔴 It has to keep pace with `evicted`, or the table is filling
-    /// with holes it cannot reuse and inserts will start running out of
-    /// probes. That failure was measured before the sweep existed.
-    pub swept: u32,
     /// Slots the free list could not hold, which is a double free.
     /// 🔴 Always zero, or the allocator is wrong.
     pub leaked: u32,
@@ -431,13 +435,6 @@ pub struct PoolCounts {
     /// checkerboard corruption, so the counter exists to name it before
     /// anyone has to recognise it by sight.
     pub overflow: u32,
-    /// Inserts that walked `PAGE_PROBES` slots without finding room.
-    ///
-    /// ⚠️ Distinct from `overflow`: the pool had space and the TABLE
-    /// did not. At a load factor of 0.5 this should be zero, and any
-    /// other number is a statement about the hash rather than about the
-    /// scene.
-    pub probes: u32,
     /// Physical pages THIS VIEW owns, so the two numbers above are
     /// readable without knowing how the build was configured.
     ///

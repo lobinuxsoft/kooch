@@ -539,31 +539,17 @@ fn inti_page_age_debug(world_position: vec3<f32>) -> vec3<f32> {
             + cell.y * side
             + cell.x;
 
-        // The probe is walked here rather than through `inti_page_lookup`
-        // because the entry INDEX is what carries the age, and the
-        // production lookup returns only the slot.
-        let entries = inti_pages.pool.x;
-        if entries == 0u {
+        // Indexed here rather than through `inti_page_lookup` because
+        // the AGE word is what this view paints, and the production
+        // lookup returns only the slot.
+        if page >= inti_pages.pool.x {
             return vec3<f32>(0.0);
         }
-        var probe = page_probe(page, entries);
-        var found = false;
-        for (var i = 0u; i < PAGE_PROBES; i = i + 1u) {
-            let key = inti_page_keys[probe];
-            if key == PAGE_EMPTY {
-                break;
-            }
-            if key == page + 1u {
-                found = true;
-                break;
-            }
-            probe = page_step(probe, entries);
-        }
-        if !found {
+        if inti_page_slots[page * PAGE_CELL] == PAGE_ABSENT {
             continue;
         }
 
-        let age = inti_page_slots[probe * PAGE_CELL + 1u];
+        let age = inti_page_slots[page * PAGE_CELL + 1u];
         let since = inti_pages.views.w - age;
         // Allocated this frame. White, and deliberately the loudest
         // thing on screen: it is the signal a flicker has to be
@@ -749,7 +735,7 @@ fn inti_lamp_page_debug(world_position: vec3<f32>, n: vec3<f32>, faces: bool) ->
         let page = view_base
             + light_index * stride
             + face * face_pages
-            + level_base_of(level, side0)
+            + local_level_base(level, side0, page_texels)
             + cell.y * side
             + cell.x;
         let slot = inti_page_lookup(page);
