@@ -772,6 +772,19 @@ lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings
 `Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
 decidía cuántos hilos, ahora decide qué páginas EXISTEN.
 
+🔴 **2026-08-23 (4) — EL USER PROBÓ: el cache rinde ("muchísimo más performante") pero
+`many_lights` tiene CIEN luces y el cap era 64.** El panel lo decía entero: 2.4M pares/111k
+samples ≈ 22 luces por píxel — no 16. Las 36 luces en slots 64..99 caían en la rama over-cap:
+121 páginas dropped, un tercio de la escena sin sombra, y cada luz SIN sombra lavando las
+sombras de las vecinas (el "se borran/no se suman" del user era esto — la suma por luz del
+shading es correcta; faltaban las sombras de un tercio de las luces). Fixes (`—`):
+`LAMP_CULLS` 64→**256** (el presupuesto del clustering); la arena de errores se dimensiona por
+las luces ACTIVAS del frame, no por el cap (256 slots sobre una escena vacía no pagan arena);
+el WARN ahora distingue "luces sobre el cap" de "sin espacio" y dispara solo en la TRANSICIÓN
+(con luces animadas, `pages` se movía cada frame y re-armaba el warn — 2 000 líneas idénticas);
+test nuevo `a_hundred_lamps_compact_without_drops` = la forma exacta de la escena. Pendiente
+del feedback del user: **blur configurable = #941** (siguiente).
+
 🎉 **2026-08-23 (3) — LAS PÁGINAS CACHEAN SU CONTENIDO ENTRE FRAMES (#477/#866): "cached
 pages are effectively free" quedó implementado.** El pool ya persistía slots; ahora persiste
 el DEPTH. La 4ª palabra de la tabla volvió como **content stamp** (la generación bajo la que

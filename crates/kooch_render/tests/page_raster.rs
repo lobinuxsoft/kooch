@@ -115,7 +115,7 @@ fn the_counters_name_every_level() {
     // and a third for the cells a scatter would have visited instead.
     assert_eq!(
         buckets,
-        sun + 64,
+        sun + 256,
         "the lamp buckets moved; `LAMP_CULLS` and the shader's constant have to move together"
     );
     assert_eq!(raster.count_slots(), buckets * 3 + 5);
@@ -239,6 +239,75 @@ fn read_words(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer)
 /// This is the CPU/WGSL arithmetic seam of the cache — `write_gens`
 /// recomputes the shader's snapped centre, and a mismatch here caches
 /// pages whose world rect silently moved.
+/// A hundred lights — `many_lights`, the scene that found the cap —
+/// and one page per lamp: every one must land in its own bucket, none
+/// in the dropped counter. At `LAMP_CULLS = 64` the lights past slot
+/// 63 lost every page (121 dropped in the editor, a third of the
+/// scene shadowless, and every unshadowed light washing out its
+/// neighbours' shadows).
+#[test]
+fn a_hundred_lamps_compact_without_drops() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut raster = rasterizer(&device);
+    let mut pool = PagePool::new(&device, small());
+    const LIGHTS: u32 = 100;
+    let lamps: Vec<kooch_lighting::GpuLight> = (0..LIGHTS)
+        .map(|i| kooch_lighting::GpuLight {
+            position: [i as f32, 2.0, 0.0],
+            range: 10.0,
+            kind: if i == 0 { 0 } else { 1 },
+            ..Default::default()
+        })
+        .collect();
+    pool.ensure_entries(&device, span(LIGHTS));
+    let cell = PAGE_CELL as usize;
+    let mut slots = vec![0u32; span(LIGHTS) as usize * cell];
+    let config = PageConfig::default();
+    let floor = config.local_floor();
+    let side = config.side(floor);
+    // One page per punctual lamp, on its own floor level. The helpers
+    // address light 0; a lamp's region sits `slot * stride` further in.
+    let light_stride = stride(PageConfig::default(), ClipmapConfig::default());
+    for light in 1..LIGHTS {
+        let page = lamp_face_page(0, 3, floor, (side / 2, side / 2), LIGHTS) + light * light_stride;
+        slots[page as usize * cell] = light + 1;
+    }
+    queue.write_buffer(pool.slots(), 0, bytemuck::cast_slice(&slots));
+
+    let mut encoder = device.create_command_encoder(&Default::default());
+    raster.record_compaction(
+        &device,
+        &queue,
+        &mut encoder,
+        &pool,
+        0,
+        glam::Vec3::new(0.3, 1.0, 0.3),
+        glam::Vec3::NEG_Y,
+        &lamps,
+    );
+    queue.submit([encoder.finish()]);
+    let counts = read_words(&device, &queue, raster.counts_buffer());
+    let buckets = raster.buckets() as usize;
+    let sun = ClipmapConfig::default().levels as usize;
+    assert_eq!(
+        counts[buckets],
+        0,
+        "pages were dropped: {:?} / lamp buckets {:?}",
+        &counts[buckets..buckets + 5],
+        &counts[sun..sun + 16]
+    );
+    let listed: u32 = counts[sun..sun + LIGHTS as usize].iter().sum();
+    assert_eq!(
+        listed,
+        LIGHTS - 1,
+        "every lamp's page reaches its bucket: {:?}",
+        &counts[sun..sun + 16]
+    );
+}
+
 #[test]
 fn a_still_suns_page_caches() {
     let Some((device, queue)) = device() else {

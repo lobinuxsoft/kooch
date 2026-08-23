@@ -517,11 +517,30 @@ impl MeshletRenderStage {
                 || (last.dropped > 0) != (counts.dropped > 0)
                 || (last.overflow > 0) != (counts.overflow > 0)
         });
+        // The WARN fires on the TRANSITION into dropping, not on every
+        // notable frame: animated lights move the page counts every
+        // frame, and each movement re-armed the warn — two thousand
+        // identical lines before anyone scrolled.
+        let began_failing = before.is_none_or(|last| last.dropped == 0 && last.overflow == 0)
+            && (counts.dropped > 0 || counts.overflow > 0);
         if !notable {
             return;
         }
         *logged(&mut self.page_raster_logged, counts.view) = Some(counts);
-        if counts.dropped > 0 || counts.overflow > 0 {
+        if began_failing {
+            // Say which failure it is: pages past a bucket's room, or
+            // lights past the shadow cap — the fixes are different.
+            let cap = crate::shadow::pages::raster::LAMP_CULLS;
+            if self.lights.light_count() > cap {
+                tracing::warn!(
+                    dropped = counts.dropped,
+                    lights = self.lights.light_count(),
+                    cap,
+                    "shadow pages: lights past the cap cast no shadow — their pages are \
+                     the dropped count"
+                );
+                return;
+            }
             tracing::warn!(
                 dropped = counts.dropped,
                 overflow = counts.overflow,

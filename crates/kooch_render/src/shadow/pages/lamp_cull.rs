@@ -71,6 +71,8 @@ pub struct LampCull {
     /// stated ceiling on [`LAMP_CULLS`].
     group_err: wgpu::Buffer,
     group_capacity: u32,
+    /// Arena rows — the most active lights any frame has had.
+    group_rows: u32,
     /// `[slot * LAMP_SURVIVORS ..]` — every lamp's packed survivors.
     survivors: wgpu::Buffer,
 
@@ -172,6 +174,7 @@ impl LampCull {
                 mapped_at_creation: false,
             }),
             group_capacity: 1,
+            group_rows: 1,
             survivors: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("lamp_cull_survivors"),
                 size: LAMP_CULLS as u64 * LAMP_SURVIVORS as u64 * 4,
@@ -194,18 +197,23 @@ impl LampCull {
         &self.survivors
     }
 
-    /// Grows the group-error arena to the scene. Group slots are
-    /// bounded by the cull thread count, the same over-approximation
-    /// `MeshletCull::ensure_group_capacity` uses.
-    pub fn ensure_groups(&mut self, device: &wgpu::Device, groups: u32) {
+    /// Grows the group-error arena to the scene AND the frame's active
+    /// lights. Group slots are bounded by the cull thread count, the
+    /// same over-approximation `MeshletCull::ensure_group_capacity`
+    /// uses; rows are the lights the frame actually has, NOT
+    /// [`LAMP_CULLS`] — a 256-slot cap over an empty scene must not
+    /// cost 256 rows of arena.
+    fn ensure_groups(&mut self, device: &wgpu::Device, groups: u32, slots: u32) {
         let groups = groups.max(1);
-        if groups <= self.group_capacity {
+        let slots = slots.clamp(1, LAMP_CULLS);
+        if groups <= self.group_capacity && slots <= self.group_rows {
             return;
         }
-        self.group_capacity = groups;
+        self.group_capacity = groups.max(self.group_capacity);
+        self.group_rows = slots.max(self.group_rows);
         self.group_err = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("lamp_cull_group_err"),
-            size: LAMP_CULLS as u64 * groups as u64 * 4,
+            size: self.group_rows as u64 * self.group_capacity as u64 * 4,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -231,6 +239,11 @@ impl LampCull {
         meshlets_per_mesh: u32,
         lod_target: f32,
     ) {
+        self.ensure_groups(
+            device,
+            instance_count.saturating_mul(meshlets_per_mesh),
+            lamp_slots,
+        );
         queue.write_buffer(
             &self.uniform,
             0,

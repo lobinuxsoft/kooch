@@ -93,12 +93,14 @@ const PAGE_CELL: u32 = 4u;
 /// perspective error metric, is precisely the retired cube path's
 /// recipe — the one path whose shadows were smooth.
 ///
-/// Mirrors `LAMP_CULLS` in `pages/raster.rs`. 64 — twice the classic
-/// path's `MAX_POINT_SHADOWS` — because the hierarchical cull (#939)
-/// made a slot cheap: no per-lamp cull object, just a slice of the
-/// shared arenas. The honest ceiling is the group-error arena,
-/// `LAMP_CULLS × group_capacity × 4 B`.
-const LAMP_CULLS: u32 = 64u;
+/// Mirrors `LAMP_CULLS` in `pages/raster.rs`. 256 — the cluster path's
+/// own light budget (`LINEAR_LOOP_BUDGET`) — because the hierarchical
+/// cull (#939) made a slot cheap and `many_lights` runs a hundred
+/// casting lamps; 64 dropped a third of them, measured as 121 pages
+/// with no shadow. The group-error arena is sized by the lights a
+/// frame actually has, not by this cap, so the cap costs buckets and
+/// survivor slices only.
+const LAMP_CULLS: u32 = 256u;
 
 /// Survivors one lamp may keep — its fixed slice of the shared
 /// survivor arena, `[slot * LAMP_SURVIVORS ..)`. Fixed rather than

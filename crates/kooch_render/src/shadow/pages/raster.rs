@@ -60,14 +60,15 @@ const DEPTH: &str = include_str!("../../../shaders/page_depth.wgsl");
 /// counted with the dropped pages. Mirrors `LAMP_CULLS` in
 /// `page_table.wgsl`.
 ///
-/// 64 — twice the classic path's `MAX_POINT_SHADOWS` — because a slot
-/// stopped costing a cull object and became a slice of shared arenas.
-/// The honest ceiling is the group-error arena,
-/// `LAMP_CULLS × group_capacity × 4 B`; raising this past it belongs
-/// to #866's streaming era. Slots are buffer order, not ranked — the
+/// 256 — the cluster path's own light budget — because `many_lights`
+/// runs a hundred casting lamps and the previous 64 dropped a third of
+/// them: 121 pages with no shadow, and every unshadowed light washing
+/// out its neighbours'. The group-error arena is sized by the frame's
+/// ACTIVE lights, not by this cap, so the cap prices buckets and
+/// survivor slices only. Slots are buffer order, not ranked — the
 /// classic path's `assign_point_slots` ranking is the follow-up named
 /// in #939.
-pub const LAMP_CULLS: u32 = 64;
+pub const LAMP_CULLS: u32 = 256;
 
 /// Moved-caster spheres a frame may upload for page invalidation.
 /// Past it, the scene generation bumps instead — every page redraws
@@ -1197,14 +1198,14 @@ impl PageRasterizer {
         &self.page_list
     }
 
-    /// Grows every cull — the clipmap levels' and the lamps' shared
-    /// arena — to the scene.
+    /// Grows every clipmap level's cull to the scene. The lamps'
+    /// shared arena sizes itself at record time, when the frame's
+    /// active light count is known.
     pub fn ensure_capacity(&mut self, device: &wgpu::Device, meshlets: u32, groups: u32) {
         for cull in &mut self.culls {
             cull.ensure_capacity(device, meshlets.max(1));
             cull.ensure_group_capacity(device, groups.max(1));
         }
-        self.lamp_cull.ensure_groups(device, groups.max(1));
     }
 
     /// The clipmap level's orthographic clip-from-world.
