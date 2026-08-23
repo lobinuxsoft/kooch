@@ -101,7 +101,10 @@ fn transform_scale(m: mat4x4<f32>) -> f32 {
 @compute @workgroup_size(EXPAND_GROUP, 1, 1)
 fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     let level = expand.level;
-    let buckets = raster.chain.x;
+    // Sun buckets plus one per lamp; the counters live after all of
+    // them. `level` is a BUCKET index — for a lamp it is
+    // `chain.x + slot`, bound to that lamp's own survivor list.
+    let buckets = raster.chain.x + LAMP_CULLS;
     let pages = min(atomicLoad(&page_counts[level]), raster.chain.z);
     let meshlets = visible_counts[level];
     if pages == 0u || meshlets == 0u {

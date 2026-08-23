@@ -129,7 +129,7 @@ impl PageConfig {
     pub fn local_floor(&self) -> u32 {
         let mut floor = 0;
         let mut texels = self.virtual_size;
-        while texels > LOCAL_MAX_TEXELS && texels > 1 {
+        while texels > LOCAL_MAX_TEXELS {
             texels >>= 1;
             floor += 1;
         }

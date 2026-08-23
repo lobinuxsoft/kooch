@@ -87,6 +87,11 @@ pub struct GpuLights {
     clusters: GpuClusters,
     capacity: u32,
     light_count: u32,
+    /// What the last [`Self::update`] uploaded, kept CPU-side: the
+    /// shadow-page rasteriser builds one cull per lamp and a cull needs
+    /// the light's position and range HERE, in buffer order — the slot
+    /// is the bucket.
+    uploaded: Vec<GpuLight>,
 }
 
 impl GpuLights {
@@ -349,6 +354,7 @@ impl GpuLights {
             clusters,
             capacity: INITIAL_CAPACITY,
             light_count: 0,
+            uploaded: Vec::new(),
         }
     }
 
@@ -482,6 +488,12 @@ impl GpuLights {
         self.light_count
     }
 
+    /// The lights as uploaded, CPU-side and in buffer order — what a
+    /// per-lamp cull reads. See the `uploaded` field.
+    pub fn uploaded(&self) -> &[GpuLight] {
+        &self.uploaded
+    }
+
     /// Walks the world, uploads the lights, and writes the per-frame
     /// constants.
     ///
@@ -540,6 +552,7 @@ impl GpuLights {
             }
         }
         self.light_count = count;
+        self.uploaded.clone_from(lights);
         self.ensure_capacity(device, self.light_count);
         if !lights.is_empty() {
             queue.write_buffer(&self.light_buffer, 0, cast_slice(lights));

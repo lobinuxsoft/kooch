@@ -373,7 +373,6 @@ impl MeshletRenderStage {
         // already removed from the cascades for being applied twice.
         let lod_target = 1.0_f32;
         let page_pool = marker.pool();
-        let lights = self.lights.light_count().max(1);
         let raster = self.page_raster.get_or_insert_with(|| {
             PageRasterizer::new(
                 device,
@@ -407,7 +406,7 @@ impl MeshletRenderStage {
             slice,
             eye,
             sun,
-            lights,
+            self.lights.uploaded(),
             self.lights.light_buffer(),
             lod_target,
         );

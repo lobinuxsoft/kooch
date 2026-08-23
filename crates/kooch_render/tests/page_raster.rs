@@ -105,24 +105,18 @@ fn the_counters_name_every_level() {
     let raster = rasterizer(&device);
     let sun = ClipmapConfig::default().levels;
     let buckets = raster.buckets();
-    // 🔴 Per BUCKET, and a bucket is a LOD rather than a light: the
-    // sun's clipmap levels first, then the chain levels every local
-    // shared by the sun and every lamp that wants that fineness. Then
-    // bucket overflow, local pages, pairs, pair overflow, a retired
-    // slot (it counted the other camera's pages when the compaction
-    // walked the whole shared table) — and then a second run per bucket for the
-    // survivors each cull produced, which is the other half of the
-    // expansion's cost, and a third for the cells a scatter would have
-    // visited instead.
-    // 🔴 The same count as the clipmap's levels, and that IS the design:
-    // a bucket is an octave of world texel size, anchored so the sun's
-    // level L lands on bucket L. A lamp's pages fall into buckets the
-    // sun's culls already fill, which is what makes the local half cost
-    // no new dispatch.
+    // 🔴 Per BUCKET: the sun's clipmap levels first — octaves of its
+    // own scale, level L on bucket L — then one bucket per lamp slot,
+    // each fed by that lamp's own cull. Then bucket overflow, local
+    // pages, pairs, pair overflow, a retired slot (it counted the other
+    // camera's pages when the compaction walked the whole shared
+    // table) — and then a second run per bucket for the survivors each
+    // cull produced, which is the other half of the expansion's cost,
+    // and a third for the cells a scatter would have visited instead.
     assert_eq!(
-        buckets, sun,
-        "buckets stopped being octaves of the sun's own scale; a lamp's pages now need \
-         a cull of their own to fill whatever the extra buckets are"
+        buckets,
+        sun + 32,
+        "the lamp buckets moved; `LAMP_CULLS` and the shader's constant have to move together"
     );
     assert_eq!(raster.count_slots(), buckets * 3 + 5);
     let mut words = vec![0u32; raster.count_slots() as usize];
@@ -293,7 +287,6 @@ fn a_page_compacts_into_the_level_it_came_from() {
         glam::Vec3::ZERO,
         glam::Vec3::NEG_Y,
         LIGHTS,
-        &lights_buffer(&device, &queue, &[10.0]),
     );
     queue.submit([encoder.finish()]);
 
@@ -311,16 +304,21 @@ fn a_page_compacts_into_the_level_it_came_from() {
         0,
         "the other camera's pages are outside the dispatch, so the retired          counter stays zero"
     );
-    // 🔴 And it LANDS somewhere — in one of the SUN'S buckets, because a
-    // bucket is an octave of world texel size and a lamp that wants the
-    // sun's fineness wants the sun's LOD. Four pages were planted for
-    // this view and all four are listed; which bucket the lamp shares
-    // depends on its range, which is exactly the point and exactly why
-    // this does not assert an index.
+    // 🔴 And it LANDS in the lamp's OWN bucket — after the sun's
+    // levels, at `levels + slot` — where its own cull's survivors are
+    // bound. It briefly shared the sun's octave buckets; that borrowed
+    // survivor lists culled for the camera's orthographic boxes and
+    // broke lamp shadows both ways.
     let listed: u32 = (0..levels as usize).map(|l| counts[l]).sum();
     assert_eq!(
-        listed, 4,
-        "three sun pages and one lamp page were planted; {listed} reached a bucket"
+        listed, 3,
+        "three sun pages were planted; {listed} reached the sun's buckets"
+    );
+    assert_eq!(
+        counts[levels as usize],
+        1,
+        "lamp 0's bucket does not hold its page: {:?}",
+        &counts[..levels as usize + 2]
     );
     // The lamp did not simply land on top of a sun page: level 5 held
     // exactly one before and the lamp is not at level 5's density.
@@ -376,9 +374,11 @@ fn a_page_compacts_into_the_level_it_came_from() {
         local,
         "the local page's listing points somewhere else"
     );
+    // Past the sun's buckets, inside lamp 0's — its own cull's bucket.
+    let lamp_bucket = levels as usize;
     assert!(
-        local_at < levels as usize * bucket,
-        "the local page landed past every bucket"
+        local_at >= lamp_bucket * bucket && local_at < (lamp_bucket + 1) * bucket,
+        "the local page is outside lamp 0's bucket: listing {local_at}"
     );
 
     // The other camera's entries are outside the dispatch, so whatever
@@ -481,13 +481,13 @@ fn a_lamp_page_holds_what_its_light_sees() {
     const LIGHTS: u32 = 1;
     let lamp = Vec3::new(0.0, 4.0, 0.0);
     let range = 20.0_f32;
+    let record = kooch_lighting::GpuLight {
+        position: lamp.to_array(),
+        range,
+        kind: 1,
+        ..Default::default()
+    };
     let lights_buffer = {
-        let record = kooch_lighting::GpuLight {
-            position: lamp.to_array(),
-            range,
-            kind: 1,
-            ..Default::default()
-        };
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("lamp_page_test_light"),
             size: std::mem::size_of::<kooch_lighting::GpuLight>() as u64,
@@ -517,11 +517,6 @@ fn a_lamp_page_holds_what_its_light_sees() {
     const COARSE_SLOT: u32 = 7;
     slots[fine as usize * cell] = FINE_SLOT + 1;
     slots[coarse as usize * cell] = COARSE_SLOT + 1;
-    // The fine page carries a receivers' ask — centimetres, octave 9 —
-    // the way the marking records one. The coarse page carries none,
-    // exercising the range fallback.
-    const ASKED: u32 = 9;
-    slots[fine as usize * cell + 3] = ASKED + 1;
     queue.write_buffer(page_pool.slots(), 0, bytemuck::cast_slice(&slots));
 
     // Built the way the FRAME builds it — against the cull pipelines'
@@ -560,33 +555,33 @@ fn a_lamp_page_holds_what_its_light_sees() {
         0,
         Vec3::new(0.0, 1.0, 8.0),
         Vec3::NEG_Y,
-        LIGHTS,
+        std::slice::from_ref(&record),
         &lights_buffer,
         1.0,
     );
     queue.submit([encoder.finish()]);
 
-    // The LOD half: the fine page buckets where its receivers asked
-    // (octave 9 -> a centimetre-class survivor list), NOT where the
-    // lamp's 20-metre range would put it — the bucketing that turned
-    // sphere shadows into octahedra. The coarse page, with no ask,
-    // falls back to the range.
+    // The bucketing half: a lamp's pages — every level of its chain —
+    // land in ITS bucket, after the sun's levels, where its own cull's
+    // survivors are bound. Bucketing them by octave into the sun's
+    // buckets handed them survivor lists culled for the camera's
+    // orthographic boxes: a close lamp's casters were culled away and a
+    // far bucket drew root meshlets — sphere shadows as faceted lumps.
     let counts = read_words(&device, &queue, raster.counts_buffer());
-    assert_eq!(
-        counts[ASKED as usize],
-        1,
-        "the asked-for bucket does not hold the fine page: {:?}",
-        &counts[..17]
-    );
     let clipmap = ClipmapConfig::default();
-    let finest = clipmap.base / config.texels(0) as f32;
-    let fallback_texel = 2.0 * range / config.texels(coarse_level) as f32;
-    let fallback = ((fallback_texel / finest).log2().floor() as usize).min(16);
+    let lamp_bucket = clipmap.levels as usize;
     assert_eq!(
-        counts[fallback],
-        1,
-        "the unasked page does not fall back to the range bucket {fallback}: {:?}",
-        &counts[..17]
+        counts[lamp_bucket],
+        2,
+        "lamp 0's bucket does not hold its two pages: {:?}",
+        &counts[..lamp_bucket + 2]
+    );
+    let strays: u32 = counts[..lamp_bucket].iter().sum();
+    assert_eq!(
+        strays,
+        0,
+        "a lamp page strayed into the sun's buckets: {:?}",
+        &counts[..lamp_bucket]
     );
 
     // What the light sees, by construction: the floor at 4 m stores
@@ -877,7 +872,6 @@ fn the_draw_covers_a_whole_meshlet() {
         glam::Vec3::ZERO,
         glam::Vec3::NEG_Y,
         1,
-        &lights_buffer(&device, &queue, &[10.0]),
     );
     queue.submit([encoder.finish()]);
 

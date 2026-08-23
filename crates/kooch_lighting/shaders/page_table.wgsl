@@ -52,29 +52,39 @@
 const PAGE_ABSENT: u32 = 0u;
 
 /// Words per table entry: the physical slot (`slot + 1`, 0 = absent),
-/// the frame it was last requested in, its index in this view's
-/// compacted `page_list`, and the finest OCTAVE any receiver asked of
-/// it this frame (`octave + 1`, 0 = nobody asked).
+/// the frame it was last requested in, and its index in this view's
+/// compacted `page_list`.
 ///
-/// # 🔴 The fourth word is what stops a lamp's shadow being a blob
-///
-/// A bucket decides which survivor list a page draws from, and the
-/// survivor list is a LOD. Bucketing a local page by the texel at the
-/// light's RANGE — the far cap — hands a range-50 lamp whose casters
-/// sit two metres away a survivor list simplified to tens of
-/// centimetres: on screen, a sphere's shadow is an octahedron.
-/// Measured in `roll-a-ball`: `worst level 12` on lamps whose
-/// receivers asked for centimetres.
-///
-/// The marking already computes what every receiver wants — `wanted`,
-/// the world texel a screen pixel needs — so it atomicMins that octave
-/// into the entry, and the compaction buckets there. The range is only
-/// the fallback for a resident page nobody looked at this frame, where
-/// a coarse redraw is invisible by construction.
+/// There used to be a fourth word — the finest octave any receiver
+/// asked — steering which of the SUN's survivor lists a lamp's page
+/// borrowed. Lamps cull for themselves now (see `LAMP_CULLS`), the
+/// borrowing is gone, and the word went with it.
 ///
 /// 🔴 Interleaved because `max_storage_buffers_per_shader_stage` is
 /// eight on the downlevel defaults; see the marking pass's binding.
-const PAGE_CELL: u32 = 4u;
+const PAGE_CELL: u32 = 3u;
+
+/// Culls a frame is willing to run for local lights — one per lamp,
+/// the way the retired cube path ran one per face (#777). A lamp's
+/// bucket is `chain.x + slot`, so a light past this cap has pages that
+/// are listed and counted but never drawn, which the skipped counter
+/// makes visible rather than silent.
+///
+/// # 🔴 Why a lamp cannot borrow the sun's survivors
+///
+/// A survivor list is a LOD picked for a VIEW. The sun's level-N list
+/// is simplified for an orthographic box centred on the CAMERA — so a
+/// lamp borrowing bucket N got geometry culled to someone else's
+/// frustum (a close lamp's casters fell outside the fine levels' box
+/// and its shadow vanished as it approached) at someone else's density
+/// (a coarse bucket handed root meshlets, and a sphere's shadow was a
+/// faceted lump). One cull per lamp, from the light's own eye with a
+/// perspective error metric, is precisely the retired cube path's
+/// recipe — the one path whose shadows were smooth.
+///
+/// Mirrors `LAMP_CULLS` in `pages/raster.rs`; the classic path's cap
+/// was `MAX_POINT_SHADOWS = 32`.
+const LAMP_CULLS: u32 = 32u;
 
 /// A table entry that is resident but not in THIS view's `page_list`.
 ///

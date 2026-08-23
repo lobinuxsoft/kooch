@@ -16,16 +16,25 @@
 //!    attachment and every page is a sub-rect of it, so 1681 pages are
 //!    ONE render pass instead of 1681.
 //!
-//! # 🔴 The sun only, and the seam is not arbitrary
+//! # 🔴 One cull per lamp, not per lamp VIEW
 //!
-//! A cull is per view. The sun's clipmap is **17** views. A hundred
-//! local lights with six faces and an eight-level chain each are
-//! **4848**, and the LOD selector is a two-pass reduction over the
-//! meshlet DAG that cannot simply be inlined per page. Local pages are
-//! marked and allocated today and counted as skipped here; rasterising
-//! them needs the cull itself moved onto the GPU as one multi-view
-//! dispatch, which is the next machine and not a bigger version of this
-//! one.
+//! A cull is per view. The sun's clipmap is **17** views; a hundred
+//! local lights with six faces and an eight-level chain each would be
+//! **4848**, which is the explosion this design refuses. What a lamp
+//! actually needs is ONE survivor list: a perspective error metric
+//! measured from the light's own position scales with distance by
+//! itself, so every face and every level of one lamp can share it —
+//! the retired cube path drew smooth shadows from exactly this recipe
+//! (#777). The frame therefore runs `17 + punctual lights` culls,
+//! capped at [`LAMP_CULLS`], and a lamp's pages bucket by LIGHT where
+//! the sun's bucket by level.
+//!
+//! 🔴 Lamps must NOT borrow the sun's survivor lists. Those are
+//! simplified for orthographic boxes centred on the CAMERA: a close
+//! lamp's casters fell outside the fine levels' box and its shadow
+//! vanished as it approached, and a coarse bucket handed root meshlets
+//! that drew a sphere's shadow as a faceted lump. Measured in
+//! `roll-a-ball`, both ways.
 
 use glam::{Mat4, Vec3};
 
@@ -37,14 +46,26 @@ use super::pool::{PagePool, PoolConfig};
 use super::{ClipmapConfig, PageConfig};
 
 use kooch_lighting::PAGE_TABLE as TABLE;
-// 🔴 The compaction reads a light's `range` to place its pages on the
-// sun's density scale, and `ClusterLight` is declared here — the same
-// concatenation the marking pass already uses. Only this pass needs it;
-// the expansion and the depth pass get `TABLE` alone.
+// `ClusterLight` is declared here — the expansion tests a candidate
+// against the lamp's own cone and the depth pass places its faces.
 use kooch_lighting::CLUSTER_COMMON;
+use kooch_lighting::{GpuLight, LIGHT_KIND_DIRECTIONAL};
 const COMPACT: &str = include_str!("../../../shaders/page_compact.wgsl");
 const EXPAND: &str = include_str!("../../../shaders/page_expand.wgsl");
 const DEPTH: &str = include_str!("../../../shaders/page_depth.wgsl");
+
+/// Culls a frame will run for local lights — one per punctual lamp, in
+/// buffer-slot order, so lamp `L`'s pages land in bucket
+/// `clipmap.levels + L` where its own survivor list is bound. A light
+/// past the cap keeps its pages listed but undrawn, counted with the
+/// dropped pages. Mirrors `LAMP_CULLS` in `page_table.wgsl`; the cap
+/// itself is the classic path's [`kooch_lighting::MAX_POINT_SHADOWS`].
+///
+/// 🔴 One per LIGHT, not per light view: a perspective error metric
+/// measured from the light's position scales with distance on its own,
+/// so all six faces and every chain level share the one list. See the
+/// module doc.
+pub const LAMP_CULLS: u32 = 32;
 
 /// What the pages are rasterised at. The same format the cascades use,
 /// so the sampling path in #477 reaches for the same comparison sampler
@@ -201,6 +222,11 @@ pub struct PageRasterizer {
     /// vertex count the indirect draw issues.
     triangles: u32,
     culls: Vec<MeshletCull>,
+    /// One per punctual lamp, grown as lights appear, in buffer-slot
+    /// order — lamp `L`'s survivors feed bucket `clipmap.levels + L`.
+    /// A directional slot keeps a placeholder so the indexing stays
+    /// the buffer's; it is never dispatched. See [`LAMP_CULLS`].
+    lamp_culls: Vec<MeshletCull>,
     /// The bind groups that never change once built.
     ///
     /// 🔴 Built ONCE, not per level per view per frame. They used to be
@@ -273,6 +299,9 @@ impl PageRasterizer {
             })
             .collect();
         let levels = clipmap.levels;
+        // Sun buckets plus one bucket per lamp; every per-bucket buffer
+        // is sized for both halves.
+        let buckets = levels + LAMP_CULLS;
 
         let module = |label: &str, body: &str| {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -413,7 +442,7 @@ impl PageRasterizer {
             uniform_stride,
             page_list: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_list"),
-                size: bucket(pool) as u64 * levels as u64 * 8,
+                size: bucket(pool) as u64 * buckets as u64 * 8,
                 // 🔴 COPY_SRC because `page_list_buffer` is public and the
                 // only reason to expose a GPU buffer is to read it back.
                 usage: storage | wgpu::BufferUsages::COPY_SRC,
@@ -421,13 +450,13 @@ impl PageRasterizer {
             }),
             counts: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_counts"),
-                size: count_slots(levels) as u64 * 4,
+                size: count_slots(buckets) as u64 * 4,
                 usage: storage | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
             expand_args: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_expand_args"),
-                size: levels as u64 * 12,
+                size: buckets as u64 * 12,
                 usage: storage | wgpu::BufferUsages::INDIRECT,
                 mapped_at_creation: false,
             }),
@@ -445,7 +474,7 @@ impl PageRasterizer {
             }),
             visible_counts: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_visible_counts"),
-                size: levels as u64 * 4,
+                size: buckets as u64 * 4,
                 // 🔴 COPY_SRC: the survivor counts ride home in the same
                 // readback as the page counts, so the expansion's cost
                 // can be read as the product it is. See `count_slots`.
@@ -454,7 +483,7 @@ impl PageRasterizer {
             }),
             levels: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_levels"),
-                size: level_stride * levels as u64,
+                size: level_stride * buckets as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
@@ -473,8 +502,9 @@ impl PageRasterizer {
             culls: (0..levels)
                 .map(|_| MeshletCull::new(device, 1, max_triangles_per_meshlet))
                 .collect(),
+            lamp_culls: Vec::new(),
             bound: None,
-            readback: RasterReadback::new(device, count_slots(levels)),
+            readback: RasterReadback::new(device, count_slots(buckets)),
             config,
             clipmap,
             pool,
@@ -548,17 +578,17 @@ impl PageRasterizer {
         &self.draw_args
     }
 
-    /// Buckets in `page_list`: one OCTAVE of world texel size each.
+    /// Buckets in `page_list`: the sun's clipmap levels first — one
+    /// octave of world texel size each, anchored so level `L` lands on
+    /// bucket `L` — then [`LAMP_CULLS`] buckets, one per lamp slot.
     ///
-    /// 🔴 The same count as the clipmap's levels, and that is the point
-    /// rather than a coincidence. `page_octave` is anchored so the sun's
-    /// level `L` lands on bucket `L`, so a local light's pages fall into
-    /// buckets the sun's culls already fill — a lamp and the sun that
-    /// want the same fineness want the same LOD, and share a list.
-    /// Bucketing by chain instead needs a cull per light to fill the
-    /// lamps' own buckets, which is the cost that grows with the scene.
+    /// 🔴 A bucket exists to name a survivor list, and a survivor
+    /// list is a LOD picked for a VIEW. Lamps briefly shared the sun's
+    /// buckets by octave; that borrowed geometry culled to the camera's
+    /// orthographic boxes and broke lamp shadows both ways — see the
+    /// module doc.
     pub fn buckets(&self) -> u32 {
-        self.clipmap.levels
+        self.clipmap.levels + LAMP_CULLS
     }
 
     /// Slots in [`Self::counts_buffer`].
@@ -629,6 +659,21 @@ fn atlas_layers(pool: PoolConfig) -> u32 {
 /// a storage binding it did not have, and 1M pairs was a number nobody
 /// had ever approached.
 pub const PAIR_CAPACITY: u32 = 1 << 18;
+
+/// A lamp cull's clip-from-world: an orthographic box of `2 * range` a
+/// side centred on the light, which is the union of everything any of
+/// its faces can see.
+///
+/// Only the extracted frustum PLANES matter — the box bounds candidates,
+/// it projects nothing — so the depth convention is free and the LOD
+/// selector runs its perspective form off `camera_position` instead.
+/// One box for spots too: their cone fits inside it, and the expansion's
+/// `cell_reaches` is the tight test anyway.
+fn lamp_clip(position: Vec3, range: f32) -> Mat4 {
+    let r = range.max(0.01);
+    Mat4::orthographic_rh(-r, r, -r, r, 0.0, 2.0 * r)
+        * Mat4::look_at_rh(position + Vec3::Z * r, position, Vec3::Y)
+}
 
 fn count_slots(buckets: u32) -> u32 {
     // Per level, then: bucket overflow, local pages skipped, pairs, pair
@@ -777,13 +822,12 @@ impl PageRasterizer {
         eye: Vec3,
         sun: Vec3,
         light_count: u32,
-        lights: &wgpu::Buffer,
     ) {
         self.write_uniform(queue, view, eye, sun, light_count);
         encoder.clear_buffer(&self.counts, 0, None);
         encoder.clear_buffer(&self.expand_args, 0, None);
         encoder.clear_buffer(&self.draw_args, 0, None);
-        let bind_group = self.compact_bind_group(device, page_pool, lights);
+        let bind_group = self.compact_bind_group(device, page_pool);
         let offset = [self.uniform_span(view).0 as u32];
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("shadow pages: compact"),
@@ -793,19 +837,14 @@ impl PageRasterizer {
         pass.set_bind_group(0, &bind_group, &offset);
         pass.dispatch_workgroups(self.compact_threads(light_count).div_ceil(64), 1, 1);
         pass.set_pipeline(&self.expand_args_pass);
-        pass.dispatch_workgroups(self.clipmap.levels.div_ceil(64), 1, 1);
+        pass.dispatch_workgroups(self.buckets().div_ceil(64), 1, 1);
         // Without a pair list this only fixes the vertex count, which is
         // exactly the half worth asserting on without a scene.
         pass.set_pipeline(&self.draw_args_pass);
         pass.dispatch_workgroups(1, 1, 1);
     }
 
-    fn compact_bind_group(
-        &self,
-        device: &wgpu::Device,
-        page_pool: &PagePool,
-        lights: &wgpu::Buffer,
-    ) -> wgpu::BindGroup {
+    fn compact_bind_group(&self, device: &wgpu::Device, page_pool: &PagePool) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("page_compact_bg"),
             layout: &self.compact_bgl,
@@ -817,10 +856,6 @@ impl PageRasterizer {
                 entry(5, &self.expand_args),
                 entry(6, &self.visible_counts),
                 entry(7, &self.draw_args),
-                // 🔴 For one field: a light's `range`. Without it a
-                // lamp's pages have no place on the density scale the
-                // sun's are on. See `page_octave`.
-                entry(8, lights),
             ],
         })
     }
@@ -863,6 +898,7 @@ impl PageRasterizer {
             visible: self
                 .culls
                 .iter()
+                .chain(self.lamp_culls.iter())
                 .map(|c| c.visible_meshlets_buffer().clone())
                 .collect(),
         };
@@ -877,7 +913,7 @@ impl PageRasterizer {
             })
         };
         self.bound = Some(Bound {
-            compact: self.compact_bind_group(device, page_pool, lights),
+            compact: self.compact_bind_group(device, page_pool),
             expand: device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("page_expand_bg"),
                 layout: &self.expand_bgl,
@@ -912,6 +948,7 @@ impl PageRasterizer {
             visible: self
                 .culls
                 .iter()
+                .chain(self.lamp_culls.iter())
                 .map(|c| storage("page_expand_visible_bg", c.visible_meshlets_buffer()))
                 .collect(),
             instances: storage("page_raster_instances_bg", instances),
@@ -926,9 +963,10 @@ impl PageRasterizer {
         &self.page_list
     }
 
-    /// Grows every level's cull to the scene.
+    /// Grows every cull — the clipmap levels' and the lamps' — to the
+    /// scene.
     pub fn ensure_capacity(&mut self, device: &wgpu::Device, meshlets: u32, groups: u32) {
-        for cull in &mut self.culls {
+        for cull in self.culls.iter_mut().chain(self.lamp_culls.iter_mut()) {
             cull.ensure_capacity(device, meshlets.max(1));
             cull.ensure_group_capacity(device, groups.max(1));
         }
@@ -982,15 +1020,18 @@ impl PageRasterizer {
         view: u32,
         eye: Vec3,
         sun: Vec3,
-        light_count: u32,
-        // The uploaded lights. The compaction reads one field —
-        // `range` — to place a lamp's pages on the same density scale
-        // as the sun's. See `page_octave`.
+        // The lights as uploaded, CPU-side and in buffer order: a
+        // lamp's cull needs its position and range HERE, and its slot
+        // is its bucket.
+        lamps: &[GpuLight],
+        // The same lights on the GPU, for the expansion's cone test
+        // and the depth pass's face placement.
         lights: &wgpu::Buffer,
         lod_target: f32,
     ) {
         let levels = self.clipmap.levels;
         let buckets = self.buckets();
+        let light_count = lamps.len() as u32;
         let view = view.min(atlas_layers(self.pool) - 1);
         self.write_uniform(queue, view, eye, sun, light_count);
         let uniform_offset = self.uniform_span(view).0 as u32;
@@ -998,14 +1039,16 @@ impl PageRasterizer {
         // 1. One cull per level. A level is a texel density and a
         //    density is a LOD.
         //
-        // 🔴 Seventeen full cull dispatches per view per frame, each
-        // writing a uniform and recording its own passes. This is the
-        // only part of the track that is CPU work rather than GPU work,
-        // and it was invisible to the profiler until this scope existed.
-        // 🔴 The local buckets have no cull, so nothing ever writes
-        // their survivor count — and an unwritten storage buffer is not
-        // zero, it is whatever the allocator handed over. `cs_expand_args`
-        // multiplies that by a page count and dispatches the result.
+        // 🔴 Seventeen-plus full cull dispatches per view per frame,
+        // each writing a uniform and recording its own passes. This is
+        // the only part of the track that is CPU work rather than GPU
+        // work, and it was invisible to the profiler until this scope
+        // existed.
+        // 🔴 Cleared BEFORE the culls: a bucket whose cull does not
+        // run this frame — a directional slot, a lamp past the cap —
+        // must read zero survivors, and an unwritten storage buffer is
+        // not zero, it is whatever the allocator handed over.
+        // `cs_expand_args` multiplies it by a page count either way.
         encoder.clear_buffer(&self.visible_counts, 0, None);
         {
             profiling::scope!("cull: clipmap levels");
@@ -1051,6 +1094,79 @@ impl PageRasterizer {
             }
         }
 
+        // 1b. One cull per punctual lamp — the retired cube path's
+        //     recipe, inside the pages (#777, #866). The frustum is the
+        //     light's own reach: an orthographic box of `2 * range` a
+        //     side, which bounds all six faces at once. The LOD is the
+        //     PERSPECTIVE form measured from the light's position —
+        //     a simplification error really does shrink with distance
+        //     from a lamp — against the finest texel budget a face can
+        //     ask, so every level of the lamp's chain shares the list.
+        //
+        // 🔴 The sun's survivor lists are NOT a substitute. They are
+        // simplified for orthographic boxes centred on the CAMERA:
+        // borrowing them culled a close lamp's casters away entirely
+        // and handed far buckets root meshlets — sphere shadows drawn
+        // as faceted lumps. Measured in `roll-a-ball`, both ways.
+        let lamp_slots = lamps.len().min(LAMP_CULLS as usize);
+        while self.lamp_culls.len() < lamp_slots {
+            self.lamp_culls
+                .push(MeshletCull::new(device, 1, self.triangles));
+        }
+        {
+            profiling::scope!("cull: lamps");
+            let threads = scene_params.instance_count * scene_params.meshlets_per_mesh;
+            for (slot, lamp) in lamps.iter().enumerate().take(lamp_slots) {
+                if lamp.kind == LIGHT_KIND_DIRECTIONAL {
+                    continue;
+                }
+                let bucket = levels + slot as u32;
+                queue.write_buffer(
+                    &self.levels,
+                    bucket as u64 * self.level_stride,
+                    bytemuck::bytes_of(&ExpandLevel {
+                        level: bucket,
+                        _pad: [0; 3],
+                    }),
+                );
+                let cull = &mut self.lamp_culls[slot];
+                cull.ensure_capacity(device, threads.max(1));
+                cull.ensure_group_capacity(device, threads.max(1));
+                let position = Vec3::from_array(lamp.position);
+                let params = CullParams::new(
+                    lamp_clip(position, lamp.range),
+                    position,
+                    scene_params.meshlets_per_mesh,
+                )
+                // 90° faces: `proj_scale_y = 1 / tan(45°) = 1`. The
+                // viewport is the finest face a lamp can raster —
+                // pages coarser than that get finer geometry than
+                // they strictly need, never coarser.
+                .with_lod(
+                    super::LOCAL_MAX_TEXELS as f32,
+                    1.0,
+                    lod_target.max(0.01),
+                );
+                cull.dispatch_scene_pool_atomic(
+                    cull_pipelines,
+                    device,
+                    queue,
+                    encoder,
+                    mesh_pool,
+                    scene,
+                    &params,
+                    scene_params,
+                );
+                encoder.copy_buffer_to_buffer(
+                    cull.visible_count_buffer(),
+                    0,
+                    &self.visible_counts,
+                    bucket as u64 * 4,
+                    4,
+                );
+            }
+        }
+
         // Per view, all of it: the page list, the pair list and the
         // dispatch arguments describe THIS camera's clipmap and nothing
         // else. The table, the pool and the atlas are the shared things,
@@ -1083,13 +1199,10 @@ impl PageRasterizer {
             pass.set_pipeline(&self.expand);
             pass.set_bind_group(1, &bound.descriptors, &[]);
             pass.set_bind_group(3, &bound.instances, &[]);
-            // 🔴 The SUN's buckets only. A local light's pages are
-            // listed and bucketed by their chain level, but no cull
-            // produces a survivor list for those buckets yet, so there
-            // is no `visible` bind group to hand them and their
-            // `expand_args` are zero either way. The loop bound says
-            // which half is missing; a bound of `buckets` would hand
-            // them the wrong level's survivors instead.
+            // The sun's buckets against its level culls, then each
+            // lamp's bucket against ITS OWN cull. `bound.visible` holds
+            // them in the same order — levels first, lamp slots after —
+            // so the bucket index is the bind-group index throughout.
             for level in 0..levels {
                 pass.set_bind_group(
                     0,
@@ -1098,6 +1211,19 @@ impl PageRasterizer {
                 );
                 pass.set_bind_group(2, &bound.visible[level as usize], &[]);
                 pass.dispatch_workgroups_indirect(&self.expand_args, level as u64 * 12);
+            }
+            for (slot, lamp) in lamps.iter().enumerate().take(lamp_slots) {
+                if lamp.kind == LIGHT_KIND_DIRECTIONAL {
+                    continue;
+                }
+                let bucket = levels + slot as u32;
+                pass.set_bind_group(
+                    0,
+                    &bound.expand,
+                    &[uniform_offset, bucket * self.level_stride as u32],
+                );
+                pass.set_bind_group(2, &bound.visible[bucket as usize], &[]);
+                pass.dispatch_workgroups_indirect(&self.expand_args, bucket as u64 * 12);
             }
 
             // 4. One draw for the whole clipmap, so its instance count
@@ -1226,10 +1352,10 @@ fn compact_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             buffer_entry(5, false, c),
             buffer_entry(6, true, c),
             buffer_entry(7, false, c),
-            // 🔴 The eighth storage buffer, which is the whole downlevel
-            // budget: `max_storage_buffers_per_shader_stage` is 8. Any
-            // future reader of this pass has to displace something.
-            buffer_entry(8, true, c),
+            // Binding 8 held the lights for the octave fallback and is
+            // retired with it: a lamp's bucket is its slot, no range
+            // needed. The stage is back under the downlevel budget of
+            // eight storage buffers with one to spare.
         ],
     })
 }

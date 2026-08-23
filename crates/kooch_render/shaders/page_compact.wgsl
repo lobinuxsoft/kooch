@@ -18,17 +18,17 @@
 // level 12, so the levels are culled separately and the pages have to
 // be grouped the same way.
 //
-// 🔴 Local lights are LISTED now, in buckets of their own — the sun's
-// clipmap levels first, then a local light's chain levels, shared by
-// every lamp. A page carries the light it belongs to in its own key, so
-// nothing downstream needs the list split by lamp; splitting it that way
-// would mean a bucket per light per level, which is the 4848-view shape
-// this design exists to avoid.
-//
-// ⚠️ Listed is not drawn. Their buckets have no survivor list yet, so
-// their expansion dispatches zero threads. What this buys is the SHAPE
-// of the local half: how many pages sit at each LOD, which is the number
-// the survivor question has to be answered against.
+// 🔴 Local lights bucket by LIGHT, after the sun's levels: lamp
+// `L`'s pages land in bucket `chain.x + L`, where its own cull's
+// survivor list is bound. They used to bucket by octave into the SUN's
+// buckets — borrowing survivor lists simplified for an orthographic box
+// around the CAMERA, which broke both ways: a close lamp's casters fell
+// outside the fine levels' box and its shadow vanished, and a coarse
+// bucket handed root meshlets and drew spheres as faceted lumps. One
+// bucket per lamp is the retired cube path's shape — one cull per
+// light — not the feared bucket-per-light-per-LEVEL explosion: a lamp's
+// pages of every level share its one perspective-LOD survivor list,
+// because a perspective error metric already scales with distance.
 
 @group(0) @binding(0) var<uniform> raster: PageRaster;
 // The flat table: `PAGE_CELL` words per virtual page — `slot + 1`
@@ -49,13 +49,6 @@
 // its draw arguments.
 @group(0) @binding(6) var<storage, read> visible_counts: array<u32>;
 @group(0) @binding(7) var<storage, read_write> draw_args: array<u32>;
-// 🔴 The lights, for ONE field: `range`. A local page's texel size is
-// `2 * range / texels(level)`, so without it a lamp's pages cannot be
-// placed on the same density scale as the sun's and the bucketing falls
-// back to chain level — which is the cost that grows with the scene.
-// See `page_octave`.
-@group(0) @binding(8) var<storage, read> lights: array<ClusterLight>;
-
 const COMPACT_GROUP: u32 = 64u;
 const EXPAND_GROUP: u32 = 64u;
 
@@ -87,39 +80,29 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         raster.space.w,
         raster.pool.w,
     );
-    let buckets = raster.chain.x;
-    // 🔴 The bucket is an OCTAVE of world texel size, so a lamp and the
-    // sun land in the same list whenever they want the same fineness —
-    // and the sun's culls have already filled it. The anchor puts the
-    // clipmap's level L on bucket L exactly; see `page_octave`.
-    //
-    // A LOCAL page buckets by what its RECEIVERS asked — the fourth
-    // word, written by the marking — because the survivor list is a
-    // LOD and the ask is the density the screen wants. The range is
-    // only the fallback for a resident page nobody marked this frame:
-    // bucketing by it handed a range-50 lamp a 30-centimetre LOD and
-    // its sphere shadows were octahedra. See `PAGE_CELL`.
-    //
-    // Virtual TEXELS across level 0, which is pages across it times a
-    // page's side — `space.y` is a face's page count and would be off
-    // by the page size squared.
-    let virtual_texels = raster.space.z * raster.pool.w;
+    // Sun buckets first, then one bucket per lamp — the counters sit
+    // after ALL of them, which is what `buckets` indexes here.
+    let sun_buckets = raster.chain.x;
+    let buckets = sun_buckets + LAMP_CULLS;
     var slot: u32;
     if id.is_sun {
+        // An OCTAVE of world texel size, anchored so the clipmap's
+        // level L lands on bucket L exactly — the level whose cull was
+        // handed that density. Virtual TEXELS across level 0: pages
+        // across it times a page's side; `space.y` is a face's page
+        // count and would be off by the page size squared.
+        let virtual_texels = raster.space.z * raster.pool.w;
         let texel = page_texel_world(id, raster.world.x, virtual_texels, 0.0);
-        slot = page_octave(texel, raster.world.x, virtual_texels, buckets);
+        slot = page_octave(texel, raster.world.x, virtual_texels, sun_buckets);
     } else {
-        let asked = table_slots[entry * PAGE_CELL + 3u];
-        if asked != 0u {
-            slot = min(asked - 1u, buckets - 1u);
-        } else {
-            var range = 0.0;
-            if id.light < arrayLength(&lights) {
-                range = lights[id.light].range;
-            }
-            let texel = page_texel_world(id, raster.world.x, virtual_texels, range);
-            slot = page_octave(texel, raster.world.x, virtual_texels, buckets);
+        // The lamp's OWN bucket, where its own cull's survivors are
+        // bound. A light past the cull budget stays undrawn — counted
+        // with the dropped pages, not silent.
+        if id.light >= LAMP_CULLS {
+            atomicAdd(&page_counts[buckets], 1u);
+            return;
         }
+        slot = sun_buckets + id.light;
     }
     // Local pages are still counted separately, because "listed" and
     // "drawn" are different claims and the panel states both.
@@ -147,7 +130,7 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
 @compute @workgroup_size(EXPAND_GROUP, 1, 1)
 fn cs_expand_args(@builtin(global_invocation_id) gid: vec3<u32>) {
     let level = gid.x;
-    if level >= raster.chain.x {
+    if level >= raster.chain.x + LAMP_CULLS {
         return;
     }
     let pages = min(atomicLoad(&page_counts[level]), raster.chain.z);
@@ -167,7 +150,7 @@ fn cs_expand_args(@builtin(global_invocation_id) gid: vec3<u32>) {
 // came from.
 @compute @workgroup_size(1, 1, 1)
 fn cs_draw_args() {
-    let pairs = min(atomicLoad(&page_counts[raster.chain.x + 2u]), raster.chain.y);
+    let pairs = min(atomicLoad(&page_counts[raster.chain.x + LAMP_CULLS + 2u]), raster.chain.y);
     // Vertex count is fixed per meshlet: the draw is indirect over a
     // triangle budget and the tail of a shorter meshlet is discarded in
     // the vertex shader.

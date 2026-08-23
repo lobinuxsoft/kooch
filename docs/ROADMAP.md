@@ -772,6 +772,24 @@ lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings
 `Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
 decidía cuántos hilos, ahora decide qué páginas EXISTEN.
 
+🔴 **2026-08-23 — LAS LÁMPARAS DEJAN DE PEDIR PRESTADOS LOS SUPERVIVIENTES DEL SOL: un
+cull por lámpara.** El "cero culls nuevos" de abajo era el defecto, medido en dos síntomas del
+user: la sombra de una point se **desintegraba al acercar la luz al objeto** (pedía octavas
+finas → buckets finos → cajas ortográficas chicas centradas en la CÁMARA → sus casters quedaban
+fuera y el cull se los comía), y la spot dibujaba con **meshlets raíz** (bucket grueso → LOD del
+sol grueso → la esfera facetada). Una lista de supervivientes es un LOD elegido para una VISTA;
+las del sol son de las vistas del sol. El fix es la receta del cube path retirado (#777):
+**un cull por luz puntual** — frustum = caja ortográfica de `2×range` centrada en la luz, LOD
+**perspectivo desde el ojo de la luz** (`with_lod`, viewport `LOCAL_MAX_TEXELS`, 90° ⇒
+`proj_scale_y = 1`) — y **una sola lista sirve las 6 caras y toda la cadena** porque el error
+perspectivo ya escala con la distancia. No es la explosión 4848 que este diseño temía: es
+`17 + lámparas` culls, cap `LAMP_CULLS = 32` (el `MAX_POINT_SHADOWS` del camino clásico; una
+luz sobre el cap queda listada y contada como dropped, no silenciosa). La compactación bucketea
+las locales por **slot de luz** (`chain.x + slot`), murió la 4ª palabra del "ask" (la tabla
+vuelve a 3 palabras/entrada) y el binding de lights de la compactación se retiró. El rig
+end-to-end ahora planta fina+gruesa y verifica que ambas caen en el bucket de SU lámpara y que
+el atlas trae piso+caja del cull propio.
+
 🎉 **2026-08-22 — LAS POINT Y SPOT LIGHTS DIBUJAN Y SE SAMPLEAN.** Cinco piezas, ninguna
 útil suelta, y por eso `mark_local` reclamaba `false` hasta que estuvieron las cinco:
 

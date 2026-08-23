@@ -1226,10 +1226,24 @@ Four passes, and their shape *is* the feature.
 
 | Pass | Threads | What it produces |
 |---|---|---|
-| **Cull** | per level, the engine's existing meshlet cull | which meshlets survive at that texel density |
-| **Compact** | one per table entry | the resident pages, dense and bucketed by level |
+| **Cull** | per clipmap level **plus one per punctual lamp**, the engine's existing meshlet cull | which meshlets survive — at that level's texel density for the sun, at a perspective error metric from the light's own position for a lamp |
+| **Compact** | one per table entry | the resident pages, dense and bucketed by level — the sun's clipmap levels first, then one bucket per lamp slot |
 | **Expand** | pages × survivors, dispatched indirectly | `(page, meshlet)` pairs |
 | **Draw** | one `draw_indirect` over every pair | depth in the atlas |
+
+### One cull per lamp, not per lamp view
+
+A lamp does **not** borrow the sun's survivor lists. Those are LODs
+picked for orthographic boxes centred on the *camera*: borrowed, a close
+lamp's casters fell outside the fine levels' box and its shadow vanished
+as the light approached, while a coarse bucket handed root meshlets and
+drew a sphere's shadow as a faceted lump. One cull per punctual light —
+frustum an orthographic box of `2 × range` a side around the light, LOD
+the perspective form measured from the light's position, capped at
+`LAMP_CULLS = 32` (the classic path's `MAX_POINT_SHADOWS`) — is the
+retired cube path's recipe, and one list serves all six faces and every
+chain level of that lamp because a perspective error metric already
+scales with distance.
 
 ### One render pass for the whole clipmap
 
