@@ -772,6 +772,23 @@ lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings
 `Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
 decidía cuántos hilos, ahora decide qué páginas EXISTEN.
 
+🎉 **2026-08-23 (9) — EL BOUND DE RECEPTORES (#940): EL PLAN OLSSON QUEDA COMPLETO.** PMCD
+de Olsson §4 a granularidad de PÁGINA (más fino que el per-face del paper): cada sample que
+marca la página de una lámpara es un receptor y el marking hace `atomicMax` de su distancia
+RADIAL a la luz en la 5ª palabra de la tabla (`PAGE_CELL` 4→5; floats positivos bitcast a
+u32 ordenados = atomicMax sobre distancias); `age_view` la borra cada frame (0 = sin datos =
+nunca rechazar → los rigs plantados y el sol quedan intactos). La compactación la copia a
+`page_list` (vec2→vec4 — el expand está EN el límite de 8 storage buffers y no puede bindear
+la tabla), y la expansión de lámparas gana UN rechazo: caster cuyo punto MÁS CERCANO queda
+detrás del receptor más lejano de la página no ocluye nada que el frame sombree (radial =
+conservador; la rotación del spot preserva longitud → una comparación para ambos kinds).
+Contador `depth_rejected` en la línea de pair-tests del panel — el número que dice si la 5ª
+palabra paga su memoria. Test `a_caster_behind_every_receiver_pairs_nothing`: dos corridas
+idénticas (bound plantado vs 0) y el contador tiene que IGUALAR los pares que desaparecieron
+(cerró exacto a la primera). Con esto, TODO el plan derivado del paper está implementado:
+cull jerárquico (#939) → caché de contenido (#477/#866) → filtro (#941) → prioridad (#942)
+→ bias (#943) → gate (#944) → max-depth (#940). Lo que sigue es MEDIR.
+
 🎉 **2026-08-23 (8) — LAS LUCES QUE NADIE PUEDE RESOLVER NO CASTEAN (#944).** El gate de
 cobertura de Epic (`PruneLightGridCS`), como UNA comparación dentro del loop de marcado que ya
 tiene todos los operandos: una luz local cuyo rango ENTERO proyecta bajo `shadow_min_pixels`

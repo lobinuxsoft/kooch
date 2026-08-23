@@ -159,6 +159,10 @@ pub struct RasterCounts {
     /// Resident pages whose content stamp still matched — the pages the
     /// cache made free this frame.
     pub cached: u32,
+    /// Lamp pairs the receiver bound turned away (#940): the caster's
+    /// nearest point lay beyond every receiver the page shades, so
+    /// drawing it could change nothing.
+    pub depth_rejected: u32,
     /// Which camera this is.
     pub view: u32,
     /// Meshlet/page tests the expansion ran, summed over the levels.
@@ -554,7 +558,8 @@ impl PageRasterizer {
             uniform_stride,
             page_list: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_list"),
-                size: bucket(pool) as u64 * buckets as u64 * 8,
+                // Four words per listing: page, slot, bound (#940), spare.
+                size: bucket(pool) as u64 * buckets as u64 * 16,
                 // 🔴 COPY_SRC because `page_list_buffer` is public and the
                 // only reason to expose a GPU buffer is to read it back.
                 usage: storage | wgpu::BufferUsages::COPY_SRC,
@@ -783,6 +788,7 @@ impl PageRasterizer {
             pairs: words[levels + 2].min(PAIR_CAPACITY),
             overflow: words[levels + 3],
             cached: words[levels + 4],
+            depth_rejected: words.get(levels * 3 + 5).copied().unwrap_or(0),
             view,
         }
     }
@@ -825,7 +831,10 @@ fn count_slots(buckets: u32) -> u32 {
     // level instead of guessed at. That one IS counted at dispatch
     // time, because unlike the product it is not a number two buffers
     // already hold.
-    buckets * 3 + 5
+    //
+    // Plus one at the very end: lamp pairs the receiver bound rejected
+    // (#940).
+    buckets * 3 + 6
 }
 
 /// The atlas: one square layer per camera.

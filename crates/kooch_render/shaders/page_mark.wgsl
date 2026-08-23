@@ -438,6 +438,19 @@ fn local_page_for(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
 // One page of a local light's mip chain, marked.
 fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let page = local_page_for(light, world, wanted);
+    // #940: every sample is a RECEIVER, and the furthest one bounds
+    // what can occlude anything on this page — a caster whose nearest
+    // point lies beyond it shadows nobody the frame shades. Radial
+    // distance rather than face depth, so the bound is face-agnostic
+    // and errs toward keeping. Positive floats bitcast to ordered
+    // u32s, which is what lets an atomicMax hold a distance.
+    if page.x < pages.pool.x {
+        let d = length(world - lights[light].position);
+        atomicMax(
+            &table_cells[page.x * PAGE_CELL + 4u],
+            bitcast<u32>(max(d, 0.0)),
+        );
+    }
     // 🔴 CLAIMED now, and the flag was a guard rather than an oversight.
     // A page claimed is a page in the table, and a page in the table
     // takes a pool slot from whoever else wanted one — with the census
@@ -752,6 +765,11 @@ fn age_view(@builtin(global_invocation_id) id: vec3<u32>) {
     let within = id.x;
     if within >= view_span() { return; }
     let entry = view_base() + within;
+    // The receiver bound (#940) is a per-FRAME quantity: this pass is
+    // the one thread per entry that already runs first, so the reset
+    // rides it. Zero means "no receiver recorded", which every reader
+    // treats as "never reject".
+    atomicStore(&table_cells[entry * PAGE_CELL + 4u], 0u);
     let stored = atomicLoad(&table_cells[entry * PAGE_CELL]);
     if stored == PAGE_ABSENT { return; }
 

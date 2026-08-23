@@ -1340,6 +1340,25 @@ is why sharp is the default and the widest choice is labelled with its
 bill. No blocker search: the penumbra is uniform, not
 contact-hardening.
 
+### The receiver bound — casters behind everything draw nothing (#940)
+
+Olsson §4's PMCD variant, at page granularity instead of the paper's
+per-face bound. Every sample that marks a lamp's page is a *receiver*,
+and the marking `atomicMax`es its radial distance from the light into
+the page's fifth table word (positive floats bitcast to ordered u32s —
+that is what lets an atomic hold a distance). The compaction carries
+the bound into the widened `page_list` — the expansion sits at the
+eight-storage-buffer limit and cannot bind the table — and the lamp
+expansion adds one rejection: a caster whose **nearest** point lies
+beyond the page's furthest receiver occludes nothing the frame shades.
+
+The bound is radial rather than per-face depth, so it errs toward
+keeping; zero means "no receiver recorded" and rejects nothing, which
+is what keeps planted rigs and the sun's slab test untouched. `age_view`
+zeroes it each frame — receivers are a frame's question. The panel's
+pair-tests line counts what it turns away, which is the number that
+says whether the fifth word earns its memory.
+
 ### Cached pages are effectively free (#477/#866)
 
 The pool always persisted its *slots*; since this change it keeps the

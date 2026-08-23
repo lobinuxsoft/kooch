@@ -38,7 +38,11 @@
 @group(0) @binding(2) var<storage, read_write> table_slots: array<u32>;
 // `x` the virtual page, `y` its physical slot. Bucketed: level `L`
 // owns `[L * chain.z, (L + 1) * chain.z)`.
-@group(0) @binding(3) var<storage, read_write> page_list: array<vec2<u32>>;
+// Four words per listing: the page, its slot, the furthest receiver
+// this frame recorded on it (#940, f32 bits, 0 = none), and a spare.
+// Widened rather than given a sibling buffer: the expansion sits AT
+// the eight-storage-buffer downlevel limit and cannot bind the table.
+@group(0) @binding(3) var<storage, read_write> page_list: array<vec4<u32>>;
 // x..levels the pages listed per level, then: the sun pages that did
 // not fit a bucket, the local-light pages skipped, the pairs, the pairs
 // that overflowed, and the pages belonging to ANOTHER view.
@@ -145,7 +149,12 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let listing = slot * raster.chain.z + index;
-    page_list[listing] = vec2<u32>(page, stored - 1u);
+    page_list[listing] = vec4<u32>(
+        page,
+        stored - 1u,
+        table_slots[entry * PAGE_CELL + 4u],
+        0u,
+    );
     // The way back: a pass that computes a page KEY can now reach the
     // entry the draw indexes, without walking every resident page to
     // find it. See `PAGE_CELL`.

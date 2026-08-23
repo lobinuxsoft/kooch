@@ -71,7 +71,7 @@ struct ExpandLevel {
 }
 
 @group(0) @binding(0) var<uniform> raster: PageRaster;
-@group(0) @binding(1) var<storage, read> page_list: array<vec2<u32>>;
+@group(0) @binding(1) var<storage, read> page_list: array<vec4<u32>>;
 @group(0) @binding(2) var<storage, read_write> page_counts: array<atomic<u32>>;
 // x the index into `page_list`, y the cull's packed `(instance, meshlet)`.
 // Four words: the page, its slot, the cull's packed pair, a spare.
@@ -159,6 +159,16 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         let cone = cell_cone(id.face, id.cell, level_side_of(id.level, raster.space.z));
         if !cell_reaches(cone.xyz, cone.w, to_centre, radius, light.range) {
+            return;
+        }
+        // #940 — Olsson §4's receiver bound, at page granularity: a
+        // caster whose NEAREST point lies beyond this page's furthest
+        // receiver occludes nothing the frame shades. `entry.z` is the
+        // marking's radial atomicMax; zero means no receiver was
+        // recorded and nothing is rejected. The spot rotation above
+        // preserves length, so one comparison serves both kinds.
+        if entry.z != 0u && length(to_centre) - radius > bitcast<f32>(entry.z) {
+            atomicAdd(&page_counts[buckets * 3u + 5u], 1u);
             return;
         }
         let slot = atomicAdd(&page_counts[buckets + 2u], 1u);

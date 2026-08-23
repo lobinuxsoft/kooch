@@ -73,7 +73,7 @@ const PAGE_ABSENT: u32 = 0u;
 ///
 /// 🔴 Interleaved because `max_storage_buffers_per_shader_stage` is
 /// eight on the downlevel defaults; see the marking pass's binding.
-const PAGE_CELL: u32 = 4u;
+const PAGE_CELL: u32 = 5u;
 
 /// Culls a frame is willing to run for local lights — one per lamp,
 /// the way the retired cube path ran one per face (#777). A lamp's
