@@ -134,7 +134,12 @@ fn cs_expand_args(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let pages = min(atomicLoad(&page_counts[level]), raster.chain.z);
-    let meshlets = visible_counts[level];
+    var meshlets = visible_counts[level];
+    // A lamp's count is written uncapped so its overflow is visible;
+    // the dispatch is sized to the slice that actually exists.
+    if level >= raster.chain.x {
+        meshlets = min(meshlets, LAMP_SURVIVORS);
+    }
     let threads = pages * meshlets;
     expand_args[level * 3u + 0u] = (threads + EXPAND_GROUP - 1u) / EXPAND_GROUP;
     expand_args[level * 3u + 1u] = 1u;

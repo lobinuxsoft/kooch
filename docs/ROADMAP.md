@@ -772,6 +772,26 @@ lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings
 `Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
 decidía cuántos hilos, ahora decide qué páginas EXISTEN.
 
+🎉 **2026-08-23 (2) — EL CULL DE LÁMPARAS ES UNA JERARQUÍA EN GPU (#939), y la técnica del
+paper quedó completa en su parte de culling.** El user trajo el paper fundacional (Olsson et
+al. 2014, *Efficient VSM for Many Lights* — el ancestro del VSM de UE5) y pidió completar la
+técnica ANTES de medir. Gap analysis contra Kóoch: clustered shading ✅ (#780), selección de
+resolución ✅ (mejor: por página vía `wanted`), projection maps ✅ (la expansión solo empareja
+contra páginas residentes), multi-draw ✅ (un `draw_indirect`), LOD ✅ (mejor: DAG de meshlets).
+Faltaban: **el cull jerárquico (§3.4/§5.2)** — hecho hoy —, el max-depth cull (→ #940), el
+filtro suave (→ #941) y la caché de contenido (ya en #477/#866). Lo de hoy: `lamp_cull.wgsl`,
+4 dispatches compartidos por TODAS las lámparas, **una vez por frame** (view-independent — la
+segunda cámara del editor reusa los survivors): (1) pares luz×instancia (esfera de la luz vs
+esfera del mesh, `mesh_bounds` del #847 subido a GPU), (2) args indirectos, (3) **la reducción
+de error por grupo del #465 para todas las lámparas en UN dispatch** — arena
+`[slot × group_capacity + group]`, coherencia entre siblings intacta, sin costuras en los
+casters — y (4) el cull (LOD perspectivo desde la luz + range + cono) emitiendo a slices fijos
+de 4096 por lámpara, counts directo a `visible_counts` (sin copia, sin bind groups por
+lámpara). Murieron: los 32 `MeshletCull` por lámpara de la mañana, su loop CPU y sus bind
+groups. `LAMP_CULLS` 32→64 (un slot ya no cuesta un cull; techo honesto = la arena,
+`64 × group_capacity × 4 B`). El rig ahora planta además una lámpara fuera de alcance y
+verifica su slice VACÍO. Pendiente nombrado en #939: ranking de slots (hoy orden de buffer).
+
 🔴 **2026-08-23 — LAS LÁMPARAS DEJAN DE PEDIR PRESTADOS LOS SUPERVIVIENTES DEL SOL: un
 cull por lámpara.** El "cero culls nuevos" de abajo era el defecto, medido en dos síntomas del
 user: la sombra de una point se **desintegraba al acercar la luz al objeto** (pedía octavas

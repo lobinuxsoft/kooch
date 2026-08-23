@@ -1226,24 +1226,46 @@ Four passes, and their shape *is* the feature.
 
 | Pass | Threads | What it produces |
 |---|---|---|
-| **Cull** | per clipmap level **plus one per punctual lamp**, the engine's existing meshlet cull | which meshlets survive — at that level's texel density for the sun, at a perspective error metric from the light's own position for a lamp |
+| **Cull** | per clipmap level for the sun; ONE hierarchical set of dispatches for every lamp (#939) | which meshlets survive — at that level's texel density for the sun, at a perspective error metric from each light's own position for lamps |
 | **Compact** | one per table entry | the resident pages, dense and bucketed by level — the sun's clipmap levels first, then one bucket per lamp slot |
 | **Expand** | pages × survivors, dispatched indirectly | `(page, meshlet)` pairs |
 | **Draw** | one `draw_indirect` over every pair | depth in the atlas |
 
-### One cull per lamp, not per lamp view
+### One hierarchical cull for every lamp (#939)
 
 A lamp does **not** borrow the sun's survivor lists. Those are LODs
 picked for orthographic boxes centred on the *camera*: borrowed, a close
 lamp's casters fell outside the fine levels' box and its shadow vanished
 as the light approached, while a coarse bucket handed root meshlets and
-drew a sphere's shadow as a faceted lump. One cull per punctual light —
-frustum an orthographic box of `2 × range` a side around the light, LOD
-the perspective form measured from the light's position, capped at
-`LAMP_CULLS = 32` (the classic path's `MAX_POINT_SHADOWS`) — is the
-retired cube path's recipe, and one list serves all six faces and every
-chain level of that lamp because a perspective error metric already
-scales with distance.
+drew a sphere's shadow as a faceted lump.
+
+What replaced the borrowing is Olsson et al. 2014 (§3.4/§5.2) adapted to
+the meshlet pool — four dispatches shared by **all** lamps, once per
+frame (a lamp's cull is view-independent, so the editor's second camera
+reuses the first one's survivors):
+
+1. **Pairs** — light sphere against instance bounds sphere, over
+   `lights × instances`. The hierarchy: instances a light cannot reach
+   never enter the meshlet domain.
+2. **Args** — sizes the meshlet-domain dispatches from the GPU-side
+   pair count.
+3. **Error** — the group-coherent LOD reduction (#465), every lamp at
+   once: the arena is indexed `[slot × group_capacity + group]`, so
+   sibling meshlets of one lamp still converge one slot and casters
+   never tear at LOD seams.
+4. **Cull** — group-coherent cut + range + backface cone, perspective
+   error measured from the light's position. Survivors land in fixed
+   per-lamp slices of one shared arena (`LAMP_SURVIVORS` each, counts
+   written uncapped so overflow is a number, not a silence), and the
+   counts land directly in the raster's `visible_counts` — no copy, no
+   per-lamp bind group, no CPU loop.
+
+One survivor list serves all six faces and every chain level of a lamp
+because a perspective error metric already scales with distance. The cap
+is `LAMP_CULLS = 64`; its honest ceiling is the group-error arena,
+`LAMP_CULLS × group_capacity × 4 B`. Slots are buffer order — ranking
+casting lights (the classic path's `assign_point_slots`) is #939's named
+follow-up.
 
 ### One render pass for the whole clipmap
 

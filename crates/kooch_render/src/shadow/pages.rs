@@ -753,6 +753,7 @@ fn level_for(config: PageConfig, distance: f32, wanted: f32) -> u32 {
     (level.max(0.0) as u32).min(config.levels() - 1)
 }
 
+pub mod lamp_cull;
 pub mod mark;
 pub mod pool;
 pub mod raster;

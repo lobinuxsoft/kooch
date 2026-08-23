@@ -54,18 +54,20 @@ const COMPACT: &str = include_str!("../../../shaders/page_compact.wgsl");
 const EXPAND: &str = include_str!("../../../shaders/page_expand.wgsl");
 const DEPTH: &str = include_str!("../../../shaders/page_depth.wgsl");
 
-/// Culls a frame will run for local lights — one per punctual lamp, in
-/// buffer-slot order, so lamp `L`'s pages land in bucket
-/// `clipmap.levels + L` where its own survivor list is bound. A light
-/// past the cap keeps its pages listed but undrawn, counted with the
-/// dropped pages. Mirrors `LAMP_CULLS` in `page_table.wgsl`; the cap
-/// itself is the classic path's [`kooch_lighting::MAX_POINT_SHADOWS`].
+/// Lamp slots the raster addresses — lamp `L`'s pages land in bucket
+/// `clipmap.levels + L`, fed by the hierarchical cull's slice for `L`
+/// (#939). A light past the cap keeps its pages listed but undrawn,
+/// counted with the dropped pages. Mirrors `LAMP_CULLS` in
+/// `page_table.wgsl`.
 ///
-/// 🔴 One per LIGHT, not per light view: a perspective error metric
-/// measured from the light's position scales with distance on its own,
-/// so all six faces and every chain level share the one list. See the
-/// module doc.
-pub const LAMP_CULLS: u32 = 32;
+/// 64 — twice the classic path's `MAX_POINT_SHADOWS` — because a slot
+/// stopped costing a cull object and became a slice of shared arenas.
+/// The honest ceiling is the group-error arena,
+/// `LAMP_CULLS × group_capacity × 4 B`; raising this past it belongs
+/// to #866's streaming era. Slots are buffer order, not ranked — the
+/// classic path's `assign_point_slots` ranking is the follow-up named
+/// in #939.
+pub const LAMP_CULLS: u32 = 64;
 
 /// What the pages are rasterised at. The same format the cascades use,
 /// so the sampling path in #477 reaches for the same comparison sampler
@@ -222,11 +224,14 @@ pub struct PageRasterizer {
     /// vertex count the indirect draw issues.
     triangles: u32,
     culls: Vec<MeshletCull>,
-    /// One per punctual lamp, grown as lights appear, in buffer-slot
-    /// order — lamp `L`'s survivors feed bucket `clipmap.levels + L`.
-    /// A directional slot keeps a placeholder so the indexing stays
-    /// the buffer's; it is never dispatched. See [`LAMP_CULLS`].
-    lamp_culls: Vec<MeshletCull>,
+    /// The one hierarchical cull every lamp shares (#939). Its
+    /// survivors land in fixed slices the expansion indexes by slot;
+    /// no cull object, bind group or dispatch exists per lamp.
+    lamp_cull: super::lamp_cull::LampCull,
+    /// The frame [`Self::lamp_cull`] last recorded for. Its passes are
+    /// view-independent, so the second camera of a frame reuses the
+    /// first one's survivors instead of re-culling.
+    lamp_frame: Option<u32>,
     /// The bind groups that never change once built.
     ///
     /// 🔴 Built ONCE, not per level per view per frame. They used to be
@@ -251,6 +256,9 @@ struct Bound {
     /// list, so this is the one thing a single dispatch could not
     /// replace without the culls sharing an output buffer.
     visible: Vec<wgpu::BindGroup>,
+    /// The lamps' shared survivor arena — ONE group for every lamp
+    /// bucket, because a slot's slice is arithmetic, not a binding.
+    lamp_visible: wgpu::BindGroup,
     instances: wgpu::BindGroup,
     descriptors: wgpu::BindGroup,
     /// What the groups above were built against. A pool resize, a scene
@@ -271,6 +279,9 @@ struct BoundKeys {
     // buffer that is simply somebody else's now.
     lights: wgpu::Buffer,
     visible: Vec<wgpu::Buffer>,
+    /// The lamps' survivor arena — fixed-size today, in the key so a
+    /// future growth path cannot silently skip the rebuild.
+    lamp_survivors: wgpu::Buffer,
 }
 
 impl PageRasterizer {
@@ -502,7 +513,8 @@ impl PageRasterizer {
             culls: (0..levels)
                 .map(|_| MeshletCull::new(device, 1, max_triangles_per_meshlet))
                 .collect(),
-            lamp_culls: Vec::new(),
+            lamp_cull: super::lamp_cull::LampCull::new(device),
+            lamp_frame: None,
             bound: None,
             readback: RasterReadback::new(device, count_slots(buckets)),
             config,
@@ -898,9 +910,9 @@ impl PageRasterizer {
             visible: self
                 .culls
                 .iter()
-                .chain(self.lamp_culls.iter())
                 .map(|c| c.visible_meshlets_buffer().clone())
                 .collect(),
+            lamp_survivors: self.lamp_cull.survivors().clone(),
         };
         if self.bound.as_ref().is_some_and(|b| b.keys == keys) {
             return;
@@ -948,9 +960,9 @@ impl PageRasterizer {
             visible: self
                 .culls
                 .iter()
-                .chain(self.lamp_culls.iter())
                 .map(|c| storage("page_expand_visible_bg", c.visible_meshlets_buffer()))
                 .collect(),
+            lamp_visible: storage("page_expand_lamp_bg", self.lamp_cull.survivors()),
             instances: storage("page_raster_instances_bg", instances),
             descriptors: storage("page_raster_descriptors_bg", descriptors),
             keys,
@@ -963,13 +975,14 @@ impl PageRasterizer {
         &self.page_list
     }
 
-    /// Grows every cull — the clipmap levels' and the lamps' — to the
-    /// scene.
+    /// Grows every cull — the clipmap levels' and the lamps' shared
+    /// arena — to the scene.
     pub fn ensure_capacity(&mut self, device: &wgpu::Device, meshlets: u32, groups: u32) {
-        for cull in self.culls.iter_mut().chain(self.lamp_culls.iter_mut()) {
+        for cull in &mut self.culls {
             cull.ensure_capacity(device, meshlets.max(1));
             cull.ensure_group_capacity(device, groups.max(1));
         }
+        self.lamp_cull.ensure_groups(device, groups.max(1));
     }
 
     /// The clipmap level's orthographic clip-from-world.
@@ -1094,14 +1107,11 @@ impl PageRasterizer {
             }
         }
 
-        // 1b. One cull per punctual lamp — the retired cube path's
-        //     recipe, inside the pages (#777, #866). The frustum is the
-        //     light's own reach: an orthographic box of `2 * range` a
-        //     side, which bounds all six faces at once. The LOD is the
-        //     PERSPECTIVE form measured from the light's position —
-        //     a simplification error really does shrink with distance
-        //     from a lamp — against the finest texel budget a face can
-        //     ask, so every level of the lamp's chain shares the list.
+        // 1b. The lamps' shared hierarchical cull (#939) — Olsson et
+        //     al.'s light/instance pre-pass, then one group-coherent
+        //     meshlet pass for every lamp at once. View-independent,
+        //     so the frame's second camera reuses the first one's
+        //     survivors instead of re-running four dispatches.
         //
         // 🔴 The sun's survivor lists are NOT a substitute. They are
         // simplified for orthographic boxes centred on the CAMERA:
@@ -1109,62 +1119,39 @@ impl PageRasterizer {
         // and handed far buckets root meshlets — sphere shadows drawn
         // as faceted lumps. Measured in `roll-a-ball`, both ways.
         let lamp_slots = lamps.len().min(LAMP_CULLS as usize);
-        while self.lamp_culls.len() < lamp_slots {
-            self.lamp_culls
-                .push(MeshletCull::new(device, 1, self.triangles));
-        }
-        {
+        if self.lamp_frame != Some(self.frame) {
+            self.lamp_frame = Some(self.frame);
             profiling::scope!("cull: lamps");
-            let threads = scene_params.instance_count * scene_params.meshlets_per_mesh;
-            for (slot, lamp) in lamps.iter().enumerate().take(lamp_slots) {
-                if lamp.kind == LIGHT_KIND_DIRECTIONAL {
-                    continue;
-                }
-                let bucket = levels + slot as u32;
-                queue.write_buffer(
-                    &self.levels,
-                    bucket as u64 * self.level_stride,
-                    bytemuck::bytes_of(&ExpandLevel {
-                        level: bucket,
-                        _pad: [0; 3],
-                    }),
-                );
-                let cull = &mut self.lamp_culls[slot];
-                cull.ensure_capacity(device, threads.max(1));
-                cull.ensure_group_capacity(device, threads.max(1));
-                let position = Vec3::from_array(lamp.position);
-                let params = CullParams::new(
-                    lamp_clip(position, lamp.range),
-                    position,
-                    scene_params.meshlets_per_mesh,
-                )
-                // 90° faces: `proj_scale_y = 1 / tan(45°) = 1`. The
-                // viewport is the finest face a lamp can raster —
-                // pages coarser than that get finer geometry than
-                // they strictly need, never coarser.
-                .with_lod(
-                    super::LOCAL_MAX_TEXELS as f32,
-                    1.0,
-                    lod_target.max(0.01),
-                );
-                cull.dispatch_scene_pool_atomic(
-                    cull_pipelines,
-                    device,
-                    queue,
-                    encoder,
-                    mesh_pool,
-                    scene,
-                    &params,
-                    scene_params,
-                );
-                encoder.copy_buffer_to_buffer(
-                    cull.visible_count_buffer(),
-                    0,
-                    &self.visible_counts,
-                    bucket as u64 * 4,
-                    4,
-                );
+            self.lamp_cull.record(
+                device,
+                queue,
+                encoder,
+                mesh_pool,
+                instances,
+                lights,
+                &self.visible_counts,
+                levels,
+                lamp_slots as u32,
+                scene_params.instance_count,
+                scene_params.meshlets_per_mesh,
+                lod_target,
+            );
+        }
+        // The bucket uniforms for the expansion's lamp dispatches —
+        // constant values, cheap to restate per view.
+        for (slot, lamp) in lamps.iter().enumerate().take(lamp_slots) {
+            if lamp.kind == LIGHT_KIND_DIRECTIONAL {
+                continue;
             }
+            let bucket = levels + slot as u32;
+            queue.write_buffer(
+                &self.levels,
+                bucket as u64 * self.level_stride,
+                bytemuck::bytes_of(&ExpandLevel {
+                    level: bucket,
+                    _pad: [0; 3],
+                }),
+            );
         }
 
         // Per view, all of it: the page list, the pair list and the
@@ -1212,6 +1199,11 @@ impl PageRasterizer {
                 pass.set_bind_group(2, &bound.visible[level as usize], &[]);
                 pass.dispatch_workgroups_indirect(&self.expand_args, level as u64 * 12);
             }
+            // The lamps: ONE bind group — the shared survivor arena —
+            // and a slot's slice is arithmetic inside the shader, so
+            // the only thing that changes per bucket is the dynamic
+            // offset.
+            pass.set_bind_group(2, &bound.lamp_visible, &[]);
             for (slot, lamp) in lamps.iter().enumerate().take(lamp_slots) {
                 if lamp.kind == LIGHT_KIND_DIRECTIONAL {
                     continue;
@@ -1222,7 +1214,6 @@ impl PageRasterizer {
                     &bound.expand,
                     &[uniform_offset, bucket * self.level_stride as u32],
                 );
-                pass.set_bind_group(2, &bound.visible[bucket as usize], &[]);
                 pass.dispatch_workgroups_indirect(&self.expand_args, bucket as u64 * 12);
             }
 
@@ -1284,14 +1275,14 @@ impl PageRasterizer {
     }
 }
 
-fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
+pub(super) fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry {
         binding,
         resource: buffer.as_entire_binding(),
     }
 }
 
-fn buffer_entry(
+pub(super) fn buffer_entry(
     binding: u32,
     read_only: bool,
     visibility: wgpu::ShaderStages,
@@ -1308,7 +1299,7 @@ fn buffer_entry(
     }
 }
 
-fn uniform_entry(
+pub(super) fn uniform_entry(
     binding: u32,
     dynamic: bool,
     visibility: wgpu::ShaderStages,

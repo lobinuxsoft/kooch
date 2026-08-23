@@ -82,9 +82,20 @@ const PAGE_CELL: u32 = 3u;
 /// perspective error metric, is precisely the retired cube path's
 /// recipe — the one path whose shadows were smooth.
 ///
-/// Mirrors `LAMP_CULLS` in `pages/raster.rs`; the classic path's cap
-/// was `MAX_POINT_SHADOWS = 32`.
-const LAMP_CULLS: u32 = 32u;
+/// Mirrors `LAMP_CULLS` in `pages/raster.rs`. 64 — twice the classic
+/// path's `MAX_POINT_SHADOWS` — because the hierarchical cull (#939)
+/// made a slot cheap: no per-lamp cull object, just a slice of the
+/// shared arenas. The honest ceiling is the group-error arena,
+/// `LAMP_CULLS × group_capacity × 4 B`.
+const LAMP_CULLS: u32 = 64u;
+
+/// Survivors one lamp may keep — its fixed slice of the shared
+/// survivor arena, `[slot * LAMP_SURVIVORS ..)`. Fixed rather than
+/// prefix-summed so the cull is one pass with no scan; a lamp past
+/// its slice keeps a count larger than the cap, which is how the
+/// panel sees the overflow. Mirrors `LAMP_SURVIVORS` in
+/// `pages/lamp_cull.rs`.
+const LAMP_SURVIVORS: u32 = 4096u;
 
 /// A table entry that is resident but not in THIS view's `page_list`.
 ///

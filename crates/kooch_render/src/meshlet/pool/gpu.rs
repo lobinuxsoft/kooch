@@ -47,12 +47,27 @@ impl GlobalMeshPool {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
 
+        // One vec4 per mesh: bounds sphere as (center, radius). Uploaded
+        // for the lamp cull's light/instance pre-pass (#939); parallel
+        // to `mesh_descriptors` the way the CPU vec is (#847).
+        let bounds: Vec<[f32; 4]> = self
+            .mesh_bounds
+            .iter()
+            .map(|b| [b.center.x, b.center.y, b.center.z, b.radius])
+            .collect();
+        let mesh_bounds = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("global_pool_mesh_bounds"),
+            contents: &pad_bytes(&bounds),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+
         GpuGlobalMeshPool {
             mesh_descriptors,
             meshlets,
             vertices,
             meshlet_vertices,
             meshlet_triangles,
+            mesh_bounds,
             mesh_count: self.mesh_count(),
             max_meshlets_per_mesh: self.max_meshlets_per_mesh(),
         }
@@ -68,6 +83,11 @@ pub struct GpuGlobalMeshPool {
     pub vertices: wgpu::Buffer,
     pub meshlet_vertices: wgpu::Buffer,
     pub meshlet_triangles: wgpu::Buffer,
+    /// Per-mesh bounds sphere as `(center, radius)` vec4s, parallel to
+    /// `mesh_descriptors`. Not part of the shared 5-entry pool layout —
+    /// only the lamp cull (#939) binds it, in its own layout, so no
+    /// existing shader mirror moves.
+    pub mesh_bounds: wgpu::Buffer,
     pub mesh_count: u32,
     pub max_meshlets_per_mesh: u32,
 }

@@ -115,7 +115,7 @@ fn the_counters_name_every_level() {
     // and a third for the cells a scatter would have visited instead.
     assert_eq!(
         buckets,
-        sun + 32,
+        sun + 64,
         "the lamp buckets moved; `LAMP_CULLS` and the shader's constant have to move together"
     );
     assert_eq!(raster.count_slots(), buckets * 3 + 5);
@@ -582,6 +582,22 @@ fn a_lamp_page_holds_what_its_light_sees() {
         0,
         "a lamp page strayed into the sun's buckets: {:?}",
         &counts[..lamp_bucket]
+    );
+    // The survivors mirror: lamp 0's cull found the floor and the box,
+    // and the out-of-range lamp's slice is EMPTY — its light sphere
+    // touches no instance, so the pre-pass never let it reach the
+    // meshlet domain.
+    let buckets = raster.buckets() as usize;
+    let survivors = |bucket: usize| counts[buckets + 5 + bucket];
+    assert!(
+        survivors(lamp_bucket) > 0,
+        "the lamp under test culled no survivors at all"
+    );
+    assert_eq!(
+        survivors(lamp_bucket + 1),
+        0,
+        "a lamp whose range reaches nothing kept survivors: {}",
+        survivors(lamp_bucket + 1)
     );
 
     // What the light sees, by construction: the floor at 4 m stores

@@ -103,10 +103,18 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     let level = expand.level;
     // Sun buckets plus one per lamp; the counters live after all of
     // them. `level` is a BUCKET index — for a lamp it is
-    // `chain.x + slot`, bound to that lamp's own survivor list.
+    // `chain.x + slot`, bound to the SHARED survivor arena.
     let buckets = raster.chain.x + LAMP_CULLS;
     let pages = min(atomicLoad(&page_counts[level]), raster.chain.z);
-    let meshlets = visible_counts[level];
+    var meshlets = visible_counts[level];
+    // A lamp's survivors live in its fixed slice of the arena. The
+    // count is written uncapped — that is how an overflowing lamp is
+    // visible — so the reader clamps to the slice.
+    var survivor_base = 0u;
+    if level >= raster.chain.x {
+        meshlets = min(meshlets, LAMP_SURVIVORS);
+        survivor_base = (level - raster.chain.x) * LAMP_SURVIVORS;
+    }
     if pages == 0u || meshlets == 0u {
         return;
     }
@@ -116,7 +124,7 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Page-major, so the threads that share a page share its rect and
     // the divergent half is the meshlet fetch.
     let entry = page_list[level * raster.chain.z + gid.x / meshlets];
-    let packed = visible_meshlets[gid.x % meshlets];
+    let packed = visible_meshlets[survivor_base + gid.x % meshlets];
 
     let inst = instances[packed >> 16u];
     let desc = descriptors[packed & 0xffffu];
