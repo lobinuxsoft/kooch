@@ -62,14 +62,44 @@ pub(crate) fn draw_performance_content(
                     meshlet_lod_settings,
                     lights_hot,
                     cluster_settings,
-                    meshlet_stats.page_marking,
-                    meshlet_stats.page_raster,
                     specular_floor,
                     meshlet_stats.cluster_occupancy,
                     viewport,
                     single_light_note,
                 );
+                // The shadow-pages readout lives in its OWN window —
+                // inlined here it sat translucent over the 3D view and
+                // could not be read. The checkbox is the way back after
+                // closing it.
+                ui.checkbox(
+                    &mut hud_visibility.shadow_pages_window,
+                    egui::RichText::new("shadow pages window").small(),
+                )
+                .on_hover_text(
+                    "The virtual-shadow-map readout — marking, residency, raster and \
+                     cache counters — as a separate movable window.",
+                );
             });
+
+            if hud_visibility.shadow_pages_window {
+                let mut open = true;
+                egui::Window::new("Shadow pages")
+                    .open(&mut open)
+                    .default_pos(egui::pos2(40.0, 80.0))
+                    .default_width(340.0)
+                    .resizable(true)
+                    .collapsible(true)
+                    .show(ui.ctx(), |ui| {
+                        shadow_page_readout(
+                            ui,
+                            meshlet_stats.page_marking,
+                            meshlet_stats.page_raster,
+                        );
+                    });
+                if !open {
+                    hud_visibility.shadow_pages_window = false;
+                }
+            }
 
             collapsing(ui, "Frame", true, |ui| {
                 grid(ui, "perf_grid_frame", |ui| {
@@ -428,8 +458,6 @@ fn debug_controls(
     meshlet_lod_settings: &mut MeshletLodSettings,
     lights_hot: &mut LightsHot,
     cluster_settings: &mut ClusterSettings,
-    page_counts: Option<kooch_render::shadow::pages::mark::MarkCounts>,
-    raster_counts: Option<kooch_render::shadow::pages::raster::RasterCounts>,
     specular_floor: &mut SpecularFloor,
     cluster_occupancy: Option<(u32, f32)>,
     viewport: egui::Vec2,
@@ -707,7 +735,6 @@ fn debug_controls(
         );
     });
 
-    shadow_page_readout(ui, page_counts, raster_counts);
 }
 
 /// The shadow-page marking pass and what it found (#866).
@@ -726,7 +753,6 @@ fn shadow_page_readout(
 ) {
     use kooch_render::shadow::pages::PageConfig;
 
-    ui.separator();
     let Some(counts) = page_counts else {
         ui.label(
             egui::RichText::new("pages: waiting for the first readback")

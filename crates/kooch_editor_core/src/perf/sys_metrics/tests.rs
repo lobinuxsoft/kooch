@@ -8,6 +8,7 @@ fn a_hidden_section_is_never_polled() {
     resources.insert(super::super::HudVisibility {
         sidebar: false,
         system_section: true,
+        shadow_pages_window: false,
     });
     sys_metrics_system(&mut resources);
 
@@ -30,6 +31,7 @@ fn a_collapsed_section_inside_a_visible_sidebar_is_also_skipped() {
     resources.insert(super::super::HudVisibility {
         sidebar: true,
         system_section: false,
+        shadow_pages_window: false,
     });
     sys_metrics_system(&mut resources);
 
@@ -60,6 +62,7 @@ fn reopening_the_section_does_not_report_the_idle_average_as_current() {
     resources.insert(super::super::HudVisibility {
         sidebar: false,
         system_section: true,
+        shadow_pages_window: false,
     });
     sys_metrics_system(&mut resources);
     resources.insert(super::super::HudVisibility::default());

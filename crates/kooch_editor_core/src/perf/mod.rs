@@ -166,6 +166,10 @@ pub(crate) struct HudVisibility {
     /// The **System** section inside it, which is the only reader of the
     /// sysinfo poll.
     pub(crate) system_section: bool,
+    /// The shadow-pages readout, as its OWN floating window: inlined in
+    /// the Debug section it sat translucent over the 3D view and could
+    /// not be read — the user's words were "no se entiende nada".
+    pub(crate) shadow_pages_window: bool,
 }
 
 impl Default for HudVisibility {
@@ -179,6 +183,7 @@ impl Default for HudVisibility {
         Self {
             sidebar: true,
             system_section: true,
+            shadow_pages_window: true,
         }
     }
 }
