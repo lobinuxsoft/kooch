@@ -835,9 +835,17 @@ fn inti_page_lookup(page: u32) -> u32 {
 /// only the weights cross the border. Costs nothing: the four loads
 /// were already paid for.
 ///
-/// ⚠️ Parity with the CUBE path, not with the cascades: the Castano
-/// soft filter (blocker search, penumbra width) is #477's remaining
-/// quality step, for the sun's pages and the lamps' alike.
+/// # The footprint is configurable (#941)
+///
+/// `world.w` carries the box width `W` in texels, from
+/// `RenderSettings::shadow_softness`. `W = 1` is the bilinear above,
+/// bit for bit. Wider widths are the Castano-class box filter: the 1D
+/// weights are `frac`-clipped at both ends and `1` in the middle, so
+/// their sum is exactly `W` per axis and the kernel is a `W`-texel box
+/// positioned with sub-texel precision — a penumbra that moves
+/// smoothly, `(W + 1)²` loads. No blocker search: the width is the
+/// author's, uniform across the scene, which is the price of paying
+/// per light per pixel.
 fn inti_page_filter(
     origin: vec2<f32>,
     layer: i32,
@@ -845,12 +853,26 @@ fn inti_page_filter(
     receiver: f32,
     page_texels: u32,
 ) -> f32 {
+    let width = max(u32(inti_pages.world.w), 1u);
+    let half = f32(width) * 0.5;
     let last = f32(page_texels) - 1.0;
-    let corner = floor(texel - vec2<f32>(0.5));
-    let frac = texel - vec2<f32>(0.5) - corner;
+    let corner = floor(texel - vec2<f32>(half));
+    let frac = texel - vec2<f32>(half) - corner;
     var lit = 0.0;
-    for (var y = 0; y < 2; y = y + 1) {
-        for (var x = 0; x < 2; x = x + 1) {
+    for (var y = 0u; y <= width; y = y + 1u) {
+        var wy = 1.0;
+        if y == 0u {
+            wy = 1.0 - frac.y;
+        } else if y == width {
+            wy = frac.y;
+        }
+        for (var x = 0u; x <= width; x = x + 1u) {
+            var wx = 1.0;
+            if x == 0u {
+                wx = 1.0 - frac.x;
+            } else if x == width {
+                wx = frac.x;
+            }
             let tap = clamp(
                 corner + vec2<f32>(f32(x), f32(y)),
                 vec2<f32>(0.0),
@@ -861,12 +883,10 @@ fn inti_page_filter(
             // Reversed-Z: a LARGER stored depth is closer to the light,
             // so it is an occluder.
             let hit = select(1.0, 0.0, stored > receiver);
-            let w = select(1.0 - frac.x, frac.x, x == 1)
-                * select(1.0 - frac.y, frac.y, y == 1);
-            lit = lit + hit * w;
+            lit = lit + hit * wx * wy;
         }
     }
-    return lit;
+    return lit / (f32(width) * f32(width));
 }
 
 /// The sun's shadow, out of the page pool.

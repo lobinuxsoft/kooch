@@ -36,6 +36,9 @@ struct PageSettings {
     paint: bool,
     density: u32,
     pool: PoolConfig,
+    /// The readers' PCF footprint width, carried to the raster uniform
+    /// the shading binds. See `ShadowSettings::page_softness`.
+    softness: u32,
 }
 
 /// A camera's index into the pool's slices.
@@ -122,6 +125,7 @@ fn page_settings(resources: &Resources) -> PageSettings {
         // selector. `ShadowSettings` has no say: it is a debug view.
         paint: false,
         density: shadows.page_density,
+        softness: shadows.page_softness,
         pool: PoolConfig {
             pages: shadows.pool_pages.clamp(PAGES_RANGE.0, PAGES_RANGE.1),
             // Filled in by the caller, which is the only place that
@@ -390,6 +394,7 @@ impl MeshletRenderStage {
         // here for the frame where the rasteriser was only just built
         // and that call found nothing to stamp.
         raster.set_frame(marker.life().frame);
+        raster.set_softness(settings.softness);
         let threads = scene_params.instance_count * scene_params.meshlets_per_mesh;
         raster.ensure_capacity(device, threads, threads);
         raster.record(

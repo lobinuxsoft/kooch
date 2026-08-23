@@ -772,6 +772,18 @@ lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings
 `Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
 decidía cuántos hilos, ahora decide qué páginas EXISTEN.
 
+🎉 **2026-08-23 (5) — BLUR CONFIGURABLE (#941): `shadow_softness` en RenderSettings.** El
+filtro de páginas generaliza de bilineal fijo a caja Castano-class de ancho configurable en
+téxeles (1 = bilineal exacto del cube path, el default; 2/3/5 con pesos de borde `frac`-clipped
+y precisión sub-téxel; costo `(W+1)²` loads POR LUZ POR PÍXEL — por eso el default es sharp y
+la opción ancha lleva su factura en el label). El ancho viaja en `world.w` del uniform del
+raster (el shading bindea ESE buffer — una escritura sirve a ambos). Cadena completa:
+RenderSettings → `shadows()` → `ShadowSettings.page_softness` → `PageSettings.softness` →
+`raster.set_softness` → uniform → `inti_page_filter`, con test de alcance
+(`shadow_softness_reaches_the_published_settings` — la clase de bug que shippeó
+`virtual_shadows` inerte). Sin blocker search: penumbra uniforme, no contact-hardening (eso
+sería PCSS, fuera de #941).
+
 🔴 **2026-08-23 (4) — EL USER PROBÓ: el cache rinde ("muchísimo más performante") pero
 `many_lights` tiene CIEN luces y el cap era 64.** El panel lo decía entero: 2.4M pares/111k
 samples ≈ 22 luces por píxel — no 16. Las 36 luces en slots 64..99 caían en la rama over-cap:

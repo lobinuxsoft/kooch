@@ -267,6 +267,9 @@ pub struct PageRasterizer {
 
     /// This frame's index, for the age debug view. See `views.w`.
     frame: u32,
+    /// The readers' PCF footprint width in texels, carried in
+    /// `world.w`. 1 = bilinear. See `inti_page_filter` (#941).
+    softness: u32,
     /// Triangles a meshlet may hold — the builder's cap, and the fixed
     /// vertex count the indirect draw issues.
     triangles: u32,
@@ -634,6 +637,7 @@ impl PageRasterizer {
             page_clear,
             clear_bgl,
             frame: 0,
+            softness: 1,
             triangles: max_triangles_per_meshlet.max(1),
             culls: (0..levels)
                 .map(|_| MeshletCull::new(device, 1, max_triangles_per_meshlet))
@@ -703,6 +707,12 @@ impl PageRasterizer {
     /// Stamps the frame the age debug view measures against.
     pub fn set_frame(&mut self, frame: u32) {
         self.frame = frame;
+    }
+
+    /// The readers' PCF footprint width, from the settings. Takes
+    /// effect at the next `write_uniform`.
+    pub fn set_softness(&mut self, texels: u32) {
+        self.softness = texels.max(1);
     }
 
     pub fn triangles_per_meshlet(&self) -> u32 {
@@ -1006,7 +1016,10 @@ impl PageRasterizer {
                     // The side of ONE LAYER, which is what a page's clip
                     // position is placed inside.
                     (self.pool.per_row() * self.config.page) as f32,
-                    0.0,
+                    // The readers' PCF footprint width (#941). In the
+                    // raster's own uniform because the shading binds
+                    // this exact buffer — one write serves both.
+                    self.softness.max(1) as f32,
                 ],
                 eye: [eye.x, eye.y, eye.z, 0.0],
                 sun: [d.x, d.y, d.z, 1.0],

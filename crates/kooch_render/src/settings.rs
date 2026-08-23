@@ -167,6 +167,22 @@ pub struct RenderSettings {
         shown_when = PAGES_ON
     )]
     pub shadow_pool_pages: u32,
+    /// Width of the page shadows' PCF footprint, in shadow texels.
+    ///
+    /// 1 is the comparison-bilinear the cube path gets from hardware —
+    /// smooth edge, no softness. Wider widths box-filter over the
+    /// footprint with bilinear sub-texel weights, Castano-style: the
+    /// penumbra grows and the cost is the taps, `(width + 1)²` loads
+    /// per light per pixel. The taps still clamp to the page — a page's
+    /// neighbour texel can belong to another level or another light,
+    /// which is why no hardware sampler can do this (#941).
+    #[serde(default = "default_shadow_softness")]
+    #[reflect(
+        group = "Shadows: virtual pages",
+        choices = SHADOW_SOFTNESS_CHOICES,
+        shown_when = PAGES_ON
+    )]
+    pub shadow_softness: u32,
     /// Whether shadows are drawn at all. Off frees the atlas entirely
     /// — 64 MiB at the default resolution — and the cube maps with it.
     ///
@@ -643,6 +659,12 @@ fn default_render_scale() -> u32 {
 ///
 /// `the_paged_shadow_resolves_like_a_cascade` pins the table so the gap
 /// is a measured number rather than an impression.
+/// 1 — the bilinear the retired cube path had in hardware. Softness is
+/// paid per light per pixel, so it is opted into, not defaulted.
+fn default_shadow_softness() -> u32 {
+    1
+}
+
 fn default_shadow_density() -> u32 {
     100
 }
@@ -742,6 +764,28 @@ const SHADOW_DENSITY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
         label: "Full — 100 %, one texel per screen pixel",
         value: 100,
+    },
+];
+
+/// The footprint widths on offer. `(width + 1)²` is the loads per
+/// light per pixel, which is why the list is short and the wide end is
+/// named after its bill.
+const SHADOW_SOFTNESS_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
+    kooch_ecs::reflect::FieldChoice {
+        label: "Sharp — bilinear, 4 taps, the cube path's look",
+        value: 1,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Soft — 2 texels, 9 taps",
+        value: 2,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Softer — 3 texels, 16 taps",
+        value: 3,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Softest — 5 texels, 36 taps: measure before shipping",
+        value: 5,
     },
 ];
 
@@ -863,6 +907,7 @@ impl Default for RenderSettings {
             shadows_enabled: shadows.enabled,
             shadow_distance: shadows.max_distance,
             shadow_cascade_texels: shadows.cascade_texels,
+            shadow_softness: shadows.page_softness,
             sun_softness: shadows.sun_softness,
             shadow_first_cascade_distance: shadows.first_cascade_distance,
             contact_shadow_steps: contact.linear_steps,
@@ -922,6 +967,7 @@ impl RenderSettings {
                 || crate::shadow::pages::mark::enabled_by_environment(),
             page_density: self.shadow_density,
             pool_pages: self.shadow_pool_pages,
+            page_softness: self.shadow_softness,
         }
     }
 

@@ -1267,6 +1267,19 @@ is `LAMP_CULLS = 64`; its honest ceiling is the group-error arena,
 casting lights (the classic path's `assign_point_slots`) is #939's named
 follow-up.
 
+### The page filter is a configurable box (#941)
+
+The readers filter by hand — a page's neighbour texel can belong to
+another level or another light, so no hardware sampler applies — and
+the footprint is the author's: `shadow_softness` in `RenderSettings`
+is a box width in shadow texels. `1` is comparison-bilinear, bit for
+bit the cube path's hardware look; wider widths are the Castano-class
+box with `frac`-clipped 1D edge weights, positioned with sub-texel
+precision, costing `(width + 1)²` loads **per light per pixel** — which
+is why sharp is the default and the widest choice is labelled with its
+bill. No blocker search: the penumbra is uniform, not
+contact-hardening.
+
 ### Cached pages are effectively free (#477/#866)
 
 The pool always persisted its *slots*; since this change it keeps the
