@@ -328,6 +328,20 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             }
             EditorTab::Components => draw_components_content(ui, self.component_types),
             EditorTab::Profiler => crate::panels::profiler::draw_profiler_content(ui),
+            EditorTab::Performance => crate::panels::performance::draw_performance_panel(
+                ui,
+                self.perf_stats,
+                self.meshlet_stats,
+                self.meshlet_debug_mode,
+                self.meshlet_debug_caps,
+                self.meshlet_lod_settings,
+                self.lights_hot,
+                self.cluster_settings,
+                self.specular_floor,
+                *self.game_request,
+                self.hud_visibility,
+                self.single_light_note,
+            ),
             EditorTab::Build => crate::panels::build::draw_build_content(
                 ui,
                 self.build,

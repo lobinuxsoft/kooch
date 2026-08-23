@@ -170,20 +170,44 @@ pub(crate) struct HudVisibility {
     /// the Debug section it sat translucent over the 3D view and could
     /// not be read — the user's words were "no se entiende nada".
     pub(crate) shadow_pages_window: bool,
+    /// Whether the Performance dock tab drew this frame. Set by the tab,
+    /// cleared by `sys_metrics_system` after reading, so it is always at
+    /// most one frame stale. Gates the sysinfo poll alongside `sidebar`,
+    /// and decides which surface hosts the pinned floating windows —
+    /// two hosts drawing the same window id would clash.
+    pub(crate) panel_visible: bool,
+    /// Which sections have been pinned out into floating windows.
+    pub(crate) pinned: PinnedSections,
+}
+
+/// One flag per pinnable section of the performance readout. A fixed
+/// struct rather than a set: the sections are a closed list, and
+/// `HudVisibility` stays `Copy` for the `PreRender` readers.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct PinnedSections {
+    pub(crate) debug: bool,
+    pub(crate) frame: bool,
+    pub(crate) project: bool,
+    pub(crate) system: bool,
+    pub(crate) render: bool,
+    pub(crate) meshlet: bool,
+    pub(crate) cpu_frame: bool,
+    pub(crate) remote: bool,
 }
 
 impl Default for HudVisibility {
-    /// Visible until the UI says otherwise.
-    ///
-    /// The first frame runs before any panel has drawn, and a default of
-    /// "hidden" would skip the first refresh — which is the one that
-    /// establishes the CPU% baseline, without which every later sample
-    /// reads zero.
+    /// The overlay sidebar defaults HIDDEN now that the metrics live in
+    /// the Performance dock tab: drawn over the game view they could
+    /// not be read, which was the user's complaint. The CPU% baseline
+    /// warm-up the old "visible by default" protected is handled by
+    /// `sys_metrics_system`'s re-warm on visibility transitions.
     fn default() -> Self {
         Self {
-            sidebar: true,
+            sidebar: false,
             system_section: true,
             shadow_pages_window: true,
+            panel_visible: false,
+            pinned: PinnedSections::default(),
         }
     }
 }
@@ -191,6 +215,6 @@ impl Default for HudVisibility {
 impl HudVisibility {
     /// Whether the OS is worth asking about CPU and memory this frame.
     pub(crate) fn wants_system_metrics(self) -> bool {
-        self.sidebar && self.system_section
+        (self.sidebar || self.panel_visible) && self.system_section
     }
 }

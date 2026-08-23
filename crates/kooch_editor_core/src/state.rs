@@ -52,6 +52,12 @@ pub(crate) enum EditorTab {
     /// layout in the other one and deserialisation fails on a tab that
     /// does not exist, taking the user's whole arrangement with it.
     Profiler,
+    /// The performance metrics as a REAL dock tab (#942-class ask from
+    /// the user): the overlay sidebar drew translucent over the game
+    /// view and could not be read. Sections pin out into floating
+    /// windows from here; the overlay stays available behind its
+    /// chevron but defaults hidden.
+    Performance,
 }
 
 /// The `.inputmap` currently open in the Input Map panel.
@@ -114,6 +120,7 @@ pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::InputMap,
     EditorTab::Build,
     EditorTab::Profiler,
+    EditorTab::Performance,
 ];
 
 impl EditorTab {
@@ -131,6 +138,7 @@ impl EditorTab {
             Self::Console => format!("{} Console", crate::icons::TERMINAL),
             Self::Build => format!("{} Build", crate::icons::PACKAGE),
             Self::Profiler => format!("{} Profiler", crate::icons::CHART_BAR),
+            Self::Performance => format!("{} Performance", crate::icons::FADERS),
         }
     }
 }
@@ -142,10 +150,11 @@ impl std::fmt::Display for EditorTab {
 }
 
 /// Creates the default 3-panel dock layout: World | View + Game |
-/// Inspector.
-/// Per-frame performance metrics are not a dock tab — the View panel
-/// renders them as a vertical overlay anchored to its right edge, so
-/// they are always visible alongside what the artist is looking at.
+/// Inspector + Performance.
+/// The performance metrics are a dock tab beside the Inspector; the
+/// in-viewport overlay still exists behind its chevron for whoever
+/// wants numbers over the picture, but defaults hidden — drawn over
+/// the game it could not be read.
 ///
 /// Game sits as a *sibling tab* of View rather than a split: the two
 /// answer the same question from different cameras, so the common
@@ -160,7 +169,11 @@ pub(crate) fn default_dock_state() -> DockState<EditorTab> {
     surface.split_left(NodeIndex::root(), 0.2, vec![EditorTab::World]);
 
     let surface = state.main_surface_mut();
-    surface.split_right(NodeIndex::root(), 0.7, vec![EditorTab::Inspector]);
+    surface.split_right(
+        NodeIndex::root(),
+        0.7,
+        vec![EditorTab::Inspector, EditorTab::Performance],
+    );
 
     state
 }

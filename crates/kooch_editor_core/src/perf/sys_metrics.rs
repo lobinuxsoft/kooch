@@ -83,6 +83,12 @@ pub(crate) fn sys_metrics_system(resources: &mut Resources) {
         .copied()
         .unwrap_or_default()
         .wants_system_metrics();
+    // The panel re-asserts its visibility every frame it draws; clearing
+    // it here keeps the flag at most one frame stale when the tab
+    // closes.
+    if let Some(hud) = resources.get_mut::<super::HudVisibility>() {
+        hud.panel_visible = false;
+    }
 
     let mut state = resources.remove::<SysMetricsState>().unwrap_or_default();
 
