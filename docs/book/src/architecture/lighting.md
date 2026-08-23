@@ -1266,6 +1266,20 @@ frame of fallback, not one of missing shadow. The panel prints the
 standing bias; one that sits high is the pool saying it is too small
 for the scene.
 
+### The classic pass under the pages — a token, not a tenant (#945)
+
+With `virtual_shadows` on, every reader branches to the pages: the
+cascade draws are gated, the spot and cube lists are empty. What
+remained was the *memory* — 64 MiB of atlas and 6 per cube, standing
+for a reader that never comes. They cannot go to zero (the shading's
+bind group needs live views, and wgpu refuses a zero-layer texture), so
+`classic_shadow_alloc` — pure, tested — sizes them to a token: the
+atlas at its clamp floor, one sixteen-texel cube, under half a
+megabyte. The release key is the whole allocation tuple rather than a
+bare texel count, so an author whose cascades already sat at the floor
+still swaps on toggle; the resize-release door that already existed
+does the swap in both directions.
+
 ### The coverage gate — a shadow nobody can resolve claims nothing (#944)
 
 Before the bias has to price anything, the demand is shrunk at the

@@ -100,7 +100,7 @@ impl MeshletRenderStage {
             // Allocated on the first frame that finds a sun; see the
             // field's doc for why not here.
             shadows: None,
-            shadow_texels: 0,
+            shadow_alloc: Default::default(),
             point_shadows_over_budget: false,
             point_shadow_holders: Vec::new(),
             upscale_technique: crate::quality::UpscaleTechnique::None,

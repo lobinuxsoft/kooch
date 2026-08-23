@@ -12,8 +12,8 @@ use crate::meshlet::{GpuGlobalMeshPool, MeshletCullPipelines, MeshletScene};
 use crate::view_camera::ViewCamera;
 
 use super::atlas::ShadowAtlas;
-use super::cascades::{build_cascades, Cascade, CASCADE_BLEND_FRACTION, CASCADE_COUNT};
-use super::cube::{PointShadowCubes, DEFAULT_CUBE_SIZE};
+use super::cascades::{CASCADE_BLEND_FRACTION, CASCADE_COUNT, Cascade, build_cascades};
+use super::cube::{DEFAULT_CUBE_SIZE, PointShadowCubes};
 use super::point::PointShadowDraw;
 use super::raster::ShadowRasterizer;
 
@@ -54,6 +54,10 @@ impl ShadowPass {
         device: &wgpu::Device,
         meshlet_bgl: &wgpu::BindGroupLayout,
         cascade_size: u32,
+        // Texels per cube face. `DEFAULT_CUBE_SIZE` normally; the #945
+        // minimal allocation passes a token size, because nothing reads
+        // the cubes while the pages shadow every lamp.
+        cube_size: u32,
         // Cube maps to allocate — the VRAM this pass costs beyond the
         // atlas, at 6 MiB each (#849).
         point_budget: u32,
@@ -69,7 +73,7 @@ impl ShadowPass {
             ),
             cubes: PointShadowCubes::new(
                 device,
-                DEFAULT_CUBE_SIZE,
+                cube_size,
                 point_budget,
                 instance_capacity,
                 max_triangles_per_meshlet,

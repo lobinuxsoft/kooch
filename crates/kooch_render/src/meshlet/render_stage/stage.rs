@@ -78,7 +78,9 @@ pub struct MeshletRenderStage {
     pub(super) shadows: Option<crate::shadow::ShadowPass>,
     /// Cascade resolution `shadows` was allocated at, so a settings
     /// change is noticed rather than silently ignored.
-    pub(super) shadow_texels: u32,
+    /// What the classic shadow pass holds allocated, or zeroed when it
+    /// holds nothing. The key the resize-release compares (#945).
+    pub(super) shadow_alloc: super::frame::ClassicAlloc,
     /// Whether any casting point light went without a cube last frame
     /// (#778), so the warning fires on the transition rather than sixty
     /// times a second. Same shape as the light-count log.

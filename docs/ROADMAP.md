@@ -772,6 +772,19 @@ lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings
 `Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
 decidía cuántos hilos, ahora decide qué páginas EXISTEN.
 
+🎉 **2026-08-23 (10) — LAS SOMBRAS CLÁSICAS DEJAN DE RETENER SU MEMORIA BAJO LA VSM (#945).**
+Lo que quedaba del defecto #5 era la MEMORIA (los draws ya estaban gateados: `draw_cascades`
+mató los 0.33 ms, y spots/points van con listas vacías bajo pages): con sol presente,
+`nothing_casts` era falso y el atlas de 64 MiB + 6 MiB por cubo quedaban alocados para un
+lector que ramifica a páginas. No pueden ir a CERO — el bind group del shading necesita views
+vivas y wgpu rechaza texturas de 0 layers — así que van a un TOKEN: atlas en el piso del
+clamp (256), UN cubo de 16 téxeles → **<0.5 MiB donde había 88**. La decisión es una función
+PURA (`classic_shadow_alloc`) y la clave de release pasó de un `u32` de téxeles a una tupla
+`ClassicAlloc` — el test `a_floor_sized_atlas_still_swaps` clava el edge que el u32 pelado
+perdía: un autor con cascadas YA en 256 no habría liberado los cubos al togglear. La puerta
+de resize-release existente hace el swap en ambos sentidos sin código nuevo. Con esto el
+frame bajo VSM paga SOLO la VSM → la medición en la OneXFly mide lo que dice medir.
+
 🎉 **2026-08-23 (9) — EL BOUND DE RECEPTORES (#940): EL PLAN OLSSON QUEDA COMPLETO.** PMCD
 de Olsson §4 a granularidad de PÁGINA (más fino que el per-face del paper): cada sample que
 marca la página de una lámpara es un receptor y el marking hace `atomicMax` de su distancia

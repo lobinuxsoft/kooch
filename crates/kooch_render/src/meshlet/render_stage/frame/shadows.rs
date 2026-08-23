@@ -17,6 +17,45 @@ use crate::view_camera::ViewCamera;
 
 use super::super::MeshletRenderStage;
 
+/// What the classic shadow pass may allocate this frame (#945): the
+/// atlas resolution, the cube face size, and how many cubes. Zeroed
+/// means "nothing held" — the sentinel the bare texel count used to be.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub(in crate::meshlet::render_stage) struct ClassicAlloc {
+    pub(in crate::meshlet::render_stage) texels: u32,
+    pub(in crate::meshlet::render_stage) cube_size: u32,
+    pub(in crate::meshlet::render_stage) cubes: u32,
+}
+
+/// The decision, pure so a test can hold it still: what the classic
+/// pass allocates given the settings.
+///
+/// 🔴 With the pages on, NOTHING reads the atlas or the cubes — the
+/// draws are gated, the lists are empty, `inti_shadow` branches to the
+/// pages — but the textures stayed allocated: 64 MiB of atlas and 6 per
+/// cube, held for a reader that never comes (#945). They cannot go to
+/// zero: the shading's bind group needs live views and wgpu refuses a
+/// zero-layer texture. So they go to a TOKEN — the atlas at its clamp
+/// floor, one sixteen-texel cube — under half a megabyte standing where
+/// eighty-eight stood, and the resize-release door that already existed
+/// swaps the real allocation back the frame the pages turn off.
+pub(in crate::meshlet::render_stage) fn classic_shadow_alloc(
+    settings: &ShadowSettings,
+) -> ClassicAlloc {
+    if settings.virtual_pages {
+        return ClassicAlloc {
+            texels: 256,
+            cube_size: 16,
+            cubes: 1,
+        };
+    }
+    ClassicAlloc {
+        texels: settings.clamped_texels(),
+        cube_size: crate::shadow::DEFAULT_CUBE_SIZE,
+        cubes: settings.point_budget() as u32,
+    }
+}
+
 impl MeshletRenderStage {
     /// Allocates the atlas if this frame needs one, places the cascades
     /// and sizes the culls.
@@ -135,9 +174,9 @@ impl MeshletRenderStage {
         // allocated at a resolution the author has since changed. Sixty
         // -four megabytes is worth noticing a settings change over, and
         // a texture cannot be resized in place.
-        let texels = settings.clamped_texels();
+        let alloc = classic_shadow_alloc(&settings);
         let nothing_casts = sun.is_none() && spots.is_empty() && points.is_empty();
-        if !settings.enabled || nothing_casts || self.shadow_texels != texels {
+        if !settings.enabled || nothing_casts || self.shadow_alloc != alloc {
             if let Some(released) = self.shadows.take() {
                 if let Some(tracker) = self.vram_tracker.as_ref() {
                     tracker.sub(released.atlas_bytes());
@@ -147,7 +186,7 @@ impl MeshletRenderStage {
                     "released the shadow atlas",
                 );
             }
-            self.shadow_texels = 0;
+            self.shadow_alloc = ClassicAlloc::default();
         }
         if !settings.enabled || nothing_casts {
             return None;
@@ -176,21 +215,24 @@ impl MeshletRenderStage {
             None => {
                 tracing::debug!(
                     target: "kooch_render::shadow",
-                    cascade_texels = texels,
+                    cascade_texels = alloc.texels,
+                    cube_size = alloc.cube_size,
+                    cubes = alloc.cubes,
                     "allocating the shadow atlas",
                 );
                 let pass = ShadowPass::new(
                     device,
                     self.cull_pipelines.meshlet_bind_group_layout(),
-                    texels,
-                    settings.point_budget() as u32,
+                    alloc.texels,
+                    alloc.cube_size,
+                    alloc.cubes,
                     self.config.meshlet_capacity,
                     super::super::super::DEFAULT_MAX_TRIANGLES as u32,
                 );
                 if let Some(tracker) = self.vram_tracker.as_ref() {
                     tracker.add(pass.atlas_bytes());
                 }
-                self.shadow_texels = texels;
+                self.shadow_alloc = alloc;
                 self.shadows.insert(pass)
             }
         };
@@ -302,3 +344,6 @@ impl MeshletRenderStage {
         );
     }
 }
+
+#[cfg(test)]
+mod tests;
