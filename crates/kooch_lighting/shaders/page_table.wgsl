@@ -52,17 +52,28 @@
 const PAGE_ABSENT: u32 = 0u;
 
 /// Words per table entry: the physical slot (`slot + 1`, 0 = absent),
-/// the frame it was last requested in, and its index in this view's
-/// compacted `page_list`.
+/// the frame it was last requested in, its index in this view's
+/// compacted `page_list`, and the CONTENT STAMP — the generation the
+/// page's atlas content was drawn under, `0` = no valid content.
 ///
-/// There used to be a fourth word — the finest octave any receiver
-/// asked — steering which of the SUN's survivor lists a lamp's page
-/// borrowed. Lamps cull for themselves now (see `LAMP_CULLS`), the
-/// borrowing is gone, and the word went with it.
+/// # 🔴 The fourth word is what makes a cached page free
+///
+/// A resident page whose stamp equals its current generation (the
+/// sun's per level — snapped centre and direction — or its lamp's —
+/// transform, range, cone) keeps last frame's atlas content: the
+/// compaction neither lists nor stamps it, the expansion never sees
+/// it, and the depth pass no longer clears whole layers, only the
+/// dirty pages' quads. StraySpark: *"cached pages are effectively
+/// free"*; UE5 caches the same way (#477/#866).
+///
+/// Written by the compaction when it LISTS a page (drawn later the
+/// same frame), zeroed by `page_stamp` when a fresh page claims the
+/// entry and by `cs_invalidate` when a moved caster's sphere reaches
+/// the page. Generations are never zero, so `0` always redraws.
 ///
 /// 🔴 Interleaved because `max_storage_buffers_per_shader_stage` is
 /// eight on the downlevel defaults; see the marking pass's binding.
-const PAGE_CELL: u32 = 3u;
+const PAGE_CELL: u32 = 4u;
 
 /// Culls a frame is willing to run for local lights — one per lamp,
 /// the way the retired cube path ran one per face (#777). A lamp's

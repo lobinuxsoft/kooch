@@ -69,6 +69,22 @@ const DEPTH: &str = include_str!("../../../shaders/page_depth.wgsl");
 /// in #939.
 pub const LAMP_CULLS: u32 = 64;
 
+/// Moved-caster spheres a frame may upload for page invalidation.
+/// Past it, the scene generation bumps instead — every page redraws
+/// once, which is coarse and never wrong.
+const MOVED_CAPACITY: u32 = 256;
+
+/// FNV-1a over a word, for the content generations. Collisions cache a
+/// stale page for one configuration change in four billion; accepted.
+fn fnv(mut hash: u32, word: u32) -> u32 {
+    for byte in word.to_le_bytes() {
+        hash = (hash ^ byte as u32).wrapping_mul(16777619);
+    }
+    hash
+}
+
+const FNV_SEED: u32 = 2166136261;
+
 /// What the pages are rasterised at. The same format the cascades use,
 /// so the sampling path in #477 reaches for the same comparison sampler
 /// rather than for a second one.
@@ -139,6 +155,9 @@ pub struct RasterCounts {
     pub pairs: u32,
     /// Pairs past the list's capacity.
     pub overflow: u32,
+    /// Resident pages whose content stamp still matched — the pages the
+    /// cache made free this frame.
+    pub cached: u32,
     /// Which camera this is.
     pub view: u32,
     /// Meshlet/page tests the expansion ran, summed over the levels.
@@ -205,6 +224,26 @@ pub struct PageRasterizer {
     visible_counts: wgpu::Buffer,
     levels: wgpu::Buffer,
     level_stride: u64,
+    /// One generation per bucket owner per view — the sun's levels
+    /// (snapped centre, direction, the eye's height along the sun's
+    /// axis), then the lamps (transform, range, cone). The compaction
+    /// caches a page whose stamp matches. Never zero.
+    gens: wgpu::Buffer,
+    /// `[0]` count, then the physical slot of every page THIS view's
+    /// compaction listed — what the depth pass clears instead of the
+    /// whole layer.
+    dirty: wgpu::Buffer,
+    /// `[0].x` count, then world spheres of every caster that moved
+    /// this frame, old and new bounds alike.
+    moved: wgpu::Buffer,
+    /// Folded into every generation. Bumped when the moved list
+    /// overflows its buffer — the coarse, honest fallback — and when a
+    /// pair overflow was observed, because a stamped page whose pairs
+    /// were dropped cached a hole.
+    scene_gen: u32,
+    /// The frame the moved list was last uploaded and any overflow
+    /// bump applied — once per frame, not per view.
+    moved_frame: Option<u32>,
 
     compact_bgl: wgpu::BindGroupLayout,
     compact: wgpu::ComputePipeline,
@@ -217,6 +256,13 @@ pub struct PageRasterizer {
 
     depth_bgl: wgpu::BindGroupLayout,
     depth: wgpu::RenderPipeline,
+    invalidate: wgpu::ComputePipeline,
+    invalidate_bgl: wgpu::BindGroupLayout,
+    /// One quad per dirty page at far depth, depth test `Always` —
+    /// the per-page replacement for the whole-layer clear the cache
+    /// retired.
+    page_clear: wgpu::RenderPipeline,
+    clear_bgl: wgpu::BindGroupLayout,
 
     /// This frame's index, for the age debug view. See `views.w`.
     frame: u32,
@@ -252,6 +298,8 @@ struct Bound {
     compact: wgpu::BindGroup,
     expand: wgpu::BindGroup,
     depth: wgpu::BindGroup,
+    invalidate: wgpu::BindGroup,
+    clear: wgpu::BindGroup,
     /// One per clipmap level: each level's cull owns its own visible
     /// list, so this is the one thing a single dispatch could not
     /// replace without the culls sharing an output buffer.
@@ -358,6 +406,18 @@ impl PageRasterizer {
         let compact = compute("cs_compact", &compact_module, &compact_layout_pipeline);
         let expand_args_pass = compute("cs_expand_args", &compact_module, &compact_layout_pipeline);
         let draw_args_pass = compute("cs_draw_args", &compact_module, &compact_layout_pipeline);
+        let invalidate_bgl = invalidate_layout(device);
+        let invalidate_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("page_invalidate_layout"),
+                bind_group_layouts: &[Some(&invalidate_bgl)],
+                immediate_size: 0,
+            });
+        let invalidate = compute(
+            "cs_invalidate",
+            &compact_module,
+            &invalidate_pipeline_layout,
+        );
 
         let expand_bgl = expand_layout(device);
         let storage_bgl = storage_layout(
@@ -426,6 +486,43 @@ impl PageRasterizer {
             cache: None,
         });
 
+        let clear_bgl = clear_layout(device);
+        let clear_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("page_clear_layout"),
+                bind_group_layouts: &[Some(&clear_bgl)],
+                immediate_size: 0,
+            });
+        let page_clear = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("page_clear"),
+            layout: Some(&clear_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &depth_module,
+                entry_point: Some("vs_page_clear"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            // No fragment and no scissor needed: the quad's corners ARE
+            // the page's rect, so nothing rasterises past it.
+            fragment: None,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: PAGE_DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                // A clear, as a draw: it always wins.
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
         let level_stride = align.max(std::mem::size_of::<ExpandLevel>() as u64);
         // 🔴 Rounded UP to a multiple, not `max`. A dynamic offset has
@@ -473,7 +570,8 @@ impl PageRasterizer {
             }),
             draw_args: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_draw_args"),
-                size: 16,
+                // Two draws: the pairs, then one quad per dirty page.
+                size: 32,
                 usage: storage | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
@@ -499,6 +597,28 @@ impl PageRasterizer {
                 mapped_at_creation: false,
             }),
             level_stride,
+            gens: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("page_raster_gens"),
+                size: atlas_layers(pool) as u64 * buckets as u64 * 4,
+                usage: storage,
+                mapped_at_creation: false,
+            }),
+            dirty: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("page_raster_dirty"),
+                // A header word, then at most one slot per page of one
+                // view's slice — the most one compaction can list.
+                size: (1 + pool.slice() as u64) * 4,
+                usage: storage,
+                mapped_at_creation: false,
+            }),
+            moved: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("page_raster_moved"),
+                size: (1 + MOVED_CAPACITY as u64) * 16,
+                usage: storage,
+                mapped_at_creation: false,
+            }),
+            scene_gen: 0,
+            moved_frame: None,
             compact_bgl,
             compact,
             expand_args_pass,
@@ -508,6 +628,10 @@ impl PageRasterizer {
             expand,
             depth_bgl,
             depth,
+            invalidate,
+            invalidate_bgl,
+            page_clear,
+            clear_bgl,
             frame: 0,
             triangles: max_triangles_per_meshlet.max(1),
             culls: (0..levels)
@@ -647,6 +771,7 @@ impl PageRasterizer {
             local: words[levels + 1],
             pairs: words[levels + 2].min(PAIR_CAPACITY),
             overflow: words[levels + 3],
+            cached: words[levels + 4],
             view,
         }
     }
@@ -671,21 +796,6 @@ fn atlas_layers(pool: PoolConfig) -> u32 {
 /// a storage binding it did not have, and 1M pairs was a number nobody
 /// had ever approached.
 pub const PAIR_CAPACITY: u32 = 1 << 18;
-
-/// A lamp cull's clip-from-world: an orthographic box of `2 * range` a
-/// side centred on the light, which is the union of everything any of
-/// its faces can see.
-///
-/// Only the extracted frustum PLANES matter — the box bounds candidates,
-/// it projects nothing — so the depth convention is free and the LOD
-/// selector runs its perspective form off `camera_position` instead.
-/// One box for spots too: their cone fits inside it, and the expansion's
-/// `cell_reaches` is the tight test anyway.
-fn lamp_clip(position: Vec3, range: f32) -> Mat4 {
-    let r = range.max(0.01);
-    Mat4::orthographic_rh(-r, r, -r, r, 0.0, 2.0 * r)
-        * Mat4::look_at_rh(position + Vec3::Z * r, position, Vec3::Y)
-}
 
 fn count_slots(buckets: u32) -> u32 {
     // Per level, then: bucket overflow, local pages skipped, pairs, pair
@@ -746,6 +856,93 @@ impl PageRasterizer {
     fn compact_threads(&self, light_count: u32) -> u32 {
         let slots = super::mark::padded_lights(light_count) + 1;
         u32::try_from(super::mark::span(self.config, self.clipmap, slots)).unwrap_or(u32::MAX)
+    }
+
+    /// One generation per bucket owner, for the cache gate. A sun
+    /// level's changes when its snapped centre, the sun's direction or
+    /// the eye's position ALONG the sun's axis change — the last
+    /// because a page's depth origin rides the eye unsnapped, so
+    /// cached depths from another origin would bias every comparison.
+    /// A lamp's changes with anything that moves its shadow: position,
+    /// direction, range, kind, cone.
+    fn write_gens(&self, queue: &wgpu::Queue, view: u32, eye: Vec3, sun: Vec3, lamps: &[GpuLight]) {
+        let levels = self.clipmap.levels as usize;
+        let buckets = self.buckets() as usize;
+        let mut gens = vec![0u32; buckets];
+        // Mirrors `sun_basis` in `page_table.wgsl`, term for term.
+        let f = sun.normalize_or(Vec3::NEG_Y);
+        let up = if f.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
+        let s_axis = f.cross(up).normalize();
+        let u_axis = s_axis.cross(f);
+        let plane = (eye.dot(s_axis), eye.dot(u_axis));
+        let along = eye.dot(f);
+        let side = self.config.side(0) as f32;
+        for (level, slot_gen) in gens.iter_mut().enumerate().take(levels) {
+            // Mirrors `sun_centre`: the snap grid is this level's page
+            // width, so the generation only turns over when the centre
+            // actually steps.
+            let width = self.clipmap.base * (level as f32).exp2() / side;
+            let mut h = FNV_SEED;
+            for word in [
+                ((plane.0 / width).floor()).to_bits(),
+                ((plane.1 / width).floor()).to_bits(),
+                along.to_bits(),
+                f.x.to_bits(),
+                f.y.to_bits(),
+                f.z.to_bits(),
+                self.scene_gen,
+            ] {
+                h = fnv(h, word);
+            }
+            // `| 1`: a stamp of zero means "no content" and must never
+            // match a generation.
+            *slot_gen = h | 1;
+        }
+        for slot in 0..LAMP_CULLS as usize {
+            let mut h = FNV_SEED;
+            if let Some(lamp) = lamps.get(slot) {
+                for word in [
+                    lamp.position[0].to_bits(),
+                    lamp.position[1].to_bits(),
+                    lamp.position[2].to_bits(),
+                    lamp.direction[0].to_bits(),
+                    lamp.direction[1].to_bits(),
+                    lamp.direction[2].to_bits(),
+                    lamp.range.to_bits(),
+                    lamp.kind,
+                    lamp.spot_scale.to_bits(),
+                    lamp.spot_offset.to_bits(),
+                ] {
+                    h = fnv(h, word);
+                }
+            }
+            h = fnv(h, self.scene_gen);
+            gens[levels + slot] = h | 1;
+        }
+        queue.write_buffer(
+            &self.gens,
+            view as u64 * buckets as u64 * 4,
+            bytemuck::cast_slice(&gens),
+        );
+    }
+
+    /// Uploads the frame's moved-caster spheres — once, not per view —
+    /// or, past the buffer, bumps the scene generation so everything
+    /// redraws instead of something staying silently stale.
+    fn write_moved(&mut self, queue: &wgpu::Queue, moved: &[[f32; 4]]) {
+        if self.moved_frame == Some(self.frame) {
+            return;
+        }
+        self.moved_frame = Some(self.frame);
+        if moved.len() > MOVED_CAPACITY as usize {
+            self.scene_gen = self.scene_gen.wrapping_add(1);
+            queue.write_buffer(&self.moved, 0, bytemuck::bytes_of(&[0.0f32; 4]));
+            return;
+        }
+        let mut data = Vec::with_capacity(1 + moved.len());
+        data.push([moved.len() as f32, 0.0, 0.0, 0.0]);
+        data.extend_from_slice(moved);
+        queue.write_buffer(&self.moved, 0, bytemuck::cast_slice(&data));
     }
 
     /// The uniform every raster pass reads. Written once a frame,
@@ -833,12 +1030,20 @@ impl PageRasterizer {
         view: u32,
         eye: Vec3,
         sun: Vec3,
-        light_count: u32,
+        lamps: &[GpuLight],
     ) {
-        self.write_uniform(queue, view, eye, sun, light_count);
+        self.write_uniform(queue, view, eye, sun, lamps.len() as u32);
+        self.write_gens(
+            queue,
+            view.min(atlas_layers(self.pool) - 1),
+            eye,
+            sun,
+            lamps,
+        );
         encoder.clear_buffer(&self.counts, 0, None);
         encoder.clear_buffer(&self.expand_args, 0, None);
         encoder.clear_buffer(&self.draw_args, 0, None);
+        encoder.clear_buffer(&self.dirty, 0, Some(4));
         let bind_group = self.compact_bind_group(device, page_pool);
         let offset = [self.uniform_span(view).0 as u32];
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -847,7 +1052,7 @@ impl PageRasterizer {
         });
         pass.set_pipeline(&self.compact);
         pass.set_bind_group(0, &bind_group, &offset);
-        pass.dispatch_workgroups(self.compact_threads(light_count).div_ceil(64), 1, 1);
+        pass.dispatch_workgroups(self.compact_threads(lamps.len() as u32).div_ceil(64), 1, 1);
         pass.set_pipeline(&self.expand_args_pass);
         pass.dispatch_workgroups(self.buckets().div_ceil(64), 1, 1);
         // Without a pair list this only fixes the vertex count, which is
@@ -868,6 +1073,8 @@ impl PageRasterizer {
                 entry(5, &self.expand_args),
                 entry(6, &self.visible_counts),
                 entry(7, &self.draw_args),
+                entry(8, &self.gens),
+                entry(9, &self.dirty),
             ],
         })
     }
@@ -957,6 +1164,21 @@ impl PageRasterizer {
                     entry(2, &self.pairs),
                 ],
             }),
+            invalidate: device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("page_invalidate_bg"),
+                layout: &self.invalidate_bgl,
+                entries: &[
+                    self.uniform_entry(0),
+                    entry(2, page_pool.slots()),
+                    entry(10, &self.moved),
+                    entry(11, lights),
+                ],
+            }),
+            clear: device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("page_clear_bg"),
+                layout: &self.clear_bgl,
+                entries: &[self.uniform_entry(0), entry(3, &self.dirty)],
+            }),
             visible: self
                 .culls
                 .iter()
@@ -1040,13 +1262,18 @@ impl PageRasterizer {
         // The same lights on the GPU, for the expansion's cone test
         // and the depth pass's face placement.
         lights: &wgpu::Buffer,
+        // World spheres of every caster that moved this frame — old
+        // and new bounds alike — for the cache's invalidation pass.
+        moved: &[[f32; 4]],
         lod_target: f32,
     ) {
         let levels = self.clipmap.levels;
         let buckets = self.buckets();
         let light_count = lamps.len() as u32;
         let view = view.min(atlas_layers(self.pool) - 1);
+        self.write_moved(queue, moved);
         self.write_uniform(queue, view, eye, sun, light_count);
+        self.write_gens(queue, view, eye, sun, lamps);
         let uniform_offset = self.uniform_span(view).0 as u32;
 
         // 1. One cull per level. A level is a texel density and a
@@ -1161,6 +1388,7 @@ impl PageRasterizer {
         encoder.clear_buffer(&self.counts, 0, None);
         encoder.clear_buffer(&self.expand_args, 0, None);
         encoder.clear_buffer(&self.draw_args, 0, None);
+        encoder.clear_buffer(&self.dirty, 0, Some(4));
 
         self.ensure_bound(device, page_pool, instances, &mesh_pool.meshlets, lights);
         let bound = self.bound.as_ref().expect("just built");
@@ -1170,6 +1398,12 @@ impl PageRasterizer {
                 label: Some("shadow pages: compact and expand"),
                 timestamp_writes: None,
             });
+            // 1c. Invalidation, BEFORE the compaction reads the stamps:
+            //     every page a moved caster reaches loses its content
+            //     stamp and redraws like a fresh one.
+            pass.set_pipeline(&self.invalidate);
+            pass.set_bind_group(0, &bound.invalidate, &[uniform_offset]);
+            pass.dispatch_workgroups(self.compact_threads(light_count).div_ceil(64), 1, 1);
             // 2. The flat table becomes a dense list, bucketed by
             //    octave — the dispatch covers exactly this camera's
             //    span, so the other view's pages are never walked.
@@ -1229,16 +1463,15 @@ impl PageRasterizer {
                 label: Some("shadow pages: depth"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    // 🔴 THIS camera's layer. The clear below is the
-                    // whole reason the atlas is an array: a camera
-                    // wipes its own pages and cannot reach the ones the
-                    // other camera is still sampling.
+                    // 🔴 THIS camera's layer, LOADED — never cleared.
+                    // The cache is the layer's content: a resident page
+                    // whose stamp still matches keeps last frame's
+                    // depth, and only the dirty pages' rects are wiped,
+                    // by the quad draw below. The array still keeps one
+                    // camera out of the other's pages.
                     view: &self.layers[view as usize],
                     depth_ops: Some(wgpu::Operations {
-                        // Reversed-Z: 0 is far, so a page nothing drew
-                        // into reads as "nothing between here and the
-                        // light" rather than as fully shadowed.
-                        load: wgpu::LoadOp::Clear(0.0),
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
@@ -1247,6 +1480,12 @@ impl PageRasterizer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            // The per-page clear: one quad per dirty page at far depth
+            // (reversed-Z 0 — "nothing between here and the light"),
+            // depth test Always. Then the pairs draw over clean rects.
+            pass.set_pipeline(&self.page_clear);
+            pass.set_bind_group(0, &bound.clear, &[uniform_offset]);
+            pass.draw_indirect(&self.draw_args, 16);
             pass.set_pipeline(&self.depth);
             pass.set_bind_group(0, &bound.depth, &[uniform_offset]);
             pass.set_bind_group(1, meshlet_bg, &[]);
@@ -1271,7 +1510,16 @@ impl PageRasterizer {
     /// returned. Call **after** the encoder has been submitted.
     pub fn poll(&mut self) -> Option<RasterCounts> {
         let (words, view) = self.readback.poll()?;
-        Some(self.decode(&words, view))
+        let counts = self.decode(&words, view);
+        // A pair overflow dropped geometry from pages the compaction
+        // had already stamped — a hole the cache would keep. One
+        // generation bump redraws everything once. 🔴 Reached only
+        // when something polls (the editor's panel does); a shipped
+        // build that never polls carries the hazard, noted in #477.
+        if counts.overflow > 0 {
+            self.scene_gen = self.scene_gen.wrapping_add(1);
+        }
+        Some(counts)
     }
 }
 
@@ -1343,11 +1591,38 @@ fn compact_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             buffer_entry(5, false, c),
             buffer_entry(6, true, c),
             buffer_entry(7, false, c),
-            // Binding 8 held the lights for the octave fallback and is
-            // retired with it: a lamp's bucket is its slot, no range
-            // needed. The stage is back under the downlevel budget of
-            // eight storage buffers with one to spare.
+            // The generations the cache gate compares stamps against,
+            // and the dirty list the per-page clear draws from — the
+            // eighth storage buffer, which is the whole downlevel
+            // budget again.
+            buffer_entry(8, true, c),
+            buffer_entry(9, false, c),
         ],
+    })
+}
+
+/// `cs_invalidate`'s own layout: the table, the moved spheres and the
+/// lights — none of which the other compact entries touch.
+fn invalidate_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let c = wgpu::ShaderStages::COMPUTE;
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("page_invalidate_bgl"),
+        entries: &[
+            uniform_entry(0, true, c),
+            buffer_entry(2, false, c),
+            buffer_entry(10, true, c),
+            buffer_entry(11, true, c),
+        ],
+    })
+}
+
+/// The per-page clear's layout: the uniform for the atlas arithmetic
+/// and the dirty list naming the slots to wipe.
+fn clear_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let v = wgpu::ShaderStages::VERTEX;
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("page_clear_bgl"),
+        entries: &[uniform_entry(0, true, v), buffer_entry(3, true, v)],
     })
 }
 

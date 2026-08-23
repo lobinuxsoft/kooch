@@ -1267,6 +1267,29 @@ is `LAMP_CULLS = 64`; its honest ceiling is the group-error arena,
 casting lights (the classic path's `assign_point_slots`) is #939's named
 follow-up.
 
+### Cached pages are effectively free (#477/#866)
+
+The pool always persisted its *slots*; since this change it keeps the
+*content*. Every table entry carries a **content stamp** — the
+generation its atlas depth was drawn under — and the compaction skips
+any resident page whose stamp still matches: not listed, not expanded,
+not drawn. The whole-layer depth clear is gone; the pass loads the
+layer and wipes only the dirty pages' rects with one quad each.
+
+Three things turn a generation over, and nothing else redraws a page:
+
+| Source | Granularity |
+|---|---|
+| The sun's snapped centre stepping, its direction, or the eye moving **along** its axis (the depth origin rides the eye) | per clipmap level |
+| A lamp's position, direction, range, kind or cone changing | per lamp — UE5 invalidates the same way |
+| A caster moving — its old **and** new bounds arrive as spheres and `cs_invalidate` zeroes the stamps of every page they reach | per page for the sun; per lamp for local lights (the #866 refinement is per cell) |
+
+A moved-caster list past its buffer, or a pair-list overflow observed
+by the panel's readback, bumps a scene generation folded into every
+hash: everything redraws once, which is coarse and never stale. The
+panel prints `rastered · cached ·` side by side — UE5's rule of thumb
+is dirty under 5% of residents in a typical frame.
+
 ### One render pass for the whole clipmap
 
 The atlas is a single depth attachment and every page is a sub-rect of

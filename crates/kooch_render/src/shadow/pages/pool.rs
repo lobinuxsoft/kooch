@@ -31,10 +31,11 @@
 
 use super::PageConfig;
 
-/// Words per table entry — the slot, its age, and its place in the
-/// compacted page list. Mirrors `PAGE_CELL` in
-/// `page_table.wgsl`, which is where the reason lives.
-pub const PAGE_CELL: u32 = 3;
+/// Words per table entry — the slot, its age, its place in the
+/// compacted page list, and the content stamp the cache runs on.
+/// Mirrors `PAGE_CELL` in `page_table.wgsl`, which is where the
+/// reason lives.
+pub const PAGE_CELL: u32 = 4;
 
 /// `KOOCH_SHADOW_POOL_PAGES`, read once.
 ///

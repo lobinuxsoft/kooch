@@ -232,6 +232,82 @@ fn read_words(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer)
     words
 }
 
+/// The sun's cache generation mirrors `sun_centre` exactly: a still
+/// camera caches, a lateral step inside one page width still caches,
+/// and a step that crosses the snap grid redraws.
+///
+/// This is the CPU/WGSL arithmetic seam of the cache — `write_gens`
+/// recomputes the shader's snapped centre, and a mismatch here caches
+/// pages whose world rect silently moved.
+#[test]
+fn a_still_suns_page_caches() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut raster = rasterizer(&device);
+    let mut pool = PagePool::new(&device, small());
+    const LIGHTS: u32 = 1;
+    let lamps = [kooch_lighting::GpuLight::default()];
+    let page = sun_page(0, 5, (7, 8), LIGHTS);
+    pool.ensure_entries(&device, span(LIGHTS));
+    let cell = PAGE_CELL as usize;
+    let mut slots = vec![0u32; span(LIGHTS) as usize * cell];
+    slots[page as usize * cell] = 11;
+    queue.write_buffer(pool.slots(), 0, bytemuck::cast_slice(&slots));
+
+    let compact = |raster: &mut PageRasterizer, eye: glam::Vec3| {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        raster.record_compaction(
+            &device,
+            &queue,
+            &mut encoder,
+            &pool,
+            0,
+            eye,
+            glam::Vec3::NEG_Y,
+            &lamps,
+        );
+        queue.submit([encoder.finish()]);
+        read_words(&device, &queue, raster.counts_buffer())
+    };
+    let buckets = raster.buckets() as usize;
+
+    // Off the snap grid's own lines: an eye at the origin sits exactly
+    // on a boundary, where the tiniest step flips `floor` — a real
+    // invalidation, not the case under test.
+    let config = PageConfig::default();
+    let width = ClipmapConfig::default().base * 32.0 / config.side(0) as f32;
+    let eye = glam::Vec3::new(0.25 * width, 0.0, 0.25 * width);
+    let counts = compact(&mut raster, eye);
+    assert_eq!(counts[5], 1, "the cold page was not listed");
+    let counts = compact(&mut raster, eye);
+    assert_eq!(
+        counts[buckets + 4],
+        1,
+        "a still camera did not cache the page: {:?}",
+        &counts[..8]
+    );
+    // A step that stays inside level 5's snap cell: still cached.
+    let counts = compact(&mut raster, eye + glam::Vec3::new(0.1 * width, 0.0, 0.0));
+    assert_eq!(
+        counts[buckets + 4],
+        1,
+        "a sub-page step invalidated the level: {:?}",
+        &counts[..8]
+    );
+    // Far past it: the snapped centre stepped, the world rect moved,
+    // the content is someone else's — redraw.
+    let counts = compact(&mut raster, glam::Vec3::new(10_000.0, 0.0, 0.0));
+    assert_eq!(
+        counts[5],
+        1,
+        "a snap crossing did not bring the page back: {:?}",
+        &counts[..8]
+    );
+    assert_eq!(counts[buckets + 4], 0, "and it must not count as cached");
+}
+
 #[test]
 fn a_page_compacts_into_the_level_it_came_from() {
     let Some((device, queue)) = device() else {
@@ -286,7 +362,7 @@ fn a_page_compacts_into_the_level_it_came_from() {
         VIEW,
         glam::Vec3::ZERO,
         glam::Vec3::NEG_Y,
-        LIGHTS,
+        &[kooch_lighting::GpuLight::default()],
     );
     queue.submit([encoder.finish()]);
 
@@ -481,20 +557,31 @@ fn a_lamp_page_holds_what_its_light_sees() {
     const LIGHTS: u32 = 1;
     let lamp = Vec3::new(0.0, 4.0, 0.0);
     let range = 20.0_f32;
-    let record = kooch_lighting::GpuLight {
-        position: lamp.to_array(),
-        range,
-        kind: 1,
-        ..Default::default()
-    };
+    // Two lamps: the one under test, and one whose range reaches no
+    // instance at all — the hierarchical cull's pre-pass must leave the
+    // second one's survivor slice empty (#939's acceptance).
+    let records = [
+        kooch_lighting::GpuLight {
+            position: lamp.to_array(),
+            range,
+            kind: 1,
+            ..Default::default()
+        },
+        kooch_lighting::GpuLight {
+            position: [100.0, 4.0, 100.0],
+            range: 5.0,
+            kind: 1,
+            ..Default::default()
+        },
+    ];
     let lights_buffer = {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("lamp_page_test_light"),
-            size: std::mem::size_of::<kooch_lighting::GpuLight>() as u64,
+            size: std::mem::size_of_val(&records) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        queue.write_buffer(&buffer, 0, bytemuck::bytes_of(&record));
+        queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&records));
         buffer
     };
 
@@ -555,8 +642,9 @@ fn a_lamp_page_holds_what_its_light_sees() {
         0,
         Vec3::new(0.0, 1.0, 8.0),
         Vec3::NEG_Y,
-        std::slice::from_ref(&record),
+        &records,
         &lights_buffer,
+        &[],
         1.0,
     );
     queue.submit([encoder.finish()]);
@@ -650,6 +738,104 @@ fn a_lamp_page_holds_what_its_light_sees() {
             "{name}: {absurd} texels claim depth nearer than anything in the scene"
         );
     }
+
+    // ---- The cache: a second frame with nothing changed draws NOTHING.
+    // The stamps written by the first compaction match their lamp's
+    // generation, so both pages are cached, no page is listed, the
+    // depth pass clears no quad — and the atlas still holds the scene.
+    let mut encoder = device.create_command_encoder(&Default::default());
+    raster.record(
+        &device,
+        &queue,
+        &mut encoder,
+        &cull_pipelines,
+        &gpu_pool,
+        &scene,
+        &meshlet_bg,
+        scene.instance_buffer(),
+        &page_pool,
+        &scene_params,
+        0,
+        Vec3::new(0.0, 1.0, 8.0),
+        Vec3::NEG_Y,
+        &records,
+        &lights_buffer,
+        &[],
+        1.0,
+    );
+    queue.submit([encoder.finish()]);
+    let counts = read_words(&device, &queue, raster.counts_buffer());
+    assert_eq!(
+        counts[lamp_bucket], 0,
+        "an unchanged frame listed pages the cache should have kept"
+    );
+    assert_eq!(
+        counts[buckets + 4],
+        2,
+        "the cached counter does not carry both pages: {:?}",
+        &counts[buckets..buckets + 5]
+    );
+    let texels = read_atlas_page(&device, &queue, &raster, FINE_SLOT, page);
+    let floor = texels
+        .iter()
+        .filter(|d| (**d - floor_depth).abs() < 0.002)
+        .count() as f32
+        / texels.len() as f32;
+    assert!(
+        floor > 0.5,
+        "a cached page lost its content: the floor covers {:.1}%",
+        floor * 100.0
+    );
+
+    // ---- Invalidation: the occluder "moves" — its old bounds arrive
+    // as a moved sphere — and every page its lamp can reach redraws.
+    // Per-light granularity: both pages of lamp 0 come back.
+    raster.set_frame(1);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    raster.record(
+        &device,
+        &queue,
+        &mut encoder,
+        &cull_pipelines,
+        &gpu_pool,
+        &scene,
+        &meshlet_bg,
+        scene.instance_buffer(),
+        &page_pool,
+        &scene_params,
+        0,
+        Vec3::new(0.0, 1.0, 8.0),
+        Vec3::NEG_Y,
+        &records,
+        &lights_buffer,
+        &[[0.45, 2.0, -0.45, 0.5]],
+        1.0,
+    );
+    queue.submit([encoder.finish()]);
+    let counts = read_words(&device, &queue, raster.counts_buffer());
+    assert_eq!(
+        counts[lamp_bucket],
+        2,
+        "a moved caster did not bring its lamp's pages back: {:?}",
+        &counts[..lamp_bucket + 2]
+    );
+    assert_eq!(
+        counts[buckets + 4],
+        0,
+        "pages stayed cached across an invalidation"
+    );
+    // And the redraw reproduces the scene.
+    let texels = read_atlas_page(&device, &queue, &raster, FINE_SLOT, page);
+    let floor = texels
+        .iter()
+        .filter(|d| (**d - floor_depth).abs() < 0.002)
+        .count() as f32
+        / texels.len() as f32;
+    assert!(
+        floor > 0.5,
+        "the invalidated redraw lost the floor: {:.1}%",
+        floor * 100.0
+    );
 }
 
 /// One page of the atlas, as f32 depths.
@@ -887,7 +1073,7 @@ fn the_draw_covers_a_whole_meshlet() {
         0,
         glam::Vec3::ZERO,
         glam::Vec3::NEG_Y,
-        1,
+        &[kooch_lighting::GpuLight::default()],
     );
     queue.submit([encoder.finish()]);
 

@@ -157,6 +157,9 @@ fn page_age(entry: u32) -> u32 {
 fn page_stamp(entry: u32, slot: u32, frame: u32) {
     atomicStore(&table_cells[entry * PAGE_CELL], slot + 1u);
     atomicStore(&table_cells[entry * PAGE_CELL + 1u], frame);
+    // A fresh claim has no content: whatever the slot held belonged to
+    // whoever held it last. Zero is "never drawn" to the cache.
+    atomicStore(&table_cells[entry * PAGE_CELL + 3u], 0u);
 }
 
 fn page_refresh(entry: u32, frame: u32) {

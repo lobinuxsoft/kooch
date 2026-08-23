@@ -886,17 +886,17 @@ fn shadow_page_readout(
         // say.
         ui.label(
             egui::RichText::new(format!(
-                "{} pages rastered · {} meshlet/page pairs",
-                raster.pages, raster.pairs
+                "{} pages rastered · {} cached · {} meshlet/page pairs",
+                raster.pages, raster.cached, raster.pairs
             ))
             .small()
             .weak(),
         )
         .on_hover_text(
-            "The pages the depth raster actually filled, and the meshlet/page pairs it \
-             drew to fill them. A pair is one meshlet rasterised into one page: drawing \
-             every meshlet into every page is the cost a virtual shadow map exists to \
-             avoid, so this number IS the feature working.",
+            "The pages the depth raster actually filled, the resident pages whose \
+             content survived from an earlier frame (the cache — those cost nothing), \
+             and the meshlet/page pairs drawn to fill the dirty ones. A still scene \
+             should raster near zero; UE5's rule of thumb is under 5% of residents.",
         );
         // 🔴 The number that decides the shape of the local-light
         // raster. The expansion is a product — a level's pages times a

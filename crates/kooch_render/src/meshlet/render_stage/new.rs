@@ -106,6 +106,8 @@ impl MeshletRenderStage {
             upscale_technique: crate::quality::UpscaleTechnique::None,
             render_scale: 100,
             instance_bounds: Vec::new(),
+            previous_bounds: Vec::new(),
+            moved_casters: Vec::new(),
             point_cube_cache: Vec::new(),
             gpu_pool: None,
             pool_dirty: false,

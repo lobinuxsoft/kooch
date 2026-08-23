@@ -408,6 +408,7 @@ impl MeshletRenderStage {
             sun,
             self.lights.uploaded(),
             self.lights.light_buffer(),
+            &self.moved_casters,
             lod_target,
         );
         // Idempotent, and this is the one call site that runs after

@@ -112,6 +112,13 @@ pub struct MeshletRenderStage {
     /// [`InstanceBounds`](crate::shadow::InstanceBounds). Replaces the
     /// single scene-wide hash the cube cache used to key on (#847).
     pub(super) instance_bounds: Vec<crate::shadow::InstanceBounds>,
+    /// Last frame's [`Self::instance_bounds`], for the page cache's
+    /// movement diff (#477): a caster whose hash changed invalidates
+    /// the shadow pages both its old and its new bounds reach.
+    pub(super) previous_bounds: Vec<crate::shadow::InstanceBounds>,
+    /// This frame's moved-caster spheres, old and new bounds alike,
+    /// rebuilt where `instance_bounds` is.
+    pub(super) moved_casters: Vec<[f32; 4]>,
     pub(super) point_cube_cache: Vec<Option<crate::shadow::CubeKey>>,
 
     /// GPU mirror of [`MeshletPipeline::pool`]. Lazy-rebuilt by

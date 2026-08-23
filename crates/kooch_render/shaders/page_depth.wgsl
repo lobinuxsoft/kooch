@@ -208,6 +208,31 @@ fn vs_page(
     return out;
 }
 
+// `[0]` the count, then the physical slot of every page the compaction
+// listed this dispatch. Only `vs_page_clear` reads it.
+@group(0) @binding(3) var<storage, read> clear_dirty: array<u32>;
+
+// One quad per dirty page at far depth — the per-page replacement for
+// the whole-layer clear the content cache retired. Reversed-Z: 0 is
+// far, so a wiped page reads as "nothing between here and the light".
+// The quad's corners ARE the page's rect, so no fragment scissor is
+// needed; drawn with depth compare `Always` so it wins over whatever
+// the slot held.
+@vertex
+fn vs_page_clear(
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
+) -> @builtin(position) vec4<f32> {
+    let slot = clear_dirty[1u + instance_index];
+    let rect = page_atlas_rect(slot, raster.views.z, raster.pool.z, raster.pool.w);
+    // Strip order: (-1,-1) (1,-1) (-1,1) (1,1).
+    let corner = vec2<f32>(
+        f32(vertex_index & 1u),
+        f32(vertex_index >> 1u),
+    ) * 2.0 - vec2<f32>(1.0);
+    return page_clip(corner, 0.0, rect, raster.world.z);
+}
+
 @fragment
 fn fs_page(in: PageVertex) {
     // The page's own texels and nothing else. See the header: this is

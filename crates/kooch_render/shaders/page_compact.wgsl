@@ -49,6 +49,20 @@
 // its draw arguments.
 @group(0) @binding(6) var<storage, read> visible_counts: array<u32>;
 @group(0) @binding(7) var<storage, read_write> draw_args: array<u32>;
+// One generation per bucket owner, per view: the sun's levels first
+// (snapped centre + direction), then the lamps (transform, range,
+// cone). A page whose stamp equals its owner's generation keeps last
+// frame's content and is never listed. Never zero.
+@group(0) @binding(8) var<storage, read> gens: array<u32>;
+// `[0]` the count, then the physical SLOT of every page listed this
+// dispatch — what the depth pass clears, page by page, now that whole
+// layers are never wiped.
+@group(0) @binding(9) var<storage, read_write> dirty: array<atomic<u32>>;
+// `[0].x` the count as f32, then world spheres — old and new bounds of
+// every caster that moved this frame. Only `cs_invalidate` reads them.
+@group(0) @binding(10) var<storage, read> moved: array<vec4<f32>>;
+// Only `cs_invalidate` reads them, for a lamp page's range test.
+@group(0) @binding(11) var<storage, read> inv_lights: array<ClusterLight>;
 const COMPACT_GROUP: u32 = 64u;
 const EXPAND_GROUP: u32 = 64u;
 
@@ -104,6 +118,19 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         slot = sun_buckets + id.light;
     }
+    // The cache gate: a page whose content was drawn under the
+    // generation its owner still has keeps it — not listed, not
+    // stamped, not drawn. `page_stamp` zeroes fresh claims and
+    // `cs_invalidate` zeroes touched pages, so 0 never matches.
+    var gen_at = id.level;
+    if !id.is_sun {
+        gen_at = sun_buckets + id.light;
+    }
+    let gen = gens[raster.views.x * buckets + gen_at];
+    if table_slots[entry * PAGE_CELL + 3u] == gen {
+        atomicAdd(&page_counts[buckets + 4u], 1u);
+        return;
+    }
     // Local pages are still counted separately, because "listed" and
     // "drawn" are different claims and the panel states both.
     if !id.is_sun {
@@ -123,6 +150,75 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
     // entry the draw indexes, without walking every resident page to
     // find it. See `PAGE_CELL`.
     table_slots[entry * PAGE_CELL + 2u] = listing;
+    // Listed means "drawn this frame", which is when the content
+    // becomes this generation's. Stamped here rather than after the
+    // draw because nothing between the two can fail — the one thing
+    // that can, a pair-list overflow, is counted and handled by the
+    // CPU bumping the scene generation.
+    table_slots[entry * PAGE_CELL + 3u] = gen;
+    let d = atomicAdd(&dirty[0], 1u);
+    if d + 1u < arrayLength(&dirty) {
+        atomicStore(&dirty[1u + d], stored - 1u);
+    }
+}
+
+// Zeroes the content stamp of every page a moved caster can reach —
+// the shadow it cast (old bounds) and the one it casts now (new
+// bounds) both have to redraw. One thread per entry of THIS VIEW's
+// span, a loop over the handful of moved spheres inside it.
+//
+// A lamp page invalidates at LIGHT granularity — sphere against the
+// light's range — which over-invalidates that lamp's few pages and
+// never misses; the sun's pages, where the volume is, test their own
+// rect. Per-cell lamp tests are #866's refinement.
+@compute @workgroup_size(COMPACT_GROUP, 1, 1)
+fn cs_invalidate(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= raster.views.y {
+        return;
+    }
+    let entry = raster.views.x * raster.views.y + gid.x;
+    if table_slots[entry * PAGE_CELL] == PAGE_ABSENT {
+        return;
+    }
+    if table_slots[entry * PAGE_CELL + 3u] == 0u {
+        return;
+    }
+    let count = u32(moved[0].x);
+    if count == 0u {
+        return;
+    }
+    let id = page_decode(
+        entry,
+        raster.views.y,
+        raster.space.x,
+        raster.space.y,
+        raster.space.z,
+        raster.space.w,
+        raster.pool.w,
+    );
+    for (var i = 0u; i < count; i = i + 1u) {
+        let sphere = moved[1u + i];
+        var hit = false;
+        if id.is_sun {
+            let basis = sun_basis(raster.sun.xyz);
+            let centre =
+                sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
+            let rect = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z, centre);
+            let plane = sun_plane(sphere.xyz, basis);
+            let along = dot(sphere.xyz - raster.eye.xyz, basis[2]);
+            let half = rect.z * 0.5 + sphere.w;
+            hit = abs(plane.x - rect.x) <= half
+                && abs(plane.y - rect.y) <= half
+                && abs(along) <= raster.world.y + sphere.w;
+        } else if id.light < arrayLength(&inv_lights) {
+            let light = inv_lights[id.light];
+            hit = distance(sphere.xyz, light.position) <= sphere.w + light.range;
+        }
+        if hit {
+            table_slots[entry * PAGE_CELL + 3u] = 0u;
+            return;
+        }
+    }
 }
 
 // One thread per level: the expansion's dispatch size is pages TIMES
@@ -163,4 +259,11 @@ fn cs_draw_args() {
     draw_args[1] = pairs;
     draw_args[2] = 0u;
     draw_args[3] = 0u;
+    // The second draw: one quad per dirty page, wiping exactly the
+    // rects the pairs are about to fill — the whole-layer clear died
+    // with the cache.
+    draw_args[4] = 4u;
+    draw_args[5] = min(atomicLoad(&dirty[0]), arrayLength(&dirty) - 1u);
+    draw_args[6] = 0u;
+    draw_args[7] = 0u;
 }

@@ -772,6 +772,26 @@ lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings
 `Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
 decidía cuántos hilos, ahora decide qué páginas EXISTEN.
 
+🎉 **2026-08-23 (3) — LAS PÁGINAS CACHEAN SU CONTENIDO ENTRE FRAMES (#477/#866): "cached
+pages are effectively free" quedó implementado.** El pool ya persistía slots; ahora persiste
+el DEPTH. La 4ª palabra de la tabla volvió como **content stamp** (la generación bajo la que
+se dibujó; 0 = sin contenido) y la compactación saltea toda página residente cuyo stamp
+coincide: ni lista, ni expande, ni dibuja. **Murió el clear de capa entera**: el depth pass
+carga la capa (`LoadOp::Load`) y limpia SOLO los rects sucios con un quad por página (compare
+`Always`, reversed-Z 0). Generaciones (hash FNV, nunca 0): por NIVEL del sol (centro snapeado
+— espejo exacto de `sun_centre`, verificado por test dedicado —, dirección, y el eje del ojo a
+lo largo del sol porque el origen de profundidad viaja con el ojo), y por LÁMPARA (posición,
+dirección, range, kind, cono — la granularidad de UE5). Invalidación por movimiento:
+`instance_bounds` (#847) ya tenía esfera+hash por instancia → diff contra el frame anterior →
+esferas viejas Y nuevas al `cs_invalidate`, que apaga el stamp de toda página alcanzada (por
+página en el sol, por luz en lámparas; por celda = refinamiento en #866). Overflow de la lista
+de movidos o del pair list ⇒ bump de scene generation = todo redibuja UNA vez, nunca stale. El
+panel ahora imprime `rastered · cached ·` (criterio #477: sucias <5%). El rig lo prueba en
+caliente: 2º frame ⇒ 0 listadas, 2 cacheadas, atlas intacto; caster movido ⇒ vuelven las 2 y
+el redraw reproduce la escena. ⚠️ Corrección honesta: la lámpara fuera de alcance que el
+commit anterior decía plantar en el rig NO estaba (un splice fallido la perdió y el assert
+pasaba trivialmente) — plantada de verdad en este commit.
+
 🎉 **2026-08-23 (2) — EL CULL DE LÁMPARAS ES UNA JERARQUÍA EN GPU (#939), y la técnica del
 paper quedó completa en su parte de culling.** El user trajo el paper fundacional (Olsson et
 al. 2014, *Efficient VSM for Many Lights* — el ancestro del VSM de UE5) y pidió completar la

@@ -288,6 +288,32 @@ impl MeshletRenderStage {
                     hash: hasher.finish(),
                 });
             }
+
+            // The page cache's movement diff (#477): index against
+            // index, because the walk order is the buffer order and is
+            // stable frame to frame. A reorder reads as moves — extra
+            // redraws, never a stale page. Both bounds go in: the
+            // shadow the caster LEFT has to redraw too.
+            self.moved_casters.clear();
+            let frames = self.instance_bounds.len().max(self.previous_bounds.len());
+            for i in 0..frames {
+                let previous = self.previous_bounds.get(i);
+                let current = self.instance_bounds.get(i);
+                if let (Some(p), Some(c)) = (previous, current)
+                    && p.hash == c.hash
+                {
+                    continue;
+                }
+                if let Some(p) = previous {
+                    self.moved_casters
+                        .push([p.center.x, p.center.y, p.center.z, p.radius]);
+                }
+                if let Some(c) = current {
+                    self.moved_casters
+                        .push([c.center.x, c.center.y, c.center.z, c.radius]);
+                }
+            }
+            self.previous_bounds.clone_from(&self.instance_bounds);
         }
 
         let scene_params = SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
