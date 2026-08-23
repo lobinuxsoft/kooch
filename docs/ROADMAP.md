@@ -825,6 +825,24 @@ virtual completo. Con `LOCAL_MAX_TEXELS`:
 **Sesenta veces menos.** La razón por la que la tabla es un hash abierto desapareció, y con ella
 el walk de 32 sondeos por píxel por luz.
 
+🔴 **2026-08-22 (noche) — LAS ESCENAS SIN SOL ESTABAN ROTAS POR UN GATE MUERTO, y la spot por
+tres mapeos.** Probado por el user en `roll-a-ball` (solo point lights): sombras destruidas y
+las debug views de lámpara en magenta. Tres defectos (`dbf1b6c7`): (1) `record_page_raster`
+retornaba temprano sin sol — comentario de ANTES de que existiera el ráster local ("their
+raster is the next machine") — así que las lámparas marcaban páginas, quemaban slots del pool
+y **nadie compactaba ni dibujaba nada**: el lector sampleaba el atlas viejo de otra escena.
+Ahora el clipmap cae a -Y (el mismo default del marcado). (2) La **spot** era tres mapeos
+distintos de una página: marcado y lector forzaban cara 0 con la UV del EJE DEL MUNDO, y el
+ráster proyectaba por +X del mundo → `spot_local` en `page_table.wgsl` rota el offset para que
+el eje de la spot SEA la cara 0, compartida por las cuatro pasadas como `sun_basis`
+(test `a_spot_page_rotates_with_its_axis`, por las funciones del shader). (3) Las debug views
+de lámpara se cegaban con `shadows_enabled` — flag de CASCADAS, 0 sin sol. Además: con páginas
+activas se seguían dibujando los cubemaps y la layer de spot **que nadie samplea** (seis caras
+por lámpara de costo muerto) — listas vacías bajo `virtual_pages` y el atlas fijo se libera; y
+los logs INFO por frame bajaron a debug. ⚠️ Del capture del user (1073 frames, desktop): GPU
+1.2 ms, CPU ~4.7, **`vkAcquireNextImageKHR` 17.0 de 24.6 ms** — el "no llega a 60" es el
+swapchain, no el engine; `KOOCH_PRESENT_MODE=novsync` lo demuestra en un launch.
+
 ✅ **2026-08-22 — LA TABLA PLANA ESTÁ.** `page_table.wgsl` ya no tiene hash: el índice de la
 entrada ES la página virtual, la primera palabra es `slot + 1` (0 = ausente), y el lookup del
 sombreado es **una lectura indexada** — la forma de Chalmers/Stephano/UE5. Con ella murieron
