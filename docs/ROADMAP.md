@@ -772,6 +772,25 @@ lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings
 `Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
 decidía cuántos hilos, ahora decide qué páginas EXISTEN.
 
+🎯 **2026-08-23 (11) — EL PRÓXIMO FRENTE, DECIDIDO: EL JUEGO TIRA DEL ENGINE.** Cerrado el
+hilo VSM (falta solo la medición en la OneXFly, que corre el user con su build), lo que sigue
+es **A: mecánicas + un nivel real**, con dos issues nuevas que lo habilitan: **#946 — CSG de
+blockout** (clase Godot CSG, NO ProBuilder: primitivas + booleanas → malla que cae directo al
+pipeline de meshlets existente; investigar crates de booleanas ANTES de escribir una — es un
+cementerio de edge cases) y **#947 — colisión y oclusión de cámara** (clase Phantom
+Camera/Cinemachine: spring-arm con shape-cast de Rapier — no un ray, la cámara tiene near
+plane —, whiskers de oclusión, damping correctivo separado del de follow; el sistema de
+cámaras quedó incompleto y un nivel real lo va a hacer notar de inmediato). **GI confirmada
+en el roadmap**: es **#450 (surfels)** — el user la nombró GIBS (EA SEED 2021), que SÍ usa
+raytracing para la radiancia por surfel pero con presupuesto de rayos desacoplado; 🔴 **el
+engine NO es solo low-end**: en high-end (9070 XT) el update de surfels puede usar ray
+queries de wgpu (`EXPERIMENTAL_RAY_QUERY`, Vulkan), en la handheld la misma estructura se
+alimenta de un sampler barato (SDF #449 como far-field) — una estructura, dos proveedores de
+rayos, el preset (#889) elige. ShaderForge-like: descartado por ahora (la tool más cara, un
+solo artista que ya escribe WGSL). Pendientes de perf que siguen vivos detrás de esto: #824
+(compute shading con luces en LDS, el #1 medido de #823) y el flip del default de
+`virtual_shadows` tras la medición.
+
 🎉 **2026-08-23 (10) — LAS SOMBRAS CLÁSICAS DEJAN DE RETENER SU MEMORIA BAJO LA VSM (#945).**
 Lo que quedaba del defecto #5 era la MEMORIA (los draws ya estaban gateados: `draw_cascades`
 mató los 0.33 ms, y spots/points van con listas vacías bajo pages): con sol presente,
