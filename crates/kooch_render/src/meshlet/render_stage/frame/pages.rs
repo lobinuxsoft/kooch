@@ -39,6 +39,8 @@ struct PageSettings {
     /// The readers' PCF footprint width, carried to the raster uniform
     /// the shading binds. See `ShadowSettings::page_softness`.
     softness: u32,
+    /// The coverage gate (#944). See `ShadowSettings::page_min_pixels`.
+    min_pixels: u32,
 }
 
 /// A camera's index into the pool's slices.
@@ -126,6 +128,7 @@ fn page_settings(resources: &Resources) -> PageSettings {
         paint: false,
         density: shadows.page_density,
         softness: shadows.page_softness,
+        min_pixels: shadows.page_min_pixels,
         pool: PoolConfig {
             pages: shadows.pool_pages.clamp(PAGES_RANGE.0, PAGES_RANGE.1),
             // Filled in by the caller, which is the only place that
@@ -200,6 +203,7 @@ impl MeshletRenderStage {
             marker.set_pool(device, settings.pool);
             marker
         });
+        marker.set_coverage(settings.min_pixels);
         let sun = self.light_frame.as_ref().and_then(|(_, frame)| frame.sun());
         let slice = page_view_index(view_id);
         let view = &self.views[view_id];

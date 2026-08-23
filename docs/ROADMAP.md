@@ -772,6 +772,20 @@ lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings
 `Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
 decidía cuántos hilos, ahora decide qué páginas EXISTEN.
 
+🎉 **2026-08-23 (8) — LAS LUCES QUE NADIE PUEDE RESOLVER NO CASTEAN (#944).** El gate de
+cobertura de Epic (`PruneLightGridCS`), como UNA comparación dentro del loop de marcado que ya
+tiene todos los operandos: una luz local cuyo rango ENTERO proyecta bajo `shadow_min_pixels`
+de radio en pantalla (nuevo knob en `Shadows: virtual pages`, default 8 px, 0 = off) no marca
+páginas — sigue ILUMINANDO, los lectores caminan su chain, no encuentran nada y devuelven
+lit, y recupera su sombra el frame en que la cámara se acerca. El sol nunca se gatea (no
+tiene radio) y el gate yerra hacia castear (mide la esfera de rango, no la parte iluminada).
+El paint del debug aplica el mismo gate. Contador nuevo `culled` (pares rechazados) en la
+línea del censo del panel. Tests: `a_tiny_light_casts_nothing` (lámpara de ~13 px bajo gate
+de 32 → 0 residentes, `culled > 0`, `pairs` idéntico — el gate corta el marcado, no el walk
+del grid) + `shadow_min_pixels_reaches_the_settings` (la lección del defecto #1: un setting
+que el frame no alcanza se shippea inerte). Con esto la cadena de #942 queda completa:
+prioridad (quién) → bias (cuánto) → gate (si siquiera).
+
 🎉 **2026-08-23 (7) — EL BIAS DE RESOLUCIÓN HACE QUE LA DEMANDA QUEPA (#943).** Feedback
 GPU-only, cero readback: `bias_view` (1 hilo, al final del marking) lee el cutoff del plan y
 mueve un bias persistente por vista un paso por frame — bajo presión las LOCALES pagan primero

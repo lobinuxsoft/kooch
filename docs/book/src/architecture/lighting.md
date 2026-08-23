@@ -1266,9 +1266,19 @@ frame of fallback, not one of missing shadow. The panel prints the
 standing bias; one that sits high is the pool saying it is too small
 for the scene.
 
-Still open: #944's coverage gate (a light lighting forty pixels casts
-no pages at all), which shrinks the demand before any of this has to
-price it.
+### The coverage gate — a shadow nobody can resolve claims nothing (#944)
+
+Before the bias has to price anything, the demand is shrunk at the
+source: a local light whose **whole range** projects under
+`shadow_min_pixels` of radius on screen (8 by default, 0 turns it off)
+marks no pages at all. It still shades — the readers walk its chain,
+find nothing resident and return lit — and it gets its shadow back the
+frame the camera comes close enough to flip the comparison. The gate
+errs toward casting: it measures the range sphere, not the lit part of
+it, and the sun is never gated because it has no radius. Epic runs the
+same rule as a pass (`PruneLightGridCS`) before anything marks; here it
+is one comparison inside a loop that already holds every operand. The
+panel counts what it turns away on the census line.
 
 ## Rasterising into the pages — the depth raster (#866)
 

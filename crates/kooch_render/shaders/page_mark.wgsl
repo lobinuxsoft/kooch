@@ -609,8 +609,28 @@ fn mark_main(@builtin(global_invocation_id) id: vec3<u32>) {
             continue;
         }
         atomicAdd(&counters[2], 1u);
+        // The coverage gate (#944): a light whose WHOLE range projects
+        // under the threshold casts no pages — it still shades, and the
+        // reader finds nothing and returns lit. Epic runs the same rule
+        // as a pass, `PruneLightGridCS`, before anything marks; here it
+        // is a comparison the loop already has every operand for.
+        if pages.density.y > 0.0 && coverage_pixels(light) < pages.density.y {
+            atomicAdd(&counters[6], 1u);
+            continue;
+        }
         _ = mark_local(light, world, local_wanted);
     }
+}
+
+// The projected radius of a light's range sphere, in screen pixels —
+// the whole reach of the light, not the lit part of it, so the gate
+// errs toward casting. Camera-dependent and pixel-independent: the
+// same number every sample computes.
+fn coverage_pixels(light: u32) -> f32 {
+    let record = lights[light];
+    let distance = max(length(record.position - pages.eye_and_base.xyz), 0.05);
+    let focal = view.clip_from_view[1][1];
+    return record.range * abs(focal) * view.viewport.y / (2.0 * distance);
 }
 
 // Paints the page each pixel chose, over the frame's final colour.
@@ -681,6 +701,10 @@ fn paint_view(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         let light = indices[slot];
         if light >= pages.strides.w {
+            continue;
+        }
+        // The same gate the marking applied (#944).
+        if pages.density.y > 0.0 && coverage_pixels(light) < pages.density.y {
             continue;
         }
         paint_page(

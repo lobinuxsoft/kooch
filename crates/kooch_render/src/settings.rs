@@ -183,6 +183,21 @@ pub struct RenderSettings {
         shown_when = PAGES_ON
     )]
     pub shadow_softness: u32,
+    /// Projected radius, in screen pixels, under which a local light
+    /// casts no shadow pages at all (#944). The light still SHADES —
+    /// only its shadow is judged not worth the pool it would spend:
+    /// a lamp whose whole reach covers forty pixels asks for the same
+    /// six-face mip chain as one filling the screen. Epic runs the
+    /// same gate as a pass, `PruneLightGridCS`, before anything marks.
+    ///
+    /// 0 disables the gate. The sun is never gated — it has no radius.
+    #[serde(default = "default_shadow_min_pixels")]
+    #[reflect(
+        group = "Shadows: virtual pages",
+        choices = SHADOW_MIN_PIXELS_CHOICES,
+        shown_when = PAGES_ON
+    )]
+    pub shadow_min_pixels: u32,
     /// Whether shadows are drawn at all. Off frees the atlas entirely
     /// — 64 MiB at the default resolution — and the cube maps with it.
     ///
@@ -669,6 +684,12 @@ fn default_shadow_density() -> u32 {
     100
 }
 
+/// 8: on a 1080p screen, a light whose whole reach projects to a
+/// 16-pixel blob. Its shadow would be a page nobody can see.
+fn default_shadow_min_pixels() -> u32 {
+    8
+}
+
 /// 🔴 Off. The cascades are what every scene in the project was authored
 /// against, and a technique that replaces them cannot become the default
 /// on the frame it first renders.
@@ -770,6 +791,29 @@ const SHADOW_DENSITY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 /// The footprint widths on offer. `(width + 1)²` is the loads per
 /// light per pixel, which is why the list is short and the wide end is
 /// named after its bill.
+const SHADOW_MIN_PIXELS_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
+    kooch_ecs::reflect::FieldChoice {
+        label: "Off — every light casts",
+        value: 0,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "4 px — gate only the invisible",
+        value: 4,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "8 px — the default",
+        value: 8,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "16 px",
+        value: 16,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "32 px — distant lamps go shadowless",
+        value: 32,
+    },
+];
+
 const SHADOW_SOFTNESS_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
         label: "Sharp — bilinear, 4 taps, the cube path's look",
@@ -908,6 +952,7 @@ impl Default for RenderSettings {
             shadow_distance: shadows.max_distance,
             shadow_cascade_texels: shadows.cascade_texels,
             shadow_softness: shadows.page_softness,
+            shadow_min_pixels: shadows.page_min_pixels,
             sun_softness: shadows.sun_softness,
             shadow_first_cascade_distance: shadows.first_cascade_distance,
             contact_shadow_steps: contact.linear_steps,
@@ -968,6 +1013,7 @@ impl RenderSettings {
             page_density: self.shadow_density,
             pool_pages: self.shadow_pool_pages,
             page_softness: self.shadow_softness,
+            page_min_pixels: self.shadow_min_pixels,
         }
     }
 

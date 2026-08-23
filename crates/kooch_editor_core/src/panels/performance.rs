@@ -836,18 +836,26 @@ fn shadow_page_readout(
     // only the four that fit today's slots would be measuring the cap
     // the feature is meant to remove.
     ui.label(
-        egui::RichText::new(format!(
-            "{} samples · {} sample/light pairs · every light casting",
-            counts.samples, counts.pairs
-        ))
+        egui::RichText::new(if counts.culled > 0 {
+            format!(
+                "{} samples · {} sample/light pairs · {} gated by coverage",
+                counts.samples, counts.pairs, counts.culled
+            )
+        } else {
+            format!(
+                "{} samples · {} sample/light pairs · every light casting",
+                counts.samples, counts.pairs
+            )
+        })
         .small()
         .weak(),
     )
     .on_hover_text(
         "The pass walks the froxel grid, which holds every light that reaches a pixel — so \
-         this is what the scene would cost with ALL of its lights casting, not with the \
-         four that have a cube slot today. Pairs divided by samples is the grid's own \
-         lights-per-pixel, which is the cross-check that the light side agrees with it.",
+         this is what the scene would cost with ALL of its lights casting. Pairs divided \
+         by samples is the grid's own lights-per-pixel. Gated pairs are lights whose whole \
+         range projects under `shadow_min_pixels` on screen (#944): they still shade, but \
+         a shadow nobody can resolve claims no pages.",
     );
     // 🔴 The comparison that makes the number mean something, and it is
     // one budget for every light in the scene rather than per light.

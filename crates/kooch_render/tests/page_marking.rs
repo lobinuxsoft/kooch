@@ -1638,3 +1638,75 @@ fn the_bias_settles_the_denials() {
     );
     assert_eq!(relaxed.pool.denied, 0, "relaxed and still denying");
 }
+
+/// A light too small on screen casts no pages (#944), and gets them
+/// back the moment the gate would pass it — here by turning the gate
+/// off, which is the same comparison a closer camera flips.
+#[test]
+fn a_tiny_light_casts_nothing() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    // Reach 2 m at 10 m: a dozen-odd pixels of projected radius on the
+    // test viewport — under a 32 px gate, over a disabled one. The
+    // surface sits AT the lamp's depth so its centre pixels are lit.
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 2.0);
+
+    let run_gated = |pixels: u32| {
+        let eye = Vec3::ZERO;
+        let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+        let proj = projection();
+        let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+        let mut lights = GpuLights::new(&device);
+        let mut frame = kooch_lighting::LightFrame::extract(&resources);
+        lights.update(&device, &queue, &resources, camera, None, &mut frame);
+        let depth_view = depth_texture(&device, &queue, 0.01);
+        let target = paint_target(&device);
+        let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
+        marker.set_coverage(pixels);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            // No sun: every page below is the lamp's own.
+            None,
+            (SIZE, SIZE),
+            0,
+            1,
+            100,
+            Paint {
+                target: &target,
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        marker.poll();
+        wait(&device);
+        marker.poll();
+        marker.last().expect("the counters came back")
+    };
+
+    let open = run_gated(0);
+    assert!(open.resident > 0, "the ungated lamp marked nothing");
+    assert_eq!(open.culled, 0, "an off gate culled something");
+
+    let gated = run_gated(32);
+    assert_eq!(
+        gated.resident, 0,
+        "a lamp under the gate still marked pages"
+    );
+    assert!(gated.culled > 0, "nothing was counted as gated");
+    assert_eq!(
+        gated.pairs, open.pairs,
+        "the gate changed the grid walk instead of the marking"
+    );
+}

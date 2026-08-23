@@ -109,6 +109,10 @@ pub struct MarkCounts {
     pub samples: u32,
     /// Sample/light pairs walked.
     pub pairs: u32,
+    /// Pairs the coverage gate turned away (#944): the light reaches
+    /// the sample, but its whole range projects under
+    /// `shadow_min_pixels` on screen, so it marks nothing.
+    pub culled: u32,
     /// Page indices past the end of the mark buffer. 🔴 Non-zero means
     /// every number above is a floor, not a count.
     pub overflow: u32,
@@ -190,6 +194,9 @@ pub struct PageMarker {
     capacity: (u32, u32),
     /// The frame index and the eviction threshold. See [`PoolLife`].
     life: PoolLife,
+    /// The coverage gate (#944), in projected screen pixels. 0 = off,
+    /// which is what a directly-constructed marker measures with.
+    coverage: u32,
     last: Option<MarkCounts>,
 }
 
@@ -263,8 +270,15 @@ impl PageMarker {
             config,
             clipmap,
             capacity: (1, 1),
+            coverage: 0,
             last: None,
         }
+    }
+
+    /// Projected radius, in screen pixels, under which a local light
+    /// marks no pages (#944). The sun is never gated.
+    pub fn set_coverage(&mut self, pixels: u32) {
+        self.coverage = pixels;
     }
 
     /// The last count that came back, a frame or two old.
@@ -442,7 +456,13 @@ impl PageMarker {
                 ],
                 // The reciprocal, because the shader scales the world
                 // size a pixel may ask a texel to match.
-                density: [100.0 / density.clamp(1, 400) as f32, 0.0, 0.0, 0.0],
+                density: [
+                    100.0 / density.clamp(1, 400) as f32,
+                    // The coverage gate (#944), in projected pixels.
+                    self.coverage as f32,
+                    0.0,
+                    0.0,
+                ],
             }),
         );
 
@@ -825,6 +845,7 @@ impl Readback {
                     samples: words[1],
                     pairs: words[2],
                     overflow: words[3],
+                    culled: words[6],
                     pool: PoolCounts {
                         claims: words[8],
                         overflow: words[5],

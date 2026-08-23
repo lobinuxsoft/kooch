@@ -320,6 +320,19 @@ fn shadow_softness_reaches_the_published_settings() {
 }
 
 #[test]
+fn shadow_min_pixels_reaches_the_settings() {
+    // Same class again: a gate that stops at the asset ships every
+    // light casting forever.
+    let settings = RenderSettings {
+        shadow_min_pixels: 32,
+        ..Default::default()
+    };
+    assert_eq!(settings.shadows().page_min_pixels, 32);
+    // The default gates only what nobody could resolve anyway.
+    assert_eq!(RenderSettings::default().shadow_min_pixels, 8);
+}
+
+#[test]
 fn the_frame_never_asks_for_render_settings() {
     // The bug's CLASS, not its instance. `RenderSettings` is the
     // author's asset; what a frame may read is the derived struct
