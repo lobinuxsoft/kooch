@@ -299,7 +299,12 @@ fn the_flat_table_is_megabytes_not_108() {
     let slots = super::mark::padded_lights(101) + 1;
     let entries = super::mark::span(config, clipmap, slots);
     let bytes = entries * super::pool::PAGE_CELL as u64 * 4;
-    assert!(bytes < 8 * 1024 * 1024, "one view's table is {bytes} bytes");
+    // Four words an entry since the receivers' ask joined the slot,
+    // the age and the listing.
+    assert!(
+        bytes < 12 * 1024 * 1024,
+        "one view's table is {bytes} bytes"
+    );
     let flat = 28_409_856u64 * 4;
     assert!(
         bytes * 10 < flat,

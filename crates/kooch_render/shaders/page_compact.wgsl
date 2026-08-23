@@ -92,16 +92,35 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
     // sun land in the same list whenever they want the same fineness —
     // and the sun's culls have already filled it. The anchor puts the
     // clipmap's level L on bucket L exactly; see `page_octave`.
-    var range = 0.0;
-    if !id.is_sun && id.light < arrayLength(&lights) {
-        range = lights[id.light].range;
-    }
+    //
+    // A LOCAL page buckets by what its RECEIVERS asked — the fourth
+    // word, written by the marking — because the survivor list is a
+    // LOD and the ask is the density the screen wants. The range is
+    // only the fallback for a resident page nobody marked this frame:
+    // bucketing by it handed a range-50 lamp a 30-centimetre LOD and
+    // its sphere shadows were octahedra. See `PAGE_CELL`.
+    //
     // Virtual TEXELS across level 0, which is pages across it times a
     // page's side — `space.y` is a face's page count and would be off
     // by the page size squared.
     let virtual_texels = raster.space.z * raster.pool.w;
-    let texel = page_texel_world(id, raster.world.x, virtual_texels, range);
-    let slot = page_octave(texel, raster.world.x, virtual_texels, buckets);
+    var slot: u32;
+    if id.is_sun {
+        let texel = page_texel_world(id, raster.world.x, virtual_texels, 0.0);
+        slot = page_octave(texel, raster.world.x, virtual_texels, buckets);
+    } else {
+        let asked = table_slots[entry * PAGE_CELL + 3u];
+        if asked != 0u {
+            slot = min(asked - 1u, buckets - 1u);
+        } else {
+            var range = 0.0;
+            if id.light < arrayLength(&lights) {
+                range = lights[id.light].range;
+            }
+            let texel = page_texel_world(id, raster.world.x, virtual_texels, range);
+            slot = page_octave(texel, raster.world.x, virtual_texels, buckets);
+        }
+    }
     // Local pages are still counted separately, because "listed" and
     // "drawn" are different claims and the panel states both.
     if !id.is_sun {

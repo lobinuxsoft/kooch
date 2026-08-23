@@ -376,6 +376,19 @@ fn local_page_for(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
 // One page of a local light's mip chain, marked.
 fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let page = local_page_for(light, world, wanted);
+    // What THIS receiver asks of the page, on the sun's octave scale —
+    // the number that decides which survivor list (which LOD) draws
+    // into it. Min across receivers: the finest ask wins. See the
+    // fourth word's doc beside `PAGE_CELL`.
+    if page.x < pages.pool.x {
+        let octave = page_octave(
+            wanted,
+            pages.eye_and_base.w,
+            pages.chain.y,
+            pages.chain.w,
+        );
+        atomicMin(&table_cells[page.x * PAGE_CELL + 3u], octave + 1u);
+    }
     // 🔴 CLAIMED now, and the flag was a guard rather than an oversight.
     // A page claimed is a page in the table, and a page in the table
     // takes a pool slot from whoever else wanted one — with the census
@@ -649,6 +662,13 @@ fn age_view(@builtin(global_invocation_id) id: vec3<u32>) {
     let within = id.x;
     if within >= view_span() { return; }
     let entry = view_base() + within;
+    // The receivers' ask is a PER-FRAME measurement: cleared here, on
+    // the pass that already walks this view's entries and runs before
+    // the marking, so each frame's minimum is this frame's. 0 means
+    // "nobody asked", which the compaction reads as "fall back to the
+    // range" — the right answer for a resident page no pixel is
+    // looking at.
+    atomicStore(&table_cells[entry * PAGE_CELL + 3u], 0u);
     let stored = atomicLoad(&table_cells[entry * PAGE_CELL]);
     if stored == PAGE_ABSENT { return; }
 

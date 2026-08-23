@@ -51,22 +51,30 @@
 /// so that a cleared buffer is an empty table; eviction stores this.
 const PAGE_ABSENT: u32 = 0u;
 
-/// Words per table entry: the physical slot, the frame it was last
-/// requested in, and its index in this view's compacted `page_list`.
+/// Words per table entry: the physical slot (`slot + 1`, 0 = absent),
+/// the frame it was last requested in, its index in this view's
+/// compacted `page_list`, and the finest OCTAVE any receiver asked of
+/// it this frame (`octave + 1`, 0 = nobody asked).
+///
+/// # 🔴 The fourth word is what stops a lamp's shadow being a blob
+///
+/// A bucket decides which survivor list a page draws from, and the
+/// survivor list is a LOD. Bucketing a local page by the texel at the
+/// light's RANGE — the far cap — hands a range-50 lamp whose casters
+/// sit two metres away a survivor list simplified to tens of
+/// centimetres: on screen, a sphere's shadow is an octahedron.
+/// Measured in `roll-a-ball`: `worst level 12` on lamps whose
+/// receivers asked for centimetres.
+///
+/// The marking already computes what every receiver wants — `wanted`,
+/// the world texel a screen pixel needs — so it atomicMins that octave
+/// into the entry, and the compaction buckets there. The range is only
+/// the fallback for a resident page nobody looked at this frame, where
+/// a coarse redraw is invisible by construction.
 ///
 /// 🔴 Interleaved because `max_storage_buffers_per_shader_stage` is
-/// eight on the downlevel defaults and the marking pass was already
-/// there. Declared here rather than in the marking pass because the
-/// SHADING pass indexes the same buffer and a stride the two disagree on
-/// reads an age as a slot.
-///
-/// The third word is the compaction's answer to a question only it can
-/// answer: `page_list` is dense and per view, so a pass holding a page
-/// KEY has no way back to the entry the draw indexes by. Writing it
-/// down while the compaction already has both is what lets a pass find
-/// pages by walking cells instead of by walking every resident page —
-/// see `cs_expand`. Only valid for the view that compacted this frame.
-const PAGE_CELL: u32 = 3u;
+/// eight on the downlevel defaults; see the marking pass's binding.
+const PAGE_CELL: u32 = 4u;
 
 /// A table entry that is resident but not in THIS view's `page_list`.
 ///

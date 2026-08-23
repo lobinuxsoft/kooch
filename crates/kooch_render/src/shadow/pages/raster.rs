@@ -672,7 +672,14 @@ fn atlas_texture(device: &wgpu::Device, config: PageConfig, pool: PoolConfig) ->
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: PAGE_DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        // COPY_SRC is for the end-to-end rig
+        // (`a_lamp_page_holds_what_its_light_sees`), which reads pages
+        // back and checks them against the scene — the class of defect
+        // that until then was only ever caught by a person staring at a
+        // broken frame. The flag costs nothing at runtime.
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     })
 }
