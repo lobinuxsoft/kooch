@@ -881,6 +881,37 @@ fn shadow_page_readout(
         } else {
             "per pixel"
         };
+        // 🔴 Derived from this engine's own budget, not from folklore.
+        // On the OneXFly `shade: compute` measured 5.5 ms at 17.9 lights
+        // per pixel — about 0.31 ms a light — against a 13.9 ms frame.
+        // Holding the shading loop near 2 ms, a fifth of the budget,
+        // puts the sustainable average at six or seven. A PEAK may run
+        // to twice that before the cells holding it stop being a
+        // rounding error, so the alert fires at sixteen.
+        const OVERLAP_WARN: u32 = 16;
+        if counts.peak_lights > 0 {
+            let over = counts.peak_lights > OVERLAP_WARN;
+            let text = egui::RichText::new(format!(
+                "worst froxel holds {} lights{}",
+                counts.peak_lights,
+                if over { " — overlapping" } else { "" }
+            ))
+            .small();
+            ui.label(if over {
+                text.color(egui::Color32::from_rgb(240, 180, 60))
+            } else {
+                text.weak()
+            })
+            .on_hover_text(
+                "Point and spot lights whose ranges overlap all land in the same froxel, \
+                 and every pixel of that froxel walks all of them — in the shading loop \
+                 and again in the page marking. Overlap is invisible while authoring: \
+                 lights are placed one at a time and the cell they share is not drawn \
+                 anywhere.\n\nThe threshold is this engine's own. Shading measured 5.5 ms \
+                 at 17.9 lights per pixel on the OneXFly, about 0.31 ms a light, against a \
+                 13.9 ms frame.",
+            );
+        }
         ui.label(
             egui::RichText::new(format!(
                 "{} froxels occupied · {:.1} lights each · walking {} · {:.0}× the other way",

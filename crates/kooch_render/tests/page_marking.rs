@@ -2005,3 +2005,44 @@ fn lamps_that_overrun_the_pool_spare_the_sun() {
         last.pool.bias_local, last.pool.bias_sun, last.pool.cutoff
     );
 }
+
+/// The peak overlap is a peak, not the average, and both paths report it.
+///
+/// 🔴 `pairs / froxels` hides the case that hurts. Lights are authored
+/// one at a time and the froxel they share is drawn nowhere, so the
+/// number that matters is the worst cell — it decides the shading
+/// loop's worst pixel and how much of the pool one cell can claim.
+#[test]
+fn the_census_reports_the_worst_froxel() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    // Stacked on one spot: every one of them reaches the same froxels.
+    for i in 0..6 {
+        let nudge = i as f32 * 0.01;
+        add_point(&mut resources, Vec3::new(nudge, 0.0, -6.0), 40.0);
+    }
+    let counts = run(&device, &queue, &resources, 0.01, None);
+    assert!(counts.froxels > 0, "no froxel was occupied");
+    let average = counts.pairs as f32 / counts.samples.max(1) as f32;
+    assert!(
+        counts.peak_lights >= average.ceil() as u32,
+        "peak {} is under the average {average} — it is not a peak",
+        counts.peak_lights
+    );
+    assert!(
+        counts.peak_lights >= 2,
+        "six lights on one spot and the worst froxel saw {}",
+        counts.peak_lights
+    );
+
+    // Same scene through the cluster path: overlap is a property of the
+    // SCENE, so the alert has to read the same either way.
+    let froxel = with_clusters(|| run(&device, &queue, &resources, 0.01, None));
+    assert_eq!(
+        froxel.peak_lights, counts.peak_lights,
+        "the two marking paths disagree about how much the scene overlaps"
+    );
+}

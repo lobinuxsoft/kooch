@@ -38,7 +38,7 @@ const GROUP: u32 = 8;
 /// 11 pages kept alive, 12 pages evicted, 13 unused (was tombstones
 /// swept). The rest spare, because a storage buffer is rounded up
 /// anyway.
-const COUNTERS: u64 = 16;
+const COUNTERS: u64 = 20;
 /// Words per view in the rank-state buffer: a 32-bucket demand
 /// histogram, the plan's three words, then the persistent bias and
 /// patience (#943), padded to 40 — then the OCCUPANCY BITMAP, one bit
@@ -146,6 +146,15 @@ pub struct MarkCounts {
     /// the sample, but its whole range projects under
     /// `shadow_min_pixels` on screen, so it marks nothing.
     pub culled: u32,
+    /// The most lights any one occupied froxel had to walk.
+    ///
+    /// 🔴 The average hides the case that hurts. `pairs / froxels` was
+    /// 17.9 in `many_lights` while single froxels held far more, and it
+    /// is the PEAK that decides both the shading loop's worst pixel and
+    /// how much of the pool one cell can claim. Overlap is the input
+    /// nobody sees while authoring: lights are placed one at a time and
+    /// the froxel they share is not on screen anywhere.
+    pub peak_lights: u32,
     /// Whether `pairs` counts (froxel, light) or (pixel, light).
     ///
     /// 🔴 The panel divided pairs by samples to get lights-per-pixel and
@@ -943,6 +952,7 @@ impl Readback {
                     overflow: words[3],
                     culled: words[6],
                     froxels: words[9],
+                    peak_lights: words[16],
                     by_froxel: false,
                     pool: PoolCounts {
                         claims: words[8],

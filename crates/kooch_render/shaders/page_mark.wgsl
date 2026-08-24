@@ -603,10 +603,12 @@ fn page_color(index: u32, level: u32) -> vec3<f32> {
 ///
 /// A workgroup is `MARK_GROUP * MARK_GROUP` = 64 threads, so this trades
 /// up to 64 global atomics for one.
-var<workgroup> tally: array<atomic<u32>, 3>;
+var<workgroup> tally: array<atomic<u32>, 4>;
 const TALLY_SAMPLES: u32 = 0u;
 const TALLY_PAIRS: u32 = 1u;
 const TALLY_CULLED: u32 = 2u;
+/// The worst overlap — a MAX, not a sum, so the flush is a max too.
+const TALLY_PEAK: u32 = 3u;
 
 /// 🔴 The barriers live HERE and the work lives in `mark_pixel`, because
 /// `workgroupBarrier` in non-uniform control flow is undefined and
@@ -618,7 +620,7 @@ fn mark_main(
     @builtin(global_invocation_id) id: vec3<u32>,
     @builtin(local_invocation_index) lane: u32,
 ) {
-    if lane < 3u {
+    if lane < 4u {
         atomicStore(&tally[lane], 0u);
     }
     workgroupBarrier();
@@ -636,6 +638,10 @@ fn mark_main(
         let culled = atomicLoad(&tally[TALLY_CULLED]);
         if culled != 0u {
             atomicAdd(&counters[6], culled);
+        }
+        let peak = atomicLoad(&tally[TALLY_PEAK]);
+        if peak != 0u {
+            atomicMax(&counters[16], peak);
         }
     }
 }
@@ -714,6 +720,14 @@ fn mark_pixel(id: vec3<u32>) {
         atomicMax(&rank_state[slab], ~depth_bits);
         atomicMax(&rank_state[slab + 1u], depth_bits);
     }
+    let record = cells[froxel];
+    // Recorded on BOTH paths: the overlap is a property of the scene, not
+    // of how the marking walks it, and the alert has to mean the same
+    // thing whichever is on. Into WORKGROUP memory — one thread per
+    // pixel lands here, and `the_hot_path_counts_in_workgroup_memory`
+    // exists to stop exactly the global atomic this was on its first
+    // draft.
+    atomicMax(&tally[TALLY_PEAK], record.point_count + record.spot_count);
     // 🔴 The per-light walk belongs to `mark_froxels` when the cluster
     // path is on (#952). Everything above this line still runs: the sun
     // is marked per pixel, and the occupancy bit that pass reads was set
@@ -721,7 +735,6 @@ fn mark_pixel(id: vec3<u32>) {
     if pages.density.z > 0.5 {
         return;
     }
-    let record = cells[froxel];
     let start = record.offset;
     // Points and spots are the first two ranges, stored in that order,
     // and both need pages. Probes, volumes and decals do not.
@@ -1225,6 +1238,8 @@ fn mark_froxels(@builtin(global_invocation_id) gid: vec3<u32>) {
     if count == 0u {
         return;
     }
+    // The worst overlap in the frame. See `MarkCounts::peak_lights`.
+    atomicMax(&counters[16], count);
 
     // The grid coordinate back out of the flat index; mirrors
     // `cluster_index`.
