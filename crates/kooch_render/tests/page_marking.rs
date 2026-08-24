@@ -2060,6 +2060,15 @@ fn the_census_reports_the_worst_froxel() {
 /// halves on failure and repacks inside the frame. Ours are measured by
 /// a per-pixel pass, so one frame is the floor — and this pins that it
 /// reaches the floor.
+///
+/// ⚠️ **Both paths, and they are allowed different bounds.** The raise
+/// estimates a level as four pages becoming one, which is exact for the
+/// sun's clipmap and only an upper bound for a lamp: `mark_face_rect`
+/// caps a face's rect at `FROXEL_RECT_MAX`, so a rect already at the cap
+/// shrinks by less than four when the level goes up. The cluster path
+/// therefore lands one correction further out. It is measured here
+/// rather than hidden because a bound nobody states is a bound nobody
+/// notices growing.
 #[test]
 fn the_bias_reaches_its_value_in_one_step() {
     let Some((device, queue)) = device() else {
@@ -2080,72 +2089,104 @@ fn the_bias_reaches_its_value_in_one_step() {
     lights.update(&device, &queue, &resources, camera, None, &mut frame);
     let depth_view = depth_texture(&device, &queue, 0.02);
     let target = paint_target(&device);
-    let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
-    marker.set_pool(
-        &device,
-        PoolConfig {
-            pages: 12,
-            views: 1,
-        },
-    );
 
-    let mut series = Vec::new();
-    for index in 0..8u32 {
-        marker.set_frame(index);
-        let mut encoder = device.create_command_encoder(&Default::default());
-        lights.record_clusters(&mut encoder);
-        marker.record(
+    let mut series_for = |cluster: bool| {
+        let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
+        marker.set_cluster_marking(cluster);
+        marker.set_pool(
             &device,
-            &queue,
-            &mut encoder,
-            &lights,
-            &depth_view,
-            (proj * view).inverse(),
-            eye,
-            Some(Vec3::new(0.3, -1.0, 0.2)),
-            (SIZE, SIZE),
-            0,
-            1,
-            100,
-            Paint {
-                target: &target,
-                on: false,
-                size: (SIZE, SIZE),
+            PoolConfig {
+                pages: 12,
+                views: 1,
             },
         );
-        queue.submit([encoder.finish()]);
-        marker.poll();
-        wait(&device);
-        marker.poll();
-        if let Some(counts) = marker.last() {
-            series.push(counts.pool.bias_local);
+
+        let mut series = Vec::new();
+        for index in 0..8u32 {
+            marker.set_frame(index);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            lights.record_clusters(&mut encoder);
+            marker.record(
+                &device,
+                &queue,
+                &mut encoder,
+                &lights,
+                &depth_view,
+                (proj * view).inverse(),
+                eye,
+                Some(Vec3::new(0.3, -1.0, 0.2)),
+                (SIZE, SIZE),
+                0,
+                1,
+                100,
+                Paint {
+                    target: &target,
+                    on: false,
+                    size: (SIZE, SIZE),
+                },
+            );
+            queue.submit([encoder.finish()]);
+            marker.poll();
+            wait(&device);
+            marker.poll();
+            if let Some(counts) = marker.last() {
+                series.push(counts.pool.bias_local);
+            }
         }
-    }
-    let settled = *series.last().expect("counters came back");
-    assert!(
-        settled > 1,
-        "this scene does not need a multi-step bias, so it cannot show \
-         one being reached in a step: settled at +{settled}"
-    );
-    // 🔴 The property, and it is deliberately not exactness. The raise
-    // uses the OPTIMISTIC estimate — four pages become one per level —
-    // because raising too little costs a frame of denials while raising
-    // too much costs blur the player sees. So it lands at or just under
-    // the answer and corrects once, never climbing through it.
-    let first_move = series
-        .iter()
-        .copied()
-        .find(|&b| b > 0)
-        .expect("the bias never rose");
-    assert!(
-        first_move + 1 >= settled,
-        "the first move was +{first_move} against a settled +{settled}: \
-         {series:?} — that is stepping, not computing"
-    );
-    let rises = series.windows(2).filter(|w| w[1] > w[0]).count();
-    assert!(
-        rises <= 1,
-        "the bias rose {rises} times after its first move: {series:?} — \
-         one correction is the estimate erring low, several is a loop"
+        series
+    };
+
+    // `corrections` is how many times the bias moved up AFTER its first
+    // move. Stepping one per frame would need `settled - 1` of them; the
+    // point of computing the fit is that this number stays tiny however
+    // deep the scene's answer is.
+    let check = |series: Vec<u32>, corrections: usize, path: &str| {
+        let settled = *series.last().expect("counters came back");
+        assert!(
+            settled > 1,
+            "{path}: this scene does not need a multi-step bias, so it \
+             cannot show one being reached in a step: settled at +{settled}"
+        );
+        // 🔴 The property, and it is deliberately not exactness. The
+        // raise uses the OPTIMISTIC estimate — four pages become one per
+        // level — because raising too little costs a frame of denials
+        // while raising too much costs blur the player sees. So it lands
+        // at or under the answer and corrects, never climbing through it.
+        let first_move = series
+            .iter()
+            .copied()
+            .find(|&b| b > 0)
+            .expect("the bias never rose");
+        assert!(
+            first_move + corrections as u32 >= settled,
+            "{path}: the first move was +{first_move} against a settled \
+             +{settled}: {series:?} — that is stepping, not computing"
+        );
+        let rises = series.windows(2).filter(|w| w[1] > w[0]).count();
+        assert!(
+            rises <= corrections,
+            "{path}: the bias rose {rises} times after its first move: \
+             {series:?} — a correction is the estimate erring low, a climb \
+             is stepping"
+        );
+        // Whatever it took to get there, it must be strictly better than
+        // the one-step-a-frame rule this replaced.
+        assert!(
+            rises < settled as usize,
+            "{path}: {rises} rises to reach +{settled} is the per-frame \
+             step it was supposed to replace: {series:?}"
+        );
+        settled
+    };
+
+    let pixels = check(series_for(false), 1, "per pixel");
+    // One further out, and the cap on a face's rect is why — see the
+    // header. Same answer, one more frame to reach it.
+    let clusters = check(series_for(true), 2, "per cluster");
+    assert_eq!(
+        pixels, clusters,
+        "the two marking paths settled on different resolutions for one \
+         scene, which is a difference in what they MARK, not in how fast \
+         the bias converges"
     );
 }

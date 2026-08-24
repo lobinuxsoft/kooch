@@ -80,6 +80,8 @@ use kooch_lighting::{GpuLight, LIGHT_KIND_DIRECTIONAL};
 const COMPACT: &str = include_str!("../../../shaders/page_compact.wgsl");
 const EXPAND: &str = include_str!("../../../shaders/page_expand.wgsl");
 const DEPTH: &str = include_str!("../../../shaders/page_depth.wgsl");
+/// Appended to [`DEPTH`] only where `CLIP_DISTANCES` exists.
+const DEPTH_CLIPPED: &str = include_str!("../../../shaders/page_depth_clipped.wgsl");
 
 /// Lamp slots the raster addresses — lamp `L`'s pages land in bucket
 /// `clipmap.levels + L`, fed by the hierarchical cull's slice for `L`
@@ -416,9 +418,24 @@ impl PageRasterizer {
             source: wgpu::ShaderSource::Wgsl(format!("{CLUSTER_COMMON}\n{TABLE}\n{EXPAND}").into()),
         });
         // The depth pass builds a lamp's frustum from the light record.
+        //
+        // 🔴 `enable` has to be the FIRST thing in a module and wgpu
+        // rejects the directive outright without the feature, so the
+        // clipped path is a different SOURCE rather than a branch inside
+        // one. `clipped` decides both halves — the prefix here and the
+        // entry point below — and they cannot disagree.
+        let clipped = device.features().contains(wgpu::Features::CLIP_DISTANCES);
+        let enable = if clipped {
+            "enable clip_distances;\n"
+        } else {
+            ""
+        };
+        let tail = if clipped { DEPTH_CLIPPED } else { "" };
         let depth_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("page_depth"),
-            source: wgpu::ShaderSource::Wgsl(format!("{CLUSTER_COMMON}\n{TABLE}\n{DEPTH}").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{enable}{CLUSTER_COMMON}\n{TABLE}\n{DEPTH}\n{tail}").into(),
+            ),
         });
 
         let compact_bgl = compact_layout(device);
@@ -489,14 +506,23 @@ impl PageRasterizer {
             layout: Some(&depth_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &depth_module,
-                entry_point: Some("vs_page"),
+                entry_point: Some(if clipped {
+                    "vs_page_clipped"
+                } else {
+                    "vs_page"
+                }),
                 buffers: &[],
                 compilation_options: Default::default(),
             },
             // 🔴 A fragment stage where `shadow_depth` has none, and it
             // is not an oversight: it is the per-page scissor the
             // hardware cannot give per instance. See `page_depth.wgsl`.
-            fragment: Some(wgpu::FragmentState {
+            //
+            // 🔴 …unless the clipper can be given the page's own four
+            // edges, in which case there is nothing left to discard and
+            // the stage goes away — which is also what puts a depth-only
+            // pass on the hardware's double-rate path (#952).
+            fragment: (!clipped).then(|| wgpu::FragmentState {
                 module: &depth_module,
                 entry_point: Some("fs_page"),
                 targets: &[],

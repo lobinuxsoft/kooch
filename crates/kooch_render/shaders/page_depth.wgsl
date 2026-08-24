@@ -26,6 +26,30 @@
 // cost is early-Z: a discard makes depth writes late. That is the price
 // of one pass instead of one per page, and it is the right side of the
 // trade by three orders of magnitude.
+//
+// # 🔴 …and why the hardware does it instead where it can
+//
+// `discard` pays TWICE, and the second one is the larger: the fragments
+// outside the rect are rasterised, interpolated and only then thrown
+// away, so the pass carries every one of them to the point of no use.
+// A page whose caster spans ten of its own widths rasterises a hundred
+// times its own texels to keep one.
+//
+// User clip planes remove both. `vs_page_clipped` hands the clipper the
+// page's own four edges, the triangle is cut geometrically before any
+// fragment exists, and with nothing left to discard the pass drops its
+// fragment shader entirely — which is also how a depth-only pass reaches
+// the hardware's double-rate depth path.
+//
+// The arithmetic is smaller than it looks. A page's local space IS the
+// clip volume — `page_clip_w` maps `local_w / w ∈ [-1, 1]` onto the
+// rect — so the four distances are `w ± local.x` and `w ± local.y`,
+// which is the standard volume test aimed at the page instead of at the
+// atlas. The rect's half-extent scales all four by a positive constant
+// and a positive scale cannot move a sign, so it drops out.
+//
+// It is optional (`Features::CLIP_DISTANCES`), so `vs_page` + `fs_page`
+// stay as the fallback and both paths must agree. See the tests.
 
 struct MeshVertexStored {
     position: array<f32, 3>,
@@ -105,12 +129,30 @@ fn fetch_local_vertex_index(byte_offset: u32) -> u32 {
     return (packed >> (byte_in_word * 8u)) & 0xffu;
 }
 
-@vertex
-fn vs_page(
-    @builtin(vertex_index) vertex_index: u32,
-    @builtin(instance_index) instance_index: u32,
-) -> PageVertex {
-    var out: PageVertex;
+/// A vertex placed in its page, plus what the CLIPPER needs to cut the
+/// triangle to that page — which the fragment path throws away and the
+/// clipped path is entirely built on.
+struct PageGeom {
+    clip: vec4<f32>,
+    rect: vec4<f32>,
+    /// The page-local position ALREADY multiplied by `w`, exactly as
+    /// `page_clip_w` takes it. In-page is `|local| <= w`.
+    local: vec2<f32>,
+    w: f32,
+    /// The tail of a meshlet with fewer triangles than the draw issues
+    /// vertices for. Sent outside the volume by both paths.
+    dead: bool,
+}
+
+/// One body, two entry points. Splitting it was the point: the clipped
+/// path differs from the fragment path in what it DECLARES, never in
+/// where it puts a vertex, and a second copy of this arithmetic is how
+/// the two paths would quietly stop agreeing.
+fn page_geometry(vertex_index: u32, instance_index: u32) -> PageGeom {
+    var out: PageGeom;
+    out.local = vec2<f32>(0.0);
+    out.w = 1.0;
+    out.dead = false;
     let pair = pairs[instance_index];
     let inst_id = pair.z >> 16u;
     let meshlet_id = pair.z & 0xffffu;
@@ -135,6 +177,7 @@ fn vs_page(
     // branch anywhere else.
     if triangle_idx >= desc.triangle_count {
         out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        out.dead = true;
         return out;
     }
 
@@ -198,6 +241,8 @@ fn vs_page(
         // PAGE_NEAR, so the rasteriser's own divide reconstructs
         // `PAGE_NEAR / z` exactly at every fragment — the identity
         // `GpuPointShadow` documents for the cube path.
+        out.local = face.xy;
+        out.w = face.z;
         out.clip = page_clip_w(
             face.xy,
             PAGE_NEAR,
@@ -208,7 +253,23 @@ fn vs_page(
         return out;
     }
 
+    // The sun's page is orthographic, so `w` really is 1 and the local
+    // position really is the NDC.
+    out.local = ndc;
+    out.w = 1.0;
     out.clip = page_clip(ndc, depth, out.rect, raster.world.z);
+    return out;
+}
+
+@vertex
+fn vs_page(
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
+) -> PageVertex {
+    let geom = page_geometry(vertex_index, instance_index);
+    var out: PageVertex;
+    out.clip = geom.clip;
+    out.rect = geom.rect;
     return out;
 }
 

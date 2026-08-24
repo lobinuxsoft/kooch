@@ -1320,6 +1320,7 @@ fn mark_froxels(@builtin(global_invocation_id) gid: vec3<u32>) {
     wanted = wanted * pages.density.x * exp2(f32(bias & 0xffu));
 
     var pairs = 0u;
+    var culled = 0u;
     for (var i = 0u; i < count; i = i + 1u) {
         let slot = record.offset + i;
         if slot >= arrayLength(&indices) {
@@ -1330,13 +1331,26 @@ fn mark_froxels(@builtin(global_invocation_id) gid: vec3<u32>) {
             continue;
         }
         pairs = pairs + 1u;
+        // 🔴 COUNTED, not merely skipped. A lamp under the projected-size
+        // gate (#944) casting nothing is indistinguishable from a lamp
+        // that was never reached, and the panel reads this number to tell
+        // "the gate is working" from "the light is missing". The
+        // per-pixel path counts it; a second path that quietly did not
+        // would make the two disagree for a reason nothing states.
         if pages.density.y > 0.0 && coverage_pixels(light) < pages.density.y {
+            culled = culled + 1u;
             continue;
         }
         mark_froxel_light(light, corners, wanted);
     }
+    // One thread per FROXEL, thousands rather than millions, so these go
+    // straight to the counters — the workgroup reduction `mark_pixel`
+    // needs buys nothing at this width. See `mark_flush`.
     if pairs != 0u {
         atomicAdd(&counters[2], pairs);
+    }
+    if culled != 0u {
+        atomicAdd(&counters[6], culled);
     }
 }
 
