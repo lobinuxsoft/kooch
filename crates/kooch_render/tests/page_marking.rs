@@ -1744,3 +1744,58 @@ fn the_hot_path_counts_in_workgroup_memory() {
          either gone or back on the global counters"
     );
 }
+
+/// The occupancy census counts froxels, and there are fewer of them than
+/// there are samples.
+///
+/// 🔴 The ratio the move to cluster/light pairs rests on. Olsson §III
+/// derives page masks from cluster bounds "several orders of magnitude
+/// fewer than the samples", and this engine measured 3 369 702
+/// sample/light pairs against 218 772 covered pixels (#952). A census
+/// that counted samples, or the whole grid, would make that comparison
+/// meaningless — so the two properties worth pinning are that it counts
+/// something, and that it counts FEWER things.
+#[test]
+fn the_census_counts_froxels_not_samples() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+    let counts = run(&device, &queue, &resources, 0.01, None);
+
+    assert!(counts.samples > 0, "the harness drew no surface");
+    assert!(counts.froxels > 0, "a full screen of surface occupied none");
+    assert!(
+        counts.froxels < counts.samples,
+        "froxels {} against {} samples — the census is counting pixels",
+        counts.froxels,
+        counts.samples
+    );
+    // The bitmap is 4096 bits wide and the grid is capped to match.
+    assert!(
+        counts.froxels <= 4096,
+        "{} froxels, past the bitmap",
+        counts.froxels
+    );
+}
+
+/// Sky occupies nothing.
+///
+/// The census reads the same early return the marking does, so a frame
+/// with no surface must report an empty grid rather than the whole one —
+/// which is the property that keeps a cluster pass from marking pages
+/// for empty air.
+#[test]
+fn sky_occupies_no_froxel() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+    let counts = run(&device, &queue, &resources, 0.0, None);
+    assert_eq!(counts.samples, 0, "the harness drew a surface");
+    assert_eq!(counts.froxels, 0, "sky occupied a froxel");
+}

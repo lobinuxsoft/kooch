@@ -41,8 +41,13 @@ const GROUP: u32 = 8;
 const COUNTERS: u64 = 16;
 /// Words per view in the rank-state buffer: a 32-bucket demand
 /// histogram, the plan's three words, then the persistent bias and
-/// patience (#943), padded to 40. Mirrors `RANK_WORDS` in the shader.
-const RANK_WORDS: u64 = 40;
+/// patience (#943), padded to 40 — then the OCCUPANCY BITMAP, one bit
+/// per froxel. Mirrors `RANK_WORDS` in the shader.
+const RANK_WORDS: u64 = 168;
+/// First word of the occupancy bitmap within a view's run.
+const RANK_OCCUPANCY: u64 = 40;
+/// Words of bitmap: 4096 froxels, the grid's own cap.
+const OCCUPANCY_WORDS: u64 = 128;
 
 /// `KOOCH_PAGE_MARKING=1`, read once.
 ///
@@ -113,6 +118,15 @@ pub struct MarkCounts {
     /// the sample, but its whole range projects under
     /// `shadow_min_pixels` on screen, so it marks nothing.
     pub culled: u32,
+    /// Froxels of this view that held visible surface.
+    ///
+    /// 🔴 The multiplier for the move to cluster/light pairs (Olsson
+    /// §III). Marking runs per (pixel, light); a cluster pass would run
+    /// per (froxel, light), and `pairs / samples` times this against
+    /// `pairs` is the ratio. The grid is capped at 4096 froxels and how
+    /// much of it a scene occupies is the whole question, so it is
+    /// counted rather than estimated.
+    pub froxels: u32,
     /// Page indices past the end of the mark buffer. 🔴 Non-zero means
     /// every number above is a floor, not a count.
     pub overflow: u32,
@@ -167,6 +181,8 @@ pub struct PageMarker {
     /// The resolution feedback (#943): one step per frame toward the
     /// coarsest marking that fits the slice.
     bias: wgpu::ComputePipeline,
+    /// Populates the occupancy bitmap into `counters[9]`.
+    census: wgpu::ComputePipeline,
     /// The bind group the marking built, kept so the paint dispatch can
     /// reuse it without rebuilding every resource binding.
     bound: Option<wgpu::BindGroup>,
@@ -231,6 +247,7 @@ impl PageMarker {
         let preempt = compute("preempt_view");
         let adopt = compute("adopt_view");
         let bias = compute("bias_view");
+        let census = compute("count_froxels");
 
         Self {
             layout,
@@ -241,6 +258,7 @@ impl PageMarker {
             preempt,
             adopt,
             bias,
+            census,
             bound: None,
             view: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_mark_view"),
@@ -500,7 +518,16 @@ impl PageMarker {
         // every frame before anything reads them, and the bias and its
         // patience (#943) PERSIST — they are what one frame teaches the
         // next.
-        encoder.clear_buffer(&self.rank, view as u64 * RANK_WORDS * 4, Some(32 * 4));
+        let run = view as u64 * RANK_WORDS * 4;
+        // 🔴 Two ranges, not one. The bias and the patience (#943) are
+        // PERSISTENT and sit between the plan and the bitmap, so a single
+        // clear across the run would wipe what the pressure loop learned.
+        encoder.clear_buffer(&self.rank, run, Some(32 * 4));
+        encoder.clear_buffer(
+            &self.rank,
+            run + RANK_OCCUPANCY * 4,
+            Some(OCCUPANCY_WORDS * 4),
+        );
         // Every counter here is a per-view quantity now, the pool's
         // claims included: a view allocates out of its own slice.
         encoder.clear_buffer(&self.counters, 0, None);
@@ -538,6 +565,10 @@ impl PageMarker {
             pass.set_pipeline(&self.adopt);
             pass.dispatch_workgroups(entries, 1, 1);
             pass.set_pipeline(&self.bias);
+            pass.dispatch_workgroups(1, 1, 1);
+            // After the marking has filled the bitmap; one group covers
+            // `OCCUPANCY_WORDS`.
+            pass.set_pipeline(&self.census);
             pass.dispatch_workgroups(1, 1, 1);
         }
         // Kept for `record_paint`, which runs after the shading and needs
@@ -846,6 +877,7 @@ impl Readback {
                     pairs: words[2],
                     overflow: words[3],
                     culled: words[6],
+                    froxels: words[9],
                     pool: PoolCounts {
                         claims: words[8],
                         overflow: words[5],

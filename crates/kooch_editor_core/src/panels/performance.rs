@@ -857,6 +857,34 @@ fn shadow_page_readout(
          range projects under `shadow_min_pixels` on screen (#944): they still shade, but \
          a shadow nobody can resolve claims no pages.",
     );
+    // 🔴 What the same work would cost per FROXEL instead of per pixel.
+    // Olsson §III derives shadow resolution and page masks from
+    // cluster/light pairs rather than sample/light pairs, because
+    // cluster bounds are "several orders of magnitude fewer than the
+    // samples". This line is that claim, in this scene, as a number
+    // rather than an argument (#952).
+    if counts.froxels > 0 && counts.samples > 0 {
+        let per_pixel = counts.pairs as f32 / counts.samples as f32;
+        let froxel_pairs = (counts.froxels as f32 * per_pixel).max(1.0);
+        ui.label(
+            egui::RichText::new(format!(
+                "{} froxels occupied · {:.1} lights each · {:.0}× fewer pairs per froxel",
+                counts.froxels,
+                per_pixel,
+                counts.pairs as f32 / froxel_pairs,
+            ))
+            .small()
+            .weak(),
+        )
+        .on_hover_text(
+            "Froxels of this view that held visible surface, counted from the depth \
+             buffer. The marking runs per (pixel, light); the same walk over occupied \
+             froxels would run per (froxel, light), and this is the ratio between the \
+             two. It is an upper bound on the win: a froxel's bounds project to a RANGE \
+             of pages rather than one, so a cluster pass marks conservatively and spends \
+             pool slots the per-pixel version never asked for.",
+        );
+    }
     // 🔴 The comparison that makes the number mean something, and it is
     // one budget for every light in the scene rather than per light.
     // It is now this engine's OWN pool rather than a figure quoted from

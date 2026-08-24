@@ -162,7 +162,33 @@ struct PageCell {
 // near-camera sun detail for lamp pages, which is a regression against
 // what the pool does today; revisit when #943's bias makes demand fit.
 const RANKS: u32 = 32u;
-const RANK_WORDS: u32 = 40u;
+// 🔴 40 words of plan, then the OCCUPANCY BITMAP: one bit per froxel of
+// this view, set by any pixel that lands in it.
+//
+// Olsson §III computes shadow resolution and page masks from
+// **cluster/light pairs**, not sample/light pairs, because cluster
+// bounding boxes are "several orders of magnitude fewer than the
+// samples". Measured here: 3 369 702 sample/light pairs against 218 772
+// covered pixels — 15.4 lights per pixel — for a grid capped at 4096
+// froxels.
+//
+// But the grid assigns lights to froxels GEOMETRICALLY and knows nothing
+// about what is visible, while the per-pixel marking is occlusion-culled
+// for free: an occluded pixel does not exist and marks nothing. A
+// cluster pass without this bitmap would mark pages for empty air and
+// for froxels behind walls, spending a pool the panel already reports
+// 100% full. This is what keeps the depth buffer's answer.
+//
+// Rides in `rank_state` rather than a binding of its own: the pass sits
+// at the eight-storage-buffer downlevel limit exactly.
+const RANK_WORDS: u32 = 168u;
+/// First word of the occupancy bitmap, `OCCUPANCY_WORDS` long.
+const RANK_OCCUPANCY: u32 = 40u;
+const OCCUPANCY_WORDS: u32 = 128u;
+/// Froxels the bitmap can hold. `ClusterSettings::default().total` is
+/// 4096; a grid larger than this simply stops recording occupancy, which
+/// costs the census its meaning and never correctness.
+const OCCUPANCY_MAX: u32 = 4096u;
 const RANK_CUTOFF: u32 = 32u;
 const RANK_QUOTA: u32 = 33u;
 const RANK_SPARE: u32 = 34u;
@@ -650,8 +676,17 @@ fn mark_pixel(id: vec3<u32>) {
     if view.dimensions.w == 0u {
         return;
     }
-    let cell = cluster_of_ndc(view, ndc, view_pos.z);
-    let record = cells[cluster_index(cell, view.dimensions)];
+    let froxel = cluster_index(cluster_of_ndc(view, ndc, view_pos.z), view.dimensions);
+    // This froxel holds visible surface. One `atomicOr` per pixel,
+    // and it replaces nothing yet — see `RANK_OCCUPANCY` for what it
+    // is for and why the depth buffer's answer has to be kept.
+    if froxel < OCCUPANCY_MAX {
+        atomicOr(
+            &rank_state[rank_base() + RANK_OCCUPANCY + froxel / 32u],
+            1u << (froxel % 32u),
+        );
+    }
+    let record = cells[froxel];
     let start = record.offset;
     // Points and spots are the first two ranges, stored in that order,
     // and both need pages. Probes, volumes and decals do not.
@@ -1047,4 +1082,27 @@ fn bias_view() {
     atomicStore(&rank_state[base + RANK_BIAS], packed);
     // What the pool is converging to, for the panel.
     atomicStore(&counters[4], packed);
+}
+
+// How many froxels of this view hold visible surface — the population of
+// the occupancy bitmap `mark_pixel` fills.
+//
+// 🔴 The number that sizes the move to cluster/light pairs. The marking
+// runs per (pixel, light) and measures 3 369 702 pairs a frame; a pass
+// over occupied froxels would run per (froxel, light) instead, and this
+// is the multiplier. Counted rather than assumed: the grid is capped at
+// 4096 and the fraction of it a scene actually occupies is the whole
+// question.
+@compute @workgroup_size(MARK_GROUP * MARK_GROUP, 1, 1)
+fn count_froxels(@builtin(local_invocation_index) lane: u32) {
+    let base = rank_base() + RANK_OCCUPANCY;
+    var found = 0u;
+    // 64 lanes over `OCCUPANCY_WORDS`, strided so the loop is the same
+    // length in every lane.
+    for (var w = lane; w < OCCUPANCY_WORDS; w = w + MARK_GROUP * MARK_GROUP) {
+        found = found + countOneBits(atomicLoad(&rank_state[base + w]));
+    }
+    if found != 0u {
+        atomicAdd(&counters[9], found);
+    }
 }
