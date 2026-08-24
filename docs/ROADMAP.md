@@ -772,6 +772,32 @@ lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings
 `Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
 decidía cuántos hilos, ahora decide qué páginas EXISTEN.
 
+🔴 **2026-08-24 (12) — LA MEDICIÓN EN LA OneXFly: EL TRACK DE VSM CUESTA ~34 ms Y NINGÚN
+SCOPE PODÍA VERLO (#948).** `many_lights` por Steam→gamescope, caliente, 20 W: frame **mediana
+46.56 ms (21.5 FPS)**, p99 98.30. La captura declaraba **11.4 ms de GPU, plana en todos los
+deciles**; `drm-engine-gfx` declaraba **969 ms/s — 93% del wall, ≈45 ms/frame**. `fdinfo` por
+proceso cierra la discusión: `roll_a_ball 968.99`, `gamescope 0.00`, `mangoapp 0.00` — **no es
+el compositor y no es remote play, es nuestra propia cola que no drena**, y por eso
+`vkAcquireNextImageKHR` bloquea 69 ms en los frames lentos. El encoder del frame abría
+exactamente DOS scopes de GPU (`cull` y `raster + shade`) y grababa `record_page_marking`
+**entre los dos y dentro de ninguno**: el mark, los 17+ culls de clipmap, la compactación, la
+expansión y el draw caían bajo ningún nombre. Peor, la captura DESVIABA: su chequeo de
+correlación decía "la variación no la explica el trabajo de GPU" (r = 0.198) — cierto del
+trabajo **medido**, y se lee como "buscá en otro lado" cuando tres cuartos del trabajo no
+estaban en la serie. `4bea7050` es SOLO instrumentación: `shadow pages` → `page mark` +
+`page raster` → `page cull` / `page expand` / `page depth` (los cuatro escalan con cosas
+distintas — niveles, páginas residentes, pares, téxeles cubiertos — así que un número sobre el
+conjunto no dice cuál creció). ⚠️ **Dos tests pasaban por encima del agujero**:
+`the_page_passes_are_profiled` decía cubrir "los dos entry points que graban el trabajo de
+GPU" y sólo afirmaba `profiling::scope!`/`#[profiling::function]`, que miden la GRABACIÓN, no
+los dispatches; y `gpu_scopes.rs` deletreaba a mano el bundle del path R64 en vez de llamar a
+`all_required_features()`, se comía `SHADER_F16` y los **tres** tests del path que toma la
+OneXFly morían en `create_shader_module` sobre `fsr3_accumulate` — el camino que se estaba
+midiendo no tenía un solo test verde. ⏭️ **NEXT = redeploy + recaptura**, y recién ahí se sabe
+cuál de los cuatro pases se come el frame. `KOOCH_SHADOW_POOL_PAGES` (default 2048, rango
+4..8192) es la palanca de A/B. 🔴 **`virtual_shadows` NO se flipea a ON hasta tener ese
+número.** Aparte, 2874 MiB de VRAM en una handheld quieren su propia mirada.
+
 🎯 **2026-08-23 (11) — EL PRÓXIMO FRENTE, DECIDIDO: EL JUEGO TIRA DEL ENGINE.** Cerrado el
 hilo VSM (falta solo la medición en la OneXFly, que corre el user con su build), lo que sigue
 es **A: mecánicas + un nivel real**, con dos issues nuevas que lo habilitan: **#946 — CSG de
