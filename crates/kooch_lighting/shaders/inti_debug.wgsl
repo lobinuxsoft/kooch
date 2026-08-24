@@ -524,10 +524,9 @@ fn inti_page_age_debug(world_position: vec3<f32>) -> vec3<f32> {
     var level = sun_level(reach, base, side);
 
     for (; level < inti_pages.chain.x; level = level + 1u) {
-        let centre = sun_centre(inti_pages.eye.xyz, basis, base, side, level);
         // The same absolute-world key the marking wrote; a debug view on
         // the old camera-relative one would paint the wrong page.
-        let cell = sun_cell(world_position, basis, base, side, level, centre);
+        let cell = sun_cell(world_position, inti_pages.eye.xyz, basis, base, side, level);
         let page = inti_pages.views.x * inti_pages.views.y
             + inti_pages.space.w * inti_pages.space.x
             + level * side * side
@@ -588,10 +587,9 @@ fn inti_page_debug(world_position: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     var level = sun_level(reach, base, side);
 
     for (; level < levels; level = level + 1u) {
-        let centre = sun_centre(inti_pages.eye.xyz, basis, base, side, level);
         // The same absolute-world key the marking wrote; a debug view on
         // the old camera-relative one would paint the wrong page.
-        let cell = sun_cell(world_position, basis, base, side, level, centre);
+        let cell = sun_cell(world_position, inti_pages.eye.xyz, basis, base, side, level);
         let page = inti_pages.views.x * inti_pages.views.y
             + inti_pages.space.w * inti_pages.space.x
             + level * side * side
@@ -604,7 +602,7 @@ fn inti_page_debug(world_position: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
         // Level as brightness, so the clipmap bands read at a glance.
         let shade = 0.45 + 0.55 * f32(levels - min(level, levels - 1u)) / f32(max(levels, 1u));
 
-        let rect = sun_page_rect(level, cell, base, side, centre);
+        let rect = sun_page_rect(level, cell, inti_pages.eye.xyz, basis, base, side);
         let within = (sun_plane(world_position, basis) - rect.xy) / rect.z + vec2<f32>(0.5);
         let place = page_place(slot, inti_pages.views.z, inti_pages.pool.z, page_texels);
         let texel = clamp(

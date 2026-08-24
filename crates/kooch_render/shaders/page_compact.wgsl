@@ -142,9 +142,8 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
     // level-wide (the sun's direction, the depth anchor, the scene).
     if id.is_sun {
         let basis = sun_basis(raster.sun.xyz);
-        let centre =
-            sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
-        let idx = sun_page_index(id.level, id.cell, raster.world.x, raster.space.z, centre);
+        let idx = sun_page_index(
+            id.level, id.cell, raster.eye.xyz, basis, raster.world.x, raster.space.z);
         gen = page_mix(gen, bitcast<u32>(i32(idx.x)));
         gen = page_mix(gen, bitcast<u32>(i32(idx.y)));
         // 0 means "no content" and must never match a generation.
@@ -231,7 +230,7 @@ fn cs_invalidate(@builtin(global_invocation_id) gid: vec3<u32>) {
             let basis = sun_basis(raster.sun.xyz);
             let centre =
                 sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
-            let rect = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z, centre);
+            let rect = sun_page_rect(id.level, id.cell, raster.eye.xyz, basis, raster.world.x, raster.space.z);
             let plane = sun_plane(sphere.xyz, basis);
             let along = dot(sphere.xyz - raster.eye.xyz, basis[2])
                 + sun_drift(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);

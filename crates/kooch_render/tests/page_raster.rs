@@ -1012,9 +1012,9 @@ fn cs_winding() {
         vec3<f32>(0.0, 0.0, -1.0),
     );
 
-    // Centre at the origin: the snap is irrelevant to winding, which is
+    // Eye at the origin: the snap is irrelevant to winding, which is
     // what this measures.
-    let rect = sun_page_rect(0u, vec2<u32>(0u, 0u), 64.0, 128u, vec2<f32>(0.0));
+    let rect = sun_page_rect(0u, vec2<u32>(0u, 0u), vec3<f32>(0.0), basis, 64.0, 128u);
     var clip = array<vec2<f32>, 3>();
     for (var i = 0u; i < 3u; i = i + 1u) {
         let p = tri[i];
@@ -1388,14 +1388,14 @@ fn cs_snap(@builtin(global_invocation_id) id: vec3<u32>) {
     let level = 3u;
     let extent = base * exp2(f32(level));
 
-    let centre = sun_centre(eyes[id.x].xyz, basis, base, side, level);
+    let eye = eyes[id.x].xyz;
     // 🔴 The KEY of a fixed world point, and the world rect that key
     // stands for. Both are supposed to be properties of the POINT, not
     // of wherever the camera happens to be — that is what `sun_cell`'s
     // absolute-world addressing buys, and what the camera-relative key
     // it replaced could not do.
-    let cell = sun_cell(world, basis, base, side, level, centre);
-    let rect = sun_page_rect(level, cell, base, side, centre);
+    let cell = sun_cell(world, eye, basis, base, side, level);
+    let rect = sun_page_rect(level, cell, eye, basis, base, side);
     cells[id.x] = vec4<f32>(vec2<f32>(cell), rect.xy);
 }
 "#

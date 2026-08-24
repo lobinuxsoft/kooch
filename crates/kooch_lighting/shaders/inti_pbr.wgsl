@@ -971,7 +971,7 @@ fn inti_page_shadow(
         let receiver = 1.0 - (along + span) / (2.0 * span);
 
         // The same absolute-world key the marking wrote. See `sun_cell`.
-        let cell = sun_cell(sampled, basis, base, side, level, centre);
+        let cell = sun_cell(sampled, inti_pages.eye.xyz, basis, base, side, level);
         // 🔴 The VIEW is the high part of the key. Two viewports over
         // one world are two clipmaps centred on two cameras, so the
         // same world position is a different page in each — and a
@@ -987,7 +987,7 @@ fn inti_page_shadow(
         }
 
         // Where the point sits inside its own page, in texels.
-        let rect = sun_page_rect(level, cell, base, side, centre);
+        let rect = sun_page_rect(level, cell, inti_pages.eye.xyz, basis, base, side);
         let within = (sun_plane(sampled, basis) - rect.xy) / rect.z + vec2<f32>(0.5);
         let place = page_place(slot, inti_pages.views.z, inti_pages.pool.z, page_texels);
         let origin = vec2<f32>(place.xy);

@@ -333,10 +333,28 @@ fn wrap_to(v: vec2<f32>, m: f32) -> vec2<f32> {
 }
 
 /// The lowest absolute page index this level's window covers, in whole
-/// pages. `centre` is already snapped to the page grid, so this is an
-/// integer.
-fn sun_window(centre: vec2<f32>, width: f32, side: u32) -> vec2<f32> {
-    return floor(centre / width) - vec2<f32>(floor(f32(side) * 0.5));
+/// pages.
+///
+/// 🔴 Derived from the EYE, never from the snapped centre. Recovering it
+/// as `floor(centre / width)` looks equivalent — `centre` IS
+/// `floor(plane / width) * width` — and is not: the multiply and the
+/// divide are both f32 and the round trip lands one page low for **7.2%
+/// of positions** at the finest level. Measured, not feared.
+///
+/// A window that jitters by one page re-keys every page inside it, which
+/// is precisely what absolute addressing exists to prevent. It cost a
+/// capture: the depth draw stopped caching entirely and sat at a flat
+/// 27 ms where it had been bimodal.
+fn sun_window(
+    eye: vec3<f32>,
+    basis: mat3x3<f32>,
+    base: f32,
+    side: u32,
+    level: u32,
+) -> vec2<f32> {
+    let s = f32(max(side, 1u));
+    let width = base * exp2(f32(level)) / s;
+    return floor(sun_plane(eye, basis) / width) - vec2<f32>(floor(s * 0.5));
 }
 
 /// The page a world point belongs to: its ABSOLUTE index on the level's
@@ -361,15 +379,15 @@ fn sun_window(centre: vec2<f32>, width: f32, side: u32) -> vec2<f32> {
 /// Measured on the OneXFly: 72 FPS standing still, 5 FPS moving (#948).
 fn sun_cell(
     world: vec3<f32>,
+    eye: vec3<f32>,
     basis: mat3x3<f32>,
     base: f32,
     side: u32,
     level: u32,
-    centre: vec2<f32>,
 ) -> vec2<u32> {
     let s = f32(max(side, 1u));
     let width = base * exp2(f32(level)) / s;
-    let low = sun_window(centre, width, side);
+    let low = sun_window(eye, basis, base, side, level);
     // ⚠️ Clamped into the window BEFORE wrapping, which is what the
     // `clamp(uv, 0, 0.99999)` this replaces was doing. Wrapping an index
     // from outside the window would alias it silently onto a page that
@@ -392,25 +410,26 @@ fn sun_cell(
 fn sun_page_index(
     level: u32,
     cell: vec2<u32>,
+    eye: vec3<f32>,
+    basis: mat3x3<f32>,
     base: f32,
     side: u32,
-    centre: vec2<f32>,
 ) -> vec2<f32> {
     let s = f32(max(side, 1u));
-    let width = base * exp2(f32(level)) / s;
-    let low = sun_window(centre, width, side);
+    let low = sun_window(eye, basis, base, side, level);
     return low + wrap_to(vec2<f32>(cell) - low, s);
 }
 
 fn sun_page_rect(
     level: u32,
     cell: vec2<u32>,
+    eye: vec3<f32>,
+    basis: mat3x3<f32>,
     base: f32,
     side: u32,
-    centre: vec2<f32>,
 ) -> vec3<f32> {
     let width = base * exp2(f32(level)) / f32(max(side, 1u));
-    let idx = sun_page_index(level, cell, base, side, centre);
+    let idx = sun_page_index(level, cell, eye, basis, base, side);
     return vec3<f32>(idx * width + vec2<f32>(width * 0.5), width);
 }
 

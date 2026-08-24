@@ -498,10 +498,9 @@ fn sun_page_for(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let density = select(0.0, floor(log2(max(wanted * texels / base, 1.0))), wanted * texels > base);
     let level = min(u32(max(contain, density)), pages.chain.w - 1u);
 
-    let centre = sun_centre(eye, basis, base, side, level);
     // Keyed by ABSOLUTE world page, wrapped. See `sun_cell` for why the
     // camera-relative key cost every page on every step.
-    let cell = sun_cell(world, basis, base, side, level, centre);
+    let cell = sun_cell(world, eye, basis, base, side, level);
 
     let index = view_base()
         + slot * pages.strides.z

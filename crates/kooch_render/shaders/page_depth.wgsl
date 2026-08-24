@@ -161,7 +161,7 @@ fn vs_page(
         // cached page every frame. See `sun_drift`.
         let along = dot(world - raster.eye.xyz, basis[2])
             + sun_drift(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
-        let page = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z, centre);
+        let page = sun_page_rect(id.level, id.cell, raster.eye.xyz, basis, raster.world.x, raster.space.z);
         ndc = (plane - page.xy) / (page.z * 0.5);
 
         // 🔴 Reversed-Z (ADR 0002): 1 is the near plane and 0 is far, so
