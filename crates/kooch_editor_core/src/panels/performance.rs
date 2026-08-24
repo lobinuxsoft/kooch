@@ -864,14 +864,27 @@ fn shadow_page_readout(
     // samples". This line is that claim, in this scene, as a number
     // rather than an argument (#952).
     if counts.froxels > 0 && counts.samples > 0 {
-        let per_pixel = counts.pairs as f32 / counts.samples as f32;
-        let froxel_pairs = (counts.froxels as f32 * per_pixel).max(1.0);
+        // 🔴 `pairs` counts a different thing on each path, so the ratio
+        // has to be read from the side that owns it. Dividing froxel
+        // pairs by samples printed `0.0 lights each` and a made-up
+        // multiplier beside it.
+        let (lights_each, walked, other) = if counts.by_froxel {
+            let each = counts.pairs as f32 / counts.froxels as f32;
+            (each, counts.pairs as f32, counts.samples as f32 * each)
+        } else {
+            let each = counts.pairs as f32 / counts.samples as f32;
+            (each, counts.pairs as f32, counts.froxels as f32 * each)
+        };
+        let ratio = (walked.max(1.0) / other.max(1.0)).max(other.max(1.0) / walked.max(1.0));
+        let shape = if counts.by_froxel {
+            "per froxel"
+        } else {
+            "per pixel"
+        };
         ui.label(
             egui::RichText::new(format!(
-                "{} froxels occupied · {:.1} lights each · {:.0}× fewer pairs per froxel",
-                counts.froxels,
-                per_pixel,
-                counts.pairs as f32 / froxel_pairs,
+                "{} froxels occupied · {:.1} lights each · walking {} · {:.0}× the other way",
+                counts.froxels, lights_each, shape, ratio,
             ))
             .small()
             .weak(),

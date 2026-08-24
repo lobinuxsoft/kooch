@@ -146,6 +146,13 @@ pub struct MarkCounts {
     /// the sample, but its whole range projects under
     /// `shadow_min_pixels` on screen, so it marks nothing.
     pub culled: u32,
+    /// Whether `pairs` counts (froxel, light) or (pixel, light).
+    ///
+    /// 🔴 The panel divided pairs by samples to get lights-per-pixel and
+    /// printed `0.0 lights each` once the cluster path made pairs a
+    /// hundredth of the samples. A number whose MEANING changes with a
+    /// switch has to carry the switch.
+    pub by_froxel: bool,
     /// Froxels of this view that held visible surface.
     ///
     /// 🔴 The multiplier for the move to cluster/light pairs (Olsson
@@ -673,7 +680,10 @@ impl PageMarker {
         if let Some(slot) = self.pending.take() {
             self.readback.submit(slot);
         }
-        if let Some(counts) = self.readback.take() {
+        if let Some(mut counts) = self.readback.take() {
+            // Stamped here rather than in the readback, which does not
+            // know which path recorded the frame it is decoding.
+            counts.by_froxel = self.cluster;
             self.last = Some(counts);
         }
     }
@@ -933,6 +943,7 @@ impl Readback {
                     overflow: words[3],
                     culled: words[6],
                     froxels: words[9],
+                    by_froxel: false,
                     pool: PoolCounts {
                         claims: words[8],
                         overflow: words[5],

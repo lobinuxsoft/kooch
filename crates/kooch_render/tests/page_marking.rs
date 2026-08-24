@@ -1873,3 +1873,34 @@ fn the_cluster_path_marks_for_fewer_pairs() {
         per_pixel.pairs
     );
 }
+
+/// The counts say which path produced them.
+///
+/// 🔴 `pairs` means (pixel, light) on one path and (froxel, light) on
+/// the other, and the panel divided it by samples either way — printing
+/// `0.0 lights each` beside a multiplier it had invented. A number whose
+/// MEANING changes with a switch has to carry the switch.
+#[test]
+fn the_counts_say_which_path_walked_them() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+
+    let per_pixel = run(&device, &queue, &resources, 0.01, None);
+    let per_froxel = with_clusters(|| run(&device, &queue, &resources, 0.01, None));
+
+    assert!(!per_pixel.by_froxel, "the per-pixel path claimed froxels");
+    assert!(per_froxel.by_froxel, "the froxel path claimed pixels");
+    // And the ratio each side implies is the same order of magnitude,
+    // which is what makes the panel's comparison honest.
+    let by_pixel = per_pixel.pairs as f32 / per_pixel.samples.max(1) as f32;
+    let by_froxel = per_froxel.pairs as f32 / per_froxel.froxels.max(1) as f32;
+    assert!(
+        by_froxel > by_pixel * 0.5,
+        "lights per froxel {by_froxel} against lights per pixel {by_pixel} — \
+         a froxel holds at least as many lights as a pixel inside it"
+    );
+}
