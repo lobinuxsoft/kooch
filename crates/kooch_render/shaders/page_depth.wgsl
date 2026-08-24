@@ -156,7 +156,11 @@ fn vs_page(
         // crawl `sun_centre` exists to remove.
         let centre = sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
         let plane = sun_plane(world, basis);
-        let along = dot(world - raster.eye.xyz, basis[2]);
+        // 🔴 And so is the depth origin, for the same reason. Measured
+        // from the raw camera it slid every frame, which voided every
+        // cached page every frame. See `sun_drift`.
+        let along = dot(world - raster.eye.xyz, basis[2])
+            + sun_drift(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
         let page = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z, centre);
         ndc = (plane - page.xy) / (page.z * 0.5);
 

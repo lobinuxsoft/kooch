@@ -273,6 +273,34 @@ fn sun_centre(eye: vec3<f32>, basis: mat3x3<f32>, base: f32, side: u32, level: u
     return floor(plane / width) * width;
 }
 
+/// How far the camera sits from this level's snapped DEPTH origin, along
+/// the sun. Add it to a camera-relative `along` to measure from the
+/// snapped origin instead.
+///
+/// 🔴 The reason the same argument as [`sun_centre`] applies to the
+/// depth axis, and did not use to. A page's stored depth was measured
+/// from the raw camera, so it stopped being valid the moment the camera
+/// moved a millimetre along the sun — every page of every level at once,
+/// every frame. Measured on the OneXFly: the depth draw cost 0.064 ms
+/// when nothing invalidated and 29.7 ms when everything did, and the
+/// second case was the normal one (#948).
+///
+/// Snapping it on the SAME per-level grid the plane already uses means
+/// depth is no longer an invalidation source of its own: a level's
+/// content survives exactly as long as its addressing does. Coarse
+/// levels, whose pages are hundreds of metres wide, become genuinely
+/// stable.
+///
+/// ⚠️ `floor(x + 0.5)` and never `round`: WGSL rounds halves to even and
+/// Rust rounds them away from zero, and `write_gens` has to agree with
+/// this bit for bit. Disagreeing on one step means a stamp that says
+/// "still valid" over depth measured from somewhere else.
+fn sun_drift(eye: vec3<f32>, basis: mat3x3<f32>, base: f32, side: u32, level: u32) -> f32 {
+    let width = base * exp2(f32(level)) / f32(max(side, 1u));
+    let along = dot(eye, basis[2]);
+    return along - floor(along / width + 0.5) * width;
+}
+
 /// A world position in the sun's plane, which is what every page lookup
 /// is really indexing.
 fn sun_plane(world: vec3<f32>, basis: mat3x3<f32>) -> vec2<f32> {

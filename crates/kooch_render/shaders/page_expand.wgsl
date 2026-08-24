@@ -197,7 +197,8 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let plane = sun_plane(bounds, basis);
-    let along = dot(bounds - raster.eye.xyz, basis[2]);
+    let along = dot(bounds - raster.eye.xyz, basis[2])
+        + sun_drift(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
     let half = rect.z * 0.5 + radius;
     if abs(plane.x - rect.x) > half || abs(plane.y - rect.y) > half {
         return;

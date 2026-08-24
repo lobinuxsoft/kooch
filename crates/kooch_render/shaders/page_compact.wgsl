@@ -214,7 +214,8 @@ fn cs_invalidate(@builtin(global_invocation_id) gid: vec3<u32>) {
                 sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
             let rect = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z, centre);
             let plane = sun_plane(sphere.xyz, basis);
-            let along = dot(sphere.xyz - raster.eye.xyz, basis[2]);
+            let along = dot(sphere.xyz - raster.eye.xyz, basis[2])
+                + sun_drift(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
             let half = rect.z * 0.5 + sphere.w;
             hit = abs(plane.x - rect.x) <= half
                 && abs(plane.y - rect.y) <= half

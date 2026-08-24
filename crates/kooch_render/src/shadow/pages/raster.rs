@@ -898,6 +898,55 @@ fn atlas_texture(device: &wgpu::Device, config: PageConfig, pool: PoolConfig) ->
     })
 }
 
+/// The content stamp of every sun clipmap level, for the cache gate.
+///
+/// A level's stamp turns over when the camera crosses one of ITS pages —
+/// on the plane, or along the sun — or when the sun turns, or when the
+/// scene changes. All three spatial terms share that level's page width,
+/// which is what lets a coarse level stay resident while a fine one
+/// churns, and a clipmap is only worth its levels if that is true.
+///
+/// 🔴 A free function over the config rather than a method, because the
+/// question it answers — *does this camera move void the cache?* — has
+/// nothing to do with a GPU and should not need one to ask.
+fn sun_gens(clipmap: ClipmapConfig, side: f32, scene_gen: u32, eye: Vec3, sun: Vec3) -> Vec<u32> {
+    // Mirrors `sun_basis` in `page_table.wgsl`, term for term.
+    let f = sun.normalize_or(Vec3::NEG_Y);
+    let up = if f.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
+    let s_axis = f.cross(up).normalize();
+    let u_axis = s_axis.cross(f);
+    let plane = (eye.dot(s_axis), eye.dot(u_axis));
+    let along = eye.dot(f);
+    (0..clipmap.levels as usize)
+        .map(|level| {
+            // Mirrors `sun_centre`: the snap grid is this level's page
+            // width, so the generation only turns over when the centre
+            // actually steps.
+            let width = clipmap.base * (level as f32).exp2() / side;
+            let mut h = FNV_SEED;
+            for word in [
+                ((plane.0 / width).floor()).to_bits(),
+                ((plane.1 / width).floor()).to_bits(),
+                // ⚠️ `floor(x + 0.5)`, mirroring `sun_drift` in
+                // `page_table.wgsl` exactly. `f32::round` would disagree
+                // with WGSL's on halves, and disagreeing by one step is
+                // a stamp that says "still valid" over depth measured
+                // from somewhere else.
+                (along / width + 0.5).floor().to_bits(),
+                f.x.to_bits(),
+                f.y.to_bits(),
+                f.z.to_bits(),
+                scene_gen,
+            ] {
+                h = fnv(h, word);
+            }
+            // `| 1`: a stamp of zero means "no content" and must never
+            // match a generation.
+            h | 1
+        })
+        .collect()
+}
+
 impl PageRasterizer {
     /// Threads the compaction needs: one per entry of one view's span.
     fn compact_threads(&self, light_count: u32) -> u32 {
@@ -906,45 +955,37 @@ impl PageRasterizer {
     }
 
     /// One generation per bucket owner, for the cache gate. A sun
-    /// level's changes when its snapped centre, the sun's direction or
-    /// the eye's position ALONG the sun's axis change — the last
-    /// because a page's depth origin rides the eye unsnapped, so
-    /// cached depths from another origin would bias every comparison.
+    /// level's changes when its snapped centre or the sun's direction
+    /// changes, and when the eye crosses one of THIS level's pages along
+    /// the sun's axis — all three on the same grid, so a level's content
+    /// lives exactly as long as its addressing does.
+    ///
+    /// 🔴 The along-sun term used to be `eye.dot(f)` raw, and it had to
+    /// be: the depth a page stored was measured from the unsnapped
+    /// camera. So every level's stamp turned over on any camera movement
+    /// at all and the cache never once hit. See `sun_drift` in
+    /// `page_table.wgsl`.
+    ///
     /// A lamp's changes with anything that moves its shadow: position,
     /// direction, range, kind, cone.
     fn write_gens(&self, queue: &wgpu::Queue, view: u32, eye: Vec3, sun: Vec3, lamps: &[GpuLight]) {
+        let gens = self.gens_for(eye, sun, lamps);
+        queue.write_buffer(
+            &self.gens,
+            view as u64 * self.buckets() as u64 * 4,
+            bytemuck::cast_slice(&gens),
+        );
+    }
+
+    /// [`Self::write_gens`] without the upload — the arithmetic alone,
+    /// so a test can ask what a camera move does to the cache without a
+    /// queue to write into.
+    pub(crate) fn gens_for(&self, eye: Vec3, sun: Vec3, lamps: &[GpuLight]) -> Vec<u32> {
         let levels = self.clipmap.levels as usize;
         let buckets = self.buckets() as usize;
         let mut gens = vec![0u32; buckets];
-        // Mirrors `sun_basis` in `page_table.wgsl`, term for term.
-        let f = sun.normalize_or(Vec3::NEG_Y);
-        let up = if f.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
-        let s_axis = f.cross(up).normalize();
-        let u_axis = s_axis.cross(f);
-        let plane = (eye.dot(s_axis), eye.dot(u_axis));
-        let along = eye.dot(f);
         let side = self.config.side(0) as f32;
-        for (level, slot_gen) in gens.iter_mut().enumerate().take(levels) {
-            // Mirrors `sun_centre`: the snap grid is this level's page
-            // width, so the generation only turns over when the centre
-            // actually steps.
-            let width = self.clipmap.base * (level as f32).exp2() / side;
-            let mut h = FNV_SEED;
-            for word in [
-                ((plane.0 / width).floor()).to_bits(),
-                ((plane.1 / width).floor()).to_bits(),
-                along.to_bits(),
-                f.x.to_bits(),
-                f.y.to_bits(),
-                f.z.to_bits(),
-                self.scene_gen,
-            ] {
-                h = fnv(h, word);
-            }
-            // `| 1`: a stamp of zero means "no content" and must never
-            // match a generation.
-            *slot_gen = h | 1;
-        }
+        gens[..levels].copy_from_slice(&sun_gens(self.clipmap, side, self.scene_gen, eye, sun));
         for slot in 0..LAMP_CULLS as usize {
             let mut h = FNV_SEED;
             if let Some(lamp) = lamps.get(slot) {
@@ -966,11 +1007,7 @@ impl PageRasterizer {
             h = fnv(h, self.scene_gen);
             gens[levels + slot] = h | 1;
         }
-        queue.write_buffer(
-            &self.gens,
-            view as u64 * buckets as u64 * 4,
-            bytemuck::cast_slice(&gens),
-        );
+        gens
     }
 
     /// Uploads the frame's moved-caster spheres — once, not per view —

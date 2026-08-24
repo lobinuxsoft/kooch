@@ -964,7 +964,8 @@ fn inti_page_shadow(
         // footprint does not slide with the camera. See `sun_centre`.
         let centre = sun_centre(inti_pages.eye.xyz, basis, base, side, level);
         let plane = sun_plane(sampled, basis) - centre;
-        let along = dot(sampled - inti_pages.eye.xyz, basis[2]);
+        let along = dot(sampled - inti_pages.eye.xyz, basis[2])
+            + sun_drift(inti_pages.eye.xyz, basis, base, side, level);
         // Reversed-Z along the sun's axis, matching `page_depth.wgsl`.
         // Nothing is added to it: the offset above already moved the
         // point towards the light, which is the depth half of the bias.

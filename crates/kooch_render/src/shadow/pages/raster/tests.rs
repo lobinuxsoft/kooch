@@ -273,3 +273,63 @@ fn slicing_does_not_grow_the_atlas() {
         "two cameras cost {two} bytes against one camera's {one}"
     );
 }
+
+/// A sub-page step along the sun keeps every level's content.
+///
+/// 🔴 The defect this file exists to stop coming back. A page's depth
+/// was measured from the raw camera, so `write_gens` had to hash the raw
+/// `eye.dot(sun)` to stay honest — and that turned over EVERY level's
+/// stamp on any movement at all. The sibling test is
+/// `a_still_suns_page_caches`: a camera that never moves cached fine,
+/// which is why this went unnoticed. Measured on the OneXFly, the depth
+/// draw cost 0.064 ms when the cache held and 29.7 ms when it did not,
+/// and it did not hold (#948).
+///
+/// One millimetre, which is a hundredth of the FINEST level's page.
+#[test]
+fn a_millimetre_along_the_sun_keeps_the_cache() {
+    let clipmap = ClipmapConfig::default();
+    let side = PageConfig::default().side(0) as f32;
+    let sun = Vec3::new(0.3, -1.0, 0.2);
+    let eye = Vec3::new(12.0, 3.0, -7.0);
+    let step = sun.normalize() * 0.001;
+
+    let before = sun_gens(clipmap, side, 7, eye, sun);
+    let after = sun_gens(clipmap, side, 7, eye + step, sun);
+
+    assert_eq!(
+        before,
+        after,
+        "a millimetre along the sun voided {} of {} levels",
+        before.iter().zip(&after).filter(|(a, b)| a != b).count(),
+        before.len()
+    );
+}
+
+/// Crossing a level's page along the sun DOES void that level — the
+/// stamp is a cache gate, not a promise that depth never goes stale.
+///
+/// The finest level's page is 1 cm wide, so a metre crosses it and every
+/// level below the one whose page is a metre across. The coarsest, whose
+/// pages are hundreds of metres, must survive: that is the whole point
+/// of snapping per level rather than globally.
+#[test]
+fn a_metre_voids_the_fine_levels_only() {
+    let clipmap = ClipmapConfig::default();
+    let side = PageConfig::default().side(0) as f32;
+    let sun = Vec3::NEG_Y;
+    let eye = Vec3::new(0.0, 40.0, 0.0);
+
+    let before = sun_gens(clipmap, side, 7, eye, sun);
+    let after = sun_gens(clipmap, side, 7, eye + Vec3::new(0.0, -1.0, 0.0), sun);
+
+    assert_ne!(
+        before[0], after[0],
+        "the finest level ignored a whole metre"
+    );
+    let last = before.len() - 1;
+    assert_eq!(
+        before[last], after[last],
+        "the coarsest level, whose pages are hundreds of metres, redrew for one"
+    );
+}
