@@ -138,6 +138,10 @@ pub(crate) struct EditorTabViewer<'a> {
     /// the viewport render. Read-only, surfaced through the View
     /// toolbar's stats overlay.
     pub(crate) meshlet_stats: MeshletRenderStats,
+    /// The GAME viewport's own stats. 🔴 Separate from the field above,
+    /// which belongs to the View camera: one slot for two cameras is
+    /// what made the Game tab's overlay report the Edit view's frustum.
+    pub(crate) game_stats: MeshletRenderStats,
     /// Per-frame perf HUD counters (#463). Read-only, surfaced
     /// through the View toolbar's perf overlay (always visible).
     pub(crate) perf_stats: crate::perf::EditorPerfStats,
@@ -257,7 +261,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.game_request,
                 self.game_has_camera,
                 self.perf_stats,
-                self.meshlet_stats,
+                self.game_stats,
                 self.meshlet_debug_mode,
                 self.meshlet_debug_caps,
                 self.single_light_note,

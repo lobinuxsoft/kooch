@@ -31,6 +31,14 @@ use kooch_ecs::query::{Query, filter::Without};
 use kooch_render::SkyRenderPass;
 use kooch_render::meshlet::{MeshletBlit, MeshletRenderStage, ViewId};
 
+/// The Game viewport's own render stats.
+///
+/// A separate resource rather than a second write to
+/// `MeshletRenderStats`: two cameras writing one slot is exactly the
+/// defect this exists to fix, and the last writer would still win.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct GameViewStats(pub kooch_render::meshlet::MeshletRenderStats);
+
 use crate::editor_camera::markers::EditorCamera;
 use crate::viewport::target::ViewportTarget;
 
@@ -96,6 +104,13 @@ pub(crate) fn render_game_view(
         &camera,
         aspect,
     );
+    // 🔴 Published under its OWN key. The Edit view's render is the only
+    // one that wrote `MeshletRenderStats`, so the overlay drawn beside
+    // THIS viewport read the other camera's numbers — same scene, other
+    // frustum, and every reading taken from this panel described a
+    // camera nobody was looking through. It also explained a count that
+    // never moved while the game camera did.
+    resources.insert(GameViewStats(stats));
 
     let mut encoder = gpu
         .device()

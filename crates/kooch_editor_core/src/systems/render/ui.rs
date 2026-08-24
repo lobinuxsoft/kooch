@@ -91,6 +91,8 @@ pub(super) fn run_editor_ui(
     cluster_settings: &mut kooch_lighting::ClusterSettings,
     specular_floor: &mut kooch_lighting::SpecularFloor,
     meshlet_stats: MeshletRenderStats,
+    // The Game viewport's own; see `GameViewStats`.
+    game_stats: MeshletRenderStats,
     perf_stats: crate::perf::EditorPerfStats,
     gizmo_visibility: &mut crate::gizmos::GizmoVisibility,
     gizmo_groups: &[crate::gizmos::GizmoGroup],
@@ -286,6 +288,7 @@ pub(super) fn run_editor_ui(
                 cluster_settings,
                 specular_floor,
                 meshlet_stats,
+                game_stats,
                 perf_stats,
             };
 

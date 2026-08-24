@@ -622,6 +622,24 @@ impl MeshletRenderStage {
     pub fn page_marking(&self) -> Option<MarkCounts> {
         self.page_marking_last
     }
+
+    /// The counts belonging to ONE view.
+    ///
+    /// 🔴 [`Self::page_marking`] is whichever readback landed last, and
+    /// with two viewports alive that is a coin toss. The editor drew the
+    /// Game tab's overlay out of it and got the Edit view's camera —
+    /// same scene, different frustum, and every reading taken from that
+    /// panel described a camera nobody was looking through.
+    pub fn page_marking_for(&self, view: crate::meshlet::render_stage::ViewId) -> Option<MarkCounts> {
+        let want = page_view_index(view);
+        self.page_marking_last.filter(|c| c.view == want)
+    }
+
+    /// The raster counts belonging to ONE view, for the same reason.
+    pub fn page_raster_for(&self, view: crate::meshlet::render_stage::ViewId) -> Option<RasterCounts> {
+        let want = page_view_index(view);
+        self.page_raster_last.filter(|c| c.view == want)
+    }
 }
 
 #[cfg(test)]

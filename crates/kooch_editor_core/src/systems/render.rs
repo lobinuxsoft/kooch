@@ -199,6 +199,15 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<MeshletRenderStats>()
         .copied()
         .unwrap_or_default();
+    // 🔴 The GAME viewport's own, published under its own key. The
+    // resource above is written by the View camera's render alone, so
+    // the Game tab's overlay used to describe a frustum nobody was
+    // looking through — and a page count that never moved while the
+    // game camera did.
+    let game_stats = resources
+        .get::<crate::viewport::game::GameViewStats>()
+        .map(|s| s.0)
+        .unwrap_or_default();
 
     // #463.4 — last frame's GPU timing (when adapter exposes
     // TIMESTAMP_QUERY) propagates from the render stage into the
@@ -484,6 +493,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut cluster_settings,
         &mut specular_floor,
         meshlet_stats,
+        game_stats,
         resources
             .get::<crate::perf::EditorPerfStats>()
             .copied()
