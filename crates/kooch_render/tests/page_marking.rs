@@ -1838,6 +1838,19 @@ fn the_cluster_path_marks_for_fewer_pairs() {
 
     assert!(per_pixel.pairs > 0, "the per-pixel path walked nothing");
     assert_eq!(per_froxel.overflow, 0, "a page index past the buffer");
+    // 🔴 Olsson's EXPLICIT bounds, in one number. A froxel is mostly
+    // empty and its box is a slab; marking the box asks for pages across
+    // depth that holds nothing. With the implicit bounds this scene sent
+    // the resolution bias straight to its ceiling — `locals +4 · sun +2`
+    // and 21 pages denied — so a superset is required and a superset
+    // three times over is the feature failing.
+    assert!(
+        per_froxel.resident <= per_pixel.resident * 2,
+        "cluster marked {} pages against {} — the over-marking is what \
+         the pool pays, and it is unbounded",
+        per_froxel.resident,
+        per_pixel.resident
+    );
     // 🔴 The safety property, and the only direction an approximation of
     // "which pages does this scene need" may err in. A froxel is a
     // frustum and its rect on a cube face is that frustum's bounding

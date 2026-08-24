@@ -43,13 +43,17 @@ const COUNTERS: u64 = 16;
 /// histogram, the plan's three words, then the persistent bias and
 /// patience (#943), padded to 40 — then the OCCUPANCY BITMAP, one bit
 /// per froxel. Mirrors `RANK_WORDS` in the shader.
-const RANK_WORDS: u64 = 168;
+const RANK_WORDS: u64 = 8360;
 /// First word of the occupancy bitmap within a view's run.
 const RANK_OCCUPANCY: u64 = 40;
 /// Words of bitmap: 4096 froxels, the grid's own cap.
 const OCCUPANCY_WORDS: u64 = 128;
 /// Froxels the bitmap covers; mirrors `OCCUPANCY_MAX` in the shader.
 const OCCUPANCY_MAX: u32 = 4096;
+/// First word of the per-froxel depth slab — Olsson's explicit bounds.
+const RANK_DEPTH: u64 = 168;
+/// Two words a froxel.
+const DEPTH_WORDS: u64 = 8192;
 
 /// `KOOCH_PAGE_MARKING=1`, read once.
 ///
@@ -567,7 +571,7 @@ impl PageMarker {
         encoder.clear_buffer(
             &self.rank,
             run + RANK_OCCUPANCY * 4,
-            Some(OCCUPANCY_WORDS * 4),
+            Some((OCCUPANCY_WORDS + DEPTH_WORDS) * 4),
         );
         // Every counter here is a per-view quantity now, the pool's
         // claims included: a view allocates out of its own slice.

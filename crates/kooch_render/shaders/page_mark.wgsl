@@ -181,7 +181,7 @@ const RANKS: u32 = 32u;
 //
 // Rides in `rank_state` rather than a binding of its own: the pass sits
 // at the eight-storage-buffer downlevel limit exactly.
-const RANK_WORDS: u32 = 168u;
+const RANK_WORDS: u32 = 8360u;
 /// First word of the occupancy bitmap, `OCCUPANCY_WORDS` long.
 const RANK_OCCUPANCY: u32 = 40u;
 const OCCUPANCY_WORDS: u32 = 128u;
@@ -189,6 +189,22 @@ const OCCUPANCY_WORDS: u32 = 128u;
 /// 4096; a grid larger than this simply stops recording occupancy, which
 /// costs the census its meaning and never correctness.
 const OCCUPANCY_MAX: u32 = 4096u;
+/// Two words per froxel — the nearest and furthest view-space depth any
+/// sample of it reached, as ordered bits.
+///
+/// 🔴 Olsson Fig. 8 calls these the EXPLICIT bounds, against the
+/// IMPLICIT ones a froxel's own box gives, and the distinction is the
+/// whole difference between the cluster path working and not. A froxel
+/// is mostly empty: the occupancy bit says a pixel landed in it, but the
+/// surface inside is a thin sheet and its box is a slab. Marking the box
+/// asks for pages across a depth range that holds nothing.
+///
+/// Measured: with implicit bounds the resolution bias went straight to
+/// its ceiling — `locals +4 · sun +2`, both maxed, 21 pages denied —
+/// against `locals +1 · sun +0` on the per-pixel path. The walk was
+/// 534x cheaper and the pool paid all of it back.
+const RANK_DEPTH: u32 = 168u;
+const DEPTH_WORDS: u32 = 8192u;
 const RANK_CUTOFF: u32 = 32u;
 const RANK_QUOTA: u32 = 33u;
 const RANK_SPARE: u32 = 34u;
@@ -685,6 +701,18 @@ fn mark_pixel(id: vec3<u32>) {
             &rank_state[rank_base() + RANK_OCCUPANCY + froxel / 32u],
             1u << (froxel % 32u),
         );
+        // The explicit bounds: how deep this froxel's SURFACE actually
+        // runs. Positive floats bitcast to u32 keep their order, which
+        // is what lets an atomic hold a depth.
+        // ⚠️ The NEAR end is stored complemented so that both words are
+        // an `atomicMax` and zero is the identity for both. The per-frame
+        // clear writes zeroes and nothing else can, so an `atomicMin`
+        // against a cleared word would never move off zero — the nearest
+        // depth in the scene would read as the camera itself.
+        let depth_bits = bitcast<u32>(abs(view_pos.z));
+        let slab = rank_base() + RANK_DEPTH + froxel * 2u;
+        atomicMax(&rank_state[slab], ~depth_bits);
+        atomicMax(&rank_state[slab + 1u], depth_bits);
     }
     // 🔴 The per-light walk belongs to `mark_froxels` when the cluster
     // path is on (#952). Everything above this line still runs: the sun
@@ -1183,7 +1211,24 @@ fn mark_froxels(@builtin(global_invocation_id) gid: vec3<u32>) {
     let dz = max(view.dimensions.z, 1u);
     let dx = max(view.dimensions.x, 1u);
     let cell = vec3<u32>((froxel / dz) % dx, (froxel / dz) / dx, froxel % dz);
-    let bounds = cluster_cell_bounds(view, cell);
+    var bounds = cluster_cell_bounds(view, cell);
+    // 🔴 The froxel's box narrowed to the slab its SURFACE occupies —
+    // Olsson's explicit bounds against its implicit ones. Without this
+    // the pass marks pages for the empty depth either side of a thin
+    // sheet, and the pool pays for every one of them.
+    let slab = rank_base() + RANK_DEPTH + froxel * 2u;
+    let far_bits = atomicLoad(&rank_state[slab + 1u]);
+    if far_bits != 0u {
+        let near_bits = ~atomicLoad(&rank_state[slab]);
+        // View space looks down -Z, so the nearer surface is the LARGER
+        // z. Clamped INTO the froxel's own box, never outside it: the
+        // slab is what the samples reached and the box is what the
+        // addressing says this cell covers.
+        let a_z = -bitcast<f32>(near_bits);
+        let b_z = -bitcast<f32>(far_bits);
+        bounds.min.z = clamp(min(a_z, b_z), bounds.min.z, bounds.max.z);
+        bounds.max.z = clamp(max(a_z, b_z), bounds.min.z, bounds.max.z);
+    }
     let world_from_view = pages.world_from_clip * view.clip_from_view;
 
     var corners: array<vec3<f32>, 8>;
