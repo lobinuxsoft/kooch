@@ -686,6 +686,13 @@ fn mark_pixel(id: vec3<u32>) {
             1u << (froxel % 32u),
         );
     }
+    // 🔴 The per-light walk belongs to `mark_froxels` when the cluster
+    // path is on (#952). Everything above this line still runs: the sun
+    // is marked per pixel, and the occupancy bit that pass reads was set
+    // above.
+    if pages.density.z > 0.5 {
+        return;
+    }
     let record = cells[froxel];
     let start = record.offset;
     // Points and spots are the first two ranges, stored in that order,
@@ -1104,5 +1111,227 @@ fn count_froxels(@builtin(local_invocation_index) lane: u32) {
     }
     if found != 0u {
         atomicAdd(&counters[9], found);
+    }
+}
+
+// ---------------------------------------------------------------------
+// Marking per (froxel, light) instead of per (pixel, light) — #952.
+//
+// Olsson §III: "the cost can be reduced substantially by using
+// cluster/light pairs in place of sample/light pairs", because cluster
+// bounds are "several orders of magnitude fewer than the samples".
+// Measured in `many_lights`: 2 937 330 sample/light pairs against 199
+// occupied froxels at 17.9 lights each — **824x fewer**.
+//
+// # 🔴 The coarsest corner decides the level, and that is what makes it safe
+//
+// A froxel's eight corners want different levels: the near one is closer
+// to the light and asks for finer texels. Marking each corner's own level
+// would need every one of them resident. Marking the COARSEST is always
+// resolvable instead, because the readers walk their chain from the fine
+// end upward — `inti_pbr`'s loop is `for (; level < chain.x; level++)` —
+// so a pixel that wanted level L finds a page at L+1 and shades with it.
+// The cost is resolution, not correctness, and it is the same trade
+// #943's bias already makes under pressure.
+//
+// # The rect, and why it is filled rather than sampled
+//
+// Eight corner lookups give eight cells. The volume between them needs
+// pages too, so each face marks the whole rect its corners span. That
+// over-marks — the froxel is a frustum and the rect is its bounding box
+// on the cube face — which is the conservative direction: a page nobody
+// samples costs a pool slot, a page nobody marked costs a shadow.
+
+/// Cells a single (froxel, light) pair may mark on one face before it
+/// gives up a level. A froxel close to a light spans a wide angle, and
+/// an unbounded rect there would spend the pool on one pair.
+const FROXEL_RECT_MAX: u32 = 4u;
+
+/// The world-space corners of a froxel, from its grid coordinate.
+fn froxel_corner(bounds: ClusterAabb, corner: u32, world_from_view: mat4x4<f32>) -> vec3<f32> {
+    let pick = vec3<f32>(
+        f32(corner & 1u),
+        f32((corner >> 1u) & 1u),
+        f32((corner >> 2u) & 1u),
+    );
+    let view_pos = mix(bounds.min, bounds.max, pick);
+    let world = world_from_view * vec4<f32>(view_pos, 1.0);
+    return world.xyz / world.w;
+}
+
+@compute @workgroup_size(MARK_GROUP * MARK_GROUP, 1, 1)
+fn mark_froxels(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let froxel = gid.x;
+    if froxel >= view.dimensions.w || froxel >= OCCUPANCY_MAX {
+        return;
+    }
+    // Occupied only. The bitmap is what keeps the depth buffer's free
+    // occlusion culling: a froxel of empty air, or one behind a wall,
+    // has no bit and marks nothing.
+    let bits = atomicLoad(&rank_state[rank_base() + RANK_OCCUPANCY + froxel / 32u]);
+    if (bits & (1u << (froxel % 32u))) == 0u {
+        return;
+    }
+    let record = cells[froxel];
+    let count = record.point_count + record.spot_count;
+    if count == 0u {
+        return;
+    }
+
+    // The grid coordinate back out of the flat index; mirrors
+    // `cluster_index`.
+    let dz = max(view.dimensions.z, 1u);
+    let dx = max(view.dimensions.x, 1u);
+    let cell = vec3<u32>((froxel / dz) % dx, (froxel / dz) / dx, froxel % dz);
+    let bounds = cluster_cell_bounds(view, cell);
+    let world_from_view = pages.world_from_clip * view.clip_from_view;
+
+    var corners: array<vec3<f32>, 8>;
+    for (var c = 0u; c < 8u; c = c + 1u) {
+        corners[c] = froxel_corner(bounds, c, world_from_view);
+    }
+    // What a screen pixel covers at this froxel's FAR face — the same
+    // quantity `mark_pixel` computes per sample, evaluated once for the
+    // whole cell and at its coarsest end.
+    let focal = view.clip_from_view[1][1];
+    var wanted = 0.0;
+    if abs(focal) > 1e-9 {
+        wanted = 2.0 * abs(bounds.min.z) / (focal * max(view.viewport.y, 1.0));
+    }
+    let bias = atomicLoad(&rank_state[rank_base() + RANK_BIAS]);
+    wanted = wanted * pages.density.x * exp2(f32(bias & 0xffu));
+
+    var pairs = 0u;
+    for (var i = 0u; i < count; i = i + 1u) {
+        let slot = record.offset + i;
+        if slot >= arrayLength(&indices) {
+            break;
+        }
+        let light = indices[slot];
+        if light >= pages.strides.w {
+            continue;
+        }
+        pairs = pairs + 1u;
+        if pages.density.y > 0.0 && coverage_pixels(light) < pages.density.y {
+            continue;
+        }
+        mark_froxel_light(light, corners, wanted);
+    }
+    if pairs != 0u {
+        atomicAdd(&counters[2], pairs);
+    }
+}
+
+/// Marks every page one froxel needs from one light.
+fn mark_froxel_light(light: u32, corners: array<vec3<f32>, 8>, wanted: f32) {
+    var corner_pages: array<vec2<u32>, 8>;
+    var level = 0u;
+    var reach = 0.0;
+    let record = lights[light];
+    // Pass one: the coarsest level any corner asks for, and the furthest
+    // corner, which is this froxel's receiver bound (#940).
+    for (var c = 0u; c < 8u; c = c + 1u) {
+        let page = local_page_for(light, corners[c], wanted);
+        corner_pages[c] = page;
+        level = max(level, page.y);
+        reach = max(reach, length(corners[c] - record.position));
+    }
+    // Pass two: every corner re-read at that one level, so the cells are
+    // comparable and the rect between them means something.
+    var seen_faces = 0u;
+    for (var c = 0u; c < 8u; c = c + 1u) {
+        let face_cell = local_cell_at(light, corners[c], level);
+        let face = face_cell.z;
+        if (seen_faces & (1u << face)) != 0u {
+            continue;
+        }
+        seen_faces = seen_faces | (1u << face);
+        // The rect this face spans, over the corners that landed on it.
+        var lo = face_cell.xy;
+        var hi = face_cell.xy;
+        for (var d = c + 1u; d < 8u; d = d + 1u) {
+            let other = local_cell_at(light, corners[d], level);
+            if other.z != face {
+                continue;
+            }
+            lo = min(lo, other.xy);
+            hi = max(hi, other.xy);
+        }
+        mark_face_rect(light, face, level, lo, hi, reach);
+    }
+}
+
+/// A point's (cell.xy, face) on a light's chain at a GIVEN level.
+///
+/// `local_page_for` picks the level from the distance; this takes it as
+/// an argument, because a froxel's eight corners have to be compared on
+/// one grid before a rect between them means anything.
+fn local_cell_at(light: u32, world: vec3<f32>, level: u32) -> vec3<u32> {
+    let record = lights[light];
+    var offset = world - record.position;
+    let spot = record.kind == PAGE_KIND_SPOT;
+    if spot {
+        offset = spot_local(record.direction, offset);
+    }
+    let hit = cube_face(offset);
+    let face = select(u32(hit.w), 0u, spot);
+    let side = level_side(level);
+    let cell = vec2<u32>(clamp(hit.xy, vec2<f32>(0.0), vec2<f32>(0.99999)) * f32(side));
+    return vec3<u32>(cell, face);
+}
+
+/// Marks the cells `lo..=hi` of one face, coarsening until the rect fits
+/// [`FROXEL_RECT_MAX`] on both axes.
+///
+/// 🔴 Coarsening rather than clamping the rect. Clamping would drop the
+/// cells past the cap and take their shadows with them; a level coarser
+/// halves the cells on each axis and still covers the whole froxel,
+/// which is the trade the readers are built to absorb.
+fn mark_face_rect(
+    light: u32,
+    face: u32,
+    start_level: u32,
+    lo_in: vec2<u32>,
+    hi_in: vec2<u32>,
+    reach: f32,
+) {
+    var level = start_level;
+    var lo = lo_in;
+    var hi = hi_in;
+    // `level_side` halves with each level, so the cells do too.
+    for (var guard = 0u; guard < 8u; guard = guard + 1u) {
+        let span = hi - lo + vec2<u32>(1u);
+        if (span.x <= FROXEL_RECT_MAX && span.y <= FROXEL_RECT_MAX)
+            || level + 1u >= pages.chain.z {
+            break;
+        }
+        level = level + 1u;
+        lo = lo / 2u;
+        hi = hi / 2u;
+    }
+    let side = level_side(level);
+    let base = view_base() + light * pages.strides.z + face * pages.strides.y + level_base(level);
+    let top = min(hi, vec2<u32>(max(side, 1u) - 1u));
+    for (var y = lo.y; y <= top.y; y = y + 1u) {
+        for (var x = lo.x; x <= top.x; x = x + 1u) {
+            let index = base + y * side + x;
+            if index >= pages.pool.x {
+                atomicAdd(&counters[3], 1u);
+                continue;
+            }
+            // #940's receiver bound, from the froxel's furthest corner
+            // rather than a sample: larger, so it rejects less, which is
+            // the safe direction for a bound that culls casters.
+            atomicMax(&table_cells[index * PAGE_CELL + 4u], bitcast<u32>(max(reach, 0.0)));
+            // 🔴 `mark_bit`, not `page_touch`. `page_touch` only
+            // refreshes an entry that already exists; the bit is what
+            // makes a page EXIST, and what `plan_view` later ranks. The
+            // first version of this called `page_touch` and marked
+            // nothing at all — 169 pairs walked, zero pages resident.
+            if mark_bit(index, true) {
+                atomicAdd(&rank_state[rank_base() + rank_local(level)], 1u);
+                page_touch(index);
+            }
+        }
     }
 }

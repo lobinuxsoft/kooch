@@ -170,6 +170,20 @@ fn wait(device: &wgpu::Device) {
 }
 
 /// One run of the pass, returning what came back.
+/// Which marking path `run_pool` builds. The environment switch is an
+/// `OnceLock`, so one process cannot answer both ways; this can.
+thread_local! {
+    static CLUSTER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `body` with the cluster/light marking on (#952).
+fn with_clusters<T>(body: impl FnOnce() -> T) -> T {
+    CLUSTER.with(|c| c.set(true));
+    let out = body();
+    CLUSTER.with(|c| c.set(false));
+    out
+}
+
 fn run(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -213,6 +227,7 @@ fn run_pool(
 
     let depth_view = depth_texture(device, queue, depth);
     let mut marker = PageMarker::new(device, PageConfig::default(), ClipmapConfig::default());
+    marker.set_cluster_marking(CLUSTER.with(|c| c.get()));
     marker.set_pool(device, pool);
 
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -1798,4 +1813,50 @@ fn sky_occupies_no_froxel() {
     let counts = run(&device, &queue, &resources, 0.0, None);
     assert_eq!(counts.samples, 0, "the harness drew a surface");
     assert_eq!(counts.froxels, 0, "sky occupied a froxel");
+}
+
+/// The cluster path marks the same scene for a fraction of the pairs.
+///
+/// 🔴 Olsson §III, measured against the path it replaces, in one
+/// process. `many_lights` on the OneXFly walks 2 937 330 sample/light
+/// pairs where 199 occupied froxels at 17.9 lights each would walk
+/// ~3 560 — 824x — and the whole point is that the cheaper answer is
+/// still an answer: pages get marked, nothing overflows, and the
+/// coarsest-corner rule keeps every one of them reachable by a reader
+/// walking its chain from the fine end.
+#[test]
+fn the_cluster_path_marks_for_fewer_pairs() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+
+    let per_pixel = run(&device, &queue, &resources, 0.01, None);
+    let per_froxel = with_clusters(|| run(&device, &queue, &resources, 0.01, None));
+
+    assert!(per_pixel.pairs > 0, "the per-pixel path walked nothing");
+    assert_eq!(per_froxel.overflow, 0, "a page index past the buffer");
+    // 🔴 The safety property, and the only direction an approximation of
+    // "which pages does this scene need" may err in. A froxel is a
+    // frustum and its rect on a cube face is that frustum's bounding
+    // box, so the cluster path marks a SUPERSET: pages nothing samples
+    // cost a pool slot, pages nobody marked cost a shadow. Measured
+    // here at 22 against 12.
+    assert!(
+        per_froxel.resident >= per_pixel.resident,
+        "cluster marked {} pages against the per-pixel path's {} — it is \
+         marking FEWER, which is a missing shadow",
+        per_froxel.resident,
+        per_pixel.resident
+    );
+    // And the whole point: an order of magnitude fewer walks.
+    assert!(
+        per_froxel.pairs * 10 < per_pixel.pairs,
+        "cluster pairs {} against per-pixel {} — not the win the rewrite \
+         is for",
+        per_froxel.pairs,
+        per_pixel.pairs
+    );
 }

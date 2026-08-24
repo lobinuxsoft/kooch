@@ -86,7 +86,7 @@ fn fragment_main(varyings: Varyings) -> @location(0) vec4<f32> {
     // generous: it covers cells the sphere's projection touches but the
     // sphere itself never reaches, and every one of those would cost a
     // light in the shading loop. This is the test that throws them out.
-    let aabb = cell_bounds(cell);
+    let aabb = cluster_cell_bounds(cluster_view, cell);
     let center = (aabb.max + aabb.min) * 0.5;
     let half = (aabb.max - aabb.min) * 0.5;
     if (!sphere_hits_aabb(varyings.sphere_center, varyings.sphere_radius, center, half)) {
@@ -110,63 +110,8 @@ fn fragment_main(varyings: Varyings) -> @location(0) vec4<f32> {
     return vec4<f32>(0.0);
 }
 
-// The view-space bounds of one cell.
-//
-// The XY edges come from unprojecting the cell's screen rectangle at the
-// near plane and following those rays out to the slice's near and far
-// depths; the sides of a froxel are not axis-aligned, so the AABB of the
-// eight resulting corners is what a cheap intersection test can use.
-fn cell_bounds(cell: vec3<u32>) -> ClusterAabb {
-    let near = cluster_view.z_factors.z;
-    let far = cluster_view.z_factors.w;
-    let slices = f32(cluster_view.dimensions.z);
-
-    let p_min = vec2<f32>(cell.xy) * cluster_view.viewport.zw;
-    let p_max = p_min + cluster_view.viewport.zw;
-
-    let ray_min = screen_to_view(p_min).xyz;
-    let ray_max = screen_to_view(p_max).xyz;
-
-    // The slice boundaries, from the same logarithmic distribution
-    // `cluster_z_slice` inverts. Slice 0 starts at the eye rather than
-    // at `near`, because that is where everything nearer than the first
-    // slice ends up.
-    let ratio = far / near;
-    let z = f32(cell.z);
-    var slice_near = 0.0;
-    if (z != 0.0) {
-        slice_near = -near * pow(ratio, (z - 1.0) / max(slices - 1.0, 1.0));
-    }
-    let slice_far = -near * pow(ratio, z / max(slices - 1.0, 1.0));
-
-    let a = ray_to_depth(ray_min, slice_near);
-    let b = ray_to_depth(ray_min, slice_far);
-    let c = ray_to_depth(ray_max, slice_near);
-    let d = ray_to_depth(ray_max, slice_far);
-
-    return ClusterAabb(min(min(a, b), min(c, d)), max(max(a, b), max(c, d)));
-}
-
-// A pixel position on the near plane, in view space.
-fn screen_to_view(screen: vec2<f32>) -> vec4<f32> {
-    let uv = screen / cluster_view.viewport.xy;
-    // NDC z of 1.0 is the near plane: the projection is reversed-Z
-    // (ADR 0002), so near is far and far is zero.
-    let clip = vec4<f32>(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, 1.0, 1.0);
-    let view = cluster_view.view_from_clip * clip;
-    return view / view.w;
-}
-
-// Where the ray from the eye through `p` crosses a plane of constant z.
-fn ray_to_depth(p: vec3<f32>, z: f32) -> vec3<f32> {
-    // A ray parallel to the plane cannot cross it. `p.z` is the near
-    // plane's depth, never zero, but the guard costs one compare and the
-    // alternative is a NaN that propagates into the cell's bounds.
-    if (abs(p.z) < 1e-9) {
-        return p;
-    }
-    return p * (z / p.z);
-}
+// `cluster_cell_bounds`, `view_at_screen` and `ray_at_depth` now live
+// in `cluster_common.wgsl`, because the page marking needs them too.
 
 fn sphere_hits_aabb(
     sphere_center: vec3<f32>,

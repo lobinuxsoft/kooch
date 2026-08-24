@@ -48,6 +48,8 @@ const RANK_WORDS: u64 = 168;
 const RANK_OCCUPANCY: u64 = 40;
 /// Words of bitmap: 4096 froxels, the grid's own cap.
 const OCCUPANCY_WORDS: u64 = 128;
+/// Froxels the bitmap covers; mirrors `OCCUPANCY_MAX` in the shader.
+const OCCUPANCY_MAX: u32 = 4096;
 
 /// `KOOCH_PAGE_MARKING=1`, read once.
 ///
@@ -61,6 +63,28 @@ pub fn enabled_by_environment() -> bool {
         std::env::var("KOOCH_PAGE_MARKING")
             .is_ok_and(|v| v != "0" && !v.eq_ignore_ascii_case("off"))
     })
+}
+
+/// `KOOCH_CLUSTER_MARKING=1`, read once.
+///
+/// 🔴 Olsson §III behind a switch, because it changes WHICH pages exist
+/// and a wrong answer here is a missing shadow rather than a slow frame.
+/// The per-pixel path stays the default until the handheld says the
+/// cluster path is both faster and right — the same A/B shape
+/// `KOOCH_PAGE_MARKING` and `KOOCH_CLUSTERING` already have.
+pub fn cluster_marking() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("KOOCH_CLUSTER_MARKING")
+            .is_ok_and(|v| v != "0" && !v.eq_ignore_ascii_case("off"))
+    })
+}
+
+impl PageMarker {
+    /// Overrides [`cluster_marking`] for this marker.
+    pub fn set_cluster_marking(&mut self, on: bool) {
+        self.cluster = on;
+    }
 }
 
 /// What `record` clamps the sampling rate to.
@@ -183,6 +207,14 @@ pub struct PageMarker {
     bias: wgpu::ComputePipeline,
     /// Populates the occupancy bitmap into `counters[9]`.
     census: wgpu::ComputePipeline,
+    /// Olsson §III's cluster/light marking, behind `KOOCH_CLUSTER_MARKING`.
+    froxel_mark: wgpu::ComputePipeline,
+    /// Whether to run it. Seeded from the environment, settable so a
+    /// test can put the two paths side by side in one process — the
+    /// `OnceLock` behind the variable makes that impossible otherwise,
+    /// and "is the cheap path still right" is the only question worth
+    /// asking about this feature.
+    cluster: bool,
     /// The bind group the marking built, kept so the paint dispatch can
     /// reuse it without rebuilding every resource binding.
     bound: Option<wgpu::BindGroup>,
@@ -248,6 +280,7 @@ impl PageMarker {
         let adopt = compute("adopt_view");
         let bias = compute("bias_view");
         let census = compute("count_froxels");
+        let froxel_mark = compute("mark_froxels");
 
         Self {
             layout,
@@ -259,6 +292,8 @@ impl PageMarker {
             adopt,
             bias,
             census,
+            froxel_mark,
+            cluster: cluster_marking(),
             bound: None,
             view: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_mark_view"),
@@ -478,7 +513,13 @@ impl PageMarker {
                     100.0 / density.clamp(1, 400) as f32,
                     // The coverage gate (#944), in projected pixels.
                     self.coverage as f32,
-                    0.0,
+                    // 🔴 Non-zero moves the per-LIGHT loop off the pixel
+                    // and onto the froxel (#952). The per-pixel pass
+                    // still runs — it marks the sun and it fills the
+                    // occupancy bitmap the froxel pass reads — it just
+                    // stops walking the light list, which is the whole
+                    // 20.3 ms.
+                    if self.cluster { 1.0 } else { 0.0 },
                     0.0,
                 ],
             }),
@@ -551,6 +592,16 @@ impl PageMarker {
             pass.set_pipeline(&self.pipeline);
             let threads = (viewport.0.div_ceil(rate), viewport.1.div_ceil(rate));
             pass.dispatch_workgroups(threads.0.div_ceil(GROUP), threads.1.div_ceil(GROUP), 1);
+            // Olsson §III (#952): the same marking over OCCUPIED FROXELS
+            // rather than pixels — 199 of them against 163 864 covered
+            // pixels in `many_lights`. Dispatched after `mark_main`,
+            // which is what fills the occupancy bitmap it reads; the
+            // per-pixel pass still marks the sun and still records the
+            // bits, it is the per-LIGHT loop this replaces.
+            if self.cluster {
+                pass.set_pipeline(&self.froxel_mark);
+                pass.dispatch_workgroups(OCCUPANCY_MAX.div_ceil(GROUP * GROUP), 1, 1);
+            }
             // The seat passes (#942), in an order that is the
             // algorithm: rank the demand, clear what the plan does not
             // fund, seat what it does. Dispatch boundaries are the

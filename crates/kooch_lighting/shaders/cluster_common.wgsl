@@ -220,3 +220,74 @@ fn cluster_sphere_bounds(
 fn cluster_light_sphere(light: ClusterLight) -> vec4<f32> {
     return vec4<f32>(light.position, light.range);
 }
+
+// ---------------------------------------------------------------------
+// A froxel's geometry, shared.
+//
+// 🔴 One definition, taken as an argument rather than read off a global,
+// because two passes now need it: the rasterizer that assigns lights to
+// cells, and the page marking that walks OCCUPIED cells instead of
+// pixels (#952). The rasterizer's own comment already states the rule
+// for its count/populate pair — "there is no compiler keeping the two in
+// step, only the fact that they are literally the same source" — and a
+// third copy in the marking would be the same hazard with a longer fuse:
+// a cell whose bounds disagree between the two passes gets lights
+// assigned for one volume and pages marked for another.
+
+// A pixel position on the near plane, in view space.
+fn view_at_screen(v: ClusterView, screen: vec2<f32>) -> vec4<f32> {
+    let uv = screen / v.viewport.xy;
+    // NDC z of 1.0 is the near plane: the projection is reversed-Z
+    // (ADR 0002), so near is far and far is zero.
+    let clip = vec4<f32>(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, 1.0, 1.0);
+    let view = v.view_from_clip * clip;
+    return view / view.w;
+}
+
+// Where the ray from the eye through `p` crosses a plane of constant z.
+fn ray_at_depth(p: vec3<f32>, z: f32) -> vec3<f32> {
+    // A ray parallel to the plane cannot cross it. `p.z` is the near
+    // plane's depth, never zero, but the guard costs one compare and the
+    // alternative is a NaN that propagates into the cell's bounds.
+    if (abs(p.z) < 1e-9) {
+        return p;
+    }
+    return p * (z / p.z);
+}
+
+// The view-space bounds of one cell.
+//
+// The XY edges come from unprojecting the cell's screen rectangle at the
+// near plane and following those rays out to the slice's near and far
+// depths; the sides of a froxel are not axis-aligned, so the AABB of the
+// eight resulting corners is what a cheap intersection test can use.
+fn cluster_cell_bounds(v: ClusterView, cell: vec3<u32>) -> ClusterAabb {
+    let near = v.z_factors.z;
+    let far = v.z_factors.w;
+    let slices = f32(v.dimensions.z);
+
+    let p_min = vec2<f32>(cell.xy) * v.viewport.zw;
+    let p_max = p_min + v.viewport.zw;
+
+    let ray_min = view_at_screen(v, p_min).xyz;
+    let ray_max = view_at_screen(v, p_max).xyz;
+
+    // The slice boundaries, from the same logarithmic distribution
+    // `cluster_z_slice` inverts. Slice 0 starts at the eye rather than
+    // at `near`, because that is where everything nearer than the first
+    // slice ends up.
+    let ratio = far / near;
+    let z = f32(cell.z);
+    var slice_near = 0.0;
+    if (z != 0.0) {
+        slice_near = -near * pow(ratio, (z - 1.0) / max(slices - 1.0, 1.0));
+    }
+    let slice_far = -near * pow(ratio, z / max(slices - 1.0, 1.0));
+
+    let a = ray_at_depth(ray_min, slice_near);
+    let b = ray_at_depth(ray_min, slice_far);
+    let c = ray_at_depth(ray_max, slice_near);
+    let d = ray_at_depth(ray_max, slice_far);
+
+    return ClusterAabb(min(min(a, b), min(c, d)), max(max(a, b), max(c, d)));
+}
