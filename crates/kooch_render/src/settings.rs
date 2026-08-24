@@ -693,8 +693,28 @@ fn default_shadow_min_pixels() -> u32 {
 /// 🔴 Off. The cascades are what every scene in the project was authored
 /// against, and a technique that replaces them cannot become the default
 /// on the frame it first renders.
+/// 🔴 **ON since 2026-08-24.** It was off because every scene in the
+/// project had been authored against the cascades — a compatibility
+/// warning, never a claim that the cascades were better. On the OneXFly,
+/// `many_lights` (100 point lights) at 10 W:
+///
+/// | | cascades era | pages, today |
+/// |---|---|---|
+/// | frame | 91.01 ms | **13.88 ms** |
+/// | GPU | ~69.6 ms | **12.2 ms** |
+/// | FPS | 11.0 | **72** |
+///
+/// 12.2 ms against a 13.9 ms handheld budget, with the frame limited by
+/// the compositor rather than by the GPU for the first time. What got it
+/// there is #952: marking per cluster (Olsson §III) and clipping page
+/// triangles in hardware instead of discarding them.
+///
+/// ⚠️ A project that wants the cascades still has the setting. This
+/// changes what a scene renders with by default, so a scene authored
+/// against cascades renders differently the first time it is opened —
+/// that is the cost, and it is paid once.
 fn default_virtual_shadows() -> bool {
-    false
+    true
 }
 
 fn default_shadow_pool_pages() -> u32 {
