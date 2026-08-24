@@ -1710,3 +1710,37 @@ fn a_tiny_light_casts_nothing() {
         "the gate changed the grid walk instead of the marking"
     );
 }
+
+/// The per-pixel path counts into workgroup memory, never into a global
+/// counter.
+///
+/// 🔴 `mark_pixel` runs one thread per pixel and loops over the lights
+/// of that pixel's cluster. A global `atomicAdd` in there lands every
+/// thread of the dispatch on one address: at the OneXFly's resolution,
+/// millions of increments serialised on two words, inside a pass
+/// measured at a flat 13.975 ms (#952). The counts are load-bearing —
+/// the panel and #942's plan read them — so they are reduced per
+/// workgroup and flushed once, and this is what stops the cheap-looking
+/// one-liner from coming back.
+///
+/// A source check, because the defect is invisible in behaviour: the
+/// census comes out identical either way, only slower.
+#[test]
+fn the_hot_path_counts_in_workgroup_memory() {
+    let source = include_str!("../shaders/page_mark.wgsl");
+    let (_, body) = source
+        .split_once("fn mark_pixel(")
+        .expect("page_mark.wgsl has no mark_pixel");
+    // To the next top-level item, which is where the per-pixel path ends.
+    let body = body.split("\n@").next().unwrap_or(body);
+    assert!(
+        !body.contains("&counters["),
+        "mark_pixel touches a global counter; every pixel of the dispatch \
+         would serialise on that one address"
+    );
+    assert!(
+        body.contains("&tally["),
+        "mark_pixel counts nothing into workgroup memory — the census is \
+         either gone or back on the global counters"
+    );
+}

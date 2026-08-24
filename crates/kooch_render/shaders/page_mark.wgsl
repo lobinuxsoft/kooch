@@ -553,8 +553,57 @@ fn page_color(index: u32, level: u32) -> vec3<f32> {
     return base * (0.45 + 0.55 * f32(h & 0xffu) / 255.0);
 }
 
+/// The census, accumulated per WORKGROUP and flushed once.
+///
+/// 🔴 These three used to be `atomicAdd(&counters[n], 1u)` straight into
+/// global memory, from the innermost loop of a pass that runs one thread
+/// per pixel: one increment per covered pixel and one per (pixel, light)
+/// pair, every one of them landing on the same two addresses. At the
+/// resolution the OneXFly captures at that is millions of increments
+/// serialised on two words, in a pass measured at a flat 13.975 ms
+/// (#952). They are diagnostics — the panel and #942's plan read them —
+/// so the fix is to make them cheap, not to delete them.
+///
+/// A workgroup is `MARK_GROUP * MARK_GROUP` = 64 threads, so this trades
+/// up to 64 global atomics for one.
+var<workgroup> tally: array<atomic<u32>, 3>;
+const TALLY_SAMPLES: u32 = 0u;
+const TALLY_PAIRS: u32 = 1u;
+const TALLY_CULLED: u32 = 2u;
+
+/// 🔴 The barriers live HERE and the work lives in `mark_pixel`, because
+/// `workgroupBarrier` in non-uniform control flow is undefined and
+/// `mark_pixel` returns early three ways — off the edge of the viewport,
+/// on sky, on a degenerate reconstruction. Every thread of the group
+/// reaches both barriers; only some of them do any marking.
 @compute @workgroup_size(MARK_GROUP, MARK_GROUP, 1)
-fn mark_main(@builtin(global_invocation_id) id: vec3<u32>) {
+fn mark_main(
+    @builtin(global_invocation_id) id: vec3<u32>,
+    @builtin(local_invocation_index) lane: u32,
+) {
+    if lane < 3u {
+        atomicStore(&tally[lane], 0u);
+    }
+    workgroupBarrier();
+    mark_pixel(id);
+    workgroupBarrier();
+    if lane == 0u {
+        let samples = atomicLoad(&tally[TALLY_SAMPLES]);
+        if samples != 0u {
+            atomicAdd(&counters[1], samples);
+        }
+        let pairs = atomicLoad(&tally[TALLY_PAIRS]);
+        if pairs != 0u {
+            atomicAdd(&counters[2], pairs);
+        }
+        let culled = atomicLoad(&tally[TALLY_CULLED]);
+        if culled != 0u {
+            atomicAdd(&counters[6], culled);
+        }
+    }
+}
+
+fn mark_pixel(id: vec3<u32>) {
     let rate = max(pages.sampling.x, 1u);
     let pixel = id.xy * rate;
     let size = vec2<u32>(view.viewport.xy);
@@ -571,7 +620,7 @@ fn mark_main(@builtin(global_invocation_id) id: vec3<u32>) {
     if depth <= 0.0 {
         return;
     }
-    atomicAdd(&counters[1], 1u);
+    atomicAdd(&tally[TALLY_SAMPLES], 1u);
 
     let uv = (vec2<f32>(pixel) + vec2<f32>(0.5)) / view.viewport.xy;
     let ndc = vec3<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth);
@@ -612,6 +661,12 @@ fn mark_main(@builtin(global_invocation_id) id: vec3<u32>) {
     // Points and spots are the first two ranges, stored in that order,
     // and both need pages. Probes, volumes and decals do not.
     let count = record.point_count + record.spot_count;
+    // 🔴 Counted in registers first. Even an LDS atomic is a shared
+    // address, and this loop body runs once per light per pixel — the
+    // hottest place in the pass. One thread's whole cluster costs it two
+    // workgroup atomics at the end instead of two per light.
+    var pairs = 0u;
+    var culled = 0u;
     for (var i = 0u; i < count; i = i + 1u) {
         let slot = start + i;
         if slot >= arrayLength(&indices) {
@@ -621,17 +676,23 @@ fn mark_main(@builtin(global_invocation_id) id: vec3<u32>) {
         if light >= pages.strides.w {
             continue;
         }
-        atomicAdd(&counters[2], 1u);
+        pairs = pairs + 1u;
         // The coverage gate (#944): a light whose WHOLE range projects
         // under the threshold casts no pages — it still shades, and the
         // reader finds nothing and returns lit. Epic runs the same rule
         // as a pass, `PruneLightGridCS`, before anything marks; here it
         // is a comparison the loop already has every operand for.
         if pages.density.y > 0.0 && coverage_pixels(light) < pages.density.y {
-            atomicAdd(&counters[6], 1u);
+            culled = culled + 1u;
             continue;
         }
         _ = mark_local(light, world, local_wanted);
+    }
+    if pairs != 0u {
+        atomicAdd(&tally[TALLY_PAIRS], pairs);
+    }
+    if culled != 0u {
+        atomicAdd(&tally[TALLY_CULLED], culled);
     }
 }
 
