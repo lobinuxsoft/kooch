@@ -365,8 +365,22 @@ fn a_still_suns_page_caches() {
         "a sub-page step invalidated the level: {:?}",
         &counts[..8]
     );
-    // Far past it: the snapped centre stepped, the world rect moved,
-    // the content is someone else's — redraw.
+    // 🔴 A step of a WHOLE page, which used to be the expensive case
+    // and is the point of the fix. The snapped centre steps, so under
+    // the camera-relative key every cell index in the level shifted by
+    // one and every page redrew — for pages whose world footprint had
+    // not moved a millimetre. Keyed by absolute world position, this
+    // page is exactly where it was and keeps its content.
+    let counts = compact(&mut raster, eye + glam::Vec3::new(width, 0.0, 0.0));
+    assert_eq!(
+        counts[buckets + 4],
+        1,
+        "a one-page step re-keyed a page that had not moved: {:?}",
+        &counts[..8]
+    );
+
+    // Far past it: a different piece of world entirely, wrapped onto the
+    // same slot — the content is someone else's, redraw.
     let counts = compact(&mut raster, glam::Vec3::new(10_000.0, 0.0, 0.0));
     assert_eq!(
         counts[5],
@@ -1375,18 +1389,14 @@ fn cs_snap(@builtin(global_invocation_id) id: vec3<u32>) {
     let extent = base * exp2(f32(level));
 
     let centre = sun_centre(eyes[id.x].xyz, basis, base, side, level);
-    let uv = clamp(
-        (sun_plane(world, basis) - centre) / extent + vec2<f32>(0.5),
-        vec2<f32>(0.0),
-        vec2<f32>(0.99999),
-    );
-    let cell = floor(uv * f32(side));
-    // 🔴 A FIXED cell's rect, not the rect of whichever cell the point
-    // fell in. The second moves whenever the point changes cell, which
-    // it is supposed to do; the first is the GRID, and the grid moving
-    // by a fraction of a page is the crawl.
-    let rect = sun_page_rect(level, vec2<u32>(0u, 0u), base, side, centre);
-    cells[id.x] = vec4<f32>(cell, rect.xy);
+    // 🔴 The KEY of a fixed world point, and the world rect that key
+    // stands for. Both are supposed to be properties of the POINT, not
+    // of wherever the camera happens to be — that is what `sun_cell`'s
+    // absolute-world addressing buys, and what the camera-relative key
+    // it replaced could not do.
+    let cell = sun_cell(world, basis, base, side, level, centre);
+    let rect = sun_page_rect(level, cell, base, side, centre);
+    cells[id.x] = vec4<f32>(vec2<f32>(cell), rect.xy);
 }
 "#
     );
@@ -1404,15 +1414,21 @@ fn cs_snap(@builtin(global_invocation_id) id: vec3<u32>) {
         cache: None,
     });
 
-    // Five camera positions spread across a fraction of one page.
+    // ⚠️ The shader's own constants, which are NOT the ones above: it
+    // declares `base = 64.0` where the engine ships 1.28. One page of
+    // the level it reads is this wide, and the cameras have to cross
+    // several of them or the test proves nothing.
+    let page = 64.0 * 8.0 / 128.0;
     let eyes: Vec<[f32; 4]> = (0..9)
         .map(|i| {
-            // Across several pages, in fractional steps: the fractional
-            // part is what a grid that slides would carry into the rect.
             let t = i as f32 * page * 0.37;
             [t, 3.0, -t * 0.6, 0.0]
         })
         .collect();
+    assert!(
+        (eyes.len() - 1) as f32 * page * 0.37 > page,
+        "the cameras never leave one page; nothing would be proven"
+    );
     let eye_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("eyes"),
         size: (eyes.len() * 16) as u64,
@@ -1465,35 +1481,31 @@ fn cs_snap(@builtin(global_invocation_id) id: vec3<u32>) {
         bytemuck::cast_slice::<u8, [f32; 4]>(&staging.slice(..).get_mapped_range()).to_vec();
     staging.unmap();
 
-    // 🔴 The property is NOT that the cell index holds — the camera
-    // moves in world space and a page is measured in the sun's plane, so
-    // it crosses page boundaries and the index is supposed to change.
-    // What may never happen is the grid moving by a FRACTION of a page:
-    // that is what re-quantises a shadow edge and makes it crawl. A jump
-    // of exactly one page moves the index and leaves every texel's
-    // footprint where it was.
+    // 🔴 The property, now that a page is keyed by absolute world
+    // position: a fixed point's page does not move AT ALL while the
+    // camera walks across several pages. Neither its key nor the world
+    // rect that key stands for.
+    //
+    // The camera-relative key this replaced could only manage the weaker
+    // version — the grid moved by WHOLE pages rather than fractions, so
+    // texel footprints held and shadows did not crawl — and it paid for
+    // it by re-keying every page of the level on every step: 72 FPS
+    // standing still and 5 FPS moving (#948).
     let first = read[0];
-    let mut moved = false;
     for (i, got) in read.iter().enumerate().skip(1) {
+        assert_eq!(
+            [got[0], got[1]],
+            [first[0], first[1]],
+            "camera {i} filed a fixed world point under a different page"
+        );
         for axis in 0..2 {
             let slid = got[2 + axis] - first[2 + axis];
-            let pages = slid / page;
             assert!(
-                (pages - pages.round()).abs() < 1e-3,
-                "camera {i} slid the grid {slid} metres on axis {axis}, \
-                 which is {pages} pages of {page}"
+                slid.abs() < 1e-3,
+                "camera {i} slid the page {slid} metres on axis {axis}"
             );
-            if pages.round() != 0.0 {
-                moved = true;
-            }
         }
     }
-    // And the run has to actually cross a boundary, or it proves that a
-    // grid nobody moved did not move.
-    assert!(
-        moved,
-        "the cameras never crossed a page; the test proves nothing"
-    );
     assert_eq!(LEVEL, 3, "the level the shader hardcodes");
 }
 

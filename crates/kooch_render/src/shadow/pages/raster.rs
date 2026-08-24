@@ -912,21 +912,23 @@ fn atlas_texture(device: &wgpu::Device, config: PageConfig, pool: PoolConfig) ->
 fn sun_gens(clipmap: ClipmapConfig, side: f32, scene_gen: u32, eye: Vec3, sun: Vec3) -> Vec<u32> {
     // Mirrors `sun_basis` in `page_table.wgsl`, term for term.
     let f = sun.normalize_or(Vec3::NEG_Y);
-    let up = if f.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
-    let s_axis = f.cross(up).normalize();
-    let u_axis = s_axis.cross(f);
-    let plane = (eye.dot(s_axis), eye.dot(u_axis));
+    // Only the sun's own axis is left: the basis' two in-plane vectors
+    // went with the snapped centre this no longer hashes.
     let along = eye.dot(f);
     (0..clipmap.levels as usize)
         .map(|level| {
-            // Mirrors `sun_centre`: the snap grid is this level's page
-            // width, so the generation only turns over when the centre
-            // actually steps.
             let width = clipmap.base * (level as f32).exp2() / side;
             let mut h = FNV_SEED;
             for word in [
-                ((plane.0 / width).floor()).to_bits(),
-                ((plane.1 / width).floor()).to_bits(),
+                // 🔴 The snapped CENTRE is deliberately absent, and used
+                // to be two of these words. It turned a whole level's
+                // content over every time the camera crossed one of its
+                // pages — for pages whose world footprint had not moved
+                // at all. `sun_cell` keys a page by its absolute world
+                // position now and `cs_compact` folds that index into
+                // the stamp per page, so scrolling the window
+                // invalidates only the ring that wrapped.
+                //
                 // ⚠️ `floor(x + 0.5)`, mirroring `sun_drift` in
                 // `page_table.wgsl` exactly. `f32::round` would disagree
                 // with WGSL's on halves, and disagreeing by one step is

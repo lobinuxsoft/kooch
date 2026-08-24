@@ -963,7 +963,6 @@ fn inti_page_shadow(
         // The plane is ABSOLUTE and the grid is snapped, so a texel's
         // footprint does not slide with the camera. See `sun_centre`.
         let centre = sun_centre(inti_pages.eye.xyz, basis, base, side, level);
-        let plane = sun_plane(sampled, basis) - centre;
         let along = dot(sampled - inti_pages.eye.xyz, basis[2])
             + sun_drift(inti_pages.eye.xyz, basis, base, side, level);
         // Reversed-Z along the sun's axis, matching `page_depth.wgsl`.
@@ -971,12 +970,8 @@ fn inti_page_shadow(
         // point towards the light, which is the depth half of the bias.
         let receiver = 1.0 - (along + span) / (2.0 * span);
 
-        let uv = clamp(
-            plane / extent + vec2<f32>(0.5),
-            vec2<f32>(0.0),
-            vec2<f32>(0.99999),
-        );
-        let cell = vec2<u32>(uv * f32(side));
+        // The same absolute-world key the marking wrote. See `sun_cell`.
+        let cell = sun_cell(sampled, basis, base, side, level, centre);
         // 🔴 The VIEW is the high part of the key. Two viewports over
         // one world are two clipmaps centred on two cameras, so the
         // same world position is a different page in each — and a

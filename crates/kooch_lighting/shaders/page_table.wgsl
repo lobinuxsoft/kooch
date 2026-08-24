@@ -326,6 +326,82 @@ fn sun_level(reach: f32, base: f32, side: u32) -> u32 {
 /// `z` its width. All three in metres, in the SUN'S PLANE — absolute,
 /// not relative to the camera, because the grid the cell indexes is
 /// snapped and the camera is not on it.
+/// Floored modulo. WGSL's `%` follows the sign of the dividend, and half
+/// the world has a negative page index.
+fn wrap_to(v: vec2<f32>, m: f32) -> vec2<f32> {
+    return v - floor(v / m) * m;
+}
+
+/// The lowest absolute page index this level's window covers, in whole
+/// pages. `centre` is already snapped to the page grid, so this is an
+/// integer.
+fn sun_window(centre: vec2<f32>, width: f32, side: u32) -> vec2<f32> {
+    return floor(centre / width) - vec2<f32>(floor(f32(side) * 0.5));
+}
+
+/// The page a world point belongs to: its ABSOLUTE index on the level's
+/// world grid, wrapped into the `side x side` table.
+///
+/// 🔴 Toroidal, and that is the whole point. The key used to be the
+/// offset from the snapped centre — `(plane - centre) / extent * side` —
+/// and `centre / width` is an integer, so the key reduced to
+/// `plane / width - centre_index + side / 2`. Step the camera one page
+/// and `centre_index` rises by one, so **every point in the world drops
+/// a cell**: the ground that was page N is filed as page N-1, its
+/// content still perfectly valid and no longer reachable under the key
+/// that holds it. The generation for the whole level turned over and
+/// every page redrew.
+///
+/// That is the opposite of what a clipmap is for. Scrolling the centre
+/// must redraw the ring that enters and leave the interior alone.
+/// Keying by world position rather than by camera offset is what makes
+/// that true — the ring that enters lands on the wrapped slots of the
+/// ring that left, which are exactly the pages that must be redrawn.
+///
+/// Measured on the OneXFly: 72 FPS standing still, 5 FPS moving (#948).
+fn sun_cell(
+    world: vec3<f32>,
+    basis: mat3x3<f32>,
+    base: f32,
+    side: u32,
+    level: u32,
+    centre: vec2<f32>,
+) -> vec2<u32> {
+    let s = f32(max(side, 1u));
+    let width = base * exp2(f32(level)) / s;
+    let low = sun_window(centre, width, side);
+    // ⚠️ Clamped into the window BEFORE wrapping, which is what the
+    // `clamp(uv, 0, 0.99999)` this replaces was doing. Wrapping an index
+    // from outside the window would alias it silently onto a page that
+    // holds somewhere else entirely — a worse failure than the edge page
+    // the clamp gives.
+    let idx = clamp(
+        floor(sun_plane(world, basis) / width),
+        low,
+        low + vec2<f32>(s - 1.0),
+    );
+    return vec2<u32>(wrap_to(idx, s));
+}
+
+/// The absolute world page index a wrapped cell stands for: the one
+/// index congruent to `cell` that lies inside this level's window.
+///
+/// This is a page's real identity. Two different world positions can
+/// share a `cell` — that is what wrapping means — and only this tells
+/// them apart.
+fn sun_page_index(
+    level: u32,
+    cell: vec2<u32>,
+    base: f32,
+    side: u32,
+    centre: vec2<f32>,
+) -> vec2<f32> {
+    let s = f32(max(side, 1u));
+    let width = base * exp2(f32(level)) / s;
+    let low = sun_window(centre, width, side);
+    return low + wrap_to(vec2<f32>(cell) - low, s);
+}
+
 fn sun_page_rect(
     level: u32,
     cell: vec2<u32>,
@@ -333,13 +409,15 @@ fn sun_page_rect(
     side: u32,
     centre: vec2<f32>,
 ) -> vec3<f32> {
-    let extent = base * exp2(f32(level));
-    let width = extent / f32(side);
-    // `mark_sun` maps the plane to `uv = (plane - centre) / extent +
-    // 0.5`, so the cell's low corner is this and its centre is half a
-    // page past it.
-    let low = (vec2<f32>(cell) / f32(side) - vec2<f32>(0.5)) * extent + centre;
-    return vec3<f32>(low + vec2<f32>(width * 0.5), width);
+    let width = base * exp2(f32(level)) / f32(max(side, 1u));
+    let idx = sun_page_index(level, cell, base, side, centre);
+    return vec3<f32>(idx * width + vec2<f32>(width * 0.5), width);
+}
+
+/// One FNV-1a round, for folding a page's identity into a generation.
+/// Mirrors `fnv` in `pages/raster.rs`.
+fn page_mix(h: u32, v: u32) -> u32 {
+    return (h ^ v) * 0x01000193u;
 }
 
 /// A page's rect inside its atlas layer, in texels: `xy` the origin,

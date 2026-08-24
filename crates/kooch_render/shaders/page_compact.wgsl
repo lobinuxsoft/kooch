@@ -130,7 +130,26 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
     if !id.is_sun {
         gen_at = sun_buckets + id.light;
     }
-    let gen = gens[raster.views.x * buckets + gen_at];
+    var gen = gens[raster.views.x * buckets + gen_at];
+    // 🔴 A sun page's validity is PER PAGE, not per level. `sun_cell`
+    // keys by absolute world position and wraps into the table, so when
+    // the window scrolls the ring that enters lands on the very slots
+    // the ring that left was using: same key, different piece of world.
+    // Folding the page's own absolute index into the generation is what
+    // tells those two apart — the interior, whose index did not move,
+    // matches and keeps its content; the wrapped ring does not and
+    // redraws. The level-wide generation carries only what is genuinely
+    // level-wide (the sun's direction, the depth anchor, the scene).
+    if id.is_sun {
+        let basis = sun_basis(raster.sun.xyz);
+        let centre =
+            sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
+        let idx = sun_page_index(id.level, id.cell, raster.world.x, raster.space.z, centre);
+        gen = page_mix(gen, bitcast<u32>(i32(idx.x)));
+        gen = page_mix(gen, bitcast<u32>(i32(idx.y)));
+        // 0 means "no content" and must never match a generation.
+        gen = gen | 1u;
+    }
     if table_slots[entry * PAGE_CELL + 3u] == gen {
         atomicAdd(&page_counts[buckets + 4u], 1u);
         return;

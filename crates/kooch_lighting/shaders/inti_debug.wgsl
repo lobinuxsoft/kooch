@@ -524,15 +524,10 @@ fn inti_page_age_debug(world_position: vec3<f32>) -> vec3<f32> {
     var level = sun_level(reach, base, side);
 
     for (; level < inti_pages.chain.x; level = level + 1u) {
-        let extent = base * exp2(f32(level));
         let centre = sun_centre(inti_pages.eye.xyz, basis, base, side, level);
-        let plane = sun_plane(world_position, basis) - centre;
-        let uv = clamp(
-            plane / extent + vec2<f32>(0.5),
-            vec2<f32>(0.0),
-            vec2<f32>(0.99999),
-        );
-        let cell = vec2<u32>(uv * f32(side));
+        // The same absolute-world key the marking wrote; a debug view on
+        // the old camera-relative one would paint the wrong page.
+        let cell = sun_cell(world_position, basis, base, side, level, centre);
         let page = inti_pages.views.x * inti_pages.views.y
             + inti_pages.space.w * inti_pages.space.x
             + level * side * side
@@ -593,15 +588,10 @@ fn inti_page_debug(world_position: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     var level = sun_level(reach, base, side);
 
     for (; level < levels; level = level + 1u) {
-        let extent = base * exp2(f32(level));
         let centre = sun_centre(inti_pages.eye.xyz, basis, base, side, level);
-        let plane = sun_plane(world_position, basis) - centre;
-        let uv = clamp(
-            plane / extent + vec2<f32>(0.5),
-            vec2<f32>(0.0),
-            vec2<f32>(0.99999),
-        );
-        let cell = vec2<u32>(uv * f32(side));
+        // The same absolute-world key the marking wrote; a debug view on
+        // the old camera-relative one would paint the wrong page.
+        let cell = sun_cell(world_position, basis, base, side, level, centre);
         let page = inti_pages.views.x * inti_pages.views.y
             + inti_pages.space.w * inti_pages.space.x
             + level * side * side
