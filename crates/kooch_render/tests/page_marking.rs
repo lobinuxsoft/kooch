@@ -2046,3 +2046,106 @@ fn the_census_reports_the_worst_froxel() {
         "the two marking paths disagree about how much the scene overlaps"
     );
 }
+
+/// The bias lands on its value in one step, not one step a frame.
+///
+/// 🔴 The raise used to move by one and wait for the next frame to see
+/// whether that was enough: a scene needing four steps denied pages for
+/// four frames, and gave them back over as many as ninety-six. The
+/// player saw it — shadows blurring on the way into a lit area and
+/// sharpening again on the way out, resolution as a function of where
+/// they had been.
+///
+/// WickedEngine has no lag at all: it sizes lights from a formula, packs,
+/// halves on failure and repacks inside the frame. Ours are measured by
+/// a per-pixel pass, so one frame is the floor — and this pins that it
+/// reaches the floor.
+#[test]
+fn the_bias_reaches_its_value_in_one_step() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    for i in 0..24 {
+        let x = (i as f32 - 12.0) * 0.35;
+        add_point(&mut resources, Vec3::new(x, 0.2, -2.0), 20.0);
+    }
+    let eye = Vec3::ZERO;
+    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let proj = projection();
+    let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+    let mut lights = GpuLights::new(&device);
+    let mut frame = kooch_lighting::LightFrame::extract(&resources);
+    lights.update(&device, &queue, &resources, camera, None, &mut frame);
+    let depth_view = depth_texture(&device, &queue, 0.02);
+    let target = paint_target(&device);
+    let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
+    marker.set_pool(
+        &device,
+        PoolConfig {
+            pages: 12,
+            views: 1,
+        },
+    );
+
+    let mut series = Vec::new();
+    for index in 0..8u32 {
+        marker.set_frame(index);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            Some(Vec3::new(0.3, -1.0, 0.2)),
+            (SIZE, SIZE),
+            0,
+            1,
+            100,
+            Paint {
+                target: &target,
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        marker.poll();
+        wait(&device);
+        marker.poll();
+        if let Some(counts) = marker.last() {
+            series.push(counts.pool.bias_local);
+        }
+    }
+    let settled = *series.last().expect("counters came back");
+    assert!(
+        settled > 1,
+        "this scene does not need a multi-step bias, so it cannot show \
+         one being reached in a step: settled at +{settled}"
+    );
+    // 🔴 The property, and it is deliberately not exactness. The raise
+    // uses the OPTIMISTIC estimate — four pages become one per level —
+    // because raising too little costs a frame of denials while raising
+    // too much costs blur the player sees. So it lands at or just under
+    // the answer and corrects once, never climbing through it.
+    let first_move = series
+        .iter()
+        .copied()
+        .find(|&b| b > 0)
+        .expect("the bias never rose");
+    assert!(
+        first_move + 1 >= settled,
+        "the first move was +{first_move} against a settled +{settled}: \
+         {series:?} — that is stepping, not computing"
+    );
+    let rises = series.windows(2).filter(|w| w[1] > w[0]).count();
+    assert!(
+        rises <= 1,
+        "the bias rose {rises} times after its first move: {series:?} — \
+         one correction is the estimate erring low, several is a loop"
+    );
+}

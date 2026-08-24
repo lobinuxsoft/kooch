@@ -1084,65 +1084,103 @@ fn bias_view() {
     var sun_bias = word >> 8u;
     let cutoff = atomicLoad(&rank_state[base + RANK_CUTOFF]);
     var patience = atomicLoad(&rank_state[base + RANK_PATIENCE]);
+    let budget = pages.pool.w;
+
+    // 🔴 Read on BOTH branches now. The raise used to step by one and
+    // wait for the next frame to see whether that was enough, so a scene
+    // needing four steps took four frames to stop denying and up to
+    // ninety-six to give them back. The demand is right here; the number
+    // of steps it implies can be computed instead of discovered.
+    //
+    // WickedEngine does the same thing without any lag at all
+    // (`wiRenderer.cpp`): it sizes every light by `min(1, range/dist)`,
+    // tries to pack, and on failure halves everything and repacks —
+    // inside the frame, from no state. It can, because its sizes come
+    // from a formula. Ours are MEASURED by a per-pixel pass, so a second
+    // evaluation would mean a second marking; one frame of lag is the
+    // floor here, and one frame is what this gets it to.
+    var sun_demand = 0u;
+    var local_demand = 0u;
+    var total = 0u;
+    for (var r = 0u; r < RANKS; r = r + 1u) {
+        let d = atomicLoad(&rank_state[base + r]);
+        total = total + d;
+        if r < pages.chain.w {
+            sun_demand = sun_demand + d;
+        } else {
+            local_demand = local_demand + d;
+        }
+    }
+
     if cutoff < RANKS {
-        if local_bias < LOCAL_BIAS_MAX {
-            local_bias = local_bias + 1u;
-        } else if cutoff < pages.chain.w && sun_bias < SUN_BIAS_MAX {
-            // 🔴 Only when the cut landed among the SUN'S ranks.
-            //
-            // `cutoff` is the first rank the budget could not fund whole,
-            // and the sun owns ranks `0 .. chain.w`. A cutoff at or past
-            // `chain.w` therefore means every sun rank was funded in
-            // full: the sun lost nothing, and blurring it buys back not
-            // one page it asked for. It only punishes the consumer that
-            // won the ranking for the overdemand of the ones that lost.
-            //
-            // Measured in `many_lights`: the plan reported "funded down
-            // to rank 17" — the sun complete, the cut inside the lamps —
-            // while the bias sat at `locals +4 · sun +2`. Two levels of
-            // sun is four times the world per shadow texel on the one
-            // shadow the scene is actually about, and standing somewhere
-            // with fewer lamps in frame made it snap back. Resolution
-            // that depends on where you are standing.
-            //
-            // The ranking already gets this right and always did: a
-            // clipmap level never loses to a lamp. This makes the
-            // pressure valve agree with it.
-            sun_bias = sun_bias + 1u;
+        // ⚠️ Four pages become one per step is the OPTIMISTIC estimate,
+        // and it is chosen on purpose. Raising too little costs one more
+        // frame of denials; raising too much costs blur the player sees.
+        // The error belongs on the low side.
+        var local_room = LOCAL_BIAS_MAX - min(local_bias, LOCAL_BIAS_MAX);
+        var extra = local_room;
+        for (var k = 1u; k <= local_room; k = k + 1u) {
+            if sun_demand + (local_demand >> (2u * k)) <= budget {
+                extra = k;
+                break;
+            }
+        }
+        local_bias = local_bias + extra;
+        let local_left = local_demand >> (2u * extra);
+        // The sun pays only when the cut landed among ITS ranks, and
+        // only once the lamps have given everything they have.
+        if local_bias >= LOCAL_BIAS_MAX && cutoff < pages.chain.w {
+            let sun_room = SUN_BIAS_MAX - min(sun_bias, SUN_BIAS_MAX);
+            var sun_extra = sun_room;
+            for (var k = 1u; k <= sun_room; k = k + 1u) {
+                if (sun_demand >> (2u * k)) + local_left <= budget {
+                    sun_extra = k;
+                    break;
+                }
+            }
+            sun_bias = sun_bias + sun_extra;
         }
         patience = 0u;
     } else {
         patience = patience + 1u;
-        var sun_demand = 0u;
-        var local_demand = 0u;
-        var total = 0u;
-        for (var r = 0u; r < RANKS; r = r + 1u) {
-            let d = atomicLoad(&rank_state[base + r]);
-            total = total + d;
-            if r < pages.chain.w {
-                sun_demand = sun_demand + d;
+        // ⚠️ Growth is FOUR times a level here, the pessimistic estimate,
+        // for the same reason inverted: an unwind that over-reaches is
+        // the blur coming straight back next frame.
+        let others = total - sun_demand;
+        var back = 0u;
+        for (var k = 1u; k <= sun_bias; k = k + 1u) {
+            if others + (sun_demand << (2u * k)) <= budget {
+                back = k;
             } else {
-                local_demand = local_demand + d;
+                break;
             }
         }
-        let budget = pages.pool.w;
-        // Strict: the slack covers ~3x that party's demand, so one
-        // level finer (at most four times the pages) provably fits.
-        if sun_bias > 0u && total + 3u * sun_demand <= budget {
-            sun_bias = sun_bias - 1u;
+        if back > 0u {
+            sun_bias = sun_bias - back;
             patience = 0u;
-        } else if local_bias > 0u && total + 3u * local_demand <= budget {
-            local_bias = local_bias - 1u;
-            patience = 0u;
-        } else if patience >= PATIENCE_FRAMES && (sun_bias > 0u || local_bias > 0u) {
-            // Trial: the proof is unavailable — coarse levels do not
-            // quadruple — so probe, and let the raise arbitrate.
-            if sun_bias > 0u {
-                sun_bias = sun_bias - 1u;
-            } else {
-                local_bias = local_bias - 1u;
+        } else {
+            let rest = total - local_demand;
+            var local_back = 0u;
+            for (var k = 1u; k <= local_bias; k = k + 1u) {
+                if rest + (local_demand << (2u * k)) <= budget {
+                    local_back = k;
+                } else {
+                    break;
+                }
             }
-            patience = 0u;
+            if local_back > 0u {
+                local_bias = local_bias - local_back;
+                patience = 0u;
+            } else if patience >= PATIENCE_FRAMES && (sun_bias > 0u || local_bias > 0u) {
+                // Trial: the proof is unavailable — coarse levels do not
+                // quadruple — so probe, and let the raise arbitrate.
+                if sun_bias > 0u {
+                    sun_bias = sun_bias - 1u;
+                } else {
+                    local_bias = local_bias - 1u;
+                }
+                patience = 0u;
+            }
         }
     }
     atomicStore(&rank_state[base + RANK_PATIENCE], patience);
