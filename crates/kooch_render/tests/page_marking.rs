@@ -1904,3 +1904,104 @@ fn the_counts_say_which_path_walked_them() {
          a froxel holds at least as many lights as a pixel inside it"
     );
 }
+
+/// Lamps that overrun the pool do not blur the sun.
+///
+/// 🔴 The ranking has always had this right — a clipmap level never
+/// loses to a lamp — and the pressure valve did not. `cutoff` is the
+/// first rank the budget could not fund whole, the sun owns ranks
+/// `0..chain.w`, so a cutoff at or past `chain.w` means every sun rank
+/// was funded in full. Raising the sun's bias there buys back no page it
+/// asked for; it only punishes the consumer that won the ranking for the
+/// overdemand of the ones that lost.
+///
+/// Seen in `many_lights`: "the plan funded down to rank 17" — the sun
+/// complete, the cut inside the lamps — beside `locals +4 · sun +2`.
+/// Two levels of sun is four times the world per shadow texel on the one
+/// shadow the scene is about, and walking somewhere with fewer lamps in
+/// frame snapped it back. Resolution that depended on where you stood.
+#[test]
+fn lamps_that_overrun_the_pool_spare_the_sun() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    // Enough lamps, close enough, that their pages cannot all be seated.
+    for i in 0..12 {
+        let x = (i as f32 - 6.0) * 0.7;
+        add_point(&mut resources, Vec3::new(x, 0.0, -4.0), 12.0);
+    }
+    let eye = Vec3::ZERO;
+    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let proj = projection();
+    let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+    let mut lights = GpuLights::new(&device);
+    let mut frame = kooch_lighting::LightFrame::extract(&resources);
+    lights.update(&device, &queue, &resources, camera, None, &mut frame);
+    let depth_view = depth_texture(&device, &queue, 0.02);
+    let target = paint_target(&device);
+    let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
+    marker.set_pool(
+        &device,
+        PoolConfig {
+            pages: 12,
+            views: 1,
+        },
+    );
+
+    let mut last = None;
+    for index in 0..24u32 {
+        marker.set_frame(index);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            Some(Vec3::new(0.3, -1.0, 0.2)),
+            (SIZE, SIZE),
+            0,
+            1,
+            100,
+            Paint {
+                target: &target,
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        marker.poll();
+        wait(&device);
+        marker.poll();
+        if let Some(counts) = marker.last() {
+            last = Some(counts);
+        }
+    }
+    let last = last.expect("counters came back");
+    // The premise: the cut has to land among the LAMPS, or this proves
+    // nothing about who pays.
+    let sun_levels = ClipmapConfig::default().levels;
+    assert!(
+        last.pool.denied > 0,
+        "nothing was denied — the pool absorbed the demand, and a scene \
+         with no shortfall cannot say who should pay for one"
+    );
+    assert!(
+        last.pool.cutoff >= sun_levels,
+        "the plan cut at rank {} of {} sun ranks — the sun WAS denied, so \
+         this scene cannot say who should pay",
+        last.pool.cutoff,
+        sun_levels
+    );
+    assert_eq!(
+        last.pool.bias_sun, 0,
+        "the sun was funded to its last rank and blurred anyway: \
+         locals +{} sun +{}, cut at rank {}",
+        last.pool.bias_local, last.pool.bias_sun, last.pool.cutoff
+    );
+}

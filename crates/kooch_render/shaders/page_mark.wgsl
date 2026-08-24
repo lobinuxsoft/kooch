@@ -1074,7 +1074,27 @@ fn bias_view() {
     if cutoff < RANKS {
         if local_bias < LOCAL_BIAS_MAX {
             local_bias = local_bias + 1u;
-        } else if sun_bias < SUN_BIAS_MAX {
+        } else if cutoff < pages.chain.w && sun_bias < SUN_BIAS_MAX {
+            // 🔴 Only when the cut landed among the SUN'S ranks.
+            //
+            // `cutoff` is the first rank the budget could not fund whole,
+            // and the sun owns ranks `0 .. chain.w`. A cutoff at or past
+            // `chain.w` therefore means every sun rank was funded in
+            // full: the sun lost nothing, and blurring it buys back not
+            // one page it asked for. It only punishes the consumer that
+            // won the ranking for the overdemand of the ones that lost.
+            //
+            // Measured in `many_lights`: the plan reported "funded down
+            // to rank 17" — the sun complete, the cut inside the lamps —
+            // while the bias sat at `locals +4 · sun +2`. Two levels of
+            // sun is four times the world per shadow texel on the one
+            // shadow the scene is actually about, and standing somewhere
+            // with fewer lamps in frame made it snap back. Resolution
+            // that depends on where you are standing.
+            //
+            // The ranking already gets this right and always did: a
+            // clipmap level never loses to a lamp. This makes the
+            // pressure valve agree with it.
             sun_bias = sun_bias + 1u;
         }
         patience = 0u;
