@@ -69,18 +69,34 @@ pub fn enabled_by_environment() -> bool {
     })
 }
 
-/// `KOOCH_CLUSTER_MARKING=1`, read once.
+/// Olsson §III's cluster/light marking, ON, and `KOOCH_CLUSTER_MARKING=0`
+/// turns it off. Read once.
 ///
-/// 🔴 Olsson §III behind a switch, because it changes WHICH pages exist
-/// and a wrong answer here is a missing shadow rather than a slow frame.
-/// The per-pixel path stays the default until the handheld says the
-/// cluster path is both faster and right — the same A/B shape
-/// `KOOCH_PAGE_MARKING` and `KOOCH_CLUSTERING` already have.
+/// 🔴 The switch turned around on 2026-08-24, and it is worth saying what
+/// turned it: the same scene, the same camera and the same handheld
+/// within two degrees, `many_lights` on the OneXFly.
+///
+/// | | per pixel | per cluster |
+/// |---|---|---|
+/// | `page mark` | 19.674 ms | **2.729 ms** |
+/// | `page depth` | 38.639 ms | 27.862 ms |
+/// | frame | 91.01 ms | **55.13 ms** |
+///
+/// The 7.2× on the mark is the factor Olsson §III predicts. The 28% on
+/// the raster is the one that decided this: marking per cluster does not
+/// merely cost less, it ASKS FOR FEWER PAGES, and a page never asked for
+/// is one that evicts nobody and rasterises never.
+///
+/// The escape hatch stays because the risk never went away — this pass
+/// chooses WHICH pages exist, so a wrong answer is a missing shadow
+/// rather than a slow frame, and a missing shadow logs nothing. Reach
+/// for `=0` when a shadow is absent and the cause is not obvious.
 pub fn cluster_marking() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
         std::env::var("KOOCH_CLUSTER_MARKING")
-            .is_ok_and(|v| v != "0" && !v.eq_ignore_ascii_case("off"))
+            .ok()
+            .is_none_or(|v| v != "0" && !v.eq_ignore_ascii_case("off"))
     })
 }
 

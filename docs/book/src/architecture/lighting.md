@@ -1558,6 +1558,47 @@ rasterised. It is pinned at one per pixel.
 as its default — the comparison it exists for is made on a handheld, over
 SSH, against a build nobody wants to make twice.
 
+### Marking per cluster, and the second-order effect that decided it
+
+Olsson §III names per-sample marking as the branch to replace: a page is
+a property of the *cluster* a sample falls in, so marking it once per
+cluster rather than once per sample is the same answer for a fraction of
+the pairs. It shipped behind `KOOCH_CLUSTER_MARKING` because this pass
+chooses **which pages exist**, and a wrong answer here is a missing
+shadow rather than a slow frame — a defect nothing logs.
+
+Measured on the OneXFly, `many_lights` (100 point lights), same camera,
+64 °C against 66 °C:
+
+| | per pixel | per cluster | |
+|---|---|---|---|
+| `page mark` | 19.674 ms | **2.729 ms** | −7.2× |
+| `page depth` | 38.639 ms | 27.862 ms | −28 % |
+| `shadow pages` | 59.352 ms | **31.622 ms** | −1.9× |
+| frame, median | 91.01 ms | **55.13 ms** | 11.0 → 18.1 FPS |
+
+🔴 **The 7.2× is what the paper predicts; the 28% is what settled the
+default.** Nothing touched the rasteriser, and it got a quarter cheaper
+anyway — because marking per cluster does not merely cost less, it *asks
+for fewer pages*, and a page never asked for evicts nobody and
+rasterises never. A pass that is 4 % of the frame cannot buy that on its
+own; it bought it by changing what the next pass was handed.
+
+So the switch turned around: cluster marking is the default and
+`KOOCH_CLUSTER_MARKING=0` returns the per-pixel path. The escape hatch
+stays for the reason it was built — reach for it when a shadow is
+absent and the cause is not obvious.
+
+⚠️ **What this did not fix.** `page depth` is still 27.9 ms, now **67 %
+of the GPU frame**, because the pool is still over-subscribed: the
+census puts `many_lights` at **6916 resident pages against a 2048-page
+pool**, so the pool is evicted and refilled every frame and the content
+cache saves nothing. That is a budget defect, not a marking one, and the
+same census says where it lives — the sun wants 118 pages and saves
+133.6× over a brute-force allocation, while the 100 lamps want 6798 and
+save **1.2×**. Virtual paging pays for coherence, and a hundred
+scattered point lights have none to sell.
+
 ## What Inti does not do yet
 
 - **Nothing but lights is clustered.** The grid reserves a range per cell
