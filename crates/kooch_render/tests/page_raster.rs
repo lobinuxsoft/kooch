@@ -715,6 +715,7 @@ fn a_lamp_page_holds_what_its_light_sees() {
         &lights_buffer,
         &[],
         1.0,
+        None,
     );
     queue.submit([encoder.finish()]);
 
@@ -831,6 +832,7 @@ fn a_lamp_page_holds_what_its_light_sees() {
         &lights_buffer,
         &[],
         1.0,
+        None,
     );
     queue.submit([encoder.finish()]);
     let counts = read_words(&device, &queue, raster.counts_buffer());
@@ -879,6 +881,7 @@ fn a_lamp_page_holds_what_its_light_sees() {
         &lights_buffer,
         &[[0.45, 2.0, -0.45, 0.5]],
         1.0,
+        None,
     );
     queue.submit([encoder.finish()]);
     let counts = read_words(&device, &queue, raster.counts_buffer());
@@ -1765,6 +1768,34 @@ fn the_page_passes_are_profiled() {
             "{name} records GPU work in a function the profiler cannot see"
         );
     }
+
+    // 🔴 Everything above measures the CPU, and every line of it passed
+    // while this track spent 34 ms per frame on the OneXFly that no
+    // capture could see. `profiling::scope!` times the RECORDING —
+    // walking levels, writing uniforms, building bind groups — and the
+    // recording is under a millisecond. What the dispatches then cost
+    // the GPU needs a timestamp on the encoder, which is a different
+    // call, and the name of this test claimed both.
+    for (name, source, wanted) in [
+        (
+            "frame/pages.rs",
+            include_str!("../src/meshlet/render_stage/frame/pages.rs"),
+            ["shadow pages", "page mark", "page raster"].as_slice(),
+        ),
+        (
+            "pages/raster.rs",
+            include_str!("../src/shadow/pages/raster.rs"),
+            ["page cull", "page expand", "page depth"].as_slice(),
+        ),
+    ] {
+        for label in wanted {
+            assert!(
+                source.contains(&format!("\"{label}\"")),
+                "{name} opens no `{label}` GPU scope; its dispatches land \
+                 in a capture under no name at all"
+            );
+        }
+    }
 }
 
 /// The octave a page asks for, run through the SHADER'S OWN arithmetic.
@@ -2372,6 +2403,7 @@ fn a_caster_behind_every_receiver_pairs_nothing() {
             &lights_buffer,
             &[],
             1.0,
+            None,
         );
         queue.submit([encoder.finish()]);
         let counts = read_words(&device, &queue, raster.counts_buffer());

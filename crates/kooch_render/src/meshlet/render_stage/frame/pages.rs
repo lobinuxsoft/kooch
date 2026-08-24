@@ -206,12 +206,25 @@ impl MeshletRenderStage {
         marker.set_coverage(settings.min_pixels);
         let sun = self.light_frame.as_ref().and_then(|(_, frame)| frame.sun());
         let slice = page_view_index(view_id);
+        // 🔴 The CPU scopes above are not the instrument this track
+        // needed. Every dispatch below runs on the GPU, and the frame
+        // encoder carried exactly two GPU scopes — `cull` and
+        // `raster + shade` — with this whole block recorded between
+        // them and inside neither. The profiler therefore reported a
+        // GPU frame of 11 ms while `drm-engine-gfx` reported 45, and
+        // the missing 34 had nowhere to be attributed.
+        let scopes = resources.get::<kooch_core::gpu::GpuScopes>();
+        let track = scopes.map(|s| s.begin("shadow pages", encoder));
         let view = &self.views[view_id];
         // 🔴 Braced. A `profiling::scope!` lives until the end of its
         // BLOCK, so an unbraced one here would swallow the raster too
         // and the two would be one number again.
         {
             profiling::scope!("mark");
+            let query = track
+                .as_ref()
+                .zip(scopes)
+                .map(|(parent, s)| s.begin_child("page mark", encoder, parent));
             marker.record(
                 device,
                 queue,
@@ -236,7 +249,18 @@ impl MeshletRenderStage {
                     size: view.size,
                 },
             );
+            if let (Some(scopes), Some(query)) = (scopes, query) {
+                scopes.end(encoder, query);
+            }
         }
+        let query = track
+            .as_ref()
+            .zip(scopes)
+            .map(|(parent, s)| s.begin_child("page raster", encoder, parent));
+        // The four passes inside nest under this one, so the flamegraph
+        // splits the raster into the things that actually scale apart:
+        // levels, resident pages, pairs, covered texels.
+        let inner = query.as_ref().zip(scopes).map(|(q, s)| (s, q));
         self.record_page_raster(
             device,
             queue,
@@ -247,7 +271,20 @@ impl MeshletRenderStage {
             eye,
             scene_params,
             meshlet_bg,
+            inner,
         );
+        // 🔴 Both closed unconditionally. `end_frame` rejects a frame
+        // that carries an open query and drops EVERY GPU timing with
+        // it, so an early return between a `begin` and its `end` blinds
+        // the whole profiler, not just this track.
+        if let Some(scopes) = scopes {
+            if let Some(query) = query {
+                scopes.end(encoder, query);
+            }
+            if let Some(track) = track {
+                scopes.end(encoder, track);
+            }
+        }
     }
 
     /// The settings, with the live camera count folded in.
@@ -357,6 +394,7 @@ impl MeshletRenderStage {
         eye: Vec3,
         scene_params: &SceneCullParams,
         meshlet_bg: &wgpu::BindGroup,
+        track: crate::shadow::pages::raster::RasterTrack<'_>,
     ) {
         // 🔴 No sun does NOT skip the raster. This gate predated the
         // local raster ("their raster is the next machine") and
@@ -419,6 +457,7 @@ impl MeshletRenderStage {
             self.lights.light_buffer(),
             &self.moved_casters,
             lod_target,
+            track,
         );
         // Idempotent, and this is the one call site that runs after
         // every possible rebuild of either side. The binding the

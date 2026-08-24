@@ -45,6 +45,33 @@ use crate::meshlet::{
 use super::pool::{PagePool, PoolConfig};
 use super::{ClipmapConfig, PageConfig};
 
+use kooch_core::gpu::{GpuQuery, GpuScopes};
+
+/// The caller's open scope, for the four passes below to nest under.
+///
+/// 🔴 The four are a cull, a compact, an expansion and a draw, and they
+/// scale with completely different things — levels, resident pages,
+/// `(page, meshlet)` pairs, covered texels. One number over the set
+/// says the track is expensive without saying which of those grew, so
+/// it is a number nothing can act on.
+pub type RasterTrack<'a> = Option<(&'a GpuScopes, &'a GpuQuery)>;
+
+/// Opens `label` under `track`, or nothing when there is no profiler.
+fn nested(
+    track: RasterTrack<'_>,
+    label: &str,
+    encoder: &mut wgpu::CommandEncoder,
+) -> Option<GpuQuery> {
+    track.map(|(scopes, parent)| scopes.begin_child(label, encoder, parent))
+}
+
+/// Closes what [`nested`] opened.
+fn close(track: RasterTrack<'_>, query: Option<GpuQuery>, encoder: &mut wgpu::CommandEncoder) {
+    if let (Some((scopes, _)), Some(query)) = (track, query) {
+        scopes.end(encoder, query);
+    }
+}
+
 use kooch_lighting::PAGE_TABLE as TABLE;
 // `ClusterLight` is declared here — the expansion tests a candidate
 // against the lamp's own cone and the depth pass places its faces.
@@ -1289,6 +1316,7 @@ impl PageRasterizer {
         // and new bounds alike — for the cache's invalidation pass.
         moved: &[[f32; 4]],
         lod_target: f32,
+        track: RasterTrack<'_>,
     ) {
         let levels = self.clipmap.levels;
         let buckets = self.buckets();
@@ -1313,6 +1341,7 @@ impl PageRasterizer {
         // not zero, it is whatever the allocator handed over.
         // `cs_expand_args` multiplies it by a page count either way.
         encoder.clear_buffer(&self.visible_counts, 0, None);
+        let cull_query = nested(track, "page cull", encoder);
         {
             profiling::scope!("cull: clipmap levels");
             for level in 0..levels {
@@ -1387,6 +1416,7 @@ impl PageRasterizer {
                 lod_target,
             );
         }
+        close(track, cull_query, encoder);
         // The bucket uniforms for the expansion's lamp dispatches —
         // constant values, cheap to restate per view.
         for (slot, lamp) in lamps.iter().enumerate().take(lamp_slots) {
@@ -1416,6 +1446,7 @@ impl PageRasterizer {
         self.ensure_bound(device, page_pool, instances, &mesh_pool.meshlets, lights);
         let bound = self.bound.as_ref().expect("just built");
 
+        let expand_query = nested(track, "page expand", encoder);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("shadow pages: compact and expand"),
@@ -1480,7 +1511,9 @@ impl PageRasterizer {
             pass.set_bind_group(0, &bound.compact, &[uniform_offset]);
             pass.dispatch_workgroups(1, 1, 1);
         }
+        close(track, expand_query, encoder);
 
+        let depth_query = nested(track, "page depth", encoder);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow pages: depth"),
@@ -1515,6 +1548,7 @@ impl PageRasterizer {
             pass.set_bind_group(2, &bound.instances, &[]);
             pass.draw_indirect(&self.draw_args, 0);
         }
+        close(track, depth_query, encoder);
 
         // The survivor counts, brought home alongside the page counts so
         // the expansion's cost can be read as the product it is. See
