@@ -206,6 +206,14 @@ impl RemoteClient {
         }
     }
 
+    /// Opens an empty unsaved scene on the project and makes it active.
+    pub fn new_scene(&self) -> Result<kooch_core::Guid, ClientError> {
+        match self.call(Method::NewScene)? {
+            ResponseData::SceneOpened { scene } => Ok(scene),
+            other => Err(ClientError::Unexpected(other)),
+        }
+    }
+
     /// Every registered component type with its field schema.
     pub fn get_schema(&self) -> Result<Vec<ComponentSchema>, ClientError> {
         match self.call(Method::GetSchema)? {
@@ -247,9 +255,20 @@ impl RemoteClient {
     }
 
     /// Spawns a new entity, optionally named; returns its handle.
-    pub fn spawn(&self, name: Option<&str>) -> Result<EntityId, ClientError> {
+    ///
+    /// `scene` names the scene to author it into (`None` = the active
+    /// one) and `parent` what to hang it off. A parent already names the
+    /// scene, so `scene` is ignored when one is given.
+    pub fn spawn(
+        &self,
+        name: Option<&str>,
+        scene: Option<kooch_core::Guid>,
+        parent: Option<EntityId>,
+    ) -> Result<EntityId, ClientError> {
         match self.call(Method::Spawn {
             name: name.map(str::to_owned),
+            scene,
+            parent,
         })? {
             ResponseData::Spawned { entity } => Ok(entity),
             other => Err(ClientError::Unexpected(other)),

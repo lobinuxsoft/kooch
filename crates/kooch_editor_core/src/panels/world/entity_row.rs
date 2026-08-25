@@ -49,6 +49,21 @@ pub(super) fn is_descendant(
 
 /// Renders a single entity row. Mutates `selected` and `last_clicked_index`
 /// on click; pushes [`EditorAction`]s for context-menu operations and drag/drop.
+/// How many levels of indent a row at `depth` sits at.
+///
+/// 🔴 One more than its depth in the hierarchy, because every entity is
+/// inside a scene and the scene has a row of its own. Drawn at its own
+/// depth, a root entity started at the same column as the scene header
+/// above it — so a scene with four roots read as five scenes, and the one
+/// thing the tree was built to say went missing.
+///
+/// A single function rather than a `+ 1` at each site: the label's indent
+/// and the triangle's position are two readings of the same number, and
+/// they were already off by one from each other once.
+pub(super) fn indent_levels(depth: usize) -> usize {
+    depth + 1
+}
+
 /// Where this row's disclosure triangle goes, or `None` when the row is
 /// too narrow to hold one.
 ///
@@ -60,7 +75,7 @@ fn twisty_rect(ui: &egui::Ui, resp: &egui::Response, depth: usize) -> Option<egu
     let icon_width = ui.spacing().icon_width;
     let font = egui::TextStyle::Button.resolve(ui.style());
     let space = ui.fonts_mut(|fonts| fonts.glyph_width(&font, ' '));
-    let left = resp.rect.left() + space * (depth * 2) as f32;
+    let left = resp.rect.left() + space * (indent_levels(depth) * 2) as f32;
     let rect = egui::Rect::from_center_size(
         egui::pos2(left + icon_width * 0.5, resp.rect.center().y),
         egui::vec2(icon_width, icon_width),
@@ -92,7 +107,7 @@ pub(super) fn draw_entity_row(
     }
     let is_selected = selected.contains(&info.entity);
 
-    let indent_str = "  ".repeat(info.depth);
+    let indent_str = "  ".repeat(indent_levels(info.depth));
     // Two more spaces for the disclosure triangle, on every row and not
     // only the ones that have one: without them a leaf's text sits two
     // characters left of its siblings' and the column reads as ragged
@@ -337,6 +352,29 @@ fn handle_context_menu(
                 }
             }
             ui.close();
+        }
+        ui.separator();
+
+        // Two destinations, because they are two different intents and
+        // guessing between them is how an entity ends up somewhere the
+        // user has to go find it.
+        //
+        // 🔴 Both name a scene without saying one. "Child" takes the
+        // parent's scene, and "in this scene" takes this entity's — so
+        // neither can put something in the active scene when the entity
+        // right-clicked is in another, which is what every spawn did
+        // before there was anywhere else to say.
+        ui.menu_button("New Child", |ui| {
+            super::spawn_entries(
+                ui,
+                actions,
+                crate::actions::SpawnTarget::ChildOf(info.entity),
+            );
+        });
+        if let Some(scene) = info.scene {
+            ui.menu_button("New in This Scene", |ui| {
+                super::spawn_entries(ui, actions, crate::actions::SpawnTarget::Scene(scene));
+            });
         }
         ui.separator();
 

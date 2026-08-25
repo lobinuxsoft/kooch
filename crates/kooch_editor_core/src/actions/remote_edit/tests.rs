@@ -79,6 +79,8 @@ fn set_field_routes_to_the_server() {
                 id: 0,
                 method: Method::Spawn {
                     name: Some("Hero".into()),
+                    scene: None,
+                    parent: None,
                 },
             },
             &mut res,
@@ -402,6 +404,7 @@ fn spawn_carries_its_extra_components_over_the_wire() {
     let action = EditorAction::Spawn {
         extra: vec![std::any::TypeId::of::<DirectionalLight>()],
         name: Some("Directional Light".to_owned()),
+        into: crate::actions::SpawnTarget::Active,
     };
     assert!(dispatch(&mut editor, &action));
 
@@ -476,6 +479,8 @@ fn reparent_reaches_the_project() {
                     id: 1,
                     method: Method::Spawn {
                         name: Some(name.to_owned()),
+                        scene: None,
+                        parent: None,
                     },
                 },
                 &mut res,
@@ -666,6 +671,8 @@ fn an_undone_field_goes_back() {
                 id: 0,
                 method: Method::Spawn {
                     name: Some("Hero".into()),
+                    scene: None,
+                    parent: None,
                 },
             },
             &mut res,
@@ -769,6 +776,8 @@ fn an_undone_despawn_rebuilds_it() {
                 id: 0,
                 method: Method::Spawn {
                     name: Some("Hero".into()),
+                    scene: None,
+                    parent: None,
                 },
             },
             &mut res,
@@ -881,6 +890,8 @@ fn a_paste_is_built_and_undone() {
                 id: 0,
                 method: Method::Spawn {
                     name: Some("Hero".into()),
+                    scene: None,
+                    parent: None,
                 },
             },
             &mut res,

@@ -612,3 +612,23 @@ fn the_dirty_marker_leads_the_name() {
         "the row cannot say what its menu should offer"
     );
 }
+
+/// Every entity row sits one level deeper than the scene above it.
+///
+/// 🔴 Drawn at its own hierarchy depth, a root entity started in the same
+/// column as its scene's header — so a scene with four roots read as five
+/// scenes, and the one thing the tree exists to say went missing.
+#[test]
+fn an_entity_is_indented_under_its_scene() {
+    use super::entity_row::indent_levels;
+    assert_eq!(
+        indent_levels(0),
+        1,
+        "a root entity sat level with its scene"
+    );
+    assert_eq!(
+        indent_levels(2),
+        3,
+        "the offset was lost deeper in the tree"
+    );
+}

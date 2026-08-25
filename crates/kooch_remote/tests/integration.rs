@@ -56,6 +56,8 @@ fn spawn_set_field_and_list_round_trip() {
         &mut resources,
         Method::Spawn {
             name: Some("Hero".into()),
+            scene: None,
+            parent: None,
         },
     ) {
         ResponseData::Spawned { entity } => entity,
@@ -122,7 +124,14 @@ fn spawn_set_field_and_list_round_trip() {
 #[test]
 fn a_nameless_spawn_still_carries_name_and_transform() {
     let mut resources = ecs();
-    let entity = match call(&mut resources, Method::Spawn { name: None }) {
+    let entity = match call(
+        &mut resources,
+        Method::Spawn {
+            name: None,
+            scene: None,
+            parent: None,
+        },
+    ) {
         ResponseData::Spawned { entity } => entity,
         other => panic!("{other:?}"),
     };
@@ -151,7 +160,14 @@ fn a_nameless_spawn_still_carries_name_and_transform() {
 #[test]
 fn unknown_component_is_a_typed_error() {
     let mut resources = ecs();
-    let entity = match call(&mut resources, Method::Spawn { name: None }) {
+    let entity = match call(
+        &mut resources,
+        Method::Spawn {
+            name: None,
+            scene: None,
+            parent: None,
+        },
+    ) {
         ResponseData::Spawned { entity } => entity,
         other => panic!("{other:?}"),
     };
@@ -278,7 +294,7 @@ fn client_drives_server_end_to_end() {
     let client = RemoteClient::new(&socket);
     client.ping().expect("ping");
 
-    let hero = client.spawn(Some("Hero")).expect("spawn");
+    let hero = client.spawn(Some("Hero"), None, None).expect("spawn");
     client
         .add_component(hero, std::any::type_name::<Transform>())
         .expect("add component");
@@ -364,6 +380,8 @@ fn entities_are_listed_in_authored_order() {
             &mut resources,
             Method::Spawn {
                 name: Some((*name).into()),
+                scene: None,
+                parent: None,
             },
         ) {
             ResponseData::Spawned { entity } => entity,
@@ -404,6 +422,8 @@ fn play_snapshots_the_world_and_stop_restores_it() {
         &mut resources,
         Method::Spawn {
             name: Some("Hero".into()),
+            scene: None,
+            parent: None,
         },
     ) {
         ResponseData::Spawned { entity } => entity,
@@ -475,6 +495,8 @@ fn repeated_play_keeps_the_original_snapshot() {
         &mut resources,
         Method::Spawn {
             name: Some("Spawned during play".into()),
+            scene: None,
+            parent: None,
         },
     );
     call(&mut resources, Method::SetPlaying { playing: true });
@@ -545,7 +567,9 @@ fn a_large_snapshot_survives_the_framing() {
 
     // Each entity carries a Transform, so the reply grows steadily.
     for n in 0..400 {
-        let e = client.spawn(Some(&format!("Entity{n}"))).expect("spawn");
+        let e = client
+            .spawn(Some(&format!("Entity{n}")), None, None)
+            .expect("spawn");
         client
             .add_component(e, std::any::type_name::<Transform>())
             .expect("add");
@@ -896,7 +920,14 @@ fn an_edit_marks_the_scene_dirty() {
     );
     assert!(!dirty(&mut resources), "a freshly loaded scene is clean");
 
-    call(&mut resources, Method::Spawn { name: None });
+    call(
+        &mut resources,
+        Method::Spawn {
+            name: None,
+            scene: None,
+            parent: None,
+        },
+    );
     assert!(
         dirty(&mut resources),
         "spawning left the scene reading clean"
@@ -940,7 +971,14 @@ fn the_edited_scene_is_the_one_marked() {
     resources.insert(manager);
 
     // An entity belonging to no scene falls back to the active one.
-    let entity = match call(&mut resources, Method::Spawn { name: None }) {
+    let entity = match call(
+        &mut resources,
+        Method::Spawn {
+            name: None,
+            scene: None,
+            parent: None,
+        },
+    ) {
         ResponseData::Spawned { entity } => entity,
         other => panic!("spawn: {other:?}"),
     };
@@ -950,4 +988,116 @@ fn the_edited_scene_is_the_one_marked() {
         "an unowned entity marks the scene that will adopt it",
     );
     let _ = entity;
+}
+
+/// A spawn lands where it was asked for, not in the active scene.
+///
+/// 🔴 Every spawn used to arrive in the active scene at the root — right
+/// for a toolbar button, wrong for a menu opened on a scene or an entity
+/// that is not the active one. The entity appears somewhere other than
+/// where it was asked for, and the only sign is a row in the wrong group.
+#[test]
+fn a_spawn_lands_in_the_scene_it_names() {
+    use kooch_ecs::SceneManager;
+
+    let mut resources = ecs();
+    let mut manager = SceneManager::new();
+    let active = manager.active_id().expect("a scene");
+    let elsewhere = manager.new_scene();
+    assert!(manager.set_active(active), "put the active one back");
+    resources.insert(manager);
+
+    let spawned = |resources: &mut Resources, scene, parent| match call(
+        resources,
+        Method::Spawn {
+            name: None,
+            scene,
+            parent,
+        },
+    ) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("spawn: {other:?}"),
+    };
+    let home = |resources: &Resources, entity: kooch_remote::protocol::EntityId| {
+        resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<kooch_ecs::SceneMember>())
+            .and_then(|s| s.get(kooch_ecs::entity::Entity::from(entity)))
+            .map(|m| m.scene)
+    };
+
+    let plain = spawned(&mut resources, None, None);
+    assert_eq!(home(&resources, plain), Some(active), "unnamed went astray");
+
+    let named = spawned(&mut resources, Some(elsewhere), None);
+    assert_eq!(
+        home(&resources, named),
+        Some(elsewhere),
+        "the scene it named was ignored for the active one",
+    );
+
+    // A parent already names the scene, so the child follows it even
+    // though the request says nothing about scenes.
+    let child = spawned(&mut resources, None, Some(named));
+    assert_eq!(
+        home(&resources, child),
+        Some(elsewhere),
+        "a child was authored into a scene its parent is not in",
+    );
+
+    // And a parent wins over a scene that disagrees: an entity's scene
+    // IS its parent's, so honouring both would write the child to a file
+    // its parent is not in.
+    let contested = spawned(&mut resources, Some(active), Some(named));
+    assert_eq!(
+        home(&resources, contested),
+        Some(elsewhere),
+        "the scene field overrode the parent, splitting a tree across two files",
+    );
+}
+
+/// A new scene opens beside the others and takes the spawn that asked
+/// for it.
+///
+/// What right-clicking the World panel's empty space means: not "put
+/// this somewhere" — there is no row under the pointer to name a
+/// somewhere — but "start something new". An entity has to belong to a
+/// scene, so opening one is what makes the gesture answerable.
+#[test]
+fn a_new_scene_opens_unsaved() {
+    let mut resources = ecs();
+    resources.insert(kooch_ecs::SceneManager::new());
+
+    let opened = match call(&mut resources, Method::NewScene) {
+        ResponseData::SceneOpened { scene } => scene,
+        other => panic!("new_scene: {other:?}"),
+    };
+
+    let scenes = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { scenes, .. } => scenes.expect("open set"),
+        other => panic!("list: {other:?}"),
+    };
+    assert_eq!(scenes.len(), 2, "it replaced the scene already open");
+    let fresh = scenes.iter().find(|s| s.id == opened).expect("listed");
+    assert_eq!(fresh.path, None, "an unsaved scene claimed a file");
+    assert!(fresh.active, "new entities would not land in it");
+    assert!(!fresh.dirty, "an empty scene has nothing to lose yet");
+
+    let entity = match call(
+        &mut resources,
+        Method::Spawn {
+            name: Some("First".into()),
+            scene: Some(opened),
+            parent: None,
+        },
+    ) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("spawn: {other:?}"),
+    };
+    let home = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<kooch_ecs::SceneMember>())
+        .and_then(|s| s.get(kooch_ecs::entity::Entity::from(entity)))
+        .map(|m| m.scene);
+    assert_eq!(home, Some(opened), "the entity did not join the new scene");
 }

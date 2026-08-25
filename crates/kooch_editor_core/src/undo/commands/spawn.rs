@@ -22,15 +22,22 @@ pub(crate) struct SpawnCommand {
     name: Option<String>,
     /// All component TypeIds added during spawn (base + extra).
     spawned_component_types: Vec<TypeId>,
+    /// Where the entity goes: which scene, and what it hangs off.
+    into: crate::actions::SpawnTarget,
 }
 
 impl SpawnCommand {
-    pub fn new(extra_component_types: Vec<TypeId>, name: Option<String>) -> Self {
+    pub fn new(
+        extra_component_types: Vec<TypeId>,
+        name: Option<String>,
+        into: crate::actions::SpawnTarget,
+    ) -> Self {
         Self {
             entity: None,
             extra_component_types,
             name,
             spawned_component_types: Vec::new(),
+            into,
         }
     }
 
@@ -115,6 +122,41 @@ impl SpawnCommand {
                 );
             }
         }
+
+        self.place(resources, entity);
+    }
+
+    /// Puts the new entity where it was asked for: under a parent, in a
+    /// named scene, or in one created for it.
+    ///
+    /// 🔴 Without this a spawned entity carries no `SceneMember` and no
+    /// `Parent`, so it belongs to nothing and shows up under "Unsaved"
+    /// until a save adopts it into whichever scene happened to be active
+    /// — which is not what a menu opened on a different one asked for.
+    fn place(&self, resources: &mut Resources, entity: Entity) {
+        use crate::actions::SpawnTarget;
+
+        let scene = match self.into {
+            SpawnTarget::Active => active_scene(resources),
+            SpawnTarget::Scene(id) => Some(id),
+            SpawnTarget::ChildOf(parent) => {
+                kooch_ecs::hierarchy::reparent(resources, entity, Some(parent));
+                // The parent's scene, because an entity's scene *is* its
+                // parent's: authoring a child into another would write it
+                // to a file its parent is not in.
+                scene_of(resources, parent).or_else(|| active_scene(resources))
+            }
+            SpawnTarget::NewScene => resources
+                .get_mut::<kooch_ecs::SceneManager>()
+                .map(|manager| manager.new_scene()),
+        };
+        let Some(scene) = scene else {
+            return;
+        };
+        tag_with_scene(resources, entity, scene);
+        if let Some(manager) = resources.get_mut::<kooch_ecs::SceneManager>() {
+            manager.mark_scene_dirty(scene);
+        }
     }
 
     fn spawn_fresh(&self, resources: &mut Resources) -> Entity {
@@ -147,5 +189,37 @@ impl EditorCommand for SpawnCommand {
 
     fn description(&self) -> &str {
         "Spawn Entity"
+    }
+}
+
+/// The scene new entities land in, if there is one.
+fn active_scene(resources: &Resources) -> Option<kooch_core::Guid> {
+    resources.get::<kooch_ecs::SceneManager>()?.active_id()
+}
+
+/// Which scene an entity belongs to.
+fn scene_of(resources: &Resources, entity: Entity) -> Option<kooch_core::Guid> {
+    resources
+        .get::<ComponentRegistry>()?
+        .get_cpu::<kooch_ecs::SceneMember>()?
+        .get(entity)
+        .map(|member| member.scene)
+}
+
+/// Records which scene the entity belongs to, archetype included.
+fn tag_with_scene(resources: &mut Resources, entity: Entity, scene: kooch_core::Guid) {
+    use kooch_ecs::SceneMember;
+
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.register_cpu::<SceneMember>();
+        if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
+            storage.insert(entity, SceneMember::new(scene));
+        }
+    }
+    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
+        && let Some(current) = archetypes.entity_archetype(entity)
+    {
+        let next = archetypes.archetype_after_add_dynamic(current, TypeId::of::<SceneMember>());
+        archetypes.register_entity(entity, next);
     }
 }

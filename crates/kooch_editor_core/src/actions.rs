@@ -50,6 +50,16 @@ pub(crate) enum EditorAction {
     Spawn {
         extra: Vec<TypeId>,
         name: Option<String>,
+        /// Which scene the new entity is authored into, and what it hangs
+        /// off.
+        ///
+        /// 🔴 Carried rather than inferred. Every spawn used to land in
+        /// the active scene, which is the right answer for the toolbar
+        /// button and the wrong one for a menu opened on a scene, or on
+        /// an entity, that is not the active one — the entity would
+        /// appear somewhere other than where it was asked for, and the
+        /// only sign of it is a row in the wrong group.
+        into: SpawnTarget,
     },
     /// Spawn an entity bound to a meshlet asset. The asset path is
     /// resolved through the AssetServer (auto-generates a `.meta`
@@ -455,6 +465,29 @@ pub(crate) enum NewFileKind {
     /// one — a second file is read by nothing and produces a warning
     /// nobody sees.
     RenderSettings,
+}
+
+/// Where a newly spawned entity goes.
+///
+/// A scene and a parent are one question, not two: an entity's scene is
+/// its parent's, so naming a parent already names the scene. Splitting
+/// them into separate fields would let a caller ask for a child of an
+/// entity in one scene and a member of another, which nothing can honour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpawnTarget {
+    /// The scene new entities land in by default — the toolbar's Spawn
+    /// button, and the World panel's empty area before this existed.
+    Active,
+    /// A named open scene, at its root.
+    Scene(kooch_core::Guid),
+    /// A child of an entity, in whatever scene that entity belongs to.
+    ChildOf(Entity),
+    /// A scene of its own, created empty and unsaved to hold it.
+    ///
+    /// What right-clicking the panel's empty space means: not "put this
+    /// somewhere" but "start something new". An entity has to belong to a
+    /// scene, so starting one is what makes the request answerable.
+    NewScene,
 }
 
 impl EditorAction {

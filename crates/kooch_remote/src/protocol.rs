@@ -188,7 +188,27 @@ pub enum Method {
     /// Remove a component from an entity.
     RemoveComponent { entity: EntityId, component: String },
     /// Spawn a new entity, optionally named. Returns its [`EntityId`].
-    Spawn { name: Option<String> },
+    ///
+    /// Where it lands is asked for, not inferred. Every spawn used to
+    /// arrive in the active scene at the root, which is right for a
+    /// toolbar button and wrong for a menu opened on a scene, or on an
+    /// entity, that is not the active one — the entity appears somewhere
+    /// other than where it was asked for, and the only sign is a row in
+    /// the wrong group.
+    Spawn {
+        name: Option<String>,
+        /// Which scene to author it into. `None` means the active one.
+        ///
+        /// Ignored when `parent` is set: an entity's scene is its
+        /// parent's, so a parent already answers this, and honouring both
+        /// would let a caller ask for a child of an entity in one scene
+        /// and a member of another.
+        #[serde(default)]
+        scene: Option<Guid>,
+        /// What to hang it off, or `None` for a root of its scene.
+        #[serde(default)]
+        parent: Option<EntityId>,
+    },
     /// Despawn an entity.
     Despawn { entity: EntityId },
     /// Reparent an entity, or unparent it when `parent` is `None`.
@@ -252,6 +272,14 @@ pub enum Method {
     /// and a second way to move an entity is a second thing to keep in step
     /// with the first.
     InstantiatePrefab { path: String },
+    /// Open an empty unsaved scene beside the ones already loaded, and
+    /// make it active. Returns its identity as [`ResponseData::SceneOpened`].
+    ///
+    /// "Start something new" while a world is already open. An entity has
+    /// to belong to a scene, so creating one is what makes "put this
+    /// somewhere of its own" answerable — which is what right-clicking
+    /// the World panel's empty space means.
+    NewScene,
     /// Replace the live ECS with a scene file from the server's disk.
     LoadScene { path: String },
     /// Start or stop the project's gameplay systems in place.
@@ -328,6 +356,8 @@ pub enum ResponseData {
     Schema { components: Vec<ComponentSchema> },
     /// Reply to [`Method::Spawn`] — the new entity's handle.
     Spawned { entity: EntityId },
+    /// Reply to [`Method::NewScene`] — the new scene's identity.
+    SceneOpened { scene: Guid },
     /// Reply to any method that mutates but returns nothing.
     Ok,
     /// Reply to [`Method::Extension`] — whatever the handler returned,

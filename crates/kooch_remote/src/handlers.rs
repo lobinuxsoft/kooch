@@ -83,12 +83,16 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
                 Err(e) => Response::err(id, e),
             }
         }
-        Method::Spawn { name } => {
-            let entity = spawn(resources, name.as_deref());
-            // A fresh entity carries no `SceneMember`, so the scene it
-            // belongs to is the active one — the same one `adopt_unowned`
-            // will hand it to when that scene is saved.
-            touch_scene(resources, None);
+        Method::Spawn {
+            name,
+            scene,
+            parent,
+        } => {
+            let entity = spawn(resources, name.as_deref(), *scene, *parent);
+            // The scene it actually landed in, which `spawn` has just
+            // recorded — not the active one, which is only where it goes
+            // when nobody said otherwise.
+            touch_entity(resources, entity.into());
             Response::ok(
                 id,
                 ResponseData::Spawned {
@@ -133,6 +137,20 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
                 Response::ok(id, ResponseData::Spawned { entity })
             }
             Err(e) => Response::err(id, e),
+        },
+        Method::NewScene => match resources.get_mut::<kooch_ecs::SceneManager>() {
+            Some(manager) => Response::ok(
+                id,
+                ResponseData::SceneOpened {
+                    scene: manager.new_scene(),
+                },
+            ),
+            None => Response::err(
+                id,
+                RemoteError::Unavailable {
+                    detail: "no SceneManager; there is no open set to add to".into(),
+                },
+            ),
         },
         Method::LoadScene { path } => match load_scene(resources, path) {
             Ok(()) => Response::ok(id, ResponseData::Ok),
@@ -499,7 +517,12 @@ fn remove_component(
 /// in a remote project and one with both in a local one. An entity with no
 /// `Name` cannot be renamed from the Inspector at all: the name editor
 /// reads the component, and there was nothing to read.
-fn spawn(resources: &mut Resources, name: Option<&str>) -> Entity {
+fn spawn(
+    resources: &mut Resources,
+    name: Option<&str>,
+    scene: Option<kooch_core::Guid>,
+    parent: Option<EntityId>,
+) -> Entity {
     let mut commands = resources
         .remove::<Commands>()
         .expect("Commands not in Resources");
@@ -517,7 +540,43 @@ fn spawn(resources: &mut Resources, name: Option<&str>) -> Entity {
     {
         n.value = name.to_owned();
     }
+
+    if let Some(parent) = parent {
+        let _ = set_parent(resources, entity.into(), Some(parent));
+    }
+    // The parent's scene wins: an entity's scene *is* its parent's, so a
+    // child authored into a different one would be written to a file its
+    // parent is not in and come back an orphan.
+    let home = parent
+        .and_then(|parent| scene_of(resources, parent))
+        .or(scene)
+        .or_else(|| {
+            resources
+                .get::<kooch_ecs::SceneManager>()
+                .and_then(|manager| manager.active_id())
+        });
+    if let Some(home) = home {
+        tag_with_scene(resources, entity, home);
+    }
     entity
+}
+
+/// Records which scene a newly spawned entity belongs to.
+///
+/// 🔴 Without this a spawned entity carries no `SceneMember` at all, so
+/// the World panel files it under "Unsaved" and it only joins a scene
+/// when a save adopts it — which is the active scene, whatever the user
+/// actually asked for.
+fn tag_with_scene(resources: &mut Resources, entity: Entity, scene: kooch_core::Guid) {
+    use kooch_ecs::SceneMember;
+
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.register_cpu::<SceneMember>();
+        if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
+            storage.insert(entity, SceneMember::new(scene));
+        }
+    }
+    update_archetype_add(resources, entity, TypeId::of::<SceneMember>());
 }
 
 /// Inserts `type_id`'s default on `entity` and moves it to the archetype

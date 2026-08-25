@@ -181,7 +181,9 @@ fn spawn_mesh(resources: &mut Resources, path: &std::path::Path, name: &str) {
     };
     let client = session.client();
 
-    let entity = match client.spawn(Some(name)) {
+    // The active scene: a mesh dropped into the viewport is authored
+    // where new things go, and nothing in that gesture names another.
+    let entity = match client.spawn(Some(name), None, None) {
         Ok(entity) => entity,
         Err(e) => {
             tracing::warn!(target: TARGET, error = %e, "remote spawn failed");
@@ -315,8 +317,10 @@ pub(super) fn build(
     mirror: &crate::remote_mirror::RemoteMirror,
     state: &crate::actions::entity_state::EntityState,
 ) -> Result<kooch_remote::protocol::EntityId, String> {
+    // Rebuilt from a captured state — a paste or an undone despawn. Its
+    // scene is restored with the rest of it, not decided here.
     let id = client
-        .spawn(state.name.as_deref())
+        .spawn(state.name.as_deref(), None, None)
         .map_err(|e| e.to_string())?;
     for component in &state.components {
         if let Err(e) = client.add_component(id, &component.name) {
@@ -406,6 +410,8 @@ enum Edit<'a> {
         /// remotely arrived with a `Name` and nothing else — no
         /// `Transform`, no light component.
         extra: Vec<std::any::TypeId>,
+        /// Where it goes — the scene, and what it hangs off.
+        into: crate::actions::SpawnTarget,
     },
     /// Every field of a `Transform`, from a gizmo drag.
     TransformEdit {
@@ -508,7 +514,8 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
                 false => Some(Edit::Paste(states.to_vec())),
             }
         }
-        EditorAction::Spawn { name, extra } => Some(Edit::Spawn {
+        EditorAction::Spawn { name, extra, into } => Some(Edit::Spawn {
+            into: *into,
             name: name.clone(),
             extra: extra.clone(),
         }),
@@ -733,8 +740,30 @@ fn send(
         Edit::Spawn {
             name: entity_name,
             extra,
+            into,
         } => {
-            let entity = client.spawn(entity_name.as_deref()).map_err(map_err)?;
+            // Asked for, not inferred. A menu opened on a scene or an
+            // entity that is not the active one means *there*, and a
+            // spawn that lands in the active scene instead shows up as a
+            // row in the wrong group with nothing saying why.
+            //
+            // A parent already names the scene, so only one of the two is
+            // ever sent.
+            let (scene, parent) = match into {
+                crate::actions::SpawnTarget::Active => (None, None),
+                crate::actions::SpawnTarget::Scene(id) => (Some(id), None),
+                crate::actions::SpawnTarget::ChildOf(local) => (None, remote(local).ok()),
+                // Two calls, not a flag on the spawn. The project owns
+                // the open set, so creating a scene is its answer to
+                // give — and the id it hands back is what the entity is
+                // then authored into.
+                crate::actions::SpawnTarget::NewScene => {
+                    (Some(client.new_scene().map_err(map_err)?), None)
+                }
+            };
+            let entity = client
+                .spawn(entity_name.as_deref(), scene, parent)
+                .map_err(map_err)?;
             created.push(entity);
             // Remote `spawn` creates only `Name`, while the local path adds
             // Name + Transform + extras. Everything past the name has to be

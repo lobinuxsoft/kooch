@@ -95,6 +95,29 @@ impl SceneManager {
         self.scenes.iter().find(|scene| scene.id == id)
     }
 
+    /// Opens a new empty scene beside the others and makes it active.
+    ///
+    /// Returns its identity. Unsaved and unnamed: it has no `path` until
+    /// somebody saves it, which is exactly the state [`Self::new`]
+    /// describes for the scene an editor starts with.
+    ///
+    /// What "start something new" means when there is already a world
+    /// open. An entity has to belong to a scene, so creating one is what
+    /// makes "put this somewhere of its own" answerable at all.
+    pub fn new_scene(&mut self) -> Guid {
+        let id = Guid::new_v4();
+        self.scenes.push(LoadedScene {
+            id,
+            path: None,
+            // Nothing to lose yet — it holds nothing. It goes dirty the
+            // moment something is authored into it, which is what puts
+            // the asterisk on a scene that has never been written.
+            dirty: false,
+        });
+        self.active = Some(id);
+        id
+    }
+
     /// Makes `id` the scene new entities land in.
     ///
     /// Returns `false` if no such scene is open, rather than pointing the

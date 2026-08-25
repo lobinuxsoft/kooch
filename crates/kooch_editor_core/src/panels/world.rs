@@ -138,7 +138,10 @@ pub(crate) fn draw_world_content(
             match &rows[index] {
                 WorldRow::Group(header) => draw_group_header(ui, header, row_h, actions),
                 WorldRow::Note(text) => {
-                    ui.weak(text);
+                    // Indented like the entities it stands in for, or the
+                    // note explaining an empty scene sits further left
+                    // than the rows it is about.
+                    ui.weak(format!("    {text}"));
                 }
                 WorldRow::Entity(idx) => {
                     let info = &entities[*idx];
@@ -192,8 +195,16 @@ pub(crate) fn draw_world_content(
         // where people actually reach for them: right-click in the
         // empty part of the hierarchy. A row's own right-click menu
         // handles per-entity actions, including Add Component (#591).
+        //
+        // 🔴 Into a scene of its own, not the active one. Right-clicking
+        // past the last row is not "put this somewhere" — there is no
+        // row under the pointer to name a somewhere. It is "start
+        // something new", and since an entity has to belong to a scene,
+        // starting one is what makes the gesture answerable.
         empty_resp.context_menu(|ui| {
-            spawn_entries(ui, actions);
+            ui.label("New scene");
+            ui.separator();
+            spawn_entries(ui, actions, crate::actions::SpawnTarget::NewScene);
         });
         // A prefab dropped into the hierarchy spawns at the position it
         // was authored at: a list of names has no geometry to read a
@@ -688,6 +699,13 @@ fn scene_context_menu(
             actions.push(EditorAction::SaveOpenSceneAs(scene));
             ui.close();
         }
+        ui.separator();
+        // Into *this* scene. The toolbar's Spawn button authors into the
+        // active one, which with several open is routinely not the scene
+        // somebody just right-clicked.
+        ui.menu_button("New", |ui| {
+            spawn_entries(ui, actions, crate::actions::SpawnTarget::Scene(scene));
+        });
     });
 }
 
