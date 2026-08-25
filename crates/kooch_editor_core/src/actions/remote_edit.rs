@@ -420,6 +420,12 @@ enum Edit<'a> {
     },
     /// Write the project's world to a scene file, or replace it from one.
     SaveScene,
+    /// Move an entity among its siblings on the project.
+    MoveEntity {
+        entity: kooch_ecs::entity::Entity,
+        parent: Option<kooch_ecs::entity::Entity>,
+        before: Option<kooch_ecs::entity::Entity>,
+    },
     /// Throw away one scene's edits on the project and read it back.
     RevertOneScene(kooch_core::Guid),
     /// Write one named scene of the project's open set to a file.
@@ -588,6 +594,15 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
             as_new: true,
         }),
         EditorAction::RevertOpenScene(scene) => Some(Edit::RevertOneScene(*scene)),
+        EditorAction::MoveEntity {
+            entity,
+            new_parent,
+            before,
+        } => Some(Edit::MoveEntity {
+            entity: *entity,
+            parent: *new_parent,
+            before: *before,
+        }),
         EditorAction::OpenSceneAdditive
         | EditorAction::CloseScene(_)
         | EditorAction::SetActiveScene(_) => None,
@@ -848,6 +863,19 @@ fn send(
                 },
             };
             client.save_scene(&path, Some(scene)).map_err(map_err)
+        }
+        Edit::MoveEntity {
+            entity,
+            parent,
+            before,
+        } => {
+            // One call. The numbering lives on the project, so a client
+            // doing it would renumber a sibling group over the wire — one
+            // round trip per entity, for a drag.
+            let entity = remote(entity)?;
+            let parent = parent.map(remote).transpose()?;
+            let before = before.map(remote).transpose()?;
+            client.move_entity(entity, parent, before).map_err(map_err)
         }
         Edit::RevertOneScene(scene) => client.revert_scene(Some(scene)).map_err(map_err),
         Edit::LoadScene => match crate::actions::scene_io::scene_dialog(resources).pick_file() {

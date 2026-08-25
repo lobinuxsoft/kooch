@@ -231,14 +231,59 @@ fn handle_drop_targets(
     if !being_dragged && let Some(dragged) = resp.dnd_hover_payload::<Entity>() {
         let d = *dragged;
         if d != info.entity && !is_descendant(info.entity, d, entities) {
-            ui.painter().rect_filled(
-                resp.rect,
-                2.0,
-                egui::Color32::from_rgba_unmultiplied(60, 130, 230, 40),
-            );
+            let intent = drop_intent(ui, resp);
+            match intent {
+                // Onto the row: become its child.
+                DropIntent::Into => {
+                    ui.painter().rect_filled(
+                        resp.rect,
+                        2.0,
+                        egui::Color32::from_rgba_unmultiplied(60, 130, 230, 40),
+                    );
+                }
+                // Between two rows: become a sibling, at that spot. Drawn
+                // as a bar in the gap rather than by making the rows move
+                // apart — `ScrollArea::show_rows` places every row from
+                // one height, so a row that grew mid-drag would put every
+                // row below it in the wrong place.
+                DropIntent::Before | DropIntent::After => {
+                    let y = match intent {
+                        DropIntent::Before => resp.rect.top(),
+                        _ => resp.rect.bottom(),
+                    };
+                    let left = resp.rect.left() + sibling_indent(ui, info.depth);
+                    ui.painter().rect_filled(
+                        egui::Rect::from_min_max(
+                            egui::pos2(left, y - 1.5),
+                            egui::pos2(resp.rect.right(), y + 1.5),
+                        ),
+                        1.0,
+                        egui::Color32::from_rgb(90, 160, 245),
+                    );
+                }
+            }
             if let Some(released) = resp.dnd_release_payload::<Entity>() {
                 let r = *released;
                 if r != info.entity && !is_descendant(info.entity, r, entities) {
+                    if intent != DropIntent::Into {
+                        // 🔴 Its siblings, not its children. Dropping in
+                        // the gap between two rows means "beside them" —
+                        // which is also the only gesture that can take an
+                        // entity *out* of a parent, since every row's
+                        // middle already means "into".
+                        actions.push(EditorAction::MoveEntity {
+                            entity: r,
+                            new_parent: info.parent,
+                            before: match intent {
+                                DropIntent::Before => Some(info.entity),
+                                _ => next_sibling(info, entities),
+                            },
+                        });
+                        if let Some(parent) = info.parent {
+                            reveal_chain(ui, parent, entities);
+                        }
+                        return;
+                    }
                     actions.push(EditorAction::Reparent {
                         entity: r,
                         new_parent: Some(info.entity),
@@ -541,4 +586,52 @@ pub(super) fn reveal_chain(ui: &egui::Ui, entity: Entity, entities: &[EntityDisp
             .find(|e| e.entity == current)
             .and_then(|e| e.parent);
     }
+}
+
+/// What a drop on this row means, from where the pointer is in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DropIntent {
+    /// In the gap above: a sibling, in front of this row.
+    Before,
+    /// On the row itself: a child of it.
+    Into,
+    /// In the gap below: a sibling, behind this row.
+    After,
+}
+
+/// Splits a row into an insert band, a parent band, and an insert band.
+///
+/// A quarter each end. Smaller and the gap is a target nobody can hit;
+/// larger and "make this a child", which is the commoner gesture, starts
+/// missing.
+fn drop_intent(ui: &egui::Ui, resp: &egui::Response) -> DropIntent {
+    let Some(pointer) = ui.ctx().pointer_interact_pos() else {
+        return DropIntent::Into;
+    };
+    let band = resp.rect.height() * 0.25;
+    if pointer.y < resp.rect.top() + band {
+        DropIntent::Before
+    } else if pointer.y > resp.rect.bottom() - band {
+        DropIntent::After
+    } else {
+        DropIntent::Into
+    }
+}
+
+/// Where the insertion bar starts: level with the row's own label, so it
+/// shows which *depth* the entity would land at, not only which gap.
+fn sibling_indent(ui: &egui::Ui, depth: usize) -> f32 {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let space = ui.fonts_mut(|fonts| fonts.glyph_width(&font, ' '));
+    space * (indent_levels(depth) * 2) as f32
+}
+
+/// The row after `info` among its own siblings, or `None` if it is last.
+///
+/// Read out of the display list, which is already in the order the panel
+/// shows — the same order `place` measures "before that one" against.
+fn next_sibling(info: &EntityDisplayInfo, entities: &[EntityDisplayInfo]) -> Option<Entity> {
+    let mut siblings = entities.iter().filter(|e| e.parent == info.parent);
+    siblings.find(|e| e.entity == info.entity)?;
+    siblings.next().map(|e| e.entity)
 }

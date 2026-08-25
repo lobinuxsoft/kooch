@@ -36,6 +36,13 @@ fn ecs() -> Resources {
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     registry.register_cpu_reflected::<Name>();
     registry.register_cpu_reflected::<Transform>();
+    // The hierarchy and ordering types a real host gets from `EcsPlugin`.
+    // Without them `reparent` and `place` find no storage and do nothing
+    // — silently, which is how a fixture ends up testing the absence of
+    // a feature rather than the feature.
+    registry.register_cpu_reflected::<kooch_ecs::hierarchy::Parent>();
+    registry.register_cpu_reflected::<kooch_ecs::hierarchy::Children>();
+    registry.register_cpu_reflected::<kooch_ecs::Order>();
     resources
 }
 
@@ -1197,4 +1204,105 @@ fn an_unsaved_scene_refuses_to_revert() {
         ),
         other => panic!("list: {other:?}"),
     }
+}
+
+/// Moving an entity between two rows makes it their sibling, and takes
+/// it out of whatever parent it was in.
+#[test]
+fn a_move_reorders_and_unparents() {
+    let mut resources = ecs();
+    resources.insert(kooch_ecs::SceneManager::new());
+
+    let spawn = |resources: &mut Resources, name: &str, parent| match call(
+        resources,
+        Method::Spawn {
+            name: Some(name.to_owned()),
+            scene: None,
+            parent,
+        },
+    ) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("spawn: {other:?}"),
+    };
+    let a = spawn(&mut resources, "A", None);
+    let b = spawn(&mut resources, "B", None);
+    let c = spawn(&mut resources, "C", None);
+    // D starts inside A.
+    let d = spawn(&mut resources, "D", Some(a));
+
+    let order = |resources: &Resources, e: kooch_remote::protocol::EntityId| {
+        resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<kooch_ecs::Order>())
+            .and_then(|s| s.get(kooch_ecs::entity::Entity::from(e)))
+            .map(|o| o.value)
+    };
+    let parent_of = |resources: &Resources, e: kooch_remote::protocol::EntityId| {
+        resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<kooch_ecs::hierarchy::Parent>())
+            .and_then(|s| s.get(kooch_ecs::entity::Entity::from(e)))
+            .map(|p| p.entity)
+    };
+    assert_eq!(
+        parent_of(&resources, d),
+        Some(kooch_ecs::entity::Entity::from(a)),
+        "D did not start inside A",
+    );
+
+    // Drop D in the gap between B and C: a root, between them.
+    call(
+        &mut resources,
+        Method::MoveEntity {
+            entity: d,
+            parent: None,
+            before: Some(c),
+        },
+    );
+
+    assert_eq!(parent_of(&resources, d), None, "D stayed inside A");
+    let (oa, ob, od, oc) = (
+        order(&resources, a),
+        order(&resources, b),
+        order(&resources, d),
+        order(&resources, c),
+    );
+    assert!(
+        oa < ob && ob < od && od < oc,
+        "expected A < B < D < C, got {oa:?} {ob:?} {od:?} {oc:?}",
+    );
+}
+
+/// Moving an entity into its own subtree is refused, rather than
+/// detaching that subtree from the world.
+#[test]
+fn a_move_into_itself_is_refused() {
+    let mut resources = ecs();
+    resources.insert(kooch_ecs::SceneManager::new());
+    let spawn = |resources: &mut Resources, parent| match call(
+        resources,
+        Method::Spawn {
+            name: None,
+            scene: None,
+            parent,
+        },
+    ) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("spawn: {other:?}"),
+    };
+    let root = spawn(&mut resources, None);
+    let child = spawn(&mut resources, Some(root));
+
+    let response = handle(
+        &Request {
+            id: 1,
+            method: Method::MoveEntity {
+                entity: root,
+                parent: Some(child),
+                before: None,
+            },
+        },
+        &mut resources,
+    );
+    assert!(matches!(response.payload, ResponsePayload::Error(_)));
 }

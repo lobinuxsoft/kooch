@@ -108,6 +108,15 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::SaveOpenScene(id) => handle_save_open_scene(resources, *id, false),
         EditorAction::SaveOpenSceneAs(id) => handle_save_open_scene(resources, *id, true),
         EditorAction::RevertOpenScene(id) => handle_revert_open_scene(resources, *id, undo_stack),
+        EditorAction::MoveEntity {
+            entity,
+            new_parent,
+            before,
+        } => {
+            if !kooch_ecs::order::place(resources, *entity, *new_parent, *before) {
+                tracing::warn!("an entity cannot be moved into its own subtree");
+            }
+        }
         EditorAction::Play => handle_play(resources),
         EditorAction::Stop => handle_stop(resources),
         EditorAction::OpenProject(path) => handle_open_project(resources, path),

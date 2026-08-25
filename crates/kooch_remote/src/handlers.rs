@@ -138,6 +138,17 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             }
             Err(e) => Response::err(id, e),
         },
+        Method::MoveEntity {
+            entity,
+            parent,
+            before,
+        } => match move_entity(resources, *entity, *parent, *before) {
+            Ok(()) => {
+                touch_entity(resources, *entity);
+                Response::ok(id, ResponseData::Ok)
+            }
+            Err(e) => Response::err(id, e),
+        },
         Method::RevertScene { scene } => match revert_scene(resources, *scene) {
             Ok(()) => Response::ok(id, ResponseData::Ok),
             Err(e) => Response::err(id, e),
@@ -745,6 +756,34 @@ fn save_scene(
     };
     resources.insert(manager);
     result
+}
+
+/// Moves an entity among its siblings, through the engine's own policy.
+fn move_entity(
+    resources: &mut Resources,
+    entity: EntityId,
+    parent: Option<EntityId>,
+    before: Option<EntityId>,
+) -> Result<(), RemoteError> {
+    let entity = resolve_entity(resources, entity)?;
+    let parent = parent.map(|p| resolve_entity(resources, p)).transpose()?;
+    // A `before` that is no longer alive means "last", not an error: the
+    // client is describing a list it read a frame ago, and refusing would
+    // turn a stale row into a failed drag.
+    let before = before.map(Entity::from).filter(|e| {
+        resources
+            .get::<EntityAllocator>()
+            .is_some_and(|a| a.is_alive(*e))
+    });
+
+    match kooch_ecs::order::place(resources, entity, parent, before) {
+        true => Ok(()),
+        // The one refusal `place` makes: into its own subtree, which
+        // would detach that subtree from the world.
+        false => Err(RemoteError::FieldError {
+            detail: "an entity cannot be moved into its own subtree".into(),
+        }),
+    }
 }
 
 /// Throws away one scene's edits and reads it back from its file.

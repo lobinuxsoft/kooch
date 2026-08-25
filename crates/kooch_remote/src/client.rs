@@ -206,6 +206,20 @@ impl RemoteClient {
         }
     }
 
+    /// Moves an entity under `parent`, before `before`.
+    pub fn move_entity(
+        &self,
+        entity: EntityId,
+        parent: Option<EntityId>,
+        before: Option<EntityId>,
+    ) -> Result<(), ClientError> {
+        self.expect_ok(Method::MoveEntity {
+            entity,
+            parent,
+            before,
+        })
+    }
+
     /// Throws away one scene's edits and reads it back from its file.
     pub fn revert_scene(&self, scene: Option<kooch_core::Guid>) -> Result<(), ClientError> {
         self.expect_ok(Method::RevertScene { scene })

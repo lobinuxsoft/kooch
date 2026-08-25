@@ -240,6 +240,21 @@ pub(crate) enum EditorAction {
     SaveOpenScene(kooch_core::Guid),
     /// Write one open scene to a path the user picks, and adopt it.
     SaveOpenSceneAs(kooch_core::Guid),
+    /// Move an entity among its siblings: under `new_parent`, in front of
+    /// `before`.
+    ///
+    /// Where, not what number. "Before that one" is what a drag means,
+    /// and the numbering that expresses it is the engine's
+    /// (`kooch_ecs::order::place`) — a caller that picked values would
+    /// put the renumbering rule in every caller, and they would disagree
+    /// the first time a gap ran out.
+    MoveEntity {
+        entity: Entity,
+        /// `None` makes it a root of its scene.
+        new_parent: Option<Entity>,
+        /// The sibling it goes in front of; `None` puts it last.
+        before: Option<Entity>,
+    },
     /// Throw away one open scene's edits and read it back from its file.
     ///
     /// Only that scene. With several open, "discard changes" that threw
@@ -543,6 +558,7 @@ impl EditorAction {
             | Self::SaveOpenScene(_)
             | Self::SaveOpenSceneAs(_)
             | Self::RevertOpenScene(_)
+            | Self::MoveEntity { .. }
             | Self::Play
             | Self::Stop
             | Self::RegisterScripts

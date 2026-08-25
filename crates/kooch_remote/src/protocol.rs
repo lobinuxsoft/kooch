@@ -272,6 +272,22 @@ pub enum Method {
     /// and a second way to move an entity is a second thing to keep in step
     /// with the first.
     InstantiatePrefab { path: String },
+    /// Move an entity among its siblings: under `parent`, before
+    /// `before`.
+    ///
+    /// One method rather than a reparent plus a field write, because the
+    /// numbering policy lives in the engine (`kooch_ecs::order::place`)
+    /// and a client computing it would have to renumber a sibling group
+    /// over the wire, one round trip per entity.
+    MoveEntity {
+        entity: EntityId,
+        /// `None` makes it a root of its scene.
+        #[serde(default)]
+        parent: Option<EntityId>,
+        /// The sibling it goes in front of; `None` puts it last.
+        #[serde(default)]
+        before: Option<EntityId>,
+    },
     /// Throw away one open scene's edits and read it back from its file.
     ///
     /// Only that scene: the others keep their edits. `None` reverts the
