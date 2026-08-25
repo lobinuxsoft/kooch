@@ -1,5 +1,5 @@
 use super::super::render::{colliding_names, module_path, render_registrations};
-use super::super::{SourceFile, detect, ensure_features};
+use super::super::{DetectedSystem, SourceFile, detect, ensure_features};
 
 /// A discovered source file, for the render tests.
 fn source(rel: &str, components: &[&str], systems: &[&str]) -> SourceFile {
@@ -7,7 +7,13 @@ fn source(rel: &str, components: &[&str], systems: &[&str]) -> SourceFile {
         rel: rel.to_owned(),
         module: module_path(rel),
         components: components.iter().map(|s| (*s).to_owned()).collect(),
-        systems: systems.iter().map(|s| (*s).to_owned()).collect(),
+        systems: systems
+            .iter()
+            .map(|name| DetectedSystem {
+                name: (*name).to_owned(),
+                ..Default::default()
+            })
+            .collect(),
     }
 }
 
@@ -230,7 +236,77 @@ pub fn movement(resources: &mut Resources) {}
 ";
     let (components, systems) = detect(src);
     assert_eq!(components, vec!["Health".to_owned()]);
-    assert_eq!(systems, vec!["movement".to_owned()]);
+    // No attribute: the binding every system had before there was one.
+    assert_eq!(systems.len(), 1);
+    assert_eq!(systems[0].name, "movement");
+    assert_eq!(systems[0].stage, "Update");
+    assert!(systems[0].gated);
+}
+
+/// `#[system(...)]` decides the stage and the wrapper, and a bare `pub
+/// fn` still gets the old default.
+///
+/// 🔴 The third case is the one worth having: an attribute must not
+/// drift onto the NEXT function. `pending` is cleared by any line that
+/// is not a doc comment or another attribute, and without that the
+/// `always` below would silently un-gate `plain`.
+#[test]
+fn an_attribute_binds_only_its_own_system() {
+    let src = "\
+#[system(PreUpdate)]
+pub fn prepare(resources: &mut Resources) {}
+
+#[system(PostUpdate, always)]
+/// Runs while the editor is paused.
+pub fn overlay(resources: &mut Resources) {}
+
+pub fn plain(resources: &mut Resources) {}
+
+#[system(Last)]
+pub struct NotASystem;
+pub fn after_a_struct(resources: &mut Resources) {}
+";
+    let (_, systems) = detect(src);
+    let found: Vec<(&str, &str, bool)> = systems
+        .iter()
+        .map(|s| (s.name.as_str(), s.stage.as_str(), s.gated))
+        .collect();
+    assert_eq!(
+        found,
+        vec![
+            ("prepare", "PreUpdate", true),
+            ("overlay", "PostUpdate", false),
+            ("plain", "Update", true),
+            ("after_a_struct", "Update", true),
+        ]
+    );
+}
+
+/// The generated line matches the binding, wrapper and all.
+#[test]
+fn the_registration_says_what_the_attribute_asked() {
+    let mut file = source("systems/gizmos.rs", &[], &[]);
+    file.systems = vec![
+        DetectedSystem {
+            name: "prepare".to_owned(),
+            stage: "PreUpdate".to_owned(),
+            gated: true,
+        },
+        DetectedSystem {
+            name: "overlay".to_owned(),
+            stage: "PostUpdate".to_owned(),
+            gated: false,
+        },
+    ];
+    let out = render_registrations(&[file]);
+    assert!(
+        out.contains("app.add_system(Stage::PreUpdate, run_if_playing(systems::gizmos::prepare));"),
+        "{out}"
+    );
+    assert!(
+        out.contains("app.add_system(Stage::PostUpdate, systems::gizmos::overlay);"),
+        "`always` still wrapped the system in `run_if_playing`:\n{out}"
+    );
 }
 
 #[test]

@@ -16,8 +16,10 @@ struct TonemapUniforms {
     // a washed-out one.
     enabled: u32,
     exposure: f32,
-    _pad0: u32,
-    _pad1: u32,
+    // Source-over-target pixel ratio; 1 when they match, the render
+    // scale when a debug view skipped the upscaler. NEAREST on purpose:
+    // a false-colour legend must not blend across its own edges.
+    scale: vec2<f32>,
 }
 
 @group(0) @binding(0) var hdr_tex: texture_2d<f32>;
@@ -45,7 +47,7 @@ fn fs_main(in: Varyings) -> @location(0) vec4<f32> {
     // read two texels wherever the sampler's rounding disagrees with the
     // rasteriser's, which shows up as a half-pixel blur that survives
     // every later pass.
-    let texel = vec2<i32>(in.position.xy);
+    let texel = vec2<i32>(in.position.xy * tonemap.scale);
     let hdr = textureLoad(hdr_tex, texel, 0);
     if (tonemap.enabled == 0u) {
         return hdr;

@@ -16,16 +16,25 @@
 //!    attachment and every page is a sub-rect of it, so 1681 pages are
 //!    ONE render pass instead of 1681.
 //!
-//! # 🔴 The sun only, and the seam is not arbitrary
+//! # 🔴 One cull per lamp, not per lamp VIEW
 //!
-//! A cull is per view. The sun's clipmap is **17** views. A hundred
-//! local lights with six faces and an eight-level chain each are
-//! **4848**, and the LOD selector is a two-pass reduction over the
-//! meshlet DAG that cannot simply be inlined per page. Local pages are
-//! marked and allocated today and counted as skipped here; rasterising
-//! them needs the cull itself moved onto the GPU as one multi-view
-//! dispatch, which is the next machine and not a bigger version of this
-//! one.
+//! A cull is per view. The sun's clipmap is **17** views; a hundred
+//! local lights with six faces and an eight-level chain each would be
+//! **4848**, which is the explosion this design refuses. What a lamp
+//! actually needs is ONE survivor list: a perspective error metric
+//! measured from the light's own position scales with distance by
+//! itself, so every face and every level of one lamp can share it —
+//! the retired cube path drew smooth shadows from exactly this recipe
+//! (#777). The frame therefore runs `17 + punctual lights` culls,
+//! capped at [`LAMP_CULLS`], and a lamp's pages bucket by LIGHT where
+//! the sun's bucket by level.
+//!
+//! 🔴 Lamps must NOT borrow the sun's survivor lists. Those are
+//! simplified for orthographic boxes centred on the CAMERA: a close
+//! lamp's casters fell outside the fine levels' box and its shadow
+//! vanished as it approached, and a coarse bucket handed root meshlets
+//! that drew a sphere's shadow as a faceted lump. Measured in
+//! `roll-a-ball`, both ways.
 
 use glam::{Mat4, Vec3};
 
@@ -36,10 +45,75 @@ use crate::meshlet::{
 use super::pool::{PagePool, PoolConfig};
 use super::{ClipmapConfig, PageConfig};
 
+use kooch_core::gpu::{GpuQuery, GpuScopes};
+
+/// The caller's open scope, for the four passes below to nest under.
+///
+/// 🔴 The four are a cull, a compact, an expansion and a draw, and they
+/// scale with completely different things — levels, resident pages,
+/// `(page, meshlet)` pairs, covered texels. One number over the set
+/// says the track is expensive without saying which of those grew, so
+/// it is a number nothing can act on.
+pub type RasterTrack<'a> = Option<(&'a GpuScopes, &'a GpuQuery)>;
+
+/// Opens `label` under `track`, or nothing when there is no profiler.
+fn nested(
+    track: RasterTrack<'_>,
+    label: &str,
+    encoder: &mut wgpu::CommandEncoder,
+) -> Option<GpuQuery> {
+    track.map(|(scopes, parent)| scopes.begin_child(label, encoder, parent))
+}
+
+/// Closes what [`nested`] opened.
+fn close(track: RasterTrack<'_>, query: Option<GpuQuery>, encoder: &mut wgpu::CommandEncoder) {
+    if let (Some((scopes, _)), Some(query)) = (track, query) {
+        scopes.end(encoder, query);
+    }
+}
+
 use kooch_lighting::PAGE_TABLE as TABLE;
+// `ClusterLight` is declared here — the expansion tests a candidate
+// against the lamp's own cone and the depth pass places its faces.
+use kooch_lighting::CLUSTER_COMMON;
+use kooch_lighting::{GpuLight, LIGHT_KIND_DIRECTIONAL};
 const COMPACT: &str = include_str!("../../../shaders/page_compact.wgsl");
 const EXPAND: &str = include_str!("../../../shaders/page_expand.wgsl");
 const DEPTH: &str = include_str!("../../../shaders/page_depth.wgsl");
+/// Appended to [`DEPTH`] only where `CLIP_DISTANCES` exists.
+const DEPTH_CLIPPED: &str = include_str!("../../../shaders/page_depth_clipped.wgsl");
+
+/// Lamp slots the raster addresses — lamp `L`'s pages land in bucket
+/// `clipmap.levels + L`, fed by the hierarchical cull's slice for `L`
+/// (#939). A light past the cap keeps its pages listed but undrawn,
+/// counted with the dropped pages. Mirrors `LAMP_CULLS` in
+/// `page_table.wgsl`.
+///
+/// 256 — the cluster path's own light budget — because `many_lights`
+/// runs a hundred casting lamps and the previous 64 dropped a third of
+/// them: 121 pages with no shadow, and every unshadowed light washing
+/// out its neighbours'. The group-error arena is sized by the frame's
+/// ACTIVE lights, not by this cap, so the cap prices buckets and
+/// survivor slices only. Slots are buffer order, not ranked — the
+/// classic path's `assign_point_slots` ranking is the follow-up named
+/// in #939.
+pub const LAMP_CULLS: u32 = 256;
+
+/// Moved-caster spheres a frame may upload for page invalidation.
+/// Past it, the scene generation bumps instead — every page redraws
+/// once, which is coarse and never wrong.
+const MOVED_CAPACITY: u32 = 256;
+
+/// FNV-1a over a word, for the content generations. Collisions cache a
+/// stale page for one configuration change in four billion; accepted.
+fn fnv(mut hash: u32, word: u32) -> u32 {
+    for byte in word.to_le_bytes() {
+        hash = (hash ^ byte as u32).wrapping_mul(16777619);
+    }
+    hash
+}
+
+const FNV_SEED: u32 = 2166136261;
 
 /// What the pages are rasterised at. The same format the cascades use,
 /// so the sampling path in #477 reaches for the same comparison sampler
@@ -97,20 +171,27 @@ pub struct RasterCounts {
     /// are missing.
     pub dropped: u32,
     /// 🔴 Pages belonging to local lights, which are marked and
-    /// allocated but not yet rasterised. Reported rather than ignored:
-    /// a pool that looks full for a reason nobody stated is how a
-    /// budget gets mis-read.
+    /// allocated and rasterised. Reported rather than ignored: a pool
+    /// that looks full for a reason nobody stated is how a budget gets
+    /// mis-read, and lamps are what fills this one.
     pub local: u32,
+    /// Pages listed for THIS view, the sun's and the lamps' together.
+    ///
+    /// They share buckets: a bucket is an octave of world texel size, so
+    /// a lamp and the sun that want the same fineness are in the same
+    /// list. [`Self::local`] is how many of them came from lamps.
+    pub listed: u32,
     /// `(page, meshlet)` pairs the draw covered.
     pub pairs: u32,
     /// Pairs past the list's capacity.
     pub overflow: u32,
-    /// Resident pages belonging to ANOTHER camera.
-    ///
-    /// 🔴 Not a failure — the table is shared and every view compacts
-    /// its own — but the number without which "the pool is full and my
-    /// view got forty pages" cannot be read.
-    pub others: u32,
+    /// Resident pages whose content stamp still matched — the pages the
+    /// cache made free this frame.
+    pub cached: u32,
+    /// Lamp pairs the receiver bound turned away (#940): the caster's
+    /// nearest point lay beyond every receiver the page shades, so
+    /// drawing it could change nothing.
+    pub depth_rejected: u32,
     /// Which camera this is.
     pub view: u32,
     /// Meshlet/page tests the expansion ran, summed over the levels.
@@ -177,6 +258,26 @@ pub struct PageRasterizer {
     visible_counts: wgpu::Buffer,
     levels: wgpu::Buffer,
     level_stride: u64,
+    /// One generation per bucket owner per view — the sun's levels
+    /// (snapped centre, direction, the eye's height along the sun's
+    /// axis), then the lamps (transform, range, cone). The compaction
+    /// caches a page whose stamp matches. Never zero.
+    gens: wgpu::Buffer,
+    /// `[0]` count, then the physical slot of every page THIS view's
+    /// compaction listed — what the depth pass clears instead of the
+    /// whole layer.
+    dirty: wgpu::Buffer,
+    /// `[0].x` count, then world spheres of every caster that moved
+    /// this frame, old and new bounds alike.
+    moved: wgpu::Buffer,
+    /// Folded into every generation. Bumped when the moved list
+    /// overflows its buffer — the coarse, honest fallback — and when a
+    /// pair overflow was observed, because a stamped page whose pairs
+    /// were dropped cached a hole.
+    scene_gen: u32,
+    /// The frame the moved list was last uploaded and any overflow
+    /// bump applied — once per frame, not per view.
+    moved_frame: Option<u32>,
 
     compact_bgl: wgpu::BindGroupLayout,
     compact: wgpu::ComputePipeline,
@@ -189,13 +290,31 @@ pub struct PageRasterizer {
 
     depth_bgl: wgpu::BindGroupLayout,
     depth: wgpu::RenderPipeline,
+    invalidate: wgpu::ComputePipeline,
+    invalidate_bgl: wgpu::BindGroupLayout,
+    /// One quad per dirty page at far depth, depth test `Always` —
+    /// the per-page replacement for the whole-layer clear the cache
+    /// retired.
+    page_clear: wgpu::RenderPipeline,
+    clear_bgl: wgpu::BindGroupLayout,
 
     /// This frame's index, for the age debug view. See `views.w`.
     frame: u32,
+    /// The readers' PCF footprint width in texels, carried in
+    /// `world.w`. 1 = bilinear. See `inti_page_filter` (#941).
+    softness: u32,
     /// Triangles a meshlet may hold — the builder's cap, and the fixed
     /// vertex count the indirect draw issues.
     triangles: u32,
     culls: Vec<MeshletCull>,
+    /// The one hierarchical cull every lamp shares (#939). Its
+    /// survivors land in fixed slices the expansion indexes by slot;
+    /// no cull object, bind group or dispatch exists per lamp.
+    lamp_cull: super::lamp_cull::LampCull,
+    /// The frame [`Self::lamp_cull`] last recorded for. Its passes are
+    /// view-independent, so the second camera of a frame reuses the
+    /// first one's survivors instead of re-culling.
+    lamp_frame: Option<u32>,
     /// The bind groups that never change once built.
     ///
     /// 🔴 Built ONCE, not per level per view per frame. They used to be
@@ -216,10 +335,15 @@ struct Bound {
     compact: wgpu::BindGroup,
     expand: wgpu::BindGroup,
     depth: wgpu::BindGroup,
+    invalidate: wgpu::BindGroup,
+    clear: wgpu::BindGroup,
     /// One per clipmap level: each level's cull owns its own visible
     /// list, so this is the one thing a single dispatch could not
     /// replace without the culls sharing an output buffer.
     visible: Vec<wgpu::BindGroup>,
+    /// The lamps' shared survivor arena — ONE group for every lamp
+    /// bucket, because a slot's slice is arithmetic, not a binding.
+    lamp_visible: wgpu::BindGroup,
     instances: wgpu::BindGroup,
     descriptors: wgpu::BindGroup,
     /// What the groups above were built against. A pool resize, a scene
@@ -231,11 +355,18 @@ struct Bound {
 /// leans on to decide whether its own bind group has to be rebuilt.
 #[derive(PartialEq)]
 struct BoundKeys {
-    keys: wgpu::Buffer,
     slots: wgpu::Buffer,
     instances: wgpu::Buffer,
     descriptors: wgpu::Buffer,
+    // 🔴 In the key because it GROWS. The lights buffer is reallocated
+    // when the scene outgrows it, and a cached bind group holding the
+    // old one reads a lamp's range out of freed memory — or out of a
+    // buffer that is simply somebody else's now.
+    lights: wgpu::Buffer,
     visible: Vec<wgpu::Buffer>,
+    /// The lamps' survivor arena — fixed-size today, in the key so a
+    /// future growth path cannot silently skip the rebuild.
+    lamp_survivors: wgpu::Buffer,
 }
 
 impl PageRasterizer {
@@ -264,6 +395,9 @@ impl PageRasterizer {
             })
             .collect();
         let levels = clipmap.levels;
+        // Sun buckets plus one bucket per lamp; every per-bucket buffer
+        // is sized for both halves.
+        let buckets = levels + LAMP_CULLS;
 
         let module = |label: &str, body: &str| {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -271,9 +405,38 @@ impl PageRasterizer {
                 source: wgpu::ShaderSource::Wgsl(format!("{TABLE}\n{body}").into()),
             })
         };
-        let compact_module = module("page_compact", COMPACT);
-        let expand_module = module("page_expand", EXPAND);
-        let depth_module = module("page_depth", DEPTH);
+        let compact_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("page_compact"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{CLUSTER_COMMON}\n{TABLE}\n{COMPACT}").into(),
+            ),
+        });
+        // The expansion reaches for `ClusterLight` too: a lamp's page is
+        // a frustum from the light's own position and range, not a slab.
+        let expand_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("page_expand"),
+            source: wgpu::ShaderSource::Wgsl(format!("{CLUSTER_COMMON}\n{TABLE}\n{EXPAND}").into()),
+        });
+        // The depth pass builds a lamp's frustum from the light record.
+        //
+        // 🔴 `enable` has to be the FIRST thing in a module and wgpu
+        // rejects the directive outright without the feature, so the
+        // clipped path is a different SOURCE rather than a branch inside
+        // one. `clipped` decides both halves — the prefix here and the
+        // entry point below — and they cannot disagree.
+        let clipped = device.features().contains(wgpu::Features::CLIP_DISTANCES);
+        let enable = if clipped {
+            "enable clip_distances;\n"
+        } else {
+            ""
+        };
+        let tail = if clipped { DEPTH_CLIPPED } else { "" };
+        let depth_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("page_depth"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{enable}{CLUSTER_COMMON}\n{TABLE}\n{DEPTH}\n{tail}").into(),
+            ),
+        });
 
         let compact_bgl = compact_layout(device);
         let compact_layout_pipeline =
@@ -295,6 +458,18 @@ impl PageRasterizer {
         let compact = compute("cs_compact", &compact_module, &compact_layout_pipeline);
         let expand_args_pass = compute("cs_expand_args", &compact_module, &compact_layout_pipeline);
         let draw_args_pass = compute("cs_draw_args", &compact_module, &compact_layout_pipeline);
+        let invalidate_bgl = invalidate_layout(device);
+        let invalidate_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("page_invalidate_layout"),
+                bind_group_layouts: &[Some(&invalidate_bgl)],
+                immediate_size: 0,
+            });
+        let invalidate = compute(
+            "cs_invalidate",
+            &compact_module,
+            &invalidate_pipeline_layout,
+        );
 
         let expand_bgl = expand_layout(device);
         let storage_bgl = storage_layout(
@@ -331,14 +506,23 @@ impl PageRasterizer {
             layout: Some(&depth_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &depth_module,
-                entry_point: Some("vs_page"),
+                entry_point: Some(if clipped {
+                    "vs_page_clipped"
+                } else {
+                    "vs_page"
+                }),
                 buffers: &[],
                 compilation_options: Default::default(),
             },
             // 🔴 A fragment stage where `shadow_depth` has none, and it
             // is not an oversight: it is the per-page scissor the
             // hardware cannot give per instance. See `page_depth.wgsl`.
-            fragment: Some(wgpu::FragmentState {
+            //
+            // 🔴 …unless the clipper can be given the page's own four
+            // edges, in which case there is nothing left to discard and
+            // the stage goes away — which is also what puts a depth-only
+            // pass on the hardware's double-rate path (#952).
+            fragment: (!clipped).then(|| wgpu::FragmentState {
                 module: &depth_module,
                 entry_point: Some("fs_page"),
                 targets: &[],
@@ -355,6 +539,43 @@ impl PageRasterizer {
                 depth_write_enabled: Some(true),
                 // Reversed-Z, like every other depth test in the engine.
                 depth_compare: Some(wgpu::CompareFunction::Greater),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let clear_bgl = clear_layout(device);
+        let clear_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("page_clear_layout"),
+                bind_group_layouts: &[Some(&clear_bgl)],
+                immediate_size: 0,
+            });
+        let page_clear = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("page_clear"),
+            layout: Some(&clear_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &depth_module,
+                entry_point: Some("vs_page_clear"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            // No fragment and no scissor needed: the quad's corners ARE
+            // the page's rect, so nothing rasterises past it.
+            fragment: None,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: PAGE_DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                // A clear, as a draw: it always wins.
+                depth_compare: Some(wgpu::CompareFunction::Always),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -390,7 +611,8 @@ impl PageRasterizer {
             uniform_stride,
             page_list: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_list"),
-                size: bucket(pool) as u64 * levels as u64 * 8,
+                // Four words per listing: page, slot, bound (#940), spare.
+                size: bucket(pool) as u64 * buckets as u64 * 16,
                 // 🔴 COPY_SRC because `page_list_buffer` is public and the
                 // only reason to expose a GPU buffer is to read it back.
                 usage: storage | wgpu::BufferUsages::COPY_SRC,
@@ -398,31 +620,32 @@ impl PageRasterizer {
             }),
             counts: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_counts"),
-                size: count_slots(levels) as u64 * 4,
+                size: count_slots(buckets) as u64 * 4,
                 usage: storage | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
             expand_args: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_expand_args"),
-                size: levels as u64 * 12,
+                size: buckets as u64 * 12,
                 usage: storage | wgpu::BufferUsages::INDIRECT,
                 mapped_at_creation: false,
             }),
             draw_args: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_draw_args"),
-                size: 16,
+                // Two draws: the pairs, then one quad per dirty page.
+                size: 32,
                 usage: storage | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
             pairs: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_pairs"),
-                size: PAIR_CAPACITY as u64 * 8,
+                size: PAIR_CAPACITY as u64 * 16,
                 usage: storage,
                 mapped_at_creation: false,
             }),
             visible_counts: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_visible_counts"),
-                size: levels as u64 * 4,
+                size: buckets as u64 * 4,
                 // 🔴 COPY_SRC: the survivor counts ride home in the same
                 // readback as the page counts, so the expansion's cost
                 // can be read as the product it is. See `count_slots`.
@@ -431,11 +654,33 @@ impl PageRasterizer {
             }),
             levels: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_levels"),
-                size: level_stride * levels as u64,
+                size: level_stride * buckets as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
             level_stride,
+            gens: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("page_raster_gens"),
+                size: atlas_layers(pool) as u64 * buckets as u64 * 4,
+                usage: storage,
+                mapped_at_creation: false,
+            }),
+            dirty: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("page_raster_dirty"),
+                // A header word, then at most one slot per page of one
+                // view's slice — the most one compaction can list.
+                size: (1 + pool.slice() as u64) * 4,
+                usage: storage,
+                mapped_at_creation: false,
+            }),
+            moved: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("page_raster_moved"),
+                size: (1 + MOVED_CAPACITY as u64) * 16,
+                usage: storage,
+                mapped_at_creation: false,
+            }),
+            scene_gen: 0,
+            moved_frame: None,
             compact_bgl,
             compact,
             expand_args_pass,
@@ -445,13 +690,20 @@ impl PageRasterizer {
             expand,
             depth_bgl,
             depth,
+            invalidate,
+            invalidate_bgl,
+            page_clear,
+            clear_bgl,
             frame: 0,
+            softness: 1,
             triangles: max_triangles_per_meshlet.max(1),
             culls: (0..levels)
                 .map(|_| MeshletCull::new(device, 1, max_triangles_per_meshlet))
                 .collect(),
+            lamp_cull: super::lamp_cull::LampCull::new(device),
+            lamp_frame: None,
             bound: None,
-            readback: RasterReadback::new(device, count_slots(levels)),
+            readback: RasterReadback::new(device, count_slots(buckets)),
             config,
             clipmap,
             pool,
@@ -515,6 +767,12 @@ impl PageRasterizer {
         self.frame = frame;
     }
 
+    /// The readers' PCF footprint width, from the settings. Takes
+    /// effect at the next `write_uniform`.
+    pub fn set_softness(&mut self, texels: u32) {
+        self.softness = texels.max(1);
+    }
+
     pub fn triangles_per_meshlet(&self) -> u32 {
         self.triangles
     }
@@ -525,14 +783,27 @@ impl PageRasterizer {
         &self.draw_args
     }
 
+    /// Buckets in `page_list`: the sun's clipmap levels first — one
+    /// octave of world texel size each, anchored so level `L` lands on
+    /// bucket `L` — then [`LAMP_CULLS`] buckets, one per lamp slot.
+    ///
+    /// 🔴 A bucket exists to name a survivor list, and a survivor
+    /// list is a LOD picked for a VIEW. Lamps briefly shared the sun's
+    /// buckets by octave; that borrowed geometry culled to the camera's
+    /// orthographic boxes and broke lamp shadows both ways — see the
+    /// module doc.
+    pub fn buckets(&self) -> u32 {
+        self.clipmap.levels + LAMP_CULLS
+    }
+
     /// Slots in [`Self::counts_buffer`].
     pub fn count_slots(&self) -> u32 {
-        count_slots(self.clipmap.levels)
+        count_slots(self.buckets())
     }
 
     /// Reads the counters out of a mapped copy of [`Self::counts_buffer`].
     pub fn decode(&self, words: &[u32], view: u32) -> RasterCounts {
-        let levels = self.clipmap.levels as usize;
+        let levels = self.buckets() as usize;
         let cap = bucket(self.pool);
         let mut tests = 0u64;
         let mut worst = (0u32, 0u64);
@@ -559,15 +830,18 @@ impl PageRasterizer {
             worst,
             scatter,
             hybrid,
-            pages: words[..levels]
-                .iter()
-                .map(|&n| n.min(bucket(self.pool)))
-                .sum(),
+            pages: words[..levels].iter().map(|&n| n.min(cap)).sum(),
+            // 🔴 Every listed page, the sun's and the lamps' alike,
+            // because they share buckets now: a lamp and the sun that
+            // want the same fineness are in the same list. `local` still
+            // says how many of them came from lamps.
+            listed: words[..levels].iter().map(|&n| n.min(cap)).sum(),
             dropped: words[levels],
             local: words[levels + 1],
             pairs: words[levels + 2].min(PAIR_CAPACITY),
             overflow: words[levels + 3],
-            others: words[levels + 4],
+            cached: words[levels + 4],
+            depth_rejected: words.get(levels * 3 + 5).copied().unwrap_or(0),
             view,
         }
     }
@@ -581,12 +855,19 @@ fn atlas_layers(pool: PoolConfig) -> u32 {
 
 /// Pairs one frame may draw.
 ///
-/// 8 MiB, and a ceiling rather than a guess: `RasterCounts::overflow`
-/// says when it was reached, which is the difference between a bound
-/// and a silent truncation.
-pub const PAIR_CAPACITY: u32 = 1 << 20;
+/// 4 MiB at four words a pair, and a ceiling rather than a guess:
+/// `RasterCounts::overflow` says when it was reached, which is the
+/// difference between a bound and a silent truncation.
+///
+/// 🔴 A quarter of what it was, and still two orders of magnitude past
+/// what a frame emits — the roll-a-ball stress scene measures around a
+/// thousand. It came down when the pair grew to carry its page and slot
+/// directly: the indirection through `page_list` cost the vertex stage
+/// a storage binding it did not have, and 1M pairs was a number nobody
+/// had ever approached.
+pub const PAIR_CAPACITY: u32 = 1 << 18;
 
-fn count_slots(levels: u32) -> u32 {
+fn count_slots(buckets: u32) -> u32 {
     // Per level, then: bucket overflow, local pages skipped, pairs, pair
     // overflow, pages owned by another view — and THEN the survivors
     // each level's cull produced, copied in from `visible_counts`.
@@ -603,7 +884,10 @@ fn count_slots(levels: u32) -> u32 {
     // level instead of guessed at. That one IS counted at dispatch
     // time, because unlike the product it is not a number two buffers
     // already hold.
-    levels * 3 + 5
+    //
+    // Plus one at the very end: lamp pairs the receiver bound rejected
+    // (#940).
+    buckets * 3 + 6
 }
 
 /// The atlas: one square layer per camera.
@@ -628,34 +912,174 @@ fn atlas_texture(device: &wgpu::Device, config: PageConfig, pool: PoolConfig) ->
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: PAGE_DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        // COPY_SRC is for the end-to-end rig
+        // (`a_lamp_page_holds_what_its_light_sees`), which reads pages
+        // back and checks them against the scene — the class of defect
+        // that until then was only ever caught by a person staring at a
+        // broken frame. The flag costs nothing at runtime.
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     })
 }
 
+/// The content stamp of every sun clipmap level, for the cache gate.
+///
+/// A level's stamp turns over when the camera crosses one of ITS pages —
+/// on the plane, or along the sun — or when the sun turns, or when the
+/// scene changes. All three spatial terms share that level's page width,
+/// which is what lets a coarse level stay resident while a fine one
+/// churns, and a clipmap is only worth its levels if that is true.
+///
+/// 🔴 A free function over the config rather than a method, because the
+/// question it answers — *does this camera move void the cache?* — has
+/// nothing to do with a GPU and should not need one to ask.
+fn sun_gens(clipmap: ClipmapConfig, side: f32, scene_gen: u32, eye: Vec3, sun: Vec3) -> Vec<u32> {
+    // Mirrors `sun_basis` in `page_table.wgsl`, term for term.
+    let f = sun.normalize_or(Vec3::NEG_Y);
+    // Only the sun's own axis is left: the basis' two in-plane vectors
+    // went with the snapped centre this no longer hashes.
+    let along = eye.dot(f);
+    (0..clipmap.levels as usize)
+        .map(|level| {
+            let width = clipmap.base * (level as f32).exp2() / side;
+            let mut h = FNV_SEED;
+            for word in [
+                // 🔴 The snapped CENTRE is deliberately absent, and used
+                // to be two of these words. It turned a whole level's
+                // content over every time the camera crossed one of its
+                // pages — for pages whose world footprint had not moved
+                // at all. `sun_cell` keys a page by its absolute world
+                // position now and `cs_compact` folds that index into
+                // the stamp per page, so scrolling the window
+                // invalidates only the ring that wrapped.
+                //
+                // ⚠️ `floor(x + 0.5)`, mirroring `sun_drift` in
+                // `page_table.wgsl` exactly. `f32::round` would disagree
+                // with WGSL's on halves, and disagreeing by one step is
+                // a stamp that says "still valid" over depth measured
+                // from somewhere else.
+                (along / width + 0.5).floor().to_bits(),
+                f.x.to_bits(),
+                f.y.to_bits(),
+                f.z.to_bits(),
+                scene_gen,
+            ] {
+                h = fnv(h, word);
+            }
+            // `| 1`: a stamp of zero means "no content" and must never
+            // match a generation.
+            h | 1
+        })
+        .collect()
+}
+
 impl PageRasterizer {
+    /// Threads the compaction needs: one per entry of one view's span.
+    fn compact_threads(&self, light_count: u32) -> u32 {
+        let slots = super::mark::padded_lights(light_count) + 1;
+        u32::try_from(super::mark::span(self.config, self.clipmap, slots)).unwrap_or(u32::MAX)
+    }
+
+    /// One generation per bucket owner, for the cache gate. A sun
+    /// level's changes when its snapped centre or the sun's direction
+    /// changes, and when the eye crosses one of THIS level's pages along
+    /// the sun's axis — all three on the same grid, so a level's content
+    /// lives exactly as long as its addressing does.
+    ///
+    /// 🔴 The along-sun term used to be `eye.dot(f)` raw, and it had to
+    /// be: the depth a page stored was measured from the unsnapped
+    /// camera. So every level's stamp turned over on any camera movement
+    /// at all and the cache never once hit. See `sun_drift` in
+    /// `page_table.wgsl`.
+    ///
+    /// A lamp's changes with anything that moves its shadow: position,
+    /// direction, range, kind, cone.
+    fn write_gens(&self, queue: &wgpu::Queue, view: u32, eye: Vec3, sun: Vec3, lamps: &[GpuLight]) {
+        let gens = self.gens_for(eye, sun, lamps);
+        queue.write_buffer(
+            &self.gens,
+            view as u64 * self.buckets() as u64 * 4,
+            bytemuck::cast_slice(&gens),
+        );
+    }
+
+    /// [`Self::write_gens`] without the upload — the arithmetic alone,
+    /// so a test can ask what a camera move does to the cache without a
+    /// queue to write into.
+    pub(crate) fn gens_for(&self, eye: Vec3, sun: Vec3, lamps: &[GpuLight]) -> Vec<u32> {
+        let levels = self.clipmap.levels as usize;
+        let buckets = self.buckets() as usize;
+        let mut gens = vec![0u32; buckets];
+        let side = self.config.side(0) as f32;
+        gens[..levels].copy_from_slice(&sun_gens(self.clipmap, side, self.scene_gen, eye, sun));
+        for slot in 0..LAMP_CULLS as usize {
+            let mut h = FNV_SEED;
+            if let Some(lamp) = lamps.get(slot) {
+                for word in [
+                    lamp.position[0].to_bits(),
+                    lamp.position[1].to_bits(),
+                    lamp.position[2].to_bits(),
+                    lamp.direction[0].to_bits(),
+                    lamp.direction[1].to_bits(),
+                    lamp.direction[2].to_bits(),
+                    lamp.range.to_bits(),
+                    lamp.kind,
+                    lamp.spot_scale.to_bits(),
+                    lamp.spot_offset.to_bits(),
+                ] {
+                    h = fnv(h, word);
+                }
+            }
+            h = fnv(h, self.scene_gen);
+            gens[levels + slot] = h | 1;
+        }
+        gens
+    }
+
+    /// Uploads the frame's moved-caster spheres — once, not per view —
+    /// or, past the buffer, bumps the scene generation so everything
+    /// redraws instead of something staying silently stale.
+    fn write_moved(&mut self, queue: &wgpu::Queue, moved: &[[f32; 4]]) {
+        if self.moved_frame == Some(self.frame) {
+            return;
+        }
+        self.moved_frame = Some(self.frame);
+        if moved.len() > MOVED_CAPACITY as usize {
+            self.scene_gen = self.scene_gen.wrapping_add(1);
+            queue.write_buffer(&self.moved, 0, bytemuck::bytes_of(&[0.0f32; 4]));
+            return;
+        }
+        let mut data = Vec::with_capacity(1 + moved.len());
+        data.push([moved.len() as f32, 0.0, 0.0, 0.0]);
+        data.extend_from_slice(moved);
+        queue.write_buffer(&self.moved, 0, bytemuck::cast_slice(&data));
+    }
+
     /// The uniform every raster pass reads. Written once a frame,
     /// before any of them.
     fn write_uniform(&self, queue: &wgpu::Queue, view: u32, eye: Vec3, sun: Vec3, lights: u32) {
         let d = sun.normalize_or(Vec3::NEG_Y);
-        // The sun's slot is one past the last light, the way marking
-        // assigns it, so a view addresses one more slot than there are
-        // lights.
-        let sun_slot = lights.max(1);
+        // The sun's region starts after the PADDED light slots, the way
+        // marking lays the space out — see `padded_lights` for why the
+        // padding and not the raw count.
+        let sun_slot = super::mark::padded_lights(lights);
         let stride = super::mark::stride(self.config, self.clipmap);
+        let view_span = super::mark::span(self.config, self.clipmap, sun_slot + 1);
         queue.write_buffer(
             &self.uniform,
             self.uniform_span(view).0,
             bytemuck::bytes_of(&RasterUniform {
                 space: [
                     stride,
-                    self.config.face_pages(),
+                    self.config.local_face_pages(),
                     self.config.side(0),
                     sun_slot,
                 ],
                 views: [
                     view.min(atlas_layers(self.pool) - 1),
-                    stride * (sun_slot + 1),
+                    u32::try_from(view_span).unwrap_or(u32::MAX),
                     self.pool.slice(),
                     // 🔴 Only the age debug view reads this. A page's age
                     // is a difference against the current frame, and the
@@ -664,7 +1088,7 @@ impl PageRasterizer {
                     self.frame,
                 ],
                 pool: [
-                    self.pool.entries(),
+                    u32::try_from(view_span * atlas_layers(self.pool) as u64).unwrap_or(u32::MAX),
                     self.pool.total(),
                     self.pool.per_row(),
                     self.config.page,
@@ -693,7 +1117,10 @@ impl PageRasterizer {
                     // The side of ONE LAYER, which is what a page's clip
                     // position is placed inside.
                     (self.pool.per_row() * self.config.page) as f32,
-                    0.0,
+                    // The readers' PCF footprint width (#941). In the
+                    // raster's own uniform because the shading binds
+                    // this exact buffer — one write serves both.
+                    self.softness.max(1) as f32,
                 ],
                 eye: [eye.x, eye.y, eye.z, 0.0],
                 sun: [d.x, d.y, d.z, 1.0],
@@ -718,12 +1145,20 @@ impl PageRasterizer {
         view: u32,
         eye: Vec3,
         sun: Vec3,
-        lights: u32,
+        lamps: &[GpuLight],
     ) {
-        self.write_uniform(queue, view, eye, sun, lights);
+        self.write_uniform(queue, view, eye, sun, lamps.len() as u32);
+        self.write_gens(
+            queue,
+            view.min(atlas_layers(self.pool) - 1),
+            eye,
+            sun,
+            lamps,
+        );
         encoder.clear_buffer(&self.counts, 0, None);
         encoder.clear_buffer(&self.expand_args, 0, None);
         encoder.clear_buffer(&self.draw_args, 0, None);
+        encoder.clear_buffer(&self.dirty, 0, Some(4));
         let bind_group = self.compact_bind_group(device, page_pool);
         let offset = [self.uniform_span(view).0 as u32];
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -732,9 +1167,9 @@ impl PageRasterizer {
         });
         pass.set_pipeline(&self.compact);
         pass.set_bind_group(0, &bind_group, &offset);
-        pass.dispatch_workgroups(self.pool.entries().div_ceil(64), 1, 1);
+        pass.dispatch_workgroups(self.compact_threads(lamps.len() as u32).div_ceil(64), 1, 1);
         pass.set_pipeline(&self.expand_args_pass);
-        pass.dispatch_workgroups(self.clipmap.levels.div_ceil(64), 1, 1);
+        pass.dispatch_workgroups(self.buckets().div_ceil(64), 1, 1);
         // Without a pair list this only fixes the vertex count, which is
         // exactly the half worth asserting on without a scene.
         pass.set_pipeline(&self.draw_args_pass);
@@ -747,13 +1182,14 @@ impl PageRasterizer {
             layout: &self.compact_bgl,
             entries: &[
                 self.uniform_entry(0),
-                entry(1, page_pool.keys()),
                 entry(2, page_pool.slots()),
                 entry(3, &self.page_list),
                 entry(4, &self.counts),
                 entry(5, &self.expand_args),
                 entry(6, &self.visible_counts),
                 entry(7, &self.draw_args),
+                entry(8, &self.gens),
+                entry(9, &self.dirty),
             ],
         })
     }
@@ -786,17 +1222,19 @@ impl PageRasterizer {
         page_pool: &PagePool,
         instances: &wgpu::Buffer,
         descriptors: &wgpu::Buffer,
+        lights: &wgpu::Buffer,
     ) {
         let keys = BoundKeys {
-            keys: page_pool.keys().clone(),
             slots: page_pool.slots().clone(),
             instances: instances.clone(),
             descriptors: descriptors.clone(),
+            lights: lights.clone(),
             visible: self
                 .culls
                 .iter()
                 .map(|c| c.visible_meshlets_buffer().clone())
                 .collect(),
+            lamp_survivors: self.lamp_cull.survivors().clone(),
         };
         if self.bound.as_ref().is_some_and(|b| b.keys == keys) {
             return;
@@ -829,6 +1267,7 @@ impl PageRasterizer {
                             ),
                         }),
                     },
+                    entry(6, lights),
                 ],
             }),
             depth: device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -836,15 +1275,31 @@ impl PageRasterizer {
                 layout: &self.depth_bgl,
                 entries: &[
                     self.uniform_entry(0),
-                    entry(1, &self.page_list),
+                    entry(1, lights),
                     entry(2, &self.pairs),
                 ],
+            }),
+            invalidate: device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("page_invalidate_bg"),
+                layout: &self.invalidate_bgl,
+                entries: &[
+                    self.uniform_entry(0),
+                    entry(2, page_pool.slots()),
+                    entry(10, &self.moved),
+                    entry(11, lights),
+                ],
+            }),
+            clear: device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("page_clear_bg"),
+                layout: &self.clear_bgl,
+                entries: &[self.uniform_entry(0), entry(3, &self.dirty)],
             }),
             visible: self
                 .culls
                 .iter()
                 .map(|c| storage("page_expand_visible_bg", c.visible_meshlets_buffer()))
                 .collect(),
+            lamp_visible: storage("page_expand_lamp_bg", self.lamp_cull.survivors()),
             instances: storage("page_raster_instances_bg", instances),
             descriptors: storage("page_raster_descriptors_bg", descriptors),
             keys,
@@ -857,7 +1312,9 @@ impl PageRasterizer {
         &self.page_list
     }
 
-    /// Grows every level's cull to the scene.
+    /// Grows every clipmap level's cull to the scene. The lamps'
+    /// shared arena sizes itself at record time, when the frame's
+    /// active light count is known.
     pub fn ensure_capacity(&mut self, device: &wgpu::Device, meshlets: u32, groups: u32) {
         for cull in &mut self.culls {
             cull.ensure_capacity(device, meshlets.max(1));
@@ -913,21 +1370,43 @@ impl PageRasterizer {
         view: u32,
         eye: Vec3,
         sun: Vec3,
-        lights: u32,
+        // The lights as uploaded, CPU-side and in buffer order: a
+        // lamp's cull needs its position and range HERE, and its slot
+        // is its bucket.
+        lamps: &[GpuLight],
+        // The same lights on the GPU, for the expansion's cone test
+        // and the depth pass's face placement.
+        lights: &wgpu::Buffer,
+        // World spheres of every caster that moved this frame — old
+        // and new bounds alike — for the cache's invalidation pass.
+        moved: &[[f32; 4]],
         lod_target: f32,
+        track: RasterTrack<'_>,
     ) {
         let levels = self.clipmap.levels;
+        let buckets = self.buckets();
+        let light_count = lamps.len() as u32;
         let view = view.min(atlas_layers(self.pool) - 1);
-        self.write_uniform(queue, view, eye, sun, lights);
+        self.write_moved(queue, moved);
+        self.write_uniform(queue, view, eye, sun, light_count);
+        self.write_gens(queue, view, eye, sun, lamps);
         let uniform_offset = self.uniform_span(view).0 as u32;
 
         // 1. One cull per level. A level is a texel density and a
         //    density is a LOD.
         //
-        // 🔴 Seventeen full cull dispatches per view per frame, each
-        // writing a uniform and recording its own passes. This is the
-        // only part of the track that is CPU work rather than GPU work,
-        // and it was invisible to the profiler until this scope existed.
+        // 🔴 Seventeen-plus full cull dispatches per view per frame,
+        // each writing a uniform and recording its own passes. This is
+        // the only part of the track that is CPU work rather than GPU
+        // work, and it was invisible to the profiler until this scope
+        // existed.
+        // 🔴 Cleared BEFORE the culls: a bucket whose cull does not
+        // run this frame — a directional slot, a lamp past the cap —
+        // must read zero survivors, and an unwritten storage buffer is
+        // not zero, it is whatever the allocator handed over.
+        // `cs_expand_args` multiplies it by a page count either way.
+        encoder.clear_buffer(&self.visible_counts, 0, None);
+        let cull_query = nested(track, "page cull", encoder);
         {
             profiling::scope!("cull: clipmap levels");
             for level in 0..levels {
@@ -972,6 +1451,54 @@ impl PageRasterizer {
             }
         }
 
+        // 1b. The lamps' shared hierarchical cull (#939) — Olsson et
+        //     al.'s light/instance pre-pass, then one group-coherent
+        //     meshlet pass for every lamp at once. View-independent,
+        //     so the frame's second camera reuses the first one's
+        //     survivors instead of re-running four dispatches.
+        //
+        // 🔴 The sun's survivor lists are NOT a substitute. They are
+        // simplified for orthographic boxes centred on the CAMERA:
+        // borrowing them culled a close lamp's casters away entirely
+        // and handed far buckets root meshlets — sphere shadows drawn
+        // as faceted lumps. Measured in `roll-a-ball`, both ways.
+        let lamp_slots = lamps.len().min(LAMP_CULLS as usize);
+        if self.lamp_frame != Some(self.frame) {
+            self.lamp_frame = Some(self.frame);
+            profiling::scope!("cull: lamps");
+            self.lamp_cull.record(
+                device,
+                queue,
+                encoder,
+                mesh_pool,
+                instances,
+                lights,
+                &self.visible_counts,
+                levels,
+                lamp_slots as u32,
+                scene_params.instance_count,
+                scene_params.meshlets_per_mesh,
+                lod_target,
+            );
+        }
+        close(track, cull_query, encoder);
+        // The bucket uniforms for the expansion's lamp dispatches —
+        // constant values, cheap to restate per view.
+        for (slot, lamp) in lamps.iter().enumerate().take(lamp_slots) {
+            if lamp.kind == LIGHT_KIND_DIRECTIONAL {
+                continue;
+            }
+            let bucket = levels + slot as u32;
+            queue.write_buffer(
+                &self.levels,
+                bucket as u64 * self.level_stride,
+                bytemuck::bytes_of(&ExpandLevel {
+                    level: bucket,
+                    _pad: [0; 3],
+                }),
+            );
+        }
+
         // Per view, all of it: the page list, the pair list and the
         // dispatch arguments describe THIS camera's clipmap and nothing
         // else. The table, the pool and the atlas are the shared things,
@@ -979,22 +1506,31 @@ impl PageRasterizer {
         encoder.clear_buffer(&self.counts, 0, None);
         encoder.clear_buffer(&self.expand_args, 0, None);
         encoder.clear_buffer(&self.draw_args, 0, None);
+        encoder.clear_buffer(&self.dirty, 0, Some(4));
 
-        self.ensure_bound(device, page_pool, instances, &mesh_pool.meshlets);
+        self.ensure_bound(device, page_pool, instances, &mesh_pool.meshlets, lights);
         let bound = self.bound.as_ref().expect("just built");
 
+        let expand_query = nested(track, "page expand", encoder);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("shadow pages: compact and expand"),
                 timestamp_writes: None,
             });
-            // 2. The hash table becomes a dense list, bucketed by level
-            //    — this camera's pages only, the rest counted and left.
+            // 1c. Invalidation, BEFORE the compaction reads the stamps:
+            //     every page a moved caster reaches loses its content
+            //     stamp and redraws like a fresh one.
+            pass.set_pipeline(&self.invalidate);
+            pass.set_bind_group(0, &bound.invalidate, &[uniform_offset]);
+            pass.dispatch_workgroups(self.compact_threads(light_count).div_ceil(64), 1, 1);
+            // 2. The flat table becomes a dense list, bucketed by
+            //    octave — the dispatch covers exactly this camera's
+            //    span, so the other view's pages are never walked.
             pass.set_pipeline(&self.compact);
             pass.set_bind_group(0, &bound.compact, &[uniform_offset]);
-            pass.dispatch_workgroups(self.pool.entries().div_ceil(64), 1, 1);
+            pass.dispatch_workgroups(self.compact_threads(light_count).div_ceil(64), 1, 1);
             pass.set_pipeline(&self.expand_args_pass);
-            pass.dispatch_workgroups(levels.div_ceil(64), 1, 1);
+            pass.dispatch_workgroups(buckets.div_ceil(64), 1, 1);
 
             // 3. Pairs. One indirect dispatch per level, sized by the
             //    pass above rather than by a CPU guess. The only thing
@@ -1003,6 +1539,10 @@ impl PageRasterizer {
             pass.set_pipeline(&self.expand);
             pass.set_bind_group(1, &bound.descriptors, &[]);
             pass.set_bind_group(3, &bound.instances, &[]);
+            // The sun's buckets against its level culls, then each
+            // lamp's bucket against ITS OWN cull. `bound.visible` holds
+            // them in the same order — levels first, lamp slots after —
+            // so the bucket index is the bind-group index throughout.
             for level in 0..levels {
                 pass.set_bind_group(
                     0,
@@ -1012,6 +1552,23 @@ impl PageRasterizer {
                 pass.set_bind_group(2, &bound.visible[level as usize], &[]);
                 pass.dispatch_workgroups_indirect(&self.expand_args, level as u64 * 12);
             }
+            // The lamps: ONE bind group — the shared survivor arena —
+            // and a slot's slice is arithmetic inside the shader, so
+            // the only thing that changes per bucket is the dynamic
+            // offset.
+            pass.set_bind_group(2, &bound.lamp_visible, &[]);
+            for (slot, lamp) in lamps.iter().enumerate().take(lamp_slots) {
+                if lamp.kind == LIGHT_KIND_DIRECTIONAL {
+                    continue;
+                }
+                let bucket = levels + slot as u32;
+                pass.set_bind_group(
+                    0,
+                    &bound.expand,
+                    &[uniform_offset, bucket * self.level_stride as u32],
+                );
+                pass.dispatch_workgroups_indirect(&self.expand_args, bucket as u64 * 12);
+            }
 
             // 4. One draw for the whole clipmap, so its instance count
             //    is the whole pair list.
@@ -1019,22 +1576,23 @@ impl PageRasterizer {
             pass.set_bind_group(0, &bound.compact, &[uniform_offset]);
             pass.dispatch_workgroups(1, 1, 1);
         }
+        close(track, expand_query, encoder);
 
+        let depth_query = nested(track, "page depth", encoder);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow pages: depth"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    // 🔴 THIS camera's layer. The clear below is the
-                    // whole reason the atlas is an array: a camera
-                    // wipes its own pages and cannot reach the ones the
-                    // other camera is still sampling.
+                    // 🔴 THIS camera's layer, LOADED — never cleared.
+                    // The cache is the layer's content: a resident page
+                    // whose stamp still matches keeps last frame's
+                    // depth, and only the dirty pages' rects are wiped,
+                    // by the quad draw below. The array still keeps one
+                    // camera out of the other's pages.
                     view: &self.layers[view as usize],
                     depth_ops: Some(wgpu::Operations {
-                        // Reversed-Z: 0 is far, so a page nothing drew
-                        // into reads as "nothing between here and the
-                        // light" rather than as fully shadowed.
-                        load: wgpu::LoadOp::Clear(0.0),
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
@@ -1043,12 +1601,19 @@ impl PageRasterizer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            // The per-page clear: one quad per dirty page at far depth
+            // (reversed-Z 0 — "nothing between here and the light"),
+            // depth test Always. Then the pairs draw over clean rects.
+            pass.set_pipeline(&self.page_clear);
+            pass.set_bind_group(0, &bound.clear, &[uniform_offset]);
+            pass.draw_indirect(&self.draw_args, 16);
             pass.set_pipeline(&self.depth);
             pass.set_bind_group(0, &bound.depth, &[uniform_offset]);
             pass.set_bind_group(1, meshlet_bg, &[]);
             pass.set_bind_group(2, &bound.instances, &[]);
             pass.draw_indirect(&self.draw_args, 0);
         }
+        close(track, depth_query, encoder);
 
         // The survivor counts, brought home alongside the page counts so
         // the expansion's cost can be read as the product it is. See
@@ -1057,8 +1622,8 @@ impl PageRasterizer {
             &self.visible_counts,
             0,
             &self.counts,
-            (self.clipmap.levels as u64 + 5) * 4,
-            self.clipmap.levels as u64 * 4,
+            (self.buckets() as u64 + 5) * 4,
+            self.buckets() as u64 * 4,
         );
         self.readback.record(encoder, &self.counts, view);
     }
@@ -1067,18 +1632,27 @@ impl PageRasterizer {
     /// returned. Call **after** the encoder has been submitted.
     pub fn poll(&mut self) -> Option<RasterCounts> {
         let (words, view) = self.readback.poll()?;
-        Some(self.decode(&words, view))
+        let counts = self.decode(&words, view);
+        // A pair overflow dropped geometry from pages the compaction
+        // had already stamped — a hole the cache would keep. One
+        // generation bump redraws everything once. 🔴 Reached only
+        // when something polls (the editor's panel does); a shipped
+        // build that never polls carries the hazard, noted in #477.
+        if counts.overflow > 0 {
+            self.scene_gen = self.scene_gen.wrapping_add(1);
+        }
+        Some(counts)
     }
 }
 
-fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
+pub(super) fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry {
         binding,
         resource: buffer.as_entire_binding(),
     }
 }
 
-fn buffer_entry(
+pub(super) fn buffer_entry(
     binding: u32,
     read_only: bool,
     visibility: wgpu::ShaderStages,
@@ -1095,7 +1669,7 @@ fn buffer_entry(
     }
 }
 
-fn uniform_entry(
+pub(super) fn uniform_entry(
     binding: u32,
     dynamic: bool,
     visibility: wgpu::ShaderStages,
@@ -1128,7 +1702,8 @@ fn compact_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             // of the uniform travels as an offset instead of as a
             // second allocation.
             uniform_entry(0, true, c),
-            buffer_entry(1, true, c),
+            // Binding 1 held the hash table's keys and is retired: the
+            // flat table's entry index IS the page id.
             // 🔴 Writable now: the compaction records each page's place
             // in `page_list` back into its table entry, which is the
             // only pass that knows both. See `PAGE_CELL`.
@@ -1138,7 +1713,38 @@ fn compact_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             buffer_entry(5, false, c),
             buffer_entry(6, true, c),
             buffer_entry(7, false, c),
+            // The generations the cache gate compares stamps against,
+            // and the dirty list the per-page clear draws from — the
+            // eighth storage buffer, which is the whole downlevel
+            // budget again.
+            buffer_entry(8, true, c),
+            buffer_entry(9, false, c),
         ],
+    })
+}
+
+/// `cs_invalidate`'s own layout: the table, the moved spheres and the
+/// lights — none of which the other compact entries touch.
+fn invalidate_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let c = wgpu::ShaderStages::COMPUTE;
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("page_invalidate_bgl"),
+        entries: &[
+            uniform_entry(0, true, c),
+            buffer_entry(2, false, c),
+            buffer_entry(10, true, c),
+            buffer_entry(11, true, c),
+        ],
+    })
+}
+
+/// The per-page clear's layout: the uniform for the atlas arithmetic
+/// and the dirty list naming the slots to wipe.
+fn clear_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let v = wgpu::ShaderStages::VERTEX;
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("page_clear_bgl"),
+        entries: &[uniform_entry(0, true, v), buffer_entry(3, true, v)],
     })
 }
 
@@ -1153,6 +1759,11 @@ fn expand_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             buffer_entry(3, false, c),
             buffer_entry(4, true, c),
             uniform_entry(5, true, c),
+            // 🔴 Here rather than in a group of its own: `max_bind_groups`
+            // is FOUR and this pass already binds four. It is also the
+            // eighth storage buffer of the stage, which is the entire
+            // downlevel budget.
+            buffer_entry(6, true, c),
         ],
     })
 }
@@ -1283,261 +1894,4 @@ impl RasterReadback {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// What the shader says a struct measures, per WGSL's own layout
-    /// rules.
-    fn shader_size(body: &str, name: &str) -> u32 {
-        let source = format!("{TABLE}\n{body}");
-        let module = naga::front::wgsl::parse_str(&source).expect("the shader parses");
-        let mut layouter = naga::proc::Layouter::default();
-        layouter
-            .update(module.to_ctx())
-            .expect("the shader has a layout");
-        for (handle, ty) in module.types.iter() {
-            if ty.name.as_deref() == Some(name) {
-                return layouter[handle].size;
-            }
-        }
-        panic!("`{name}` is not declared in this shader");
-    }
-
-    /// Where every field of a shader struct starts, in declaration
-    /// order.
-    ///
-    /// 🔴 The half a size check cannot see. Two structs of the same
-    /// size with two fields swapped measure identical and mean
-    /// different things — and that is not hypothetical either: a field
-    /// added after `paint` in the shader and before it in Rust broke
-    /// the page DEBUG VIEW, a feature the change had not touched.
-    pub fn shader_offsets(body: &str, name: &str) -> Vec<(String, u32)> {
-        let source = format!("{TABLE}\n{body}");
-        let module = naga::front::wgsl::parse_str(&source).expect("the shader parses");
-        for (_, ty) in module.types.iter() {
-            if ty.name.as_deref() != Some(name) {
-                continue;
-            }
-            let naga::TypeInner::Struct { members, .. } = &ty.inner else {
-                panic!("`{name}` is not a struct");
-            };
-            return members
-                .iter()
-                .map(|m| (m.name.clone().unwrap_or_default(), m.offset))
-                .collect();
-        }
-        panic!("`{name}` is not declared in this shader");
-    }
-
-    /// 🔴 The bug class this exists for cost a frame that rendered
-    /// nothing but validation errors, once per frame forever.
-    ///
-    /// `ExpandLevel` held a `vec3<u32>` for padding. A `vec3<u32>`
-    /// **aligns to 16**, so the field started at offset 16 and the
-    /// struct measured 32 bytes against the Rust mirror's 16. It
-    /// compiles. It validates. It fails at BIND time — *"bound with
-    /// size 16 where the shader expects 32"* — which is the one place
-    /// no test was looking.
-    ///
-    /// A comment saying "mirrors X field for field" is not a check.
-    /// This is.
-    #[test]
-    fn the_uniform_mirrors_match_the_shader() {
-        assert_eq!(
-            shader_size(COMPACT, "PageRaster") as usize,
-            std::mem::size_of::<RasterUniform>(),
-            "PageRaster",
-        );
-        assert_eq!(
-            shader_size(EXPAND, "ExpandLevel") as usize,
-            std::mem::size_of::<ExpandLevel>(),
-            "ExpandLevel",
-        );
-    }
-
-    /// The other half: same size, wrong order.
-    #[test]
-    fn the_uniform_fields_line_up() {
-        let mine = [
-            ("space", std::mem::offset_of!(RasterUniform, space)),
-            ("views", std::mem::offset_of!(RasterUniform, views)),
-            ("pool", std::mem::offset_of!(RasterUniform, pool)),
-            ("chain", std::mem::offset_of!(RasterUniform, chain)),
-            ("world", std::mem::offset_of!(RasterUniform, world)),
-            ("eye", std::mem::offset_of!(RasterUniform, eye)),
-            ("sun", std::mem::offset_of!(RasterUniform, sun)),
-        ];
-        let theirs = shader_offsets(COMPACT, "PageRaster");
-        assert_eq!(theirs.len(), mine.len(), "field count");
-        for ((name, offset), (their_name, their_offset)) in mine.iter().zip(&theirs) {
-            assert_eq!(name, their_name, "field order");
-            assert_eq!(*offset as u32, *their_offset, "`{name}` starts elsewhere");
-        }
-    }
-
-    /// The three runs of counters do not overlap, and the shader that
-    /// writes the third one agrees with the Rust that reads it.
-    ///
-    /// 🔴 A counter buffer is one flat array of `u32` shared by four
-    /// shaders and one `copy_buffer_to_buffer`, addressed by arithmetic
-    /// written out twice. The first run is per level, the second is
-    /// filled by a copy from `visible_counts`, the third is written by
-    /// `count_scatter`. Getting the base of the third wrong does not
-    /// fail: it lands in the survivor counts, which are plausible
-    /// numbers, and the panel reports a comparison built on the wrong
-    /// half of the buffer.
-    ///
-    /// This session already shipped one defect of exactly this shape —
-    /// `page_compact.wgsl` reading a two-word table entry with a
-    /// one-word stride — and it took a screen full of squares to find.
-    #[test]
-    fn the_counter_runs_do_not_overlap() {
-        for levels in [1u32, 4, 17, 32] {
-            let n = levels as usize;
-            let slots = count_slots(levels) as usize;
-            // Run one: the pages per level. Run two: the survivors,
-            // written by the copy at the end of `record`. Run three:
-            // the scatter's cells.
-            let survivors = n + 5;
-            let scatter = n * 2 + 5;
-            assert!(
-                survivors + n <= scatter,
-                "the survivor run runs into the scatter run at {levels} levels",
-            );
-            assert!(
-                scatter + n <= slots,
-                "the scatter run runs off the end at {levels} levels",
-            );
-        }
-        // And the shader addresses the third run the same way `decode`
-        // does. A comment claiming they match is not a check.
-        assert!(
-            EXPAND.contains("page_counts[levels * 2u + 5u + level]"),
-            "`count_scatter` no longer writes where `decode` reads",
-        );
-    }
-
-    /// Every buffer this pass copies OUT of declares that it can be.
-    ///
-    /// 🔴 Written after shipping a `copy_buffer_to_buffer` whose source
-    /// lacked `COPY_SRC`. It compiles; it passes every test that plants
-    /// words and decodes them; and it fails at RUNTIME, once per view
-    /// per frame forever, with the shadow pass producing nothing. The
-    /// tests around it never ran `record`, which is where the copy is.
-    ///
-    /// A source check rather than a GPU one, because the question is
-    /// about a declaration and answering it on a device would mean
-    /// building a whole frame to observe one flag.
-    #[test]
-    fn every_copied_buffer_can_be_copied_from() {
-        let source = include_str!("raster.rs");
-        // The buffers this pass copies out of, by the field name the
-        // copy uses.
-        let mut copied = copied_fields(source);
-        assert!(
-            !copied.is_empty(),
-            "the scan found no copies at all; it has stopped matching the source"
-        );
-        // 🔴 And every buffer this module hands OUT. The only reason to
-        // expose a GPU buffer is for something to read it back, and a
-        // reader outside this file is a copy this scan cannot see — that
-        // is exactly how `page_list` shipped without the flag, failing
-        // only sometimes, because wgpu reports the error whenever it
-        // gets round to it.
-        let mut labels: Vec<String> = copied
-            .iter()
-            .map(|field| format!("page_raster_{field}"))
-            .collect();
-        // The label a buffer carries is not always its field name.
-        labels.extend(
-            [
-                "page_raster_list",
-                "page_raster_counts",
-                "page_raster_draw_args",
-            ]
-            .into_iter()
-            .map(String::from),
-        );
-        for label in labels {
-            let at = source
-                .find(&format!("Some(\"{label}\")"))
-                .unwrap_or_else(|| panic!("{label} has no buffer descriptor"));
-            let body = &source[at..at + 400];
-            let usage = body
-                .find("usage:")
-                .map(|i| &body[i..body[i..].find(',').map(|j| i + j).unwrap_or(body.len())])
-                .unwrap_or("");
-            assert!(
-                usage.contains("COPY_SRC"),
-                "{label} is copied out of and its usage is `{usage}`"
-            );
-        }
-    }
-
-    /// The field each `copy_buffer_to_buffer` reads FROM — the first
-    /// `&self.<field>` after the call, whatever the formatter did to the
-    /// whitespace between them.
-    fn copied_fields(source: &str) -> std::collections::BTreeSet<&str> {
-        let mut out = std::collections::BTreeSet::new();
-        let mut rest = source;
-        while let Some(at) = rest.find("copy_buffer_to_buffer(") {
-            let tail = &rest[at + "copy_buffer_to_buffer(".len()..];
-            // 🔴 The FIRST argument only. The destination is the third,
-            // and it needs COPY_DST rather than COPY_SRC — a scan that
-            // took whichever `&self.` came first would demand the wrong
-            // flag of the wrong buffer.
-            let first = &tail[..tail.find(',').unwrap_or(0)];
-            if let Some(field) = first.trim().strip_prefix("&self.") {
-                let end = field
-                    .find(|c: char| !c.is_alphanumeric() && c != '_')
-                    .unwrap_or(field.len());
-                if end > 0 {
-                    out.insert(&field[..end]);
-                }
-            }
-            rest = tail;
-        }
-        out
-    }
-
-    /// A camera's slice is its own, and nothing else's.
-    #[test]
-    fn a_view_owns_its_slice() {
-        for views in 1..=4u32 {
-            let pool = PoolConfig { pages: 2048, views };
-            let slice = pool.slice();
-            assert!(slice > 0);
-            assert_eq!(pool.total(), slice * views, "every view gets one");
-            let bases: Vec<u32> = (0..views).map(|v| pool.base(v)).collect();
-            for pair in bases.windows(2) {
-                assert_eq!(pair[1] - pair[0], slice, "the slices do not overlap");
-            }
-            assert_eq!(
-                pool.base(views - 1) + slice,
-                pool.total(),
-                "the last slice ends where the pool does"
-            );
-        }
-    }
-
-    /// The pool is a budget, not a per-camera one. Splitting it must not
-    /// multiply what it costs.
-    #[test]
-    fn slicing_does_not_grow_the_atlas() {
-        let config = PageConfig::default();
-        let one = PoolConfig {
-            pages: 2048,
-            views: 1,
-        }
-        .atlas_bytes(config);
-        let two = PoolConfig {
-            pages: 2048,
-            views: 2,
-        }
-        .atlas_bytes(config);
-        assert!(
-            two <= one,
-            "two cameras cost {two} bytes against one camera's {one}"
-        );
-    }
-}
+mod tests;

@@ -33,11 +33,27 @@ use super::{ClipmapConfig, PageConfig};
 const SOURCE: &str = include_str!("../../../shaders/page_mark.wgsl");
 const GROUP: u32 = 8;
 /// 0 resident, 1 samples, 2 pairs, 3 mark overflow, 4 unused, 5 pool
-/// overflow, 6 probe overflow, 7 reuses, 8 fresh claims, 9 holes walked,
-/// 10 free-list overflow, 11 pages kept alive, 12 pages evicted, 13
-/// tombstones swept. 14 and 15 spare, because a storage buffer is
-/// rounded up anyway.
-const COUNTERS: u64 = 16;
+/// overflow, 6 unused (was the hash's probe overflow), 7 reuses, 8
+/// fresh claims, 9 unused (was holes walked), 10 free-list overflow,
+/// 11 pages kept alive, 12 pages evicted, 13 unused (was tombstones
+/// swept). The rest spare, because a storage buffer is rounded up
+/// anyway.
+const COUNTERS: u64 = 20;
+/// Words per view in the rank-state buffer: a 32-bucket demand
+/// histogram, the plan's three words, then the persistent bias and
+/// patience (#943), padded to 40 — then the OCCUPANCY BITMAP, one bit
+/// per froxel. Mirrors `RANK_WORDS` in the shader.
+const RANK_WORDS: u64 = 8360;
+/// First word of the occupancy bitmap within a view's run.
+const RANK_OCCUPANCY: u64 = 40;
+/// Words of bitmap: 4096 froxels, the grid's own cap.
+const OCCUPANCY_WORDS: u64 = 128;
+/// Froxels the bitmap covers; mirrors `OCCUPANCY_MAX` in the shader.
+const OCCUPANCY_MAX: u32 = 4096;
+/// First word of the per-froxel depth slab — Olsson's explicit bounds.
+const RANK_DEPTH: u64 = 168;
+/// Two words a froxel.
+const DEPTH_WORDS: u64 = 8192;
 
 /// `KOOCH_PAGE_MARKING=1`, read once.
 ///
@@ -51,6 +67,44 @@ pub fn enabled_by_environment() -> bool {
         std::env::var("KOOCH_PAGE_MARKING")
             .is_ok_and(|v| v != "0" && !v.eq_ignore_ascii_case("off"))
     })
+}
+
+/// Olsson §III's cluster/light marking, ON, and `KOOCH_CLUSTER_MARKING=0`
+/// turns it off. Read once.
+///
+/// 🔴 The switch turned around on 2026-08-24, and it is worth saying what
+/// turned it: the same scene, the same camera and the same handheld
+/// within two degrees, `many_lights` on the OneXFly.
+///
+/// | | per pixel | per cluster |
+/// |---|---|---|
+/// | `page mark` | 19.674 ms | **2.729 ms** |
+/// | `page depth` | 38.639 ms | 27.862 ms |
+/// | frame | 91.01 ms | **55.13 ms** |
+///
+/// The 7.2× on the mark is the factor Olsson §III predicts. The 28% on
+/// the raster is the one that decided this: marking per cluster does not
+/// merely cost less, it ASKS FOR FEWER PAGES, and a page never asked for
+/// is one that evicts nobody and rasterises never.
+///
+/// The escape hatch stays because the risk never went away — this pass
+/// chooses WHICH pages exist, so a wrong answer is a missing shadow
+/// rather than a slow frame, and a missing shadow logs nothing. Reach
+/// for `=0` when a shadow is absent and the cause is not obvious.
+pub fn cluster_marking() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("KOOCH_CLUSTER_MARKING")
+            .ok()
+            .is_none_or(|v| v != "0" && !v.eq_ignore_ascii_case("off"))
+    })
+}
+
+impl PageMarker {
+    /// Overrides [`cluster_marking`] for this marker.
+    pub fn set_cluster_marking(&mut self, on: bool) {
+        self.cluster = on;
+    }
 }
 
 /// What `record` clamps the sampling rate to.
@@ -104,6 +158,35 @@ pub struct MarkCounts {
     pub samples: u32,
     /// Sample/light pairs walked.
     pub pairs: u32,
+    /// Pairs the coverage gate turned away (#944): the light reaches
+    /// the sample, but its whole range projects under
+    /// `shadow_min_pixels` on screen, so it marks nothing.
+    pub culled: u32,
+    /// The most lights any one occupied froxel had to walk.
+    ///
+    /// 🔴 The average hides the case that hurts. `pairs / froxels` was
+    /// 17.9 in `many_lights` while single froxels held far more, and it
+    /// is the PEAK that decides both the shading loop's worst pixel and
+    /// how much of the pool one cell can claim. Overlap is the input
+    /// nobody sees while authoring: lights are placed one at a time and
+    /// the froxel they share is not on screen anywhere.
+    pub peak_lights: u32,
+    /// Whether `pairs` counts (froxel, light) or (pixel, light).
+    ///
+    /// 🔴 The panel divided pairs by samples to get lights-per-pixel and
+    /// printed `0.0 lights each` once the cluster path made pairs a
+    /// hundredth of the samples. A number whose MEANING changes with a
+    /// switch has to carry the switch.
+    pub by_froxel: bool,
+    /// Froxels of this view that held visible surface.
+    ///
+    /// 🔴 The multiplier for the move to cluster/light pairs (Olsson
+    /// §III). Marking runs per (pixel, light); a cluster pass would run
+    /// per (froxel, light), and `pairs / samples` times this against
+    /// `pairs` is the ratio. The grid is capped at 4096 froxels and how
+    /// much of it a scene occupies is the whole question, so it is
+    /// counted rather than estimated.
+    pub froxels: u32,
     /// Page indices past the end of the mark buffer. 🔴 Non-zero means
     /// every number above is a floor, not a count.
     pub overflow: u32,
@@ -145,20 +228,38 @@ pub struct PageMarker {
     /// and only this view's. See `age_view` in the shader for why that
     /// cannot be a `clear_buffer`.
     clear: wgpu::ComputePipeline,
-    /// Turns tombstones back into empty entries where that is provably
-    /// safe. Without it the table saturates with holes in under a
-    /// minute. See `sweep_view` in the shader.
-    sweep: wgpu::ComputePipeline,
     /// Paints the debug view, in a dispatch of its own that runs AFTER
     /// the shading. See `paint_view` in the shader for why it cannot go
     /// with the marking any more.
     paint: wgpu::ComputePipeline,
+    /// The three seat passes (#942): rank the frame's demand, clear the
+    /// seats the plan does not fund, then seat what it does. Allocation
+    /// lives HERE now, not in the marking — first-come is not an order.
+    plan: wgpu::ComputePipeline,
+    preempt: wgpu::ComputePipeline,
+    adopt: wgpu::ComputePipeline,
+    /// The resolution feedback (#943): one step per frame toward the
+    /// coarsest marking that fits the slice.
+    bias: wgpu::ComputePipeline,
+    /// Populates the occupancy bitmap into `counters[9]`.
+    census: wgpu::ComputePipeline,
+    /// Olsson §III's cluster/light marking, behind `KOOCH_CLUSTER_MARKING`.
+    froxel_mark: wgpu::ComputePipeline,
+    /// Whether to run it. Seeded from the environment, settable so a
+    /// test can put the two paths side by side in one process — the
+    /// `OnceLock` behind the variable makes that impossible otherwise,
+    /// and "is the cheap path still right" is the only question worth
+    /// asking about this feature.
+    cluster: bool,
     /// The bind group the marking built, kept so the paint dispatch can
     /// reuse it without rebuilding every resource binding.
     bound: Option<wgpu::BindGroup>,
     view: wgpu::Buffer,
     marks: wgpu::Buffer,
     counters: wgpu::Buffer,
+    /// The seating plan (#942): per-view demand histogram by rank plus
+    /// the cutoff the plan chose. Cleared per view per frame.
+    rank: wgpu::Buffer,
     /// The physical pool and its table, written by the same dispatch
     /// that marks. See [`pool`](super::pool) for why the allocation
     /// happens here and not in a pass of its own.
@@ -177,6 +278,9 @@ pub struct PageMarker {
     capacity: (u32, u32),
     /// The frame index and the eviction threshold. See [`PoolLife`].
     life: PoolLife,
+    /// The coverage gate (#944), in projected screen pixels. 0 = off,
+    /// which is what a directly-constructed marker measures with.
+    coverage: u32,
     last: Option<MarkCounts>,
 }
 
@@ -206,15 +310,26 @@ impl PageMarker {
         };
         let pipeline = compute("mark_main");
         let clear = compute("age_view");
-        let sweep = compute("sweep_view");
         let paint = compute("paint_view");
+        let plan = compute("plan_view");
+        let preempt = compute("preempt_view");
+        let adopt = compute("adopt_view");
+        let bias = compute("bias_view");
+        let census = compute("count_froxels");
+        let froxel_mark = compute("mark_froxels");
 
         Self {
             layout,
             pipeline,
             clear,
-            sweep,
             paint,
+            plan,
+            preempt,
+            adopt,
+            bias,
+            census,
+            froxel_mark,
+            cluster: cluster_marking(),
             bound: None,
             view: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_mark_view"),
@@ -223,6 +338,7 @@ impl PageMarker {
                 mapped_at_creation: false,
             }),
             marks: marks_buffer(device, config, clipmap, 1, 1),
+            rank: rank_buffer(device, 1),
             pool: PagePool::new(device, PoolConfig::default()),
             counters: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_mark_counters"),
@@ -243,8 +359,15 @@ impl PageMarker {
             config,
             clipmap,
             capacity: (1, 1),
+            coverage: 0,
             last: None,
         }
+    }
+
+    /// Projected radius, in screen pixels, under which a local light
+    /// marks no pages (#944). The sun is never gated.
+    pub fn set_coverage(&mut self, pixels: u32) {
+        self.coverage = pixels;
     }
 
     /// The last count that came back, a frame or two old.
@@ -343,14 +466,28 @@ impl PageMarker {
     ) {
         let count = lights.light_count().max(1);
         // One slot past the lights, for the sun: it is not in the grid
-        // — it has no position to cluster — so it gets a stride of its
-        // own rather than a light index.
-        let slots = count + 1;
+        // — it has no position to cluster — so it gets a region of its
+        // own at the tail rather than a light index. PADDED, so a light
+        // added or removed does not move every page id in the table —
+        // see `padded_lights`.
+        let padded = padded_lights(count);
+        let slots = padded + 1;
         let views = self.pool.config().slices();
         let view = view.min(views - 1);
         if (slots, views) != self.capacity {
             self.marks = marks_buffer(device, self.config, self.clipmap, slots, views);
+            self.rank = rank_buffer(device, views);
             self.capacity = (slots, views);
+        }
+        // The flat table is one entry per addressable page, so its size
+        // follows the address space. A growth replaces the buffers —
+        // every entry gone — so the next frame is flagged as a rebuild
+        // and `age_view` evicts the nothing that is left, keeping the
+        // allocator honest.
+        let view_span = span(self.config, self.clipmap, slots);
+        let entries = u32::try_from(view_span * views as u64).unwrap_or(u32::MAX);
+        if self.pool.ensure_entries(device, entries) {
+            self.life.rebuilt = true;
         }
 
         // 🔴 Painting forces one thread per pixel. At any coarser rate
@@ -382,14 +519,17 @@ impl PageMarker {
                 ],
                 strides: [
                     self.config.side(0),
-                    self.config.face_pages(),
+                    self.config.local_face_pages(),
                     self.stride(),
                     count,
                 ],
-                sampling: [rate, count, u32::from(paint.on), view],
+                // 🔴 `sampling.y` is the SUN'S SLOT — the padded light
+                // count, not the real one. The real count stays in
+                // `strides.w` for the marking loop's guard.
+                sampling: [rate, padded, u32::from(paint.on), view],
 
                 pool: [
-                    self.pool.config().entries(),
+                    self.pool.entries(),
                     self.pool.config().total(),
                     self.pool.config().per_row(),
                     self.pool.config().slice(),
@@ -405,7 +545,19 @@ impl PageMarker {
                 ],
                 // The reciprocal, because the shader scales the world
                 // size a pixel may ask a texel to match.
-                density: [100.0 / density.clamp(1, 400) as f32, 0.0, 0.0, 0.0],
+                density: [
+                    100.0 / density.clamp(1, 400) as f32,
+                    // The coverage gate (#944), in projected pixels.
+                    self.coverage as f32,
+                    // 🔴 Non-zero moves the per-LIGHT loop off the pixel
+                    // and onto the froxel (#952). The per-pixel pass
+                    // still runs — it marks the sun and it fills the
+                    // occupancy bitmap the froxel pass reads — it just
+                    // stops walking the light list, which is the whole
+                    // 20.3 ms.
+                    if self.cluster { 1.0 } else { 0.0 },
+                    0.0,
+                ],
             }),
         );
 
@@ -428,7 +580,7 @@ impl PageMarker {
                     binding: 8,
                     resource: wgpu::BindingResource::TextureView(paint.target),
                 },
-                buffer_entry(9, self.pool.keys()),
+                buffer_entry(9, &self.rank),
                 buffer_entry(10, self.pool.slots()),
                 buffer_entry(11, self.pool.alloc()),
             ],
@@ -437,31 +589,74 @@ impl PageMarker {
         // 🔴 This VIEW'S bits, not the whole bitmap. A view's pages are
         // a contiguous run — that is what `stride` is rounded to a
         // multiple of 32 for — so the reset is an offset clear.
-        let words = span(self.config, self.clipmap, slots).div_ceil(32) * 4;
+        let words = view_span.div_ceil(32) * 4;
         encoder.clear_buffer(&self.marks, words * view as u64, Some(words));
+        // Only the demand histogram: the plan's words are stored anew
+        // every frame before anything reads them, and the bias and its
+        // patience (#943) PERSIST — they are what one frame teaches the
+        // next.
+        let run = view as u64 * RANK_WORDS * 4;
+        // 🔴 Two ranges, not one. The bias and the patience (#943) are
+        // PERSISTENT and sit between the plan and the bitmap, so a single
+        // clear across the run would wipe what the pressure loop learned.
+        encoder.clear_buffer(&self.rank, run, Some(32 * 4));
+        encoder.clear_buffer(
+            &self.rank,
+            run + RANK_OCCUPANCY * 4,
+            Some((OCCUPANCY_WORDS + DEPTH_WORDS) * 4),
+        );
         // Every counter here is a per-view quantity now, the pool's
         // claims included: a view allocates out of its own slice.
         encoder.clear_buffer(&self.counters, 0, None);
-        let entries = self.pool.config().entries();
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("shadow pages: mark"),
                 timestamp_writes: None,
             });
-            // The table is shared, so its reset is a pass that reads
-            // each key's owner rather than a `clear_buffer` that would
-            // take the other view's entries with it.
+            // The table is flat and a view's entries are contiguous, so
+            // the ageing walks exactly this view's span — the other
+            // camera's pages are outside the dispatch.
             pass.set_pipeline(&self.clear);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(entries.div_ceil(GROUP * GROUP), 1, 1);
+            pass.dispatch_workgroups(
+                u32::try_from(view_span)
+                    .unwrap_or(u32::MAX)
+                    .div_ceil(GROUP * GROUP),
+                1,
+                1,
+            );
             pass.set_pipeline(&self.pipeline);
             let threads = (viewport.0.div_ceil(rate), viewport.1.div_ceil(rate));
             pass.dispatch_workgroups(threads.0.div_ceil(GROUP), threads.1.div_ceil(GROUP), 1);
-            // 🔴 AFTER the marking, not before it: this frame's inserts
-            // get first refusal on the holes, and what it removes is
-            // whatever they left behind.
-            pass.set_pipeline(&self.sweep);
-            pass.dispatch_workgroups(entries.div_ceil(GROUP * GROUP), 1, 1);
+            // Olsson §III (#952): the same marking over OCCUPIED FROXELS
+            // rather than pixels — 199 of them against 163 864 covered
+            // pixels in `many_lights`. Dispatched after `mark_main`,
+            // which is what fills the occupancy bitmap it reads; the
+            // per-pixel pass still marks the sun and still records the
+            // bits, it is the per-LIGHT loop this replaces.
+            if self.cluster {
+                pass.set_pipeline(&self.froxel_mark);
+                pass.dispatch_workgroups(OCCUPANCY_MAX.div_ceil(GROUP * GROUP), 1, 1);
+            }
+            // The seat passes (#942), in an order that is the
+            // algorithm: rank the demand, clear what the plan does not
+            // fund, seat what it does. Dispatch boundaries are the
+            // barriers between them.
+            let entries = u32::try_from(view_span)
+                .unwrap_or(u32::MAX)
+                .div_ceil(GROUP * GROUP);
+            pass.set_pipeline(&self.plan);
+            pass.dispatch_workgroups(1, 1, 1);
+            pass.set_pipeline(&self.preempt);
+            pass.dispatch_workgroups(entries, 1, 1);
+            pass.set_pipeline(&self.adopt);
+            pass.dispatch_workgroups(entries, 1, 1);
+            pass.set_pipeline(&self.bias);
+            pass.dispatch_workgroups(1, 1, 1);
+            // After the marking has filled the bitmap; one group covers
+            // `OCCUPANCY_WORDS`.
+            pass.set_pipeline(&self.census);
+            pass.dispatch_workgroups(1, 1, 1);
         }
         // Kept for `record_paint`, which runs after the shading and needs
         // every one of these bindings — the depth, the view uniform and
@@ -510,31 +705,50 @@ impl PageMarker {
         if let Some(slot) = self.pending.take() {
             self.readback.submit(slot);
         }
-        if let Some(counts) = self.readback.take() {
+        if let Some(mut counts) = self.readback.take() {
+            // Stamped here rather than in the readback, which does not
+            // know which path recorded the frame it is decoding.
+            counts.by_froxel = self.cluster;
             self.last = Some(counts);
         }
     }
 }
 
-/// Pages one light can address: the six faces of a mip chain, or the
-/// clipmap, whichever is longer.
-///
-/// Mirrors `PageCensus::new`. One stride for every light — a per-kind
-/// stride would save bits and cost a prefix sum to find a light's base.
+/// Pages one LOCAL light addresses: six faces of a chain that starts at
+/// `local_floor` — the levels under the floor cannot be marked, so
+/// addressing them would spend table entries on pages that cannot
+/// exist. At the defaults this is 2 046 pages against the 131 070 a
+/// full chain would cost, and the flat table is only affordable at the
+/// small number.
 ///
 /// 🔴 Rounded up to a multiple of 32. The mark bitmap is emptied one
 /// VIEW at a time and `clear_buffer` takes byte offsets, so a view's
 /// first bit has to land on a word boundary or the clear reaches into
 /// the neighbour's. The rounding costs at most 31 bits per light.
-pub(super) fn stride(config: PageConfig, clipmap: ClipmapConfig) -> u32 {
-    let local = config.face_pages() * super::CUBE_FACES as u32;
-    let sun = clipmap.levels * config.side(0).pow(2);
-    local.max(sun).div_ceil(32) * 32
+pub(super) fn stride(config: PageConfig, _clipmap: ClipmapConfig) -> u32 {
+    let local = config.local_face_pages() * super::CUBE_FACES as u32;
+    local.div_ceil(32) * 32
 }
 
-/// Pages one VIEW addresses: every light plus the sun.
+/// Light slots the address space is laid out for, PADDED so that adding
+/// a light does not move every page id.
+///
+/// 🔴 The sun's region starts at `padded * stride` and view N's span
+/// starts at `N * span`: a raw count would shift both on every light
+/// added or removed, which is a full pool rebuild per change. Padding
+/// to a step makes the layout stable until the scene crosses the step.
+pub(super) fn padded_lights(count: u32) -> u32 {
+    count.max(1).next_multiple_of(64)
+}
+
+/// Pages one VIEW addresses: `slots - 1` padded light slots, then the
+/// sun's clipmap — every level a full grid, at the tail.
 pub(super) fn span(config: PageConfig, clipmap: ClipmapConfig, slots: u32) -> u64 {
-    stride(config, clipmap) as u64 * slots.max(1) as u64
+    let lights = slots.max(2) as u64 - 1;
+    let sun = clipmap.levels as u64 * (config.side(0) as u64).pow(2);
+    // The whole span on a word boundary, like the stride: view N's bits
+    // start at `N * span` and the bitmap is cleared per view.
+    (lights * stride(config, clipmap) as u64 + sun).div_ceil(32) * 32
 }
 
 fn marks_buffer(
@@ -548,6 +762,16 @@ fn marks_buffer(
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("page_mark_bits"),
         size: bits.div_ceil(32).max(1) * 4,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+/// One `RANK_WORDS` run per view. Persistent only within a frame.
+fn rank_buffer(device: &wgpu::Device, views: u32) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("page_rank_state"),
+        size: views as u64 * RANK_WORDS * 4,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })
@@ -611,6 +835,11 @@ fn layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 },
                 count: None,
             },
+            // Binding 9 held the hash table's keys, was retired with the
+            // flat table, and is spent again on the seating plan (#942)
+            // — which puts this layout AT the eight-per-stage
+            // storage-buffer downlevel limit. The next buffer this pass
+            // wants has to fold into an existing one.
             storage(9, false),
             storage(10, false),
             storage(11, false),
@@ -737,16 +966,22 @@ impl Readback {
                     samples: words[1],
                     pairs: words[2],
                     overflow: words[3],
+                    culled: words[6],
+                    froxels: words[9],
+                    peak_lights: words[16],
+                    by_froxel: false,
                     pool: PoolCounts {
                         claims: words[8],
                         overflow: words[5],
-                        probes: words[6],
                         reused: words[7],
-                        holes: words[9],
                         leaked: words[10],
                         alive: words[11],
                         evicted: words[12],
-                        swept: words[13],
+                        denied: words[13],
+                        preempted: words[14],
+                        cutoff: words[15],
+                        bias_local: words[4] & 0xff,
+                        bias_sun: words[4] >> 8,
                         capacity,
                     },
                     size,
@@ -762,93 +997,4 @@ impl Readback {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The same guard the raster has, on the mirror that has existed
-    /// longest.
-    ///
-    /// 🔴 `PageView` is described as mirroring `PageMarkView` "field for
-    /// field", and a comment saying so is not a check. The identical
-    /// claim in the raster was false: a `vec3<u32>` of padding made the
-    /// shader's struct twice the Rust one, and it surfaced as a
-    /// per-frame bind error rather than as a failing test.
-    #[test]
-    fn the_view_mirror_matches_the_shader() {
-        let source = format!("{CLUSTER_COMMON}\n{PAGE_TABLE}\n{SOURCE}");
-        let module = naga::front::wgsl::parse_str(&source).expect("the shader parses");
-        let mut layouter = naga::proc::Layouter::default();
-        layouter
-            .update(module.to_ctx())
-            .expect("the shader has a layout");
-        let size = module
-            .types
-            .iter()
-            .find(|(_, ty)| ty.name.as_deref() == Some("PageView"))
-            .map(|(handle, _)| layouter[handle].size)
-            .expect("`PageView` is declared");
-        assert_eq!(size as usize, std::mem::size_of::<PageMarkView>());
-    }
-
-    /// Same size, wrong order — the failure a size check waves through.
-    ///
-    /// 🔴 It has already happened here: `pool` went in after `paint` on
-    /// one side and before it on the other, and what broke was the page
-    /// DEBUG VIEW, which the change never touched.
-    #[test]
-    fn the_view_fields_line_up() {
-        let mine = [
-            (
-                "world_from_clip",
-                std::mem::offset_of!(PageMarkView, world_from_clip),
-            ),
-            (
-                "eye_and_base",
-                std::mem::offset_of!(PageMarkView, eye_and_base),
-            ),
-            ("sun", std::mem::offset_of!(PageMarkView, sun)),
-            ("chain", std::mem::offset_of!(PageMarkView, chain)),
-            ("strides", std::mem::offset_of!(PageMarkView, strides)),
-            ("sampling", std::mem::offset_of!(PageMarkView, sampling)),
-            ("pool", std::mem::offset_of!(PageMarkView, pool)),
-            ("paint", std::mem::offset_of!(PageMarkView, paint)),
-            ("life", std::mem::offset_of!(PageMarkView, life)),
-            ("density", std::mem::offset_of!(PageMarkView, density)),
-        ];
-        let source = format!("{CLUSTER_COMMON}\n{PAGE_TABLE}\n{SOURCE}");
-        let module = naga::front::wgsl::parse_str(&source).expect("the shader parses");
-        let theirs: Vec<(String, u32)> = module
-            .types
-            .iter()
-            .find(|(_, ty)| ty.name.as_deref() == Some("PageView"))
-            .and_then(|(_, ty)| match &ty.inner {
-                naga::TypeInner::Struct { members, .. } => Some(
-                    members
-                        .iter()
-                        .map(|m| (m.name.clone().unwrap_or_default(), m.offset))
-                        .collect(),
-                ),
-                _ => None,
-            })
-            .expect("`PageView` is a struct");
-        assert_eq!(theirs.len(), mine.len(), "field count");
-        for ((name, offset), (their_name, their_offset)) in mine.iter().zip(&theirs) {
-            assert_eq!(name, their_name, "field order");
-            assert_eq!(*offset as u32, *their_offset, "`{name}` starts elsewhere");
-        }
-    }
-
-    /// A view's bits have to start on a word boundary, or emptying one
-    /// camera's region reaches into the other's.
-    #[test]
-    fn a_views_bits_start_on_a_word() {
-        for levels in [1u32, 5, 17, 22] {
-            let clipmap = ClipmapConfig { base: 1.28, levels };
-            let stride = stride(PageConfig::default(), clipmap);
-            assert_eq!(stride % 32, 0, "{levels} levels give a stride of {stride}");
-            for slots in [1u32, 2, 102] {
-                assert_eq!(span(PageConfig::default(), clipmap, slots) % 32, 0);
-            }
-        }
-    }
-}
+mod tests;

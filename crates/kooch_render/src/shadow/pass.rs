@@ -12,8 +12,8 @@ use crate::meshlet::{GpuGlobalMeshPool, MeshletCullPipelines, MeshletScene};
 use crate::view_camera::ViewCamera;
 
 use super::atlas::ShadowAtlas;
-use super::cascades::{build_cascades, Cascade, CASCADE_BLEND_FRACTION, CASCADE_COUNT};
-use super::cube::{PointShadowCubes, DEFAULT_CUBE_SIZE};
+use super::cascades::{CASCADE_BLEND_FRACTION, CASCADE_COUNT, Cascade, build_cascades};
+use super::cube::{DEFAULT_CUBE_SIZE, PointShadowCubes};
 use super::point::PointShadowDraw;
 use super::raster::ShadowRasterizer;
 
@@ -37,6 +37,13 @@ pub struct PreparedShadows {
     /// One per shadow-casting point light this frame (#778). Six draws
     /// each, so an empty list is worth having.
     pub points: Vec<PointShadowDraw>,
+    /// Whether the cascade layers get filled.
+    ///
+    /// 🔴 NOT `frame.cascades_enabled`. That one says the sun's data in
+    /// the frame uniform is valid, and `shadows_enabled` — which
+    /// `inti_shadow` checks before it branches to the pages — rides on
+    /// it. Reusing it to skip the draw turned every shadow off.
+    draw_cascades: bool,
     /// What goes in the frame UBO. Handed to
     /// [`kooch_lighting::GpuLights::update`].
     pub frame: kooch_lighting::FrameShadows,
@@ -47,6 +54,10 @@ impl ShadowPass {
         device: &wgpu::Device,
         meshlet_bgl: &wgpu::BindGroupLayout,
         cascade_size: u32,
+        // Texels per cube face. `DEFAULT_CUBE_SIZE` normally; the #945
+        // minimal allocation passes a token size, because nothing reads
+        // the cubes while the pages shadow every lamp.
+        cube_size: u32,
         // Cube maps to allocate — the VRAM this pass costs beyond the
         // atlas, at 6 MiB each (#849).
         point_budget: u32,
@@ -62,7 +73,7 @@ impl ShadowPass {
             ),
             cubes: PointShadowCubes::new(
                 device,
-                DEFAULT_CUBE_SIZE,
+                cube_size,
                 point_budget,
                 instance_capacity,
                 max_triangles_per_meshlet,
@@ -113,6 +124,10 @@ impl ShadowPass {
         aspect: f32,
         sun_direction: Vec3,
         cascades_enabled: bool,
+        // Whether the cascade layers are worth filling. Distinct from
+        // `cascades_enabled`, which says the frame uniform's sun data is
+        // valid — see the call site.
+        draw_cascades: bool,
         max_distance: f32,
         first_cascade_distance: f32,
         sun_softness: f32,
@@ -181,6 +196,7 @@ impl ShadowPass {
             cascades,
             spots: draws,
             points: point_draws,
+            draw_cascades,
         }
     }
 
@@ -219,7 +235,7 @@ impl ShadowPass {
         // point cubes that follow share this atlas and this rasteriser
         // and have no page raster yet, so the allocation stays and so do
         // their draws.
-        if prepared.frame.cascades_enabled {
+        if prepared.draw_cascades {
             self.rasterizer.render(
                 device,
                 queue,

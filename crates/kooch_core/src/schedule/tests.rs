@@ -342,3 +342,43 @@ fn cpu_systems_still_run_when_gpu_systems_skipped() {
     // Both CPU systems should have run, GPU skipped.
     assert_eq!(counter.load(Ordering::SeqCst), 11);
 }
+
+/// Two systems get two scopes, and one system keeps the one it got.
+///
+/// 🔴 This is the defect the whole design exists to avoid, and it is
+/// invisible without a test: `puffin` keys a scope by CALL SITE, so the
+/// obvious implementation — one `profiling::scope!` inside the dispatch
+/// loop — compiles, runs, produces a flamegraph, and files every system
+/// in the process under whichever one ran first. Nothing errors. The
+/// picture is simply wrong, and it is wrong in the direction of looking
+/// right.
+///
+/// Reusing the id on the second call is the other half: registering per
+/// frame would grow puffin's scope table without bound for the lifetime
+/// of the process.
+#[cfg(feature = "cpu-profiler")]
+#[test]
+fn each_system_gets_its_own_scope() {
+    use super::system_scope::SystemScope;
+
+    puffin::set_scopes_on(true);
+
+    let mut first = SystemScope::default();
+    let mut second = SystemScope::default();
+    drop(first.enter("physics_sync_system"));
+    drop(second.enter("remote_sync_system"));
+
+    let physics = first.id().expect("the scope was registered on first run");
+    let remote = second.id().expect("the scope was registered on first run");
+    assert_ne!(
+        physics, remote,
+        "two systems share one scope id, so the flamegraph reports both under one name"
+    );
+
+    drop(first.enter("physics_sync_system"));
+    assert_eq!(
+        first.id(),
+        Some(physics),
+        "the id was registered again instead of reused, which grows puffin's table every frame"
+    );
+}

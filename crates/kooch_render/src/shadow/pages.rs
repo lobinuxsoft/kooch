@@ -73,6 +73,11 @@ impl Default for PageConfig {
     }
 }
 
+/// The finest a LOCAL light's chain may go, in virtual texels across
+/// one cube face. Mirror of `LOCAL_MAX_TEXELS` in `page_table.wgsl` —
+/// see its doc for the measurement that set it.
+pub const LOCAL_MAX_TEXELS: u32 = 2048;
+
 /// Pages in Unreal's physical pool by default —
 /// `r.Shadow.Virtual.MaxPhysicalPages`.
 ///
@@ -115,6 +120,29 @@ impl PageConfig {
     /// census bitmap.
     pub fn face_pages(&self) -> u32 {
         (0..self.levels()).map(|l| self.side(l).pow(2)).sum()
+    }
+
+    /// The finest chain level a LOCAL light may use. Mirror of
+    /// `local_level_floor` in `page_table.wgsl`, floor for floor: the
+    /// GPU addresses a lamp's chain from here up, so a CPU that
+    /// disagreed would size a table the shaders index past.
+    pub fn local_floor(&self) -> u32 {
+        let mut floor = 0;
+        let mut texels = self.virtual_size;
+        while texels > LOCAL_MAX_TEXELS {
+            texels >>= 1;
+            floor += 1;
+        }
+        floor
+    }
+
+    /// Pages in one face's chain from the floor up — a LOCAL light's
+    /// face stride in the page table. Mirror of `local_face_pages` in
+    /// `page_table.wgsl`.
+    pub fn local_face_pages(&self) -> u32 {
+        (self.local_floor()..self.levels())
+            .map(|l| self.side(l).pow(2))
+            .sum()
     }
 
     /// Where `level` starts inside one face's chain.
@@ -725,6 +753,7 @@ fn level_for(config: PageConfig, distance: f32, wanted: f32) -> u32 {
     (level.max(0.0) as u32).min(config.levels() - 1)
 }
 
+pub mod lamp_cull;
 pub mod mark;
 pub mod pool;
 pub mod raster;

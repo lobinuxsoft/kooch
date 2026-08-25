@@ -328,8 +328,12 @@ impl MeshletRenderStage {
             // that to the HUD draws a number from an unknown moment as
             // if it described the frame on screen (#703).
             cluster_occupancy: self.lights.clusters().occupancy(),
-            page_marking: self.page_marking(),
-            page_raster: self.page_raster(),
+            // 🔴 THIS view's counts, not the last readback to land. The
+            // stats a view publishes have to describe the camera that
+            // produced them, or a panel drawn beside one viewport
+            // reports the other one's frustum.
+            page_marking: self.page_marking_for(view_id),
+            page_raster: self.page_raster_for(view_id),
             cull_stage_counts: if cull_params.debug_active != 0 {
                 self.stage_counters.last_frame_counts()
             } else {

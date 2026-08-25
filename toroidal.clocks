@@ -1,0 +1,8 @@
+=== toroidal — after ===
+sclk     1: 2027Mhz *
+mclk     
+fclk     
+socclk   
+amdgpu   64 C
+k10temp   65 C
+watts    20.0

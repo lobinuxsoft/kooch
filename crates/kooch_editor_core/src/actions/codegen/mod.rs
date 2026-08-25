@@ -39,7 +39,39 @@ struct SourceFile {
     /// Rust path to the module, e.g. `enemies::ai`.
     module: String,
     components: Vec<String>,
-    systems: Vec<String>,
+    systems: Vec<DetectedSystem>,
+}
+
+/// A system the scan found, and the binding its `#[system(...)]` asked
+/// for.
+///
+/// 🔴 Before the attribute existed this was a bare `String` and every
+/// system was bound to `Stage::Update` with `run_if_playing`. The scan
+/// was never short of power — it had nothing to read. These two extra
+/// fields are that.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DetectedSystem {
+    pub(crate) name: String,
+    /// A `Stage` variant's name, e.g. `"PostUpdate"`. Carried as text
+    /// because this crate writes source, not values — and the attribute
+    /// already refused anything that is not one of the fourteen.
+    pub(crate) stage: String,
+    /// Whether the registration wraps it in `run_if_playing`. `always`
+    /// clears it, for the systems that have to run while the editor is
+    /// paused: gizmos, overlays, streaming pumps.
+    pub(crate) gated: bool,
+}
+
+/// What a system binds to when it says nothing — which is what every
+/// system written before the attribute existed says.
+impl Default for DetectedSystem {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            stage: "Update".to_string(),
+            gated: true,
+        }
+    }
 }
 
 impl SourceFile {
@@ -65,18 +97,29 @@ impl SourceFile {
 
 /// Regenerates `src/registrations.rs` from the project's `src/` tree and
 /// ensures `main.rs` exists.
-pub(crate) fn register_scripts(resources: &mut Resources) {
+/// What a regeneration did, for the poll that calls this on a timer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SyncOutcome {
+    /// No project, or no `src/`. Nothing to be in sync with.
+    Idle,
+    /// The file on disk already said exactly this.
+    Unchanged,
+    /// Rewritten. The project's build is now behind its source.
+    Regenerated,
+}
+
+pub(crate) fn register_scripts(resources: &mut Resources) -> SyncOutcome {
     let Some(project_root) = resources
         .get::<ProjectState>()
         .and_then(|ps| ps.active_project.as_ref().map(|ap| ap.root_path.clone()))
     else {
         tracing::warn!("register scripts: no active project");
-        return;
+        return SyncOutcome::Idle;
     };
     let src = project_root.join("src");
     if !src.is_dir() {
         tracing::warn!(src = %src.display(), "register scripts: no src/ directory");
-        return;
+        return SyncOutcome::Idle;
     }
 
     let mut files: Vec<SourceFile> = Vec::new();
@@ -93,15 +136,27 @@ pub(crate) fn register_scripts(resources: &mut Resources) {
 
     let content = render::render_registrations(&files);
     let out = src.join("registrations.rs");
-    match std::fs::write(&out, content) {
-        Ok(()) => tracing::info!(
-            file = %out.display(),
-            components = files.iter().map(|f| f.components.len()).sum::<usize>(),
-            systems = files.iter().map(|f| f.systems.len()).sum::<usize>(),
-            "registrations regenerated",
-        ),
-        Err(e) => {
-            tracing::error!(file = %out.display(), error = %e, "failed to write registrations")
+    // 🔴 Compared before writing, and not as an optimisation. This runs
+    // on a timer now, and an unconditional write moves the file's mtime
+    // — which is what cargo decides to rebuild by. Writing the same
+    // bytes twice a second would recompile the project forever.
+    let mut outcome = SyncOutcome::Unchanged;
+    if std::fs::read_to_string(&out).is_ok_and(|on_disk| on_disk == content) {
+        tracing::debug!(file = %out.display(), "registrations already current");
+    } else {
+        match std::fs::write(&out, content) {
+            Ok(()) => {
+                outcome = SyncOutcome::Regenerated;
+                tracing::info!(
+                    file = %out.display(),
+                    components = files.iter().map(|f| f.components.len()).sum::<usize>(),
+                    systems = files.iter().map(|f| f.systems.len()).sum::<usize>(),
+                    "registrations regenerated",
+                );
+            }
+            Err(e) => {
+                tracing::error!(file = %out.display(), error = %e, "failed to write registrations")
+            }
         }
     }
 
@@ -123,6 +178,7 @@ pub(crate) fn register_scripts(resources: &mut Resources) {
     if !crate_name.is_empty() {
         migrate_to_library(&project_root, &crate_name);
     }
+    outcome
 }
 
 /// Adds engine features a project predates.
@@ -330,26 +386,72 @@ fn scan(root: &Path, dir: &Path, out: &mut Vec<SourceFile>) {
 
 /// Heuristic detection of components (`impl Component for X`) and systems
 /// (`pub fn f(…: &mut Resources)`) by scanning trimmed lines.
-fn detect(content: &str) -> (Vec<String>, Vec<String>) {
+pub(crate) fn detect(content: &str) -> (Vec<String>, Vec<DetectedSystem>) {
     let mut components = Vec::new();
     let mut systems = Vec::new();
+    // The most recent `#[system(...)]`, waiting for the `pub fn` it
+    // belongs to.
+    let mut pending: Option<DetectedSystem> = None;
     for line in content.lines() {
         let l = line.trim();
-        if let Some(rest) = l.strip_prefix("impl Component for ") {
+        if let Some(rest) = l.strip_prefix("#[system") {
+            pending = Some(parse_system_attr(rest));
+        } else if let Some(rest) = l.strip_prefix("impl Component for ") {
             let name = ident_prefix(rest);
             if !name.is_empty() {
                 components.push(name);
             }
+            pending = None;
         } else if let Some(rest) = l.strip_prefix("pub fn ") {
             if l.contains("&mut Resources") {
                 let name = ident_prefix(rest);
                 if !name.is_empty() {
-                    systems.push(name);
+                    systems.push(DetectedSystem {
+                        name,
+                        ..pending.take().unwrap_or_default()
+                    });
                 }
             }
+            pending = None;
+        } else if !l.is_empty() && !l.starts_with("//") && !l.starts_with("#[") {
+            // 🔴 Anything that is not a doc comment or another attribute
+            // ends the run. Without this an attribute on one item would
+            // drift down and bind the next `pub fn` it happened to reach,
+            // which is the kind of wrong that looks right in the diff.
+            pending = None;
         }
     }
     (components, systems)
+}
+
+/// Reads what follows `#[system` — `]`, `(PreUpdate)]` or
+/// `(PostUpdate, always)]`.
+///
+/// Unknown words are IGNORED here rather than reported: the proc-macro
+/// already rejected them at compile time with a message naming the
+/// fourteen stages, and a second, worse diagnostic from a line scanner
+/// would only disagree with the first.
+fn parse_system_attr(rest: &str) -> DetectedSystem {
+    let inner = rest
+        .trim()
+        .strip_prefix('(')
+        .and_then(|r| r.split_once(')'))
+        .map(|(args, _)| args)
+        .unwrap_or("");
+    let mut found = DetectedSystem::default();
+    for (index, part) in inner
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .enumerate()
+    {
+        if part == "always" {
+            found.gated = false;
+        } else if index == 0 {
+            found.stage = part.to_string();
+        }
+    }
+    found
 }
 
 fn ident_prefix(s: &str) -> String {

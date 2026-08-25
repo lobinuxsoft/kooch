@@ -1098,59 +1098,59 @@ The alternative — sweep the mark bitmap afterwards and allocate what is
 set — is a dispatch over the *virtual* space. See the next section for
 how large that is.
 
-### 🔴 The flat page table is dead, and the number is why
+### 🔴 The table is FLAT, and the number that used to forbid it is dead
 
-With 128-texel pages over a 16384 virtual map, a mip chain per cube face
-and a 17-level clipmap, one light addresses **278 528** pages. A hundred
-lights and a sun address **28 409 856**.
+The lookup runs **per pixel per light** in the shading pass, and prior
+art is unanimous that it must be one indexed read: Chalmers (*"quite
+fast because they only require a single texture lookup"*), Stephano's
+sparse VSM (`pageTable[ivec2(floor(uv * numPagesXY))]`), UE 5.8
+(`CalcPageOffset` is flat arithmetic over 21 845 entries per map). The
+first table here hashed instead — open addressing with tombstones —
+and the measurement that killed it, on `many_lights` at 1096 frames:
+**shading 10.4 ms against 0.884 ms for the entire shadow track**, on a
+walk of up to 5 chain levels × up to 32 probes, per pixel per light.
 
-| Structure | One page costs | Total |
-|---|---|---|
-| The mark bitmap | 1 bit | **3.4 MiB** ✅ |
-| A flat `u32` table | 32 bits | **108 MiB** 🔴 |
-| The pool it would index | — | 256 MiB |
+The hash had existed for a real reason. With 128-texel pages over a
+16384 virtual map, a mip chain per cube face and a 17-level clipmap,
+one light addressed **278 528** pages; a hundred lights and a sun,
+**28 409 856** — a flat `u32` table was **108 MiB, 42 % of the pool it
+would index**, describing pages that are 99.99 % empty. Two decisions
+shrank the space by a factor of ~58 and made flat affordable:
 
-A flat table spends **42 % of the pool on describing pages that are
-99.99 % empty**. It also kills the sweep: 28 million threads to find
-about two thousand set bits.
+- **`LOCAL_MAX_TEXELS` caps a lamp's chain** three levels below the
+  sun's — a factor of 64 in the pages one lamp can address, and the
+  texel it gives up at four metres is two millimetres.
+- **The address space stops *paying* for the capped levels.** A lamp's
+  chain is addressed from `local_level_floor` up, so its stride is
+  **2 046 pages instead of 131 070**, and the sun's clipmap sits at the
+  tail of the view's span. 101 lights and a sun now address ~485 000
+  pages — a few MiB of table at `PAGE_CELL` words per entry.
 
-The bitmap survives the same arithmetic only because a bit is a bit. That
-is why marking was built first and why it was affordable.
+This is Epic's own shape: UE5 stays flat by never handing a distant
+light a full virtual space (`VSM_MAX_SINGLE_PAGE_SHADOW_MAPS` is 8192
+maps of *one* entry each).
 
-### So the table is sized to what is resident, not to what is addressable
+### The entry index IS the page id
 
-Open addressing over `2 × pool_pages` entries — 8192 slots for Epic's
-4096-page pool, **64 KiB**, keys and physical indices together.
+- **The first word is `slot + 1`,** so `PAGE_ABSENT` is 0 and an empty
+  table is a zeroed buffer. Eviction stores 0 — **no tombstones**,
+  because nothing probes past an entry any more, and the sweep pass
+  that kept the hash's holes in check is deleted outright.
+- **The insert is a plain store,** not a compare-exchange: only the
+  thread that flipped a page's mark bit inserts, and marking already
+  guaranteed there is exactly one.
+- **Light slots are padded** (`padded_lights`, steps of 64) so adding a
+  light does not shift the sun's region or the next view's base — the
+  layout, and every resident page with it, survives scene edits until
+  the count crosses a step.
+- **The reader is one load per level tried.** The sun's walk starts at
+  its containment level and typically resolves on the first; a lamp's
+  starts at the floor and has at most five levels to try, each a
+  single indexed load where the hash paid a probe run.
 
-> ⚠️ **UE5 does not hash its table, and an earlier version of this page
-> said it did.** `CalcPageOffset` in
-> `VirtualShadowMapPageAccessCommon.ush` is flat arithmetic —
-> `id * VSM_PAGE_TABLE_SIZE + level_offset + x + y * dims` — over 21 845
-> entries, **87 KiB per shadow map**. It stays affordable because Epic
-> never hands a distant light a full virtual space:
-> `VSM_MAX_SINGLE_PAGE_SHADOW_MAPS` is 8192 maps of *one* entry each.
-> The 108 MiB above is what a flat table costs **given our decision to
-> give every light the whole space** — a decision, not a law, and the
-> one worth revisiting before the hash is defended again.
-
-- **Keys are `page + 1`,** so `PAGE_EMPTY` is 0 and an empty table is a
-  zeroed buffer.
-- **The load factor never passes 0.5,** where the expected probe count is
-  under two. `PoolCounts::probes` reports any insert that walked 32 slots
-  without finding room; a non-zero number there is a statement about the
-  hash, not about the scene.
-- **The compare-exchange is for collisions between different keys,**
-  never for two threads fighting over one page — marking already
-  guaranteed there is only one. That is what makes the physical index
-  safe to write with a plain store immediately after.
-- **A hierarchical table** would also be small, but it pays an
-  indirection per lookup, and the lookup is per pixel per light in the
-  shading pass. That is the hot path the froxel grid exists to keep
-  short.
-
-`page_table.wgsl` holds the hash, the probe sequence and the atlas
-layout, and is concatenated into every pass that touches the table, so
-the writer and the reader cannot drift apart.
+`page_table.wgsl` holds the id arithmetic and the atlas layout, and is
+concatenated into every pass that touches the table, so the writer and
+the reader cannot drift apart.
 
 ### Overflow has a name here because it has none on screen
 
@@ -1178,16 +1178,17 @@ page = view * view_span + light * stride + <chain offset>
 ```
 
 which is UE5's `VirtualShadowMapId` written as a multiply instead of a
-table per id. The hash is what makes widening the address space free.
+table per id — and with a flat table the multiply is the address.
 
 Three things follow, and none of them is optional:
 
-- **The table is emptied by a pass, not by `clear_buffer`.**
-  `clear_view` zeroes only the entries whose key belongs to the camera
-  about to mark. It has to be per camera because the raster is **fused
-  with the shading** — a camera samples an atlas a frame old, so wiping
-  the whole table at the top of a frame leaves whichever camera marks
-  second reading what the first just erased.
+- **The table is aged by a pass, not wiped by `clear_buffer`.**
+  `age_view` walks only this camera's contiguous run of entries and
+  evicts what went unrequested past `max_age`. It has to be per camera
+  because the raster is **fused with the shading** — a camera samples
+  an atlas a frame old, so wiping the whole table at the top of a frame
+  leaves whichever camera marks second reading what the first just
+  erased.
 - **The pool is sliced, not shared,** and the atlas is an **array with a
   layer per camera**. A layer is an attachment a camera clears on its
   own; the alternatives — a scissor, a stencil, a clearing draw — all
@@ -1199,25 +1200,99 @@ Three things follow, and none of them is optional:
   hands *both* passes the second value — the engine shipped that bug once
   already. A camera writing its own range cannot be overwritten.
 
-### What is deliberately not built yet
+### The seating plan — who gets a slot under pressure (#942)
 
-- ⚠️ **Caching across frames**, which is the optimisation virtual shadow
-  maps exist for — and the prior art is clear that it is the *mechanism*,
-  not a refinement. UE5 keeps a page alive while
-  `PhysicalPageRequestedAge <= MaxPageAgeSinceLastRequest` and allocates
-  by popping an **LRU** list; when that list is empty it simply writes
-  nothing and the sampler falls back to a coarser level. There is no
-  priority by light, by level or by distance anywhere in it. Our pool is
-  refilled from scratch every frame, so a static shadow is re-rasterised
-  every frame, and allocation is first-come — which means *whichever
-  thread the GPU scheduled first*.
-- 🔴 **Priority inside a slice.** Allocation is still first-come, which
-  on a GPU means *whichever thread the scheduler ran first*. What it no
-  longer does is spend the pool on pages nothing draws: a local light's
-  page is marked — the census is what says what a hundred casting lights
-  would cost — but only the sun's pages claim a physical slot, because
-  only the sun is rasterised. Before that split, local pages held 991 of
-  each camera's 1024 slots and the sun was left 33.
+Both of the gaps this section used to list are closed: pages persist
+across frames (see *Cached pages are effectively free* below), and
+allocation is no longer first-come. What replaced first-come is worth
+stating precisely, because the failure it ended was measured: **7 674
+pages wanted against a 1 024-page slice**, a steady state of `1022
+reused · 0 new · 0 evicted`, and 6 652 requests starving *forever* —
+whoever claimed a slot first kept it, because a resident page is
+re-marked every frame and never ages. Moving the camera produced
+requests that never landed; the shadows visibly lagged the view.
+
+Three dispatches at the tail of the marking pass, in an order that IS
+the algorithm:
+
+| Pass | Threads | What it decides |
+|---|---|---|
+| `plan_view` | one | prefix-sums the frame's demand histogram against the slice's budget: the **cutoff rank**, the quota within it, and the spare the cache may keep |
+| `preempt_view` | one per table entry | evicts every resident the plan did not fund — and lets residents of the cutoff rank take the quota **before** any newcomer, so a page with content beats one without |
+| `adopt_view` | one per table entry | seats every marked page the plan funded; what is past the cutoff is **denied and counted** |
+
+The rank is the level, coarsest first: the sun's clipmap (ranks
+`0..17`) ahead of every local light, and within any chain the coarse
+levels ahead of the fine — so under pressure a consumer loses its
+finest detail before it loses coverage, and the sun (the one consumer
+every frame has) never loses to a lamp. The demand histogram is
+recorded where the mark bit is won, which makes the plan one 32-bucket
+loop rather than a sort.
+
+Two consequences the counters pin:
+
+- **The arithmetic closes.** The plan funds exactly `slice` seats and
+  the preemption frees everything unfunded, so `page_alloc` never
+  misses: `overflow` stays zero and every shortfall is a *denial* with
+  a rank on it — the panel says what was sacrificed, not just how much.
+- **A move reseats in one frame.** Stale pages stop being marked, the
+  plan stops funding them, and `preempt_view` hands their seats to the
+  new view the same frame — not `max_age` frames later.
+
+What #942 does **not** do is make 7 674 fit into 1 024 — that is the
+next section's job.
+
+### The resolution bias — making the demand fit (#943)
+
+When the plan reports pressure, a persistent per-view bias walks the
+marking coarser, one level per frame: the LOCAL lights pay first (up to
+four levels), the sun only when they have nothing left to give (up to
+two). Each level quarters that party's page demand, and the readers
+need no change at all — both walk their chains from the fine end and
+take the first resident page, so a coarser marking is simply what they
+find. UE5 runs the same loop as its page-pool-overflow bias; Olsson
+caps every light by projected area (Eq. 1) for the same reason: when
+demand cannot fit, serve *everyone* coarser rather than turn 87 % of
+the requests away.
+
+Unwinding is two-tracked, and the asymmetry is the hysteresis. Where
+the arithmetic can *prove* a finer marking fits (slack ≥ 3× the
+party's demand), the bias steps down immediately. Where it cannot —
+coarse clipmap levels do not quadruple, so the ×4 estimate over-blocks
+— it **tries** a step once 16 quiet frames of patience run out, and the
+ordinary raise reverts a failed trial the next frame. The still-resident
+coarser pages catch the readers meanwhile, so a failed trial costs one
+frame of fallback, not one of missing shadow. The panel prints the
+standing bias; one that sits high is the pool saying it is too small
+for the scene.
+
+### The classic pass under the pages — a token, not a tenant (#945)
+
+With `virtual_shadows` on, every reader branches to the pages: the
+cascade draws are gated, the spot and cube lists are empty. What
+remained was the *memory* — 64 MiB of atlas and 6 per cube, standing
+for a reader that never comes. They cannot go to zero (the shading's
+bind group needs live views, and wgpu refuses a zero-layer texture), so
+`classic_shadow_alloc` — pure, tested — sizes them to a token: the
+atlas at its clamp floor, one sixteen-texel cube, under half a
+megabyte. The release key is the whole allocation tuple rather than a
+bare texel count, so an author whose cascades already sat at the floor
+still swaps on toggle; the resize-release door that already existed
+does the swap in both directions.
+
+### The coverage gate — a shadow nobody can resolve claims nothing (#944)
+
+Before the bias has to price anything, the demand is shrunk at the
+source: a local light whose **whole range** projects under
+`shadow_min_pixels` of radius on screen (8 by default, 0 turns it off)
+marks no pages at all. It still shades — the readers walk its chain,
+find nothing resident and return lit — and it gets its shadow back the
+frame the camera comes close enough to flip the comparison. The gate
+errs toward casting: it measures the range sphere, not the lit part of
+it, and the sun is never gated because it has no radius. Epic runs the
+same rule as a pass (`PruneLightGridCS`) before anything marks; here it
+is one comparison inside a loop that already holds every operand. The
+panel counts what it turns away on the census line.
 
 ## Rasterising into the pages — the depth raster (#866)
 
@@ -1225,10 +1300,101 @@ Four passes, and their shape *is* the feature.
 
 | Pass | Threads | What it produces |
 |---|---|---|
-| **Cull** | per level, the engine's existing meshlet cull | which meshlets survive at that texel density |
-| **Compact** | one per table entry | the resident pages, dense and bucketed by level |
+| **Cull** | per clipmap level for the sun; ONE hierarchical set of dispatches for every lamp (#939) | which meshlets survive — at that level's texel density for the sun, at a perspective error metric from each light's own position for lamps |
+| **Compact** | one per table entry | the resident pages, dense and bucketed by level — the sun's clipmap levels first, then one bucket per lamp slot |
 | **Expand** | pages × survivors, dispatched indirectly | `(page, meshlet)` pairs |
 | **Draw** | one `draw_indirect` over every pair | depth in the atlas |
+
+### One hierarchical cull for every lamp (#939)
+
+A lamp does **not** borrow the sun's survivor lists. Those are LODs
+picked for orthographic boxes centred on the *camera*: borrowed, a close
+lamp's casters fell outside the fine levels' box and its shadow vanished
+as the light approached, while a coarse bucket handed root meshlets and
+drew a sphere's shadow as a faceted lump.
+
+What replaced the borrowing is Olsson et al. 2014 (§3.4/§5.2) adapted to
+the meshlet pool — four dispatches shared by **all** lamps, once per
+frame (a lamp's cull is view-independent, so the editor's second camera
+reuses the first one's survivors):
+
+1. **Pairs** — light sphere against instance bounds sphere, over
+   `lights × instances`. The hierarchy: instances a light cannot reach
+   never enter the meshlet domain.
+2. **Args** — sizes the meshlet-domain dispatches from the GPU-side
+   pair count.
+3. **Error** — the group-coherent LOD reduction (#465), every lamp at
+   once: the arena is indexed `[slot × group_capacity + group]`, so
+   sibling meshlets of one lamp still converge one slot and casters
+   never tear at LOD seams.
+4. **Cull** — group-coherent cut + range + backface cone, perspective
+   error measured from the light's position. Survivors land in fixed
+   per-lamp slices of one shared arena (`LAMP_SURVIVORS` each, counts
+   written uncapped so overflow is a number, not a silence), and the
+   counts land directly in the raster's `visible_counts` — no copy, no
+   per-lamp bind group, no CPU loop.
+
+One survivor list serves all six faces and every chain level of a lamp
+because a perspective error metric already scales with distance. The cap
+is `LAMP_CULLS = 64`; its honest ceiling is the group-error arena,
+`LAMP_CULLS × group_capacity × 4 B`. Slots are buffer order — ranking
+casting lights (the classic path's `assign_point_slots`) is #939's named
+follow-up.
+
+### The page filter is a configurable box (#941)
+
+The readers filter by hand — a page's neighbour texel can belong to
+another level or another light, so no hardware sampler applies — and
+the footprint is the author's: `shadow_softness` in `RenderSettings`
+is a box width in shadow texels. `1` is comparison-bilinear, bit for
+bit the cube path's hardware look; wider widths are the Castano-class
+box with `frac`-clipped 1D edge weights, positioned with sub-texel
+precision, costing `(width + 1)²` loads **per light per pixel** — which
+is why sharp is the default and the widest choice is labelled with its
+bill. No blocker search: the penumbra is uniform, not
+contact-hardening.
+
+### The receiver bound — casters behind everything draw nothing (#940)
+
+Olsson §4's PMCD variant, at page granularity instead of the paper's
+per-face bound. Every sample that marks a lamp's page is a *receiver*,
+and the marking `atomicMax`es its radial distance from the light into
+the page's fifth table word (positive floats bitcast to ordered u32s —
+that is what lets an atomic hold a distance). The compaction carries
+the bound into the widened `page_list` — the expansion sits at the
+eight-storage-buffer limit and cannot bind the table — and the lamp
+expansion adds one rejection: a caster whose **nearest** point lies
+beyond the page's furthest receiver occludes nothing the frame shades.
+
+The bound is radial rather than per-face depth, so it errs toward
+keeping; zero means "no receiver recorded" and rejects nothing, which
+is what keeps planted rigs and the sun's slab test untouched. `age_view`
+zeroes it each frame — receivers are a frame's question. The panel's
+pair-tests line counts what it turns away, which is the number that
+says whether the fifth word earns its memory.
+
+### Cached pages are effectively free (#477/#866)
+
+The pool always persisted its *slots*; since this change it keeps the
+*content*. Every table entry carries a **content stamp** — the
+generation its atlas depth was drawn under — and the compaction skips
+any resident page whose stamp still matches: not listed, not expanded,
+not drawn. The whole-layer depth clear is gone; the pass loads the
+layer and wipes only the dirty pages' rects with one quad each.
+
+Three things turn a generation over, and nothing else redraws a page:
+
+| Source | Granularity |
+|---|---|
+| The sun's snapped centre stepping, its direction, or the eye moving **along** its axis (the depth origin rides the eye) | per clipmap level |
+| A lamp's position, direction, range, kind or cone changing | per lamp — UE5 invalidates the same way |
+| A caster moving — its old **and** new bounds arrive as spheres and `cs_invalidate` zeroes the stamps of every page they reach | per page for the sun; per lamp for local lights (the #866 refinement is per cell) |
+
+A moved-caster list past its buffer, or a pair-list overflow observed
+by the panel's readback, bumps a scene generation folded into every
+hash: everything redraws once, which is coarse and never stale. The
+panel prints `rastered · cached ·` side by side — UE5's rule of thumb
+is dirty under 5% of residents in a typical frame.
 
 ### One render pass for the whole clipmap
 
@@ -1316,7 +1482,8 @@ So the reader starts at the coarsest level that could contain the point
 and walks outward, taking the first resident page. **Any** resident page
 containing the point holds correct depth, whatever level marked it: the
 stored value is a distance along the sun's axis and does not depend on
-how finely the page was diced. Typically the first probe hits.
+how finely the page was diced. Typically the first level tried hits,
+and each try is one indexed load.
 
 That walk is also what absorbs the frame of latency below.
 
@@ -1390,6 +1557,47 @@ rasterised. It is pinned at one per pixel.
 `KOOCH_PAGE_MARKING=1` survives as a **force** on top of the setting, not
 as its default — the comparison it exists for is made on a handheld, over
 SSH, against a build nobody wants to make twice.
+
+### Marking per cluster, and the second-order effect that decided it
+
+Olsson §III names per-sample marking as the branch to replace: a page is
+a property of the *cluster* a sample falls in, so marking it once per
+cluster rather than once per sample is the same answer for a fraction of
+the pairs. It shipped behind `KOOCH_CLUSTER_MARKING` because this pass
+chooses **which pages exist**, and a wrong answer here is a missing
+shadow rather than a slow frame — a defect nothing logs.
+
+Measured on the OneXFly, `many_lights` (100 point lights), same camera,
+64 °C against 66 °C:
+
+| | per pixel | per cluster | |
+|---|---|---|---|
+| `page mark` | 19.674 ms | **2.729 ms** | −7.2× |
+| `page depth` | 38.639 ms | 27.862 ms | −28 % |
+| `shadow pages` | 59.352 ms | **31.622 ms** | −1.9× |
+| frame, median | 91.01 ms | **55.13 ms** | 11.0 → 18.1 FPS |
+
+🔴 **The 7.2× is what the paper predicts; the 28% is what settled the
+default.** Nothing touched the rasteriser, and it got a quarter cheaper
+anyway — because marking per cluster does not merely cost less, it *asks
+for fewer pages*, and a page never asked for evicts nobody and
+rasterises never. A pass that is 4 % of the frame cannot buy that on its
+own; it bought it by changing what the next pass was handed.
+
+So the switch turned around: cluster marking is the default and
+`KOOCH_CLUSTER_MARKING=0` returns the per-pixel path. The escape hatch
+stays for the reason it was built — reach for it when a shadow is
+absent and the cause is not obvious.
+
+⚠️ **What this did not fix.** `page depth` is still 27.9 ms, now **67 %
+of the GPU frame**, because the pool is still over-subscribed: the
+census puts `many_lights` at **6916 resident pages against a 2048-page
+pool**, so the pool is evicted and refilled every frame and the content
+cache saves nothing. That is a budget defect, not a marking one, and the
+same census says where it lives — the sun wants 118 pages and saves
+133.6× over a brute-force allocation, while the 100 lamps want 6798 and
+save **1.2×**. Virtual paging pays for coherence, and a hundred
+scattered point lights have none to sell.
 
 ## What Inti does not do yet
 

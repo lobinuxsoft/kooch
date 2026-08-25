@@ -287,13 +287,15 @@ struct IntiClusterCell {
 @group({{INTI_GROUP}}) @binding(7) var<storage, read> inti_cluster_indices: array<u32>;
 
 // Virtual shadow maps (#866). `PageRaster`, `page_decode`, `sun_basis`,
-// `sun_page_rect`, `page_origin` and the probe sequence all come from
-// `page_table.wgsl`, concatenated ahead of this file — the same
+// `sun_page_rect` and `page_origin` all come from `page_table.wgsl`,
+// concatenated ahead of this file — the same
 // arrangement the froxel grid uses, and for the same reason: the four
 // passes that FILL this table live in another crate, and a page id
 // encoded one way and decoded another samples somebody else's shadow.
 @group({{INTI_GROUP}}) @binding(8) var<uniform> inti_pages: PageRaster;
-@group({{INTI_GROUP}}) @binding(9) var<storage, read> inti_page_keys: array<u32>;
+// The FLAT page table: `PAGE_CELL` words per virtual page, indexed by
+// the page id itself — `slot + 1` first, `PAGE_ABSENT` meaning "not
+// resident". Binding 9 held the hash's key array and is retired.
 @group({{INTI_GROUP}}) @binding(10) var<storage, read> inti_page_slots: array<u32>;
 // 🔴 `textureLoad`, never a sampler. A filter cannot cross a page
 // border: the neighbouring texels belong to another clipmap level, and
@@ -801,25 +803,90 @@ fn inti_sample_cascade_record(
 /// cannot see and cascades you can point at.
 // Where a virtual page lives, or `PAGE_MISS`.
 //
-// Open addressing, the read half of what the marking pass writes. Keys
-// are stored as `page + 1` so that a cleared buffer is an empty table.
+// ONE indexed read — the whole point of #477's flat table. This runs
+// per pixel PER LIGHT, and the open-addressed walk it replaced (up to
+// 32 probes, times up to 5 chain levels) measured 10.4 ms of shading
+// against 0.884 ms for the entire shadow track. Chalmers, Stephano and
+// UE5 all land on the same shape: a single lookup in the final pass.
 fn inti_page_lookup(page: u32) -> u32 {
-    let entries = inti_pages.pool.x;
-    if entries == 0u {
+    if page >= inti_pages.pool.x {
         return PAGE_MISS;
     }
-    var probe = page_probe(page, entries);
-    for (var i = 0u; i < PAGE_PROBES; i = i + 1u) {
-        let key = inti_page_keys[probe];
-        if key == PAGE_EMPTY {
-            return PAGE_MISS;
-        }
-        if key == page + 1u {
-            return inti_page_slots[probe * PAGE_CELL];
-        }
-        probe = page_step(probe, entries);
+    let stored = inti_page_slots[page * PAGE_CELL];
+    if stored == PAGE_ABSENT {
+        return PAGE_MISS;
     }
-    return PAGE_MISS;
+    return stored - 1u;
+}
+
+/// Occlusion at `texel` inside one page, bilinear-PCF filtered.
+///
+/// # 🔴 Weighted, not averaged — this is why the shadow stopped looking
+/// like the geometry
+///
+/// The first reader averaged four binary taps flat, and the measured
+/// look was "the shadow IS the mesh": a hard staircase at texel scale,
+/// against the smooth edge every other shadow path resolves. The cube
+/// path got its smoothness for free — `textureSampleCompareLevel` is
+/// comparison-BILINEAR in hardware. A page cannot use that sampler,
+/// because hardware filtering cannot be told where a page ends: the
+/// neighbour texel may belong to another level or another light. So
+/// the same filter is done by hand — the taps CLAMP to the page and
+/// only the weights cross the border. Costs nothing: the four loads
+/// were already paid for.
+///
+/// # The footprint is configurable (#941)
+///
+/// `world.w` carries the box width `W` in texels, from
+/// `RenderSettings::shadow_softness`. `W = 1` is the bilinear above,
+/// bit for bit. Wider widths are the Castano-class box filter: the 1D
+/// weights are `frac`-clipped at both ends and `1` in the middle, so
+/// their sum is exactly `W` per axis and the kernel is a `W`-texel box
+/// positioned with sub-texel precision — a penumbra that moves
+/// smoothly, `(W + 1)²` loads. No blocker search: the width is the
+/// author's, uniform across the scene, which is the price of paying
+/// per light per pixel.
+fn inti_page_filter(
+    origin: vec2<f32>,
+    layer: i32,
+    texel: vec2<f32>,
+    receiver: f32,
+    page_texels: u32,
+) -> f32 {
+    let width = max(u32(inti_pages.world.w), 1u);
+    let half = f32(width) * 0.5;
+    let last = f32(page_texels) - 1.0;
+    let corner = floor(texel - vec2<f32>(half));
+    let frac = texel - vec2<f32>(half) - corner;
+    var lit = 0.0;
+    for (var y = 0u; y <= width; y = y + 1u) {
+        var wy = 1.0;
+        if y == 0u {
+            wy = 1.0 - frac.y;
+        } else if y == width {
+            wy = frac.y;
+        }
+        for (var x = 0u; x <= width; x = x + 1u) {
+            var wx = 1.0;
+            if x == 0u {
+                wx = 1.0 - frac.x;
+            } else if x == width {
+                wx = frac.x;
+            }
+            let tap = clamp(
+                corner + vec2<f32>(f32(x), f32(y)),
+                vec2<f32>(0.0),
+                vec2<f32>(last),
+            );
+            let at = vec2<i32>(origin + tap);
+            let stored = textureLoad(inti_page_atlas, at, layer, 0);
+            // Reversed-Z: a LARGER stored depth is closer to the light,
+            // so it is an occluder.
+            let hit = select(1.0, 0.0, stored > receiver);
+            lit = lit + hit * wx * wy;
+        }
+    }
+    return lit / (f32(width) * f32(width));
 }
 
 /// The sun's shadow, out of the page pool.
@@ -896,19 +963,15 @@ fn inti_page_shadow(
         // The plane is ABSOLUTE and the grid is snapped, so a texel's
         // footprint does not slide with the camera. See `sun_centre`.
         let centre = sun_centre(inti_pages.eye.xyz, basis, base, side, level);
-        let plane = sun_plane(sampled, basis) - centre;
-        let along = dot(sampled - inti_pages.eye.xyz, basis[2]);
+        let along = dot(sampled - inti_pages.eye.xyz, basis[2])
+            + sun_drift(inti_pages.eye.xyz, basis, base, side, level);
         // Reversed-Z along the sun's axis, matching `page_depth.wgsl`.
         // Nothing is added to it: the offset above already moved the
         // point towards the light, which is the depth half of the bias.
         let receiver = 1.0 - (along + span) / (2.0 * span);
 
-        let uv = clamp(
-            plane / extent + vec2<f32>(0.5),
-            vec2<f32>(0.0),
-            vec2<f32>(0.99999),
-        );
-        let cell = vec2<u32>(uv * f32(side));
+        // The same absolute-world key the marking wrote. See `sun_cell`.
+        let cell = sun_cell(sampled, inti_pages.eye.xyz, basis, base, side, level);
         // 🔴 The VIEW is the high part of the key. Two viewports over
         // one world are two clipmaps centred on two cameras, so the
         // same world position is a different page in each — and a
@@ -924,41 +987,137 @@ fn inti_page_shadow(
         }
 
         // Where the point sits inside its own page, in texels.
-        let rect = sun_page_rect(level, cell, base, side, centre);
+        let rect = sun_page_rect(level, cell, inti_pages.eye.xyz, basis, base, side);
         let within = (sun_plane(sampled, basis) - rect.xy) / rect.z + vec2<f32>(0.5);
         let place = page_place(slot, inti_pages.views.z, inti_pages.pool.z, page_texels);
         let origin = vec2<f32>(place.xy);
         let layer = i32(place.z);
         let texel = within * f32(page_texels);
 
-        // 2x2, and CLAMPED INSIDE THE PAGE. A tap that walked off the
-        // edge would read a texel belonging to another clipmap level or
-        // another light: not a softer edge, a shadow from somewhere
-        // else. This is the border handling a paged shadow map cannot
-        // do without.
-        let last = f32(page_texels) - 1.0;
-        var lit = 0.0;
-        for (var y = 0; y < 2; y = y + 1) {
-            for (var x = 0; x < 2; x = x + 1) {
-                let tap = clamp(
-                    floor(texel) + vec2<f32>(f32(x), f32(y)) - vec2<f32>(0.5),
-                    vec2<f32>(0.0),
-                    vec2<f32>(last),
-                );
-                let at = vec2<i32>(origin + tap);
-                let stored = textureLoad(inti_page_atlas, at, layer, 0);
-                // Reversed-Z: a LARGER stored depth is closer to the
-                // light, so it is an occluder.
-                lit = lit + select(1.0, 0.0, stored > receiver);
-            }
-        }
-        return lit * 0.25;
+        // Bilinear PCF, clamped inside the page — see
+        // `inti_page_filter` for both halves of that sentence.
+        return inti_page_filter(origin, layer, texel, receiver, page_texels);
     }
     // No page anywhere in the chain. Lit, not shadowed: a point nobody
     // marked is a point the frame never looked at, and guessing dark
     // there would put shadow where no data exists.
     return 1.0;
 }
+/// A local light's shadow, out of the page pool.
+///
+/// # 🔴 The half that makes the pages visible
+///
+/// Rasterising a lamp's pages and never reading them is a pass that
+/// costs and shows nothing — which is exactly what shipped one commit
+/// ago. `inti_point_shadow` and `inti_spot_shadow` sampled the cube
+/// atlas whatever the pages held, so a lamp past the cube budget
+/// returned fully lit while its own pages sat drawn in the pool.
+///
+/// # Walking the chain, not computing the level
+///
+/// The MARKING picks a level from the texel a pixel wants, and that
+/// number is a property of the frame the marking ran in — the reader has
+/// no way back to it. So it walks: finest level first, taking the first
+/// page that is resident. Whichever level the marking chose is the
+/// coarsest one it could have chosen, so the walk finds it or something
+/// finer, and never something coarser than the frame asked for.
+///
+/// `face` is the cube face the point lands on, except for a spot, which
+/// writes one face the way `mark_local` assigns it.
+fn inti_local_page_shadow(
+    light: u32,
+    is_spot: bool,
+    light_position: vec3<f32>,
+    // The spot's axis; unread for a point. A spot's one face is
+    // aligned with it — see `spot_local`.
+    light_direction: vec3<f32>,
+    world_position: vec3<f32>,
+    normal: vec3<f32>,
+    to_light: vec3<f32>,
+) -> f32 {
+    let side0 = inti_pages.space.z;
+    let page_texels = inti_pages.pool.w;
+    let stride = inti_pages.space.x;
+    let face_pages = inti_pages.space.y;
+    // The chain stops where a whole level is one page. Mirrors
+    // `PageConfig::levels`.
+    let levels = u32(log2(f32(max(side0, 1u)))) + 1u;
+    let view_base = inti_pages.views.x * inti_pages.views.y;
+
+    // 🔴 Starts at the floor, not at zero. The marking cannot pick a
+    // level below it, so the levels under it hold no pages for anybody —
+    // walking them is three table lookups a pixel that can only miss.
+    for (var level = local_level_floor(side0 * page_texels); level < levels; level = level + 1u) {
+        let side = level_side_of(level, side0);
+        let raw = world_position - light_position;
+        let distance = max(length(raw), PAGE_NEAR);
+        // A cube face is a 90-degree perspective, so at `distance` it
+        // covers `2 * distance` across `side * page_texels` texels. The
+        // same identity `page_level` inverts, and the reason the offset
+        // is computed inside the walk rather than once before it.
+        let texel_world = 2.0 * distance / f32(side * page_texels);
+        // 🔴 The POINT pair, not the sun's. `INTI_POINT_DEPTH_BIAS` is
+        // FOUR TIMES `INTI_DEPTH_BIAS` and its doc says exactly why: a
+        // cube face is 90 degrees and its texels are coarse, so a lamp
+        // needs more depth push than a cascade. Borrowing the sun's
+        // prints a stair-stepped square on an empty floor under a lamp
+        // — the floor shadowing itself — which is what this reader
+        // shipped doing.
+        let sampled = world_position
+            + normal * (texel_world * INTI_POINT_NORMAL_BIAS)
+            + to_light * INTI_POINT_DEPTH_BIAS;
+
+        var offset = sampled - light_position;
+        if is_spot {
+            offset = spot_local(light_direction, offset);
+        }
+        let hit = cube_face(offset);
+        let face = select(u32(hit.w), 0u, is_spot);
+        let cell = vec2<u32>(
+            clamp(hit.xy, vec2<f32>(0.0), vec2<f32>(0.99999)) * f32(side)
+        );
+        // 🔴 The VIEW is the high part of the key, the same as the sun's:
+        // two viewports are two page sets and a lookup without it finds
+        // whichever camera marked last.
+        let page = view_base
+            + light * stride
+            + face * face_pages
+            + local_level_base(level, side0, page_texels)
+            + cell.y * side
+            + cell.x;
+        let slot = inti_page_lookup(page);
+        if slot == PAGE_MISS {
+            continue;
+        }
+
+        // Reversed-Z, and along the MAJOR AXIS — `page_depth.wgsl` stores
+        // `PAGE_NEAR / major`, the same identity `GpuPointShadow`
+        // documents for the cube path. A radial distance here would be
+        // wrong by the ratio between the two, which is 1 at the centre
+        // of a face and 1.73 at its corner: a shadow that is correct
+        // straight ahead of the lamp and drifts towards every edge.
+        let major = max(max(abs(offset.x), abs(offset.y)), abs(offset.z));
+        let receiver = clamp(PAGE_NEAR / max(major, PAGE_NEAR), 0.0, 1.0);
+
+        // Where the point sits inside its own cell, in texels.
+        let step = 1.0 / f32(side);
+        let low = vec2<f32>(cell) * step;
+        let within = (hit.xy - low) / step;
+        let place = page_place(slot, inti_pages.views.z, inti_pages.pool.z, page_texels);
+        let origin = vec2<f32>(place.xy);
+        let layer = i32(place.z);
+        let texel = within * f32(page_texels);
+
+        // Bilinear PCF, clamped inside the page — see
+        // `inti_page_filter` for both halves of that sentence.
+        return inti_page_filter(origin, layer, texel, receiver, page_texels);
+    }
+    // No page anywhere in the chain: lit, for the same reason the sun's
+    // reader is. A point nobody marked is a point the frame never looked
+    // at, and guessing dark there puts shadow where no data exists.
+    return 1.0;
+}
+
 fn inti_shadow(
     world_position: vec3<f32>,
     normal: vec3<f32>,
@@ -1126,9 +1285,14 @@ struct IntiLit {
 fn inti_light_contribution(
     surf: IntiSurface,
     light: IntiLight,
+    // 🔴 Its index in `inti_lights`, which is the light's identity in a
+    // page key. `IntiLight` does not carry it — the struct is 80 bytes
+    // against a Rust mirror and its three spare scalars are load-bearing
+    // padding, so the index travels as an argument rather than in a pad.
+    index: u32,
     frag_coord: vec2<f32>,
 ) -> vec3<f32> {
-    return inti_light_lit(surf, light, frag_coord, true).radiance;
+    return inti_light_lit(surf, light, index, frag_coord, true).radiance;
 }
 
 // The same, with the contact march made optional and the light's weight
@@ -1141,6 +1305,7 @@ fn inti_light_contribution(
 fn inti_light_lit(
     surf: IntiSurface,
     light: IntiLight,
+    index: u32,
     frag_coord: vec2<f32>,
     march: bool,
 ) -> IntiLit {
@@ -1260,18 +1425,38 @@ fn inti_light_lit(
     if ((surf.flags & INTI_SURFACE_RECEIVES_SHADOWS) != 0u) {
         if (light.kind == INTI_KIND_DIRECTIONAL) {
             shadow = inti_shadow(surf.world_position, surf.n, s.to_light, surf.view_depth, n_dot_l);
-        } else if (light.kind == INTI_KIND_POINT && light.shadow_slot != INTI_NO_SHADOW_SLOT) {
-            // Six faces of one cube (#778). A point light finally casts.
-            shadow = inti_point_shadow(
-                light.shadow_slot, surf.world_position, surf.n, s.to_light, light.position);
-        } else if (light.kind == INTI_KIND_SPOT && light.shadow_slot != INTI_NO_SHADOW_SLOT) {
-            // A spot casts into a layer of the same array the cascades
-            // use (#777). Along the cone axis, the same measure Bevy
-            // takes: the radial distance would widen the bias towards
-            // the edge of the cone, where the map is not coarser.
-            let axial = dot(light.direction, surf.world_position - light.position);
-            shadow = inti_spot_shadow(
-                light.shadow_slot, surf.world_position, surf.n, s.to_light, n_dot_l, axial);
+        } else if (light.kind == INTI_KIND_POINT) {
+            // 🔴 The page path is NOT gated on `shadow_slot`. That slot
+            // is a cube-atlas index and there are 32 of them; a lamp
+            // past the budget returns fully lit from the cube reader,
+            // which is the exact ceiling the pages exist to remove. A
+            // page-backed lamp needs no slot at all — its pages are
+            // keyed by the light's own index.
+            if (inti_pages.sun.w > 0.5) {
+                shadow = inti_local_page_shadow(
+                    index, false, light.position, light.direction,
+                    surf.world_position, surf.n, s.to_light);
+            } else if (light.shadow_slot != INTI_NO_SHADOW_SLOT) {
+                // Six faces of one cube (#778).
+                shadow = inti_point_shadow(
+                    light.shadow_slot, surf.world_position, surf.n, s.to_light, light.position);
+            }
+        } else if (light.kind == INTI_KIND_SPOT) {
+            if (inti_pages.sun.w > 0.5) {
+                // One face, aligned with the spot's own axis.
+                shadow = inti_local_page_shadow(
+                    index, true, light.position, light.direction,
+                    surf.world_position, surf.n, s.to_light);
+            } else if (light.shadow_slot != INTI_NO_SHADOW_SLOT) {
+                // A spot casts into a layer of the same array the
+                // cascades use (#777). Along the cone axis, the same
+                // measure Bevy takes: the radial distance would widen
+                // the bias towards the edge of the cone, where the map
+                // is not coarser.
+                let axial = dot(light.direction, surf.world_position - light.position);
+                shadow = inti_spot_shadow(
+                    light.shadow_slot, surf.world_position, surf.n, s.to_light, n_dot_l, axial);
+            }
         }
 
         // Contact shadows (#735) — the last few centimetres the cascades
@@ -1541,7 +1726,7 @@ fn inti_shade(
         // cost pixels x lights.
         for (var i = 0u; i < inti.light_count; i = i + 1u) {
             acc = inti_accumulate(acc, inti_light_lit(
-                surf, inti_lights[i], frag_coord, !dominant));
+                surf, inti_lights[i], i, frag_coord, !dominant));
         }
     } else {
         // Directional lights are not in the grid: they reach every cell,
@@ -1549,7 +1734,7 @@ fn inti_shade(
         // buffer's leading entries — see `ExtractedLights`.
         for (var i = 0u; i < inti.directional_count; i = i + 1u) {
             acc = inti_accumulate(acc, inti_light_lit(
-                surf, inti_lights[i], frag_coord, !dominant));
+                surf, inti_lights[i], i, frag_coord, !dominant));
         }
         acc = inti_merge(acc, inti_clustered_lights(surf, world_position, frag_coord, dominant));
     }
@@ -1609,7 +1794,7 @@ fn inti_clustered_lights(
             break;
         }
         acc = inti_accumulate(acc, inti_light_lit(
-            surf, inti_lights[inti_cluster_indices[i]], frag_coord, !dominant));
+            surf, inti_lights[inti_cluster_indices[i]], inti_cluster_indices[i], frag_coord, !dominant));
     }
     return acc;
 }

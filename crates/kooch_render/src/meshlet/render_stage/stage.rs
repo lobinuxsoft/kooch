@@ -78,7 +78,9 @@ pub struct MeshletRenderStage {
     pub(super) shadows: Option<crate::shadow::ShadowPass>,
     /// Cascade resolution `shadows` was allocated at, so a settings
     /// change is noticed rather than silently ignored.
-    pub(super) shadow_texels: u32,
+    /// What the classic shadow pass holds allocated, or zeroed when it
+    /// holds nothing. The key the resize-release compares (#945).
+    pub(super) shadow_alloc: super::frame::ClassicAlloc,
     /// Whether any casting point light went without a cube last frame
     /// (#778), so the warning fires on the transition rather than sixty
     /// times a second. Same shape as the light-count log.
@@ -112,6 +114,13 @@ pub struct MeshletRenderStage {
     /// [`InstanceBounds`](crate::shadow::InstanceBounds). Replaces the
     /// single scene-wide hash the cube cache used to key on (#847).
     pub(super) instance_bounds: Vec<crate::shadow::InstanceBounds>,
+    /// Last frame's [`Self::instance_bounds`], for the page cache's
+    /// movement diff (#477): a caster whose hash changed invalidates
+    /// the shadow pages both its old and its new bounds reach.
+    pub(super) previous_bounds: Vec<crate::shadow::InstanceBounds>,
+    /// This frame's moved-caster spheres, old and new bounds alike,
+    /// rebuilt where `instance_bounds` is.
+    pub(super) moved_casters: Vec<[f32; 4]>,
     pub(super) point_cube_cache: Vec<Option<crate::shadow::CubeKey>>,
 
     /// GPU mirror of [`MeshletPipeline::pool`]. Lazy-rebuilt by

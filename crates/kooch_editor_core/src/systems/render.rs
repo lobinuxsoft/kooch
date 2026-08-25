@@ -199,6 +199,15 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<MeshletRenderStats>()
         .copied()
         .unwrap_or_default();
+    // 🔴 The GAME viewport's own, published under its own key. The
+    // resource above is written by the View camera's render alone, so
+    // the Game tab's overlay used to describe a frustum nobody was
+    // looking through — and a page count that never moved while the
+    // game camera did.
+    let game_stats = resources
+        .get::<crate::viewport::game::GameViewStats>()
+        .map(|s| s.0)
+        .unwrap_or_default();
 
     // #463.4 — last frame's GPU timing (when adapter exposes
     // TIMESTAMP_QUERY) propagates from the render stage into the
@@ -285,6 +294,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         remote_stale: resources
             .get::<crate::remote_session::RemoteState>()
             .and_then(|s| s.session.as_ref()?.stale_reason().map(String::from)),
+        scripts_behind: resources
+            .get::<crate::script_sync::ScriptSync>()
+            .is_some_and(|sync| sync.state == crate::script_sync::SyncState::NeedsRebuild),
         // In remote mode the project runs gameplay in place, so Play
         // is a wire toggle rather than a launched process.
         is_playing: is_playing
@@ -484,6 +496,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut cluster_settings,
         &mut specular_floor,
         meshlet_stats,
+        game_stats,
         resources
             .get::<crate::perf::EditorPerfStats>()
             .copied()
@@ -497,6 +510,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &connect_output,
         prefab_overwrite.as_ref(),
         &build_panel,
+        crate::editor_camera::editor_camera_rotation(resources),
     );
     stages.ui_ms = crate::perf::ms_since(ui_start);
     let input_start = std::time::Instant::now();
@@ -640,7 +654,14 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         game.has_camera = false;
     }
 
-    {
+    // The View panel, gated the way the Game panel above already is:
+    // `viewport_request` is `Some` this frame iff the tab was actually
+    // drawn. View and Game ship as sibling tabs, so the common case is
+    // one of them hidden — and a hidden view must cost NOTHING: no
+    // cull, no raster, no sky, no shadow-page slice. The user's rule,
+    // stated verbatim: "todo lo que no es visible, no tiene que
+    // consumir".
+    if viewport_request.is_some() {
         // The meshlet stage + blit are constructed at startup and live
         // for the whole editor session; if either is missing, another
         // system removed them mid-frame. Reconstruct minimal

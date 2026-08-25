@@ -138,9 +138,16 @@ pub(crate) struct EditorTabViewer<'a> {
     /// the viewport render. Read-only, surfaced through the View
     /// toolbar's stats overlay.
     pub(crate) meshlet_stats: MeshletRenderStats,
+    /// The GAME viewport's own stats. 🔴 Separate from the field above,
+    /// which belongs to the View camera: one slot for two cameras is
+    /// what made the Game tab's overlay report the Edit view's frustum.
+    pub(crate) game_stats: MeshletRenderStats,
     /// Per-frame perf HUD counters (#463). Read-only, surfaced
     /// through the View toolbar's perf overlay (always visible).
     pub(crate) perf_stats: crate::perf::EditorPerfStats,
+    /// The editor camera's rotation this frame, for the View panel's
+    /// navigation gizmo. `None` before the camera spawns.
+    pub(crate) editor_camera_rotation: Option<glam::Quat>,
 }
 
 impl<'a> TabViewer for EditorTabViewer<'a> {
@@ -254,7 +261,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.game_request,
                 self.game_has_camera,
                 self.perf_stats,
-                self.meshlet_stats,
+                self.game_stats,
                 self.meshlet_debug_mode,
                 self.meshlet_debug_caps,
                 self.single_light_note,
@@ -279,6 +286,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.gizmo_groups,
                 self.physics_debug,
                 self.actions,
+                self.editor_camera_rotation,
             ),
             EditorTab::Console => {
                 crate::panels::console::draw_console(ui, focused, self.log_buffer, self.console)
@@ -328,6 +336,20 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             }
             EditorTab::Components => draw_components_content(ui, self.component_types),
             EditorTab::Profiler => crate::panels::profiler::draw_profiler_content(ui),
+            EditorTab::Performance => crate::panels::performance::draw_performance_panel(
+                ui,
+                self.perf_stats,
+                self.meshlet_stats,
+                self.meshlet_debug_mode,
+                self.meshlet_debug_caps,
+                self.meshlet_lod_settings,
+                self.lights_hot,
+                self.cluster_settings,
+                self.specular_floor,
+                *self.game_request,
+                self.hud_visibility,
+                self.single_light_note,
+            ),
             EditorTab::Build => crate::panels::build::draw_build_content(
                 ui,
                 self.build,

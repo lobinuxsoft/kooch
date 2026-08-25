@@ -66,12 +66,19 @@ fn device_for(atomic_vbuf: bool) -> Option<(wgpu::Device, wgpu::Queue)> {
     let mut needed =
         wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
     if atomic_vbuf {
-        // TEXTURE_ATOMIC alongside the int64 bundle: the R64 path
-        // dereferences the triangle-density texture unconditionally,
-        // and that texture is only allocated when the debug caps probe
-        // finds R32Uint atomics. Production requests both in
-        // `optional_features`.
-        needed |= kooch_core::gpu::vbuf64_features() | wgpu::Features::TEXTURE_ATOMIC;
+        // 🔴 `all_required_features`, not the bundle spelled out again.
+        // This site listed `vbuf64_features` alone, which is every flag
+        // the R64 path needs except `SHADER_F16` — and the R64 path
+        // builds `fsr3_accumulate`, whose first line is `enable f16`.
+        // The device came back short and the three tests on this path
+        // died inside `create_shader_module`, so the path the OneXFly
+        // takes had no passing test at all while it was being measured.
+        //
+        // TEXTURE_ATOMIC on top: the R64 path dereferences the
+        // triangle-density texture unconditionally, and that texture is
+        // only allocated when the debug caps probe finds R32Uint
+        // atomics. Production requests it in `optional_features`.
+        needed |= kooch_core::gpu::all_required_features() | wgpu::Features::TEXTURE_ATOMIC;
     }
     if !adapter.features().contains(needed) {
         return None;
@@ -151,6 +158,11 @@ fn recorded_labels(device: &wgpu::Device, queue: &wgpu::Queue, frames: usize) ->
     labels_with_shading(device, queue, frames, false)
 }
 
+/// [`recorded_labels`], with the virtual shadow pages turned on.
+fn labels_with_pages(device: &wgpu::Device, queue: &wgpu::Queue, frames: usize) -> Vec<String> {
+    labels_from(device, queue, frames, false, true)
+}
+
 /// [`recorded_labels`], with the shading path chosen (#824).
 fn labels_with_shading(
     device: &wgpu::Device,
@@ -158,7 +170,23 @@ fn labels_with_shading(
     frames: usize,
     compute_shading: bool,
 ) -> Vec<String> {
+    labels_from(device, queue, frames, compute_shading, false)
+}
+
+fn labels_from(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frames: usize,
+    compute_shading: bool,
+    virtual_pages: bool,
+) -> Vec<String> {
     let (mut resources, mut stage) = scene(device, queue);
+    if virtual_pages {
+        resources.insert(kooch_render::shadow::ShadowSettings {
+            virtual_pages: true,
+            ..Default::default()
+        });
+    }
     stage.set_compute_shading(compute_shading);
     let captured: Arc<Mutex<Vec<Arc<puffin::FrameData>>>> = Arc::default();
     let sink = {
@@ -314,4 +342,34 @@ fn the_hi_z_path_names_its_passes() {
         labels.iter().any(|l| l == "shade"),
         "no shading scope among {labels:?}"
     );
+}
+
+/// 🔴 The track that cost the OneXFly 34 ms nobody could see.
+///
+/// Its CPU scopes existed and said 0.7 ms, so the pass looked cheap and
+/// settled. The dispatches it records ran between `cull` and
+/// `raster + shade` and inside neither, so a capture reported an 11 ms
+/// GPU frame while `drm-engine-gfx` reported 45 for the same process —
+/// and the gap had no name to be filed under.
+#[test]
+fn the_pages_name_their_passes() {
+    let _guard = PUFFIN.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = device_for(true) else {
+        eprintln!("no adapter with timestamps + int64 atomics; skipping");
+        return;
+    };
+    let labels = labels_with_pages(&device, &queue, 8);
+    for wanted in [
+        "shadow pages",
+        "page mark",
+        "page raster",
+        "page cull",
+        "page expand",
+        "page depth",
+    ] {
+        assert!(
+            labels.iter().any(|l| l == wanted),
+            "no {wanted:?} scope among {labels:?}"
+        );
+    }
 }

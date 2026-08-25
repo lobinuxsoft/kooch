@@ -138,6 +138,14 @@ fn editor_camera_exists(resources: &Resources) -> bool {
 /// One implementation, here with the marker it looks for. There used to
 /// be a second identical copy in `input::apply`, which is how a bug like
 /// this survives a reading.
+/// The editor camera's current rotation, for the viewport's axis gizmo.
+pub(crate) fn editor_camera_rotation(resources: &Resources) -> Option<glam::Quat> {
+    let entity = find_editor_camera_entity(resources)?;
+    let registry = resources.get::<kooch_ecs::ComponentRegistry>()?;
+    let storage = registry.get_cpu::<kooch_ecs::Transform>()?;
+    Some(storage.get(entity)?.rotation)
+}
+
 pub(crate) fn find_editor_camera_entity(resources: &Resources) -> Option<kooch_ecs::Entity> {
     use kooch_ecs::archetype_registry::ArchetypeRegistry;
 

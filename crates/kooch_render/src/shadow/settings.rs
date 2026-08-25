@@ -86,6 +86,13 @@ pub struct ShadowSettings {
     pub page_density: u32,
     /// Physical pages the pool holds, which is the memory budget.
     pub pool_pages: u32,
+    /// PCF footprint width of the page readers, in shadow texels.
+    /// 1 = bilinear; wider = Castano-style box with bilinear edges,
+    /// `(width + 1)²` loads per light per pixel (#941).
+    pub page_softness: u32,
+    /// Projected radius in screen pixels under which a local light
+    /// casts no pages (#944). 0 = every light casts.
+    pub page_min_pixels: u32,
 }
 
 impl ShadowSettings {
@@ -111,6 +118,8 @@ impl Default for ShadowSettings {
             virtual_pages: false,
             page_density: 100,
             pool_pages: crate::shadow::pages::pool::DEFAULT_PAGES,
+            page_softness: 1,
+            page_min_pixels: 8,
         }
     }
 }

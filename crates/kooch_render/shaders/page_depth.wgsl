@@ -26,6 +26,30 @@
 // cost is early-Z: a discard makes depth writes late. That is the price
 // of one pass instead of one per page, and it is the right side of the
 // trade by three orders of magnitude.
+//
+// # 🔴 …and why the hardware does it instead where it can
+//
+// `discard` pays TWICE, and the second one is the larger: the fragments
+// outside the rect are rasterised, interpolated and only then thrown
+// away, so the pass carries every one of them to the point of no use.
+// A page whose caster spans ten of its own widths rasterises a hundred
+// times its own texels to keep one.
+//
+// User clip planes remove both. `vs_page_clipped` hands the clipper the
+// page's own four edges, the triangle is cut geometrically before any
+// fragment exists, and with nothing left to discard the pass drops its
+// fragment shader entirely — which is also how a depth-only pass reaches
+// the hardware's double-rate depth path.
+//
+// The arithmetic is smaller than it looks. A page's local space IS the
+// clip volume — `page_clip_w` maps `local_w / w ∈ [-1, 1]` onto the
+// rect — so the four distances are `w ± local.x` and `w ± local.y`,
+// which is the standard volume test aimed at the page instead of at the
+// atlas. The rect's half-extent scales all four by a positive constant
+// and a positive scale cannot move a sign, so it drops out.
+//
+// It is optional (`Features::CLIP_DISTANCES`), so `vs_page` + `fs_page`
+// stay as the fallback and both paths must agree. See the tests.
 
 struct MeshVertexStored {
     position: array<f32, 3>,
@@ -67,8 +91,21 @@ struct MeshInstance {
 }
 
 @group(0) @binding(0) var<uniform> raster: PageRaster;
-@group(0) @binding(1) var<storage, read> page_list: array<vec2<u32>>;
-@group(0) @binding(2) var<storage, read> pairs: array<vec2<u32>>;
+// 🔴 FOUR words a pair — the virtual page, its physical slot, the
+// cull's packed `(instance, meshlet)`, and a spare. It used to be two,
+// with the page and slot fetched through `page_list`, and that
+// indirection cost this stage a storage binding it does not have:
+// `max_storage_buffers_per_shader_stage` is 8 and the mesh pool alone
+// spends five.
+//
+// It also costs LESS memory, because the capacity came down with it.
+@group(0) @binding(2) var<storage, read> pairs: array<vec4<u32>>;
+// 🔴 A lamp's page is a frustum from the light's own position, so its
+// transform cannot come from a uniform the way the sun's does: apex,
+// axis and reach are all properties of the light the page names. In
+// group 0 because group 2 is the shared one-buffer instance layout and
+// widening it would widen every pass that uses it.
+@group(0) @binding(1) var<storage, read> lights: array<ClusterLight>;
 
 @group(1) @binding(0) var<storage, read> vertices: array<MeshVertexStored>;
 @group(1) @binding(1) var<storage, read> meshlet_vertices: array<u32>;
@@ -92,27 +129,45 @@ fn fetch_local_vertex_index(byte_offset: u32) -> u32 {
     return (packed >> (byte_in_word * 8u)) & 0xffu;
 }
 
-@vertex
-fn vs_page(
-    @builtin(vertex_index) vertex_index: u32,
-    @builtin(instance_index) instance_index: u32,
-) -> PageVertex {
-    var out: PageVertex;
+/// A vertex placed in its page, plus what the CLIPPER needs to cut the
+/// triangle to that page — which the fragment path throws away and the
+/// clipped path is entirely built on.
+struct PageGeom {
+    clip: vec4<f32>,
+    rect: vec4<f32>,
+    /// The page-local position ALREADY multiplied by `w`, exactly as
+    /// `page_clip_w` takes it. In-page is `|local| <= w`.
+    local: vec2<f32>,
+    w: f32,
+    /// The tail of a meshlet with fewer triangles than the draw issues
+    /// vertices for. Sent outside the volume by both paths.
+    dead: bool,
+}
+
+/// One body, two entry points. Splitting it was the point: the clipped
+/// path differs from the fragment path in what it DECLARES, never in
+/// where it puts a vertex, and a second copy of this arithmetic is how
+/// the two paths would quietly stop agreeing.
+fn page_geometry(vertex_index: u32, instance_index: u32) -> PageGeom {
+    var out: PageGeom;
+    out.local = vec2<f32>(0.0);
+    out.w = 1.0;
+    out.dead = false;
     let pair = pairs[instance_index];
-    let entry = page_list[pair.x];
-    let inst_id = pair.y >> 16u;
-    let meshlet_id = pair.y & 0xffffu;
+    let inst_id = pair.z >> 16u;
+    let meshlet_id = pair.z & 0xffffu;
     let desc = descriptors[meshlet_id];
 
     let id = page_decode(
-        entry.x,
+        pair.x,
         raster.views.y,
         raster.space.x,
         raster.space.y,
         raster.space.z,
         raster.space.w,
+        raster.pool.w,
     );
-    out.rect = page_atlas_rect(entry.y, raster.views.z, raster.pool.z, raster.pool.w);
+    out.rect = page_atlas_rect(pair.y, raster.views.z, raster.pool.z, raster.pool.w);
 
     let triangle_idx = vertex_index / 3u;
     let corner_idx = vertex_index % 3u;
@@ -122,6 +177,7 @@ fn vs_page(
     // branch anywhere else.
     if triangle_idx >= desc.triangle_count {
         out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        out.dead = true;
         return out;
     }
 
@@ -132,25 +188,114 @@ fn vs_page(
     let pos = vec3<f32>(v.position[0], v.position[1], v.position[2]);
     let world = (instances[inst_id].transform * vec4<f32>(pos, 1.0)).xyz;
 
-    let basis = sun_basis(raster.sun.xyz);
-    // 🔴 The plane is ABSOLUTE and the rect carries the snapped centre.
-    // Measuring from the camera instead would put the geometry on a grid
-    // that slides with it, which is the shadow crawl `sun_centre`
-    // exists to remove.
-    let centre = sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
-    let plane = sun_plane(world, basis);
-    let along = dot(world - raster.eye.xyz, basis[2]);
-    let page = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z, centre);
-    let ndc = (plane - page.xy) / (page.z * 0.5);
+    var ndc = vec2<f32>(2.0);
+    var depth = 0.0;
 
-    // 🔴 Reversed-Z (ADR 0002): 1 is the near plane and 0 is far, so an
-    // empty page reads as "nothing between here and the light" rather
-    // than as "everything is shadowed". The clear matches.
-    let span = raster.world.y;
-    let depth = 1.0 - (along + span) / (2.0 * span);
+    if id.is_sun {
+        let basis = sun_basis(raster.sun.xyz);
+        // 🔴 The plane is ABSOLUTE and the rect carries the snapped
+        // centre. Measuring from the camera instead would put the
+        // geometry on a grid that slides with it, which is the shadow
+        // crawl `sun_centre` exists to remove.
+        let centre = sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
+        let plane = sun_plane(world, basis);
+        // 🔴 And so is the depth origin, for the same reason. Measured
+        // from the raw camera it slid every frame, which voided every
+        // cached page every frame. See `sun_drift`.
+        let along = dot(world - raster.eye.xyz, basis[2])
+            + sun_drift(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
+        let page = sun_page_rect(id.level, id.cell, raster.eye.xyz, basis, raster.world.x, raster.space.z);
+        ndc = (plane - page.xy) / (page.z * 0.5);
 
+        // 🔴 Reversed-Z (ADR 0002): 1 is the near plane and 0 is far, so
+        // an empty page reads as "nothing between here and the light"
+        // rather than as "everything is shadowed". The clear matches.
+        let span = raster.world.y;
+        depth = 1.0 - (along + span) / (2.0 * span);
+    } else {
+        // A lamp's page: a perspective frustum from the light, narrowed
+        // to the one cell of the one face the page names.
+        //
+        // Built here rather than uploaded because there is no per-page
+        // uniform to upload it into — a draw covers every page of every
+        // light at once, and which page an instance belongs to is only
+        // known from the pair it read.
+        let light = lights[id.light];
+        var offset = world - light.position;
+        // A spot's page projects along the SPOT's axis. See
+        // `spot_local`: the writer, this raster and the reader rotate
+        // with the same basis or the page holds someone else's depth.
+        if light.kind == PAGE_KIND_SPOT {
+            offset = spot_local(light.direction, offset);
+        }
+        let side = level_side_of(id.level, raster.space.z);
+        // 🔴 NOT rejected per vertex. `cell_face` projects whatever it
+        // is given and returns a NEGATIVE `w` for a point behind this
+        // face — which is what the clipper is for. Rejecting per vertex
+        // pushed one corner of a seam-straddling triangle outside the
+        // clip volume while the other two projected normally, and the
+        // interpolation between them drew a wedge along every seam. On
+        // screen: a straight bar of false occlusion across the pool.
+        let face = cell_face(id.face, id.cell, side, offset);
+        // Reversed-Z along the face's axis. `depth * w` is the constant
+        // PAGE_NEAR, so the rasteriser's own divide reconstructs
+        // `PAGE_NEAR / z` exactly at every fragment — the identity
+        // `GpuPointShadow` documents for the cube path.
+        out.local = face.xy;
+        out.w = face.z;
+        out.clip = page_clip_w(
+            face.xy,
+            PAGE_NEAR,
+            out.rect,
+            raster.world.z,
+            face.z,
+        );
+        return out;
+    }
+
+    // The sun's page is orthographic, so `w` really is 1 and the local
+    // position really is the NDC.
+    out.local = ndc;
+    out.w = 1.0;
     out.clip = page_clip(ndc, depth, out.rect, raster.world.z);
     return out;
+}
+
+@vertex
+fn vs_page(
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
+) -> PageVertex {
+    let geom = page_geometry(vertex_index, instance_index);
+    var out: PageVertex;
+    out.clip = geom.clip;
+    out.rect = geom.rect;
+    return out;
+}
+
+// `[0]` the count, then the physical slot of every page the compaction
+// listed this dispatch. Only `vs_page_clear` reads it.
+@group(0) @binding(3) var<storage, read> clear_dirty: array<u32>;
+
+// One quad per dirty page at far depth — the per-page replacement for
+// the whole-layer clear the content cache retired. Reversed-Z: 0 is
+// far, so a wiped page reads as "nothing between here and the light".
+// The quad's corners ARE the page's rect, so no fragment scissor is
+// needed; drawn with depth compare `Always` so it wins over whatever
+// the slot held.
+@vertex
+fn vs_page_clear(
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
+) -> @builtin(position) vec4<f32> {
+    let slot = clear_dirty[1u + instance_index];
+    let rect = page_atlas_rect(slot, raster.views.z, raster.pool.z, raster.pool.w);
+    // Strip order: (-1,-1) (1,-1) (-1,1) (1,1).
+    let corner = vec2<f32>(
+        f32(vertex_index & 1u),
+        f32(vertex_index >> 1u),
+    ) * 2.0 - vec2<f32>(1.0);
+    return page_clip(corner, 0.0, rect, raster.world.z);
 }
 
 @fragment

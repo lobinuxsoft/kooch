@@ -51,6 +51,21 @@ pub(crate) mod queries;
 pub(crate) mod remote_input;
 pub mod remote_mirror;
 pub mod remote_session;
+pub mod script_sync;
+
+/// 🔴 A profiling build with the per-system scopes compiled out is not a
+/// build that fails — it is a build whose captures look exactly like the
+/// ones from before the scopes existed. That is how this went unnoticed
+/// once already: the feature was added to the `kooch` facade and not
+/// here, and the next capture reported `PreUpdate: 3.2 ms` with no
+/// children, which is a correct-looking answer to the wrong question.
+#[cfg(feature = "profiling")]
+const _: () = assert!(
+    kooch_core::CPU_SCOPES,
+    "`profiling` is on but `kooch_core/cpu-profiler` is not, so systems have no scopes \
+     and every stage will report one number with no children"
+);
+
 pub(crate) mod shortcuts;
 pub(crate) mod state;
 pub(crate) mod style;
@@ -116,6 +131,7 @@ impl Plugin for EditorPlugin {
         app.insert_resource(PlayState::new());
         // Idle until someone presses Build (#758).
         app.insert_resource(build::BuildState::default());
+        app.insert_resource(script_sync::ScriptSync::default());
         app.insert_resource(input_focus::InputFocus::default());
         // Remote mode starts inert: no session means the editor drives
         // its own ECS exactly as before. "Open Remote" fills it in.
@@ -180,6 +196,10 @@ impl Plugin for EditorPlugin {
         // entries the same frame the user opens a project.
         app.add_system(Stage::PreUpdate, systems::scan_project_assets_system);
         app.add_system(Stage::PreUpdate, systems::ensure_main_exists_system);
+        // Keeps `registrations.rs` level with `src/` without being asked.
+        // A system written in an external editor used to reach no
+        // registration and no log line — it simply never ran.
+        app.add_system(Stage::PreUpdate, script_sync::sync_scripts_system);
         // Remote mode: advance the handshake and pull the project's
         // world into the local mirror. PreUpdate so the panels and the
         // viewport see a snapshot that is at most one frame stale.
@@ -211,6 +231,7 @@ impl Plugin for EditorPlugin {
         // Which gizmo groups draw, restored from disk. After the
         // visualizers are registered so the panel has something to list.
         app.add_system(Stage::Startup, gizmos::load_visibility_system);
+        app.add_system(Stage::Startup, perf::persistence::load_overlays_system);
         // Rebuild the gizmo line batch from current selection. Runs after
         // transform propagation (PostUpdate) so GlobalTransform is fresh.
         app.add_system(Stage::PreRender, gizmos::build_gizmo_batch_system);
@@ -222,6 +243,7 @@ impl Plugin for EditorPlugin {
         // Same cheap fast-path as the layout: re-serialize, compare, and
         // only touch disk when a choice actually changed.
         app.add_system(Stage::Last, gizmos::save_visibility_system);
+        app.add_system(Stage::Last, perf::persistence::save_overlays_system);
     }
 
     fn name(&self) -> &str {

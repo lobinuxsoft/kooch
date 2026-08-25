@@ -41,7 +41,7 @@ pub(crate) mod prefab_propagate;
 
 pub(crate) use self::asset_ops::main_scene_path;
 pub(crate) use self::codegen::{
-    initial_registrations, migrate_to_library, register_scripts, split_authoring,
+    SyncOutcome, initial_registrations, migrate_to_library, register_scripts, split_authoring,
 };
 
 pub(crate) enum EditorAction {
@@ -418,6 +418,9 @@ pub(crate) enum EditorAction {
     /// stopped is worse than an interrupted one.
     CancelBuild,
     RegisterScripts,
+    /// The author saw the resync notice. Clears it; the rebuild is
+    /// theirs to run.
+    AcknowledgeScriptSync,
 }
 
 /// The kind of file created by [`EditorAction::CreateFile`]. The Rust
@@ -488,7 +491,8 @@ impl EditorAction {
             | Self::SetActiveScene(_)
             | Self::Play
             | Self::Stop
-            | Self::RegisterScripts => true,
+            | Self::RegisterScripts
+            | Self::AcknowledgeScriptSync => true,
 
             // Session and project lifecycle: these are how a user gets
             // *out* of a stuck build, so they must keep working.

@@ -24,7 +24,12 @@ const SHADER_SOURCE: &str = include_str!("../../../shaders/tonemap.wgsl");
 struct TonemapUbo {
     enabled: u32,
     exposure: f32,
-    _pad: [u32; 2],
+    /// Source-over-target pixel ratio. `1.0` when the source already
+    /// matches the target; the render-resolution ratio when a debug
+    /// view skipped the upscaler, so the region the renderer actually
+    /// wrote stretches to fill the view instead of sitting in a
+    /// corner at half size.
+    scale: [f32; 2],
 }
 
 /// Owns the HDR target the shading writes and the pipeline that resolves
@@ -152,6 +157,7 @@ impl Tonemap {
         target: &wgpu::TextureView,
         exposure: f32,
         enabled: bool,
+        source_scale: [f32; 2],
     ) {
         queue.write_buffer(
             &self.ubo,
@@ -159,7 +165,7 @@ impl Tonemap {
             bytemuck::bytes_of(&TonemapUbo {
                 enabled: u32::from(enabled),
                 exposure,
-                _pad: [0; 2],
+                scale: source_scale,
             }),
         );
 

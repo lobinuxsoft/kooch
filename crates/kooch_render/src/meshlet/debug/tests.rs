@@ -29,6 +29,14 @@ fn discriminants_match_the_shader() {
         ),
         (MeshletDebugMode::SingleLight, "INTI_DEBUG_SINGLE_LIGHT"),
         (MeshletDebugMode::LightsPerPixel, "INTI_DEBUG_LIGHT_COUNT"),
+        (MeshletDebugMode::VirtualPages, "INTI_DEBUG_VIRTUAL_PAGES"),
+        (
+            MeshletDebugMode::VirtualPageTiles,
+            "INTI_DEBUG_VIRTUAL_TILES",
+        ),
+        (MeshletDebugMode::VirtualPageAge, "INTI_DEBUG_VIRTUAL_AGE"),
+        (MeshletDebugMode::LocalPageFaces, "INTI_DEBUG_LAMP_FACES"),
+        (MeshletDebugMode::LocalPageDepth, "INTI_DEBUG_LAMP_DEPTH"),
     ] {
         let declaration = format!("const {name}: u32 = {}u;", mode.as_u32());
         assert!(
@@ -51,6 +59,94 @@ fn every_inti_view_is_above_the_dispatch_floor() {
         MeshletDebugMode::LightsPerPixel,
     ] {
         assert!(mode.as_u32() >= floor, "{mode:?} is below INTI_DEBUG_FIRST");
+    }
+}
+
+/// A mode the dropdown offers that the shader's own gate rejects paints
+/// BLACK, silently.
+///
+/// 🔴 The gate is not a range: modes 18 through 25 are resolved by other
+/// passes, so `inti_debug.wgsl` lists the high ones by name. Adding a
+/// variant to the enum and forgetting the gate gives a menu entry that
+/// blanks the screen, and the comment on `INTI_DEBUG_LAST` is there
+/// because it happened.
+#[test]
+fn every_paged_view_passes_the_shader_gate() {
+    let source = kooch_lighting::inti_debug_shader();
+    let gate = source
+        .find("return (mode >= INTI_DEBUG_FIRST")
+        .expect("the dispatch gate moved");
+    let block = &source[gate..source[gate..].find(';').unwrap() + gate];
+    for name in [
+        "INTI_DEBUG_VIRTUAL_PAGES",
+        "INTI_DEBUG_VIRTUAL_AGE",
+        "INTI_DEBUG_LAMP_FACES",
+        "INTI_DEBUG_LAMP_DEPTH",
+    ] {
+        assert!(
+            block.contains(name),
+            "`{name}` is above INTI_DEBUG_LAST and not named in the gate, so selecting \
+             it paints black instead of the view"
+        );
+    }
+}
+
+/// Every view whose shader reads `inti.debug_light` is listed in
+/// `needs_selected_light`.
+///
+/// # 🔴 The third time this happened
+///
+/// A view not listed gets `None` for the selection and renders its
+/// "nothing picked" branch forever, with nothing on screen to suggest
+/// the fault is in another crate entirely. It cost a removed view once,
+/// and then both lamp page views — which shipped painting the whole
+/// screen a flat colour, in the same commit that added a test for the
+/// dispatch gate and missed this.
+///
+/// The list cannot be trusted to be maintained, so this reads the
+/// shader: a mode whose branch touches `debug_light` has to be in it.
+#[test]
+fn every_view_that_reads_the_selected_light_is_listed() {
+    let source = kooch_lighting::inti_debug_shader();
+    for &mode in MeshletDebugMode::all_implemented() {
+        // The constant this mode dispatches on, and the function that
+        // constant calls.
+        let Some(name) = source
+            .lines()
+            .zip(source.lines().skip(1))
+            .find(|(doc, _)| doc.contains(&format!("MeshletDebugMode::{mode:?}`")))
+            .and_then(|(_, decl)| decl.split_whitespace().nth(1))
+            .map(|c| c.trim_end_matches(':').to_owned())
+        else {
+            continue;
+        };
+        let Some(at) = source.find(&format!("mode == {name}) {{")) else {
+            continue;
+        };
+        let call = &source[at..(at + 200).min(source.len())];
+        let Some(open) = call.find("return inti_") else {
+            continue;
+        };
+        let func = call[open + 7..]
+            .split('(')
+            .next()
+            .expect("a call has a name")
+            .to_owned();
+        let Some(body) = source.find(&format!("fn {func}(")) else {
+            continue;
+        };
+        let end = source[body..]
+            .find("\n}\n")
+            .map(|e| body + e)
+            .unwrap_or(source.len());
+        let reads = source[body..end].contains("inti.debug_light");
+        assert_eq!(
+            reads,
+            mode.needs_selected_light(),
+            "`{func}` reads debug_light = {reads} but {mode:?}.needs_selected_light() = {}; \
+             an unlisted view gets no selection and paints one flat colour forever",
+            mode.needs_selected_light(),
+        );
     }
 }
 
@@ -261,11 +357,22 @@ fn every_inti_view_still_replaces_the_shading() {
 /// a gap silently shows the wrong intermediate.
 #[test]
 fn the_fsr_stages_are_one_to_six() {
-    let stages: Vec<u32> = MeshletDebugMode::all_implemented()
-        .iter()
-        .map(|m| m.fsr3_stage())
-        .filter(|s| *s != 0)
-        .collect();
+    // Enumerated directly: the views retired from the DROPDOWN (the
+    // upscaler works and the user asked for the clutter gone), but the
+    // variants and their shader stages remain the diagnosis tools for
+    // the next regression, and this contract still guards them.
+    let stages: Vec<u32> = [
+        MeshletDebugMode::Fsr3Input,
+        MeshletDebugMode::Fsr3Motion,
+        MeshletDebugMode::Fsr3Masks,
+        MeshletDebugMode::Fsr3Upsample,
+        MeshletDebugMode::Fsr3History,
+        MeshletDebugMode::Fsr3Locks,
+        MeshletDebugMode::Fsr3Weights,
+    ]
+    .iter()
+    .map(|m| m.fsr3_stage())
+    .collect();
     assert_eq!(stages, [1, 2, 3, 4, 5, 6, 7]);
 }
 

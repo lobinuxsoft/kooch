@@ -40,6 +40,7 @@ pub(crate) fn draw_view_content(
     gizmo_groups: &[crate::gizmos::GizmoGroup],
     physics_debug: &mut kooch_physics::backend::DebugCategories,
     actions: &mut Vec<crate::actions::EditorAction>,
+    camera_rotation: Option<glam::Quat>,
 ) {
     let available = ui.available_size();
     let pixels_per_point = ui.ctx().pixels_per_point();
@@ -238,10 +239,125 @@ pub(crate) fn draw_view_content(
             });
     }
 
+    // The navigation gizmo — Godot's "compass". Clicking an axis ball
+    // snaps the camera to that view, keeping focus point and distance.
+    if let Some(rotation) = camera_rotation {
+        axis_gizmo(ui, panel_origin, available, rotation, &mut delta);
+    }
+
     // The perf sidebar used to live here. It moved to the Game panel:
     // the numbers describe what it costs to draw the game, and reading
     // them beside the game is the point (#592).
     *input = Some(delta);
+}
+
+/// The orientation gizmo in the viewport's top-right: six balls on the
+/// world axes, projected through the camera's rotation, back ones drawn
+/// first. Clicking one snaps the camera to look FROM that axis — the
+/// click travels as `snap_orientation` in the input delta, applied by
+/// the same step that applies orbits, so the panel stays free of
+/// camera math the way the rest of its input already is.
+fn axis_gizmo(
+    ui: &mut egui::Ui,
+    origin: egui::Pos2,
+    available: egui::Vec2,
+    rotation: glam::Quat,
+    delta: &mut ViewportInputDelta,
+) {
+    const RADIUS: f32 = 34.0;
+    const BALL: f32 = 8.0;
+    const MARGIN: f32 = 14.0;
+    let centre = origin + egui::vec2(available.x - RADIUS - BALL - MARGIN, RADIUS + BALL + MARGIN);
+    let footprint =
+        egui::Rect::from_center_size(centre, egui::Vec2::splat((RADIUS + BALL + 6.0) * 2.0));
+
+    // A faint disc under the pointer, the way Godot announces the
+    // widget is live.
+    if ui.rect_contains_pointer(footprint) {
+        ui.painter().circle_filled(
+            centre,
+            RADIUS + BALL + 4.0,
+            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 14),
+        );
+    }
+
+    let inverse = rotation.conjugate();
+    let colors = [
+        egui::Color32::from_rgb(226, 84, 84),
+        egui::Color32::from_rgb(122, 199, 68),
+        egui::Color32::from_rgb(80, 132, 240),
+    ];
+    let names = ["X", "Y", "Z"];
+    let axes = [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z];
+
+    // Project all six, then paint far-to-near so overlaps read as depth.
+    let mut balls: Vec<(egui::Pos2, f32, usize, f32)> = Vec::with_capacity(6);
+    for (index, axis) in axes.iter().enumerate() {
+        for sign in [1.0f32, -1.0] {
+            let view = inverse * (*axis * sign);
+            let at = centre + egui::vec2(view.x, -view.y) * RADIUS;
+            balls.push((at, view.z, index, sign));
+        }
+    }
+    balls.sort_by(|a, b| a.1.total_cmp(&b.1));
+
+    for (at, depth, index, sign) in balls {
+        let toward_viewer = depth >= 0.0;
+        let base = colors[index];
+        let fill = if toward_viewer {
+            base
+        } else {
+            base.gamma_multiply(0.45)
+        };
+        // Sticks join the CENTRE to the positive balls, under them.
+        if sign > 0.0 {
+            ui.painter()
+                .line_segment([centre, at], egui::Stroke::new(1.5, fill));
+        }
+        let rect = egui::Rect::from_center_size(at, egui::Vec2::splat(BALL * 2.0));
+        let id = ui.id().with(("axis_gizmo", index, sign as i8));
+        let response = ui.interact(rect, id, egui::Sense::click());
+        let radius = if response.hovered() { BALL + 1.5 } else { BALL };
+        if sign > 0.0 {
+            ui.painter().circle_filled(at, radius, fill);
+            ui.painter().text(
+                at,
+                egui::Align2::CENTER_CENTER,
+                names[index],
+                egui::FontId::proportional(10.0),
+                egui::Color32::from_rgb(20, 20, 24),
+            );
+        } else {
+            ui.painter()
+                .circle_filled(at, radius, fill.gamma_multiply(0.6));
+            ui.painter()
+                .circle_stroke(at, radius, egui::Stroke::new(1.0, fill));
+        }
+        if response.clicked() {
+            delta.snap_orientation = Some(snap_view(axes[index], sign));
+        }
+        response.on_hover_text(format!(
+            "Look from {}{}",
+            if sign > 0.0 { "+" } else { "-" },
+            names[index]
+        ));
+    }
+}
+
+/// The orientation that looks FROM `axis * sign` toward the focus
+/// point. Up stays world +Y except on the Y axis itself, where the
+/// horizon is gone and -Z stands in — the same convention Godot's top
+/// and bottom views use, so muscle memory transfers.
+fn snap_view(axis: glam::Vec3, sign: f32) -> glam::Quat {
+    let back = axis * sign;
+    let up = if axis.y.abs() > 0.5 {
+        glam::Vec3::NEG_Z
+    } else {
+        glam::Vec3::Y
+    };
+    let right = up.cross(back).normalize();
+    let true_up = back.cross(right);
+    glam::Quat::from_mat3(&glam::Mat3::from_cols(right, true_up, back))
 }
 
 /// Width of the perf sidebar overlay anchored to the right edge of

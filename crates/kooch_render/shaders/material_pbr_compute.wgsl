@@ -147,7 +147,7 @@ fn shade_from_tile(
     // leading entries and this walk is unchanged.
     for (var i = 0u; i < inti.directional_count; i = i + 1u) {
         acc = inti_accumulate(acc, inti_light_lit(
-            surf, inti_lights[i], frag_coord, !dominant));
+            surf, inti_lights[i], i, frag_coord, !dominant));
     }
     // `KOOCH_LIGHT_LIMIT`, the same cap `inti_clustered_lights` applies
     // to the storage walk. Both paths have to honour it or an A/B
@@ -158,7 +158,7 @@ fn shade_from_tile(
     }
     for (var i = 0u; i < walk; i = i + 1u) {
         acc = inti_accumulate(acc, inti_light_lit(
-            surf, inti_lights[tile_lights[start + i]], frag_coord, !dominant));
+            surf, inti_lights[tile_lights[start + i]], tile_lights[start + i], frag_coord, !dominant));
     }
     var radiance = acc.radiance;
     if (dominant && acc.reach > 0.0) {

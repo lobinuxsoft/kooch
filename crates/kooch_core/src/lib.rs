@@ -75,6 +75,16 @@ pub mod run_state;
 pub mod runner;
 pub mod scene_paths;
 pub mod schedule;
+/// Whether this build carries a profiling scope per system.
+///
+/// 🔴 Exists to be asserted by the crates that select the feature. A
+/// profiling build whose scopes compiled out is not a build that fails —
+/// it is a build whose captures quietly look like the ones from before
+/// the scopes existed, with `PreUpdate` reporting one number and no
+/// children. That already happened once, between adding the scopes and
+/// noticing the editor never enabled them.
+pub const CPU_SCOPES: bool = cfg!(feature = "cpu-profiler");
+
 pub mod stage;
 pub mod system;
 pub mod time;

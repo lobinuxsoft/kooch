@@ -83,6 +83,7 @@ pub(crate) fn draw_menu_bar(
     is_playing: bool,
     remote: Option<ConnectionState>,
     remote_stale: Option<&str>,
+    scripts_behind: bool,
     can_undo: bool,
     can_redo: bool,
     undo_desc: Option<&str>,
@@ -201,6 +202,7 @@ pub(crate) fn draw_menu_bar(
             {
                 actions.push(EditorAction::Stop);
             }
+            draw_script_sync(ui, scripts_behind, actions);
 
             // Right-aligned, and in a right-to-left layout the first
             // thing drawn is the furthest right — so the version sits at
@@ -230,6 +232,63 @@ pub(crate) fn draw_menu_bar(
             });
         });
     });
+}
+
+/// The code-sync control: quiet while the generated registrations match
+/// the project's build, pulsing once they do not.
+///
+/// 🔴 It does NOT mean "`registrations.rs` is stale". The poll rewrote
+/// that file already — announcing it would announce something handled.
+/// What is behind is the BUILD: the editor lists a project's components
+/// out of its compiled dylib, so a system added ten seconds ago is in the
+/// generated file and in no binary anywhere. That gap is invisible, it
+/// produces no error, and the symptom is "I pressed Play and my system
+/// did not run".
+///
+/// ⚠️ The pulse asks for a repaint per frame, which in an immediate-mode
+/// UI is a real and permanent cost — so it runs ONLY while behind. In
+/// the ordinary state the widget is static and asks for nothing.
+fn draw_script_sync(ui: &mut egui::Ui, behind: bool, actions: &mut Vec<EditorAction>) {
+    if !behind {
+        if ui
+            .button(icons::ARROWS_CLOCKWISE)
+            .on_hover_text(
+                "Resync scripts — rescans `src/` and rewrites the generated \
+                 registrations. Runs on its own when a source file changes; \
+                 this forces it.",
+            )
+            .clicked()
+        {
+            actions.push(EditorAction::RegisterScripts);
+        }
+        return;
+    }
+
+    // A triangle wave rather than a sine: the eye catches a hard edge,
+    // and a sine spends most of its time near the middle where the
+    // difference from the resting colour is smallest.
+    let phase = (ui.input(|i| i.time) * 1.6).fract() as f32;
+    let lit = 1.0 - (phase * 2.0 - 1.0).abs();
+    let colour = egui::Color32::from_rgb(150 + (105.0 * lit) as u8, 110 + (80.0 * lit) as u8, 40);
+    let clicked = ui
+        .add(
+            egui::Button::new(
+                egui::RichText::new(format!("{} Resync", icons::ARROWS_CLOCKWISE)).color(colour),
+            )
+            .min_size(egui::vec2(90.0, 0.0)),
+        )
+        .on_hover_text(
+            "The generated registrations changed, so the project's compiled code is \
+             behind its source — a component or system added since the last build \
+             exists in the file and in no binary. Rebuild the project, then click \
+             this to clear the notice.",
+        )
+        .clicked();
+    // Only while it pulses. See the header.
+    ui.ctx().request_repaint();
+    if clicked {
+        actions.push(EditorAction::AcknowledgeScriptSync);
+    }
 }
 
 /// Draws the remote session indicator and its rebuild control.

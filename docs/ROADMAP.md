@@ -772,6 +772,304 @@ lado son de otro nivel del clipmap. **Todos los knobs pasaron a `.rendersettings
 `Shadows: virtual pages` junto a `sun cascades` y `contact`. 🔴 **El rate de marcado se eliminó**:
 decidía cuántos hilos, ahora decide qué páginas EXISTEN.
 
+🔴 **2026-08-24 (12) — LA MEDICIÓN EN LA OneXFly: EL TRACK DE VSM CUESTA ~34 ms Y NINGÚN
+SCOPE PODÍA VERLO (#948).** `many_lights` por Steam→gamescope, caliente, 20 W: frame **mediana
+46.56 ms (21.5 FPS)**, p99 98.30. La captura declaraba **11.4 ms de GPU, plana en todos los
+deciles**; `drm-engine-gfx` declaraba **969 ms/s — 93% del wall, ≈45 ms/frame**. `fdinfo` por
+proceso cierra la discusión: `roll_a_ball 968.99`, `gamescope 0.00`, `mangoapp 0.00` — **no es
+el compositor y no es remote play, es nuestra propia cola que no drena**, y por eso
+`vkAcquireNextImageKHR` bloquea 69 ms en los frames lentos. El encoder del frame abría
+exactamente DOS scopes de GPU (`cull` y `raster + shade`) y grababa `record_page_marking`
+**entre los dos y dentro de ninguno**: el mark, los 17+ culls de clipmap, la compactación, la
+expansión y el draw caían bajo ningún nombre. Peor, la captura DESVIABA: su chequeo de
+correlación decía "la variación no la explica el trabajo de GPU" (r = 0.198) — cierto del
+trabajo **medido**, y se lee como "buscá en otro lado" cuando tres cuartos del trabajo no
+estaban en la serie. `4bea7050` es SOLO instrumentación: `shadow pages` → `page mark` +
+`page raster` → `page cull` / `page expand` / `page depth` (los cuatro escalan con cosas
+distintas — niveles, páginas residentes, pares, téxeles cubiertos — así que un número sobre el
+conjunto no dice cuál creció). ⚠️ **Dos tests pasaban por encima del agujero**:
+`the_page_passes_are_profiled` decía cubrir "los dos entry points que graban el trabajo de
+GPU" y sólo afirmaba `profiling::scope!`/`#[profiling::function]`, que miden la GRABACIÓN, no
+los dispatches; y `gpu_scopes.rs` deletreaba a mano el bundle del path R64 en vez de llamar a
+`all_required_features()`, se comía `SHADER_F16` y los **tres** tests del path que toma la
+OneXFly morían en `create_shader_module` sobre `fsr3_accumulate` — el camino que se estaba
+midiendo no tenía un solo test verde. ⏭️ **NEXT = redeploy + recaptura**, y recién ahí se sabe
+cuál de los cuatro pases se come el frame. `KOOCH_SHADOW_POOL_PAGES` (default 2048, rango
+4..8192) es la palanca de A/B. 🔴 **`virtual_shadows` NO se flipea a ON hasta tener ese
+número.** Aparte, 2874 MiB de VRAM en una handheld quieren su propia mirada.
+
+🎯 **2026-08-23 (11) — EL PRÓXIMO FRENTE, DECIDIDO: EL JUEGO TIRA DEL ENGINE.** Cerrado el
+hilo VSM (falta solo la medición en la OneXFly, que corre el user con su build), lo que sigue
+es **A: mecánicas + un nivel real**, con dos issues nuevas que lo habilitan: **#946 — CSG de
+blockout** (clase Godot CSG, NO ProBuilder: primitivas + booleanas → malla que cae directo al
+pipeline de meshlets existente; investigar crates de booleanas ANTES de escribir una — es un
+cementerio de edge cases) y **#947 — colisión y oclusión de cámara** (clase Phantom
+Camera/Cinemachine: spring-arm con shape-cast de Rapier — no un ray, la cámara tiene near
+plane —, whiskers de oclusión, damping correctivo separado del de follow; el sistema de
+cámaras quedó incompleto y un nivel real lo va a hacer notar de inmediato). **GI confirmada
+en el roadmap**: es **#450 (surfels)** — el user la nombró GIBS (EA SEED 2021), que SÍ usa
+raytracing para la radiancia por surfel pero con presupuesto de rayos desacoplado; 🔴 **el
+engine NO es solo low-end**: en high-end (9070 XT) el update de surfels puede usar ray
+queries de wgpu (`EXPERIMENTAL_RAY_QUERY`, Vulkan), en la handheld la misma estructura se
+alimenta de un sampler barato (SDF #449 como far-field) — una estructura, dos proveedores de
+rayos, el preset (#889) elige. ShaderForge-like: descartado por ahora (la tool más cara, un
+solo artista que ya escribe WGSL). Pendientes de perf que siguen vivos detrás de esto: #824
+(compute shading con luces en LDS, el #1 medido de #823) y el flip del default de
+`virtual_shadows` tras la medición.
+
+🎉 **2026-08-23 (10) — LAS SOMBRAS CLÁSICAS DEJAN DE RETENER SU MEMORIA BAJO LA VSM (#945).**
+Lo que quedaba del defecto #5 era la MEMORIA (los draws ya estaban gateados: `draw_cascades`
+mató los 0.33 ms, y spots/points van con listas vacías bajo pages): con sol presente,
+`nothing_casts` era falso y el atlas de 64 MiB + 6 MiB por cubo quedaban alocados para un
+lector que ramifica a páginas. No pueden ir a CERO — el bind group del shading necesita views
+vivas y wgpu rechaza texturas de 0 layers — así que van a un TOKEN: atlas en el piso del
+clamp (256), UN cubo de 16 téxeles → **<0.5 MiB donde había 88**. La decisión es una función
+PURA (`classic_shadow_alloc`) y la clave de release pasó de un `u32` de téxeles a una tupla
+`ClassicAlloc` — el test `a_floor_sized_atlas_still_swaps` clava el edge que el u32 pelado
+perdía: un autor con cascadas YA en 256 no habría liberado los cubos al togglear. La puerta
+de resize-release existente hace el swap en ambos sentidos sin código nuevo. Con esto el
+frame bajo VSM paga SOLO la VSM → la medición en la OneXFly mide lo que dice medir.
+
+🎉 **2026-08-23 (9) — EL BOUND DE RECEPTORES (#940): EL PLAN OLSSON QUEDA COMPLETO.** PMCD
+de Olsson §4 a granularidad de PÁGINA (más fino que el per-face del paper): cada sample que
+marca la página de una lámpara es un receptor y el marking hace `atomicMax` de su distancia
+RADIAL a la luz en la 5ª palabra de la tabla (`PAGE_CELL` 4→5; floats positivos bitcast a
+u32 ordenados = atomicMax sobre distancias); `age_view` la borra cada frame (0 = sin datos =
+nunca rechazar → los rigs plantados y el sol quedan intactos). La compactación la copia a
+`page_list` (vec2→vec4 — el expand está EN el límite de 8 storage buffers y no puede bindear
+la tabla), y la expansión de lámparas gana UN rechazo: caster cuyo punto MÁS CERCANO queda
+detrás del receptor más lejano de la página no ocluye nada que el frame sombree (radial =
+conservador; la rotación del spot preserva longitud → una comparación para ambos kinds).
+Contador `depth_rejected` en la línea de pair-tests del panel — el número que dice si la 5ª
+palabra paga su memoria. Test `a_caster_behind_every_receiver_pairs_nothing`: dos corridas
+idénticas (bound plantado vs 0) y el contador tiene que IGUALAR los pares que desaparecieron
+(cerró exacto a la primera). Con esto, TODO el plan derivado del paper está implementado:
+cull jerárquico (#939) → caché de contenido (#477/#866) → filtro (#941) → prioridad (#942)
+→ bias (#943) → gate (#944) → max-depth (#940). Lo que sigue es MEDIR.
+
+🎉 **2026-08-23 (8) — LAS LUCES QUE NADIE PUEDE RESOLVER NO CASTEAN (#944).** El gate de
+cobertura de Epic (`PruneLightGridCS`), como UNA comparación dentro del loop de marcado que ya
+tiene todos los operandos: una luz local cuyo rango ENTERO proyecta bajo `shadow_min_pixels`
+de radio en pantalla (nuevo knob en `Shadows: virtual pages`, default 8 px, 0 = off) no marca
+páginas — sigue ILUMINANDO, los lectores caminan su chain, no encuentran nada y devuelven
+lit, y recupera su sombra el frame en que la cámara se acerca. El sol nunca se gatea (no
+tiene radio) y el gate yerra hacia castear (mide la esfera de rango, no la parte iluminada).
+El paint del debug aplica el mismo gate. Contador nuevo `culled` (pares rechazados) en la
+línea del censo del panel. Tests: `a_tiny_light_casts_nothing` (lámpara de ~13 px bajo gate
+de 32 → 0 residentes, `culled > 0`, `pairs` idéntico — el gate corta el marcado, no el walk
+del grid) + `shadow_min_pixels_reaches_the_settings` (la lección del defecto #1: un setting
+que el frame no alcanza se shippea inerte). Con esto la cadena de #942 queda completa:
+prioridad (quién) → bias (cuánto) → gate (si siquiera).
+
+🎉 **2026-08-23 (7) — EL BIAS DE RESOLUCIÓN HACE QUE LA DEMANDA QUEPA (#943).** Feedback
+GPU-only, cero readback: `bias_view` (1 hilo, al final del marking) lee el cutoff del plan y
+mueve un bias persistente por vista un paso por frame — bajo presión las LOCALES pagan primero
+(hasta 4 niveles), el sol recién cuando ellas no tienen más que dar (hasta 2); cada nivel es
+un cuarto de las páginas. Los lectores NO cambiaron: ambos caminan su chain desde lo fino y
+toman la primera página residente, así que un marcado más grueso es simplemente lo que
+encuentran (el debug paint aplica el mismo bias o pintaría páginas que el marking nunca
+eligió). La vuelta es de dos vías y esa asimetría ES la histéresis: si la aritmética PRUEBA
+que un nivel más fino entra (slack ≥ 3× la demanda de esa parte) baja al instante; donde no
+puede probarlo — los niveles gruesos del clipmap NO cuadruplican, el ×4 sobre-bloquea, lo
+midió el test — PRUEBA un paso tras 16 frames de paciencia y el raise ordinario revierte el
+trial fallido al frame siguiente (las páginas gruesas aún residentes atajan a los lectores
+mientras tanto: un trial fallido cuesta un frame de fallback, no uno de sombra faltante).
+Test de aceptación `the_bias_settles_the_denials`: pool de 4 con demanda de ~11 → el bias
+escala hasta que `denied == 0`, se queda quieto 3 frames (sin oscilación), y con la demanda
+relajada vuelve a (0,0) solo. El panel imprime el bias vigente; uno que queda alto es el pool
+diciendo que es chico para la escena. `RANK_WORDS` 36→40 (bias + paciencia persistentes; el
+clear por frame ahora borra SOLO el histograma).
+
+🎉 **2026-08-23 (6) — EL POOL ASIGNA POR RANGO, NO POR ORDEN DE LLEGADA (#942).** El
+diagnóstico salió del propio panel: **7 674 páginas pedidas contra un slice de 1 024** y un
+estado estacionario `1022 reused · 0 new · 0 evicted` — el que agarró un slot primero lo
+retiene para siempre (residente → re-marcado → edad refrescada) y 6 652 requests hacen
+inanición eterna; mover la cámara producía pedidos que jamás aterrizaban. Tres dispatches
+nuevos al final del marking: `plan_view` (prefix-sum del histograma de demanda por rango
+contra el presupuesto del slice → rango de corte + quota + spare), `preempt_view` (desaloja
+lo que el plan no financia; los residentes del rango de corte toman la quota ANTES que los
+nuevos — a igual importancia, una página CON contenido le gana a una sin), `adopt_view`
+(asienta lo financiado; lo demás se DENIEGA y se cuenta). El rango es el nivel, grueso
+primero: el clipmap del sol (rangos 0..17) delante de toda lámpara, y dentro de cada chain lo
+grueso delante de lo fino — bajo presión se pierde detalle, nunca cobertura, y el sol nunca
+pierde contra una lámpara. `page_touch` ya NO asigna: la demanda se anota donde se gana el
+bit y la asignación es del plan. La aritmética cierra por construcción (el plan financia
+exactamente `slice` asientos y la preempción libera lo no financiado → `overflow` del
+allocator = 0 SIEMPRE; toda escasez es una *denial* con rango). Dos tests de aceptación:
+`the_survivors_are_the_top_ranks` (más demanda que slots → todo residente ≤ cutoff, espejo
+CPU de `entry_rank`) y `a_saturated_pool_reseats_on_move` (pool saturado + cámara movida →
+`claims > 0` y `preempted > 0` EN EL MISMO FRAME, no a los `max_age`). El binding 9 (libre
+desde la tabla plana) se gasta en el rank state: el layout queda EN el límite downlevel de 8
+storage buffers. ⚠️ #942 no hace que 7 674 entren en 1 024 — eso es el bias de resolución
+(#943) y el gate por cobertura (#944).
+
+🎉 **2026-08-23 (5) — BLUR CONFIGURABLE (#941): `shadow_softness` en RenderSettings.** El
+filtro de páginas generaliza de bilineal fijo a caja Castano-class de ancho configurable en
+téxeles (1 = bilineal exacto del cube path, el default; 2/3/5 con pesos de borde `frac`-clipped
+y precisión sub-téxel; costo `(W+1)²` loads POR LUZ POR PÍXEL — por eso el default es sharp y
+la opción ancha lleva su factura en el label). El ancho viaja en `world.w` del uniform del
+raster (el shading bindea ESE buffer — una escritura sirve a ambos). Cadena completa:
+RenderSettings → `shadows()` → `ShadowSettings.page_softness` → `PageSettings.softness` →
+`raster.set_softness` → uniform → `inti_page_filter`, con test de alcance
+(`shadow_softness_reaches_the_published_settings` — la clase de bug que shippeó
+`virtual_shadows` inerte). Sin blocker search: penumbra uniforme, no contact-hardening (eso
+sería PCSS, fuera de #941).
+
+🔴 **2026-08-23 (4) — EL USER PROBÓ: el cache rinde ("muchísimo más performante") pero
+`many_lights` tiene CIEN luces y el cap era 64.** El panel lo decía entero: 2.4M pares/111k
+samples ≈ 22 luces por píxel — no 16. Las 36 luces en slots 64..99 caían en la rama over-cap:
+121 páginas dropped, un tercio de la escena sin sombra, y cada luz SIN sombra lavando las
+sombras de las vecinas (el "se borran/no se suman" del user era esto — la suma por luz del
+shading es correcta; faltaban las sombras de un tercio de las luces). Fixes (`—`):
+`LAMP_CULLS` 64→**256** (el presupuesto del clustering); la arena de errores se dimensiona por
+las luces ACTIVAS del frame, no por el cap (256 slots sobre una escena vacía no pagan arena);
+el WARN ahora distingue "luces sobre el cap" de "sin espacio" y dispara solo en la TRANSICIÓN
+(con luces animadas, `pages` se movía cada frame y re-armaba el warn — 2 000 líneas idénticas);
+test nuevo `a_hundred_lamps_compact_without_drops` = la forma exacta de la escena. Pendiente
+del feedback del user: **blur configurable = #941** (siguiente).
+
+🎉 **2026-08-23 (3) — LAS PÁGINAS CACHEAN SU CONTENIDO ENTRE FRAMES (#477/#866): "cached
+pages are effectively free" quedó implementado.** El pool ya persistía slots; ahora persiste
+el DEPTH. La 4ª palabra de la tabla volvió como **content stamp** (la generación bajo la que
+se dibujó; 0 = sin contenido) y la compactación saltea toda página residente cuyo stamp
+coincide: ni lista, ni expande, ni dibuja. **Murió el clear de capa entera**: el depth pass
+carga la capa (`LoadOp::Load`) y limpia SOLO los rects sucios con un quad por página (compare
+`Always`, reversed-Z 0). Generaciones (hash FNV, nunca 0): por NIVEL del sol (centro snapeado
+— espejo exacto de `sun_centre`, verificado por test dedicado —, dirección, y el eje del ojo a
+lo largo del sol porque el origen de profundidad viaja con el ojo), y por LÁMPARA (posición,
+dirección, range, kind, cono — la granularidad de UE5). Invalidación por movimiento:
+`instance_bounds` (#847) ya tenía esfera+hash por instancia → diff contra el frame anterior →
+esferas viejas Y nuevas al `cs_invalidate`, que apaga el stamp de toda página alcanzada (por
+página en el sol, por luz en lámparas; por celda = refinamiento en #866). Overflow de la lista
+de movidos o del pair list ⇒ bump de scene generation = todo redibuja UNA vez, nunca stale. El
+panel ahora imprime `rastered · cached ·` (criterio #477: sucias <5%). El rig lo prueba en
+caliente: 2º frame ⇒ 0 listadas, 2 cacheadas, atlas intacto; caster movido ⇒ vuelven las 2 y
+el redraw reproduce la escena. ⚠️ Corrección honesta: la lámpara fuera de alcance que el
+commit anterior decía plantar en el rig NO estaba (un splice fallido la perdió y el assert
+pasaba trivialmente) — plantada de verdad en este commit.
+
+🎉 **2026-08-23 (2) — EL CULL DE LÁMPARAS ES UNA JERARQUÍA EN GPU (#939), y la técnica del
+paper quedó completa en su parte de culling.** El user trajo el paper fundacional (Olsson et
+al. 2014, *Efficient VSM for Many Lights* — el ancestro del VSM de UE5) y pidió completar la
+técnica ANTES de medir. Gap analysis contra Kóoch: clustered shading ✅ (#780), selección de
+resolución ✅ (mejor: por página vía `wanted`), projection maps ✅ (la expansión solo empareja
+contra páginas residentes), multi-draw ✅ (un `draw_indirect`), LOD ✅ (mejor: DAG de meshlets).
+Faltaban: **el cull jerárquico (§3.4/§5.2)** — hecho hoy —, el max-depth cull (→ #940), el
+filtro suave (→ #941) y la caché de contenido (ya en #477/#866). Lo de hoy: `lamp_cull.wgsl`,
+4 dispatches compartidos por TODAS las lámparas, **una vez por frame** (view-independent — la
+segunda cámara del editor reusa los survivors): (1) pares luz×instancia (esfera de la luz vs
+esfera del mesh, `mesh_bounds` del #847 subido a GPU), (2) args indirectos, (3) **la reducción
+de error por grupo del #465 para todas las lámparas en UN dispatch** — arena
+`[slot × group_capacity + group]`, coherencia entre siblings intacta, sin costuras en los
+casters — y (4) el cull (LOD perspectivo desde la luz + range + cono) emitiendo a slices fijos
+de 4096 por lámpara, counts directo a `visible_counts` (sin copia, sin bind groups por
+lámpara). Murieron: los 32 `MeshletCull` por lámpara de la mañana, su loop CPU y sus bind
+groups. `LAMP_CULLS` 32→64 (un slot ya no cuesta un cull; techo honesto = la arena,
+`64 × group_capacity × 4 B`). El rig ahora planta además una lámpara fuera de alcance y
+verifica su slice VACÍO. Pendiente nombrado en #939: ranking de slots (hoy orden de buffer).
+
+🔴 **2026-08-23 — LAS LÁMPARAS DEJAN DE PEDIR PRESTADOS LOS SUPERVIVIENTES DEL SOL: un
+cull por lámpara.** El "cero culls nuevos" de abajo era el defecto, medido en dos síntomas del
+user: la sombra de una point se **desintegraba al acercar la luz al objeto** (pedía octavas
+finas → buckets finos → cajas ortográficas chicas centradas en la CÁMARA → sus casters quedaban
+fuera y el cull se los comía), y la spot dibujaba con **meshlets raíz** (bucket grueso → LOD del
+sol grueso → la esfera facetada). Una lista de supervivientes es un LOD elegido para una VISTA;
+las del sol son de las vistas del sol. El fix es la receta del cube path retirado (#777):
+**un cull por luz puntual** — frustum = caja ortográfica de `2×range` centrada en la luz, LOD
+**perspectivo desde el ojo de la luz** (`with_lod`, viewport `LOCAL_MAX_TEXELS`, 90° ⇒
+`proj_scale_y = 1`) — y **una sola lista sirve las 6 caras y toda la cadena** porque el error
+perspectivo ya escala con la distancia. No es la explosión 4848 que este diseño temía: es
+`17 + lámparas` culls, cap `LAMP_CULLS = 32` (el `MAX_POINT_SHADOWS` del camino clásico; una
+luz sobre el cap queda listada y contada como dropped, no silenciosa). La compactación bucketea
+las locales por **slot de luz** (`chain.x + slot`), murió la 4ª palabra del "ask" (la tabla
+vuelve a 3 palabras/entrada) y el binding de lights de la compactación se retiró. El rig
+end-to-end ahora planta fina+gruesa y verifica que ambas caen en el bucket de SU lámpara y que
+el atlas trae piso+caja del cull propio.
+
+🎉 **2026-08-22 — LAS POINT Y SPOT LIGHTS DIBUJAN Y SE SAMPLEAN.** Cinco piezas, ninguna
+útil suelta, y por eso `mark_local` reclamaba `false` hasta que estuvieron las cinco:
+
+| pieza | qué era |
+|---|---|
+| **bucket = OCTAVA** | Un bucket es una densidad, no una luz ni una cadena. `page_octave` está anclada para que el nivel L del clipmap del sol caiga en el bucket L **exacto**, así una lámpara cae en listas de supervivientes que los culls del sol **ya llenaron**. Medido: una lámpara de 10 m ocupa `[0,0,0,1,2,3,4,5]`. **Cero culls nuevos, y el costo no crece con la cantidad de luces** |
+| **cono en `cs_expand`** | Una página de lámpara es un frustum desde un punto, no una losa; el test esfera-caja es incorrecto a toda distancia salvo la que la caja usó |
+| **`page_clip_w`** | La página era un **mapeo, no una proyección**: se dividía por vértice y el rasterizador recibía `w = 1`, así que el interior del triángulo se rellenaba con rectas entre tres esquinas divididas por separado. Wrong de forma coherente y direccional — se leía como *todas las sombras apuntando al mismo lado* |
+| **`face_local`** | Rechazar un vértice por caer en otra cara **no elimina el triángulo**: el clipper interpola y dibuja una cuña en cada costura. En pantalla, una **barra recta de oclusión falsa** cruzando el pool. Ahora se proyecta sin preguntar y un punto detrás vuelve con `w` negativo |
+| **el LECTOR** | `inti_point_shadow` sampleaba el cubemap pase lo que pase. 7937 pares por frame rasterizados y **nadie los leía**. Y el camino de páginas **no** se gatea con `shadow_slot`: ese slot es un índice de cubo y hay 32, que es el techo que las páginas existen para borrar |
+
+`LOCAL_MAX_TEXELS = 2048` corta la cadena de una lámpara tres niveles — **factor 64 en las
+páginas que puede direccionar**. Sin eso, 455 de 504 slots residentes eran de lámparas, al sol
+le quedaban 49, y la tabla caminaba **9 tumbas por lookup**.
+
+🔴 **2026-08-22 — EL COSTO NO ESTÁ DONDE LO BUSCÁBAMOS, Y LA TABLA HASH ES EL DEFECTO.**
+Profiling de 1096 frames, con las lámparas dibujando:
+
+```
+raster + shade                   12.398 ms
+  shade: compute (half rate)      6.432      ← el lector
+  shade: compute                  4.011      ← el lector
+shadows                           0.884      ← TODO el track: marcado, cull, compact, expand, draw
+```
+
+**El sombreado se come 10.4 ms y todo el track de sombras 0.88.** El híbrido de la expansión
+—medido en **245×** de ahorro sobre 254 898 pair tests— optimizaría el 7 % del frame. No es ahí.
+
+Lo que cambió: `inti_point_shadow` era **un `textureSampleCompareLevel`** — una instrucción de
+textura con hardware dedicado. `inti_local_page_shadow` es un **walk en software**: hasta 5
+niveles de cadena, cada uno con un lookup de hash abierto de hasta 32 sondeos, **por píxel y
+por luz**. Se cambió una instrucción por un bucle anidado.
+
+**Las tres fuentes del prior art coinciden en que el lookup es UNA lectura indexada:**
+
+| fuente | qué dice |
+|---|---|
+| Chalmers, *More Efficient VSM for Many Lights* | *"virtual shadow maps are quite fast because they only require **a single texture lookup** in the final pass"* |
+| Stephano, *Sparse Virtual Shadow Maps* | `pageTable[ivec2(floor(virtualTexCoords * numPagesXY))]` — **una indirección por píxel**, entrada de 32 bits con coordenada física + índice de pool + residencia |
+| UE 5.8 | `SampleVirtualShadowMapLevel` → `VirtualToPhysicalTexel`, **un solo lookup** |
+
+🎯 **Y el recorte de hoy destrabó la decisión que estaba bloqueada por memoria.** La tabla plana
+se había descartado por costar **108 MiB** — pero ese número asumía darle a cada luz el espacio
+virtual completo. Con `LOCAL_MAX_TEXELS`:
+
+| | páginas virtuales | tabla plana |
+|---|---|---|
+| antes (cadena completa por lámpara) | 28 409 856 | **108 MiB** 🔴 |
+| **después del floor** | **~485 000** | **~1.9 MiB** ✅ |
+
+**Sesenta veces menos.** La razón por la que la tabla es un hash abierto desapareció, y con ella
+el walk de 32 sondeos por píxel por luz.
+
+🔴 **2026-08-22 (noche) — LAS ESCENAS SIN SOL ESTABAN ROTAS POR UN GATE MUERTO, y la spot por
+tres mapeos.** Probado por el user en `roll-a-ball` (solo point lights): sombras destruidas y
+las debug views de lámpara en magenta. Tres defectos (`dbf1b6c7`): (1) `record_page_raster`
+retornaba temprano sin sol — comentario de ANTES de que existiera el ráster local ("their
+raster is the next machine") — así que las lámparas marcaban páginas, quemaban slots del pool
+y **nadie compactaba ni dibujaba nada**: el lector sampleaba el atlas viejo de otra escena.
+Ahora el clipmap cae a -Y (el mismo default del marcado). (2) La **spot** era tres mapeos
+distintos de una página: marcado y lector forzaban cara 0 con la UV del EJE DEL MUNDO, y el
+ráster proyectaba por +X del mundo → `spot_local` en `page_table.wgsl` rota el offset para que
+el eje de la spot SEA la cara 0, compartida por las cuatro pasadas como `sun_basis`
+(test `a_spot_page_rotates_with_its_axis`, por las funciones del shader). (3) Las debug views
+de lámpara se cegaban con `shadows_enabled` — flag de CASCADAS, 0 sin sol. Además: con páginas
+activas se seguían dibujando los cubemaps y la layer de spot **que nadie samplea** (seis caras
+por lámpara de costo muerto) — listas vacías bajo `virtual_pages` y el atlas fijo se libera; y
+los logs INFO por frame bajaron a debug. ⚠️ Del capture del user (1073 frames, desktop): GPU
+1.2 ms, CPU ~4.7, **`vkAcquireNextImageKHR` 17.0 de 24.6 ms** — el "no llega a 60" es el
+swapchain, no el engine; `KOOCH_PRESENT_MODE=novsync` lo demuestra en un launch.
+
+✅ **2026-08-22 — LA TABLA PLANA ESTÁ.** `page_table.wgsl` ya no tiene hash: el índice de la
+entrada ES la página virtual, la primera palabra es `slot + 1` (0 = ausente), y el lookup del
+sombreado es **una lectura indexada** — la forma de Chalmers/Stephano/UE5. Con ella murieron
+los tombstones, el `sweep_view` entero, el buffer de keys (un binding menos en tres pasadas) y
+los tres contadores del hash (`holes`/`probes`/`swept`). El espacio local se re-basó en el piso
+— stride por lámpara **2 048 páginas contra 131 070** — y los slots de luces van acolchados de
+a 64 para que agregar una luz no mueva ni una página residente. El walk del lector quedó en ≤5
+niveles × una lectura cada uno (el del sol resuelve típicamente en el primero).
+
+⚠️ Y lo que el prior art dice del ráster y todavía no tenemos: **caché de páginas entre
+frames**. StraySpark: *"cached pages are effectively free"*; el juego entero de optimización es
+mantenerlas cacheadas. Nuestro pool se vacía y se rellena cada frame.
+
 🔴 **2026-08-21 — MEDIDO EN EL EDITOR: la VSM anda mal, y los números dicen por qué.** Dos
 vistas alternando a 409x403, `many_lights`:
 

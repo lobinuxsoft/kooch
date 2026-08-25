@@ -11,6 +11,7 @@
 //! single `resources.get::<EditorPerfStats>()` from the View toolbar.
 
 pub(crate) mod breakdown;
+pub(crate) mod persistence;
 pub(crate) mod sys_metrics;
 pub(crate) mod timing;
 
@@ -159,33 +160,77 @@ mod tests;
 /// metric refreshed twice a second that lag is invisible, and the
 /// alternative — asking the UI mid-`PreRender` what it is about to draw —
 /// does not exist.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub(crate) struct HudVisibility {
-    /// The perf sidebar as a whole.
-    pub(crate) sidebar: bool,
     /// The **System** section inside it, which is the only reader of the
     /// sysinfo poll.
+    #[serde(skip)]
     pub(crate) system_section: bool,
+    /// The shadow-pages readout, as its OWN floating window: inlined in
+    /// the Debug section it sat translucent over the 3D view and could
+    /// not be read — the user's words were "no se entiende nada".
+    pub(crate) shadow_pages_window: bool,
+    /// Whether the Performance dock tab drew this frame. Set by the tab,
+    /// cleared by `sys_metrics_system` after reading, so it is always at
+    /// most one frame stale. Gates the sysinfo poll alongside `sidebar`,
+    /// and decides which surface hosts the pinned floating windows —
+    /// two hosts drawing the same window id would clash.
+    #[serde(skip)]
+    pub(crate) panel_visible: bool,
+    /// Which sections have been pinned out into floating windows.
+    pub(crate) pinned: PinnedSections,
+    /// The Godot-style anchored cards on the game viewport, toggled
+    /// from its View menu: frame timings top-right, render information
+    /// bottom-right. Small, fixed, and out of the picture's way — the
+    /// full readout lives in the Performance tab.
+    pub(crate) frame_time_card: bool,
+    pub(crate) info_card: bool,
+}
+
+/// One flag per pinnable section of the performance readout. A fixed
+/// struct rather than a set: the sections are a closed list, and
+/// `HudVisibility` stays `Copy` for the `PreRender` readers.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub(crate) struct PinnedSections {
+    pub(crate) debug: bool,
+    pub(crate) frame: bool,
+    pub(crate) project: bool,
+    pub(crate) system: bool,
+    pub(crate) render: bool,
+    pub(crate) meshlet: bool,
+    pub(crate) cpu_frame: bool,
+    pub(crate) remote: bool,
 }
 
 impl Default for HudVisibility {
-    /// Visible until the UI says otherwise.
-    ///
-    /// The first frame runs before any panel has drawn, and a default of
-    /// "hidden" would skip the first refresh — which is the one that
-    /// establishes the CPU% baseline, without which every later sample
-    /// reads zero.
+    /// The overlay sidebar defaults HIDDEN now that the metrics live in
+    /// the Performance dock tab: drawn over the game view they could
+    /// not be read, which was the user's complaint. The CPU% baseline
+    /// warm-up the old "visible by default" protected is handled by
+    /// `sys_metrics_system`'s re-warm on visibility transitions.
     fn default() -> Self {
         Self {
-            sidebar: true,
             system_section: true,
+            shadow_pages_window: false,
+            panel_visible: false,
+            pinned: PinnedSections::default(),
+            // The one card a fresh layout shows: frame timings are what
+            // everyone wants first, and everything else is a toggle
+            // away in the View menu. The user's spec, verbatim.
+            frame_time_card: true,
+            info_card: false,
         }
     }
 }
 
 impl HudVisibility {
     /// Whether the OS is worth asking about CPU and memory this frame.
+    /// Whether the OS is worth asking about CPU and memory this frame:
+    /// the Performance tab is open with its System section expanded, or
+    /// the System overlay card is on the game viewport.
     pub(crate) fn wants_system_metrics(self) -> bool {
-        self.sidebar && self.system_section
+        (self.panel_visible && self.system_section) || self.pinned.system
     }
 }

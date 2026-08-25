@@ -91,6 +91,16 @@ pub(super) fn optional_features(adapter: &Adapter) -> wgpu::Features {
     {
         features |= wgpu::Features::DEPTH_CLIP_CONTROL;
     }
+    // #952 — the virtual shadow pages' depth pass clips each triangle to
+    // the one page it was paired with. Without this it does that in a
+    // fragment shader with `discard`, which pays twice: the out-of-rect
+    // fragments are rasterised before they are thrown away, and the
+    // `discard` disables early-Z for the whole pass. With it the clipper
+    // cuts the triangle before any fragment exists and the pass carries
+    // no fragment shader at all. See `page_depth_clipped.wgsl`.
+    if adapter.features().contains(wgpu::Features::CLIP_DISTANCES) {
+        features |= wgpu::Features::CLIP_DISTANCES;
+    }
     if adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY)
         && adapter
             .features()

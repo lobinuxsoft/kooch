@@ -17,6 +17,45 @@ use crate::view_camera::ViewCamera;
 
 use super::super::MeshletRenderStage;
 
+/// What the classic shadow pass may allocate this frame (#945): the
+/// atlas resolution, the cube face size, and how many cubes. Zeroed
+/// means "nothing held" — the sentinel the bare texel count used to be.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub(in crate::meshlet::render_stage) struct ClassicAlloc {
+    pub(in crate::meshlet::render_stage) texels: u32,
+    pub(in crate::meshlet::render_stage) cube_size: u32,
+    pub(in crate::meshlet::render_stage) cubes: u32,
+}
+
+/// The decision, pure so a test can hold it still: what the classic
+/// pass allocates given the settings.
+///
+/// 🔴 With the pages on, NOTHING reads the atlas or the cubes — the
+/// draws are gated, the lists are empty, `inti_shadow` branches to the
+/// pages — but the textures stayed allocated: 64 MiB of atlas and 6 per
+/// cube, held for a reader that never comes (#945). They cannot go to
+/// zero: the shading's bind group needs live views and wgpu refuses a
+/// zero-layer texture. So they go to a TOKEN — the atlas at its clamp
+/// floor, one sixteen-texel cube — under half a megabyte standing where
+/// eighty-eight stood, and the resize-release door that already existed
+/// swaps the real allocation back the frame the pages turn off.
+pub(in crate::meshlet::render_stage) fn classic_shadow_alloc(
+    settings: &ShadowSettings,
+) -> ClassicAlloc {
+    if settings.virtual_pages {
+        return ClassicAlloc {
+            texels: 256,
+            cube_size: 16,
+            cubes: 1,
+        };
+    }
+    ClassicAlloc {
+        texels: settings.clamped_texels(),
+        cube_size: crate::shadow::DEFAULT_CUBE_SIZE,
+        cubes: settings.point_budget() as u32,
+    }
+}
+
 impl MeshletRenderStage {
     /// Allocates the atlas if this frame needs one, places the cascades
     /// and sizes the culls.
@@ -49,7 +88,19 @@ impl MeshletRenderStage {
         // Already capped at the budget during the walk, and numbered in
         // the order the slots were handed out — there is no second place
         // that decides which spots fit.
-        let spots = lights.spot_shadows().to_vec();
+        // 🔴 With virtual pages on, every lamp samples the PAGE pool —
+        // `inti_light_lit` takes the page branch whenever the pages are
+        // bound — so the cube maps and the spot layers would be drawn
+        // for nobody. Six faces per lamp is the single most expensive
+        // shadow this engine draws, and it was running in parallel with
+        // the pages that replaced it. Empty lists skip those passes
+        // wholesale, and the atlas releases through the same
+        // `nothing_casts` door a lamp-less scene uses.
+        let spots = if settings.virtual_pages {
+            Vec::new()
+        } else {
+            lights.spot_shadows().to_vec()
+        };
         // Point lights, likewise (#778) — ranked by what a cube would
         // show, because past the limit a light stops casting and which
         // one should not depend on spawn order.
@@ -71,11 +122,16 @@ impl MeshletRenderStage {
         // of the frame — the union of every active view's frustum, or one
         // selection reused by all of them — not of whoever is rendering.
         let ranked = lights.ranked_points(camera.position(), usize::MAX);
-        let points = crate::shadow::select_point_casters(
-            &ranked,
-            settings.point_budget(),
-            &self.point_shadow_holders,
-        );
+        let points = if settings.virtual_pages {
+            // The page pool shadows them; see `spots` above.
+            Vec::new()
+        } else {
+            crate::shadow::select_point_casters(
+                &ranked,
+                settings.point_budget(),
+                &self.point_shadow_holders,
+            )
+        };
         // Next frame's hysteresis is this frame's answer. Written even
         // when the list is empty: a light that lost its cube must not be
         // handed the bonus back the moment it returns.
@@ -93,7 +149,13 @@ impl MeshletRenderStage {
         // alternating in the roll-a-ball stress scene — because the cull
         // ran before the budget; now the count is a property of the
         // scene, so the line is printed once and stays true.
-        let dropped = ranked.len().saturating_sub(points.len());
+        let dropped = if settings.virtual_pages {
+            // Nothing was dropped: the pages shadow every caster, which
+            // is the ceiling this warn exists to name the loss of.
+            0
+        } else {
+            ranked.len().saturating_sub(points.len())
+        };
         if (dropped > 0) != self.point_shadows_over_budget {
             if dropped > 0 {
                 tracing::warn!(
@@ -112,9 +174,9 @@ impl MeshletRenderStage {
         // allocated at a resolution the author has since changed. Sixty
         // -four megabytes is worth noticing a settings change over, and
         // a texture cannot be resized in place.
-        let texels = settings.clamped_texels();
+        let alloc = classic_shadow_alloc(&settings);
         let nothing_casts = sun.is_none() && spots.is_empty() && points.is_empty();
-        if !settings.enabled || nothing_casts || self.shadow_texels != texels {
+        if !settings.enabled || nothing_casts || self.shadow_alloc != alloc {
             if let Some(released) = self.shadows.take() {
                 if let Some(tracker) = self.vram_tracker.as_ref() {
                     tracker.sub(released.atlas_bytes());
@@ -124,7 +186,7 @@ impl MeshletRenderStage {
                     "released the shadow atlas",
                 );
             }
-            self.shadow_texels = 0;
+            self.shadow_alloc = ClassicAlloc::default();
         }
         if !settings.enabled || nothing_casts {
             return None;
@@ -134,14 +196,18 @@ impl MeshletRenderStage {
         // cascades' own `shadows_enabled` flag stays off, which is what
         // stops the shading model from sampling four empty layers.
         //
-        // 🔴 And neither is "the virtual pages are on". `inti_shadow`
-        // takes the page branch and never reads a cascade layer, so
-        // every cascade cull, every cascade draw and the whole fit were
-        // work with no reader — all four layers, every frame, for as
-        // long as the feature has existed. The atlas itself STAYS: its
-        // trailing layers are the spot lights, which have no page
-        // raster yet.
-        let cascades_enabled = sun.is_some() && !settings.virtual_pages;
+        let cascades_enabled = sun.is_some();
+        // 🔴 A SEPARATE decision, and the separation is the whole point.
+        // `cascades_enabled` means "the sun's shadow data in the frame
+        // uniform is valid", and `IntiFrame::with_optional_shadows` is
+        // what turns `shadows_enabled` on when it is — which
+        // `inti_shadow` checks BEFORE it branches to the pages. Folding
+        // the raster's decision into that flag turned the whole sun off:
+        // fully lit everywhere, cascades and pages alike.
+        //
+        // This one says only "draw the cascade layers", which with the
+        // pages on nothing reads.
+        let draw_cascades = cascades_enabled && !settings.virtual_pages;
         let sun = sun.unwrap_or(glam::Vec3::NEG_Y);
 
         let shadows = match self.shadows.as_mut() {
@@ -149,21 +215,24 @@ impl MeshletRenderStage {
             None => {
                 tracing::debug!(
                     target: "kooch_render::shadow",
-                    cascade_texels = texels,
+                    cascade_texels = alloc.texels,
+                    cube_size = alloc.cube_size,
+                    cubes = alloc.cubes,
                     "allocating the shadow atlas",
                 );
                 let pass = ShadowPass::new(
                     device,
                     self.cull_pipelines.meshlet_bind_group_layout(),
-                    texels,
-                    settings.point_budget() as u32,
+                    alloc.texels,
+                    alloc.cube_size,
+                    alloc.cubes,
                     self.config.meshlet_capacity,
                     super::super::super::DEFAULT_MAX_TRIANGLES as u32,
                 );
                 if let Some(tracker) = self.vram_tracker.as_ref() {
                     tracker.add(pass.atlas_bytes());
                 }
-                self.shadow_texels = texels;
+                self.shadow_alloc = alloc;
                 self.shadows.insert(pass)
             }
         };
@@ -180,6 +249,7 @@ impl MeshletRenderStage {
             aspect,
             sun,
             cascades_enabled,
+            draw_cascades,
             settings.max_distance,
             settings.first_cascade_distance,
             settings.sun_softness,
@@ -274,3 +344,6 @@ impl MeshletRenderStage {
         );
     }
 }
+
+#[cfg(test)]
+mod tests;

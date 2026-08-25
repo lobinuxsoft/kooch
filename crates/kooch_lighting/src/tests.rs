@@ -222,34 +222,48 @@ fn a_lamp_on_the_camera_is_finite() {
 #[test]
 fn the_page_bindings_substitute() {
     let src = inti_pbr_shader(5);
-    // The virtual shadow map's four (#866). Worth pinning for the same
+    // The virtual shadow map's three (#866). Worth pinning for the same
     // reason the shadow bindings above are: they were added to a group
     // already believed full, and a group index that failed to
     // substitute is a runtime panic rather than a test failure.
+    // Binding 9 held the page hash's key array and is retired with it.
     assert!(src.contains("@group(5) @binding(8)"));
-    assert!(src.contains("@group(5) @binding(9)"));
     assert!(src.contains("@group(5) @binding(10)"));
     assert!(src.contains("@group(5) @binding(11)"));
+    assert!(
+        !src.contains("@group(5) @binding(9)"),
+        "binding 9 came back; the flat table has no key array"
+    );
 }
 
 #[test]
-fn the_reader_uses_the_shared_probe() {
+fn the_reader_shares_the_page_arithmetic() {
     let src = inti_pbr_shader(0);
     // 🔴 The structural guarantee against the drift that matters. Four
     // passes in another crate WRITE this table; this one reads it. A
-    // reader that reimplemented the hash would be free to disagree with
-    // the writer by one bucket, and the symptom is a shadow that
-    // disappears rather than one that looks wrong.
-    assert!(src.contains("fn page_probe("), "the shared probe is here");
+    // reader that reimplemented the id arithmetic would be free to
+    // disagree with the writer by one level, and the symptom is a
+    // shadow that disappears rather than one that looks wrong.
     assert!(src.contains("fn page_decode("));
     assert!(src.contains("fn sun_page_rect("));
-    for helper in ["page_probe(", "page_step(", "PAGE_EMPTY", "PAGE_MISS"] {
+    for helper in [
+        "local_level_base(",
+        "local_level_floor(",
+        "PAGE_ABSENT",
+        "PAGE_MISS",
+    ] {
         let uses = src.matches(helper).count();
         assert!(
             uses >= 2,
             "`{helper}` is declared but never used by the reader",
         );
     }
+    // And the hash stays gone: a probe loop growing back is the 10.4 ms
+    // this table was flattened to kill.
+    assert!(
+        !src.contains("page_probe("),
+        "the reader grew a probe loop back"
+    );
 }
 
 #[test]

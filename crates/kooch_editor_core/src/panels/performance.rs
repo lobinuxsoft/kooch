@@ -43,18 +43,26 @@ pub(crate) fn draw_performance_content(
     viewport: egui::Vec2,
     hud_visibility: &mut crate::perf::HudVisibility,
     single_light_note: Option<&str>,
+    surface: PerfSurface,
 ) {
-    // auto_shrink=[true, true] lets the ScrollArea report only the
-    // height its content actually needs, so the surrounding Frame
-    // sizes to the visible sections (collapsing one shrinks the
-    // dark container too). Width is bounded by the parent's
-    // `set_max_width`; vertical scroll kicks in only when the
-    // sections together exceed the viewport.
-    egui::ScrollArea::vertical()
-        .id_salt("performance_body")
-        .auto_shrink([true, true])
-        .show(ui, |ui| {
-            collapsing(ui, "Debug", true, |ui| {
+    // The panel scrolls; the overlay stack does not — a scroll area
+    // inside the viewport-anchored column reserved space its cards did
+    // not use, which read as panels "longer than their content".
+    let scroll = |ui: &mut egui::Ui, body: Box<dyn FnOnce(&mut egui::Ui) + '_>| {
+        if surface == PerfSurface::Panel {
+            egui::ScrollArea::vertical()
+                .id_salt("performance_body")
+                .auto_shrink([true, true])
+                .show(ui, body);
+        } else {
+            body(ui);
+        }
+    };
+    scroll(
+        ui,
+        Box::new(|ui| {
+            let mut pin_debug = hud_visibility.pinned.debug;
+            section(ui, &mut pin_debug, surface, "Debug", true, |ui| {
                 debug_controls(
                     ui,
                     meshlet_debug_mode,
@@ -62,8 +70,6 @@ pub(crate) fn draw_performance_content(
                     meshlet_lod_settings,
                     lights_hot,
                     cluster_settings,
-                    meshlet_stats.page_marking,
-                    meshlet_stats.page_raster,
                     specular_floor,
                     meshlet_stats.cluster_occupancy,
                     viewport,
@@ -71,93 +77,120 @@ pub(crate) fn draw_performance_content(
                 );
             });
 
-            collapsing(ui, "Frame", true, |ui| {
-                grid(ui, "perf_grid_frame", |ui| {
-                    metric(
-                        ui,
-                        "FPS (instant)",
-                        &format!("{:.0}", perf_stats.fps_instant),
-                    );
-                    metric(
-                        ui,
-                        "FPS (60-frame avg)",
-                        &format!("{:.0}", perf_stats.fps_avg),
-                    );
-                    metric(
-                        ui,
-                        "CPU frame time",
-                        &format!("{:.2} ms", perf_stats.cpu_frame_ms),
-                    );
-                    let gpu_text = perf_stats
-                        .gpu_frame_ms
-                        .map(|ms| format!("{:.2} ms", ms))
-                        .unwrap_or_else(|| "n/a".to_string());
-                    metric(ui, "GPU frame time", &gpu_text);
-                    // #252 — per-pass GPU ms breakdown. Labels are
-                    // path-specific: R64 emits `["Cull", "Raster",
-                    // "Overlay"]`; the Hi-Z 2-pass orchestrator emits
-                    // `["Pass A", "Hi-Z", "Pass B"]`. Sum equals
-                    // `GPU frame time` above. `None` until the first
-                    // ring readback completes (1-2 frames after
-                    // `enable_gpu_timers`) or on adapters without
-                    // `TIMESTAMP_QUERY`.
-                    if let Some(stages) = meshlet_stats.stage_timings {
-                        for (label, ms) in stages.iter() {
-                            metric(ui, &format!("  · {label}"), &format!("{ms:.3} ms"));
-                        }
-                    }
-                });
+            hud_visibility.pinned.debug = pin_debug;
+
+            // The shadow-pages readout, a section like any other: in
+            // the tab it collapses, on the viewport it is one more
+            // card in the stack. The floating window it once was is
+            // retired — the stack IS the way overlays live now.
+            let mut pin_pages = hud_visibility.shadow_pages_window;
+            section(ui, &mut pin_pages, surface, "Shadow pages", true, |ui| {
+                shadow_page_readout(ui, meshlet_stats.page_marking, meshlet_stats.page_raster);
             });
+            hud_visibility.shadow_pages_window = pin_pages;
+
+            section(
+                ui,
+                &mut hud_visibility.pinned.frame,
+                surface,
+                "Frame",
+                true,
+                |ui| {
+                    grid(ui, "perf_grid_frame", |ui| {
+                        metric(
+                            ui,
+                            "FPS (instant)",
+                            &format!("{:.0}", perf_stats.fps_instant),
+                        );
+                        metric(
+                            ui,
+                            "FPS (60-frame avg)",
+                            &format!("{:.0}", perf_stats.fps_avg),
+                        );
+                        metric(
+                            ui,
+                            "CPU frame time",
+                            &format!("{:.2} ms", perf_stats.cpu_frame_ms),
+                        );
+                        let gpu_text = perf_stats
+                            .gpu_frame_ms
+                            .map(|ms| format!("{:.2} ms", ms))
+                            .unwrap_or_else(|| "n/a".to_string());
+                        metric(ui, "GPU frame time", &gpu_text);
+                        // #252 — per-pass GPU ms breakdown. Labels are
+                        // path-specific: R64 emits `["Cull", "Raster",
+                        // "Overlay"]`; the Hi-Z 2-pass orchestrator emits
+                        // `["Pass A", "Hi-Z", "Pass B"]`. Sum equals
+                        // `GPU frame time` above. `None` until the first
+                        // ring readback completes (1-2 frames after
+                        // `enable_gpu_timers`) or on adapters without
+                        // `TIMESTAMP_QUERY`.
+                        if let Some(stages) = meshlet_stats.stage_timings {
+                            for (label, ms) in stages.iter() {
+                                metric(ui, &format!("  · {label}"), &format!("{ms:.3} ms"));
+                            }
+                        }
+                    });
+                },
+            );
 
             // #699 — the process that is actually simulating, next to the
             // editor's own frame because that is the comparison being
             // made: everything else on this panel describes the editor,
             // which is not what a person pressing Play is asking about.
             if let Some(host) = perf_stats.host {
-                collapsing(ui, "Project", true, |ui| {
-                    grid(ui, "perf_grid_host", |ui| {
-                        metric_with_tooltip(
-                            ui,
-                            "Ticks (instant)",
-                            &format!("{:.0} /s", host.ticks_instant),
-                            "How many times a second the project's own process runs \
+                section(
+                    ui,
+                    &mut hud_visibility.pinned.project,
+                    surface,
+                    "Project",
+                    true,
+                    |ui| {
+                        grid(ui, "perf_grid_host", |ui| {
+                            metric_with_tooltip(
+                                ui,
+                                "Ticks (instant)",
+                                &format!("{:.0} /s", host.ticks_instant),
+                                "How many times a second the project's own process runs \
                              its update, from the last tick alone. Not frames per \
                              second: the host has no window and no renderer — the \
                              editor draws its world. This is the number that says \
                              whether the gameplay and the solver keep up.",
-                        );
-                        metric_with_tooltip(
-                            ui,
-                            "Ticks (60-tick avg)",
-                            &format!("{:.0} /s", host.ticks_per_second),
-                            "The same rate over the host's last sixty ticks. Lags \
+                            );
+                            metric_with_tooltip(
+                                ui,
+                                "Ticks (60-tick avg)",
+                                &format!("{:.0} /s", host.ticks_per_second),
+                                "The same rate over the host's last sixty ticks. Lags \
                              the instant reading after Play or Stop, which is what \
                              an average is for — and why both are here instead of \
                              one number that is sometimes each.",
-                        );
-                        metric_with_tooltip(
-                            ui,
-                            "Tick time",
-                            &format!("{:.2} ms", host.frame_ms),
-                            "Wall-clock between the project's ticks, waiting \
+                            );
+                            metric_with_tooltip(
+                                ui,
+                                "Tick time",
+                                &format!("{:.2} ms", host.frame_ms),
+                                "Wall-clock between the project's ticks, waiting \
                              included. A paused project still ticks.",
-                        );
-                        metric_with_tooltip(
-                            ui,
-                            "  · work",
-                            &format!("{:.2} ms", host.cpu_frame_ms),
-                            "The part of the tick that was work rather than waiting. \
+                            );
+                            metric_with_tooltip(
+                                ui,
+                                "  · work",
+                                &format!("{:.2} ms", host.cpu_frame_ms),
+                                "The part of the tick that was work rather than waiting. \
                              This is what grows when the scene gets heavier, and the \
                              one to watch while a project is playing.",
-                        );
-                    });
-                });
+                            );
+                        });
+                    },
+                );
             }
 
             // The only reader of the sysinfo poll, which costs 2.08 ms
             // every time it runs (#703). Recorded so `sys_metrics_system`
             // can skip the frames nobody is reading.
-            hud_visibility.system_section = collapsing(ui, "System", true, |ui| {
+            let mut pin_system = hud_visibility.pinned.system;
+            let system_shown = section(ui, &mut pin_system, surface, "System", true, |ui| {
                 grid(ui, "perf_grid_system", |ui| {
                     // {:.2} so sub-1 % (typical for an idle editor
                     // at 60 FPS waiting on vsync) is visible
@@ -175,236 +208,273 @@ pub(crate) fn draw_performance_content(
                 });
             });
 
-            collapsing(ui, "Render", true, |ui| {
-                grid(ui, "perf_grid_render", |ui| {
-                    metric(
-                        ui,
-                        "VRAM (engine-tracked)",
-                        &format!("{} MB", perf_stats.vram_tracked_mb()),
-                    );
-                    metric_with_tooltip(
-                        ui,
-                        "Draw calls / frame",
-                        &perf_stats.draw_calls.to_string(),
-                        // #492 audit: explain why the empty-scene floor
-                        // is non-zero so the artist doesn't read it as
-                        // a leak.
-                        "Editor base passes (sky + viewport blit + egui paint = 3) \
+            hud_visibility.pinned.system = pin_system;
+            // Only the PANEL surface votes on the section's openness:
+            // the overlay writes the same flag through `pinned.system`,
+            // and letting it overwrite here would turn the poll off
+            // while the tab still shows the numbers.
+            if surface == PerfSurface::Panel {
+                hud_visibility.system_section = system_shown;
+            }
+            section(
+                ui,
+                &mut hud_visibility.pinned.render,
+                surface,
+                "Render",
+                true,
+                |ui| {
+                    grid(ui, "perf_grid_render", |ui| {
+                        metric(
+                            ui,
+                            "VRAM (engine-tracked)",
+                            &format!("{} MB", perf_stats.vram_tracked_mb()),
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "Draw calls / frame",
+                            &perf_stats.draw_calls.to_string(),
+                            // #492 audit: explain why the empty-scene floor
+                            // is non-zero so the artist doesn't read it as
+                            // a leak.
+                            "Editor base passes (sky + viewport blit + egui paint = 3) \
                          plus the meshlet stage's per-frame draw count \
                          (0 = empty scene, 4 = R64 atomic vbuf path, \
                          6 = R32 + Hi-Z 2-pass path). \
                          MeshRenderer.visible = false drops the entity at sync \
                          time, so an invisible mesh never reaches the cull \
                          pipeline and never bumps this number.",
-                    );
-                });
-            });
+                        );
+                    });
+                },
+            );
 
-            collapsing(ui, "Meshlet pipeline", true, |ui| {
-                grid(ui, "perf_grid_meshlet", |ui| {
-                    metric(
-                        ui,
-                        "Instances uploaded",
-                        &meshlet_stats.instances_uploaded.to_string(),
-                    );
-                    metric(
-                        ui,
-                        "Cull dispatch threads",
-                        &meshlet_stats.cull_threads.to_string(),
-                    );
-                    metric(
-                        ui,
-                        "Pool meshlets (total)",
-                        &meshlet_stats.pool_meshlets_total.to_string(),
-                    );
-                    metric(
-                        ui,
-                        "Pool meshlets (roots)",
-                        &meshlet_stats.pool_meshlets_roots.to_string(),
-                    );
-                    // #454.6 — per-stage cull survivor counts. Only
-                    // populated when a debug-active mode is selected
-                    // (any reject-overlay variant); the readback ring
-                    // is skipped on production frames so the field
-                    // stays None and the rows hide.
-                    if let Some([after_frustum, after_backface, after_hi_z, total_visible]) =
-                        meshlet_stats.cull_stage_counts
-                    {
-                        metric(ui, "After frustum", &after_frustum.to_string());
-                        metric(ui, "After backface", &after_backface.to_string());
-                        metric(ui, "After Hi-Z", &after_hi_z.to_string());
-                        metric(ui, "Total visible", &total_visible.to_string());
-                    }
-                });
-            });
+            section(
+                ui,
+                &mut hud_visibility.pinned.meshlet,
+                surface,
+                "Meshlet pipeline",
+                true,
+                |ui| {
+                    grid(ui, "perf_grid_meshlet", |ui| {
+                        metric(
+                            ui,
+                            "Instances uploaded",
+                            &meshlet_stats.instances_uploaded.to_string(),
+                        );
+                        metric(
+                            ui,
+                            "Cull dispatch threads",
+                            &meshlet_stats.cull_threads.to_string(),
+                        );
+                        metric(
+                            ui,
+                            "Pool meshlets (total)",
+                            &meshlet_stats.pool_meshlets_total.to_string(),
+                        );
+                        metric(
+                            ui,
+                            "Pool meshlets (roots)",
+                            &meshlet_stats.pool_meshlets_roots.to_string(),
+                        );
+                        // #454.6 — per-stage cull survivor counts. Only
+                        // populated when a debug-active mode is selected
+                        // (any reject-overlay variant); the readback ring
+                        // is skipped on production frames so the field
+                        // stays None and the rows hide.
+                        if let Some([after_frustum, after_backface, after_hi_z, total_visible]) =
+                            meshlet_stats.cull_stage_counts
+                        {
+                            metric(ui, "After frustum", &after_frustum.to_string());
+                            metric(ui, "After backface", &after_backface.to_string());
+                            metric(ui, "After Hi-Z", &after_hi_z.to_string());
+                            metric(ui, "Total visible", &total_visible.to_string());
+                        }
+                    });
+                },
+            );
 
-            collapsing(ui, "CPU frame", false, |ui| {
-                let breakdown = perf_stats.breakdown;
-                let render = breakdown.render;
-                grid(ui, "perf_grid_breakdown", |ui| {
-                    metric_with_tooltip(
-                        ui,
-                        "Gather",
-                        &format!("{:.2} ms", render.gather_ms),
-                        "Building the frame's view of the world for the UI: hierarchy, \
+            section(
+                ui,
+                &mut hud_visibility.pinned.cpu_frame,
+                surface,
+                "CPU frame",
+                false,
+                |ui| {
+                    let breakdown = perf_stats.breakdown;
+                    let render = breakdown.render;
+                    grid(ui, "perf_grid_breakdown", |ui| {
+                        metric_with_tooltip(
+                            ui,
+                            "Gather",
+                            &format!("{:.2} ms", render.gather_ms),
+                            "Building the frame's view of the world for the UI: hierarchy, \
                          inspector data, asset catalog. Walks every entity, so it grows \
                          with the scene.",
-                    );
-                    let gather = render.gather;
-                    metric_with_tooltip(
-                        ui,
-                        "  · entities",
-                        &format!("{:.2} ms", gather.entities_ms),
-                        "Every entity with its components and their reflected field \
+                        );
+                        let gather = render.gather;
+                        metric_with_tooltip(
+                            ui,
+                            "  · entities",
+                            &format!("{:.2} ms", gather.entities_ms),
+                            "Every entity with its components and their reflected field \
                          values. Grows with the world twice over — entities times \
                          components — and is paid whether or not a panel is open to \
                          read it.",
-                    );
-                    metric_with_tooltip(
-                        ui,
-                        "  · types",
-                        &format!("{:.2} ms", gather.types_ms),
-                        "The registered-type lists behind Add Component. Scales with \
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "  · types",
+                            &format!("{:.2} ms", gather.types_ms),
+                            "The registered-type lists behind Add Component. Scales with \
                          the number of component types, not with the scene.",
-                    );
-                    metric_with_tooltip(
-                        ui,
-                        "  · archetypes",
-                        &format!("{:.2} ms", gather.archetypes_ms),
-                        "The archetype list for the Components panel.",
-                    );
-                    metric_with_tooltip(
-                        ui,
-                        "  · intern",
-                        &format!("{:.2} ms", gather.intern_ms),
-                        "Resolving every registered component name to a stable id, \
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "  · archetypes",
+                            &format!("{:.2} ms", gather.archetypes_ms),
+                            "The archetype list for the Components panel.",
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "  · intern",
+                            &format!("{:.2} ms", gather.intern_ms),
+                            "Resolving every registered component name to a stable id, \
                          before the gathers above can use one.",
-                    );
-                    metric_with_tooltip(
-                        ui,
-                        "  · assets",
-                        &format!("{:.2} ms", gather.assets_ms),
-                        "The asset catalog for the Inspector's pickers, plus the \
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "  · assets",
+                            &format!("{:.2} ms", gather.assets_ms),
+                            "The asset catalog for the Inspector's pickers, plus the \
                          contents of whatever the Asset Browser has selected.",
-                    );
-                    metric_with_tooltip(
-                        ui,
-                        "  · rest",
-                        &format!("{:.2} ms", (render.gather_ms - gather.total_ms()).max(0.0)),
-                        "The open scenes and the resource shuffling around the gathers \
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "  · rest",
+                            &format!("{:.2} ms", (render.gather_ms - gather.total_ms()).max(0.0)),
+                            "The open scenes and the resource shuffling around the gathers \
                          — what gather spends outside the rows above.",
-                    );
-                    metric_with_tooltip(
-                        ui,
-                        "UI pass",
-                        &format!("{:.2} ms", render.ui_ms),
-                        "Laying out and painting every panel. egui is immediate mode: a \
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "UI pass",
+                            &format!("{:.2} ms", render.ui_ms),
+                            "Laying out and painting every panel. egui is immediate mode: a \
                          list of 600 rows costs 600 rows every frame, whether or not one \
                          of them changed. Collapsing the panels is the quickest way to \
                          confirm this number.",
-                    );
-                    metric_with_tooltip(
-                        ui,
-                        "Input",
-                        &format!("{:.2} ms", render.input_ms),
-                        "Gizmo handles, viewport picking, camera. Near zero unless the \
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "Input",
+                            &format!("{:.2} ms", render.input_ms),
+                            "Gizmo handles, viewport picking, camera. Near zero unless the \
                          pointer is doing something — which is exactly when it matters.",
-                    );
-                    metric_with_tooltip(
-                        ui,
-                        "Viewport",
-                        &format!("{:.2} ms", render.viewport_ms),
-                        "Recording the viewport's GPU commands — sky, meshlets, gizmos, \
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "Viewport",
+                            &format!("{:.2} ms", render.viewport_ms),
+                            "Recording the viewport's GPU commands — sky, meshlets, gizmos, \
                          blit. CPU-side encoding only; what the GPU then spends is the \
                          GPU frame row above.",
-                    );
-                    metric_with_tooltip(
-                        ui,
-                        "Present",
-                        &format!("{:.2} ms", render.present_ms),
-                        "Handing the frame to the surface, including egui's tessellation \
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "Present",
+                            &format!("{:.2} ms", render.present_ms),
+                            "Handing the frame to the surface, including egui's tessellation \
                          and texture uploads. With vsync on this also absorbs the wait \
                          for the vblank.",
-                    );
-                    metric_with_tooltip(
-                        ui,
-                        "Actions",
-                        &format!("{:.2} ms", render.actions_ms),
-                        "Applying what the UI queued: spawns, despawns, edits, saves. \
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "Actions",
+                            &format!("{:.2} ms", render.actions_ms),
+                            "Applying what the UI queued: spawns, despawns, edits, saves. \
                          Zero on a frame where the user did nothing.",
-                    );
-                    metric_with_tooltip(
-                        ui,
-                        "Unaccounted",
-                        &format!("{:.2} ms", breakdown.residual_ms(perf_stats.cpu_frame_ms)),
-                        "CPU frame time minus the rows above. Near zero means the split \
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "Unaccounted",
+                            &format!("{:.2} ms", breakdown.residual_ms(perf_stats.cpu_frame_ms)),
+                            "CPU frame time minus the rows above. Near zero means the split \
                          describes the frame and the biggest row is the thing to fix. \
                          Large means the split is in the wrong place — the next stage \
                          boundary belongs inside whatever these rows are missing.",
-                    );
-                    metric_with_tooltip(
-                        ui,
-                        "Gizmo batch",
-                        &format!("{:.2} ms", breakdown.gizmo_batch_ms),
-                        "Rebuilding the gizmo line and mesh batches, before the render \
+                        );
+                        metric_with_tooltip(
+                            ui,
+                            "Gizmo batch",
+                            &format!("{:.2} ms", breakdown.gizmo_batch_ms),
+                            "Rebuilding the gizmo line and mesh batches, before the render \
                          system runs. NOT part of CPU frame time and deliberately not \
                          deducted above — it is listed here because it is per-frame cost \
                          that scales with the scene and was otherwise invisible.",
-                    );
-                });
-            });
+                        );
+                    });
+                },
+            );
 
             // #645 — only with a session; local mode has no pull, and a
             // section of zeroes would read as "measured, costs nothing".
             if let Some(remote) = perf_stats.remote {
-                collapsing(ui, "Remote", true, |ui| {
-                    grid(ui, "perf_grid_remote", |ui| {
-                        metric_with_tooltip(
-                            ui,
-                            "Snapshot pull",
-                            &format!("{:.2} ms", remote.refresh_ms),
-                            "Main-thread stall for one snapshot pull, paid out of this \
+                section(
+                    ui,
+                    &mut hud_visibility.pinned.remote,
+                    surface,
+                    "Remote",
+                    true,
+                    |ui| {
+                        grid(ui, "perf_grid_remote", |ui| {
+                            metric_with_tooltip(
+                                ui,
+                                "Snapshot pull",
+                                &format!("{:.2} ms", remote.refresh_ms),
+                                "Main-thread stall for one snapshot pull, paid out of this \
                              frame's budget. Every frame while playing, one frame in \
                              thirty while paused. Holds the last pull's value on the \
                              frames in between.",
-                        );
-                        metric_with_tooltip(
-                            ui,
-                            "  · transport",
-                            &format!("{:.2} ms", remote.transport_ms),
-                            "Socket open, request, and the block until the project \
+                            );
+                            metric_with_tooltip(
+                                ui,
+                                "  · transport",
+                                &format!("{:.2} ms", remote.transport_ms),
+                                "Socket open, request, and the block until the project \
                              answers. The project serves requests from a Stage::First \
                              system, so this is mostly the wait for its next frame \
                              boundary — not bandwidth. If this dominates, the fix is to \
                              stop doing it on the main thread.",
-                        );
-                        metric_with_tooltip(
-                            ui,
-                            "  · decode",
-                            &format!("{:.2} ms", remote.decode_ms),
-                            "Parsing the response. If this dominates, the payload is \
+                            );
+                            metric_with_tooltip(
+                                ui,
+                                "  · decode",
+                                &format!("{:.2} ms", remote.decode_ms),
+                                "Parsing the response. If this dominates, the payload is \
                              the problem and the fix is to send less of it — diff \
                              server-side rather than resend the whole scene.",
-                        );
-                        metric_with_tooltip(
-                            ui,
-                            "Mirror apply",
-                            &format!("{:.2} ms", remote.mirror_ms),
-                            "Rebuilding the snapshot into the editor's own ECS, on the \
+                            );
+                            metric_with_tooltip(
+                                ui,
+                                "Mirror apply",
+                                &format!("{:.2} ms", remote.mirror_ms),
+                                "Rebuilding the snapshot into the editor's own ECS, on the \
                              same frames as the pull. Reads 0.00 when the project \
                              reported nothing new — the mirror already matches the \
                              world, so there is nothing to walk.",
-                        );
-                        metric(ui, "Entities mirrored", &remote.entities.to_string());
-                        metric(
-                            ui,
-                            "Snapshot size",
-                            &format!("{:.1} KB", remote.snapshot_bytes as f32 / 1024.0),
-                        );
-                    });
-                });
+                            );
+                            metric(ui, "Entities mirrored", &remote.entities.to_string());
+                            metric(
+                                ui,
+                                "Snapshot size",
+                                &format!("{:.1} KB", remote.snapshot_bytes as f32 / 1024.0),
+                            );
+                        });
+                    },
+                );
             }
-        });
+        }),
+    );
 }
 
 /// Digit groups, because a pair-test count runs to seven figures and an
@@ -428,8 +498,6 @@ fn debug_controls(
     meshlet_lod_settings: &mut MeshletLodSettings,
     lights_hot: &mut LightsHot,
     cluster_settings: &mut ClusterSettings,
-    page_counts: Option<kooch_render::shadow::pages::mark::MarkCounts>,
-    raster_counts: Option<kooch_render::shadow::pages::raster::RasterCounts>,
     specular_floor: &mut SpecularFloor,
     cluster_occupancy: Option<(u32, f32)>,
     viewport: egui::Vec2,
@@ -465,6 +533,39 @@ fn debug_controls(
                     egui::RichText::new("Select a light in the World panel")
                         .small()
                         .weak(),
+                );
+            }
+        }
+    }
+    // 🔴 The same problem the note above solves, for the two views that
+    // shipped painting the whole screen one colour: a code the reader
+    // has to remember is a code the reader does not have. Orange means
+    // "pick a lamp", and saying so is one line.
+    let lamp_view = matches!(
+        *meshlet_debug_mode,
+        MeshletDebugMode::LocalPageFaces | MeshletDebugMode::LocalPageDepth
+    );
+    if lamp_view {
+        match single_light_note {
+            Some(note) => {
+                ui.label(egui::RichText::new(note).small().weak());
+                let legend = if *meshlet_debug_mode == MeshletDebugMode::LocalPageFaces {
+                    "6 hues = cube face · brightness = chain level · white = no page"
+                } else {
+                    "red = occluded · green = lit · blue = no page"
+                };
+                ui.label(egui::RichText::new(legend).small().weak())
+                    .on_hover_text(
+                        "One lamp at a time, because a hundred averaged together is the                          signal this view exists to show. Faces answers which page was                          READ; occlusion answers what that page CONTAINED — a wrong                          shadow is one or the other and no single view separates them.                          Black is outside the lamp's range; magenta is the paged shadow                          path switched off.",
+                    );
+            }
+            None => {
+                ui.label(
+                    egui::RichText::new(
+                        "Orange everywhere = select a point or spot light in the World panel",
+                    )
+                    .small()
+                    .weak(),
                 );
             }
         }
@@ -673,8 +774,6 @@ fn debug_controls(
              confirm the chain is being descended.",
         );
     });
-
-    shadow_page_readout(ui, page_counts, raster_counts);
 }
 
 /// The shadow-page marking pass and what it found (#866).
@@ -693,7 +792,6 @@ fn shadow_page_readout(
 ) {
     use kooch_render::shadow::pages::PageConfig;
 
-    ui.separator();
     let Some(counts) = page_counts else {
         ui.label(
             egui::RichText::new("pages: waiting for the first readback")
@@ -738,19 +836,99 @@ fn shadow_page_readout(
     // only the four that fit today's slots would be measuring the cap
     // the feature is meant to remove.
     ui.label(
-        egui::RichText::new(format!(
-            "{} samples · {} sample/light pairs · every light casting",
-            counts.samples, counts.pairs
-        ))
+        egui::RichText::new(if counts.culled > 0 {
+            format!(
+                "{} samples · {} sample/light pairs · {} gated by coverage",
+                counts.samples, counts.pairs, counts.culled
+            )
+        } else {
+            format!(
+                "{} samples · {} sample/light pairs · every light casting",
+                counts.samples, counts.pairs
+            )
+        })
         .small()
         .weak(),
     )
     .on_hover_text(
         "The pass walks the froxel grid, which holds every light that reaches a pixel — so \
-         this is what the scene would cost with ALL of its lights casting, not with the \
-         four that have a cube slot today. Pairs divided by samples is the grid's own \
-         lights-per-pixel, which is the cross-check that the light side agrees with it.",
+         this is what the scene would cost with ALL of its lights casting. Pairs divided \
+         by samples is the grid's own lights-per-pixel. Gated pairs are lights whose whole \
+         range projects under `shadow_min_pixels` on screen (#944): they still shade, but \
+         a shadow nobody can resolve claims no pages.",
     );
+    // 🔴 What the same work would cost per FROXEL instead of per pixel.
+    // Olsson §III derives shadow resolution and page masks from
+    // cluster/light pairs rather than sample/light pairs, because
+    // cluster bounds are "several orders of magnitude fewer than the
+    // samples". This line is that claim, in this scene, as a number
+    // rather than an argument (#952).
+    if counts.froxels > 0 && counts.samples > 0 {
+        // 🔴 `pairs` counts a different thing on each path, so the ratio
+        // has to be read from the side that owns it. Dividing froxel
+        // pairs by samples printed `0.0 lights each` and a made-up
+        // multiplier beside it.
+        let (lights_each, walked, other) = if counts.by_froxel {
+            let each = counts.pairs as f32 / counts.froxels as f32;
+            (each, counts.pairs as f32, counts.samples as f32 * each)
+        } else {
+            let each = counts.pairs as f32 / counts.samples as f32;
+            (each, counts.pairs as f32, counts.froxels as f32 * each)
+        };
+        let ratio = (walked.max(1.0) / other.max(1.0)).max(other.max(1.0) / walked.max(1.0));
+        let shape = if counts.by_froxel {
+            "per froxel"
+        } else {
+            "per pixel"
+        };
+        // 🔴 Derived from this engine's own budget, not from folklore.
+        // On the OneXFly `shade: compute` measured 5.5 ms at 17.9 lights
+        // per pixel — about 0.31 ms a light — against a 13.9 ms frame.
+        // Holding the shading loop near 2 ms, a fifth of the budget,
+        // puts the sustainable average at six or seven. A PEAK may run
+        // to twice that before the cells holding it stop being a
+        // rounding error, so the alert fires at sixteen.
+        const OVERLAP_WARN: u32 = 16;
+        if counts.peak_lights > 0 {
+            let over = counts.peak_lights > OVERLAP_WARN;
+            let text = egui::RichText::new(format!(
+                "worst froxel holds {} lights{}",
+                counts.peak_lights,
+                if over { " — overlapping" } else { "" }
+            ))
+            .small();
+            ui.label(if over {
+                text.color(egui::Color32::from_rgb(240, 180, 60))
+            } else {
+                text.weak()
+            })
+            .on_hover_text(
+                "Point and spot lights whose ranges overlap all land in the same froxel, \
+                 and every pixel of that froxel walks all of them — in the shading loop \
+                 and again in the page marking. Overlap is invisible while authoring: \
+                 lights are placed one at a time and the cell they share is not drawn \
+                 anywhere.\n\nThe threshold is this engine's own. Shading measured 5.5 ms \
+                 at 17.9 lights per pixel on the OneXFly, about 0.31 ms a light, against a \
+                 13.9 ms frame.",
+            );
+        }
+        ui.label(
+            egui::RichText::new(format!(
+                "{} froxels occupied · {:.1} lights each · walking {} · {:.0}× the other way",
+                counts.froxels, lights_each, shape, ratio,
+            ))
+            .small()
+            .weak(),
+        )
+        .on_hover_text(
+            "Froxels of this view that held visible surface, counted from the depth \
+             buffer. The marking runs per (pixel, light); the same walk over occupied \
+             froxels would run per (froxel, light), and this is the ratio between the \
+             two. It is an upper bound on the win: a froxel's bounds project to a RANGE \
+             of pages rather than one, so a cluster pass marks conservatively and spends \
+             pool slots the per-pixel version never asked for.",
+        );
+    }
     // 🔴 The comparison that makes the number mean something, and it is
     // one budget for every light in the scene rather than per light.
     // It is now this engine's OWN pool rather than a figure quoted from
@@ -781,23 +959,54 @@ fn shadow_page_readout(
     // were separated, local pages took 991 of each camera's 1024 slots
     // and the sun got 33 — a pool reporting itself full while doing
     // nothing.
-    let unspent = counts.pool.unspent(counts.resident);
-    if unspent > 0 {
+    if counts.pool.denied > 0 {
         ui.label(
             egui::RichText::new(format!(
-                "{} of them are local lights — marked, not allocated",
-                unspent
+                "{} denied by rank — the plan funded down to rank {}",
+                counts.pool.denied, counts.pool.cutoff
+            ))
+            .small()
+            .color(egui::Color32::from_rgb(230, 190, 90)),
+        )
+        .on_hover_text(
+            "The frame wanted more pages than this view's slice holds, so the seating plan \
+             (#942) ranked the demand and funded it coarsest-first: the sun's clipmap ahead \
+             of every local light, and within any chain the coarse levels ahead of the fine. \
+             What was denied is the finest detail, never a whole light's coverage — and the \
+             number to shrink it is #943's resolution bias, not a bigger pool.",
+        );
+    }
+    if counts.pool.bias_local > 0 || counts.pool.bias_sun > 0 {
+        ui.label(
+            egui::RichText::new(format!(
+                "resolution bias: locals +{} · sun +{} levels",
+                counts.pool.bias_local, counts.pool.bias_sun
             ))
             .small()
             .weak(),
         )
         .on_hover_text(
-            "Local lights are counted so the census stays honest about what many casting \
-             lights would cost, but the raster only draws the sun, so they claim no physical \
-             page: a slot handed to one is a slot nothing writes and nothing samples. Epic \
-             states the same rule as a pass — `PruneLightGridCS` prunes the light grid down \
-             to the lights that HAVE a virtual shadow map before anything marks. The gate \
-             moves the day the local raster lands.",
+            "The demand did not fit the slice, so the marking asks coarser (#943): each \
+             level is a quarter of the pages. Locals pay up to four levels before the sun \
+             pays one, and it unwinds on its own when the demand shrinks. A bias that sits \
+             high is the pool saying it is too small for the scene — raise \
+             `shadow_pool_pages` or lower `shadow_density`.",
+        );
+    }
+    if counts.pool.preempted > 0 {
+        ui.label(
+            egui::RichText::new(format!(
+                "{} residents preempted — their seat went to a higher rank",
+                counts.pool.preempted
+            ))
+            .small()
+            .weak(),
+        )
+        .on_hover_text(
+            "Pages evicted by PRESSURE rather than by age: the plan did not fund their rank \
+             this frame. A camera that stopped moving should drive this to zero within a \
+             frame — persistent churn here means the demand is oscillating around the \
+             cutoff rank.",
         );
     }
     // 🔴 The reading persistence exists to produce. A still camera
@@ -815,7 +1024,12 @@ fn shadow_page_readout(
         .weak(),
     )
     .on_hover_text(
-        "The pool PERSISTS between frames: a page is freed when nothing has asked for it in          `max_age` frames, which is Epic's `MaxPageAgeSinceLastRequest`, and not because a          frame ended. A reused page is one whose depth is already in the atlas and does not          have to be rasterised again.          ⚠️ `max_age` DEFAULTS TO ZERO, so everything is evicted every frame and the hit          rate reads 0 %: keeping a page longer is only correct once something invalidates          the ones a moving caster passed through, and that pass does not exist yet.          `KOOCH_SHADOW_PAGE_AGE` raises it to try it.",
+        "The pool PERSISTS between frames: a page is freed when nothing has asked for it in \
+         `max_age` frames (60 by default — Epic's `MaxPageAgeSinceLastRequest`, \
+         `KOOCH_SHADOW_PAGE_AGE` overrides it), or the moment the seating plan stops \
+         funding its rank under pressure (#942). A reused page is one whose depth is \
+         already in the atlas and does not have to be rasterised again; movement \
+         invalidation re-lists what a caster passed through.",
     );
     if counts.pool.leaked > 0 {
         ui.label(
@@ -853,17 +1067,17 @@ fn shadow_page_readout(
         // say.
         ui.label(
             egui::RichText::new(format!(
-                "{} sun pages rastered · {} meshlet/page pairs · {} owned by another view",
-                raster.pages, raster.pairs, raster.others
+                "{} pages rastered · {} cached · {} meshlet/page pairs",
+                raster.pages, raster.cached, raster.pairs
             ))
             .small()
             .weak(),
         )
         .on_hover_text(
-            "The pages the depth raster actually filled, and the meshlet/page pairs it \
-             drew to fill them. A pair is one meshlet rasterised into one page: drawing \
-             every meshlet into every page is the cost a virtual shadow map exists to \
-             avoid, so this number IS the feature working.",
+            "The pages the depth raster actually filled, the resident pages whose \
+             content survived from an earlier frame (the cache — those cost nothing), \
+             and the meshlet/page pairs drawn to fill the dirty ones. A still scene \
+             should raster near zero; UE5's rule of thumb is under 5% of residents.",
         );
         // 🔴 The number that decides the shape of the local-light
         // raster. The expansion is a product — a level's pages times a
@@ -873,8 +1087,9 @@ fn shadow_page_readout(
             let per_pair = raster.tests as f32 / raster.pairs.max(1) as f32;
             ui.label(
                 egui::RichText::new(format!(
-                    "{} pair tests · {per_pair:.0} per pair · worst level {} at {}",
+                    "{} pair tests · {per_pair:.0} per pair · {} depth-rejected · worst level {} at {}",
                     thousands(raster.tests),
+                    raster.depth_rejected,
                     raster.worst.0,
                     thousands(raster.worst.1)
                 ))
@@ -916,18 +1131,22 @@ fn shadow_page_readout(
         if raster.local > 0 {
             ui.label(
                 egui::RichText::new(format!(
-                    "{} local-light pages marked and not drawn yet",
-                    raster.local
+                    "{} local-light pages drawn",
+                    thousands(raster.local as u64),
                 ))
                 .small()
                 .weak(),
             )
             .on_hover_text(
-                "Local lights get pages marked and allocated, and the raster does not draw \
-                 them yet. A cull runs per view: the sun's clipmap is 17 views, a hundred \
-                 point lights with six faces and an eight-level chain are 4848. That needs \
-                 the cull itself moved onto the GPU as one multi-view dispatch, which is \
-                 the next piece and not a bigger version of this one.",
+                "Pages belonging to point and spot lights, rasterised this frame. They \
+                 share the sun's buckets: a bucket is an OCTAVE of world texel size, so a \
+                 lamp and the sun that want the same fineness draw from the same survivor \
+                 list — which is what lets the local half cost no cull of its own. \
+                 A page carries its light in its own key, so nothing downstream needs the \
+                 list split by lamp; a bucket per light per level would be the 4848-view \
+                 shape this exists to avoid. \
+                 ⚠️ They spend the same pool the sun does. When the pool fills, the \
+                 overflow line above says so.",
             );
         }
         if raster.dropped > 0 || raster.overflow > 0 {
@@ -941,33 +1160,9 @@ fn shadow_page_readout(
             );
         }
     }
-    // The cost of eviction, and the one that grows silently.
-    if counts.pool.holes > 0 && counts.pool.requests() > 0 {
-        let per = counts.pool.holes as f32 / counts.pool.requests() as f32;
-        ui.label(
-            egui::RichText::new(format!("{per:.1} dead entries walked per request"))
-                .small()
-                .weak(),
-        )
-        .on_hover_text(
-            "An evicted entry leaves a TOMBSTONE rather than an empty slot, because open              addressing proves a key is absent by finding an empty one — writing empty over              a freed key would make every key whose probe run passed through it unfindable              while it is still resident. The hole keeps the run intact and lengthens it.              Climbing towards 32, which is where a lookup gives up, means the table is              turning into holes and wants a rehash.",
-        );
-    }
-    if counts.pool.probes > 0 {
-        ui.label(
-            egui::RichText::new(format!(
-                "{} inserts ran out of probes — the table, not the pool",
-                counts.pool.probes
-            ))
-            .small()
-            .color(egui::Color32::from_rgb(220, 120, 90)),
-        )
-        .on_hover_text(
-            "The page table is open-addressed at a load factor of 0.5, where the expected \
-             probe count is under two. Anything here is a statement about the hash rather \
-             than about the scene.",
-        );
-    }
+    // The hash's two failure meters — tombstones walked and inserts out
+    // of probes — are gone with the hash: the flat table has no probe
+    // run to degrade. See `page_table.wgsl`.
 }
 
 /// Default-open collapsing header — section toggles with the chevron
@@ -979,18 +1174,129 @@ fn shadow_page_readout(
 /// numbers cost 2.08 ms to take (#703) — but is returned for all of them
 /// rather than special-casing one, so the next expensive metric can be
 /// gated without changing this signature again.
-fn collapsing(
+/// The Performance dock tab (the user's ask): everything the overlay
+/// sidebar showed, in a real panel off the game view, with every
+/// section pinnable into its own floating window.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_performance_panel(
     ui: &mut egui::Ui,
+    perf_stats: EditorPerfStats,
+    meshlet_stats: MeshletRenderStats,
+    meshlet_debug_mode: &mut MeshletDebugMode,
+    meshlet_debug_caps: MeshletDebugCaps,
+    meshlet_lod_settings: &mut MeshletLodSettings,
+    lights_hot: &mut LightsHot,
+    cluster_settings: &mut ClusterSettings,
+    specular_floor: &mut SpecularFloor,
+    game_viewport: Option<(u32, u32)>,
+    hud_visibility: &mut crate::perf::HudVisibility,
+    single_light_note: Option<&str>,
+) {
+    hud_visibility.panel_visible = true;
+    // The cluster grid's shape needs the GAME viewport, which this tab
+    // does not render — the Game tab's last size request stands in. The
+    // fallback only matters with the Game tab closed, where the grid is
+    // informational anyway.
+    let viewport = game_viewport
+        .map(|(w, h)| egui::vec2(w as f32, h as f32))
+        .unwrap_or(egui::vec2(1920.0, 1080.0));
+    draw_performance_content(
+        ui,
+        perf_stats,
+        meshlet_stats,
+        meshlet_debug_mode,
+        meshlet_debug_caps,
+        meshlet_lod_settings,
+        lights_hot,
+        cluster_settings,
+        specular_floor,
+        viewport,
+        hud_visibility,
+        single_light_note,
+        PerfSurface::Panel,
+    );
+}
+
+/// Which surface is rendering the sections: the Performance dock tab,
+/// or the semi-transparent card stack on the game viewport.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum PerfSurface {
+    Panel,
+    Overlay,
+}
+
+/// One section of the readout.
+///
+/// On the PANEL every section renders, as a collapsing header whose pin
+/// toggle mirrors it onto the game viewport. On the OVERLAY only the
+/// toggled sections render, each as a semi-transparent card in the
+/// stack, with a ✕ to dismiss — Godot's viewport overlays, the user's
+/// ask. Returns whether the body rendered, which the System section's
+/// poll gate reads.
+fn section(
+    ui: &mut egui::Ui,
+    pinned: &mut bool,
+    surface: PerfSurface,
     title: &str,
     default_open: bool,
     body: impl FnOnce(&mut egui::Ui),
 ) -> bool {
-    egui::CollapsingHeader::new(egui::RichText::new(title).strong())
-        .id_salt(format!("perf_section_{title}"))
-        .default_open(default_open)
-        .show(ui, body)
-        .body_returned
-        .is_some()
+    if surface == PerfSurface::Overlay {
+        if !*pinned {
+            return false;
+        }
+        stack_card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(title).strong().small());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button(crate::icons::X)
+                        .on_hover_text("Hide this overlay")
+                        .clicked()
+                    {
+                        *pinned = false;
+                    }
+                });
+            });
+            body(ui);
+        });
+        return true;
+    }
+    let id = ui.make_persistent_id(format!("perf_section_{title}"));
+    let state = egui::collapsing_header::CollapsingState::load_with_default_open(
+        ui.ctx(),
+        id,
+        default_open,
+    );
+    let (_, _, body_response) = state
+        .show_header(ui, |ui| {
+            ui.label(egui::RichText::new(title).strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mut on = *pinned;
+                if ui
+                    .toggle_value(&mut on, crate::icons::MAP_PIN_SIMPLE_AREA)
+                    .on_hover_text("Show as an overlay card on the game viewport")
+                    .clicked()
+                {
+                    *pinned = on;
+                }
+            });
+        })
+        .body(body);
+    body_response.is_some()
+}
+
+/// A semi-transparent card in the game viewport's overlay stack.
+pub(crate) fn stack_card(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 170))
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_width(264.0);
+            body(ui);
+        });
+    ui.add_space(6.0);
 }
 
 /// Two-column grid for label / value rows.
@@ -1020,15 +1326,6 @@ fn metric_with_tooltip(ui: &mut egui::Ui, label: &str, value: &str, tooltip: &st
     ui.end_row();
 }
 
-/// Width of the perf sidebar overlay anchored to the right edge of
-/// the panel. 260 px fits the widest "n/a (TIMESTAMP_QUERY
-/// unavailable)" GPU-frame-time row without wrapping while leaving
-/// room to read the actual image behind it.
-pub(crate) const PERF_SIDEBAR_WIDTH: f32 = 260.0;
-const TOOLBAR_BUTTON_SIZE: f32 = 28.0;
-const TOOLBAR_PADDING: f32 = 6.0;
-const TOOLBAR_OFFSET: egui::Vec2 = egui::vec2(8.0, 8.0);
-
 /// A froxel's depth as the panel should state it.
 ///
 /// The two clamped ends are the ones that matter: an unbounded last
@@ -1040,130 +1337,4 @@ fn depth_label(metres: f32) -> String {
         true => format!("{metres:.1} m"),
         false => "unbounded".to_owned(),
     }
-}
-
-/// Draws the vertical perf sidebar anchored to the right edge of a
-/// panel, with its always-visible toggle chevron.
-///
-/// Lives beside the Game panel rather than the View: every number in it
-/// — frame time, cull dispatch, pool meshlets, remote snapshot — is the
-/// cost of drawing the game, and the View shows an authoring camera that
-/// nobody ships.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn draw_perf_sidebar(
-    ui: &mut egui::Ui,
-    panel_origin: egui::Pos2,
-    available: egui::Vec2,
-    perf_stats: crate::perf::EditorPerfStats,
-    meshlet_stats: kooch_render::meshlet::MeshletRenderStats,
-    meshlet_debug_mode: &mut kooch_render::meshlet::MeshletDebugMode,
-    meshlet_debug_caps: kooch_render::meshlet::MeshletDebugCaps,
-    meshlet_lod_settings: &mut kooch_render::meshlet::MeshletLodSettings,
-    lights_hot: &mut LightsHot,
-    cluster_settings: &mut ClusterSettings,
-    specular_floor: &mut SpecularFloor,
-    viewport: egui::Vec2,
-    hud_visibility: &mut crate::perf::HudVisibility,
-    single_light_note: Option<&str>,
-) {
-    // State lives in `HudVisibility` rather than in egui memory: the
-    // systems that pay for these metrics run in `PreRender` and cannot
-    // read egui's memory, so a flag kept only there meant nothing could
-    // ask whether anyone was looking (#703).
-    let mut sidebar_visible = hud_visibility.sidebar;
-
-    let panel_top_right =
-        panel_origin + egui::vec2(available.x - TOOLBAR_OFFSET.x, TOOLBAR_OFFSET.y);
-
-    // Toggle chevron — left-pointing when expanded (click to
-    // collapse to the right), right-pointing when collapsed (click
-    // to expand back). Always rendered so the user has a way back
-    // even after hiding the panel.
-    let toggle_size = egui::vec2(TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
-    let toggle_pos = panel_top_right - egui::vec2(toggle_size.x, 0.0);
-    let toggle_rect = egui::Rect::from_min_size(toggle_pos, toggle_size);
-    let mut toggle_ui = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(toggle_rect)
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
-    egui::Frame::new()
-        .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
-        .corner_radius(egui::CornerRadius::same(6))
-        .show(&mut toggle_ui, |ui| {
-            let glyph = if sidebar_visible {
-                "\u{27e9}"
-            } else {
-                "\u{27e8}"
-            };
-            let button = egui::Button::new(egui::RichText::new(glyph).size(16.0))
-                .min_size(toggle_size)
-                .fill(egui::Color32::TRANSPARENT)
-                .stroke(egui::Stroke::NONE);
-            let resp = ui.add(button).on_hover_text(if sidebar_visible {
-                "Hide performance sidebar"
-            } else {
-                "Show performance sidebar"
-            });
-            if resp.clicked() {
-                sidebar_visible = !sidebar_visible;
-            }
-        });
-
-    if sidebar_visible {
-        // Panel sits below the toggle chevron, anchored to the
-        // right edge. max_rect height is bounded by the viewport
-        // so the inner ScrollArea can clip when sections overflow;
-        // auto_shrink in `draw_performance_content` keeps the
-        // Frame tight around the actually-visible content so
-        // collapsing every section doesn't leave a giant black
-        // box on the viewport.
-        let panel_top = toggle_pos.y + toggle_size.y + 4.0;
-        let panel_max_height =
-            (available.y - 2.0 * TOOLBAR_OFFSET.y - toggle_size.y - 4.0).max(0.0);
-        let sidebar_max_rect = egui::Rect::from_min_size(
-            egui::pos2(panel_top_right.x - PERF_SIDEBAR_WIDTH, panel_top),
-            egui::vec2(PERF_SIDEBAR_WIDTH, panel_max_height),
-        );
-        let mut sidebar_ui = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(sidebar_max_rect)
-                .layout(egui::Layout::top_down(egui::Align::Min)),
-        );
-        egui::Frame::new()
-            .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 24, 200))
-            .corner_radius(egui::CornerRadius::same(6))
-            .inner_margin(egui::Margin::same(TOOLBAR_PADDING as i8))
-            .show(&mut sidebar_ui, |ui| {
-                ui.set_max_width(PERF_SIDEBAR_WIDTH - TOOLBAR_PADDING * 2.0);
-                draw_performance_content(
-                    ui,
-                    perf_stats,
-                    meshlet_stats,
-                    meshlet_debug_mode,
-                    meshlet_debug_caps,
-                    meshlet_lod_settings,
-                    lights_hot,
-                    cluster_settings,
-                    specular_floor,
-                    viewport,
-                    hud_visibility,
-                    single_light_note,
-                );
-            });
-    }
-
-    // Written after drawing, so it records what was actually on screen
-    // this frame rather than what was asked for. A collapsed sidebar
-    // leaves `system_section` at whatever it last was, which is correct:
-    // an invisible section is not an open one, and `wants_system_metrics`
-    // requires both.
-    hud_visibility.sidebar = sidebar_visible;
-
-    // Written after drawing, so it records what was actually on screen
-    // this frame rather than what was asked for. A collapsed sidebar
-    // leaves `system_section` at whatever it last was, which is correct:
-    // an invisible section is not an open one, and `wants_system_metrics`
-    // requires both.
-    hud_visibility.sidebar = sidebar_visible;
 }

@@ -71,12 +71,19 @@ struct ExpandLevel {
 }
 
 @group(0) @binding(0) var<uniform> raster: PageRaster;
-@group(0) @binding(1) var<storage, read> page_list: array<vec2<u32>>;
+@group(0) @binding(1) var<storage, read> page_list: array<vec4<u32>>;
 @group(0) @binding(2) var<storage, read_write> page_counts: array<atomic<u32>>;
 // x the index into `page_list`, y the cull's packed `(instance, meshlet)`.
-@group(0) @binding(3) var<storage, read_write> pairs: array<vec2<u32>>;
+// Four words: the page, its slot, the cull's packed pair, a spare.
+@group(0) @binding(3) var<storage, read_write> pairs: array<vec4<u32>>;
 @group(0) @binding(4) var<storage, read> visible_counts: array<u32>;
 @group(0) @binding(5) var<uniform> expand: ExpandLevel;
+// 🔴 In group 0 and not a group of its own: `max_bind_groups` is FOUR
+// and the meshlet pool, the survivor list and the instances already own
+// the other three. This is also the eighth storage buffer the stage
+// binds, which is the whole downlevel budget — the next reader of this
+// pass has to displace something.
+@group(0) @binding(6) var<storage, read> lights: array<ClusterLight>;
 
 @group(1) @binding(0) var<storage, read> descriptors: array<MeshletDescriptor>;
 @group(2) @binding(0) var<storage, read> visible_meshlets: array<u32>;
@@ -94,9 +101,20 @@ fn transform_scale(m: mat4x4<f32>) -> f32 {
 @compute @workgroup_size(EXPAND_GROUP, 1, 1)
 fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     let level = expand.level;
-    let levels = raster.chain.x;
+    // Sun buckets plus one per lamp; the counters live after all of
+    // them. `level` is a BUCKET index — for a lamp it is
+    // `chain.x + slot`, bound to the SHARED survivor arena.
+    let buckets = raster.chain.x + LAMP_CULLS;
     let pages = min(atomicLoad(&page_counts[level]), raster.chain.z);
-    let meshlets = visible_counts[level];
+    var meshlets = visible_counts[level];
+    // A lamp's survivors live in its fixed slice of the arena. The
+    // count is written uncapped — that is how an overflowing lamp is
+    // visible — so the reader clamps to the slice.
+    var survivor_base = 0u;
+    if level >= raster.chain.x {
+        meshlets = min(meshlets, LAMP_SURVIVORS);
+        survivor_base = (level - raster.chain.x) * LAMP_SURVIVORS;
+    }
     if pages == 0u || meshlets == 0u {
         return;
     }
@@ -106,7 +124,7 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Page-major, so the threads that share a page share its rect and
     // the divergent half is the meshlet fetch.
     let entry = page_list[level * raster.chain.z + gid.x / meshlets];
-    let packed = visible_meshlets[gid.x % meshlets];
+    let packed = visible_meshlets[survivor_base + gid.x % meshlets];
 
     let inst = instances[packed >> 16u];
     let desc = descriptors[packed & 0xffffu];
@@ -120,10 +138,51 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
         raster.space.y,
         raster.space.z,
         raster.space.w,
+        raster.pool.w,
     );
+
+    // 🔴 A lamp's page is a FRUSTUM from a point and the sun's is a
+    // slab. The same sphere test against a box is wrong at every
+    // distance except the one the box was built at, which is why the
+    // two branches here are two shapes rather than two constants.
+    if !id.is_sun {
+        if id.light >= arrayLength(&lights) {
+            return;
+        }
+        let light = lights[id.light];
+        var to_centre = bounds - light.position;
+        // The cell's cone is built in the face's own frame, so a spot's
+        // candidates rotate into it the way every other pass does — see
+        // `spot_local`.
+        if light.kind == PAGE_KIND_SPOT {
+            to_centre = spot_local(light.direction, to_centre);
+        }
+        let cone = cell_cone(id.face, id.cell, level_side_of(id.level, raster.space.z));
+        if !cell_reaches(cone.xyz, cone.w, to_centre, radius, light.range) {
+            return;
+        }
+        // #940 — Olsson §4's receiver bound, at page granularity: a
+        // caster whose NEAREST point lies beyond this page's furthest
+        // receiver occludes nothing the frame shades. `entry.z` is the
+        // marking's radial atomicMax; zero means no receiver was
+        // recorded and nothing is rejected. The spot rotation above
+        // preserves length, so one comparison serves both kinds.
+        if entry.z != 0u && length(to_centre) - radius > bitcast<f32>(entry.z) {
+            atomicAdd(&page_counts[buckets * 3u + 5u], 1u);
+            return;
+        }
+        let slot = atomicAdd(&page_counts[buckets + 2u], 1u);
+        if slot >= raster.chain.y {
+            atomicAdd(&page_counts[buckets + 3u], 1u);
+            return;
+        }
+        pairs[slot] = vec4<u32>(entry.x, entry.y, packed, 0u);
+        return;
+    }
+
     let basis = sun_basis(raster.sun.xyz);
     let centre = sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
-    let rect = sun_page_rect(id.level, id.cell, raster.world.x, raster.space.z, centre);
+    let rect = sun_page_rect(id.level, id.cell, raster.eye.xyz, basis, raster.world.x, raster.space.z);
 
     // Sphere against the page's box, in the sun's own frame. The depth
     // axis is the orthographic span rather than the page's width: a
@@ -134,11 +193,12 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     // below: the cost being counted is what the other shape would pay
     // whether or not this pair survives.
     if gid.x < meshlets {
-        count_scatter(level, levels, bounds, radius);
+        count_scatter(level, buckets, bounds, radius);
     }
 
     let plane = sun_plane(bounds, basis);
-    let along = dot(bounds - raster.eye.xyz, basis[2]);
+    let along = dot(bounds - raster.eye.xyz, basis[2])
+        + sun_drift(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
     let half = rect.z * 0.5 + radius;
     if abs(plane.x - rect.x) > half || abs(plane.y - rect.y) > half {
         return;
@@ -147,12 +207,12 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let slot = atomicAdd(&page_counts[levels + 2u], 1u);
+    let slot = atomicAdd(&page_counts[buckets + 2u], 1u);
     if slot >= raster.chain.y {
-        atomicAdd(&page_counts[levels + 3u], 1u);
+        atomicAdd(&page_counts[buckets + 3u], 1u);
         return;
     }
-    pairs[slot] = vec2<u32>(level * raster.chain.z + gid.x / meshlets, packed);
+    pairs[slot] = vec4<u32>(entry.x, entry.y, packed, 0u);
 }
 
 /// What the OTHER shape of this pass would have cost, counted without
@@ -183,7 +243,7 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
 ///
 /// Free to run: it rides the threads that already exist for page index
 /// zero, so it adds arithmetic to `meshlets` threads and no dispatch.
-fn count_scatter(level: u32, levels: u32, bounds: vec3<f32>, radius: f32) {
+fn count_scatter(level: u32, buckets: u32, bounds: vec3<f32>, radius: f32) {
     let side = raster.space.z;
     let basis = sun_basis(raster.sun.xyz);
     let centre = sun_centre(raster.eye.xyz, basis, raster.world.x, side, level);
@@ -201,5 +261,5 @@ fn count_scatter(level: u32, levels: u32, bounds: vec3<f32>, radius: f32) {
     let first = clamp(floor(lo * f32(side)), vec2<f32>(0.0), vec2<f32>(top));
     let last = clamp(floor(hi * f32(side)), vec2<f32>(0.0), vec2<f32>(top));
     let span = last - first + vec2<f32>(1.0);
-    atomicAdd(&page_counts[levels * 2u + 5u + level], u32(span.x * span.y));
+    atomicAdd(&page_counts[buckets * 2u + 5u + level], u32(span.x * span.y));
 }

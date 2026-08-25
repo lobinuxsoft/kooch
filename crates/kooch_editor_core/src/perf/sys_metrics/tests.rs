@@ -6,8 +6,10 @@ fn a_hidden_section_is_never_polled() {
     let mut resources = Resources::default();
     resources.insert(EditorPerfStats::default());
     resources.insert(super::super::HudVisibility {
-        sidebar: false,
+        panel_visible: false,
         system_section: true,
+        shadow_pages_window: false,
+        ..Default::default()
     });
     sys_metrics_system(&mut resources);
 
@@ -22,14 +24,16 @@ fn a_hidden_section_is_never_polled() {
 }
 
 /// Both halves of the question. The section being open inside a
-/// hidden sidebar is not the same as being on screen.
+/// closed panel is not the same as being on screen.
 #[test]
-fn a_collapsed_section_inside_a_visible_sidebar_is_also_skipped() {
+fn a_collapsed_section_inside_a_visible_panel_is_also_skipped() {
     let mut resources = Resources::default();
     resources.insert(EditorPerfStats::default());
     resources.insert(super::super::HudVisibility {
-        sidebar: true,
+        panel_visible: true,
         system_section: false,
+        shadow_pages_window: false,
+        ..Default::default()
     });
     sys_metrics_system(&mut resources);
 
@@ -49,20 +53,37 @@ fn a_collapsed_section_inside_a_visible_sidebar_is_also_skipped() {
 fn reopening_the_section_does_not_report_the_idle_average_as_current() {
     let mut resources = Resources::default();
     resources.insert(EditorPerfStats::default());
-    resources.insert(super::super::HudVisibility::default());
-    // Warm up: two refreshes establish a real delta.
+    resources.insert(super::super::HudVisibility {
+        panel_visible: true,
+        system_section: true,
+        ..Default::default()
+    });
+    // Warm up: two refreshes establish a real delta. The panel flag is
+    // re-asserted before each call the way the UI does every frame —
+    // the system clears it after reading.
     sys_metrics_system(&mut resources);
     resources.get_mut::<SysMetricsState>().unwrap().last_refresh = None;
+    resources.insert(super::super::HudVisibility {
+        panel_visible: true,
+        system_section: true,
+        ..Default::default()
+    });
     sys_metrics_system(&mut resources);
     assert!(resources.get::<SysMetricsState>().unwrap().samples_taken >= 2);
 
     // Hidden, then shown again.
     resources.insert(super::super::HudVisibility {
-        sidebar: false,
+        panel_visible: false,
         system_section: true,
+        shadow_pages_window: false,
+        ..Default::default()
     });
     sys_metrics_system(&mut resources);
-    resources.insert(super::super::HudVisibility::default());
+    resources.insert(super::super::HudVisibility {
+        panel_visible: true,
+        system_section: true,
+        ..Default::default()
+    });
     sys_metrics_system(&mut resources);
 
     assert!(
@@ -78,6 +99,11 @@ fn first_call_populates_ram_eventually() {
     // running the system at least populates the RAM field.
     let mut resources = Resources::default();
     resources.insert(EditorPerfStats::default());
+    resources.insert(super::super::HudVisibility {
+        panel_visible: true,
+        system_section: true,
+        ..Default::default()
+    });
     sys_metrics_system(&mut resources);
     let stats = resources.get::<EditorPerfStats>().unwrap();
     assert!(
@@ -95,6 +121,11 @@ fn second_call_inside_refresh_interval_is_a_noop() {
     // call.
     let mut resources = Resources::default();
     resources.insert(EditorPerfStats::default());
+    resources.insert(super::super::HudVisibility {
+        panel_visible: true,
+        system_section: true,
+        ..Default::default()
+    });
     sys_metrics_system(&mut resources);
     let first = resources
         .get::<SysMetricsState>()
@@ -122,6 +153,11 @@ fn first_sample_does_not_overwrite_cpu_percent() {
     let mut seeded_stats = EditorPerfStats::default();
     seeded_stats.cpu_percent = 42.0; // simulate prior reading
     resources.insert(seeded_stats);
+    resources.insert(super::super::HudVisibility {
+        panel_visible: true,
+        system_section: true,
+        ..Default::default()
+    });
     sys_metrics_system(&mut resources);
     let stats = resources.get::<EditorPerfStats>().unwrap();
     assert_eq!(

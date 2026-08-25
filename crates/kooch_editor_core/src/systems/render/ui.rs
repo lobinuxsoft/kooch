@@ -43,6 +43,9 @@ pub(super) struct ToolbarInfo {
     pub(super) remote: Option<ConnectionState>,
     /// Why the remote snapshot stopped tracking, when it has.
     pub(super) remote_stale: Option<String>,
+    /// `registrations.rs` was rewritten since the project was last
+    /// built, so the loaded code is behind its source.
+    pub(super) scripts_behind: bool,
 }
 
 /// Handles to the viewport resource consumed by the UI: a read-only
@@ -91,6 +94,8 @@ pub(super) fn run_editor_ui(
     cluster_settings: &mut kooch_lighting::ClusterSettings,
     specular_floor: &mut kooch_lighting::SpecularFloor,
     meshlet_stats: MeshletRenderStats,
+    // The Game viewport's own; see `GameViewStats`.
+    game_stats: MeshletRenderStats,
     perf_stats: crate::perf::EditorPerfStats,
     gizmo_visibility: &mut crate::gizmos::GizmoVisibility,
     gizmo_groups: &[crate::gizmos::GizmoGroup],
@@ -101,6 +106,7 @@ pub(super) fn run_editor_ui(
     connect_output: &[String],
     prefab_overwrite: Option<&PendingPrefabOverwrite>,
     build: &crate::panels::build::BuildPanel,
+    editor_camera_rotation: Option<glam::Quat>,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
     // 🔴 One frame boundary per editor frame, and it has to be exactly
     // here. puffin builds its flamegraph out of the scopes that closed
@@ -163,6 +169,7 @@ pub(super) fn run_editor_ui(
                 toolbar.is_playing,
                 toolbar.remote,
                 toolbar.remote_stale.as_deref(),
+                toolbar.scripts_behind,
                 toolbar.can_undo,
                 toolbar.can_redo,
                 toolbar.undo_desc.as_deref(),
@@ -230,6 +237,7 @@ pub(super) fn run_editor_ui(
             }
 
             let mut tab_viewer = EditorTabViewer {
+                editor_camera_rotation,
                 build,
                 build_selection: &mut overlay.build_selection,
                 pinned: &mut pinned_gizmos,
@@ -284,6 +292,7 @@ pub(super) fn run_editor_ui(
                 cluster_settings,
                 specular_floor,
                 meshlet_stats,
+                game_stats,
                 perf_stats,
             };
 

@@ -305,6 +305,34 @@ fn virtual_shadows_reaches_the_published_settings() {
 }
 
 #[test]
+fn shadow_softness_reaches_the_published_settings() {
+    // Same class as `virtual_shadows_reaches_the_published_settings`:
+    // a knob that stops at the asset ships a filter nobody can widen.
+    let settings = RenderSettings {
+        shadow_softness: 3,
+        ..Default::default()
+    };
+    assert_eq!(settings.shadows().page_softness, 3);
+    // And the default is the sharp end: bilinear, the cube path's
+    // look — softness is opted into because it is paid per light per
+    // pixel.
+    assert_eq!(RenderSettings::default().shadow_softness, 1);
+}
+
+#[test]
+fn shadow_min_pixels_reaches_the_settings() {
+    // Same class again: a gate that stops at the asset ships every
+    // light casting forever.
+    let settings = RenderSettings {
+        shadow_min_pixels: 32,
+        ..Default::default()
+    };
+    assert_eq!(settings.shadows().page_min_pixels, 32);
+    // The default gates only what nobody could resolve anyway.
+    assert_eq!(RenderSettings::default().shadow_min_pixels, 8);
+}
+
+#[test]
 fn the_frame_never_asks_for_render_settings() {
     // The bug's CLASS, not its instance. `RenderSettings` is the
     // author's asset; what a frame may read is the derived struct

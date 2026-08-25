@@ -170,6 +170,20 @@ fn wait(device: &wgpu::Device) {
 }
 
 /// One run of the pass, returning what came back.
+/// Which marking path `run_pool` builds. The environment switch is an
+/// `OnceLock`, so one process cannot answer both ways; this can.
+thread_local! {
+    static CLUSTER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `body` with the cluster/light marking on (#952).
+fn with_clusters<T>(body: impl FnOnce() -> T) -> T {
+    CLUSTER.with(|c| c.set(true));
+    let out = body();
+    CLUSTER.with(|c| c.set(false));
+    out
+}
+
 fn run(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -213,6 +227,7 @@ fn run_pool(
 
     let depth_view = depth_texture(device, queue, depth);
     let mut marker = PageMarker::new(device, PageConfig::default(), ClipmapConfig::default());
+    marker.set_cluster_marking(CLUSTER.with(|c| c.get()));
     marker.set_pool(device, pool);
 
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -688,21 +703,29 @@ fn every_drawable_page_claims_a_slot() {
         "one claim per distinct page"
     );
     assert_eq!(counts.pool.overflow, 0, "the pool held them");
-    assert_eq!(counts.pool.probes, 0, "no insert ran out of probes");
 }
 
-/// A page nothing draws does not get a page nothing writes.
+/// A local light claims its pages, now that something draws them.
 ///
-/// 🔴 The measured defect: on `many_lights` with two viewports, local
-/// lights held **991 and 1004 of each camera's 1024 slots** and the sun
-/// — the only consumer the raster has — was left 33 and 20 pages. The
-/// pool reported itself 100 % full while producing almost no shadow.
+/// # 🔴 The guard this replaces, and why it was there
 ///
-/// Local pages are still MARKED, because what a hundred casting lights
-/// would cost is the measurement this whole track is justified by. They
-/// simply do not spend the pool until something rasterises them.
+/// Local pages used to be marked and NOT claimed. Measured on
+/// `many_lights` with two viewports, claiming them held **991 and 1004
+/// of each camera's 1024 slots**, leaving the sun — the raster's only
+/// consumer at the time — 33 and 20 pages. The pool reported itself
+/// 100 % full while producing almost no shadow.
+///
+/// What makes claiming safe is that the rest of the chain now exists:
+/// the compaction buckets a lamp's pages by octave, the expansion tests
+/// them against the lamp's own frustum, and the depth pass builds that
+/// frustum from the light the page names. A claimed page is a drawn
+/// page.
+///
+/// ⚠️ The pressure is real and did not go away. What changed is that
+/// the pages bought something — `RasterCounts::local` and the pool's own
+/// overflow counter are what say when the budget stops covering it.
 #[test]
-fn a_local_light_marks_but_does_not_claim() {
+fn a_local_light_claims_its_pages() {
     let Some((device, queue)) = device() else {
         eprintln!("no adapter; skipping");
         return;
@@ -713,12 +736,18 @@ fn a_local_light_marks_but_does_not_claim() {
     let dark = run(&device, &queue, &resources, 0.02, None);
     assert!(dark.resident > 0, "the point light marked nothing");
     assert_eq!(
-        dark.pool.claims, 0,
-        "{} local pages took a slot the raster cannot fill",
-        dark.pool.claims
+        dark.pool.claims, dark.resident,
+        "one claim per distinct page: {} claims of {} resident",
+        dark.pool.claims, dark.resident
     );
-    assert_eq!(dark.pool.unspent(dark.resident), dark.resident);
+    assert_eq!(
+        dark.pool.unspent(dark.resident),
+        0,
+        "a marked local page is no longer a page nothing spends"
+    );
 
+    // And with a sun as well: both chains draw from one pool, which is
+    // the budget line this whole track is measured against.
     let sunny = run(
         &device,
         &queue,
@@ -726,18 +755,18 @@ fn a_local_light_marks_but_does_not_claim() {
         0.02,
         Some(Vec3::new(0.3, -1.0, 0.2)),
     );
-    assert!(sunny.pool.claims > 0, "the sun claimed nothing");
+    assert!(sunny.pool.claims > 0, "nothing claimed with a sun in frame");
     assert!(
-        sunny.pool.claims < sunny.resident,
-        "the local pages stopped being counted: {} claims of {} resident",
-        sunny.pool.claims,
-        sunny.resident
+        sunny.resident > dark.resident,
+        "adding a sun did not add pages: {} against {}",
+        sunny.resident,
+        dark.resident
     );
-    assert_eq!(sunny.pool.overflow, 0, "the sun overflowed a default pool");
+    assert_eq!(sunny.pool.overflow, 0, "a default pool overflowed");
 }
 
 #[test]
-fn a_full_pool_reports_overflow() {
+fn a_full_pool_denies_by_rank() {
     let Some((device, queue)) = device() else {
         eprintln!("no adapter; skipping");
         return;
@@ -767,20 +796,28 @@ fn a_full_pool_reports_overflow() {
         small.slice()
     );
     assert_eq!(counts.pool.allocated(), small.slice(), "the pool filled");
-    // 🔴 `claims` counts the ones that GOT a slot now, not the ones that
-    // asked: `page_touch` allocates before it inserts, so a request the
-    // pool could not answer never reaches the table and never counts.
-    // `overflow` is the rest, and the two together are the requests.
+    // 🔴 With the seating plan (#942) a request the slice cannot fund is
+    // DENIED at its rank, not dropped at the allocator: the plan funds
+    // exactly `slice` seats, so the free list never runs dry and
+    // `overflow` — the allocator's own miss — stays zero.
     assert_eq!(
         counts.pool.claims + counts.pool.reused,
         small.slice(),
         "the pool handed out every slot it had"
     );
     assert!(
-        counts.pool.overflow > 0,
+        counts.pool.denied > 0,
         "a pool of {} could not answer {} requests and said nothing",
         small.slice(),
         counts.resident
+    );
+    assert!(
+        counts.pool.cutoff < 32,
+        "denials without a cutoff: the plan did not run"
+    );
+    assert_eq!(
+        counts.pool.overflow, 0,
+        "the allocator missed — the plan's arithmetic does not close"
     );
 }
 
@@ -805,26 +842,24 @@ fn the_table_holds_every_claim() {
         PoolConfig::default(),
     );
     assert!(counts.pool.claims > 0, "the sun claimed nothing");
-    let keys = read_words(&device, &queue, marker.pool().keys());
     let slots = read_words(&device, &queue, marker.pool().slots());
     let capacity = marker.pool().config().total();
 
-    let mut seen_keys = std::collections::HashSet::new();
+    let mut resident = 0u32;
     let mut seen_slots = std::collections::HashSet::new();
-    for (entry, &key) in keys.iter().enumerate() {
-        // 0 is EMPTY and `PAGE_DEAD` is an evicted entry: neither names
-        // a slot anyone owns.
-        if key == 0 || key == 0xffff_fffe {
+    for entry in 0..slots.len() / PAGE_CELL as usize {
+        // The first word is `slot + 1`; `PAGE_ABSENT` (0) names nothing.
+        let stored = slots[entry * PAGE_CELL as usize];
+        if stored == 0 {
             continue;
         }
-        assert!(seen_keys.insert(key), "key {key} filed twice");
-        // TWO words an entry — slot, then age. See `PAGE_CELL`.
-        let slot = slots[entry * PAGE_CELL as usize];
+        resident += 1;
+        let slot = stored - 1;
         assert!(slot < capacity, "slot {slot} past the pool");
         assert!(seen_slots.insert(slot), "slot {slot} handed out twice");
     }
     assert_eq!(
-        seen_keys.len() as u32,
+        resident,
         counts.pool.allocated(),
         "the table holds exactly what was allocated"
     );
@@ -895,23 +930,25 @@ fn a_view_clears_only_its_own_pages() {
         wait(&device);
     }
 
-    // A page carries its camera in the high part: `page / span`, with
-    // the span one stride per light plus one for the sun.
+    // The table is flat and a view's entries are a contiguous run, so
+    // ownership is the entry's position against the span — the same
+    // arithmetic `view_base` uses, rebuilt here so the two can disagree.
     let lights_count = lights.light_count().max(1);
-    let stride = {
-        let local = config.face_pages() * 6;
-        let sun = clipmap.levels * config.side(0).pow(2);
-        local.max(sun).div_ceil(32) * 32
-    };
-    let span = stride as u64 * (lights_count + 1) as u64;
+    let padded = lights_count.max(1).next_multiple_of(64);
+    let stride = (config.local_face_pages() * 6).div_ceil(32) * 32;
+    let span = (padded as u64 * stride as u64
+        + clipmap.levels as u64 * (config.side(0) as u64).pow(2))
+    .div_ceil(32)
+        * 32;
 
+    let slots = read_words(&device, &queue, marker.pool().slots());
     let mut per_view = [0u32; 2];
-    for key in read_words(&device, &queue, marker.pool().keys()) {
-        if key == 0 {
+    for entry in 0..slots.len() / PAGE_CELL as usize {
+        if slots[entry * PAGE_CELL as usize] == 0 {
             continue;
         }
-        let owner = ((key - 1) as u64 / span) as usize;
-        assert!(owner < 2, "a key belongs to camera {owner}");
+        let owner = (entry as u64 / span) as usize;
+        assert!(owner < 2, "an entry belongs to camera {owner}");
         per_view[owner] += 1;
     }
     assert!(
@@ -1213,92 +1250,9 @@ fn max_age_decides_whether_a_page_is_kept() {
     }
 }
 
-/// The table does not fill up with holes.
-///
-/// 🔴 Measured failing in the editor: the panel showed "1.0 dead entries
-/// walked per request" and then "1 inserts ran out of probes" — pages
-/// the frame needed and could not file, which render unshadowed.
-///
-/// ⚠️ A STANDING camera does not reproduce it, and finding that out is
-/// most of what this test is worth. It asks for the same pages every
-/// frame, so a hole is left exactly where the next request's probe run
-/// starts and is reused immediately: a steady 1.00 that never grows, and
-/// the first version of this test asserted against it and failed on a
-/// system that was working. The leak needs the requested pages to MOVE,
-/// which is what a camera turning does and what varying the density
-/// stands in for.
-#[test]
-fn holes_do_not_accumulate() {
-    let Some((device, queue)) = device() else {
-        eprintln!("no adapter; skipping");
-        return;
-    };
-    let resources = world();
-    // Four densities on rotation, so a page abandoned on one frame is
-    // not asked for again until three frames later — long enough that
-    // its hole is nobody's probe start in between.
-    let frames = run_frames(
-        &device,
-        &queue,
-        &resources,
-        150,
-        0,
-        PoolConfig {
-            pages: 16,
-            views: 1,
-        },
-        &|i| [100u32, 40, 70, 25][(i % 4) as usize],
-        &|i| Vec3::new(i as f32 * 0.35, 0.0, i as f32 * -0.2),
-        // 🔴 And the sun turns, which the user pointed at: it re-bases the
-        // whole clipmap, so every page the last frame filed is orphaned
-        // where it stands.
-        &|i| {
-            let a = i as f32 * 0.11;
-            Vec3::new(a.sin() * 0.6, -1.0, a.cos() * 0.6)
-        },
-    );
-
-    for (index, counts) in frames.iter().enumerate() {
-        if index % 25 == 0 || counts.pool.probes > 0 {
-            eprintln!(
-                "frame {index}: holes {} probes {} evicted {} swept {} requests {}",
-                counts.pool.holes,
-                counts.pool.probes,
-                counts.pool.evicted,
-                counts.pool.swept,
-                counts.pool.requests()
-            );
-        }
-    }
-    for (index, counts) in frames.iter().enumerate() {
-        assert_eq!(
-            counts.pool.probes, 0,
-            "frame {index}: {} inserts ran out of probes",
-            counts.pool.probes
-        );
-    }
-    // Growth, not level: a hole a request walks and then reuses is the
-    // healthy case. What is not healthy is the number climbing.
-    let walked = |window: &[MarkCounts]| -> f32 {
-        let holes: u32 = window.iter().map(|c| c.pool.holes).sum();
-        let requests: u32 = window.iter().map(|c| c.pool.requests()).sum();
-        holes as f32 / requests.max(1) as f32
-    };
-    let early = walked(&frames[4..20]);
-    let late = walked(&frames[frames.len() - 16..]);
-    assert!(
-        late <= early + 0.5,
-        "dead entries walked per request went {early:.2} -> {late:.2} over {} frames",
-        frames.len()
-    );
-    // And the sweep has to keep pace with the eviction that feeds it.
-    let evicted: u32 = frames[1..].iter().map(|c| c.pool.evicted).sum();
-    let swept: u32 = frames[1..].iter().map(|c| c.pool.swept).sum();
-    assert!(
-        swept * 4 >= evicted,
-        "{swept} tombstones swept against {evicted} evicted"
-    );
-}
+// `holes_do_not_accumulate` lived here and is retired with the hash it
+// measured: the flat table has no probe runs, so an eviction cannot
+// leave a hole for a lookup to walk. See `page_table.wgsl`.
 
 /// A page that stays resident keeps the SAME physical slot.
 ///
@@ -1360,14 +1314,15 @@ fn a_resident_page_keeps_its_slot() {
             },
         );
         queue.submit([encoder.finish()]);
-        let keys = read_words(&device, &queue, marker.pool().keys());
         let cells = read_words(&device, &queue, marker.pool().slots());
         let mut placed = std::collections::HashMap::new();
-        for (entry, &key) in keys.iter().enumerate() {
-            if key == 0 || key == 0xffff_fffe {
+        for entry in 0..cells.len() / PAGE_CELL as usize {
+            let stored = cells[entry * PAGE_CELL as usize];
+            if stored == 0 {
                 continue;
             }
-            placed.insert(key - 1, cells[entry * PAGE_CELL as usize]);
+            // The entry index IS the page id; the word is `slot + 1`.
+            placed.insert(entry as u32, stored - 1);
         }
         placements.push(placed);
     }
@@ -1395,9 +1350,10 @@ fn a_resident_page_keeps_its_slot() {
 /// unshadowed, and come back when something finally ages out — a shadow
 /// that blinks in and out, which is what the user reported.
 ///
-/// What it pins is the failure, not a policy: if it fires, the pool
-/// needs eviction under PRESSURE — Epic's `PHYSICAL_PAGE_LIST_LRU` —
-/// rather than eviction by age alone.
+/// What it pins is the failure, not a policy. Eviction under pressure
+/// exists now — `preempt_view`, #942 — so a walking camera's stale
+/// pages are reseated the frame the plan stops funding them; what this
+/// asserts is that the reseating actually keeps up.
 #[test]
 fn a_moving_camera_does_not_exhaust_the_pool() {
     let Some((device, queue)) = device() else {
@@ -1419,7 +1375,8 @@ fn a_moving_camera_does_not_exhaust_the_pool() {
     );
 
     let peak = frames.iter().map(|c| c.pool.allocated()).max().unwrap_or(0);
-    let spilled: u32 = frames.iter().map(|c| c.pool.overflow).sum();
+    // A denial is starvation with a name on it — it counts the same.
+    let spilled: u32 = frames.iter().map(|c| c.pool.overflow + c.pool.denied).sum();
     eprintln!(
         "peak {peak} of {} slots, {spilled} pages went unallocated",
         frames[0].pool.capacity
@@ -1428,5 +1385,808 @@ fn a_moving_camera_does_not_exhaust_the_pool() {
         spilled, 0,
         "{spilled} pages found no slot; the pool peaked at {peak} of {}",
         frames[0].pool.capacity
+    );
+}
+
+/// The CPU mirror of `entry_rank` in `page_mark.wgsl`, decode for
+/// decode, so the test can name the rank of every survivor.
+fn entry_rank(config: &PageConfig, clip_levels: u32, within: u32) -> u32 {
+    let stride = (config.local_face_pages() * 6).div_ceil(32) * 32;
+    // The tests run well under 64 lights, so the padded slot count is
+    // the first step: 64.
+    let sun_base = 64 * stride;
+    if within >= sun_base {
+        let cell = config.side(0).pow(2);
+        let level = ((within - sun_base) / cell).min(clip_levels - 1);
+        return (clip_levels - 1 - level).min(31);
+    }
+    let face = (within % stride) % config.local_face_pages();
+    let mut level = config.local_floor();
+    let mut next = config.side(level).pow(2);
+    while level + 1 < config.levels() && face >= next {
+        level += 1;
+        next += config.side(level).pow(2);
+    }
+    (clip_levels + (config.levels() - 1 - level)).min(31)
+}
+
+/// Under pressure, what survives is the top of the ranking — never a
+/// page the plan ranked below one it turned away. The issue's own
+/// acceptance test: plant more requests than slots, read the table,
+/// and check every resident against the cutoff the plan reported.
+#[test]
+fn the_survivors_are_the_top_ranks() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    // A lamp alongside the sun, so the demand spans both classes and
+    // the local ranks are really in the contest they are meant to lose.
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+    let small = PoolConfig { pages: 4, views: 1 };
+    let (marker, counts) = run_pool(
+        &device,
+        &queue,
+        &resources,
+        0.6,
+        Some(Vec3::new(0.3, -1.0, 0.2)),
+        400,
+        small,
+    );
+    assert!(counts.pool.denied > 0, "no pressure, nothing to rank");
+    let cutoff = counts.pool.cutoff;
+    assert!(cutoff < 32, "denials without a cutoff");
+
+    let config = PageConfig::default();
+    let clip_levels = ClipmapConfig::default().levels;
+    let cells = read_words(&device, &queue, marker.pool().slots());
+    let mut residents = 0;
+    for entry in 0..cells.len() / PAGE_CELL as usize {
+        if cells[entry * PAGE_CELL as usize] == 0 {
+            continue;
+        }
+        residents += 1;
+        let rank = entry_rank(&config, clip_levels, entry as u32);
+        assert!(
+            rank <= cutoff,
+            "entry {entry} of rank {rank} kept its seat past the cutoff {cutoff}"
+        );
+    }
+    assert_eq!(residents, small.slice(), "the slice seated exactly itself");
+}
+
+/// A saturated pool reseats the frame the camera moves: the new view's
+/// pages take their seats from the stale ones IN THE SAME FRAME, not
+/// after `max_age` lets them go. The starvation this replaces sat at
+/// `0 new` forever while 6 652 requests waited.
+#[test]
+fn a_saturated_pool_reseats_on_move() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+    let small = PoolConfig { pages: 4, views: 1 };
+    let eye = Vec3::ZERO;
+    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let proj = projection();
+    let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+    let mut lights = GpuLights::new(&device);
+    let mut frame = kooch_lighting::LightFrame::extract(&resources);
+    lights.update(&device, &queue, &resources, camera, None, &mut frame);
+    let target = paint_target(&device);
+    let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
+    marker.set_pool(&device, small);
+
+    // Two frames at two depths: the surface moves, so the second frame
+    // wants pages the first one never marked — against a full slice.
+    let mut last = None;
+    for (index, depth) in [0.6f32, 0.15].into_iter().enumerate() {
+        marker.set_frame(index as u32);
+        let depth_view = depth_texture(&device, &queue, depth);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            Some(Vec3::new(0.3, -1.0, 0.2)),
+            (SIZE, SIZE),
+            0,
+            1,
+            400,
+            Paint {
+                target: &target,
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        marker.poll();
+        wait(&device);
+        marker.poll();
+        last = marker.last();
+    }
+    let counts = last.expect("the counters came back");
+    assert!(
+        counts.pool.claims > 0,
+        "the camera moved against a full pool and nothing reseated: {:?}",
+        counts.pool
+    );
+    assert!(
+        counts.pool.preempted > 0,
+        "new pages were seated but no stale resident paid for them: {:?}",
+        counts.pool
+    );
+}
+
+/// The pressure bias settles the denials (#943): a pool too small for
+/// the frame converges, one level per frame, to a marking that fits —
+/// and then HOLDS, because the step down needs slack the settled state
+/// does not have. The acceptance criteria of the issue, in order:
+/// denials reach zero, the bias is the reason, and it does not
+/// oscillate.
+#[test]
+fn the_bias_settles_the_denials() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+    let small = PoolConfig { pages: 4, views: 1 };
+    let eye = Vec3::ZERO;
+    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let proj = projection();
+    let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+    let mut lights = GpuLights::new(&device);
+    let mut frame = kooch_lighting::LightFrame::extract(&resources);
+    lights.update(&device, &queue, &resources, camera, None, &mut frame);
+    let depth_view = depth_texture(&device, &queue, 0.6);
+    let target = paint_target(&device);
+    let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
+    marker.set_pool(&device, small);
+
+    // A near surface at four times the screen's density wants more sun
+    // pages than four slots hold; the bias has up to six steps (four
+    // local, two sun) plus the readback lag to settle in.
+    let mut series = Vec::new();
+    for index in 0..12u32 {
+        marker.set_frame(index);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            Some(Vec3::new(0.3, -1.0, 0.2)),
+            (SIZE, SIZE),
+            0,
+            1,
+            400,
+            Paint {
+                target: &target,
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        marker.poll();
+        wait(&device);
+        marker.poll();
+        if let Some(counts) = marker.last() {
+            series.push(counts);
+        }
+    }
+    let last = series.last().expect("counters came back");
+    assert!(
+        last.pool.bias_sun > 0,
+        "the demand never fit and the sun never paid: {:?}",
+        last.pool
+    );
+    assert_eq!(
+        last.pool.denied, 0,
+        "the bias settled at +{} local +{} sun and pages still starve",
+        last.pool.bias_local, last.pool.bias_sun
+    );
+    // No oscillation: once settled, a constant demand is a constant
+    // bias. The last three frames have to agree.
+    let tail: Vec<_> = series
+        .iter()
+        .rev()
+        .take(3)
+        .map(|c| (c.pool.bias_local, c.pool.bias_sun))
+        .collect();
+    assert!(
+        tail.windows(2).all(|w| w[0] == w[1]),
+        "the bias oscillates at the end: {tail:?}"
+    );
+
+    // And it unwinds: drop the demand to almost nothing and the bias
+    // walks back to zero on its own — quality is only ever borrowed.
+    // Two trial steps 16 frames of patience apart, plus the readback
+    // ring's lag: 48 relaxed frames is the controller's own arithmetic.
+    let mut relaxed = None;
+    for index in 12..60u32 {
+        marker.set_frame(index);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            Some(Vec3::new(0.3, -1.0, 0.2)),
+            (SIZE, SIZE),
+            0,
+            1,
+            25,
+            Paint {
+                target: &target,
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        marker.poll();
+        wait(&device);
+        marker.poll();
+        relaxed = marker.last();
+    }
+    let relaxed = relaxed.expect("counters came back");
+    assert_eq!(
+        (relaxed.pool.bias_local, relaxed.pool.bias_sun),
+        (0, 0),
+        "the demand shrank and the bias never gave the quality back: {:?}",
+        relaxed.pool
+    );
+    assert_eq!(relaxed.pool.denied, 0, "relaxed and still denying");
+}
+
+/// A light too small on screen casts no pages (#944), and gets them
+/// back the moment the gate would pass it — here by turning the gate
+/// off, which is the same comparison a closer camera flips.
+#[test]
+fn a_tiny_light_casts_nothing() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    // Reach 2 m at 10 m: a dozen-odd pixels of projected radius on the
+    // test viewport — under a 32 px gate, over a disabled one. The
+    // surface sits AT the lamp's depth so its centre pixels are lit.
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 2.0);
+
+    let run_gated = |pixels: u32| {
+        let eye = Vec3::ZERO;
+        let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+        let proj = projection();
+        let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+        let mut lights = GpuLights::new(&device);
+        let mut frame = kooch_lighting::LightFrame::extract(&resources);
+        lights.update(&device, &queue, &resources, camera, None, &mut frame);
+        let depth_view = depth_texture(&device, &queue, 0.01);
+        let target = paint_target(&device);
+        let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
+        marker.set_coverage(pixels);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            // No sun: every page below is the lamp's own.
+            None,
+            (SIZE, SIZE),
+            0,
+            1,
+            100,
+            Paint {
+                target: &target,
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        marker.poll();
+        wait(&device);
+        marker.poll();
+        marker.last().expect("the counters came back")
+    };
+
+    let open = run_gated(0);
+    assert!(open.resident > 0, "the ungated lamp marked nothing");
+    assert_eq!(open.culled, 0, "an off gate culled something");
+
+    let gated = run_gated(32);
+    assert_eq!(
+        gated.resident, 0,
+        "a lamp under the gate still marked pages"
+    );
+    assert!(gated.culled > 0, "nothing was counted as gated");
+    assert_eq!(
+        gated.pairs, open.pairs,
+        "the gate changed the grid walk instead of the marking"
+    );
+}
+
+/// The per-pixel path counts into workgroup memory, never into a global
+/// counter.
+///
+/// 🔴 `mark_pixel` runs one thread per pixel and loops over the lights
+/// of that pixel's cluster. A global `atomicAdd` in there lands every
+/// thread of the dispatch on one address: at the OneXFly's resolution,
+/// millions of increments serialised on two words, inside a pass
+/// measured at a flat 13.975 ms (#952). The counts are load-bearing —
+/// the panel and #942's plan read them — so they are reduced per
+/// workgroup and flushed once, and this is what stops the cheap-looking
+/// one-liner from coming back.
+///
+/// A source check, because the defect is invisible in behaviour: the
+/// census comes out identical either way, only slower.
+#[test]
+fn the_hot_path_counts_in_workgroup_memory() {
+    let source = include_str!("../shaders/page_mark.wgsl");
+    let (_, body) = source
+        .split_once("fn mark_pixel(")
+        .expect("page_mark.wgsl has no mark_pixel");
+    // To the next top-level item, which is where the per-pixel path ends.
+    let body = body.split("\n@").next().unwrap_or(body);
+    assert!(
+        !body.contains("&counters["),
+        "mark_pixel touches a global counter; every pixel of the dispatch \
+         would serialise on that one address"
+    );
+    assert!(
+        body.contains("&tally["),
+        "mark_pixel counts nothing into workgroup memory — the census is \
+         either gone or back on the global counters"
+    );
+}
+
+/// The occupancy census counts froxels, and there are fewer of them than
+/// there are samples.
+///
+/// 🔴 The ratio the move to cluster/light pairs rests on. Olsson §III
+/// derives page masks from cluster bounds "several orders of magnitude
+/// fewer than the samples", and this engine measured 3 369 702
+/// sample/light pairs against 218 772 covered pixels (#952). A census
+/// that counted samples, or the whole grid, would make that comparison
+/// meaningless — so the two properties worth pinning are that it counts
+/// something, and that it counts FEWER things.
+#[test]
+fn the_census_counts_froxels_not_samples() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+    let counts = run(&device, &queue, &resources, 0.01, None);
+
+    assert!(counts.samples > 0, "the harness drew no surface");
+    assert!(counts.froxels > 0, "a full screen of surface occupied none");
+    assert!(
+        counts.froxels < counts.samples,
+        "froxels {} against {} samples — the census is counting pixels",
+        counts.froxels,
+        counts.samples
+    );
+    // The bitmap is 4096 bits wide and the grid is capped to match.
+    assert!(
+        counts.froxels <= 4096,
+        "{} froxels, past the bitmap",
+        counts.froxels
+    );
+}
+
+/// Sky occupies nothing.
+///
+/// The census reads the same early return the marking does, so a frame
+/// with no surface must report an empty grid rather than the whole one —
+/// which is the property that keeps a cluster pass from marking pages
+/// for empty air.
+#[test]
+fn sky_occupies_no_froxel() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+    let counts = run(&device, &queue, &resources, 0.0, None);
+    assert_eq!(counts.samples, 0, "the harness drew a surface");
+    assert_eq!(counts.froxels, 0, "sky occupied a froxel");
+}
+
+/// The cluster path marks the same scene for a fraction of the pairs.
+///
+/// 🔴 Olsson §III, measured against the path it replaces, in one
+/// process. `many_lights` on the OneXFly walks 2 937 330 sample/light
+/// pairs where 199 occupied froxels at 17.9 lights each would walk
+/// ~3 560 — 824x — and the whole point is that the cheaper answer is
+/// still an answer: pages get marked, nothing overflows, and the
+/// coarsest-corner rule keeps every one of them reachable by a reader
+/// walking its chain from the fine end.
+#[test]
+fn the_cluster_path_marks_for_fewer_pairs() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+
+    let per_pixel = run(&device, &queue, &resources, 0.01, None);
+    let per_froxel = with_clusters(|| run(&device, &queue, &resources, 0.01, None));
+
+    assert!(per_pixel.pairs > 0, "the per-pixel path walked nothing");
+    assert_eq!(per_froxel.overflow, 0, "a page index past the buffer");
+    // 🔴 Olsson's EXPLICIT bounds, in one number. A froxel is mostly
+    // empty and its box is a slab; marking the box asks for pages across
+    // depth that holds nothing. With the implicit bounds this scene sent
+    // the resolution bias straight to its ceiling — `locals +4 · sun +2`
+    // and 21 pages denied — so a superset is required and a superset
+    // three times over is the feature failing.
+    assert!(
+        per_froxel.resident <= per_pixel.resident * 2,
+        "cluster marked {} pages against {} — the over-marking is what \
+         the pool pays, and it is unbounded",
+        per_froxel.resident,
+        per_pixel.resident
+    );
+    // 🔴 The safety property, and the only direction an approximation of
+    // "which pages does this scene need" may err in. A froxel is a
+    // frustum and its rect on a cube face is that frustum's bounding
+    // box, so the cluster path marks a SUPERSET: pages nothing samples
+    // cost a pool slot, pages nobody marked cost a shadow. Measured
+    // here at 22 against 12.
+    assert!(
+        per_froxel.resident >= per_pixel.resident,
+        "cluster marked {} pages against the per-pixel path's {} — it is \
+         marking FEWER, which is a missing shadow",
+        per_froxel.resident,
+        per_pixel.resident
+    );
+    // And the whole point: an order of magnitude fewer walks.
+    assert!(
+        per_froxel.pairs * 10 < per_pixel.pairs,
+        "cluster pairs {} against per-pixel {} — not the win the rewrite \
+         is for",
+        per_froxel.pairs,
+        per_pixel.pairs
+    );
+}
+
+/// The counts say which path produced them.
+///
+/// 🔴 `pairs` means (pixel, light) on one path and (froxel, light) on
+/// the other, and the panel divided it by samples either way — printing
+/// `0.0 lights each` beside a multiplier it had invented. A number whose
+/// MEANING changes with a switch has to carry the switch.
+#[test]
+fn the_counts_say_which_path_walked_them() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
+
+    let per_pixel = run(&device, &queue, &resources, 0.01, None);
+    let per_froxel = with_clusters(|| run(&device, &queue, &resources, 0.01, None));
+
+    assert!(!per_pixel.by_froxel, "the per-pixel path claimed froxels");
+    assert!(per_froxel.by_froxel, "the froxel path claimed pixels");
+    // And the ratio each side implies is the same order of magnitude,
+    // which is what makes the panel's comparison honest.
+    let by_pixel = per_pixel.pairs as f32 / per_pixel.samples.max(1) as f32;
+    let by_froxel = per_froxel.pairs as f32 / per_froxel.froxels.max(1) as f32;
+    assert!(
+        by_froxel > by_pixel * 0.5,
+        "lights per froxel {by_froxel} against lights per pixel {by_pixel} — \
+         a froxel holds at least as many lights as a pixel inside it"
+    );
+}
+
+/// Lamps that overrun the pool do not blur the sun.
+///
+/// 🔴 The ranking has always had this right — a clipmap level never
+/// loses to a lamp — and the pressure valve did not. `cutoff` is the
+/// first rank the budget could not fund whole, the sun owns ranks
+/// `0..chain.w`, so a cutoff at or past `chain.w` means every sun rank
+/// was funded in full. Raising the sun's bias there buys back no page it
+/// asked for; it only punishes the consumer that won the ranking for the
+/// overdemand of the ones that lost.
+///
+/// Seen in `many_lights`: "the plan funded down to rank 17" — the sun
+/// complete, the cut inside the lamps — beside `locals +4 · sun +2`.
+/// Two levels of sun is four times the world per shadow texel on the one
+/// shadow the scene is about, and walking somewhere with fewer lamps in
+/// frame snapped it back. Resolution that depended on where you stood.
+#[test]
+fn lamps_that_overrun_the_pool_spare_the_sun() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    // Enough lamps, close enough, that their pages cannot all be seated.
+    for i in 0..12 {
+        let x = (i as f32 - 6.0) * 0.7;
+        add_point(&mut resources, Vec3::new(x, 0.0, -4.0), 12.0);
+    }
+    let eye = Vec3::ZERO;
+    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let proj = projection();
+    let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+    let mut lights = GpuLights::new(&device);
+    let mut frame = kooch_lighting::LightFrame::extract(&resources);
+    lights.update(&device, &queue, &resources, camera, None, &mut frame);
+    let depth_view = depth_texture(&device, &queue, 0.02);
+    let target = paint_target(&device);
+    let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
+    marker.set_pool(
+        &device,
+        PoolConfig {
+            pages: 12,
+            views: 1,
+        },
+    );
+
+    let mut last = None;
+    for index in 0..24u32 {
+        marker.set_frame(index);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        lights.record_clusters(&mut encoder);
+        marker.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &lights,
+            &depth_view,
+            (proj * view).inverse(),
+            eye,
+            Some(Vec3::new(0.3, -1.0, 0.2)),
+            (SIZE, SIZE),
+            0,
+            1,
+            100,
+            Paint {
+                target: &target,
+                on: false,
+                size: (SIZE, SIZE),
+            },
+        );
+        queue.submit([encoder.finish()]);
+        marker.poll();
+        wait(&device);
+        marker.poll();
+        if let Some(counts) = marker.last() {
+            last = Some(counts);
+        }
+    }
+    let last = last.expect("counters came back");
+    // The premise: the cut has to land among the LAMPS, or this proves
+    // nothing about who pays.
+    let sun_levels = ClipmapConfig::default().levels;
+    assert!(
+        last.pool.denied > 0,
+        "nothing was denied — the pool absorbed the demand, and a scene \
+         with no shortfall cannot say who should pay for one"
+    );
+    assert!(
+        last.pool.cutoff >= sun_levels,
+        "the plan cut at rank {} of {} sun ranks — the sun WAS denied, so \
+         this scene cannot say who should pay",
+        last.pool.cutoff,
+        sun_levels
+    );
+    assert_eq!(
+        last.pool.bias_sun, 0,
+        "the sun was funded to its last rank and blurred anyway: \
+         locals +{} sun +{}, cut at rank {}",
+        last.pool.bias_local, last.pool.bias_sun, last.pool.cutoff
+    );
+}
+
+/// The peak overlap is a peak, not the average, and both paths report it.
+///
+/// 🔴 `pairs / froxels` hides the case that hurts. Lights are authored
+/// one at a time and the froxel they share is drawn nowhere, so the
+/// number that matters is the worst cell — it decides the shading
+/// loop's worst pixel and how much of the pool one cell can claim.
+#[test]
+fn the_census_reports_the_worst_froxel() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    // Stacked on one spot: every one of them reaches the same froxels.
+    for i in 0..6 {
+        let nudge = i as f32 * 0.01;
+        add_point(&mut resources, Vec3::new(nudge, 0.0, -6.0), 40.0);
+    }
+    let counts = run(&device, &queue, &resources, 0.01, None);
+    assert!(counts.froxels > 0, "no froxel was occupied");
+    let average = counts.pairs as f32 / counts.samples.max(1) as f32;
+    assert!(
+        counts.peak_lights >= average.ceil() as u32,
+        "peak {} is under the average {average} — it is not a peak",
+        counts.peak_lights
+    );
+    assert!(
+        counts.peak_lights >= 2,
+        "six lights on one spot and the worst froxel saw {}",
+        counts.peak_lights
+    );
+
+    // Same scene through the cluster path: overlap is a property of the
+    // SCENE, so the alert has to read the same either way.
+    let froxel = with_clusters(|| run(&device, &queue, &resources, 0.01, None));
+    assert_eq!(
+        froxel.peak_lights, counts.peak_lights,
+        "the two marking paths disagree about how much the scene overlaps"
+    );
+}
+
+/// The bias lands on its value in one step, not one step a frame.
+///
+/// 🔴 The raise used to move by one and wait for the next frame to see
+/// whether that was enough: a scene needing four steps denied pages for
+/// four frames, and gave them back over as many as ninety-six. The
+/// player saw it — shadows blurring on the way into a lit area and
+/// sharpening again on the way out, resolution as a function of where
+/// they had been.
+///
+/// WickedEngine has no lag at all: it sizes lights from a formula, packs,
+/// halves on failure and repacks inside the frame. Ours are measured by
+/// a per-pixel pass, so one frame is the floor — and this pins that it
+/// reaches the floor.
+///
+/// ⚠️ **Both paths, and they are allowed different bounds.** The raise
+/// estimates a level as four pages becoming one, which is exact for the
+/// sun's clipmap and only an upper bound for a lamp: `mark_face_rect`
+/// caps a face's rect at `FROXEL_RECT_MAX`, so a rect already at the cap
+/// shrinks by less than four when the level goes up. The cluster path
+/// therefore lands one correction further out. It is measured here
+/// rather than hidden because a bound nobody states is a bound nobody
+/// notices growing.
+#[test]
+fn the_bias_reaches_its_value_in_one_step() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let mut resources = world();
+    for i in 0..24 {
+        let x = (i as f32 - 12.0) * 0.35;
+        add_point(&mut resources, Vec3::new(x, 0.2, -2.0), 20.0);
+    }
+    let eye = Vec3::ZERO;
+    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let proj = projection();
+    let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
+    let mut lights = GpuLights::new(&device);
+    let mut frame = kooch_lighting::LightFrame::extract(&resources);
+    lights.update(&device, &queue, &resources, camera, None, &mut frame);
+    let depth_view = depth_texture(&device, &queue, 0.02);
+    let target = paint_target(&device);
+
+    let mut series_for = |cluster: bool| {
+        let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
+        marker.set_cluster_marking(cluster);
+        marker.set_pool(
+            &device,
+            PoolConfig {
+                pages: 12,
+                views: 1,
+            },
+        );
+
+        let mut series = Vec::new();
+        for index in 0..8u32 {
+            marker.set_frame(index);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            lights.record_clusters(&mut encoder);
+            marker.record(
+                &device,
+                &queue,
+                &mut encoder,
+                &lights,
+                &depth_view,
+                (proj * view).inverse(),
+                eye,
+                Some(Vec3::new(0.3, -1.0, 0.2)),
+                (SIZE, SIZE),
+                0,
+                1,
+                100,
+                Paint {
+                    target: &target,
+                    on: false,
+                    size: (SIZE, SIZE),
+                },
+            );
+            queue.submit([encoder.finish()]);
+            marker.poll();
+            wait(&device);
+            marker.poll();
+            if let Some(counts) = marker.last() {
+                series.push(counts.pool.bias_local);
+            }
+        }
+        series
+    };
+
+    // `corrections` is how many times the bias moved up AFTER its first
+    // move. Stepping one per frame would need `settled - 1` of them; the
+    // point of computing the fit is that this number stays tiny however
+    // deep the scene's answer is.
+    let check = |series: Vec<u32>, corrections: usize, path: &str| {
+        let settled = *series.last().expect("counters came back");
+        assert!(
+            settled > 1,
+            "{path}: this scene does not need a multi-step bias, so it \
+             cannot show one being reached in a step: settled at +{settled}"
+        );
+        // 🔴 The property, and it is deliberately not exactness. The
+        // raise uses the OPTIMISTIC estimate — four pages become one per
+        // level — because raising too little costs a frame of denials
+        // while raising too much costs blur the player sees. So it lands
+        // at or under the answer and corrects, never climbing through it.
+        let first_move = series
+            .iter()
+            .copied()
+            .find(|&b| b > 0)
+            .expect("the bias never rose");
+        assert!(
+            first_move + corrections as u32 >= settled,
+            "{path}: the first move was +{first_move} against a settled \
+             +{settled}: {series:?} — that is stepping, not computing"
+        );
+        let rises = series.windows(2).filter(|w| w[1] > w[0]).count();
+        assert!(
+            rises <= corrections,
+            "{path}: the bias rose {rises} times after its first move: \
+             {series:?} — a correction is the estimate erring low, a climb \
+             is stepping"
+        );
+        // Whatever it took to get there, it must be strictly better than
+        // the one-step-a-frame rule this replaced.
+        assert!(
+            rises < settled as usize,
+            "{path}: {rises} rises to reach +{settled} is the per-frame \
+             step it was supposed to replace: {series:?}"
+        );
+        settled
+    };
+
+    let pixels = check(series_for(false), 1, "per pixel");
+    // One further out, and the cap on a face's rect is why — see the
+    // header. Same answer, one more frame to reach it.
+    let clusters = check(series_for(true), 2, "per cluster");
+    assert_eq!(
+        pixels, clusters,
+        "the two marking paths settled on different resolutions for one \
+         scene, which is a difference in what they MARK, not in how fast \
+         the bias converges"
     );
 }
