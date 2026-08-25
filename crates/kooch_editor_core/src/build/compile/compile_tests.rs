@@ -311,16 +311,22 @@ fn a_missing_target_is_refused_with_the_fix() {
         return;
     };
 
-    if let Some(problem) = missing_toolchain(&only(cross)) {
-        assert!(
-            problem.contains(&format!("rustup target add {}", cross.triple())),
-            "the refusal does not say what to run: {problem}",
-        );
+    let Some(problem) = missing_toolchain(&only(cross)) else {
+        // The target is installed and so is everything else it needs.
+        return;
+    };
+    // ⚠️ The same check answers for more than one thing — a missing
+    // target and a missing mingw both come back here — so the assertion
+    // is on the branch this test is about, not on whatever came first.
+    // Asserting unconditionally made this fail the day the mingw check
+    // landed, on a machine where the target was installed all along.
+    if !problem.contains("is not installed") {
+        return;
     }
-    // No assertion when the target *is* installed — which it is on the
-    // machine this was written on. The check cannot be forced to fail
-    // without uninstalling a toolchain, and a test that did that would
-    // break the next build.
+    assert!(
+        problem.contains(&format!("rustup target add {}", cross.triple())),
+        "the refusal does not say what to run: {problem}",
+    );
 }
 
 /// The platform this machine runs needs no target installed: it is the
@@ -384,4 +390,52 @@ fn a_migrated_main_is_not_blamed() {
     assert!(unmigrated_main(&dir).is_none());
     // And a project with no main.rs at all is not a crash.
     assert!(unmigrated_main(std::path::Path::new("/nonexistent")).is_none());
+}
+
+/// 🔴 A Linux-only preset must never be refused over a Windows
+/// toolchain.
+///
+/// This is the half that can be tested on any machine, and it is the
+/// half that would ruin somebody's day: a check that asked for mingw
+/// unconditionally would stop every Linux build on every machine that
+/// never intends to ship for Windows.
+#[test]
+fn a_linux_preset_is_never_asked_for_mingw() {
+    let Some(host) = Platform::host() else {
+        return;
+    };
+    if host != Platform::Linux {
+        return;
+    }
+    let problem = missing_toolchain(&only(Platform::Linux));
+    assert!(
+        problem.is_none(),
+        "a Linux build was refused: {}",
+        problem.unwrap_or_default(),
+    );
+}
+
+/// And when the tools are genuinely absent, the refusal says which one
+/// and how to install it.
+///
+/// 🔴 `g++`, not just `gcc`. Measured: this machine had `mingw64-gcc`
+/// and no `mingw64-gcc-c++`, and the build died inside `meshopt`'s build
+/// script — meshoptimizer is C++ — well after cargo had accepted the
+/// target. A check that only looked for a mingw `gcc` would have said
+/// yes and let it through.
+#[test]
+fn a_missing_mingw_names_the_tool_and_the_package() {
+    let Some(problem) = missing_mingw() else {
+        // The tools are installed here; there is nothing to assert and
+        // uninstalling them to find out would break the next build.
+        return;
+    };
+    assert!(
+        problem.contains("x86_64-w64-mingw32-g++"),
+        "the refusal does not name the missing tool: {problem}",
+    );
+    assert!(
+        problem.contains("mingw64-gcc-c++"),
+        "the refusal does not say what to install: {problem}",
+    );
 }

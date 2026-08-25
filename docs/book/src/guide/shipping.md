@@ -240,11 +240,22 @@ platform is checked before the *first* one starts compiling, with the
 reported up front rather than after Linux has spent ten minutes
 building.
 
-Windows also needs a mingw toolchain. That one is not checked for you:
-a C toolchain can be installed under names this editor would guess
-wrong about, and refusing a build that would have worked is worse than
-letting cargo say so. The C23 workaround `metis` requires **is** passed
-for you.
+Windows also needs the **mingw-w64** toolchain, and both halves of it:
+`metis` is C and `meshopt` is C++. Having only the C compiler is a real
+state to be in — Fedora ships `mingw64-gcc` and `mingw64-gcc-c++` as
+separate packages — and it fails inside a build script well after cargo
+has accepted the target.
+
+So both are checked up front, by the exact names `cc-rs` looks for, and
+the refusal says what to install:
+
+```sh
+rpm-ostree install mingw64-gcc mingw64-gcc-c++          # Fedora, Bazzite
+sudo apt install gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64   # Debian, Ubuntu
+sudo pacman -S mingw-w64-gcc                            # Arch
+```
+
+The C23 workaround `metis` requires is passed for you.
 
 A preset with no platform ticked builds nothing, and says so instead of
 guessing that you meant this machine.

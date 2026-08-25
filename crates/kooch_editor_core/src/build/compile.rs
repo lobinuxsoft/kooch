@@ -536,13 +536,67 @@ fn missing_toolchain(preset: &BuildPreset) -> Option<String> {
     // 🔴 The whole reason this check exists: without it cargo runs for
     // ten minutes and fails with a linker error that never says the word
     // "target".
-    cross
-        .into_iter()
+    let missing_target = cross
+        .iter()
+        .copied()
         .map(Platform::triple)
         .find(|triple| !installed.lines().any(|line| line.trim() == *triple))
         .map(|triple| {
             format!("the target {triple} is not installed — run:\n  rustup target add {triple}")
-        })
+        });
+    if missing_target.is_some() {
+        return missing_target;
+    }
+    if cross.contains(&Platform::Windows) {
+        return missing_mingw();
+    }
+    None
+}
+
+/// The mingw tools a Windows cross-build needs and this machine has not
+/// got.
+///
+/// # 🔴 Why `g++` and not just `gcc`
+///
+/// Measured, not guessed: this machine had `mingw64-gcc` and no
+/// `mingw64-gcc-c++`, and the build died in `meshopt`'s build script —
+/// meshoptimizer is C++ — after cargo had already accepted the target
+/// and started work. A check that asked "is there a mingw gcc?" would
+/// have answered yes and let it through.
+///
+/// Both are checked, because both are used: `metis-sys` is C and
+/// `meshopt` is C++, and a machine can have either half.
+///
+/// # Why this is checkable at all when a C toolchain generally is not
+///
+/// The names are not a guess. `cc-rs` derives them from the target
+/// triple and looks for `x86_64-w64-mingw32-g++` verbatim, which is the
+/// same string this looks for. Nothing is being inferred about how
+/// somebody installed their compiler.
+fn missing_mingw() -> Option<String> {
+    let missing: Vec<&str> = ["x86_64-w64-mingw32-gcc", "x86_64-w64-mingw32-g++"]
+        .into_iter()
+        .filter(|tool| !on_path(tool, "--version"))
+        .collect();
+    if missing.is_empty() {
+        return None;
+    }
+    // The package name differs per distribution and getting it wrong
+    // sends someone to install something that does not exist, so all
+    // three common spellings are offered rather than one guessed from
+    // the host.
+    Some(format!(
+        "a Windows build needs the mingw-w64 toolchain, and {} {} not on PATH.\n\
+         Install it with one of:\n\
+         \x20 rpm-ostree install mingw64-gcc mingw64-gcc-c++   (Fedora, Bazzite)\n\
+         \x20 sudo apt install gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64   (Debian, Ubuntu)\n\
+         \x20 sudo pacman -S mingw-w64-gcc   (Arch)",
+        missing.join(" and "),
+        match missing.len() {
+            1 => "is",
+            _ => "are",
+        },
+    ))
 }
 
 /// What a glibc floor needs and this machine has not got.
