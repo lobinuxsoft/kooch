@@ -17,7 +17,7 @@ pub(super) fn run_gpu_batch(systems: &mut [AnySystem], resources: &mut Resources
 
     // Init + prepare phase (GpuContext removed from resources).
     for sys in systems.iter_mut() {
-        if let AnySystem::Gpu(gpu_sys) = sys {
+        if let Some(gpu_sys) = sys.as_gpu() {
             if !gpu_sys.is_initialized() {
                 gpu_sys.init(gpu.device(), gpu.queue());
                 tracing::debug!(system = gpu_sys.name(), "GPU system initialized");
@@ -33,8 +33,11 @@ pub(super) fn run_gpu_batch(systems: &mut [AnySystem], resources: &mut Resources
             label: Some("gpu_system_encoder"),
         });
 
-    for sys in systems.iter() {
-        if let AnySystem::Gpu(gpu_sys) = sys {
+    for sys in systems.iter_mut() {
+        // The batch shares one encoder, so a GPU system has no `run` of
+        // its own to wrap — the scope covers what it records instead.
+        let _scope = sys.scope();
+        if let Some(gpu_sys) = sys.as_gpu() {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(gpu_sys.name()),
                 timestamp_writes: None,

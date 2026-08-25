@@ -58,6 +58,12 @@ dynamic = ["dep:libloading", "dep:kooch_plugin_api"]
 # release build: it allocates query sets and buffers per frame and the
 # timestamps themselves are not free.
 gpu-profiler = ["dep:wgpu-profiler", "dep:puffin"]
+# One profiling scope per SYSTEM, not just per stage. Selected by
+# `kooch/profiling` alongside the GPU half: a stage holds systems from
+# five crates at once, so "PreUpdate: 92 ms" names a suspect list rather
+# than a suspect. See `schedule::system_scope` for why it cannot be a
+# macro.
+cpu-profiler = ["dep:puffin"]
 # NVIDIA DLSS (#536). Compile-time by construction — see `gpu::dlss`.
 # With it on the instance is Vulkan-only, which on Windows moves every
 # player off D3D12, so it is a decision a build makes, not a default.

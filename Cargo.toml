@@ -265,6 +265,10 @@ profiling = [
     # a profiling build without GPU scopes is a build that cannot answer
     # the question it was made for.
     "kooch_render?/gpu-profiler",
+    # A scope per SYSTEM rather than per stage. Same argument one level
+    # down: a stage that reports 92 ms and holds nine systems from five
+    # crates has told you the frame is slow and nothing else.
+    "kooch_core/cpu-profiler",
 ]
 
 [[example]]

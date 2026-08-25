@@ -81,7 +81,7 @@ impl Schedule {
         self.stages
             .entry(stage)
             .or_default()
-            .push(AnySystem::Cpu(Box::new(FunctionSystem::new(system))));
+            .push(AnySystem::cpu(Box::new(FunctionSystem::new(system))));
     }
 
     /// Adds a struct implementing [`System`] at the specified stage.
@@ -89,7 +89,7 @@ impl Schedule {
         self.stages
             .entry(stage)
             .or_default()
-            .push(AnySystem::Cpu(Box::new(system)));
+            .push(AnySystem::cpu(Box::new(system)));
     }
 
     /// Adds a [`GpuSystem`] at the specified stage.
@@ -100,7 +100,7 @@ impl Schedule {
         self.stages
             .entry(stage)
             .or_default()
-            .push(AnySystem::Gpu(Box::new(system)));
+            .push(AnySystem::gpu(Box::new(system)));
     }
 
     /// Runs all systems in the specified stage.
@@ -122,9 +122,10 @@ impl Schedule {
                 }
                 run_gpu_batch(&mut systems[gpu_start..i], resources);
             } else {
-                if let AnySystem::Cpu(sys) = &mut systems[i] {
-                    sys.run(resources);
-                }
+                // Its own profiling scope, carrying its own name: a
+                // stage is nine systems from five crates, and "one of
+                // these nine" is not a thing anyone can act on.
+                systems[i].run_cpu(resources);
                 i += 1;
             }
         }
