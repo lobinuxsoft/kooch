@@ -24,7 +24,7 @@ use kooch_ecs::world_snapshot::WorldSnapshot;
 
 use crate::protocol::{
     ComponentSchema, ComponentSnapshot, EntityId, EntitySnapshot, FieldSchema, Method, RemoteError,
-    Request, Response, ResponseData,
+    Request, Response, ResponseData, SceneEntry,
 };
 
 /// Runs `request` against `resources` and returns the response to send.
@@ -216,7 +216,35 @@ fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Resp
             revision: delta.revision,
             full: delta.full,
             host: host_metrics(resources),
+            scenes: open_scenes(resources),
         },
+    )
+}
+
+/// The scenes this project has open, for the editor to list.
+///
+/// `None` when there is no [`SceneManager`], which is what a host that
+/// never loaded one looks like — distinct from "none are open", so the
+/// editor keeps showing what it had rather than blanking the panel.
+///
+/// [`SceneManager`]: kooch_ecs::SceneManager
+fn open_scenes(resources: &Resources) -> Option<Vec<SceneEntry>> {
+    let manager = resources.get::<kooch_ecs::SceneManager>()?;
+    let active = manager.active_id();
+    Some(
+        manager
+            .scenes()
+            .iter()
+            .map(|scene| SceneEntry {
+                id: scene.id,
+                path: scene
+                    .path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned()),
+                active: active == Some(scene.id),
+                dirty: scene.dirty,
+            })
+            .collect(),
     )
 }
 

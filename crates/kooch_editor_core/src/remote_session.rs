@@ -121,6 +121,22 @@ pub struct RemoteSession {
     /// shows its own frame; this is the process that is actually
     /// simulating (#699).
     host_metrics: Option<kooch_remote::protocol::HostMetrics>,
+    /// The scenes the project has open, as it last reported them.
+    ///
+    /// 🔴 This is the list the World panel must draw, and the editor
+    /// cannot supply it. The editor's own `SceneManager` seeds one
+    /// unsaved scene with a random id at startup — reasonable for local
+    /// mode, meaningless here — while the project holds the real files
+    /// under ids of its own. Drawn from the editor's copy, the panel
+    /// showed an `Untitled` scene nothing belongs to and filed every
+    /// mirrored entity under "Unsaved", since the scene each one names
+    /// was in nobody's list.
+    ///
+    /// `None` until the project answers, which is what keeps local mode
+    /// reading its own manager. `Some(vec![])` is a project that has
+    /// closed every scene — a different thing, and the panel should show
+    /// it rather than falling back to a list the editor made up.
+    scenes: Option<Vec<kooch_remote::protocol::SceneEntry>>,
     /// Whether the last [`Self::refresh`] actually changed the world.
     ///
     /// The mirror walks every entity to apply a snapshot, which costs
@@ -224,6 +240,7 @@ impl RemoteSession {
             state: ConnectionState::Connecting,
             snapshot: Vec::new(),
             host_metrics: None,
+            scenes: None,
             changed_last_refresh: true,
             revision: None,
             schema: Vec::new(),
@@ -241,6 +258,7 @@ impl RemoteSession {
             state: ConnectionState::Connecting,
             snapshot: Vec::new(),
             host_metrics: None,
+            scenes: None,
             changed_last_refresh: true,
             revision: None,
             schema: Vec::new(),
@@ -305,7 +323,14 @@ impl RemoteSession {
         }
         if self.client.ping().is_ok() {
             self.schema = self.client.get_schema().unwrap_or_default();
-            self.snapshot = self.client.list_entities().unwrap_or_default();
+            // Through the `since` form even though there is nothing to
+            // diff against: the plain one returns entities alone, and
+            // the open scene set would then be unknown until the first
+            // refresh — one frame of the panel listing nothing.
+            if let Ok(update) = self.client.list_entities_since(None) {
+                self.snapshot = update.entities;
+                self.scenes = update.scenes;
+            }
             self.state = ConnectionState::Connected;
             tracing::info!("remote project connected");
         }
@@ -337,6 +362,16 @@ impl RemoteSession {
         self.host_metrics
     }
 
+    /// The scenes the project has open, or `None` if it has not said.
+    ///
+    /// The two are not the same answer: `None` is a project that has
+    /// not replied yet or a host too old to send the field, and a caller
+    /// should fall back to whatever it knows locally. `Some` is the open
+    /// set, empty included.
+    pub fn open_scenes(&self) -> Option<&[kooch_remote::protocol::SceneEntry]> {
+        self.scenes.as_deref()
+    }
+
     pub fn refresh(&mut self) {
         if self.state != ConnectionState::Connected {
             return;
@@ -364,6 +399,13 @@ impl RemoteSession {
                 // screen instead of blanking them every other frame.
                 if update.host.is_some() {
                     self.host_metrics = update.host;
+                }
+                // Same reasoning as the metrics above, and it matters
+                // more: blanking the open set on a reply from an older
+                // host would empty the World panel of every scene while
+                // the entities that belong to them keep arriving.
+                if update.scenes.is_some() {
+                    self.scenes = update.scenes;
                 }
                 if self.stale.take().is_some() {
                     tracing::info!("remote snapshot is tracking the project again");

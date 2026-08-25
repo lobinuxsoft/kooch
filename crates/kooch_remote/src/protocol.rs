@@ -74,6 +74,36 @@ pub struct EntitySnapshot {
     pub components: Vec<ComponentSnapshot>,
 }
 
+/// One scene the project has open, as the editor needs to list it.
+///
+/// 🔴 The editor cannot answer this from its own state. Its
+/// `SceneManager` seeds an empty scene with a freshly generated `Guid`
+/// and no path, while the project holds a different `SceneManager` with
+/// the real files under different ids — so the editor was listing a
+/// scene that exists nowhere and filing every mirrored entity under
+/// "Unsaved", because the scene each one names was not in its list.
+///
+/// The open set belongs to the project for the same reason the entities
+/// do: it is the side that loaded them. Carried per reply rather than
+/// behind a method of its own, like [`HostMetrics`] — it is a handful of
+/// entries, the editor already pulls a snapshot every frame, and a
+/// second round trip is a second thing that can be a frame out of date.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SceneEntry {
+    /// Identity, matching [`EntitySnapshot::scene`] and the scene file's
+    /// own `id`.
+    pub id: Guid,
+    /// Where it was loaded from, or `None` for one never saved.
+    ///
+    /// A string, not a `PathBuf`: the wire carries no host paths as
+    /// types, and the client only ever shows it.
+    pub path: Option<String>,
+    /// Whether new entities are authored into it.
+    pub active: bool,
+    /// Whether it has edits not on disk.
+    pub dirty: bool,
+}
+
 /// Static metadata for one field of a registered component type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FieldSchema {
@@ -261,6 +291,22 @@ pub enum ResponseData {
         /// said".
         #[serde(default, skip_serializing_if = "Option::is_none")]
         host: Option<HostMetrics>,
+        /// Which scenes the project has open.
+        ///
+        /// `None` means nobody said — an older host, or one with no
+        /// `SceneManager` — and the client should keep whatever it was
+        /// showing. `Some` is the whole open set, replacing it.
+        ///
+        /// The distinction is the point: an empty `Vec` would be
+        /// indistinguishable from a host that never sent the field, and
+        /// the editor would blank a list it had no news about.
+        ///
+        /// Sent whole every reply rather than diffed like `entities`.
+        /// There are as many of these as a person has scenes open, and
+        /// a diff of three entries costs more to be right about than to
+        /// resend.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scenes: Option<Vec<SceneEntry>>,
     },
     /// Reply to [`Method::GetSchema`].
     Schema { components: Vec<ComponentSchema> },

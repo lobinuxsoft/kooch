@@ -193,12 +193,14 @@ impl RemoteClient {
                 revision,
                 full,
                 host,
+                scenes,
             } => Ok(EntityUpdate {
                 entities,
                 removed,
                 revision,
                 full,
                 host,
+                scenes,
             }),
             other => Err(ClientError::Unexpected(other)),
         }
@@ -409,4 +411,9 @@ pub struct EntityUpdate {
     pub full: bool,
     /// What the host's frame cost, if it reported one.
     pub host: Option<crate::protocol::HostMetrics>,
+    /// The scenes the project has open, or `None` if it did not say.
+    ///
+    /// Not diffed: it arrives whole or not at all, so a caller replaces
+    /// its list rather than merging into one.
+    pub scenes: Option<Vec<crate::protocol::SceneEntry>>,
 }

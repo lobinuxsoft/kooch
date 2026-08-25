@@ -668,3 +668,50 @@ fn a_queued_request_wakes_a_sleeping_main_loop() {
     let response = client.join().unwrap();
     assert!(response.contains("\"kind\":\"pong\""), "body: {response}");
 }
+
+/// The project's open scenes travel with the snapshot the editor
+/// already pulls every frame.
+///
+/// 🔴 This is the field the World panel draws its roots from. The
+/// editor cannot answer it locally: its own `SceneManager` seeds an
+/// unsaved scene with a random id, so without this the panel listed a
+/// scene nothing belongs to and filed every mirrored entity under
+/// "Unsaved" — the scene each one named was in nobody's list.
+#[test]
+fn the_open_scene_set_is_listed() {
+    let mut resources = ecs();
+    let mut manager = kooch_ecs::SceneManager::new();
+    manager.set_current(std::path::PathBuf::from("assets/scenes/many_lights.scene"));
+    let id = manager
+        .active_id()
+        .expect("new manager has an active scene");
+    resources.insert(manager);
+
+    let scenes = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { scenes, .. } => scenes.expect("the host has a SceneManager"),
+        other => panic!("list: {other:?}"),
+    };
+
+    assert_eq!(scenes.len(), 1);
+    assert_eq!(scenes[0].id, id, "the project's id, not one minted here");
+    assert_eq!(
+        scenes[0].path.as_deref(),
+        Some("assets/scenes/many_lights.scene"),
+    );
+    assert!(scenes[0].active);
+}
+
+/// A host with no `SceneManager` says nothing, rather than saying no
+/// scenes are open.
+///
+/// The editor replaces its list from this field, so the two have to be
+/// distinguishable — answering with an empty list would blank the
+/// World panel every frame.
+#[test]
+fn a_host_without_scenes_says_nothing() {
+    let mut resources = ecs();
+    match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { scenes, .. } => assert_eq!(scenes, None),
+        other => panic!("list: {other:?}"),
+    }
+}

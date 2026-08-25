@@ -99,7 +99,21 @@ impl FrameDisplayData {
 }
 
 /// Snapshots the open scenes for the World panel.
+///
+/// 🔴 The project's list wins whenever there is one. **Open Project
+/// always opens remote**, so the scenes on screen belong to another
+/// process; the editor's own `SceneManager` still holds the unsaved
+/// scene it seeds at startup, under an id no entity will ever name.
+/// Listing that one put an `Untitled (0 entities)` row above the real
+/// scene and dropped everything else into "Unsaved" — the panel
+/// describing the editor's idea of the world instead of the world.
+///
+/// The local manager is the fallback, not the default: it is right in
+/// local mode and right again before the project has answered.
 fn gather_scenes(resources: &Resources) -> Vec<SceneDisplayInfo> {
+    if let Some(scenes) = remote_scenes(resources) {
+        return scenes;
+    }
     let Some(manager) = resources.get::<kooch_ecs::SceneManager>() else {
         return Vec::new();
     };
@@ -119,4 +133,35 @@ fn gather_scenes(resources: &Resources) -> Vec<SceneDisplayInfo> {
             active: active == Some(scene.id),
         })
         .collect()
+}
+
+/// The open scenes as the connected project reports them.
+///
+/// `None` in local mode and until the project has answered once, which
+/// is the difference between "no news" and "no scenes open" — the
+/// latter would blank the panel on every reply from a host too old to
+/// send the field.
+fn remote_scenes(resources: &Resources) -> Option<Vec<SceneDisplayInfo>> {
+    let session = resources
+        .get::<crate::remote_session::RemoteState>()?
+        .session
+        .as_ref()?;
+    let scenes = session.open_scenes()?;
+    Some(
+        scenes
+            .iter()
+            .map(|scene| SceneDisplayInfo {
+                id: scene.id,
+                name: scene
+                    .path
+                    .as_deref()
+                    .map(std::path::Path::new)
+                    .and_then(|path| path.file_stem())
+                    .map(|stem| stem.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "Untitled".to_owned()),
+                dirty: scene.dirty,
+                active: scene.active,
+            })
+            .collect(),
+    )
 }
