@@ -43,6 +43,9 @@ pub(super) struct ToolbarInfo {
     pub(super) remote: Option<ConnectionState>,
     /// Why the remote snapshot stopped tracking, when it has.
     pub(super) remote_stale: Option<String>,
+    /// `registrations.rs` was rewritten since the project was last
+    /// built, so the loaded code is behind its source.
+    pub(super) scripts_behind: bool,
 }
 
 /// Handles to the viewport resource consumed by the UI: a read-only
@@ -166,6 +169,7 @@ pub(super) fn run_editor_ui(
                 toolbar.is_playing,
                 toolbar.remote,
                 toolbar.remote_stale.as_deref(),
+                toolbar.scripts_behind,
                 toolbar.can_undo,
                 toolbar.can_redo,
                 toolbar.undo_desc.as_deref(),

@@ -97,18 +97,29 @@ impl SourceFile {
 
 /// Regenerates `src/registrations.rs` from the project's `src/` tree and
 /// ensures `main.rs` exists.
-pub(crate) fn register_scripts(resources: &mut Resources) {
+/// What a regeneration did, for the poll that calls this on a timer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SyncOutcome {
+    /// No project, or no `src/`. Nothing to be in sync with.
+    Idle,
+    /// The file on disk already said exactly this.
+    Unchanged,
+    /// Rewritten. The project's build is now behind its source.
+    Regenerated,
+}
+
+pub(crate) fn register_scripts(resources: &mut Resources) -> SyncOutcome {
     let Some(project_root) = resources
         .get::<ProjectState>()
         .and_then(|ps| ps.active_project.as_ref().map(|ap| ap.root_path.clone()))
     else {
         tracing::warn!("register scripts: no active project");
-        return;
+        return SyncOutcome::Idle;
     };
     let src = project_root.join("src");
     if !src.is_dir() {
         tracing::warn!(src = %src.display(), "register scripts: no src/ directory");
-        return;
+        return SyncOutcome::Idle;
     }
 
     let mut files: Vec<SourceFile> = Vec::new();
@@ -125,15 +136,27 @@ pub(crate) fn register_scripts(resources: &mut Resources) {
 
     let content = render::render_registrations(&files);
     let out = src.join("registrations.rs");
-    match std::fs::write(&out, content) {
-        Ok(()) => tracing::info!(
-            file = %out.display(),
-            components = files.iter().map(|f| f.components.len()).sum::<usize>(),
-            systems = files.iter().map(|f| f.systems.len()).sum::<usize>(),
-            "registrations regenerated",
-        ),
-        Err(e) => {
-            tracing::error!(file = %out.display(), error = %e, "failed to write registrations")
+    // 🔴 Compared before writing, and not as an optimisation. This runs
+    // on a timer now, and an unconditional write moves the file's mtime
+    // — which is what cargo decides to rebuild by. Writing the same
+    // bytes twice a second would recompile the project forever.
+    let mut outcome = SyncOutcome::Unchanged;
+    if std::fs::read_to_string(&out).is_ok_and(|on_disk| on_disk == content) {
+        tracing::debug!(file = %out.display(), "registrations already current");
+    } else {
+        match std::fs::write(&out, content) {
+            Ok(()) => {
+                outcome = SyncOutcome::Regenerated;
+                tracing::info!(
+                    file = %out.display(),
+                    components = files.iter().map(|f| f.components.len()).sum::<usize>(),
+                    systems = files.iter().map(|f| f.systems.len()).sum::<usize>(),
+                    "registrations regenerated",
+                );
+            }
+            Err(e) => {
+                tracing::error!(file = %out.display(), error = %e, "failed to write registrations")
+            }
         }
     }
 
@@ -155,6 +178,7 @@ pub(crate) fn register_scripts(resources: &mut Resources) {
     if !crate_name.is_empty() {
         migrate_to_library(&project_root, &crate_name);
     }
+    outcome
 }
 
 /// Adds engine features a project predates.

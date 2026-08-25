@@ -51,6 +51,7 @@ pub(crate) mod queries;
 pub(crate) mod remote_input;
 pub mod remote_mirror;
 pub mod remote_session;
+pub mod script_sync;
 pub(crate) mod shortcuts;
 pub(crate) mod state;
 pub(crate) mod style;
@@ -116,6 +117,7 @@ impl Plugin for EditorPlugin {
         app.insert_resource(PlayState::new());
         // Idle until someone presses Build (#758).
         app.insert_resource(build::BuildState::default());
+        app.insert_resource(script_sync::ScriptSync::default());
         app.insert_resource(input_focus::InputFocus::default());
         // Remote mode starts inert: no session means the editor drives
         // its own ECS exactly as before. "Open Remote" fills it in.
@@ -180,6 +182,10 @@ impl Plugin for EditorPlugin {
         // entries the same frame the user opens a project.
         app.add_system(Stage::PreUpdate, systems::scan_project_assets_system);
         app.add_system(Stage::PreUpdate, systems::ensure_main_exists_system);
+        // Keeps `registrations.rs` level with `src/` without being asked.
+        // A system written in an external editor used to reach no
+        // registration and no log line — it simply never ran.
+        app.add_system(Stage::PreUpdate, script_sync::sync_scripts_system);
         // Remote mode: advance the handshake and pull the project's
         // world into the local mirror. PreUpdate so the panels and the
         // viewport see a snapshot that is at most one frame stale.
