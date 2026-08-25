@@ -399,20 +399,38 @@ fn row_pitch(ui: &egui::Ui, row_h: f32) -> f32 {
     row_h + ui.spacing().item_spacing.y
 }
 
-/// Opens whatever group holds `entity`, so it has a row to scroll to.
+/// Opens whatever group and collapsed ancestors hold `entity`, so it has
+/// a row to scroll to.
+///
+/// A row that does not exist cannot be scrolled to, and leaving it hidden
+/// reproduces the symptom #706 exists to prevent: something selected with
+/// nothing on screen to show for it.
 fn reveal_group_of(
     ui: &egui::Ui,
     entities: &[EntityDisplayInfo],
     scenes: &[SceneDisplayInfo],
     entity: Entity,
 ) {
-    // One scene means no headers at all, so there is nothing to open.
-    if scenes.len() < 2 {
-        return;
-    }
+    // 🔴 No early return on a single scene. That guard was right while a
+    // lone scene drew no header, and stopped being right the moment every
+    // scene got a root — one collapsed scene is now exactly as able to
+    // hide a selection as two.
     let Some(info) = entities.iter().find(|e| e.entity == entity) else {
         return;
     };
+
+    // Every collapsed ancestor, not only the group. A prefab instance
+    // starts collapsed, so anything created inside one — a duplicate of a
+    // child — lands in a subtree with no rows at all.
+    let mut ancestor = info.parent;
+    while let Some(parent) = ancestor {
+        ui.data_mut(|data| data.insert_persisted(subtree_id(parent), true));
+        ancestor = entities
+            .iter()
+            .find(|e| e.entity == parent)
+            .and_then(|e| e.parent);
+    }
+
     match info.scene.and_then(|id| scenes.iter().find(|s| s.id == id)) {
         Some(scene) => {
             let members = entities

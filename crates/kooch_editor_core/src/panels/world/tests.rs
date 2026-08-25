@@ -540,3 +540,34 @@ fn only_the_instances_root_starts_collapsed() {
         "expanding the instance's root did not reveal the whole instance"
     );
 }
+
+/// A selection inside a collapsed prefab instance gets a row to land on.
+///
+/// 🔴 Two things used to hide it, and both arrived with the tree. The
+/// group reveal bailed on a single scene — right while a lone scene drew
+/// no header, wrong the moment every scene got a root — and it only ever
+/// opened the group, never the collapsed parents inside it. A prefab
+/// instance starts collapsed, so duplicating one of its children put the
+/// new entity in a subtree with no rows at all: selected, and nowhere on
+/// screen (#706).
+#[test]
+fn a_reveal_opens_collapsed_ancestors() {
+    let id = kooch_core::Guid::new_v4();
+    let scenes = vec![scene_info(id, true)];
+    let entities = parent_and_child(id, true, 30);
+    let child = entities[1].entity;
+
+    let rows = with_ui(|ui| {
+        // Collapse the scene too, so both guards are under test.
+        ui.data_mut(|data| data.insert_persisted(egui::Id::new(("world_group_open", id)), false));
+        assert_eq!(
+            entity_rows(&build_rows(ui, &entities, &scenes)),
+            0,
+            "nothing was hidden, so the test proves nothing",
+        );
+        super::reveal_group_of(ui, &entities, &scenes, child);
+        entity_rows(&build_rows(ui, &entities, &scenes))
+    });
+
+    assert_eq!(rows, 2, "the revealed child still had no row");
+}
