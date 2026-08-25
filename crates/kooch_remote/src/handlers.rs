@@ -138,6 +138,10 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             }
             Err(e) => Response::err(id, e),
         },
+        Method::RevertScene { scene } => match revert_scene(resources, *scene) {
+            Ok(()) => Response::ok(id, ResponseData::Ok),
+            Err(e) => Response::err(id, e),
+        },
         Method::NewScene => match resources.get_mut::<kooch_ecs::SceneManager>() {
             Some(manager) => Response::ok(
                 id,
@@ -740,6 +744,40 @@ fn save_scene(
         }),
     };
     resources.insert(manager);
+    result
+}
+
+/// Throws away one scene's edits and reads it back from its file.
+///
+/// Lifted out and put back for the same reason a load is: the manager
+/// needs `&mut Resources` for the ECS it is about to replace, and it
+/// lives in there.
+fn revert_scene(
+    resources: &mut Resources,
+    scene: Option<kooch_core::Guid>,
+) -> Result<(), RemoteError> {
+    let Some(mut manager) = resources.remove::<kooch_ecs::SceneManager>() else {
+        return Err(RemoteError::Unavailable {
+            detail: "no SceneManager; nothing knows which scene to revert".into(),
+        });
+    };
+    let result = match scene.or_else(|| manager.active_id()) {
+        Some(id) => manager
+            .revert(id, resources)
+            .map_err(|e| RemoteError::SceneError {
+                detail: e.to_string(),
+            }),
+        None => Err(RemoteError::SceneError {
+            detail: "no scene is open".into(),
+        }),
+    };
+    resources.insert(manager);
+    // A prefab edited while this scene held stale copies of it: the
+    // entities were just respawned from the file, so they need the same
+    // refresh a load gives them.
+    if result.is_ok() {
+        kooch_ecs::scene::propagate::refresh_all(resources);
+    }
     result
 }
 

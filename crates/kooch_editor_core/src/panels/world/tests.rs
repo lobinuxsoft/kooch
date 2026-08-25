@@ -632,3 +632,60 @@ fn an_entity_is_indented_under_its_scene() {
         "the offset was lost deeper in the tree"
     );
 }
+
+/// Dropping onto a collapsed entity opens the chain above it.
+///
+/// 🔴 Without this the dragged entity *vanishes*: the reparent works and
+/// its row lands inside a subtree that is not listed. Nothing says where
+/// it went, and the obvious reading is that the drag deleted it.
+#[test]
+fn a_drop_target_opens_up_to_its_root() {
+    let id = kooch_core::Guid::new_v4();
+    let scenes = vec![scene_info(id, true)];
+    // root → middle → leaf, all collapsed.
+    let mut root = entity_info(40, Some(id));
+    let mut middle = entity_info(41, Some(id));
+    let leaf = entity_info(42, Some(id));
+    root.children = vec![middle.entity];
+    middle.parent = Some(root.entity);
+    middle.depth = 1;
+    middle.children = vec![leaf.entity];
+    let mut leaf = leaf;
+    leaf.parent = Some(middle.entity);
+    leaf.depth = 2;
+    let entities = vec![root, middle, leaf];
+
+    let rows = with_ui(|ui| {
+        for e in &entities {
+            ui.data_mut(|d| d.insert_persisted(subtree_id(e.entity), false));
+        }
+        assert_eq!(
+            entity_rows(&build_rows(ui, &entities, &scenes)),
+            1,
+            "nothing was collapsed, so the test proves nothing",
+        );
+        // Dropping onto the leaf: its whole chain has to open.
+        super::entity_row::reveal_chain(ui, entities[2].entity, &entities);
+        entity_rows(&build_rows(ui, &entities, &scenes))
+    });
+
+    assert_eq!(rows, 3, "the drop target's chain stayed folded");
+}
+
+/// A scene with no file offers no "Discard Changes".
+///
+/// There is nothing to revert *to*, and despawning its entities would
+/// delete work rather than undo it — the one thing discard must never be
+/// mistaken for.
+#[test]
+fn an_unsaved_scene_cannot_discard() {
+    let id = kooch_core::Guid::new_v4();
+    let mut info = scene_info(id, true);
+    info.dirty = true;
+    assert!(
+        !super::GroupHeader::scene(&info, 1).has_file,
+        "a scene that has never been saved claimed a file to revert to",
+    );
+    info.path = Some(std::path::PathBuf::from("scenes/station.scene"));
+    assert!(super::GroupHeader::scene(&info, 1).has_file);
+}

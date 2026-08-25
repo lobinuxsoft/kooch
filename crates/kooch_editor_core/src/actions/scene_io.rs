@@ -75,6 +75,19 @@ pub(super) fn save_open_scene_as(
     result
 }
 
+/// Throws away one scene's edits and reads it back from its file.
+pub(super) fn revert_scene(
+    resources: &mut Resources,
+    id: kooch_core::Guid,
+) -> Result<(), kooch_ecs::SceneError> {
+    let mut sm = resources
+        .remove::<kooch_ecs::SceneManager>()
+        .unwrap_or_default();
+    let result = sm.revert(id, resources);
+    resources.insert(sm);
+    result
+}
+
 /// Where an open scene came from, or `None` for one never saved.
 pub(super) fn scene_path(resources: &Resources, id: kooch_core::Guid) -> Option<PathBuf> {
     resources

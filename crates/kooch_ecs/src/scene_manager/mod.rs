@@ -274,6 +274,48 @@ impl SceneManager {
         Ok(doc.id)
     }
 
+    /// Throws away one scene's edits and reads it back from its file.
+    ///
+    /// Despawns only that scene's entities and loads the file again, so
+    /// the other open scenes are untouched. The scene keeps its place in
+    /// the open set and stays active if it was.
+    ///
+    /// Refused for a scene with no file: there is nothing to revert *to*,
+    /// and despawning its entities would delete work rather than undo it
+    /// — which is the one thing "discard changes" must never be mistaken
+    /// for.
+    pub fn revert(&mut self, id: Guid, resources: &mut Resources) -> Result<(), SceneError> {
+        let Some(path) = self.scene(id).and_then(|scene| scene.path.clone()) else {
+            return Err(SceneError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "scene has never been saved; there is nothing to revert to",
+            )));
+        };
+
+        let bytes = kooch_core::asset_loader::read_game_file(resources, &path)?;
+        let text = String::from_utf8_lossy(&bytes);
+        // Parsed BEFORE anything is despawned. A file that has been
+        // deleted or hand-edited into nonsense would otherwise leave the
+        // scene empty and unrecoverable — "discard changes" that discards
+        // the scene as well.
+        let doc = SceneDocument::parse(&text)?;
+
+        despawn_scene(id, resources);
+        spawn_scene_into(&doc, resources)?;
+
+        let was_active = self.active == Some(id);
+        if let Some(scene) = self.scenes.iter_mut().find(|scene| scene.id == id) {
+            // The document's identity, not the old one: reverting to a
+            // file means becoming what the file says, id included.
+            scene.id = doc.id;
+            scene.dirty = Self::lacks_stored_id(&text);
+        }
+        if was_active {
+            self.active = Some(doc.id);
+        }
+        Ok(())
+    }
+
     /// Closes one scene, despawning only its entities.
     ///
     /// Returns `false` if it was not open. Unsaved edits are discarded —

@@ -272,6 +272,14 @@ pub enum Method {
     /// and a second way to move an entity is a second thing to keep in step
     /// with the first.
     InstantiatePrefab { path: String },
+    /// Throw away one open scene's edits and read it back from its file.
+    ///
+    /// Only that scene: the others keep their edits. `None` reverts the
+    /// active one.
+    RevertScene {
+        #[serde(default)]
+        scene: Option<Guid>,
+    },
     /// Open an empty unsaved scene beside the ones already loaded, and
     /// make it active. Returns its identity as [`ResponseData::SceneOpened`].
     ///

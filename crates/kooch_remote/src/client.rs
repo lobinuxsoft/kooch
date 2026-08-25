@@ -206,6 +206,11 @@ impl RemoteClient {
         }
     }
 
+    /// Throws away one scene's edits and reads it back from its file.
+    pub fn revert_scene(&self, scene: Option<kooch_core::Guid>) -> Result<(), ClientError> {
+        self.expect_ok(Method::RevertScene { scene })
+    }
+
     /// Opens an empty unsaved scene on the project and makes it active.
     pub fn new_scene(&self) -> Result<kooch_core::Guid, ClientError> {
         match self.call(Method::NewScene)? {

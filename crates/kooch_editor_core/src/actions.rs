@@ -240,6 +240,12 @@ pub(crate) enum EditorAction {
     SaveOpenScene(kooch_core::Guid),
     /// Write one open scene to a path the user picks, and adopt it.
     SaveOpenSceneAs(kooch_core::Guid),
+    /// Throw away one open scene's edits and read it back from its file.
+    ///
+    /// Only that scene. With several open, "discard changes" that threw
+    /// away every scene's would destroy work in files the user never
+    /// touched.
+    RevertOpenScene(kooch_core::Guid),
     Play,
     Stop,
     /// Open a project: launch its binary with `--remote` and drive its
@@ -536,6 +542,7 @@ impl EditorAction {
             | Self::SetActiveScene(_)
             | Self::SaveOpenScene(_)
             | Self::SaveOpenSceneAs(_)
+            | Self::RevertOpenScene(_)
             | Self::Play
             | Self::Stop
             | Self::RegisterScripts

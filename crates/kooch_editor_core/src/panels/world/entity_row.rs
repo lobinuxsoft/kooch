@@ -243,6 +243,19 @@ fn handle_drop_targets(
                         entity: r,
                         new_parent: Some(info.entity),
                     });
+                    // 🔴 Open the new parent and everything above it,
+                    // right up to the root. Dropping onto a collapsed
+                    // entity otherwise makes the dragged one *vanish*:
+                    // the reparent works, and its row is inside a subtree
+                    // that is not listed. Nothing says where it went, and
+                    // the obvious reading is that the drag deleted it.
+                    //
+                    // Done here rather than after the action lands
+                    // because the chain to open is the one above the drop
+                    // target, which is known now — and the reparent has
+                    // not happened yet, so asking the hierarchy would
+                    // still describe the old one.
+                    reveal_chain(ui, info.entity, entities);
                 }
             }
         }
@@ -511,4 +524,21 @@ fn handle_context_menu(
             }
         }
     });
+}
+
+/// Opens `entity` and every ancestor of it, so a child dropped onto it
+/// has a row.
+///
+/// Walks up rather than down: what has to be listed is the chain from
+/// the drop target to its root, and each collapsed link in it hides
+/// everything below.
+pub(super) fn reveal_chain(ui: &egui::Ui, entity: Entity, entities: &[EntityDisplayInfo]) {
+    let mut at = Some(entity);
+    while let Some(current) = at {
+        ui.data_mut(|data| data.insert_persisted(super::subtree_id(current), true));
+        at = entities
+            .iter()
+            .find(|e| e.entity == current)
+            .and_then(|e| e.parent);
+    }
 }

@@ -285,6 +285,11 @@ struct GroupHeader {
     scene: Option<kooch_core::Guid>,
     /// Whether that scene has edits not on disk.
     dirty: bool,
+    /// Whether it has ever been saved.
+    ///
+    /// What separates "discard changes" from "delete everything": a scene
+    /// with no file has nothing to be read back from.
+    has_file: bool,
 }
 
 impl GroupHeader {
@@ -302,6 +307,7 @@ impl GroupHeader {
             default_open: scene.active,
             scene: Some(scene.id),
             dirty: scene.dirty,
+            has_file: scene.path.is_some(),
         }
     }
 
@@ -312,6 +318,7 @@ impl GroupHeader {
             default_open: true,
             scene: None,
             dirty: false,
+            has_file: false,
         }
     }
 
@@ -476,7 +483,7 @@ fn reveal_group_of(
 
 /// Flattens the hierarchy into the lines the panel will show.
 /// What identifies one entity's expanded state across frames.
-fn subtree_id(entity: Entity) -> egui::Id {
+pub(super) fn subtree_id(entity: Entity) -> egui::Id {
     egui::Id::new(("world_subtree_open", entity))
 }
 
@@ -654,9 +661,27 @@ fn draw_group_header(
         egui::Align2::LEFT_CENTER,
         &header.label,
         egui::TextStyle::Button.resolve(ui.style()),
-        visuals.text_color(),
+        match header.dirty {
+            true => DIRTY_SCENE,
+            false => visuals.text_color(),
+        },
     );
 }
+
+/// The colour of a scene that has edits not on disk.
+///
+/// The same amber the code-sync control pulses in, because it means the
+/// same thing: something here is out of step with what is on disk. One
+/// colour for "needs attention" is one thing to learn rather than two.
+///
+/// Paired with the `*`, never alone — a colour by itself is unreadable
+/// to anyone who cannot separate these two hues, and this one has to
+/// survive both themes.
+///
+/// 🔴 A literal, and it should not stay one. Every colour the panel
+/// introduces belongs in Settings (#955); a palette hard-coded into a
+/// panel is a palette nobody can fix for their own eyes.
+const DIRTY_SCENE: egui::Color32 = egui::Color32::from_rgb(210, 150, 60);
 
 /// The right-click menu on a scene's row.
 ///
@@ -698,6 +723,19 @@ fn scene_context_menu(
         {
             actions.push(EditorAction::SaveOpenSceneAs(scene));
             ui.close();
+        }
+        // Only offered when there is something to discard, and only for
+        // a scene that has a file. Without one there is nothing to revert
+        // *to*, and despawning its entities would delete work rather than
+        // undo it — the one thing "discard" must never be mistaken for.
+        if header.dirty && header.has_file {
+            let discard = ui
+                .button("Discard Changes")
+                .on_hover_text("Throw away this scene's edits and read it back from its file");
+            if discard.clicked() {
+                actions.push(EditorAction::RevertOpenScene(scene));
+                ui.close();
+            }
         }
         ui.separator();
         // Into *this* scene. The toolbar's Spawn button authors into the

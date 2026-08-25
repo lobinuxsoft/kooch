@@ -1101,3 +1101,100 @@ fn a_new_scene_opens_unsaved() {
         .map(|m| m.scene);
     assert_eq!(home, Some(opened), "the entity did not join the new scene");
 }
+
+/// Reverting throws away one scene's edits and leaves the rest alone.
+#[test]
+fn a_revert_reads_the_file_back() {
+    use kooch_ecs::SceneManager;
+
+    let mut resources = ecs();
+    resources.insert(SceneManager::new());
+
+    let dir = std::env::temp_dir().join("kooch_remote_revert");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("station.scene");
+    std::fs::write(
+        &path,
+        r#"(id: "ae0b881d-c3e2-49e1-ae19-cf8c3db5288e", name: "Station", version: "0.1.0", entities: [])"#,
+    )
+    .expect("write scene");
+
+    call(
+        &mut resources,
+        Method::LoadScene {
+            path: path.to_string_lossy().into_owned(),
+        },
+    );
+    call(
+        &mut resources,
+        Method::Spawn {
+            name: Some("Mistake".into()),
+            scene: None,
+            parent: None,
+        },
+    );
+
+    let named = |resources: &mut Resources| -> Vec<String> {
+        match call(resources, Method::ListEntities { since: None }) {
+            ResponseData::Entities { entities, .. } => {
+                entities.iter().filter_map(|e| e.name.clone()).collect()
+            }
+            other => panic!("list: {other:?}"),
+        }
+    };
+    assert!(named(&mut resources).contains(&"Mistake".to_owned()));
+
+    call(&mut resources, Method::RevertScene { scene: None });
+    assert!(
+        !named(&mut resources).contains(&"Mistake".to_owned()),
+        "the edit survived a discard",
+    );
+
+    let scenes = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { scenes, .. } => scenes.expect("open set"),
+        other => panic!("list: {other:?}"),
+    };
+    assert!(!scenes[0].dirty, "a reverted scene still read as edited");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+/// A scene that has never been saved refuses to revert.
+///
+/// 🔴 There is nothing to read back, and despawning its entities would
+/// delete work rather than undo it — the one thing "discard changes"
+/// must never be mistaken for.
+#[test]
+fn an_unsaved_scene_refuses_to_revert() {
+    let mut resources = ecs();
+    resources.insert(kooch_ecs::SceneManager::new());
+    call(
+        &mut resources,
+        Method::Spawn {
+            name: Some("Work".into()),
+            scene: None,
+            parent: None,
+        },
+    );
+
+    let response = handle(
+        &Request {
+            id: 1,
+            method: Method::RevertScene { scene: None },
+        },
+        &mut resources,
+    );
+    assert!(
+        matches!(response.payload, ResponsePayload::Error(_)),
+        "an unsaved scene reverted to nothing",
+    );
+
+    match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { entities, .. } => assert_eq!(
+            entities.len(),
+            1,
+            "the refusal despawned the work it could not restore",
+        ),
+        other => panic!("list: {other:?}"),
+    }
+}

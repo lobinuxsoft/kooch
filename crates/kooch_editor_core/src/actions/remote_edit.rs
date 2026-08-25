@@ -420,6 +420,8 @@ enum Edit<'a> {
     },
     /// Write the project's world to a scene file, or replace it from one.
     SaveScene,
+    /// Throw away one scene's edits on the project and read it back.
+    RevertOneScene(kooch_core::Guid),
     /// Write one named scene of the project's open set to a file.
     ///
     /// `as_new` asks for a path; otherwise the scene is written back to
@@ -585,6 +587,7 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
             scene: *scene,
             as_new: true,
         }),
+        EditorAction::RevertOpenScene(scene) => Some(Edit::RevertOneScene(*scene)),
         EditorAction::OpenSceneAdditive
         | EditorAction::CloseScene(_)
         | EditorAction::SetActiveScene(_) => None,
@@ -846,6 +849,7 @@ fn send(
             };
             client.save_scene(&path, Some(scene)).map_err(map_err)
         }
+        Edit::RevertOneScene(scene) => client.revert_scene(Some(scene)).map_err(map_err),
         Edit::LoadScene => match crate::actions::scene_io::scene_dialog(resources).pick_file() {
             Some(path) => client.load_scene(&path.to_string_lossy()).map_err(map_err),
             None => Ok(()),
