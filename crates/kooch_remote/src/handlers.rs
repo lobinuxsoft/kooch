@@ -566,18 +566,50 @@ fn despawn(resources: &mut Resources, entity: EntityId) -> Result<(), RemoteErro
 }
 
 fn load_scene(resources: &mut Resources, path: &str) -> Result<(), RemoteError> {
-    let doc = SceneDocument::load(path.as_ref()).map_err(|e| RemoteError::SceneError {
-        detail: e.to_string(),
-    })?;
-    sync_scene_to_ecs(&doc, resources).map_err(|e| RemoteError::SceneError {
-        detail: e.to_string(),
-    })?;
+    match load_through_manager(resources, path) {
+        Some(result) => result?,
+        None => load_directly(resources, path)?,
+    }
     // A prefab edited while this scene was closed left stale copies in it.
     // Done here rather than editor-side because this is where the scene
     // actually arrives — the editor would have to wait for the mirror
     // before it even knew what was in it.
     kooch_ecs::scene::propagate::refresh_all(resources);
     Ok(())
+}
+
+/// Loads through the project's [`SceneManager`], so it knows what it has.
+///
+/// 🔴 This used to go straight to [`sync_scene_to_ecs`], which loads the
+/// entities and tells the manager nothing. The project then held its
+/// startup scratch scene — an unsaved one under a random `Guid` — while
+/// every entity in the world named the id of the file that had just been
+/// loaded. Nothing failed; the project simply could not say which scene
+/// it had open, and the editor asking it got the scratch one.
+///
+/// `None` when there is no manager to load through, which is a host that
+/// never installed `EcsPlugin` rather than a failure.
+///
+/// [`SceneManager`]: kooch_ecs::SceneManager
+fn load_through_manager(resources: &mut Resources, path: &str) -> Option<Result<(), RemoteError>> {
+    // Lifted out and put back: `load` needs `&mut Resources` for the ECS
+    // it is about to replace, and the manager lives in there too.
+    let mut manager = resources.remove::<kooch_ecs::SceneManager>()?;
+    let result = manager.load(path.as_ref(), resources);
+    resources.insert(manager);
+    Some(result.map_err(|e| RemoteError::SceneError {
+        detail: e.to_string(),
+    }))
+}
+
+/// Loads without a manager: the entities arrive, nothing records them.
+fn load_directly(resources: &mut Resources, path: &str) -> Result<(), RemoteError> {
+    let doc = SceneDocument::load(path.as_ref()).map_err(|e| RemoteError::SceneError {
+        detail: e.to_string(),
+    })?;
+    sync_scene_to_ecs(&doc, resources).map_err(|e| RemoteError::SceneError {
+        detail: e.to_string(),
+    })
 }
 
 /// The authored world, held while a play session runs so Stop can put
