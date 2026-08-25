@@ -307,6 +307,18 @@ impl SceneDocument {
         Self::capture(resources, Capture::Scene(scene), scene)
     }
 
+    /// Snapshots one open scene instance, writing `as_id` as the
+    /// document's identity.
+    ///
+    /// 🔴 The two are different once the same file can be open twice.
+    /// `scene` says whose entities to capture — the copy — and `as_id`
+    /// says what the file is called. Writing the instance's id would give
+    /// the file a new identity every time a second copy was saved, and
+    /// break every reference that named it.
+    pub fn from_ecs_instance(resources: &mut Resources, scene: Guid, as_id: Guid) -> Self {
+        Self::capture(resources, Capture::Scene(scene), as_id)
+    }
+
     /// Snapshots one entity and its descendants as a standalone scene — a
     /// prefab.
     ///

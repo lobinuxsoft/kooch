@@ -36,7 +36,25 @@ pub fn spawn_scene_into(
     scene: &SceneDocument,
     resources: &mut Resources,
 ) -> Result<(), SceneError> {
-    spawn_returning(scene, resources).map(|_| ())
+    spawn_scene_as(scene, resources, scene.id)
+}
+
+/// Spawns a document's entities as the scene instance `instance`.
+///
+/// 🔴 The entities keep the ids the file gives them; only which *copy*
+/// they belong to differs. That is what lets the same file be open twice:
+/// `SceneMember` names the instance, so the `(scene, entity)` pair stays
+/// unique while the entity half is verbatim from disk.
+///
+/// Unity DOTS takes the same position — instances of a subscene are
+/// "exact copies of each other", told apart by the instance the load
+/// hands back rather than by anything inside them.
+pub fn spawn_scene_as(
+    scene: &SceneDocument,
+    resources: &mut Resources,
+    instance: kooch_core::Guid,
+) -> Result<(), SceneError> {
+    spawn_returning_as(scene, resources, instance).map(|_| ())
 }
 
 /// Stamps out a copy of `prefab` inside the scene `into`, and hands back
@@ -118,6 +136,15 @@ fn spawn_returning(
     scene: &SceneDocument,
     resources: &mut Resources,
 ) -> Result<Vec<crate::entity::Entity>, SceneError> {
+    spawn_returning_as(scene, resources, scene.id)
+}
+
+/// [`spawn_returning`], into a named scene instance.
+fn spawn_returning_as(
+    scene: &SceneDocument,
+    resources: &mut Resources,
+    instance: kooch_core::Guid,
+) -> Result<Vec<crate::entity::Entity>, SceneError> {
     use crate::hierarchy::Parent;
 
     // Identity has to be a known type before the spawn pass, or the ids
@@ -147,7 +174,7 @@ fn spawn_returning(
         // The result stands in for the description, so a `Parent` pointing
         // at this instance resolves to the root the prefab produced.
         let entity = match instance_source(entity_desc) {
-            Some(source) => rebuild_instance(entity_desc, source, resources, scene.id),
+            Some(source) => rebuild_instance(entity_desc, source, resources, instance),
             None => {
                 let mut commands = resources
                     .remove::<Commands>()
@@ -160,7 +187,7 @@ fn spawn_returning(
 
         name_to_entity.insert(entity_desc.name.clone(), entity);
         spawned_order.push(entity);
-        tag_with_scene(resources, entity, scene.id);
+        tag_with_scene(resources, entity, instance);
 
         for comp_desc in &entity_desc.components {
             // Look up the TypeId by full type name. A name this binary
