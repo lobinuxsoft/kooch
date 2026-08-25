@@ -779,3 +779,83 @@ fn loading_a_second_scene_teaches_the_manager() {
     let _ = std::fs::remove_file(&first);
     let _ = std::fs::remove_file(&second);
 }
+
+/// Saving over the wire writes one scene, and does not re-mint its id.
+///
+/// 🔴 `SaveScene` used to call `SceneDocument::from_ecs`:
+/// `Capture::Everything` plus a fresh `Guid` for the document. Two
+/// consequences, both silent. With more than one scene open it wrote
+/// them all into the one file, so the next load spawned every entity
+/// twice. And the id changed on every save, so anything that referred to
+/// the scene by identity pointed at a file that no longer claimed it.
+///
+/// The engine has always had `from_ecs_scene`. The local editor path used
+/// it, this one did not, and **Open Project always opens remote** — so
+/// the wrong one was the one that ran.
+#[test]
+fn saving_writes_one_scene_and_keeps_its_id() {
+    let mut resources = ecs();
+    resources.insert(kooch_ecs::SceneManager::new());
+
+    let dir = std::env::temp_dir().join("kooch_remote_save_scene");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let source = dir.join("station.scene");
+    let id = "ae0b881d-c3e2-49e1-ae19-cf8c3db5288e";
+    std::fs::write(
+        &source,
+        format!(r#"(id: "{id}", name: "Station", version: "0.1.0", entities: [])"#),
+    )
+    .expect("write scene");
+
+    call(
+        &mut resources,
+        Method::LoadScene {
+            path: source.to_string_lossy().into_owned(),
+        },
+    );
+
+    let out = dir.join("written.scene");
+    call(
+        &mut resources,
+        Method::SaveScene {
+            path: out.to_string_lossy().into_owned(),
+            scene: None,
+        },
+    );
+
+    let written = kooch_ecs::scene::SceneDocument::load(&out).expect("reads back");
+    assert_eq!(
+        written.id,
+        id.parse::<kooch_core::Guid>().expect("a well-formed id"),
+        "the save minted a new identity for a scene that already had one",
+    );
+
+    let _ = std::fs::remove_file(&source);
+    let _ = std::fs::remove_file(&out);
+}
+
+/// A host with no `SceneManager` refuses to save rather than writing the
+/// whole world into the file.
+#[test]
+fn saving_without_a_manager_is_refused() {
+    let mut resources = ecs();
+    let out = std::env::temp_dir().join("kooch_remote_no_manager.scene");
+    // Cleared first: the assertion below is "nothing was written", and a
+    // leftover from an earlier run would fail a correct implementation.
+    let _ = std::fs::remove_file(&out);
+    let response = handle(
+        &Request {
+            id: 1,
+            method: Method::SaveScene {
+                path: out.to_string_lossy().into_owned(),
+                scene: None,
+            },
+        },
+        &mut resources,
+    );
+    assert!(
+        matches!(response.payload, ResponsePayload::Error(_)),
+        "wrote something without knowing which scene it was",
+    );
+    assert!(!out.exists(), "a refused save left a file behind");
+}

@@ -768,7 +768,12 @@ fn send(
         // Both processes see the same filesystem, so the path the user
         // picks here is meaningful on the project's side of the wire.
         Edit::SaveScene => match crate::actions::scene_io::scene_dialog(resources).save_file() {
-            Some(path) => client.save_scene(&path.to_string_lossy()).map_err(map_err),
+            // `None` — the active scene. Saving a scene the user picked
+            // out of the panel is #955's own menu item; this is the
+            // File menu, which has never named one.
+            Some(path) => client
+                .save_scene(&path.to_string_lossy(), None)
+                .map_err(map_err),
             None => Ok(()),
         },
         Edit::LoadScene => match crate::actions::scene_io::scene_dialog(resources).pick_file() {

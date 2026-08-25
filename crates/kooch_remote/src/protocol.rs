@@ -204,8 +204,24 @@ pub enum Method {
         /// does not get a second method.
         parent: Option<EntityId>,
     },
-    /// Persist the live ECS to a scene file on the server's disk.
-    SaveScene { path: String },
+    /// Persist one open scene to a file on the server's disk.
+    ///
+    /// 🔴 One scene, not the world. This used to write
+    /// `SceneDocument::from_ecs` — every entity alive, under a freshly
+    /// generated document id. With two scenes open that put both scenes'
+    /// entities in one file, so the next load spawned everything twice,
+    /// and the id changed on every save, breaking whatever named the
+    /// scene. The engine has always had `from_ecs_scene`; the local
+    /// editor path used it and this one did not, and **Open Project
+    /// always opens remote**.
+    SaveScene {
+        path: String,
+        /// Which scene to write. `None` means the active one — what a
+        /// client that knows of only one scene sends, and what a host
+        /// older than this field is asked for anyway.
+        #[serde(default)]
+        scene: Option<Guid>,
+    },
     /// Write one entity and its descendants to a scene file — a prefab.
     ///
     /// Server-side because the world it captures lives here; the editor's

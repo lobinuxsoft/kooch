@@ -306,8 +306,38 @@ impl SceneManager {
         let Some(id) = self.active else {
             return Err(Self::no_path());
         };
+        self.save_scene_as(id, path, resources)
+    }
 
-        adopt_unowned(resources, id);
+    /// Saves one open scene to `path` and adopts it.
+    ///
+    /// "Save As" for a scene that is not the active one — which a panel
+    /// listing several of them needs, since the scene the user
+    /// right-clicked is not necessarily the one new entities land in.
+    ///
+    /// Captures **only that scene's entities**. Saving one scene must
+    /// never drag another's into the file: the next load would spawn
+    /// them twice, once from each.
+    pub fn save_scene_as(
+        &mut self,
+        id: Guid,
+        path: PathBuf,
+        resources: &mut Resources,
+    ) -> Result<(), SceneError> {
+        if self.scene(id).is_none() {
+            return Err(SceneError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("scene {id} is not open"),
+            )));
+        }
+
+        // Only for the active scene. An entity nothing recorded the
+        // origin of belongs in the one being worked in — adopting it
+        // into whichever scene happened to be right-clicked would move
+        // somebody's work into a file they did not touch.
+        if self.active == Some(id) {
+            adopt_unowned(resources, id);
+        }
         SceneDocument::from_ecs_scene(resources, id).save(&path)?;
         if let Some(scene) = self.scenes.iter_mut().find(|scene| scene.id == id) {
             scene.path = Some(path);

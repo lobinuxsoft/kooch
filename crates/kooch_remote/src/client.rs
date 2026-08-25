@@ -273,10 +273,18 @@ impl RemoteClient {
         self.expect_ok(Method::SetParent { entity, parent })
     }
 
-    /// Persists the server's live ECS to a scene file on its disk.
-    pub fn save_scene(&self, path: &str) -> Result<(), ClientError> {
+    /// Persists one open scene to a file on the server's disk.
+    ///
+    /// `scene` names it; `None` saves the active one. Only that scene's
+    /// entities are written — see [`Method::SaveScene`].
+    pub fn save_scene(
+        &self,
+        path: &str,
+        scene: Option<kooch_core::Guid>,
+    ) -> Result<(), ClientError> {
         self.expect_ok(Method::SaveScene {
             path: path.to_owned(),
+            scene,
         })
     }
 

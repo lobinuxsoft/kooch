@@ -122,6 +122,60 @@ fn saving_one_scene_does_not_capture_the_other() {
     );
 }
 
+/// A scene that is not the active one can be saved to a new path.
+///
+/// "Save As" on the scene the user right-clicked, which with several
+/// open is not the one new entities land in. It must write that scene
+/// and adopt the path for it alone — leaving the active scene's own
+/// path, and the other's entities, untouched.
+#[test]
+fn a_scene_that_is_not_active_saves() {
+    use crate::scene::SceneDocument;
+
+    let first = write_scene("multi_saveas_a", &[1, 2]);
+    let second = write_scene("multi_saveas_b", &[10]);
+
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+    manager.load(&first, &mut resources).unwrap();
+    let first_id = manager.active_id().unwrap();
+    let second_id = manager.open_additive(&second, &mut resources).unwrap();
+    assert_eq!(manager.active_id(), Some(second_id), "the second is active");
+
+    let elsewhere = tmp_path("multi_saveas_out");
+    manager
+        .save_scene_as(first_id, elsewhere.clone(), &mut resources)
+        .expect("saves the one that is not active");
+
+    let written = SceneDocument::load(&elsewhere).expect("reads back");
+    assert_eq!(
+        written.entities.len(),
+        2,
+        "wrote the named scene, not the active one and not both",
+    );
+    assert_eq!(written.id, first_id, "and kept that scene's identity");
+    assert_eq!(
+        manager.scene(second_id).and_then(|s| s.path.clone()),
+        Some(second),
+        "the active scene's own path was left alone",
+    );
+    assert_eq!(
+        manager.scene(first_id).and_then(|s| s.path.clone()),
+        Some(elsewhere),
+        "the saved scene adopted where it was written",
+    );
+}
+
+/// Saving a scene that is not open is refused, rather than writing a
+/// file nothing will ever load back into that identity.
+#[test]
+fn saving_a_scene_that_is_not_open_fails() {
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+    let stray = manager.save_scene_as(Guid::new_v4(), tmp_path("nope"), &mut resources);
+    assert!(stray.is_err());
+}
+
 /// "Close the station" and "walk away from the station" are different
 /// operations (#566); this is the first one.
 #[test]

@@ -91,17 +91,10 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             Ok(()) => Response::ok(id, ResponseData::Ok),
             Err(e) => Response::err(id, e),
         },
-        Method::SaveScene { path } => {
-            match SceneDocument::from_ecs(resources).save(path.as_ref()) {
-                Ok(()) => Response::ok(id, ResponseData::Ok),
-                Err(e) => Response::err(
-                    id,
-                    RemoteError::SceneError {
-                        detail: e.to_string(),
-                    },
-                ),
-            }
-        }
+        Method::SaveScene { path, scene } => match save_scene(resources, path, *scene) {
+            Ok(()) => Response::ok(id, ResponseData::Ok),
+            Err(e) => Response::err(id, e),
+        },
         Method::SavePrefab { entity, path } => match save_prefab(resources, *entity, path) {
             Ok(()) => Response::ok(id, ResponseData::Ok),
             Err(e) => Response::err(id, e),
@@ -576,6 +569,48 @@ fn load_scene(resources: &mut Resources, path: &str) -> Result<(), RemoteError> 
     // before it even knew what was in it.
     kooch_ecs::scene::propagate::refresh_all(resources);
     Ok(())
+}
+
+/// Writes one open scene to `path`, through the project's manager.
+///
+/// 🔴 One scene, not the world. This used to call
+/// [`SceneDocument::from_ecs`] — `Capture::Everything` plus a fresh
+/// `Guid` for the document. With two scenes open it wrote both into the
+/// file, so the next load spawned every entity twice; and the new id on
+/// every save broke anything that referred to the scene by identity.
+///
+/// Through the manager rather than straight to `from_ecs_scene` so the
+/// scene adopts the path and its dirty flag is cleared — a save that
+/// leaves the record saying "unsaved" is a save the user cannot see
+/// happened.
+///
+/// `None` saves the active scene, which is what a client that knows of
+/// only one sends.
+fn save_scene(
+    resources: &mut Resources,
+    path: &str,
+    scene: Option<kooch_core::Guid>,
+) -> Result<(), RemoteError> {
+    let Some(mut manager) = resources.remove::<kooch_ecs::SceneManager>() else {
+        // Refused rather than falling back to writing everything alive:
+        // that fallback is the bug this function exists to remove, and a
+        // silent one is worse than an error naming what is missing.
+        return Err(RemoteError::Unavailable {
+            detail: "no SceneManager; nothing knows which scene to write".into(),
+        });
+    };
+    let result = match scene.or_else(|| manager.active_id()) {
+        Some(id) => manager
+            .save_scene_as(id, std::path::PathBuf::from(path), resources)
+            .map_err(|e| RemoteError::SceneError {
+                detail: e.to_string(),
+            }),
+        None => Err(RemoteError::SceneError {
+            detail: "no scene is open".into(),
+        }),
+    };
+    resources.insert(manager);
+    result
 }
 
 /// Loads through the project's [`SceneManager`], so it knows what it has.
