@@ -202,10 +202,15 @@ fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Resp
         );
     };
 
+    // Membership is reflected — so a world rebuild carries it — but it
+    // still travels beside the components in `scene`, not among them.
+    // Sending both would put the same fact on the wire twice and let a
+    // client act on whichever it read last.
     let skip = [
         TypeId::of::<Parent>(),
         TypeId::of::<kooch_ecs::hierarchy::Children>(),
         TypeId::of::<kooch_ecs::hierarchy::GlobalTransform>(),
+        TypeId::of::<kooch_ecs::SceneMember>(),
     ];
     let parents = registry.get_cpu::<Parent>();
     let members = registry.get_cpu::<kooch_ecs::SceneMember>();
@@ -586,7 +591,7 @@ fn tag_with_scene(resources: &mut Resources, entity: Entity, scene: kooch_core::
     use kooch_ecs::SceneMember;
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-        registry.register_cpu::<SceneMember>();
+        registry.register_cpu_reflected::<SceneMember>();
         if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
             storage.insert(entity, SceneMember::new(scene));
         }

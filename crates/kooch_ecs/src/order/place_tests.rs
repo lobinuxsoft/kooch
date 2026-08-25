@@ -24,7 +24,7 @@ fn world(count: usize) -> (Resources, Vec<Entity>, Guid) {
         reg.register_cpu_reflected::<Parent>();
         reg.register_cpu_reflected::<Children>();
         reg.register_cpu_reflected::<crate::transform::Transform>();
-        reg.register_cpu::<SceneMember>();
+        reg.register_cpu_reflected::<SceneMember>();
     }
 
     let scene = Guid::new_v4();

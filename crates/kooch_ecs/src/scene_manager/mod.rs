@@ -544,7 +544,7 @@ fn adopt_unowned(resources: &mut Resources, scene: Guid) {
     }
 
     if let Some(components) = resources.get_mut::<ComponentRegistry>() {
-        components.register_cpu::<SceneMember>();
+        components.register_cpu_reflected::<SceneMember>();
         if let Some(storage) = components.get_cpu_mut::<SceneMember>() {
             for &entity in &orphans {
                 storage.insert(entity, SceneMember::new(scene));

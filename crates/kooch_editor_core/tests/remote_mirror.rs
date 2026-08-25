@@ -403,10 +403,9 @@ fn a_reference_to_a_later_entity_is_translated_too() {
 
 /// Scene membership survives the wire.
 ///
-/// 🔴 `SceneMember` is deliberately NOT a reflected component — it is
-/// derived on load and never written to a scene file — so it cannot
-/// travel as one, and it travels beside the components the way `parent`
-/// does. Without it every mirrored entity belongs to nothing, and since
+/// 🔴 `SceneMember` is derived on load and never written to a scene file,
+/// and the host keeps it out of the component list, so it travels beside
+/// the components the way `parent` does. Without it every mirrored entity belongs to nothing, and since
 /// **Open Project always opens remote**, that is every entity the editor
 /// normally shows: the World panel grouped a whole project into an empty
 /// scene and a pile of orphans, and no error said why.

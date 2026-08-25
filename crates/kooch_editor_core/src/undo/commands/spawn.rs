@@ -211,7 +211,7 @@ fn tag_with_scene(resources: &mut Resources, entity: Entity, scene: kooch_core::
     use kooch_ecs::SceneMember;
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-        registry.register_cpu::<SceneMember>();
+        registry.register_cpu_reflected::<SceneMember>();
         if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
             storage.insert(entity, SceneMember::new(scene));
         }

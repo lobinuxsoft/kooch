@@ -573,7 +573,7 @@ fn tag_with_scene(
     use crate::scene_member::SceneMember;
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-        registry.register_cpu::<SceneMember>();
+        registry.register_cpu_reflected::<SceneMember>();
         if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
             storage.insert(entity, SceneMember::new(scene));
         }

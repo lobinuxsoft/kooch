@@ -316,15 +316,16 @@ fn remove_component(resources: &mut Resources, entity: Entity, type_name: &str) 
 /// Records which scene a mirrored entity belongs to, or that it belongs
 /// to none.
 ///
-/// 🔴 `SceneMember` is not a reflected component — it is derived on load
-/// and never written to a scene file — so it cannot arrive as one. Without
-/// this the World panel groups a mirrored world into an empty scene and a
-/// pile of orphans, which is what it did: every entity under "Unsaved"
-/// while the open scene reported zero.
+/// 🔴 Membership arrives in `EntitySnapshot::scene`, never among the
+/// components: the host skips `SceneMember` when it builds a snapshot so
+/// the fact is on the wire once. Without this the World panel groups a
+/// mirrored world into an empty scene and a pile of orphans, which is
+/// what it did: every entity under "Unsaved" while the open scene
+/// reported zero.
 ///
-/// Registered as a plain CPU component, not a reflected one. Reflecting it
-/// would put it in the Inspector and in the schema, and it is neither
-/// authored nor editable.
+/// Registered reflected — a generic world rebuild has to be able to carry
+/// it — but hidden from the Inspector, since it is derived rather than
+/// authored.
 fn set_scene(resources: &mut Resources, entity: Entity, scene: Option<kooch_core::Guid>) {
     let current = resources
         .get::<ComponentRegistry>()
@@ -339,7 +340,7 @@ fn set_scene(resources: &mut Resources, entity: Entity, scene: Option<kooch_core
     match scene {
         Some(scene) => {
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-                registry.register_cpu::<kooch_ecs::SceneMember>();
+                registry.register_cpu_reflected::<kooch_ecs::SceneMember>();
                 if let Some(storage) = registry.get_cpu_mut::<kooch_ecs::SceneMember>() {
                     storage.insert(entity, kooch_ecs::SceneMember::new(scene));
                 }

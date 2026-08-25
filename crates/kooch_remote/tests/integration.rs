@@ -1306,3 +1306,55 @@ fn a_move_into_itself_is_refused() {
     );
     assert!(matches!(response.payload, ResponsePayload::Error(_)));
 }
+
+/// Membership travels once, in `scene` — never among the components.
+///
+/// 🔴 It is a reflected component now, so the snapshot's "every
+/// reflected component on the archetype" loop will pick it up unless the
+/// skip list stops it. Sending it twice puts the same fact on the wire
+/// in two shapes, and with several copies of a scene open the component
+/// carries the *instance* guid — so a client merging the two would file
+/// entities under a scene the project never named.
+#[test]
+fn membership_travels_beside_the_components_not_among_them() {
+    let mut resources = ecs();
+    let mut manager = kooch_ecs::SceneManager::new();
+    let active = manager.active_id().expect("a scene");
+    resources.insert(manager);
+
+    let entity = match call(
+        &mut resources,
+        Method::Spawn {
+            name: Some("Rig".into()),
+            scene: None,
+            parent: None,
+        },
+    ) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("spawn: {other:?}"),
+    };
+
+    let entities = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { entities, .. } => entities,
+        other => panic!("list: {other:?}"),
+    };
+    let mirrored = entities
+        .iter()
+        .find(|e| e.id == entity)
+        .expect("the spawned entity");
+
+    assert_eq!(
+        mirrored.scene,
+        Some(active),
+        "membership did not travel at all",
+    );
+    let named: Vec<&str> = mirrored
+        .components
+        .iter()
+        .map(|c| c.type_name.as_str())
+        .collect();
+    assert!(
+        !named.iter().any(|name| name.contains("SceneMember")),
+        "membership travelled twice: {named:?}",
+    );
+}

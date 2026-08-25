@@ -63,12 +63,12 @@ pub struct EntitySnapshot {
     /// to none — an editor helper, or something spawned and not yet saved.
     ///
     /// 🔴 Carried out of band for the same reason `parent` is: membership
-    /// lives in `SceneMember`, which is deliberately not a reflected
-    /// component — it is derived on load and never written to a scene
-    /// file — so it cannot travel as one. Without this every mirrored
-    /// entity arrives belonging to nothing, and since **Open Project
-    /// always opens remote**, that is every entity the editor normally
-    /// shows.
+    /// lives in `SceneMember`, which is derived on load and never written
+    /// to a scene file. It is reflected — a world rebuild has to carry it
+    /// — so the host skips it explicitly when listing components, leaving
+    /// this the one place it travels. Without this every mirrored entity
+    /// arrives belonging to nothing, and since **Open Project always
+    /// opens remote**, that is every entity the editor normally shows.
     #[serde(default)]
     pub scene: Option<Guid>,
     pub components: Vec<ComponentSnapshot>,
