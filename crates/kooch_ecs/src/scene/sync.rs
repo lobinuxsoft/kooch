@@ -147,7 +147,7 @@ fn spawn_returning(
         // The result stands in for the description, so a `Parent` pointing
         // at this instance resolves to the root the prefab produced.
         let entity = match instance_source(entity_desc) {
-            Some(source) => rebuild_instance(entity_desc, source, resources),
+            Some(source) => rebuild_instance(entity_desc, source, resources, scene.id),
             None => {
                 let mut commands = resources
                     .remove::<Commands>()
@@ -346,6 +346,7 @@ fn rebuild_instance(
     entity_desc: &super::document::EntityDescription,
     source: kooch_core::Guid,
     resources: &mut Resources,
+    into: kooch_core::Guid,
 ) -> crate::entity::Entity {
     // Depth-first, so the chain is exactly the prefabs above this one.
     if resources.get::<InstancingChain>().is_none() {
@@ -366,7 +367,11 @@ fn rebuild_instance(
         chain.0.push(source);
     }
 
-    let built = match super::prefab::spawn_members(source, resources) {
+    // Named, not guessed. `spawn_members` reads the active scene out of
+    // `SceneManager` — which the load lifted out of `Resources` to run,
+    // so it would answer with a fresh random `Guid` and put this
+    // instance's members in a scene nobody has open (#955).
+    let built = match super::prefab::spawn_members_into(source, resources, into) {
         Ok((root, members)) => {
             crate::prefab_instance::attach(resources, root, &members, source);
             apply_overrides(&instance_overrides(entity_desc), &members, resources);

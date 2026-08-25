@@ -124,6 +124,32 @@ pub fn spawn_members(
     prefab: Guid,
     resources: &mut Resources,
 ) -> Result<(crate::entity::Entity, Vec<crate::entity::Entity>), SceneError> {
+    // 🔴 Only correct when somebody is *there* to answer. A scene load
+    // lifts the `SceneManager` out of `Resources` to call
+    // `SceneManager::load`, so an instance built during a load asks an
+    // empty room and gets a fresh random `Guid` — a scene that exists
+    // nowhere, one per instance. `many_lights` produced 36 of them, and
+    // the 144 entities carrying them dropped out of the panel (#955).
+    //
+    // A caller that knows which scene it is building into must say so:
+    // [`spawn_members_into`].
+    let into = resources
+        .get::<crate::scene_manager::SceneManager>()
+        .and_then(|scenes| scenes.active_id())
+        .unwrap_or_else(Guid::new_v4);
+    spawn_members_into(prefab, resources, into)
+}
+
+/// [`spawn_members`], into a scene the caller names.
+///
+/// The load path uses this: the document being spawned knows its own id,
+/// and passing it beats asking a resource that has been lifted out for
+/// the duration of the very call that needs it.
+pub fn spawn_members_into(
+    prefab: Guid,
+    resources: &mut Resources,
+    into: Guid,
+) -> Result<(crate::entity::Entity, Vec<crate::entity::Entity>), SceneError> {
     // Taken out and put back so `load_by_guid` can borrow `resources` for
     // the load it may have to perform.
     let mut server = resources
@@ -147,11 +173,6 @@ pub fn spawn_members(
             prefab,
             detail: "loaded but absent from Assets<SceneDocument>".to_owned(),
         })?;
-
-    let into = resources
-        .get::<crate::scene_manager::SceneManager>()
-        .and_then(|scenes| scenes.active_id())
-        .unwrap_or_else(Guid::new_v4);
 
     super::sync::instantiate_members(&document, resources, into)
 }
