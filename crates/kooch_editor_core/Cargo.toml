@@ -70,6 +70,12 @@ profiling = [
     # reason a game's is: the editor draws the scene being authored, and
     # a frame that is GPU-bound cannot be explained by CPU scopes.
     "kooch_render/gpu-profiler",
+    # 🔴 And the per-SYSTEM half. Missing it is invisible: the scopes
+    # compile out, the capture still opens, and `PreUpdate` reports one
+    # number with no children — exactly what it reported before the
+    # scopes existed. `CPU_SCOPES` below is what turns that into a
+    # compile error.
+    "kooch_core/cpu-profiler",
 ]
 
 # Reads a .puffin capture in a terminal (#785). Needs the same feature

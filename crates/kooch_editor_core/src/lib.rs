@@ -52,6 +52,20 @@ pub(crate) mod remote_input;
 pub mod remote_mirror;
 pub mod remote_session;
 pub mod script_sync;
+
+/// 🔴 A profiling build with the per-system scopes compiled out is not a
+/// build that fails — it is a build whose captures look exactly like the
+/// ones from before the scopes existed. That is how this went unnoticed
+/// once already: the feature was added to the `kooch` facade and not
+/// here, and the next capture reported `PreUpdate: 3.2 ms` with no
+/// children, which is a correct-looking answer to the wrong question.
+#[cfg(feature = "profiling")]
+const _: () = assert!(
+    kooch_core::CPU_SCOPES,
+    "`profiling` is on but `kooch_core/cpu-profiler` is not, so systems have no scopes \
+     and every stage will report one number with no children"
+);
+
 pub(crate) mod shortcuts;
 pub(crate) mod state;
 pub(crate) mod style;
