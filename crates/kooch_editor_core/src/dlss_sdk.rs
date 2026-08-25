@@ -77,11 +77,10 @@ pub fn runtime_path(dir: &Path) -> PathBuf {
 ///
 /// Empty means this machine, which is the only case where the host's own
 /// name is the right answer.
-pub fn runtime_for(dir: &Path, triple: &str) -> PathBuf {
-    if triple.contains("windows") || (triple.trim().is_empty() && cfg!(windows)) {
-        dir.join("lib/Windows_x86_64/rel/nvngx_dlss.dll")
-    } else {
-        runtime_path(dir)
+pub fn runtime_for(dir: &Path, platform: crate::build::Platform) -> PathBuf {
+    match platform {
+        crate::build::Platform::Windows => dir.join("lib/Windows_x86_64/rel/nvngx_dlss.dll"),
+        crate::build::Platform::Linux => runtime_path(dir),
     }
 }
 

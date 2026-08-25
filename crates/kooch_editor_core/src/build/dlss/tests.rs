@@ -44,7 +44,10 @@ fn a_preset_without_the_feature_needs_no_sdk() {
 #[test]
 fn a_preset_without_the_feature_ships_nothing() {
     let dir = std::env::temp_dir();
-    assert_eq!(ship(&preset_with(""), &dir).unwrap(), Vec::<PathBuf>::new());
+    assert_eq!(
+        ship(&preset_with(""), super::super::Platform::Linux, &dir).unwrap(),
+        Vec::<PathBuf>::new()
+    );
 }
 
 const MANIFEST: &str = "[package]

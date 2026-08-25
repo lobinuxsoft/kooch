@@ -39,6 +39,7 @@ use std::path::{Path, PathBuf};
 use kooch_pack::{PackKey, PackWriter};
 
 use super::BuildPreset;
+use super::platform::Platform;
 
 /// What came out of a packaging run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +112,7 @@ pub const PACK_FILE: &str = "assets.kpack";
 /// allowlist, derived rather than maintained.
 pub fn assemble(
     preset: &BuildPreset,
+    platform: Platform,
     known: &[String],
     project_root: &Path,
     engine_root: Option<&Path>,
@@ -124,10 +126,24 @@ pub fn assemble(
     // Both paths canonical-ish before comparing: `output_dir: "."`
     // joins to `<root>/.`, which is the project root and is not equal to
     // it as written.
-    let dir = normalise(&project_root.join(&preset.output_dir));
-    prepare(&dir, &normalise(project_root))?;
+    //
+    // 🔴 Each platform gets its own subfolder. Sharing one would have the
+    // second build overwrite the first's pack and manifest while leaving
+    // both executables behind — a folder that looks like it holds two
+    // games and holds one and a half.
+    //
+    // 🔴 The *base* is checked, not just the platform folder. Appending
+    // `linux/` to a dangerous `output_dir` would make it look safe —
+    // `output_dir: "src"` becomes `src/linux`, which is not `src` and
+    // would sail past a guard that only saw the final path, while
+    // packaging still emptied a folder inside the project's source.
+    let root = normalise(project_root);
+    let base = normalise(&project_root.join(&preset.output_dir));
+    guard(&base, &root)?;
+    let dir = base.join(platform.folder());
+    prepare(&dir, &root)?;
 
-    let dest_binary = dir.join(preset.binary_name(crate_name));
+    let dest_binary = dir.join(preset.binary_name(crate_name, platform));
     std::fs::copy(binary, &dest_binary)?;
     keep_executable(binary, &dest_binary);
 
@@ -184,7 +200,7 @@ pub fn assemble(
 
     // #536 — NVIDIA's runtime blob and its notices, for a build that
     // asked for DLSS. Nothing for every other build.
-    let dlss = super::dlss::ship(preset, &dir)?;
+    let dlss = super::dlss::ship(preset, platform, &dir)?;
 
     Ok(Package {
         dir,
@@ -232,13 +248,7 @@ const PROJECT_OWNED: [&str; 5] = ["src", "assets", "scenes", ".git", ".kooch"];
 /// 2. **By what it holds.** Somewhere outside the project that looks like
 ///    a source tree — a sibling checkout, a home directory.
 fn prepare(dir: &Path, project_root: &Path) -> Result<(), PackageError> {
-    let unsafe_place = dir == project_root
-        || PROJECT_OWNED
-            .iter()
-            .any(|owned| dir.starts_with(project_root.join(owned)));
-    if unsafe_place {
-        return Err(PackageError::UnsafeOutput(dir.to_path_buf()));
-    }
+    guard(dir, project_root)?;
 
     if dir.exists() {
         if ["Cargo.toml", "src", ".git"]
@@ -251,6 +261,23 @@ fn prepare(dir: &Path, project_root: &Path) -> Result<(), PackageError> {
     }
     std::fs::create_dir_all(dir)?;
     Ok(())
+}
+
+/// Refuses a path that is the project, or inside something the project
+/// owns.
+///
+/// Applied to the output base *and* to the platform folder under it:
+/// either one landing in the project's own tree is a folder packaging
+/// would empty.
+fn guard(dir: &Path, project_root: &Path) -> Result<(), PackageError> {
+    let unsafe_place = dir == project_root
+        || PROJECT_OWNED
+            .iter()
+            .any(|owned| dir.starts_with(project_root.join(owned)));
+    match unsafe_place {
+        true => Err(PackageError::UnsafeOutput(dir.to_path_buf())),
+        false => Ok(()),
+    }
 }
 
 /// Every asset that travels, as `(name in the pack, file on disk)`.

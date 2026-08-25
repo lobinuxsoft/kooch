@@ -637,7 +637,10 @@ fn start_build(resources: &mut Resources, guid: kooch_core::Guid) {
         known,
     ) {
         Ok(job) => {
-            tracing::info!(target = %preset.target_triple, "build started");
+            tracing::info!(
+                platforms = ?preset.targets(),
+                "build started",
+            );
             if let Some(state) = resources.get_mut::<crate::build::BuildState>() {
                 state.log.clear();
                 state.job = Some(job);

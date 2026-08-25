@@ -65,38 +65,69 @@ fn the_mode_decides_not_the_text() {
 /// Godot name their exports. A folder holding both is unambiguous.
 #[test]
 fn each_platform_gets_its_extension() {
-    let windows = BuildPreset {
-        target_triple: "x86_64-pc-windows-gnu".to_owned(),
-        ..Default::default()
-    };
-    let linux = BuildPreset {
-        target_triple: "x86_64-unknown-linux-gnu".to_owned(),
-        ..Default::default()
-    };
-
-    assert_eq!(windows.binary_name("demo"), "demo.exe");
-    assert_eq!(linux.binary_name("demo"), "demo.x86_64");
+    let preset = BuildPreset::default();
+    assert_eq!(preset.binary_name("demo", Platform::Windows), "demo.exe",);
+    assert_eq!(preset.binary_name("demo", Platform::Linux), "demo.x86_64",);
 }
 
-/// 🔴 Read off the triple, not assumed. A build for ARM named
-/// `.x86_64` is a name that lies about what it runs on.
+/// The platforms a preset builds, in the order they are built.
 #[test]
-fn the_architecture_comes_from_the_triple() {
-    let arm = BuildPreset {
-        target_triple: "aarch64-unknown-linux-gnu".to_owned(),
+fn a_preset_lists_the_platforms_it_builds() {
+    let both = BuildPreset {
+        linux: true,
+        windows: true,
         ..Default::default()
     };
+    assert_eq!(both.targets(), vec![Platform::Linux, Platform::Windows]);
 
-    assert_eq!(arm.binary_name("demo"), "demo.aarch64");
+    let neither = BuildPreset {
+        linux: false,
+        windows: false,
+        ..Default::default()
+    };
+    assert!(neither.targets().is_empty());
 }
 
-/// An empty triple means this machine, so its own architecture answers.
+/// Each platform lands in its own folder under the preset's output.
 #[test]
-fn a_host_build_uses_this_machines_arch() {
+fn a_platform_lands_under_the_output_dir() {
+    let preset = BuildPreset {
+        output_dir: "dist".to_owned(),
+        ..Default::default()
+    };
     assert_eq!(
-        BuildPreset::default().binary_name("demo"),
-        format!("demo.{}", std::env::consts::ARCH),
+        preset.platform_dir(Platform::Windows),
+        std::path::Path::new("dist/windows"),
     );
+}
+
+/// 🔴 A floor is a glibc version, and Windows has none.
+///
+/// One preset can build both, and `cargo zigbuild` rejects
+/// `x86_64-pc-windows-gnu.2.28` — so the floor must reach the Linux half
+/// only.
+#[test]
+fn a_floor_reaches_linux_alone() {
+    let preset = BuildPreset {
+        linux: true,
+        windows: true,
+        min_glibc: "2.28".to_owned(),
+        ..Default::default()
+    };
+
+    assert_eq!(preset.glibc_floor(Platform::Linux), Some("2.28"));
+    assert_eq!(preset.glibc_floor(Platform::Windows), None);
+    assert!(preset.needs_zig());
+
+    // And a preset that only builds Windows needs no zig at all, so the
+    // check must not demand it be installed.
+    let windows = BuildPreset {
+        linux: false,
+        windows: true,
+        min_glibc: "2.28".to_owned(),
+        ..Default::default()
+    };
+    assert!(!windows.needs_zig());
 }
 
 #[test]
@@ -107,20 +138,8 @@ fn an_explicit_name_wins_over_the_crate() {
     };
 
     assert_eq!(
-        preset.binary_name("demo"),
-        format!("My Game.{}", std::env::consts::ARCH),
-    );
-}
-
-#[test]
-fn an_empty_triple_means_this_machine() {
-    assert!(BuildPreset::default().is_host());
-    assert!(
-        !BuildPreset {
-            target_triple: "x86_64-pc-windows-gnu".to_owned(),
-            ..Default::default()
-        }
-        .is_host()
+        preset.binary_name("demo", Platform::Linux),
+        "My Game.x86_64"
     );
 }
 
@@ -150,42 +169,18 @@ fn the_default_is_a_shippable_build() {
         "the default build opens a listening socket"
     );
     assert!(preset.pack_assets, "the default build ships loose assets");
-    assert!(preset.is_host());
-}
-
-/// A glibc floor only means something where there is a glibc, and
-/// `x86_64-pc-windows-gnu.2.28` is a target that does not exist.
-#[test]
-fn a_floor_only_applies_to_gnu_linux() {
-    let floored = |triple: &str| {
-        BuildPreset {
-            target_triple: triple.to_owned(),
-            min_glibc: "2.28".to_owned(),
-            ..Default::default()
-        }
-        .glibc_floor()
-        .map(str::to_owned)
-    };
-
-    assert_eq!(floored("x86_64-unknown-linux-gnu"), Some("2.28".to_owned()));
-    assert_eq!(floored("x86_64-pc-windows-gnu"), None);
-    assert_eq!(floored("x86_64-unknown-linux-musl"), None);
-    // And no floor asked for is no floor, whatever the target.
     assert_eq!(
-        BuildPreset {
-            target_triple: "x86_64-unknown-linux-gnu".to_owned(),
-            min_glibc: "   ".to_owned(),
-            ..Default::default()
-        }
-        .glibc_floor(),
-        None,
+        preset.targets(),
+        Platform::host().into_iter().collect::<Vec<_>>(),
+        "the default build is not for the machine in front of the author",
     );
 }
 
 #[test]
 fn a_preset_round_trips_through_ron() {
     let preset = BuildPreset {
-        target_triple: "x86_64-pc-windows-gnu".to_owned(),
+        linux: true,
+        windows: true,
         output_dir: "dist".to_owned(),
         executable_name: "game".to_owned(),
         mode: MODE_PROFILING,
@@ -256,4 +251,46 @@ fn load(text: &str) -> BuildPreset {
     BuildPresetLoader
         .load(text.as_bytes(), &mut ctx)
         .expect("a preset the editor wrote has to load")
+}
+
+/// 🔴 The migration that matters now: a preset written before the
+/// toggles carries its platform only in `target_triple`, a field the
+/// struct no longer has.
+///
+/// Serde drops unknown fields without a word, so without reading it back
+/// deliberately every existing preset would open with nothing ticked,
+/// build nothing, and have that emptiness written over it on the first
+/// save.
+#[test]
+fn an_old_presets_triple_becomes_a_toggle() {
+    let windows: BuildPreset = load(r#"(target_triple: "x86_64-pc-windows-gnu")"#);
+    assert!(windows.windows, "the Windows toggle did not come on");
+    assert!(!windows.linux, "it gained a platform it never asked for");
+
+    let linux: BuildPreset = load(r#"(target_triple: "x86_64-unknown-linux-gnu")"#);
+    assert!(linux.linux);
+    assert!(!linux.windows);
+}
+
+/// An empty triple meant "this machine", which is the host — not a
+/// triple that failed to parse.
+#[test]
+fn an_empty_triple_becomes_the_host() {
+    let preset: BuildPreset = load(r#"(target_triple: "", output_dir: "dist")"#);
+
+    assert_eq!(
+        preset.targets(),
+        Platform::host().into_iter().collect::<Vec<_>>(),
+    );
+}
+
+/// ⚠️ A preset written *after* the toggles must not be migrated: its
+/// file has no `target_triple`, and reading an absent field as "the
+/// host" would turn a deliberately-unticked Linux box back on.
+#[test]
+fn a_new_preset_is_not_migrated() {
+    let preset: BuildPreset = load(r#"(linux: false, windows: true)"#);
+
+    assert!(!preset.linux, "an absent triple switched Linux back on");
+    assert!(preset.windows);
 }

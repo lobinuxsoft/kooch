@@ -20,12 +20,14 @@ pub mod compile;
 pub mod dlss;
 pub mod key;
 pub mod package;
+pub mod platform;
 pub mod preset;
 
 pub use compile::{BuildJob, BuildStatus};
 pub use key::project_key;
 pub use package::PACK_FILE;
 pub use package::{Package, PackageError, assemble};
+pub use platform::Platform;
 pub use preset::{BUILD_PRESET_EXTENSION, BuildPreset, BuildPresetLoader};
 
 /// The editor's build state: the running job and what it has said.

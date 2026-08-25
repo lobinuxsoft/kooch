@@ -4,11 +4,20 @@ use super::*;
 use crate::build::preset::{MODE_PROFILING, MODE_RELEASE};
 
 /// The arguments as strings, for asserting on.
-fn args(preset: &BuildPreset) -> Vec<String> {
-    cargo_command(preset, Path::new("/proj"), "demo")
+fn args(preset: &BuildPreset, platform: Platform) -> Vec<String> {
+    cargo_command(preset, platform, Path::new("/proj"), "demo")
         .get_args()
         .map(|a| a.to_string_lossy().into_owned())
         .collect()
+}
+
+/// A preset that builds one named platform and nothing else.
+fn only(platform: Platform) -> BuildPreset {
+    BuildPreset {
+        linux: platform == Platform::Linux,
+        windows: platform == Platform::Windows,
+        ..Default::default()
+    }
 }
 
 /// 🔴 The game, never `demo_editor`. The authoring binary is gated
@@ -16,7 +25,7 @@ fn args(preset: &BuildPreset) -> Vec<String> {
 /// it here is the one way to put the editor back into a release.
 #[test]
 fn the_game_binary_is_the_one_built() {
-    let args = args(&BuildPreset::default());
+    let args = args(&only(Platform::Linux), Platform::Linux);
     let at = args
         .iter()
         .position(|a| a == "--bin")
@@ -32,10 +41,10 @@ fn the_game_binary_is_the_one_built() {
 fn the_editor_feature_never_reaches_cargo() {
     let preset = BuildPreset {
         features: "editor,cheats".to_owned(),
-        ..Default::default()
+        ..only(Platform::Linux)
     };
 
-    let args = args(&preset);
+    let args = args(&preset, Platform::Linux);
     let at = args.iter().position(|a| a == "--features").unwrap();
     assert_eq!(args[at + 1], "cheats");
 }
@@ -48,36 +57,33 @@ fn every_mode_asks_for_release() {
     for mode in [MODE_RELEASE, MODE_PROFILING] {
         let preset = BuildPreset {
             mode,
-            ..Default::default()
+            ..only(Platform::Linux)
         };
         assert!(
-            args(&preset).iter().any(|a| a == "--release"),
+            args(&preset, Platform::Linux)
+                .iter()
+                .any(|a| a == "--release"),
             "mode {mode} did not ask for --release",
         );
     }
 }
 
-/// An empty triple means this machine, and passing `--target ""` would
-/// fail rather than build for the host.
+/// 🔴 Every build names its target, the host's included.
+///
+/// Passing one sometimes and not others means the packager has to guess
+/// afterwards whether cargo wrote to `target/release` or
+/// `target/<triple>/release`. It also has to be there for a glibc floor,
+/// which zigbuild has nothing to attach to without it.
 #[test]
-fn a_host_build_passes_no_target() {
-    assert!(
-        !args(&BuildPreset::default())
+fn every_build_names_its_target() {
+    for platform in Platform::ALL {
+        let args = args(&only(platform), platform);
+        let at = args
             .iter()
-            .any(|a| a == "--target")
-    );
-}
-
-#[test]
-fn a_cross_build_passes_its_triple() {
-    let preset = BuildPreset {
-        target_triple: "  x86_64-pc-windows-gnu  ".to_owned(),
-        ..Default::default()
-    };
-
-    let args = args(&preset);
-    let at = args.iter().position(|a| a == "--target").unwrap();
-    assert_eq!(args[at + 1], "x86_64-pc-windows-gnu");
+            .position(|a| a == "--target")
+            .unwrap_or_else(|| panic!("{} passed no target", platform.label()));
+        assert_eq!(args[at + 1], platform.triple());
+    }
 }
 
 /// 🔴 mingw's gcc defaults to C23, where `false` is a keyword, and
@@ -85,11 +91,12 @@ fn a_cross_build_passes_its_triple() {
 /// fails to build for Windows — measured on this machine, not guessed.
 #[test]
 fn a_windows_build_carries_the_mingw_cflags() {
-    let preset = BuildPreset {
-        target_triple: "x86_64-pc-windows-gnu".to_owned(),
-        ..Default::default()
-    };
-    let command = cargo_command(&preset, Path::new("/proj"), "demo");
+    let command = cargo_command(
+        &only(Platform::Windows),
+        Platform::Windows,
+        Path::new("/proj"),
+        "demo",
+    );
 
     let set: Vec<_> = command
         .get_envs()
@@ -109,17 +116,22 @@ fn a_windows_build_carries_the_mingw_cflags() {
     );
 }
 
-/// A host build must not carry it: it would apply to nothing, and a flag
-/// nobody can explain is worse than no flag.
+/// A Linux build must not carry it: it would apply to nothing, and a
+/// flag nobody can explain is worse than no flag.
 #[test]
-fn a_host_build_carries_no_cflags() {
-    let command = cargo_command(&BuildPreset::default(), Path::new("/proj"), "demo");
+fn a_linux_build_carries_no_cflags() {
+    let command = cargo_command(
+        &only(Platform::Linux),
+        Platform::Linux,
+        Path::new("/proj"),
+        "demo",
+    );
 
     assert!(
         !command
             .get_envs()
             .any(|(key, _)| key.to_string_lossy().starts_with("CFLAGS_")),
-        "a host build picked up a cross-compilation CFLAGS",
+        "a Linux build picked up the Windows CFLAGS",
     );
 }
 
@@ -129,7 +141,12 @@ fn a_host_build_carries_no_cflags() {
 /// every existing one without saying so.
 #[test]
 fn a_build_is_optimised_all_the_way() {
-    let command = cargo_command(&BuildPreset::default(), Path::new("/proj"), "demo");
+    let command = cargo_command(
+        &only(Platform::Linux),
+        Platform::Linux,
+        Path::new("/proj"),
+        "demo",
+    );
     let envs: Vec<(String, String)> = command
         .get_envs()
         .filter_map(|(k, v)| {
@@ -157,28 +174,50 @@ fn a_build_is_optimised_all_the_way() {
 /// getting it wrong reads as "cargo succeeded but built nothing".
 #[test]
 fn the_built_binary_is_where_cargo_puts_it() {
-    let host = BuildPreset::default();
     assert_eq!(
-        built_binary(&host, Path::new("/proj"), "demo"),
-        Path::new("/proj/target/release/demo"),
+        built_binary(
+            &only(Platform::Linux),
+            Platform::Linux,
+            Path::new("/proj"),
+            "demo",
+        ),
+        Path::new("/proj/target/x86_64-unknown-linux-gnu/release/demo"),
     );
 
     let measured = BuildPreset {
         mode: MODE_PROFILING,
-        ..Default::default()
+        ..only(Platform::Linux)
     };
     assert_eq!(
-        built_binary(&measured, Path::new("/proj"), "demo"),
-        Path::new("/proj/target/release/demo"),
+        built_binary(&measured, Platform::Linux, Path::new("/proj"), "demo"),
+        Path::new("/proj/target/x86_64-unknown-linux-gnu/release/demo"),
+        "profiling is a feature, not a profile — both land in release",
     );
 
-    let windows = BuildPreset {
-        target_triple: "x86_64-pc-windows-gnu".to_owned(),
-        ..Default::default()
+    assert_eq!(
+        built_binary(
+            &only(Platform::Windows),
+            Platform::Windows,
+            Path::new("/proj"),
+            "demo",
+        ),
+        Path::new("/proj/target/x86_64-pc-windows-gnu/release/demo.exe"),
+    );
+}
+
+/// ⚠️ The floor rides on the `--target` **argument**, not on the folder
+/// cargo creates. Looking for the binary under
+/// `target/x86_64-unknown-linux-gnu.2.28/` finds nothing, which reads as
+/// "cargo succeeded and built nothing".
+#[test]
+fn a_floor_does_not_move_the_binary() {
+    let preset = BuildPreset {
+        min_glibc: "2.28".to_owned(),
+        ..only(Platform::Linux)
     };
     assert_eq!(
-        built_binary(&windows, Path::new("/proj"), "demo"),
-        Path::new("/proj/target/x86_64-pc-windows-gnu/release/demo.exe"),
+        built_binary(&preset, Platform::Linux, Path::new("/proj"), "demo"),
+        Path::new("/proj/target/x86_64-unknown-linux-gnu/release/demo"),
     );
 }
 
@@ -188,56 +227,42 @@ fn the_built_binary_is_where_cargo_puts_it() {
 #[test]
 fn a_glibc_floor_goes_through_zigbuild() {
     let preset = BuildPreset {
-        target_triple: "x86_64-unknown-linux-gnu".to_owned(),
         min_glibc: "2.28".to_owned(),
-        ..Default::default()
+        ..only(Platform::Linux)
     };
 
-    let args = args(&preset);
+    let args = args(&preset, Platform::Linux);
     assert_eq!(args[0], "zigbuild");
     let at = args.iter().position(|a| a == "--target").unwrap();
     assert_eq!(args[at + 1], "x86_64-unknown-linux-gnu.2.28");
 }
 
-/// 🔴 Without a `--target` zigbuild has nothing to attach the version to
-/// and the floor is silently ignored — a build that looks like it worked
-/// and still will not start on the handheld. So a host preset gains one.
+/// 🔴 One preset, two platforms, and the floor must reach exactly one of
+/// them.
+///
+/// `cargo zigbuild` spells a floor by appending it to the triple, and
+/// `x86_64-pc-windows-gnu.2.28` is not a target — so a floor that
+/// followed the build onto Windows would fail it on an argument nobody
+/// typed. Windows also drops back to plain `cargo build`: there is
+/// nothing for zigbuild to do.
 #[test]
-#[cfg(target_os = "linux")]
-fn a_floor_gives_a_host_build_a_target() {
+fn a_floor_reaches_linux_and_not_windows() {
     let preset = BuildPreset {
+        linux: true,
+        windows: true,
         min_glibc: "2.28".to_owned(),
         ..Default::default()
     };
 
-    let args = args(&preset);
-    let at = args.iter().position(|a| a == "--target").unwrap();
-    assert!(args[at + 1].ends_with(".2.28"), "{}", args[at + 1]);
-    // And cargo puts anything with a target under its own folder, so the
-    // packager has to look there rather than in `target/release`.
-    let built = built_binary(&preset, Path::new("/proj"), "demo");
-    let built = built.to_string_lossy();
-    assert!(
-        built.starts_with("/proj/target/") && built.ends_with("/release/demo"),
-        "{built}",
-    );
-    assert_ne!(built, "/proj/target/release/demo");
-}
+    let linux = args(&preset, Platform::Linux);
+    assert_eq!(linux[0], "zigbuild");
+    let at = linux.iter().position(|a| a == "--target").unwrap();
+    assert_eq!(linux[at + 1], "x86_64-unknown-linux-gnu.2.28");
 
-/// The floor is a glibc version, so it means nothing for a target that
-/// does not have one — and passing `x86_64-pc-windows-gnu.2.28` fails.
-#[test]
-fn a_floor_is_ignored_off_linux() {
-    let preset = BuildPreset {
-        target_triple: "x86_64-pc-windows-gnu".to_owned(),
-        min_glibc: "2.28".to_owned(),
-        ..Default::default()
-    };
-
-    let args = args(&preset);
-    assert_eq!(args[0], "build");
-    let at = args.iter().position(|a| a == "--target").unwrap();
-    assert_eq!(args[at + 1], "x86_64-pc-windows-gnu");
+    let windows = args(&preset, Platform::Windows);
+    assert_eq!(windows[0], "build");
+    let at = windows.iter().position(|a| a == "--target").unwrap();
+    assert_eq!(windows[at + 1], "x86_64-pc-windows-gnu");
 }
 
 /// 🔴 The link fails on symbols of the *build machine's* libasound, which
@@ -245,27 +270,30 @@ fn a_floor_is_ignored_off_linux() {
 /// appended so a project's own flags survive.
 #[test]
 fn a_floor_allows_undefined_host_symbols() {
-    let flags = |preset: &BuildPreset| -> Option<String> {
-        cargo_command(preset, Path::new("/proj"), "demo")
+    let flags = |preset: &BuildPreset, platform: Platform| -> Option<String> {
+        cargo_command(preset, platform, Path::new("/proj"), "demo")
             .get_envs()
             .find(|(k, _)| *k == "RUSTFLAGS")
             .and_then(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
     };
 
     let floored = BuildPreset {
-        target_triple: "x86_64-unknown-linux-gnu".to_owned(),
         min_glibc: "2.28".to_owned(),
-        ..Default::default()
+        ..only(Platform::Linux)
     };
-    assert!(flags(&floored).unwrap().contains("--allow-shlib-undefined"));
-    assert!(flags(&BuildPreset::default()).is_none());
+    assert!(
+        flags(&floored, Platform::Linux)
+            .unwrap()
+            .contains("--allow-shlib-undefined")
+    );
+    assert!(flags(&only(Platform::Linux), Platform::Linux).is_none());
 }
 
 /// The manifest is named explicitly: cargo run from the editor's own
 /// working directory would otherwise build the editor's workspace.
 #[test]
 fn the_project_manifest_is_named() {
-    let args = args(&BuildPreset::default());
+    let args = args(&only(Platform::Linux), Platform::Linux);
     let at = args.iter().position(|a| a == "--manifest-path").unwrap();
 
     assert_eq!(args[at + 1], "/proj/Cargo.toml");
@@ -275,21 +303,49 @@ fn the_project_manifest_is_named() {
 /// that never says the word "target". The check says what to run.
 #[test]
 fn a_missing_target_is_refused_with_the_fix() {
-    let preset = BuildPreset {
-        target_triple: "nonsense-unknown-triple".to_owned(),
-        ..Default::default()
+    let Some(host) = Platform::host() else {
+        return;
+    };
+    let cross = Platform::ALL.into_iter().find(|p| *p != host);
+    let Some(cross) = cross else {
+        return;
     };
 
-    if let Some(problem) = missing_toolchain(&preset) {
-        assert!(problem.contains("rustup target add nonsense-unknown-triple"));
+    if let Some(problem) = missing_toolchain(&only(cross)) {
+        assert!(
+            problem.contains(&format!("rustup target add {}", cross.triple())),
+            "the refusal does not say what to run: {problem}",
+        );
     }
-    // No assertion when rustup is absent: this machine cannot answer the
-    // question, and refusing the build over that would be worse.
+    // No assertion when the target *is* installed — which it is on the
+    // machine this was written on. The check cannot be forced to fail
+    // without uninstalling a toolchain, and a test that did that would
+    // break the next build.
 }
 
+/// The platform this machine runs needs no target installed: it is the
+/// one rustup came with.
 #[test]
-fn a_host_build_needs_no_target_check() {
-    assert!(missing_toolchain(&BuildPreset::default()).is_none());
+fn the_host_platform_needs_no_target_check() {
+    let Some(host) = Platform::host() else {
+        return;
+    };
+    assert!(missing_toolchain(&only(host)).is_none());
+}
+
+/// 🔴 A preset with nothing ticked builds nothing, and must say so.
+///
+/// The tempting reading is "no platform means the host" — which would
+/// make an unticked box behave exactly like a ticked one, and there
+/// would be no way to express "not this one".
+#[test]
+fn a_preset_with_no_platform_names_none() {
+    let preset = BuildPreset {
+        linux: false,
+        windows: false,
+        ..Default::default()
+    };
+    assert!(preset.targets().is_empty());
 }
 
 /// 🔴 The migration leaves an edited `main.rs` alone and warns when the
