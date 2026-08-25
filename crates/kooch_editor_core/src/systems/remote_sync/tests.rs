@@ -431,6 +431,7 @@ fn a_creation_waits_for_its_snapshot() {
             id: made,
             name: Some("Hero Copy".to_owned()),
             parent: None,
+            scene: None,
             components: Vec::new(),
         }],
         &mut resources,

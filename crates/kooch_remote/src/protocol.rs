@@ -10,6 +10,7 @@
 //! and its parameters; a [`Response`] is either the method's result or a
 //! typed [`RemoteError`]. HTTP carries it; see [`crate::server`].
 
+use kooch_core::Guid;
 use serde::{Deserialize, Serialize};
 
 use kooch_ecs::entity::Entity;
@@ -58,6 +59,18 @@ pub struct EntitySnapshot {
     pub name: Option<String>,
     /// Parent entity, for hierarchy reconstruction on the client.
     pub parent: Option<EntityId>,
+    /// The scene this entity was authored in, `None` for one that belongs
+    /// to none — an editor helper, or something spawned and not yet saved.
+    ///
+    /// 🔴 Carried out of band for the same reason `parent` is: membership
+    /// lives in `SceneMember`, which is deliberately not a reflected
+    /// component — it is derived on load and never written to a scene
+    /// file — so it cannot travel as one. Without this every mirrored
+    /// entity arrives belonging to nothing, and since **Open Project
+    /// always opens remote**, that is every entity the editor normally
+    /// shows.
+    #[serde(default)]
+    pub scene: Option<Guid>,
     pub components: Vec<ComponentSnapshot>,
 }
 

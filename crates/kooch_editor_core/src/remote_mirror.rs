@@ -114,7 +114,8 @@ impl RemoteMirror {
             self.sync_components(resources, entity, snap);
         }
 
-        // Third pass: wire parents now that every id is mapped.
+        // Third pass: the two things that travel beside the components
+        // rather than as components — the parent and the scene.
         //
         // The parent travels as its own snapshot field rather than as a
         // component, so it needs its own sync — `sync_components` above
@@ -130,6 +131,7 @@ impl RemoteMirror {
                 Some(&parent_local) => set_parent(resources, child, parent_local),
                 None => clear_parent(resources, child),
             }
+            set_scene(resources, child, snap.scene);
         }
     }
 
@@ -308,6 +310,54 @@ fn remove_component(resources: &mut Resources, entity: Entity, type_name: &str) 
     {
         let new_arch = archetypes.archetype_after_remove_dynamic(current, type_id);
         archetypes.register_entity(entity, new_arch);
+    }
+}
+
+/// Records which scene a mirrored entity belongs to, or that it belongs
+/// to none.
+///
+/// 🔴 `SceneMember` is not a reflected component — it is derived on load
+/// and never written to a scene file — so it cannot arrive as one. Without
+/// this the World panel groups a mirrored world into an empty scene and a
+/// pile of orphans, which is what it did: every entity under "Unsaved"
+/// while the open scene reported zero.
+///
+/// Registered as a plain CPU component, not a reflected one. Reflecting it
+/// would put it in the Inspector and in the schema, and it is neither
+/// authored nor editable.
+fn set_scene(resources: &mut Resources, entity: Entity, scene: Option<kooch_core::Guid>) {
+    let current = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<kooch_ecs::SceneMember>())
+        .and_then(|s| s.get(entity))
+        .map(|member| member.scene);
+    if current == scene {
+        // Unchanged, and skipping keeps the archetype churn off every
+        // entity on every refresh.
+        return;
+    }
+    match scene {
+        Some(scene) => {
+            if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                registry.register_cpu::<kooch_ecs::SceneMember>();
+                if let Some(storage) = registry.get_cpu_mut::<kooch_ecs::SceneMember>() {
+                    storage.insert(entity, kooch_ecs::SceneMember::new(scene));
+                }
+            }
+            update_archetype_add(resources, entity, type_id::<kooch_ecs::SceneMember>());
+        }
+        None => {
+            if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+                registry.remove_component(entity, &type_id::<kooch_ecs::SceneMember>());
+            }
+            if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
+                && let Some(current) = archetypes.entity_archetype(entity)
+            {
+                let without = archetypes
+                    .archetype_after_remove_dynamic(current, type_id::<kooch_ecs::SceneMember>());
+                archetypes.register_entity(entity, without);
+            }
+        }
     }
 }
 

@@ -155,6 +155,7 @@ fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Resp
         TypeId::of::<kooch_ecs::hierarchy::GlobalTransform>(),
     ];
     let parents = registry.get_cpu::<Parent>();
+    let members = registry.get_cpu::<kooch_ecs::SceneMember>();
 
     // Archetype iteration groups by component set, which scrambles the
     // order the user authored. Entities are allocated in the order the
@@ -186,10 +187,12 @@ fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Resp
             let parent = parents
                 .and_then(|s| s.get(entity))
                 .map(|p| EntityId::from(p.entity));
+            let scene = members.and_then(|s| s.get(entity)).map(|m| m.scene);
             entities.push(EntitySnapshot {
                 id: entity.into(),
                 name,
                 parent,
+                scene,
                 components,
             });
         }
