@@ -716,52 +716,66 @@ fn a_host_without_scenes_says_nothing() {
     }
 }
 
-/// Loading a scene teaches the project's `SceneManager` what it holds.
+/// Loading a *second* scene teaches the project's `SceneManager`.
 ///
 /// 🔴 The handler used to go straight to `sync_scene_to_ecs`: the
-/// entities arrived and the manager was told nothing. The project then
-/// held the unsaved scratch scene it starts with — a random `Guid`
-/// under no path — while every entity in the world named the id of the
-/// file just loaded. Nothing failed. The project simply could not say
-/// which scene it had open, and the editor asking it got the scratch
-/// one, which is the same lie moved one process over.
+/// entities arrived and the manager was told nothing, so it went on
+/// describing the scene before this one.
+///
+/// The boot scene hides that. `SceneBootstrapPlugin` loads through the
+/// manager, so a host that opens its startup scene and is never asked
+/// for another looks perfectly correct — record and world agree because
+/// neither has moved. Which is why this test loads twice: one load
+/// passes with the bug in place.
 #[test]
-fn loading_a_scene_teaches_the_manager() {
+fn loading_a_second_scene_teaches_the_manager() {
     let mut resources = ecs();
     resources.insert(kooch_ecs::SceneManager::new());
 
     let dir = std::env::temp_dir().join("kooch_remote_load_scene");
     std::fs::create_dir_all(&dir).expect("temp dir");
-    let path = dir.join("station.scene");
-    let id = "ae0b881d-c3e2-49e1-ae19-cf8c3db5288e";
-    std::fs::write(
-        &path,
-        format!(r#"(id: "{id}", name: "Station", version: "0.1.0", entities: [])"#),
-    )
-    .expect("write scene");
 
-    call(
-        &mut resources,
-        Method::LoadScene {
-            path: path.to_string_lossy().into_owned(),
-        },
-    );
+    let mut write_scene = |name: &str, id: &str| {
+        let path = dir.join(name);
+        std::fs::write(
+            &path,
+            format!(r#"(id: "{id}", name: "{name}", version: "0.1.0", entities: [])"#),
+        )
+        .expect("write scene");
+        path
+    };
+    let first = write_scene("station.scene", "ae0b881d-c3e2-49e1-ae19-cf8c3db5288e");
+    let second = write_scene("hangar.scene", "019023f7-29d5-433e-98c8-e79461209106");
+
+    let mut load = |resources: &mut Resources, path: &std::path::Path| {
+        call(
+            resources,
+            Method::LoadScene {
+                path: path.to_string_lossy().into_owned(),
+            },
+        );
+    };
+    load(&mut resources, &first);
+    load(&mut resources, &second);
 
     let scenes = match call(&mut resources, Method::ListEntities { since: None }) {
         ResponseData::Entities { scenes, .. } => scenes.expect("the host has a SceneManager"),
         other => panic!("list: {other:?}"),
     };
-    assert_eq!(scenes.len(), 1, "the loaded scene replaced the scratch one");
+    assert_eq!(scenes.len(), 1, "the second load replaced the first");
     assert_eq!(
         scenes[0].id,
-        id.parse::<kooch_core::Guid>().expect("a well-formed id"),
-        "the file's id, not the one the manager minted at startup",
+        "019023f7-29d5-433e-98c8-e79461209106"
+            .parse::<kooch_core::Guid>()
+            .expect("a well-formed id"),
+        "the project still named the scene it had left",
     );
     assert_eq!(
         scenes[0].path.as_deref(),
-        Some(path.to_string_lossy().as_ref())
+        Some(second.to_string_lossy().as_ref()),
     );
     assert!(scenes[0].active);
 
-    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&first);
+    let _ = std::fs::remove_file(&second);
 }

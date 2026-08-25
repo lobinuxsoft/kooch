@@ -581,11 +581,16 @@ fn load_scene(resources: &mut Resources, path: &str) -> Result<(), RemoteError> 
 /// Loads through the project's [`SceneManager`], so it knows what it has.
 ///
 /// 🔴 This used to go straight to [`sync_scene_to_ecs`], which loads the
-/// entities and tells the manager nothing. The project then held its
-/// startup scratch scene — an unsaved one under a random `Guid` — while
-/// every entity in the world named the id of the file that had just been
-/// loaded. Nothing failed; the project simply could not say which scene
-/// it had open, and the editor asking it got the scratch one.
+/// entities and tells the manager nothing — so after this call the
+/// manager still described the scene *before* it, and every entity in
+/// the world named a file it had never heard of.
+///
+/// The boot scene hid it. `SceneBootstrapPlugin` loads through the
+/// manager, so a host that opens its startup scene and is never asked
+/// for another looks perfectly correct: the record and the world agree,
+/// because neither has moved since. It is the second scene that breaks
+/// — the editor opening a different one — and the project would then go
+/// on naming the first with the entities of the second inside it.
 ///
 /// `None` when there is no manager to load through, which is a host that
 /// never installed `EcsPlugin` rather than a failure.
