@@ -141,16 +141,23 @@ pub(crate) fn draw_world_content(
                     ui.weak(text);
                 }
                 WorldRow::Entity(idx) => {
+                    let info = &entities[*idx];
+                    // A leaf gets `None` and no triangle. The default
+                    // here has to match `push_members`' or the row would
+                    // point one way while the list hid the other.
+                    let subtree = (!info.children.is_empty())
+                        .then(|| subtree_open(ui, info.entity, !info.is_prefab_instance));
                     draw_entity_row(
                         ui,
                         *idx,
-                        &entities[*idx],
+                        info,
                         entities,
                         selected,
                         pinned,
                         reflected_types,
                         actions,
                         last_clicked_index,
+                        subtree,
                     );
                 }
             }
@@ -423,20 +430,90 @@ fn reveal_group_of(
 }
 
 /// Flattens the hierarchy into the lines the panel will show.
+/// What identifies one entity's expanded state across frames.
+fn subtree_id(entity: Entity) -> egui::Id {
+    egui::Id::new(("world_subtree_open", entity))
+}
+
+/// Whether an entity's children are listed under it.
+///
+/// 🔴 A prefab instance starts CLOSED and everything else starts open,
+/// and that is the difference between a panel and a wall. An instance is
+/// a unit: its five entities are the prefab's business, not the scene's,
+/// and `many_lights` puts thirty-six of them on screen — a hundred and
+/// eighty rows nobody asked to read. A hand-built hierarchy is the
+/// opposite: somebody put those children there on purpose, and hiding
+/// them would hide their own work.
+///
+/// Kept in egui's persisted store like the group headers, for the same
+/// reason: it is view state of one panel, it should survive a frame and
+/// not a project, and threading it through would put a field about a
+/// disclosure triangle into the editor's model of the world.
+fn subtree_open(ui: &egui::Ui, entity: Entity, default_open: bool) -> bool {
+    ui.data_mut(|data| *data.get_persisted_mut_or_insert_with(subtree_id(entity), || default_open))
+}
+
+/// Appends a scene's entities, leaving out what a collapsed parent hides.
+///
+/// `members` arrive in DFS order with `depth` — the third pass of
+/// `queries` guarantees it — so a subtree is contiguous and skipping one
+/// is "drop rows until the depth comes back up". That is also why a
+/// collapsed group costs nothing: its rows are absent from the list
+/// rather than skipped one at a time while scrolling.
+fn push_members(
+    ui: &egui::Ui,
+    entities: &[EntityDisplayInfo],
+    members: &[usize],
+    rows: &mut Vec<WorldRow>,
+) {
+    // The depth of the collapsed parent whose descendants are being
+    // dropped, if any.
+    let mut hidden_under: Option<usize> = None;
+    // Whether each level of the current chain sits inside a prefab
+    // instance, so the instance's ROOT can be told from its members —
+    // `is_prefab_instance` is true for every entity the instance owns.
+    let mut inside_prefab: Vec<bool> = Vec::new();
+
+    for &idx in members {
+        let Some(info) = entities.get(idx) else {
+            continue;
+        };
+        match hidden_under {
+            Some(depth) if info.depth > depth => continue,
+            _ => hidden_under = None,
+        }
+
+        inside_prefab.truncate(info.depth);
+        let under_instance = inside_prefab.last().copied().unwrap_or(false);
+        inside_prefab.push(under_instance || info.is_prefab_instance);
+
+        rows.push(WorldRow::Entity(idx));
+
+        if info.children.is_empty() {
+            continue;
+        }
+        let starts_open = !(info.is_prefab_instance && !under_instance);
+        if !subtree_open(ui, info.entity, starts_open) {
+            hidden_under = Some(info.depth);
+        }
+    }
+}
+
 fn build_rows(
     ui: &egui::Ui,
     entities: &[EntityDisplayInfo],
     scenes: &[SceneDisplayInfo],
 ) -> Vec<WorldRow> {
-    // One scene: no headers, since every row would sit under the same
-    // one and the grouping would only cost a level of indentation.
-    if scenes.len() < 2 {
-        return (0..entities.len()).map(WorldRow::Entity).collect();
-    }
-
     let mut rows = Vec::with_capacity(entities.len() + scenes.len() + 1);
     let mut grouped = vec![false; entities.len()];
 
+    // 🔴 A header even for a single scene. It used to be skipped —
+    // "every row would sit under the same one" — and that was true right
+    // up until a second scene could be opened beside it. Without a root
+    // per scene, two scenes' entities land in one column with nothing
+    // saying which is which, no place to offer closing one, and no
+    // answer to which scene a Spawn belongs to. The root is what makes
+    // additive open a thing that can exist.
     for scene in scenes {
         let members: Vec<usize> = entities
             .iter()
@@ -460,7 +537,7 @@ fn build_rows(
         if members.is_empty() {
             rows.push(WorldRow::Note("(empty)".to_owned()));
         }
-        rows.extend(members.into_iter().map(WorldRow::Entity));
+        push_members(ui, entities, &members, &mut rows);
     }
 
     // Anything belonging to no scene still has to be reachable, or an
@@ -480,7 +557,7 @@ fn build_rows(
             rows.push(WorldRow::Note(
                 "Not in any scene yet — saved with the active one.".to_owned(),
             ));
-            rows.extend(orphans.into_iter().map(WorldRow::Entity));
+            push_members(ui, entities, &orphans, &mut rows);
         }
     }
 

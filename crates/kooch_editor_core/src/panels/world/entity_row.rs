@@ -49,6 +49,25 @@ pub(super) fn is_descendant(
 
 /// Renders a single entity row. Mutates `selected` and `last_clicked_index`
 /// on click; pushes [`EditorAction`]s for context-menu operations and drag/drop.
+/// Where this row's disclosure triangle goes, or `None` when the row is
+/// too narrow to hold one.
+///
+/// Measured from the label's own indentation rather than from a spacing
+/// constant, because the indent is TEXT — `"  "` per level — so its
+/// width is the font's, and a triangle placed by an assumed pixel step
+/// drifts away from the label it belongs to as the tree gets deeper.
+fn twisty_rect(ui: &egui::Ui, resp: &egui::Response, depth: usize) -> Option<egui::Rect> {
+    let icon_width = ui.spacing().icon_width;
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let space = ui.fonts_mut(|fonts| fonts.glyph_width(&font, ' '));
+    let left = resp.rect.left() + space * (depth * 2) as f32;
+    let rect = egui::Rect::from_center_size(
+        egui::pos2(left + icon_width * 0.5, resp.rect.center().y),
+        egui::vec2(icon_width, icon_width),
+    );
+    resp.rect.contains_rect(rect).then_some(rect)
+}
+
 pub(super) fn draw_entity_row(
     ui: &mut egui::Ui,
     idx: usize,
@@ -59,6 +78,10 @@ pub(super) fn draw_entity_row(
     reflected_types: &[ReflectedTypeInfo],
     actions: &mut Vec<EditorAction>,
     last_clicked_index: &mut Option<usize>,
+    // `Some(open)` when this entity has children, `None` when it is a
+    // leaf. Decided by the caller, which is also what builds the row
+    // list — the two have to agree about what is hidden.
+    subtree: Option<bool>,
 ) {
     let display_name = display_name_for(info);
     let mut label = build_label(info, display_name.as_deref());
@@ -70,7 +93,11 @@ pub(super) fn draw_entity_row(
     let is_selected = selected.contains(&info.entity);
 
     let indent_str = "  ".repeat(info.depth);
-    let indented_label = format!("{indent_str}{label}");
+    // Two more spaces for the disclosure triangle, on every row and not
+    // only the ones that have one: without them a leaf's text sits two
+    // characters left of its siblings' and the column reads as ragged
+    // depth that is not there.
+    let indented_label = format!("{indent_str}  {label}");
 
     // Check if this entity is the one being dragged.
     let being_dragged =
@@ -83,6 +110,30 @@ pub(super) fn draw_entity_row(
         .sense(egui::Sense::click_and_drag())
         .dimmed(being_dragged)
         .show(ui);
+
+    // 🔴 The triangle is painted onto the row and hit-tested out of the
+    // row's own response, rather than being a widget of its own. One
+    // response was already the rule here — "two widgets would let the
+    // drag overlay steal the click that selects the row" — and a second
+    // sensing widget inside a row that is also a drag source is exactly
+    // that bug with a new name.
+    if let Some(open) = subtree
+        && let Some(twisty) = twisty_rect(ui, &resp, info.depth)
+    {
+        let mut icon_resp = resp.clone();
+        icon_resp.rect = twisty;
+        egui::collapsing_header::paint_default_icon(ui, if open { 1.0 } else { 0.0 }, &icon_resp);
+        // A click that landed on the triangle toggles and selects
+        // nothing. Returning early is what keeps it from doing both.
+        if resp.clicked()
+            && resp
+                .interact_pointer_pos()
+                .is_some_and(|at| twisty.x_range().contains(at.x))
+        {
+            ui.data_mut(|data| data.insert_persisted(super::subtree_id(info.entity), !open));
+            return;
+        }
+    }
 
     // Single response handles both click and drag.
     resp.dnd_set_drag_payload(info.entity);
