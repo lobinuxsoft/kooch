@@ -180,13 +180,21 @@ pub(crate) fn draw_menu_bar(
             // third pushed the whole group off centre by half a button —
             // visible immediately, and the kind of arithmetic that goes
             // wrong again the next time one is added.
-            let available = ui.available_width();
             let button_width = 70.0;
             let spacing = ui.spacing().item_spacing.x;
             let widths = [button_width, button_width, SYNC_WIDTH];
             let total_buttons: f32 =
                 widths.iter().sum::<f32>() + spacing * (widths.len() - 1) as f32;
-            let offset = (available - total_buttons) / 2.0;
+            // 🔴 Centred in the BAR, not in what is left of it. The
+            // offset used to come from `available_width()`, which is
+            // measured after the File/Edit/Window/Settings menus have
+            // taken their share — so the group was centred in the
+            // remainder and sat a couple of hundred pixels right of the
+            // window's middle. Widening the group made that visible and
+            // did not cause it.
+            let bar = ui.max_rect();
+            let spent = ui.cursor().left() - bar.left();
+            let offset = (bar.width() - total_buttons) * 0.5 - spent;
             if offset > 0.0 {
                 ui.add_space(offset);
             }
