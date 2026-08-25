@@ -59,23 +59,36 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             field,
             value,
         } => match set_field(resources, *entity, component, field, value.clone()) {
-            Ok(()) => Response::ok(id, ResponseData::Ok),
+            Ok(()) => {
+                touch_entity(resources, *entity);
+                Response::ok(id, ResponseData::Ok)
+            }
             Err(e) => Response::err(id, e),
         },
         Method::AddComponent { entity, component } => {
             match add_component(resources, *entity, component) {
-                Ok(()) => Response::ok(id, ResponseData::Ok),
+                Ok(()) => {
+                    touch_entity(resources, *entity);
+                    Response::ok(id, ResponseData::Ok)
+                }
                 Err(e) => Response::err(id, e),
             }
         }
         Method::RemoveComponent { entity, component } => {
             match remove_component(resources, *entity, component) {
-                Ok(()) => Response::ok(id, ResponseData::Ok),
+                Ok(()) => {
+                    touch_entity(resources, *entity);
+                    Response::ok(id, ResponseData::Ok)
+                }
                 Err(e) => Response::err(id, e),
             }
         }
         Method::Spawn { name } => {
             let entity = spawn(resources, name.as_deref());
+            // A fresh entity carries no `SceneMember`, so the scene it
+            // belongs to is the active one — the same one `adopt_unowned`
+            // will hand it to when that scene is saved.
+            touch_scene(resources, None);
             Response::ok(
                 id,
                 ResponseData::Spawned {
@@ -83,12 +96,23 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
                 },
             )
         }
-        Method::Despawn { entity } => match despawn(resources, *entity) {
-            Ok(()) => Response::ok(id, ResponseData::Ok),
-            Err(e) => Response::err(id, e),
-        },
+        Method::Despawn { entity } => {
+            // Read before it goes: an entity that no longer exists cannot
+            // say which scene just lost it.
+            let scene = scene_of(resources, *entity);
+            match despawn(resources, *entity) {
+                Ok(()) => {
+                    touch_scene(resources, scene);
+                    Response::ok(id, ResponseData::Ok)
+                }
+                Err(e) => Response::err(id, e),
+            }
+        }
         Method::SetParent { entity, parent } => match set_parent(resources, *entity, *parent) {
-            Ok(()) => Response::ok(id, ResponseData::Ok),
+            Ok(()) => {
+                touch_entity(resources, *entity);
+                Response::ok(id, ResponseData::Ok)
+            }
             Err(e) => Response::err(id, e),
         },
         Method::SaveScene { path, scene } => match save_scene(resources, path, *scene) {
@@ -104,7 +128,10 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             Response::ok(id, ResponseData::Ok)
         }
         Method::InstantiatePrefab { path } => match instantiate_prefab(resources, path) {
-            Ok(entity) => Response::ok(id, ResponseData::Spawned { entity }),
+            Ok(entity) => {
+                touch_entity(resources, entity);
+                Response::ok(id, ResponseData::Spawned { entity })
+            }
             Err(e) => Response::err(id, e),
         },
         Method::LoadScene { path } => match load_scene(resources, path) {
@@ -569,6 +596,50 @@ fn load_scene(resources: &mut Resources, path: &str) -> Result<(), RemoteError> 
     // before it even knew what was in it.
     kooch_ecs::scene::propagate::refresh_all(resources);
     Ok(())
+}
+
+/// Records that the scene holding `entity` has edits not on disk.
+///
+/// 🔴 Nothing marked a scene dirty anywhere in the engine before this.
+/// `SceneManager::mark_dirty` was called by its own tests and by nobody
+/// else, so `dirty` was permanently `false`: the World panel's asterisk
+/// could never appear, `any_dirty()` always answered "nothing to lose",
+/// and a close-without-saving prompt built on it would have waved the
+/// user straight through. Nobody had ever seen the asterisk, so nobody
+/// noticed it was inert.
+///
+/// The scene of the entity that changed, not the active one — with two
+/// scenes open those are different, and marking the active one puts the
+/// asterisk on the file that did not change.
+fn touch_entity(resources: &mut Resources, entity: EntityId) {
+    let scene = scene_of(resources, entity);
+    touch_scene(resources, scene);
+}
+
+/// Which scene an entity belongs to, or `None` for one that belongs to
+/// none — spawned here and not yet adopted by a save.
+fn scene_of(resources: &Resources, entity: EntityId) -> Option<kooch_core::Guid> {
+    resources
+        .get::<ComponentRegistry>()?
+        .get_cpu::<kooch_ecs::SceneMember>()?
+        .get(Entity::from(entity))
+        .map(|member| member.scene)
+}
+
+/// Marks one scene dirty, or the active one when the entity belonged to
+/// none.
+fn touch_scene(resources: &mut Resources, scene: Option<kooch_core::Guid>) {
+    let Some(manager) = resources.get_mut::<kooch_ecs::SceneManager>() else {
+        return;
+    };
+    match scene {
+        // A scene the project does not have open is not this host's to
+        // record. `mark_scene_dirty` says so; nothing here can act on it.
+        Some(id) => {
+            manager.mark_scene_dirty(id);
+        }
+        None => manager.mark_dirty(),
+    }
 }
 
 /// Writes one open scene to `path`, through the project's manager.

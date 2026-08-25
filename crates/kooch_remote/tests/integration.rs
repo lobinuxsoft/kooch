@@ -859,3 +859,95 @@ fn saving_without_a_manager_is_refused() {
     );
     assert!(!out.exists(), "a refused save left a file behind");
 }
+
+/// An edit marks the scene it changed, and a save clears it.
+///
+/// 🔴 Nothing in the engine marked a scene dirty before this.
+/// `SceneManager::mark_dirty` was called by its own tests and by nothing
+/// else, so `dirty` was permanently `false`: the World panel's asterisk
+/// could never appear and `any_dirty()` always answered "nothing to
+/// lose". Nobody had seen the asterisk, so nobody noticed it was inert.
+#[test]
+fn an_edit_marks_the_scene_dirty() {
+    let mut resources = ecs();
+    resources.insert(kooch_ecs::SceneManager::new());
+
+    let dir = std::env::temp_dir().join("kooch_remote_dirty");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("station.scene");
+    std::fs::write(
+        &path,
+        r#"(id: "ae0b881d-c3e2-49e1-ae19-cf8c3db5288e", name: "Station", version: "0.1.0", entities: [])"#,
+    )
+    .expect("write scene");
+
+    let dirty = |resources: &mut Resources| -> bool {
+        match call(resources, Method::ListEntities { since: None }) {
+            ResponseData::Entities { scenes, .. } => scenes.expect("open set")[0].dirty,
+            other => panic!("list: {other:?}"),
+        }
+    };
+
+    call(
+        &mut resources,
+        Method::LoadScene {
+            path: path.to_string_lossy().into_owned(),
+        },
+    );
+    assert!(!dirty(&mut resources), "a freshly loaded scene is clean");
+
+    call(&mut resources, Method::Spawn { name: None });
+    assert!(
+        dirty(&mut resources),
+        "spawning left the scene reading clean"
+    );
+
+    let out = dir.join("written.scene");
+    call(
+        &mut resources,
+        Method::SaveScene {
+            path: out.to_string_lossy().into_owned(),
+            scene: None,
+        },
+    );
+    assert!(!dirty(&mut resources), "the save did not clear the flag");
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&out);
+}
+
+/// The scene that changed is marked, not the one that happens to be
+/// active.
+///
+/// With two open those are different, and marking the active one puts
+/// the asterisk on the file nobody touched while leaving it off the one
+/// they did.
+#[test]
+fn the_edited_scene_is_the_one_marked() {
+    use kooch_ecs::SceneManager;
+
+    let mut resources = ecs();
+    let mut manager = SceneManager::new();
+    let active = manager.active_id().expect("a scene");
+    // A second scene, open but not active. Registered by hand: opening
+    // one additively is not a remote method, and what is under test is
+    // which of the two an edit marks.
+    let elsewhere = kooch_core::Guid::new_v4();
+    assert!(
+        !manager.mark_scene_dirty(elsewhere),
+        "a scene that is not open cannot be marked",
+    );
+    resources.insert(manager);
+
+    // An entity belonging to no scene falls back to the active one.
+    let entity = match call(&mut resources, Method::Spawn { name: None }) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("spawn: {other:?}"),
+    };
+    let manager = resources.get::<SceneManager>().expect("manager");
+    assert!(
+        manager.scene(active).expect("open").dirty,
+        "an unowned entity marks the scene that will adopt it",
+    );
+    let _ = entity;
+}

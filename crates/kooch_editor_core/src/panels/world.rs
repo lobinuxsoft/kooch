@@ -270,10 +270,14 @@ struct GroupHeader {
 
 impl GroupHeader {
     fn scene(scene: &SceneDisplayInfo, count: usize) -> Self {
-        let dirty = if scene.dirty { " *" } else { "" };
+        // Leading, not trailing. The entity count sits between the name
+        // and the end of the line, so an asterisk after it is separated
+        // from the thing it is about by a number that changes — and in a
+        // column of scenes, the eye scans the left edge.
+        let dirty = if scene.dirty { "*" } else { "" };
         Self {
             id: egui::Id::new(("world_group_open", scene.id)),
-            label: format!("{} ({count} entities){dirty}", scene.name),
+            label: format!("{dirty}{} ({count} entities)", scene.name),
             // The active scene starts expanded: it is the one being
             // worked in.
             default_open: scene.active,

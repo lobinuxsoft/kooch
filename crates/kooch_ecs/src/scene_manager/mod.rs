@@ -147,6 +147,27 @@ impl SceneManager {
         }
     }
 
+    /// Records that one open scene has edits not on disk.
+    ///
+    /// Returns `false` if it is not open — an edit to an entity whose
+    /// scene nothing has loaded, which is not something to record.
+    ///
+    /// 🔴 The scene of the entity that changed, not the active one.
+    /// [`Self::mark_dirty`] marks whichever scene new entities land in,
+    /// which is the wrong scene the moment two are open: editing
+    /// something in the second while the first is active would put the
+    /// asterisk on the file that did not change, and leave it off the
+    /// one that did.
+    pub fn mark_scene_dirty(&mut self, id: Guid) -> bool {
+        match self.scenes.iter_mut().find(|scene| scene.id == id) {
+            Some(scene) => {
+                scene.dirty = true;
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn mark_clean(&mut self) {
         if let Some(scene) = self.active_mut() {
             scene.dirty = false;
