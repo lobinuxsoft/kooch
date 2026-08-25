@@ -9,14 +9,41 @@ use kooch::kooch_ecs::component::Component;
 /// A `{{Name}}` component. Attach it to entities; its public fields show
 /// up in the editor Inspector automatically.
 ///
-/// You do not register it by hand. Press Register Scripts and the editor
-/// regenerates `src/registrations.rs` with both halves: the ECS
+/// # It registers itself
+///
+/// You do not add it anywhere. The editor watches `src/` and rewrites
+/// `src/registrations.rs` when it changes, with both halves: the ECS
 /// registration (for scene save/load and the Inspector) and the schema a
 /// standalone editor reads from this project's dylib.
+///
+/// ⚠️ Registering is not compiling. The generated file names your
+/// component within a second; the Inspector still lists what the *last
+/// build* of your project contained. The toolbar's Resync button pulses
+/// while those two disagree.
+///
+/// 🔴 **Renaming this type breaks saved scenes, silently.** A scene
+/// stores components by type name, so a renamed component simply is not
+/// found at load: the entity comes back without it, nothing errors, and
+/// the loss looks like an authoring mistake. Rename before a scene uses
+/// it, or accept re-authoring the ones that do.
 #[derive(Default, Reflect)]
 pub struct {{Name}} {
     // Add fields here, e.g.:
     // pub value: f32,
 }
+
+// ⚠️ `Default` is derived, so every field starts at zero — and zero is
+// rarely the value that makes a component *do* something. A speed of 0
+// is a thing that never moves, which reads as "the system is broken"
+// rather than "the default is unset". Write the impl by hand when the
+// useful default is not zero:
+//
+//     impl Default for {{Name}} {
+//         fn default() -> Self {
+//             Self { value: 1.0 }
+//         }
+//     }
+//
+// (Drop `Default` from the derive above if you do.)
 
 impl Component for {{Name}} {}

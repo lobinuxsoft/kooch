@@ -77,10 +77,12 @@ pub fn spin(resources: &mut Resources) {
 The query matches only entities that have **both** components, so a `Spinner` on an entity
 with no `Transform` is simply skipped rather than being an error.
 
-## 4. Register and build
+## 4. Build
 
-Press **Register Scripts**. The editor scans `src/`, finds `impl Component for Spinner` and
-`pub fn spin(_: &mut Resources)`, and rewrites `registrations.rs` with both.
+Registration already happened. The editor polls `src/`, found `impl Component for Spinner` and
+`pub fn spin(_: &mut Resources)`, and rewrote `registrations.rs` with both — within a second of
+you saving, from whichever editor you saved in. The toolbar's Resync button forces it, and
+pulses when the generated file has moved ahead of your last build.
 
 Then build. Today that means a terminal:
 
@@ -118,8 +120,10 @@ before it starts and restores on stop, so testing never costs you your scene.
 
 | Symptom | Cause |
 |---|---|
-| The component is not in the Add Component menu | Register Scripts not pressed, or the project not rebuilt and reopened |
+| The component is not in the Add Component menu | The project has not been rebuilt and reopened since it was written — registering is not compiling |
 | A field is not in the Inspector | It is private, has `#[reflect(skip)]`, or is a type reflection does not support yet ([#649](https://github.com/lobinuxsoft/kooch/issues/649)) |
 | The derive does not compile | A field's type is not supported — `Vec<T>`, `HashMap`, your own enums. Mark it `#[reflect(skip)]` |
-| The system never runs | It is in `Update` behind the `Playing` gate; press Play. Or its signature does not match `pub fn f(_: &mut Resources)` exactly, so the scanner missed it |
+| The system never runs | It is in `Update` behind the `Playing` gate; press Play. Or its signature does not match `pub fn f(_: &mut Resources)` exactly — on one line — so the scanner missed it |
+| The system runs in the wrong stage | Say which with `#[system(PreUpdate)]`; without it, every system lands in `Update`. See [Writing a System](./systems.md) |
+| A child object or shadow lags one frame behind | The system writes a `Transform` in `PostUpdate` or later, after the engine already resolved `GlobalTransform`. Move it to `Update` |
 | Play opens a second window and takes minutes | The old local-Play path ([#633](https://github.com/lobinuxsoft/kooch/issues/633)) |

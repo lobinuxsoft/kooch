@@ -386,7 +386,7 @@ fn scan(root: &Path, dir: &Path, out: &mut Vec<SourceFile>) {
 
 /// Heuristic detection of components (`impl Component for X`) and systems
 /// (`pub fn f(…: &mut Resources)`) by scanning trimmed lines.
-fn detect(content: &str) -> (Vec<String>, Vec<DetectedSystem>) {
+pub(crate) fn detect(content: &str) -> (Vec<String>, Vec<DetectedSystem>) {
     let mut components = Vec::new();
     let mut systems = Vec::new();
     // The most recent `#[system(...)]`, waiting for the `pub fn` it

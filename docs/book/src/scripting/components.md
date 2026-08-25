@@ -22,8 +22,13 @@ pub struct Health {
 impl Component for Health {}
 ```
 
-Create it from the editor (which drops this scaffold in `src/` and regenerates
-`registrations.rs`), or write the file yourself and press Register Scripts.
+Create it from the editor, which drops this scaffold in `src/` — or write the file yourself
+in any editor. Either way the registrations regenerate on their own: the editor polls `src/`
+and rewrites them within a second of a save.
+
+⚠️ Regenerating is not rebuilding. The Inspector lists what your project's **last build**
+contained, so a component added a moment ago is in `registrations.rs` and in no binary yet.
+The toolbar's Resync button pulses while the two disagree.
 
 **Public fields show up in the Inspector automatically.** No attribute is required to opt in;
 attributes exist to opt *out*, or to say something the type alone cannot.
