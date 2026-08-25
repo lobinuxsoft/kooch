@@ -139,6 +139,10 @@ pub mod prelude {
         Entity, EntityAllocator, GlobalTransform, MeshRenderer, Name, OrthographicCamera, Parent,
         PerspectiveCamera, Reflect, SceneManager, Transform,
     };
+    // Where a system binds into the frame, said at the system. Inert:
+    // the editor's codegen reads it, the compiler passes the function
+    // through untouched.
+    pub use kooch_ecs::system;
     // The rest of what a scene is made of: what lights it, what the sky
     // is, and the override that pins an entity's level of detail.
     pub use kooch_ecs::{DirectionalLight, LodForceLevel, PointLight, SkyRenderer, SpotLight};

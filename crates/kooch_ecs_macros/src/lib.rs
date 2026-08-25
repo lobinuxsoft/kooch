@@ -40,6 +40,7 @@
 //! ```
 
 mod attrs;
+mod system_attr;
 mod type_mapping;
 mod unit_struct;
 mod util;
@@ -62,6 +63,30 @@ use crate::util::{is_entity, is_entity_ref, option_inner};
 /// Generates `reflect_fields`, `reflect_get`, `reflect_set`, and
 /// `reflect_default` based on the struct's fields. Each field type
 /// must map to a known `FieldKind` / `ReflectValue` variant.
+/// Declares which frame stage a system binds into, and how.
+///
+/// ```ignore
+/// #[system]                     // Update, gated by Play — the default
+/// #[system(PreUpdate)]          // PreUpdate, gated by Play
+/// #[system(PostUpdate, always)] // PostUpdate, runs while editing too
+/// ```
+///
+/// 🔴 **Expands to the function unchanged.** It is read by the editor's
+/// codegen, which scans `src/` and writes `registrations.rs`; before
+/// this, that scan bound every system it found to `Stage::Update` with
+/// `run_if_playing` because there was nothing to read. Deleting the
+/// attribute therefore never breaks a build — the system returns to the
+/// default binding.
+///
+/// It still validates: a mistyped stage is a compile error naming the
+/// fourteen, rather than a system that quietly stays in `Update`.
+///
+/// See `system_attr` for why `always` has to be a word.
+#[proc_macro_attribute]
+pub fn system(args: TokenStream, item: TokenStream) -> TokenStream {
+    crate::system_attr::system_impl(args, item)
+}
+
 #[proc_macro_derive(Reflect, attributes(reflect))]
 pub fn derive_reflect(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

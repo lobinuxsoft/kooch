@@ -58,6 +58,9 @@ pub use entity::Entity;
 pub use ephemeral::EphemeralComponents;
 pub use hierarchy::{Children, GlobalTransform, Parent};
 pub use kooch_ecs_macros::Reflect;
+/// Declares a system's stage. Inert at compile time — read by the
+/// editor's codegen. See the macro's own docs.
+pub use kooch_ecs_macros::system;
 pub use lod_force_level::LodForceLevel;
 pub use mesh_renderer::MeshRenderer;
 pub use name::Name;
