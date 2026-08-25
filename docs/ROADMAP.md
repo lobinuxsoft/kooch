@@ -16,7 +16,18 @@ Last updated 2026-08-20 — 🔴 **a frame cap is a PERFORMANCE setting on this 
 ## The constraint everything is now measured against
 
 **72 FPS at 10 W TDP on the OneXFly F1 Pro.** The bar a game made with
-this engine has to clear. It does not clear it today.
+this engine has to clear.
+
+🎉 **It cleared it on 2026-08-25**, on `many_lights` — 100 point lights,
+the harshest scene this project has — at exactly 10 W. Frame 13.88 ms
+(the 72 Hz cap, held flat across the whole capture), GPU 12.2 ms, so the
+frame is limited by the compositor rather than by the GPU for the first
+time. It got there from **11.0 FPS** in one day: see #954.
+
+⚠️ That is one scene on one device, and the scene's lights were static.
+The same scene with its lights in motion is the case the content cache
+cannot help, and it has not been measured on the device yet. Clearing the
+bar once is not the same as owning it.
 
 That is **13.9 ms per frame**, on a gfx1150 iGPU, on a third of the power
 the part will draw if you let it.
@@ -3034,6 +3045,22 @@ thing. It is also what lets #55 land without touching gameplay.
    loading is disabled while a project is open. The only place a merged feature is
    knowingly incomplete.
 3. **#591** context menus, **#592** a Game panel separate from View.
+4. **#955 — the editor invents its own scenes.** `SceneManager::new()` seeds one empty
+   scene with a random `Guid` and no path, and in remote mode that is the *only* scene the
+   editor knows: the project holds a different manager, with the real file, under a
+   different id. Nothing carries the open set across the wire.
+
+   🔴 This is the same wall #613 hits from the other side. #613 reads as "additive is
+   disabled while a project is open"; the cause is that **the editor has no idea which
+   scenes the project has open**, so there is nothing for an additive one to be added *to*.
+   Fixing the open set fixes both, and it is what the World panel's tree uncovered — an
+   `Untitled (0 entities)` root beside 185 entities claiming to belong to nowhere.
+
+   Blocks seven ordinary panel features that all assume the model is true: unloading on
+   non-additive load, selecting a scene row, creating an entity *into a named scene*,
+   creating a child in its parent's scene, unparenting by dropping between siblings,
+   dropping outside a scene to make a new one, and the rule that **no entity is ever
+   loose**.
 
 ---
 
