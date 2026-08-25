@@ -129,6 +129,7 @@ fn gather_scenes(resources: &Resources) -> Vec<SceneDisplayInfo> {
                 .and_then(|path| path.file_stem())
                 .map(|stem| stem.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "Untitled".to_owned()),
+            path: scene.path.clone(),
             dirty: scene.dirty,
             active: active == Some(scene.id),
         })
@@ -159,6 +160,10 @@ fn remote_scenes(resources: &Resources) -> Option<Vec<SceneDisplayInfo>> {
                     .and_then(|path| path.file_stem())
                     .map(|stem| stem.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "Untitled".to_owned()),
+                // The project's path, on the project's disk. Both
+                // processes see the same filesystem, so it is meaningful
+                // here — the same reason the scene dialog is.
+                path: scene.path.as_deref().map(std::path::PathBuf::from),
                 dirty: scene.dirty,
                 active: scene.active,
             })

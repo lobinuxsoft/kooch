@@ -218,6 +218,18 @@ pub(crate) enum EditorAction {
     CloseScene(kooch_core::Guid),
     /// Make an already-open scene the one new entities are authored into.
     SetActiveScene(kooch_core::Guid),
+    /// Write one open scene back to the file it came from.
+    ///
+    /// Named, not implied. The File menu's [`Self::SaveScene`] saves the
+    /// active scene, and with several open the one somebody right-clicked
+    /// is routinely not that — saving the wrong file is not a mistake the
+    /// user can see until the next load.
+    ///
+    /// Falls back to asking for a path when the scene has never been
+    /// saved, which is the only case where there is nothing to write to.
+    SaveOpenScene(kooch_core::Guid),
+    /// Write one open scene to a path the user picks, and adopt it.
+    SaveOpenSceneAs(kooch_core::Guid),
     Play,
     Stop,
     /// Open a project: launch its binary with `--remote` and drive its
@@ -489,6 +501,8 @@ impl EditorAction {
             | Self::OpenSceneAdditive
             | Self::CloseScene(_)
             | Self::SetActiveScene(_)
+            | Self::SaveOpenScene(_)
+            | Self::SaveOpenSceneAs(_)
             | Self::Play
             | Self::Stop
             | Self::RegisterScripts

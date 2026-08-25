@@ -956,3 +956,30 @@ fn a_paste_is_built_and_undone() {
     done.store(true, Ordering::Relaxed);
     main_loop.join().unwrap();
 }
+
+/// Saving one scene is the project's business, and carries which scene.
+///
+/// 🔴 The scene id has to survive `classify`. Dropped, the save would
+/// fall through to the active scene — writing the file the user did not
+/// right-click, which is a mistake nothing shows until the next load.
+#[test]
+fn saving_one_scene_names_it() {
+    let editor = ecs();
+    let id = kooch_core::Guid::new_v4();
+
+    let named = |action| match super::classify(&action, &editor) {
+        Some(super::Edit::SaveOneScene { scene, as_new }) => (scene, as_new),
+        _ => panic!("a per-scene save did not classify as one"),
+    };
+
+    assert_eq!(
+        named(EditorAction::SaveOpenScene(id)),
+        (id, false),
+        "Save lost the scene, or asked for a path instead of using the file",
+    );
+    assert_eq!(
+        named(EditorAction::SaveOpenSceneAs(id)),
+        (id, true),
+        "Save As lost the scene, or wrote over the existing file without asking",
+    );
+}

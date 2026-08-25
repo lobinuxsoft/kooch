@@ -414,6 +414,16 @@ enum Edit<'a> {
     },
     /// Write the project's world to a scene file, or replace it from one.
     SaveScene,
+    /// Write one named scene of the project's open set to a file.
+    ///
+    /// `as_new` asks for a path; otherwise the scene is written back to
+    /// where the project says it came from. The path is resolved from the
+    /// mirrored open set, which is the project's own answer — the editor
+    /// has no scenes of its own while one is connected.
+    SaveOneScene {
+        scene: kooch_core::Guid,
+        as_new: bool,
+    },
     LoadScene,
     /// Capture one of the project's entities as a prefab file.
     SavePrefab {
@@ -560,6 +570,14 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
         // every edit to them is dropped for not being in the mirror.
         // Listed rather than left to the catch-all so the audit in #596
         // keeps meaning something.
+        EditorAction::SaveOpenScene(scene) => Some(Edit::SaveOneScene {
+            scene: *scene,
+            as_new: false,
+        }),
+        EditorAction::SaveOpenSceneAs(scene) => Some(Edit::SaveOneScene {
+            scene: *scene,
+            as_new: true,
+        }),
         EditorAction::OpenSceneAdditive
         | EditorAction::CloseScene(_)
         | EditorAction::SetActiveScene(_) => None,
@@ -776,6 +794,29 @@ fn send(
                 .map_err(map_err),
             None => Ok(()),
         },
+        Edit::SaveOneScene { scene, as_new } => {
+            // The project's own path for that scene, straight off the
+            // mirrored open set. Both processes see the same filesystem,
+            // so it is meaningful on this side of the wire.
+            let known = (!as_new)
+                .then(|| {
+                    session
+                        .open_scenes()
+                        .unwrap_or_default()
+                        .iter()
+                        .find(|s| s.id == scene)
+                        .and_then(|s| s.path.clone())
+                })
+                .flatten();
+            let path = match known {
+                Some(path) => path,
+                None => match crate::actions::scene_io::scene_dialog(resources).save_file() {
+                    Some(path) => path.to_string_lossy().into_owned(),
+                    None => return Ok(()),
+                },
+            };
+            client.save_scene(&path, Some(scene)).map_err(map_err)
+        }
         Edit::LoadScene => match crate::actions::scene_io::scene_dialog(resources).pick_file() {
             Some(path) => client.load_scene(&path.to_string_lossy()).map_err(map_err),
             None => Ok(()),

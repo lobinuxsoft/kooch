@@ -136,7 +136,7 @@ pub(crate) fn draw_world_content(
         let at_end = range.end >= rows.len();
         for index in range {
             match &rows[index] {
-                WorldRow::Group(header) => draw_group_header(ui, header, row_h),
+                WorldRow::Group(header) => draw_group_header(ui, header, row_h, actions),
                 WorldRow::Note(text) => {
                     ui.weak(text);
                 }
@@ -266,6 +266,14 @@ struct GroupHeader {
     label: String,
     /// Whether it starts open the first time it is ever seen.
     default_open: bool,
+    /// The scene this header stands for, or `None` for the pseudo-group
+    /// holding entities that belong to none.
+    ///
+    /// What decides whether the row has anything to offer on a right
+    /// click: "Save" means nothing for a group that is not a file.
+    scene: Option<kooch_core::Guid>,
+    /// Whether that scene has edits not on disk.
+    dirty: bool,
 }
 
 impl GroupHeader {
@@ -281,6 +289,8 @@ impl GroupHeader {
             // The active scene starts expanded: it is the one being
             // worked in.
             default_open: scene.active,
+            scene: Some(scene.id),
+            dirty: scene.dirty,
         }
     }
 
@@ -289,6 +299,8 @@ impl GroupHeader {
             id: egui::Id::new("world_group_open_unsaved"),
             label: format!("Unsaved ({count} entities)"),
             default_open: true,
+            scene: None,
+            dirty: false,
         }
     }
 
@@ -595,7 +607,12 @@ fn build_rows(
 /// function; what it buys is that a collapsed group's six hundred
 /// entities are absent from the row list entirely rather than skipped
 /// one at a time.
-fn draw_group_header(ui: &mut egui::Ui, header: &GroupHeader, row_h: f32) {
+fn draw_group_header(
+    ui: &mut egui::Ui,
+    header: &GroupHeader,
+    row_h: f32,
+    actions: &mut Vec<EditorAction>,
+) {
     let size = egui::vec2(ui.available_width(), row_h);
     let (rect, resp) = ui.allocate_at_least(size, egui::Sense::click());
 
@@ -604,6 +621,7 @@ fn draw_group_header(ui: &mut egui::Ui, header: &GroupHeader, row_h: f32) {
         open = !open;
         ui.data_mut(|data| data.insert_persisted(header.id, open));
     }
+    scene_context_menu(&resp, header, actions);
 
     if !ui.is_rect_visible(rect) {
         return;
@@ -627,6 +645,50 @@ fn draw_group_header(ui: &mut egui::Ui, header: &GroupHeader, row_h: f32) {
         egui::TextStyle::Button.resolve(ui.style()),
         visuals.text_color(),
     );
+}
+
+/// The right-click menu on a scene's row.
+///
+/// Saving one scene at a time is what having several open makes
+/// necessary: the File menu saves the active scene, and the scene
+/// somebody right-clicked is routinely not that one. Writing the wrong
+/// file is not a mistake the user can see until the next load.
+///
+/// Nothing for the "Unsaved" pseudo-group — it is not a file, so there
+/// is nowhere for it to be saved to. Its entities go with the active
+/// scene, which is what its own note already says.
+fn scene_context_menu(
+    resp: &egui::Response,
+    header: &GroupHeader,
+    actions: &mut Vec<EditorAction>,
+) {
+    let Some(scene) = header.scene else {
+        return;
+    };
+    resp.context_menu(|ui| {
+        // No icon on either. There is no verified Phosphor codepoint for
+        // a save glyph in `icons`, and that module's own note says why
+        // guessing one is not an option: a wrong codepoint is still a
+        // valid glyph, so it renders something and only a person looking
+        // at it ever finds out. Eleven of the first thirty were wrong.
+        let save = ui.button("Save").on_hover_text(if header.dirty {
+            "Write this scene back to its own file"
+        } else {
+            "This scene has no unsaved changes"
+        });
+        if save.clicked() {
+            actions.push(EditorAction::SaveOpenScene(scene));
+            ui.close();
+        }
+        if ui
+            .button("Save As…")
+            .on_hover_text("Write this scene to a new file and adopt it")
+            .clicked()
+        {
+            actions.push(EditorAction::SaveOpenSceneAs(scene));
+            ui.close();
+        }
+    });
 }
 
 /// Keyboard shortcuts for the World panel: Delete, Ctrl+A, arrow up/down.

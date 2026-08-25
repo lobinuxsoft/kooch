@@ -20,6 +20,7 @@ fn scene_info(id: kooch_core::Guid, active: bool) -> SceneDisplayInfo {
     SceneDisplayInfo {
         id,
         name: "Scene".to_owned(),
+        path: None,
         dirty: false,
         active,
     }
@@ -570,4 +571,44 @@ fn a_reveal_opens_collapsed_ancestors() {
     });
 
     assert_eq!(rows, 2, "the revealed child still had no row");
+}
+
+/// A scene's row offers Save; the "Unsaved" pseudo-group does not.
+///
+/// The group holding entities that belong to no scene is not a file, so
+/// there is nowhere for it to be saved to — and offering it would write
+/// its entities into whichever scene happened to be active, which is the
+/// note under that header, not a menu item.
+#[test]
+fn only_a_scene_row_can_be_saved() {
+    let id = kooch_core::Guid::new_v4();
+    let scene = super::GroupHeader::scene(&scene_info(id, true), 3);
+    assert_eq!(scene.scene, Some(id), "a scene row names its scene");
+    assert_eq!(
+        super::GroupHeader::unsaved(2).scene,
+        None,
+        "the unsaved group would have offered to save entities into a file it does not have",
+    );
+}
+
+/// The unsaved marker leads the name.
+///
+/// The entity count sits between the name and the end of the line, so a
+/// trailing marker is separated from what it describes by a number that
+/// changes — and a column of scenes is read down its left edge.
+#[test]
+fn the_dirty_marker_leads_the_name() {
+    let id = kooch_core::Guid::new_v4();
+    let mut info = scene_info(id, true);
+    assert!(
+        !super::GroupHeader::scene(&info, 1).label.starts_with('*'),
+        "a clean scene was marked",
+    );
+    info.dirty = true;
+    let header = super::GroupHeader::scene(&info, 1);
+    assert!(header.label.starts_with("*Scene"), "{}", header.label);
+    assert!(
+        header.dirty,
+        "the row cannot say what its menu should offer"
+    );
 }

@@ -6,7 +6,8 @@ use kooch_core::resource::Resources;
 use crate::undo::UndoStack;
 
 use crate::actions::scene_io::{
-    close_scene, load_scene, open_scene_additive, save_scene_as, scene_dialog,
+    close_scene, load_scene, open_scene_additive, save_open_scene_as, save_scene_as, scene_dialog,
+    scene_path,
 };
 
 pub(super) fn handle_save_scene(resources: &mut Resources) {
@@ -16,6 +17,30 @@ pub(super) fn handle_save_scene(resources: &mut Resources) {
     match save_scene_as(resources, path.clone()) {
         Ok(()) => tracing::info!("scene saved to {}", path.display()),
         Err(e) => tracing::error!("failed to save scene: {e}"),
+    }
+}
+
+/// Saves one named open scene.
+///
+/// `as_new` asks for a path; otherwise the scene is written back to the
+/// file it came from, and only a scene that has never been saved falls
+/// through to the dialog — there is nothing else it could be written to.
+pub(super) fn handle_save_open_scene(
+    resources: &mut Resources,
+    id: kooch_core::Guid,
+    as_new: bool,
+) {
+    let existing = (!as_new).then(|| scene_path(resources, id)).flatten();
+    let path = match existing {
+        Some(path) => path,
+        None => match scene_dialog(resources).save_file() {
+            Some(path) => path,
+            None => return,
+        },
+    };
+    match save_open_scene_as(resources, id, path.clone()) {
+        Ok(()) => tracing::info!("scene {id} saved to {}", path.display()),
+        Err(e) => tracing::error!("failed to save scene {id}: {e}"),
     }
 }
 
