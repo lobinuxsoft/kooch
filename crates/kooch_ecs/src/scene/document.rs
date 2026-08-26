@@ -365,6 +365,7 @@ impl SceneDocument {
         let parent_tid = std::any::TypeId::of::<crate::hierarchy::Parent>();
         let instance_tid = std::any::TypeId::of::<crate::prefab_instance::PrefabInstance>();
         let member_tid_prefab = std::any::TypeId::of::<crate::prefab_instance::PrefabMember>();
+        let order_tid = std::any::TypeId::of::<crate::order::Order>();
 
         // A subtree's membership is resolved once, up front: the walk below
         // visits archetypes in whatever order they were created, so
@@ -468,7 +469,19 @@ impl SceneDocument {
                         // `PrefabMember` is rebuilt by `attach` on load, so
                         // writing it would be storing a fact twice — the
                         // mistake this whole change exists to stop making.
-                        if is_instance_root && type_id != instance_tid && type_id != parent_tid {
+                        //
+                        // 🔴 `Order` is *where it sits*, exactly as `Parent`
+                        // is, and it is neither the prefab's nor an override
+                        // of anything in it: a prefab knows nothing about
+                        // where its instances land among a scene's siblings.
+                        // Skipping it silently dropped the ordering off every
+                        // instance on save (#961) — the entity came back in
+                        // the middle of the list it had been moved out of.
+                        if is_instance_root
+                            && type_id != instance_tid
+                            && type_id != parent_tid
+                            && type_id != order_tid
+                        {
                             continue;
                         }
                         // Instance bookkeeping never enters a prefab. A

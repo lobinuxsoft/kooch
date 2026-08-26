@@ -208,6 +208,11 @@ fn is_bookkeeping(type_name: &str) -> bool {
             | "Children"
             | "GlobalTransform"
             | "SceneMember"
+            // Where an instance sits among its siblings is the scene's
+            // business, not the prefab's — a prefab has no siblings.
+            // Propagating over it would reshuffle every instance of a
+            // prefab the moment somebody edited it (#961).
+            | "Order"
     )
 }
 
