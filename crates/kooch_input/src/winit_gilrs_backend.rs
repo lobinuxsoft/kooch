@@ -6,6 +6,8 @@
 use glam::Vec2;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use gilrs::Gilrs;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -42,6 +44,99 @@ pub struct WinitGilrsBackend {
     queued_events: Vec<InputEvent>,
 }
 
+/// How long startup waits for gamepad enumeration before going on
+/// without it.
+///
+/// Generous on purpose: enumerating takes milliseconds on every platform
+/// where it works, so anything approaching this is already a backend
+/// that is not coming back. Long enough that a machine under heavy load
+/// is not robbed of its gamepads for being slow.
+const GILRS_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Builds the gilrs context, giving up if it does not answer.
+///
+/// # 🔴 Why this cannot be a plain `Gilrs::new()`
+///
+/// Because a game that cannot read a gamepad is a game with no gamepad,
+/// and a game whose startup never returns is no game at all — and the
+/// second is what happened (#963).
+///
+/// A Windows build under Proton on a OneXFly hangs here. gilrs
+/// enumerates through `Windows.Gaming.Input`; Wine meets the handheld's
+/// vendor-defined HID (`usage ffff:0001`), has no implementation for it,
+/// and never comes back. Input is built **before** the window and the
+/// GPU, so nothing after it ever happens: no window, no Vulkan, no
+/// error, no output. From outside it looks like the game does not start,
+/// which is the least debuggable failure there is.
+///
+/// The `Err` arm below always intended this outcome — "gamepad support
+/// unavailable; keyboard and mouse still work". It just never covered
+/// the case where enumeration neither succeeds nor fails.
+///
+/// ⚠️ The thread is deliberately **not** joined. If enumeration is wedged
+/// in a driver, joining it would reintroduce exactly the hang this
+/// exists to remove. It costs one parked thread for the life of the
+/// process, which is the cheaper of the two.
+fn init_gilrs(timeout: Duration) -> Option<Mutex<Gilrs>> {
+    match build_within(timeout, || Gilrs::new().map_err(|error| error.to_string())) {
+        Built::Ready(gilrs) => Some(Mutex::new(gilrs)),
+        Built::Failed(error) => {
+            tracing::warn!(%error, "gamepad support unavailable; keyboard and mouse still work");
+            None
+        }
+        Built::NoAnswer => {
+            tracing::warn!(
+                timeout_secs = timeout.as_secs(),
+                "gamepad enumeration did not answer; continuing without gamepads — \
+                 keyboard and mouse still work",
+            );
+            None
+        }
+    }
+}
+
+/// What came back from a build that was given a deadline.
+enum Built<T> {
+    Ready(T),
+    /// It answered, and the answer was no.
+    Failed(String),
+    /// It did not answer. Distinct from `Failed` because the causes and
+    /// the messages differ: one is a backend that is absent, the other
+    /// is a backend that is stuck.
+    NoAnswer,
+}
+
+/// Runs `build` on its own thread and gives up on it after `timeout`.
+///
+/// Split out from [`init_gilrs`] so the deadline can be tested without a
+/// wedged driver to hand: the interesting behaviour is "a build that
+/// never returns must not hold the caller", and that is provable with
+/// any slow closure.
+fn build_within<T, F>(timeout: Duration, build: F) -> Built<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+    if std::thread::Builder::new()
+        .name("gilrs-init".into())
+        .spawn(move || {
+            // The receiver is gone once the deadline passes; a failed
+            // send means nobody is waiting any more, not an error.
+            let _ = tx.send(build());
+        })
+        .is_err()
+    {
+        return Built::Failed("could not start the initialisation thread".to_owned());
+    }
+
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(value)) => Built::Ready(value),
+        Ok(Err(error)) => Built::Failed(error),
+        Err(_) => Built::NoAnswer,
+    }
+}
+
 #[derive(Default)]
 struct GamepadState {
     pressed_buttons: HashSet<GamepadButton>,
@@ -56,18 +151,12 @@ impl WinitGilrsBackend {
     /// Creates a backend, initialising the gilrs context.
     ///
     /// Gamepad support degrades to nothing if gilrs cannot enumerate a
-    /// device backend (on Linux: headless, no evdev access, a container).
-    /// Keyboard and mouse are unaffected — they arrive from winit.
+    /// device backend (on Linux: headless, no evdev access, a container)
+    /// **or if it does not answer at all** — see [`init_gilrs`]. Keyboard
+    /// and mouse are unaffected: they arrive from winit.
     pub fn new() -> Self {
-        let gilrs = match Gilrs::new() {
-            Ok(gilrs) => Some(Mutex::new(gilrs)),
-            Err(error) => {
-                tracing::warn!(%error, "gamepad support unavailable; keyboard and mouse still work");
-                None
-            }
-        };
         Self {
-            gilrs,
+            gilrs: init_gilrs(GILRS_TIMEOUT),
             pressed_keys: HashSet::new(),
             just_pressed_keys: HashSet::new(),
             just_released_keys: HashSet::new(),
@@ -286,3 +375,6 @@ impl InputBackend for WinitGilrsBackend {
             .unwrap_or(0.0)
     }
 }
+
+#[cfg(test)]
+mod backend_tests;
