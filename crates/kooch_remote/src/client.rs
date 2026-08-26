@@ -193,13 +193,42 @@ impl RemoteClient {
                 revision,
                 full,
                 host,
+                scenes,
             } => Ok(EntityUpdate {
                 entities,
                 removed,
                 revision,
                 full,
                 host,
+                scenes,
             }),
+            other => Err(ClientError::Unexpected(other)),
+        }
+    }
+
+    /// Moves an entity under `parent`, before `before`.
+    pub fn move_entity(
+        &self,
+        entity: EntityId,
+        parent: Option<EntityId>,
+        before: Option<EntityId>,
+    ) -> Result<(), ClientError> {
+        self.expect_ok(Method::MoveEntity {
+            entity,
+            parent,
+            before,
+        })
+    }
+
+    /// Throws away one scene's edits and reads it back from its file.
+    pub fn revert_scene(&self, scene: Option<kooch_core::Guid>) -> Result<(), ClientError> {
+        self.expect_ok(Method::RevertScene { scene })
+    }
+
+    /// Opens an empty unsaved scene on the project and makes it active.
+    pub fn new_scene(&self) -> Result<kooch_core::Guid, ClientError> {
+        match self.call(Method::NewScene)? {
+            ResponseData::SceneOpened { scene } => Ok(scene),
             other => Err(ClientError::Unexpected(other)),
         }
     }
@@ -245,9 +274,20 @@ impl RemoteClient {
     }
 
     /// Spawns a new entity, optionally named; returns its handle.
-    pub fn spawn(&self, name: Option<&str>) -> Result<EntityId, ClientError> {
+    ///
+    /// `scene` names the scene to author it into (`None` = the active
+    /// one) and `parent` what to hang it off. A parent already names the
+    /// scene, so `scene` is ignored when one is given.
+    pub fn spawn(
+        &self,
+        name: Option<&str>,
+        scene: Option<kooch_core::Guid>,
+        parent: Option<EntityId>,
+    ) -> Result<EntityId, ClientError> {
         match self.call(Method::Spawn {
             name: name.map(str::to_owned),
+            scene,
+            parent,
         })? {
             ResponseData::Spawned { entity } => Ok(entity),
             other => Err(ClientError::Unexpected(other)),
@@ -271,10 +311,18 @@ impl RemoteClient {
         self.expect_ok(Method::SetParent { entity, parent })
     }
 
-    /// Persists the server's live ECS to a scene file on its disk.
-    pub fn save_scene(&self, path: &str) -> Result<(), ClientError> {
+    /// Persists one open scene to a file on the server's disk.
+    ///
+    /// `scene` names it; `None` saves the active one. Only that scene's
+    /// entities are written — see [`Method::SaveScene`].
+    pub fn save_scene(
+        &self,
+        path: &str,
+        scene: Option<kooch_core::Guid>,
+    ) -> Result<(), ClientError> {
         self.expect_ok(Method::SaveScene {
             path: path.to_owned(),
+            scene,
         })
     }
 
@@ -409,4 +457,9 @@ pub struct EntityUpdate {
     pub full: bool,
     /// What the host's frame cost, if it reported one.
     pub host: Option<crate::protocol::HostMetrics>,
+    /// The scenes the project has open, or `None` if it did not say.
+    ///
+    /// Not diffed: it arrives whole or not at all, so a caller replaces
+    /// its list rather than merging into one.
+    pub scenes: Option<Vec<crate::protocol::SceneEntry>>,
 }

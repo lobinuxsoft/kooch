@@ -10,6 +10,7 @@ fn entity(index: u32, x: f32) -> EntitySnapshot {
         },
         name: Some(format!("Entity {index}")),
         parent: None,
+        scene: None,
         components: vec![ComponentSnapshot {
             type_name: "Transform".to_owned(),
             fields: vec![("x".to_owned(), ReflectValue::F32(x))],

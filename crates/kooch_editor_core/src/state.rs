@@ -388,6 +388,12 @@ pub(crate) struct SceneDisplayInfo {
     pub(crate) id: kooch_core::Guid,
     /// File stem, or "Untitled" for a scene never saved.
     pub(crate) name: String,
+    /// Where it came from, or `None` for one never saved.
+    ///
+    /// Carried beside the name so "Save" can write to the file the scene
+    /// came from without asking, and fall back to asking when there is no
+    /// file yet. The stem alone cannot say where it lives.
+    pub(crate) path: Option<std::path::PathBuf>,
     pub(crate) dirty: bool,
     pub(crate) active: bool,
 }

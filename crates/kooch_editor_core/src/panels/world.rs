@@ -136,21 +136,31 @@ pub(crate) fn draw_world_content(
         let at_end = range.end >= rows.len();
         for index in range {
             match &rows[index] {
-                WorldRow::Group(header) => draw_group_header(ui, header, row_h),
+                WorldRow::Group(header) => draw_group_header(ui, header, row_h, actions),
                 WorldRow::Note(text) => {
-                    ui.weak(text);
+                    // Indented like the entities it stands in for, or the
+                    // note explaining an empty scene sits further left
+                    // than the rows it is about.
+                    ui.weak(format!("    {text}"));
                 }
                 WorldRow::Entity(idx) => {
+                    let info = &entities[*idx];
+                    // A leaf gets `None` and no triangle. The default
+                    // here has to match `push_members`' or the row would
+                    // point one way while the list hid the other.
+                    let subtree = (!info.children.is_empty())
+                        .then(|| subtree_open(ui, info.entity, !info.is_prefab_instance));
                     draw_entity_row(
                         ui,
                         *idx,
-                        &entities[*idx],
+                        info,
                         entities,
                         selected,
                         pinned,
                         reflected_types,
                         actions,
                         last_clicked_index,
+                        subtree,
                     );
                 }
             }
@@ -185,8 +195,16 @@ pub(crate) fn draw_world_content(
         // where people actually reach for them: right-click in the
         // empty part of the hierarchy. A row's own right-click menu
         // handles per-entity actions, including Add Component (#591).
+        //
+        // 🔴 Into a scene of its own, not the active one. Right-clicking
+        // past the last row is not "put this somewhere" — there is no
+        // row under the pointer to name a somewhere. It is "start
+        // something new", and since an entity has to belong to a scene,
+        // starting one is what makes the gesture answerable.
         empty_resp.context_menu(|ui| {
-            spawn_entries(ui, actions);
+            ui.label("New scene");
+            ui.separator();
+            spawn_entries(ui, actions, crate::actions::SpawnTarget::NewScene);
         });
         // A prefab dropped into the hierarchy spawns at the position it
         // was authored at: a list of names has no geometry to read a
@@ -259,17 +277,37 @@ struct GroupHeader {
     label: String,
     /// Whether it starts open the first time it is ever seen.
     default_open: bool,
+    /// The scene this header stands for, or `None` for the pseudo-group
+    /// holding entities that belong to none.
+    ///
+    /// What decides whether the row has anything to offer on a right
+    /// click: "Save" means nothing for a group that is not a file.
+    scene: Option<kooch_core::Guid>,
+    /// Whether that scene has edits not on disk.
+    dirty: bool,
+    /// Whether it has ever been saved.
+    ///
+    /// What separates "discard changes" from "delete everything": a scene
+    /// with no file has nothing to be read back from.
+    has_file: bool,
 }
 
 impl GroupHeader {
     fn scene(scene: &SceneDisplayInfo, count: usize) -> Self {
-        let dirty = if scene.dirty { " *" } else { "" };
+        // Leading, not trailing. The entity count sits between the name
+        // and the end of the line, so an asterisk after it is separated
+        // from the thing it is about by a number that changes — and in a
+        // column of scenes, the eye scans the left edge.
+        let dirty = if scene.dirty { "*" } else { "" };
         Self {
             id: egui::Id::new(("world_group_open", scene.id)),
-            label: format!("{} ({count} entities){dirty}", scene.name),
+            label: format!("{dirty}{} ({count} entities)", scene.name),
             // The active scene starts expanded: it is the one being
             // worked in.
             default_open: scene.active,
+            scene: Some(scene.id),
+            dirty: scene.dirty,
+            has_file: scene.path.is_some(),
         }
     }
 
@@ -278,6 +316,9 @@ impl GroupHeader {
             id: egui::Id::new("world_group_open_unsaved"),
             label: format!("Unsaved ({count} entities)"),
             default_open: true,
+            scene: None,
+            dirty: false,
+            has_file: false,
         }
     }
 
@@ -392,20 +433,38 @@ fn row_pitch(ui: &egui::Ui, row_h: f32) -> f32 {
     row_h + ui.spacing().item_spacing.y
 }
 
-/// Opens whatever group holds `entity`, so it has a row to scroll to.
+/// Opens whatever group and collapsed ancestors hold `entity`, so it has
+/// a row to scroll to.
+///
+/// A row that does not exist cannot be scrolled to, and leaving it hidden
+/// reproduces the symptom #706 exists to prevent: something selected with
+/// nothing on screen to show for it.
 fn reveal_group_of(
     ui: &egui::Ui,
     entities: &[EntityDisplayInfo],
     scenes: &[SceneDisplayInfo],
     entity: Entity,
 ) {
-    // One scene means no headers at all, so there is nothing to open.
-    if scenes.len() < 2 {
-        return;
-    }
+    // 🔴 No early return on a single scene. That guard was right while a
+    // lone scene drew no header, and stopped being right the moment every
+    // scene got a root — one collapsed scene is now exactly as able to
+    // hide a selection as two.
     let Some(info) = entities.iter().find(|e| e.entity == entity) else {
         return;
     };
+
+    // Every collapsed ancestor, not only the group. A prefab instance
+    // starts collapsed, so anything created inside one — a duplicate of a
+    // child — lands in a subtree with no rows at all.
+    let mut ancestor = info.parent;
+    while let Some(parent) = ancestor {
+        ui.data_mut(|data| data.insert_persisted(subtree_id(parent), true));
+        ancestor = entities
+            .iter()
+            .find(|e| e.entity == parent)
+            .and_then(|e| e.parent);
+    }
+
     match info.scene.and_then(|id| scenes.iter().find(|s| s.id == id)) {
         Some(scene) => {
             let members = entities
@@ -423,20 +482,90 @@ fn reveal_group_of(
 }
 
 /// Flattens the hierarchy into the lines the panel will show.
+/// What identifies one entity's expanded state across frames.
+pub(super) fn subtree_id(entity: Entity) -> egui::Id {
+    egui::Id::new(("world_subtree_open", entity))
+}
+
+/// Whether an entity's children are listed under it.
+///
+/// 🔴 A prefab instance starts CLOSED and everything else starts open,
+/// and that is the difference between a panel and a wall. An instance is
+/// a unit: its five entities are the prefab's business, not the scene's,
+/// and `many_lights` puts thirty-six of them on screen — a hundred and
+/// eighty rows nobody asked to read. A hand-built hierarchy is the
+/// opposite: somebody put those children there on purpose, and hiding
+/// them would hide their own work.
+///
+/// Kept in egui's persisted store like the group headers, for the same
+/// reason: it is view state of one panel, it should survive a frame and
+/// not a project, and threading it through would put a field about a
+/// disclosure triangle into the editor's model of the world.
+fn subtree_open(ui: &egui::Ui, entity: Entity, default_open: bool) -> bool {
+    ui.data_mut(|data| *data.get_persisted_mut_or_insert_with(subtree_id(entity), || default_open))
+}
+
+/// Appends a scene's entities, leaving out what a collapsed parent hides.
+///
+/// `members` arrive in DFS order with `depth` — the third pass of
+/// `queries` guarantees it — so a subtree is contiguous and skipping one
+/// is "drop rows until the depth comes back up". That is also why a
+/// collapsed group costs nothing: its rows are absent from the list
+/// rather than skipped one at a time while scrolling.
+fn push_members(
+    ui: &egui::Ui,
+    entities: &[EntityDisplayInfo],
+    members: &[usize],
+    rows: &mut Vec<WorldRow>,
+) {
+    // The depth of the collapsed parent whose descendants are being
+    // dropped, if any.
+    let mut hidden_under: Option<usize> = None;
+    // Whether each level of the current chain sits inside a prefab
+    // instance, so the instance's ROOT can be told from its members —
+    // `is_prefab_instance` is true for every entity the instance owns.
+    let mut inside_prefab: Vec<bool> = Vec::new();
+
+    for &idx in members {
+        let Some(info) = entities.get(idx) else {
+            continue;
+        };
+        match hidden_under {
+            Some(depth) if info.depth > depth => continue,
+            _ => hidden_under = None,
+        }
+
+        inside_prefab.truncate(info.depth);
+        let under_instance = inside_prefab.last().copied().unwrap_or(false);
+        inside_prefab.push(under_instance || info.is_prefab_instance);
+
+        rows.push(WorldRow::Entity(idx));
+
+        if info.children.is_empty() {
+            continue;
+        }
+        let starts_open = !(info.is_prefab_instance && !under_instance);
+        if !subtree_open(ui, info.entity, starts_open) {
+            hidden_under = Some(info.depth);
+        }
+    }
+}
+
 fn build_rows(
     ui: &egui::Ui,
     entities: &[EntityDisplayInfo],
     scenes: &[SceneDisplayInfo],
 ) -> Vec<WorldRow> {
-    // One scene: no headers, since every row would sit under the same
-    // one and the grouping would only cost a level of indentation.
-    if scenes.len() < 2 {
-        return (0..entities.len()).map(WorldRow::Entity).collect();
-    }
-
     let mut rows = Vec::with_capacity(entities.len() + scenes.len() + 1);
     let mut grouped = vec![false; entities.len()];
 
+    // 🔴 A header even for a single scene. It used to be skipped —
+    // "every row would sit under the same one" — and that was true right
+    // up until a second scene could be opened beside it. Without a root
+    // per scene, two scenes' entities land in one column with nothing
+    // saying which is which, no place to offer closing one, and no
+    // answer to which scene a Spawn belongs to. The root is what makes
+    // additive open a thing that can exist.
     for scene in scenes {
         let members: Vec<usize> = entities
             .iter()
@@ -460,7 +589,7 @@ fn build_rows(
         if members.is_empty() {
             rows.push(WorldRow::Note("(empty)".to_owned()));
         }
-        rows.extend(members.into_iter().map(WorldRow::Entity));
+        push_members(ui, entities, &members, &mut rows);
     }
 
     // Anything belonging to no scene still has to be reachable, or an
@@ -480,7 +609,7 @@ fn build_rows(
             rows.push(WorldRow::Note(
                 "Not in any scene yet — saved with the active one.".to_owned(),
             ));
-            rows.extend(orphans.into_iter().map(WorldRow::Entity));
+            push_members(ui, entities, &orphans, &mut rows);
         }
     }
 
@@ -496,7 +625,12 @@ fn build_rows(
 /// function; what it buys is that a collapsed group's six hundred
 /// entities are absent from the row list entirely rather than skipped
 /// one at a time.
-fn draw_group_header(ui: &mut egui::Ui, header: &GroupHeader, row_h: f32) {
+fn draw_group_header(
+    ui: &mut egui::Ui,
+    header: &GroupHeader,
+    row_h: f32,
+    actions: &mut Vec<EditorAction>,
+) {
     let size = egui::vec2(ui.available_width(), row_h);
     let (rect, resp) = ui.allocate_at_least(size, egui::Sense::click());
 
@@ -505,6 +639,7 @@ fn draw_group_header(ui: &mut egui::Ui, header: &GroupHeader, row_h: f32) {
         open = !open;
         ui.data_mut(|data| data.insert_persisted(header.id, open));
     }
+    scene_context_menu(&resp, header, actions);
 
     if !ui.is_rect_visible(rect) {
         return;
@@ -526,8 +661,90 @@ fn draw_group_header(ui: &mut egui::Ui, header: &GroupHeader, row_h: f32) {
         egui::Align2::LEFT_CENTER,
         &header.label,
         egui::TextStyle::Button.resolve(ui.style()),
-        visuals.text_color(),
+        match header.dirty {
+            true => DIRTY_SCENE,
+            false => visuals.text_color(),
+        },
     );
+}
+
+/// The colour of a scene that has edits not on disk.
+///
+/// The same amber the code-sync control pulses in, because it means the
+/// same thing: something here is out of step with what is on disk. One
+/// colour for "needs attention" is one thing to learn rather than two.
+///
+/// Paired with the `*`, never alone — a colour by itself is unreadable
+/// to anyone who cannot separate these two hues, and this one has to
+/// survive both themes.
+///
+/// 🔴 A literal, and it should not stay one. Every colour the panel
+/// introduces belongs in Settings (#955); a palette hard-coded into a
+/// panel is a palette nobody can fix for their own eyes.
+const DIRTY_SCENE: egui::Color32 = egui::Color32::from_rgb(210, 150, 60);
+
+/// The right-click menu on a scene's row.
+///
+/// Saving one scene at a time is what having several open makes
+/// necessary: the File menu saves the active scene, and the scene
+/// somebody right-clicked is routinely not that one. Writing the wrong
+/// file is not a mistake the user can see until the next load.
+///
+/// Nothing for the "Unsaved" pseudo-group — it is not a file, so there
+/// is nowhere for it to be saved to. Its entities go with the active
+/// scene, which is what its own note already says.
+fn scene_context_menu(
+    resp: &egui::Response,
+    header: &GroupHeader,
+    actions: &mut Vec<EditorAction>,
+) {
+    let Some(scene) = header.scene else {
+        return;
+    };
+    resp.context_menu(|ui| {
+        // No icon on either. There is no verified Phosphor codepoint for
+        // a save glyph in `icons`, and that module's own note says why
+        // guessing one is not an option: a wrong codepoint is still a
+        // valid glyph, so it renders something and only a person looking
+        // at it ever finds out. Eleven of the first thirty were wrong.
+        let save = ui.button("Save").on_hover_text(if header.dirty {
+            "Write this scene back to its own file"
+        } else {
+            "This scene has no unsaved changes"
+        });
+        if save.clicked() {
+            actions.push(EditorAction::SaveOpenScene(scene));
+            ui.close();
+        }
+        if ui
+            .button("Save As…")
+            .on_hover_text("Write this scene to a new file and adopt it")
+            .clicked()
+        {
+            actions.push(EditorAction::SaveOpenSceneAs(scene));
+            ui.close();
+        }
+        // Only offered when there is something to discard, and only for
+        // a scene that has a file. Without one there is nothing to revert
+        // *to*, and despawning its entities would delete work rather than
+        // undo it — the one thing "discard" must never be mistaken for.
+        if header.dirty && header.has_file {
+            let discard = ui
+                .button("Discard Changes")
+                .on_hover_text("Throw away this scene's edits and read it back from its file");
+            if discard.clicked() {
+                actions.push(EditorAction::RevertOpenScene(scene));
+                ui.close();
+            }
+        }
+        ui.separator();
+        // Into *this* scene. The toolbar's Spawn button authors into the
+        // active one, which with several open is routinely not the scene
+        // somebody just right-clicked.
+        ui.menu_button("New", |ui| {
+            spawn_entries(ui, actions, crate::actions::SpawnTarget::Scene(scene));
+        });
+    });
 }
 
 /// Keyboard shortcuts for the World panel: Delete, Ctrl+A, arrow up/down.

@@ -401,9 +401,31 @@ pub(crate) fn gather_entity_data(
     let mut sorted: Vec<EntityDisplayInfo> = Vec::with_capacity(flat.len());
     let mut stack: Vec<(kooch_ecs::Entity, usize)> = Vec::new();
 
-    // Sort roots by index for stable ordering.
+    // 🔴 By `Order` first, `Entity::index` second. The index alone was
+    // never a decision anybody made — it is the order the allocator
+    // handed slots out in, which the panel and the scene file both read
+    // and therefore agreed on by coincidence. Entities nobody has ordered
+    // have no `Order` and sort after those that do, by index, so a scene
+    // authored before this looks exactly as it did.
+    let order_of = |e: &kooch_ecs::Entity| {
+        (
+            components
+                .as_ref()
+                .and_then(|r| r.get_cpu::<kooch_ecs::Order>())
+                .and_then(|s| s.get(*e))
+                .map(|o| o.value),
+            e.index(),
+        )
+    };
+    let key = |e: &kooch_ecs::Entity| {
+        let (order, index) = order_of(e);
+        // `None` last: `Option`'s own ordering puts it first, which would
+        // float every unordered entity to the top of its group.
+        (order.is_none(), order.unwrap_or(0), index)
+    };
+
     let mut sorted_roots = roots;
-    sorted_roots.sort_by_key(|e| e.index());
+    sorted_roots.sort_by_key(&key);
 
     // Push roots in reverse so first root is processed first.
     for &root in sorted_roots.iter().rev() {
@@ -430,7 +452,7 @@ pub(crate) fn gather_entity_data(
 
             // Push children in reverse for correct DFS order.
             let mut children = info.children.clone();
-            children.sort_by_key(|e| e.index());
+            children.sort_by_key(&key);
             for &child in children.iter().rev() {
                 stack.push((child, depth + 1));
             }

@@ -181,7 +181,9 @@ fn spawn_mesh(resources: &mut Resources, path: &std::path::Path, name: &str) {
     };
     let client = session.client();
 
-    let entity = match client.spawn(Some(name)) {
+    // The active scene: a mesh dropped into the viewport is authored
+    // where new things go, and nothing in that gesture names another.
+    let entity = match client.spawn(Some(name), None, None) {
         Ok(entity) => entity,
         Err(e) => {
             tracing::warn!(target: TARGET, error = %e, "remote spawn failed");
@@ -315,8 +317,10 @@ pub(super) fn build(
     mirror: &crate::remote_mirror::RemoteMirror,
     state: &crate::actions::entity_state::EntityState,
 ) -> Result<kooch_remote::protocol::EntityId, String> {
+    // Rebuilt from a captured state — a paste or an undone despawn. Its
+    // scene is restored with the rest of it, not decided here.
     let id = client
-        .spawn(state.name.as_deref())
+        .spawn(state.name.as_deref(), None, None)
         .map_err(|e| e.to_string())?;
     for component in &state.components {
         if let Err(e) = client.add_component(id, &component.name) {
@@ -406,6 +410,8 @@ enum Edit<'a> {
         /// remotely arrived with a `Name` and nothing else — no
         /// `Transform`, no light component.
         extra: Vec<std::any::TypeId>,
+        /// Where it goes — the scene, and what it hangs off.
+        into: crate::actions::SpawnTarget,
     },
     /// Every field of a `Transform`, from a gizmo drag.
     TransformEdit {
@@ -414,6 +420,24 @@ enum Edit<'a> {
     },
     /// Write the project's world to a scene file, or replace it from one.
     SaveScene,
+    /// Move an entity among its siblings on the project.
+    MoveEntity {
+        entity: kooch_ecs::entity::Entity,
+        parent: Option<kooch_ecs::entity::Entity>,
+        before: Option<kooch_ecs::entity::Entity>,
+    },
+    /// Throw away one scene's edits on the project and read it back.
+    RevertOneScene(kooch_core::Guid),
+    /// Write one named scene of the project's open set to a file.
+    ///
+    /// `as_new` asks for a path; otherwise the scene is written back to
+    /// where the project says it came from. The path is resolved from the
+    /// mirrored open set, which is the project's own answer — the editor
+    /// has no scenes of its own while one is connected.
+    SaveOneScene {
+        scene: kooch_core::Guid,
+        as_new: bool,
+    },
     LoadScene,
     /// Capture one of the project's entities as a prefab file.
     SavePrefab {
@@ -498,7 +522,8 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
                 false => Some(Edit::Paste(states.to_vec())),
             }
         }
-        EditorAction::Spawn { name, extra } => Some(Edit::Spawn {
+        EditorAction::Spawn { name, extra, into } => Some(Edit::Spawn {
+            into: *into,
             name: name.clone(),
             extra: extra.clone(),
         }),
@@ -560,6 +585,24 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
         // every edit to them is dropped for not being in the mirror.
         // Listed rather than left to the catch-all so the audit in #596
         // keeps meaning something.
+        EditorAction::SaveOpenScene(scene) => Some(Edit::SaveOneScene {
+            scene: *scene,
+            as_new: false,
+        }),
+        EditorAction::SaveOpenSceneAs(scene) => Some(Edit::SaveOneScene {
+            scene: *scene,
+            as_new: true,
+        }),
+        EditorAction::RevertOpenScene(scene) => Some(Edit::RevertOneScene(*scene)),
+        EditorAction::MoveEntity {
+            entity,
+            new_parent,
+            before,
+        } => Some(Edit::MoveEntity {
+            entity: *entity,
+            parent: *new_parent,
+            before: *before,
+        }),
         EditorAction::OpenSceneAdditive
         | EditorAction::CloseScene(_)
         | EditorAction::SetActiveScene(_) => None,
@@ -715,8 +758,30 @@ fn send(
         Edit::Spawn {
             name: entity_name,
             extra,
+            into,
         } => {
-            let entity = client.spawn(entity_name.as_deref()).map_err(map_err)?;
+            // Asked for, not inferred. A menu opened on a scene or an
+            // entity that is not the active one means *there*, and a
+            // spawn that lands in the active scene instead shows up as a
+            // row in the wrong group with nothing saying why.
+            //
+            // A parent already names the scene, so only one of the two is
+            // ever sent.
+            let (scene, parent) = match into {
+                crate::actions::SpawnTarget::Active => (None, None),
+                crate::actions::SpawnTarget::Scene(id) => (Some(id), None),
+                crate::actions::SpawnTarget::ChildOf(local) => (None, remote(local).ok()),
+                // Two calls, not a flag on the spawn. The project owns
+                // the open set, so creating a scene is its answer to
+                // give — and the id it hands back is what the entity is
+                // then authored into.
+                crate::actions::SpawnTarget::NewScene => {
+                    (Some(client.new_scene().map_err(map_err)?), None)
+                }
+            };
+            let entity = client
+                .spawn(entity_name.as_deref(), scene, parent)
+                .map_err(map_err)?;
             created.push(entity);
             // Remote `spawn` creates only `Name`, while the local path adds
             // Name + Transform + extras. Everything past the name has to be
@@ -768,9 +833,51 @@ fn send(
         // Both processes see the same filesystem, so the path the user
         // picks here is meaningful on the project's side of the wire.
         Edit::SaveScene => match crate::actions::scene_io::scene_dialog(resources).save_file() {
-            Some(path) => client.save_scene(&path.to_string_lossy()).map_err(map_err),
+            // `None` — the active scene. Saving a scene the user picked
+            // out of the panel is #955's own menu item; this is the
+            // File menu, which has never named one.
+            Some(path) => client
+                .save_scene(&path.to_string_lossy(), None)
+                .map_err(map_err),
             None => Ok(()),
         },
+        Edit::SaveOneScene { scene, as_new } => {
+            // The project's own path for that scene, straight off the
+            // mirrored open set. Both processes see the same filesystem,
+            // so it is meaningful on this side of the wire.
+            let known = (!as_new)
+                .then(|| {
+                    session
+                        .open_scenes()
+                        .unwrap_or_default()
+                        .iter()
+                        .find(|s| s.id == scene)
+                        .and_then(|s| s.path.clone())
+                })
+                .flatten();
+            let path = match known {
+                Some(path) => path,
+                None => match crate::actions::scene_io::scene_dialog(resources).save_file() {
+                    Some(path) => path.to_string_lossy().into_owned(),
+                    None => return Ok(()),
+                },
+            };
+            client.save_scene(&path, Some(scene)).map_err(map_err)
+        }
+        Edit::MoveEntity {
+            entity,
+            parent,
+            before,
+        } => {
+            // One call. The numbering lives on the project, so a client
+            // doing it would renumber a sibling group over the wire — one
+            // round trip per entity, for a drag.
+            let entity = remote(entity)?;
+            let parent = parent.map(remote).transpose()?;
+            let before = before.map(remote).transpose()?;
+            client.move_entity(entity, parent, before).map_err(map_err)
+        }
+        Edit::RevertOneScene(scene) => client.revert_scene(Some(scene)).map_err(map_err),
         Edit::LoadScene => match crate::actions::scene_io::scene_dialog(resources).pick_file() {
             Some(path) => client.load_scene(&path.to_string_lossy()).map_err(map_err),
             None => Ok(()),

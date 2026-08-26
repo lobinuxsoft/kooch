@@ -35,7 +35,7 @@ fn display_name(stem: &str) -> String {
 /// `EditorAction::Spawn` entries to `actions` when the user picks an item.
 pub(super) fn draw_spawn_menu(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) {
     ui.menu_button(format!("{} Spawn", icons::PLUS), |ui| {
-        spawn_entries(ui, actions);
+        spawn_entries(ui, actions, crate::actions::SpawnTarget::Active);
     });
 }
 
@@ -44,10 +44,15 @@ pub(super) fn draw_spawn_menu(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>
 /// Split out so the right-click menu on the World panel's empty space
 /// offers exactly what the toolbar does. Two lists would drift, and the
 /// one that drifts is always the one fewer people use (#591).
-pub(super) fn spawn_entries(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) {
+pub(super) fn spawn_entries(
+    ui: &mut egui::Ui,
+    actions: &mut Vec<EditorAction>,
+    into: crate::actions::SpawnTarget,
+) {
     {
         if ui.button(format!("{} Entity", icons::CUBE)).clicked() {
             actions.push(EditorAction::Spawn {
+                into,
                 extra: vec![],
                 name: None,
             });
@@ -57,6 +62,7 @@ pub(super) fn spawn_entries(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) 
         ui.menu_button("Cameras", |ui| {
             if ui.button("Perspective Camera").clicked() {
                 actions.push(EditorAction::Spawn {
+                    into,
                     extra: vec![TypeId::of::<PerspectiveCamera>()],
                     name: Some("Perspective Camera".to_owned()),
                 });
@@ -64,6 +70,7 @@ pub(super) fn spawn_entries(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) 
             }
             if ui.button("Orthographic Camera").clicked() {
                 actions.push(EditorAction::Spawn {
+                    into,
                     extra: vec![TypeId::of::<OrthographicCamera>()],
                     name: Some("Orthographic Camera".to_owned()),
                 });
@@ -75,6 +82,7 @@ pub(super) fn spawn_entries(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) 
             // spawning it and wondering why nothing renders through it.
             if ui.button("Virtual Camera").clicked() {
                 actions.push(EditorAction::Spawn {
+                    into,
                     extra: vec![TypeId::of::<VirtualCamera>()],
                     name: Some("Virtual Camera".to_owned()),
                 });
@@ -83,6 +91,7 @@ pub(super) fn spawn_entries(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) 
         });
         if ui.button("Mesh Renderer").clicked() {
             actions.push(EditorAction::Spawn {
+                into,
                 extra: vec![TypeId::of::<MeshRenderer>()],
                 name: Some("Mesh".to_owned()),
             });
@@ -111,6 +120,7 @@ pub(super) fn spawn_entries(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) 
         });
         if ui.button("Sky").clicked() {
             actions.push(EditorAction::Spawn {
+                into,
                 extra: vec![TypeId::of::<SkyRenderer>()],
                 name: Some("Sky".to_owned()),
             });
@@ -119,6 +129,7 @@ pub(super) fn spawn_entries(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) 
         ui.menu_button("Lights", |ui| {
             if ui.button("Directional Light").clicked() {
                 actions.push(EditorAction::Spawn {
+                    into,
                     extra: vec![TypeId::of::<DirectionalLight>()],
                     name: Some("Directional Light".to_owned()),
                 });
@@ -126,6 +137,7 @@ pub(super) fn spawn_entries(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) 
             }
             if ui.button("Point Light").clicked() {
                 actions.push(EditorAction::Spawn {
+                    into,
                     extra: vec![TypeId::of::<PointLight>()],
                     name: Some("Point Light".to_owned()),
                 });
@@ -133,6 +145,7 @@ pub(super) fn spawn_entries(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) 
             }
             if ui.button("Spot Light").clicked() {
                 actions.push(EditorAction::Spawn {
+                    into,
                     extra: vec![TypeId::of::<SpotLight>()],
                     name: Some("Spot Light".to_owned()),
                 });

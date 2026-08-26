@@ -154,3 +154,45 @@ fn restore_brings_back_parked_components() {
         vec![("rpm".to_owned(), ReflectValue::F32(33.0))]
     );
 }
+
+/// Pressing stop must not empty the scenes.
+///
+/// `SceneMember` used to be unreflected, so the capture could not see it
+/// — but the restore's `clear_world` strips components by entity,
+/// reflected or not. Every entity therefore came back with no scene, and
+/// the whole authored world fell into "not in any scene yet".
+#[test]
+fn a_restore_keeps_the_scene_tags() {
+    let mut resources = ecs();
+    resources
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .register_cpu_reflected::<crate::SceneMember>();
+    let spawned = spawn_all(&mut resources, 3);
+
+    let scene = kooch_core::guid::Guid::new_v4();
+    for &entity in &spawned {
+        resources
+            .get_mut::<ComponentRegistry>()
+            .unwrap()
+            .get_cpu_mut::<crate::SceneMember>()
+            .unwrap()
+            .insert(entity, crate::SceneMember::new(scene));
+        add_to_archetype(&mut resources, entity, TypeId::of::<crate::SceneMember>());
+    }
+
+    let snapshot = WorldSnapshot::capture(&resources);
+    snapshot.restore(&mut resources);
+
+    let tagged = spawned
+        .iter()
+        .filter(|&&e| {
+            resources
+                .get::<ComponentRegistry>()
+                .and_then(|r| r.get_cpu::<crate::SceneMember>())
+                .and_then(|s| s.get(e))
+                .is_some_and(|m| m.scene == scene)
+        })
+        .count();
+    assert_eq!(tagged, 3, "stop dropped the scene tag off every entity");
+}

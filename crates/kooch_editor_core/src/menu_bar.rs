@@ -173,11 +173,28 @@ pub(crate) fn draw_menu_bar(
                 ui.data_mut(|d| d.insert_temp(settings_open_id(ui.ctx()), true));
             }
 
-            // Push Play/Stop buttons to the center of the remaining space.
-            let available = ui.available_width();
+            // Centre the transport controls in the remaining space.
+            //
+            // 🔴 Counted, not hardcoded to two. It was `button_width * 2`
+            // when Play and Stop were the only ones here, so adding a
+            // third pushed the whole group off centre by half a button —
+            // visible immediately, and the kind of arithmetic that goes
+            // wrong again the next time one is added.
             let button_width = 70.0;
-            let total_buttons = button_width * 2.0 + ui.spacing().item_spacing.x;
-            let offset = (available - total_buttons) / 2.0;
+            let spacing = ui.spacing().item_spacing.x;
+            let widths = [button_width, button_width, SYNC_WIDTH];
+            let total_buttons: f32 =
+                widths.iter().sum::<f32>() + spacing * (widths.len() - 1) as f32;
+            // 🔴 Centred in the BAR, not in what is left of it. The
+            // offset used to come from `available_width()`, which is
+            // measured after the File/Edit/Window/Settings menus have
+            // taken their share — so the group was centred in the
+            // remainder and sat a couple of hundred pixels right of the
+            // window's middle. Widening the group made that visible and
+            // did not cause it.
+            let bar = ui.max_rect();
+            let spent = ui.cursor().left() - bar.left();
+            let offset = (bar.width() - total_buttons) * 0.5 - spent;
             if offset > 0.0 {
                 ui.add_space(offset);
             }
@@ -234,6 +251,10 @@ pub(crate) fn draw_menu_bar(
     });
 }
 
+/// What the code-sync control occupies, in both of its states. Shared so
+/// the centring above and the button below cannot disagree about it.
+const SYNC_WIDTH: f32 = 120.0;
+
 /// The code-sync control: quiet while the generated registrations match
 /// the project's build, pulsing once they do not.
 ///
@@ -251,11 +272,13 @@ pub(crate) fn draw_menu_bar(
 fn draw_script_sync(ui: &mut egui::Ui, behind: bool, actions: &mut Vec<EditorAction>) {
     if !behind {
         if ui
-            .button(icons::ARROWS_CLOCKWISE)
+            .add(
+                egui::Button::new(format!("{} Code Sync", icons::ARROWS_CLOCKWISE))
+                    .min_size(egui::vec2(SYNC_WIDTH, 0.0)),
+            )
             .on_hover_text(
-                "Resync scripts — rescans `src/` and rewrites the generated \
-                 registrations. Runs on its own when a source file changes; \
-                 this forces it.",
+                "Rescans `src/` and rewrites the generated registrations. Runs on \
+                 its own when a source file changes; this forces it.",
             )
             .clicked()
         {
@@ -273,9 +296,9 @@ fn draw_script_sync(ui: &mut egui::Ui, behind: bool, actions: &mut Vec<EditorAct
     let clicked = ui
         .add(
             egui::Button::new(
-                egui::RichText::new(format!("{} Resync", icons::ARROWS_CLOCKWISE)).color(colour),
+                egui::RichText::new(format!("{} Code Sync", icons::ARROWS_CLOCKWISE)).color(colour),
             )
-            .min_size(egui::vec2(90.0, 0.0)),
+            .min_size(egui::vec2(SYNC_WIDTH, 0.0)),
         )
         .on_hover_text(
             "The generated registrations changed, so the project's compiled code is \

@@ -44,9 +44,11 @@ pub(super) fn action_to_command(
     resources: &Resources,
 ) -> Option<Box<dyn EditorCommand>> {
     match action {
-        EditorAction::Spawn { extra, name } => {
-            Some(Box::new(SpawnCommand::new(extra.clone(), name.clone())))
-        }
+        EditorAction::Spawn { extra, name, into } => Some(Box::new(SpawnCommand::new(
+            extra.clone(),
+            name.clone(),
+            *into,
+        ))),
         EditorAction::SpawnMesh { path, name } => {
             Some(Box::new(SpawnMeshCommand::new(path.clone(), name.clone())))
         }

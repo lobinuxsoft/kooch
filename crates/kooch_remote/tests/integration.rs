@@ -36,6 +36,13 @@ fn ecs() -> Resources {
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     registry.register_cpu_reflected::<Name>();
     registry.register_cpu_reflected::<Transform>();
+    // The hierarchy and ordering types a real host gets from `EcsPlugin`.
+    // Without them `reparent` and `place` find no storage and do nothing
+    // — silently, which is how a fixture ends up testing the absence of
+    // a feature rather than the feature.
+    registry.register_cpu_reflected::<kooch_ecs::hierarchy::Parent>();
+    registry.register_cpu_reflected::<kooch_ecs::hierarchy::Children>();
+    registry.register_cpu_reflected::<kooch_ecs::Order>();
     resources
 }
 
@@ -56,6 +63,8 @@ fn spawn_set_field_and_list_round_trip() {
         &mut resources,
         Method::Spawn {
             name: Some("Hero".into()),
+            scene: None,
+            parent: None,
         },
     ) {
         ResponseData::Spawned { entity } => entity,
@@ -122,7 +131,14 @@ fn spawn_set_field_and_list_round_trip() {
 #[test]
 fn a_nameless_spawn_still_carries_name_and_transform() {
     let mut resources = ecs();
-    let entity = match call(&mut resources, Method::Spawn { name: None }) {
+    let entity = match call(
+        &mut resources,
+        Method::Spawn {
+            name: None,
+            scene: None,
+            parent: None,
+        },
+    ) {
         ResponseData::Spawned { entity } => entity,
         other => panic!("{other:?}"),
     };
@@ -151,7 +167,14 @@ fn a_nameless_spawn_still_carries_name_and_transform() {
 #[test]
 fn unknown_component_is_a_typed_error() {
     let mut resources = ecs();
-    let entity = match call(&mut resources, Method::Spawn { name: None }) {
+    let entity = match call(
+        &mut resources,
+        Method::Spawn {
+            name: None,
+            scene: None,
+            parent: None,
+        },
+    ) {
         ResponseData::Spawned { entity } => entity,
         other => panic!("{other:?}"),
     };
@@ -278,7 +301,7 @@ fn client_drives_server_end_to_end() {
     let client = RemoteClient::new(&socket);
     client.ping().expect("ping");
 
-    let hero = client.spawn(Some("Hero")).expect("spawn");
+    let hero = client.spawn(Some("Hero"), None, None).expect("spawn");
     client
         .add_component(hero, std::any::type_name::<Transform>())
         .expect("add component");
@@ -364,6 +387,8 @@ fn entities_are_listed_in_authored_order() {
             &mut resources,
             Method::Spawn {
                 name: Some((*name).into()),
+                scene: None,
+                parent: None,
             },
         ) {
             ResponseData::Spawned { entity } => entity,
@@ -404,6 +429,8 @@ fn play_snapshots_the_world_and_stop_restores_it() {
         &mut resources,
         Method::Spawn {
             name: Some("Hero".into()),
+            scene: None,
+            parent: None,
         },
     ) {
         ResponseData::Spawned { entity } => entity,
@@ -475,6 +502,8 @@ fn repeated_play_keeps_the_original_snapshot() {
         &mut resources,
         Method::Spawn {
             name: Some("Spawned during play".into()),
+            scene: None,
+            parent: None,
         },
     );
     call(&mut resources, Method::SetPlaying { playing: true });
@@ -545,7 +574,9 @@ fn a_large_snapshot_survives_the_framing() {
 
     // Each entity carries a Transform, so the reply grows steadily.
     for n in 0..400 {
-        let e = client.spawn(Some(&format!("Entity{n}"))).expect("spawn");
+        let e = client
+            .spawn(Some(&format!("Entity{n}")), None, None)
+            .expect("spawn");
         client
             .add_component(e, std::any::type_name::<Transform>())
             .expect("add");
@@ -667,4 +698,663 @@ fn a_queued_request_wakes_a_sleeping_main_loop() {
 
     let response = client.join().unwrap();
     assert!(response.contains("\"kind\":\"pong\""), "body: {response}");
+}
+
+/// The project's open scenes travel with the snapshot the editor
+/// already pulls every frame.
+///
+/// 🔴 This is the field the World panel draws its roots from. The
+/// editor cannot answer it locally: its own `SceneManager` seeds an
+/// unsaved scene with a random id, so without this the panel listed a
+/// scene nothing belongs to and filed every mirrored entity under
+/// "Unsaved" — the scene each one named was in nobody's list.
+#[test]
+fn the_open_scene_set_is_listed() {
+    let mut resources = ecs();
+    let mut manager = kooch_ecs::SceneManager::new();
+    manager.set_current(std::path::PathBuf::from("assets/scenes/many_lights.scene"));
+    let id = manager
+        .active_id()
+        .expect("new manager has an active scene");
+    resources.insert(manager);
+
+    let scenes = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { scenes, .. } => scenes.expect("the host has a SceneManager"),
+        other => panic!("list: {other:?}"),
+    };
+
+    assert_eq!(scenes.len(), 1);
+    assert_eq!(scenes[0].id, id, "the project's id, not one minted here");
+    assert_eq!(
+        scenes[0].path.as_deref(),
+        Some("assets/scenes/many_lights.scene"),
+    );
+    assert!(scenes[0].active);
+}
+
+/// A host with no `SceneManager` says nothing, rather than saying no
+/// scenes are open.
+///
+/// The editor replaces its list from this field, so the two have to be
+/// distinguishable — answering with an empty list would blank the
+/// World panel every frame.
+#[test]
+fn a_host_without_scenes_says_nothing() {
+    let mut resources = ecs();
+    match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { scenes, .. } => assert_eq!(scenes, None),
+        other => panic!("list: {other:?}"),
+    }
+}
+
+/// Loading a *second* scene teaches the project's `SceneManager`.
+///
+/// 🔴 The handler used to go straight to `sync_scene_to_ecs`: the
+/// entities arrived and the manager was told nothing, so it went on
+/// describing the scene before this one.
+///
+/// The boot scene hides that. `SceneBootstrapPlugin` loads through the
+/// manager, so a host that opens its startup scene and is never asked
+/// for another looks perfectly correct — record and world agree because
+/// neither has moved. Which is why this test loads twice: one load
+/// passes with the bug in place.
+#[test]
+fn loading_a_second_scene_teaches_the_manager() {
+    let mut resources = ecs();
+    resources.insert(kooch_ecs::SceneManager::new());
+
+    let dir = std::env::temp_dir().join("kooch_remote_load_scene");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+
+    let mut write_scene = |name: &str, id: &str| {
+        let path = dir.join(name);
+        std::fs::write(
+            &path,
+            format!(r#"(id: "{id}", name: "{name}", version: "0.1.0", entities: [])"#),
+        )
+        .expect("write scene");
+        path
+    };
+    let first = write_scene("station.scene", "ae0b881d-c3e2-49e1-ae19-cf8c3db5288e");
+    let second = write_scene("hangar.scene", "019023f7-29d5-433e-98c8-e79461209106");
+
+    let mut load = |resources: &mut Resources, path: &std::path::Path| {
+        call(
+            resources,
+            Method::LoadScene {
+                path: path.to_string_lossy().into_owned(),
+            },
+        );
+    };
+    load(&mut resources, &first);
+    load(&mut resources, &second);
+
+    let scenes = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { scenes, .. } => scenes.expect("the host has a SceneManager"),
+        other => panic!("list: {other:?}"),
+    };
+    assert_eq!(scenes.len(), 1, "the second load replaced the first");
+    assert_eq!(
+        scenes[0].id,
+        "019023f7-29d5-433e-98c8-e79461209106"
+            .parse::<kooch_core::Guid>()
+            .expect("a well-formed id"),
+        "the project still named the scene it had left",
+    );
+    assert_eq!(
+        scenes[0].path.as_deref(),
+        Some(second.to_string_lossy().as_ref()),
+    );
+    assert!(scenes[0].active);
+
+    let _ = std::fs::remove_file(&first);
+    let _ = std::fs::remove_file(&second);
+}
+
+/// Saving over the wire writes one scene, and does not re-mint its id.
+///
+/// 🔴 `SaveScene` used to call `SceneDocument::from_ecs`:
+/// `Capture::Everything` plus a fresh `Guid` for the document. Two
+/// consequences, both silent. With more than one scene open it wrote
+/// them all into the one file, so the next load spawned every entity
+/// twice. And the id changed on every save, so anything that referred to
+/// the scene by identity pointed at a file that no longer claimed it.
+///
+/// The engine has always had `from_ecs_scene`. The local editor path used
+/// it, this one did not, and **Open Project always opens remote** — so
+/// the wrong one was the one that ran.
+#[test]
+fn saving_writes_one_scene_and_keeps_its_id() {
+    let mut resources = ecs();
+    resources.insert(kooch_ecs::SceneManager::new());
+
+    let dir = std::env::temp_dir().join("kooch_remote_save_scene");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let source = dir.join("station.scene");
+    let id = "ae0b881d-c3e2-49e1-ae19-cf8c3db5288e";
+    std::fs::write(
+        &source,
+        format!(r#"(id: "{id}", name: "Station", version: "0.1.0", entities: [])"#),
+    )
+    .expect("write scene");
+
+    call(
+        &mut resources,
+        Method::LoadScene {
+            path: source.to_string_lossy().into_owned(),
+        },
+    );
+
+    let out = dir.join("written.scene");
+    call(
+        &mut resources,
+        Method::SaveScene {
+            path: out.to_string_lossy().into_owned(),
+            scene: None,
+        },
+    );
+
+    let written = kooch_ecs::scene::SceneDocument::load(&out).expect("reads back");
+    assert_eq!(
+        written.id,
+        id.parse::<kooch_core::Guid>().expect("a well-formed id"),
+        "the save minted a new identity for a scene that already had one",
+    );
+
+    let _ = std::fs::remove_file(&source);
+    let _ = std::fs::remove_file(&out);
+}
+
+/// A host with no `SceneManager` refuses to save rather than writing the
+/// whole world into the file.
+#[test]
+fn saving_without_a_manager_is_refused() {
+    let mut resources = ecs();
+    let out = std::env::temp_dir().join("kooch_remote_no_manager.scene");
+    // Cleared first: the assertion below is "nothing was written", and a
+    // leftover from an earlier run would fail a correct implementation.
+    let _ = std::fs::remove_file(&out);
+    let response = handle(
+        &Request {
+            id: 1,
+            method: Method::SaveScene {
+                path: out.to_string_lossy().into_owned(),
+                scene: None,
+            },
+        },
+        &mut resources,
+    );
+    assert!(
+        matches!(response.payload, ResponsePayload::Error(_)),
+        "wrote something without knowing which scene it was",
+    );
+    assert!(!out.exists(), "a refused save left a file behind");
+}
+
+/// An edit marks the scene it changed, and a save clears it.
+///
+/// 🔴 Nothing in the engine marked a scene dirty before this.
+/// `SceneManager::mark_dirty` was called by its own tests and by nothing
+/// else, so `dirty` was permanently `false`: the World panel's asterisk
+/// could never appear and `any_dirty()` always answered "nothing to
+/// lose". Nobody had seen the asterisk, so nobody noticed it was inert.
+#[test]
+fn an_edit_marks_the_scene_dirty() {
+    let mut resources = ecs();
+    resources.insert(kooch_ecs::SceneManager::new());
+
+    let dir = std::env::temp_dir().join("kooch_remote_dirty");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("station.scene");
+    std::fs::write(
+        &path,
+        r#"(id: "ae0b881d-c3e2-49e1-ae19-cf8c3db5288e", name: "Station", version: "0.1.0", entities: [])"#,
+    )
+    .expect("write scene");
+
+    let dirty = |resources: &mut Resources| -> bool {
+        match call(resources, Method::ListEntities { since: None }) {
+            ResponseData::Entities { scenes, .. } => scenes.expect("open set")[0].dirty,
+            other => panic!("list: {other:?}"),
+        }
+    };
+
+    call(
+        &mut resources,
+        Method::LoadScene {
+            path: path.to_string_lossy().into_owned(),
+        },
+    );
+    assert!(!dirty(&mut resources), "a freshly loaded scene is clean");
+
+    call(
+        &mut resources,
+        Method::Spawn {
+            name: None,
+            scene: None,
+            parent: None,
+        },
+    );
+    assert!(
+        dirty(&mut resources),
+        "spawning left the scene reading clean"
+    );
+
+    let out = dir.join("written.scene");
+    call(
+        &mut resources,
+        Method::SaveScene {
+            path: out.to_string_lossy().into_owned(),
+            scene: None,
+        },
+    );
+    assert!(!dirty(&mut resources), "the save did not clear the flag");
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&out);
+}
+
+/// The scene that changed is marked, not the one that happens to be
+/// active.
+///
+/// With two open those are different, and marking the active one puts
+/// the asterisk on the file nobody touched while leaving it off the one
+/// they did.
+#[test]
+fn the_edited_scene_is_the_one_marked() {
+    use kooch_ecs::SceneManager;
+
+    let mut resources = ecs();
+    let mut manager = SceneManager::new();
+    let active = manager.active_id().expect("a scene");
+    // A second scene, open but not active. Registered by hand: opening
+    // one additively is not a remote method, and what is under test is
+    // which of the two an edit marks.
+    let elsewhere = kooch_core::Guid::new_v4();
+    assert!(
+        !manager.mark_scene_dirty(elsewhere),
+        "a scene that is not open cannot be marked",
+    );
+    resources.insert(manager);
+
+    // An entity belonging to no scene falls back to the active one.
+    let entity = match call(
+        &mut resources,
+        Method::Spawn {
+            name: None,
+            scene: None,
+            parent: None,
+        },
+    ) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("spawn: {other:?}"),
+    };
+    let manager = resources.get::<SceneManager>().expect("manager");
+    assert!(
+        manager.scene(active).expect("open").dirty,
+        "an unowned entity marks the scene that will adopt it",
+    );
+    let _ = entity;
+}
+
+/// A spawn lands where it was asked for, not in the active scene.
+///
+/// 🔴 Every spawn used to arrive in the active scene at the root — right
+/// for a toolbar button, wrong for a menu opened on a scene or an entity
+/// that is not the active one. The entity appears somewhere other than
+/// where it was asked for, and the only sign is a row in the wrong group.
+#[test]
+fn a_spawn_lands_in_the_scene_it_names() {
+    use kooch_ecs::SceneManager;
+
+    let mut resources = ecs();
+    let mut manager = SceneManager::new();
+    let active = manager.active_id().expect("a scene");
+    let elsewhere = manager.new_scene();
+    assert!(manager.set_active(active), "put the active one back");
+    resources.insert(manager);
+
+    let spawned = |resources: &mut Resources, scene, parent| match call(
+        resources,
+        Method::Spawn {
+            name: None,
+            scene,
+            parent,
+        },
+    ) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("spawn: {other:?}"),
+    };
+    let home = |resources: &Resources, entity: kooch_remote::protocol::EntityId| {
+        resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<kooch_ecs::SceneMember>())
+            .and_then(|s| s.get(kooch_ecs::entity::Entity::from(entity)))
+            .map(|m| m.scene)
+    };
+
+    let plain = spawned(&mut resources, None, None);
+    assert_eq!(home(&resources, plain), Some(active), "unnamed went astray");
+
+    let named = spawned(&mut resources, Some(elsewhere), None);
+    assert_eq!(
+        home(&resources, named),
+        Some(elsewhere),
+        "the scene it named was ignored for the active one",
+    );
+
+    // A parent already names the scene, so the child follows it even
+    // though the request says nothing about scenes.
+    let child = spawned(&mut resources, None, Some(named));
+    assert_eq!(
+        home(&resources, child),
+        Some(elsewhere),
+        "a child was authored into a scene its parent is not in",
+    );
+
+    // And a parent wins over a scene that disagrees: an entity's scene
+    // IS its parent's, so honouring both would write the child to a file
+    // its parent is not in.
+    let contested = spawned(&mut resources, Some(active), Some(named));
+    assert_eq!(
+        home(&resources, contested),
+        Some(elsewhere),
+        "the scene field overrode the parent, splitting a tree across two files",
+    );
+}
+
+/// A new scene opens beside the others and takes the spawn that asked
+/// for it.
+///
+/// What right-clicking the World panel's empty space means: not "put
+/// this somewhere" — there is no row under the pointer to name a
+/// somewhere — but "start something new". An entity has to belong to a
+/// scene, so opening one is what makes the gesture answerable.
+#[test]
+fn a_new_scene_opens_unsaved() {
+    let mut resources = ecs();
+    resources.insert(kooch_ecs::SceneManager::new());
+
+    let opened = match call(&mut resources, Method::NewScene) {
+        ResponseData::SceneOpened { scene } => scene,
+        other => panic!("new_scene: {other:?}"),
+    };
+
+    let scenes = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { scenes, .. } => scenes.expect("open set"),
+        other => panic!("list: {other:?}"),
+    };
+    assert_eq!(scenes.len(), 2, "it replaced the scene already open");
+    let fresh = scenes.iter().find(|s| s.id == opened).expect("listed");
+    assert_eq!(fresh.path, None, "an unsaved scene claimed a file");
+    assert!(fresh.active, "new entities would not land in it");
+    assert!(!fresh.dirty, "an empty scene has nothing to lose yet");
+
+    let entity = match call(
+        &mut resources,
+        Method::Spawn {
+            name: Some("First".into()),
+            scene: Some(opened),
+            parent: None,
+        },
+    ) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("spawn: {other:?}"),
+    };
+    let home = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<kooch_ecs::SceneMember>())
+        .and_then(|s| s.get(kooch_ecs::entity::Entity::from(entity)))
+        .map(|m| m.scene);
+    assert_eq!(home, Some(opened), "the entity did not join the new scene");
+}
+
+/// Reverting throws away one scene's edits and leaves the rest alone.
+#[test]
+fn a_revert_reads_the_file_back() {
+    use kooch_ecs::SceneManager;
+
+    let mut resources = ecs();
+    resources.insert(SceneManager::new());
+
+    let dir = std::env::temp_dir().join("kooch_remote_revert");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("station.scene");
+    std::fs::write(
+        &path,
+        r#"(id: "ae0b881d-c3e2-49e1-ae19-cf8c3db5288e", name: "Station", version: "0.1.0", entities: [])"#,
+    )
+    .expect("write scene");
+
+    call(
+        &mut resources,
+        Method::LoadScene {
+            path: path.to_string_lossy().into_owned(),
+        },
+    );
+    call(
+        &mut resources,
+        Method::Spawn {
+            name: Some("Mistake".into()),
+            scene: None,
+            parent: None,
+        },
+    );
+
+    let named = |resources: &mut Resources| -> Vec<String> {
+        match call(resources, Method::ListEntities { since: None }) {
+            ResponseData::Entities { entities, .. } => {
+                entities.iter().filter_map(|e| e.name.clone()).collect()
+            }
+            other => panic!("list: {other:?}"),
+        }
+    };
+    assert!(named(&mut resources).contains(&"Mistake".to_owned()));
+
+    call(&mut resources, Method::RevertScene { scene: None });
+    assert!(
+        !named(&mut resources).contains(&"Mistake".to_owned()),
+        "the edit survived a discard",
+    );
+
+    let scenes = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { scenes, .. } => scenes.expect("open set"),
+        other => panic!("list: {other:?}"),
+    };
+    assert!(!scenes[0].dirty, "a reverted scene still read as edited");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+/// A scene that has never been saved refuses to revert.
+///
+/// 🔴 There is nothing to read back, and despawning its entities would
+/// delete work rather than undo it — the one thing "discard changes"
+/// must never be mistaken for.
+#[test]
+fn an_unsaved_scene_refuses_to_revert() {
+    let mut resources = ecs();
+    resources.insert(kooch_ecs::SceneManager::new());
+    call(
+        &mut resources,
+        Method::Spawn {
+            name: Some("Work".into()),
+            scene: None,
+            parent: None,
+        },
+    );
+
+    let response = handle(
+        &Request {
+            id: 1,
+            method: Method::RevertScene { scene: None },
+        },
+        &mut resources,
+    );
+    assert!(
+        matches!(response.payload, ResponsePayload::Error(_)),
+        "an unsaved scene reverted to nothing",
+    );
+
+    match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { entities, .. } => assert_eq!(
+            entities.len(),
+            1,
+            "the refusal despawned the work it could not restore",
+        ),
+        other => panic!("list: {other:?}"),
+    }
+}
+
+/// Moving an entity between two rows makes it their sibling, and takes
+/// it out of whatever parent it was in.
+#[test]
+fn a_move_reorders_and_unparents() {
+    let mut resources = ecs();
+    resources.insert(kooch_ecs::SceneManager::new());
+
+    let spawn = |resources: &mut Resources, name: &str, parent| match call(
+        resources,
+        Method::Spawn {
+            name: Some(name.to_owned()),
+            scene: None,
+            parent,
+        },
+    ) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("spawn: {other:?}"),
+    };
+    let a = spawn(&mut resources, "A", None);
+    let b = spawn(&mut resources, "B", None);
+    let c = spawn(&mut resources, "C", None);
+    // D starts inside A.
+    let d = spawn(&mut resources, "D", Some(a));
+
+    let order = |resources: &Resources, e: kooch_remote::protocol::EntityId| {
+        resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<kooch_ecs::Order>())
+            .and_then(|s| s.get(kooch_ecs::entity::Entity::from(e)))
+            .map(|o| o.value)
+    };
+    let parent_of = |resources: &Resources, e: kooch_remote::protocol::EntityId| {
+        resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<kooch_ecs::hierarchy::Parent>())
+            .and_then(|s| s.get(kooch_ecs::entity::Entity::from(e)))
+            .map(|p| p.entity)
+    };
+    assert_eq!(
+        parent_of(&resources, d),
+        Some(kooch_ecs::entity::Entity::from(a)),
+        "D did not start inside A",
+    );
+
+    // Drop D in the gap between B and C: a root, between them.
+    call(
+        &mut resources,
+        Method::MoveEntity {
+            entity: d,
+            parent: None,
+            before: Some(c),
+        },
+    );
+
+    assert_eq!(parent_of(&resources, d), None, "D stayed inside A");
+    let (oa, ob, od, oc) = (
+        order(&resources, a),
+        order(&resources, b),
+        order(&resources, d),
+        order(&resources, c),
+    );
+    assert!(
+        oa < ob && ob < od && od < oc,
+        "expected A < B < D < C, got {oa:?} {ob:?} {od:?} {oc:?}",
+    );
+}
+
+/// Moving an entity into its own subtree is refused, rather than
+/// detaching that subtree from the world.
+#[test]
+fn a_move_into_itself_is_refused() {
+    let mut resources = ecs();
+    resources.insert(kooch_ecs::SceneManager::new());
+    let spawn = |resources: &mut Resources, parent| match call(
+        resources,
+        Method::Spawn {
+            name: None,
+            scene: None,
+            parent,
+        },
+    ) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("spawn: {other:?}"),
+    };
+    let root = spawn(&mut resources, None);
+    let child = spawn(&mut resources, Some(root));
+
+    let response = handle(
+        &Request {
+            id: 1,
+            method: Method::MoveEntity {
+                entity: root,
+                parent: Some(child),
+                before: None,
+            },
+        },
+        &mut resources,
+    );
+    assert!(matches!(response.payload, ResponsePayload::Error(_)));
+}
+
+/// Membership travels once, in `scene` — never among the components.
+///
+/// 🔴 It is a reflected component now, so the snapshot's "every
+/// reflected component on the archetype" loop will pick it up unless the
+/// skip list stops it. Sending it twice puts the same fact on the wire
+/// in two shapes, and with several copies of a scene open the component
+/// carries the *instance* guid — so a client merging the two would file
+/// entities under a scene the project never named.
+#[test]
+fn membership_travels_beside_the_components_not_among_them() {
+    let mut resources = ecs();
+    let mut manager = kooch_ecs::SceneManager::new();
+    let active = manager.active_id().expect("a scene");
+    resources.insert(manager);
+
+    let entity = match call(
+        &mut resources,
+        Method::Spawn {
+            name: Some("Rig".into()),
+            scene: None,
+            parent: None,
+        },
+    ) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("spawn: {other:?}"),
+    };
+
+    let entities = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { entities, .. } => entities,
+        other => panic!("list: {other:?}"),
+    };
+    let mirrored = entities
+        .iter()
+        .find(|e| e.id == entity)
+        .expect("the spawned entity");
+
+    assert_eq!(
+        mirrored.scene,
+        Some(active),
+        "membership did not travel at all",
+    );
+    let named: Vec<&str> = mirrored
+        .components
+        .iter()
+        .map(|c| c.type_name.as_str())
+        .collect();
+    assert!(
+        !named.iter().any(|name| name.contains("SceneMember")),
+        "membership travelled twice: {named:?}",
+    );
 }

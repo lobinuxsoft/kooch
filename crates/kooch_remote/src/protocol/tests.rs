@@ -97,6 +97,7 @@ fn host_metrics_round_trip() {
                 ticks_instant: 59.99,
                 ticks_per_second: 60.0,
             }),
+            scenes: None,
         },
     );
     let json = serde_json::to_string(&resp).unwrap();
@@ -116,8 +117,68 @@ fn absent_host_metrics_are_not_serialized() {
             revision: 1,
             full: true,
             host: None,
+            scenes: None,
         },
     );
     let json = serde_json::to_string(&resp).unwrap();
     assert!(!json.contains("host"), "{json}");
+}
+
+/// The open scene set survives the wire.
+#[test]
+fn open_scenes_round_trip() {
+    let resp = Response::ok(
+        4,
+        ResponseData::Entities {
+            entities: Vec::new(),
+            removed: Vec::new(),
+            revision: 3,
+            full: true,
+            host: None,
+            scenes: Some(vec![SceneEntry {
+                id: Guid::new_v4(),
+                path: Some("assets/scenes/many_lights.scene".into()),
+                active: true,
+                dirty: false,
+            }]),
+        },
+    );
+    let json = serde_json::to_string(&resp).unwrap();
+    let back: Response = serde_json::from_str(&json).unwrap();
+    assert_eq!(resp, back);
+}
+
+/// A host too old to send the open set has to arrive as "nobody said".
+///
+/// 🔴 Not as an empty list. The editor replaces its scene list from
+/// this field, so an empty `Vec` here would blank the World panel of
+/// every scene while the entities belonging to them kept arriving.
+#[test]
+fn a_reply_without_scenes_parses() {
+    let json = r#"{"id":1,"result":{"kind":"entities","entities":[],"revision":7,"full":true}}"#;
+    let parsed: Response = serde_json::from_str(json).expect("older host still understood");
+    match parsed.payload {
+        ResponsePayload::Result(ResponseData::Entities { scenes, .. }) => {
+            assert_eq!(scenes, None, "absent, not empty");
+        }
+        other => panic!("expected entities, got {other:?}"),
+    }
+}
+
+/// Nothing to say costs nothing to send.
+#[test]
+fn absent_scenes_are_not_serialized() {
+    let resp = Response::ok(
+        1,
+        ResponseData::Entities {
+            entities: Vec::new(),
+            removed: Vec::new(),
+            revision: 1,
+            full: true,
+            host: None,
+            scenes: None,
+        },
+    );
+    let json = serde_json::to_string(&resp).unwrap();
+    assert!(!json.contains("scenes"), "{json}");
 }

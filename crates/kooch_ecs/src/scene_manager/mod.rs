@@ -20,13 +20,36 @@ use std::path::{Path, PathBuf};
 use kooch_core::Guid;
 use kooch_core::resource::Resources;
 
-use crate::scene::{SceneDocument, SceneError, despawn_scene, spawn_scene_into, sync_scene_to_ecs};
+use crate::scene::{
+    SceneDocument, SceneError, despawn_scene, spawn_scene_as, spawn_scene_into, sync_scene_to_ecs,
+};
 
 /// One open scene.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoadedScene {
-    /// Identity, matching [`SceneDocument::id`].
+    /// Identity of **this open copy**.
+    ///
+    /// 🔴 Not the file's. They were one field, which is why opening the
+    /// same file twice had to be refused: both copies would claim one
+    /// identity and every `(scene, entity)` pair would alias.
+    ///
+    /// Unity DOTS answers this a level up — instances of a subscene are
+    /// "exact copies of each other", and the load hands back a *scene meta
+    /// entity* naming the new instance. The entities inside keep the ids
+    /// the file gives them; the copies are told apart by the instance,
+    /// not by their contents.
+    ///
+    /// The first copy of a file keeps the file's own id, so a scene that
+    /// is only ever opened once behaves exactly as it did — and so does
+    /// every reference already written to disk.
     pub id: Guid,
+    /// Identity of the **file** this copy came from, when it came from
+    /// one.
+    ///
+    /// What a reference stored on disk names, and what a save writes back
+    /// as the document's id. A second copy has a different [`Self::id`]
+    /// and the same `source`.
+    pub source: Option<Guid>,
     /// Where it came from, or `None` for a scene never yet saved.
     pub path: Option<PathBuf>,
     /// Whether it has edits not on disk.
@@ -66,6 +89,7 @@ impl SceneManager {
         Self {
             scenes: vec![LoadedScene {
                 id,
+                source: None,
                 path: None,
                 dirty: false,
             }],
@@ -93,6 +117,30 @@ impl SceneManager {
     /// Looks up one open scene.
     pub fn scene(&self, id: Guid) -> Option<&LoadedScene> {
         self.scenes.iter().find(|scene| scene.id == id)
+    }
+
+    /// Opens a new empty scene beside the others and makes it active.
+    ///
+    /// Returns its identity. Unsaved and unnamed: it has no `path` until
+    /// somebody saves it, which is exactly the state [`Self::new`]
+    /// describes for the scene an editor starts with.
+    ///
+    /// What "start something new" means when there is already a world
+    /// open. An entity has to belong to a scene, so creating one is what
+    /// makes "put this somewhere of its own" answerable at all.
+    pub fn new_scene(&mut self) -> Guid {
+        let id = Guid::new_v4();
+        self.scenes.push(LoadedScene {
+            id,
+            source: None,
+            path: None,
+            // Nothing to lose yet — it holds nothing. It goes dirty the
+            // moment something is authored into it, which is what puts
+            // the asterisk on a scene that has never been written.
+            dirty: false,
+        });
+        self.active = Some(id);
+        id
     }
 
     /// Makes `id` the scene new entities land in.
@@ -147,6 +195,27 @@ impl SceneManager {
         }
     }
 
+    /// Records that one open scene has edits not on disk.
+    ///
+    /// Returns `false` if it is not open — an edit to an entity whose
+    /// scene nothing has loaded, which is not something to record.
+    ///
+    /// 🔴 The scene of the entity that changed, not the active one.
+    /// [`Self::mark_dirty`] marks whichever scene new entities land in,
+    /// which is the wrong scene the moment two are open: editing
+    /// something in the second while the first is active would put the
+    /// asterisk on the file that did not change, and leave it off the
+    /// one that did.
+    pub fn mark_scene_dirty(&mut self, id: Guid) -> bool {
+        match self.scenes.iter_mut().find(|scene| scene.id == id) {
+            Some(scene) => {
+                scene.dirty = true;
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn mark_clean(&mut self) {
         if let Some(scene) = self.active_mut() {
             scene.dirty = false;
@@ -181,6 +250,7 @@ impl SceneManager {
         self.scenes.clear();
         self.scenes.push(LoadedScene {
             id: doc.id,
+            source: Some(doc.id),
             path: Some(path.to_path_buf()),
             // A file written before scenes had identity was just given one.
             // Marking it dirty is what persists that id on the next save;
@@ -194,11 +264,24 @@ impl SceneManager {
 
     /// Loads `path` beside the scenes already open, and makes it active.
     ///
-    /// Returns the loaded scene's identity. Loading the same file twice is
-    /// refused: two copies would share every entity id, so references into
-    /// the scene could not say which copy they meant. Instancing a scene
-    /// more than once needs per-instance id remapping, which is its own
-    /// piece of work.
+    /// Returns the **instance's** identity, which is the file's own the
+    /// first time it is opened and a fresh one for every copy after that.
+    ///
+    /// # Opening the same file twice
+    ///
+    /// This used to be refused, because a scene's identity *was* its
+    /// file's: two copies would claim one id and every `(scene, entity)`
+    /// pair would alias.
+    ///
+    /// Unity DOTS answers it a level up. Instances of a subscene are
+    /// "exact copies of each other" — the same bytes loaded again — and
+    /// the load hands back a meta entity naming the new instance. The
+    /// entities keep the ids the file gives them; the copies are told
+    /// apart by the instance, not by anything inside them.
+    ///
+    /// So the entity half of the pair stays verbatim from disk, which is
+    /// what makes a scene reload to exactly the identities it was saved
+    /// with, and the scene half says which copy.
     pub fn open_additive(
         &mut self,
         path: &Path,
@@ -213,21 +296,76 @@ impl SceneManager {
         let doc = SceneDocument::parse(&text)?;
         let needs_id = Self::lacks_stored_id(&text);
 
-        if self.scene(doc.id).is_some() {
-            return Err(SceneError::Io(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                format!("scene {} is already open", doc.id),
-            )));
-        }
+        // The first copy keeps the file's id, so a scene opened once
+        // behaves exactly as it did — and so does every reference already
+        // written to disk naming it.
+        let instance = match self.scene(doc.id).is_some() {
+            true => Guid::new_v4(),
+            false => doc.id,
+        };
 
-        spawn_scene_into(&doc, resources)?;
+        spawn_scene_as(&doc, resources, instance)?;
         self.scenes.push(LoadedScene {
-            id: doc.id,
+            id: instance,
+            source: Some(doc.id),
             path: Some(path.to_path_buf()),
             dirty: needs_id,
         });
-        self.active = Some(doc.id);
-        Ok(doc.id)
+        self.active = Some(instance);
+        Ok(instance)
+    }
+
+    /// Every open copy of the file identified by `source`.
+    ///
+    /// What a reference stored on disk has to be resolved against: it
+    /// names a file, and which copy it means is only answerable when
+    /// exactly one is open.
+    pub fn instances_of(&self, source: Guid) -> impl Iterator<Item = &LoadedScene> {
+        self.scenes
+            .iter()
+            .filter(move |scene| scene.source == Some(source))
+    }
+
+    /// Throws away one scene's edits and reads it back from its file.
+    ///
+    /// Despawns only that scene's entities and loads the file again, so
+    /// the other open scenes are untouched. The scene keeps its place in
+    /// the open set and stays active if it was.
+    ///
+    /// Refused for a scene with no file: there is nothing to revert *to*,
+    /// and despawning its entities would delete work rather than undo it
+    /// — which is the one thing "discard changes" must never be mistaken
+    /// for.
+    pub fn revert(&mut self, id: Guid, resources: &mut Resources) -> Result<(), SceneError> {
+        let Some(path) = self.scene(id).and_then(|scene| scene.path.clone()) else {
+            return Err(SceneError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "scene has never been saved; there is nothing to revert to",
+            )));
+        };
+
+        let bytes = kooch_core::asset_loader::read_game_file(resources, &path)?;
+        let text = String::from_utf8_lossy(&bytes);
+        // Parsed BEFORE anything is despawned. A file that has been
+        // deleted or hand-edited into nonsense would otherwise leave the
+        // scene empty and unrecoverable — "discard changes" that discards
+        // the scene as well.
+        let doc = SceneDocument::parse(&text)?;
+
+        despawn_scene(id, resources);
+        spawn_scene_into(&doc, resources)?;
+
+        let was_active = self.active == Some(id);
+        if let Some(scene) = self.scenes.iter_mut().find(|scene| scene.id == id) {
+            // The document's identity, not the old one: reverting to a
+            // file means becoming what the file says, id included.
+            scene.id = doc.id;
+            scene.dirty = Self::lacks_stored_id(&text);
+        }
+        if was_active {
+            self.active = Some(doc.id);
+        }
+        Ok(())
     }
 
     /// Closes one scene, despawning only its entities.
@@ -294,7 +432,8 @@ impl SceneManager {
         if self.active == Some(id) {
             adopt_unowned(resources, id);
         }
-        SceneDocument::from_ecs_scene(resources, id).save(&path)?;
+        let as_id = self.scene(id).and_then(|scene| scene.source).unwrap_or(id);
+        SceneDocument::from_ecs_instance(resources, id, as_id).save(&path)?;
         if let Some(scene) = self.scenes.iter_mut().find(|scene| scene.id == id) {
             scene.dirty = false;
         }
@@ -306,10 +445,48 @@ impl SceneManager {
         let Some(id) = self.active else {
             return Err(Self::no_path());
         };
+        self.save_scene_as(id, path, resources)
+    }
 
-        adopt_unowned(resources, id);
-        SceneDocument::from_ecs_scene(resources, id).save(&path)?;
+    /// Saves one open scene to `path` and adopts it.
+    ///
+    /// "Save As" for a scene that is not the active one — which a panel
+    /// listing several of them needs, since the scene the user
+    /// right-clicked is not necessarily the one new entities land in.
+    ///
+    /// Captures **only that scene's entities**. Saving one scene must
+    /// never drag another's into the file: the next load would spawn
+    /// them twice, once from each.
+    pub fn save_scene_as(
+        &mut self,
+        id: Guid,
+        path: PathBuf,
+        resources: &mut Resources,
+    ) -> Result<(), SceneError> {
+        if self.scene(id).is_none() {
+            return Err(SceneError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("scene {id} is not open"),
+            )));
+        }
+
+        // Only for the active scene. An entity nothing recorded the
+        // origin of belongs in the one being worked in — adopting it
+        // into whichever scene happened to be right-clicked would move
+        // somebody's work into a file they did not touch.
+        if self.active == Some(id) {
+            adopt_unowned(resources, id);
+        }
+        // The file's identity, not this copy's. A second copy has an
+        // instance id of its own, and writing that would rename the file
+        // and break every reference naming it.
+        let as_id = self.scene(id).and_then(|scene| scene.source).unwrap_or(id);
+        SceneDocument::from_ecs_instance(resources, id, as_id).save(&path)?;
         if let Some(scene) = self.scenes.iter_mut().find(|scene| scene.id == id) {
+            // Saved to a file, so from here it *is* that file's copy —
+            // which matters for "Save As", where a copy becomes the sole
+            // instance of a new file.
+            scene.source = Some(as_id);
             scene.path = Some(path);
             scene.dirty = false;
         }
@@ -367,7 +544,7 @@ fn adopt_unowned(resources: &mut Resources, scene: Guid) {
     }
 
     if let Some(components) = resources.get_mut::<ComponentRegistry>() {
-        components.register_cpu::<SceneMember>();
+        components.register_cpu_reflected::<SceneMember>();
         if let Some(storage) = components.get_cpu_mut::<SceneMember>() {
             for &entity in &orphans {
                 storage.insert(entity, SceneMember::new(scene));

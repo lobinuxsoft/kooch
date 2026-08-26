@@ -24,7 +24,7 @@ use kooch_ecs::world_snapshot::WorldSnapshot;
 
 use crate::protocol::{
     ComponentSchema, ComponentSnapshot, EntityId, EntitySnapshot, FieldSchema, Method, RemoteError,
-    Request, Response, ResponseData,
+    Request, Response, ResponseData, SceneEntry,
 };
 
 /// Runs `request` against `resources` and returns the response to send.
@@ -59,23 +59,40 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             field,
             value,
         } => match set_field(resources, *entity, component, field, value.clone()) {
-            Ok(()) => Response::ok(id, ResponseData::Ok),
+            Ok(()) => {
+                touch_entity(resources, *entity);
+                Response::ok(id, ResponseData::Ok)
+            }
             Err(e) => Response::err(id, e),
         },
         Method::AddComponent { entity, component } => {
             match add_component(resources, *entity, component) {
-                Ok(()) => Response::ok(id, ResponseData::Ok),
+                Ok(()) => {
+                    touch_entity(resources, *entity);
+                    Response::ok(id, ResponseData::Ok)
+                }
                 Err(e) => Response::err(id, e),
             }
         }
         Method::RemoveComponent { entity, component } => {
             match remove_component(resources, *entity, component) {
-                Ok(()) => Response::ok(id, ResponseData::Ok),
+                Ok(()) => {
+                    touch_entity(resources, *entity);
+                    Response::ok(id, ResponseData::Ok)
+                }
                 Err(e) => Response::err(id, e),
             }
         }
-        Method::Spawn { name } => {
-            let entity = spawn(resources, name.as_deref());
+        Method::Spawn {
+            name,
+            scene,
+            parent,
+        } => {
+            let entity = spawn(resources, name.as_deref(), *scene, *parent);
+            // The scene it actually landed in, which `spawn` has just
+            // recorded — not the active one, which is only where it goes
+            // when nobody said otherwise.
+            touch_entity(resources, entity.into());
             Response::ok(
                 id,
                 ResponseData::Spawned {
@@ -83,25 +100,29 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
                 },
             )
         }
-        Method::Despawn { entity } => match despawn(resources, *entity) {
-            Ok(()) => Response::ok(id, ResponseData::Ok),
-            Err(e) => Response::err(id, e),
-        },
-        Method::SetParent { entity, parent } => match set_parent(resources, *entity, *parent) {
-            Ok(()) => Response::ok(id, ResponseData::Ok),
-            Err(e) => Response::err(id, e),
-        },
-        Method::SaveScene { path } => {
-            match SceneDocument::from_ecs(resources).save(path.as_ref()) {
-                Ok(()) => Response::ok(id, ResponseData::Ok),
-                Err(e) => Response::err(
-                    id,
-                    RemoteError::SceneError {
-                        detail: e.to_string(),
-                    },
-                ),
+        Method::Despawn { entity } => {
+            // Read before it goes: an entity that no longer exists cannot
+            // say which scene just lost it.
+            let scene = scene_of(resources, *entity);
+            match despawn(resources, *entity) {
+                Ok(()) => {
+                    touch_scene(resources, scene);
+                    Response::ok(id, ResponseData::Ok)
+                }
+                Err(e) => Response::err(id, e),
             }
         }
+        Method::SetParent { entity, parent } => match set_parent(resources, *entity, *parent) {
+            Ok(()) => {
+                touch_entity(resources, *entity);
+                Response::ok(id, ResponseData::Ok)
+            }
+            Err(e) => Response::err(id, e),
+        },
+        Method::SaveScene { path, scene } => match save_scene(resources, path, *scene) {
+            Ok(()) => Response::ok(id, ResponseData::Ok),
+            Err(e) => Response::err(id, e),
+        },
         Method::SavePrefab { entity, path } => match save_prefab(resources, *entity, path) {
             Ok(()) => Response::ok(id, ResponseData::Ok),
             Err(e) => Response::err(id, e),
@@ -111,8 +132,40 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             Response::ok(id, ResponseData::Ok)
         }
         Method::InstantiatePrefab { path } => match instantiate_prefab(resources, path) {
-            Ok(entity) => Response::ok(id, ResponseData::Spawned { entity }),
+            Ok(entity) => {
+                touch_entity(resources, entity);
+                Response::ok(id, ResponseData::Spawned { entity })
+            }
             Err(e) => Response::err(id, e),
+        },
+        Method::MoveEntity {
+            entity,
+            parent,
+            before,
+        } => match move_entity(resources, *entity, *parent, *before) {
+            Ok(()) => {
+                touch_entity(resources, *entity);
+                Response::ok(id, ResponseData::Ok)
+            }
+            Err(e) => Response::err(id, e),
+        },
+        Method::RevertScene { scene } => match revert_scene(resources, *scene) {
+            Ok(()) => Response::ok(id, ResponseData::Ok),
+            Err(e) => Response::err(id, e),
+        },
+        Method::NewScene => match resources.get_mut::<kooch_ecs::SceneManager>() {
+            Some(manager) => Response::ok(
+                id,
+                ResponseData::SceneOpened {
+                    scene: manager.new_scene(),
+                },
+            ),
+            None => Response::err(
+                id,
+                RemoteError::Unavailable {
+                    detail: "no SceneManager; there is no open set to add to".into(),
+                },
+            ),
         },
         Method::LoadScene { path } => match load_scene(resources, path) {
             Ok(()) => Response::ok(id, ResponseData::Ok),
@@ -149,12 +202,18 @@ fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Resp
         );
     };
 
+    // Membership is reflected — so a world rebuild carries it — but it
+    // still travels beside the components in `scene`, not among them.
+    // Sending both would put the same fact on the wire twice and let a
+    // client act on whichever it read last.
     let skip = [
         TypeId::of::<Parent>(),
         TypeId::of::<kooch_ecs::hierarchy::Children>(),
         TypeId::of::<kooch_ecs::hierarchy::GlobalTransform>(),
+        TypeId::of::<kooch_ecs::SceneMember>(),
     ];
     let parents = registry.get_cpu::<Parent>();
+    let members = registry.get_cpu::<kooch_ecs::SceneMember>();
 
     // Archetype iteration groups by component set, which scrambles the
     // order the user authored. Entities are allocated in the order the
@@ -186,10 +245,12 @@ fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Resp
             let parent = parents
                 .and_then(|s| s.get(entity))
                 .map(|p| EntityId::from(p.entity));
+            let scene = members.and_then(|s| s.get(entity)).map(|m| m.scene);
             entities.push(EntitySnapshot {
                 id: entity.into(),
                 name,
                 parent,
+                scene,
                 components,
             });
         }
@@ -213,7 +274,35 @@ fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Resp
             revision: delta.revision,
             full: delta.full,
             host: host_metrics(resources),
+            scenes: open_scenes(resources),
         },
+    )
+}
+
+/// The scenes this project has open, for the editor to list.
+///
+/// `None` when there is no [`SceneManager`], which is what a host that
+/// never loaded one looks like — distinct from "none are open", so the
+/// editor keeps showing what it had rather than blanking the panel.
+///
+/// [`SceneManager`]: kooch_ecs::SceneManager
+fn open_scenes(resources: &Resources) -> Option<Vec<SceneEntry>> {
+    let manager = resources.get::<kooch_ecs::SceneManager>()?;
+    let active = manager.active_id();
+    Some(
+        manager
+            .scenes()
+            .iter()
+            .map(|scene| SceneEntry {
+                id: scene.id,
+                path: scene
+                    .path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned()),
+                active: active == Some(scene.id),
+                dirty: scene.dirty,
+            })
+            .collect(),
     )
 }
 
@@ -448,7 +537,12 @@ fn remove_component(
 /// in a remote project and one with both in a local one. An entity with no
 /// `Name` cannot be renamed from the Inspector at all: the name editor
 /// reads the component, and there was nothing to read.
-fn spawn(resources: &mut Resources, name: Option<&str>) -> Entity {
+fn spawn(
+    resources: &mut Resources,
+    name: Option<&str>,
+    scene: Option<kooch_core::Guid>,
+    parent: Option<EntityId>,
+) -> Entity {
     let mut commands = resources
         .remove::<Commands>()
         .expect("Commands not in Resources");
@@ -466,7 +560,43 @@ fn spawn(resources: &mut Resources, name: Option<&str>) -> Entity {
     {
         n.value = name.to_owned();
     }
+
+    if let Some(parent) = parent {
+        let _ = set_parent(resources, entity.into(), Some(parent));
+    }
+    // The parent's scene wins: an entity's scene *is* its parent's, so a
+    // child authored into a different one would be written to a file its
+    // parent is not in and come back an orphan.
+    let home = parent
+        .and_then(|parent| scene_of(resources, parent))
+        .or(scene)
+        .or_else(|| {
+            resources
+                .get::<kooch_ecs::SceneManager>()
+                .and_then(|manager| manager.active_id())
+        });
+    if let Some(home) = home {
+        tag_with_scene(resources, entity, home);
+    }
     entity
+}
+
+/// Records which scene a newly spawned entity belongs to.
+///
+/// 🔴 Without this a spawned entity carries no `SceneMember` at all, so
+/// the World panel files it under "Unsaved" and it only joins a scene
+/// when a save adopts it — which is the active scene, whatever the user
+/// actually asked for.
+fn tag_with_scene(resources: &mut Resources, entity: Entity, scene: kooch_core::Guid) {
+    use kooch_ecs::SceneMember;
+
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.register_cpu_reflected::<SceneMember>();
+        if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
+            storage.insert(entity, SceneMember::new(scene));
+        }
+    }
+    update_archetype_add(resources, entity, TypeId::of::<SceneMember>());
 }
 
 /// Inserts `type_id`'s default on `entity` and moves it to the archetype
@@ -535,18 +665,203 @@ fn despawn(resources: &mut Resources, entity: EntityId) -> Result<(), RemoteErro
 }
 
 fn load_scene(resources: &mut Resources, path: &str) -> Result<(), RemoteError> {
-    let doc = SceneDocument::load(path.as_ref()).map_err(|e| RemoteError::SceneError {
-        detail: e.to_string(),
-    })?;
-    sync_scene_to_ecs(&doc, resources).map_err(|e| RemoteError::SceneError {
-        detail: e.to_string(),
-    })?;
+    match load_through_manager(resources, path) {
+        Some(result) => result?,
+        None => load_directly(resources, path)?,
+    }
     // A prefab edited while this scene was closed left stale copies in it.
     // Done here rather than editor-side because this is where the scene
     // actually arrives — the editor would have to wait for the mirror
     // before it even knew what was in it.
     kooch_ecs::scene::propagate::refresh_all(resources);
     Ok(())
+}
+
+/// Records that the scene holding `entity` has edits not on disk.
+///
+/// 🔴 Nothing marked a scene dirty anywhere in the engine before this.
+/// `SceneManager::mark_dirty` was called by its own tests and by nobody
+/// else, so `dirty` was permanently `false`: the World panel's asterisk
+/// could never appear, `any_dirty()` always answered "nothing to lose",
+/// and a close-without-saving prompt built on it would have waved the
+/// user straight through. Nobody had ever seen the asterisk, so nobody
+/// noticed it was inert.
+///
+/// The scene of the entity that changed, not the active one — with two
+/// scenes open those are different, and marking the active one puts the
+/// asterisk on the file that did not change.
+fn touch_entity(resources: &mut Resources, entity: EntityId) {
+    let scene = scene_of(resources, entity);
+    touch_scene(resources, scene);
+}
+
+/// Which scene an entity belongs to, or `None` for one that belongs to
+/// none — spawned here and not yet adopted by a save.
+fn scene_of(resources: &Resources, entity: EntityId) -> Option<kooch_core::Guid> {
+    resources
+        .get::<ComponentRegistry>()?
+        .get_cpu::<kooch_ecs::SceneMember>()?
+        .get(Entity::from(entity))
+        .map(|member| member.scene)
+}
+
+/// Marks one scene dirty, or the active one when the entity belonged to
+/// none.
+fn touch_scene(resources: &mut Resources, scene: Option<kooch_core::Guid>) {
+    let Some(manager) = resources.get_mut::<kooch_ecs::SceneManager>() else {
+        return;
+    };
+    match scene {
+        // A scene the project does not have open is not this host's to
+        // record. `mark_scene_dirty` says so; nothing here can act on it.
+        Some(id) => {
+            manager.mark_scene_dirty(id);
+        }
+        None => manager.mark_dirty(),
+    }
+}
+
+/// Writes one open scene to `path`, through the project's manager.
+///
+/// 🔴 One scene, not the world. This used to call
+/// [`SceneDocument::from_ecs`] — `Capture::Everything` plus a fresh
+/// `Guid` for the document. With two scenes open it wrote both into the
+/// file, so the next load spawned every entity twice; and the new id on
+/// every save broke anything that referred to the scene by identity.
+///
+/// Through the manager rather than straight to `from_ecs_scene` so the
+/// scene adopts the path and its dirty flag is cleared — a save that
+/// leaves the record saying "unsaved" is a save the user cannot see
+/// happened.
+///
+/// `None` saves the active scene, which is what a client that knows of
+/// only one sends.
+fn save_scene(
+    resources: &mut Resources,
+    path: &str,
+    scene: Option<kooch_core::Guid>,
+) -> Result<(), RemoteError> {
+    let Some(mut manager) = resources.remove::<kooch_ecs::SceneManager>() else {
+        // Refused rather than falling back to writing everything alive:
+        // that fallback is the bug this function exists to remove, and a
+        // silent one is worse than an error naming what is missing.
+        return Err(RemoteError::Unavailable {
+            detail: "no SceneManager; nothing knows which scene to write".into(),
+        });
+    };
+    let result = match scene.or_else(|| manager.active_id()) {
+        Some(id) => manager
+            .save_scene_as(id, std::path::PathBuf::from(path), resources)
+            .map_err(|e| RemoteError::SceneError {
+                detail: e.to_string(),
+            }),
+        None => Err(RemoteError::SceneError {
+            detail: "no scene is open".into(),
+        }),
+    };
+    resources.insert(manager);
+    result
+}
+
+/// Moves an entity among its siblings, through the engine's own policy.
+fn move_entity(
+    resources: &mut Resources,
+    entity: EntityId,
+    parent: Option<EntityId>,
+    before: Option<EntityId>,
+) -> Result<(), RemoteError> {
+    let entity = resolve_entity(resources, entity)?;
+    let parent = parent.map(|p| resolve_entity(resources, p)).transpose()?;
+    // A `before` that is no longer alive means "last", not an error: the
+    // client is describing a list it read a frame ago, and refusing would
+    // turn a stale row into a failed drag.
+    let before = before.map(Entity::from).filter(|e| {
+        resources
+            .get::<EntityAllocator>()
+            .is_some_and(|a| a.is_alive(*e))
+    });
+
+    match kooch_ecs::order::place(resources, entity, parent, before) {
+        true => Ok(()),
+        // The one refusal `place` makes: into its own subtree, which
+        // would detach that subtree from the world.
+        false => Err(RemoteError::FieldError {
+            detail: "an entity cannot be moved into its own subtree".into(),
+        }),
+    }
+}
+
+/// Throws away one scene's edits and reads it back from its file.
+///
+/// Lifted out and put back for the same reason a load is: the manager
+/// needs `&mut Resources` for the ECS it is about to replace, and it
+/// lives in there.
+fn revert_scene(
+    resources: &mut Resources,
+    scene: Option<kooch_core::Guid>,
+) -> Result<(), RemoteError> {
+    let Some(mut manager) = resources.remove::<kooch_ecs::SceneManager>() else {
+        return Err(RemoteError::Unavailable {
+            detail: "no SceneManager; nothing knows which scene to revert".into(),
+        });
+    };
+    let result = match scene.or_else(|| manager.active_id()) {
+        Some(id) => manager
+            .revert(id, resources)
+            .map_err(|e| RemoteError::SceneError {
+                detail: e.to_string(),
+            }),
+        None => Err(RemoteError::SceneError {
+            detail: "no scene is open".into(),
+        }),
+    };
+    resources.insert(manager);
+    // A prefab edited while this scene held stale copies of it: the
+    // entities were just respawned from the file, so they need the same
+    // refresh a load gives them.
+    if result.is_ok() {
+        kooch_ecs::scene::propagate::refresh_all(resources);
+    }
+    result
+}
+
+/// Loads through the project's [`SceneManager`], so it knows what it has.
+///
+/// 🔴 This used to go straight to [`sync_scene_to_ecs`], which loads the
+/// entities and tells the manager nothing — so after this call the
+/// manager still described the scene *before* it, and every entity in
+/// the world named a file it had never heard of.
+///
+/// The boot scene hid it. `SceneBootstrapPlugin` loads through the
+/// manager, so a host that opens its startup scene and is never asked
+/// for another looks perfectly correct: the record and the world agree,
+/// because neither has moved since. It is the second scene that breaks
+/// — the editor opening a different one — and the project would then go
+/// on naming the first with the entities of the second inside it.
+///
+/// `None` when there is no manager to load through, which is a host that
+/// never installed `EcsPlugin` rather than a failure.
+///
+/// [`SceneManager`]: kooch_ecs::SceneManager
+fn load_through_manager(resources: &mut Resources, path: &str) -> Option<Result<(), RemoteError>> {
+    // Lifted out and put back: `load` needs `&mut Resources` for the ECS
+    // it is about to replace, and the manager lives in there too.
+    let mut manager = resources.remove::<kooch_ecs::SceneManager>()?;
+    let result = manager.load(path.as_ref(), resources);
+    resources.insert(manager);
+    Some(result.map_err(|e| RemoteError::SceneError {
+        detail: e.to_string(),
+    }))
+}
+
+/// Loads without a manager: the entities arrive, nothing records them.
+fn load_directly(resources: &mut Resources, path: &str) -> Result<(), RemoteError> {
+    let doc = SceneDocument::load(path.as_ref()).map_err(|e| RemoteError::SceneError {
+        detail: e.to_string(),
+    })?;
+    sync_scene_to_ecs(&doc, resources).map_err(|e| RemoteError::SceneError {
+        detail: e.to_string(),
+    })
 }
 
 /// The authored world, held while a play session runs so Stop can put

@@ -50,6 +50,16 @@ pub(crate) enum EditorAction {
     Spawn {
         extra: Vec<TypeId>,
         name: Option<String>,
+        /// Which scene the new entity is authored into, and what it hangs
+        /// off.
+        ///
+        /// 🔴 Carried rather than inferred. Every spawn used to land in
+        /// the active scene, which is the right answer for the toolbar
+        /// button and the wrong one for a menu opened on a scene, or on
+        /// an entity, that is not the active one — the entity would
+        /// appear somewhere other than where it was asked for, and the
+        /// only sign of it is a row in the wrong group.
+        into: SpawnTarget,
     },
     /// Spawn an entity bound to a meshlet asset. The asset path is
     /// resolved through the AssetServer (auto-generates a `.meta`
@@ -218,6 +228,39 @@ pub(crate) enum EditorAction {
     CloseScene(kooch_core::Guid),
     /// Make an already-open scene the one new entities are authored into.
     SetActiveScene(kooch_core::Guid),
+    /// Write one open scene back to the file it came from.
+    ///
+    /// Named, not implied. The File menu's [`Self::SaveScene`] saves the
+    /// active scene, and with several open the one somebody right-clicked
+    /// is routinely not that — saving the wrong file is not a mistake the
+    /// user can see until the next load.
+    ///
+    /// Falls back to asking for a path when the scene has never been
+    /// saved, which is the only case where there is nothing to write to.
+    SaveOpenScene(kooch_core::Guid),
+    /// Write one open scene to a path the user picks, and adopt it.
+    SaveOpenSceneAs(kooch_core::Guid),
+    /// Move an entity among its siblings: under `new_parent`, in front of
+    /// `before`.
+    ///
+    /// Where, not what number. "Before that one" is what a drag means,
+    /// and the numbering that expresses it is the engine's
+    /// (`kooch_ecs::order::place`) — a caller that picked values would
+    /// put the renumbering rule in every caller, and they would disagree
+    /// the first time a gap ran out.
+    MoveEntity {
+        entity: Entity,
+        /// `None` makes it a root of its scene.
+        new_parent: Option<Entity>,
+        /// The sibling it goes in front of; `None` puts it last.
+        before: Option<Entity>,
+    },
+    /// Throw away one open scene's edits and read it back from its file.
+    ///
+    /// Only that scene. With several open, "discard changes" that threw
+    /// away every scene's would destroy work in files the user never
+    /// touched.
+    RevertOpenScene(kooch_core::Guid),
     Play,
     Stop,
     /// Open a project: launch its binary with `--remote` and drive its
@@ -445,6 +488,29 @@ pub(crate) enum NewFileKind {
     RenderSettings,
 }
 
+/// Where a newly spawned entity goes.
+///
+/// A scene and a parent are one question, not two: an entity's scene is
+/// its parent's, so naming a parent already names the scene. Splitting
+/// them into separate fields would let a caller ask for a child of an
+/// entity in one scene and a member of another, which nothing can honour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpawnTarget {
+    /// The scene new entities land in by default — the toolbar's Spawn
+    /// button, and the World panel's empty area before this existed.
+    Active,
+    /// A named open scene, at its root.
+    Scene(kooch_core::Guid),
+    /// A child of an entity, in whatever scene that entity belongs to.
+    ChildOf(Entity),
+    /// A scene of its own, created empty and unsaved to hold it.
+    ///
+    /// What right-clicking the panel's empty space means: not "put this
+    /// somewhere" but "start something new". An entity has to belong to a
+    /// scene, so starting one is what makes the request answerable.
+    NewScene,
+}
+
 impl EditorAction {
     /// Whether applying this needs the project's world to already be
     /// there.
@@ -489,6 +555,10 @@ impl EditorAction {
             | Self::OpenSceneAdditive
             | Self::CloseScene(_)
             | Self::SetActiveScene(_)
+            | Self::SaveOpenScene(_)
+            | Self::SaveOpenSceneAs(_)
+            | Self::RevertOpenScene(_)
+            | Self::MoveEntity { .. }
             | Self::Play
             | Self::Stop
             | Self::RegisterScripts

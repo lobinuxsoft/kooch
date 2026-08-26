@@ -324,7 +324,7 @@ fn spawn_undo_redo_cycle() {
     let mut stack = UndoStack::new();
 
     // Spawn via command.
-    let cmd = SpawnCommand::new(vec![], None);
+    let cmd = SpawnCommand::new(vec![], None, crate::actions::SpawnTarget::Active);
     stack.execute(Box::new(cmd), &mut resources);
 
     // Find the spawned entity (should be index 0).

@@ -46,6 +46,7 @@ fn register_builtin_components(resources: &mut kooch_core::resource::Resources) 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<Transform>();
         registry.register_cpu_reflected::<Name>();
+        registry.register_cpu_reflected::<crate::order::Order>();
         registry.register_cpu_reflected::<Parent>();
         registry.register_cpu_reflected::<Children>();
         registry.register_cpu_reflected::<GlobalTransform>();

@@ -20,6 +20,7 @@ fn scene_info(id: kooch_core::Guid, active: bool) -> SceneDisplayInfo {
     SceneDisplayInfo {
         id,
         name: "Scene".to_owned(),
+        path: None,
         dirty: false,
         active,
     }
@@ -57,16 +58,26 @@ fn a_selection_far_down_the_list_scrolls_into_view() {
         // The list has been sitting at the top.
         ui.data_mut(|d| d.insert_temp(visible_range_id(), (0usize, 20usize)));
         let focus = newly_focused(ui, &selected).expect("selection is new");
+        let row = rows
+            .iter()
+            .position(|row| matches!(row, WorldRow::Entity(idx) if entities[*idx].entity == focus))
+            .expect("the focused entity has a row");
         scroll_offset_for(ui, &rows, &entities, focus, 20.0)
-            .map(|offset| (offset, row_pitch(ui, 20.0)))
+            .map(|offset| (offset, row, row_pitch(ui, 20.0)))
     });
 
-    let (offset, pitch) = offset.expect("a row 900 places down is not on screen");
-    // Centred on row 900 with twenty rows visible, measured in the
-    // pitch `show_rows` uses — height *plus* item spacing.
+    let (offset, row, pitch) = offset.expect("a row 900 places down is not on screen");
+    // Centred on the row the entity actually landed on, with twenty
+    // visible, measured in the pitch `show_rows` uses — height *plus*
+    // item spacing.
+    //
+    // 🔴 The row index is read back rather than assumed to be 900. The
+    // list carries group headers and notes now, so "the 900th entity" and
+    // "the 900th row" are different numbers, and a test that hardcodes
+    // one of them is measuring the layout instead of the scrolling.
     assert!(
-        (offset - (900.0 - 9.5) * pitch).abs() < 1.0,
-        "expected the row centred, got offset {offset} at pitch {pitch}",
+        (offset - (row as f32 - 9.5) * pitch).abs() < 1.0,
+        "expected row {row} centred, got offset {offset} at pitch {pitch}",
     );
 }
 
@@ -195,12 +206,49 @@ fn a_selection_inside_a_collapsed_group_is_revealed() {
     });
 }
 
+/// A single scene still gets a root of its own.
+///
+/// 🔴 It used to be skipped, on the argument that "every row would sit
+/// under the same one". That was true right up until a second scene
+/// could be opened beside it: without a root per scene, two scenes'
+/// entities land in one column with nothing saying which is which, no
+/// place to offer closing one, and no answer to which scene a Spawn
+/// belongs to. The root is what makes additive open a thing that can
+/// exist, so it is there even when there is only one.
 #[test]
-fn one_scene_lists_every_entity_and_no_headers() {
-    let entities: Vec<_> = (0..1000).map(|i| entity_info(i, None)).collect();
+fn a_single_scene_still_gets_a_root() {
+    let id = kooch_core::Guid::new_v4();
+    let entities: Vec<_> = (0..1000).map(|i| entity_info(i, Some(id))).collect();
+    let scenes = vec![scene_info(id, true)];
+    let rows = with_ui(|ui| build_rows(ui, &entities, &scenes));
+
+    assert!(
+        matches!(rows.first(), Some(WorldRow::Group(_))),
+        "the scene has no root row"
+    );
+    assert_eq!(rows.len(), 1001, "one root plus every entity");
+    assert!(
+        rows[1..]
+            .iter()
+            .all(|row| matches!(row, WorldRow::Entity(_))),
+        "something other than entities landed under the root"
+    );
+}
+
+/// Entities belonging to no scene are still reachable, under their own
+/// header — an entity spawned before the first save must not vanish
+/// from the panel that lists the world.
+#[test]
+fn entities_without_a_scene_get_their_own_group() {
+    let entities: Vec<_> = (0..10).map(|i| entity_info(i, None)).collect();
     let rows = with_ui(|ui| build_rows(ui, &entities, &[]));
-    assert_eq!(rows.len(), 1000);
-    assert!(rows.iter().all(|row| matches!(row, WorldRow::Entity(_))));
+
+    assert!(matches!(rows.first(), Some(WorldRow::Group(_))));
+    let listed = rows
+        .iter()
+        .filter(|row| matches!(row, WorldRow::Entity(_)))
+        .count();
+    assert_eq!(listed, 10, "an orphan went missing");
 }
 
 /// The point of building the list from the open flags: a collapsed
@@ -331,6 +379,8 @@ fn a_row_advances_the_cursor_by_exactly_one_pitch() {
             &[],
             &mut Vec::new(),
             &mut None,
+            // A leaf: these rigs plant a single entity with no children.
+            None,
         );
         (reserved, ui.cursor().top() - before)
     });
@@ -373,6 +423,8 @@ fn a_very_long_name_does_not_make_its_row_taller() {
             &[],
             &mut Vec::new(),
             &mut None,
+            // A leaf: these rigs plant a single entity with no children.
+            None,
         );
         (reserved, ui.cursor().top() - before)
     });
@@ -380,4 +432,260 @@ fn a_very_long_name_does_not_make_its_row_taller() {
         (reserved - occupied).abs() < 0.01,
         "a 400-character name advanced the cursor {occupied}, not {reserved}",
     );
+}
+
+/// One entity with a child, for the collapse tests.
+///
+/// ⚠️ `base` is not decoration. The open flags are persisted per ENTITY,
+/// and egui's store outlives one `build_rows`, so two rigs sharing entity
+/// ids in the same `with_ui` share their expanded state — the second
+/// reads whatever the first left behind. That is a real property of the
+/// panel and it made this file's first draft pass for the wrong reason.
+fn parent_and_child(scene: kooch_core::Guid, prefab: bool, base: u32) -> Vec<EntityDisplayInfo> {
+    let mut parent = entity_info(base, Some(scene));
+    let mut child = entity_info(base + 1, Some(scene));
+    parent.is_prefab_instance = prefab;
+    child.is_prefab_instance = prefab;
+    parent.children = vec![child.entity];
+    child.parent = Some(parent.entity);
+    child.depth = 1;
+    vec![parent, child]
+}
+
+fn entity_rows(rows: &[WorldRow]) -> usize {
+    rows.iter()
+        .filter(|row| matches!(row, WorldRow::Entity(_)))
+        .count()
+}
+
+/// A collapsed parent's children are *absent* from the list, not skipped
+/// while drawing.
+///
+/// 🔴 That is the whole point of building the rows from the open flags.
+/// Skipping them one at a time leaves the cost proportional to the whole
+/// world, which is exactly what collapsing exists to avoid — and with 36
+/// prefab instances of five entities each, the difference is 36 rows
+/// against 180.
+#[test]
+fn a_collapsed_parent_hides_its_subtree() {
+    let id = kooch_core::Guid::new_v4();
+    let entities = parent_and_child(id, false, 0);
+    let scenes = vec![scene_info(id, true)];
+
+    let (open, closed) = with_ui(|ui| {
+        let open = entity_rows(&build_rows(ui, &entities, &scenes));
+        ui.data_mut(|data| data.insert_persisted(subtree_id(entities[0].entity), false));
+        let closed = entity_rows(&build_rows(ui, &entities, &scenes));
+        (open, closed)
+    });
+
+    assert_eq!(
+        open, 2,
+        "the child was not listed while its parent was open"
+    );
+    assert_eq!(closed, 1, "the child survived its parent being collapsed");
+}
+
+/// A prefab instance starts collapsed; anything else starts open.
+///
+/// 🔴 An instance is a unit — its members are the prefab's business, not
+/// the scene's. A hand-built hierarchy is the opposite: somebody put
+/// those children there on purpose, and starting closed would hide their
+/// own work from them.
+#[test]
+fn a_prefab_instance_starts_collapsed() {
+    let id = kooch_core::Guid::new_v4();
+    let scenes = vec![scene_info(id, true)];
+    let plain = parent_and_child(id, false, 0);
+    let instance = parent_and_child(id, true, 10);
+
+    let (plain_rows, instance_rows) = with_ui(|ui| {
+        (
+            entity_rows(&build_rows(ui, &plain, &scenes)),
+            entity_rows(&build_rows(ui, &instance, &scenes)),
+        )
+    });
+
+    assert_eq!(plain_rows, 2, "a hand-built parent started closed");
+    assert_eq!(instance_rows, 1, "a prefab instance started open");
+}
+
+/// The default is decided for the instance's ROOT, not for every entity
+/// it owns.
+///
+/// `is_prefab_instance` is true for all five entities of an instance, so
+/// reading it alone would start the pivot inside it collapsed as well —
+/// and a user who expands the instance would find its insides still
+/// folded, one click at a time, for no stated reason.
+#[test]
+fn only_the_instances_root_starts_collapsed() {
+    let id = kooch_core::Guid::new_v4();
+    let scenes = vec![scene_info(id, true)];
+    let mut entities = parent_and_child(id, true, 20);
+    // A grandchild under the instance's own child.
+    let mut grandchild = entity_info(22, Some(id));
+    grandchild.is_prefab_instance = true;
+    grandchild.parent = Some(entities[1].entity);
+    grandchild.depth = 2;
+    entities[1].children = vec![grandchild.entity];
+    entities.push(grandchild);
+
+    let rows = with_ui(|ui| {
+        // Open the root, and nothing else.
+        ui.data_mut(|data| data.insert_persisted(subtree_id(entities[0].entity), true));
+        entity_rows(&build_rows(ui, &entities, &scenes))
+    });
+
+    assert_eq!(
+        rows, 3,
+        "expanding the instance's root did not reveal the whole instance"
+    );
+}
+
+/// A selection inside a collapsed prefab instance gets a row to land on.
+///
+/// 🔴 Two things used to hide it, and both arrived with the tree. The
+/// group reveal bailed on a single scene — right while a lone scene drew
+/// no header, wrong the moment every scene got a root — and it only ever
+/// opened the group, never the collapsed parents inside it. A prefab
+/// instance starts collapsed, so duplicating one of its children put the
+/// new entity in a subtree with no rows at all: selected, and nowhere on
+/// screen (#706).
+#[test]
+fn a_reveal_opens_collapsed_ancestors() {
+    let id = kooch_core::Guid::new_v4();
+    let scenes = vec![scene_info(id, true)];
+    let entities = parent_and_child(id, true, 30);
+    let child = entities[1].entity;
+
+    let rows = with_ui(|ui| {
+        // Collapse the scene too, so both guards are under test.
+        ui.data_mut(|data| data.insert_persisted(egui::Id::new(("world_group_open", id)), false));
+        assert_eq!(
+            entity_rows(&build_rows(ui, &entities, &scenes)),
+            0,
+            "nothing was hidden, so the test proves nothing",
+        );
+        super::reveal_group_of(ui, &entities, &scenes, child);
+        entity_rows(&build_rows(ui, &entities, &scenes))
+    });
+
+    assert_eq!(rows, 2, "the revealed child still had no row");
+}
+
+/// A scene's row offers Save; the "Unsaved" pseudo-group does not.
+///
+/// The group holding entities that belong to no scene is not a file, so
+/// there is nowhere for it to be saved to — and offering it would write
+/// its entities into whichever scene happened to be active, which is the
+/// note under that header, not a menu item.
+#[test]
+fn only_a_scene_row_can_be_saved() {
+    let id = kooch_core::Guid::new_v4();
+    let scene = super::GroupHeader::scene(&scene_info(id, true), 3);
+    assert_eq!(scene.scene, Some(id), "a scene row names its scene");
+    assert_eq!(
+        super::GroupHeader::unsaved(2).scene,
+        None,
+        "the unsaved group would have offered to save entities into a file it does not have",
+    );
+}
+
+/// The unsaved marker leads the name.
+///
+/// The entity count sits between the name and the end of the line, so a
+/// trailing marker is separated from what it describes by a number that
+/// changes — and a column of scenes is read down its left edge.
+#[test]
+fn the_dirty_marker_leads_the_name() {
+    let id = kooch_core::Guid::new_v4();
+    let mut info = scene_info(id, true);
+    assert!(
+        !super::GroupHeader::scene(&info, 1).label.starts_with('*'),
+        "a clean scene was marked",
+    );
+    info.dirty = true;
+    let header = super::GroupHeader::scene(&info, 1);
+    assert!(header.label.starts_with("*Scene"), "{}", header.label);
+    assert!(
+        header.dirty,
+        "the row cannot say what its menu should offer"
+    );
+}
+
+/// Every entity row sits one level deeper than the scene above it.
+///
+/// 🔴 Drawn at its own hierarchy depth, a root entity started in the same
+/// column as its scene's header — so a scene with four roots read as five
+/// scenes, and the one thing the tree exists to say went missing.
+#[test]
+fn an_entity_is_indented_under_its_scene() {
+    use super::entity_row::indent_levels;
+    assert_eq!(
+        indent_levels(0),
+        1,
+        "a root entity sat level with its scene"
+    );
+    assert_eq!(
+        indent_levels(2),
+        3,
+        "the offset was lost deeper in the tree"
+    );
+}
+
+/// Dropping onto a collapsed entity opens the chain above it.
+///
+/// 🔴 Without this the dragged entity *vanishes*: the reparent works and
+/// its row lands inside a subtree that is not listed. Nothing says where
+/// it went, and the obvious reading is that the drag deleted it.
+#[test]
+fn a_drop_target_opens_up_to_its_root() {
+    let id = kooch_core::Guid::new_v4();
+    let scenes = vec![scene_info(id, true)];
+    // root → middle → leaf, all collapsed.
+    let mut root = entity_info(40, Some(id));
+    let mut middle = entity_info(41, Some(id));
+    let leaf = entity_info(42, Some(id));
+    root.children = vec![middle.entity];
+    middle.parent = Some(root.entity);
+    middle.depth = 1;
+    middle.children = vec![leaf.entity];
+    let mut leaf = leaf;
+    leaf.parent = Some(middle.entity);
+    leaf.depth = 2;
+    let entities = vec![root, middle, leaf];
+
+    let rows = with_ui(|ui| {
+        for e in &entities {
+            ui.data_mut(|d| d.insert_persisted(subtree_id(e.entity), false));
+        }
+        assert_eq!(
+            entity_rows(&build_rows(ui, &entities, &scenes)),
+            1,
+            "nothing was collapsed, so the test proves nothing",
+        );
+        // Dropping onto the leaf: its whole chain has to open.
+        super::entity_row::reveal_chain(ui, entities[2].entity, &entities);
+        entity_rows(&build_rows(ui, &entities, &scenes))
+    });
+
+    assert_eq!(rows, 3, "the drop target's chain stayed folded");
+}
+
+/// A scene with no file offers no "Discard Changes".
+///
+/// There is nothing to revert *to*, and despawning its entities would
+/// delete work rather than undo it — the one thing discard must never be
+/// mistaken for.
+#[test]
+fn an_unsaved_scene_cannot_discard() {
+    let id = kooch_core::Guid::new_v4();
+    let mut info = scene_info(id, true);
+    info.dirty = true;
+    assert!(
+        !super::GroupHeader::scene(&info, 1).has_file,
+        "a scene that has never been saved claimed a file to revert to",
+    );
+    info.path = Some(std::path::PathBuf::from("scenes/station.scene"));
+    assert!(super::GroupHeader::scene(&info, 1).has_file);
 }
