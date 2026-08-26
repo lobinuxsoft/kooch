@@ -93,6 +93,17 @@ pub struct ShadowSettings {
     /// Projected radius in screen pixels under which a local light
     /// casts no pages (#944). 0 = every light casts.
     pub page_min_pixels: u32,
+    /// How far a local light may cast pages from, in multiples of its
+    /// OWN range. 0 = no distance limit, which is what shipped.
+    ///
+    /// 🔴 Not the same question as [`Self::page_min_pixels`], though
+    /// both turn a light away. That one is a projected SIZE, so the
+    /// distance it implies scales with the light's range and with the
+    /// viewport — at 808x439 a range-50 light does not fall under eight
+    /// pixels until 2.4 km, and a threshold high enough to cut it at a
+    /// hundred metres also cuts a small light beside the camera. This
+    /// one scales with the light instead of with the screen.
+    pub page_light_reach: u32,
 }
 
 impl ShadowSettings {
@@ -120,6 +131,11 @@ impl Default for ShadowSettings {
             pool_pages: crate::shadow::pages::pool::DEFAULT_PAGES,
             page_softness: 1,
             page_min_pixels: 8,
+            // 🔴 Off, because it is a behaviour change and nothing has
+            // measured what it costs yet: a light out of reach stops
+            // casting, and a threshold picked from a whiteboard is how
+            // `DEFAULT_PAGES` ended up at half of Epic's.
+            page_light_reach: 0,
         }
     }
 }

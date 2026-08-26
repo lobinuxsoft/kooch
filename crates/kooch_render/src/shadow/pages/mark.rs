@@ -281,6 +281,8 @@ pub struct PageMarker {
     /// The coverage gate (#944), in projected screen pixels. 0 = off,
     /// which is what a directly-constructed marker measures with.
     coverage: u32,
+    /// The distance gate, in multiples of a light's own range. 0 = off.
+    reach: u32,
     last: Option<MarkCounts>,
 }
 
@@ -360,6 +362,7 @@ impl PageMarker {
             clipmap,
             capacity: (1, 1),
             coverage: 0,
+            reach: 0,
             last: None,
         }
     }
@@ -368,6 +371,12 @@ impl PageMarker {
     /// marks no pages (#944). The sun is never gated.
     pub fn set_coverage(&mut self, pixels: u32) {
         self.coverage = pixels;
+    }
+
+    /// How far a light may cast from, in multiples of its own range.
+    /// Zero is no limit. See `ShadowSettings::page_light_reach`.
+    pub fn set_reach(&mut self, ranges: u32) {
+        self.reach = ranges;
     }
 
     /// The last count that came back, a frame or two old.
@@ -612,7 +621,9 @@ impl PageMarker {
                     // stops walking the light list, which is the whole
                     // 20.3 ms.
                     if self.cluster { 1.0 } else { 0.0 },
-                    0.0,
+                    // The distance gate, in multiples of a light's own
+                    // range. See `light_out_of_reach`.
+                    self.reach as f32,
                 ],
             }),
         );

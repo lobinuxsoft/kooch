@@ -198,6 +198,27 @@ pub struct RenderSettings {
         shown_when = PAGES_ON
     )]
     pub shadow_min_pixels: u32,
+    /// How far a local light may cast shadow pages from, in multiples
+    /// of its OWN range. The light still SHADES past it; only its
+    /// shadow stops being paid for.
+    ///
+    /// 🔴 A second gate beside [`Self::shadow_min_pixels`], and not a
+    /// duplicate of it. That one is a projected SIZE, so the distance it
+    /// implies scales with the light's range and with the viewport: at
+    /// 808x439 a range-50 light does not fall under eight pixels until
+    /// 2.4 km, and the threshold that would cut it at a hundred metres
+    /// also cuts a small light standing beside the camera. One number
+    /// cannot answer both questions. This one scales with the light.
+    ///
+    /// 0 disables it, which is what shipped. The sun is never gated —
+    /// it has no position to be far from.
+    #[serde(default = "default_shadow_light_reach")]
+    #[reflect(
+        group = "Shadows: virtual pages",
+        choices = SHADOW_LIGHT_REACH_CHOICES,
+        shown_when = PAGES_ON
+    )]
+    pub shadow_light_reach: u32,
     /// Whether shadows are drawn at all. Off frees the atlas entirely
     /// — 64 MiB at the default resolution — and the cube maps with it.
     ///
@@ -690,6 +711,13 @@ fn default_shadow_min_pixels() -> u32 {
     8
 }
 
+/// 🔴 Zero, because turning it on is a behaviour change and nothing has
+/// measured what it costs. A threshold chosen from a whiteboard is how
+/// `DEFAULT_PAGES` came to sit at half of Epic's for a year.
+fn default_shadow_light_reach() -> u32 {
+    0
+}
+
 /// 🔴 Off. The cascades are what every scene in the project was authored
 /// against, and a technique that replaces them cannot become the default
 /// on the frame it first renders.
@@ -811,6 +839,34 @@ const SHADOW_DENSITY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 /// The footprint widths on offer. `(width + 1)²` is the loads per
 /// light per pixel, which is why the list is short and the wide end is
 /// named after its bill.
+/// The distance gate, in multiples of a light's own range.
+///
+/// The steps are what the arithmetic makes meaningful rather than round
+/// numbers: a lamp contributes nothing past its range by definition, so
+/// 1 is the aggressive end and 8 is "only cut what is plainly pointless".
+const SHADOW_LIGHT_REACH_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
+    kooch_ecs::reflect::FieldChoice {
+        label: "Off — distance never gates",
+        value: 0,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "1x range — aggressive",
+        value: 1,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "2x range",
+        value: 2,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "4x range",
+        value: 4,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "8x range — conservative",
+        value: 8,
+    },
+];
+
 const SHADOW_MIN_PIXELS_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
         label: "Off — every light casts",
@@ -973,6 +1029,7 @@ impl Default for RenderSettings {
             shadow_cascade_texels: shadows.cascade_texels,
             shadow_softness: shadows.page_softness,
             shadow_min_pixels: shadows.page_min_pixels,
+            shadow_light_reach: shadows.page_light_reach,
             sun_softness: shadows.sun_softness,
             shadow_first_cascade_distance: shadows.first_cascade_distance,
             contact_shadow_steps: contact.linear_steps,
@@ -1034,6 +1091,7 @@ impl RenderSettings {
             pool_pages: self.shadow_pool_pages,
             page_softness: self.shadow_softness,
             page_min_pixels: self.shadow_min_pixels,
+            page_light_reach: self.shadow_light_reach,
         }
     }
 

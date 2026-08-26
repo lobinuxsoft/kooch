@@ -42,6 +42,8 @@ struct PageSettings {
     softness: u32,
     /// The coverage gate (#944). See `ShadowSettings::page_min_pixels`.
     min_pixels: u32,
+    /// The distance gate. See `ShadowSettings::page_light_reach`.
+    reach: u32,
     /// How many times the set of loaded scenes has changed.
     ///
     /// 🔴 Carried so the raster can notice a world it did not draw.
@@ -171,6 +173,7 @@ fn page_settings(resources: &Resources) -> PageSettings {
         density: shadows.page_density,
         softness: shadows.page_softness,
         min_pixels: shadows.page_min_pixels,
+        reach: shadows.page_light_reach,
         // Absent in a headless test and in any host without a manager,
         // where zero is right: nothing ever changes, so nothing ever
         // needs voiding.
@@ -309,6 +312,7 @@ impl MeshletRenderStage {
             marker
         });
         marker.set_coverage(settings.min_pixels);
+        marker.set_reach(settings.reach);
         let sun = self.light_frame.as_ref().and_then(|(_, frame)| frame.sun());
         let slice = page_view_index(view_id);
         // 🔴 The CPU scopes above are not the instrument this track

@@ -770,7 +770,7 @@ fn mark_pixel(id: vec3<u32>) {
         // reader finds nothing and returns lit. Epic runs the same rule
         // as a pass, `PruneLightGridCS`, before anything marks; here it
         // is a comparison the loop already has every operand for.
-        if pages.density.y > 0.0 && coverage_pixels(light) < pages.density.y {
+        if light_gated(light) {
             culled = culled + 1u;
             continue;
         }
@@ -793,6 +793,48 @@ fn coverage_pixels(light: u32) -> f32 {
     let distance = max(length(record.position - pages.eye_and_base.xyz), 0.05);
     let focal = view.clip_from_view[1][1];
     return record.range * abs(focal) * view.viewport.y / (2.0 * distance);
+}
+
+// Whether the light is past the distance the settings let it cast from.
+//
+// # 🔴 Why a second gate, when the coverage one measures the same thing
+//
+// It does not measure the same thing, and the arithmetic says so. The
+// coverage gate is a projected SIZE, so the distance it corresponds to
+// scales with the light's range and with the viewport: at 808x439 a
+// range-50 light does not fall under eight pixels until 2.4 km. A
+// threshold high enough to cut that light at a hundred metres cuts a
+// small light standing next to the camera, because one number is being
+// asked two questions.
+//
+// This one asks the second question on its own terms, in multiples of
+// the light's OWN range, so it scales with the light rather than with
+// the screen. A lamp lights nothing meaningful past its range; casting
+// shadows from one many ranges away is paying for a shadow nobody can
+// tell from no shadow at all.
+//
+// ⚠️ Distance to the light's CENTRE, not to its sphere. Erring toward
+// casting, like the gate above.
+fn light_out_of_reach(light: u32) -> bool {
+    if pages.density.w <= 0.0 {
+        return false;
+    }
+    let record = lights[light];
+    let distance = length(record.position - pages.eye_and_base.xyz);
+    return distance > record.range * pages.density.w;
+}
+
+// The two gates as one question, so the three call sites cannot drift.
+//
+// 🔴 They were three copies of one comparison, and #944's comment at the
+// first of them already warns that a path which quietly skips a light
+// the others count "would make the two disagree for a reason nothing
+// states". A second gate multiplies that risk by two.
+fn light_gated(light: u32) -> bool {
+    if pages.density.y > 0.0 && coverage_pixels(light) < pages.density.y {
+        return true;
+    }
+    return light_out_of_reach(light);
 }
 
 // Paints the page each pixel chose, over the frame's final colour.
@@ -866,7 +908,7 @@ fn paint_view(@builtin(global_invocation_id) id: vec3<u32>) {
             continue;
         }
         // The same gate the marking applied (#944).
-        if pages.density.y > 0.0 && coverage_pixels(light) < pages.density.y {
+        if light_gated(light) {
             continue;
         }
         paint_page(
@@ -1364,7 +1406,7 @@ fn mark_froxels(@builtin(global_invocation_id) gid: vec3<u32>) {
         // "the gate is working" from "the light is missing". The
         // per-pixel path counts it; a second path that quietly did not
         // would make the two disagree for a reason nothing states.
-        if pages.density.y > 0.0 && coverage_pixels(light) < pages.density.y {
+        if light_gated(light) {
             culled = culled + 1u;
             continue;
         }
