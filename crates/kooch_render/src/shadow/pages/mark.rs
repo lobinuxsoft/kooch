@@ -495,6 +495,44 @@ impl PageMarker {
         if (slots, views) != self.capacity {
             self.marks = marks_buffer(device, self.config, self.clipmap, slots, views);
             self.rank = rank_buffer(device, views);
+            // 🔴 The TABLE goes with them, and it did not (#973).
+            //
+            // A view's span is a function of the light count — see
+            // `span` — and so is `view_base`. Change the number of
+            // lights and every entry in the table names a different
+            // page than the one whose slot it holds. The two buffers
+            // above were already rebuilt for that reason; the table and
+            // the free list were left standing.
+            //
+            // What that costs is a SLOW LEAK, which is why it took a
+            // day to see. The passes that release a slot — `age_view`,
+            // `preempt_view` — only ever walk the CURRENT span, so an
+            // entry that fell outside it is never visited again and its
+            // slot never returns. Nothing is double-freed, so `leaked`
+            // stays at zero and the panel reports a healthy pool that is
+            // quietly smaller every time the scene changes. Measured on
+            // a round trip out of a heavy scene and back: 529 slots
+            // accounted for, then 528, then 491, and the 38 missing are
+            // exactly the requests that failed to allocate and rendered
+            // unshadowed.
+            //
+            // It also explains the only workaround anyone found: raising
+            // `shadow_pool_pages` recreates `alloc` through
+            // `PagePool::resize`, which does not fix anything — it
+            // restarts the accounting.
+            //
+            // Whole-table because the re-addressing is whole-table: a
+            // partial eviction over the new span would leave exactly the
+            // entries the new span cannot reach, which are the ones that
+            // leak.
+            self.pool.clear(encoder);
+            self.life.rebuilt = true;
+            tracing::info!(
+                target: "kooch_render::shadow",
+                slots,
+                views,
+                "the page table was re-addressed; clearing it and the free list",
+            );
             self.capacity = (slots, views);
         }
         // The flat table is one entry per addressable page, so its size
