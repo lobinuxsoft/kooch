@@ -313,8 +313,16 @@ fn page_alloc() -> u32 {
     // less pushed it below zero and puts it back.
     let taken = atomicSub(&alloc[base + 1u], 1u);
     if taken != 0u && taken <= slice {
+        atomicAdd(&counters[20], 1u);
         return atomicLoad(&alloc[base + 2u + taken - 1u]);
     }
+    // 🔴 A pop that found nothing. Counted apart from the miss below,
+    // because the two mean opposite things: this one says the list was
+    // empty (or that a concurrent popper drove the count negative and
+    // this thread saw the underflow), while the miss says the bump is
+    // spent too. A frame with these and free slots in the ledger is a
+    // contention bug, not a full pool.
+    atomicAdd(&counters[23], 1u);
     atomicAdd(&alloc[base + 1u], 1u);
 
     let local = atomicAdd(&alloc[base], 1u);
@@ -323,6 +331,7 @@ fn page_alloc() -> u32 {
         atomicAdd(&counters[5], 1u);
         return PAGE_MISS;
     }
+    atomicAdd(&counters[21], 1u);
     return pages.sampling.w * slice + local;
 }
 
@@ -340,6 +349,7 @@ fn page_release(slot: u32) {
         return;
     }
     atomicStore(&alloc[base + 2u + at], slot);
+    atomicAdd(&counters[22], 1u);
 }
 
 // Finds `page` in the table, or puts it there, and stamps it with this

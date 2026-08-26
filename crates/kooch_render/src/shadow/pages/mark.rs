@@ -38,7 +38,7 @@ const GROUP: u32 = 8;
 /// 11 pages kept alive, 12 pages evicted, 13 unused (was tombstones
 /// swept). The rest spare, because a storage buffer is rounded up
 /// anyway.
-const COUNTERS: u64 = 20;
+const COUNTERS: u64 = 24;
 /// Words per view in the rank-state buffer: a 32-bucket demand
 /// histogram, the plan's three words, then the persistent bias and
 /// patience (#943), padded to 40 — then the OCCUPANCY BITMAP, one bit
@@ -1001,6 +1001,10 @@ impl Readback {
                         high: words[17],
                         free: words[18],
                         demand: words[19],
+                        popped: words[20],
+                        bumped: words[21],
+                        pushed: words[22],
+                        empty: words[23],
                         bias_local: words[4] & 0xff,
                         bias_sun: words[4] >> 8,
                         capacity,

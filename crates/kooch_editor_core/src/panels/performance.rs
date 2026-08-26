@@ -1053,6 +1053,30 @@ fn shadow_page_readout(
              Only checked once the bump allocator has handed out the whole slice.",
         );
     }
+    // 🔴 Every take and every give-back of this frame, so the shortfall
+    // above can be attributed to an operation rather than inferred. The
+    // reading that names the defect: `empty` above zero while the ledger
+    // still shows free slots — a pop that found nothing on a list that
+    // is not.
+    ui.label(
+        egui::RichText::new(format!(
+            "slots: {} popped + {} bumped taken · {} pushed back · {} pops found nothing",
+            counts.pool.popped, counts.pool.bumped, counts.pool.pushed, counts.pool.empty
+        ))
+        .small()
+        .color(if counts.pool.empty > 0 && counts.pool.free > 0 {
+            egui::Color32::from_rgb(220, 120, 90)
+        } else {
+            egui::Color32::GRAY
+        }),
+    )
+    .on_hover_text(
+        "A slot is taken either off the free list or from the bump, and given back only to \
+         the free list. Pops that found nothing WHILE the ledger reports free slots is the \
+         contention case: the count and the array are two separate atomics, so a popper \
+         that drives the count below zero makes another popper read the underflow and give \
+         up on a list that still holds slots.",
+    );
     ui.label(
         egui::RichText::new(format!(
             "ledger: {} demanded · {} free · bump at {} of {}",

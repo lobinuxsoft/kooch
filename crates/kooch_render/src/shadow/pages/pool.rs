@@ -475,6 +475,19 @@ pub struct PoolCounts {
     /// the valve for them, and `demand + free + preempted` against the
     /// capacity is what says whether that valve closed the arithmetic.
     pub demand: u32,
+    /// Slots taken off the free list this frame.
+    pub popped: u32,
+    /// Slots taken from the bump — never handed out before.
+    pub bumped: u32,
+    /// Slots given back to the free list this frame.
+    pub pushed: u32,
+    /// Pops that found the list empty.
+    ///
+    /// 🔴 With free slots still in the ledger, this is contention and
+    /// not a full pool: the count and the array are two atomics with
+    /// nothing ordering them, so a popper that drives the count below
+    /// zero makes another popper read an underflow.
+    pub empty: u32,
     /// Physical pages THIS VIEW owns, so the two numbers above are
     /// readable without knowing how the build was configured.
     ///
