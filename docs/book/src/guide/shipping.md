@@ -21,14 +21,23 @@ which one to build; no preset is "the" preset.
 
 ```text
 build/
-  My Game.x86_64      the executable, named for its target
-  assets.kpack        the scenes and everything they reference
-  project.kooch       which scene the game opens with
+  linux/
+    My Game.x86_64    the executable, named for its platform
+    assets.kpack      the scenes and everything they reference
+    project.kooch     which scene the game opens with
+  windows/
+    My Game.exe
+    assets.kpack
+    project.kooch
 ```
 
-The extension follows the target — `.exe` on Windows, the architecture
-on Linux, the same convention Unity and Godot use. A folder holding both
-platforms is then unambiguous.
+Each platform gets a folder of its own under the preset's output
+directory, so a preset that builds both does not have the second
+overwrite the first.
+
+The extension follows the platform — `.exe` on Windows, `.x86_64` on
+Linux, the same convention Unity and Godot use. A folder holding both is
+then unambiguous.
 
 ## Which scene it opens with
 
@@ -189,6 +198,10 @@ links against that instead:
 Leave it empty while iterating locally; set it before handing the build
 to anyone.
 
+It applies to the Linux half of a preset and no other: Windows has no
+glibc, and the floor is simply not carried there. One preset can set a
+floor and build both.
+
 ### What it needs
 
 Two tools, neither of which requires root — which matters on an immutable
@@ -214,11 +227,43 @@ The Build panel's Cancel stops cargo. Nothing is packaged, so a
 half-built executable never reaches the output folder — packaging only
 runs when cargo exits clean.
 
-## Cross-compiling
+## Building for more than one platform
 
-Set `target_triple` to build for another platform. The target has to be
-installed, and a preset naming one that is not fails immediately with the
-`rustup target add` line to run rather than after a long compile.
+A preset has a checkbox per platform — **Linux** and **Windows** — and
+ticking both builds both from one press, one after the other. They are
+never built in parallel: two cargos on one machine fight over the same
+`target/` lock and interleave their output into a log nobody can read.
 
-Windows needs a mingw toolchain; the C23 workaround `metis` requires is
-passed for you.
+Each platform's Rust target has to be installed. **Every** enabled
+platform is checked before the *first* one starts compiling, with the
+`rustup target add` line to run — so a missing Windows target is
+reported up front rather than after Linux has spent ten minutes
+building.
+
+Windows also needs the **mingw-w64** toolchain, and both halves of it:
+`metis` is C and `meshopt` is C++. Having only the C compiler is a real
+state to be in — Fedora ships `mingw64-gcc` and `mingw64-gcc-c++` as
+separate packages — and it fails inside a build script well after cargo
+has accepted the target.
+
+So both are checked up front, by the exact names `cc-rs` looks for, and
+the refusal says what to install:
+
+```sh
+rpm-ostree install mingw64-gcc mingw64-gcc-c++          # Fedora, Bazzite
+sudo apt install gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64   # Debian, Ubuntu
+sudo pacman -S mingw-w64-gcc                            # Arch
+```
+
+The C23 workaround `metis` requires is passed for you.
+
+A preset with no platform ticked builds nothing, and says so instead of
+guessing that you meant this machine.
+
+### Presets written before the checkboxes
+
+They carried a `target_triple` instead. It is read once, on load, and
+turned into the matching checkbox — an empty one meaning the machine the
+editor is running on. A triple naming a platform with no checkbox opens
+with none ticked and warns, rather than silently building something the
+preset never asked for.

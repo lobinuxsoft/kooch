@@ -92,12 +92,17 @@ fn binary(dir: &Path) -> PathBuf {
 }
 
 fn run(dir: &Path, preset: &BuildPreset) -> Result<Package, PackageError> {
+    run_on(dir, preset, Platform::Linux)
+}
+
+fn run_on(dir: &Path, preset: &BuildPreset, platform: Platform) -> Result<Package, PackageError> {
     let (proj, eng) = (dir.join("proj"), dir.join("engine"));
     project(&proj);
     engine(&eng);
     let exe = binary(dir);
     assemble(
         preset,
+        platform,
         &known(),
         &proj,
         Some(&eng),
@@ -115,7 +120,7 @@ fn a_package_holds_the_game_its_scenes_and_a_pack() {
     assert!(out.binary.is_file());
     assert_eq!(
         out.binary.file_name().unwrap().to_string_lossy(),
-        format!("demo.{}", std::env::consts::ARCH),
+        "demo.x86_64",
     );
     assert!(out.dir.join(PACK_FILE).is_file());
     assert_eq!(out.scenes, 1);
@@ -144,6 +149,7 @@ fn both_asset_trees_land_in_one_pack() {
 
     let out = assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         Some(&eng),
@@ -178,6 +184,7 @@ fn meta_sidecars_travel() {
 
     let out = assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         Some(&eng),
@@ -206,6 +213,7 @@ fn engine_demos_stay_behind() {
 
     let out = assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         Some(&eng),
@@ -240,6 +248,7 @@ fn a_project_asset_shadows_the_engines() {
 
     let out = assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         Some(&eng),
@@ -283,6 +292,7 @@ fn packaging_refuses_to_delete_a_project() {
         };
         let result = assemble(
             &preset,
+            Platform::Linux,
             &known(),
             &proj,
             None,
@@ -342,13 +352,49 @@ fn unpacked_assets_are_copied_as_files() {
 fn a_windows_preset_names_an_exe() {
     let dir = tmp("windows");
     let preset = BuildPreset {
-        target_triple: "x86_64-pc-windows-gnu".to_owned(),
+        windows: true,
         ..Default::default()
     };
 
-    let out = run(&dir, &preset).unwrap();
+    let out = run_on(&dir, &preset, Platform::Windows).unwrap();
 
     assert_eq!(out.binary.file_name().unwrap(), "demo.exe");
+    assert!(
+        out.dir.ends_with("windows"),
+        "Windows did not get its own folder: {}",
+        out.dir.display(),
+    );
+}
+
+/// 🔴 Two platforms, two folders — or the second build overwrites the
+/// first's pack and manifest and leaves both executables behind, which
+/// looks like a folder holding two games and holds one and a half.
+#[test]
+fn each_platform_gets_its_own_folder() {
+    let dir = tmp("both");
+    let preset = BuildPreset {
+        linux: true,
+        windows: true,
+        ..Default::default()
+    };
+
+    let linux = run_on(&dir, &preset, Platform::Linux).unwrap();
+    let windows = run_on(&dir, &preset, Platform::Windows).unwrap();
+
+    assert_ne!(linux.dir, windows.dir);
+    assert!(
+        linux.dir.ends_with("build/linux"),
+        "{}",
+        linux.dir.display()
+    );
+    assert!(
+        windows.dir.ends_with("build/windows"),
+        "{}",
+        windows.dir.display(),
+    );
+    // Both survived: packaging the second did not empty the first.
+    assert!(linux.binary.is_file(), "the Linux build was wiped");
+    assert!(windows.binary.is_file());
 }
 
 /// The build ran, the binary did not appear where it was expected: say
@@ -361,6 +407,7 @@ fn a_missing_binary_is_named() {
 
     let result = assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         None,
@@ -382,6 +429,7 @@ fn packaging_works_without_an_engine_root() {
 
     let out = assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         None,
@@ -430,6 +478,7 @@ fn build_presets_do_not_ship() {
 
     let out = assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         Some(&eng),
@@ -462,6 +511,7 @@ fn an_authoring_sidecar_does_not_ship_either() {
 
     let out = assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         None,
@@ -493,6 +543,7 @@ fn render_settings_still_ship() {
 
     let out = assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         None,
@@ -538,6 +589,7 @@ fn an_engine_asset_the_scene_uses_ships() {
 
     let out = assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         Some(&eng),
@@ -576,6 +628,7 @@ fn an_engine_asset_nothing_uses_stays_behind() {
 
     let out = assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         Some(&eng),
@@ -662,6 +715,7 @@ fn chained(dir: &Path, key: &PackKey) -> Package {
     let exe = binary(dir);
     assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         Some(&eng),
@@ -728,6 +782,7 @@ fn a_reference_cycle_terminates() {
     let exe = binary(&dir);
     let out = assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         Some(&eng),
@@ -794,6 +849,7 @@ fn a_shared_asset_is_collected_once() {
         let exe = binary(&dir);
         assemble(
             &BuildPreset::default(),
+            Platform::Linux,
             &known(),
             &proj,
             Some(&eng),
@@ -851,6 +907,7 @@ fn a_chain_inside_the_engine_resolves() {
     let exe = binary(&dir);
     let out = assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         Some(&eng),
@@ -967,6 +1024,7 @@ fn a_declared_asset_ships_without_being_named() {
     let exe = binary(&dir);
     let out = assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         Some(&eng),
@@ -1024,6 +1082,7 @@ fn a_declared_asset_brings_what_it_references() {
     let exe = binary(&dir);
     let out = assemble(
         &BuildPreset::default(),
+        Platform::Linux,
         &known(),
         &proj,
         Some(&eng),

@@ -31,10 +31,14 @@
 //! [`super::key`], outside the preset and outside git, which is the same
 //! line Godot draws between `export_presets.cfg` and its encryption key.
 
+use std::path::{Path, PathBuf};
+
 use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
 use kooch_ecs::Reflect;
 use kooch_ecs::reflect::FieldChoice;
 use serde::{Deserialize, Serialize};
+
+use super::platform::Platform;
 
 /// Extension a build preset carries.
 pub const BUILD_PRESET_EXTENSION: &str = "buildpreset";
@@ -89,27 +93,37 @@ pub static BUILD_MODE_CHOICES: &[FieldChoice] = &[
 #[derive(Debug, Clone, PartialEq, Eq, Reflect, Serialize, Deserialize)]
 #[reflect(category = "Build")]
 pub struct BuildPreset {
-    /// Rust target triple to compile for, e.g.
-    /// `x86_64-unknown-linux-gnu` or `x86_64-pc-windows-gnu`.
+    /// Build for Linux.
     ///
-    /// Empty builds for this machine. A triple that is not installed
-    /// fails before compiling, with what to run to install it — cargo's
-    /// own error arrives ten minutes in and names a linker.
+    /// Enabling both platforms builds both, one after the other, from
+    /// one press — each into its own folder.
     #[serde(default)]
-    pub target_triple: String,
+    #[reflect(group = "Platforms")]
+    pub linux: bool,
 
-    /// Folder the build is written to, relative to the project.
+    /// Build for Windows.
     ///
-    /// Everything the game needs lands here together: the executable,
-    /// `scenes/`, and the asset pack.
+    /// ⚠️ Cross-compiling to Windows needs the `x86_64-pc-windows-gnu`
+    /// target and mingw-w64. Both are checked before cargo starts, and
+    /// the check says what to install.
+    #[serde(default)]
+    #[reflect(group = "Platforms")]
+    pub windows: bool,
+
+    /// Folder the builds are written to, relative to the project.
+    ///
+    /// Each platform gets a subfolder of its own — `build/linux`,
+    /// `build/windows` — so building both does not have the second
+    /// overwrite the first. Everything one game needs lands in its own
+    /// folder together: the executable, `scenes/`, and the asset pack.
     #[serde(default = "default_output_dir")]
     pub output_dir: String,
 
     /// Name of the produced executable, without an extension.
     ///
     /// Empty uses the crate's own name. The extension is added for you
-    /// and follows the target: `.exe` on Windows, the architecture on
-    /// Linux (`.x86_64`, `.aarch64`) the way Unity and Godot name theirs.
+    /// and follows the platform: `.exe` on Windows, `.x86_64` on Linux
+    /// the way Unity and Godot name theirs.
     #[serde(default)]
     pub executable_name: String,
 
@@ -172,7 +186,8 @@ pub struct BuildPreset {
     ///
     /// ⚠️ Needs `zig` and `cargo-zigbuild` — both install without root,
     /// and the build says so before compiling rather than after. Ignored
-    /// for targets that are not `*-linux-gnu`.
+    /// by every platform that has no glibc, so a preset building both
+    /// Linux and Windows carries the floor into the Linux half only.
     #[serde(default)]
     pub min_glibc: String,
 }
@@ -190,7 +205,10 @@ impl Default for BuildPreset {
     /// thing someone means by "make a build" before they have opinions.
     fn default() -> Self {
         Self {
-            target_triple: String::new(),
+            // The machine in front of the author, which is what "make a
+            // build" means before anyone has opinions about platforms.
+            linux: matches!(Platform::host(), Some(Platform::Linux)),
+            windows: matches!(Platform::host(), Some(Platform::Windows)),
             output_dir: default_output_dir(),
             executable_name: String::new(),
             // The one field whose default is a shipping decision rather
@@ -272,47 +290,58 @@ impl BuildPreset {
     /// ⚠️ Never `.sh`. That is a text script the shell interprets; this
     /// is a compiled binary, and the extension would make some file
     /// managers offer to open it in an editor.
-    pub fn binary_name(&self, crate_name: &str) -> String {
+    pub fn binary_name(&self, crate_name: &str, platform: Platform) -> String {
         let stem = match self.executable_name.trim() {
             "" => crate_name,
             name => name,
         };
-        let triple = self.target_triple.trim();
-        if triple.contains("windows") {
-            return format!("{stem}.exe");
-        }
-        // Read off the triple rather than assumed: a build for
-        // `aarch64-unknown-linux-gnu` is not an `x86_64` one, and a name
-        // that says otherwise is worse than no name at all. An empty
-        // triple means this machine, so its own architecture answers.
-        let arch = match triple.split('-').next().unwrap_or_default() {
-            "" => std::env::consts::ARCH,
-            arch => arch,
-        };
-        format!("{stem}.{arch}")
+        format!("{stem}{}", platform.extension())
     }
 
-    /// Whether this preset builds for the machine running the editor.
-    pub fn is_host(&self) -> bool {
-        self.target_triple.trim().is_empty()
+    /// The platforms this preset builds, in the order they are built.
+    ///
+    /// Empty is a preset that builds nothing, which is a state the panel
+    /// reports rather than one the build silently treats as "the host" —
+    /// guessing there would make an unticked box behave like a ticked
+    /// one.
+    pub fn targets(&self) -> Vec<Platform> {
+        Platform::ALL
+            .into_iter()
+            .filter(|platform| match platform {
+                Platform::Linux => self.linux,
+                Platform::Windows => self.windows,
+            })
+            .collect()
+    }
+
+    /// Where `platform`'s build is written, relative to the project.
+    pub fn platform_dir(&self, platform: Platform) -> PathBuf {
+        Path::new(&self.output_dir).join(platform.folder())
     }
 
     /// The glibc version this build must not go above, if one was asked
-    /// for and the target is one it means anything for.
+    /// for and `platform` is one it means anything for.
     ///
-    /// An empty triple is this machine, and this machine runs Linux
-    /// whenever the editor was compiled for it — so the floor applies
-    /// there too, which is the common case: someone building for their
-    /// own desktop and copying the result to a handheld.
-    pub fn glibc_floor(&self) -> Option<&str> {
+    /// Per platform rather than per preset: one preset can build both,
+    /// and `cargo zigbuild` rejects `x86_64-pc-windows-gnu.2.28` — so a
+    /// floor that followed the build onto Windows would fail it on an
+    /// argument nobody typed.
+    pub fn glibc_floor(&self, platform: Platform) -> Option<&str> {
         let floor = self.min_glibc.trim();
-        let triple = self.target_triple.trim();
-        let gnu_linux =
-            triple.contains("linux-gnu") || (triple.is_empty() && cfg!(target_os = "linux"));
-        match !floor.is_empty() && gnu_linux {
+        match !floor.is_empty() && platform.takes_glibc_floor() {
             true => Some(floor),
             false => None,
         }
+    }
+
+    /// Whether any platform this preset builds needs `cargo zigbuild`.
+    ///
+    /// The toolchain check runs once for the whole preset, before the
+    /// first compile — so it asks about the set, not about one member.
+    pub fn needs_zig(&self) -> bool {
+        self.targets()
+            .into_iter()
+            .any(|platform| self.glibc_floor(platform).is_some())
     }
 }
 
@@ -333,6 +362,56 @@ struct LegacyMode {
     release: Option<bool>,
     #[serde(default, deserialize_with = "present_bool")]
     profiling: Option<bool>,
+}
+
+/// The `target_triple` the platform toggles replaced.
+///
+/// 🔴 **A missing field is not a missing decision.** The toggles default
+/// to `false`, so without this a preset written last week would open
+/// with no platform ticked and build nothing — and the first save would
+/// write that emptiness back over the only record of what it was for.
+///
+/// An absent field and an empty one mean different things and are kept
+/// apart: absent is a file that already had toggles, empty is one that
+/// said "this machine".
+#[derive(Deserialize)]
+struct LegacyTarget {
+    #[serde(default, deserialize_with = "present_string")]
+    target_triple: Option<String>,
+}
+
+impl LegacyTarget {
+    /// The platform a pre-toggle preset meant, or `None` when the file
+    /// was written by an editor that already had the toggles.
+    fn platform(&self) -> Option<Platform> {
+        let triple = self.target_triple.as_deref()?;
+        match Platform::from_triple(triple) {
+            Some(platform) => Some(platform),
+            // An empty triple was "this machine", which is the host —
+            // not an unreadable triple. A triple that names neither
+            // platform is one this editor cannot build for, and taking
+            // the host instead would build something the file never
+            // asked for.
+            None if triple.trim().is_empty() => Platform::host(),
+            None => {
+                tracing::warn!(
+                    triple,
+                    "build preset: this target has no platform toggle, so the preset \
+                     opens with none ticked — pick one before building",
+                );
+                None
+            }
+        }
+    }
+}
+
+/// Reads a plain string into `Some`, leaving `None` to mean the field
+/// was absent — the same distinction [`present_bool`] draws.
+fn present_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    String::deserialize(deserializer).map(Some)
 }
 
 /// Reads a plain `true` / `false` into `Some`, leaving `None` to mean
@@ -396,6 +475,14 @@ impl AssetLoader<BuildPreset> for BuildPresetLoader {
             && let Some(mode) = legacy.mode()
         {
             preset.mode = mode;
+        }
+        if let Ok(legacy) = ron::from_str::<LegacyTarget>(text)
+            && let Some(platform) = legacy.platform()
+        {
+            match platform {
+                Platform::Linux => preset.linux = true,
+                Platform::Windows => preset.windows = true,
+            }
         }
         Ok(preset)
     }

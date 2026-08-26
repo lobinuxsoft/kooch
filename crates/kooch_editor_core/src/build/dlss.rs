@@ -245,7 +245,11 @@ fn vulkan_sdk() -> PathBuf {
 ///
 /// Returns what it wrote, so the build log can say it — a file that
 /// appears without being mentioned is a file the author deletes.
-pub fn ship(preset: &BuildPreset, dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+pub fn ship(
+    preset: &BuildPreset,
+    platform: super::platform::Platform,
+    dir: &Path,
+) -> std::io::Result<Vec<PathBuf>> {
     if !wanted(preset) {
         return Ok(Vec::new());
     }
@@ -253,7 +257,7 @@ pub fn ship(preset: &BuildPreset, dir: &Path) -> std::io::Result<Vec<PathBuf>> {
         return Ok(Vec::new());
     };
     let mut written = Vec::new();
-    let runtime = crate::dlss_sdk::runtime_for(&sdk, &preset.target_triple);
+    let runtime = crate::dlss_sdk::runtime_for(&sdk, platform);
     if runtime.is_file() {
         let dest = dir.join(file_name(&runtime));
         std::fs::copy(&runtime, &dest)?;

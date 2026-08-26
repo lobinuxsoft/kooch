@@ -82,9 +82,20 @@ fn draw_presets(
         // difference between a build that runs on the handheld and one
         // that stops at a missing symbol version — and nothing else in
         // the row hints at it.
-        let floor = match preset.glibc_floor() {
-            Some(floor) => format!(", glibc {floor}+"),
-            None => String::new(),
+        let floor = match preset.min_glibc.trim() {
+            "" => String::new(),
+            floor => format!(", glibc {floor}+"),
+        };
+        // The platforms are the row's subject: a preset that builds both
+        // takes twice as long and produces two folders, and that should
+        // be readable without opening it.
+        let platforms = match preset.targets().as_slice() {
+            [] => "no platform".to_owned(),
+            targets => targets
+                .iter()
+                .map(|platform| platform.label())
+                .collect::<Vec<_>>()
+                .join(" + "),
         };
         // The mode leads the row: it is the difference between a build
         // you hand out and one that opens a listening socket, and it is
@@ -97,10 +108,7 @@ fn draw_presets(
                 false => icons::PACKAGE,
             },
             preset.mode_label(),
-            match preset.is_host() {
-                true => "this machine",
-                false => preset.target_triple.trim(),
-            },
+            platforms,
         );
         if ui.selectable_label(chosen, label).clicked() {
             *selected = Some(*guid);
@@ -145,7 +153,7 @@ fn draw_presets(
 fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
     match &panel.status {
         None => ui.weak("Idle."),
-        Some(BuildStatus::Compiling { preset, what }) => {
+        Some(BuildStatus::Compiling { preset, what, step }) => {
             // The name is looked up rather than stored: a preset can be
             // renamed while it builds, and the row it came from is the
             // one a reader is looking at. What it was *told to build*
@@ -163,7 +171,14 @@ fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
                 // minutes reasonably concludes it hung — and because
                 // "which preset is this" is not answerable from a list
                 // whose selection can be changed while it runs.
-                ui.label(format!("Compiling {name} — {what}."));
+                // The step only appears when there is more than one:
+                // "(1 of 1)" on every ordinary build is noise that makes
+                // the useful case harder to notice.
+                let of = match step {
+                    (_, 1) => String::new(),
+                    (at, total) => format!(" [{at} of {total}]"),
+                };
+                ui.label(format!("Compiling {name} — {what}{of}."));
             })
             .response
         }
@@ -174,42 +189,57 @@ fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
             })
             .response
         }
-        Some(BuildStatus::Done(package)) => {
-            let summary = format!(
-                "{} Built: {} — {} assets, {} scenes",
+        Some(BuildStatus::Done(packages)) => {
+            // One line per platform, and its warnings under it. A single
+            // summary covering both would have to add the asset counts
+            // together, and the number that matters is whether each
+            // folder got everything — plus the DLSS and shadowing
+            // warnings belong to the folder they happened in.
+            let mut response = ui.strong(format!(
+                "{} Built {} {}.",
                 icons::PACKAGE,
-                package.dir.display(),
-                package.assets,
-                package.scenes,
-            );
-            let response = ui.strong(summary);
-            if !package.dlss.is_empty() {
-                // 🔴 Said out loud, because one of these files is a
-                // legal obligation and the other is what makes DLSS
-                // work at all. A build folder gains two files nobody
-                // recognises, and an unexplained file gets deleted.
-                ui.weak(format!(
-                    "{} NVIDIA files travelled with this build — the DLSS runtime and \
-                     its notices. Both must stay beside the executable.",
-                    package.dlss.len(),
-                ))
-                .on_hover_text(
-                    package
-                        .dlss
-                        .iter()
-                        .map(|path| path.display().to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                );
-            }
-            if !package.shadowed.is_empty() {
-                // Worth surfacing: the engine's version of those files is
-                // simply not in the build, and nothing else says so.
-                ui.weak(format!(
-                    "{} of your assets replaced an engine asset of the same name.",
-                    package.shadowed.len(),
-                ))
-                .on_hover_text(package.shadowed.join("\n"));
+                packages.len(),
+                match packages.len() {
+                    1 => "platform",
+                    _ => "platforms",
+                },
+            ));
+            for package in packages {
+                response = ui.label(format!(
+                    "{} — {} assets, {} scenes",
+                    package.dir.display(),
+                    package.assets,
+                    package.scenes,
+                ));
+                if !package.dlss.is_empty() {
+                    // 🔴 Said out loud, because one of these files is a
+                    // legal obligation and the other is what makes DLSS
+                    // work at all. A build folder gains two files nobody
+                    // recognises, and an unexplained file gets deleted.
+                    ui.weak(format!(
+                        "    {} NVIDIA files travelled with this build — the DLSS runtime \
+                         and its notices. Both must stay beside the executable.",
+                        package.dlss.len(),
+                    ))
+                    .on_hover_text(
+                        package
+                            .dlss
+                            .iter()
+                            .map(|path| path.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    );
+                }
+                if !package.shadowed.is_empty() {
+                    // Worth surfacing: the engine's version of those
+                    // files is simply not in the build, and nothing else
+                    // says so.
+                    ui.weak(format!(
+                        "    {} of your assets replaced an engine asset of the same name.",
+                        package.shadowed.len(),
+                    ))
+                    .on_hover_text(package.shadowed.join("\n"));
+                }
             }
             response
         }

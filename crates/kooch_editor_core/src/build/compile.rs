@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use kooch_core::Guid;
 use kooch_pack::PackKey;
 
+use super::platform::Platform;
 use super::{BuildPreset, Package, PackageError};
 
 /// Where a build has got to.
@@ -35,13 +36,17 @@ pub enum BuildStatus {
     Compiling {
         /// Which preset started it, so the panel can name it.
         preset: Guid,
-        /// What cargo was actually asked for: mode, target, floor.
+        /// What cargo was actually asked for: mode, platform, floor.
         what: String,
+        /// Which platform of how many, for a preset building several.
+        /// `(1, 1)` for the ordinary single-platform build.
+        step: (usize, usize),
     },
     /// cargo finished; the folder is being laid out.
     Packaging,
-    /// Everything worked.
-    Done(Package),
+    /// Everything worked — one package per platform built, in the order
+    /// they were built.
+    Done(Vec<Package>),
     Failed(String),
     /// Stopped on purpose.
     ///
@@ -64,6 +69,20 @@ pub struct BuildJob {
     /// captured at start because the job outlives the frame that had the
     /// asset server.
     known: Vec<String>,
+    /// Which preset this is, so a later platform can be labelled the way
+    /// the first one was.
+    preset_guid: Guid,
+    /// The platform cargo is compiling now.
+    current: Platform,
+    /// Platforms not started yet, in order.
+    ///
+    /// 🔴 One at a time, never in parallel. Two cargos on one machine
+    /// fight over the same `target/` lock and interleave their output
+    /// into one log nobody can read — and the user has one CPU either
+    /// way, so the wall clock would not improve.
+    queued: Vec<Platform>,
+    /// What each finished platform produced.
+    done: Vec<Package>,
 }
 
 impl BuildJob {
@@ -77,17 +96,29 @@ impl BuildJob {
         key: PackKey,
         known: Vec<String>,
     ) -> Result<Self, String> {
+        let mut platforms = preset.targets();
+        if platforms.is_empty() {
+            return Err(
+                "this preset builds for no platform — tick Linux or Windows on it".to_owned(),
+            );
+        }
+        // 🔴 Every platform is checked before the *first* one compiles.
+        // Checking each as it starts would let Linux build for ten
+        // minutes and only then report that the Windows target is not
+        // installed — the delayed-failure this whole section exists to
+        // avoid, just moved.
         if let Some(problem) = missing_toolchain(preset) {
             return Err(problem);
         }
-        // #536 — checked here for the reason the triple is: without it
+        // #536 — checked here for the reason the target is: without it
         // the failure is `dlss_wgpu`'s build script panicking about an
         // environment variable, minutes into a compile.
         if let Some(problem) = super::dlss::missing_sdk(preset) {
             return Err(problem);
         }
 
-        let mut command = cargo_command(preset, project_root, crate_name);
+        let current = platforms.remove(0);
+        let mut command = cargo_command(preset, current, project_root, crate_name);
         if preset.pack_assets {
             // The shares the game reassembles its key from. Through the
             // environment, so nothing is written into the project — see
@@ -111,7 +142,8 @@ impl BuildJob {
             output,
             status: BuildStatus::Compiling {
                 preset: preset_guid,
-                what: describe(preset),
+                what: describe(preset, current),
+                step: (1, platforms.len() + 1),
             },
             preset: preset.clone(),
             project_root: project_root.to_path_buf(),
@@ -119,7 +151,48 @@ impl BuildJob {
             crate_name: crate_name.to_owned(),
             key,
             known,
+            preset_guid,
+            current,
+            queued: platforms,
+            done: Vec::new(),
         })
+    }
+
+    /// Starts cargo on the next queued platform.
+    ///
+    /// The log is kept rather than cleared: a build of two platforms is
+    /// one thing the user pressed once, and the first one's warnings are
+    /// still worth reading when the second is running.
+    fn start_next(&mut self) -> Result<(), String> {
+        let Some(next) = (!self.queued.is_empty()).then(|| self.queued.remove(0)) else {
+            return Ok(());
+        };
+        self.current = next;
+        let mut command = cargo_command(&self.preset, next, &self.project_root, &self.crate_name);
+        if self.preset.pack_assets {
+            command.env(
+                kooch_core::asset_loader::SHARES_ENV,
+                kooch_core::asset_loader::shares_for_build(&self.key),
+            );
+        }
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = command
+            .spawn()
+            .map_err(|e| format!("could not start cargo for {}: {e}", next.label()))?;
+        if let Ok(mut log) = self.output.lock() {
+            log.push(String::new());
+            log.push(format!("── {} ──", next.label()));
+        }
+        capture(child.stdout.take(), &self.output);
+        capture(child.stderr.take(), &self.output);
+        self.child = Some(child);
+        let built = self.done.len();
+        self.status = BuildStatus::Compiling {
+            preset: self.preset_guid,
+            what: describe(&self.preset, next),
+            step: (built + 1, built + 1 + self.queued.len()),
+        };
+        Ok(())
     }
 
     /// Where the build is. Call once a frame.
@@ -150,7 +223,10 @@ impl BuildJob {
                     // cargo's own words are in the log; this is the line
                     // that says which step failed — plus the cause, when
                     // it is one this editor already knows about.
-                    let mut why = format!("cargo exited with {exit} — see the log");
+                    let mut why = format!(
+                        "{}: cargo exited with {exit} — see the log",
+                        self.current.label(),
+                    );
                     if let Some(hint) = unmigrated_main(&self.project_root) {
                         why.push_str(&hint);
                     }
@@ -168,9 +244,11 @@ impl BuildJob {
     }
 
     fn package(&mut self) {
-        let binary = built_binary(&self.preset, &self.project_root, &self.crate_name);
+        let platform = self.current;
+        let binary = built_binary(&self.preset, platform, &self.project_root, &self.crate_name);
         let result = super::assemble(
             &self.preset,
+            platform,
             &self.known,
             &self.project_root,
             self.engine_root.as_deref(),
@@ -178,23 +256,41 @@ impl BuildJob {
             &self.crate_name,
             &self.key,
         );
-        self.status = match result {
+        match result {
             Ok(package) => {
                 for name in &package.shadowed {
                     tracing::warn!(
                         asset = %name,
+                        platform = platform.label(),
                         "a project asset replaced the engine's of the same name",
                     );
                 }
-                BuildStatus::Done(package)
+                self.done.push(package);
             }
-            Err(PackageError::NoBinary(path)) => BuildStatus::Failed(format!(
-                "cargo succeeded but produced no executable at {} — check the \
-                 preset's target triple",
-                path.display(),
-            )),
-            Err(e) => BuildStatus::Failed(e.to_string()),
-        };
+            Err(PackageError::NoBinary(path)) => {
+                // 🔴 Stop the whole build, rather than carrying on to the
+                // next platform. A build that reports Done with one of
+                // its platforms quietly missing is worse than one that
+                // failed: the folder looks finished.
+                self.status = BuildStatus::Failed(format!(
+                    "cargo succeeded but produced no executable for {} at {}",
+                    platform.label(),
+                    path.display(),
+                ));
+                return;
+            }
+            Err(e) => {
+                self.status = BuildStatus::Failed(format!("{}: {e}", platform.label()));
+                return;
+            }
+        }
+        if !self.queued.is_empty() {
+            if let Err(problem) = self.start_next() {
+                self.status = BuildStatus::Failed(problem);
+            }
+            return;
+        }
+        self.status = BuildStatus::Done(std::mem::take(&mut self.done));
     }
 
     /// Stops the build.
@@ -233,8 +329,13 @@ impl Drop for BuildJob {
 /// authoring binary is gated behind a feature a shipped build does not
 /// enable (#558), and asking for it by accident is the one way to put the
 /// editor back into a release.
-pub fn cargo_command(preset: &BuildPreset, project_root: &Path, crate_name: &str) -> Command {
-    let floor = preset.glibc_floor();
+pub fn cargo_command(
+    preset: &BuildPreset,
+    platform: Platform,
+    project_root: &Path,
+    crate_name: &str,
+) -> Command {
+    let floor = preset.glibc_floor(platform);
     let mut command = Command::new("cargo");
     // `zigbuild` is a cargo subcommand, so everything after it is the
     // ordinary `build` invocation — only the linker changes.
@@ -249,14 +350,23 @@ pub fn cargo_command(preset: &BuildPreset, project_root: &Path, crate_name: &str
         .arg(crate_name);
     command.arg("--release");
     full_optimisation(&mut command);
-    if let Some(triple) = build_triple(preset) {
+    // 🔴 Always explicit, even for the platform this machine runs.
+    //
+    // A `--target` is what puts the output in `target/<triple>/`, and a
+    // build that sometimes passes one and sometimes does not has to
+    // guess afterwards where cargo left the binary. It also has to be
+    // there for a glibc floor — zigbuild has nothing to attach the
+    // version to without it, and silently ignores the floor, producing
+    // a build that looks fine and will not start on the handheld.
+    //
+    // The cost is a cargo cache separate from a plain `cargo build`, so
+    // the first build after this recompiles. Once.
+    command.arg("--target").arg(match floor {
         // `x86_64-unknown-linux-gnu.2.28` — zigbuild's own spelling for
         // "this target, against that glibc".
-        command.arg("--target").arg(match floor {
-            Some(floor) => format!("{triple}.{floor}"),
-            None => triple,
-        });
-    }
+        Some(floor) => format!("{}.{floor}", platform.triple()),
+        None => platform.triple().to_owned(),
+    });
     if floor.is_some() {
         allow_shlib_undefined(&mut command);
     }
@@ -270,40 +380,11 @@ pub fn cargo_command(preset: &BuildPreset, project_root: &Path, crate_name: &str
     // GKlib declares an enum member with that name — so metis-sys fails
     // to build for Windows without this. Measured, not guessed: the
     // engine cross-compiles with it and does not without.
-    if preset.target_triple.contains("windows-gnu") {
+    if platform == Platform::Windows {
         command.env("CFLAGS_x86_64_pc_windows_gnu", "-std=gnu17");
     }
     super::dlss::build_env(&mut command, preset);
     command
-}
-
-/// The triple cargo is told to build for, or `None` for "this machine,
-/// however cargo spells it".
-///
-/// 🔴 A glibc floor forces one even when the preset asked for the host.
-/// `cargo zigbuild` has nothing to attach the version to without an
-/// explicit `--target`, and without it the floor is silently ignored —
-/// a build that looks like it worked and still will not start on the
-/// handheld.
-fn build_triple(preset: &BuildPreset) -> Option<String> {
-    let triple = preset.target_triple.trim();
-    if !triple.is_empty() {
-        return Some(triple.to_owned());
-    }
-    preset.glibc_floor().and_then(|_| host_triple())
-}
-
-/// What `rustc` calls this machine.
-///
-/// Asked rather than assembled from `std::env::consts`: those give
-/// `x86_64` and `linux` with no vendor and no ABI, and the triple has to
-/// match a directory cargo will create exactly.
-fn host_triple() -> Option<String> {
-    let out = Command::new("rustc").arg("-vV").output().ok()?;
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .find_map(|line| line.strip_prefix("host: "))
-        .map(|t| t.trim().to_owned())
 }
 
 /// Lets the link go through with symbols the *host's* shared libraries
@@ -332,13 +413,10 @@ fn allow_shlib_undefined(command: &mut Command) {
 /// The mode leads it: it is the difference between a build you hand out
 /// and one that opens a listening socket, and a compile long enough to
 /// walk away from should say which one it is making.
-fn describe(preset: &BuildPreset) -> String {
+fn describe(preset: &BuildPreset, platform: Platform) -> String {
     let mut parts = vec![preset.mode_label().to_owned()];
-    parts.push(match preset.is_host() {
-        true => "this machine".to_owned(),
-        false => preset.target_triple.trim().to_owned(),
-    });
-    if let Some(floor) = preset.glibc_floor() {
+    parts.push(platform.label().to_owned());
+    if let Some(floor) = preset.glibc_floor(platform) {
         parts.push(format!("glibc {floor}+"));
     }
     if !preset.pack_assets {
@@ -380,19 +458,25 @@ fn full_optimisation(command: &mut Command) {
 }
 
 /// Where cargo leaves the executable for this preset.
-pub fn built_binary(preset: &BuildPreset, project_root: &Path, crate_name: &str) -> PathBuf {
-    let mut path = project_root.join("target");
-    // 🔴 `build_triple`, not the preset's field: a host build with a
-    // glibc floor is still given a `--target`, and cargo puts anything
-    // with one in `target/<triple>/` rather than `target/`.
-    if let Some(triple) = build_triple(preset) {
-        path = path.join(triple);
-    }
+pub fn built_binary(
+    preset: &BuildPreset,
+    platform: Platform,
+    project_root: &Path,
+    crate_name: &str,
+) -> PathBuf {
+    // 🔴 Under the triple, always: `cargo_command` always passes a
+    // `--target`, and cargo puts anything with one in `target/<triple>/`
+    // rather than `target/`.
+    //
+    // ⚠️ Without the floor. `--target x86_64-unknown-linux-gnu.2.28` is
+    // zigbuild's spelling for the *argument*; the directory cargo
+    // creates is still the plain triple.
+    let path = project_root.join("target").join(platform.triple());
     // The name cargo writes, which is the crate's — the preset's own
     // name is what the *copy* is called.
-    let produced = match preset.target_triple.contains("windows") {
-        true => format!("{crate_name}.exe"),
-        false => crate_name.to_owned(),
+    let produced = match platform {
+        Platform::Windows => format!("{crate_name}.exe"),
+        Platform::Linux => crate_name.to_owned(),
     };
     path.join(preset.profile_dir()).join(produced)
 }
@@ -428,28 +512,90 @@ fn unmigrated_main(project_root: &Path) -> Option<String> {
 /// — that surfaces from cargo, and guessing at it would mean refusing
 /// builds that would have worked.
 fn missing_toolchain(preset: &BuildPreset) -> Option<String> {
-    if preset.glibc_floor().is_some()
+    if preset.needs_zig()
         && let Some(problem) = missing_zig()
     {
         return Some(problem);
     }
-    if preset.is_host() {
+    // The platform this machine runs needs no target installed — it is
+    // the one rustup came with.
+    let host = Platform::host();
+    let cross: Vec<Platform> = preset
+        .targets()
+        .into_iter()
+        .filter(|platform| Some(*platform) != host)
+        .collect();
+    if cross.is_empty() {
         return None;
     }
-    let triple = preset.target_triple.trim();
     let installed = Command::new("rustup")
         .args(["target", "list", "--installed"])
         .output()
         .ok()?;
     let installed = String::from_utf8_lossy(&installed.stdout);
-    if installed.lines().any(|line| line.trim() == triple) {
-        return None;
-    }
     // 🔴 The whole reason this check exists: without it cargo runs for
     // ten minutes and fails with a linker error that never says the word
     // "target".
+    let missing_target = cross
+        .iter()
+        .copied()
+        .map(Platform::triple)
+        .find(|triple| !installed.lines().any(|line| line.trim() == *triple))
+        .map(|triple| {
+            format!("the target {triple} is not installed — run:\n  rustup target add {triple}")
+        });
+    if missing_target.is_some() {
+        return missing_target;
+    }
+    if cross.contains(&Platform::Windows) {
+        return missing_mingw();
+    }
+    None
+}
+
+/// The mingw tools a Windows cross-build needs and this machine has not
+/// got.
+///
+/// # 🔴 Why `g++` and not just `gcc`
+///
+/// Measured, not guessed: this machine had `mingw64-gcc` and no
+/// `mingw64-gcc-c++`, and the build died in `meshopt`'s build script —
+/// meshoptimizer is C++ — after cargo had already accepted the target
+/// and started work. A check that asked "is there a mingw gcc?" would
+/// have answered yes and let it through.
+///
+/// Both are checked, because both are used: `metis-sys` is C and
+/// `meshopt` is C++, and a machine can have either half.
+///
+/// # Why this is checkable at all when a C toolchain generally is not
+///
+/// The names are not a guess. `cc-rs` derives them from the target
+/// triple and looks for `x86_64-w64-mingw32-g++` verbatim, which is the
+/// same string this looks for. Nothing is being inferred about how
+/// somebody installed their compiler.
+fn missing_mingw() -> Option<String> {
+    let missing: Vec<&str> = ["x86_64-w64-mingw32-gcc", "x86_64-w64-mingw32-g++"]
+        .into_iter()
+        .filter(|tool| !on_path(tool, "--version"))
+        .collect();
+    if missing.is_empty() {
+        return None;
+    }
+    // The package name differs per distribution and getting it wrong
+    // sends someone to install something that does not exist, so all
+    // three common spellings are offered rather than one guessed from
+    // the host.
     Some(format!(
-        "the target {triple} is not installed — run:\n  rustup target add {triple}",
+        "a Windows build needs the mingw-w64 toolchain, and {} {} not on PATH.\n\
+         Install it with one of:\n\
+         \x20 rpm-ostree install mingw64-gcc mingw64-gcc-c++   (Fedora, Bazzite)\n\
+         \x20 sudo apt install gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64   (Debian, Ubuntu)\n\
+         \x20 sudo pacman -S mingw-w64-gcc   (Arch)",
+        missing.join(" and "),
+        match missing.len() {
+            1 => "is",
+            _ => "are",
+        },
     ))
 }
 
