@@ -811,9 +811,15 @@ impl PageRasterizer {
         // has nothing to void, and bumping here would throw away the
         // pages the very first scene just filled.
         if self.scene_epoch.is_some() {
-            tracing::debug!(
+            // 🔴 info, not debug. This fires once per scene load — rare,
+            // and the single line that answers "did the cache get
+            // voided?" when shadows look wrong after a scene change.
+            // Hidden behind debug it cost a diagnosis on the day it
+            // shipped.
+            tracing::info!(
                 target: "kooch_render::shadow",
                 epoch,
+                generation = self.scene_gen.wrapping_add(1),
                 "the scene set changed; voiding the page cache",
             );
             self.scene_gen = self.scene_gen.wrapping_add(1);
