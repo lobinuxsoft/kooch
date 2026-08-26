@@ -61,6 +61,13 @@ pub struct Package {
     /// folder without being mentioned is a file its author deletes, and
     /// the notices are the one that must not be deleted.
     pub dlss: Vec<PathBuf>,
+    /// The mingw C++ runtime a cross-compiled Windows build carries
+    /// (#962), empty for every other build.
+    ///
+    /// Reported for the same reason `dlss` is: three DLLs appear in the
+    /// folder, and an unexplained file beside a game is a file somebody
+    /// deletes — these are the ones it cannot start without.
+    pub runtime: Vec<PathBuf>,
     /// Project assets that shadowed an engine asset of the same name.
     ///
     /// Not an error — the project is the author and wins — but worth
@@ -72,6 +79,12 @@ pub struct Package {
 #[derive(Debug)]
 pub enum PackageError {
     Io(std::io::Error),
+    /// A runtime file the build cannot start without could not be found
+    /// or copied.
+    ///
+    /// Separate from `Io` because the fix is not a filesystem one: it
+    /// names a missing toolchain piece and what to install.
+    Runtime(String),
     /// The built executable was not where it was said to be.
     NoBinary(PathBuf),
     /// The output folder is somewhere a build must not write.
@@ -90,6 +103,7 @@ impl std::fmt::Display for PackageError {
                  delete it. Point the preset's output at a folder of its own.",
                 p.display(),
             ),
+            Self::Runtime(why) => write!(f, "{why}"),
             Self::Pack(e) => write!(f, "{e}"),
         }
     }
@@ -202,6 +216,12 @@ pub fn assemble(
     // asked for DLSS. Nothing for every other build.
     let dlss = super::dlss::ship(preset, platform, &dir)?;
 
+    // 🔴 mingw's C++ runtime, for a Windows build cross-compiled from
+    // Linux (#962). Without it the folder looks complete and the game
+    // stops at a Windows dialog naming a DLL — on someone else's
+    // machine, which is the whole point of making a build.
+    let runtime = super::mingw::ship(platform, &dir).map_err(PackageError::Runtime)?;
+
     Ok(Package {
         dir,
         binary: dest_binary,
@@ -209,6 +229,7 @@ pub fn assemble(
         assets: files.len() - scene_count,
         scenes: scene_count,
         dlss,
+        runtime,
         shadowed,
     })
 }
