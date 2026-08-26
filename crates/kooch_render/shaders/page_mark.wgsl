@@ -1112,6 +1112,23 @@ fn bias_view() {
         }
     }
 
+    // 🔴 The allocator's own ledger, taken here because this is the one
+    // single-threaded pass that runs AFTER `adopt_view` — so it reports
+    // what the seating actually left, not what the plan intended.
+    //
+    // `adopt_view` states an invariant it cannot check: *"a funded
+    // request cannot find the free list empty"*. The panel has shown it
+    // violated — `page_alloc` returning `PAGE_MISS` while the plan
+    // reported `cutoff = RANKS`, which means the whole demand fit. The
+    // three words below are what tells the two candidate explanations
+    // apart, and neither is visible today: a free list that ran dry with
+    // slots still unhanded (`high < slice`), or a ledger that does not
+    // close (`resident + free != slice` once `high == slice`), which
+    // would be slots leaving the accounting without `leaked` firing.
+    atomicStore(&counters[17], atomicLoad(&alloc[alloc_base()]));
+    atomicStore(&counters[18], atomicLoad(&alloc[alloc_base() + 1u]));
+    atomicStore(&counters[19], total);
+
     if cutoff < RANKS {
         // ⚠️ Four pages become one per step is the OPTIMISTIC estimate,
         // and it is chosen on purpose. Raising too little costs one more

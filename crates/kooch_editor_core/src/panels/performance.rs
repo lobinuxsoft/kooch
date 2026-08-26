@@ -1031,6 +1031,42 @@ fn shadow_page_readout(
          already in the atlas and does not have to be rasterised again; movement \
          invalidation re-lists what a caster passed through.",
     );
+    // 🔴 The ledger, printed only when it does not close. `adopt_view`
+    // states this as an invariant it cannot check — "a funded request
+    // cannot find the free list empty" — and the frame that violates it
+    // is the frame whose pages render unshadowed (#973).
+    if !counts.pool.balanced() {
+        ui.label(
+            egui::RichText::new(format!(
+                "the allocator's ledger does not close — {} resident + {} free of {}",
+                counts.pool.allocated(),
+                counts.pool.free,
+                counts.pool.capacity
+            ))
+            .small()
+            .color(egui::Color32::from_rgb(220, 120, 90)),
+        )
+        .on_hover_text(
+            "Every slot of the slice is either held by a resident or sitting on the free \
+             list. When the two do not add up, slots left the accounting without the \
+             double-free counter firing, and requests the plan funded fail to allocate. \
+             Only checked once the bump allocator has handed out the whole slice.",
+        );
+    }
+    ui.label(
+        egui::RichText::new(format!(
+            "ledger: {} demanded · {} free · bump at {} of {}",
+            counts.pool.demand, counts.pool.free, counts.pool.high, counts.pool.capacity
+        ))
+        .small()
+        .weak(),
+    )
+    .on_hover_text(
+        "What the frame asked for, what the free list held after seating, and how far the \
+         bump allocator has ever reached. The bump never goes down — a freed slot returns \
+         to the free list — so once it reaches the capacity every allocation must come off \
+         that list, and an empty list then fails a request the plan had funded.",
+    );
     if counts.pool.leaked > 0 {
         ui.label(
             egui::RichText::new(format!(
