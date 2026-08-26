@@ -140,6 +140,33 @@ impl SceneManager {
         self.epoch
     }
 
+    /// Records that the world was replaced by something that is not this
+    /// manager.
+    ///
+    /// # 🔴 Why a manager that loads nothing still has to count
+    ///
+    /// The epoch is the engine's one answer to *"is this the same world
+    /// as last frame"*, and every other bump sits inside a method that
+    /// replaced the world itself. A mirrored session replaces it without
+    /// going through any of them: **Open Project always opens remote**,
+    /// the project process owns the scenes, and the editor receives
+    /// entities appearing and disappearing over the wire. Its own
+    /// manager loads nothing, so its epoch sat at zero for the whole
+    /// session — and the shadow page cache, which reads exactly this to
+    /// know a world it did not draw, was told nothing every time (#971).
+    ///
+    /// Named for what it means rather than for what it does: a caller
+    /// says the world changed, and how the count moves is this type's
+    /// business.
+    pub fn world_replaced(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+        tracing::info!(
+            target: "kooch_ecs::scene",
+            epoch = self.epoch,
+            "the world was replaced from outside the manager",
+        );
+    }
+
     /// The active scene's entry.
     pub fn active(&self) -> Option<&LoadedScene> {
         self.active.and_then(|id| self.scene(id))

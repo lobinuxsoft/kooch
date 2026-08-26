@@ -52,6 +52,16 @@ pub struct RemoteMirror {
     /// removed — the local ECS cannot be asked, since parked components
     /// live outside the archetype.
     components: HashMap<Entity, Vec<String>>,
+    /// The scenes the last snapshot said its entities belonged to.
+    ///
+    /// 🔴 The mirror is a DIFF and that is load-bearing for selection,
+    /// so nothing here ever announces "a new world" on its own: a scene
+    /// swap on the project's side arrives as a batch of despawns and a
+    /// batch of spawns, indistinguishable one entity at a time from a
+    /// game destroying things. The set of scenes is what tells them
+    /// apart, and it is the same question `SceneManager::epoch` answers
+    /// for a local session.
+    scenes: HashSet<kooch_core::Guid>,
 }
 
 impl RemoteMirror {
@@ -80,6 +90,9 @@ impl RemoteMirror {
         self.id_map.clear();
         self.remote_map.clear();
         self.components.clear();
+        // Forgotten too, or reconnecting to the SAME scene reads as no
+        // change and the mirror comes back over a stale page cache.
+        self.scenes.clear();
     }
 
     /// Updates the local mirror to match `snapshot`.
@@ -132,6 +145,17 @@ impl RemoteMirror {
                 None => clear_parent(resources, child),
             }
             set_scene(resources, child, snap.scene);
+        }
+
+        // Last, so it reports a world that is already standing. Readers
+        // of the epoch run in later stages, but a bump published over a
+        // half-applied mirror is a claim this cannot make honestly.
+        let scenes: HashSet<kooch_core::Guid> = snapshot.iter().filter_map(|s| s.scene).collect();
+        if scenes != self.scenes {
+            self.scenes = scenes;
+            if let Some(manager) = resources.get_mut::<kooch_ecs::SceneManager>() {
+                manager.world_replaced();
+            }
         }
     }
 
