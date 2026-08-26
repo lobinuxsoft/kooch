@@ -278,10 +278,15 @@ pub struct RenderSettings {
     /// 🔴 NOT cascade-only, whatever the name says. `ShadowAtlas` is one
     /// texture array and this is the side of every layer in it — the
     /// four cascades AND the layer each casting spot light draws into.
-    /// It keeps acting while the virtual pages are on, which is why it
-    /// is here and not under the cascades that no longer run.
+    ///
+    /// ⚠️ It stops acting entirely once the virtual pages are on, and
+    /// this comment used to claim the opposite. `classic_shadow_alloc`
+    /// returns a token 256 in that mode and never reads this field, so
+    /// the number in the panel described an atlas nobody allocated.
+    /// Hidden rather than removed: the classic path is still the whole
+    /// of what runs with the pages off.
     #[serde(default = "default_cascade_texels")]
-    #[reflect(group = "Shadows: atlas")]
+    #[reflect(group = "Shadows: atlas", shown_when = PAGES_OFF)]
     pub shadow_cascade_texels: u32,
 
     /// How many point lights may cast a cube map at once (#849).
@@ -295,10 +300,15 @@ pub struct RenderSettings {
     /// that memory is the system's, so this is a real trade and not a
     /// quality slider.
     ///
-    /// ⚠️ Unaffected by the virtual pages: the local lights still cast
-    /// from these cubes, because the page raster is the sun's only.
+    /// ⚠️ Everything above holds with the pages OFF, and this comment
+    /// used to say the pages did not affect it — true when the page
+    /// raster was the sun's only, and false since the local-light raster
+    /// landed. The lamps cast from pages now; `classic_shadow_alloc`
+    /// drops the cube array to a single 16-texel face and never reads
+    /// this field. Neither the VRAM it describes nor the popping it
+    /// warns about exists in that mode.
     #[serde(default = "default_point_shadows")]
-    #[reflect(group = "Shadows: atlas")]
+    #[reflect(group = "Shadows: atlas", shown_when = PAGES_OFF)]
     pub point_shadows: u32,
 
     /// Steps a contact-shadow ray takes. **Zero turns contact shadows
