@@ -47,6 +47,15 @@ pub fn all_required_features() -> wgpu::Features {
     engine_features() | vbuf64_features()
 }
 
+/// Whether this adapter carries everything the engine hard-requires.
+///
+/// The same question [`required_engine_features`] asserts, asked without
+/// killing the process — so an adapter can be rejected and another tried
+/// before anyone panics.
+pub(super) fn suits_engine(adapter: &Adapter) -> bool {
+    (engine_features() - adapter.features()).is_empty()
+}
+
 /// Asserts the adapter carries [`engine_features`], with a message that
 /// names why each one is there.
 pub(super) fn required_engine_features(adapter: &Adapter) -> wgpu::Features {
