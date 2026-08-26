@@ -190,6 +190,14 @@ pub struct MeshletRenderStage {
     pub(super) page_raster_logged: Vec<Option<crate::shadow::pages::raster::RasterCounts>>,
     /// The pool the atlas was built for. A change rebuilds it.
     pub(super) page_pool_config: Option<crate::shadow::pages::pool::PoolConfig>,
+    /// Last frame's shadow casters, for the two questions the page
+    /// machine asks about them: is there still ANY, and did one leave.
+    ///
+    /// `None` until a frame is read — which is not the same as zero, and
+    /// the distinction matters: without a `Time` the stage never parks a
+    /// light frame at all, so every headless test would otherwise read
+    /// as "the scene has no lights" and free an atlas the test is using.
+    pub(super) page_casters: Option<crate::shadow::pages::Casters>,
 
     pub(super) instance_capacity: u32,
 

@@ -12,6 +12,7 @@ use glam::{Mat4, Vec3};
 use kooch_core::resource::Resources;
 
 use crate::meshlet::SceneCullParams;
+use crate::shadow::pages::Casters;
 use crate::shadow::pages::mark::{MarkCounts, PageMarker, Paint};
 use crate::shadow::pages::pool::{PAGES_RANGE, PoolConfig};
 use crate::shadow::pages::raster::{PageRasterizer, RasterCounts};
@@ -182,12 +183,25 @@ impl MeshletRenderStage {
         profiling::scope!("shadow pages");
         let settings = self.page_settings_for_views(resources, debug);
         if !settings.enabled {
-            self.forget_page_marking();
-            // 🔴 Unbind, do not merely stop drawing. The atlas still
-            // holds the last frame it filled, and a shading pass that
-            // kept sampling it would show a shadow frozen in place —
-            // silent, and blamed on everything else first.
-            self.lights.unbind_shadow_pages(device);
+            self.release_pages(device);
+            return;
+        }
+        // 🔴 Read from the light frame rather than counted here, so a
+        // light switched off in the inspector and a light despawned with
+        // its scene are the same event: `LightFrame::extract` drops
+        // both, and this is downstream of it.
+        //
+        // ⚠️ `None` is "no frame read", NOT "no lights" — see the field.
+        let casters = self
+            .light_frame
+            .as_ref()
+            .map(|(_, frame)| Casters::of_frame(frame));
+        if casters.is_some_and(|c| c.is_empty()) {
+            // Nothing casts, so no page will ever be requested: give the
+            // atlas, the table and the free lists back and record
+            // nothing at all until a light returns.
+            self.page_casters = casters;
+            self.release_pages(device);
             return;
         }
         // 🔴 Stamped BEFORE the pool is touched, and once per frame
@@ -201,6 +215,18 @@ impl MeshletRenderStage {
         // that never evicts rather than one that evicts constantly.
         if let Some(marker) = self.page_marker.as_mut() {
             marker.set_frame(page_frame(resources));
+        }
+        // 🔴 AFTER `set_frame` and never before it: a new frame index
+        // clears the rebuild flag, so voiding first would void nothing.
+        // The same ordering trap `set_pool` is commented for, one lever
+        // over.
+        if let Some(casters) = casters {
+            if self.page_casters.is_some_and(|before| casters.lost(before))
+                && let Some(marker) = self.page_marker.as_mut()
+            {
+                marker.void();
+            }
+            self.page_casters = Some(casters);
         }
         // The pool is the memory budget, and changing it changes the
         // atlas. Rebuilt rather than resized: a slot recorded against
@@ -624,6 +650,41 @@ impl MeshletRenderStage {
             local = counts.local,
             "shadow pages rastered"
         );
+    }
+
+    /// Gives the whole page machine back: the atlas, the flat table,
+    /// the per-view free lists, every pipeline's buffers.
+    ///
+    /// 🔴 Unbind, do not merely stop drawing. The atlas still holds the
+    /// last frame it filled, and a shading pass that kept sampling it
+    /// would show a shadow frozen in place — silent, and blamed on
+    /// everything else first.
+    ///
+    /// 🔴 Dropped rather than kept idle, and that is the point of it:
+    /// the atlas is a hundred megabytes standing whether or not the
+    /// frame contains a shadow-casting light, which on a handheld is a
+    /// hundred megabytes taken from the same pool the textures live in.
+    ///
+    /// ⚠️ The cost is a rebuild on the frame the first light comes back
+    /// — a texture allocation and every pipeline's buffers, inside a
+    /// frame. That is a visible hitch on the transition, traded for
+    /// holding nothing while there is nothing to hold. The transition is
+    /// a scene change or a light toggled on; it is not a per-frame edge.
+    ///
+    /// Idempotent, so a scene with no lights costs one comparison a
+    /// frame and not one release a frame.
+    fn release_pages(&mut self, device: &wgpu::Device) {
+        if self.page_marker.is_none() && self.page_raster.is_none() {
+            return;
+        }
+        self.forget_page_marking();
+        self.lights.unbind_shadow_pages(device);
+        self.page_marker = None;
+        self.page_raster = None;
+        // The pool the atlas WAS built for, and there is no atlas now.
+        // Left set, the next build would skip `set_pool` and run against
+        // a marker that never sized its table.
+        self.page_pool_config = None;
     }
 
     /// Drops every count the pass produced, so a run that starts again
