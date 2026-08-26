@@ -220,13 +220,34 @@ impl MeshletRenderStage {
         // clears the rebuild flag, so voiding first would void nothing.
         // The same ordering trap `set_pool` is commented for, one lever
         // over.
+        //
+        // Two events free the table outright, and they are the two the
+        // continuous invalidations cannot see: the world was replaced,
+        // or a light that was the only one asking for a run of pages
+        // stopped existing.
+        //
+        // 🔴 The scene change frees SLOTS and does not merely restamp
+        // them. `set_scene_epoch` bumps the content generation, which
+        // is the honest thing to do and was not enough — found from the
+        // owner's own experiment: resizing `shadow_pool_pages` fixed
+        // the stale shadows, putting the size BACK left them fixed, and
+        // a scene change broke them again. The only thing a resize does
+        // that a generation bump does not is `life.rebuilt`, which
+        // empties the table. So the scene change pulls that lever too.
+        let scene_changed = self
+            .page_epoch
+            .replace(settings.scene_epoch)
+            .is_some_and(|before| before != settings.scene_epoch);
+        let caster_lost = casters
+            .zip(self.page_casters)
+            .is_some_and(|(now, before)| now.lost(before));
         if let Some(casters) = casters {
-            if self.page_casters.is_some_and(|before| casters.lost(before))
-                && let Some(marker) = self.page_marker.as_mut()
-            {
-                marker.void();
-            }
             self.page_casters = Some(casters);
+        }
+        if (scene_changed || caster_lost)
+            && let Some(marker) = self.page_marker.as_mut()
+        {
+            marker.void();
         }
         // The pool is the memory budget, and changing it changes the
         // atlas. Rebuilt rather than resized: a slot recorded against

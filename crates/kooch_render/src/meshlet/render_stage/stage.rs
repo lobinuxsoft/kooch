@@ -198,6 +198,12 @@ pub struct MeshletRenderStage {
     /// light frame at all, so every headless test would otherwise read
     /// as "the scene has no lights" and free an atlas the test is using.
     pub(super) page_casters: Option<crate::shadow::pages::Casters>,
+    /// The scene set the page table was filled for.
+    ///
+    /// `None` until a frame is read. A change means the world was
+    /// replaced, which is the one event none of the continuous
+    /// invalidations can see — see `PageMarker::void`.
+    pub(super) page_epoch: Option<u32>,
 
     pub(super) instance_capacity: u32,
 
