@@ -278,6 +278,19 @@ pub struct PageRasterizer {
     /// The frame the moved list was last uploaded and any overflow
     /// bump applied — once per frame, not per view.
     moved_frame: Option<u32>,
+    /// Whether the moved list is currently past [`MOVED_CAPACITY`].
+    ///
+    /// Kept only so the report fires on the EDGE. The condition is a
+    /// per-frame one and a line per frame at 150 Hz is not a report,
+    /// it is a denial of service on the console.
+    flooded: bool,
+    /// The scene set this cache holds pages for.
+    ///
+    /// 🔴 `None` until the first frame, so a fresh rasterizer does not
+    /// void a cache it has not filled. After that a mismatch means the
+    /// world was replaced, and every stamp in the pool describes
+    /// geometry that may no longer exist (#971).
+    scene_epoch: Option<u32>,
 
     compact_bgl: wgpu::BindGroupLayout,
     compact: wgpu::ComputePipeline,
@@ -680,7 +693,9 @@ impl PageRasterizer {
                 mapped_at_creation: false,
             }),
             scene_gen: 0,
+            scene_epoch: None,
             moved_frame: None,
+            flooded: false,
             compact_bgl,
             compact,
             expand_args_pass,
@@ -765,6 +780,58 @@ impl PageRasterizer {
     /// Stamps the frame the age debug view measures against.
     pub fn set_frame(&mut self, frame: u32) {
         self.frame = frame;
+    }
+
+    /// Voids every cached page when the world was replaced.
+    ///
+    /// # 🔴 Why the other invalidations cannot cover this
+    ///
+    /// Every one of them answers a *continuous* question. The moved
+    /// list carries what shifted since last frame; `age_view` evicts
+    /// what nobody asked for; the clipmap recycles the ring that
+    /// scrolled out. All three assume the world persists and only some
+    /// of it changed.
+    ///
+    /// Loading a scene breaks that assumption. **Despawning is not
+    /// moving**: the outgoing entities did not shift, they stopped
+    /// existing, so nothing put them on the moved list and their pages
+    /// stayed resident — holding depth for geometry that no longer had
+    /// anything to cast it. Sampled as the incoming scene's occlusion,
+    /// it looked like large straight shadows that matched nothing on
+    /// screen (#971).
+    ///
+    /// Loading is the mirror and just as quiet: entities that were
+    /// never anywhere did not move either, so an additive load casts
+    /// nothing until something unrelated forces a redraw.
+    ///
+    /// ⚠️ One bump per change, never per caster. UE5 invalidates per
+    /// instance because it streams a world continuously; doing that on
+    /// a load is how they reached a `DEVICE_HUNG` after level
+    /// streaming. A scene change is rare and explicit — one full
+    /// redraw is the cheap answer, and the right one until the
+    /// by-reach invalidation of #866 exists.
+    pub fn set_scene_epoch(&mut self, epoch: u32) {
+        if self.scene_epoch == Some(epoch) {
+            return;
+        }
+        // Not on the first frame: a rasterizer that has drawn nothing
+        // has nothing to void, and bumping here would throw away the
+        // pages the very first scene just filled.
+        if self.scene_epoch.is_some() {
+            // 🔴 info, not debug. This fires once per scene load — rare,
+            // and the single line that answers "did the cache get
+            // voided?" when shadows look wrong after a scene change.
+            // Hidden behind debug it cost a diagnosis on the day it
+            // shipped.
+            tracing::info!(
+                target: "kooch_render::shadow",
+                epoch,
+                generation = self.scene_gen.wrapping_add(1),
+                "the scene set changed; voiding the page cache",
+            );
+            self.scene_gen = self.scene_gen.wrapping_add(1);
+        }
+        self.scene_epoch = Some(epoch);
     }
 
     /// The readers' PCF footprint width, from the settings. Takes
@@ -1047,9 +1114,33 @@ impl PageRasterizer {
         }
         self.moved_frame = Some(self.frame);
         if moved.len() > MOVED_CAPACITY as usize {
+            // 🔴 Said out loud, because the fallback is silent and
+            // total: past the cap the scene generation bumps, which
+            // voids EVERY page every frame it happens. The panel then
+            // reports a pool at 100 % hit — the slots are reused — over
+            // a raster redrawing all of them, and the two readings
+            // together look like a working cache. A scene that trips
+            // this permanently has no page cache at all.
+            if !self.flooded {
+                self.flooded = true;
+                tracing::warn!(
+                    target: "kooch_render::shadow",
+                    moved = moved.len(),
+                    capacity = MOVED_CAPACITY,
+                    "the moved-caster list overflowed; every page redraws while it does",
+                );
+            }
             self.scene_gen = self.scene_gen.wrapping_add(1);
             queue.write_buffer(&self.moved, 0, bytemuck::bytes_of(&[0.0f32; 4]));
             return;
+        }
+        if self.flooded {
+            self.flooded = false;
+            tracing::info!(
+                target: "kooch_render::shadow",
+                moved = moved.len(),
+                "the moved-caster list fits again; the page cache is live",
+            );
         }
         let mut data = Vec::with_capacity(1 + moved.len());
         data.push([moved.len() as f32, 0.0, 0.0, 0.0]);

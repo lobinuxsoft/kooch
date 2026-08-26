@@ -423,6 +423,24 @@ impl PageMarker {
         self.life.max_age = frames;
     }
 
+    /// Frees every page in the table, on the next frame.
+    ///
+    /// The same lever a pool resize pulls, for a different reason: the
+    /// pool's shape is fine, but a light that was the only one asking
+    /// for a run of pages has gone away, and nothing will ever ask for
+    /// them again. Aging alone would hold them for `max_age` frames — a
+    /// second at 60 Hz, of an atlas kept for a light that no longer
+    /// exists.
+    ///
+    /// ⚠️ Whole-table, not per light, and it has to be: the table is
+    /// keyed by page id and no entry records which light asked for it.
+    /// The lights that REMAIN re-request and re-rasterise on the next
+    /// frame, so this costs one frame of full page raster — on an event
+    /// that is rare by nature, a scene change or a light switched off.
+    pub fn void(&mut self) {
+        self.life.rebuilt = true;
+    }
+
     /// Drops the cached count.
     ///
     /// 🔴 Sticky by design — the ring is a frame or two behind, so a

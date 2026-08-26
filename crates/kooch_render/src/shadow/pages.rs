@@ -760,3 +760,56 @@ pub mod raster;
 
 #[cfg(test)]
 mod tests;
+
+/// The light set as the page cache has to see it: how many shadow
+/// casters the frame has, and whether one of them is the sun.
+///
+/// 🔴 The sun is a term of its own rather than merely part of the
+/// count, because the sun's clipmap stamp cannot tell "no sun" apart
+/// from "a sun pointing down". `sun_gens` is handed
+/// `sun.unwrap_or(Vec3::NEG_Y)` and hashes a *direction*, so a scene
+/// that loses its directional light and keeps its lamps stamps to the
+/// pages the old sun left behind, and they are read as valid. That is
+/// #971, and it looks like flat rectangles of shadow lying on the floor
+/// of a scene that has no directional light in it at all.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Casters {
+    /// Shadow-casting lights in the frame, the sun included.
+    pub count: u32,
+    /// Whether the frame has a shadow-casting directional light.
+    pub sun: bool,
+}
+
+impl Casters {
+    /// What a frame's extracted lights add up to.
+    ///
+    /// `LightFrame::extract` has already dropped the inactive lights and
+    /// the ones with `cast_shadows` off, so a light switched off in the
+    /// inspector arrives here exactly the way a despawned one does — and
+    /// that is what lets one rule cover both.
+    pub fn of_frame(frame: &kooch_lighting::LightFrame) -> Self {
+        let sun = frame.sun().is_some();
+        Self {
+            count: u32::from(sun)
+                + frame.point_shadows().len() as u32
+                + frame.spot_shadows().len() as u32,
+            sun,
+        }
+    }
+
+    /// Nothing casts, so no page will ever be requested again.
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    /// Whether this frame lost a caster `before` had.
+    ///
+    /// The direction is the whole point. A light ARRIVING requests pages
+    /// of its own and disturbs nobody else's. A light LEAVING strands
+    /// every page it was the only one asking for: nothing requests them,
+    /// so nothing re-rasterises them, and they sit in the atlas holding
+    /// depth measured for a light that is gone.
+    pub fn lost(&self, before: Casters) -> bool {
+        self.count < before.count || (before.sun && !self.sun)
+    }
+}

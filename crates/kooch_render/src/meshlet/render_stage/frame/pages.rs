@@ -12,6 +12,7 @@ use glam::{Mat4, Vec3};
 use kooch_core::resource::Resources;
 
 use crate::meshlet::SceneCullParams;
+use crate::shadow::pages::Casters;
 use crate::shadow::pages::mark::{MarkCounts, PageMarker, Paint};
 use crate::shadow::pages::pool::{PAGES_RANGE, PoolConfig};
 use crate::shadow::pages::raster::{PageRasterizer, RasterCounts};
@@ -41,6 +42,16 @@ struct PageSettings {
     softness: u32,
     /// The coverage gate (#944). See `ShadowSettings::page_min_pixels`.
     min_pixels: u32,
+    /// How many times the set of loaded scenes has changed.
+    ///
+    /// 🔴 Carried so the raster can notice a world it did not draw.
+    /// Everything else that voids a page is *continuous* — the camera
+    /// moves, a caster moves, the pool fills — and a scene being
+    /// swapped out is none of those. The outgoing entities did not
+    /// move; they stopped existing, which a movement diff cannot see,
+    /// so their pages stayed resident and were sampled as the new
+    /// scene's occlusion (#971).
+    scene_epoch: u32,
 }
 
 /// A camera's index into the pool's slices.
@@ -93,6 +104,37 @@ fn page_frame(resources: &Resources) -> u32 {
         .unwrap_or(0)
 }
 
+/// The scene epoch, as the page machine can see it from here.
+///
+/// ⚠️ Zero is ambiguous and the ambiguity cost a day: "no manager in
+/// these `Resources`" and "a manager that has loaded nothing" read the
+/// same. Exactly the hole the comment in [`page_settings`] describes
+/// for `RenderSettings`, one lookup over.
+///
+/// So the answer is reported whenever it CHANGES — found or not, and
+/// with the address of what was found, to be matched against the
+/// `scene load: the epoch moved` line the manager writes at the source.
+/// Two addresses that differ are two managers.
+fn read_epoch(resources: &Resources) -> u32 {
+    let manager = resources.get::<kooch_ecs::SceneManager>();
+    let epoch = manager.map(|m| m.epoch()).unwrap_or(0);
+    let at = manager.map_or(0, |m| m as *const _ as usize);
+    // Packed so one atomic carries both halves: a reader that found
+    // nothing and a reader that found zero must not collapse.
+    let seen = (u64::from(manager.is_some()) << 32) | u64::from(epoch);
+    static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+    if LAST.swap(seen, std::sync::atomic::Ordering::Relaxed) != seen {
+        tracing::info!(
+            target: "kooch_render::shadow",
+            found = manager.is_some(),
+            epoch,
+            manager = at,
+            "the page machine read the scene epoch",
+        );
+    }
+    epoch
+}
+
 fn page_settings(resources: &Resources) -> PageSettings {
     // 🔴 `ShadowSettings`, not `RenderSettings`, and `unwrap_or_default`
     // rather than an early return. Both halves of that were the bug.
@@ -129,6 +171,10 @@ fn page_settings(resources: &Resources) -> PageSettings {
         density: shadows.page_density,
         softness: shadows.page_softness,
         min_pixels: shadows.page_min_pixels,
+        // Absent in a headless test and in any host without a manager,
+        // where zero is right: nothing ever changes, so nothing ever
+        // needs voiding.
+        scene_epoch: read_epoch(resources),
         pool: PoolConfig {
             pages: shadows.pool_pages.clamp(PAGES_RANGE.0, PAGES_RANGE.1),
             // Filled in by the caller, which is the only place that
@@ -165,12 +211,25 @@ impl MeshletRenderStage {
         profiling::scope!("shadow pages");
         let settings = self.page_settings_for_views(resources, debug);
         if !settings.enabled {
-            self.forget_page_marking();
-            // 🔴 Unbind, do not merely stop drawing. The atlas still
-            // holds the last frame it filled, and a shading pass that
-            // kept sampling it would show a shadow frozen in place —
-            // silent, and blamed on everything else first.
-            self.lights.unbind_shadow_pages(device);
+            self.release_pages(device);
+            return;
+        }
+        // 🔴 Read from the light frame rather than counted here, so a
+        // light switched off in the inspector and a light despawned with
+        // its scene are the same event: `LightFrame::extract` drops
+        // both, and this is downstream of it.
+        //
+        // ⚠️ `None` is "no frame read", NOT "no lights" — see the field.
+        let casters = self
+            .light_frame
+            .as_ref()
+            .map(|(_, frame)| Casters::of_frame(frame));
+        if casters.is_some_and(|c| c.is_empty()) {
+            // Nothing casts, so no page will ever be requested: give the
+            // atlas, the table and the free lists back and record
+            // nothing at all until a light returns.
+            self.page_casters = casters;
+            self.release_pages(device);
             return;
         }
         // 🔴 Stamped BEFORE the pool is touched, and once per frame
@@ -184,6 +243,52 @@ impl MeshletRenderStage {
         // that never evicts rather than one that evicts constantly.
         if let Some(marker) = self.page_marker.as_mut() {
             marker.set_frame(page_frame(resources));
+        }
+        // 🔴 AFTER `set_frame` and never before it: a new frame index
+        // clears the rebuild flag, so voiding first would void nothing.
+        // The same ordering trap `set_pool` is commented for, one lever
+        // over.
+        //
+        // Two events free the table outright, and they are the two the
+        // continuous invalidations cannot see: the world was replaced,
+        // or a light that was the only one asking for a run of pages
+        // stopped existing.
+        //
+        // 🔴 The scene change frees SLOTS and does not merely restamp
+        // them. `set_scene_epoch` bumps the content generation, which
+        // is the honest thing to do and was not enough — found from the
+        // owner's own experiment: resizing `shadow_pool_pages` fixed
+        // the stale shadows, putting the size BACK left them fixed, and
+        // a scene change broke them again. The only thing a resize does
+        // that a generation bump does not is `life.rebuilt`, which
+        // empties the table. So the scene change pulls that lever too.
+        let scene_changed = self
+            .page_epoch
+            .replace(settings.scene_epoch)
+            .is_some_and(|before| before != settings.scene_epoch);
+        let caster_lost = casters
+            .zip(self.page_casters)
+            .is_some_and(|(now, before)| now.lost(before));
+        if let Some(casters) = casters {
+            self.page_casters = Some(casters);
+        }
+        if (scene_changed || caster_lost)
+            && let Some(marker) = self.page_marker.as_mut()
+        {
+            // 🔴 Said out loud, because everything this lever does
+            // happens on the GPU and leaves no number behind: the table
+            // it empties is refilled by the next frame's marking, so a
+            // void that fired and a void that never ran look identical
+            // in the panel one frame later. Edge-triggered by nature —
+            // both conditions are events.
+            tracing::info!(
+                target: "kooch_render::shadow",
+                epoch = settings.scene_epoch,
+                scene_changed,
+                caster_lost,
+                "voiding the shadow page table",
+            );
+            marker.void();
         }
         // The pool is the memory budget, and changing it changes the
         // atlas. Rebuilt rather than resized: a slot recorded against
@@ -437,6 +542,10 @@ impl MeshletRenderStage {
         // and that call found nothing to stamp.
         raster.set_frame(marker.life().frame);
         raster.set_softness(settings.softness);
+        // Before anything reads a stamp this frame: a world that was
+        // replaced must not be sampled through the previous one's
+        // pages (#971).
+        raster.set_scene_epoch(settings.scene_epoch);
         let threads = scene_params.instance_count * scene_params.meshlets_per_mesh;
         raster.ensure_capacity(device, threads, threads);
         raster.record(
@@ -605,6 +714,41 @@ impl MeshletRenderStage {
         );
     }
 
+    /// Gives the whole page machine back: the atlas, the flat table,
+    /// the per-view free lists, every pipeline's buffers.
+    ///
+    /// 🔴 Unbind, do not merely stop drawing. The atlas still holds the
+    /// last frame it filled, and a shading pass that kept sampling it
+    /// would show a shadow frozen in place — silent, and blamed on
+    /// everything else first.
+    ///
+    /// 🔴 Dropped rather than kept idle, and that is the point of it:
+    /// the atlas is a hundred megabytes standing whether or not the
+    /// frame contains a shadow-casting light, which on a handheld is a
+    /// hundred megabytes taken from the same pool the textures live in.
+    ///
+    /// ⚠️ The cost is a rebuild on the frame the first light comes back
+    /// — a texture allocation and every pipeline's buffers, inside a
+    /// frame. That is a visible hitch on the transition, traded for
+    /// holding nothing while there is nothing to hold. The transition is
+    /// a scene change or a light toggled on; it is not a per-frame edge.
+    ///
+    /// Idempotent, so a scene with no lights costs one comparison a
+    /// frame and not one release a frame.
+    fn release_pages(&mut self, device: &wgpu::Device) {
+        if self.page_marker.is_none() && self.page_raster.is_none() {
+            return;
+        }
+        self.forget_page_marking();
+        self.lights.unbind_shadow_pages(device);
+        self.page_marker = None;
+        self.page_raster = None;
+        // The pool the atlas WAS built for, and there is no atlas now.
+        // Left set, the next build would skip `set_pool` and run against
+        // a marker that never sized its table.
+        self.page_pool_config = None;
+    }
+
     /// Drops every count the pass produced, so a run that starts again
     /// reports what it finds rather than what it found before.
     fn forget_page_marking(&mut self) {
@@ -630,13 +774,19 @@ impl MeshletRenderStage {
     /// Game tab's overlay out of it and got the Edit view's camera —
     /// same scene, different frustum, and every reading taken from that
     /// panel described a camera nobody was looking through.
-    pub fn page_marking_for(&self, view: crate::meshlet::render_stage::ViewId) -> Option<MarkCounts> {
+    pub fn page_marking_for(
+        &self,
+        view: crate::meshlet::render_stage::ViewId,
+    ) -> Option<MarkCounts> {
         let want = page_view_index(view);
         self.page_marking_last.filter(|c| c.view == want)
     }
 
     /// The raster counts belonging to ONE view, for the same reason.
-    pub fn page_raster_for(&self, view: crate::meshlet::render_stage::ViewId) -> Option<RasterCounts> {
+    pub fn page_raster_for(
+        &self,
+        view: crate::meshlet::render_stage::ViewId,
+    ) -> Option<RasterCounts> {
         let want = page_view_index(view);
         self.page_raster_last.filter(|c| c.view == want)
     }

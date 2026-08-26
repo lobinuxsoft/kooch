@@ -547,3 +547,62 @@ fn a_lamp_reads_its_pages_without_a_cube_slot() {
         "a radial distance is back on one side of the comparison"
     );
 }
+
+/// #971's hole, stated as an assertion: the sun leaving has to read as
+/// a loss even when the count does not fall, because a lamp arrived in
+/// the same frame. Nothing else in the page machine can tell — the
+/// sun's clipmap stamp hashes a *direction* and a departed sun is
+/// handed `Vec3::NEG_Y`, which is a perfectly ordinary sun.
+#[test]
+fn a_lost_sun_is_a_loss() {
+    let before = Casters {
+        count: 1,
+        sun: true,
+    };
+    let after = Casters {
+        count: 1,
+        sun: false,
+    };
+    assert!(after.lost(before));
+}
+
+#[test]
+fn a_lost_lamp_is_a_loss() {
+    let before = Casters {
+        count: 4,
+        sun: false,
+    };
+    let after = Casters {
+        count: 3,
+        sun: false,
+    };
+    assert!(after.lost(before));
+}
+
+/// A light arriving requests pages of its own and strands nobody
+/// else's, so it must NOT void the table: that would be a full page
+/// raster every time anything switched a lamp on.
+#[test]
+fn a_new_lamp_is_not() {
+    let before = Casters {
+        count: 1,
+        sun: true,
+    };
+    let after = Casters {
+        count: 2,
+        sun: true,
+    };
+    assert!(!after.lost(before));
+}
+
+#[test]
+fn a_scene_with_no_casters_is_empty() {
+    assert!(Casters::default().is_empty());
+    assert!(
+        !Casters {
+            count: 1,
+            sun: false
+        }
+        .is_empty()
+    );
+}

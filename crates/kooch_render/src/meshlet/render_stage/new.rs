@@ -97,6 +97,8 @@ impl MeshletRenderStage {
             page_raster_last: None,
             page_raster_logged: Vec::new(),
             page_pool_config: None,
+            page_casters: None,
+            page_epoch: None,
             // Allocated on the first frame that finds a sun; see the
             // field's doc for why not here.
             shadows: None,

@@ -662,3 +662,73 @@ fn two_copies_of_one_file_keep_their_ids_and_their_links() {
         );
     }
 }
+
+/// 🔴 Every change to the set of loaded scenes moves the epoch.
+///
+/// A renderer's caches key on continuity — what moved since last frame,
+/// what nobody asked for, which ring scrolled out. All of them assume
+/// the world persists and only part of it changed. Replacing the world
+/// breaks that assumption silently: **despawning is not moving**, so the
+/// outgoing scene's shadow pages stayed resident and were sampled as the
+/// incoming scene's occlusion (#971).
+///
+/// Held by a test because every one of these is a separate code path,
+/// and the one that gets forgotten is the one nobody was thinking about.
+#[test]
+fn every_scene_change_moves_the_epoch() {
+    let first = write_scene("epoch_a", &[1, 2]);
+    let second = write_scene("epoch_b", &[3]);
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+
+    let mut seen = vec![manager.epoch()];
+    let mut moved = |manager: &SceneManager, seen: &mut Vec<u32>, what: &str| {
+        let now = manager.epoch();
+        assert!(
+            !seen.contains(&now),
+            "{what} left the epoch at {now}, so a renderer cannot tell the world changed",
+        );
+        seen.push(now);
+    };
+
+    manager.load(&first, &mut resources).expect("loads");
+    moved(&manager, &mut seen, "load");
+
+    let added = manager
+        .open_additive(&second, &mut resources)
+        .expect("opens beside");
+    moved(&manager, &mut seen, "open_additive");
+
+    manager.new_scene();
+    moved(&manager, &mut seen, "new_scene");
+
+    manager.revert(added, &mut resources).expect("reverts");
+    moved(&manager, &mut seen, "revert");
+
+    assert!(manager.close(added, &mut resources), "closes");
+    moved(&manager, &mut seen, "close");
+}
+
+/// ⚠️ And an ordinary edit does **not**.
+///
+/// The epoch voids every cached page, so spending one on something that
+/// happens continuously would be the invalidation storm this is meant to
+/// avoid — the shape that reached a driver hang in UE5 after level
+/// streaming. Only the set of scenes moves it.
+#[test]
+fn editing_a_scene_leaves_the_epoch_alone() {
+    let path = write_scene("epoch_edit", &[7]);
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+    manager.load(&path, &mut resources).expect("loads");
+
+    let after_load = manager.epoch();
+    manager.mark_dirty();
+    manager.mark_clean();
+
+    assert_eq!(
+        manager.epoch(),
+        after_load,
+        "editing a scene voided every shadow page in the pool",
+    );
+}

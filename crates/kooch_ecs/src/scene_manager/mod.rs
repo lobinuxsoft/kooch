@@ -68,6 +68,26 @@ pub struct LoadedScene {
 pub struct SceneManager {
     scenes: Vec<LoadedScene>,
     active: Option<Guid>,
+    /// Bumped whenever the set of loaded scenes changes.
+    ///
+    /// # 🔴 What reads this, and why it is not a detail
+    ///
+    /// Caches that key on "the world as it was" cannot notice a scene
+    /// being swapped out. The shadow page cache invalidates on a
+    /// **movement diff** — which instances moved since last frame — and
+    /// **despawning is not moving**: the outgoing scene's entities did
+    /// not move, they ceased to exist, and their pages stayed resident
+    /// holding geometry that no longer had anything to cast it (#971).
+    ///
+    /// Loading is the mirror image and just as quiet: newly spawned
+    /// entities did not move either, so an additive load's geometry
+    /// casts nothing until something else forces a redraw.
+    ///
+    /// A counter rather than an event, because the reader is a renderer
+    /// that runs once a frame and only needs to answer "is this the
+    /// world I last drew?" — a question a comparison answers and a
+    /// queue of events complicates.
+    epoch: u32,
 }
 
 impl Default for SceneManager {
@@ -94,6 +114,7 @@ impl SceneManager {
                 dirty: false,
             }],
             active: Some(id),
+            epoch: 0,
         }
     }
 
@@ -107,6 +128,43 @@ impl SceneManager {
     /// Identity of the scene new entities are authored into.
     pub fn active_id(&self) -> Option<Guid> {
         self.active
+    }
+
+    /// How many times the set of loaded scenes has changed.
+    ///
+    /// A renderer compares this against what it last drew: different
+    /// means the world was replaced, and any cache keyed on continuity —
+    /// a movement diff, a page stamp — is answering about a world that
+    /// is gone. See the field's own docs for why movement is not enough.
+    pub fn epoch(&self) -> u32 {
+        self.epoch
+    }
+
+    /// Records that the world was replaced by something that is not this
+    /// manager.
+    ///
+    /// # 🔴 Why a manager that loads nothing still has to count
+    ///
+    /// The epoch is the engine's one answer to *"is this the same world
+    /// as last frame"*, and every other bump sits inside a method that
+    /// replaced the world itself. A mirrored session replaces it without
+    /// going through any of them: **Open Project always opens remote**,
+    /// the project process owns the scenes, and the editor receives
+    /// entities appearing and disappearing over the wire. Its own
+    /// manager loads nothing, so its epoch sat at zero for the whole
+    /// session — and the shadow page cache, which reads exactly this to
+    /// know a world it did not draw, was told nothing every time (#971).
+    ///
+    /// Named for what it means rather than for what it does: a caller
+    /// says the world changed, and how the count moves is this type's
+    /// business.
+    pub fn world_replaced(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+        tracing::info!(
+            target: "kooch_ecs::scene",
+            epoch = self.epoch,
+            "the world was replaced from outside the manager",
+        );
     }
 
     /// The active scene's entry.
@@ -129,6 +187,7 @@ impl SceneManager {
     /// open. An entity has to belong to a scene, so creating one is what
     /// makes "put this somewhere of its own" answerable at all.
     pub fn new_scene(&mut self) -> Guid {
+        self.epoch = self.epoch.wrapping_add(1);
         let id = Guid::new_v4();
         self.scenes.push(LoadedScene {
             id,
@@ -237,6 +296,16 @@ impl SceneManager {
     /// camera, gizmos…) survive, because [`sync_scene_to_ecs`] honours
     /// [`EphemeralComponents`](crate::ephemeral::EphemeralComponents).
     pub fn load(&mut self, path: &Path, resources: &mut Resources) -> Result<(), SceneError> {
+        self.epoch = self.epoch.wrapping_add(1);
+        // 🔴 At the SOURCE of the count, because a reader far away found
+        // it stuck at zero and could not tell "never bumped" from "read
+        // from a different manager". One line per load, which is rare.
+        tracing::info!(
+            target: "kooch_ecs::scene",
+            epoch = self.epoch,
+            manager = self as *const Self as usize,
+            "scene load: the epoch moved",
+        );
         // 🔴 Through the pack-aware reader, and read once. A packaged
         // game has no `scenes/` directory: its scenes are inside the
         // pack, and reading the disk here is how a shipped game starts
@@ -287,6 +356,13 @@ impl SceneManager {
         path: &Path,
         resources: &mut Resources,
     ) -> Result<Guid, SceneError> {
+        // ⚠️ Additive too, and the temptation to skip it is the trap.
+        // Loading beside what is already there destroys nothing, so it
+        // reads as safe — but the incoming entities did not *move*
+        // either, and a movement diff cannot see something that was
+        // never anywhere. Skipped, the new scene casts no shadows until
+        // something unrelated forces a redraw (#971).
+        self.epoch = self.epoch.wrapping_add(1);
         // 🔴 Through the pack-aware reader, and read once. A packaged
         // game has no `scenes/` directory: its scenes are inside the
         // pack, and reading the disk here is how a shipped game starts
@@ -337,6 +413,7 @@ impl SceneManager {
     /// — which is the one thing "discard changes" must never be mistaken
     /// for.
     pub fn revert(&mut self, id: Guid, resources: &mut Resources) -> Result<(), SceneError> {
+        self.epoch = self.epoch.wrapping_add(1);
         let Some(path) = self.scene(id).and_then(|scene| scene.path.clone()) else {
             return Err(SceneError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -374,6 +451,7 @@ impl SceneManager {
     /// asking about them is the caller's job, since only the caller can
     /// prompt.
     pub fn close(&mut self, id: Guid, resources: &mut Resources) -> bool {
+        self.epoch = self.epoch.wrapping_add(1);
         if self.scene(id).is_none() {
             return false;
         }
