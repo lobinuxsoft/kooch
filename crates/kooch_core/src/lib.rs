@@ -100,6 +100,8 @@ pub use guid::Guid;
 #[cfg(feature = "dynamic")]
 pub mod dynamic;
 
+pub mod log_file;
+
 /// Initializes the tracing subscriber for logging.
 ///
 /// Call this early in your application (before creating the App) if you
@@ -114,6 +116,7 @@ pub mod dynamic;
 /// }
 /// ```
 pub use log_console::{LogBuffer, LogEntry, strip_ansi};
+pub use log_file::{SharedLog, log_panics, open_log};
 
 /// Installs tracing with a console buffer beside stdout, and hands the
 /// buffer back.
@@ -182,6 +185,51 @@ pub fn init_tracing_if_needed() {
     use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    // 🔴 The file is what a shipped game can be debugged from (#964). It
+    // has no terminal — started from Steam, from a launcher, or by
+    // double-click — and under Proton its stdout is not forwarded at
+    // all, so without this a Windows build cannot say anything to
+    // anybody.
+    //
+    // Beside stdout rather than instead of it: someone running from a
+    // terminal keeps what they had.
+    let file = log_file::open_log();
+    if let Some((log, ref path)) = file {
+        // Installed before the subscriber, so a panic during setup is
+        // still caught — the run this exists for is the one that dies
+        // early.
+        log_file::log_panics(log.clone());
+        let writer = log.clone();
+        let installed = match json_wanted() {
+            true => tracing_subscriber::registry()
+                .with(fmt::layer().json().flatten_event(true))
+                .with(
+                    fmt::layer()
+                        .with_ansi(false)
+                        .with_writer(move || writer.clone()),
+                )
+                .with(filter)
+                .try_init(),
+            false => tracing_subscriber::registry()
+                .with(fmt::layer().with_ansi(ansi_wanted()))
+                .with(
+                    fmt::layer()
+                        .with_ansi(false)
+                        .with_writer(move || writer.clone()),
+                )
+                .with(filter)
+                .try_init(),
+        };
+        if installed.is_ok() {
+            // Said once, on the line above everything else, because
+            // "where is the log" is the first question anyone asks and
+            // the answer differs per platform and per install.
+            tracing::info!(path = %path.display(), "logging to file");
+        }
+        return;
+    }
+
     if json_wanted() {
         let _ = tracing_subscriber::registry()
             .with(fmt::layer().json().flatten_event(true))

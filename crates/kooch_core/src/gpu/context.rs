@@ -56,12 +56,7 @@ impl GpuContext {
 
         let surface = instance.create_surface(target)?;
 
-        let adapter = pollster::block_on(instance.request_adapter(&RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .map_err(GpuError::NoAdapter)?;
+        let adapter = pick_adapter(&instance, &surface)?;
 
         let info = adapter.get_info();
         tracing::info!(
@@ -405,5 +400,71 @@ pub(super) fn vsync_from(raw: Option<&str>) -> Option<bool> {
         Some("novsync") => Some(false),
         Some("vsync") => Some(true),
         _ => None,
+    }
+}
+
+/// The adapter the engine can actually run on.
+///
+/// # 🔴 Why asking for "the best one" is not enough
+///
+/// `request_adapter` answers with the most powerful adapter, not the
+/// most capable one, and those differ. Under Proton the same Radeon
+/// 890M is visible **twice**: once through Vulkan and once through DX12,
+/// which is vkd3d translating to Vulkan underneath. DX12 wins the
+/// preference and does not expose `SHADER_F16`, so the engine's feature
+/// assert killed the game 571 ms after launch — on a machine whose GPU
+/// supports every feature it needs, through the other door (#963).
+///
+/// So: take the preferred adapter when it suits, and otherwise look for
+/// one that does before giving up. The order is deliberate — a desktop
+/// with an integrated and a discrete GPU keeps getting the discrete one,
+/// because the preferred adapter is tried first and almost always fits.
+fn pick_adapter(
+    instance: &Instance,
+    surface: &wgpu::Surface<'static>,
+) -> Result<Adapter, GpuError> {
+    let preferred = pollster::block_on(instance.request_adapter(&RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: Some(surface),
+        force_fallback_adapter: false,
+    }))
+    .map_err(GpuError::NoAdapter)?;
+
+    if super::features::suits_engine(&preferred) {
+        return Ok(preferred);
+    }
+
+    // Said out loud, because "the engine picked a different GPU than you
+    // expected" is otherwise invisible, and because the reason names the
+    // exact features that ruled the first one out.
+    let info = preferred.get_info();
+    let missing = super::features::engine_features() - preferred.features();
+    tracing::warn!(
+        name = info.name,
+        backend = ?info.backend,
+        ?missing,
+        "the preferred adapter cannot run the engine; looking for one that can",
+    );
+
+    let usable = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
+        .into_iter()
+        .find(|adapter| {
+            adapter.is_surface_supported(surface) && super::features::suits_engine(adapter)
+        });
+
+    match usable {
+        Some(adapter) => {
+            let info = adapter.get_info();
+            tracing::info!(
+                name = info.name,
+                backend = ?info.backend,
+                "using this adapter instead",
+            );
+            Ok(adapter)
+        }
+        // Nothing on the machine suits. Hand back the preferred one so
+        // the feature assert reports what is missing, rather than
+        // failing here with a vaguer message about no adapter at all.
+        None => Ok(preferred),
     }
 }
