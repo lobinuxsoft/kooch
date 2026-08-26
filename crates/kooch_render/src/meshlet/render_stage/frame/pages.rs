@@ -146,6 +146,11 @@ fn page_settings(resources: &Resources) -> PageSettings {
         scene_epoch: resources
             .get::<kooch_ecs::SceneManager>()
             .map(|manager| manager.epoch())
+            // ⚠️ Zero here is ambiguous and that ambiguity cost a day:
+            // "no manager in these Resources" and "a manager that has
+            // loaded nothing" read the same. `scene load: the epoch
+            // moved` logs the manager's address at the source, so the
+            // two can be told apart when this reads zero anyway.
             .unwrap_or(0),
         pool: PoolConfig {
             pages: shadows.pool_pages.clamp(PAGES_RANGE.0, PAGES_RANGE.1),

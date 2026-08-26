@@ -270,6 +270,15 @@ impl SceneManager {
     /// [`EphemeralComponents`](crate::ephemeral::EphemeralComponents).
     pub fn load(&mut self, path: &Path, resources: &mut Resources) -> Result<(), SceneError> {
         self.epoch = self.epoch.wrapping_add(1);
+        // 🔴 At the SOURCE of the count, because a reader far away found
+        // it stuck at zero and could not tell "never bumped" from "read
+        // from a different manager". One line per load, which is rare.
+        tracing::info!(
+            target: "kooch_ecs::scene",
+            epoch = self.epoch,
+            manager = self as *const Self as usize,
+            "scene load: the epoch moved",
+        );
         // 🔴 Through the pack-aware reader, and read once. A packaged
         // game has no `scenes/` directory: its scenes are inside the
         // pack, and reading the disk here is how a shipped game starts
