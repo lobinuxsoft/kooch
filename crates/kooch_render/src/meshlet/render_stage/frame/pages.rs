@@ -104,6 +104,37 @@ fn page_frame(resources: &Resources) -> u32 {
         .unwrap_or(0)
 }
 
+/// The scene epoch, as the page machine can see it from here.
+///
+/// ⚠️ Zero is ambiguous and the ambiguity cost a day: "no manager in
+/// these `Resources`" and "a manager that has loaded nothing" read the
+/// same. Exactly the hole the comment in [`page_settings`] describes
+/// for `RenderSettings`, one lookup over.
+///
+/// So the answer is reported whenever it CHANGES — found or not, and
+/// with the address of what was found, to be matched against the
+/// `scene load: the epoch moved` line the manager writes at the source.
+/// Two addresses that differ are two managers.
+fn read_epoch(resources: &Resources) -> u32 {
+    let manager = resources.get::<kooch_ecs::SceneManager>();
+    let epoch = manager.map(|m| m.epoch()).unwrap_or(0);
+    let at = manager.map_or(0, |m| m as *const _ as usize);
+    // Packed so one atomic carries both halves: a reader that found
+    // nothing and a reader that found zero must not collapse.
+    let seen = (u64::from(manager.is_some()) << 32) | u64::from(epoch);
+    static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+    if LAST.swap(seen, std::sync::atomic::Ordering::Relaxed) != seen {
+        tracing::info!(
+            target: "kooch_render::shadow",
+            found = manager.is_some(),
+            epoch,
+            manager = at,
+            "the page machine read the scene epoch",
+        );
+    }
+    epoch
+}
+
 fn page_settings(resources: &Resources) -> PageSettings {
     // 🔴 `ShadowSettings`, not `RenderSettings`, and `unwrap_or_default`
     // rather than an early return. Both halves of that were the bug.
@@ -143,15 +174,7 @@ fn page_settings(resources: &Resources) -> PageSettings {
         // Absent in a headless test and in any host without a manager,
         // where zero is right: nothing ever changes, so nothing ever
         // needs voiding.
-        scene_epoch: resources
-            .get::<kooch_ecs::SceneManager>()
-            .map(|manager| manager.epoch())
-            // ⚠️ Zero here is ambiguous and that ambiguity cost a day:
-            // "no manager in these Resources" and "a manager that has
-            // loaded nothing" read the same. `scene load: the epoch
-            // moved` logs the manager's address at the source, so the
-            // two can be told apart when this reads zero anyway.
-            .unwrap_or(0),
+        scene_epoch: read_epoch(resources),
         pool: PoolConfig {
             pages: shadows.pool_pages.clamp(PAGES_RANGE.0, PAGES_RANGE.1),
             // Filled in by the caller, which is the only place that
