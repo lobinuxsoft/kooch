@@ -34,10 +34,25 @@ pub(crate) fn gather_asset_detail(guid: Guid, resources: &mut Resources) -> Opti
         "kooch_render::meshlet::asset::MeshletMesh" => gather_mesh(guid, resources),
         "kooch_render::texture::asset::Image" => gather_image(guid, resources),
         crate::drag_drop::PREFAB_TYPE_NAME => gather_prefab(guid, resources),
-        other => Some(AssetDetail::Unknown {
+        // Anything without a bespoke view: if the type registered
+        // itself as reflected, the Inspector edits it with the same grid
+        // components use. Before #744 every type landed on the label
+        // below, and a new asset type cost three edits in this crate.
+        other => gather_reflected(other, guid, resources).or(Some(AssetDetail::Unknown {
             type_name: other.to_owned(),
-        }),
+        })),
     }
+}
+
+/// Reads any asset registered with `register_reflected_asset!`.
+fn gather_reflected(type_name: &str, guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
+    let registration = kooch_ecs::reflect::reflected_asset(type_name)?;
+    let fields = (registration.read)(resources, guid)?;
+    Some(AssetDetail::Reflected {
+        type_name: type_name.to_owned(),
+        fields,
+        field_metas: Some((registration.field_metas)()),
+    })
 }
 
 fn gather_material(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
@@ -206,12 +221,22 @@ fn gather_image(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
     let handle = load_handle::<Image>(guid, resources)?;
     let images = resources.get::<Assets<Image>>()?;
     let img = images.get(handle)?;
-    Some(AssetDetail::Image(ImageImportInfo {
+    let info = ImageImportInfo {
         width: img.width,
         height: img.height,
         format: format_name(img.format),
         bytes: img.byte_count(),
-    }))
+        // Read off the loaded image rather than the sidecar: the image
+        // is what the loader decided after reading the sidecar, so this
+        // shows what the texture IS and not what a file says it should
+        // be. They differ exactly while a `.meta` is malformed, which is
+        // the case worth seeing.
+        import: kooch_render::texture::ImageImport {
+            mipmaps: img.mipmaps,
+        },
+        levels: kooch_render::texture::level_count(img.width, img.height),
+    };
+    Some(AssetDetail::Image(info))
 }
 
 /// Resolves `guid` to a typed handle through the `AssetServer`, loading

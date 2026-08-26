@@ -173,11 +173,31 @@ pub fn load_project_plugin(
             plugin.build(&mut host);
             plugins.loaded.push(path);
         }
-        Err(e) => {
-            // Not fatal. The project still opens; it just shows none of
-            // its own components, and the reason says why.
-            tracing::warn!("{e}");
+        // Not fatal either way. The project still opens; it just shows
+        // none of its own components until a build produces a library
+        // this engine will load.
+        Err(kooch_core::dynamic::PluginLoadError::Incompatible {
+            reason: kooch_core::dynamic::Incompatibility::EngineVersion { .. },
+            ..
+        }) => {
+            // 🔴 Expected, and self-correcting. The engine bumps its
+            // version on every merged PR, so the project's library is
+            // stale the first time the editor opens after one — and the
+            // editor rebuilds the project moments later, which is where
+            // `loaded project plugin` comes from two lines down in the
+            // same log.
+            //
+            // Reported as a warning it read as a fault the owner had to
+            // act on, three sessions running. A warning that appears
+            // every time and needs nothing done is what teaches people
+            // to skim past the one that matters.
+            tracing::info!(
+                target: "kooch_editor_core::project_plugin",
+                "the project's library was built against another engine version; \
+                 rebuilding it is part of opening the project",
+            );
         }
+        Err(e) => tracing::warn!("{e}"),
     }
 
     resources.insert(plugins);
@@ -220,128 +240,7 @@ fn registered_type_count(resources: &Resources) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn library_names_follow_cargo() {
-        let name = library_file_name("my-game");
-        assert!(
-            name.contains("my_game"),
-            "cargo replaces dashes with underscores, got {name}"
-        );
-        #[cfg(target_os = "linux")]
-        assert_eq!(name, "libmy_game.so");
-    }
-
-    #[test]
-    fn a_project_without_a_library_yields_none() {
-        let dir = std::env::temp_dir().join("kooch_no_lib_test");
-        std::fs::create_dir_all(&dir).unwrap();
-        assert_eq!(library_path(&dir, "absent"), None);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Opening a project that has no library must not fail, and must not
-    /// register anything.
-    #[test]
-    fn loading_nothing_is_not_an_error() {
-        let dir = std::env::temp_dir().join("kooch_no_lib_load_test");
-        std::fs::create_dir_all(&dir).unwrap();
-
-        let mut resources = Resources::new();
-        assert_eq!(load_project_plugin(&mut resources, &dir, "absent"), 0);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn the_source_name_matches_what_the_bridge_derives() {
-        assert_eq!(
-            source_of(Path::new("/p/target/debug/libmy_game.so")).as_deref(),
-            Some("my_game")
-        );
-        assert_eq!(
-            source_of(Path::new("/p/target/debug/my_game.dll")).as_deref(),
-            Some("my_game")
-        );
-    }
-}
+mod tests;
 
 #[cfg(test)]
-mod staleness_tests {
-    use super::stale_source;
-
-    /// 🔴 A component written and not yet compiled is simply absent from
-    /// the add-component menu, and nothing says why: the editor loads
-    /// this library, it does not build it.
-    ///
-    /// Reported from a real session — the `.so` was 21 minutes older than
-    /// the component that "did not exist", and the time went into the
-    /// derive, `registrations.rs` and the `#[reflect]` attribute, none of
-    /// which were wrong.
-    #[test]
-    fn a_source_newer_than_the_library_is_reported() {
-        let dir = std::env::temp_dir().join("kooch_stale_plugin_test");
-        let src = dir.join("src").join("components");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&src).expect("temp dirs");
-
-        let library = dir.join("libproject.so");
-        std::fs::write(&library, b"not really a library").expect("write library");
-
-        // Written after, which is exactly the reported situation.
-        let component = src.join("input.rs");
-        std::fs::write(&component, b"pub struct PlayerInput;").expect("write source");
-        filetime_bump(&component);
-
-        assert_eq!(
-            stale_source(&dir, &library).as_deref(),
-            Some(component.as_path()),
-            "a source newer than the library went unreported"
-        );
-
-        // And the other way round: a fresh build is quiet, or the warning
-        // fires on every open and stops meaning anything.
-        let rebuilt = dir.join("librebuilt.so");
-        std::fs::write(&rebuilt, b"newer").expect("write");
-        filetime_bump(&rebuilt);
-        assert_eq!(
-            stale_source(&dir, &rebuilt),
-            None,
-            "a library newer than every source was reported as stale"
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// No sources at all is not a complaint: a project that defines no
-    /// components is a normal project.
-    #[test]
-    fn a_project_with_no_sources_is_quiet() {
-        let dir = std::env::temp_dir().join("kooch_stale_plugin_empty");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        let library = dir.join("libproject.so");
-        std::fs::write(&library, b"x").expect("write");
-
-        assert_eq!(stale_source(&dir, &library), None);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Rewrites `path` until its mtime is strictly later than it was, so
-    /// the test does not depend on filesystem timestamp granularity —
-    /// which on some mounts is a whole second.
-    fn filetime_bump(path: &std::path::Path) {
-        let before = path.metadata().and_then(|m| m.modified()).expect("mtime");
-        for _ in 0..100 {
-            std::fs::write(path, b"touched").expect("rewrite");
-            let now = path.metadata().and_then(|m| m.modified()).expect("mtime");
-            if now > before {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        panic!("could not make {} newer", path.display());
-    }
-}
+mod staleness_tests;

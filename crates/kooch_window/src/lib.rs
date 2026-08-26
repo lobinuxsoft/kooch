@@ -22,6 +22,8 @@
 
 pub mod event;
 pub mod handle;
+pub mod icon;
+mod mode;
 pub mod runner;
 pub mod title_metrics;
 mod winit_app;
@@ -89,6 +91,25 @@ pub struct WindowPlugin {
     pub width: u32,
     /// Window height in logical pixels.
     pub height: u32,
+    /// Whether this window follows the project's `window_mode` setting.
+    ///
+    /// 🔴 `false` in the editor, and that is the whole reason the field
+    /// exists. The editor adds this plugin **and** the asset plugin that
+    /// publishes a project's `.rendersettings`, so without it opening a
+    /// project whose `window_mode` is fullscreen would put the EDITOR
+    /// full screen. The setting describes the game's window, and the
+    /// editor's window is not the game's.
+    ///
+    /// The same argument the editor already makes for `FrameMetrics`:
+    /// the engine's own reporting is for a game, and a tool that shows
+    /// it is showing the wrong thing.
+    ///
+    /// ⚠️ `vsync` needs no equivalent only because
+    /// `apply_presentation_system` lives in `RenderPlugin`, which the
+    /// editor must not add — see `bootstrap.rs`. That is an accident of
+    /// where it was registered, not a rule, and moving it would
+    /// reintroduce the same bug.
+    pub applies_window_mode: bool,
 }
 
 impl Default for WindowPlugin {
@@ -98,6 +119,7 @@ impl Default for WindowPlugin {
             title: config.title,
             width: config.width,
             height: config.height,
+            applies_window_mode: true,
         }
     }
 }
@@ -121,6 +143,28 @@ impl Plugin for WindowPlugin {
             kooch_core::stage::Stage::Last,
             title_metrics::title_metrics_system,
         );
+        // After `apply_render_settings_system`, which publishes the
+        // resource in `Update`, so a change lands on the frame it is
+        // made. The system does nothing until something asks for a mode.
+        //
+        // Not registered at all in a host that does not own a game's
+        // window, rather than registered and skipped: there is nothing
+        // per-frame to decide, and a system that is never right to run
+        // should not be in the schedule.
+        if self.applies_window_mode {
+            // The list is published whether or not anything asks for a
+            // mode: a game's options menu needs it to draw the dropdown
+            // at all, and it costs one enumeration on the first frame
+            // the window exists.
+            app.add_system(
+                kooch_core::stage::Stage::Last,
+                mode::publish_display_modes_system,
+            );
+            app.add_system(
+                kooch_core::stage::Stage::Last,
+                mode::apply_window_mode_system,
+            );
+        }
 
         app.set_runner(winit_runner);
     }
@@ -131,43 +175,4 @@ impl Plugin for WindowPlugin {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use kooch_core::event::Events;
-    use kooch_core::plugin::MinimalPlugins;
-
-    #[test]
-    fn window_config_default() {
-        let config = WindowConfig::default();
-        assert_eq!(config.title, "Kóoch");
-        assert_eq!(config.width, 1280);
-        assert_eq!(config.height, 720);
-    }
-
-    #[test]
-    fn window_plugin_registers_events() {
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        app.add_plugin(WindowPlugin::default());
-
-        assert!(app.resources().contains::<WindowConfig>());
-        assert!(app.resources().contains::<Events<WindowResized>>());
-        assert!(app.resources().contains::<Events<WindowCloseRequested>>());
-    }
-
-    #[test]
-    fn window_plugin_custom_config() {
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        app.add_plugin(WindowPlugin {
-            title: "Test Game".to_string(),
-            width: 1920,
-            height: 1080,
-        });
-
-        let config = app.resources().get::<WindowConfig>().unwrap();
-        assert_eq!(config.title, "Test Game");
-        assert_eq!(config.width, 1920);
-        assert_eq!(config.height, 1080);
-    }
-}
+mod tests;

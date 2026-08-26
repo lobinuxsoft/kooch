@@ -36,7 +36,25 @@ pub fn spawn_scene_into(
     scene: &SceneDocument,
     resources: &mut Resources,
 ) -> Result<(), SceneError> {
-    spawn_returning(scene, resources).map(|_| ())
+    spawn_scene_as(scene, resources, scene.id)
+}
+
+/// Spawns a document's entities as the scene instance `instance`.
+///
+/// 🔴 The entities keep the ids the file gives them; only which *copy*
+/// they belong to differs. That is what lets the same file be open twice:
+/// `SceneMember` names the instance, so the `(scene, entity)` pair stays
+/// unique while the entity half is verbatim from disk.
+///
+/// Unity DOTS takes the same position — instances of a subscene are
+/// "exact copies of each other", told apart by the instance the load
+/// hands back rather than by anything inside them.
+pub fn spawn_scene_as(
+    scene: &SceneDocument,
+    resources: &mut Resources,
+    instance: kooch_core::Guid,
+) -> Result<(), SceneError> {
+    spawn_returning_as(scene, resources, instance).map(|_| ())
 }
 
 /// Stamps out a copy of `prefab` inside the scene `into`, and hands back
@@ -118,6 +136,15 @@ fn spawn_returning(
     scene: &SceneDocument,
     resources: &mut Resources,
 ) -> Result<Vec<crate::entity::Entity>, SceneError> {
+    spawn_returning_as(scene, resources, scene.id)
+}
+
+/// [`spawn_returning`], into a named scene instance.
+fn spawn_returning_as(
+    scene: &SceneDocument,
+    resources: &mut Resources,
+    instance: kooch_core::Guid,
+) -> Result<Vec<crate::entity::Entity>, SceneError> {
     use crate::hierarchy::Parent;
 
     // Identity has to be a known type before the spawn pass, or the ids
@@ -147,7 +174,7 @@ fn spawn_returning(
         // The result stands in for the description, so a `Parent` pointing
         // at this instance resolves to the root the prefab produced.
         let entity = match instance_source(entity_desc) {
-            Some(source) => rebuild_instance(entity_desc, source, resources),
+            Some(source) => rebuild_instance(entity_desc, source, resources, instance),
             None => {
                 let mut commands = resources
                     .remove::<Commands>()
@@ -160,7 +187,7 @@ fn spawn_returning(
 
         name_to_entity.insert(entity_desc.name.clone(), entity);
         spawned_order.push(entity);
-        tag_with_scene(resources, entity, scene.id);
+        tag_with_scene(resources, entity, instance);
 
         for comp_desc in &entity_desc.components {
             // Look up the TypeId by full type name. A name this binary
@@ -346,6 +373,7 @@ fn rebuild_instance(
     entity_desc: &super::document::EntityDescription,
     source: kooch_core::Guid,
     resources: &mut Resources,
+    into: kooch_core::Guid,
 ) -> crate::entity::Entity {
     // Depth-first, so the chain is exactly the prefabs above this one.
     if resources.get::<InstancingChain>().is_none() {
@@ -366,7 +394,11 @@ fn rebuild_instance(
         chain.0.push(source);
     }
 
-    let built = match super::prefab::spawn_members(source, resources) {
+    // Named, not guessed. `spawn_members` reads the active scene out of
+    // `SceneManager` — which the load lifted out of `Resources` to run,
+    // so it would answer with a fresh random `Guid` and put this
+    // instance's members in a scene nobody has open (#955).
+    let built = match super::prefab::spawn_members_into(source, resources, into) {
         Ok((root, members)) => {
             crate::prefab_instance::attach(resources, root, &members, source);
             apply_overrides(&instance_overrides(entity_desc), &members, resources);
@@ -541,7 +573,7 @@ fn tag_with_scene(
     use crate::scene_member::SceneMember;
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-        registry.register_cpu::<SceneMember>();
+        registry.register_cpu_reflected::<SceneMember>();
         if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
             storage.insert(entity, SceneMember::new(scene));
         }

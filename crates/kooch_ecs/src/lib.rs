@@ -29,6 +29,7 @@ pub mod light_consts;
 pub mod lod_force_level;
 pub mod mesh_renderer;
 pub mod name;
+pub mod order;
 pub mod orthographic_camera;
 pub mod persistent_id;
 pub mod perspective_camera;
@@ -42,6 +43,7 @@ pub mod scene_manager;
 pub mod scene_member;
 pub mod sky_renderer;
 pub mod spot_light;
+pub mod storage;
 pub mod transform;
 pub mod world_snapshot;
 
@@ -49,15 +51,21 @@ pub use allocator::EntityAllocator;
 pub use archetype::{Archetype, ArchetypeId};
 pub use archetype_registry::ArchetypeRegistry;
 pub use commands::Commands;
-pub use component::{Component, ComponentId, ComponentNames, ComponentRegistry, ComponentStorage};
+pub use component::{
+    Component, ComponentId, ComponentNames, ComponentRegistry, ComponentStorage, StorageId,
+};
 pub use directional_light::DirectionalLight;
 pub use entity::Entity;
 pub use ephemeral::EphemeralComponents;
 pub use hierarchy::{Children, GlobalTransform, Parent};
 pub use kooch_ecs_macros::Reflect;
+/// Declares a system's stage. Inert at compile time — read by the
+/// editor's codegen. See the macro's own docs.
+pub use kooch_ecs_macros::system;
 pub use lod_force_level::LodForceLevel;
 pub use mesh_renderer::MeshRenderer;
 pub use name::Name;
+pub use order::Order;
 pub use orthographic_camera::OrthographicCamera;
 pub use persistent_id::{EntityGuid, PersistentId, PersistentIdAllocator};
 pub use perspective_camera::PerspectiveCamera;

@@ -51,6 +51,10 @@ pub struct AssetPlugin {
     /// The `Assets<T>` those loaders fill. Paired with `extra_loaders` by
     /// `with_asset`, which is the only thing that pushes to either.
     extra_storages: Vec<std::sync::Arc<dyn Fn(&mut App) + Send + Sync>>,
+    /// A `.kpack` to read assets out of instead of the filesystem, and
+    /// the key that opens it (#758). `None` in the editor and in any
+    /// `cargo run`.
+    pack: Option<(PathBuf, PathBuf, kooch_core::asset_loader::PackKey)>,
 }
 
 impl std::fmt::Debug for AssetPlugin {
@@ -73,6 +77,7 @@ impl AssetPlugin {
             eager_import: true,
             extra_loaders: Vec::new(),
             extra_storages: Vec::new(),
+            pack: None,
         }
     }
 
@@ -142,6 +147,21 @@ impl AssetPlugin {
         self
     }
 
+    /// Reads assets out of `pack` rather than the filesystem.
+    ///
+    /// What a shipped game does. The pack is mounted over the primary
+    /// root, so an asset's path is the same string it would have on
+    /// disk and nothing downstream learns that packs exist.
+    pub fn with_pack_over(
+        mut self,
+        root: impl Into<PathBuf>,
+        pack: impl Into<PathBuf>,
+        key: kooch_core::asset_loader::PackKey,
+    ) -> Self {
+        self.pack = Some((root.into(), pack.into(), key));
+        self
+    }
+
     fn primary_root(&self) -> &Path {
         self.roots
             .first()
@@ -186,14 +206,42 @@ impl Plugin for AssetPlugin {
             register(&mut server);
         }
 
+        // Mounted before the database is built: a packaged game has no
+        // directory to scan, and the pack's index is what stands in for
+        // one.
+        let mut packed = None;
+        if let Some((root, path, key)) = &self.pack {
+            match server.mount_pack(root.clone(), path, key) {
+                Ok(entries) => packed = Some(entries),
+                // 🔴 Loud, and not fatal. A game whose pack will not open
+                // has nothing to draw, and the reason — wrong key, damaged
+                // file — is the only useful thing anyone can be told. It
+                // still boots, so the window and the log exist to say so.
+                Err(e) => tracing::error!(
+                    target: "kooch_render::plugin::assets",
+                    path = %path.display(),
+                    error = %e,
+                    "the asset pack could not be opened — this game has no assets",
+                ),
+            }
+        }
+
         let mut database = AssetDatabase::new();
+        if packed.is_some() {
+            kooch_core::asset_loader::scan_packs(&mut server, &mut database);
+        }
+        // Derived from the loaders just registered above, so a file
+        // written by hand is adopted on the first scan rather than being
+        // invisible until something loads it.
+        let known = server.known_extensions();
         for root in &self.roots {
-            match database.scan_directory(root) {
+            match database.scan_directory_adopting(root, &known) {
                 Ok(report) => {
                     tracing::info!(
                         target: "kooch_render::plugin::assets",
                         root = %root.display(),
                         registered = report.registered,
+                        adopted = report.adopted,
                         orphans = report.orphans,
                         duplicates = report.duplicates,
                         "asset database scan complete",
@@ -239,6 +287,11 @@ impl Plugin for AssetPlugin {
         // from inside the editor render path if startup ordering
         // ever leaves us without a context.
         app.add_system(Stage::Startup, init_material_pipeline_system);
+        // Publishes the project's RenderSettings into the Resources the
+        // shading model reads (#744). Per frame, because the asset is
+        // reloaded in place when saved and there is no change signal to
+        // subscribe to; it returns early unless a value actually moved.
+        app.add_system(Stage::Update, crate::settings::apply_render_settings_system);
 
         let roots = self.roots.clone();
 
@@ -274,9 +327,18 @@ fn init_material_pipeline_system(resources: &mut Resources) {
         return;
     }
     let Some(gpu) = resources.get::<GpuContext>() else {
-        tracing::warn!(
+        // 🔴 Not a warning: this is the ordinary path. The editor builds
+        // its GPU context after Startup runs, so every session takes
+        // this branch once and the retry a moment later is what logs
+        // `MaterialPipeline inserted into Resources`.
+        //
+        // A warning that fires every time and needs nothing done is how
+        // people learn to skim past the one that matters — and when this
+        // deferral genuinely never resolves, the symptom is a project
+        // with no materials at all, which nobody misses.
+        tracing::debug!(
             target: "kooch_render::plugin::assets",
-            "GpuContext missing at Startup; MaterialPipeline init deferred",
+            "GpuContext not up yet; MaterialPipeline init deferred to the retry",
         );
         return;
     };
@@ -290,81 +352,4 @@ fn init_material_pipeline_system(resources: &mut Resources) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use kooch_core::asset_loader::{AssetLoader, AssetResult, LoadContext};
-
-    #[derive(Debug, Clone, PartialEq)]
-    struct Probe(String);
-
-    #[derive(Clone)]
-    struct ProbeLoader;
-    impl AssetLoader<Probe> for ProbeLoader {
-        fn extensions(&self) -> &[&'static str] {
-            &["probe"]
-        }
-        fn load(&self, bytes: &[u8], _ctx: &mut LoadContext<'_>) -> AssetResult<Probe> {
-            Ok(Probe(String::from_utf8_lossy(&bytes).into_owned()))
-        }
-    }
-
-    fn empty_plugin() -> AssetPlugin {
-        AssetPlugin::new().with_root(std::env::temp_dir().join("kooch_no_such_assets"))
-    }
-
-    /// 🔴 A contributed asset arrives with **both** halves: the loader
-    /// that reads it and the `Assets<T>` that loader fills.
-    ///
-    /// Splitting them is what broke a real run — `load_by_guid` requires
-    /// the storage to exist rather than creating it, so an `.inputmap`
-    /// with a registered loader failed every frame with `Assets<ActionMap>
-    /// resource missing`. Registering a loader alone is no longer
-    /// expressible, and this is what says so.
-    #[test]
-    fn a_contributed_asset_brings_its_loader_and_its_storage() {
-        let mut app = App::new();
-        empty_plugin()
-            .with_asset::<Probe, _>(ProbeLoader)
-            .build(&mut app);
-
-        let resources = app.resources_mut();
-        assert!(
-            resources
-                .get::<AssetServer>()
-                .is_some_and(|server| server.has_loader::<Probe>()),
-            "the contributed loader never reached the server"
-        );
-        assert!(
-            resources.get::<Assets<Probe>>().is_some(),
-            "the loader is registered with nowhere to put what it loads,              which fails every load with `Assets<T> resource missing`"
-        );
-    }
-
-    /// Several crates contributing is the case this exists for — input
-    /// today, audio next — so more than one has to survive.
-    #[test]
-    fn every_contributed_asset_survives() {
-        #[derive(Debug, Clone)]
-        struct Other(u8);
-        #[derive(Clone)]
-        struct OtherLoader;
-        impl AssetLoader<Other> for OtherLoader {
-            fn extensions(&self) -> &[&'static str] {
-                &["other"]
-            }
-            fn load(&self, _b: &[u8], _c: &mut LoadContext<'_>) -> AssetResult<Other> {
-                Ok(Other(0))
-            }
-        }
-
-        let mut app = App::new();
-        empty_plugin()
-            .with_asset::<Probe, _>(ProbeLoader)
-            .with_asset::<Other, _>(OtherLoader)
-            .build(&mut app);
-
-        let resources = app.resources_mut();
-        assert!(resources.get::<Assets<Probe>>().is_some());
-        assert!(resources.get::<Assets<Other>>().is_some());
-    }
-}
+mod tests;

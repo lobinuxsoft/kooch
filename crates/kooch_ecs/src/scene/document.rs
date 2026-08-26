@@ -263,10 +263,21 @@ impl SceneDocument {
     }
 
     /// Loads a scene from a RON file at `path`.
+    ///
+    /// Reads the disk directly. A game whose scenes live in a pack goes
+    /// through [`SceneManager::load`](crate::SceneManager::load), which
+    /// asks the pack first — this stays for the editor, tests, and
+    /// anything holding a path it knows is a file.
     pub fn load(path: &Path) -> Result<Self, SceneError> {
-        let data = std::fs::read_to_string(path)?;
-        let doc: Self = ron::from_str(&data)?;
-        Ok(doc)
+        Self::parse(&std::fs::read_to_string(path)?)
+    }
+
+    /// Parses a scene from RON text.
+    ///
+    /// Split out so the bytes can come from a pack: a packaged game has
+    /// no `scenes/` directory to read (#758).
+    pub fn parse(text: &str) -> Result<Self, SceneError> {
+        Ok(ron::from_str(text)?)
     }
 
     /// Snapshots the current ECS state into a `SceneDocument`.
@@ -294,6 +305,18 @@ impl SceneDocument {
     /// next load spawn each twice.
     pub fn from_ecs_scene(resources: &mut Resources, scene: Guid) -> Self {
         Self::capture(resources, Capture::Scene(scene), scene)
+    }
+
+    /// Snapshots one open scene instance, writing `as_id` as the
+    /// document's identity.
+    ///
+    /// 🔴 The two are different once the same file can be open twice.
+    /// `scene` says whose entities to capture — the copy — and `as_id`
+    /// says what the file is called. Writing the instance's id would give
+    /// the file a new identity every time a second copy was saved, and
+    /// break every reference that named it.
+    pub fn from_ecs_instance(resources: &mut Resources, scene: Guid, as_id: Guid) -> Self {
+        Self::capture(resources, Capture::Scene(scene), as_id)
     }
 
     /// Snapshots one entity and its descendants as a standalone scene — a
@@ -342,6 +365,7 @@ impl SceneDocument {
         let parent_tid = std::any::TypeId::of::<crate::hierarchy::Parent>();
         let instance_tid = std::any::TypeId::of::<crate::prefab_instance::PrefabInstance>();
         let member_tid_prefab = std::any::TypeId::of::<crate::prefab_instance::PrefabMember>();
+        let order_tid = std::any::TypeId::of::<crate::order::Order>();
 
         // A subtree's membership is resolved once, up front: the walk below
         // visits archetypes in whatever order they were created, so
@@ -445,7 +469,19 @@ impl SceneDocument {
                         // `PrefabMember` is rebuilt by `attach` on load, so
                         // writing it would be storing a fact twice — the
                         // mistake this whole change exists to stop making.
-                        if is_instance_root && type_id != instance_tid && type_id != parent_tid {
+                        //
+                        // 🔴 `Order` is *where it sits*, exactly as `Parent`
+                        // is, and it is neither the prefab's nor an override
+                        // of anything in it: a prefab knows nothing about
+                        // where its instances land among a scene's siblings.
+                        // Skipping it silently dropped the ordering off every
+                        // instance on save (#961) — the entity came back in
+                        // the middle of the list it had been moved out of.
+                        if is_instance_root
+                            && type_id != instance_tid
+                            && type_id != parent_tid
+                            && type_id != order_tid
+                        {
                             continue;
                         }
                         // Instance bookkeeping never enters a prefab. A

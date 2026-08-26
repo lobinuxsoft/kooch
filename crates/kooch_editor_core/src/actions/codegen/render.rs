@@ -45,11 +45,15 @@ pub(super) fn render_registrations(files: &[SourceFile]) -> String {
     s.push('\n');
     s.push_str("/// Editor-managed plugin: registers project components + systems.\n");
     s.push_str("///\n");
-    s.push_str("/// Gameplay systems are always registered, wrapped in\n");
-    s.push_str("/// `run_if_playing` so the `Playing` resource decides per frame\n");
-    s.push_str("/// whether they run. `run_systems` only sets its starting value:\n");
-    s.push_str("/// `true` in the game build, `false` while editing — and the\n");
-    s.push_str("/// editor's Play button flips it live, with no rebuild.\n");
+    s.push_str("/// A system binds to `Stage::Update` wrapped in `run_if_playing`\n");
+    s.push_str("/// unless its `#[system(...)]` says otherwise — `#[system(PreUpdate)]`\n");
+    s.push_str("/// moves it, `always` drops the wrapper for the systems that must\n");
+    s.push_str("/// run while the editor is paused.\n");
+    s.push_str("///\n");
+    s.push_str("/// `run_if_playing` reads the `Playing` resource per frame, so\n");
+    s.push_str("/// `run_systems` only sets its starting value: `true` in the game\n");
+    s.push_str("/// build, `false` while editing — and the editor's Play button\n");
+    s.push_str("/// flips it live, with no rebuild.\n");
     s.push_str("pub struct ProjectRegistrations {\n");
     s.push_str("    pub run_systems: bool,\n");
     s.push_str("}\n\n");
@@ -59,9 +63,13 @@ pub(super) fn render_registrations(files: &[SourceFile]) -> String {
     s.push_str("        app.add_system(Stage::Startup, register_components);\n");
     for f in files {
         for sys in &f.systems {
+            let call = match sys.gated {
+                true => format!("run_if_playing({}::{})", f.module, sys.name),
+                false => format!("{}::{}", f.module, sys.name),
+            };
             s.push_str(&format!(
-                "        app.add_system(Stage::Update, run_if_playing({}::{}));\n",
-                f.module, sys
+                "        app.add_system(Stage::{}, {});\n",
+                sys.stage, call
             ));
         }
     }
@@ -93,6 +101,12 @@ pub(super) fn render_registrations(files: &[SourceFile]) -> String {
     s.push_str("/// Describes project components to an editor that loads this library.\n");
     s.push_str("///\n");
     s.push_str("/// Called from `lib.rs` when the editor loads the project's dylib.\n");
+    // 🔴 Behind the `editor` feature, like the export in `lib.rs`. It
+    // names `kooch::kooch_plugin_api` and `component::plugin_bridge`,
+    // both of which live behind `dynamic` — which a game build does not
+    // enable (#558). Gating `lib.rs` and not this meant a game build
+    // failed to compile on a file the editor itself had written.
+    s.push_str("#[cfg(feature = \"editor\")]\n");
     s.push_str("pub fn declare_components(engine: &mut dyn kooch::kooch_plugin_api::Engine) {\n");
     if !has_components {
         // No components to describe. Binding the parameter keeps a project

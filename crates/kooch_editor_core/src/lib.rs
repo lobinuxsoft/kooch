@@ -18,9 +18,14 @@
 
 pub(crate) mod actions;
 pub mod bootstrap;
+pub mod build;
+pub(crate) mod cargo_args;
+pub(crate) mod clipboard;
 pub(crate) mod drag_drop;
 pub mod editor_camera;
+pub mod engine_vendor;
 pub(crate) mod gizmos;
+pub(crate) mod history;
 pub mod icons;
 pub mod input_focus;
 pub mod launch_screen;
@@ -28,9 +33,16 @@ pub(crate) mod layout;
 pub(crate) mod menu_bar;
 pub(crate) mod numeric;
 pub(crate) mod panels;
+/// Re-exported for `capture_remote`, which is a client of the same
+/// `puffin_http::Client` the panel drives and needs the same guard
+/// against a long capture discarding its own scope names.
+#[cfg(feature = "profiling")]
+pub use panels::profiler::keep_all_frames;
+pub mod dlss_sdk;
 pub mod perf;
 mod picking;
 pub mod play_state;
+pub mod preflight;
 pub mod project;
 pub mod project_log;
 pub mod project_plugin;
@@ -39,6 +51,22 @@ pub(crate) mod queries;
 pub(crate) mod remote_input;
 pub mod remote_mirror;
 pub mod remote_session;
+pub mod script_sync;
+
+/// 🔴 A profiling build with the per-system scopes compiled out is not a
+/// build that fails — it is a build whose captures look exactly like the
+/// ones from before the scopes existed. That is how this went unnoticed
+/// once already: the feature was added to the `kooch` facade and not
+/// here, and the next capture reported `PreUpdate: 3.2 ms` with no
+/// children, which is a correct-looking answer to the wrong question.
+#[cfg(feature = "profiling")]
+const _: () = assert!(
+    kooch_core::CPU_SCOPES,
+    "`profiling` is on but `kooch_core/cpu-profiler` is not, so systems have no scopes \
+     and every stage will report one number with no children"
+);
+
+pub(crate) mod shortcuts;
 pub(crate) mod state;
 pub(crate) mod style;
 pub(crate) mod systems;
@@ -101,6 +129,9 @@ impl Plugin for EditorPlugin {
             kooch_core::frame_pacing::FramePace::Wait,
         ));
         app.insert_resource(PlayState::new());
+        // Idle until someone presses Build (#758).
+        app.insert_resource(build::BuildState::default());
+        app.insert_resource(script_sync::ScriptSync::default());
         app.insert_resource(input_focus::InputFocus::default());
         // Remote mode starts inert: no session means the editor drives
         // its own ECS exactly as before. "Open Remote" fills it in.
@@ -108,11 +139,26 @@ impl Plugin for EditorPlugin {
         app.insert_resource(systems::RemoteSyncState::default());
         app.insert_resource(project_state::ProjectState::new());
         app.insert_resource(undo::UndoStack::new());
+        // The remote half of the same history. Two stacks and not one
+        // because they describe different worlds — see
+        // `actions::remote_undo`.
+        app.insert_resource(actions::remote_undo::RemoteHistory::default());
+        app.insert_resource(clipboard::EntityClipboard::default());
+        // One history per open document — a prefab, an input map, a
+        // material. The scene's is above; see `history`.
+        app.insert_resource(history::documents::DocumentHistories::default());
         // #463 perf HUD — populated incrementally by per-metric
         // systems (frame timer, sysinfo poller, GPU timestamp
         // readback, render-side counters). Inserted at zero so the
         // toolbar can read it on the very first frame without any
         // metric system having run yet.
+        // Once per launch: installing anything it reports ends in a
+        // reboot on an image-based system, so the answer cannot change
+        // while the editor runs.
+        app.insert_resource(preflight::Report::detect());
+        // Looked at lazily, the first time the Settings window draws:
+        // three `is_file`s, and nothing at all until somebody opens it.
+        app.insert_resource(dlss_sdk::SdkInstall::default());
         app.insert_resource(perf::EditorPerfStats::default());
         app.insert_resource(perf::PerfTimingState::default());
         app.insert_resource(perf::SysMetricsState::default());
@@ -150,6 +196,10 @@ impl Plugin for EditorPlugin {
         // entries the same frame the user opens a project.
         app.add_system(Stage::PreUpdate, systems::scan_project_assets_system);
         app.add_system(Stage::PreUpdate, systems::ensure_main_exists_system);
+        // Keeps `registrations.rs` level with `src/` without being asked.
+        // A system written in an external editor used to reach no
+        // registration and no log line — it simply never ran.
+        app.add_system(Stage::PreUpdate, script_sync::sync_scripts_system);
         // Remote mode: advance the handshake and pull the project's
         // world into the local mirror. PreUpdate so the panels and the
         // viewport see a snapshot that is at most one frame stale.
@@ -181,6 +231,7 @@ impl Plugin for EditorPlugin {
         // Which gizmo groups draw, restored from disk. After the
         // visualizers are registered so the panel has something to list.
         app.add_system(Stage::Startup, gizmos::load_visibility_system);
+        app.add_system(Stage::Startup, perf::persistence::load_overlays_system);
         // Rebuild the gizmo line batch from current selection. Runs after
         // transform propagation (PostUpdate) so GlobalTransform is fresh.
         app.add_system(Stage::PreRender, gizmos::build_gizmo_batch_system);
@@ -192,6 +243,7 @@ impl Plugin for EditorPlugin {
         // Same cheap fast-path as the layout: re-serialize, compare, and
         // only touch disk when a choice actually changed.
         app.add_system(Stage::Last, gizmos::save_visibility_system);
+        app.add_system(Stage::Last, perf::persistence::save_overlays_system);
     }
 
     fn name(&self) -> &str {
@@ -200,79 +252,4 @@ impl Plugin for EditorPlugin {
 }
 
 #[cfg(test)]
-mod engine_component_registration_tests {
-    /// 🔴 Every `*ComponentsPlugin` in the workspace is added by the
-    /// editor.
-    ///
-    /// The editor keeps its **own** `ComponentRegistry`. A component the
-    /// project registers is invisible here, so authoring one requires the
-    /// matching components-plugin in `EditorPlugin::build` — and the list
-    /// is written by hand, which is exactly as reliable as it sounds:
-    /// this has now been the fifth omission (#722 was the third,
-    /// `InputMapSource` the fifth), and each one surfaces as a component
-    /// the menu offers and then refuses with "no default value".
-    ///
-    /// Scanning the source rather than a registry because the failure is
-    /// a plugin that was never *added* — a runtime check could only see
-    /// what was added, which is the set that is already correct.
-    #[test]
-    fn every_components_plugin_is_added_by_the_editor() {
-        let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("crates/ dir");
-        let lib = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"),
-        )
-        .expect("read the editor's own lib.rs");
-
-        let mut found = Vec::new();
-        collect_components_plugins(crates, &mut found);
-        assert!(
-            found.len() >= 4,
-            "the scan found {} plugins, so it is not scanning: {found:?}",
-            found.len()
-        );
-
-        for name in &found {
-            assert!(
-                lib.contains(name.as_str()),
-                "{name} exists but `EditorPlugin::build` never adds it, so its \
-                 components cannot be authored — the add-component menu will \
-                 offer them and fail with \"no default value\"",
-            );
-        }
-    }
-
-    /// Every `pub struct <X>ComponentsPlugin` under `dir`.
-    fn collect_components_plugins(dir: &std::path::Path, out: &mut Vec<String>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if path.file_name().is_some_and(|n| n == "target") {
-                    continue;
-                }
-                collect_components_plugins(&path, out);
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                let Ok(text) = std::fs::read_to_string(&path) else {
-                    continue;
-                };
-                for line in text.lines() {
-                    let line = line.trim();
-                    let Some(rest) = line.strip_prefix("pub struct ") else {
-                        continue;
-                    };
-                    let name: String = rest
-                        .chars()
-                        .take_while(|c| c.is_alphanumeric() || *c == '_')
-                        .collect();
-                    if name.ends_with("ComponentsPlugin") && !out.contains(&name) {
-                        out.push(name);
-                    }
-                }
-            }
-        }
-    }
-}
+mod engine_component_registration_tests;

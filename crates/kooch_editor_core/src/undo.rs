@@ -19,8 +19,8 @@ use kooch_ecs::reflect::ReflectValue;
 
 pub(crate) use commands::{
     AddComponentCommand, AddDynamicComponentCommand, DespawnCommand, DuplicateCommand,
-    RemoveComponentCommand, RemoveDynamicComponentCommand, SetDynamicFieldCommand, SetFieldCommand,
-    SpawnCommand, SpawnMeshCommand, TransformEditCommand,
+    PasteCommand, RemoveComponentCommand, RemoveDynamicComponentCommand, SetDynamicFieldCommand,
+    SetFieldCommand, SpawnCommand, SpawnMeshCommand, TransformEditCommand,
 };
 
 /// A snapshot of all reflected field values for a single component on an entity.

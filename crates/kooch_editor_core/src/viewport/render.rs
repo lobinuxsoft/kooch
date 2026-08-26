@@ -52,16 +52,13 @@ pub(crate) fn render_viewport(
         meshlet
             .stage
             .sync_assets_to_gpu(gpu.device(), gpu.queue(), resources);
-        let camera = view_camera(resources);
-        let (view_proj, cam_pos) = camera
-            .map(|c| (c.view_proj(target.aspect()), c.position()))
-            .unwrap_or((glam::Mat4::IDENTITY, glam::Vec3::ZERO));
+        let camera = view_camera(resources).unwrap_or_default();
         let stats = meshlet.stage.render_with_assets_primary(
             gpu.device(),
             gpu.queue(),
             resources,
-            view_proj,
-            cam_pos,
+            &camera,
+            target.aspect(),
         );
         // Republish per-frame so the editor's debug-stats overlay (#451)
         // can read it next tick. Stats from a frame the meshlet stage
@@ -79,6 +76,13 @@ pub(crate) fn render_viewport(
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("viewport_encoder"),
         });
+
+    // #785 — the same `sky` scope the game reports, so a capture taken
+    // in the editor names the same pass. It is the one that measured
+    // 39.6 ms of a 71.6 ms frame on the handheld, and the reason to
+    // have it here is that this is where the project is being authored.
+    let scopes = resources.get::<kooch_core::gpu::GpuScopes>();
+    let sky_query = scopes.map(|s| s.begin("sky", &mut encoder));
 
     // Pass 1: Sky (when available).
     let sky_drawn = if project_loaded {
@@ -109,6 +113,9 @@ pub(crate) fn render_viewport(
 
     if !sky_drawn {
         clear_to_black(&mut encoder, target.view(), target.depth_view());
+    }
+    if let (Some(scopes), Some(query)) = (scopes, sky_query) {
+        scopes.end(&mut encoder, query);
     }
 
     // Pass 2: Meshlet blit composite — only when this frame actually

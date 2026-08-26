@@ -57,6 +57,46 @@ pub(super) fn save_scene_as(
     result
 }
 
+/// Saves one open scene to `path` via `SceneManager`, adopting it.
+///
+/// Named rather than implied: with several scenes open, the one somebody
+/// right-clicked is routinely not the active one, and `save_as` writes
+/// whichever that is.
+pub(super) fn save_open_scene_as(
+    resources: &mut Resources,
+    id: kooch_core::Guid,
+    path: PathBuf,
+) -> Result<(), kooch_ecs::SceneError> {
+    let mut sm = resources
+        .remove::<kooch_ecs::SceneManager>()
+        .unwrap_or_default();
+    let result = sm.save_scene_as(id, path, resources);
+    resources.insert(sm);
+    result
+}
+
+/// Throws away one scene's edits and reads it back from its file.
+pub(super) fn revert_scene(
+    resources: &mut Resources,
+    id: kooch_core::Guid,
+) -> Result<(), kooch_ecs::SceneError> {
+    let mut sm = resources
+        .remove::<kooch_ecs::SceneManager>()
+        .unwrap_or_default();
+    let result = sm.revert(id, resources);
+    resources.insert(sm);
+    result
+}
+
+/// Where an open scene came from, or `None` for one never saved.
+pub(super) fn scene_path(resources: &Resources, id: kooch_core::Guid) -> Option<PathBuf> {
+    resources
+        .get::<kooch_ecs::SceneManager>()?
+        .scene(id)?
+        .path
+        .clone()
+}
+
 /// Builds the scene file dialog, rooted at the active project's
 /// `scenes/` folder when there is one.
 ///

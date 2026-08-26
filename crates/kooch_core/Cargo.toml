@@ -8,14 +8,24 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# Reading a shipped game's assets out of a `.kpack` (#758).
+kooch_pack.workspace = true
 inventory = "0.3"
 wgpu.workspace = true
+dlss_wgpu = { workspace = true, optional = true }
 bytemuck.workspace = true
 encase.workspace = true
 glam.workspace = true
 pollster.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+# The profiling facade (#785). No backend is selected here: with none of
+# `profiling`'s `profile-with-*` features on, every `scope!` below expands
+# to nothing at all. The backend is chosen once, by whoever builds the
+# binary — `kooch/profiling` for a game, `kooch_editor_core/profiling`
+# for the editor.
+profiling.workspace = true
 
 # Asset handles use slotmap (generational arena: dense Vec storage,
 # u32 indices, generation counter for stale-handle detection — DOD-friendly).
@@ -26,11 +36,35 @@ slotmap = "1.0"
 # Rust-native human-editable equivalent of Unity's YAML .meta.
 uuid = { workspace = true }
 toml = { workspace = true }
+ron = { workspace = true }
 serde = { workspace = true }
 
 # Dynamic plugin support (optional)
 libloading = { workspace = true, optional = true }
 kooch_plugin_api = { workspace = true, optional = true }
 
+# GPU timer scopes (#785). `default-features = false` is not a size
+# tweak: `wgpu-profiler`'s own `puffin` feature depends on puffin
+# ^0.19.1, and this workspace patches puffin to 0.20 — the two cannot
+# resolve together. `gpu/profiler/puffin_bridge.rs` reports the results
+# to *our* puffin instead, so there is one `GlobalProfiler` and the GPU
+# rows land in the same flamegraph as the CPU ones.
+wgpu-profiler = { workspace = true, optional = true }
+puffin = { workspace = true, optional = true }
+
 [features]
 dynamic = ["dep:libloading", "dep:kooch_plugin_api"]
+# Per-pass GPU timings. Selected by `kooch/profiling`, never on in a
+# release build: it allocates query sets and buffers per frame and the
+# timestamps themselves are not free.
+gpu-profiler = ["dep:wgpu-profiler", "dep:puffin"]
+# One profiling scope per SYSTEM, not just per stage. Selected by
+# `kooch/profiling` alongside the GPU half: a stage holds systems from
+# five crates at once, so "PreUpdate: 92 ms" names a suspect list rather
+# than a suspect. See `schedule::system_scope` for why it cannot be a
+# macro.
+cpu-profiler = ["dep:puffin"]
+# NVIDIA DLSS (#536). Compile-time by construction — see `gpu::dlss`.
+# With it on the instance is Vulkan-only, which on Windows moves every
+# player off D3D12, so it is a decision a build makes, not a default.
+dlss = ["dep:dlss_wgpu"]

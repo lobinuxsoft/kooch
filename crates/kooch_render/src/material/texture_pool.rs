@@ -29,7 +29,7 @@ use std::collections::HashMap;
 
 use kooch_core::Guid;
 
-use crate::texture::{GpuTexture, Image, ImageFormat};
+use crate::texture::{GpuTexture, Image, ImageFormat, Mipmapper};
 
 /// Which PBR channel a texture feeds. Selects the matching fallback and
 /// documents the expected color space at the call site.
@@ -43,6 +43,19 @@ pub enum TextureSlot {
     MetalRoughness,
 }
 
+/// The hardware minimum, which means the feature is off.
+///
+/// 🔴 This is the setting that actually improves a floor, and it is not
+/// the mip bias. A surface at a grazing angle covers a footprint that is
+/// long and thin, and an isotropic filter has one number for it: it
+/// takes the LONG axis, picks the level that would not alias there, and
+/// blurs the short axis by the same amount. That is why a tiled floor
+/// goes soft towards the horizon while a wall facing the camera stays
+/// sharp — the level is right for one axis and wrong for the other.
+/// Anisotropic filtering takes several samples along the long axis
+/// instead of one coarse one.
+pub const NO_ANISOTROPY: u16 = 1;
+
 /// GPU texture registry + per-material bind group factory.
 ///
 /// CPU-side coordination structure (populated at asset-load / sync time,
@@ -54,7 +67,11 @@ pub struct MaterialTexturePool {
     fallback_normal: GpuTexture,
     fallback_metal_roughness: GpuTexture,
     sampler: wgpu::Sampler,
+    anisotropy: u16,
     bgl: wgpu::BindGroupLayout,
+    /// Owned here because it caches a render pipeline per format, and
+    /// this is the one place textures are uploaded from.
+    mipmapper: Mipmapper,
 }
 
 impl MaterialTexturePool {
@@ -77,16 +94,7 @@ impl MaterialTexturePool {
             &Image::solid_color([255, 255, 255, 255], ImageFormat::Rgba8Unorm),
         );
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("material_texture_sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            ..Default::default()
-        });
+        let sampler = create_sampler(device, NO_ANISOTROPY);
 
         let bgl = Self::bind_group_layout(device);
 
@@ -95,17 +103,26 @@ impl MaterialTexturePool {
             fallback_albedo,
             fallback_normal,
             fallback_metal_roughness,
+            mipmapper: Mipmapper::new(device),
             sampler,
+            anisotropy: NO_ANISOTROPY,
             bgl,
         }
     }
 
     /// Per-material bind group layout: albedo(0), normal(1),
-    /// metal_roughness(2) textures + sampler(3), all fragment-visible.
+    /// metal_roughness(2) textures + sampler(3).
+    ///
+    /// Visible to compute as well as fragment (#824). The compute
+    /// shading pass samples the same three maps through
+    /// `textureSampleGrad`, which takes its gradients explicitly and is
+    /// therefore legal outside a fragment stage — the derivatives the
+    /// surface reconstruction computes analytically are what makes that
+    /// true here.
     pub fn bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
         let texture_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
             binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
+            visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
             ty: wgpu::BindingType::Texture {
                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
                 view_dimension: wgpu::TextureViewDimension::D2,
@@ -121,12 +138,33 @@ impl MaterialTexturePool {
                 texture_entry(2),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
             ],
         })
+    }
+
+    /// Replaces the sampler with one taking `samples` along the long
+    /// axis of a footprint, and reports whether anything changed.
+    ///
+    /// ⚠️ Every per-material bind group is rebuilt from this sampler
+    /// each frame, so there is nothing to invalidate — which is what
+    /// makes this a live setting rather than a restart.
+    pub fn set_anisotropy(&mut self, device: &wgpu::Device, samples: u16) -> bool {
+        let samples = samples.max(NO_ANISOTROPY);
+        if samples == self.anisotropy {
+            return false;
+        }
+        self.anisotropy = samples;
+        self.sampler = create_sampler(device, samples);
+        true
+    }
+
+    /// What the sampler currently takes.
+    pub fn anisotropy(&self) -> u16 {
+        self.anisotropy
     }
 
     /// Uploads `image` under `guid`, replacing any prior texture for that
@@ -138,8 +176,18 @@ impl MaterialTexturePool {
         guid: Guid,
         image: &Image,
     ) {
-        let texture = GpuTexture::upload(device, queue, image);
+        let texture = GpuTexture::upload_with(device, queue, image, &mut self.mipmapper);
         self.textures.insert(guid, texture);
+    }
+
+    /// Drops the texture for `guid`, so the next sync uploads it again.
+    ///
+    /// What a re-import is, from the pool's side. The bytes on disk did
+    /// not change — the answer about them did, and the answer lives in
+    /// the texture's descriptor: a chain is levels allocated at creation
+    /// and there is no way to add one to a texture that already exists.
+    pub fn evict(&mut self, guid: Guid) -> bool {
+        self.textures.remove(&guid).is_some()
     }
 
     /// True if a texture is already uploaded for `guid`.
@@ -217,81 +265,23 @@ impl MaterialTexturePool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod tests;
 
-    /// Acquires a headless device with default features/limits. Returns
-    /// `None` when no adapter is available (CI without a GPU) so the test
-    /// skips rather than fails, matching the crate's other GPU tests.
-    fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-            flags: wgpu::InstanceFlags::default(),
-            backend_options: wgpu::BackendOptions::default(),
-            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-            display: None,
-        });
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-        .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("material_texture_pool_test_device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::Off,
-            experimental_features: wgpu::ExperimentalFeatures::default(),
-        }))
-        .ok()
-    }
-
-    fn checker(format: ImageFormat) -> Image {
-        Image::solid_color([200, 100, 50, 255], format)
-    }
-
-    #[test]
-    fn register_and_lookup_roundtrip() {
-        let Some((device, queue)) = try_acquire_device() else {
-            eprintln!("skipping: no GPU adapter");
-            return;
-        };
-        let mut pool = MaterialTexturePool::new(&device, &queue);
-        assert!(pool.is_empty());
-
-        let g = Guid::new_v4();
-        assert!(!pool.contains(g));
-        pool.register(&device, &queue, g, &checker(ImageFormat::Rgba8UnormSrgb));
-        assert!(pool.contains(g));
-        assert_eq!(pool.len(), 1);
-
-        // Re-register same GUID replaces, does not grow.
-        pool.register(&device, &queue, g, &checker(ImageFormat::Rgba8UnormSrgb));
-        assert_eq!(pool.len(), 1);
-    }
-
-    #[test]
-    fn material_bind_group_builds_with_and_without_textures() {
-        let Some((device, queue)) = try_acquire_device() else {
-            eprintln!("skipping: no GPU adapter");
-            return;
-        };
-        let mut pool = MaterialTexturePool::new(&device, &queue);
-        let albedo = Guid::new_v4();
-        pool.register(
-            &device,
-            &queue,
-            albedo,
-            &checker(ImageFormat::Rgba8UnormSrgb),
-        );
-
-        // All-fallback (no maps) must build against the same layout.
-        let _bg_none = pool.material_bind_group(&device, None, None, None);
-        // Mixed: real albedo, fallback normal + metal_roughness.
-        let _bg_mixed = pool.material_bind_group(&device, Some(albedo), None, None);
-        // Unregistered GUID silently falls back.
-        let _bg_missing = pool.material_bind_group(&device, Some(Guid::new_v4()), None, None);
-    }
+/// The material sampler, at a given anisotropy.
+///
+/// ⚠️ `anisotropy_clamp` above 1 requires every filter mode to be
+/// linear — wgpu rejects the sampler otherwise. All three already are,
+/// and this function is where that stays true.
+fn create_sampler(device: &wgpu::Device, anisotropy: u16) -> wgpu::Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("material_texture_sampler"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        address_mode_w: wgpu::AddressMode::Repeat,
+        anisotropy_clamp: anisotropy.max(NO_ANISOTROPY),
+        ..Default::default()
+    })
 }

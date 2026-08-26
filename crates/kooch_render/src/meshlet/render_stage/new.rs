@@ -55,6 +55,9 @@ impl MeshletRenderStage {
         let primary = views.insert(super::view_targets::MeshletView::new(
             device,
             size,
+            // Nothing has selected a technique yet, so a fresh view
+            // renders at its panel's size.
+            size,
             debug_caps,
             vbuf64,
             cull_pipelines.meshlet_bind_group_layout(),
@@ -84,6 +87,28 @@ impl MeshletRenderStage {
             rasterizer,
             deferred,
             lights: kooch_lighting::GpuLights::new(device),
+            light_frame: None,
+            // Built on the first frame that finds the environment
+            // variable set; see the field's doc.
+            page_marker: None,
+            page_marking_last: None,
+            page_marking_logged: Vec::new(),
+            page_raster: None,
+            page_raster_last: None,
+            page_raster_logged: Vec::new(),
+            page_pool_config: None,
+            // Allocated on the first frame that finds a sun; see the
+            // field's doc for why not here.
+            shadows: None,
+            shadow_alloc: Default::default(),
+            point_shadows_over_budget: false,
+            point_shadow_holders: Vec::new(),
+            upscale_technique: crate::quality::UpscaleTechnique::None,
+            render_scale: 100,
+            instance_bounds: Vec::new(),
+            previous_bounds: Vec::new(),
+            moved_casters: Vec::new(),
+            point_cube_cache: Vec::new(),
             gpu_pool: None,
             pool_dirty: false,
             meshlet_bgl,
@@ -98,6 +123,7 @@ impl MeshletRenderStage {
             // [`Self::enable_gpu_timers`] at startup once the queue
             // and adapter are available.
             gpu_timers: MeshletGpuTimers::new_disabled_for_default(),
+            frames_recorded: 0,
             vram_tracker: None,
             frame_bind_groups: [Vec::new(), Vec::new(), Vec::new()],
             frame_bind_groups_index: 0,
@@ -182,6 +208,23 @@ impl MeshletRenderStage {
         self.gpu_timers.last_frame_ms()
     }
 
+    /// The shadow atlas this stage drew into, if it has one.
+    ///
+    /// For tests and for a future debug view (#743): the atlas answers
+    /// "did the pass record this occluder" directly, where the shaded
+    /// frame answers it through the whole sampling path.
+    pub fn shadow_atlas_texture(&self) -> Option<&wgpu::Texture> {
+        self.shadows.as_ref().map(|s| s.atlas_texture())
+    }
+
+    /// The point-light cube array, for the same reason as the atlas
+    /// above: a test that reads the map answers "is the occluder in
+    /// there" without going through the sampling path, the filter, the
+    /// bias and a surface shader — four places a picture can lie.
+    pub fn shadow_cubes_texture(&self) -> Option<&wgpu::Texture> {
+        self.shadows.as_ref().map(|s| s.cubes_texture())
+    }
+
     pub fn pipeline(&self) -> &MeshletPipeline {
         &self.pipeline
     }
@@ -228,6 +271,242 @@ impl MeshletRenderStage {
         &self.views[self.primary].color_texture
     }
 
+    /// The primary view's motion vectors (#481), when it runs the R64
+    /// path. `None` on the fallback, which has no vbuf to reconstruct
+    /// from.
+    pub fn motion_vector_texture(&self) -> Option<&wgpu::Texture> {
+        self.views[self.primary]
+            .vbuf64_stage
+            .as_ref()
+            .map(|stage| stage.motion_vector_texture())
+    }
+
+    /// The primary view's most recent temporal resolve (#481), for a
+    /// test to read back. `None` on the R32 fallback.
+    pub fn resolved_texture(&self) -> Option<&wgpu::Texture> {
+        self.views[self.primary]
+            .vbuf64_stage
+            .as_ref()
+            .map(|stage| stage.resolved_texture())
+    }
+
+    /// Switches temporal anti-aliasing on or off across every view
+    /// (#481), which is also what switches the sub-pixel jitter.
+    ///
+    /// 🔴 Returns how many views took it, for the same reason
+    /// [`Self::set_compute_shading`] does: zero means every view is on
+    /// the R32 fallback, where there is neither a motion vector nor a
+    /// history and this does nothing — and "did nothing" is
+    /// indistinguishable from "worked" in anything that only looks at
+    /// the image.
+    pub fn set_temporal_aa(&mut self, on: bool) -> usize {
+        let mut switched = 0;
+        for (_, view) in self.views.iter_mut() {
+            if let Some(stage) = view.vbuf64_stage.as_mut() {
+                stage.set_temporal_aa(on);
+                switched += 1;
+            }
+        }
+        switched
+    }
+
+    /// Selects the temporal technique on every view that has the R64
+    /// stage, and returns how many took it (#536).
+    pub fn set_upscale(&mut self, technique: crate::quality::UpscaleTechnique) -> usize {
+        self.upscale_technique = technique;
+        let mut applied = 0;
+        for (_, view) in self.views.iter_mut() {
+            if let Some(stage) = view.vbuf64_stage.as_mut() {
+                stage.set_upscale(technique);
+                applied += 1;
+            }
+        }
+        applied
+    }
+
+    /// How hard RCAS sharpens the finished image on every view that has
+    /// the R64 stage, 0..=100 (#481 step 5). Returns how many took it.
+    pub fn set_sharpening(&mut self, percent: u32) -> usize {
+        let mut applied = 0;
+        for (_, view) in self.views.iter_mut() {
+            if let Some(stage) = view.vbuf64_stage.as_mut() {
+                stage.set_sharpening(percent);
+                applied += 1;
+            }
+        }
+        applied
+    }
+
+    /// How much smaller than its panel each view renders, 1..=100.
+    ///
+    /// Takes effect on the next `resize_view`, which the editor calls
+    /// every frame with the panel's size — so a change lands within a
+    /// frame without a reallocation path of its own.
+    pub fn set_render_scale(&mut self, scale: u32) {
+        self.render_scale = scale.clamp(1, 100);
+    }
+
+    /// Whether any view shades in compute.
+    fn compute_shading_active(&self) -> bool {
+        self.views
+            .iter()
+            .filter_map(|(_, view)| view.vbuf64_stage.as_ref())
+            .any(|stage| stage.compute_shading())
+    }
+
+    /// What a fragment coordinate is multiplied by to find its froxel.
+    ///
+    /// 🔴 Exposed because sizing this from the wrong resolution shipped
+    /// (#481 step 4). The grid's DIMENSIONS come from the aspect ratio
+    /// and a fixed cluster budget, so they do not move with the
+    /// resolution and cannot catch the mistake — this is the number that
+    /// does. Built from the window while the shading pass produces
+    /// fragment coordinates at render resolution, every pixel reads a
+    /// froxel at twice its address. The owner found it by eye; nothing
+    /// in the suite could have.
+    pub fn cluster_tile_factors(&self) -> glam::Vec2 {
+        self.lights.clusters().grid().tile_factors
+    }
+
+    /// What a view of `output` renders at, under the current technique.
+    pub(super) fn render_size_for(&self, output: (u32, u32)) -> (u32, u32) {
+        // 🔴 The fragment path renders at the window's size whatever the
+        // settings say. It tonemaps inline into the image the window
+        // presents — no HDR target, nothing at render resolution — so a
+        // smaller frame there puts a render-sized depth buffer and a
+        // window-sized colour target into one pass, and **wgpu discards
+        // the pass**. The failure is not a soft picture, it is no
+        // picture. Reported from the editor at 1023x816 and 50 %.
+        //
+        // Applied HERE rather than in the setters, so the order the two
+        // arrive in cannot decide the outcome: a scale set before the
+        // compute path is switched on must not be lost, and one set
+        // after must not slip through.
+        if !self.compute_shading_active() {
+            return output;
+        }
+        // 🔴 DLSS picks its own, and the engine's arithmetic does not get
+        // a vote (#536). NGX's MINIMUM render resolution is its optimal
+        // — it will not reconstruct from fewer pixels than the mode asks
+        // for — so a percentage that rounds a pixel low is refused
+        // outright. A 943-row window halved is 471 by flooring and 472
+        // by NGX's rounding, and that one pixel used to disable the
+        // upscaler for the session and leave the frame in the corner of
+        // the window.
+        //
+        // `None` until the first context exists, and the fallback below
+        // is what creates it: the scale still decides which of NVIDIA's
+        // presets is asked for.
+        if self.upscale_technique == crate::quality::UpscaleTechnique::Dlss {
+            if let Some(size) = self.dlss_render_size(output) {
+                return size;
+            }
+            // Unusable: no vendor upscaler, so nothing will enlarge the
+            // frame and it has to be rendered at the output's own size.
+            // The resolve that runs instead is the engine's TAA, which
+            // antialiases and does not reconstruct.
+            if self.dlss_unusable() {
+                return output;
+            }
+        }
+        self.upscale_technique
+            .render_size(output, self.render_scale)
+    }
+
+    /// What DLSS wants a view of `output` rendered at, asked of the
+    /// views because that is where its per-camera context lives.
+    fn dlss_render_size(&self, output: (u32, u32)) -> Option<(u32, u32)> {
+        self.views
+            .iter()
+            .find_map(|(_, view)| view.vbuf64_stage.as_ref()?.dlss_render_size(output))
+    }
+
+    /// Whether every view that could run DLSS has given up on it.
+    ///
+    /// ⚠️ `any`, not `all`: one view that cannot reconstruct is one
+    /// window drawing into its own corner, and the answer that keeps a
+    /// picture on the screen is the conservative one.
+    fn dlss_unusable(&self) -> bool {
+        self.views.iter().any(|(_, view)| {
+            view.vbuf64_stage
+                .as_ref()
+                .is_some_and(|s| s.dlss_unusable())
+        })
+    }
+
+    /// The lens both the cull and SGSR 2's edge mask are derived from.
+    pub fn set_camera_lens(&mut self, fov_y_rad: f32, aspect: f32, near: f32) -> usize {
+        let mut applied = 0;
+        for (_, view) in self.views.iter_mut() {
+            if let Some(stage) = view.vbuf64_stage.as_mut() {
+                stage.set_camera_lens(fov_y_rad, aspect, near);
+                applied += 1;
+            }
+        }
+        applied
+    }
+
+    /// Switches every view between the fragment shading path and the
+    /// compute one (#824), overriding `KOOCH_COMPUTE_SHADING`.
+    ///
+    /// Both pipelines are already built, so this costs nothing to flip
+    /// and takes effect on the next frame. It exists because the two
+    /// paths have to be compared — a test rendering the same scene twice
+    /// cannot do it through a `OnceLock` that reads the environment once
+    /// per process, and neither can a live control.
+    ///
+    /// A view without the R64 stage (no 64-bit texture atomics) has no
+    /// compute shading path to switch to and is left alone.
+    ///
+    /// 🔴 Returns how many views it reached, and a caller that needs the
+    /// switch to have happened must check it. Zero means every view is
+    /// on the R32 fallback, where this setting does nothing at all —
+    /// which is indistinguishable from "the setting worked" in anything
+    /// that only looks at the rendered image. #824's parity tests passed
+    /// against a stage built with `Vbuf64Support::from_supported(false)`
+    /// until they started checking this.
+    pub fn set_compute_shading(&mut self, on: bool) -> usize {
+        let mut switched = 0;
+        for (_, view) in self.views.iter_mut() {
+            if let Some(stage) = view.vbuf64_stage.as_mut() {
+                stage.set_compute_shading(on);
+                switched += 1;
+            }
+        }
+        switched
+    }
+
+    /// How many pixels share one shaded sample (#825), across every
+    /// view.
+    ///
+    /// 🔴 Returns how many views took it, for the same reason
+    /// [`Self::set_compute_shading`] does — and one more: a reduced rate
+    /// needs the compute shading path, so this returns zero both when a
+    /// view has no R64 stage and when it has one still on the fragment
+    /// path. Either way nothing changed, and only the return value says
+    /// so.
+    pub fn set_shading_rate(&mut self, rate: crate::meshlet::ShadingRate) -> usize {
+        let mut switched = 0;
+        for (_, view) in self.views.iter_mut() {
+            if let Some(stage) = view.vbuf64_stage.as_mut()
+                && stage.set_shading_rate(rate)
+            {
+                switched += 1;
+            }
+        }
+        switched
+    }
+
+    /// The primary view's current shading rate (#825). `Full` when the
+    /// view has no R64 stage, which is the rate it renders at.
+    pub fn shading_rate(&self) -> crate::meshlet::ShadingRate {
+        self.views[self.primary]
+            .vbuf64_stage
+            .as_ref()
+            .map(|s| s.shading_rate())
+            .unwrap_or_default()
+    }
+
     pub fn vbuf_texture(&self) -> &wgpu::Texture {
         &self.views[self.primary].vbuf_texture
     }
@@ -259,9 +538,11 @@ impl MeshletRenderStage {
     /// puts the pool at 6.33 MiB for four assets, and duplicating it
     /// per camera would buy nothing.
     pub fn create_view(&mut self, device: &wgpu::Device, size: (u32, u32)) -> ViewId {
+        let render_size = self.render_size_for(size);
         self.views.insert(super::view_targets::MeshletView::new(
             device,
             size,
+            render_size,
             self.config.debug_caps,
             self.config.vbuf64,
             self.cull_pipelines.meshlet_bind_group_layout(),
@@ -302,6 +583,16 @@ impl MeshletRenderStage {
     /// Colour target of `id`, or `None` if the handle is stale.
     pub fn view_color_view(&self, id: ViewId) -> Option<&wgpu::TextureView> {
         self.views.get(id).map(|v| &v.color_view)
+    }
+
+    /// Colour TEXTURE of `id`, or `None` if the handle is stale.
+    ///
+    /// The view above is what a blit binds; this is what a readback
+    /// copies from. Added because every shadow picture this repo takes
+    /// came from the primary view, so the Game panel — a second `ViewId`
+    /// on the same stage — was the one surface no test could look at.
+    pub fn view_color_texture(&self, id: ViewId) -> Option<&wgpu::Texture> {
+        self.views.get(id).map(|v| &v.color_texture)
     }
 
     /// Size of `id`, or `None` if the handle is stale.

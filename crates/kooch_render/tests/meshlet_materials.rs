@@ -107,10 +107,16 @@ fn render_with_material(material_id: u32) -> Vec<u8> {
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        // TEXTURE_BINDING as well: the contact-shadow march (#735)
+        // samples the scene depth during shading.
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
     let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let depth_sample_view = depth_tex.create_view(&wgpu::TextureViewDescriptor {
+        aspect: wgpu::TextureAspect::DepthOnly,
+        ..Default::default()
+    });
 
     let cam = Vec3::new(0.0, 0.0, 2.0);
     let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
@@ -147,6 +153,7 @@ fn render_with_material(material_id: u32) -> Vec<u8> {
         &queue,
         &mut encoder,
         &vbuf_view,
+        &depth_sample_view,
         &color_view,
         &meshlet_bg,
         &material_bg,

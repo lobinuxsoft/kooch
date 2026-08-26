@@ -124,6 +124,32 @@ pub fn spawn_members(
     prefab: Guid,
     resources: &mut Resources,
 ) -> Result<(crate::entity::Entity, Vec<crate::entity::Entity>), SceneError> {
+    // 🔴 Only correct when somebody is *there* to answer. A scene load
+    // lifts the `SceneManager` out of `Resources` to call
+    // `SceneManager::load`, so an instance built during a load asks an
+    // empty room and gets a fresh random `Guid` — a scene that exists
+    // nowhere, one per instance. `many_lights` produced 36 of them, and
+    // the 144 entities carrying them dropped out of the panel (#955).
+    //
+    // A caller that knows which scene it is building into must say so:
+    // [`spawn_members_into`].
+    let into = resources
+        .get::<crate::scene_manager::SceneManager>()
+        .and_then(|scenes| scenes.active_id())
+        .unwrap_or_else(Guid::new_v4);
+    spawn_members_into(prefab, resources, into)
+}
+
+/// [`spawn_members`], into a scene the caller names.
+///
+/// The load path uses this: the document being spawned knows its own id,
+/// and passing it beats asking a resource that has been lifted out for
+/// the duration of the very call that needs it.
+pub fn spawn_members_into(
+    prefab: Guid,
+    resources: &mut Resources,
+    into: Guid,
+) -> Result<(crate::entity::Entity, Vec<crate::entity::Entity>), SceneError> {
     // Taken out and put back so `load_by_guid` can borrow `resources` for
     // the load it may have to perform.
     let mut server = resources
@@ -148,11 +174,6 @@ pub fn spawn_members(
             detail: "loaded but absent from Assets<SceneDocument>".to_owned(),
         })?;
 
-    let into = resources
-        .get::<crate::scene_manager::SceneManager>()
-        .and_then(|scenes| scenes.active_id())
-        .unwrap_or_else(Guid::new_v4);
-
     super::sync::instantiate_members(&document, resources, into)
 }
 
@@ -175,47 +196,4 @@ impl std::fmt::Display for PrefabParseError {
 impl std::error::Error for PrefabParseError {}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn ctx_free_load(bytes: &[u8]) -> AssetResult<SceneDocument> {
-        // The context only carries the source path, which this loader does
-        // not consult — a prefab's contents are self-describing.
-        let mut ctx = LoadContext {
-            path: std::path::Path::new("x.prefab"),
-        };
-        PrefabLoader.load(bytes, &mut ctx)
-    }
-
-    /// The extension is the one that names the single-root invariant, not
-    /// the scene one — registering both against the same loader would make
-    /// every scene show up in a prefab picker.
-    #[test]
-    fn the_loader_claims_prefabs_and_not_scenes() {
-        let extensions = PrefabLoader.extensions();
-        assert!(extensions.contains(&kooch_core::scene_paths::PREFAB_EXTENSION));
-        assert!(!extensions.contains(&kooch_core::scene_paths::SCENE_EXTENSION));
-    }
-
-    #[test]
-    fn a_prefab_round_trips_through_the_loader() {
-        let document = SceneDocument {
-            id: Guid::new_v4(),
-            name: "Ball".into(),
-            version: "0.1.0".into(),
-            entities: Vec::new(),
-        };
-        let text = ron::ser::to_string(&document).unwrap();
-        let loaded = ctx_free_load(text.as_bytes()).expect("its own output should parse");
-        assert_eq!(loaded.name, "Ball");
-        assert_eq!(loaded.id, document.id);
-    }
-
-    /// A truncated or hand-edited file has to fail as an error rather than
-    /// panic: it arrives from disk, so it is input, not a bug.
-    #[test]
-    fn a_malformed_prefab_is_an_error() {
-        assert!(ctx_free_load(b"(id: ").is_err());
-        assert!(ctx_free_load(&[0xff, 0xfe]).is_err(), "invalid UTF-8");
-    }
-}
+mod tests;

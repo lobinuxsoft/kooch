@@ -56,6 +56,53 @@ pub fn perspective_rh_reverse_z(fovy: f32, aspect: f32, near: f32, far: f32) -> 
     depth_flip * Mat4::perspective_rh(fovy, aspect, near, far)
 }
 
+/// Right-handed **reversed-Z with no far plane**: near maps to
+/// `ndc.z = 1.0` and infinity to `ndc.z = 0.0`, which it approaches
+/// without reaching.
+///
+/// This is what a camera in this engine renders with. The finite form
+/// above survives for the one job that genuinely needs a bounded
+/// frustum — fitting shadow cascades to a slice of it.
+///
+/// # Why no far plane
+///
+/// Two reasons, and the second is the one that decided it.
+///
+/// **Precision.** Reversed-Z spends float exponent where the eye is,
+/// and a finite far plane spends some of that range describing the
+/// distance between `far` and infinity, which nothing renders.
+///
+/// **`ndc.z` becomes a usable number.** With this projection
+/// `ndc.z = near / distance` exactly, so any shader can recover metres
+/// with one divide and no extra uniform. With a finite far it is
+/// `A / (B − ndc.z)`, which needs two coefficients plumbed to every
+/// consumer — and every one that forgets is a technique whose
+/// world-space parameters quietly mean something different per scene.
+/// Screen-space contact shadows (#735) hit that first; SSR, SSAO, fog,
+/// temporal upscaling (#732) and the atmosphere (#248) all read depth
+/// the same way and would each have hit it in turn.
+///
+/// It is also what Bevy does — `bevy_camera/src/projection.rs`, whose
+/// `Perspective` has a `far` field that its own `get_clip_from_view`
+/// does not pass to `Mat4::perspective_infinite_reverse_rh`. Every
+/// depth helper they ship (`depth_ndc_to_view_z`, the SSR/contact-shadow
+/// ray march) assumes it, so porting their shaders and not their
+/// projection is porting half a mechanism.
+pub fn perspective_infinite_rh_reverse_z(fovy: f32, aspect: f32, near: f32) -> Mat4 {
+    Mat4::perspective_infinite_reverse_rh(fovy, aspect, near)
+}
+
+/// The `near` a shader can recover from the projection matrix alone,
+/// which is all a depth linearisation needs once the far plane is gone.
+///
+/// Bevy reads exactly this element and calls it
+/// `perspective_camera_near()` (`view_transformations.wgsl:166`); the
+/// name here says where it comes from, because on any other projection
+/// the element means something else.
+pub fn near_from_infinite_projection(proj: Mat4) -> f32 {
+    proj.to_cols_array_2d()[3][2]
+}
+
 /// A world-space ray: where a screen pixel points once it leaves the
 /// camera.
 ///
@@ -99,14 +146,13 @@ pub fn viewport_cursor_to_ray(
     camera_to_world: Mat4,
     fov_y_radians: f32,
     near: f32,
-    far: f32,
 ) -> Option<WorldRay> {
     if viewport_size.x < 1.0 || viewport_size.y < 1.0 {
         return None;
     }
     let aspect = (viewport_size.x / viewport_size.y).max(0.001);
     let near = near.max(0.001);
-    let proj = perspective_rh_reverse_z(fov_y_radians, aspect, near, far.max(near + 0.001));
+    let proj = perspective_infinite_rh_reverse_z(fov_y_radians, aspect, near);
     let view_proj = proj * camera_to_world.inverse();
     let inverse = view_proj.inverse();
 
@@ -115,14 +161,18 @@ pub fn viewport_cursor_to_ray(
     let ndc_x = 2.0 * (cursor.x / viewport_size.x) - 1.0;
     let ndc_y = 1.0 - 2.0 * (cursor.y / viewport_size.y);
 
-    // Reversed-Z: the far plane is at ndc.z = 0.
-    let far_point = inverse * Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
-    if far_point.w.abs() < 1e-6 {
+    // 🔴 Unprojected at the NEAR plane (`ndc.z = 1` under reversed-Z),
+    // not the far one. There is no far plane any more: `ndc.z = 0` is
+    // infinity, it unprojects to `w = 0`, and every pick would return
+    // `None`. The near point is on the same ray through the eye and is
+    // the only one that stays finite.
+    let near_point = inverse * Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+    if near_point.w.abs() < 1e-6 {
         return None;
     }
-    let far_point = far_point.truncate() / far_point.w;
+    let near_point = near_point.truncate() / near_point.w;
     let origin = camera_to_world.w_axis.truncate();
-    let direction = (far_point - origin).normalize_or_zero();
+    let direction = (near_point - origin).normalize_or_zero();
     if direction == Vec3::ZERO {
         return None;
     }
@@ -158,201 +208,4 @@ impl WorldRay {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use glam::{Vec3, Vec4Swizzles};
-
-    fn project_point(proj: Mat4, view_z: f32) -> f32 {
-        let clip = proj * Vec4::new(0.0, 0.0, view_z, 1.0);
-        clip.z / clip.w
-    }
-
-    #[test]
-    fn near_plane_maps_to_one() {
-        let proj = perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
-        // RH cameras look down -Z; the near plane is at view_z = -near.
-        let z = project_point(proj, -0.1);
-        assert!(
-            (z - 1.0).abs() < 1e-3,
-            "near plane should map to ndc.z ≈ 1.0, got {z}"
-        );
-    }
-
-    #[test]
-    fn far_plane_maps_to_zero() {
-        let proj = perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
-        let z = project_point(proj, -100.0);
-        assert!(
-            z.abs() < 1e-3,
-            "far plane should map to ndc.z ≈ 0.0, got {z}"
-        );
-    }
-
-    #[test]
-    fn midpoint_lies_between() {
-        // Reversed-Z spreads precision NON-uniformly in view space —
-        // points closer to the camera get more depth resolution. The
-        // mid-distance point lands somewhere between 0 and 1, NOT
-        // exactly 0.5, but ordering is preserved monotonically with
-        // distance.
-        let proj = perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
-        let z_close = project_point(proj, -1.0);
-        let z_mid = project_point(proj, -50.0);
-        let z_far = project_point(proj, -100.0);
-        assert!(
-            z_close > z_mid,
-            "closer point must have larger ndc.z (reversed-Z)"
-        );
-        assert!(z_mid > z_far, "mid point must have larger ndc.z than far");
-        assert!((0.0..=1.0).contains(&z_mid), "ndc.z must stay in [0, 1]");
-    }
-
-    #[test]
-    fn xy_unchanged_versus_standard() {
-        // The depth flip only touches z; xy must match standard perspective.
-        let std = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
-        let rev = perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
-        let p = Vec4::new(1.0, 0.5, -10.0, 1.0);
-        let s = std * p;
-        let r = rev * p;
-        assert_eq!(s.x, r.x);
-        assert_eq!(s.y, r.y);
-        assert_eq!(s.w, r.w);
-    }
-
-    #[test]
-    fn world_corner_round_trip() {
-        // Sanity: a world-space point at the centre of the frustum
-        // projects somewhere visible in NDC.
-        let proj = perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
-        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
-        let view_proj = proj * view;
-        let p = view_proj * Vec4::new(0.0, 0.0, 0.0, 1.0);
-        let ndc = p.xyz() / p.w;
-        assert!(ndc.x.abs() < 0.5);
-        assert!(ndc.y.abs() < 0.5);
-        // Origin is between near (5 - 0.1) and far (5 + 100), should
-        // give a smallish ndc.z (closer to 0 than to 1 — well into the
-        // reversed-Z far band).
-        assert!((0.0..=1.0).contains(&ndc.z));
-    }
-    /// The centre pixel points straight down the camera's forward axis.
-    /// Camera at +5Z looking at the origin means forward is -Z.
-    #[test]
-    fn the_centre_of_the_viewport_looks_where_the_camera_looks() {
-        let camera = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y).inverse();
-        let ray = viewport_cursor_to_ray(
-            Vec2::new(400.0, 300.0),
-            Vec2::new(800.0, 600.0),
-            camera,
-            60.0_f32.to_radians(),
-            0.1,
-            100.0,
-        )
-        .expect("a centred cursor in a real viewport has a ray");
-        assert!((ray.origin - Vec3::new(0.0, 0.0, 5.0)).length() < 1e-4);
-        assert!(
-            (ray.direction - Vec3::NEG_Z).length() < 1e-3,
-            "expected forward, got {:?}",
-            ray.direction,
-        );
-    }
-
-    /// Reversed-Z is the trap: unproject with the conventional orientation
-    /// and the ray comes out pointing *behind* the camera. The dot product
-    /// against forward catches exactly that, which a length check would not.
-    #[test]
-    fn the_ray_leaves_the_camera_rather_than_entering_it() {
-        let camera = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y).inverse();
-        for cursor in [
-            Vec2::new(10.0, 10.0),
-            Vec2::new(790.0, 10.0),
-            Vec2::new(400.0, 590.0),
-        ] {
-            let ray = viewport_cursor_to_ray(
-                cursor,
-                Vec2::new(800.0, 600.0),
-                camera,
-                60.0_f32.to_radians(),
-                0.1,
-                100.0,
-            )
-            .unwrap();
-            assert!(
-                ray.direction.dot(Vec3::NEG_Z) > 0.0,
-                "cursor {cursor:?} produced a ray pointing backwards: {:?}",
-                ray.direction,
-            );
-        }
-    }
-
-    /// egui's Y grows downward. A cursor above centre must map to a ray
-    /// aiming upward in world space, and a flipped sign here is invisible
-    /// in a symmetric test.
-    #[test]
-    fn screen_y_is_flipped_into_world_y() {
-        let camera = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y).inverse();
-        let size = Vec2::new(800.0, 600.0);
-        let fov = 60.0_f32.to_radians();
-        let above =
-            viewport_cursor_to_ray(Vec2::new(400.0, 100.0), size, camera, fov, 0.1, 100.0).unwrap();
-        let below =
-            viewport_cursor_to_ray(Vec2::new(400.0, 500.0), size, camera, fov, 0.1, 100.0).unwrap();
-        assert!(above.direction.y > 0.0, "top of screen should aim up");
-        assert!(below.direction.y < 0.0, "bottom of screen should aim down");
-    }
-
-    #[test]
-    fn a_viewport_with_no_area_has_no_ray() {
-        let camera = Mat4::IDENTITY;
-        for size in [Vec2::ZERO, Vec2::new(800.0, 0.0), Vec2::new(0.0, 600.0)] {
-            assert!(
-                viewport_cursor_to_ray(Vec2::ZERO, size, camera, 1.0, 0.1, 100.0).is_none(),
-                "size {size:?} should not produce a ray",
-            );
-        }
-    }
-
-    #[test]
-    fn a_ray_aimed_down_meets_the_ground() {
-        let ray = WorldRay {
-            origin: Vec3::new(2.0, 10.0, -3.0),
-            direction: Vec3::new(0.0, -1.0, 0.0),
-        };
-        let hit = ray.hits_horizontal_plane(0.0).unwrap();
-        assert!((hit - Vec3::new(2.0, 0.0, -3.0)).length() < 1e-5);
-    }
-
-    /// Both the parallel case and the behind-the-camera case. Placing
-    /// something at the algebraic solution of either would put it somewhere
-    /// the user did not click — off at the horizon, or behind them.
-    #[test]
-    fn a_ray_that_never_reaches_the_ground_ahead_reports_nothing() {
-        let parallel = WorldRay {
-            origin: Vec3::new(0.0, 5.0, 0.0),
-            direction: Vec3::X,
-        };
-        assert_eq!(parallel.hits_horizontal_plane(0.0), None);
-
-        let upward = WorldRay {
-            origin: Vec3::new(0.0, 5.0, 0.0),
-            direction: Vec3::Y,
-        };
-        assert_eq!(
-            upward.hits_horizontal_plane(0.0),
-            None,
-            "the plane is behind the camera, not in front of it",
-        );
-    }
-
-    #[test]
-    fn a_plane_at_height_is_met_at_that_height() {
-        let ray = WorldRay {
-            origin: Vec3::new(0.0, 10.0, 0.0),
-            direction: Vec3::new(1.0, -1.0, 0.0).normalize(),
-        };
-        let hit = ray.hits_horizontal_plane(4.0).unwrap();
-        assert!((hit.y - 4.0).abs() < 1e-5, "got {hit:?}");
-        assert!((hit.x - 6.0).abs() < 1e-5, "got {hit:?}");
-    }
-}
+mod tests;

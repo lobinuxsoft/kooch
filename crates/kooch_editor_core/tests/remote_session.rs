@@ -40,6 +40,8 @@ fn seeded_ecs() -> Resources {
             id: 0,
             method: Method::Spawn {
                 name: Some("Hero".into()),
+                scene: None,
+                parent: None,
             },
         },
         &mut resources,

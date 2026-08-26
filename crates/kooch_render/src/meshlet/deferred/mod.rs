@@ -33,6 +33,14 @@ const DEFERRED_BODY: &str = include_str!("../../../shaders/meshlet_deferred.wgsl
 /// same text with a different number substituted in.
 pub const DEFERRED_INTI_GROUP: u32 = 4;
 
+/// Group-0 bindings the contact-shadow march takes on this path (#735).
+/// 0..4 are the camera, model and screen uniforms, the visibility buffer
+/// and the colour target; these are the next free. Group 0 because the
+/// depth buffer is per view, exactly as on the R64 path — the two paths
+/// differ in the *numbers*, and in nothing else.
+pub const DEFERRED_CONTACT_UBO_BINDING: u32 = 5;
+pub const DEFERRED_CONTACT_DEPTH_BINDING: u32 = 6;
+
 /// The complete compute shader: shared barycentric reconstruction, the
 /// Inti shading model, then this path's entry points.
 ///
@@ -42,19 +50,72 @@ pub const DEFERRED_INTI_GROUP: u32 = 4;
 /// only read the normal, wrong the moment a point light needs a
 /// distance. Sharing the chunk is what stops the fallback from quietly
 /// drifting away from the path everyone actually looks at.
-fn shader_source() -> String {
+/// `debug` builds the editor's variant, which is the only one that
+/// contains the debug views at all — see
+/// [`kooch_lighting::INTI_DEBUG_STUB`] (#743).
+fn shader_source(debug: bool) -> String {
     [
         crate::meshlet::SURFACE_RECONSTRUCT_SHADER,
+        &crate::contact_shadow::contact_shadow_shader(
+            DEFERRED_CONTACT_UBO_BINDING,
+            DEFERRED_CONTACT_DEPTH_BINDING,
+        ),
         &kooch_lighting::inti_pbr_shader(DEFERRED_INTI_GROUP),
+        if debug {
+            kooch_lighting::inti_debug_shader()
+        } else {
+            kooch_lighting::INTI_DEBUG_STUB
+        },
         DEFERRED_BODY,
     ]
     .join("\n")
+}
+
+/// The scene-wide shading pipeline, over whichever module it is given.
+fn build_scene_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    module: &wgpu::ShaderModule,
+) -> wgpu::ComputePipeline {
+    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("meshlet_deferred_pipeline_scene"),
+        layout: Some(layout),
+        module,
+        entry_point: Some("cs_shade_scene"),
+        compilation_options: Default::default(),
+        cache: None,
+    })
 }
 
 /// Output color format the deferred shader writes through a storage
 /// texture binding. Rgba8Unorm matches the forward path so tests can
 /// compare pixel-for-pixel.
 pub const DEFERRED_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+/// Where the compute path's shading lands **before** the tonemap
+/// (#732 phase 1).
+///
+/// # 🔴 Why the tonemap had to move out of the shading shader
+///
+/// Temporal anti-aliasing blends this frame with the last one, and a
+/// blend is only meaningful in a linear space: averaging two
+/// ACES-tonemapped 8-bit values is not the tonemap of their average.
+/// Bevy's TAA works around a display-referred input by applying a
+/// reversible tonemap inside the resolve, and it can do that because its
+/// input is HDR to begin with. Ours was `Rgba8Unorm` with ACES already
+/// baked in, so the history would have quantised at 1/255 per frame —
+/// exactly the precision a temporal accumulator exists to recover.
+///
+/// So the chain is now `shade → HDR → tonemap → LDR → blit`, and TAA
+/// lands between the first two. The extra pass is not scaffolding for
+/// that: it is where #254's auto exposure belongs regardless.
+///
+/// ⚠️ Sixteen bits per channel is twice the write bandwidth of the pass
+/// the device says is the bottleneck. At half rate the shading writes a
+/// quarter-resolution target, so the extra traffic is a quarter of what
+/// it looks like — but it is real and it is measured on the device
+/// rather than argued here.
+pub const HDR_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
@@ -82,12 +143,25 @@ pub(super) struct ScreenUbo {
 pub struct MeshletDeferredShader {
     pub(super) pipeline: wgpu::ComputePipeline,
     pub(super) pipeline_scene: wgpu::ComputePipeline,
+    /// `pipeline_scene` with the debug views concatenated in (#743).
+    ///
+    /// Built on first use, which in a shipped game never comes: the game
+    /// neither compiles the views nor carries them in the pipeline it
+    /// does run.
+    ///
+    /// A `OnceLock` so the render chain stays on `&self` — see the R64
+    /// path's twin field for the reasoning.
+    pub(super) pipeline_scene_debug: std::sync::OnceLock<wgpu::ComputePipeline>,
+    /// Kept so the debug variant is built against the same layout.
+    pub(super) pipeline_layout_scene: wgpu::PipelineLayout,
     pub(super) shading_bgl: wgpu::BindGroupLayout,
     pub(super) scene_bgl: wgpu::BindGroupLayout,
 
     pub(super) camera_buffer: wgpu::Buffer,
     pub(super) model_buffer: wgpu::Buffer,
     pub(super) screen_buffer: wgpu::Buffer,
+    /// The contact-shadow march's per-view uniform (#735).
+    pub(super) contact_buffer: wgpu::Buffer,
 }
 
 impl MeshletDeferredShader {
@@ -97,7 +171,7 @@ impl MeshletDeferredShader {
     pub fn new(device: &wgpu::Device, meshlet_bgl: &wgpu::BindGroupLayout) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("meshlet_deferred_shader"),
-            source: wgpu::ShaderSource::Wgsl(shader_source().into()),
+            source: wgpu::ShaderSource::Wgsl(shader_source(false).into()),
         });
 
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -113,6 +187,12 @@ impl MeshletDeferredShader {
         let screen_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("meshlet_deferred_screen_ubo"),
             contents: bytemuck::bytes_of(&ScreenUbo::default()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let contact_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("meshlet_deferred_contact_shadow_ubo"),
+            contents: bytemuck::bytes_of(&crate::contact_shadow::ContactShadowUbo::default()),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -139,6 +219,20 @@ impl MeshletDeferredShader {
                         access: wgpu::StorageTextureAccess::WriteOnly,
                         format: DEFERRED_COLOR_FORMAT,
                         view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                ubo_entry(
+                    DEFERRED_CONTACT_UBO_BINDING,
+                    std::mem::size_of::<crate::contact_shadow::ContactShadowUbo>() as u64,
+                ),
+                wgpu::BindGroupLayoutEntry {
+                    binding: DEFERRED_CONTACT_DEPTH_BINDING,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
                     count: None,
                 },
@@ -199,23 +293,19 @@ impl MeshletDeferredShader {
             compilation_options: Default::default(),
             cache: None,
         });
-        let pipeline_scene = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("meshlet_deferred_pipeline_scene"),
-            layout: Some(&pipeline_layout_scene),
-            module: &shader,
-            entry_point: Some("cs_shade_scene"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pipeline_scene = build_scene_pipeline(device, &pipeline_layout_scene, &shader);
 
         Self {
             pipeline,
             pipeline_scene,
+            pipeline_scene_debug: std::sync::OnceLock::new(),
+            pipeline_layout_scene,
             shading_bgl,
             scene_bgl,
             camera_buffer,
             model_buffer,
             screen_buffer,
+            contact_buffer,
         }
     }
 
@@ -238,6 +328,7 @@ impl MeshletDeferredShader {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         vbuf_view: &wgpu::TextureView,
+        depth_sample_view: &wgpu::TextureView,
         color_view: &wgpu::TextureView,
         meshlet_bg: &wgpu::BindGroup,
         material_bg: &wgpu::BindGroup,
@@ -296,6 +387,14 @@ impl MeshletDeferredShader {
                     binding: 4,
                     resource: wgpu::BindingResource::TextureView(color_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: DEFERRED_CONTACT_UBO_BINDING,
+                    resource: self.contact_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: DEFERRED_CONTACT_DEPTH_BINDING,
+                    resource: wgpu::BindingResource::TextureView(depth_sample_view),
+                },
             ],
         });
 
@@ -325,24 +424,4 @@ fn ubo_entry(binding: u32, size: u64) -> wgpu::BindGroupLayoutEntry {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn deferred_shader_parses_and_validates() {
-        let module = naga::front::wgsl::parse_str(&shader_source())
-            .expect("composed meshlet_deferred shader should parse");
-        let mut validator = naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::all(),
-        );
-        validator
-            .validate(&module)
-            .expect("composed meshlet_deferred shader should validate");
-    }
-
-    #[test]
-    fn screen_ubo_layout() {
-        assert_eq!(std::mem::size_of::<ScreenUbo>(), 16);
-    }
-}
+mod tests;

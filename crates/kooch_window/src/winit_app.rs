@@ -193,9 +193,23 @@ impl ApplicationHandler<WakeUp> for WinitApp {
             .get::<WindowConfig>()
             .expect("WindowConfig resource not found");
 
+        // 🔴 Only the ENVIRONMENT override is applied here, not the
+        // project's setting. The settings asset needs the asset server,
+        // which needs the GPU, which needs this window — so the asset's
+        // mode cannot exist yet and lands a few frames later through
+        // `mode::apply_window_mode_system`. The variable can be read
+        // before anything, and a measurement run asking for fullscreen
+        // should not spend its first frames in a window.
+        let mode = kooch_core::window_mode::mode_override();
         let attrs = WindowAttributes::default()
             .with_title(&config.title)
-            .with_inner_size(winit::dpi::LogicalSize::new(config.width, config.height));
+            .with_window_icon(crate::icon::window_icon())
+            .with_inner_size(winit::dpi::LogicalSize::new(config.width, config.height))
+            .with_decorations(mode.is_none_or(|mode| mode.decorated()))
+            .with_fullscreen(
+                mode.filter(|mode| mode.fullscreen())
+                    .map(|_| winit::window::Fullscreen::Borderless(None)),
+            );
 
         let window = event_loop
             .create_window(attrs)
@@ -217,6 +231,11 @@ impl ApplicationHandler<WakeUp> for WinitApp {
         let size = window.inner_size();
         match GpuContext::new(Arc::clone(&window), size.width, size.height) {
             Ok(gpu) => {
+                // #536 — the DLSS handles as their own resource. The
+                // render systems remove `GpuContext` for the length of a
+                // frame, so a pass that reached for the adapter through
+                // it mid-frame would find nothing.
+                self.app.resources.insert(gpu.dlss_runtime());
                 self.app.resources.insert(gpu);
             }
             Err(e) => {
@@ -387,37 +406,4 @@ fn wants_a_frame(event: &WindowEvent) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The events that cost the most and change the least.
-    #[test]
-    fn redundant_events_do_not_ask_for_a_frame() {
-        assert!(
-            !wants_a_frame(&WindowEvent::Moved(winit::dpi::PhysicalPosition::new(3, 4))),
-            "moving the window changes nothing inside it",
-        );
-        assert!(
-            !wants_a_frame(&WindowEvent::AxisMotion {
-                device_id: winit::event::DeviceId::dummy(),
-                axis: 0,
-                value: 1.0,
-            }),
-            "AxisMotion duplicates CursorMoved, at twice the rate",
-        );
-    }
-
-    /// And the ones that must never be dropped: while the loop idles,
-    /// this is the only thing that produces a frame at all.
-    #[test]
-    fn input_always_asks_for_a_frame() {
-        assert!(wants_a_frame(&WindowEvent::CursorMoved {
-            device_id: winit::event::DeviceId::dummy(),
-            position: winit::dpi::PhysicalPosition::new(1.0, 2.0),
-        }));
-        assert!(wants_a_frame(&WindowEvent::Focused(true)));
-        assert!(wants_a_frame(&WindowEvent::CursorLeft {
-            device_id: winit::event::DeviceId::dummy(),
-        }));
-    }
-}
+mod tests;

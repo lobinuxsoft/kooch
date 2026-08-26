@@ -10,5 +10,9 @@ authors.workspace = true
 [dependencies]
 kooch_core.workspace = true
 winit.workspace = true
+# Decodes the embedded window icon. Already in the workspace with
+# default-features off (png + jpeg only), so this adds a name to one
+# Cargo.toml rather than a codec tree to the build.
+image.workspace = true
 raw-window-handle.workspace = true
 tracing.workspace = true

@@ -36,9 +36,11 @@ impl MeshletRenderStage {
         scene_params: &SceneCullParams,
         meshlet_bg: &wgpu::BindGroup,
         material_bg: &wgpu::BindGroup,
+        contact: &crate::contact_shadow::ContactShadowUbo,
         timer_slot: Option<usize>,
         instance_count: u32,
     ) -> MeshletRenderStats {
+        profiling::scope!("path: R32 Hi-Z two-pass");
         // Triple-buffer arena rotation (#445 PR #479 Mesa radv
         // workaround): pick the slot 2 frames stale, clear it, and
         // park this frame's bind groups there so they outlive GPU
@@ -49,10 +51,15 @@ impl MeshletRenderStage {
         self.views[view_id].retired_pyramids[arena_idx].clear();
 
         if self.views[view_id].hiz_prev.is_none() {
+            // 🔴 RENDER size: a Hi-Z pyramid is a mip chain of the DEPTH
+            // buffer, and the depth buffer shrinks with the scale (#481
+            // step 4). Built at the window's size it would describe a
+            // depth target that does not exist, and the occlusion cull
+            // would test against the wrong texels.
             let pyr = crate::hi_z::HiZ::new(
                 device,
-                self.views[view_id].size.0,
-                self.views[view_id].size.1,
+                self.views[view_id].render_size.0,
+                self.views[view_id].render_size.1,
             );
             if let Some(tracker) = &self.vram_tracker {
                 tracker.add(pyr.byte_size());
@@ -60,10 +67,15 @@ impl MeshletRenderStage {
             self.views[view_id].hiz_prev = Some(pyr);
         }
         if self.views[view_id].hiz_curr.is_none() {
+            // 🔴 RENDER size: a Hi-Z pyramid is a mip chain of the DEPTH
+            // buffer, and the depth buffer shrinks with the scale (#481
+            // step 4). Built at the window's size it would describe a
+            // depth target that does not exist, and the occlusion cull
+            // would test against the wrong texels.
             let pyr = crate::hi_z::HiZ::new(
                 device,
-                self.views[view_id].size.0,
-                self.views[view_id].size.1,
+                self.views[view_id].render_size.0,
+                self.views[view_id].render_size.1,
             );
             if let Some(tracker) = &self.vram_tracker {
                 tracker.add(pyr.byte_size());
@@ -131,6 +143,14 @@ impl MeshletRenderStage {
         let hi_z_params =
             crate::meshlet::dispatcher::HiZTestParams::new(view_proj, hiz_w, hiz_h, mip_count);
 
+        // #785 — the same five names the R64 path reports, so a capture
+        // reads the same on an adapter that lands here. Each pair opens
+        // and closes on one encoder: this path uses four of them, and a
+        // debug group left open across a `finish()` is a validation
+        // error rather than a missing measurement.
+        let scopes = resources.get::<kooch_core::gpu::GpuScopes>();
+        let pass_a_query = scopes.map(|s| s.begin("cull + raster A", &mut encoder));
+
         // Pass A: AABB-based cull against hiz_prev.
         {
             let gpu_pool = self.gpu_pool.as_ref().expect("checked by render() prelude");
@@ -169,6 +189,9 @@ impl MeshletRenderStage {
         );
         // Stage 0 (Pass A) closes here. `render()`'s prelude already
         // emitted `write_start` which lands on stage 0.
+        if let (Some(scopes), Some(query)) = (scopes, pass_a_query) {
+            scopes.end(&mut encoder, query);
+        }
         if timer_slot.is_some() {
             self.gpu_timers.write_stage_end(&mut encoder, 0);
         }
@@ -177,6 +200,7 @@ impl MeshletRenderStage {
         let mut build_enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("meshlet_hi_z_build_encoder"),
         });
+        let hi_z_query = scopes.map(|s| s.begin("hi-z build", &mut build_enc));
         // Stage 1 (Hi-Z SPD build).
         if timer_slot.is_some() {
             self.gpu_timers.write_stage_start(&mut build_enc, 1);
@@ -193,6 +217,9 @@ impl MeshletRenderStage {
                 &mut self.frame_bind_groups[arena_idx],
             );
         }
+        if let (Some(scopes), Some(query)) = (scopes, hi_z_query) {
+            scopes.end(&mut build_enc, query);
+        }
         if timer_slot.is_some() {
             self.gpu_timers.write_stage_end(&mut build_enc, 1);
         }
@@ -201,6 +228,7 @@ impl MeshletRenderStage {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("meshlet_render_stage_encoder_pass_b"),
         });
+        let pass_b_query = scopes.map(|s| s.begin("cull + raster B", &mut encoder));
         // Stage 2 (Pass B = cull B + raster B + deferred shade).
         if timer_slot.is_some() {
             self.gpu_timers.write_stage_start(&mut encoder, 2);
@@ -239,16 +267,24 @@ impl MeshletRenderStage {
             0,
             /* clear */ false,
         );
+        if let (Some(scopes), Some(query)) = (scopes, pass_b_query) {
+            scopes.end(&mut encoder, query);
+        }
         let debug_mode = resources
             .get::<MeshletDebugMode>()
             .copied()
             .unwrap_or_default()
             .as_u32();
+        // On this path the lighting is its own pass rather than fused
+        // into the raster, so it gets its own name — this is the box
+        // that answers the same question `raster + shade` does on R64.
+        let shade_query = scopes.map(|s| s.begin("shade", &mut encoder));
         self.deferred.shade_scene(
             device,
             queue,
             &mut encoder,
             &self.views[view_id].vbuf_view,
+            &self.views[view_id].depth_sample_view,
             &self.views[view_id].color_view,
             meshlet_bg,
             material_bg,
@@ -256,9 +292,15 @@ impl MeshletRenderStage {
             &self.scene,
             self.lights.bind_group(),
             view_proj,
-            self.views[view_id].size,
+            contact,
+            // Render size: this is the shading dispatch, and it is the
+            // pass the whole scale exists to make cheaper.
+            self.views[view_id].render_size,
             debug_mode,
         );
+        if let (Some(scopes), Some(query)) = (scopes, shade_query) {
+            scopes.end(&mut encoder, query);
+        }
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.write_stage_end(&mut encoder, 2);
             self.gpu_timers.resolve_and_copy(&mut encoder, slot_idx);
@@ -310,6 +352,9 @@ impl MeshletRenderStage {
             // whatever the last debug-active frame read, and handing
             // that to the HUD draws a number from an unknown moment as
             // if it described the frame on screen (#703).
+            cluster_occupancy: self.lights.clusters().occupancy(),
+            page_marking: None,
+            page_raster: None,
             cull_stage_counts: if cull_params.debug_active != 0 {
                 self.stage_counters.last_frame_counts()
             } else {

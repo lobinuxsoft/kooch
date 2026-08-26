@@ -28,6 +28,7 @@ pub(crate) fn draw_world_content(
     active_archetype_count: usize,
     last_clicked_index: &mut Option<usize>,
     scenes: &[SceneDisplayInfo],
+    clipboard_has_entities: bool,
 ) {
     draw_scene_bar(ui, scenes, actions);
     ui.label(format!(
@@ -39,20 +40,36 @@ pub(crate) fn draw_world_content(
     ui.horizontal(|ui| {
         draw_spawn_menu(ui, actions);
         let any_selected = !selected.is_empty();
-        if ui
-            .add_enabled(
-                any_selected,
-                egui::Button::new(format!("{} Duplicate", icons::COPY)),
-            )
-            .on_hover_text(
-                "Clone the selected entity (or entities) with every \
-                 component value preserved. The new entity gets a fresh \
-                 handle; nothing about the source is touched.",
-            )
-            .clicked()
-        {
-            for &entity in selected.iter() {
-                actions.push(EditorAction::Duplicate(entity));
+        // The three clipboard commands, from the same table the menu and
+        // the keyboard read. Each button says its chord, because a
+        // toolbar is where a shortcut is learned — nobody reads a manual
+        // to find out that Ctrl+D exists.
+        for chord in [
+            crate::shortcuts::EditChord::Duplicate,
+            crate::shortcuts::EditChord::Copy,
+            crate::shortcuts::EditChord::Paste,
+        ] {
+            let enabled = match chord {
+                crate::shortcuts::EditChord::Paste => clipboard_has_entities,
+                _ => any_selected,
+            };
+            let icon = match chord {
+                crate::shortcuts::EditChord::Paste => icons::PACKAGE,
+                _ => icons::COPY,
+            };
+            if ui
+                .add_enabled(
+                    enabled,
+                    egui::Button::new(format!("{icon} {}", chord.label())),
+                )
+                .on_hover_text(format!("{}\n\n{}", chord.chord(), chord.tooltip()))
+                .clicked()
+            {
+                actions.extend(crate::shortcuts::actions_for(
+                    chord,
+                    selected,
+                    Some(&crate::history::Document::World),
+                ));
             }
         }
         if ui
@@ -119,21 +136,31 @@ pub(crate) fn draw_world_content(
         let at_end = range.end >= rows.len();
         for index in range {
             match &rows[index] {
-                WorldRow::Group(header) => draw_group_header(ui, header, row_h),
+                WorldRow::Group(header) => draw_group_header(ui, header, row_h, actions),
                 WorldRow::Note(text) => {
-                    ui.weak(text);
+                    // Indented like the entities it stands in for, or the
+                    // note explaining an empty scene sits further left
+                    // than the rows it is about.
+                    ui.weak(format!("    {text}"));
                 }
                 WorldRow::Entity(idx) => {
+                    let info = &entities[*idx];
+                    // A leaf gets `None` and no triangle. The default
+                    // here has to match `push_members`' or the row would
+                    // point one way while the list hid the other.
+                    let subtree = (!info.children.is_empty())
+                        .then(|| subtree_open(ui, info.entity, !info.is_prefab_instance));
                     draw_entity_row(
                         ui,
                         *idx,
-                        &entities[*idx],
+                        info,
                         entities,
                         selected,
                         pinned,
                         reflected_types,
                         actions,
                         last_clicked_index,
+                        subtree,
                     );
                 }
             }
@@ -168,8 +195,16 @@ pub(crate) fn draw_world_content(
         // where people actually reach for them: right-click in the
         // empty part of the hierarchy. A row's own right-click menu
         // handles per-entity actions, including Add Component (#591).
+        //
+        // 🔴 Into a scene of its own, not the active one. Right-clicking
+        // past the last row is not "put this somewhere" — there is no
+        // row under the pointer to name a somewhere. It is "start
+        // something new", and since an entity has to belong to a scene,
+        // starting one is what makes the gesture answerable.
         empty_resp.context_menu(|ui| {
-            spawn_entries(ui, actions);
+            ui.label("New scene");
+            ui.separator();
+            spawn_entries(ui, actions, crate::actions::SpawnTarget::NewScene);
         });
         // A prefab dropped into the hierarchy spawns at the position it
         // was authored at: a list of names has no geometry to read a
@@ -242,17 +277,37 @@ struct GroupHeader {
     label: String,
     /// Whether it starts open the first time it is ever seen.
     default_open: bool,
+    /// The scene this header stands for, or `None` for the pseudo-group
+    /// holding entities that belong to none.
+    ///
+    /// What decides whether the row has anything to offer on a right
+    /// click: "Save" means nothing for a group that is not a file.
+    scene: Option<kooch_core::Guid>,
+    /// Whether that scene has edits not on disk.
+    dirty: bool,
+    /// Whether it has ever been saved.
+    ///
+    /// What separates "discard changes" from "delete everything": a scene
+    /// with no file has nothing to be read back from.
+    has_file: bool,
 }
 
 impl GroupHeader {
     fn scene(scene: &SceneDisplayInfo, count: usize) -> Self {
-        let dirty = if scene.dirty { " *" } else { "" };
+        // Leading, not trailing. The entity count sits between the name
+        // and the end of the line, so an asterisk after it is separated
+        // from the thing it is about by a number that changes — and in a
+        // column of scenes, the eye scans the left edge.
+        let dirty = if scene.dirty { "*" } else { "" };
         Self {
             id: egui::Id::new(("world_group_open", scene.id)),
-            label: format!("{} ({count} entities){dirty}", scene.name),
+            label: format!("{dirty}{} ({count} entities)", scene.name),
             // The active scene starts expanded: it is the one being
             // worked in.
             default_open: scene.active,
+            scene: Some(scene.id),
+            dirty: scene.dirty,
+            has_file: scene.path.is_some(),
         }
     }
 
@@ -261,6 +316,9 @@ impl GroupHeader {
             id: egui::Id::new("world_group_open_unsaved"),
             label: format!("Unsaved ({count} entities)"),
             default_open: true,
+            scene: None,
+            dirty: false,
+            has_file: false,
         }
     }
 
@@ -375,20 +433,38 @@ fn row_pitch(ui: &egui::Ui, row_h: f32) -> f32 {
     row_h + ui.spacing().item_spacing.y
 }
 
-/// Opens whatever group holds `entity`, so it has a row to scroll to.
+/// Opens whatever group and collapsed ancestors hold `entity`, so it has
+/// a row to scroll to.
+///
+/// A row that does not exist cannot be scrolled to, and leaving it hidden
+/// reproduces the symptom #706 exists to prevent: something selected with
+/// nothing on screen to show for it.
 fn reveal_group_of(
     ui: &egui::Ui,
     entities: &[EntityDisplayInfo],
     scenes: &[SceneDisplayInfo],
     entity: Entity,
 ) {
-    // One scene means no headers at all, so there is nothing to open.
-    if scenes.len() < 2 {
-        return;
-    }
+    // 🔴 No early return on a single scene. That guard was right while a
+    // lone scene drew no header, and stopped being right the moment every
+    // scene got a root — one collapsed scene is now exactly as able to
+    // hide a selection as two.
     let Some(info) = entities.iter().find(|e| e.entity == entity) else {
         return;
     };
+
+    // Every collapsed ancestor, not only the group. A prefab instance
+    // starts collapsed, so anything created inside one — a duplicate of a
+    // child — lands in a subtree with no rows at all.
+    let mut ancestor = info.parent;
+    while let Some(parent) = ancestor {
+        ui.data_mut(|data| data.insert_persisted(subtree_id(parent), true));
+        ancestor = entities
+            .iter()
+            .find(|e| e.entity == parent)
+            .and_then(|e| e.parent);
+    }
+
     match info.scene.and_then(|id| scenes.iter().find(|s| s.id == id)) {
         Some(scene) => {
             let members = entities
@@ -406,20 +482,90 @@ fn reveal_group_of(
 }
 
 /// Flattens the hierarchy into the lines the panel will show.
+/// What identifies one entity's expanded state across frames.
+pub(super) fn subtree_id(entity: Entity) -> egui::Id {
+    egui::Id::new(("world_subtree_open", entity))
+}
+
+/// Whether an entity's children are listed under it.
+///
+/// 🔴 A prefab instance starts CLOSED and everything else starts open,
+/// and that is the difference between a panel and a wall. An instance is
+/// a unit: its five entities are the prefab's business, not the scene's,
+/// and `many_lights` puts thirty-six of them on screen — a hundred and
+/// eighty rows nobody asked to read. A hand-built hierarchy is the
+/// opposite: somebody put those children there on purpose, and hiding
+/// them would hide their own work.
+///
+/// Kept in egui's persisted store like the group headers, for the same
+/// reason: it is view state of one panel, it should survive a frame and
+/// not a project, and threading it through would put a field about a
+/// disclosure triangle into the editor's model of the world.
+fn subtree_open(ui: &egui::Ui, entity: Entity, default_open: bool) -> bool {
+    ui.data_mut(|data| *data.get_persisted_mut_or_insert_with(subtree_id(entity), || default_open))
+}
+
+/// Appends a scene's entities, leaving out what a collapsed parent hides.
+///
+/// `members` arrive in DFS order with `depth` — the third pass of
+/// `queries` guarantees it — so a subtree is contiguous and skipping one
+/// is "drop rows until the depth comes back up". That is also why a
+/// collapsed group costs nothing: its rows are absent from the list
+/// rather than skipped one at a time while scrolling.
+fn push_members(
+    ui: &egui::Ui,
+    entities: &[EntityDisplayInfo],
+    members: &[usize],
+    rows: &mut Vec<WorldRow>,
+) {
+    // The depth of the collapsed parent whose descendants are being
+    // dropped, if any.
+    let mut hidden_under: Option<usize> = None;
+    // Whether each level of the current chain sits inside a prefab
+    // instance, so the instance's ROOT can be told from its members —
+    // `is_prefab_instance` is true for every entity the instance owns.
+    let mut inside_prefab: Vec<bool> = Vec::new();
+
+    for &idx in members {
+        let Some(info) = entities.get(idx) else {
+            continue;
+        };
+        match hidden_under {
+            Some(depth) if info.depth > depth => continue,
+            _ => hidden_under = None,
+        }
+
+        inside_prefab.truncate(info.depth);
+        let under_instance = inside_prefab.last().copied().unwrap_or(false);
+        inside_prefab.push(under_instance || info.is_prefab_instance);
+
+        rows.push(WorldRow::Entity(idx));
+
+        if info.children.is_empty() {
+            continue;
+        }
+        let starts_open = !(info.is_prefab_instance && !under_instance);
+        if !subtree_open(ui, info.entity, starts_open) {
+            hidden_under = Some(info.depth);
+        }
+    }
+}
+
 fn build_rows(
     ui: &egui::Ui,
     entities: &[EntityDisplayInfo],
     scenes: &[SceneDisplayInfo],
 ) -> Vec<WorldRow> {
-    // One scene: no headers, since every row would sit under the same
-    // one and the grouping would only cost a level of indentation.
-    if scenes.len() < 2 {
-        return (0..entities.len()).map(WorldRow::Entity).collect();
-    }
-
     let mut rows = Vec::with_capacity(entities.len() + scenes.len() + 1);
     let mut grouped = vec![false; entities.len()];
 
+    // 🔴 A header even for a single scene. It used to be skipped —
+    // "every row would sit under the same one" — and that was true right
+    // up until a second scene could be opened beside it. Without a root
+    // per scene, two scenes' entities land in one column with nothing
+    // saying which is which, no place to offer closing one, and no
+    // answer to which scene a Spawn belongs to. The root is what makes
+    // additive open a thing that can exist.
     for scene in scenes {
         let members: Vec<usize> = entities
             .iter()
@@ -443,7 +589,7 @@ fn build_rows(
         if members.is_empty() {
             rows.push(WorldRow::Note("(empty)".to_owned()));
         }
-        rows.extend(members.into_iter().map(WorldRow::Entity));
+        push_members(ui, entities, &members, &mut rows);
     }
 
     // Anything belonging to no scene still has to be reachable, or an
@@ -463,7 +609,7 @@ fn build_rows(
             rows.push(WorldRow::Note(
                 "Not in any scene yet — saved with the active one.".to_owned(),
             ));
-            rows.extend(orphans.into_iter().map(WorldRow::Entity));
+            push_members(ui, entities, &orphans, &mut rows);
         }
     }
 
@@ -479,7 +625,12 @@ fn build_rows(
 /// function; what it buys is that a collapsed group's six hundred
 /// entities are absent from the row list entirely rather than skipped
 /// one at a time.
-fn draw_group_header(ui: &mut egui::Ui, header: &GroupHeader, row_h: f32) {
+fn draw_group_header(
+    ui: &mut egui::Ui,
+    header: &GroupHeader,
+    row_h: f32,
+    actions: &mut Vec<EditorAction>,
+) {
     let size = egui::vec2(ui.available_width(), row_h);
     let (rect, resp) = ui.allocate_at_least(size, egui::Sense::click());
 
@@ -488,6 +639,7 @@ fn draw_group_header(ui: &mut egui::Ui, header: &GroupHeader, row_h: f32) {
         open = !open;
         ui.data_mut(|data| data.insert_persisted(header.id, open));
     }
+    scene_context_menu(&resp, header, actions);
 
     if !ui.is_rect_visible(rect) {
         return;
@@ -509,8 +661,90 @@ fn draw_group_header(ui: &mut egui::Ui, header: &GroupHeader, row_h: f32) {
         egui::Align2::LEFT_CENTER,
         &header.label,
         egui::TextStyle::Button.resolve(ui.style()),
-        visuals.text_color(),
+        match header.dirty {
+            true => DIRTY_SCENE,
+            false => visuals.text_color(),
+        },
     );
+}
+
+/// The colour of a scene that has edits not on disk.
+///
+/// The same amber the code-sync control pulses in, because it means the
+/// same thing: something here is out of step with what is on disk. One
+/// colour for "needs attention" is one thing to learn rather than two.
+///
+/// Paired with the `*`, never alone — a colour by itself is unreadable
+/// to anyone who cannot separate these two hues, and this one has to
+/// survive both themes.
+///
+/// 🔴 A literal, and it should not stay one. Every colour the panel
+/// introduces belongs in Settings (#955); a palette hard-coded into a
+/// panel is a palette nobody can fix for their own eyes.
+const DIRTY_SCENE: egui::Color32 = egui::Color32::from_rgb(210, 150, 60);
+
+/// The right-click menu on a scene's row.
+///
+/// Saving one scene at a time is what having several open makes
+/// necessary: the File menu saves the active scene, and the scene
+/// somebody right-clicked is routinely not that one. Writing the wrong
+/// file is not a mistake the user can see until the next load.
+///
+/// Nothing for the "Unsaved" pseudo-group — it is not a file, so there
+/// is nowhere for it to be saved to. Its entities go with the active
+/// scene, which is what its own note already says.
+fn scene_context_menu(
+    resp: &egui::Response,
+    header: &GroupHeader,
+    actions: &mut Vec<EditorAction>,
+) {
+    let Some(scene) = header.scene else {
+        return;
+    };
+    resp.context_menu(|ui| {
+        // No icon on either. There is no verified Phosphor codepoint for
+        // a save glyph in `icons`, and that module's own note says why
+        // guessing one is not an option: a wrong codepoint is still a
+        // valid glyph, so it renders something and only a person looking
+        // at it ever finds out. Eleven of the first thirty were wrong.
+        let save = ui.button("Save").on_hover_text(if header.dirty {
+            "Write this scene back to its own file"
+        } else {
+            "This scene has no unsaved changes"
+        });
+        if save.clicked() {
+            actions.push(EditorAction::SaveOpenScene(scene));
+            ui.close();
+        }
+        if ui
+            .button("Save As…")
+            .on_hover_text("Write this scene to a new file and adopt it")
+            .clicked()
+        {
+            actions.push(EditorAction::SaveOpenSceneAs(scene));
+            ui.close();
+        }
+        // Only offered when there is something to discard, and only for
+        // a scene that has a file. Without one there is nothing to revert
+        // *to*, and despawning its entities would delete work rather than
+        // undo it — the one thing "discard" must never be mistaken for.
+        if header.dirty && header.has_file {
+            let discard = ui
+                .button("Discard Changes")
+                .on_hover_text("Throw away this scene's edits and read it back from its file");
+            if discard.clicked() {
+                actions.push(EditorAction::RevertOpenScene(scene));
+                ui.close();
+            }
+        }
+        ui.separator();
+        // Into *this* scene. The toolbar's Spawn button authors into the
+        // active one, which with several open is routinely not the scene
+        // somebody just right-clicked.
+        ui.menu_button("New", |ui| {
+            spawn_entries(ui, actions, crate::actions::SpawnTarget::Scene(scene));
+        });
+    });
 }
 
 /// Keyboard shortcuts for the World panel: Delete, Ctrl+A, arrow up/down.
@@ -579,387 +813,4 @@ fn handle_keyboard(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::state::EntityDisplayInfo;
-    use crate::state::ReflectedFields;
-
-    fn entity_info(index: u32, scene: Option<kooch_core::Guid>) -> EntityDisplayInfo {
-        EntityDisplayInfo {
-            is_prefab_instance: false,
-            entity: Entity::new(index, 0),
-            components: Vec::new(),
-            parent: None,
-            children: Vec::new(),
-            depth: 0,
-            global_rotation: None,
-            scene,
-            parent_global_rotation: None,
-        }
-    }
-
-    fn scene_info(id: kooch_core::Guid, active: bool) -> SceneDisplayInfo {
-        SceneDisplayInfo {
-            id,
-            name: "Scene".to_owned(),
-            dirty: false,
-            active,
-        }
-    }
-
-    /// Runs `body` against a real `Ui`, since everything here reads or
-    /// writes egui's own layout and persisted state.
-    fn with_ui<R>(body: impl FnOnce(&mut egui::Ui) -> R) -> R {
-        let ctx = egui::Context::default();
-        let mut body = Some(body);
-        let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(400.0, 600.0),
-            )),
-            ..Default::default()
-        };
-        let mut out = None;
-        ctx.run_ui(input, |ui| {
-            let body = body.take().expect("run_ui called the closure twice");
-            egui::CentralPanel::default().show(ui, |ui| out = Some(body(ui)));
-        });
-        out.expect("central panel did not run")
-    }
-
-    /// A pick in the viewport has to bring its row into view, and the
-    /// row is usually not drawn — which is the whole difficulty (#706).
-    #[test]
-    fn a_selection_far_down_the_list_scrolls_into_view() {
-        let entities: Vec<_> = (0..1000).map(|i| entity_info(i, None)).collect();
-        let selected = vec![entities[900].entity];
-
-        let offset = with_ui(|ui| {
-            let rows = build_rows(ui, &entities, &[]);
-            // The list has been sitting at the top.
-            ui.data_mut(|d| d.insert_temp(visible_range_id(), (0usize, 20usize)));
-            let focus = newly_focused(ui, &selected).expect("selection is new");
-            scroll_offset_for(ui, &rows, &entities, focus, 20.0)
-                .map(|offset| (offset, row_pitch(ui, 20.0)))
-        });
-
-        let (offset, pitch) = offset.expect("a row 900 places down is not on screen");
-        // Centred on row 900 with twenty rows visible, measured in the
-        // pitch `show_rows` uses — height *plus* item spacing.
-        assert!(
-            (offset - (900.0 - 9.5) * pitch).abs() < 1.0,
-            "expected the row centred, got offset {offset} at pitch {pitch}",
-        );
-    }
-
-    /// The half of the exchange no other test covered: every test here
-    /// wrote the visible range itself, so deleting the line that records
-    /// it left them all green while the list scrolled on every click.
-    ///
-    /// Which is what happened — a refactor took the write and left the
-    /// read, and the suite said nothing.
-    #[test]
-    fn the_panel_records_the_range_it_drew() {
-        let mut entities: Vec<_> = (0..500).map(|i| entity_info(i, None)).collect();
-        let mut selected = Vec::new();
-        let mut pinned = std::collections::HashSet::new();
-        let mut actions = Vec::new();
-        let mut last_clicked = None;
-
-        let recorded = with_ui(|ui| {
-            ui.data_mut(|d| d.remove::<(usize, usize)>(visible_range_id()));
-            draw_world_content(
-                ui,
-                true,
-                &mut entities,
-                &mut selected,
-                &mut pinned,
-                &[],
-                &mut actions,
-                500,
-                1,
-                1,
-                &mut last_clicked,
-                &[],
-            );
-            ui.data(|d| d.get_temp::<(usize, usize)>(visible_range_id()))
-        });
-
-        let (start, end) = recorded.expect("the panel has to say what it drew");
-        assert!(end > start, "an empty range describes nothing");
-        assert!(end <= 500, "the range cannot exceed the rows");
-    }
-
-    /// The offset has to be measured in the same unit `show_rows`
-    /// divides by, or it is right at row ten and sixty rows off at row
-    /// 460 — which is what shipped and what a person saw immediately.
-    ///
-    /// Pinned against `egui`'s own arithmetic
-    /// (`scroll_area.rs`: `row_height_sans_spacing + spacing.y`) rather
-    /// than a number copied here, so an upstream change to it fails this
-    /// instead of silently drifting the list.
-    #[test]
-    fn the_offset_is_in_the_unit_show_rows_reads() {
-        with_ui(|ui| {
-            let row_h = entity_row::row_height(ui);
-            let spacing = ui.spacing().item_spacing.y;
-            assert!(spacing > 0.0, "a zero spacing would make this test vacuous");
-            assert_eq!(row_pitch(ui, row_h), row_h + spacing);
-        });
-    }
-
-    /// Clicking a row that is already visible must not move the list —
-    /// the selection changed, but nothing needed to happen.
-    #[test]
-    fn selecting_a_visible_row_leaves_the_list_alone() {
-        let entities: Vec<_> = (0..1000).map(|i| entity_info(i, None)).collect();
-        let selected = vec![entities[5].entity];
-
-        let offset = with_ui(|ui| {
-            let rows = build_rows(ui, &entities, &[]);
-            ui.data_mut(|d| d.insert_temp(visible_range_id(), (0usize, 20usize)));
-            let focus = newly_focused(ui, &selected).expect("selection is new");
-            scroll_offset_for(ui, &rows, &entities, focus, 20.0)
-        });
-
-        assert_eq!(offset, None, "row 5 of 0..20 is already on screen");
-    }
-
-    /// The reason change detection is separate from acting on it: a
-    /// group closed by hand, with something selected inside it, must
-    /// stay closed. Asking every frame would reopen it every frame.
-    #[test]
-    fn an_unchanged_selection_asks_for_nothing() {
-        let entities: Vec<_> = (0..100).map(|i| entity_info(i, None)).collect();
-        let selected = vec![entities[50].entity];
-
-        with_ui(|ui| {
-            assert!(newly_focused(ui, &selected).is_some(), "first sight of it");
-            assert!(
-                newly_focused(ui, &selected).is_none(),
-                "the same selection is not news twice",
-            );
-        });
-    }
-
-    /// An entity inside a collapsed group has no row at all. Opening the
-    /// group gives it one — and the row list, longer now, still places
-    /// it by the same multiplication.
-    #[test]
-    fn a_selection_inside_a_collapsed_group_is_revealed() {
-        let first = kooch_core::Guid::new_v4();
-        let second = kooch_core::Guid::new_v4();
-        let scenes = vec![scene_info(first, true), scene_info(second, false)];
-        let entities: Vec<_> = (0..40)
-            .map(|i| entity_info(i, Some(if i < 20 { first } else { second })))
-            .collect();
-        let hidden = entities[30].entity;
-
-        with_ui(|ui| {
-            // Close the second group: its twenty entities leave the list.
-            GroupHeader::scene(&scenes[1], 20).open(ui);
-            ui.data_mut(|d| d.insert_persisted(egui::Id::new(("world_group_open", second)), false));
-            let closed = build_rows(ui, &entities, &scenes);
-            assert!(
-                !closed.iter().any(|row| matches!(row, WorldRow::Entity(idx)
-                    if entities[*idx].entity == hidden)),
-                "a closed group contributes no entity rows",
-            );
-
-            reveal_group_of(ui, &entities, &scenes, hidden);
-            let opened = build_rows(ui, &entities, &scenes);
-            let index = opened.iter().position(|row| {
-                matches!(row, WorldRow::Entity(idx)
-                if entities[*idx].entity == hidden)
-            });
-            assert!(index.is_some(), "revealing the group gave it a row");
-        });
-    }
-
-    #[test]
-    fn one_scene_lists_every_entity_and_no_headers() {
-        let entities: Vec<_> = (0..1000).map(|i| entity_info(i, None)).collect();
-        let rows = with_ui(|ui| build_rows(ui, &entities, &[]));
-        assert_eq!(rows.len(), 1000);
-        assert!(rows.iter().all(|row| matches!(row, WorldRow::Entity(_))));
-    }
-
-    /// The point of building the list from the open flags: a collapsed
-    /// group's entities are *absent*, not skipped. Skipping them one at a
-    /// time would leave the cost proportional to the whole world, which
-    /// is what collapsing is supposed to avoid.
-    #[test]
-    fn a_collapsed_group_contributes_only_its_header() {
-        let a = kooch_core::Guid::new_v4();
-        let b = kooch_core::Guid::new_v4();
-        let entities: Vec<_> = (0..100)
-            .map(|i| entity_info(i, Some(if i < 60 { a } else { b })))
-            .collect();
-        // Only `b` is active, so `a` defaults closed.
-        let scenes = vec![scene_info(a, false), scene_info(b, true)];
-
-        let rows = with_ui(|ui| build_rows(ui, &entities, &scenes));
-
-        let headers = rows
-            .iter()
-            .filter(|row| matches!(row, WorldRow::Group(_)))
-            .count();
-        assert_eq!(headers, 2);
-        assert_eq!(
-            rows.len(),
-            2 + 40,
-            "the closed scene's 60 entities are still in the list",
-        );
-    }
-
-    /// An entity in a closed scene belongs to that scene, not to nobody.
-    /// Deciding group membership after the open check would move it into
-    /// "Unsaved" as a side effect of clicking a triangle.
-    #[test]
-    fn a_collapsed_scenes_entities_do_not_become_unsaved() {
-        let a = kooch_core::Guid::new_v4();
-        let b = kooch_core::Guid::new_v4();
-        let entities: Vec<_> = (0..10)
-            .map(|i| entity_info(i, Some(if i < 5 { a } else { b })))
-            .collect();
-        let scenes = vec![scene_info(a, false), scene_info(b, true)];
-
-        let rows = with_ui(|ui| build_rows(ui, &entities, &scenes));
-        assert_eq!(
-            rows.iter()
-                .filter(|row| matches!(row, WorldRow::Group(_)))
-                .count(),
-            2,
-            "an Unsaved group appeared for entities that have a scene",
-        );
-    }
-
-    #[test]
-    fn an_entity_in_no_scene_is_still_reachable() {
-        let a = kooch_core::Guid::new_v4();
-        let b = kooch_core::Guid::new_v4();
-        let mut entities: Vec<_> = (0..4).map(|i| entity_info(i, Some(a))).collect();
-        entities.push(entity_info(99, None));
-        let scenes = vec![scene_info(a, true), scene_info(b, true)];
-
-        let rows = with_ui(|ui| build_rows(ui, &entities, &scenes));
-        assert!(
-            rows.iter()
-                .any(|row| matches!(row, WorldRow::Entity(idx) if *idx == 4)),
-            "the orphan entity is not in the list",
-        );
-    }
-
-    /// `show_rows` names its parameter `row_height_sans_spacing` and adds
-    /// `item_spacing.y` itself. A height that already includes it makes
-    /// egui reserve two gaps per row while each row leaves one — four
-    /// pixels of empty panel per row, growing with the panel because the
-    /// number of visible rows does (#708).
-    ///
-    /// # This restates the formula, deliberately
-    ///
-    /// Measuring a drawn row cannot catch it: the cursor advances by the
-    /// widget's size plus the spacing, so height and advance scale
-    /// together and the assertion holds either way. That is exactly what
-    /// the first attempt at this test did, and it passed with the bug
-    /// reinstated.
-    ///
-    /// What is being pinned is not the formula but that **nothing is
-    /// added to it** — so the formula has to appear here for the addition
-    /// to be visible.
-    #[test]
-    fn the_row_height_excludes_the_spacing_show_rows_adds() {
-        with_ui(|ui| {
-            let line = ui.text_style_height(&egui::TextStyle::Button);
-            let content =
-                (line + 2.0 * ui.spacing().button_padding.y).max(ui.spacing().interact_size.y);
-            assert!(ui.spacing().item_spacing.y > 0.0, "otherwise vacuous");
-            assert!(
-                (entity_row::row_height(ui) - content).abs() < 0.01,
-                "row_height is {} but the content is {content}; anything extra is \
-                 space egui will reserve and no row will fill",
-                entity_row::row_height(ui),
-            );
-        });
-    }
-
-    /// The one invariant virtualization rests on. `show_rows` places every
-    /// row from an index times this pitch without drawing the rows above,
-    /// so a row that advances the cursor by anything else puts the whole
-    /// list out of step with the scrollbar — and clicks land on a
-    /// neighbour.
-    ///
-    /// # Against the pitch, not the height
-    ///
-    /// This compared the cursor's advance to `row_height` and passed,
-    /// which is how the bug in #708 survived being tested: the advance
-    /// includes `item_spacing.y`, so the test was asserting that the
-    /// height *is* the pitch — and `row_height` obliged by including the
-    /// spacing, leaving egui to add a second one.
-    #[test]
-    fn a_row_advances_the_cursor_by_exactly_one_pitch() {
-        let entities = vec![entity_info(0, None)];
-        let (reserved, occupied) = with_ui(|ui| {
-            let reserved = row_pitch(ui, entity_row::row_height(ui));
-            let before = ui.cursor().top();
-            draw_entity_row(
-                ui,
-                0,
-                &entities[0],
-                &entities,
-                &mut Vec::new(),
-                &mut std::collections::HashSet::new(),
-                &[],
-                &mut Vec::new(),
-                &mut None,
-            );
-            (reserved, ui.cursor().top() - before)
-        });
-        assert!(
-            (reserved - occupied).abs() < 0.01,
-            "the list reserves {reserved} per row and the row advanced {occupied}",
-        );
-    }
-
-    /// The reason rows truncate. A name long enough to wrap would make
-    /// its own row taller than the list promised, and every row below it
-    /// would be drawn a line further off than the one before.
-    #[test]
-    fn a_very_long_name_does_not_make_its_row_taller() {
-        let mut long = entity_info(0, None);
-        long.depth = 4;
-        long.components = vec![crate::state::ComponentDisplayInfo {
-            type_id: std::any::TypeId::of::<()>(),
-            component: kooch_ecs::component::ComponentId::INVALID,
-            short_name: "Name".into(),
-            fields: ReflectedFields::Values(vec![(
-                "value".to_owned(),
-                kooch_ecs::reflect::ReflectValue::String("x".repeat(400)),
-            )]),
-            field_metas: None,
-            visibility: Default::default(),
-        }];
-        let entities = vec![long];
-
-        let (reserved, occupied) = with_ui(|ui| {
-            let reserved = row_pitch(ui, entity_row::row_height(ui));
-            let before = ui.cursor().top();
-            draw_entity_row(
-                ui,
-                0,
-                &entities[0],
-                &entities,
-                &mut Vec::new(),
-                &mut std::collections::HashSet::new(),
-                &[],
-                &mut Vec::new(),
-                &mut None,
-            );
-            (reserved, ui.cursor().top() - before)
-        });
-        assert!(
-            (reserved - occupied).abs() < 0.01,
-            "a 400-character name advanced the cursor {occupied}, not {reserved}",
-        );
-    }
-}
+mod tests;

@@ -401,9 +401,31 @@ pub(crate) fn gather_entity_data(
     let mut sorted: Vec<EntityDisplayInfo> = Vec::with_capacity(flat.len());
     let mut stack: Vec<(kooch_ecs::Entity, usize)> = Vec::new();
 
-    // Sort roots by index for stable ordering.
+    // 🔴 By `Order` first, `Entity::index` second. The index alone was
+    // never a decision anybody made — it is the order the allocator
+    // handed slots out in, which the panel and the scene file both read
+    // and therefore agreed on by coincidence. Entities nobody has ordered
+    // have no `Order` and sort after those that do, by index, so a scene
+    // authored before this looks exactly as it did.
+    let order_of = |e: &kooch_ecs::Entity| {
+        (
+            components
+                .as_ref()
+                .and_then(|r| r.get_cpu::<kooch_ecs::Order>())
+                .and_then(|s| s.get(*e))
+                .map(|o| o.value),
+            e.index(),
+        )
+    };
+    let key = |e: &kooch_ecs::Entity| {
+        let (order, index) = order_of(e);
+        // `None` last: `Option`'s own ordering puts it first, which would
+        // float every unordered entity to the top of its group.
+        (order.is_none(), order.unwrap_or(0), index)
+    };
+
     let mut sorted_roots = roots;
-    sorted_roots.sort_by_key(|e| e.index());
+    sorted_roots.sort_by_key(&key);
 
     // Push roots in reverse so first root is processed first.
     for &root in sorted_roots.iter().rev() {
@@ -430,7 +452,7 @@ pub(crate) fn gather_entity_data(
 
             // Push children in reverse for correct DFS order.
             let mut children = info.children.clone();
-            children.sort_by_key(|e| e.index());
+            children.sort_by_key(&key);
             for &child in children.iter().rev() {
                 stack.push((child, depth + 1));
             }
@@ -677,46 +699,4 @@ pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedType
 mod tests;
 
 #[cfg(test)]
-mod engine_owned_tests {
-    use super::is_engine_owned;
-
-    /// The four the engine writes. Two of them are overwritten on the next
-    /// frame; two of them break something if a second one exists.
-    #[test]
-    fn derived_components_are_not_offered() {
-        for name in [
-            "kooch_ecs::hierarchy::parent::Parent",
-            "kooch_ecs::hierarchy::children::Children",
-            "kooch_ecs::transform::GlobalTransform",
-            "kooch_ecs::persistent_id::PersistentId",
-        ] {
-            assert!(
-                is_engine_owned(name),
-                "{name} should not be addable by hand"
-            );
-        }
-    }
-
-    /// Everything a user actually places has to stay in the menu. This is
-    /// the assertion that fails if the list is ever widened carelessly.
-    #[test]
-    fn authorable_components_stay() {
-        for name in [
-            "kooch_ecs::transform::Transform",
-            "kooch_ecs::name::Name",
-            "kooch_ecs::perspective_camera::PerspectiveCamera",
-            "kooch_physics::components::PhysicsBody",
-            "kooch_camera::virtual_camera::VirtualCamera",
-        ] {
-            assert!(!is_engine_owned(name), "{name} must remain addable");
-        }
-    }
-
-    /// A project's own `Parent` is not the engine's. The prefix check is
-    /// the whole reason the rule is not just "any type called Parent".
-    #[test]
-    fn a_projects_own_type_is_never_caught_by_an_engine_rule() {
-        assert!(!is_engine_owned("my_game::hierarchy::Parent"));
-        assert!(!is_engine_owned("roll_a_ball::Children"));
-    }
-}
+mod engine_owned_tests;

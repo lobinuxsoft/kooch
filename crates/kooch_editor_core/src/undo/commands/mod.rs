@@ -6,6 +6,7 @@ mod component;
 mod despawn;
 mod duplicate;
 mod dynamic_component;
+mod paste;
 mod set_field;
 mod spawn;
 mod spawn_mesh;
@@ -17,6 +18,7 @@ pub(crate) use duplicate::DuplicateCommand;
 pub(crate) use dynamic_component::{
     AddDynamicComponentCommand, RemoveDynamicComponentCommand, SetDynamicFieldCommand,
 };
+pub(crate) use paste::PasteCommand;
 pub(crate) use set_field::SetFieldCommand;
 pub(crate) use spawn::SpawnCommand;
 pub(crate) use spawn_mesh::SpawnMeshCommand;

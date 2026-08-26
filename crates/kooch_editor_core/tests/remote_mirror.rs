@@ -44,12 +44,14 @@ fn snapshot() -> Vec<EntitySnapshot> {
             id: eid(0),
             name: Some("Rig".into()),
             parent: None,
+            scene: None,
             components: vec![],
         },
         EntitySnapshot {
             id: eid(1),
             name: Some("Mesh".into()),
             parent: Some(eid(0)),
+            scene: None,
             components: vec![
                 ComponentSnapshot {
                     type_name: std::any::type_name::<Transform>().into(),
@@ -114,6 +116,7 @@ fn reapply_replaces_the_previous_mirror() {
         id: eid(7),
         name: Some("Solo".into()),
         parent: None,
+        scene: None,
         components: vec![ComponentSnapshot {
             type_name: std::any::type_name::<Transform>().into(),
             fields: vec![],
@@ -255,6 +258,7 @@ fn a_changed_parent_is_followed() {
         id: eid(2),
         name: Some("Other".into()),
         parent: None,
+        scene: None,
         components: vec![],
     });
     mirror.apply(&initial, &mut resources);
@@ -312,12 +316,14 @@ fn an_entity_reference_is_translated_into_the_mirror() {
             id: target,
             name: Some("Door frame".into()),
             parent: None,
+            scene: None,
             components: vec![],
         },
         EntitySnapshot {
             id: holder,
             name: Some("Hinge".into()),
             parent: None,
+            scene: None,
             components: vec![ComponentSnapshot {
                 type_name: std::any::type_name::<Joint>().into(),
                 fields: vec![(
@@ -365,6 +371,7 @@ fn a_reference_to_a_later_entity_is_translated_too() {
             id: eid(5),
             name: Some("Hinge".into()),
             parent: None,
+            scene: None,
             components: vec![ComponentSnapshot {
                 type_name: std::any::type_name::<Joint>().into(),
                 fields: vec![(
@@ -377,6 +384,7 @@ fn a_reference_to_a_later_entity_is_translated_too() {
             id: eid(6),
             name: Some("Door".into()),
             parent: None,
+            scene: None,
             components: vec![],
         },
     ];
@@ -391,4 +399,73 @@ fn a_reference_to_a_later_entity_is_translated_too() {
         .expect("the Joint was mirrored");
 
     assert_eq!(joint.body_b, Some(EntityRef::live(local_target)));
+}
+
+/// Scene membership survives the wire.
+///
+/// 🔴 `SceneMember` is derived on load and never written to a scene file,
+/// and the host keeps it out of the component list, so it travels beside
+/// the components the way `parent` does. Without it every mirrored entity belongs to nothing, and since
+/// **Open Project always opens remote**, that is every entity the editor
+/// normally shows: the World panel grouped a whole project into an empty
+/// scene and a pile of orphans, and no error said why.
+#[test]
+fn a_mirrored_entity_keeps_its_scene() {
+    let mut r = ecs();
+    let scene = kooch_core::Guid::new_v4();
+    let mut mirror = RemoteMirror::new();
+
+    mirror.apply(
+        &[EntitySnapshot {
+            id: eid(0),
+            name: Some("Rig".into()),
+            parent: None,
+            scene: Some(scene),
+            components: vec![],
+        }],
+        &mut r,
+    );
+
+    let entity = mirror.local_of(eid(0)).expect("the entity was mirrored");
+    let member = r
+        .get::<ComponentRegistry>()
+        .and_then(|registry| registry.get_cpu::<kooch_ecs::SceneMember>())
+        .and_then(|storage| storage.get(entity))
+        .map(|member| member.scene);
+    assert_eq!(member, Some(scene), "the scene did not reach the mirror");
+}
+
+/// An entity the project reports as belonging to no scene LOSES its
+/// membership locally.
+///
+/// Both directions, for the same reason the parent needs both: an entity
+/// that leaves a scene would otherwise keep the old membership forever,
+/// and it would keep being listed under a scene it is no longer in.
+#[test]
+fn a_mirrored_entity_can_leave_its_scene() {
+    let mut r = ecs();
+    let scene = kooch_core::Guid::new_v4();
+    let mut mirror = RemoteMirror::new();
+    let with_scene = |scene| {
+        vec![EntitySnapshot {
+            id: eid(0),
+            name: Some("Rig".into()),
+            parent: None,
+            scene,
+            components: vec![],
+        }]
+    };
+
+    mirror.apply(&with_scene(Some(scene)), &mut r);
+    mirror.apply(&with_scene(None), &mut r);
+
+    let entity = mirror.local_of(eid(0)).expect("the entity was mirrored");
+    let still_there = r
+        .get::<ComponentRegistry>()
+        .and_then(|registry| registry.get_cpu::<kooch_ecs::SceneMember>())
+        .is_some_and(|storage| storage.contains(entity));
+    assert!(
+        !still_there,
+        "the entity kept a scene the project no longer reports it in"
+    );
 }

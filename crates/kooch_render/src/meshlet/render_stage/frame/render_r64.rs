@@ -32,31 +32,50 @@ impl MeshletRenderStage {
         mut encoder: wgpu::CommandEncoder,
         resources: &Resources,
         view_proj: Mat4,
+        // The camera's own matrix, before the sub-pixel jitter (#481).
+        // Equal to `view_proj` when the temporal resolve is off.
+        unjittered_view_proj: Mat4,
         cam_pos: Vec3,
         cull_params: &CullParams,
         scene_params: &SceneCullParams,
         meshlet_bg: &wgpu::BindGroup,
+        contact: &crate::contact_shadow::ContactShadowUbo,
         timer_slot: Option<usize>,
         instance_count: u32,
     ) -> MeshletRenderStats {
         let gpu_pool = self.gpu_pool.as_ref().expect("checked by render() prelude");
-        let vbuf64 = self.views[view_id]
-            .vbuf64_stage
-            .as_ref()
-            .expect("path selected only when vbuf64_stage is Some");
+
+        profiling::scope!("path: R64 atomic vbuf");
+
+        // #785 — the GPU counterpart of the CPU scopes below. Read
+        // once: `begin`/`end` take `&self`, so this borrow coexists
+        // with everything else this function reads out of `resources`.
+        let scopes = resources.get::<kooch_core::gpu::GpuScopes>();
+
+        // #536 — the DLSS handles. Their own resource rather than a
+        // field of `GpuContext`, because the frame's systems have taken
+        // the context out of `Resources` for the duration of this call.
+        let dlss_runtime = resources.get::<kooch_core::gpu::DlssRuntime>();
 
         // Stage 0 (Cull). render() already called `write_start`
         // which lands on stage 0; just close it after the dispatch.
-        self.views[view_id].cull.dispatch_scene_pool_atomic(
-            &self.cull_pipelines,
-            device,
-            queue,
-            &mut encoder,
-            gpu_pool,
-            &self.scene,
-            cull_params,
-            scene_params,
-        );
+        {
+            profiling::scope!("cull: view");
+            let query = scopes.map(|s| s.begin("cull", &mut encoder));
+            self.views[view_id].cull.dispatch_scene_pool_atomic(
+                &self.cull_pipelines,
+                device,
+                queue,
+                &mut encoder,
+                gpu_pool,
+                &self.scene,
+                cull_params,
+                scene_params,
+            );
+            if let (Some(scopes), Some(query)) = (scopes, query) {
+                scopes.end(&mut encoder, query);
+            }
+        }
         if timer_slot.is_some() {
             self.gpu_timers.write_stage_end(&mut encoder, 0);
         }
@@ -80,6 +99,35 @@ impl MeshletRenderStage {
             MeshletDebugMode::Overdraw => 2,
             _ => 0,
         };
+        // 🔴 Shadow pages (#866), BEFORE the fused pass and not after
+        // it. `vbuf64.render` rasterises and lights in one fragment
+        // shader, so whatever it samples has to be finished by the time
+        // it starts.
+        //
+        // The marking reads the depth buffer, which at this point still
+        // holds the LAST frame — the fused pass is what clears and
+        // refills it. That is Epic's arrangement and the trade is
+        // deliberate: last frame's depth decides which pages EXIST,
+        // which is off by however far the camera moved in a frame and
+        // costs a page at the edge of the screen; this frame's geometry
+        // fills them, which is what the shading compares against.
+        //
+        // The other way round — marking after the shading — meant the
+        // atlas was a frame old, so a moving object was compared against
+        // its OWN caster from the previous frame and shadowed itself.
+        self.record_page_marking(
+            device,
+            queue,
+            &mut encoder,
+            resources,
+            view_id,
+            unjittered_view_proj,
+            cam_pos,
+            scene_params,
+            meshlet_bg,
+            debug_mode,
+        );
+        self.bind_page_shadows(device, resources, view_id);
         let density_view = self.views[view_id]
             .triangle_density_view
             .as_ref()
@@ -91,23 +139,85 @@ impl MeshletRenderStage {
             self.gpu_timers.write_stage_start(&mut encoder, 1);
         }
         let material_pipeline = resources.get::<crate::material::MaterialPipeline>();
-        vbuf64.render(
-            device,
-            queue,
-            &mut encoder,
-            &self.views[view_id].depth_view,
-            &self.views[view_id].color_view,
-            density_view,
-            density_mode,
-            meshlet_bg,
-            material_pipeline.as_deref(),
-            self.lights.bind_group(),
-            &self.views[view_id].cull,
-            &self.scene,
-            view_proj,
-            debug_mode.as_u32(),
-            /* clear_depth */ true,
-        );
+        // Hoisted out of the call below: the page-marking debug view
+        // needs it too, to divide out what the tonemap multiplies back
+        // in (#866).
+        let exposure = resources
+            .get::<kooch_lighting::Exposure>()
+            .copied()
+            .unwrap_or_default()
+            .multiplier();
+        // 🔴 Braced, like `upload instances`: a `profiling::scope!`
+        // lives to the end of its block, and mid-function this one
+        // reported the overlay dispatch, the readbacks and `Queue::
+        // submit` as part of the raster. The CPU cost of submitting is
+        // not the cost of shading.
+        // 🔴 The block's value, not a mutable binding written from
+        // inside it: DLSS hands back a command buffer that has to reach
+        // the single submit at the bottom of this function (#536).
+        let vbuf64 = self.views[view_id]
+            .vbuf64_stage
+            .as_ref()
+            .expect("path selected only when vbuf64_stage is Some");
+        let frame_dlss_commands = {
+            profiling::scope!("raster + shade (fused)");
+            // The prime suspect for the 96 % (#769): one fragment shader
+            // doing both the raster and the whole lighting evaluation, over
+            // every pixel the scene covers.
+            let shade_query = scopes.map(|s| s.begin("raster + shade", &mut encoder));
+            let dlss_commands = vbuf64.render(
+                device,
+                queue,
+                &mut encoder,
+                &self.views[view_id].depth_view,
+                &self.views[view_id].depth_sample_view,
+                &self.views[view_id].color_view,
+                density_view,
+                density_mode,
+                meshlet_bg,
+                material_pipeline.as_deref(),
+                self.lights.bind_group(),
+                &self.views[view_id].cull,
+                &self.scene,
+                view_proj,
+                unjittered_view_proj,
+                contact,
+                debug_mode.as_u32(),
+                // #732 — the tonemap is its own pass now, so the scalar
+                // it used to read out of the Inti uniform is passed to
+                // the stage instead.
+                exposure,
+                /* clear_depth */ true,
+                scopes.as_deref(),
+                shade_query.as_ref(),
+                dlss_runtime.as_deref(),
+            );
+            if let (Some(scopes), Some(query)) = (scopes, shade_query) {
+                scopes.end(&mut encoder, query);
+            }
+            // 🔴 Kept until the submit below, where it goes in the SAME
+            // submission and immediately after this encoder. DLSS
+            // records into wgpu's Vulkan command pool behind its back;
+            // submitting it apart from, or before, the frame that fed
+            // it is undefined behaviour by the crate's own contract.
+            dlss_commands
+        };
+
+        // 🔴 The frame is CUT here when DLSS ran, and the rest of it —
+        // the debug overlay below, the GPU timer resolve, the final
+        // submit — continues in the encoder the stage handed back.
+        // Everything downstream reads the upscaled image, and DLSS has
+        // not written it until its own buffer reaches the queue.
+        if let Some(deferred) = frame_dlss_commands {
+            queue.submit([encoder.finish(), deferred.dlss]);
+            encoder = deferred.post;
+        }
+        // The debug paint, which is all that is left here. See
+        // `PageMarker::record_paint`: the marking itself moved to the
+        // top of the frame, but the paint writes the view's FINAL colour
+        // and has to land after the fused pass and after the DLSS cut.
+        self.record_page_paint(&mut encoder, view_id);
+
         if timer_slot.is_some() {
             self.gpu_timers.write_stage_end(&mut encoder, 1);
             self.gpu_timers.write_stage_start(&mut encoder, 2);
@@ -143,7 +253,7 @@ impl MeshletRenderStage {
                 &self.scene,
                 gpu_pool,
                 view_proj,
-                self.views[view_id].size,
+                self.views[view_id].render_size,
                 reason,
                 /* line_thickness_px */ 2,
                 total_threads,
@@ -178,6 +288,10 @@ impl MeshletRenderStage {
             self.gpu_timers.resolve_and_copy(&mut encoder, slot_idx);
         }
         queue.submit(std::iter::once(encoder.finish()));
+        // The counters' ring maps after the submit, the way every other
+        // readback here does.
+        self.report_page_marking(resources);
+        self.report_page_raster(resources);
         if let Some(slot_idx) = timer_slot {
             self.gpu_timers.submit_readback(slot_idx);
         }
@@ -213,6 +327,13 @@ impl MeshletRenderStage {
             // whatever the last debug-active frame read, and handing
             // that to the HUD draws a number from an unknown moment as
             // if it described the frame on screen (#703).
+            cluster_occupancy: self.lights.clusters().occupancy(),
+            // 🔴 THIS view's counts, not the last readback to land. The
+            // stats a view publishes have to describe the camera that
+            // produced them, or a panel drawn beside one viewport
+            // reports the other one's frustum.
+            page_marking: self.page_marking_for(view_id),
+            page_raster: self.page_raster_for(view_id),
             cull_stage_counts: if cull_params.debug_active != 0 {
                 self.stage_counters.last_frame_counts()
             } else {

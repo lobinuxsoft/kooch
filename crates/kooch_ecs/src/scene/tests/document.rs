@@ -1,11 +1,14 @@
+use std::any::TypeId;
+
 use glam::Vec3;
 
 use crate::commands::Commands;
+use crate::component::ComponentRegistry;
 use crate::reflect::ReflectValue;
 use crate::scene::{ComponentDescription, EntityDescription, SceneDocument};
 use crate::transform::Transform;
 
-use super::{Health, TestEphemeral, setup_resources};
+use super::{Health, TestEphemeral, add_to_archetype, setup_resources};
 
 #[test]
 fn round_trip_save_load() {
@@ -137,4 +140,62 @@ fn from_ecs_skips_ephemeral_entities() {
     assert_eq!(doc.entities.len(), 1);
     let health = &doc.entities[0].components[0];
     assert!(health.fields.contains(&("hp".into(), ReflectValue::U32(1))));
+}
+
+/// Membership is reflected, and must still never reach the file.
+///
+/// Reflecting `SceneMember` is what lets a world rebuild carry it — see
+/// `WorldSnapshot`. It also makes it eligible for every generic "write
+/// the reflected components" pass, and `from_ecs` is one. Writing it
+/// would state membership twice, and with several copies of a scene open
+/// the value on the entity is the *instance* guid — so the file would
+/// come back naming a scene that only existed in one session.
+#[test]
+fn a_saved_scene_never_states_its_own_membership() {
+    use crate::scene_member::SceneMember;
+
+    let mut resources = setup_resources();
+    let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+    registry.register_cpu_reflected::<Transform>();
+    registry.register_cpu_reflected::<SceneMember>();
+    registry.register_cpu_reflected::<crate::name::Name>();
+
+    let mut commands = resources.remove::<Commands>().unwrap();
+    let entity = commands.spawn(&mut resources).id();
+    commands.apply(&mut resources);
+    resources.insert(commands);
+
+    let scene = kooch_core::Guid::new_v4();
+    let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+    registry
+        .get_cpu_mut::<crate::name::Name>()
+        .unwrap()
+        .insert(entity, crate::name::Name::new("Rig"));
+    registry
+        .get_cpu_mut::<Transform>()
+        .unwrap()
+        .insert(entity, Transform::default());
+    registry
+        .get_cpu_mut::<SceneMember>()
+        .unwrap()
+        .insert(entity, SceneMember::new(scene));
+    add_to_archetype(&mut resources, entity, TypeId::of::<crate::name::Name>());
+    add_to_archetype(&mut resources, entity, TypeId::of::<Transform>());
+    add_to_archetype(&mut resources, entity, TypeId::of::<SceneMember>());
+
+    let doc = SceneDocument::from_ecs(&mut resources);
+
+    let written: Vec<&str> = doc
+        .entities
+        .iter()
+        .flat_map(|e| e.components.iter())
+        .map(|c| c.type_name.as_str())
+        .collect();
+    assert!(
+        !written.iter().any(|name| name.contains("SceneMember")),
+        "membership reached the file: {written:?}"
+    );
+    // The entity itself still has to be there, or the assertion above
+    // would pass on an empty document.
+    assert_eq!(doc.entities.len(), 1);
 }

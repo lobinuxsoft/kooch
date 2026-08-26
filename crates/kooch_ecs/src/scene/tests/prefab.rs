@@ -853,3 +853,50 @@ fn a_self_referencing_prefab_does_not_recurse_forever() {
         "the unresolvable prefab should be named, got {named:?}",
     );
 }
+
+/// 🔴 An instance keeps its place among its siblings across a save.
+///
+/// A saved instance root writes only what makes it an instance and where
+/// it sits — its components come from the prefab. `Order` is neither the
+/// prefab's nor an override of one: a prefab knows nothing about where
+/// its copies land in a scene. Left out, reordering a prefab instance
+/// looked like it worked and was gone on reload, with the entity back in
+/// the middle of the list it had been dragged out of (#961).
+#[test]
+fn an_instance_keeps_its_place_across_a_save() {
+    use crate::order::Order;
+
+    let (mut resources, root) = world_with_a_deep_subtree();
+    resources
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .register_cpu_reflected::<Order>();
+
+    let prefab = SceneDocument::from_ecs_subtree(&mut resources, root);
+    let (spawned, members) =
+        crate::scene::sync::instantiate_members(&prefab, &mut resources, Guid::new_v4()).unwrap();
+    crate::prefab_instance::attach(&mut resources, spawned, &members, Guid::new_v4());
+
+    // Dragged into third place among its siblings.
+    resources
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .get_cpu_mut::<Order>()
+        .unwrap()
+        .insert(spawned, Order { value: 2500 });
+    super::add_to_archetype(&mut resources, spawned, std::any::TypeId::of::<Order>());
+
+    let doc = SceneDocument::from_ecs(&mut resources);
+
+    let written = doc
+        .entities
+        .iter()
+        .flat_map(|e| e.components.iter())
+        .find(|c| c.type_name.contains("Order"))
+        .expect("the instance's place was not written");
+    assert_eq!(
+        written.fields.first().map(|(_, value)| value.clone()),
+        Some(crate::reflect::ReflectValue::U32(2500)),
+        "the place was written but not the one it was moved to",
+    );
+}

@@ -1,0 +1,380 @@
+use super::*;
+
+#[test]
+fn defaults_match_what_the_engine_does_without_a_file() {
+    let settings = RenderSettings::default();
+    assert_eq!(settings.camera(), PhysicalCamera::default());
+    assert_eq!(settings.ambient(), AmbientLight::default());
+}
+
+/// A settings file written by an older engine, or by hand with one
+/// line in it, must load. Failing shut on an unknown or absent field
+/// would make the asset a liability rather than a convenience.
+#[test]
+fn a_partial_file_fills_the_rest_from_defaults() {
+    let loader = RenderSettingsLoader;
+    let path = std::path::Path::new("project.rendersettings");
+    let mut ctx = LoadContext::new(path);
+    let parsed = loader
+        .load(b"(aperture_f_stops: 1.4)", &mut ctx)
+        .expect("a one-field file should load");
+    assert_eq!(parsed.aperture_f_stops, 1.4);
+    assert_eq!(
+        parsed.sensitivity_iso,
+        RenderSettings::default().sensitivity_iso
+    );
+}
+
+#[test]
+fn an_empty_file_is_entirely_defaults() {
+    let loader = RenderSettingsLoader;
+    let path = std::path::Path::new("project.rendersettings");
+    let mut ctx = LoadContext::new(path);
+    let parsed = loader
+        .load(b"()", &mut ctx)
+        .expect("an empty record should load");
+    assert_eq!(parsed, RenderSettings::default());
+}
+
+#[test]
+fn round_trips_through_ron() {
+    let mut settings = RenderSettings::default();
+    settings.aperture_f_stops = 2.0;
+    settings.ambient_intensity = 42.0;
+    let text = to_ron(&settings).expect("serialises");
+    let back: RenderSettings = ron::from_str(&text).expect("deserialises");
+    assert_eq!(back, settings);
+}
+
+#[test]
+fn nonsense_is_refused_rather_than_defaulted() {
+    let loader = RenderSettingsLoader;
+    let path = std::path::Path::new("project.rendersettings");
+    let mut ctx = LoadContext::new(path);
+    assert!(loader.load(b"this is not ron", &mut ctx).is_err());
+}
+
+/// Every field carries a tooltip, because the whole reason to open
+/// this asset is not knowing what the numbers mean.
+#[test]
+fn every_field_explains_itself() {
+    let settings = RenderSettings::default();
+    let missing: Vec<_> = settings
+        .reflect_fields()
+        .iter()
+        .filter(|m| m.doc.trim().is_empty())
+        .map(|m| m.name)
+        .collect();
+    assert!(missing.is_empty(), "fields with no tooltip: {missing:?}");
+}
+
+#[test]
+fn the_unit_of_each_number_is_stated() {
+    let settings = RenderSettings::default();
+    let doc = |name: &str| {
+        settings
+            .reflect_fields()
+            .iter()
+            .find(|m| m.name == name)
+            .map(|m| m.doc)
+            .unwrap_or("")
+    };
+    assert!(doc("shutter_speed_s").contains("SECONDS"));
+    assert!(doc("ambient_intensity").contains("LUX"));
+}
+
+/// 🔴 A `.rendersettings` written before #826 was removed must still
+/// load, and quietly.
+///
+/// This is the removal's only real hazard. Deleting a field from a
+/// serialized asset is not like deleting a function: the compiler cannot
+/// see the files already on disk, and every project that ever opened the
+/// Shading group has `light_samples` written into its own
+/// `project.rendersettings` — roll-a-ball's said `light_samples: 4` when
+/// this landed. If RON rejected the unknown key the asset would fail to
+/// load, and the project would come up with default exposure, default
+/// shadows and default everything with nothing naming the cause.
+///
+/// Goes through the real loader rather than `ron::from_str`, because the
+/// loader is what a project actually hits.
+#[test]
+fn a_settings_file_with_the_removed_field_still_loads() {
+    let loader = RenderSettingsLoader;
+    let path = std::path::Path::new("project.rendersettings");
+    let mut ctx = LoadContext::new(path);
+    let parsed = loader
+        .load(
+            b"(aperture_f_stops: 2.8, light_samples: 4, compute_shading: true)",
+            &mut ctx,
+        )
+        .expect(
+            "a .rendersettings carrying the removed `light_samples` key failed to load. \
+             Every project that touched the Shading group has one, and a project whose \
+             settings fail to load renders with defaults and says nothing.",
+        );
+    assert!(
+        parsed.compute_shading,
+        "the file loaded but the field after the removed key was not read",
+    );
+    assert_eq!(parsed.aperture_f_stops, 2.8);
+}
+
+/// 🔴 The resolve is gated on the compute path, and the enum must not
+/// have quietly dropped that gate: the jitter would stay on with
+/// nothing to integrate it, which shimmers and reads as the technique
+/// being broken rather than inapplicable.
+#[test]
+fn the_fragment_path_gets_no_technique() {
+    let settings = "(upscale: 1, compute_shading: false)";
+    let parsed: RenderSettings = ron::from_str(settings).expect("should load");
+    assert_eq!(parsed.technique(), crate::quality::UpscaleTechnique::Taa);
+    assert!(
+        !parsed.temporal().enabled(),
+        "the fragment path must resolve to no technique whatever the file asks for",
+    );
+}
+
+/// 🔴 A file written before `temporal_aa` was deleted must still load.
+///
+/// Same hazard the removal of `light_samples` had, and the same test:
+/// the compiler cannot see the files already on disk, and every project
+/// that ever opened the Temporal group has `temporal_aa` written into
+/// its own `project.rendersettings`. If RON rejected the unknown key the
+/// asset would fail to load and the project would render with engine
+/// defaults for EVERYTHING, not just for this one setting.
+///
+/// The value itself is gone on purpose — the owner's call, since the
+/// dropdown replaced it and no project outside this repo predates it.
+/// What must not happen is the file failing.
+#[test]
+fn a_file_naming_the_deleted_toggle_still_loads() {
+    let parsed: RenderSettings =
+        ron::from_str("(aperture_f_stops: 2.8, temporal_aa: true, upscale: 1)")
+            .expect("an unknown key must not fail the load");
+    assert_eq!(parsed.aperture_f_stops, 2.8);
+    assert_eq!(
+        parsed.technique(),
+        crate::quality::UpscaleTechnique::Taa,
+        "the field after the deleted key was not read",
+    );
+}
+
+/// 🔴 `render_scale` must not be offered for a technique that ignores
+/// it.
+///
+/// It is already forced to 100 for `None` and `TAA`, so the control did
+/// nothing — and a control that silently does nothing is worse than an
+/// absent one, because it reads as "I tried the setting and it did not
+/// help". Reported by the owner, who set it under TAA and reasonably
+/// expected it to apply.
+///
+/// Pinned as the condition's VALUES rather than by rendering anything:
+/// the enum's numbers are serialised into user projects and are
+/// append-only, so a variant renumbered without updating this would
+/// show the control for the wrong technique.
+#[test]
+fn the_scale_is_offered_only_where_it_acts() {
+    let shown: Vec<u32> = UPSCALES_WHEN.values.iter().map(|v| *v as u32).collect();
+    for value in 0..4u32 {
+        let technique = crate::quality::UpscaleTechnique::from_asset(value);
+        assert_eq!(
+            shown.contains(&value),
+            technique.upscales(),
+            "technique {technique:?} (asset value {value}) upscales={} but the inspector \
+             condition says shown={}",
+            technique.upscales(),
+            shown.contains(&value),
+        );
+    }
+}
+
+/// The anisotropy in the asset reaches the settings the renderer reads.
+///
+/// ⚠️ Its own test because the GPU one cannot cover it: that rig
+/// registers its material by hand, so the texture sync — which is what
+/// carries this number from `ShadingSettings` to the sampler — has no
+/// snapshots to run on. Two claims, two tests: this one is "the file is
+/// read", the GPU one is "the sampler does something".
+#[test]
+fn the_anisotropy_travels_from_the_asset() {
+    let ron = r#"(compute_shading: true, anisotropy: 8)"#;
+    let path = std::path::Path::new("look.rendersettings");
+    let mut ctx = LoadContext::new(path);
+    let parsed = RenderSettingsLoader.load(ron.as_bytes(), &mut ctx).unwrap();
+    assert_eq!(parsed.anisotropy, 8);
+    assert_eq!(parsed.shading().anisotropy, 8);
+}
+
+/// 🔴 And a number hardware does not implement is clamped, not passed on.
+///
+/// `anisotropy_clamp` is a `u16` the sampler validates: zero is not a
+/// legal value and wgpu rejects the descriptor outright, which would
+/// take down every material in the project over one hand-edited line.
+#[test]
+fn an_impossible_anisotropy_is_clamped() {
+    for (written, expected) in [(0u32, 1u16), (3, 3), (64, 16), (100_000, 16)] {
+        let ron = format!("(anisotropy: {written})");
+        let path = std::path::Path::new("look.rendersettings");
+        let mut ctx = LoadContext::new(path);
+        let parsed = RenderSettingsLoader.load(ron.as_bytes(), &mut ctx).unwrap();
+        assert_eq!(
+            parsed.shading().anisotropy,
+            expected,
+            "anisotropy {written} reached the sampler as {}",
+            parsed.shading().anisotropy,
+        );
+    }
+}
+
+/// 🔴 `apply` publishes the presentation, and the staleness check in
+/// `apply_render_settings_system` compares it. A settings file whose
+/// only edit was vsync has nothing else to change, so a resource left
+/// out of either place makes that edit do nothing at all — silently,
+/// which is the failure mode this whole asset exists to avoid.
+#[test]
+fn apply_publishes_the_presentation() {
+    let mut resources = kooch_core::resource::Resources::new();
+    let mut settings = RenderSettings::default();
+    settings.vsync = false;
+    settings.apply(&mut resources);
+    assert_eq!(
+        resources.get::<crate::quality::Presentation>(),
+        Some(&crate::quality::Presentation { vsync: false }),
+    );
+}
+
+/// 🔴 What a file written before this field existed silently becomes,
+/// which `settings.rs` argues about at length for `compute_shading`: a
+/// serde default is not a recommendation. Every `.rendersettings` on
+/// every disk predates `vsync`, so this default is what all of them
+/// mean — and an uncapped frame is not something a project opts into by
+/// upgrading the engine.
+#[test]
+fn a_file_without_vsync_keeps_it_on() {
+    let parsed: RenderSettings = ron::from_str("(sharpening: 0)").expect("partial file");
+    assert!(parsed.vsync);
+}
+
+/// 🔴 What a file written before this field existed silently becomes.
+/// Every `.rendersettings` on every disk predates `window_mode`, and
+/// taking the display is not something a project opts into by upgrading
+/// the engine.
+#[test]
+fn a_file_without_the_mode_stays_windowed() {
+    let parsed: RenderSettings = ron::from_str("(sharpening: 0)").expect("partial file");
+    assert_eq!(
+        parsed.window_mode(),
+        kooch_core::window_mode::WindowMode::Windowed,
+    );
+}
+
+/// `apply` publishes it and `apply_render_settings_system` compares it —
+/// a resource missing from either place makes the setting do nothing at
+/// all, silently.
+#[test]
+fn apply_publishes_the_window_mode() {
+    let mut resources = kooch_core::resource::Resources::new();
+    let mut settings = RenderSettings::default();
+    settings.window_mode = 2;
+    settings.apply(&mut resources);
+    assert_eq!(
+        resources.get::<kooch_core::window_mode::WindowMode>(),
+        Some(&kooch_core::window_mode::WindowMode::Fullscreen),
+    );
+}
+
+#[test]
+fn virtual_shadows_reaches_the_published_settings() {
+    // 🔴 The regression this exists for shipped a whole feature inert.
+    // `virtual_shadows` was read at the call site off `RenderSettings`,
+    // which `apply` never inserts as a `Resources` value, so the lookup
+    // returned `None` in every build and the fallback turned the pages
+    // off. Two handheld captures — one with the pages on, one without —
+    // came back identical scope for scope, which is what a setting that
+    // reaches nothing looks like from the outside.
+    let settings = RenderSettings {
+        virtual_shadows: true,
+        shadow_density: 50,
+        shadow_pool_pages: 4096,
+        ..Default::default()
+    };
+    let published = settings.shadows();
+    assert!(published.virtual_pages);
+    assert_eq!(published.page_density, 50);
+    assert_eq!(published.pool_pages, 4096);
+}
+
+#[test]
+fn shadow_softness_reaches_the_published_settings() {
+    // Same class as `virtual_shadows_reaches_the_published_settings`:
+    // a knob that stops at the asset ships a filter nobody can widen.
+    let settings = RenderSettings {
+        shadow_softness: 3,
+        ..Default::default()
+    };
+    assert_eq!(settings.shadows().page_softness, 3);
+    // And the default is the sharp end: bilinear, the cube path's
+    // look — softness is opted into because it is paid per light per
+    // pixel.
+    assert_eq!(RenderSettings::default().shadow_softness, 1);
+}
+
+#[test]
+fn shadow_min_pixels_reaches_the_settings() {
+    // Same class again: a gate that stops at the asset ships every
+    // light casting forever.
+    let settings = RenderSettings {
+        shadow_min_pixels: 32,
+        ..Default::default()
+    };
+    assert_eq!(settings.shadows().page_min_pixels, 32);
+    // The default gates only what nobody could resolve anyway.
+    assert_eq!(RenderSettings::default().shadow_min_pixels, 8);
+}
+
+#[test]
+fn the_frame_never_asks_for_render_settings() {
+    // The bug's CLASS, not its instance. `RenderSettings` is the
+    // author's asset; what a frame may read is the derived struct
+    // `apply` publishes. Asking for the asset compiles, runs, returns
+    // `None` forever, and takes whatever fallback the caller wrote —
+    // silently.
+    //
+    // Structural rather than behavioural on purpose: the behavioural
+    // test above only covers the one field somebody remembered.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut offenders = Vec::new();
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            // This module is where the asset is turned into what the
+            // frame reads, so it is the one place allowed to hold it.
+            if path.ends_with("settings.rs") || path.ends_with("settings/tests.rs") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if text.contains("get::<crate::settings::RenderSettings>")
+                || text.contains("get::<RenderSettings>")
+            {
+                offenders.push(path);
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these read the author's asset out of Resources, where it never is: {offenders:#?}",
+    );
+}

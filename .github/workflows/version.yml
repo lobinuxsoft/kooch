@@ -1,0 +1,111 @@
+# Gives every pull request its own engine version.
+#
+# The version is not decoration here. It names the vendored engine
+# directory (`~/.local/share/kooch/<version>/engine`), it is half of the
+# `BuildStamp` a project compares itself against, and it keys the
+# pipeline cache. A version that does not move makes all three blind:
+# an editor installed today finds the directory it wrote last week, sees
+# the right shape, reports itself up to date, and every project on the
+# machine goes on compiling against source from weeks earlier — with
+# nothing said. That is #761, and it is why this runs on every PR rather
+# than once per release.
+#
+# 🔴 It bumps the PR's own branch, not `development`. The ruleset on
+# `development` requires a pull request and has no bypass actors, so a
+# workflow token cannot push there at all. Bumping in the branch also
+# puts the version in the diff, where it is reviewable.
+name: version
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [development]
+
+# One per PR. A second push while the first run is mid-bump would
+# compute the same target version and race to push it.
+concurrency:
+  group: version-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    # A fork's branch is not writable with this token, and a PR labelled
+    # `no-version-bump` is an explicit opt-out — for the case where a
+    # branch has to sit at a specific version.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !contains(github.event.pull_request.labels.*.name, 'no-version-bump')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          # The base is needed to read the version this PR starts from.
+          fetch-depth: 0
+
+      - name: Decide how far to move
+        id: decide
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          # Conventional Commits, read off the PR title — which is what
+          # ends up on `development` as the merge commit's subject.
+          # `feat!:` or a `BREAKING CHANGE:` FOOTER is a major; `feat:` is
+          # a minor; everything else — fix, docs, chore, refactor, test,
+          # ci, perf — is a patch, because the rule is that the version
+          # moves with EVERY change. A number that sits still turns the
+          # engine's own drift warning into noise.
+          #
+          # 🔴 The rule lives in Python with a self-test beside it, not
+          # in a bash conditional here. The bash version matched
+          # "BREAKING CHANGE:" anywhere in the body, this workflow's own
+          # pull request explained the rule in a bullet, and the first
+          # run it ever did took the engine from 0.2.44 to 1.0.0.
+          python3 .github/scripts/bump_version.py --self-test
+          PART=$(python3 .github/scripts/bump_version.py --decide "$TITLE")
+          echo "part=$PART" >> "$GITHUB_OUTPUT"
+
+      - name: Move the version
+        id: move
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PART: ${{ steps.decide.outputs.part }}
+        run: |
+          set -euo pipefail
+          # 🔴 Bump from the BASE's version, never from the branch's own.
+          # Recomputing from the branch would add one more patch on every
+          # push, so a PR with twelve commits would land twelve versions
+          # ahead of a PR with one. The target is a function of the base
+          # and the change size, which makes the step idempotent: pushing
+          # again recomputes the same number and does nothing.
+          git show "$BASE_SHA:Cargo.toml" > /tmp/base-cargo.toml
+          BASE=$(python3 -c 'import re,sys; t=open("/tmp/base-cargo.toml").read(); m=re.search(r"\[workspace\.package\][^\[]*?\bversion\s*=\s*\"([^\"]+)\"", t, re.DOTALL); print(m.group(1) if m else "")')
+          [ -n "$BASE" ] || { echo "could not read the base version"; exit 1; }
+          python3 .github/scripts/bump_version.py --set "$BASE"
+          python3 .github/scripts/bump_version.py --bump "$PART" --check
+          echo "version=$(python3 .github/scripts/bump_version.py --print)" >> "$GITHUB_OUTPUT"
+
+      - name: Commit it, if it moved
+        env:
+          VERSION: ${{ steps.move.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "already at $VERSION — nothing to push"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: bump the engine to $VERSION"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+
+      - name: Say what it did
+        env:
+          VERSION: ${{ steps.move.outputs.version }}
+          PART: ${{ steps.decide.outputs.part }}
+        run: echo "### Engine version \`$VERSION\` (\`$PART\`)" >> "$GITHUB_STEP_SUMMARY"

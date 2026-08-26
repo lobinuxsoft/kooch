@@ -38,7 +38,7 @@ impl MeshletCull {
             self.capacity,
         );
 
-        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(cull_params));
+        let params_binding = self.stage_params(queue, cull_params);
         queue.write_buffer(
             &self.scene_params_buffer,
             0,
@@ -46,7 +46,7 @@ impl MeshletCull {
         );
         encoder.clear_buffer(&self.visible_count, 0, None);
 
-        let cull_bg = self.build_cull_bg(pipelines, device, mesh);
+        let cull_bg = self.build_cull_bg(pipelines, device, mesh, params_binding);
         let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_scene_bg"),
             layout: &pipelines.scene_bgl,

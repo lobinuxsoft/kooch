@@ -16,6 +16,7 @@ members = [
     "crates/kooch_world",
     "crates/kooch_audio",
     "crates/kooch_ecs_macros",
+    "crates/kooch_pack",
     "crates/kooch_remote",
     "crates/kooch_editor_core",
     "crates/kooch_editor",
@@ -23,15 +24,49 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.18.3"
 edition = "2024"
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/lobinuxsoft/kooch"
 authors = ["lobinuxsoft"]
 
 [workspace.dependencies]
+# Profiling (#785). Adopted rather than written: the policy is never to
+# implement what a maintained crate covers, and these are pinned to the
+# versions this workspace already uses.
+#
+# 🔴 `wgpu-profiler` 0.28 is on wgpu 30; 0.27 is the one that matches
+# wgpu 29. Taking "latest" here is a compile error, not an upgrade.
+# `puffin_egui` 0.30 wants egui 0.35.0, which is ours exactly.
+#
+# The facade is what is called at every site, so the backend (puffin,
+# tracy, optick, superluminal) stays a cargo feature rather than a
+# rewrite. With no backend feature on, `profiling::scope!` expands to
+# nothing — which is how a release build carries none of this (#558).
+profiling = "1"
+puffin = "0.20"
+puffin_egui = "0.30"
+puffin_http = "0.17"
+wgpu-profiler = { version = "0.27", default-features = false }
+# Asset packs (#758): zstd wins ratio and decompression speed at once;
+# AES-GCM is authenticated, so a tampered pack fails loudly.
+zstd = "0.13"
+aes-gcm = "0.11"
+# Subkey derivation, so one master key never does two jobs, and the
+# file tag can be derived rather than announced.
+hkdf = "0.13"
+sha2 = "0.11"
+# Wipes key material on drop. A key that outlives its use is a key in a
+# core dump.
+zeroize = { version = "1.9", features = ["derive"] }
 # GPU
 wgpu = "29"
+# NVIDIA DLSS through wgpu's Vulkan HAL (#536). Optional everywhere and
+# off by default: its build script links `libnvsdk_ngx` statically and
+# runs bindgen over NVIDIA's headers, so a build with this feature on
+# needs `DLSS_SDK` and `VULKAN_SDK` set. The version chart is exact —
+# dlss_wgpu 4.0.0 is the one pinned to wgpu 29 and DLSS SDK 310.5.3.
+dlss_wgpu = "=4.0.0"
 # Windowing
 winit = { version = "0.30", features = ["serde"] }
 # Math
@@ -128,6 +163,7 @@ serde_json = "1"
 kooch_core = { path = "crates/kooch_core" }
 kooch_ecs = { path = "crates/kooch_ecs" }
 kooch_ecs_macros = { path = "crates/kooch_ecs_macros" }
+kooch_pack = { path = "crates/kooch_pack" }
 kooch_window = { path = "crates/kooch_window" }
 kooch_input = { path = "crates/kooch_input" }
 kooch_lighting = { path = "crates/kooch_lighting" }
@@ -170,6 +206,15 @@ kooch_remote = { workspace = true, optional = true }
 kooch_editor_core = { workspace = true, optional = true }
 kooch_plugin_api = { workspace = true, optional = true }
 
+# The profiling facade, and the backend a game build selects through it
+# (#785). `profiling` is unconditional and costs nothing on its own: with
+# no `profile-with-*` feature enabled every `scope!` in the workspace
+# expands to nothing. The two below are what the `profiling` feature
+# turns on, and they are what a release build must not contain.
+profiling.workspace = true
+puffin = { workspace = true, optional = true }
+puffin_http = { workspace = true, optional = true }
+
 # External (used by examples)
 wgpu.workspace = true
 glam.workspace = true
@@ -198,7 +243,43 @@ world = ["dep:kooch_world"]
 # `--remote` mode; independent of the embedded `editor`.
 remote = ["dep:kooch_remote"]
 editor = ["dep:kooch_editor_core"]
+# NVIDIA DLSS (#536). A GAME turns this on; the engine never defaults to
+# it. Requires `DLSS_SDK` and `VULKAN_SDK` at build time and moves the
+# whole build to the Vulkan backend, Windows included — see
+# `kooch_core::gpu::dlss`.
+dlss = ["render", "kooch_render/dlss"]
 dynamic = ["kooch_core/dynamic", "kooch_ecs/dynamic", "dep:kooch_plugin_api"]
+# Streams this game's frames to a profiler over TCP, and turns on the
+# puffin backend for every `profiling::scope!` in the workspace — feature
+# unification means selecting the backend here selects it everywhere.
+#
+# 🔴 Never in a release build (#558): it opens a listening socket. The
+# build panel offers it as its own preset for that reason. Off here means
+# the scopes are gone at compile time, not idle at runtime.
+profiling = [
+    "dep:puffin",
+    "dep:puffin_http",
+    "profiling/profile-with-puffin",
+    # The GPU half (#785). Selected together with the CPU half rather
+    # than separately: on the OneXFly the frame is GPU-bound at 96 %, so
+    # a profiling build without GPU scopes is a build that cannot answer
+    # the question it was made for.
+    "kooch_render?/gpu-profiler",
+    # A scope per SYSTEM rather than per stage. Same argument one level
+    # down: a stage that reports 92 ms and holds nine systems from five
+    # crates has told you the frame is slow and nothing else.
+    "kooch_core/cpu-profiler",
+]
+
+[[example]]
+name = "package_editor"
+path = "examples/package_editor.rs"
+required-features = ["editor"]
+
+[[example]]
+name = "package_appimage"
+path = "examples/package_appimage.rs"
+required-features = ["editor"]
 
 [[example]]
 name = "load_project_smoke"
@@ -227,6 +308,11 @@ name = "measure_mesh_pool"
 path = "examples/measure_mesh_pool.rs"
 
 [[example]]
+name = "measure_shadow_pages"
+path = "examples/measure_shadow_pages.rs"
+required-features = ["lighting"]
+
+[[example]]
 name = "physics_smoke"
 path = "examples/physics_smoke/main.rs"
 required-features = ["physics", "physics-debug-render"]
@@ -244,3 +330,32 @@ path = "examples/compute_vector_add.rs"
 name = "dynamic_plugin"
 path = "examples/dynamic_plugin.rs"
 required-features = ["dynamic"]
+
+# ⚠️ TEMPORARY, and the exit condition is written down: `puffin_egui`
+# 0.30.0 as PUBLISHED pins egui 0.33.3, while this workspace is on 0.35.
+# Two egui versions in one graph make `puffin_egui::egui::Ui` a different
+# type from ours and the panel cannot be drawn at all. Embark's `main`
+# migrated to egui 0.35 and has not been released.
+#
+# 🔴 It is a `patch` and not a plain git dependency on purpose. `puffin`
+# would otherwise exist twice — once from the registry, reached through
+# `profiling/profile-with-puffin`, and once from git, reached through
+# `puffin_egui` — and scopes recorded into one would be invisible to the
+# other. Patching redirects the whole graph to a single copy.
+#
+# Pinned by `rev`, never by branch: a moving branch makes a build that
+# compiled yesterday fail today for reasons no commit here explains.
+#
+# **Remove this section the moment puffin_egui ships a release built
+# against egui 0.35**, and take all three from crates.io again.
+[patch.crates-io]
+# 🔴 `profiling` 1.0.17 (released) depends on puffin ^0.19, and the panel
+# above is on 0.20. Two puffins mean two `GlobalProfiler`s: every scope
+# in the engine would record into one and the panel would read the other,
+# and the symptom is an empty flamegraph with nothing to blame. Their
+# master is 1.0.18 on puffin 0.20, unpublished — same story as the panel,
+# and it leaves with it.
+profiling = { git = "https://github.com/aclysma/profiling", rev = "da44bd1c5497c665c0f00e5d70594fc14d390b4b" }
+puffin = { git = "https://github.com/EmbarkStudios/puffin", rev = "ec04e7f6e9f5b420a969ee663b48896362a0eb00" }
+puffin_egui = { git = "https://github.com/EmbarkStudios/puffin", rev = "ec04e7f6e9f5b420a969ee663b48896362a0eb00" }
+puffin_http = { git = "https://github.com/EmbarkStudios/puffin", rev = "ec04e7f6e9f5b420a969ee663b48896362a0eb00" }

@@ -111,10 +111,23 @@ pub(super) fn render_folder(
                 }
             }
             let writable = ctx.writable;
+            let has_settings = ctx.has_settings;
+            let role = super::model::FolderRole::of(&node.path, ctx.project_root);
             let actions = &mut *ctx.actions;
             let rename = &mut *ctx.rename;
             let pending = &mut *ctx.pending;
-            resp.context_menu(|ui| folder_menu(ui, node, writable, actions, rename, pending));
+            resp.context_menu(|ui| {
+                folder_menu(
+                    ui,
+                    node,
+                    writable,
+                    actions,
+                    rename,
+                    pending,
+                    has_settings,
+                    role,
+                )
+            });
         })
         .body(|ui| render_children(ui, node, ctx, root));
 }
@@ -130,9 +143,16 @@ pub(super) fn render_leaf(
         return;
     }
 
-    let icon = match &leaf.asset {
-        Some((_, type_name)) => type_icon(type_name),
-        None => file_icon(&leaf.name),
+    // 🔴 The main scene gets its own icon rather than a colour. A colour
+    // is a second thing the theme has to keep legible in both light and
+    // dark, and the tree is already read by icon — `file_icon` gives
+    // every `.scene` the same one, which is exactly the ambiguity this
+    // resolves (#808).
+    let is_main_scene = ctx.main_scene.is_some_and(|main| main == leaf.path);
+    let icon = match (&leaf.asset, is_main_scene) {
+        (_, true) => icons::PLAY,
+        (Some((_, type_name)), _) => type_icon(type_name),
+        (None, _) => file_icon(&leaf.name),
     };
     let is_cursor = ctx.nav.is_cursor(&leaf.path);
     ctx.nav.rows.push(AssetRow {
@@ -149,7 +169,20 @@ pub(super) fn render_leaf(
         Some(_) => egui::Sense::click_and_drag(),
         None => egui::Sense::click(),
     };
-    let resp = SelectableRow::new(format!("{icon} {}", leaf.name))
+    // The icon says which one; the colour is what makes it readable
+    // without hunting for the icon. Both, because a row is scanned by
+    // shape at a glance and read by name when you stop on it.
+    //
+    // 🔴 From the theme, never a literal. `selection.bg_fill` is the
+    // accent the editor already lights a focused panel with, so it stays
+    // legible in whichever theme is on — a hard-coded colour is legible
+    // in the one it was picked in.
+    let label = match is_main_scene {
+        true => egui::RichText::new(format!("{icon} {}", leaf.name))
+            .color(ui.visuals().selection.bg_fill),
+        false => egui::RichText::new(format!("{icon} {}", leaf.name)),
+    };
+    let resp = SelectableRow::new(label)
         .selected(is_cursor)
         .sense(sense)
         .show(ui);
@@ -166,7 +199,15 @@ pub(super) fn render_leaf(
             draw_drag_preview(ui, icon, &leaf.name);
         }
     }
-    let resp = resp.on_hover_text(leaf.path.display().to_string());
+    let resp = match is_main_scene {
+        // The badge says "this one is special"; the tooltip is where it
+        // says what special means. An icon nobody can name is decoration.
+        true => resp.on_hover_text(format!(
+            "{}\nThe scene this project opens with",
+            leaf.path.display()
+        )),
+        false => resp.on_hover_text(leaf.path.display().to_string()),
+    };
 
     if resp.clicked() {
         ctx.nav.cursor = Some(leaf.path.clone());
@@ -194,5 +235,5 @@ pub(super) fn render_leaf(
     let writable = ctx.writable;
     let actions = &mut *ctx.actions;
     let rename = &mut *ctx.rename;
-    resp.context_menu(|ui| leaf_menu(ui, leaf, writable, root, actions, rename));
+    resp.context_menu(|ui| leaf_menu(ui, leaf, writable, root, actions, rename, is_main_scene));
 }

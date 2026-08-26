@@ -61,11 +61,22 @@ impl EntityCommands<'_> {
 
     /// Queues the entity for despawn.
     pub fn despawn(self) {
-        // Skip the Drop impl — despawn replaces all pending inserts/removals.
-        let entity = self.entity;
-        let queue = unsafe { &mut *(self.queue as *mut Vec<Command>) };
-        std::mem::forget(self);
-        queue.push(Command::Despawn(entity));
+        // The `Drop` impl is skipped on purpose: despawn replaces every
+        // pending insert and removal.
+        //
+        // 🔴 `ManuallyDrop`, not `mem::forget`. `forget` MOVES `self`, and
+        // moving it invalidates every borrow derived from it — including
+        // the one the old code took a line earlier and then used a line
+        // later. Miri rejected exactly that:
+        //
+        //   <tag> was created by a Unique retag ... was later invalidated
+        //   by a Unique retag  →  std::mem::forget(self)
+        //
+        // Wrapping first means the borrow is taken through a value that
+        // outlives the push, and the `unsafe` block disappears with it.
+        let mut this = std::mem::ManuallyDrop::new(self);
+        let entity = this.entity;
+        this.queue.push(Command::Despawn(entity));
     }
 }
 

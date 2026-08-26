@@ -52,6 +52,24 @@ pub struct Material {
     /// `metallic` / `roughness` scalars.
     #[serde(default)]
     pub metal_roughness: Option<Guid>,
+    /// How many times the maps repeat across the mesh's UVs.
+    ///
+    /// A mesh's UVs describe the surface once; how densely a texture
+    /// sits on it is the material's business, not the mesh's. Without
+    /// this a 1024-pixel grid stretches to a single tile over a floor
+    /// however large the floor is, which is the one thing a prototype
+    /// grid exists not to do — one square is supposed to be a known
+    /// distance.
+    ///
+    /// 🔴 Scaling the mesh's UVs instead is not the same thing: the mesh
+    /// is shared, so it would change every object that uses it.
+    #[serde(default = "default_uv_scale")]
+    pub uv_scale: [f32; 2],
+    /// Where the maps start, in the same units. Slides the texture
+    /// across the surface; whole numbers change nothing on a tiling
+    /// texture, which is the point.
+    #[serde(default)]
+    pub uv_offset: [f32; 2],
 }
 
 impl Material {
@@ -66,6 +84,8 @@ impl Material {
             albedo: None,
             normal: None,
             metal_roughness: None,
+            uv_scale: default_uv_scale(),
+            uv_offset: [0.0, 0.0],
         }
     }
 
@@ -87,6 +107,13 @@ impl Material {
         self
     }
 
+    /// Sets the texture transform.
+    pub fn with_uv(mut self, scale: [f32; 2], offset: [f32; 2]) -> Self {
+        self.uv_scale = scale;
+        self.uv_offset = offset;
+        self
+    }
+
     /// Builds the GPU-side packed representation.
     pub fn to_params(&self) -> MaterialParams {
         MaterialParams::new(
@@ -95,6 +122,7 @@ impl Material {
             self.roughness,
             self.emissive,
         )
+        .with_uv(self.uv_scale, self.uv_offset)
     }
 }
 
@@ -108,6 +136,8 @@ impl Default for Material {
             albedo: None,
             normal: None,
             metal_roughness: None,
+            uv_scale: default_uv_scale(),
+            uv_offset: [0.0, 0.0],
         }
     }
 }
@@ -118,6 +148,13 @@ fn default_base_color() -> [f32; 4] {
 
 fn default_roughness() -> f32 {
     0.5
+}
+
+/// One tile across the mesh's UVs — the texture as the mesh's author
+/// laid it out. Anything else is the material's decision, so this is the
+/// value a `.ron` that says nothing gets.
+fn default_uv_scale() -> [f32; 2] {
+    [1.0, 1.0]
 }
 
 /// `AssetLoader<Material>` for `*.ron` files.
@@ -171,135 +208,4 @@ impl std::error::Error for MaterialParseError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::Path;
-
-    #[test]
-    fn extension_is_ron() {
-        assert_eq!(MaterialLoader.extensions(), &["ron"]);
-    }
-
-    #[test]
-    fn default_matches_legacy_white_diffuse() {
-        let m = Material::default();
-        assert_eq!(m.base_color, [1.0, 1.0, 1.0, 1.0]);
-        assert_eq!(m.metallic, 0.0);
-        assert_eq!(m.roughness, 0.5);
-        assert_eq!(m.emissive, 0.0);
-        // Textures are opt-in: a fresh material references none.
-        assert_eq!(m.albedo, None);
-        assert_eq!(m.normal, None);
-        assert_eq!(m.metal_roughness, None);
-    }
-
-    #[test]
-    fn builders_attach_texture_guids() {
-        let (a, n, mr) = (Guid::new_v4(), Guid::new_v4(), Guid::new_v4());
-        let m = Material::default()
-            .with_albedo(a)
-            .with_normal(n)
-            .with_metal_roughness(mr);
-        assert_eq!(m.albedo, Some(a));
-        assert_eq!(m.normal, Some(n));
-        assert_eq!(m.metal_roughness, Some(mr));
-    }
-
-    #[test]
-    fn to_params_round_trips_scalars() {
-        let m = Material::new([0.2, 0.3, 0.4, 1.0], 0.6, 0.7, 1.5);
-        let p = m.to_params();
-        assert_eq!(p.base_color, [0.2, 0.3, 0.4, 1.0]);
-        assert_eq!(p.metallic(), 0.6);
-        assert_eq!(p.roughness(), 0.7);
-        assert_eq!(p.emissive(), 1.5);
-    }
-
-    #[test]
-    fn ron_minimal_uses_defaults() {
-        // Empty struct literal — every field falls through to its
-        // serde default. Exercises the back-compat contract: future
-        // schemas must preserve this property.
-        let mut ctx = LoadContext {
-            path: Path::new("empty.kooch_material.ron"),
-        };
-        let m = MaterialLoader
-            .load(b"()", &mut ctx)
-            .expect("empty struct parses");
-        assert_eq!(m, Material::default());
-    }
-
-    #[test]
-    fn ron_full_round_trip() {
-        let original = Material::new([0.9, 0.1, 0.05, 1.0], 0.0, 0.4, 0.0)
-            .with_albedo(Guid::new_v4())
-            .with_normal(Guid::new_v4())
-            .with_metal_roughness(Guid::new_v4());
-        let text = ron::ser::to_string_pretty(&original, ron::ser::PrettyConfig::default())
-            .expect("serialize");
-        let mut ctx = LoadContext {
-            path: Path::new("red.kooch_material.ron"),
-        };
-        let parsed = MaterialLoader
-            .load(text.as_bytes(), &mut ctx)
-            .expect("parse");
-        assert_eq!(parsed, original);
-    }
-
-    #[test]
-    fn ron_parses_texture_guid_literals() {
-        use std::str::FromStr;
-        let text = r#"(
-    base_color: (0.8, 0.8, 0.8, 1.0),
-    albedo: Some("550e8400-e29b-41d4-a716-446655440000"),
-    metal_roughness: Some("00000000-0000-0000-0000-000000000001"),
-)"#;
-        let mut ctx = LoadContext {
-            path: Path::new("textured.kooch_material.ron"),
-        };
-        let m = MaterialLoader
-            .load(text.as_bytes(), &mut ctx)
-            .expect("parse");
-        assert_eq!(
-            m.albedo,
-            Some(Guid::from_str("550e8400-e29b-41d4-a716-446655440000").unwrap())
-        );
-        assert_eq!(
-            m.metal_roughness,
-            Some(Guid::from_str("00000000-0000-0000-0000-000000000001").unwrap())
-        );
-        // Normal elided → stays None; scalars fall back to defaults.
-        assert_eq!(m.normal, None);
-        assert_eq!(m.roughness, 0.5);
-    }
-
-    #[test]
-    fn ron_partial_fills_remaining_with_defaults() {
-        let text = r#"(
-    base_color: (0.1, 0.2, 0.3, 1.0),
-    emissive: 2.0,
-)"#;
-        let mut ctx = LoadContext {
-            path: Path::new("partial.kooch_material.ron"),
-        };
-        let m = MaterialLoader
-            .load(text.as_bytes(), &mut ctx)
-            .expect("parse");
-        assert_eq!(m.base_color, [0.1, 0.2, 0.3, 1.0]);
-        assert_eq!(m.emissive, 2.0);
-        // Missing fields fell back to defaults.
-        assert_eq!(m.metallic, 0.0);
-        assert_eq!(m.roughness, 0.5);
-    }
-
-    #[test]
-    fn invalid_bytes_return_loader_error() {
-        let mut ctx = LoadContext {
-            path: Path::new("garbage.kooch_material.ron"),
-        };
-        let err = MaterialLoader
-            .load(b"not RON at all =", &mut ctx)
-            .expect_err("garbage rejected");
-        assert!(matches!(err, AssetError::Loader(_)));
-    }
-}
+mod tests;

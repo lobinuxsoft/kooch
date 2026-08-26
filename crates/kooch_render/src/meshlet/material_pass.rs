@@ -39,25 +39,62 @@ pub const VISIBILITY_BUFFER_RESOLVE_SHADER: &str =
 /// points: `vs_fullscreen`, `fs_material`.
 pub const MATERIAL_PBR_DEFAULT_BODY: &str = include_str!("../../shaders/material_pbr_default.wgsl");
 
+/// The same shading as [`MATERIAL_PBR_DEFAULT_BODY`], as a compute entry
+/// point that owns a 16x16 screen tile and reads that tile's froxel
+/// light list into workgroup memory once (#824). Compose it with
+/// [`compose_material_shader`] — it takes the identical prefix, which is
+/// what keeps the two paths' arithmetic the same. Entry point:
+/// `cs_shade_tile`.
+pub const MATERIAL_PBR_COMPUTE_BODY: &str = include_str!("../../shaders/material_pbr_compute.wgsl");
+
+/// Tile edge, in pixels, of [`MATERIAL_PBR_COMPUTE_BODY`]'s workgroup.
+/// Must match the `TILE_SIZE` the shader declares; the dispatch size is
+/// derived from it.
+pub const SHADING_TILE_SIZE: u32 = 16;
+
 /// Bind group Inti's frame UBO + light storage occupy on this path.
 /// Groups 0..4 are the vbuf/camera/screen, the meshlet pool, the
 /// material storage, the scene buffers and the per-material textures —
 /// 5 is the first free index.
 pub const MATERIAL_PASS_INTI_GROUP: u32 = 5;
 
+/// Group-0 bindings the contact-shadow march takes on this path (#735).
+/// The vbuf, camera and screen uniforms hold 0/1/2; these are the next
+/// free, and they sit in group 0 because the depth buffer is per view.
+pub const MATERIAL_PASS_CONTACT_UBO_BINDING: u32 = 3;
+pub const MATERIAL_PASS_CONTACT_DEPTH_BINDING: u32 = 4;
+
 /// Composes a complete material shader: the visibility-buffer resolve
-/// helpers, then the Inti shading model, then the material-specific
-/// body. This stands in for the `#import` a WGSL preprocessor would
-/// provide.
+/// helpers, the contact-shadow march, then the Inti shading model, then
+/// the debug views (or the stub that removes them), then the
+/// material-specific body. This stands in for the `#import` a WGSL
+/// preprocessor would provide.
 ///
 /// Order matters — WGSL resolves top to bottom, so anything the body
-/// calls has to be declared above it.
-pub fn compose_material_shader(material_body: &str) -> String {
+/// calls has to be declared above it. The march goes ahead of the
+/// shading model for exactly that reason: `inti_shade` calls it. The
+/// debug views go after it, because they call *it*.
+///
+/// `debug` builds the editor's variant. With it false the result
+/// contains no debug view at all — see [`kooch_lighting::INTI_DEBUG_STUB`]
+/// for why that is a performance decision and not tidiness (#743).
+pub fn compose_material_shader(material_body: &str, debug: bool) -> String {
+    let contact = crate::contact_shadow::contact_shadow_shader(
+        MATERIAL_PASS_CONTACT_UBO_BINDING,
+        MATERIAL_PASS_CONTACT_DEPTH_BINDING,
+    );
     let inti = kooch_lighting::inti_pbr_shader(MATERIAL_PASS_INTI_GROUP);
+    let debug_views = if debug {
+        kooch_lighting::inti_debug_shader()
+    } else {
+        kooch_lighting::INTI_DEBUG_STUB
+    };
     [
         VISIBILITY_BUFFER_RESOLVE_SHADER,
         SURFACE_RECONSTRUCT_SHADER,
+        &contact,
         &inti,
+        debug_views,
         material_body,
     ]
     .join("\n")
@@ -69,38 +106,4 @@ pub fn compose_material_shader(material_body: &str) -> String {
 pub const MATERIAL_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn validate(source: &str, what: &str) {
-        let module = naga::front::wgsl::parse_str(source)
-            .unwrap_or_else(|e| panic!("{what} should parse: {e}"));
-        let mut validator = naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::all(),
-        );
-        validator
-            .validate(&module)
-            .unwrap_or_else(|e| panic!("{what} should validate: {e}"));
-    }
-
-    #[test]
-    fn resolve_material_depth_parses_and_validates() {
-        validate(RESOLVE_MATERIAL_DEPTH_SHADER, "resolve_material_depth.wgsl");
-    }
-
-    /// Neither chunk validates alone — each references names the other
-    /// declares, which is the point of concatenating them. The composed
-    /// shader below is what actually has to parse.
-    #[test]
-    fn the_two_resolve_chunks_are_halves_of_one_shader() {
-        assert!(VISIBILITY_BUFFER_RESOLVE_SHADER.contains("resolve_surface("));
-        assert!(SURFACE_RECONSTRUCT_SHADER.contains("fn resolve_surface("));
-    }
-
-    #[test]
-    fn composed_default_material_parses_and_validates() {
-        let composed = compose_material_shader(MATERIAL_PBR_DEFAULT_BODY);
-        validate(&composed, "composed default material shader");
-    }
-}
+mod tests;

@@ -37,6 +37,7 @@ pub(crate) fn render_single_pass(rig: &BenchRig) {
         &rig.queue,
         &mut enc,
         &rig.vbuf_view,
+        &rig.depth_sample_view,
         &rig.color_view,
         &rig.meshlet_bg,
         &rig.material_bg,
@@ -44,6 +45,7 @@ pub(crate) fn render_single_pass(rig: &BenchRig) {
         &rig.scene,
         rig.lights.bind_group(),
         rig.view_proj,
+        &Default::default(),
         (RT_SIZE, RT_SIZE),
         0,
     );
@@ -121,6 +123,7 @@ pub(crate) fn render_two_pass(rig: &mut BenchRig, arena: &mut Vec<wgpu::BindGrou
         &rig.queue,
         &mut enc,
         &rig.vbuf_view,
+        &rig.depth_sample_view,
         &rig.color_view,
         &rig.meshlet_bg,
         &rig.material_bg,
@@ -128,6 +131,7 @@ pub(crate) fn render_two_pass(rig: &mut BenchRig, arena: &mut Vec<wgpu::BindGrou
         &rig.scene,
         rig.lights.bind_group(),
         rig.view_proj,
+        &Default::default(),
         (RT_SIZE, RT_SIZE),
         0,
     );

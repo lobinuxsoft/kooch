@@ -81,3 +81,108 @@ for one. A `WaitUntil` deadline expiring reports through
 `StartCause::ResumeTimeReached`, and a cross-thread wake arrives as a
 winit user event — the proxy rather than `request_redraw`, because the
 proxy is the API documented to be callable from another thread.
+
+## The swapchain image is asked for last
+
+The game runtime's frame is two halves that need very different things.
+The meshlet stage — cull, raster, shading, shadows, TAA, tonemap — draws
+into textures the engine owns and submits its own command buffer. Only
+the sky and the blit write to the surface.
+
+So the surface image is acquired **between** them, and not before both:
+
+```text
+record + submit the scene   ──►  get_current_texture()  ──►  sky, blit, present
+        ~34 ms of GPU work         blocks on the compositor      ~0.65 ms
+```
+
+🔴 **Acquiring first costs a full frame of overlap**, and that is what
+this did until #837. `get_current_texture` blocks until the presentation
+engine releases an image, so asking for it before recording puts the
+whole CPU-side of the frame *after* the wait — and the GPU cannot start
+this frame's work until the compositor has let go of the last one.
+Measured on the OneXFly: a median frame of 37.14 ms made of 34 ms of GPU
+and 3.006 ms of recording, added together rather than overlapped.
+
+Nothing about the image is needed to record the scene. The dependency
+was in the control flow, not in the data.
+
+⚠️ **The editor already did this correctly**, which is why the two paths
+look different: `systems/present.rs` tessellates the UI, uploads its
+textures and updates its buffers before acquiring, and the viewport
+passes run earlier still. Only the game runtime had the acquire on top.
+
+### Vsync is a setting, not only a variable
+
+`vsync` lives in `.rendersettings`, beside the shading path and the
+render scale, and `Presentation` carries it to the surface through the
+same **environment first, asset second** rule the rest of `quality` uses:
+`KOOCH_PRESENT_MODE=novsync` overrides the file for one run, `vsync`
+overrides it back, and unset leaves the project's choice alone.
+
+🔴 It was an environment variable and nothing else until then, which
+meant **a game built with Kóoch could not offer a vsync toggle** — the
+one graphics option every game ships. Its own options menu would have
+had to ask the player to set an environment variable.
+
+⚠️ `vsync: false` in a project file is a measurement configuration, not
+a performance setting. It costs a GPU drawing frames nobody sees, and on
+a handheld it costs battery for the same. It is off in exactly one case:
+somebody is reading a frame time and needs it to show work rather than
+the wait for the vblank.
+
+`GpuContext::set_vsync` compares against the mode the surface already
+has before it reconfigures, because `configure` rebuilds the swapchain —
+applying the resource unconditionally would rebuild it once a frame.
+There is no headless surface, so no test in the suite watches that
+happen; what the tests pin is the precedence rule and the serde default,
+which is what every `.rendersettings` already on disk silently becomes.
+
+### What this does not fix
+
+The frame-time distribution is bimodal on the OneXFly — the same GPU
+work produces a 34.7 ms frame and a 69.4 ms one — and this change does
+not address that.
+
+Two explanations were on the table and **both are now refuted**, by three
+30-second captures of one binary with one variable changed each:
+
+| | latency 2 | latency 3 | `novsync` |
+|---|---|---|---|
+| frame/GPU p80 | 1.98 | 1.99 | 1.94 |
+| frame/GPU p90 | 2.49 | 2.50 | 2.21 |
+| `vkAcquireNextImageKHR` ms/frame | 35.209 | 33.646 | 37.162 |
+
+A third swapchain image does not move the ratio by a hundredth. Neither
+does leaving FIFO.
+
+🔴 **An acquire of ~35 ms against a GPU of ~35 ms is not a defect.**
+Being GPU-bound means the CPU waits somewhere, and `get_current_texture`
+is where. Reading that number as a symptom is a mistake this document
+used to make. What is genuinely unexplained is only the **tail**: the
+frames where the wait grows by 50 ms while our own GPU work grows by 2.
+
+⚠️ **A present mode is close to decorative when a compositor owns the
+display.** These captures run under gamescope, which composites on the
+same GPU, on its own schedule, and is **invisible to our scopes** — they
+time our passes and nothing else. `novsync` turns off *our* vsync, not
+its. Whatever is left lives outside this process, and no environment
+variable on this side is going to find it.
+
+The next measurement is not another engine knob. It is gamescope's own
+frame statistics, or a run without gamescope at all.
+
+### And what the tail was hiding
+
+```text
+GPU:          ~35 ms
+budget:        13.9 ms
+```
+
+**2.5x over, with a still camera and at half shading rate.** If the tail
+vanished entirely the frame would still miss by more than double, and
+`shade: compute (half rate)` alone — 19.7 to 22.8 ms across the three
+captures — costs more than the whole frame is allowed.
+
+The tail is a mystery in 30% of frames. The shading is 60% of every one
+of them.

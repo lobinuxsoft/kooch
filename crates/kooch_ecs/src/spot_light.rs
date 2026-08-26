@@ -19,9 +19,11 @@ use crate::Reflect;
 /// - `color`: white `(1, 1, 1)`
 /// - `intensity`: 800.0 lumens
 /// - `range`: 10.0
+/// - `radius`: 0.0 (a point, as every light in the engine was before)
 /// - `inner_angle`: 30.0 degrees
 /// - `outer_angle`: 45.0 degrees
 /// - `cast_shadows`: true
+/// - `contact_shadows`: false
 #[derive(Debug, Clone, Copy, Reflect)]
 #[reflect(category = "Rendering")]
 pub struct SpotLight {
@@ -51,6 +53,17 @@ pub struct SpotLight {
     /// A budget rather than a physical property — real light never
     /// stops. The editor's wire cone is drawn to exactly this length.
     pub range: f32,
+    /// Radius of the emitting sphere, in world units. `0` is a
+    /// mathematical point.
+    ///
+    /// The size of the bulb inside the fixture, not the width of the
+    /// cone — that is [`Self::outer_angle`]. It widens the specular
+    /// highlight the light leaves on a glossy surface.
+    ///
+    /// ⚠️ **Specular only**, exactly as on
+    /// [`PointLight`](crate::PointLight): it does not soften the
+    /// penumbra of the cone and it does not soften shadows.
+    pub radius: f32,
     /// HALF-angle of the fully-lit cone, in degrees, measured from the
     /// axis to the edge.
     ///
@@ -65,9 +78,25 @@ pub struct SpotLight {
     pub outer_angle: f32,
     /// Whether this light casts shadows.
     ///
-    /// ⚠️ Not implemented yet — shadows land with #476 / #477. The field
-    /// is stored and saved; today nothing reads it.
+    /// Real since #777: a spot renders a perspective depth map into a
+    /// layer of the same array the sun's cascades use. Off by default,
+    /// as in Bevy — a map is a cull and a depth pass per light.
+    ///
+    /// ⚠️ Only the first few casting spots get one; past
+    /// `MAX_SPOT_SHADOWS` a light still lights the scene without a
+    /// shadow, because losing the light would be the worse failure.
     pub cast_shadows: bool,
+    /// Whether this light marches the depth buffer for contact shadows.
+    ///
+    /// Off by default, unlike [`DirectionalLight`](crate::DirectionalLight):
+    /// the march costs per light per pixel, and a scene has one sun but
+    /// can have fifty lamps. Turn it on for the few whose contact with
+    /// the floor the viewer actually looks at.
+    ///
+    /// ⚠️ This is the ONLY shadow a punctual light casts today, so it
+    /// grounds an object without the light being occluded by anything
+    /// else in the room.
+    pub contact_shadows: bool,
 }
 
 impl Default for SpotLight {
@@ -77,9 +106,11 @@ impl Default for SpotLight {
             color: Vec3::ONE,
             intensity: crate::light_consts::lumens::ROOM_LIGHT_NO_GI,
             range: 10.0,
+            radius: 0.0,
             inner_angle: 30.0,
             outer_angle: 45.0,
             cast_shadows: true,
+            contact_shadows: false,
         }
     }
 }
@@ -87,41 +118,4 @@ impl Default for SpotLight {
 impl Component for SpotLight {}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::reflect::Reflect;
-
-    #[test]
-    fn default_values() {
-        let l = SpotLight::default();
-        assert!(l.active);
-        assert_eq!(l.color, Vec3::ONE);
-        // Deliberately far above a real fixture: direct lighting only,
-        // so the bounces that make a real room bright are missing. Goes
-        // back to a real bulb the day #450 lands.
-        assert_eq!(l.intensity, crate::light_consts::lumens::ROOM_LIGHT_NO_GI);
-        assert_eq!(l.range, 10.0);
-        assert_eq!(l.inner_angle, 30.0);
-        assert_eq!(l.outer_angle, 45.0);
-        assert!(l.cast_shadows);
-    }
-
-    #[test]
-    fn reflect_fields() {
-        let l = SpotLight::default();
-        let fields = l.reflect_fields();
-        let names: Vec<&str> = fields.iter().map(|f| f.name).collect();
-        assert_eq!(
-            names,
-            &[
-                "active",
-                "color",
-                "intensity",
-                "range",
-                "inner_angle",
-                "outer_angle",
-                "cast_shadows",
-            ]
-        );
-    }
-}
+mod tests;

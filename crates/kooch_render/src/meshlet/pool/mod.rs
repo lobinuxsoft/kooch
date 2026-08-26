@@ -30,4 +30,4 @@ mod tests;
 
 pub use descriptor::{MeshDescriptor, MeshHandle};
 pub use gpu::GpuGlobalMeshPool;
-pub use pool::GlobalMeshPool;
+pub use pool::{GlobalMeshPool, MeshBounds};

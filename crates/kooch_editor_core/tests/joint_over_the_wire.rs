@@ -78,7 +78,7 @@ fn a_joint_added_over_the_wire_comes_back_in_the_snapshot() {
     });
 
     let client = RemoteClient::new(&socket);
-    let entity = client.spawn(Some("Anchor")).expect("spawn");
+    let entity = client.spawn(Some("Anchor"), None, None).expect("spawn");
 
     let joint_type = std::any::type_name::<Joint>();
     client
@@ -144,7 +144,7 @@ fn a_joints_fields_survive_the_round_trip() {
     });
 
     let client = RemoteClient::new(&socket);
-    let entity = client.spawn(Some("Anchor")).expect("spawn");
+    let entity = client.spawn(Some("Anchor"), None, None).expect("spawn");
     client
         .add_component(entity, std::any::type_name::<Joint>())
         .expect("add");

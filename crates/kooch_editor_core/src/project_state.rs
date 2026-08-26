@@ -120,9 +120,13 @@ impl LauncherProcess {
 
         let binary_path = project_root.join("target").join("debug").join(binary_name);
 
-        let mut child = Command::new("cargo")
-            .args(["build", "--manifest-path"])
-            .arg(&manifest_path)
+        let mut cmd = Command::new("cargo");
+        cmd.args(["build", "--manifest-path"]).arg(&manifest_path);
+        // Authoring, not a game build: this produces the `dylib` the
+        // editor loads to list the project's components, and that is
+        // compiled out of a game (#558).
+        crate::cargo_args::authoring(&mut cmd);
+        let mut child = cmd
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -253,6 +257,14 @@ pub struct ProjectState {
     pub launcher_process: Option<LauncherProcess>,
     /// Accumulated output lines from the launcher process for display.
     pub launcher_output: Vec<String>,
+    /// How the engine on disk compares to the one this editor ships,
+    /// as of the last time a project was opened.
+    ///
+    /// `Some` with a difference that
+    /// [`wants_a_decision`](crate::engine_vendor::Difference::wants_a_decision)
+    /// is what puts the notice on screen. Cleared when it is answered —
+    /// keeping it would draw the notice forever.
+    pub engine_status: Option<crate::engine_vendor::EngineStatus>,
 }
 
 impl ProjectState {
@@ -266,6 +278,7 @@ impl ProjectState {
             engine_root: None,
             launcher_process: None,
             launcher_output: Vec::new(),
+            engine_status: None,
         }
     }
 
@@ -284,6 +297,92 @@ impl ProjectState {
         if let Err(e) = crate::project::ensure_default_scene(root_path) {
             tracing::warn!("failed to ensure default scene: {e}");
         }
+        // 🔴 The engine lives ONCE on the machine, in
+        // ~/.local/share/kooch/<version>/engine, and every project's
+        // manifest points at it (#754). This is the first moment anything
+        // knows which version the project wants.
+        //
+        // 🔴 Looking is not the same as replacing, and this used to do
+        // both. Installing this editor's engine over the one a project
+        // was building against makes the next build a full one, minutes
+        // long, and leaves the project's compiled `.so` behind an engine
+        // it was not compiled against — announced in a log line nobody
+        // reads. Now the difference is reported and the answer is the
+        // user's.
+        //
+        // ⚠️ A missing engine is still installed without asking: there is
+        // nothing to keep, and a project that cannot build at all is not
+        // a choice worth offering.
+        let source = crate::engine_vendor::vendor_source(self.engine_root.as_deref());
+        let status = crate::engine_vendor::status(&manifest.engine_version, source.as_deref());
+        if status.difference.wants_a_decision() {
+            tracing::info!(
+                summary = %status.headline(),
+                "the engine this editor ships is not the one this project uses",
+            );
+            if let Some(dir) = status.installed.clone()
+                && let Err(e) = crate::project::point_manifest_at_engine(root_path, &dir)
+            {
+                tracing::warn!("could not point the project at the engine: {e}");
+            }
+            self.engine_status = Some(status);
+            return self.finish_open(root_path, manifest);
+        }
+        self.engine_status = Some(status);
+
+        match crate::engine_vendor::ensure_current(&manifest.engine_version, source.as_deref()) {
+            Ok((state, Some(engine_dir))) => {
+                use crate::engine_vendor::VendorState;
+                match state {
+                    VendorState::UpToDate => {}
+                    // 🔴 Said plainly because the next build is a full
+                    // one: every engine source file is newer than the
+                    // project's `target/`, so cargo rebuilds all of it.
+                    // Minutes of silence with no explanation is how this
+                    // reads otherwise (#761).
+                    VendorState::Replaced => tracing::info!(
+                        path = %engine_dir.display(),
+                        "the engine was replaced with the one this editor ships — \
+                         the next build of this project is a full rebuild",
+                    ),
+                    _ => tracing::info!(
+                        ?state,
+                        path = %engine_dir.display(),
+                        "engine materialised",
+                    ),
+                }
+                // The manifest carries an absolute path and `$HOME`
+                // differs per user, so a project moved between machines
+                // points somewhere that does not exist. The editor owns
+                // that line — it owns the directory it names — so it
+                // rewrites it rather than letting cargo fail on it.
+                if let Err(e) = crate::project::point_manifest_at_engine(root_path, &engine_dir) {
+                    tracing::warn!("could not point the project at the engine: {e}");
+                }
+            }
+            // Never fails an open: a project already pointing at a good
+            // engine still builds, and one that is not says so at build
+            // time with cargo's own error.
+            Ok((_, None)) => tracing::warn!(
+                "no engine source available to materialise; the project keeps whatever \
+                 its manifest points at",
+            ),
+            Err(e) => tracing::warn!("could not materialise the engine: {e}"),
+        }
+
+        self.finish_open(root_path, manifest)
+    }
+
+    /// The rest of opening a project, once the engine question is settled
+    /// one way or the other.
+    ///
+    /// Its own method because that question has two answers — install, or
+    /// leave it to the user — and both of them open the project.
+    fn finish_open(
+        &mut self,
+        root_path: &Path,
+        mut manifest: ProjectManifest,
+    ) -> Result<(), crate::project::ProjectError> {
         if manifest.main_scene.is_none() {
             manifest.main_scene = Some(crate::project::DEFAULT_SCENE_REL_PATH.to_owned());
             if let Err(e) = manifest.save(root_path) {
@@ -296,6 +395,92 @@ impl ProjectState {
             root_path: root_path.to_owned(),
         });
         Ok(())
+    }
+
+    /// Installs the engine this editor ships, answering the notice.
+    ///
+    /// ⚠️ The next build of the project is a **full** one: every engine
+    /// source file is newer than the project's `target/`, so cargo
+    /// rebuilds all of it. Minutes of silence with no explanation is how
+    /// that reads otherwise (#761).
+    pub fn update_engine(&mut self) {
+        // 🔴 Not while cargo is reading it. Installing renames the whole
+        // directory out from under a compile in progress, and what comes
+        // back is an error about a missing file in a crate nobody
+        // touched. The notice stays up; pressing it again after the
+        // build works.
+        if self.launcher_process.is_some() {
+            tracing::warn!("a build is running — the engine is not replaced while cargo reads it");
+            return;
+        }
+
+        // 🔴 The version comes from the notice, not from the open
+        // project. The notice outlives closing a project — it is about
+        // the machine — and reading the version off `active_project`
+        // made Install a button that returned in silence from the
+        // project manager, which is exactly where it is easiest to
+        // press.
+        //
+        // 🔴🔴 And it is the version this editor **ships**, not the one
+        // the project asks for — see `EngineStatus::version_to_install`.
+        // Asking for the project's version returns the engine already on
+        // the machine under that name, which is the right answer for
+        // opening a project and the wrong one for a button that says
+        // *"Installing moves the project onto it."*
+        let Some(version) = self
+            .engine_status
+            .as_ref()
+            .map(|s| s.version_to_install().to_owned())
+        else {
+            return;
+        };
+        let root_path = self.active_project.as_ref().map(|p| p.root_path.clone());
+
+        let source = crate::engine_vendor::vendor_source(self.engine_root.as_deref());
+        match crate::engine_vendor::ensure_current(&version, source.as_deref()) {
+            Ok((state, Some(engine_dir))) => {
+                tracing::info!(
+                    ?state,
+                    path = %engine_dir.display(),
+                    "engine installed — the next build of a project on it is a full rebuild",
+                );
+                // Only when one is open. With none, the engine is still
+                // installed and the next project to open is pointed at
+                // it by the usual path.
+                // 🔴 One call, because two files record which engine a
+                // project uses and writing one without the other is
+                // exactly what made this prompt return for ever (#801).
+                // `move_project_to_engine` is the only place either is
+                // written.
+                if let Some(root) = root_path {
+                    match crate::project::move_project_to_engine(&root, &engine_dir, &version) {
+                        Ok(()) => {
+                            if let Some(project) = self.active_project.as_mut() {
+                                project.manifest.engine_version = version.clone();
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("could not point the project at the engine: {e}")
+                        }
+                    }
+                }
+                self.engine_status =
+                    Some(crate::engine_vendor::status(&version, source.as_deref()));
+            }
+            Ok((_, None)) => tracing::warn!("no engine source available to install"),
+            Err(e) => tracing::warn!("could not install the engine: {e}"),
+        }
+    }
+
+    /// Dismisses the engine notice, leaving the installed engine alone.
+    ///
+    /// 🔴 What this cannot promise: engines are named by version and
+    /// replaced in place, so keeping one here holds only until something
+    /// else installs over it — updating from another project, for
+    /// instance. Two engines with the same version have nowhere separate
+    /// to live.
+    pub fn keep_engine(&mut self) {
+        self.engine_status = None;
     }
 
     /// Closes the current project, returning to the launch screen.

@@ -184,3 +184,192 @@ fn an_unreflected_type_reports_no_defaults() {
             .is_none()
     );
 }
+
+// -- The dense handle (#891, stage 1) ---------------------------------------
+
+struct Health(u32);
+impl Component for Health {}
+
+/// Needs `Reflect` for the slot-reuse test; `Default` because the derive
+/// requires it.
+#[derive(Debug, Clone, Copy, Default, crate::Reflect)]
+struct Armour {
+    plates: u32,
+}
+impl Component for Armour {}
+
+/// Ids come out 0, 1, 2 — with no gaps, because a column will index a
+/// `Vec` with them and a gap there is a wasted allocation per type.
+#[test]
+fn ids_are_dense() {
+    let mut registry = ComponentRegistry::new();
+    let a = registry.register_cpu::<Position>();
+    let b = registry.register_cpu::<Name>();
+    let c = registry.register_cpu::<Health>();
+
+    assert_eq!([a.0, b.0, c.0], [0, 1, 2]);
+    assert_eq!(registry.registered_count(), 3);
+}
+
+/// Registering the same type twice hands back the same slot rather than
+/// minting a second one. A duplicate slot would mean two storages for one
+/// component, and whichever a query found first would win.
+#[test]
+fn registering_twice_is_idempotent() {
+    let mut registry = ComponentRegistry::new();
+    let first = registry.register_cpu::<Position>();
+    let again = registry.register_cpu::<Position>();
+
+    assert_eq!(first, again);
+    assert_eq!(registry.registered_count(), 1);
+}
+
+/// 🔴 The invariant the whole port rests on: an id, once handed out, never
+/// moves. A query resolves it once and then indexes forever — if a later
+/// registration could shift it, every cached id would silently address
+/// another component's storage.
+#[test]
+fn an_id_outlives_later_registrations() {
+    let mut registry = ComponentRegistry::new();
+    let position = registry.register_cpu::<Position>();
+    registry.register_cpu::<Name>();
+    registry.register_cpu::<Health>();
+
+    assert_eq!(
+        registry.storage_id(&TypeId::of::<Position>()),
+        Some(position)
+    );
+}
+
+/// Adding reflection to an already-registered component reuses its slot.
+#[test]
+fn reflection_reuses_the_slot() {
+    let mut registry = ComponentRegistry::new();
+    let id = registry.register_cpu::<Armour>();
+    registry.register_cpu_reflected::<Armour>();
+
+    assert_eq!(registry.registered_count(), 1);
+    assert_eq!(registry.storage_id(&TypeId::of::<Armour>()), Some(id));
+    assert!(registry.has_reflector(&TypeId::of::<Armour>()));
+}
+
+/// An unregistered type has no id, rather than a defaulted one.
+#[test]
+fn an_unknown_type_has_no_id() {
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu::<Position>();
+
+    assert_eq!(registry.storage_id(&TypeId::of::<Health>()), None);
+}
+
+// -- Reflection reads and writes wherever the value lives (#891) ------------
+
+mod reflection {
+    use crate::component::registry::ComponentRegistry;
+    use crate::component::traits::Component;
+    use crate::entity::Entity;
+    use crate::reflect::ReflectValue;
+    use crate::storage::{Column, Table, TableRow};
+    use std::any::TypeId;
+
+    #[derive(Debug, Clone, Copy, Default, crate::Reflect)]
+    struct Shield {
+        strength: u32,
+    }
+    impl Component for Shield {}
+
+    /// A registry with `Shield` reflected, and a one-column table holding
+    /// one entity's value — **and nothing in the map**.
+    ///
+    /// 🔴 The map is left empty on purpose. If the value were in both, a
+    /// pass would prove nothing: the old path would answer and look
+    /// identical. Only the column can answer here.
+    fn only_in_a_column(strength: u32) -> (ComponentRegistry, Table, TableRow) {
+        let mut registry = ComponentRegistry::new();
+        registry.register_cpu_reflected::<Shield>();
+        let id = registry.storage_id(&TypeId::of::<Shield>()).unwrap();
+
+        let mut table = Table::new([(id, Column::of::<Shield>())]);
+        let row = table.push_entity(Entity::new(1, 0));
+        unsafe { table.column_mut(id).unwrap().push(Shield { strength }) };
+
+        (registry, table, row)
+    }
+
+    #[test]
+    fn it_reads_a_field_from_a_column() {
+        let (registry, table, row) = only_in_a_column(42);
+
+        let fields = registry
+            .reflect_fields_at(
+                &TypeId::of::<Shield>(),
+                Entity::new(1, 0),
+                Some((&table, row)),
+            )
+            .expect("the column answers");
+
+        assert_eq!(fields, vec![("strength".to_owned(), ReflectValue::U32(42))]);
+    }
+
+    #[test]
+    fn it_writes_a_field_into_a_column() {
+        let (mut registry, table, row) = only_in_a_column(42);
+        let id = registry.storage_id(&TypeId::of::<Shield>()).unwrap();
+
+        registry
+            .reflect_write_at(
+                &TypeId::of::<Shield>(),
+                Entity::new(1, 0),
+                "strength",
+                ReflectValue::U32(99),
+                Some((&table, row)),
+            )
+            .expect("the column takes the write");
+
+        let stored = unsafe { table.column(id).unwrap().get::<Shield>(row.index()) };
+        assert_eq!(stored.unwrap().strength, 99, "it landed in the column");
+    }
+
+    /// Reading from one home and writing to the other would let the
+    /// inspector show a value it cannot change.
+    #[test]
+    fn a_write_is_visible_to_the_next_read() {
+        let (mut registry, table, row) = only_in_a_column(1);
+        let entity = Entity::new(1, 0);
+        let shield = TypeId::of::<Shield>();
+
+        registry
+            .reflect_write_at(
+                &shield,
+                entity,
+                "strength",
+                ReflectValue::U32(7),
+                Some((&table, row)),
+            )
+            .unwrap();
+        let fields = registry
+            .reflect_fields_at(&shield, entity, Some((&table, row)))
+            .unwrap();
+
+        assert_eq!(fields, vec![("strength".to_owned(), ReflectValue::U32(7))]);
+    }
+
+    /// And the map is still the answer for everything that has not moved,
+    /// which today is everything.
+    #[test]
+    fn the_map_still_answers_without_a_row() {
+        let mut registry = ComponentRegistry::new();
+        registry.register_cpu_reflected::<Shield>();
+        let entity = Entity::new(1, 0);
+        registry
+            .get_cpu_mut::<Shield>()
+            .unwrap()
+            .insert(entity, Shield { strength: 5 });
+
+        let fields = registry
+            .reflect_get_fields(&TypeId::of::<Shield>(), entity)
+            .unwrap();
+
+        assert_eq!(fields, vec![("strength".to_owned(), ReflectValue::U32(5))]);
+    }
+}

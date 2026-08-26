@@ -16,6 +16,21 @@ use kooch_world::WorldStreamingPlugin;
 use crate::EditorPlugin;
 use crate::project_state::ProjectState;
 
+/// The window's title: the editor, its version, and the open project.
+///
+/// One function rather than a `format!` at each of the three sites that
+/// set this. The version belongs here because the title bar and the task
+/// switcher are where it is legible without opening anything, and
+/// because "which editor is running" is the question a stale vendored
+/// engine makes someone ask.
+pub fn window_title(project: Option<&str>) -> String {
+    let version = crate::engine_vendor::editor_engine_version();
+    match project {
+        Some(name) => format!("{name} — Kóoch {version}"),
+        None => format!("Kóoch {version}"),
+    }
+}
+
 /// Runs the editor with no project plugin — the standalone launcher.
 pub fn run_editor() {
     run_editor_with(NoProjectPlugin);
@@ -36,9 +51,14 @@ pub fn run_editor_with<P: Plugin + 'static>(project: P) {
     app.insert_resource(crate::panels::console::ConsoleState::default());
     app.add_plugins(MinimalPlugins);
     app.add_plugin(WindowPlugin {
-        title: "Kóoch".into(),
+        title: window_title(None),
         width: 1280,
         height: 720,
+        // 🔴 The editor adds the asset plugin that publishes a project's
+        // `.rendersettings`, so a project whose `window_mode` says
+        // fullscreen would take the EDITOR full screen. That setting
+        // describes the game's window; this one is the tool's.
+        applies_window_mode: false,
     });
     app.add_plugin(EcsPlugin);
     // Asset root resolved to an ABSOLUTE path — the cwd shifts when a
@@ -53,6 +73,11 @@ pub fn run_editor_with<P: Plugin + 'static>(project: P) {
     app.add_plugin(kooch_input::InputPlugin);
     app.add_plugin(project);
     app.add_system(Stage::Startup, set_engine_root);
+    // 🔴 After `set_engine_root`, and that is why it is registered here
+    // rather than inside `EditorPlugin`: systems in a stage run in the
+    // order they were added, the plugin's `build` ran before this line,
+    // and this one needs the root that line resolves.
+    app.add_system(Stage::Startup, install_own_engine);
     app.run();
 }
 
@@ -111,6 +136,50 @@ fn engine_root() -> std::path::PathBuf {
 /// Startup system that records the engine root on `ProjectState` (so
 /// `create_project` can generate valid `Cargo.toml` paths) and honours
 /// `KOOCH_EDITOR_AUTO_OPEN` for headless / smoke runs.
+/// Puts the engine this editor ships on the machine, at startup.
+///
+/// 🔴 Every other call to `ensure_current` is behind an action on a
+/// PROJECT — opening one, creating one, pressing **Use**. So an editor
+/// that opened and sat on the launcher installed nothing, and the
+/// version it ships existed nowhere until somebody opened a project.
+/// That reads as "the editor does not install the engine", because from
+/// outside it is indistinguishable from it.
+///
+/// Materialising the engine and MOVING a project onto it stay different
+/// questions: this writes `~/.local/share/kooch/<this version>/engine`
+/// and touches no project's manifest.
+///
+/// Costs nothing when it is already there — `ensure_current_in` compares
+/// a stamp of the source tree and returns early — so it runs on every
+/// launch rather than being guarded by a flag that could go stale.
+fn install_own_engine(resources: &mut Resources) {
+    let source = resources
+        .get::<ProjectState>()
+        .and_then(|ps| crate::engine_vendor::vendor_source(ps.engine_root.as_deref()));
+    if source.is_none() {
+        // A binary copied somewhere without its `engine/` beside it, and
+        // not run from the engine's own tree. Nothing to install FROM,
+        // which is a different problem and one `package_editor` exists
+        // to prevent.
+        tracing::warn!(
+            "no engine source found; this editor cannot hand a project an engine to build \
+             against — see examples/package_editor.rs",
+        );
+        return;
+    }
+    let version = crate::engine_vendor::editor_engine_version();
+    match crate::engine_vendor::ensure_current(version, source.as_deref()) {
+        Ok((state, Some(path))) => tracing::info!(
+            version,
+            ?state,
+            path = %path.display(),
+            "engine ready for projects",
+        ),
+        Ok((state, None)) => tracing::warn!(?state, "no engine directory available"),
+        Err(e) => tracing::warn!(error = %e, "could not install this editor's engine"),
+    }
+}
+
 fn set_engine_root(resources: &mut Resources) {
     if let Some(ps) = resources.get_mut::<ProjectState>() {
         ps.engine_root = Some(engine_root());
@@ -183,3 +252,6 @@ fn force_x11_backend_if_needed() {
         );
     }
 }
+
+#[cfg(test)]
+mod tests;

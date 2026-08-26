@@ -18,9 +18,14 @@ impl MeshletCull {
     pub fn new(device: &wgpu::Device, capacity: u32, max_triangles_per_meshlet: u32) -> Self {
         assert!(capacity > 0, "MeshletCull capacity must be non-zero");
 
+        // A ring, not one struct — see `PARAMS_RING`. The stride is the
+        // device's uniform offset alignment because a bind group binds
+        // a sub-range by byte offset and the API requires that.
+        let params_stride = (device.limits().min_uniform_buffer_offset_alignment as u64)
+            .max(std::mem::size_of::<CullParams>() as u64);
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_cull_params"),
-            size: std::mem::size_of::<CullParams>() as u64,
+            size: params_stride * super::super::PARAMS_RING,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -153,6 +158,8 @@ impl MeshletCull {
             stage_counters,
             capacity,
             vertex_count_per_instance,
+            params_stride,
+            params_cursor: std::sync::atomic::AtomicU32::new(0),
         }
     }
 }

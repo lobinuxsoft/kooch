@@ -54,6 +54,11 @@ struct MaterialParams {
     // 0xffffffff = no map (fall back to scalars). Only the two-pass
     // fragment path samples them; this path uses the scalars.
     texture_indices: vec4<u32>,
+    // xy tiling, zw offset. See `MaterialParams` in `material/mod.rs`:
+    // this struct is declared here and in two other shaders, and a test
+    // reads all three because a field added to two of them fails
+    // silently rather than at compile time.
+    uv_scale_offset: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
@@ -63,10 +68,6 @@ struct MaterialParams {
 @group(0) @binding(4) var color_out: texture_storage_2d<rgba8unorm, write>;
 
 @group(2) @binding(0) var<storage, read> materials: array<MaterialParams>;
-
-// `MeshletDebugMode::Normals`. Pinned to the Rust enum by a test in
-// `debug.rs`; WGSL cannot import a Rust constant.
-const DEBUG_MODE_NORMALS: u32 = 11u;
 
 // PCG-style hash → vec3 rgb in [0.2, 1.0]. The 0.2 floor keeps any
 // id from collapsing to black (which the alpha=0 background uses).
@@ -171,8 +172,15 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
             let surf = resolve_surface(visible_slot, tri_idx, vec2<f32>(pixel) + vec2<f32>(0.5));
             let n = normalize(surf.world_normal);
 
-            if (screen.debug_mode == DEBUG_MODE_NORMALS) {
-                rgb = n * 0.5 + 0.5;
+            // The debug views (#743). `inti_debug_is_view` is a literal
+            // `false` in a production pipeline, so this branch and every
+            // view behind it are folded away before register allocation.
+            if (inti_debug_is_view(screen.debug_mode)) {
+                rgb = inti_debug_view(
+                    screen.debug_mode,
+                    surf.world_position,
+                    n,
+                    vec2<f32>(pixel) + vec2<f32>(0.5));
             } else {
                 let m = materials[surf.material_id];
                 // No texture sampling on this path: a compute shader
@@ -186,6 +194,11 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
                     m.base_color.rgb,
                     m.metallic_roughness_emissive_pad.x,
                     m.metallic_roughness_emissive_pad.y,
+                    // Pixel centre — the contact-shadow jitter wants the
+                    // same coordinate the fragment path passes, so the
+                    // two paths dither identically.
+                    vec2<f32>(pixel) + vec2<f32>(0.5),
+                    surf.flags,
                 );
                 radiance += m.base_color.rgb * m.metallic_roughness_emissive_pad.z;
                 rgb = inti_tonemap(radiance);

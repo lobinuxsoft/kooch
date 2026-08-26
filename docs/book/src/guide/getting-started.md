@@ -19,17 +19,217 @@ there:
 The rest of this page is the handful of things that are easy to trip over and do not belong
 to any one of those.
 
+## One engine per machine, shared by every project
+
+The editor materialises the engine once per version in
+
+```text
+~/.local/share/kooch/<version>/engine
+```
+
+and every project's `Cargo.toml` points at it:
+
+```toml
+kooch = { path = "/home/you/.local/share/kooch/0.1.0/engine" }
+```
+
+**Nothing is copied into the project.** Two projects on the same engine
+version share one directory; two versions coexist, so a project pinned
+to an older engine keeps building after the editor updates.
+
+⚠️ That path is absolute and `$HOME` differs per user, so a project that
+changes machines names a directory that is not there. **The editor owns
+that line** — it owns the directory it names — and rewrites it when a
+project opens. Nothing to do by hand.
+
+`KOOCH_ENGINE_HOME` overrides the base, for CI and for portable installs
+that must not write to the user's data directory.
+
+**It costs no build time.** A project always compiled the engine from
+source; this only changes where the source is.
+
+### When that directory is replaced
+
+Every materialised engine records which source tree it came from, in a
+`.kooch-engine-stamp` beside it — the version, plus a digest of every
+file. An editor compares its own source against that stamp, and **says
+so rather than acting on it**:
+
+> Engine 0.1.0 — same version, different source than this editor ships
+> `[ Install ]  [ Keep ]`
+
+**Install** replaces the directory, leaving one copy behind, never two.
+**Keep** leaves it alone. Nothing is replaced under a project that was
+about to be built, which is what used to happen with only a log line to
+show for it.
+
+🔴 A missing engine is installed **without asking**: there is nothing to
+keep, and a project that cannot build at all is not a choice worth
+offering.
+
+🔴 What *Keep* cannot promise: engines are named `major.minor.patch` and
+replaced in place, so keeping one holds until something else installs
+over it — updating from another project, for instance. Two engines with
+the same version have nowhere separate to live.
+
+⚠️ Installing is refused while a build is running. Renaming the directory
+cargo is reading produces an error about a missing file in a crate nobody
+touched.
+
+### What is on this machine
+
+**Settings** lists every installed engine, marks the one this editor
+ships and the one the open project uses, and removes the rest. Those two
+cannot be removed: both are named by a manifest, and deleting one leaves
+it pointing at nothing.
+
+New versions are not created from there. The version *is* the engine's
+own `major.minor.patch`, so a new directory appears when an editor
+shipping that version opens a project.
+
+🔴 **Without it, a new editor never updated the engine.** The directory
+is named after the engine version, that version used to be `0.1.0` for
+every development build, and the old check only asked whether
+`Cargo.toml`, `crates` and `src` existed — which is true of every copy of
+the engine ever made. So a freshly installed editor found the directory,
+called it current, and every project on the machine went on compiling
+against weeks-old source with nothing said.
+
+**The version moves on every pull request now**, automatically:
+`.github/workflows/version.yml` bumps `[workspace.package]` in the PR's
+own branch — major for a `!` or a `BREAKING CHANGE:`, minor for `feat:`,
+patch for everything else. A number that sits still is what made all
+three mechanisms that depend on it — this directory's name, the
+`BuildStamp` a project compares itself against, and the pipeline cache —
+blind at once. Label a PR `no-version-bump` to opt out.
+
+⚠️ **One directory per version, and they are not cleaned up
+automatically.** A version a week now means a directory a week; Settings
+is where the unused ones are removed.
+
+⚠️ **The build right after a replacement is a full rebuild**, since every
+engine source file is now newer than the project's `target/`. That cost
+is why installing is a question rather than something that happens while
+you are opening a project to look at a scene.
+
+A version this editor does **not** ship is never touched: that directory
+is what a pinned project builds against, and differing from the source in
+hand is the reason it exists rather than a reason to overwrite it.
+
+### Checking a copy that went wrong
+
+The comparison above catches a *stale* engine, not a *damaged* one:
+deleting a file from a copy does not change what the copy claims to be.
+
+```sh
+KOOCH_VERIFY_ENGINE=1 kooch_editor
+```
+
+re-reads the whole tree, compares it against its own stamp, and re-copies
+when they differ. Off by default because it reads 8 MB every time a
+project opens.
+
+⚠️ **Rust is still required** to build a project. Gameplay is native Rust
+compiled into the game, so the toolchain is not optional the way it is in
+an engine whose gameplay is a script.
+
+### Why the source is on disk at all
+
+Because Rust has no stable ABI. A precompiled `rlib` links only against
+the exact compiler and the exact dependency versions that built it, and
+cargo does not model binary dependencies — which is why no Rust engine
+ships binaries, Bevy included. The only route to "binary, no source" is
+an `extern "C"` API in the shape of Godot's GDExtension, and it costs the
+typed ECS.
+
+So the engine's source is protected the way Unreal protects theirs: **by
+licence, not by hiding it.**
+
+### The licence is not optional
+
+`LICENSE.md` is vendored with the engine, and the facade compiles it in:
+
+```rust
+pub const LICENSE: &str = include_str!("../LICENSE.md");
+```
+
+A game links the engine as an `rlib`, so **that text is inside every
+shipped executable**. It is not a file someone has to remember to copy;
+removing it means not building.
+
+### Packaging the editor
+
+```sh
+cargo build --release -p kooch_editor
+cargo run --release --features editor --example package_editor -- dist/
+```
+
+```text
+dist/
+  kooch_editor      the binary
+  engine/           7.7 MB — the source it materialises for projects
+    .kooch-engine-stamp   which tree this is, so an install can tell
+                          whether it is newer than what is on the machine
+  assets/           what the editor itself renders with
+```
+
+`engine_vendor::vendor_source` looks in three places, in order:
+`KOOCH_ENGINE_SOURCE`, `engine/` next to the executable, and the engine
+root — which only resolves when running from the engine's own tree.
+
+⚠️ `package_editor` **refuses a binary older than the source**. It once
+shipped an editor built before this feature existed, and the AppImage
+made from it wrote its own mount point into a project — a directory that
+stops existing when the app closes.
+
+⚠️ **It packages for the platform it runs on.** An editor for Windows
+means running it on Windows, the same conclusion Bevy's release workflow
+reaches: `metis` is vendored C, which makes cross-compiling more than a
+target flag.
+
+### Developing the engine itself
+
+When the editor runs out of the engine's own `target/`, project creation
+points the manifest at the live clone and materialises nothing —
+otherwise every engine change would need a re-materialise before the game
+could see it. The check is where the *executable* is, not where the
+source is.
+
 ## Loading a scene
 
 The boot scene is resolved in this order:
 
 1. `SceneBootstrapPlugin::with_scene(path)`, if your `main.rs` sets one explicitly.
 2. `--scene <path>` on the command line — absolute, or relative to the working directory.
-3. `scenes/default.scene`, relative to the working directory.
+3. `scenes/default.scene` **beside the executable**.
+4. The same, relative to the working directory.
 
-So `cargo run -- --game` from the project root just works: the default path resolves because
+So `cargo run` from the project root just works: the default path resolves because
 the working directory is the project. A different level is
-`cargo run -- --game --scene scenes/Level1.scene`.
+`cargo run -- --scene scenes/Level1.scene`.
+
+### 🔴 Why the executable comes first
+
+A shipped game is opened by double-clicking it, and that leaves the working directory
+wherever the desktop felt like — your home, or `/`. Resolved against the cwd alone, a
+released game starts with **an empty scene and no error**: the file was not missing from the
+package, it was never looked for in the package.
+
+So a packaged game keeps its content beside the binary:
+
+```text
+dist/
+  mygame              the executable
+  scenes/             default.scene, and the rest
+  assets/             everything the scenes reference, by GUID (.meta included)
+```
+
+The cwd stays as the fallback because that is what a plain `cargo run` inside a project
+relies on — there the executable lives in `target/debug/` and has no `scenes/` beside it.
+
+⚠️ **The `.meta` sidecars are not optional.** A scene references its assets by GUID, and the
+GUID lives in the `.meta` next to each file. A copy that filters by extension and leaves them
+behind produces a game that loads its scene and renders nothing.
 
 ## Component registration runs before the scene loads
 
@@ -50,10 +250,10 @@ without one and you get the clear-to-black fallback.
 This is deliberate, not a bug. Injecting the editor camera as a temporary play camera —
 what Unity and Unreal do — is a possible future change, not current behaviour.
 
-## Running without the editor
+## Running the game
 
 ```bash
-cargo run -- --game
+cargo run
 ```
 
 `DefaultPlugins` is the group that makes this a game rather than a collection of crates:

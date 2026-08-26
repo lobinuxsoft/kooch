@@ -118,10 +118,7 @@ impl DownsamplePass {
         });
         pass.set_pipeline(&self.pipelines[cascade_idx as usize]);
         pass.set_bind_group(0, &bg, &[]);
-        pass.dispatch_workgroups_indirect(
-            grid.populate_indirect_args_buffer(0),
-            0,
-        );
+        pass.dispatch_workgroups_indirect(grid.populate_indirect_args_buffer(0), 0);
     }
 
     fn create_bg(
@@ -131,8 +128,7 @@ impl DownsamplePass {
         lod_src: u32,
         lod_dst: u32,
     ) -> wgpu::BindGroup {
-        let label =
-            format!("kooch_world::voxel::downsample::bg_lod{lod_src}_to_lod{lod_dst}");
+        let label = format!("kooch_world::voxel::downsample::bg_lod{lod_src}_to_lod{lod_dst}");
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(&label),
             layout: &self.bgl,
@@ -147,15 +143,11 @@ impl DownsamplePass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(
-                        grid.subgrid_pool_view(lod_src),
-                    ),
+                    resource: wgpu::BindingResource::TextureView(grid.subgrid_pool_view(lod_src)),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(
-                        grid.subgrid_pool_view(lod_dst),
-                    ),
+                    resource: wgpu::BindingResource::TextureView(grid.subgrid_pool_view(lod_dst)),
                 },
                 // needs_indices / needs_count come from LOD 0
                 // regardless of cascade — the canonical cascade only
@@ -242,3 +234,6 @@ const BGL_ENTRIES: [wgpu::BindGroupLayoutEntry; 6] = [
         count: None,
     },
 ];
+
+#[cfg(test)]
+mod tests;

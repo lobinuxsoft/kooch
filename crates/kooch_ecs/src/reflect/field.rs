@@ -77,6 +77,25 @@ pub struct FieldMeta {
     /// `///` is stripped, so the tooltip reads as prose rather than as
     /// source.
     pub doc: &'static str,
+    /// Heading this field is drawn under in the Inspector, from
+    /// `#[reflect(group = "...")]`. `""` for a field that belongs to no
+    /// group and is drawn before the first heading.
+    ///
+    /// # Why a string on the field rather than nesting
+    ///
+    /// Nesting would be the obvious answer — `PhysicalCamera` and
+    /// `AmbientLight` *are* structs — and it is the wrong one here. A
+    /// nested field is a nested value: it changes the serialised shape
+    /// of every asset and scene, it needs `FieldKind::Nested` handling
+    /// in the editor, the undo stack and the RON round-trip, and it does
+    /// all of that to solve a problem that is entirely about where a
+    /// label is drawn.
+    ///
+    /// Consecutive fields sharing a group are one section. Runs, not
+    /// sets: the order in the struct is the order on screen, and a group
+    /// that appears twice draws twice rather than silently reordering
+    /// the author's fields.
+    pub group: &'static str,
 }
 
 /// A labelled value in a [`FieldMeta::choices`] set.
@@ -176,44 +195,4 @@ pub enum InspectorVisibility {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const SPHERE: i64 = 0;
-    const CUBOID: i64 = 1;
-    const CAPSULE: i64 = 2;
-
-    static RADIUS_WHEN: FieldCondition = FieldCondition {
-        field: "shape",
-        values: &[SPHERE, CAPSULE],
-    };
-
-    #[test]
-    fn a_condition_is_met_only_by_its_listed_values() {
-        assert!(RADIUS_WHEN.is_met(Some(SPHERE)));
-        assert!(RADIUS_WHEN.is_met(Some(CAPSULE)));
-        assert!(!RADIUS_WHEN.is_met(Some(CUBOID)));
-    }
-
-    /// A condition naming a field the component does not have reads as
-    /// met. A typo in an attribute should look like a mistake, not like a
-    /// field that silently vanished — the field the author annotated is
-    /// still the field they wanted to see.
-    #[test]
-    fn a_missing_discriminant_shows_the_field() {
-        assert!(RADIUS_WHEN.is_met(None));
-    }
-
-    /// An empty value list hides the field for every discriminant. Not a
-    /// useful annotation, but it must not read as "always shown", or a
-    /// mistake there would be invisible.
-    #[test]
-    fn an_empty_condition_hides_the_field() {
-        static NEVER: FieldCondition = FieldCondition {
-            field: "shape",
-            values: &[],
-        };
-        assert!(!NEVER.is_met(Some(SPHERE)));
-        assert!(NEVER.is_met(None), "a missing discriminant still shows");
-    }
-}
+mod tests;

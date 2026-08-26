@@ -41,6 +41,24 @@ pub struct MeshletRenderStats {
     /// blit / egui passes outside the meshlet stage are counted
     /// separately by the editor render system.
     pub draw_calls: u32,
+    /// Lights in the busiest froxel, and the mean over the froxels that
+    /// hold any (#820).
+    ///
+    /// The number the lights-per-pixel view (#817) could only be
+    /// bisected for by eye, which does not separate 32 from 45 — and
+    /// which cannot be compared before and after a change to the grid
+    /// without doing the bisection twice.
+    ///
+    /// `None` when the frame did not cluster (no camera matrices, or
+    /// clustering off) or the async readback has not landed yet, 1-2
+    /// frames in. Stale by the same design as the cull counts: the
+    /// alternative is a `device.poll` in the hot loop.
+    pub cluster_occupancy: Option<(u32, f32)>,
+    /// What the shadow-page marking pass found, when it is running
+    /// (#866). `None` when it is off, which is the default.
+    pub page_marking: Option<crate::shadow::pages::mark::MarkCounts>,
+    /// What the paged depth raster drew, a frame or two old.
+    pub page_raster: Option<crate::shadow::pages::raster::RasterCounts>,
     /// Per-stage cull survivor counts (#454.6).
     /// `[after_frustum, after_backface, after_hi_z, total_visible]`.
     /// `None` when no debug-active mode has been selected yet (the

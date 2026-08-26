@@ -68,45 +68,70 @@ pub const PROJECT_MANIFEST_FILE: &str = "project.kooch";
 /// Also the path the runtime falls back to relative to the working
 /// directory when no `--scene` was passed; see the cwd caveat on
 /// `SceneBootstrapPlugin`.
-pub const DEFAULT_SCENE_REL_PATH: &str = "scenes/default.scene";
+pub const DEFAULT_SCENE_REL_PATH: &str = "assets/scenes/default.scene";
+
+/// Directory, under a project, that scenes live in.
+///
+/// 🔴 Under `assets/`, since #758. Everything a game needs at runtime is
+/// in one tree, so packaging walks one place and "where does this file
+/// go" has one answer. Projects made before this are moved when they
+/// open.
+pub const SCENES_DIR: &str = "assets/scenes";
+
+/// Extensions the runtime reads **by path**, without going through a
+/// loader.
+///
+/// 🔴 The packaging allowlist is derived from registered loaders, and a
+/// scene has none: it is loaded by path, by name, before the asset system
+/// is in play. Without this the scenes would be filtered out of a build
+/// and the game would start empty — which is the failure the derived
+/// allowlist otherwise prevents, arriving from the other side.
+pub const READ_BY_PATH: [&str; 1] = [SCENE_EXTENSION];
+
+/// The `main_scene` a manifest names, if it names one.
+///
+/// # Why the runtime parses the manifest at all
+///
+/// 🔴 Until #808 it did not, and `main_scene` was a field **nothing
+/// read**. A shipped game opened [`DEFAULT_SCENE_REL_PATH`] whatever the
+/// manifest said, so a project whose starting scene was not called
+/// `default.scene` shipped a game that started somewhere else — or
+/// started empty — with no error anywhere. The field looked like a
+/// setting and behaved like a comment.
+///
+/// # Why a struct of one field rather than the editor's `ProjectManifest`
+///
+/// That type lives in `kooch_editor_core`, which a game does not link and
+/// must not: the manifest carries authoring state the runtime has no
+/// business knowing. Serde ignores the fields not named here, so this
+/// keeps reading correctly as the manifest grows.
+pub fn main_scene_of(manifest: &str) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct BootFields {
+        main_scene: Option<String>,
+    }
+    let fields: BootFields = ron::from_str(manifest).ok()?;
+    fields.main_scene.filter(|s| !s.trim().is_empty())
+}
+
+/// The same path, tolerating the form that omits `assets/`.
+///
+/// ⚠️ `main_scene` is relative to the project **root** and therefore
+/// starts with `assets/`, and projects exist on disk carrying
+/// `scenes/x.scene` instead — `roll-a-ball` was one. Both look plausible
+/// and only one resolves, so the short form is accepted and normalised
+/// rather than silently resolving to a file that is not there.
+///
+/// Returns the path unchanged when it already names a directory that is
+/// not `scenes/`, because that is somebody's deliberate layout and not
+/// this function's business.
+pub fn normalise_main_scene(path: &str) -> String {
+    let trimmed = path.trim_start_matches("./");
+    if trimmed.starts_with("assets/") || !trimmed.starts_with("scenes/") {
+        return trimmed.to_owned();
+    }
+    format!("assets/{trimmed}")
+}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The default path and the extension were two literals in two crates,
-    /// and a rename moved one. They are one fact now, and this fails if
-    /// they ever drift apart again.
-    #[test]
-    fn the_default_scene_path_carries_the_scene_extension() {
-        assert!(
-            DEFAULT_SCENE_REL_PATH.ends_with(&format!(".{SCENE_EXTENSION}")),
-            "{DEFAULT_SCENE_REL_PATH} does not end in .{SCENE_EXTENSION}",
-        );
-    }
-
-    /// The whole point of two extensions is that they differ.
-    #[test]
-    fn a_scene_and_a_prefab_are_told_apart() {
-        assert_ne!(SCENE_EXTENSION, PREFAB_EXTENSION);
-    }
-
-    /// The manifest is a file name, not an extension: it carries its dot
-    /// in the middle. Asserting it stops a future rename from turning it
-    /// into a bare `kooch` that `join()` would happily create as a folder.
-    #[test]
-    fn the_manifest_is_a_file_name() {
-        assert!(PROJECT_MANIFEST_FILE.contains('.'));
-        assert!(!PROJECT_MANIFEST_FILE.starts_with('.'));
-        assert!(!PROJECT_MANIFEST_FILE.ends_with('.'));
-    }
-
-    /// A leading dot would make every `format!(".{ext}")` produce `..scene`.
-    #[test]
-    fn an_extension_is_bare() {
-        for ext in [SCENE_EXTENSION, PREFAB_EXTENSION] {
-            assert!(!ext.starts_with('.'), "{ext} should not carry its dot");
-            assert!(!ext.is_empty());
-        }
-    }
-}
+mod tests;

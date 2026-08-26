@@ -1,0 +1,133 @@
+# NOTICE
+
+Kóoch is licensed under the terms in `LICENSE.md`. It contains code
+transliterated from third-party projects, listed here with the notices
+their licences require. Every ported file also carries its original
+copyright header at the top.
+
+---
+
+## Snapdragon™ Game Super Resolution 2 (SGSR 2)
+
+The temporal upscaler in `crates/kooch_render/shaders/sgsr2_*.wgsl` is
+transliterated from Qualcomm's GLSL implementation
+(<https://github.com/SnapdragonStudios/snapdragon-gsr>, `sgsr/v2/`).
+
+> Copyright (c) 2024, Qualcomm Innovation Center, Inc. All rights reserved.
+>
+> Redistribution and use in source and binary forms, with or without
+> modification, are permitted provided that the following conditions are
+> met:
+>
+> 1. Redistributions of source code must retain the above copyright
+>    notice, this list of conditions and the following disclaimer.
+>
+> 2. Redistributions in binary form must reproduce the above copyright
+>    notice, this list of conditions and the following disclaimer in the
+>    documentation and/or other materials provided with the distribution.
+>
+> 3. Neither the name of the copyright holder nor the names of its
+>    contributors may be used to endorse or promote products derived
+>    from this software without specific prior written permission.
+>
+> THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+> "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+> LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+> A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+> HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+> SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+> LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+> DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+> THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+> (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+> OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+**Per clause 3: Kóoch is not a Qualcomm product, and neither Qualcomm
+nor the Qualcomm Innovation Center endorses it.** Snapdragon is a
+trademark of Qualcomm Incorporated.
+
+---
+
+## FidelityFX™ Robust Contrast Adaptive Sharpening (RCAS)
+
+The sharpening pass in `crates/kooch_render/shaders/rcas.wgsl` is
+transliterated from Bevy's `robust_contrast_adaptive_sharpening.wesl`
+(<https://github.com/bevyengine/bevy>, MIT / Apache-2.0), which is
+itself a port of AMD's `ffx_fsr1.h` from FidelityFX FSR
+(<https://github.com/GPUOpen-Effects/FidelityFX-FSR2>).
+
+> Copyright (c) 2022 Advanced Micro Devices, Inc. All rights reserved.
+>
+> Permission is hereby granted, free of charge, to any person obtaining
+> a copy of this software and associated documentation files (the
+> "Software"), to deal in the Software without restriction, including
+> without limitation the rights to use, copy, modify, merge, publish,
+> distribute, sublicense, and/or sell copies of the Software, and to
+> permit persons to whom the Software is furnished to do so, subject to
+> the following conditions:
+>
+> The above copyright notice and this permission notice shall be
+> included in all copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+> EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+> MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+> NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+> LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+> OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+> WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+FidelityFX is a trademark of Advanced Micro Devices, Inc.
+
+---
+
+## FidelityFX™ Super Resolution 3.1 (FSR 3.1)
+
+The temporal upscaler in `crates/kooch_render/shaders/fsr3_*.wgsl` is
+transliterated from AMD's HLSL implementation, `Kits/FidelityFX/
+upscalers/fsr3/` of the AMD FSR SDK 2.3.0
+(<https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK>).
+
+> This file is part of the FidelityFX SDK.
+>
+> Copyright (C) 2026 Advanced Micro Devices, Inc.
+>
+> Permission is hereby granted, free of charge, to any person obtaining
+> a copy of this software and associated documentation files (the
+> "Software"), to deal in the Software without restriction, including
+> without limitation the rights to use, copy, modify, merge, publish,
+> distribute, sublicense, and/or sell copies of the Software, and to
+> permit persons to whom the Software is furnished to do so, subject to
+> the following conditions:
+>
+> The above copyright notice and this permission notice shall be
+> included in all copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+> EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+> MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+> NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+> LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+> OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+> WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+FidelityFX and FSR are trademarks of Advanced Micro Devices, Inc.
+**AMD does not endorse Kóoch.**
+
+---
+
+## Prototype Textures (Kenney)
+
+The textures under `assets/textures/prototype/` are Kenney's *Prototype
+Textures* pack, version 1.0 (<https://kenney.nl/assets/prototype-textures>),
+unmodified.
+
+> License: Creative Commons Zero, CC0
+> <http://creativecommons.org/publicdomain/zero/1.0/>
+>
+> This content is free to use in personal, educational and commercial
+> projects. Support us by crediting Kenney or www.kenney.nl (this is not
+> mandatory)
+
+CC0 requires nothing, so this notice is the credit they ask for and do
+not require. **Kenney does not endorse Kóoch.**

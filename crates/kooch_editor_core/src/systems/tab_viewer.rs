@@ -91,6 +91,13 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Asset Browser selection (owned by the overlay). Row clicks mutate
     /// it; the render system reads it to pre-resolve `asset_detail`.
     pub(crate) selected_asset: &'a mut Option<kooch_core::Guid>,
+    /// What the Build panel draws: the presets, the running job's status
+    /// and cargo's output (#758).
+    pub(crate) build: &'a crate::panels::build::BuildPanel,
+    /// Which preset the Build panel has selected. Separate from
+    /// `selected_asset`: choosing a preset shows it in the Inspector, but
+    /// selecting something else there must not change what Build builds.
+    pub(crate) build_selection: &'a mut Option<kooch_core::Guid>,
     /// Data snapshot for the selected asset, resolved before the frame.
     /// `None` when nothing is selected or the snapshot is still pending.
     pub(crate) asset_detail: Option<&'a AssetDetail>,
@@ -101,6 +108,12 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Project / engine `assets/` roots, for the Asset Browser tree.
     pub(crate) engine_assets_root: Option<&'a std::path::Path>,
     pub(crate) project_assets_root: Option<&'a std::path::Path>,
+    /// Whether Ctrl+V has anything to paste, so the World panel's button
+    /// can be greyed rather than silently doing nothing.
+    pub(crate) clipboard_has_entities: bool,
+    /// The scene the project opens with, for the Asset Browser to mark
+    /// (#808). Resolved once per frame from the manifest.
+    pub(crate) main_scene: Option<&'a std::path::Path>,
     /// Selector for the meshlet pipeline's debug visualization
     /// (#451). Mutated by the View toolbar dropdown.
     pub(crate) meshlet_debug_mode: &'a mut MeshletDebugMode,
@@ -108,17 +121,33 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Performance dropdowns surface based on the device's
     /// `Features::TEXTURE_ATOMIC` exposure.
     pub(crate) meshlet_debug_caps: MeshletDebugCaps,
+    /// What the light isolated by `SingleLight` actually casts (#743).
+    pub(crate) single_light_note: Option<&'a str>,
     /// Continuous-LOD threshold (#462). Mutated by the View toolbar
     /// slider so artists can sanity-check the chain at editor
     /// distances without rebuilding any pipeline state.
     pub(crate) meshlet_lod_settings: &'a mut MeshletLodSettings,
+    /// Top of scale for the lights-per-pixel view (#817).
+    pub(crate) lights_hot: &'a mut kooch_lighting::LightsHot,
+    /// The froxel grid's reach, tuned beside the view that shows what it
+    /// costs (#820).
+    pub(crate) cluster_settings: &'a mut kooch_lighting::ClusterSettings,
+    /// Where the shading model stops paying for specular (#821).
+    pub(crate) specular_floor: &'a mut kooch_lighting::SpecularFloor,
     /// Per-frame meshlet pipeline counters republished as a Resource by
     /// the viewport render. Read-only, surfaced through the View
     /// toolbar's stats overlay.
     pub(crate) meshlet_stats: MeshletRenderStats,
+    /// The GAME viewport's own stats. 🔴 Separate from the field above,
+    /// which belongs to the View camera: one slot for two cameras is
+    /// what made the Game tab's overlay report the Edit view's frustum.
+    pub(crate) game_stats: MeshletRenderStats,
     /// Per-frame perf HUD counters (#463). Read-only, surfaced
     /// through the View toolbar's perf overlay (always visible).
     pub(crate) perf_stats: crate::perf::EditorPerfStats,
+    /// The editor camera's rotation this frame, for the View panel's
+    /// navigation gizmo. `None` before the camera spawns.
+    pub(crate) editor_camera_rotation: Option<glam::Quat>,
 }
 
 impl<'a> TabViewer for EditorTabViewer<'a> {
@@ -224,6 +253,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.active_archetype_count,
                 self.last_clicked_index,
                 self.scenes,
+                self.clipboard_has_entities,
             ),
             EditorTab::Game => draw_game_content(
                 ui,
@@ -231,10 +261,14 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.game_request,
                 self.game_has_camera,
                 self.perf_stats,
-                self.meshlet_stats,
+                self.game_stats,
                 self.meshlet_debug_mode,
                 self.meshlet_debug_caps,
+                self.single_light_note,
                 self.meshlet_lod_settings,
+                self.lights_hot,
+                self.cluster_settings,
+                self.specular_floor,
                 self.hud_visibility,
             ),
             EditorTab::View => draw_view_content(
@@ -252,6 +286,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.gizmo_groups,
                 self.physics_debug,
                 self.actions,
+                self.editor_camera_rotation,
             ),
             EditorTab::Console => {
                 crate::panels::console::draw_console(ui, focused, self.log_buffer, self.console)
@@ -300,6 +335,28 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 }
             }
             EditorTab::Components => draw_components_content(ui, self.component_types),
+            EditorTab::Profiler => crate::panels::profiler::draw_profiler_content(ui),
+            EditorTab::Performance => crate::panels::performance::draw_performance_panel(
+                ui,
+                self.perf_stats,
+                self.meshlet_stats,
+                self.meshlet_debug_mode,
+                self.meshlet_debug_caps,
+                self.meshlet_lod_settings,
+                self.lights_hot,
+                self.cluster_settings,
+                self.specular_floor,
+                *self.game_request,
+                self.hud_visibility,
+                self.single_light_note,
+            ),
+            EditorTab::Build => crate::panels::build::draw_build_content(
+                ui,
+                self.build,
+                self.build_selection,
+                self.selected_asset,
+                self.actions,
+            ),
             EditorTab::AssetBrowser => draw_asset_browser_content(
                 ui,
                 focused,
@@ -309,6 +366,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.current_folder,
                 self.engine_assets_root,
                 self.project_assets_root,
+                self.main_scene,
                 self.actions,
             ),
         }

@@ -48,6 +48,8 @@ mod init;
 mod pipelines;
 mod types;
 
+use crate::meshlet::cull::CullParams;
+
 pub use pipelines::MeshletCullPipelines;
 pub use types::{DrawIndirectArgs, HiZTestParams};
 
@@ -104,7 +106,63 @@ pub struct MeshletCull {
 
     pub(super) capacity: u32,
     pub(super) vertex_count_per_instance: u32,
+
+    /// Bytes between two parameter slots in `params_buffer`, rounded up
+    /// to the device's `min_uniform_buffer_offset_alignment`.
+    pub(super) params_stride: u64,
+    /// Which slot the next dispatch writes. See [`Self::stage_params`].
+    pub(super) params_cursor: std::sync::atomic::AtomicU32,
 }
+
+/// How many parameter sets `params_buffer` holds.
+///
+/// 🔴 This buffer is a ring and not a single struct, and that is the
+/// whole of #853.
+///
+/// `queue.write_buffer` is **not** ordered against the encoder. Every
+/// write queued while a frame is being recorded is applied at the head
+/// of the submit, before a single command runs — so writing one buffer
+/// twice in one frame does not give two dispatches two values, it gives
+/// both of them the second one.
+///
+/// The point-light shadow pass dispatches one cull per light per cube
+/// face, and the six culls belong to the FACE, shared by every lamp.
+/// So with two casting point lights, both cubes were culled against
+/// whichever lamp's frustum was written last, while each was rasterised
+/// with its own matrix. Every occluder the first lamp could see and the
+/// second could not vanished from the first lamp's map. One lamp was
+/// always correct, which is why it took a scene with two.
+///
+/// # 🔴 Sizing it, and the arithmetic that was wrong
+///
+/// The bound is how many times one cull object is dispatched inside one
+/// encoder. That was read as
+/// [`MAX_POINT_SHADOWS`](kooch_lighting::MAX_POINT_SHADOWS) — 32 — with
+/// 64 leaving "a factor of two".
+///
+/// **It counted one view.** The stage renders every active view into
+/// one encoder, and the editor has two. At 32 casting lamps that is
+/// exactly 64 dispatches of the same cull object against 64 slots, so
+/// the ring laps itself inside the frame and lamps are culled with each
+/// other's frusta — #853 again, by exhaustion rather than by reuse. It
+/// stayed hidden because the shipped budget was 6: twelve dispatches
+/// into sixty-four never collided, and "it works" was measured on the
+/// case that could not fail.
+///
+/// ⚠️ And the cursor is monotonic — it is never rewound at the start of
+/// a frame — so a frame beginning mid-ring wraps onto its own earlier
+/// slots with FEWER dispatches than there are slots. The margin has to
+/// swallow that too, which is why this is generous rather than exact.
+///
+/// `VIEWS_ASSUMED` is the number this is allowed to be wrong about. Two
+/// is what the editor uses today; four is the headroom, and
+/// `the_ring_covers_the_worst_case` fails if anything makes that false.
+///
+/// Cross-submit reuse is not a hazard — wgpu barriers a buffer that
+/// goes from uniform read to copy destination between submits.
+pub(super) const VIEWS_ASSUMED: u64 = 4;
+
+pub(super) const PARAMS_RING: u64 = kooch_lighting::MAX_POINT_SHADOWS as u64 * VIEWS_ASSUMED * 2;
 
 impl MeshletCull {
     /// Storage capacity (in meshlets) of the visible-output buffer.
@@ -261,6 +319,47 @@ impl MeshletCull {
         &self.stage_counters
     }
 
+    /// Puts one dispatch's [`CullParams`] somewhere the previous
+    /// dispatch's copy is not, and hands back the range to bind.
+    ///
+    /// Call once per dispatch, before building the bind group. See
+    /// [`PARAMS_RING`] for why a plain write to offset 0 is wrong.
+    ///
+    /// `scene_params_buffer` deliberately has no ring: its contents are
+    /// `(instance_count, meshlets_per_mesh)`, a property of the frame
+    /// rather than of the dispatch, and every dispatch in a frame writes
+    /// the same bytes. [`Self::scene_params_buffer`] is handed to the
+    /// reject-overlay pass on exactly that assumption.
+    pub(super) fn stage_params(
+        &self,
+        queue: &wgpu::Queue,
+        params: &CullParams,
+    ) -> wgpu::BufferBinding<'_> {
+        use std::sync::atomic::Ordering;
+        let slot = self.params_cursor.fetch_add(1, Ordering::Relaxed) as u64 % PARAMS_RING;
+        let offset = slot * self.params_stride;
+        queue.write_buffer(&self.params_buffer, offset, bytemuck::bytes_of(params));
+        wgpu::BufferBinding {
+            buffer: &self.params_buffer,
+            offset,
+            size: std::num::NonZeroU64::new(std::mem::size_of::<CullParams>() as u64),
+        }
+    }
+
+    /// The slot the most recent [`Self::stage_params`] wrote, for a
+    /// second pass that shares one pass's parameters — the Hi-Z
+    /// 2-pass cull's pass B, which deliberately re-reads what pass A
+    /// was dispatched with.
+    pub(super) fn last_params(&self) -> wgpu::BufferBinding<'_> {
+        use std::sync::atomic::Ordering;
+        let written = self.params_cursor.load(Ordering::Relaxed).wrapping_sub(1);
+        wgpu::BufferBinding {
+            buffer: &self.params_buffer,
+            offset: (written as u64 % PARAMS_RING) * self.params_stride,
+            size: std::num::NonZeroU64::new(std::mem::size_of::<CullParams>() as u64),
+        }
+    }
+
     /// `wgpu::Buffer` holding the per-frame `SceneCullParams` UBO.
     /// Re-exported so the reject-overlay pass can bind the same
     /// `(instance_count, meshlets_per_mesh)` the cull pass dispatched
@@ -272,49 +371,4 @@ impl MeshletCull {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn draw_indirect_args_layout_is_pod() {
-        // Must match wgpu::DrawIndirectArgs exactly so we can write
-        // straight into an INDIRECT-usage buffer.
-        assert_eq!(std::mem::size_of::<DrawIndirectArgs>(), 16);
-    }
-
-    #[test]
-    fn draw_indirect_args_default_is_zero() {
-        let args = DrawIndirectArgs::default();
-        assert_eq!(args.vertex_count, 0);
-        assert_eq!(args.instance_count, 0);
-        assert_eq!(args.first_vertex, 0);
-        assert_eq!(args.first_instance, 0);
-    }
-
-    #[test]
-    fn hi_z_test_params_layout() {
-        // 64-byte mat4 + 8-byte vec2 + 4-byte u32 + 4-byte pad = 80 B.
-        assert_eq!(std::mem::size_of::<HiZTestParams>(), 80);
-    }
-
-    #[test]
-    fn cull_shader_parses_and_validates() {
-        const CULL_SHADER_SOURCE: &str = concat!(
-            include_str!("../../../shaders/meshlet_cull/common.wgsl"),
-            include_str!("../../../shaders/meshlet_cull/basic.wgsl"),
-            include_str!("../../../shaders/meshlet_cull/scene.wgsl"),
-            include_str!("../../../shaders/meshlet_cull/pool.wgsl"),
-            include_str!("../../../shaders/meshlet_cull/atomic.wgsl"),
-            include_str!("../../../shaders/meshlet_cull/atomic_hi_z.wgsl"),
-        );
-        let module = naga::front::wgsl::parse_str(CULL_SHADER_SOURCE)
-            .expect("meshlet_cull.wgsl should parse");
-        let mut validator = naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::all(),
-        );
-        validator
-            .validate(&module)
-            .expect("meshlet_cull.wgsl should validate");
-    }
-}
+mod tests;

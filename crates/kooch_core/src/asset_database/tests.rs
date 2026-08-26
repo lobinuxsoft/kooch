@@ -306,3 +306,104 @@ fn remove_path_drops_both_mappings() {
     // Removing again is a no-op.
     assert_eq!(db.remove_path(&path), None);
 }
+
+/// 🔴 The circle this broke.
+///
+/// A file written by hand — by a script, by another tool, by an author
+/// with a text editor — used to be invisible to the editor forever: the
+/// browser lists what the database registered, the database registered
+/// what had a `.meta`, and the `.meta` appeared only when something
+/// loaded the file. Nothing broke that from outside, and `docs/MEMORY.md`
+/// recorded the symptom twice without it being fixed.
+#[test]
+fn a_hand_written_file_is_adopted_when_a_loader_claims_its_extension() {
+    let dir = TempDir::new("adopt_known");
+    let path = dir.path.join("project.rendersettings");
+    std::fs::write(&path, b"()").expect("write");
+
+    let mut db = AssetDatabase::new();
+    let report = db
+        .scan_directory_adopting(&dir.path, &[("rendersettings", "some::RenderSettings")])
+        .expect("scan");
+
+    assert_eq!(report.adopted, 1, "the file should have been adopted");
+    assert_eq!(report.registered, 1);
+    let guid = db.guid_for(&path).expect("registered under a guid");
+    assert_eq!(
+        db.entry(guid).and_then(|e| e.type_name.as_deref()),
+        Some("some::RenderSettings"),
+        "the type comes from the loader, not from a guess",
+    );
+}
+
+/// A README beside a mesh is not an asset. Adoption is driven by what a
+/// loader claims, so an unclaimed extension stays unregistered and no
+/// stray `.meta` appears next to it.
+#[test]
+fn an_unclaimed_extension_is_left_alone() {
+    let dir = TempDir::new("adopt_unknown");
+    let path = dir.path.join("NOTES.txt");
+    std::fs::write(&path, b"not an asset").expect("write");
+
+    let mut db = AssetDatabase::new();
+    let report = db
+        .scan_directory_adopting(&dir.path, &[("rendersettings", "some::RenderSettings")])
+        .expect("scan");
+
+    assert_eq!(report.adopted, 0);
+    assert_eq!(report.registered, 0);
+    assert!(
+        !dir.path.join("NOTES.txt.meta").exists(),
+        "a .meta was written beside a file nothing can load",
+    );
+}
+
+/// Case matters on Linux and does not to a person. `.PNG` off a camera
+/// and `.png` off a download are the same asset.
+#[test]
+fn adoption_ignores_extension_case() {
+    let dir = TempDir::new("adopt_case");
+    std::fs::write(dir.path.join("Sky.RENDERSETTINGS"), b"()").expect("write");
+
+    let mut db = AssetDatabase::new();
+    let report = db
+        .scan_directory_adopting(&dir.path, &[("rendersettings", "some::RenderSettings")])
+        .expect("scan");
+    assert_eq!(report.adopted, 1);
+}
+
+/// Adoption is idempotent: the second scan finds the `.meta` the first
+/// one wrote and registers normally, rather than adopting again or
+/// minting a second identity.
+#[test]
+fn adopting_twice_keeps_one_identity() {
+    let dir = TempDir::new("adopt_twice");
+    let path = dir.path.join("a.rendersettings");
+    std::fs::write(&path, b"()").expect("write");
+    let known = [("rendersettings", "some::RenderSettings")];
+
+    let mut db = AssetDatabase::new();
+    db.scan_directory_adopting(&dir.path, &known)
+        .expect("first");
+    let first = db.guid_for(&path).expect("registered");
+
+    let mut db2 = AssetDatabase::new();
+    let report = db2
+        .scan_directory_adopting(&dir.path, &known)
+        .expect("second");
+    assert_eq!(report.adopted, 0, "the second scan should find the .meta");
+    assert_eq!(db2.guid_for(&path), Some(first), "the guid must be stable");
+}
+
+/// The old entry point adopts nothing, so every caller that has not
+/// opted in behaves exactly as before.
+#[test]
+fn scan_directory_without_known_extensions_adopts_nothing() {
+    let dir = TempDir::new("adopt_none");
+    std::fs::write(dir.path.join("a.rendersettings"), b"()").expect("write");
+
+    let mut db = AssetDatabase::new();
+    let report = db.scan_directory(&dir.path).expect("scan");
+    assert_eq!(report.adopted, 0);
+    assert_eq!(report.registered, 0);
+}

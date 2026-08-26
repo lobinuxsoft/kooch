@@ -116,6 +116,26 @@ impl MeshletPipeline {
     /// resource if present; otherwise every instance falls back to
     /// slot 0 (the white-diffuse default).
     pub fn collect_scene_instances(&self, resources: &Resources) -> Vec<MeshInstance> {
+        self.collect_scene_instances_with_entities(resources).0
+    }
+
+    /// The same walk, with the entity each instance came from (#481).
+    ///
+    /// 🔴 Motion vectors need last frame's transform for **this object**,
+    /// and the position in this vector is not an identity: the walk is an
+    /// ECS query, so an entity appearing, disappearing or changing
+    /// archetype renumbers everything after it. Keyed by index, a
+    /// reordering would hand each instance some other object's previous
+    /// matrix and produce motion vectors that are wrong without anything
+    /// failing.
+    ///
+    /// The entity is the identity. It costs one `Vec<Entity>` per frame
+    /// and it is the difference between a temporal pass that works and
+    /// one that smears whenever the scene changes.
+    pub fn collect_scene_instances_with_entities(
+        &self,
+        resources: &Resources,
+    ) -> (Vec<MeshInstance>, Vec<kooch_ecs::entity::Entity>) {
         let material_pipeline = resources.get::<crate::material::MaterialPipeline>();
         // Side-channel lookup of optional LodForceLevel components.
         // The MeshRenderer query is the primary walk; per-entity we
@@ -124,6 +144,7 @@ impl MeshletPipeline {
         let lod_force_lookup = collect_lod_force_levels(resources);
         let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
         let mut out = Vec::new();
+        let mut entities = Vec::new();
         let mesh_descriptors = &self.pool.mesh_descriptors;
         // Per-instance prefix sum into `group_max_err`: each instance
         // reserves `mesh_descriptors[mesh_id].group_count` consecutive
@@ -154,14 +175,23 @@ impl MeshletPipeline {
                 instance.lod_force_level = LOD_FORCE_NONE;
             }
             instance.group_base = running_base;
+            // #804 — the component has carried `receive_shadows` since
+            // it was written and nothing ever read it: unticking it in
+            // the Inspector changed nothing at all. This is the bit that
+            // makes the checkbox mean something.
+            instance.flags = match renderer.receive_shadows {
+                true => crate::meshlet::scene::INSTANCE_RECEIVES_SHADOWS,
+                false => 0,
+            };
             let group_count = mesh_descriptors
                 .get(mesh_handle.mesh_id as usize)
                 .map(|d| d.group_count)
                 .unwrap_or(0);
             running_base = running_base.saturating_add(group_count);
             out.push(instance);
+            entities.push(entity);
         });
-        out
+        (out, entities)
     }
 
     /// Total `group_max_err` slots the scene needs given an already-
@@ -204,160 +234,4 @@ pub fn instance_at_origin(mesh_id: u32) -> MeshInstance {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::mesh::{Mesh, MeshVertex};
-    use crate::meshlet::build_default_meshlets;
-
-    fn cube_mesh() -> Mesh {
-        let positions = [
-            [-0.5, -0.5, -0.5],
-            [0.5, -0.5, -0.5],
-            [0.5, 0.5, -0.5],
-            [-0.5, 0.5, -0.5],
-            [-0.5, -0.5, 0.5],
-            [0.5, -0.5, 0.5],
-            [0.5, 0.5, 0.5],
-            [-0.5, 0.5, 0.5],
-        ];
-        let face_indices: [[usize; 4]; 6] = [
-            [0, 1, 2, 3],
-            [4, 5, 6, 7],
-            [0, 1, 5, 4],
-            [3, 2, 6, 7],
-            [0, 3, 7, 4],
-            [1, 2, 6, 5],
-        ];
-        let face_normal = [0.0, 1.0, 0.0];
-        let mut vertices = Vec::new();
-        let mut indices = Vec::new();
-        for corners in face_indices {
-            let base = vertices.len() as u32;
-            for &c in &corners {
-                vertices.push(MeshVertex {
-                    position: positions[c],
-                    normal: face_normal,
-                    uv: [0.0, 0.0],
-                });
-            }
-            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-        }
-        Mesh::from_arrays(vertices, indices)
-    }
-
-    #[test]
-    fn register_is_idempotent() {
-        let mut pipeline = MeshletPipeline::new();
-        let mesh = build_default_meshlets(&cube_mesh()).expect("build");
-        let guid = Guid::new_v4();
-
-        let h0 = pipeline.register_mesh(guid, &mesh);
-        let h1 = pipeline.register_mesh(guid, &mesh);
-        assert_eq!(h0, h1);
-        assert_eq!(pipeline.registered_count(), 1);
-    }
-
-    #[test]
-    fn distinct_guids_get_distinct_pool_handles() {
-        let mut pipeline = MeshletPipeline::new();
-        let mesh = build_default_meshlets(&cube_mesh()).expect("build");
-
-        let g1 = Guid::new_v4();
-        let g2 = Guid::new_v4();
-        let h1 = pipeline.register_mesh(g1, &mesh);
-        let h2 = pipeline.register_mesh(g2, &mesh);
-        assert_ne!(h1, h2);
-        assert_eq!(pipeline.registered_count(), 2);
-    }
-
-    #[test]
-    fn lookup_returns_none_before_register() {
-        let pipeline = MeshletPipeline::new();
-        assert!(pipeline.lookup(Guid::new_v4()).is_none());
-    }
-
-    #[test]
-    fn instance_at_origin_uses_identity() {
-        let inst = instance_at_origin(7);
-        assert_eq!(inst.mesh_id, 7);
-        let m = inst.transform_mat4();
-        assert_eq!(m, Mat4::IDENTITY);
-    }
-
-    /// #492 regression: `MeshRenderer.visible == false` must be
-    /// filtered at the scene-collection step so the cull dispatch
-    /// never sees the entity. Same rule applies to
-    /// `collect_referenced_guids` — an invisible mesh should not be
-    /// pulled into the GPU pool either.
-    #[test]
-    fn invisible_mesh_renderer_is_filtered_at_collect() {
-        use kooch_ecs::allocator::EntityAllocator;
-        use kooch_ecs::archetype_registry::ArchetypeRegistry;
-        use kooch_ecs::commands::Commands;
-        use kooch_ecs::component::registry::ComponentRegistry;
-        use kooch_ecs::query::AccessTracker;
-
-        let mut pipeline = MeshletPipeline::new();
-        let mesh = build_default_meshlets(&cube_mesh()).expect("build");
-        let guid = Guid::new_v4();
-        pipeline.register_mesh(guid, &mesh);
-
-        let mut resources = Resources::new();
-        resources.insert(EntityAllocator::new());
-        resources.insert(ComponentRegistry::new());
-        resources.insert(ArchetypeRegistry::new());
-        resources.insert(AccessTracker::new());
-
-        let mut commands = Commands::new();
-        // A — visible, valid mesh → should land in the instance vec.
-        commands
-            .spawn(&mut resources)
-            .insert(MeshRenderer {
-                mesh: Some(guid),
-                visible: true,
-                ..Default::default()
-            })
-            .insert(GlobalTransform {
-                matrix: Mat4::from_translation(glam::Vec3::ZERO),
-            });
-        // B — invisible: must be dropped at sync time.
-        commands
-            .spawn(&mut resources)
-            .insert(MeshRenderer {
-                mesh: Some(guid),
-                visible: false,
-                ..Default::default()
-            })
-            .insert(GlobalTransform {
-                matrix: Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)),
-            });
-        // C — control: visible but mesh = None, must also be dropped
-        // (separate filter inside collect_scene_instances).
-        commands
-            .spawn(&mut resources)
-            .insert(MeshRenderer {
-                mesh: None,
-                visible: true,
-                ..Default::default()
-            })
-            .insert(GlobalTransform {
-                matrix: Mat4::from_translation(glam::Vec3::new(-2.0, 0.0, 0.0)),
-            });
-        commands.apply(&mut resources);
-
-        let instances = pipeline.collect_scene_instances(&resources);
-        assert_eq!(
-            instances.len(),
-            1,
-            "only entity A (visible + valid mesh) should reach the instance vec"
-        );
-
-        let referenced = pipeline.collect_referenced_guids(&resources);
-        assert_eq!(
-            referenced.len(),
-            1,
-            "the invisible entity must not pull its mesh into the GPU pool"
-        );
-        assert_eq!(referenced[0], guid);
-    }
-}
+mod tests;

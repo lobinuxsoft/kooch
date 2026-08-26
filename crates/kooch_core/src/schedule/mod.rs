@@ -8,6 +8,7 @@ mod any_system;
 mod gpu_batch;
 #[allow(clippy::module_inception)]
 mod schedule;
+mod system_scope;
 
 #[cfg(test)]
 mod tests;

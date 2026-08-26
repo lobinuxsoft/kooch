@@ -138,6 +138,14 @@ fn editor_camera_exists(resources: &Resources) -> bool {
 /// One implementation, here with the marker it looks for. There used to
 /// be a second identical copy in `input::apply`, which is how a bug like
 /// this survives a reading.
+/// The editor camera's current rotation, for the viewport's axis gizmo.
+pub(crate) fn editor_camera_rotation(resources: &Resources) -> Option<glam::Quat> {
+    let entity = find_editor_camera_entity(resources)?;
+    let registry = resources.get::<kooch_ecs::ComponentRegistry>()?;
+    let storage = registry.get_cpu::<kooch_ecs::Transform>()?;
+    Some(storage.get(entity)?.rotation)
+}
+
 pub(crate) fn find_editor_camera_entity(resources: &Resources) -> Option<kooch_ecs::Entity> {
     use kooch_ecs::archetype_registry::ArchetypeRegistry;
 
@@ -161,99 +169,7 @@ fn initial_transform(controller: &EditorCameraController) -> Transform {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn initial_transform_places_camera_at_default_eye() {
-        let controller = EditorCameraController::default();
-        let t = initial_transform(&controller);
-        let delta = (t.position - DEFAULT_EYE).length();
-        assert!(
-            delta < 1e-4,
-            "expected position {DEFAULT_EYE:?}, got {:?}",
-            t.position
-        );
-    }
-
-    #[test]
-    fn initial_transform_looks_at_focus_point() {
-        let controller = EditorCameraController::default();
-        let t = initial_transform(&controller);
-        // Camera-forward in glam right-handed view space is -Z, so the
-        // world-space forward direction is `rotation * -Z`.
-        let forward = (t.rotation * -Vec3::Z).normalize();
-        let expected = (controller.focus_point - t.position).normalize();
-        let dot = forward.dot(expected);
-        assert!(
-            dot > 0.999,
-            "forward {forward:?} should point at focus, dot={dot}"
-        );
-    }
-
-    #[test]
-    fn editor_camera_priority_is_above_default() {
-        // PerspectiveCamera default priority is 0; editor must override.
-        assert!(EDITOR_CAMERA_PRIORITY > 0);
-    }
-}
+mod tests;
 
 #[cfg(test)]
-mod find_tests {
-    use super::*;
-    use kooch_ecs::allocator::EntityAllocator;
-    use kooch_ecs::archetype_registry::ArchetypeRegistry;
-    use kooch_ecs::perspective_camera::PerspectiveCamera;
-    use kooch_ecs::transform::Transform;
-
-    /// An archetype the camera has *left* still lists the marker.
-    ///
-    /// This is what froze the editor camera: the lookup returned from
-    /// inside the loop, so the first archetype carrying `EditorCamera`
-    /// decided the answer even when it held no entities. Adding or
-    /// removing any component on the camera produces exactly this shape.
-    #[test]
-    fn an_empty_archetype_with_the_marker_does_not_hide_the_camera() {
-        let mut resources = Resources::new();
-        let mut alloc = EntityAllocator::new();
-        let camera = alloc.spawn();
-        resources.insert(alloc);
-
-        let mut archetypes = ArchetypeRegistry::new();
-
-        // The shell left behind: carries the marker, holds nobody.
-        let abandoned: std::collections::BTreeSet<_> = [
-            TypeId::of::<EditorCamera>(),
-            TypeId::of::<PerspectiveCamera>(),
-        ]
-        .into_iter()
-        .collect();
-        archetypes.get_or_create(abandoned);
-
-        // Where the camera actually lives now.
-        let current: std::collections::BTreeSet<_> = [
-            TypeId::of::<EditorCamera>(),
-            TypeId::of::<PerspectiveCamera>(),
-            TypeId::of::<Transform>(),
-        ]
-        .into_iter()
-        .collect();
-        let current_id = archetypes.get_or_create(current);
-        archetypes.register_entity(camera, current_id);
-        resources.insert(archetypes);
-
-        assert_eq!(
-            find_editor_camera_entity(&resources),
-            Some(camera),
-            "the lookup stopped at the empty archetype and reported no camera",
-        );
-    }
-
-    #[test]
-    fn no_camera_at_all_is_none() {
-        let mut resources = Resources::new();
-        resources.insert(EntityAllocator::new());
-        resources.insert(ArchetypeRegistry::new());
-        assert_eq!(find_editor_camera_entity(&resources), None);
-    }
-}
+mod find_tests;

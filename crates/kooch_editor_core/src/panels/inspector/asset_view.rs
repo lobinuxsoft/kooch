@@ -1,8 +1,9 @@
 //! Asset inspector — the Inspector panel's view when an *asset* (rather
 //! than an entity) is selected in the Asset Browser.
 //!
-//! Shows read-only *import settings* for baked assets (meshes, textures)
-//! and editable *input parameters* for authored assets (materials:
+//! Shows *import settings* for baked assets (meshes, textures) — a
+//! texture's mip chain is editable here and writes the asset's `.meta`
+//! — and editable *input parameters* for authored assets (materials:
 //! colours, scalars, texture slots). Material edits are emitted as
 //! [`EditorAction::EditMaterial`], which writes the change back to the
 //! asset's `.ron`.
@@ -41,7 +42,20 @@ pub(crate) enum AssetDetail {
     /// what is on disk. The two differ exactly while there are unsaved
     /// changes, which is what the Save button is for.
     Prefab(Box<PrefabDetail>),
-    /// A typed asset with no dedicated detail view yet.
+    /// Any asset registered with `register_reflected_asset!`, drawn
+    /// through the same grid components use (#744).
+    ///
+    /// The hand-written variants above still win where they exist: they
+    /// do more than field editing — texture pickers, import stats, a
+    /// prefab's entity tree. This is what turns "no import settings"
+    /// into "editable" for every type that never gets a bespoke view,
+    /// which is every type nobody remembers to add one for.
+    Reflected {
+        type_name: String,
+        fields: Vec<(String, kooch_ecs::reflect::ReflectValue)>,
+        field_metas: Option<&'static [kooch_ecs::reflect::FieldMeta]>,
+    },
+    /// A typed asset with neither a dedicated view nor reflection.
     Unknown { type_name: String },
 }
 
@@ -113,6 +127,13 @@ pub(crate) struct ImageImportInfo {
     pub height: u32,
     pub format: &'static str,
     pub bytes: usize,
+    /// The `[import]` table's answer, or the engine's default.
+    pub import: kooch_render::texture::ImageImport,
+    /// How many levels the chain has when it is on — shown because
+    /// "mipmaps" is an abstraction and "11 levels" is a fact about this
+    /// texture, and because a 1x1 image getting one level is the
+    /// explanation for a checkbox that appears to do nothing.
+    pub levels: u32,
 }
 
 /// Renders the Inspector's asset view. `detail` is `None` while the
@@ -156,7 +177,22 @@ pub(crate) fn draw_asset_inspector(
                 actions,
             ),
             Some(AssetDetail::Mesh(info)) => draw_mesh_import(ui, info),
-            Some(AssetDetail::Image(info)) => draw_image_import(ui, info),
+            Some(AssetDetail::Image(info)) => draw_image_import(ui, entry.guid, info, actions),
+            Some(AssetDetail::Reflected {
+                type_name,
+                fields,
+                field_metas,
+            }) => draw_reflected_asset(
+                ui,
+                entry.guid,
+                type_name,
+                fields,
+                *field_metas,
+                euler_cache,
+                catalog,
+                entities,
+                actions,
+            ),
             Some(AssetDetail::Unknown { type_name }) => {
                 ui.weak(format!("No import settings for {type_name}."));
             }
@@ -218,6 +254,38 @@ fn draw_material_editor(
 
     ui.separator();
     ui.label("Textures");
+    egui::Grid::new(("material_uv", guid))
+        .num_columns(2)
+        .spacing([8.0, 4.0])
+        .show(ui, |ui| {
+            // Above the slots on purpose: it applies to all three, and
+            // reading it after them invites the idea that it belongs to
+            // the last one.
+            ui.label("Tiling");
+            ui.horizontal(|ui| {
+                for axis in 0..2 {
+                    let response = ui.add(
+                        crate::numeric::drag(&mut edited.uv_scale[axis])
+                            .speed(0.05)
+                            .range(0.001..=1024.0),
+                    );
+                    changed |= response.changed();
+                    released |= response.drag_stopped();
+                }
+            });
+            ui.end_row();
+
+            ui.label("Offset");
+            ui.horizontal(|ui| {
+                for axis in 0..2 {
+                    let response =
+                        ui.add(crate::numeric::drag(&mut edited.uv_offset[axis]).speed(0.01));
+                    changed |= response.changed();
+                    released |= response.drag_stopped();
+                }
+            });
+            ui.end_row();
+        });
     changed |= texture_row(ui, "Albedo", &mut edited.albedo, catalog);
     changed |= texture_row(ui, "Normal", &mut edited.normal, catalog);
     changed |= texture_row(ui, "Metal/Rough", &mut edited.metal_roughness, catalog);
@@ -292,16 +360,44 @@ fn draw_mesh_import(ui: &mut egui::Ui, info: &MeshImportInfo) {
         });
 }
 
-fn draw_image_import(ui: &mut egui::Ui, info: &ImageImportInfo) {
-    ui.weak("Import settings (read-only)");
+fn draw_image_import(
+    ui: &mut egui::Ui,
+    guid: Guid,
+    info: &ImageImportInfo,
+    actions: &mut Vec<EditorAction>,
+) {
+    ui.weak("Import settings");
+    let mut import = info.import;
     egui::Grid::new("image_import")
         .num_columns(2)
         .spacing([8.0, 4.0])
         .show(ui, |ui| {
+            ui.label("Mipmaps");
+            let response = ui.checkbox(&mut import.mipmaps, "");
+            response.on_hover_text(
+                "Pre-filtered smaller copies, sampled as a surface tilts away from the \
+                 camera. Off is for textures read at their own scale — a UI atlas, a \
+                 lookup table — where the smaller copies are memory spent to make a 1:1 \
+                 sample blurrier.",
+            );
+            ui.end_row();
+
             kv(ui, "Size", &format!("{} × {}", info.width, info.height));
             kv(ui, "Format", info.format);
             kv(ui, "Bytes", &info.bytes.to_string());
+            kv(
+                ui,
+                "Levels",
+                &if info.import.mipmaps {
+                    info.levels.to_string()
+                } else {
+                    "1".to_owned()
+                },
+            );
         });
+    if import != info.import {
+        actions.push(EditorAction::SetImageImport { guid, import });
+    }
 }
 
 /// One `label: value` grid row.
@@ -310,3 +406,73 @@ fn kv(ui: &mut egui::Ui, key: &str, value: &str) {
     ui.label(value);
     ui.end_row();
 }
+
+/// Any reflected asset, drawn with the component grid (#744).
+///
+/// # The synthetic entity and component id
+///
+/// `draw_reflected_fields` takes both, and an asset has neither. Its own
+/// documentation already provides for this — *"a caller with no entity
+/// passes a synthetic one"* — and the prefab inspector does the same.
+/// Both are derived from the guid so two assets never share egui state
+/// or a euler-cache entry, and the generation is one no live entity
+/// carries.
+#[allow(clippy::too_many_arguments)]
+fn draw_reflected_asset(
+    ui: &mut egui::Ui,
+    guid: Guid,
+    type_name: &str,
+    fields: &[(String, kooch_ecs::reflect::ReflectValue)],
+    field_metas: Option<&'static [kooch_ecs::reflect::FieldMeta]>,
+    euler_cache: &mut std::collections::HashMap<super::EulerCacheKey, glam::Vec3>,
+    catalog: &[AssetCatalogEntry],
+    entities: &[crate::state::EntityDisplayInfo],
+    actions: &mut Vec<EditorAction>,
+) {
+    let short = type_name.rsplit("::").next().unwrap_or(type_name);
+    ui.label(short);
+    ui.separator();
+
+    if fields.is_empty() {
+        ui.weak("(no fields)");
+        return;
+    }
+
+    let bits = guid.as_uuid().as_u128();
+    let synthetic_entity = kooch_ecs::entity::Entity::new(bits as u32, ASSET_PSEUDO_GENERATION);
+    let synthetic_component = kooch_ecs::component::ComponentId((bits >> 64) as u32);
+
+    let edits = super::single::draw_reflected_fields(
+        ui,
+        synthetic_entity,
+        None,
+        synthetic_component,
+        fields,
+        field_metas,
+        euler_cache,
+        // An asset has no world transform to display a rotation against.
+        super::RotationContext::local_only(),
+        catalog,
+        entities,
+    );
+
+    // One write per gesture, not per frame. A slider reports a change
+    // every frame it is dragged; persisting each one writes the file,
+    // reads it back and round-trips to the running project — 29 times
+    // for one drag, measured in #728. While the pointer is down the
+    // in-memory copy is enough and the viewport follows it.
+    let commit = !ui.ctx().input(|i| i.pointer.any_down());
+    for (field, value) in edits {
+        actions.push(EditorAction::EditAssetField {
+            guid,
+            field,
+            value,
+            commit,
+        });
+    }
+}
+
+/// Generation no live entity carries, and distinct from the prefab
+/// inspector\'s. Keeps asset and prefab euler-cache entries apart when
+/// their synthetic indices happen to collide.
+const ASSET_PSEUDO_GENERATION: u32 = u32::MAX - 1;

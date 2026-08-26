@@ -14,9 +14,15 @@ kooch_ecs.workspace = true
 # without one paints normals.
 kooch_lighting.workspace = true
 wgpu.workspace = true
+dlss_wgpu = { workspace = true, optional = true }
 glam.workspace = true
 bytemuck.workspace = true
 tracing.workspace = true
+# The profiling facade (#785). No backend is selected here: with none
+# of `profiling`'s `profile-with-*` features on, every `scope!` in this
+# crate expands to nothing, so a release build carries no instrumentation
+# at all rather than instrumentation that is switched off (#558).
+profiling.workspace = true
 gltf.workspace = true
 base64.workspace = true
 image.workspace = true
@@ -34,6 +40,22 @@ metis = { version = "0.2", default-features = false, features = ["vendored"] }
 ron.workspace = true
 serde.workspace = true
 
+[features]
+# Forwards `kooch_core`'s GPU timer scopes (#785). Nothing in this
+# crate is `cfg`'d on it: `GpuScopes` is present either way and its
+# methods compile to nothing when the feature is off, so the render
+# code has one shape.
+gpu-profiler = ["kooch_core/gpu-profiler"]
+# NVIDIA DLSS (#536). Off by default and compile-time by construction:
+# `dlss_wgpu`'s build script links NVIDIA's static library, so a build
+# with this on needs `DLSS_SDK` and `VULKAN_SDK` set. With it off the
+# `Dlss` technique still exists, still serialises, and falls back to the
+# engine's own resolve with a warning.
+dlss = ["dep:dlss_wgpu", "kooch_core/dlss"]
+
 [dev-dependencies]
 naga = { version = "29", features = ["wgsl-in"] }
 pollster.workspace = true
+# Reading back what the GPU scopes reported (#785). Only the test needs
+# to name puffin: the engine reaches it through `kooch_core`.
+puffin.workspace = true

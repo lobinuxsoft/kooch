@@ -14,6 +14,51 @@ use std::path::Path;
 pub struct LoadContext<'a> {
     /// Absolute path the bytes came from.
     pub path: &'a Path,
+    /// The `[import]` table of the asset's `.meta`, when it has one.
+    ///
+    /// Private and read through [`Self::import`]: the settings are
+    /// per-type — a texture's chain, a mesh's scale — and `kooch_core`
+    /// has no business knowing what any of them mean. It carries the
+    /// table; the loader that owns the type deserialises it.
+    import: Option<&'a toml::Table>,
+}
+
+impl<'a> LoadContext<'a> {
+    /// A context with no import settings, which is what a test and a
+    /// `.meta`-less file both get.
+    pub fn new(path: &'a Path) -> Self {
+        Self { path, import: None }
+    }
+
+    /// The same, carrying the sidecar's `[import]` table.
+    pub fn with_import(path: &'a Path, import: Option<&'a toml::Table>) -> Self {
+        Self { path, import }
+    }
+
+    /// The loader's own import settings, or their defaults.
+    ///
+    /// 🔴 Defaults rather than an error on a malformed table, and it is
+    /// deliberate: a settings file should never stop an asset from
+    /// loading. A `.meta` written by a newer engine, or hand-edited with
+    /// a typo, has to leave the texture on screen — the failure belongs
+    /// in the log, not in a missing mesh.
+    pub fn import<T: serde::de::DeserializeOwned + Default>(&self) -> T {
+        let Some(table) = self.import else {
+            return T::default();
+        };
+        match table.clone().try_into() {
+            Ok(settings) => settings,
+            Err(error) => {
+                tracing::warn!(
+                    target: "kooch_core::asset_loader",
+                    path = %self.path.display(),
+                    %error,
+                    "the .meta's [import] table did not parse; using defaults",
+                );
+                T::default()
+            }
+        }
+    }
 }
 
 /// Trait every asset loader implements.

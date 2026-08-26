@@ -83,13 +83,23 @@ fn test_socket_name() -> String {
     )
 }
 
+/// The scene the test project reports as open.
+const PROJECT_SCENE: &str = "assets/scenes/many_lights.scene";
+
 /// A project with one Transform-bearing entity at the origin, served
 /// until `done` flips.
+///
+/// It holds a `SceneManager` because a real one does, and the editor
+/// now reads the open set from it over the wire — a fixture without one
+/// would be a project the World panel could say nothing about.
 fn project(done: Arc<AtomicBool>) -> (String, std::thread::JoinHandle<()>) {
     let server = RemoteServer::start(&test_socket_name()).expect("bind");
     let socket = server.name().to_owned();
     let thread = std::thread::spawn(move || {
         let mut res = ecs();
+        let mut scenes = kooch_ecs::SceneManager::new();
+        scenes.set_current(std::path::PathBuf::from(PROJECT_SCENE));
+        res.insert(scenes);
         let entity = {
             let mut commands = res.remove::<Commands>().unwrap();
             let entity = commands.spawn(&mut res).id();
@@ -379,4 +389,99 @@ fn an_idle_handle_set_does_not_block_the_refresh() {
 
     resources.insert(dragging_handles());
     assert!(drag_in_flight(&resources));
+}
+
+/// An edit the editor just sent is not "outside change": the pull that
+/// shows it has to be the next frame's, not the next tick of a
+/// half-second cadence. Waiting it out is what made Ctrl+Z look ignored.
+#[test]
+fn an_edit_asks_for_a_pull() {
+    let mut sync = RemoteSyncState::default();
+    sync.last_pull = Some(std::time::Instant::now());
+    assert!(
+        sync.last_pull
+            .is_some_and(|last| last.elapsed() < sync.idle_interval),
+        "the cadence would have skipped the pull",
+    );
+
+    sync.invalidate();
+    assert!(
+        sync.last_pull
+            .is_none_or(|last| last.elapsed() >= sync.idle_interval),
+        "the pull is still waiting out the cadence",
+    );
+}
+
+/// The intent is spent when the mirror can name what the project made,
+/// and held until then — the project's id is not a handle this side can
+/// select.
+///
+/// The selection write itself is not covered here: it needs an
+/// `EditorOverlay`, which needs a GPU. What is covered is the half that
+/// decides *when* — which is where a creation either lands selected or
+/// lands lost in a list of six hundred.
+#[test]
+fn a_creation_waits_for_its_snapshot() {
+    use kooch_remote::protocol::{EntityId, EntitySnapshot};
+
+    let mut resources = ecs();
+    let mut mirror = crate::remote_mirror::RemoteMirror::new();
+    let made = EntityId {
+        index: 4,
+        generation: 1,
+    };
+    let mut pending = vec![made];
+
+    // Before the snapshot: nothing to name, so the intent is kept.
+    take_selection(&mut resources, &mirror, &mut pending);
+    assert_eq!(pending.len(), 1, "the intent was dropped too early");
+
+    mirror.apply(
+        &[EntitySnapshot {
+            id: made,
+            name: Some("Hero Copy".to_owned()),
+            parent: None,
+            scene: None,
+            components: Vec::new(),
+        }],
+        &mut resources,
+    );
+    take_selection(&mut resources, &mirror, &mut pending);
+
+    assert!(pending.is_empty(), "the intent outlived its snapshot");
+    assert!(mirror.local_of(made).is_some());
+}
+
+/// The editor lists the project's scenes, not its own.
+///
+/// 🔴 The editor's `SceneManager` seeds an unsaved scene with a random
+/// id at startup. Drawn from that, the World panel showed an
+/// `Untitled` root nothing belongs to and dropped every mirrored entity
+/// into "Unsaved", because the scene each one names was in nobody's
+/// list. **Open Project always opens remote**, so that was the normal
+/// path, not an edge case.
+#[test]
+fn the_project_names_the_open_scenes() {
+    let done = Arc::new(AtomicBool::new(false));
+    let (socket, thread) = project(done.clone());
+    let mut resources = ecs();
+    let state = connected(&socket, &mut resources);
+
+    let scenes = state
+        .session
+        .as_ref()
+        .unwrap()
+        .open_scenes()
+        .expect("the project answered");
+    assert_eq!(scenes.len(), 1, "the project has exactly one scene open");
+    assert_eq!(scenes[0].path.as_deref(), Some(PROJECT_SCENE));
+    assert!(scenes[0].active);
+
+    // And it is a scene the editor could not have invented: its own
+    // manager holds a different id under no path at all.
+    let mine = kooch_ecs::SceneManager::new();
+    assert_ne!(Some(scenes[0].id), mine.active_id());
+
+    done.store(true, Ordering::Relaxed);
+    let _ = thread.join();
 }

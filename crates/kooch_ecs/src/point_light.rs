@@ -19,7 +19,9 @@ use crate::Reflect;
 /// - `color`: white `(1, 1, 1)`
 /// - `intensity`: [`lumens::ROOM_LIGHT_NO_GI`](crate::light_consts::lumens::ROOM_LIGHT_NO_GI)
 /// - `range`: 10.0
+/// - `radius`: 0.0 (a point, as every light in the engine was before)
 /// - `cast_shadows`: true
+/// - `contact_shadows`: false
 #[derive(Debug, Clone, Copy, Reflect)]
 #[reflect(category = "Rendering")]
 pub struct PointLight {
@@ -52,11 +54,40 @@ pub struct PointLight {
     /// sphere draws precisely this boundary, and scales with the
     /// entity's transform the way the shading does.
     pub range: f32,
+    /// Radius of the emitting sphere, in world units. `0` is a
+    /// mathematical point.
+    ///
+    /// A real lamp has a size, and its size is what decides how big the
+    /// highlight it leaves on a glossy surface is. Growing this widens
+    /// that highlight without making the surface brighter.
+    ///
+    /// ⚠️ **Specular only.** It does not soften the diffuse falloff and
+    /// it does not soften shadows — a soft shadow is a separate
+    /// technique driven by the same number (#477), not a consequence of
+    /// this one. Bevy's `PointLight::radius` is documented the same way.
+    pub radius: f32,
     /// Whether this light casts shadows.
     ///
-    /// ⚠️ Not implemented yet — shadows land with #476 / #477. The field
-    /// is stored and saved; today nothing reads it.
+    /// Since #778 this is a cube map and a promise the engine keeps —
+    /// for **at most `MAX_POINT_SHADOWS` lights at a time**. Past that a
+    /// light keeps lighting the scene and stops casting; which ones lose
+    /// their cube is decided per frame by how much a cube spent on them
+    /// would show, so the Inspector cannot answer it for a given light.
     pub cast_shadows: bool,
+    /// Whether this light marches the depth buffer for contact shadows.
+    ///
+    /// Off by default, unlike [`DirectionalLight`](crate::DirectionalLight):
+    /// the march costs per light per pixel, and a scene has one sun but
+    /// can have fifty lamps. Turn it on for the few whose contact with
+    /// the floor the viewer actually looks at.
+    ///
+    /// 🔴 **Measured, and it is the most expensive thing a point light
+    /// can be asked to do.** In `many_lights.scene` — a hundred lamps,
+    /// eight steps each — turning this off across the scene took
+    /// `shade: compute` from 24.860 ms to 11.081 on the OneXFly, against
+    /// a whole-frame budget of 13.9. Unlike the cube map it has **no
+    /// cap**: every light that reaches a pixel marches for it.
+    pub contact_shadows: bool,
 }
 
 impl Default for PointLight {
@@ -66,7 +97,9 @@ impl Default for PointLight {
             color: Vec3::ONE,
             intensity: crate::light_consts::lumens::ROOM_LIGHT_NO_GI,
             range: 10.0,
+            radius: 0.0,
             cast_shadows: true,
+            contact_shadows: false,
         }
     }
 }
@@ -74,31 +107,4 @@ impl Default for PointLight {
 impl Component for PointLight {}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::reflect::Reflect;
-
-    #[test]
-    fn default_values() {
-        let l = PointLight::default();
-        assert!(l.active);
-        assert_eq!(l.color, Vec3::ONE);
-        // Deliberately far above a real fixture: direct lighting only,
-        // so the bounces that make a real room bright are missing. Goes
-        // back to a real bulb the day #450 lands.
-        assert_eq!(l.intensity, crate::light_consts::lumens::ROOM_LIGHT_NO_GI);
-        assert_eq!(l.range, 10.0);
-        assert!(l.cast_shadows);
-    }
-
-    #[test]
-    fn reflect_fields() {
-        let l = PointLight::default();
-        let fields = l.reflect_fields();
-        let names: Vec<&str> = fields.iter().map(|f| f.name).collect();
-        assert_eq!(
-            names,
-            &["active", "color", "intensity", "range", "cast_shadows"]
-        );
-    }
-}
+mod tests;

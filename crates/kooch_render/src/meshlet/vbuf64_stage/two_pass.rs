@@ -17,12 +17,13 @@
 
 use bytemuck::bytes_of;
 
+use crate::contact_shadow::ContactShadowUbo;
 use crate::material::MaterialPipeline;
 use crate::meshlet::dispatcher::MeshletCull;
 use crate::meshlet::scene::MeshletScene;
 use crate::meshlet::{
-    MATERIAL_DEPTH_FORMAT, MATERIAL_PBR_DEFAULT_BODY, RESOLVE_MATERIAL_DEPTH_SHADER,
-    compose_material_shader,
+    MATERIAL_DEPTH_FORMAT, MATERIAL_PASS_CONTACT_DEPTH_BINDING, MATERIAL_PASS_CONTACT_UBO_BINDING,
+    MATERIAL_PBR_DEFAULT_BODY, RESOLVE_MATERIAL_DEPTH_SHADER, compose_material_shader,
 };
 
 use super::{CameraUbo, DEFERRED_COLOR_FORMAT, ScreenUbo, VBUF64_FORMAT};
@@ -31,10 +32,81 @@ use super::{CameraUbo, DEFERRED_COLOR_FORMAT, ScreenUbo, VBUF64_FORMAT};
 /// Matches `MaterialPipeline::DEFAULT_CAPACITY`.
 const MAX_SHADING_SLOTS: u32 = 256;
 
+/// Pass 2's pipeline, in one of its two variants.
+///
+/// `debug` decides whether the shader carries the debug views at all —
+/// not whether it takes a branch. The production variant is compiled
+/// from source that does not contain them (#743).
+fn build_shading_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    debug: bool,
+) -> wgpu::RenderPipeline {
+    let src = compose_material_shader(MATERIAL_PBR_DEFAULT_BODY, debug);
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some(if debug {
+            "material_pbr_default_shader_debug"
+        } else {
+            "material_pbr_default_shader"
+        }),
+        source: wgpu::ShaderSource::Wgsl(src.into()),
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("material_two_pass_shading_pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: &module,
+            entry_point: Some("vs_fullscreen"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: Some("fs_material"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: DEFERRED_COLOR_FORMAT,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: MATERIAL_DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Equal),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 pub(super) struct MaterialTwoPass {
     resolve_pipeline: wgpu::RenderPipeline,
     resolve_bgl: wgpu::BindGroupLayout,
     shading_pipeline: wgpu::RenderPipeline,
+    /// The same pipeline with the debug views concatenated in (#743).
+    ///
+    /// Built the first time somebody selects one, because a shipped game
+    /// never does: it neither compiles this nor carries a byte of it in
+    /// the pipeline it does run. The editor pays one compile, once, on
+    /// the frame the dropdown changes.
+    ///
+    /// A `OnceLock` rather than an `Option` so the whole render chain
+    /// stays on `&self`. Threading `&mut` up to the frame orchestrator
+    /// for a field written once, if ever, would be a large change to
+    /// call signatures in exchange for nothing; the steady-state cost
+    /// here is one atomic load per frame.
+    shading_pipeline_debug: std::sync::OnceLock<wgpu::RenderPipeline>,
+    /// Kept so the debug pipeline can be built later against the exact
+    /// layout the production one uses.
+    shading_layout: wgpu::PipelineLayout,
     frame_bgl: wgpu::BindGroupLayout,
     materials_bgl: wgpu::BindGroupLayout,
     scene_bgl: wgpu::BindGroupLayout,
@@ -43,6 +115,8 @@ pub(super) struct MaterialTwoPass {
     /// single buffer feeds every per-material pass in one submit.
     screen_buffer: wgpu::Buffer,
     screen_stride: u64,
+    /// The contact-shadow march's per-view uniform (#735).
+    contact_buffer: wgpu::Buffer,
 }
 
 impl MaterialTwoPass {
@@ -53,12 +127,6 @@ impl MaterialTwoPass {
             label: Some("resolve_material_depth_shader"),
             source: wgpu::ShaderSource::Wgsl(RESOLVE_MATERIAL_DEPTH_SHADER.into()),
         });
-        let material_src = compose_material_shader(MATERIAL_PBR_DEFAULT_BODY);
-        let material_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("material_pbr_default_shader"),
-            source: wgpu::ShaderSource::Wgsl(material_src.into()),
-        });
-
         let vbuf_read = |binding: u32| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -107,7 +175,39 @@ impl MaterialTwoPass {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: true,
-                        min_binding_size: std::num::NonZeroU64::new(16),
+                        min_binding_size: std::num::NonZeroU64::new(
+                            std::mem::size_of::<ScreenUbo>() as u64,
+                        ),
+                    },
+                    count: None,
+                },
+                // Contact shadows (#735). Both here rather than in
+                // Inti's group: the depth buffer is per view and that
+                // group is shared across views.
+                wgpu::BindGroupLayoutEntry {
+                    binding: MATERIAL_PASS_CONTACT_UBO_BINDING,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
+                            ContactShadowUbo,
+                        >()
+                            as u64),
+                    },
+                    count: None,
+                },
+                // The scene depth, sampled. It is not an attachment
+                // during shading — that is the material-depth target —
+                // so it is free to be read, and the Hi-Z builder
+                // already reads the same view.
+                wgpu::BindGroupLayoutEntry {
+                    binding: MATERIAL_PASS_CONTACT_DEPTH_BINDING,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
                     count: None,
                 },
@@ -180,40 +280,7 @@ impl MaterialTwoPass {
             ],
             immediate_size: 0,
         });
-        let shading_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("material_two_pass_shading_pipeline"),
-            layout: Some(&shading_layout),
-            vertex: wgpu::VertexState {
-                module: &material_shader,
-                entry_point: Some("vs_fullscreen"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &material_shader,
-                entry_point: Some("fs_material"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: DEFERRED_COLOR_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: MATERIAL_DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Equal),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let shading_pipeline = build_shading_pipeline(device, &shading_layout, false);
 
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
         let screen_stride = align.max(std::mem::size_of::<ScreenUbo>() as u64);
@@ -230,22 +297,42 @@ impl MaterialTwoPass {
             mapped_at_creation: false,
         });
 
+        let contact_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("material_two_pass_contact_shadow_ubo"),
+            size: std::mem::size_of::<ContactShadowUbo>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
             resolve_pipeline,
             resolve_bgl,
             shading_pipeline,
+            shading_pipeline_debug: std::sync::OnceLock::new(),
+            shading_layout,
             frame_bgl,
             materials_bgl,
             scene_bgl,
             camera_buffer,
             screen_buffer,
             screen_stride,
+            contact_buffer,
         }
     }
 
     /// Runs pass 1 (material-depth resolve) then one pass 2 draw per
     /// shading slot. Replaces `Vbuf64Deferred::shade_scene` for production
     /// (`Off`) rendering on the R64 path.
+    /// The pipeline this frame draws with, compiling the debug variant
+    /// the first time one is asked for.
+    fn pipeline_for(&self, device: &wgpu::Device, debug_mode: u32) -> &wgpu::RenderPipeline {
+        if debug_mode == 0 {
+            return &self.shading_pipeline;
+        }
+        self.shading_pipeline_debug
+            .get_or_init(|| build_shading_pipeline(device, &self.shading_layout, true))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn shade(
         &self,
@@ -254,6 +341,7 @@ impl MaterialTwoPass {
         encoder: &mut wgpu::CommandEncoder,
         vbuf_view: &wgpu::TextureView,
         material_depth_view: &wgpu::TextureView,
+        depth_sample_view: &wgpu::TextureView,
         color_view: &wgpu::TextureView,
         meshlet_bg: &wgpu::BindGroup,
         cull: &MeshletCull,
@@ -261,9 +349,12 @@ impl MaterialTwoPass {
         material_pipeline: &MaterialPipeline,
         lights_bg: &wgpu::BindGroup,
         view_proj: glam::Mat4,
+        contact: &ContactShadowUbo,
         screen_size: (u32, u32),
         debug_mode: u32,
     ) {
+        let shading_pipeline = self.pipeline_for(device, debug_mode);
+
         queue.write_buffer(
             &self.camera_buffer,
             0,
@@ -271,11 +362,16 @@ impl MaterialTwoPass {
                 view_proj: view_proj.to_cols_array_2d(),
             }),
         );
+        queue.write_buffer(&self.contact_buffer, 0, bytes_of(contact));
         let slots = material_pipeline.shading_slots();
         debug_assert!(
             slots.end <= MAX_SHADING_SLOTS,
             "shading slot count exceeds MAX_SHADING_SLOTS",
         );
+        // `KOOCH_SHADING_PAD`, applied here so the loop below writes a
+        // `ScreenUbo` for the padded slots too. Zero unless a
+        // measurement run asked for it (#885).
+        let slots = super::shading_pad::padded_slots(slots, MAX_SHADING_SLOTS);
         for slot in slots.clone() {
             queue.write_buffer(
                 &self.screen_buffer,
@@ -284,6 +380,13 @@ impl MaterialTwoPass {
                     size: [screen_size.0, screen_size.1],
                     material_id: slot,
                     debug_mode,
+                    // This path shades inside its own raster: one
+                    // invocation per covered pixel, and no thread to
+                    // remove (#825).
+                    shading_rate: 1,
+                    // No bias: this pass does not sample material textures.
+                    mip_bias_scale: 1.0,
+                    _pad: [0; 2],
                 }),
             );
         }
@@ -349,6 +452,14 @@ impl MaterialTwoPass {
                         size: std::num::NonZeroU64::new(std::mem::size_of::<ScreenUbo>() as u64),
                     }),
                 },
+                wgpu::BindGroupEntry {
+                    binding: MATERIAL_PASS_CONTACT_UBO_BINDING,
+                    resource: self.contact_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: MATERIAL_PASS_CONTACT_DEPTH_BINDING,
+                    resource: wgpu::BindingResource::TextureView(depth_sample_view),
+                },
             ],
         });
         let materials_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -406,7 +517,7 @@ impl MaterialTwoPass {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.shading_pipeline);
+            pass.set_pipeline(shading_pipeline);
             let offset = (slot as u64 * self.screen_stride) as u32;
             pass.set_bind_group(0, &frame_bg, &[offset]);
             pass.set_bind_group(1, meshlet_bg, &[]);

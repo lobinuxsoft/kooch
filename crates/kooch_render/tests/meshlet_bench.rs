@@ -117,10 +117,16 @@ fn meshlet_bench_sphere_renders_under_target_frame_time() {
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        // TEXTURE_BINDING as well: the contact-shadow march (#735)
+        // samples the scene depth during shading.
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
     let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let depth_sample_view = depth_tex.create_view(&wgpu::TextureViewDescriptor {
+        aspect: wgpu::TextureAspect::DepthOnly,
+        ..Default::default()
+    });
 
     let cam = Vec3::new(0.0, 0.0, 3.0);
     let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
@@ -158,6 +164,7 @@ fn meshlet_bench_sphere_renders_under_target_frame_time() {
         &queue,
         &mut warmup,
         &vbuf_view,
+        &depth_sample_view,
         &color_view,
         &meshlet_bg,
         &material_bg,
@@ -204,6 +211,7 @@ fn meshlet_bench_sphere_renders_under_target_frame_time() {
             &queue,
             &mut enc,
             &vbuf_view,
+            &depth_sample_view,
             &color_view,
             &meshlet_bg,
             &material_bg,
@@ -332,7 +340,8 @@ fn meshlet_bench_scaling_per_pass_timings() {
         );
         let material_bg = materials.pool().bind_group(&device);
 
-        let (vbuf_view, color_view, depth_view) = bench_offscreen_targets(&device);
+        let (vbuf_view, color_view, depth_view, depth_sample_view) =
+            bench_offscreen_targets(&device);
 
         let cam = Vec3::new(0.0, 0.0, 3.0);
         let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
@@ -366,6 +375,7 @@ fn meshlet_bench_scaling_per_pass_timings() {
             &vbuf_view,
             &color_view,
             &depth_view,
+            &depth_sample_view,
             view_proj,
             model,
             &cull_params,
@@ -391,6 +401,7 @@ fn meshlet_bench_scaling_per_pass_timings() {
                 &vbuf_view,
                 &color_view,
                 &depth_view,
+                &depth_sample_view,
                 view_proj,
                 model,
                 &cull_params,
@@ -453,7 +464,12 @@ fn median(samples: &[f64]) -> f64 {
 
 fn bench_offscreen_targets(
     device: &wgpu::Device,
-) -> (wgpu::TextureView, wgpu::TextureView, wgpu::TextureView) {
+) -> (
+    wgpu::TextureView,
+    wgpu::TextureView,
+    wgpu::TextureView,
+    wgpu::TextureView,
+) {
     let size = wgpu::Extent3d {
         width: BENCH_RT_WIDTH,
         height: BENCH_RT_HEIGHT,
@@ -486,13 +502,19 @@ fn bench_offscreen_targets(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        // TEXTURE_BINDING as well: the contact-shadow march (#735)
+        // samples the scene depth during shading.
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
     (
         vbuf.create_view(&wgpu::TextureViewDescriptor::default()),
         color.create_view(&wgpu::TextureViewDescriptor::default()),
         depth.create_view(&wgpu::TextureViewDescriptor::default()),
+        depth.create_view(&wgpu::TextureViewDescriptor {
+            aspect: wgpu::TextureAspect::DepthOnly,
+            ..Default::default()
+        }),
     )
 }
 
@@ -510,6 +532,7 @@ fn bench_run_frame(
     vbuf_view: &wgpu::TextureView,
     color_view: &wgpu::TextureView,
     depth_view: &wgpu::TextureView,
+    depth_sample_view: &wgpu::TextureView,
     view_proj: Mat4,
     model: Mat4,
     cull_params: &CullParams,
@@ -560,6 +583,7 @@ fn bench_run_frame(
         queue,
         &mut enc,
         vbuf_view,
+        depth_sample_view,
         color_view,
         meshlet_bg,
         material_bg,

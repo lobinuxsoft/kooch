@@ -69,8 +69,7 @@ pub fn activate_chunks_cached(
     manager: &mut ChunkManager,
     config: &LodRingConfig,
 ) {
-    let positions: Vec<FocusPosition> =
-        focuses.iter().map(|(e, p, _)| (*e, *p)).collect();
+    let positions: Vec<FocusPosition> = focuses.iter().map(|(e, p, _)| (*e, *p)).collect();
     let dirty = cache.dirty_pairs(&positions, config.lod_count());
     cache.purge_stale(&positions);
 
@@ -92,10 +91,7 @@ pub fn activation_system(
     manager: &mut ChunkManager,
     config: &LodRingConfig,
 ) {
-    let origin = resources
-        .get::<ActiveOrigin>()
-        .copied()
-        .unwrap_or_default();
+    let origin = resources.get::<ActiveOrigin>().copied().unwrap_or_default();
 
     let mut focuses: Vec<(Entity, DVec3, u8)> = Vec::new();
     let q = Query::<(Entity, &StreamingFocus, &GlobalTransform)>::new(resources);

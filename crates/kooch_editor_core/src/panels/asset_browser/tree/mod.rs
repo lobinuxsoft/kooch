@@ -53,6 +53,23 @@ pub(crate) struct RenderCtx<'a> {
     /// Keyboard state. The renderer records the rows it draws here, and
     /// applies whatever the keyboard asked for on the way past.
     pub nav: &'a mut AssetNav,
+    /// Whether the project already has a `.rendersettings`.
+    ///
+    /// Read from the catalog rather than the database: the menu draws
+    /// from what the panel already has in hand, and reaching into
+    /// `Resources` from a context menu is how a draw ends up owning a
+    /// lookup that belongs to the frame.
+    pub has_settings: bool,
+    /// The open project's root, for deciding whether a folder is one the
+    /// editor scans. `None` when no project is open, which makes every
+    /// folder [`FolderRole::Other`].
+    pub project_root: Option<&'a Path>,
+    /// The scene the project opens with, absolute (#808).
+    ///
+    /// Resolved once by the panel rather than per row: it comes from the
+    /// manifest, every leaf compares against it, and reading it per file
+    /// would be a lookup inside a draw.
+    pub main_scene: Option<&'a Path>,
 }
 
 /// Renders one source root as a top-level collapsible node. `root_path`
@@ -77,8 +94,24 @@ pub(crate) fn render_root(
                 let actions = &mut *ctx.actions;
                 let rename = &mut *ctx.rename;
                 let pending = &mut *ctx.pending;
-                resp.context_menu(|ui| folder_menu(ui, &root, true, actions, rename, pending));
+                let has_settings = ctx.has_settings;
+                let role = model::FolderRole::of(&root.path, ctx.project_root);
+                resp.context_menu(|ui| {
+                    folder_menu(
+                        ui,
+                        &root,
+                        true,
+                        actions,
+                        rename,
+                        pending,
+                        has_settings,
+                        role,
+                    )
+                });
             }
         })
         .body(|ui| render_children(ui, &root, ctx, root_path));
 }
+
+#[cfg(test)]
+mod role_tests;

@@ -1,0 +1,22 @@
+[package]
+name = "kooch_pack"
+description = "Compressed, encrypted asset containers for shipped games"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# Compression and cryptography are not things to write. zstd wins ratio
+# and decompression speed at once — level 19 approaches LZMA with ~10x
+# faster decompression — and AES-GCM is authenticated, so a tampered pack
+# fails to open instead of handing back plausible rubbish.
+zstd.workspace = true
+# `rand_core` is what exposes `OsRng` for per-entry nonces; the default
+# features already carry `aes` and `alloc`.
+aes-gcm = { workspace = true, features = ["rand_core"] }
+hkdf.workspace = true
+sha2.workspace = true
+zeroize.workspace = true
+tracing.workspace = true

@@ -33,6 +33,9 @@ pub struct AssetServer {
     cache: HashMap<(TypeId, PathBuf), slotmap::DefaultKey>,
     /// Directory paths are resolved relative to. `None` keeps paths raw.
     asset_root: Option<PathBuf>,
+    /// Packs to read through before touching the disk (#758). Empty in
+    /// the editor and in any `cargo run`, so development is unaffected.
+    packs: super::packs::Packs,
 }
 
 impl AssetServer {
@@ -42,6 +45,7 @@ impl AssetServer {
             loaders: HashMap::new(),
             cache: HashMap::new(),
             asset_root: None,
+            packs: super::packs::Packs::default(),
         }
     }
 
@@ -78,6 +82,24 @@ impl AssetServer {
     /// Returns `true` when a loader is registered for `T`.
     pub fn has_loader<T: Asset>(&self) -> bool {
         self.loaders.contains_key(&TypeId::of::<T>())
+    }
+
+    /// Every `(extension, asset type name)` pair any registered loader
+    /// claims.
+    ///
+    /// What the asset database uses to decide whether a file it has
+    /// never seen is an asset. Derived from the loaders rather than
+    /// listed anywhere: a list would be a second place to add an asset
+    /// type, and the day someone forgot it the type would load fine and
+    /// be invisible in the editor.
+    pub fn known_extensions(&self) -> Vec<(&'static str, &'static str)> {
+        self.loaders
+            .values()
+            .flat_map(|loader| {
+                let type_name = loader.asset_type_name();
+                loader.extensions().iter().map(move |ext| (*ext, type_name))
+            })
+            .collect()
     }
 
     /// Returns the extensions claimed by `T`'s loader, or `&[]` if none.
@@ -154,8 +176,14 @@ impl AssetServer {
             });
         }
 
-        let bytes = std::fs::read(&path)?;
-        let mut ctx = LoadContext { path: &path };
+        let bytes = self.packs.read_or_disk(&path)?;
+        // The sidecar is read for its `[import]` table, and its absence
+        // is not an error: a file with no `.meta` yet — one dropped into
+        // the folder a moment ago — still loads, on the engine's
+        // defaults.
+        let meta = asset_meta::read_meta(&path).ok();
+        let mut ctx =
+            LoadContext::with_import(&path, meta.as_ref().and_then(|m| m.import.as_ref()));
         let boxed = loader.load_boxed(&bytes, &mut ctx)?;
 
         // Downcast back to T. Safe by construction — registry is keyed by
@@ -285,7 +313,7 @@ impl AssetServer {
         }
 
         // Read once even when several types share the file.
-        let bytes = std::fs::read(&path)?;
+        let bytes = self.packs.read_or_disk(&path)?;
         let mut reloaded = 0usize;
         let mut stale = Vec::new();
         for (type_id, key) in cached {
@@ -294,7 +322,12 @@ impl AssetServer {
                 // this one does not — nothing to refresh it with.
                 continue;
             };
-            let mut ctx = LoadContext { path: &path };
+            // Hot reload takes the sidecar as it is on disk right now:
+            // editing the `[import]` table and saving is a reload, and
+            // the point of the table is to see the answer change.
+            let meta = asset_meta::read_meta(&path).ok();
+            let mut ctx =
+                LoadContext::with_import(&path, meta.as_ref().and_then(|m| m.import.as_ref()));
             match loader.reload_into(&bytes, &mut ctx, key, resources)? {
                 true => reloaded += 1,
                 false => stale.push(type_id),
@@ -368,6 +401,54 @@ impl AssetServer {
         } else {
             path.to_path_buf()
         }
+    }
+
+    /// Mounts a `.kpack` over `root`, so assets under that directory come
+    /// out of the pack instead of the filesystem (#758).
+    ///
+    /// Returns how many entries it holds. Called by a shipped game at
+    /// startup, and by the editor when it verifies a build; nothing
+    /// mounts one during ordinary development, where the disk is what
+    /// makes editing an asset show up without a repack.
+    pub fn mount_pack(
+        &mut self,
+        root: impl Into<PathBuf>,
+        pack: &Path,
+        key: &kooch_pack::PackKey,
+    ) -> Result<usize, kooch_pack::PackError> {
+        let mounted = super::packs::MountedPack::open(root.into(), pack, key)?;
+        let entries = mounted.len();
+        self.packs.push(mounted);
+        tracing::info!(
+            target: "kooch_core::assets",
+            path = %pack.display(),
+            entries,
+            "asset pack mounted",
+        );
+        Ok(entries)
+    }
+
+    /// Whether anything is mounted — i.e. whether this is a packaged game
+    /// rather than a project being edited.
+    pub fn has_packs(&self) -> bool {
+        !self.packs.is_empty()
+    }
+
+    /// Every path the mounted packs hold, as the engine names them.
+    ///
+    /// What [`scan_packs`](super::scan_packs) walks: a packaged game has
+    /// no directory to scan, so the pack's index is the directory.
+    pub fn packed_paths(&self) -> Vec<PathBuf> {
+        self.packs.paths()
+    }
+
+    /// Reads `path` out of a mounted pack, or `None` when no pack holds
+    /// it.
+    ///
+    /// Never falls back to the disk, unlike loading: the caller is asking
+    /// what the *pack* contains.
+    pub fn read_packed(&mut self, path: &Path) -> Option<Vec<u8>> {
+        self.packs.read_packed(path)
     }
 }
 

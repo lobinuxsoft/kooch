@@ -21,7 +21,27 @@
 //!
 //! Default features: `window`, `render`.
 
+/// The engine's licence, verbatim.
+///
+/// 🔴 **Compiled into every binary that links the engine**, which is
+/// what makes it non-optional: a game links Kóoch as an `rlib`, so this
+/// string is inside the shipped executable whether or not anyone
+/// remembered to copy a file next to it. Removing it means not using
+/// the engine.
+///
+/// The engine's source is protected by this licence rather than by
+/// being hidden — Rust has no stable ABI, so a project compiles the
+/// engine from source (see #754). Unreal distributes their C++ the same
+/// way, on the same basis.
+pub const LICENSE: &str = include_str!("../LICENSE.md");
+
+// Named `profiler` and not `profiling` on purpose: a module of that name
+// in the crate root shadows the `profiling` facade crate for every path
+// written in this file.
+#[cfg(feature = "profiling")]
+pub mod profiler;
 mod scene_bootstrap;
+pub mod shipped;
 
 // Always present
 pub use kooch_core;
@@ -119,6 +139,10 @@ pub mod prelude {
         Entity, EntityAllocator, GlobalTransform, MeshRenderer, Name, OrthographicCamera, Parent,
         PerspectiveCamera, Reflect, SceneManager, Transform,
     };
+    // Where a system binds into the frame, said at the system. Inert:
+    // the editor's codegen reads it, the compiler passes the function
+    // through untouched.
+    pub use kooch_ecs::system;
     // The rest of what a scene is made of: what lights it, what the sky
     // is, and the override that pins an entity's level of detail.
     pub use kooch_ecs::{DirectionalLight, LodForceLevel, PointLight, SkyRenderer, SpotLight};
@@ -226,19 +250,27 @@ pub mod prelude {
 /// the historical `assets/` working-directory default.
 #[cfg(feature = "render")]
 fn default_asset_plugin() -> kooch_render::plugin::AssetPlugin {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     let engine_root = std::env::var_os("KOOCH_ENGINE_ROOT").map(PathBuf::from);
     let project_root = std::env::var_os("KOOCH_PROJECT_ROOT").map(PathBuf::from);
 
+    // 🔴 A shipped game's assets live in a pack, so `<exe>/assets` is
+    // the right root even though no such directory exists — the
+    // `.exists()` filter below would reject it and fall through to the
+    // working directory, which for a double-clicked game is the user's
+    // home. Same failure the boot scene had.
+    let shipped = crate::shipped::shipped_pack();
+    let beside_exe = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.join("assets")));
+
     let primary = engine_root
         .as_ref()
         .map(|p| p.join("assets"))
-        .or_else(|| {
-            std::env::current_exe()
-                .ok()
-                .and_then(|e| e.parent().map(|p| p.join("assets")))
-                .filter(|p| p.exists())
+        .or_else(|| match shipped.is_some() {
+            true => beside_exe.clone(),
+            false => beside_exe.clone().filter(|p| p.exists()),
         })
         .unwrap_or_else(|| PathBuf::from("assets"));
 
@@ -247,6 +279,16 @@ fn default_asset_plugin() -> kooch_render::plugin::AssetPlugin {
     // `AssetPlugin` installs whatever is linked in. A list in the facade
     // meant the editor kept a second copy of it, and the two drifted.
     let mut plugin = kooch_render::plugin::AssetPlugin::new().with_root(primary);
+    if let Some((pack, key)) = shipped {
+        tracing::info!(target: "kooch::shipped", path = %pack.display(), "reading assets from the shipped pack");
+        // 🔴 Mounted over the game folder, not over `assets/`. The pack
+        // holds `assets/…` *and* `scenes/…`, because a scene is the
+        // structure of the whole game and shipping it in plain RON beside
+        // an encrypted pack protects the textures and publishes the
+        // design. One mount covers both.
+        let root = pack.parent().map(Path::to_path_buf).unwrap_or_default();
+        plugin = plugin.with_pack_over(root, pack, key);
+    }
     if let Some(project) = project_root {
         let project_assets = project.join("assets");
         if project_assets.exists() {
@@ -315,6 +357,13 @@ impl kooch_core::plugin::PluginGroup for DefaultPlugins {
         let builder = kooch_core::plugin::PluginGroupBuilder::new()
             .add(kooch_core::plugin::CorePlugin)
             .add(kooch_ecs::EcsPlugin);
+
+        // First, so the socket is already listening while the asset
+        // loaders do the slowest work of the run — and so the author of
+        // the game never edits a line to be able to profile it. Absent
+        // from a build that did not ask for the feature.
+        #[cfg(feature = "profiling")]
+        let builder = builder.add(crate::profiler::ProfilingPlugin::default());
 
         #[cfg(all(feature = "physics", feature = "gravity"))]
         let builder = builder.add(kooch_gravity::GravityPlugin);
@@ -514,3 +563,12 @@ fn debug_categories_from(
         body_axes: flag("body_axes"),
     }
 }
+
+#[cfg(test)]
+mod licence_tests;
+
+#[cfg(test)]
+mod boot_scene_tests;
+
+#[cfg(test)]
+mod engine_assets_tests;

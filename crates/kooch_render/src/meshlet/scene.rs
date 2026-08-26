@@ -24,6 +24,12 @@ use glam::Mat4;
 /// `i32::MIN` so any sensible level (positive small int) cannot
 /// collide with it.
 pub const LOD_FORCE_NONE: i32 = i32::MIN;
+/// This instance samples shadow maps.
+///
+/// Clear it and the shading path skips the fetch entirely — not a
+/// cheaper fetch, no fetch. That cost is per pixel **and** per casting
+/// light, which is why it is worth a bit (#804).
+pub const INSTANCE_RECEIVES_SHADOWS: u32 = 1u32 << 0;
 
 /// Per-instance scene record consumed by `cs_cull_scene`.
 ///
@@ -53,7 +59,14 @@ pub struct MeshInstance {
     pub lod_bias: f32,
     pub lod_force_level: i32,
     pub group_base: u32,
-    pub _pad0: u32,
+    /// Per-instance bits the shading path reads. See
+    /// [`INSTANCE_RECEIVES_SHADOWS`].
+    ///
+    /// Was `_pad0`: same offset, same size, so the 96-byte stride every
+    /// shader mirrors is unchanged. 🔴 Seven WGSL files declare this
+    /// struct; one left behind reads the next field at the wrong offset
+    /// and **does not fail to compile**.
+    pub flags: u32,
     pub _pad1: u32,
     pub _pad2: u32,
 }
@@ -67,7 +80,9 @@ impl MeshInstance {
             lod_bias: 0.0,
             lod_force_level: LOD_FORCE_NONE,
             group_base: 0,
-            _pad0: 0,
+            // Receiving shadows is the default, so a mesh nobody
+            // thought about looks the way it always has.
+            flags: INSTANCE_RECEIVES_SHADOWS,
             _pad1: 0,
             _pad2: 0,
         }
@@ -131,8 +146,35 @@ impl SceneCullParams {
 /// reference to the buffer across frames.
 pub struct MeshletScene {
     instance_buffer: wgpu::Buffer,
+    /// Each instance's transform **from the previous frame** (#481), as a
+    /// flat array the motion-vector pass indexes with the same
+    /// `inst_id`.
+    ///
+    /// 🔴 Parallel to the instances rather than a field inside them. The
+    /// record is 96 bytes and six shaders mirror its layout; growing it
+    /// would mean editing all six to add a matrix that exactly one of
+    /// them reads. Separate arrays, indexed by the same id, is also what
+    /// the engine's own data-oriented rule asks for.
+    previous_transform_buffer: wgpu::Buffer,
     capacity: u32,
     bgl: wgpu::BindGroupLayout,
+    /// Last frame's transform for each entity that had one.
+    ///
+    /// 🔴 Keyed by ENTITY, never by position. The instance vector is
+    /// rebuilt from an ECS query every frame, so an entity appearing or
+    /// changing archetype renumbers everything after it — index `i`
+    /// simply is not the same object two frames running. Keyed by index,
+    /// a reorder hands each instance somebody else's previous matrix and
+    /// the motion vectors come out wrong with nothing failing.
+    ///
+    /// A map on the CPU, feeding a flat array on the GPU. The DOD rule
+    /// bans hash lookups from hot paths that cross to the GPU; this one
+    /// runs once per frame over the instance list to *build* that array,
+    /// which is the streaming-and-coordination case it allows.
+    previous_transforms: std::collections::HashMap<kooch_ecs::entity::Entity, [[f32; 4]; 4]>,
+    /// Scratch for the upload, kept so the per-frame gather does not
+    /// allocate.
+    previous_scratch: Vec<[[f32; 4]; 4]>,
 }
 
 impl MeshletScene {
@@ -145,11 +187,15 @@ impl MeshletScene {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let previous_transform_buffer = create_previous_buffer(device, capacity);
         let bgl = Self::bind_group_layout(device);
         Self {
             instance_buffer,
+            previous_transform_buffer,
             capacity,
             bgl,
+            previous_transforms: std::collections::HashMap::new(),
+            previous_scratch: Vec::new(),
         }
     }
 
@@ -188,6 +234,7 @@ impl MeshletScene {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        self.previous_transform_buffer = create_previous_buffer(device, new_capacity);
         tracing::debug!(
             target: "kooch_render::meshlet::scene",
             from = self.capacity,
@@ -196,6 +243,10 @@ impl MeshletScene {
             "grew the instance buffer",
         );
         self.capacity = new_capacity;
+    }
+
+    pub fn previous_transform_buffer(&self) -> &wgpu::Buffer {
+        &self.previous_transform_buffer
     }
 
     pub fn instance_buffer(&self) -> &wgpu::Buffer {
@@ -243,6 +294,57 @@ impl MeshletScene {
     /// Uploads `instances[..]` into the GPU buffer (offset 0). Caller
     /// is responsible for keeping `instances.len() <= capacity`.
     pub fn upload_instances(&self, queue: &wgpu::Queue, instances: &[MeshInstance]) {
+        self.upload_instance_data(queue, instances);
+    }
+
+    /// Uploads the instances **and** each one's transform from the
+    /// previous frame, then remembers this frame's for the next one
+    /// (#481).
+    ///
+    /// An entity seen for the first time gets its current transform as
+    /// its previous one, which is a motion vector of zero. That is the
+    /// right answer: an object that did not exist last frame has no
+    /// history for a temporal pass to reproject, and claiming it moved
+    /// from wherever the slot's last occupant was would smear it across
+    /// the screen on its first frame.
+    pub fn upload_instances_with_history(
+        &mut self,
+        queue: &wgpu::Queue,
+        instances: &[MeshInstance],
+        entities: &[kooch_ecs::entity::Entity],
+    ) {
+        debug_assert_eq!(instances.len(), entities.len());
+        self.previous_scratch.clear();
+        self.previous_scratch
+            .extend(instances.iter().zip(entities).map(|(instance, entity)| {
+                self.previous_transforms
+                    .get(entity)
+                    .copied()
+                    .unwrap_or(instance.transform)
+            }));
+        if !self.previous_scratch.is_empty() {
+            queue.write_buffer(
+                &self.previous_transform_buffer,
+                0,
+                bytemuck::cast_slice(&self.previous_scratch),
+            );
+        }
+        self.upload_instance_data(queue, instances);
+
+        // Rebuilt rather than updated: an entity that stopped rendering
+        // has to leave, or the map grows for the lifetime of the process
+        // and a despawned object's matrix comes back if its entity id is
+        // reused.
+        self.previous_transforms.clear();
+        self.previous_transforms.extend(
+            entities
+                .iter()
+                .zip(instances)
+                .map(|(entity, instance)| (*entity, instance.transform)),
+        );
+    }
+
+    fn upload_instance_data(&self, queue: &wgpu::Queue, instances: &[MeshInstance]) {
         assert!(
             instances.len() as u32 <= self.capacity,
             "instance count {} exceeds scene capacity {}",
@@ -273,95 +375,16 @@ pub fn encode_scene_visible_id(instance_id: u32, meshlet_id: u32) -> u32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mesh_instance_layout_is_pod_96_bytes() {
-        assert_eq!(std::mem::size_of::<MeshInstance>(), 96);
-    }
-
-    #[test]
-    fn scene_cull_params_layout_is_pod_16_bytes() {
-        assert_eq!(std::mem::size_of::<SceneCullParams>(), 16);
-    }
-
-    #[test]
-    fn mesh_instance_round_trip_transform() {
-        let m = Mat4::from_translation(glam::Vec3::new(1.0, 2.0, 3.0));
-        let inst = MeshInstance::new(m, 7, 11);
-        let recovered = inst.transform_mat4();
-        // Compare every column to avoid a float-eq trap on Mat4.
-        for col in 0..4 {
-            for row in 0..4 {
-                assert_eq!(inst.transform[col][row], recovered.col(col)[row]);
-            }
-        }
-        assert_eq!(inst.mesh_id, 7);
-        assert_eq!(inst.material_id, 11);
-    }
-
-    #[test]
-    fn encode_decode_round_trip() {
-        for instance_id in [0u32, 1, 42, 0xFFFF] {
-            for meshlet_id in [0u32, 1, 100, 0xFFFF] {
-                let packed = encode_scene_visible_id(instance_id, meshlet_id);
-                assert_eq!(decode_scene_visible_id(packed), (instance_id, meshlet_id));
-            }
-        }
-    }
-
-    #[test]
-    fn decode_extracts_high_low_halves() {
-        let packed = (5u32 << 16) | 12u32;
-        assert_eq!(decode_scene_visible_id(packed), (5, 12));
-    }
-}
+mod tests;
 
 #[cfg(test)]
-mod capacity_tests {
-    use super::*;
+mod capacity_tests;
 
-    /// The growth policy, without a device. What matters is that it
-    /// reaches the requirement and does not creep up one slot at a time.
-    fn grown(from: u32, required: u32) -> u32 {
-        if required <= from {
-            return from;
-        }
-        required
-            .checked_next_power_of_two()
-            .unwrap_or(required)
-            .max(from.saturating_mul(2))
-    }
-
-    /// The case that panicked: 608 instances against the default 256.
-    #[test]
-    fn a_dense_scene_fits_after_growing() {
-        assert!(grown(256, 608) >= 608);
-    }
-
-    #[test]
-    fn growth_is_geometric_not_incremental() {
-        // A scene gaining one instance at a time must not reallocate on
-        // every frame, so one growth has to leave real headroom.
-        let after = grown(256, 257);
-        assert!(
-            after >= 512,
-            "grew to {after}, which is one frame away from growing again",
-        );
-    }
-
-    #[test]
-    fn a_capacity_that_already_fits_is_left_alone() {
-        assert_eq!(grown(1024, 608), 1024);
-        assert_eq!(grown(608, 608), 608);
-    }
-
-    /// `next_power_of_two` returns `None` past `2^31`; the fallback has
-    /// to be the requirement itself rather than a wrap to zero.
-    #[test]
-    fn an_enormous_requirement_does_not_wrap() {
-        let huge = u32::MAX - 1;
-        assert!(grown(256, huge) >= huge);
-    }
+fn create_previous_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("meshlet_scene_previous_transforms"),
+        size: capacity as u64 * std::mem::size_of::<[[f32; 4]; 4]>() as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
 }

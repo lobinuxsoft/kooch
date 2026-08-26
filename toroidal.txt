@@ -1,0 +1,221 @@
+311 frames
+frame ms: median 73.65  p99 160.83  max 195.45
+
+── tree (ms/frame, self time in brackets) ──
+
+[main]
+  Render                                     63.833 [  0.098] ×1.0
+    Surface::get_current_texture               59.977 [  0.020] ×1.0
+      vkAcquireNextImageKHR                      59.954 [ 59.954] ×1.0
+      … 1 smaller scopes                          0.003
+    frame                                       2.629 [  0.072] ×1.0
+      path: R64 atomic vbuf                       2.506 [  0.012] ×1.0
+        CommandEncoder::finish                      1.031 [  0.822] ×1.0
+          insert_barriers                             0.083 [  0.038] ×56.0
+            drain_barriers                              0.044 [  0.044] ×56.0
+          RenderPassInfo::start                       0.077 [  0.077] ×11.0
+          drain_barriers                              0.040 [  0.040] ×179.0
+          RenderPassInfo::finish                      0.006 [  0.006] ×11.0
+          StagingBuffer::new                          0.003 [  0.003] ×4.0
+        shadow pages                                0.738 [  0.004] ×1.0
+          PageRasterizer::record                      0.710 [  0.050] ×1.0
+            cull: clipmap levels                        0.452 [  0.077] ×1.0
+              Device::create_bind_group                   0.227 [  0.227] ×85.0
+              Queue::write_buffer                         0.104 [  0.066] ×51.0
+                StagingBuffer::new                          0.033 [  0.033] ×51.0
+                copy                                        0.004 [  0.004] ×51.0
+              CommandEncoder::clear_buffer                0.015 [  0.015] ×68.0
+              CommandEncoder::run_compute_pass {}         0.011 [  0.011] ×34.0
+              BindGroup::drop                             0.010 [  0.010] ×85.0
+              CommandEncoder::copy_buffer_to_buffer       0.008 [  0.008] ×34.0
+            Queue::write_buffer                         0.197 [  0.107] ×103.0
+              StagingBuffer::new                          0.081 [  0.081] ×103.0
+              copy                                        0.008 [  0.008] ×103.0
+            cull: lamps                                 0.007 [  0.003] ×1.0
+              Queue::write_buffer                         0.002 [  0.001] ×1.0
+                StagingBuffer::new                          0.001 [  0.001] ×1.0
+                copy                                        0.000 [  0.000] ×1.0
+              CommandEncoder::clear_buffer                0.001 [  0.001] ×3.0
+              CommandEncoder::run_compute_pass {}         0.000 [  0.000] ×1.0
+            … 6 smaller scopes                          0.005
+          mark                                        0.023 [  0.001] ×1.0
+            PageMarker::record                          0.022 [  0.004] ×1.0
+              Device::create_bind_group                   0.013 [  0.013] ×1.0
+              Queue::write_buffer                         0.002 [  0.001] ×1.0
+                StagingBuffer::new                          0.001 [  0.001] ×1.0
+                copy                                        0.000 [  0.000] ×1.0
+              CommandEncoder::clear_buffer                0.002 [  0.002] ×3.0
+              BindGroup::drop                             0.001 [  0.001] ×1.0
+              CommandEncoder::copy_buffer_to_buffer       0.000 [  0.000] ×1.0
+              CommandEncoder::run_compute_pass {}         0.000 [  0.000] ×1.0
+            … 2 smaller scopes                          0.000
+          … 2 smaller scopes                          0.001
+        Queue::submit                               0.550 [  0.008] ×1.0
+          vkQueueSubmit                               0.486 [  0.486] ×1.0
+          prepare                                     0.034 [  0.000] ×1.0
+            process command buffer                      0.033 [  0.004] ×1.0
+              insert_barriers_from_device_tracker         0.018 [  0.018] ×1.0
+              check resource state                        0.010 [  0.000] ×1.0
+                buffers                                     0.005 [  0.005] ×1.0
+                bind groups                                 0.004 [  0.004] ×1.0
+                textures                                    0.001 [  0.001] ×1.0
+                CommandEncoder::[submission]::validate_as_actions    0.000 [  0.000] ×1.0
+              initialize_texture_memory                   0.000 [  0.000] ×1.0
+              initialize_buffer_memory                    0.000 [  0.000] ×1.0
+              CommandEncoder::[submission]::set_acceleration_structure_dependencies    0.000 [  0.000] ×1.0
+          cleanup                                     0.023 [  0.000] ×1.0
+            Device::maintain                            0.022 [  0.004] ×1.0
+              triage_submissions                          0.019 [  0.001] ×1.0
+                drop command buffer trackers                0.018 [  0.018] ×0.4
+        raster + shade (fused)                      0.142 [  0.035] ×1.0
+          Device::create_bind_group                   0.065 [  0.065] ×21.0
+          Queue::write_buffer                         0.034 [  0.020] ×18.0
+            StagingBuffer::new                          0.012 [  0.012] ×18.0
+            copy                                        0.002 [  0.002] ×18.0
+          CommandEncoder::run_render_pass {}          0.002 [  0.002] ×8.0
+          BindGroup::drop                             0.002 [  0.002] ×21.0
+          CommandEncoder::push_debug_group            0.001 [  0.001] ×6.0
+          CommandEncoder::pop_debug_marker            0.001 [  0.001] ×6.0
+          CommandEncoder::run_compute_pass {}         0.001 [  0.001] ×3.0
+        cull: view                                  0.030 [  0.007] ×1.0
+          Device::create_bind_group                   0.015 [  0.015] ×5.0
+          Queue::write_buffer                         0.005 [  0.003] ×2.0
+            StagingBuffer::new                          0.001 [  0.001] ×2.0
+            copy                                        0.000 [  0.000] ×2.0
+          CommandEncoder::clear_buffer                0.001 [  0.001] ×4.0
+          CommandEncoder::push_debug_group            0.001 [  0.001] ×1.0
+          BindGroup::drop                             0.001 [  0.001] ×5.0
+          CommandEncoder::run_compute_pass {}         0.000 [  0.000] ×2.0
+          CommandEncoder::copy_buffer_to_buffer       0.000 [  0.000] ×1.0
+          … 1 smaller scopes                          0.000
+        … 7 smaller scopes                          0.004
+      … 16 smaller scopes                         0.051
+    Queue::submit                               0.692 [  0.009] ×1.0
+      cleanup                                     0.587 [  0.000] ×1.0
+        Device::maintain                            0.586 [  0.005] ×1.0
+          triage_submissions                          0.581 [  0.002] ×1.0
+            drop command buffer trackers                0.579 [  0.579] ×2.6
+      vkQueueSubmit                               0.078 [  0.078] ×1.0
+      prepare                                     0.018 [  0.000] ×1.0
+        process command buffer                      0.018 [  0.009] ×1.0
+          insert_barriers_from_device_tracker         0.006 [  0.006] ×1.0
+          check resource state                        0.002 [  0.000] ×1.0
+            textures                                    0.001 [  0.001] ×1.0
+            buffers                                     0.000 [  0.000] ×1.0
+            bind groups                                 0.000 [  0.000] ×1.0
+            CommandEncoder::[submission]::validate_as_actions    0.000 [  0.000] ×1.0
+          initialize_texture_memory                   0.001 [  0.001] ×1.0
+          initialize_buffer_memory                    0.000 [  0.000] ×1.0
+          CommandEncoder::[submission]::set_acceleration_structure_dependencies    0.000 [  0.000] ×1.0
+    … 18 smaller scopes                         0.437
+  Update                                      0.080 [  0.080] ×1.0
+    RigidBody::apply_impulse                    0.000 [  0.000] ×0.8
+  Physics                                     0.065 [  0.019] ×3.8
+    IslandSolver::init_and_solve                0.037 [  0.013] ×3.8
+      VelocitySolver::solve_constraints           0.023 [  0.010] ×3.8
+        ContactConstraintsSet::solve                0.004 [  0.004] ×15.4
+        ContactConstraintsSet::update               0.003 [  0.003] ×15.4
+        ContactConstraintsSet::solve_wo_bias        0.003 [  0.003] ×15.4
+        VelocitySolver::integrate_positions         0.002 [  0.002] ×15.4
+        JointConstraintsSet::update                 0.001 [  0.001] ×15.4
+        JointConstraintsSet::solve                  0.001 [  0.001] ×15.4
+      InteractionGroups::group_joints             0.001 [  0.001] ×3.8
+    NarrowPhase::compute_contacts               0.007 [  0.007] ×3.8
+    NarrowPhase::handle_user_changes            0.001 [  0.001] ×3.8
+      NarrowPhase::handle_user_changes_on_colliders    0.000 [  0.000] ×3.8
+    NarrowPhase::compute_intersections          0.000 [  0.000] ×3.8
+  PostUpdate                                  0.046 [  0.046] ×1.0
+  PreUpdate                                   0.044 [  0.044] ×1.0
+  Input                                       0.024 [  0.024] ×1.0
+  PostPhysics                                 0.016 [  0.016] ×3.8
+  Last                                        0.015 [  0.015] ×1.0
+  GpuSync                                     0.002 [  0.002] ×1.0
+  First                                       0.001 [  0.001] ×1.0
+  PostRender                                  0.000 [  0.000] ×1.0
+  Gpu                                         0.000 [  0.000] ×1.0
+  PreRender                                   0.000 [  0.000] ×1.0
+
+[GPU]
+  shadow pages                               49.664 [  0.006] ×1.0
+    page raster                                34.810 [  0.026] ×1.0
+      page depth                                 33.772 [ 33.772] ×1.0
+      page expand                                 0.592 [  0.592] ×1.0
+      page cull                                   0.421 [  0.421] ×1.0
+    page mark                                  14.847 [ 14.847] ×1.0
+  raster + shade                              8.896 [  0.798] ×1.0
+    shade: compute (half rate)                  5.295 [  5.295] ×1.0
+    sgsr2                                       1.540 [  1.540] ×1.0
+    tonemap                                     0.539 [  0.539] ×1.0
+    shade: upsample                             0.375 [  0.375] ×1.0
+    motion vectors                              0.350 [  0.350] ×1.0
+  blit                                        0.419 [  0.419] ×1.0
+  sky                                         0.360 [  0.360] ×1.0
+  cluster grid                                0.146 [  0.146] ×1.0
+  cull                                        0.029 [  0.029] ×1.0
+  shadows                                     0.003 [  0.003] ×1.0
+
+[puffin-server]
+  PuffinServerImpl::send                      0.206 [  0.206] ×1.0
+
+── is the GPU series aligned with the frame series? ──
+  GPU of frame n against frame n+0:  r = 0.278
+  GPU of frame n against frame n+1:  r = 0.411
+  GPU of frame n against frame n+2:  r = 0.158
+  GPU of frame n against frame n+3:  r = 0.338
+  GPU of frame n against frame n+4:  r = 0.118
+  ⚠️  strongest at +1 (r = 0.411): the GPU results are filed 1 frame(s) late, and a per-frame ratio below pairs a frame with another frame's work.
+
+── fastest 77 frames (51.76 ms) vs slowest 77 (133.30 ms), by self time ──
+     fast      slow     delta   scope path
+   14.485   126.871  +112.386   main > Render > Surface::get_current_texture > vkAcquireNextImageKHR
+   26.681    36.451    +9.770   GPU > shadow pages > page raster > page depth
+   12.419    16.990    +4.571   GPU > shadow pages > page mark
+    0.090     1.170    +1.080   main > Render > Queue::submit > cleanup > Device::maintain > triage_submissions > drop command buffer trackers
+    4.928     5.478    +0.550   GPU > raster + shade > shade: compute (half rate)
+    0.174     0.270    +0.096   main > Render > frame > path: R64 atomic vbuf > shadow pages > PageRasterizer::record > cull: clipmap levels > Device::create_bind_group
+    0.248     0.339    +0.091   main > Render > Surface::present > vkQueuePresentKHR
+    0.745     0.836    +0.091   GPU > raster + shade
+    0.771     0.831    +0.061   main > Render > frame > path: R64 atomic vbuf > CommandEncoder::finish
+    0.193     0.089    -0.104   GPU > cluster grid
+    0.451     0.268    -0.183   GPU > sky
+
+── frame against the GPU work that produced it ──
+ frame ms    GPU ms  frame/GPU   decile
+    42.63     40.76       1.05   p0
+    56.61     53.55       1.06   p10
+    61.89     56.37       1.10   p20
+    65.36     64.03       1.02   p30
+    70.58     63.43       1.11   p40
+    77.69     71.08       1.09   p50
+    96.30     54.43       1.77   p60
+   114.60     63.91       1.79   p70
+   125.62     61.12       2.06   p80
+   147.15     66.28       2.22   p90
+
+── flat, by total cost ──
+scope                                         ms/frame   calls/f
+Render                                          63.833       1.0
+Surface::get_current_texture                    59.977       1.0
+vkAcquireNextImageKHR                           59.954       1.0
+shadow pages                                    50.402       2.0
+page raster                                     34.810       1.0
+page depth                                      33.772       1.0
+page mark                                       14.847       1.0
+raster + shade                                   8.896       1.0
+shade: compute (half rate)                       5.295       1.0
+frame                                            2.629       1.0
+path: R64 atomic vbuf                            2.506       1.0
+sgsr2                                            1.540       1.0
+Queue::submit                                    1.241       2.0
+CommandEncoder::finish                           1.111       2.0
+PageRasterizer::record                           0.710       1.0
+cleanup                                          0.609       2.0
+Device::maintain                                 0.609       2.0
+triage_submissions                               0.600       2.0
+drop command buffer trackers                     0.598       3.0
+page expand                                      0.592       1.0
+vkQueueSubmit                                    0.563       2.0
+tonemap                                          0.539       1.0
+cull: clipmap levels                             0.452       1.0
+page cull                                        0.421       1.0
+blit                                             0.419       1.0

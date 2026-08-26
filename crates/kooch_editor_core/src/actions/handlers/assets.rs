@@ -47,6 +47,63 @@ pub(super) fn handle_import_assets(
     }
 }
 
+/// Rewrites a texture's `[import]` table and queues the re-upload.
+///
+/// Three steps, and the third is the one that is easy to leave out: the
+/// sidecar is written, the loaded `Image` is dropped so the next read
+/// comes from disk, and the GPU pool is told to forget the texture. A
+/// mip chain is levels allocated when the texture is created and no API
+/// adds one afterwards — without the eviction the file would be correct,
+/// the asset would be correct, and the picture would keep sampling the
+/// texture uploaded at startup until the project was reopened.
+pub(super) fn handle_set_image_import(
+    resources: &mut Resources,
+    guid: Guid,
+    import: kooch_render::texture::ImageImport,
+) {
+    let Some(path) = resources
+        .get::<AssetDatabase>()
+        .and_then(|db| db.entry(guid).map(|e| e.path.clone()))
+    else {
+        tracing::warn!(guid = %guid, "SetImageImport: no path in AssetDatabase; not persisted");
+        return;
+    };
+
+    let mut meta = match kooch_core::asset_meta::read_meta(&path) {
+        Ok(meta) => meta,
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                %error,
+                "SetImageImport: no readable .meta beside the texture",
+            );
+            return;
+        }
+    };
+    meta.import = match kooch_core::toml::Table::try_from(import) {
+        Ok(table) => Some(table),
+        Err(error) => {
+            tracing::warn!(%error, "SetImageImport: import settings did not serialise");
+            return;
+        }
+    };
+    if let Err(error) = kooch_core::asset_meta::write_meta(&path, &meta) {
+        tracing::warn!(path = %path.display(), %error, "SetImageImport: could not write .meta");
+        return;
+    }
+
+    // The bytes did not change, so the mtime-driven reload will not fire
+    // on its own. This is the re-import.
+    crate::actions::handlers::asset_saved(resources, &path);
+    if let Some(reimports) = resources.get_mut::<kooch_render::material::TextureReimports>() {
+        reimports.queue(guid);
+    } else {
+        let mut reimports = kooch_render::material::TextureReimports::default();
+        reimports.queue(guid);
+        resources.insert(reimports);
+    }
+}
+
 /// Applies a Material asset edit.
 ///
 /// Two speeds, because a slider produces one of these per frame:
@@ -79,11 +136,47 @@ pub(super) fn handle_edit_material(
         return;
     };
 
+    // Before the edit, and on the preview too: the preview is the first
+    // frame of a drag, so recording only on commit would snapshot the
+    // value the drag already reached. The merge key is what keeps the
+    // rest of the drag from filing sixty more.
+    crate::history::documents::record(
+        resources,
+        &crate::history::Document::Asset(guid),
+        "Edit Material",
+        Some(crate::history::MergeKey::of(("material", guid))),
+    );
+
     if !commit {
         preview_material(resources, guid, material);
         return;
     }
 
+    persist_material(resources, guid, material, &path);
+}
+
+/// Puts a material into the world *and* onto disk.
+///
+/// The write is what an undo has to reach: a committed edit wrote the
+/// file, so restoring only the in-memory copy would leave the value the
+/// user undid sitting in the asset both processes read.
+pub(crate) fn write_material(resources: &mut Resources, guid: Guid, material: &Material) {
+    let Some(path) = resources
+        .get::<AssetDatabase>()
+        .and_then(|db| db.entry(guid).map(|e| e.path.clone()))
+    else {
+        return;
+    };
+    preview_material(resources, guid, material);
+    persist_material(resources, guid, material, &path);
+}
+
+fn persist_material(
+    resources: &mut Resources,
+    guid: Guid,
+    material: &Material,
+    path: &std::path::Path,
+) {
     let text = match ron::ser::to_string_pretty(material, ron::ser::PrettyConfig::default()) {
         Ok(text) => text,
         Err(e) => {
@@ -91,11 +184,11 @@ pub(super) fn handle_edit_material(
             return;
         }
     };
-    if let Err(e) = std::fs::write(&path, text) {
+    if let Err(e) = std::fs::write(path, text) {
         tracing::error!(path = %path.display(), error = %e, "failed to write material");
         return;
     }
-    crate::actions::handlers::asset_saved(resources, &path);
+    crate::actions::handlers::asset_saved(resources, path);
     tracing::info!(path = %path.display(), "material saved");
 }
 
@@ -113,4 +206,84 @@ fn preview_material(resources: &mut Resources, guid: Guid, material: &Material) 
     {
         *slot = material.clone();
     }
+}
+
+/// Writes one field of any reflected asset (#744).
+///
+/// The generic counterpart to [`handle_edit_material`], and the same
+/// two-speed shape:
+///
+/// - **Live** — set the field on the in-memory asset. The viewport
+///   follows the drag and nothing touches the disk.
+/// - **Committed** — write the file, then let [`asset_saved`] refresh
+///   from it and tell the running project.
+///
+/// Committing writes the file *first* and refreshes from it, keeping one
+/// direction of travel: the file is the asset, and both processes read
+/// it the same way. Skipping that is how editing a material used to
+/// change the Inspector and leave the running game rendering the old one.
+///
+/// [`asset_saved`]: crate::actions::handlers::asset_saved
+pub(super) fn handle_edit_asset_field(
+    resources: &mut Resources,
+    guid: Guid,
+    field: &str,
+    value: kooch_ecs::reflect::ReflectValue,
+    commit: bool,
+) {
+    let Some((path, type_name)) = resources.get::<AssetDatabase>().and_then(|db| {
+        let entry = db.entry(guid)?;
+        Some((entry.path.clone(), entry.type_name.clone()?))
+    }) else {
+        tracing::warn!(guid = %guid, "EditAssetField: no path or type in AssetDatabase");
+        return;
+    };
+
+    let Some(registration) = kooch_ecs::reflect::reflected_asset(&type_name) else {
+        // The Inspector only offers these widgets for a registered type,
+        // so reaching here means the registry and the panel disagree —
+        // worth a line rather than a silent no-op.
+        tracing::warn!(%type_name, "EditAssetField: type is not a reflected asset");
+        return;
+    };
+
+    // Same shape as the material path: recorded on the way in, merged by
+    // field so a drag is one step.
+    crate::history::documents::record(
+        resources,
+        &crate::history::Document::Asset(guid),
+        &format!("Set {field}"),
+        Some(crate::history::MergeKey::of((guid, field))),
+    );
+
+    if !(registration.write)(resources, guid, field, value) {
+        tracing::warn!(%type_name, field, "EditAssetField: the asset refused the value");
+        return;
+    }
+    if !commit {
+        return;
+    }
+
+    persist_asset(resources, guid, registration, &path);
+}
+
+/// Serialises a reflected asset to its file and refreshes from it.
+///
+/// Shared with the undo path, which has to persist for the same reason
+/// the commit does — the file is the asset.
+pub(crate) fn persist_asset(
+    resources: &mut Resources,
+    guid: Guid,
+    registration: &kooch_ecs::reflect::ReflectedAssetRegistration,
+    path: &std::path::Path,
+) {
+    let Some(text) = (registration.to_ron)(resources, guid) else {
+        tracing::error!(guid = %guid, "failed to serialise the asset; not persisted");
+        return;
+    };
+    if let Err(e) = std::fs::write(path, text) {
+        tracing::error!(path = %path.display(), error = %e, "failed to write asset");
+        return;
+    }
+    super::asset_saved(resources, path);
 }

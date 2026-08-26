@@ -23,10 +23,15 @@ impl MeshletRenderStage {
     /// editor dragging the Game panel's divider must not reallocate the
     /// View panel's attachments.
     pub fn resize_view(&mut self, id: ViewId, device: &wgpu::Device, new_size: (u32, u32)) {
+        // 🔴 Computed before the borrow: a change of technique or of
+        // scale must reallocate even when the panel has not moved, and
+        // comparing only the panel size would leave the old render
+        // target in place until someone dragged a divider.
+        let new_render_size = self.render_size_for(new_size);
         let Some(view) = self.views.get_mut(id) else {
             return;
         };
-        if new_size == view.size {
+        if (new_size, new_render_size) == (view.size, view.render_size) {
             return;
         }
 
@@ -35,7 +40,12 @@ impl MeshletRenderStage {
         // the slot that is two frames old, by which point the GPU is
         // done with them. Mesa radv invalidates bind groups dropped
         // while still in flight.
-        let pyramid_delta = view.resize(device, new_size, self.frame_bind_groups_index);
+        let pyramid_delta = view.resize(
+            device,
+            new_size,
+            new_render_size,
+            self.frame_bind_groups_index,
+        );
 
         if let Some(tracker) = &self.vram_tracker {
             // A resize can free more than it allocates — shrinking the

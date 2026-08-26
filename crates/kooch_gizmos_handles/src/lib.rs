@@ -248,4 +248,3 @@ pub trait Handle: Send + Sync + 'static {
     /// return `Scale`.
     fn drag(&self, drag: DragInfo, frame: HandleFrame) -> TransformDelta;
 }
-

@@ -22,20 +22,31 @@ pub(crate) trait ReflectAccessor: Send + Sync {
     /// Returns field metadata for the component type.
     fn fields(&self) -> &'static [FieldMeta];
 
-    /// Reads all field values for an entity's component.
-    fn get_fields(
-        &self,
-        storage: &dyn AnyStorage,
-        entity: Entity,
-    ) -> Option<Vec<(String, ReflectValue)>>;
+    /// Reads all field values of the component **at** `value`.
+    ///
+    /// 🔴 A raw address rather than a storage, so reflection stops caring
+    /// *where* the component lives. It used to take `&dyn AnyStorage` and
+    /// look the entity up itself — which meant the inspector, scene
+    /// saving, undo and the remote mirror could only ever see components
+    /// held in the per-type map. A value that moved to a table column
+    /// would have gone missing from all four, silently. See #891.
+    ///
+    /// # Safety
+    ///
+    /// `value` must point to a live component of this accessor's type.
+    unsafe fn read_fields(&self, value: *const u8) -> Vec<(String, ReflectValue)>;
 
-    /// Sets a single field on an entity's component.
-    fn set_field(
+    /// Sets a single field on the component **at** `value`.
+    ///
+    /// # Safety
+    ///
+    /// `value` must point to a live component of this accessor's type, and
+    /// the caller must hold exclusive access to it.
+    unsafe fn write_field(
         &self,
-        storage: &mut dyn AnyStorage,
-        entity: Entity,
+        value: *mut u8,
         field: &str,
-        value: ReflectValue,
+        new: ReflectValue,
     ) -> Result<(), ReflectError>;
 
     /// Creates a boxed default instance (for spawning).
@@ -113,43 +124,33 @@ impl<T: Reflect> ReflectAccessor for TypedReflectAccessor<T> {
             .collect()
     }
 
-    fn get_fields(
-        &self,
-        storage: &dyn AnyStorage,
-        entity: Entity,
-    ) -> Option<Vec<(String, ReflectValue)>> {
-        let ptr = storage.get_ptr(entity)?;
-        // SAFETY: The pointer comes from a storage that was registered with
-        // TypeId::of::<T>(), so the data behind it is a valid `T`.
-        let component = unsafe { &*(ptr as *const T) };
-        let fields = component.reflect_fields();
-        let values = fields
+    unsafe fn read_fields(&self, value: *const u8) -> Vec<(String, ReflectValue)> {
+        // SAFETY: the caller guarantees `value` points to a live `T`.
+        let component = unsafe { &*value.cast::<T>() };
+        component
+            .reflect_fields()
             .iter()
             .filter_map(|meta| {
                 component
                     .reflect_get(meta.name)
                     .map(|v| (meta.name.to_owned(), v))
             })
-            .collect();
-        Some(values)
+            .collect()
     }
 
-    fn set_field(
+    unsafe fn write_field(
         &self,
-        storage: &mut dyn AnyStorage,
-        entity: Entity,
+        value: *mut u8,
         field: &str,
-        value: ReflectValue,
+        new: ReflectValue,
     ) -> Result<(), ReflectError> {
-        let ptr = storage
-            .get_mut_ptr(entity)
-            .ok_or(ReflectError::ComponentNotFound)?;
-        // SAFETY: same TypeId guarantee as get_fields. Every storage is
-        // writable now that the GPU-backed, read-only kind is gone (#603);
-        // `ReflectError::ReadOnly` survives for types that refuse a write in
-        // their own `reflect_set`, such as `Parent`.
-        let component = unsafe { &mut *(ptr as *mut T) };
-        component.reflect_set(field, value)
+        // SAFETY: the caller guarantees `value` points to a live `T` and
+        // holds exclusive access. Every storage is writable now that the
+        // GPU-backed, read-only kind is gone (#603); `ReflectError::ReadOnly`
+        // survives for types that refuse a write in their own `reflect_set`,
+        // such as `Parent`.
+        let component = unsafe { &mut *value.cast::<T>() };
+        component.reflect_set(field, new)
     }
 
     fn default_value(&self) -> Box<dyn std::any::Any + Send + Sync> {

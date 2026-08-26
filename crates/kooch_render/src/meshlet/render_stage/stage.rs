@@ -48,6 +48,80 @@ pub struct MeshletRenderStage {
     /// because each view records *and submits* its own encoder; see
     /// [`kooch_lighting::GpuLights`] for the ordering argument.
     pub(super) lights: kooch_lighting::GpuLights,
+    /// The light walk of the current frame, and the frame it was taken in.
+    ///
+    /// 🎯 One walk per FRAME, shared by every view — the editor renders two
+    /// through this one stage, and a split screen renders one per player.
+    /// What it holds is view-independent by construction: which lights
+    /// exist, where they are, which cast. Everything that depends on where
+    /// anyone stands takes a camera and stays per view — the point ranking,
+    /// the cascade fit, the froxel grid.
+    ///
+    /// ⚠️ `None` when there is no `Time` to stamp against, which is every
+    /// headless test: the walk then happens per view exactly as it used to.
+    pub(super) light_frame: Option<(u64, kooch_lighting::LightFrame)>,
+
+    /// The sun's shadow atlas and depth pipeline (#476).
+    ///
+    /// `None` until a frame finds a directional light that casts, and
+    /// allocated once when one does: the atlas is 64 MiB at the default
+    /// resolution, and a headless test, an unlit scene or a project that
+    /// turned shadows off must not pay it. Dropped again when the
+    /// author disables shadows or changes the cascade resolution — the
+    /// texture size is baked in at allocation.
+    ///
+    /// Shared across views for the same reason the lights are: which
+    /// geometry occludes the sun does not depend on where a camera is.
+    /// The cascade *placement* does, and it is per frame rather than
+    /// stored — each view rebuilds it from its own camera before
+    /// recording, and each view submits its own encoder.
+    pub(super) shadows: Option<crate::shadow::ShadowPass>,
+    /// Cascade resolution `shadows` was allocated at, so a settings
+    /// change is noticed rather than silently ignored.
+    /// What the classic shadow pass holds allocated, or zeroed when it
+    /// holds nothing. The key the resize-release compares (#945).
+    pub(super) shadow_alloc: super::frame::ClassicAlloc,
+    /// Whether any casting point light went without a cube last frame
+    /// (#778), so the warning fires on the transition rather than sixty
+    /// times a second. Same shape as the light-count log.
+    ///
+    /// 🔴 A **flag**, not the count. It was the count, and the count is
+    /// not steady: the lights are culled against the frustum before the
+    /// budget is applied, so nudging the camera moves how many casters
+    /// are visible — measured swinging between 84 and 96 in a scene of
+    /// 100 — and "log when it changes" then logs every single frame.
+    /// What an author needs to know is that the budget is exceeded at
+    /// all; the exact overflow changes with where they are standing and
+    /// says nothing more.
+    pub(super) point_shadows_over_budget: bool,
+    /// The lights that held a cube last frame, so
+    /// [`select_point_casters`](crate::shadow::select_point_casters) can
+    /// favour them over a rival that is barely ahead. At most
+    /// `MAX_POINT_SHADOWS` entries — this is a hysteresis term, not a
+    /// cache.
+    pub(super) point_shadow_holders: Vec<kooch_ecs::entity::Entity>,
+    /// What decides how much smaller than its panel a view renders
+    /// (#481 step 4). Kept on the stage rather than asked of the
+    /// settings at allocation time, because a view is resized by the
+    /// editor dragging a divider — which knows the panel's size and
+    /// nothing about upscaling.
+    pub(super) upscale_technique: crate::quality::UpscaleTechnique,
+    pub(super) render_scale: u32,
+    /// Hash of every instance uploaded this frame, and the cached cube
+    /// key per point-shadow slot (#778). Together they answer "may last
+    /// frame's six faces stand".
+    /// One entry per instance this frame — see
+    /// [`InstanceBounds`](crate::shadow::InstanceBounds). Replaces the
+    /// single scene-wide hash the cube cache used to key on (#847).
+    pub(super) instance_bounds: Vec<crate::shadow::InstanceBounds>,
+    /// Last frame's [`Self::instance_bounds`], for the page cache's
+    /// movement diff (#477): a caster whose hash changed invalidates
+    /// the shadow pages both its old and its new bounds reach.
+    pub(super) previous_bounds: Vec<crate::shadow::InstanceBounds>,
+    /// This frame's moved-caster spheres, old and new bounds alike,
+    /// rebuilt where `instance_bounds` is.
+    pub(super) moved_casters: Vec<[f32; 4]>,
+    pub(super) point_cube_cache: Vec<Option<crate::shadow::CubeKey>>,
 
     /// GPU mirror of [`MeshletPipeline::pool`]. Lazy-rebuilt by
     /// [`Self::render_with_assets`] when [`Self::pool_dirty`] is set,
@@ -86,6 +160,36 @@ pub struct MeshletRenderStage {
     /// Shared rather than per view: it is a pipeline, and the texture
     /// it writes through comes from whichever view is being rendered.
     pub(super) reject_overlay: Option<MeshletRejectOverlay>,
+    /// The shadow-page marking pass (#866), when it was asked for.
+    ///
+    /// 🔴 An **instrument**, not a feature: nothing reads what it
+    /// writes. It exists to falsify the CPU census in
+    /// `shadow::pages` — that census is a model, and this is the first
+    /// thing that can disagree with it. Built on the first frame that
+    /// finds `KOOCH_PAGE_MARKING` set, and never otherwise: a
+    /// measurement that runs whether or not anyone asked is a cost
+    /// nobody attributed.
+    pub(super) page_marker: Option<crate::shadow::pages::mark::PageMarker>,
+    /// The last count read back, for the panel.
+    pub(super) page_marking_last: Option<crate::shadow::pages::mark::MarkCounts>,
+    /// The last count LOGGED, per camera.
+    ///
+    /// 🔴 Per camera, and compared with a threshold rather than for
+    /// equality. Two things conspired: the cameras alternate, so one
+    /// slot always disagreed with the frame before it, and the counts
+    /// move every frame anyway because the temporal jitter shifts
+    /// sub-pixel sample positions into other pages. "Log on change"
+    /// therefore fired twice a frame — 8000 lines with 2404 dropped,
+    /// measured — and buried the console it was meant to inform.
+    pub(super) page_marking_logged: Vec<Option<crate::shadow::pages::mark::MarkCounts>>,
+    /// The paged depth raster and its atlas. 🔴 Built with the marker
+    /// and never before it: the atlas is a hundred megabytes and it has
+    /// nothing to hold until pages are being marked.
+    pub(super) page_raster: Option<crate::shadow::pages::raster::PageRasterizer>,
+    pub(super) page_raster_last: Option<crate::shadow::pages::raster::RasterCounts>,
+    pub(super) page_raster_logged: Vec<Option<crate::shadow::pages::raster::RasterCounts>>,
+    /// The pool the atlas was built for. A change rebuilds it.
+    pub(super) page_pool_config: Option<crate::shadow::pages::pool::PoolConfig>,
 
     pub(super) instance_capacity: u32,
 
@@ -104,6 +208,12 @@ pub struct MeshletRenderStage {
     /// footprint is 48 B and the ring stays idle when no
     /// debug-active mode is selected.
     pub(super) stage_counters: MeshletStageCounters,
+
+    /// Frames this stage has recorded, for anything that wants a
+    /// temporally varying value. Today that is the contact-shadow
+    /// jitter (#735): without it the dither pattern is frozen into the
+    /// image and reads as a texture rather than as noise.
+    pub(super) frames_recorded: u32,
 
     /// Cross-module engine VRAM counter (#463.5). Optional —
     /// `None` means the editor / game has not registered a tracker

@@ -18,7 +18,7 @@
 
 mod common;
 
-use common::{build_sphere_mesh, try_acquire_device};
+use common::{build_sphere_mesh, read_rgba8, try_acquire_device};
 use glam::{Mat4, Quat, Vec3};
 use kooch_core::Guid;
 use kooch_core::resource::Resources;
@@ -27,6 +27,7 @@ use kooch_ecs::archetype_registry::ArchetypeRegistry;
 use kooch_ecs::commands::Commands;
 use kooch_ecs::component::registry::ComponentRegistry;
 use kooch_ecs::directional_light::DirectionalLight;
+use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::global_transform::GlobalTransform;
 use kooch_ecs::mesh_renderer::MeshRenderer;
 use kooch_ecs::query::AccessTracker;
@@ -44,8 +45,7 @@ struct Rig {
     queue: wgpu::Queue,
     resources: Resources,
     stage: MeshletRenderStage,
-    view_proj: Mat4,
-    cam_pos: Vec3,
+    camera: kooch_render::ViewCamera,
 }
 
 fn rig() -> Option<Rig> {
@@ -98,17 +98,12 @@ fn rig() -> Option<Rig> {
         });
     commands.apply(&mut resources);
 
-    let cam_pos = Vec3::new(0.0, 0.0, 3.0);
-    let view = Mat4::look_at_rh(cam_pos, Vec3::ZERO, Vec3::Y);
-    let proj = kooch_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
-
     Some(Rig {
         device,
         queue,
         resources,
         stage,
-        view_proj: proj * view,
-        cam_pos,
+        camera: kooch_render::ViewCamera::looking_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO),
     })
 }
 
@@ -117,31 +112,35 @@ fn rig() -> Option<Rig> {
 /// The direction comes from the transform's -Z, never from a field —
 /// that is the scope correction #441 was rewritten around, so the test
 /// exercises it the same way an author would: by rotating the entity.
-fn add_directional(resources: &mut Resources, direction: Vec3, intensity: f32) {
+fn add_directional(resources: &mut Resources, direction: Vec3, intensity: f32) -> Entity {
+    add_coloured(resources, direction, intensity, Vec3::ONE)
+}
+
+/// Returns the entity, because the single-light view addresses a light
+/// by the one the editor selected and a test has to name it too.
+fn add_coloured(resources: &mut Resources, direction: Vec3, intensity: f32, color: Vec3) -> Entity {
     let rotation = Quat::from_rotation_arc(Vec3::NEG_Z, direction.normalize());
     let mut commands = Commands::new();
-    commands
+    let entity = commands
         .spawn(resources)
         .insert(DirectionalLight {
             active: true,
-            color: Vec3::ONE,
+            color,
             intensity,
             cast_shadows: false,
+            contact_shadows: false,
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_quat(rotation),
-        });
+        })
+        .id();
     commands.apply(resources);
+    entity
 }
 
 fn render(rig: &mut Rig) -> Vec<u8> {
-    rig.stage.render_with_assets_primary(
-        &rig.device,
-        &rig.queue,
-        &rig.resources,
-        rig.view_proj,
-        rig.cam_pos,
-    );
+    rig.stage
+        .render_with_assets_primary(&rig.device, &rig.queue, &rig.resources, &rig.camera, 1.0);
     read_rgba8(&rig.device, &rig.queue, rig.stage.color_texture())
 }
 
@@ -155,37 +154,10 @@ fn pixel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
     ]
 }
 
-/// sRGB electrical value → linear.
-///
-/// Comparisons happen in linear because that is where the shading
-/// happened. In 8-bit sRGB the transfer function plus ACES compress a
-/// genuine 2× difference in irradiance down to about 1.1× in the byte,
-/// which makes a working BRDF look like a broken one.
-fn srgb_to_linear(v: u8) -> f32 {
-    let c = v as f32 / 255.0;
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
-}
-
 /// Mean linear luminance over a small box, so one stray pixel on a
 /// silhouette cannot decide a test.
 fn brightness(pixels: &[u8], cx: u32, cy: u32) -> f32 {
-    let half = 3;
-    let mut total = 0.0;
-    let mut count = 0.0;
-    for y in (cy - half)..=(cy + half) {
-        for x in (cx - half)..=(cx + half) {
-            let p = pixel(pixels, x, y);
-            total += 0.2126 * srgb_to_linear(p[0])
-                + 0.7152 * srgb_to_linear(p[1])
-                + 0.0722 * srgb_to_linear(p[2]);
-            count += 1.0;
-        }
-    }
-    total / count
+    common::luminance_at(pixels, SIZE, cx, cy, 3)
 }
 
 /// Distance from the centre to the sphere's silhouette, measured on the
@@ -371,58 +343,95 @@ fn the_normals_debug_view_differs_from_lit_shading() {
     );
 }
 
-/// Reads a 2-D Rgba8Unorm texture back into a tightly packed buffer.
-fn read_rgba8(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -> Vec<u8> {
-    let size = texture.size();
-    let (w, h) = (size.width, size.height);
-    let unpadded = w * 4;
-    let padded = unpadded.div_ceil(256) * 256;
+/// The single-light view (#743) is only a view of ONE light if a second
+/// one changes nothing about it.
+///
+/// Two suns from opposite poles, so the full frame lights both halves of
+/// the sphere and neither light alone does. If the view were summing
+/// both — or ignoring the selection and shading everything — the pole
+/// facing away from the selected light would not go dark.
+#[test]
+fn isolating_a_light_leaves_the_other_ones_half_dark() {
+    let Some(mut rig) = rig() else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+    // Ambient off for the reason the pole-vs-pole test gives: it lands
+    // almost equally everywhere, which is the difference being measured.
+    // The view excludes it anyway — this keeps the `Off` frame honest.
+    rig.resources.insert(kooch_lighting::AmbientLight {
+        intensity: 0.0,
+        ..Default::default()
+    });
+    let from_above = add_directional(&mut rig.resources, Vec3::NEG_Y, 2_000.0);
+    add_directional(&mut rig.resources, Vec3::Y, 2_000.0);
 
-    let staging = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("inti_readback"),
-        size: (padded * h) as u64,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("inti_readback_encoder"),
-    });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &staging,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(padded),
-                rows_per_image: Some(h),
-            },
-        },
-        wgpu::Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
-        },
+    let lit = render(&mut rig);
+    let radius = silhouette_radius(&lit);
+    assert!(radius > 20, "the rig is not rendering a sphere");
+    let offset = radius * 7 / 10;
+    // Row 0 is the top of the image, so the larger row index is the
+    // pole the downward light cannot reach.
+    let (bottom_x, bottom_y) = (SIZE / 2, SIZE / 2 + offset);
+
+    let both_lights = brightness(&lit, bottom_x, bottom_y);
+    assert!(
+        both_lights > 0.1,
+        "with a light on each pole the bottom should be lit ({both_lights:.4} linear); \
+         the rest of this test has nothing to compare against",
     );
-    queue.submit(std::iter::once(encoder.finish()));
 
-    let slice = staging.slice(..);
-    slice.map_async(wgpu::MapMode::Read, |_| {});
-    let _ = device.poll(wgpu::PollType::Wait {
-        submission_index: None,
-        timeout: None,
+    rig.resources.insert(MeshletDebugMode::SingleLight);
+    rig.resources
+        .insert(kooch_lighting::DebugLight(Some(from_above)));
+    let isolated = render(&mut rig);
+
+    let one_light = brightness(&isolated, bottom_x, bottom_y);
+    assert!(
+        one_light < both_lights / 4.0,
+        "the pole facing away from the isolated light is still at \
+         {one_light:.4} linear against {both_lights:.4} with both — the view \
+         is not isolating anything",
+    );
+}
+
+/// Greyscale is half the point: with the albedo gone, a coloured light
+/// must not put its colour back.
+///
+/// A green sun over a white sphere renders green in the lit frame and
+/// has to render grey here, or the view is answering "what colour is
+/// this" when the question was "how much light lands here".
+#[test]
+fn the_isolated_light_renders_grey_whatever_colour_it_is() {
+    let Some(mut rig) = rig() else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+    rig.resources.insert(kooch_lighting::AmbientLight {
+        intensity: 0.0,
+        ..Default::default()
     });
-    let data = slice.get_mapped_range();
-    let mut out = Vec::with_capacity((unpadded * h) as usize);
-    for row in 0..h {
-        let start = (row * padded) as usize;
-        out.extend_from_slice(&data[start..start + unpadded as usize]);
-    }
-    drop(data);
-    staging.unmap();
-    out
+    let green = add_coloured(
+        &mut rig.resources,
+        Vec3::NEG_Z,
+        2_000.0,
+        Vec3::new(0.1, 1.0, 0.1),
+    );
+
+    rig.resources.insert(MeshletDebugMode::SingleLight);
+    rig.resources
+        .insert(kooch_lighting::DebugLight(Some(green)));
+    let pixels = render(&mut rig);
+
+    let [r, g, b, a] = pixel(&pixels, SIZE / 2, SIZE / 2);
+    assert_eq!(a, 255, "the sphere's centre pixel is background");
+    assert!(
+        g > 20,
+        "the centre pixel is black ({r},{g},{b}); nothing is being shaded",
+    );
+    assert!(
+        r == g && g == b,
+        "the isolated light rendered {r},{g},{b} — a green light is \
+         tinting a view that is supposed to be luminance only",
+    );
 }

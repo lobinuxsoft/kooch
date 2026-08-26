@@ -40,6 +40,7 @@ fn mirrored_world() -> Resources {
         },
         name: Some("Mesh".into()),
         parent: None,
+        scene: None,
         components: vec![
             ComponentSnapshot {
                 type_name: std::any::type_name::<Transform>().into(),

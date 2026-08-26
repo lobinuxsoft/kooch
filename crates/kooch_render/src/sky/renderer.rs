@@ -239,6 +239,12 @@ impl SkyRenderPass {
     /// Always records a pass — the caller decided there was a camera when
     /// it built the [`ViewCamera`](crate::ViewCamera); the return value is
     /// kept so existing call sites read unchanged.
+    // 🔴 Named for the cost, not the call. The sky ray-marches the
+    // atmosphere per pixel and #771 counted 8192 hashes per pixel in the
+    // worst case, on pixels the geometry then draws over. If this scope
+    // is ever the biggest entry in a frame, that issue is the answer and
+    // the number here is its evidence.
+    #[profiling::function]
     pub fn render(
         &mut self,
         queue: &wgpu::Queue,

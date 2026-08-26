@@ -8,9 +8,18 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+anyhow = "1"
+profiling.workspace = true
+# `serialization` is what `FrameView::write` sits behind — saving a
+# capture to a `.puffin` the standalone viewer can open.
+puffin = { workspace = true, optional = true, features = ["serialization"] }
+puffin_egui = { workspace = true, optional = true }
+# The client half of the wire a game's `ProfilingPlugin` serves on.
+puffin_http = { workspace = true, optional = true }
 kooch_core = { workspace = true, features = ["dynamic"] }
 kooch_ecs = { workspace = true, features = ["dynamic"] }
 kooch_render.workspace = true
+kooch_lighting.workspace = true
 kooch_gizmos.workspace = true
 kooch_gizmos_handles.workspace = true
 # `debug-render` pulls in rapier's world walk, which the viewport overlay
@@ -24,6 +33,8 @@ kooch_gravity.workspace = true
 kooch_window.workspace = true
 kooch_world.workspace = true
 kooch_remote.workspace = true
+# Writing and verifying a shipped game's asset packs (#758).
+kooch_pack.workspace = true
 kooch_input.workspace = true
 egui.workspace = true
 egui-winit.workspace = true
@@ -44,3 +55,40 @@ sysinfo.workspace = true
 # egui reports unstable widget ids through `log`, and the id-stability
 # test reads those complaints rather than reimplementing the check.
 log = "0.4"
+
+[features]
+# The in-editor profiler (#785). Off by default: with no backend
+# selected, every `profiling::scope!` in the engine expands to nothing,
+# so a build without this carries no instrumentation rather than
+# instrumentation that is idle.
+profiling = [
+    "dep:puffin",
+    "dep:puffin_egui",
+    "dep:puffin_http",
+    "profiling/profile-with-puffin",
+    # The GPU half. Selected together with the CPU half for the same
+    # reason a game's is: the editor draws the scene being authored, and
+    # a frame that is GPU-bound cannot be explained by CPU scopes.
+    "kooch_render/gpu-profiler",
+    # 🔴 And the per-SYSTEM half. Missing it is invisible: the scopes
+    # compile out, the capture still opens, and `PreUpdate` reports one
+    # number with no children — exactly what it reported before the
+    # scopes existed. `CPU_SCOPES` below is what turns that into a
+    # compile error.
+    "kooch_core/cpu-profiler",
+]
+
+# Reads a .puffin capture in a terminal (#785). Needs the same feature
+# the panel does, or  tries to build it without
+# puffin and fails on a crate that is deliberately optional.
+[[example]]
+name = "read_capture"
+required-features = ["profiling"]
+
+# Records a running game's frames over the network and writes a
+# .puffin (#824). The editor panel is the only other client and it
+# needs somebody watching for the moment to press Save, which an A/B
+# of two runs cannot rely on.
+[[example]]
+name = "capture_remote"
+required-features = ["profiling"]

@@ -52,7 +52,9 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
             tracing::info!("opened project: {title}");
 
             if let Some(wh) = resources.get::<kooch_window::WindowHandle>() {
-                let _ = wh.window().set_title(&format!("{title} — Kóoch"));
+                let _ = wh
+                    .window()
+                    .set_title(&crate::bootstrap::window_title(Some(&title)));
             }
 
             // Bring an older project's layout up to date *before* looking
@@ -61,6 +63,11 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
             if let Some(root) = ps.active_project.as_ref().map(|p| p.root_path.clone()) {
                 let crate_name = crate::project::sanitize_crate_name(&title);
                 crate::actions::migrate_to_library(&root, &crate_name);
+                // Then split authoring out of the game build (#558).
+                // After the library migration, not before: this adds a
+                // second `[[bin]]`, and the one above is what stops cargo
+                // inferring the first from `src/main.rs`.
+                crate::actions::split_authoring(&root, &crate_name);
 
                 // Then load it, if it has been built. Writing lib.rs does
                 // not produce a .so — that needs a compile — so the first
@@ -280,10 +287,16 @@ pub(super) fn handle_close_project(resources: &mut Resources, undo_stack: &mut U
         ps.close_project();
     }
     if let Some(wh) = resources.get::<kooch_window::WindowHandle>() {
-        let _ = wh.window().set_title("Kóoch");
+        let _ = wh.window().set_title(&crate::bootstrap::window_title(None));
     }
 
     undo_stack.clear();
+    // The remote history describes the world of the project being closed.
+    // Left behind, the next project opened would offer to undo edits made
+    // to the last one, against ids it has no idea about.
+    if let Some(history) = resources.get_mut::<crate::actions::remote_undo::RemoteHistory>() {
+        history.clear();
+    }
 }
 
 pub(super) fn handle_remove_recent(resources: &mut Resources, path: &std::path::Path) {

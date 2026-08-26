@@ -3,7 +3,8 @@
 mod asset_ops;
 mod codegen;
 mod dispatch;
-mod handlers;
+pub(crate) mod entity_state;
+pub(crate) mod handlers;
 mod ide;
 
 /// The IDE this machine would use, as a command string the Settings
@@ -18,12 +19,12 @@ pub(crate) fn detected_ide_command() -> Option<String> {
     Some(parts.join(" "))
 }
 mod remote_edit;
+pub(crate) mod remote_undo;
 pub(crate) mod scene_io;
 
 use std::any::TypeId;
 use std::path::PathBuf;
 
-use kooch_core::power::PowerProfile;
 use kooch_core::resource::Resources;
 use kooch_ecs::component::ComponentId;
 use kooch_ecs::entity::Entity;
@@ -38,7 +39,10 @@ use self::handlers::apply_non_ecs_action;
 mod prefab_overrides;
 pub(crate) mod prefab_propagate;
 
-pub(crate) use self::codegen::{initial_registrations, migrate_to_library, register_scripts};
+pub(crate) use self::asset_ops::main_scene_path;
+pub(crate) use self::codegen::{
+    SyncOutcome, initial_registrations, migrate_to_library, register_scripts, split_authoring,
+};
 
 pub(crate) enum EditorAction {
     /// Spawn an entity with Name + Transform + optional extra components.
@@ -46,6 +50,16 @@ pub(crate) enum EditorAction {
     Spawn {
         extra: Vec<TypeId>,
         name: Option<String>,
+        /// Which scene the new entity is authored into, and what it hangs
+        /// off.
+        ///
+        /// 🔴 Carried rather than inferred. Every spawn used to land in
+        /// the active scene, which is the right answer for the toolbar
+        /// button and the wrong one for a menu opened on a scene, or on
+        /// an entity, that is not the active one — the entity would
+        /// appear somewhere other than where it was asked for, and the
+        /// only sign of it is a row in the wrong group.
+        into: SpawnTarget,
     },
     /// Spawn an entity bound to a meshlet asset. The asset path is
     /// resolved through the AssetServer (auto-generates a `.meta`
@@ -62,6 +76,15 @@ pub(crate) enum EditorAction {
     /// quickly bring up parallel test entities (e.g. the LOD-stack
     /// inspector workflow needs N copies of one mesh entity).
     Duplicate(Entity),
+    /// Read entities into the editor's clipboard, replacing what was
+    /// there. Carries the selection because the clipboard is filled from
+    /// a panel that has one and the handler has not.
+    CopyEntities(Vec<Entity>),
+    /// Build the clipboard's contents as new entities.
+    ///
+    /// Takes no argument: what to paste is whatever was copied, and a
+    /// paste that named its own source would be a duplicate.
+    PasteEntities,
     SetField {
         entity: Entity,
         component: ComponentId,
@@ -85,8 +108,13 @@ pub(crate) enum EditorAction {
         after: Transform,
         desc: &'static str,
     },
-    Undo,
-    Redo,
+    /// Reverse the last edit **to one document**.
+    ///
+    /// The document travels with the chord because only the UI knows
+    /// which one is being looked at, and the whole point of #813 is that
+    /// a Ctrl+Z in the Input Map panel must not reach the scene.
+    Undo(crate::history::Document),
+    Redo(crate::history::Document),
     SaveScene,
     OpenScene,
     /// Write an entity and its descendants to a scene file — a prefab.
@@ -166,6 +194,18 @@ pub(crate) enum EditorAction {
     ReloadAssetOnHost(std::path::PathBuf),
     /// Dismiss the "replace this prefab?" prompt without saving.
     CancelPrefabOverwrite,
+    /// Install the engine this editor ships over the one the project is
+    /// building against. The next build of the project is a full one.
+    UpdateEngine,
+    /// Points a project at this editor's engine without opening it
+    /// (#800). The launcher's version of [`Self::UpdateEngine`], which
+    /// only ever ran as a side effect of opening a project.
+    MoveProjectToEngine(std::path::PathBuf),
+    /// Dismiss the engine notice and leave the installed engine alone.
+    KeepEngine,
+    /// Delete an installed engine by version. Never the one this editor
+    /// ships, nor the one the open project builds against.
+    RemoveEngine(String),
     /// Stamp a prefab into the open scene.
     InstantiatePrefab {
         /// The prefab asset. A guid rather than a path, so moving or
@@ -188,6 +228,39 @@ pub(crate) enum EditorAction {
     CloseScene(kooch_core::Guid),
     /// Make an already-open scene the one new entities are authored into.
     SetActiveScene(kooch_core::Guid),
+    /// Write one open scene back to the file it came from.
+    ///
+    /// Named, not implied. The File menu's [`Self::SaveScene`] saves the
+    /// active scene, and with several open the one somebody right-clicked
+    /// is routinely not that — saving the wrong file is not a mistake the
+    /// user can see until the next load.
+    ///
+    /// Falls back to asking for a path when the scene has never been
+    /// saved, which is the only case where there is nothing to write to.
+    SaveOpenScene(kooch_core::Guid),
+    /// Write one open scene to a path the user picks, and adopt it.
+    SaveOpenSceneAs(kooch_core::Guid),
+    /// Move an entity among its siblings: under `new_parent`, in front of
+    /// `before`.
+    ///
+    /// Where, not what number. "Before that one" is what a drag means,
+    /// and the numbering that expresses it is the engine's
+    /// (`kooch_ecs::order::place`) — a caller that picked values would
+    /// put the renumbering rule in every caller, and they would disagree
+    /// the first time a gap ran out.
+    MoveEntity {
+        entity: Entity,
+        /// `None` makes it a root of its scene.
+        new_parent: Option<Entity>,
+        /// The sibling it goes in front of; `None` puts it last.
+        before: Option<Entity>,
+    },
+    /// Throw away one open scene's edits and read it back from its file.
+    ///
+    /// Only that scene. With several open, "discard changes" that threw
+    /// away every scene's would destroy work in files the user never
+    /// touched.
+    RevertOpenScene(kooch_core::Guid),
     Play,
     Stop,
     /// Open a project: launch its binary with `--remote` and drive its
@@ -219,7 +292,6 @@ pub(crate) enum EditorAction {
     RemoveRecent(PathBuf),
     LaunchProject(PathBuf),
     CancelLaunch,
-    SetPowerProfile(PowerProfile),
     /// Replace a `Material` asset's contents (PBR scalars + texture
     /// references). Emitted by the Asset Browser's material editor.
     /// Applied to `Assets<Material>` so the render sync picks it up live.
@@ -236,6 +308,29 @@ pub(crate) enum EditorAction {
         guid: kooch_core::Guid,
         material: kooch_render::material::Material,
         /// `false` while a drag is still in flight — update memory only.
+        commit: bool,
+    },
+    /// Rewrites a texture's `[import]` table and re-imports it.
+    ///
+    /// No `commit` flag, unlike the two below: this is a checkbox, and a
+    /// checkbox has no drag to be in the middle of.
+    SetImageImport {
+        guid: kooch_core::Guid,
+        import: kooch_render::texture::ImageImport,
+    },
+    /// Writes one field of a reflected asset (#744).
+    ///
+    /// The generic counterpart to `EditMaterial`: any type registered
+    /// with `register_reflected_asset!` is edited through this, so a new
+    /// asset type needs no new action and no new handler.
+    ///
+    /// `commit` carries the same meaning it does there — `false` while a
+    /// drag is in flight, so the file is written once per gesture rather
+    /// than once per frame.
+    EditAssetField {
+        guid: kooch_core::Guid,
+        field: String,
+        value: kooch_ecs::reflect::ReflectValue,
         commit: bool,
     },
     /// Copy external files into a project folder and re-scan the asset
@@ -282,6 +377,17 @@ pub(crate) enum EditorAction {
     RevealInFileManager {
         path: PathBuf,
     },
+    /// Make `path` the scene the project — and the game built from it —
+    /// opens with (#808).
+    ///
+    /// `path` is absolute, the way the asset tree carries it; the handler
+    /// is what turns it into the project-relative form the manifest
+    /// stores. An absolute path written into `project.kooch` would work
+    /// on the machine that clicked and nowhere else, and nothing would
+    /// report it until the game opened an empty scene.
+    SetMainScene {
+        path: PathBuf,
+    },
     /// Open `file` in an external IDE, with the project's **crate root**
     /// as the workspace, so the whole project (Rust source,
     /// `Cargo.toml`, …) is editable rather than the assets folder alone.
@@ -307,6 +413,12 @@ pub(crate) enum EditorAction {
     /// [`OpenInIde`], persisted in the editor config.
     SetIdeCommand {
         command: Option<String>,
+    },
+    /// Set the environment the Play button launches the open project's
+    /// game with, persisted in the editor config against that project's
+    /// path. An empty line clears it.
+    SetLaunchEnv {
+        value: String,
     },
     /// Rescan the project's `src/` for components + systems and rewrite
     /// the editor-managed `src/registrations.rs` (regenerating `main.rs`
@@ -336,7 +448,22 @@ pub(crate) enum EditorAction {
     OpenInputMap {
         path: std::path::PathBuf,
     },
+    /// Build and package the project with one of its presets (#758).
+    ///
+    /// Carries the preset's guid rather than the preset: the panel has a
+    /// handle, and what it points at may have been edited in the
+    /// Inspector since — the handler reads the current one.
+    BuildProject(kooch_core::Guid),
+    /// Stop the running build.
+    ///
+    /// cargo is killed rather than asked: it has no "stop when
+    /// convenient", and a build still compiling after the button said it
+    /// stopped is worse than an interrupted one.
+    CancelBuild,
     RegisterScripts,
+    /// The author saw the resync notice. Clears it; the rebuild is
+    /// theirs to run.
+    AcknowledgeScriptSync,
 }
 
 /// The kind of file created by [`EditorAction::CreateFile`]. The Rust
@@ -348,6 +475,40 @@ pub(crate) enum NewFileKind {
     Scene,
     /// One action on its own — what a component points at.
     InputAction,
+    /// One way of building this project: target, output, packed (#758).
+    ///
+    /// **Several per project**, unlike settings — "Windows release" and
+    /// "Linux debug" are two presets, not one with a switch.
+    BuildPreset,
+    /// How the project looks: exposure, ambient, shadows (#744).
+    ///
+    /// **One per project.** The menu hides this once the project has
+    /// one — a second file is read by nothing and produces a warning
+    /// nobody sees.
+    RenderSettings,
+}
+
+/// Where a newly spawned entity goes.
+///
+/// A scene and a parent are one question, not two: an entity's scene is
+/// its parent's, so naming a parent already names the scene. Splitting
+/// them into separate fields would let a caller ask for a child of an
+/// entity in one scene and a member of another, which nothing can honour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpawnTarget {
+    /// The scene new entities land in by default — the toolbar's Spawn
+    /// button, and the World panel's empty area before this existed.
+    Active,
+    /// A named open scene, at its root.
+    Scene(kooch_core::Guid),
+    /// A child of an entity, in whatever scene that entity belongs to.
+    ChildOf(Entity),
+    /// A scene of its own, created empty and unsaved to hold it.
+    ///
+    /// What right-clicking the panel's empty space means: not "put this
+    /// somewhere" but "start something new". An entity has to belong to a
+    /// scene, so starting one is what makes the request answerable.
+    NewScene,
 }
 
 impl EditorAction {
@@ -378,13 +539,15 @@ impl EditorAction {
             | Self::SpawnMesh { .. }
             | Self::Despawn(_)
             | Self::Duplicate(_)
+            // Both read or write entities, so both wait for a world to
+            // read them out of.
+            | Self::CopyEntities(_)
+            | Self::PasteEntities
             | Self::SetField { .. }
             | Self::AddComponent { .. }
             | Self::RemoveComponent { .. }
             | Self::TransformEdit { .. }
             | Self::Reparent { .. }
-            | Self::Undo
-            | Self::Redo
             | Self::SaveScene
             | Self::SavePrefab { .. }
             | Self::InstantiatePrefab { .. }
@@ -392,13 +555,24 @@ impl EditorAction {
             | Self::OpenSceneAdditive
             | Self::CloseScene(_)
             | Self::SetActiveScene(_)
+            | Self::SaveOpenScene(_)
+            | Self::SaveOpenSceneAs(_)
+            | Self::RevertOpenScene(_)
+            | Self::MoveEntity { .. }
             | Self::Play
             | Self::Stop
-            | Self::RegisterScripts => true,
+            | Self::RegisterScripts
+            | Self::AcknowledgeScriptSync => true,
 
             // Session and project lifecycle: these are how a user gets
             // *out* of a stuck build, so they must keep working.
-            Self::OpenProject(_)
+            //
+            // Building belongs here rather than above: it reads the
+            // project from disk and never touches the ECS, so it works
+            // while a project is still compiling and its world is empty.
+            Self::BuildProject(_)
+            | Self::CancelBuild
+            | Self::OpenProject(_)
             | Self::RebuildRemote
             | Self::CreateProject { .. }
             | Self::CloseProject
@@ -411,6 +585,13 @@ impl EditorAction {
             // Answering a prompt is editor state; refusing it while a
             // project builds would leave the modal permanently up.
             | Self::CancelPrefabOverwrite
+            // Dismissing the engine notice writes nothing, and
+            // installing writes to disk outside the project rather than
+            // to the world.
+            | Self::KeepEngine
+            | Self::MoveProjectToEngine(_)
+            | Self::UpdateEngine
+            | Self::RemoveEngine(_)
             // Nothing to do locally; it exists to reach the project.
             | Self::ReloadAssetOnHost(_)
             // Both write into the world, so they wait for one.
@@ -429,12 +610,19 @@ impl EditorAction {
             | Self::SaveInputMap
             | Self::InputMapFocused => false,
 
+            // Only the scene's history needs the world. A prefab or an
+            // input map is a document this side owns, and undoing an edit
+            // to one while the project compiles is fine.
+            Self::Undo(document) | Self::Redo(document) => document.is_world(),
+
             // Editor preferences and things that act on files rather than
             // on the world. An asset edit is about a `.ron` on disk, and
             // the project is not holding it.
-            Self::SetPowerProfile(_)
             | Self::SetIdeCommand { .. }
+            | Self::SetLaunchEnv { .. }
             | Self::EditMaterial { .. }
+            | Self::SetImageImport { .. }
+            | Self::EditAssetField { .. }
             | Self::ImportAssets { .. }
             | Self::CreateFolder { .. }
             | Self::CreateMaterial { .. }
@@ -445,6 +633,8 @@ impl EditorAction {
             | Self::DeleteFolder { .. }
             | Self::RevealInFileManager { .. }
             | Self::OpenInIde { .. }
+            // The manifest is a file beside the project, not the world.
+            | Self::SetMainScene { .. }
             | Self::CreateFile { .. } => false,
         }
     }
@@ -652,14 +842,17 @@ pub(crate) fn apply_actions(
     while i < actions.len() {
         let action = actions[i];
 
-        // Undo/Redo are handled directly.
-        if matches!(action, EditorAction::Undo) {
-            undo_stack.undo(resources);
-            i += 1;
-            continue;
-        }
-        if matches!(action, EditorAction::Redo) {
-            undo_stack.redo(resources);
+        // Undo/Redo are handled directly — the scene's here, and every
+        // other document by the handler below.
+        if let EditorAction::Undo(document) | EditorAction::Redo(document) = action {
+            let undo = matches!(action, EditorAction::Undo(_));
+            match (document.is_world(), undo) {
+                (true, true) => undo_stack.undo(resources),
+                (true, false) => undo_stack.redo(resources),
+                (false, _) => {
+                    crate::history::documents::step(resources, document, undo);
+                }
+            }
             i += 1;
             continue;
         }
@@ -706,46 +899,4 @@ pub(crate) fn apply_actions(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The one that motivated the guard: a Save during a build would
-    /// write the empty mirror over the project's real scene. Not a panic
-    /// — a deleted scene.
-    #[test]
-    fn saving_needs_a_live_world() {
-        assert!(EditorAction::SaveScene.needs_a_live_world());
-    }
-
-    /// Every escape hatch has to keep working, or a build that never
-    /// finishes leaves the editor with no way out.
-    #[test]
-    fn the_ways_out_of_a_stuck_build_are_not_blocked() {
-        for (name, action) in [
-            ("CancelLaunch", EditorAction::CancelLaunch),
-            ("RebuildRemote", EditorAction::RebuildRemote),
-            ("CloseProject", EditorAction::CloseProject),
-        ] {
-            assert!(
-                !action.needs_a_live_world(),
-                "{name} is how a user recovers; blocking it traps them",
-            );
-        }
-    }
-
-    /// Play asks the *project* to start simulating. Sent before it can
-    /// answer, it is a message into a socket nobody is reading yet.
-    #[test]
-    fn play_and_stop_wait_for_the_project() {
-        assert!(EditorAction::Play.needs_a_live_world());
-        assert!(EditorAction::Stop.needs_a_live_world());
-    }
-
-    /// An asset edit is about a file on disk, and the project is not
-    /// holding it — refusing these would block work that is perfectly
-    /// safe during a build.
-    #[test]
-    fn preferences_and_file_work_stay_available() {
-        assert!(!EditorAction::SetPowerProfile(PowerProfile::Battery).needs_a_live_world());
-    }
-}
+mod tests;

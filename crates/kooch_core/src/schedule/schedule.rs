@@ -13,6 +13,28 @@ use super::gpu_batch::run_gpu_batch;
 /// the [`System`] trait for new code.
 pub type SystemFn = Box<dyn FnMut(&mut Resources) + Send + Sync>;
 
+/// Runs the listed stages in order, each one inside a profiling scope
+/// carrying its own name.
+///
+/// 🔴 The scope has to be expanded per stage instead of written once
+/// inside [`Schedule::run_stage`]. `puffin` caches the `ScopeId` in a
+/// `static` belonging to the call site and registers it with the *first*
+/// name that site ever saw (`profile_scope_custom_if!`), so a single site
+/// serving all fourteen stages would report the entire frame under
+/// whichever one ran first. Every expansion below is a separate call
+/// site, and therefore a separate name.
+///
+/// Expands to the bare `run_stage` calls when no profiling backend is
+/// selected, which is every build that does not ask for one.
+macro_rules! run_staged {
+    ($self:ident, $resources:ident, $($stage:ident),+ $(,)?) => {
+        $({
+            profiling::scope!(stringify!($stage));
+            $self.run_stage(Stage::$stage, $resources);
+        })+
+    };
+}
+
 /// Organizes systems by stage for ordered execution.
 ///
 /// Systems are stored in a `BTreeMap` keyed by `Stage`, ensuring they
@@ -59,7 +81,7 @@ impl Schedule {
         self.stages
             .entry(stage)
             .or_default()
-            .push(AnySystem::Cpu(Box::new(FunctionSystem::new(system))));
+            .push(AnySystem::cpu(Box::new(FunctionSystem::new(system))));
     }
 
     /// Adds a struct implementing [`System`] at the specified stage.
@@ -67,7 +89,7 @@ impl Schedule {
         self.stages
             .entry(stage)
             .or_default()
-            .push(AnySystem::Cpu(Box::new(system)));
+            .push(AnySystem::cpu(Box::new(system)));
     }
 
     /// Adds a [`GpuSystem`] at the specified stage.
@@ -78,7 +100,7 @@ impl Schedule {
         self.stages
             .entry(stage)
             .or_default()
-            .push(AnySystem::Gpu(Box::new(system)));
+            .push(AnySystem::gpu(Box::new(system)));
     }
 
     /// Runs all systems in the specified stage.
@@ -100,9 +122,10 @@ impl Schedule {
                 }
                 run_gpu_batch(&mut systems[gpu_start..i], resources);
             } else {
-                if let AnySystem::Cpu(sys) = &mut systems[i] {
-                    sys.run(resources);
-                }
+                // Its own profiling scope, carrying its own name: a
+                // stage is nine systems from five crates, and "one of
+                // these nine" is not a thing anyone can act on.
+                systems[i].run_cpu(resources);
                 i += 1;
             }
         }
@@ -135,17 +158,14 @@ impl Schedule {
     ///
     /// First → Input → PreUpdate → Update
     pub fn run_pre_physics(&mut self, resources: &mut Resources) {
-        for stage in [Stage::First, Stage::Input, Stage::PreUpdate, Stage::Update] {
-            self.run_stage(stage, resources);
-        }
+        run_staged!(self, resources, First, Input, PreUpdate, Update);
     }
 
     /// Runs the fixed timestep stages once.
     ///
     /// Physics → PostPhysics
     pub fn run_fixed_stages(&mut self, resources: &mut Resources) {
-        self.run_stage(Stage::Physics, resources);
-        self.run_stage(Stage::PostPhysics, resources);
+        run_staged!(self, resources, Physics, PostPhysics);
     }
 
     /// Runs the frame stages that follow the fixed timestep loop.
@@ -158,17 +178,9 @@ impl Schedule {
     /// Running them before the fixed loop would render the previous
     /// frame's simulation.
     pub fn run_post_physics(&mut self, resources: &mut Resources) {
-        for stage in [
-            Stage::PostUpdate,
-            Stage::GpuSync,
-            Stage::Gpu,
-            Stage::PreRender,
-            Stage::Render,
-            Stage::PostRender,
-            Stage::Last,
-        ] {
-            self.run_stage(stage, resources);
-        }
+        run_staged!(
+            self, resources, PostUpdate, GpuSync, Gpu, PreRender, Render, PostRender, Last,
+        );
     }
 
     /// Returns `true` if any systems are registered for the stage.

@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::actions::{EditorAction, NewFileKind};
 use crate::icons;
 
-use super::model::{CreateKind, FileLeaf, FolderNode, PendingCreate, RenameState};
+use super::model::{CreateKind, FileLeaf, FolderNode, FolderRole, PendingCreate, RenameState};
 
 pub(super) fn folder_menu(
     ui: &mut egui::Ui,
@@ -15,6 +15,8 @@ pub(super) fn folder_menu(
     actions: &mut Vec<EditorAction>,
     rename: &mut Option<RenameState>,
     pending: &mut Option<PendingCreate>,
+    has_settings: bool,
+    role: FolderRole,
 ) {
     // Offered on folders too, and on read-only ones: opening the crate
     // that owns a folder is how you get at the code behind it, which is
@@ -52,10 +54,29 @@ pub(super) fn folder_menu(
         start(CreateKind::Folder);
         ui.close();
     }
-    if ui
-        .button(format!("{} New Material", icons::FADERS))
-        .clicked()
-    {
+
+    // 🔴 Every entry below is disabled outside the tree that would
+    // register it. The editor scans `assets/` for assets and `src/` for
+    // scripts, so a file created anywhere else is a file nothing reads —
+    // no error, no GUID, no compile, just a file. Disabled with the
+    // reason beats offering an action whose result is silence.
+    let mut entry = |ui: &mut egui::Ui, label: String, wants: FolderRole| {
+        let refusal = role.refusal(wants);
+        let resp = ui.add_enabled(refusal.is_none(), egui::Button::new(label));
+        match refusal {
+            Some(why) => {
+                resp.on_disabled_hover_text(why);
+                false
+            }
+            None => resp.clicked(),
+        }
+    };
+
+    if entry(
+        ui,
+        format!("{} New Material", icons::FADERS),
+        FolderRole::Assets,
+    ) {
         start(CreateKind::Material);
         ui.close();
     }
@@ -72,21 +93,56 @@ pub(super) fn folder_menu(
             ),
             ("System (Rust)", CreateKind::File(NewFileKind::RustSystem)),
         ] {
-            if ui.button(label).clicked() {
+            if entry(ui, label.to_owned(), FolderRole::Source) {
                 start(kind);
                 ui.close();
             }
         }
     });
-    if ui.button(format!("{} New Scene", icons::GLOBE)).clicked() {
+    if entry(
+        ui,
+        format!("{} New Scene", icons::GLOBE),
+        FolderRole::Assets,
+    ) {
         start(CreateKind::File(NewFileKind::Scene));
         ui.close();
     }
-    if ui
-        .button(format!("{} New Input Action", icons::GAME_CONTROLLER))
-        .clicked()
-    {
+    if entry(
+        ui,
+        format!("{} New Input Action", icons::GAME_CONTROLLER),
+        FolderRole::Assets,
+    ) {
         start(CreateKind::File(NewFileKind::InputAction));
+        ui.close();
+    }
+    // Several per project, unlike settings: "Windows release" and
+    // "Linux debug" are two presets rather than one with a switch, which
+    // is the whole reason Godot's export presets are a list.
+    if entry(
+        ui,
+        format!("{} New Build Preset", icons::PACKAGE),
+        FolderRole::Assets,
+    ) {
+        start(CreateKind::File(NewFileKind::BuildPreset));
+        ui.close();
+    }
+    // Settings are per project, and the renderer finds them by type: a
+    // second file is read by nothing and warns where nobody looks. Shown
+    // disabled rather than hidden, so a project that already has one says
+    // so instead of leaving someone hunting for a menu entry that was
+    // there yesterday.
+    let allowed = role.refusal(FolderRole::Assets).is_none() && !has_settings;
+    let settings = ui.add_enabled(
+        allowed,
+        egui::Button::new(format!("{} New Render Settings", icons::FADERS)),
+    );
+    if !allowed {
+        settings.on_disabled_hover_text(
+            role.refusal(FolderRole::Assets)
+                .unwrap_or("This project already has one — settings are per project."),
+        );
+    } else if settings.clicked() {
+        start(CreateKind::File(NewFileKind::RenderSettings));
         ui.close();
     }
     // The synthetic root node has an empty name; it is not itself
@@ -124,7 +180,26 @@ pub(super) fn leaf_menu(
     _root: &Path,
     actions: &mut Vec<EditorAction>,
     rename: &mut Option<RenameState>,
+    is_main_scene: bool,
 ) {
+    if offers_main_scene(&leaf.path, writable) {
+        // Offered as disabled rather than hidden on the scene that
+        // already is the main one: a menu that changes shape depending on
+        // a state nothing else displays is how you end up right-clicking
+        // three scenes to find out which is which. The badge in the tree
+        // says which; this says it again where the question was asked.
+        let entry = egui::Button::new(format!("{} Set as Main Scene", icons::GLOBE));
+        let resp = ui.add_enabled(!is_main_scene, entry);
+        if is_main_scene {
+            resp.on_disabled_hover_text("Already the scene this project opens with");
+        } else if resp.clicked() {
+            actions.push(EditorAction::SetMainScene {
+                path: leaf.path.clone(),
+            });
+            ui.close();
+        }
+        ui.separator();
+    }
     // Prefabs only. A scene is the same format but not the same invariant:
     // it may have any number of roots, and instancing needs exactly one.
     // Offering this on a scene meant a four-root scene failed at the click
@@ -210,3 +285,24 @@ pub(super) fn leaf_menu(
         ui.close();
     }
 }
+
+/// Whether "Set as Main Scene" belongs on this file's menu (#808).
+///
+/// Scenes only, and only under a writable root. A `.material` is not
+/// something a game can open with, and the engine's shipped assets are
+/// somebody else's — pointing a project's manifest at one would store a
+/// path outside the project, which the handler refuses anyway.
+///
+/// 🔴 A prefab is the same format with a different extension and must
+/// **not** qualify: it carries exactly one root entity, so a game opening
+/// one would start with a single object and no camera. The extension is
+/// the only thing separating them — see `PREFAB_EXTENSION`.
+pub(super) fn offers_main_scene(path: &Path, writable: bool) -> bool {
+    writable
+        && path
+            .extension()
+            .is_some_and(|ext| ext == crate::project::SCENE_EXTENSION)
+}
+
+#[cfg(test)]
+mod main_scene_entry_tests;

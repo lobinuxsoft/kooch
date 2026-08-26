@@ -143,6 +143,46 @@ pub(super) fn field_is_shown(
     condition.is_met(discriminant)
 }
 
+/// The heading a field is drawn under (#830), or `""` for none.
+pub(super) fn group_for(field_metas: Option<&'static [FieldMeta]>, name: &str) -> &'static str {
+    field_metas
+        .and_then(|metas| metas.iter().find(|m| m.name == name))
+        .map(|m| m.group)
+        .unwrap_or("")
+}
+
+/// Splits the visible fields into consecutive runs that share a heading.
+///
+/// # Why runs and not a grouping
+///
+/// Collecting every field of a group together would reorder the
+/// author's struct behind their back, and the order of fields in a
+/// settings asset is itself information — exposure reads as a triple
+/// because aperture, shutter and ISO sit in that order. A run keeps the
+/// declaration order and lets a heading appear twice if the struct says
+/// so, which is visible and fixable rather than silent.
+///
+/// The `shown_when` filter is applied here rather than at draw time, so
+/// a group whose every field is hidden by the current variant does not
+/// leave a heading with nothing under it.
+pub(super) fn group_runs<'a>(
+    fields: &'a [(String, ReflectValue)],
+    field_metas: Option<&'static [FieldMeta]>,
+) -> Vec<(&'static str, Vec<&'a (String, ReflectValue)>)> {
+    let mut runs: Vec<(&'static str, Vec<&'a (String, ReflectValue)>)> = Vec::new();
+    for field in fields {
+        if !field_is_shown(field_metas, &field.0, fields) {
+            continue;
+        }
+        let group = group_for(field_metas, &field.0);
+        match runs.last_mut() {
+            Some((current, members)) if *current == group => members.push(field),
+            _ => runs.push((group, vec![field])),
+        }
+    }
+    runs
+}
+
 /// Reads a reflected value as an `i64`, for comparing against a
 /// [`FieldCondition`]'s values. `None` for anything not an integer — a
 /// condition on a float or a vector is meaningless, and treating it as
@@ -157,6 +197,12 @@ fn integer_value(value: &ReflectValue) -> Option<i64> {
         ReflectValue::I16(v) => Some(*v as i64),
         ReflectValue::I32(v) => Some(*v as i64),
         ReflectValue::I64(v) => Some(*v),
+        ReflectValue::Bool(v) => Some(i64::from(*v)),
+        // 🔴 A bool IS a discriminant with two values, and leaving it
+        // out does not fail loudly: `is_met(None)` reads as SHOWN, so a
+        // `shown_when` pointing at a toggle silently never hides
+        // anything. The absent-field case is meant to look like a typo;
+        // an unsupported TYPE looked like a working rule instead.
         _ => None,
     }
 }
@@ -196,62 +242,79 @@ pub(super) fn draw_reflected_fields(
     entities: &[EntityDisplayInfo],
 ) -> Vec<(String, ReflectValue)> {
     let mut edits = Vec::new();
-    // Keyed on the component alone — see the note in `mod.rs`. The entity
-    // used to be part of it, which renamed every widget in the grid the
-    // moment the selection moved, while the grid stayed in the same place.
-    egui::Grid::new(format!("fields_{component:?}"))
-        .num_columns(2)
-        .spacing([8.0, 4.0])
-        .show(ui, |ui| {
-            for (name, value) in fields {
-                // A variant's own parameters only. Showing a capsule's
-                // half_height while a sphere is selected implies it does
-                // something; the value is still stored and still saved.
-                if !field_is_shown(field_metas, name, fields) {
-                    continue;
-                }
-                // Keyed on the field, not on its position in the grid.
-                // `field_is_shown` hides a variant's unused parameters, so
-                // the row count changes as a collider switches shape — and
-                // with automatic ids that renames every widget below.
-                //
-                // One scope per cell, not one around the row: a scope
-                // advances the grid's cursor, so wrapping both would put
-                // the label and its editor in the same column.
-                ui.push_id(("label", name), |ui| {
-                    let label = ui.label(name);
-                    let doc = doc_for(field_metas, name);
-                    if !doc.is_empty() {
-                        label.on_hover_text(doc);
-                    }
-                });
-                ui.push_id(name, |ui| {
-                    let field = FieldContext {
-                        name,
-                        choices: choices_for(field_metas, name),
-                        bits: bits_for(field_metas, name),
-                        assets: asset_catalog,
-                        entities,
-                        requires: requires_for(field_metas, name),
-                    };
-                    let new_value = match value {
-                        ReflectValue::Quat(q) => {
-                            let ctx = if is_transform_rotation(type_id, name) {
-                                rotation_ctx
-                            } else {
-                                RotationContext::local_only()
-                            };
-                            draw_quat_with_cache(ui, entity, component, name, *q, ctx, euler_cache)
+    // One grid per heading (#830). A single grid for the whole component
+    // is what produced the pile the settings asset had become: fourteen
+    // rows with no indication of which three belong to the exposure and
+    // which five to the shadows.
+    //
+    // Keyed on the component **and the heading** — see the note in
+    // `mod.rs` for why the entity is not part of it. The heading is, and
+    // has to be: two grids sharing an id share their column widths, so
+    // one long tooltip in the shadows section would resize the exposure
+    // section above it.
+    for (group, members) in group_runs(fields, field_metas) {
+        if !group.is_empty() {
+            ui.add_space(6.0);
+            ui.strong(group);
+        }
+        egui::Grid::new(format!("fields_{component:?}_{group}"))
+            .num_columns(2)
+            .spacing([8.0, 4.0])
+            .show(ui, |ui| {
+                for (name, value) in members {
+                    // Keyed on the field, not on its position in the
+                    // grid. `field_is_shown` hides a variant's unused
+                    // parameters, so the row count changes as a collider
+                    // switches shape — and with automatic ids that
+                    // renames every widget below.
+                    //
+                    // One scope per cell, not one around the row: a
+                    // scope advances the grid's cursor, so wrapping both
+                    // would put the label and its editor in the same
+                    // column.
+                    ui.push_id(("label", name), |ui| {
+                        let label = ui.label(name);
+                        let doc = doc_for(field_metas, name);
+                        if !doc.is_empty() {
+                            label.on_hover_text(doc);
                         }
-                        _ => draw_value_widget(ui, value, &field),
-                    };
-                    if let Some(new_value) = new_value {
-                        edits.push((name.clone(), new_value));
-                    }
-                });
-                ui.end_row();
-            }
-        });
+                    });
+                    ui.push_id(name, |ui| {
+                        let field = FieldContext {
+                            name,
+                            choices: choices_for(field_metas, name),
+                            bits: bits_for(field_metas, name),
+                            assets: asset_catalog,
+                            entities,
+                            requires: requires_for(field_metas, name),
+                        };
+                        let new_value = match value {
+                            ReflectValue::Quat(q) => {
+                                let ctx = if is_transform_rotation(type_id, name) {
+                                    rotation_ctx
+                                } else {
+                                    RotationContext::local_only()
+                                };
+                                draw_quat_with_cache(
+                                    ui,
+                                    entity,
+                                    component,
+                                    name,
+                                    *q,
+                                    ctx,
+                                    euler_cache,
+                                )
+                            }
+                            _ => draw_value_widget(ui, value, &field),
+                        };
+                        if let Some(new_value) = new_value {
+                            edits.push((name.clone(), new_value));
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+    }
     edits
 }
 
@@ -262,166 +325,36 @@ pub(super) fn draw_readonly_fields(
     fields: &[(String, ReflectValue)],
     field_metas: Option<&'static [FieldMeta]>,
 ) {
-    egui::Grid::new(format!("ro_fields_{component:?}"))
-        .num_columns(2)
-        .spacing([8.0, 4.0])
-        .show(ui, |ui| {
-            for (name, value) in fields {
-                // A variant's own parameters only. Showing a capsule's
-                // half_height while a sphere is selected implies it does
-                // something; the value is still stored and still saved.
-                if !field_is_shown(field_metas, name, fields) {
-                    continue;
-                }
-                ui.push_id(("label", name), |ui| {
-                    let label = ui.label(name);
-                    let doc = doc_for(field_metas, name);
-                    if !doc.is_empty() {
-                        label.on_hover_text(doc);
-                    }
-                });
-                ui.push_id(name, |ui| {
-                    let choices = choices_for(field_metas, name);
-                    let bits = bits_for(field_metas, name);
-                    draw_readonly_value(ui, value, choices, bits);
-                });
-                ui.end_row();
-            }
-        });
-}
-
-#[cfg(test)]
-mod condition_tests {
-    use kooch_ecs::reflect::{Reflect, ReflectValue};
-    use kooch_physics::components::{Collider, SHAPE_CAPSULE, SHAPE_CUBOID, SHAPE_SPHERE};
-
-    use super::field_is_shown;
-
-    /// `(name, current value)` for every field, the way the Inspector
-    /// receives them.
-    fn field_values(collider: &Collider) -> Vec<(String, ReflectValue)> {
-        collider
-            .reflect_fields()
-            .iter()
-            .filter_map(|meta| {
-                collider
-                    .reflect_get(meta.name)
-                    .map(|value| (meta.name.to_owned(), value))
-            })
-            .collect()
-    }
-
-    /// The field names the Inspector would actually render for a shape.
-    fn shown_fields(shape: u32) -> Vec<String> {
-        let collider = Collider {
-            shape,
-            ..Default::default()
-        };
-        let fields = field_values(&collider);
-        let metas = Some(collider.reflect_fields());
-        fields
-            .iter()
-            .filter(|(name, _)| field_is_shown(metas, name, &fields))
-            .map(|(name, _)| name.clone())
-            .collect()
-    }
-
-    /// What was reported: a sphere showed `half_extents` and `half_height`,
-    /// which it ignores entirely, and they read as if they did something.
-    #[test]
-    fn a_sphere_shows_only_the_parameters_it_reads() {
-        let shown = shown_fields(SHAPE_SPHERE);
-        assert!(shown.contains(&"radius".to_owned()), "{shown:?}");
-        assert!(shown.contains(&"center".to_owned()), "{shown:?}");
-        assert!(
-            !shown.contains(&"half_extents".to_owned()),
-            "a sphere still offers half_extents: {shown:?}"
-        );
-        assert!(
-            !shown.contains(&"half_height".to_owned()),
-            "a sphere still offers half_height: {shown:?}"
-        );
-    }
-
-    #[test]
-    fn a_cuboid_shows_its_extents_and_not_the_round_parameters() {
-        let shown = shown_fields(SHAPE_CUBOID);
-        assert!(shown.contains(&"half_extents".to_owned()), "{shown:?}");
-        assert!(!shown.contains(&"radius".to_owned()), "{shown:?}");
-        assert!(!shown.contains(&"half_height".to_owned()), "{shown:?}");
-    }
-
-    #[test]
-    fn a_capsule_shows_both_of_its_dimensions() {
-        let shown = shown_fields(SHAPE_CAPSULE);
-        assert!(shown.contains(&"radius".to_owned()), "{shown:?}");
-        assert!(shown.contains(&"half_height".to_owned()), "{shown:?}");
-        assert!(!shown.contains(&"half_extents".to_owned()), "{shown:?}");
-    }
-
-    /// `shape` and `center` apply to every variant, so they are never
-    /// filtered — a condition is opt-in per field.
-    #[test]
-    fn the_shape_selector_and_centre_always_show() {
-        for shape in [SHAPE_SPHERE, SHAPE_CUBOID, SHAPE_CAPSULE, 99] {
-            let shown = shown_fields(shape);
-            assert!(shown.contains(&"shape".to_owned()), "shape {shape}");
-            assert!(shown.contains(&"center".to_owned()), "shape {shape}");
+    for (group, members) in group_runs(fields, field_metas) {
+        if !group.is_empty() {
+            ui.add_space(6.0);
+            ui.strong(group);
         }
-    }
-
-    /// Hiding is display only. Every field is still reflected, so it is
-    /// still stored, still serialised, and still survives a scene
-    /// round-trip — the reason the storage keeps all variants side by side
-    /// in the first place.
-    #[test]
-    fn hidden_fields_are_still_stored_and_reflected() {
-        let collider = Collider {
-            shape: SHAPE_SPHERE,
-            half_extents: glam::Vec3::splat(7.0),
-            half_height: 3.0,
-            ..Default::default()
-        };
-        let fields = field_values(&collider);
-
-        // Present in reflection even though the Inspector hides them.
-        let extents = fields.iter().find(|(n, _)| n == "half_extents");
-        assert_eq!(
-            extents.map(|(_, v)| v.clone()),
-            Some(ReflectValue::Vec3(glam::Vec3::splat(7.0))),
-            "a hidden field stopped being reflected"
-        );
-        assert!(
-            !field_is_shown(Some(collider.reflect_fields()), "half_extents", &fields),
-            "test is not exercising a hidden field"
-        );
+        egui::Grid::new(format!("ro_fields_{component:?}_{group}"))
+            .num_columns(2)
+            .spacing([8.0, 4.0])
+            .show(ui, |ui| {
+                for (name, value) in members {
+                    ui.push_id(("label", name), |ui| {
+                        let label = ui.label(name);
+                        let doc = doc_for(field_metas, name);
+                        if !doc.is_empty() {
+                            label.on_hover_text(doc);
+                        }
+                    });
+                    ui.push_id(name, |ui| {
+                        let choices = choices_for(field_metas, name);
+                        let bits = bits_for(field_metas, name);
+                        draw_readonly_value(ui, value, choices, bits);
+                    });
+                    ui.end_row();
+                }
+            });
     }
 }
 
 #[cfg(test)]
-mod name_editor_tests {
-    use super::text_to_show;
+mod condition_tests;
 
-    /// The reported bug, stated as the rule that caused it: with focus,
-    /// the lagging snapshot must not win. It is one character behind what
-    /// was just typed, and egui pulls the caret back to fit.
-    #[test]
-    fn the_typed_text_wins_while_the_field_has_focus() {
-        let shown = text_to_show(true, Some("Doo".to_owned()), "Do");
-        assert_eq!(shown, "Doo", "the stale snapshot overwrote the keystroke");
-    }
-
-    /// Focused with nothing typed yet — the first frame after clicking in.
-    #[test]
-    fn focus_without_a_buffer_falls_back_to_the_world() {
-        assert_eq!(text_to_show(true, None, "Door frame"), "Door frame");
-    }
-
-    /// Unfocused, the world is authoritative: a rename the project
-    /// altered or refused has to show what actually landed.
-    #[test]
-    fn the_world_wins_once_focus_is_gone() {
-        let shown = text_to_show(false, Some("what I typed".to_owned()), "what landed");
-        assert_eq!(shown, "what landed");
-    }
-}
+#[cfg(test)]
+mod name_editor_tests;

@@ -10,7 +10,7 @@ use wgpu::Adapter;
 ///   wgpu refuses storage access on `R16Float`. RDNA 2/4 (Steam Deck,
 ///   RX 9070 XT) supports it natively over Vulkan; DX12 / Metal also
 ///   expose it on contemporary hardware.
-pub(super) fn required_engine_features(adapter: &Adapter) -> wgpu::Features {
+pub fn engine_features() -> wgpu::Features {
     // FLOAT32_FILTERABLE is required by PR-4 of epic #370: the GDF
     // cascade-0 storage texture is `R32Float` (no native R16Float
     // STORAGE_BINDING in wgpu 29 / WebGPU core), and the production
@@ -20,8 +20,46 @@ pub(super) fn required_engine_features(adapter: &Adapter) -> wgpu::Features {
     // the Steam Deck APU all advertise this feature; raising it as a
     // hard-required surfaces unsupported HW at startup rather than a
     // crash mid-frame inside `create_bind_group`.
-    let required = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-        | wgpu::Features::FLOAT32_FILTERABLE;
+    //
+    // SHADER_F16 is FSR 3.1's `FFX_HALF` path (#481). The accumulation
+    // carries 25 colours per output pixel through YCoCg, a tonemap round
+    // trip and a variance box; in half that is half the registers, and
+    // on a 10 W part registers are occupancy and occupancy is latency
+    // hiding. It is `VK_KHR_shader_float16_int8` — present on RADV
+    // STRIX1 (the OneXFly's 890M) and on gfx1201, and on anything that
+    // also carries the 64-bit texture atomics the meshlet path already
+    // demands, which are far rarer.
+    wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+        | wgpu::Features::FLOAT32_FILTERABLE
+        | wgpu::Features::SHADER_F16
+}
+
+/// Everything a device must expose for the whole engine to run: the
+/// hard-required set plus the meshlet path's atomic bundle.
+///
+/// 🔴 **The one list.** This existed in seven places — the engine, the
+/// vbuf64 gate, and five test files that each spelled it out again —
+/// and adding `SHADER_F16` meant remembering all seven. Forgetting one
+/// does not fail to compile: it makes the device request come back
+/// short, the test skip with "no adapter", and the reader conclude the
+/// machine lacks the hardware rather than the list lacks a line.
+pub fn all_required_features() -> wgpu::Features {
+    engine_features() | vbuf64_features()
+}
+
+/// Whether this adapter carries everything the engine hard-requires.
+///
+/// The same question [`required_engine_features`] asserts, asked without
+/// killing the process — so an adapter can be rejected and another tried
+/// before anyone panics.
+pub(super) fn suits_engine(adapter: &Adapter) -> bool {
+    (engine_features() - adapter.features()).is_empty()
+}
+
+/// Asserts the adapter carries [`engine_features`], with a message that
+/// names why each one is there.
+pub(super) fn required_engine_features(adapter: &Adapter) -> wgpu::Features {
+    let required = engine_features();
     let missing = required - adapter.features();
     assert!(
         missing.is_empty(),
@@ -29,7 +67,8 @@ pub(super) fn required_engine_features(adapter: &Adapter) -> wgpu::Features {
          #136 S6 — sparse SDF storage needs R16Float storage textures, \
          which requires TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES on the adapter. \
          PR-4 of epic #370 — GDF cascade fetch needs FLOAT32_FILTERABLE for \
-         linear-sampled R32Float textures."
+         linear-sampled R32Float textures. \
+         #481 — FSR 3.1's half-precision path needs SHADER_F16."
     );
     required
 }
@@ -48,6 +87,28 @@ pub(super) fn optional_features(adapter: &Adapter) -> wgpu::Features {
     let mut features = wgpu::Features::empty();
     if adapter.features().contains(wgpu::Features::PIPELINE_CACHE) {
         features |= wgpu::Features::PIPELINE_CACHE;
+    }
+    // #476 — the shadow pass wants `unclipped_depth` so a cascade's
+    // depth range can hug the slice it covers. Without it the near plane
+    // has to sit a cascade width further back to catch occluders outside
+    // the view frustum, and that whole margin is precision the depth
+    // comparison never gets. Bevy renders their shadow pass with it and
+    // emulates it in the fragment shader where it is missing.
+    if adapter
+        .features()
+        .contains(wgpu::Features::DEPTH_CLIP_CONTROL)
+    {
+        features |= wgpu::Features::DEPTH_CLIP_CONTROL;
+    }
+    // #952 — the virtual shadow pages' depth pass clips each triangle to
+    // the one page it was paired with. Without this it does that in a
+    // fragment shader with `discard`, which pays twice: the out-of-rect
+    // fragments are rasterised before they are thrown away, and the
+    // `discard` disables early-Z for the whole pass. With it the clipper
+    // cuts the triangle before any fragment exists and the pass carries
+    // no fragment shader at all. See `page_depth_clipped.wgsl`.
+    if adapter.features().contains(wgpu::Features::CLIP_DISTANCES) {
+        features |= wgpu::Features::CLIP_DISTANCES;
     }
     if adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY)
         && adapter

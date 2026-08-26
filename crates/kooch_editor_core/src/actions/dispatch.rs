@@ -7,8 +7,8 @@ use kooch_ecs::component::{ComponentId, ComponentNames, ComponentRegistry};
 
 use crate::undo::{
     AddComponentCommand, AddDynamicComponentCommand, DespawnCommand, DuplicateCommand,
-    EditorCommand, RemoveComponentCommand, RemoveDynamicComponentCommand, SetDynamicFieldCommand,
-    SetFieldCommand, SpawnCommand, SpawnMeshCommand, TransformEditCommand,
+    EditorCommand, PasteCommand, RemoveComponentCommand, RemoveDynamicComponentCommand,
+    SetDynamicFieldCommand, SetFieldCommand, SpawnCommand, SpawnMeshCommand, TransformEditCommand,
 };
 
 use super::EditorAction;
@@ -44,15 +44,22 @@ pub(super) fn action_to_command(
     resources: &Resources,
 ) -> Option<Box<dyn EditorCommand>> {
     match action {
-        EditorAction::Spawn { extra, name } => {
-            Some(Box::new(SpawnCommand::new(extra.clone(), name.clone())))
-        }
+        EditorAction::Spawn { extra, name, into } => Some(Box::new(SpawnCommand::new(
+            extra.clone(),
+            name.clone(),
+            *into,
+        ))),
         EditorAction::SpawnMesh { path, name } => {
             Some(Box::new(SpawnMeshCommand::new(path.clone(), name.clone())))
         }
         EditorAction::Despawn(entity) => Some(Box::new(DespawnCommand::new(resources, *entity))),
         EditorAction::Duplicate(entity) => {
             Some(Box::new(DuplicateCommand::new(resources, *entity)))
+        }
+        // `None` for an empty clipboard, which is also what makes Ctrl+V
+        // before any Ctrl+C a no-op rather than an empty history entry.
+        EditorAction::PasteEntities => {
+            PasteCommand::new(resources).map(|cmd| Box::new(cmd) as Box<dyn EditorCommand>)
         }
         EditorAction::SetField {
             entity,

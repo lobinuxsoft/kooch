@@ -46,6 +46,17 @@ struct CullParams {
     // raster pass flips it on while the user holds a reject-mode
     // dropdown selection.
     debug_active: u32,
+    // 1 when the view is orthographic — a shadow cascade. Changes the
+    // LOD test rather than tuning it: an orthographic projection
+    // magnifies everything equally, so there is no distance term.
+    lod_orthographic: u32,
+    // Three scalars, NOT `vec3<u32>`: a vec3 aligns to 16, which would
+    // push `view_proj` to the next boundary and inflate the struct to
+    // 224 bytes against the host's 208. wgpu reports that as
+    // "min_binding_size" and it reads like a binding problem.
+    _pad_lod0: u32,
+    _pad_lod1: u32,
+    _pad_lod2: u32,
     // Clip-from-world matrix used by the AABB-vs-frustum test in
     // `atomic.wgsl` (#454.4 follow-up A). The atomic R64 path now
     // matches the Hi-Z 2-pass entry's #488 fix: derive frustum
@@ -112,7 +123,44 @@ fn sphere_outside_frustum(center: vec3<f32>, radius: f32) -> bool {
     return false;
 }
 
+// Largest axis scale of an instance's transform.
+//
+// 🔴 A meshlet's simplification error is measured in the mesh's OWN
+// space. Scale the instance up and the same error covers more world,
+// and more of the shadow map with it — so the selector has to scale it
+// too or a large object is judged by a small object's budget, keeps a
+// LOD coarser than it should, and self-shadows against a silhouette
+// that no longer matches the one being shaded. Blotches on the object,
+// only on the ones somebody scaled.
+//
+// Bevy applies exactly this in `lod_error_is_imperceptible`
+// (`simplification_error * world_scale`).
+fn instance_world_scale(transform: mat4x4<f32>) -> f32 {
+    return max(
+        length(transform[0].xyz),
+        max(length(transform[1].xyz), length(transform[2].xyz)),
+    );
+}
+
 fn camera_in_cone(apex: vec3<f32>, axis: vec3<f32>, cutoff: f32) -> bool {
+    // 🔴 Never for an orthographic view — a shadow cascade.
+    //
+    // The whole test is "form the vector from the viewpoint to the
+    // meshlet and compare it against the average normal", and a
+    // directional light has no viewpoint. Any point stood in for one is
+    // an approximation that gets worse the further the meshlet is from
+    // it, and it fails in the direction that matters: meshlets facing
+    // the sun get rejected, write no depth, and the shadow comes out
+    // with bites taken out of its edge. It shows up most when the caster
+    // is off screen, because that is when the stand-in point is
+    // furthest from the geometry.
+    //
+    // Bevy 0.19 does not cone-cull meshlets in ANY view — there is no
+    // occurrence of "cone" in `meshlet_cull_shared.wgsl`. Keeping it for
+    // the camera, where the viewpoint is real, and dropping it here.
+    if (params.lod_orthographic == 1u) {
+        return false;
+    }
     // meshopt sets cone_cutoff to 1.0 when the meshlet's normals are
     // too divergent for a meaningful cone. Treat that as a no-cull
     // sentinel — the test would otherwise reject everything.

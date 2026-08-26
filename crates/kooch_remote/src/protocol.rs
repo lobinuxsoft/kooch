@@ -10,6 +10,7 @@
 //! and its parameters; a [`Response`] is either the method's result or a
 //! typed [`RemoteError`]. HTTP carries it; see [`crate::server`].
 
+use kooch_core::Guid;
 use serde::{Deserialize, Serialize};
 
 use kooch_ecs::entity::Entity;
@@ -58,7 +59,49 @@ pub struct EntitySnapshot {
     pub name: Option<String>,
     /// Parent entity, for hierarchy reconstruction on the client.
     pub parent: Option<EntityId>,
+    /// The scene this entity was authored in, `None` for one that belongs
+    /// to none — an editor helper, or something spawned and not yet saved.
+    ///
+    /// 🔴 Carried out of band for the same reason `parent` is: membership
+    /// lives in `SceneMember`, which is derived on load and never written
+    /// to a scene file. It is reflected — a world rebuild has to carry it
+    /// — so the host skips it explicitly when listing components, leaving
+    /// this the one place it travels. Without this every mirrored entity
+    /// arrives belonging to nothing, and since **Open Project always
+    /// opens remote**, that is every entity the editor normally shows.
+    #[serde(default)]
+    pub scene: Option<Guid>,
     pub components: Vec<ComponentSnapshot>,
+}
+
+/// One scene the project has open, as the editor needs to list it.
+///
+/// 🔴 The editor cannot answer this from its own state. Its
+/// `SceneManager` seeds an empty scene with a freshly generated `Guid`
+/// and no path, while the project holds a different `SceneManager` with
+/// the real files under different ids — so the editor was listing a
+/// scene that exists nowhere and filing every mirrored entity under
+/// "Unsaved", because the scene each one names was not in its list.
+///
+/// The open set belongs to the project for the same reason the entities
+/// do: it is the side that loaded them. Carried per reply rather than
+/// behind a method of its own, like [`HostMetrics`] — it is a handful of
+/// entries, the editor already pulls a snapshot every frame, and a
+/// second round trip is a second thing that can be a frame out of date.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SceneEntry {
+    /// Identity, matching [`EntitySnapshot::scene`] and the scene file's
+    /// own `id`.
+    pub id: Guid,
+    /// Where it was loaded from, or `None` for one never saved.
+    ///
+    /// A string, not a `PathBuf`: the wire carries no host paths as
+    /// types, and the client only ever shows it.
+    pub path: Option<String>,
+    /// Whether new entities are authored into it.
+    pub active: bool,
+    /// Whether it has edits not on disk.
+    pub dirty: bool,
 }
 
 /// Static metadata for one field of a registered component type.
@@ -145,7 +188,27 @@ pub enum Method {
     /// Remove a component from an entity.
     RemoveComponent { entity: EntityId, component: String },
     /// Spawn a new entity, optionally named. Returns its [`EntityId`].
-    Spawn { name: Option<String> },
+    ///
+    /// Where it lands is asked for, not inferred. Every spawn used to
+    /// arrive in the active scene at the root, which is right for a
+    /// toolbar button and wrong for a menu opened on a scene, or on an
+    /// entity, that is not the active one — the entity appears somewhere
+    /// other than where it was asked for, and the only sign is a row in
+    /// the wrong group.
+    Spawn {
+        name: Option<String>,
+        /// Which scene to author it into. `None` means the active one.
+        ///
+        /// Ignored when `parent` is set: an entity's scene is its
+        /// parent's, so a parent already answers this, and honouring both
+        /// would let a caller ask for a child of an entity in one scene
+        /// and a member of another.
+        #[serde(default)]
+        scene: Option<Guid>,
+        /// What to hang it off, or `None` for a root of its scene.
+        #[serde(default)]
+        parent: Option<EntityId>,
+    },
     /// Despawn an entity.
     Despawn { entity: EntityId },
     /// Reparent an entity, or unparent it when `parent` is `None`.
@@ -161,8 +224,24 @@ pub enum Method {
         /// does not get a second method.
         parent: Option<EntityId>,
     },
-    /// Persist the live ECS to a scene file on the server's disk.
-    SaveScene { path: String },
+    /// Persist one open scene to a file on the server's disk.
+    ///
+    /// 🔴 One scene, not the world. This used to write
+    /// `SceneDocument::from_ecs` — every entity alive, under a freshly
+    /// generated document id. With two scenes open that put both scenes'
+    /// entities in one file, so the next load spawned everything twice,
+    /// and the id changed on every save, breaking whatever named the
+    /// scene. The engine has always had `from_ecs_scene`; the local
+    /// editor path used it and this one did not, and **Open Project
+    /// always opens remote**.
+    SaveScene {
+        path: String,
+        /// Which scene to write. `None` means the active one — what a
+        /// client that knows of only one scene sends, and what a host
+        /// older than this field is asked for anyway.
+        #[serde(default)]
+        scene: Option<Guid>,
+    },
     /// Write one entity and its descendants to a scene file — a prefab.
     ///
     /// Server-side because the world it captures lives here; the editor's
@@ -193,6 +272,38 @@ pub enum Method {
     /// and a second way to move an entity is a second thing to keep in step
     /// with the first.
     InstantiatePrefab { path: String },
+    /// Move an entity among its siblings: under `parent`, before
+    /// `before`.
+    ///
+    /// One method rather than a reparent plus a field write, because the
+    /// numbering policy lives in the engine (`kooch_ecs::order::place`)
+    /// and a client computing it would have to renumber a sibling group
+    /// over the wire, one round trip per entity.
+    MoveEntity {
+        entity: EntityId,
+        /// `None` makes it a root of its scene.
+        #[serde(default)]
+        parent: Option<EntityId>,
+        /// The sibling it goes in front of; `None` puts it last.
+        #[serde(default)]
+        before: Option<EntityId>,
+    },
+    /// Throw away one open scene's edits and read it back from its file.
+    ///
+    /// Only that scene: the others keep their edits. `None` reverts the
+    /// active one.
+    RevertScene {
+        #[serde(default)]
+        scene: Option<Guid>,
+    },
+    /// Open an empty unsaved scene beside the ones already loaded, and
+    /// make it active. Returns its identity as [`ResponseData::SceneOpened`].
+    ///
+    /// "Start something new" while a world is already open. An entity has
+    /// to belong to a scene, so creating one is what makes "put this
+    /// somewhere of its own" answerable — which is what right-clicking
+    /// the World panel's empty space means.
+    NewScene,
     /// Replace the live ECS with a scene file from the server's disk.
     LoadScene { path: String },
     /// Start or stop the project's gameplay systems in place.
@@ -248,11 +359,29 @@ pub enum ResponseData {
         /// said".
         #[serde(default, skip_serializing_if = "Option::is_none")]
         host: Option<HostMetrics>,
+        /// Which scenes the project has open.
+        ///
+        /// `None` means nobody said — an older host, or one with no
+        /// `SceneManager` — and the client should keep whatever it was
+        /// showing. `Some` is the whole open set, replacing it.
+        ///
+        /// The distinction is the point: an empty `Vec` would be
+        /// indistinguishable from a host that never sent the field, and
+        /// the editor would blank a list it had no news about.
+        ///
+        /// Sent whole every reply rather than diffed like `entities`.
+        /// There are as many of these as a person has scenes open, and
+        /// a diff of three entries costs more to be right about than to
+        /// resend.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scenes: Option<Vec<SceneEntry>>,
     },
     /// Reply to [`Method::GetSchema`].
     Schema { components: Vec<ComponentSchema> },
     /// Reply to [`Method::Spawn`] — the new entity's handle.
     Spawned { entity: EntityId },
+    /// Reply to [`Method::NewScene`] — the new scene's identity.
+    SceneOpened { scene: Guid },
     /// Reply to any method that mutates but returns nothing.
     Ok,
     /// Reply to [`Method::Extension`] — whatever the handler returned,
@@ -352,129 +481,4 @@ impl Response {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn entity_id_round_trips_through_entity() {
-        let e = Entity::new(7, 3);
-        let id: EntityId = e.into();
-        assert_eq!(id.index, 7);
-        assert_eq!(id.generation, 3);
-        assert_eq!(Entity::from(id), e);
-    }
-
-    #[test]
-    fn request_deserializes_from_flat_json() {
-        let json = r#"{"id":5,"method":"set_field","entity":{"index":1,"generation":0},"component":"game::Health","field":"hp","value":{"U32":42}}"#;
-        let req: Request = serde_json::from_str(json).unwrap();
-        assert_eq!(req.id, 5);
-        match req.method {
-            Method::SetField {
-                entity,
-                component,
-                field,
-                value,
-            } => {
-                assert_eq!(entity.index, 1);
-                assert_eq!(component, "game::Health");
-                assert_eq!(field, "hp");
-                assert_eq!(value, ReflectValue::U32(42));
-            }
-            other => panic!("wrong method: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn ping_request_needs_no_params() {
-        let req: Request = serde_json::from_str(r#"{"id":1,"method":"ping"}"#).unwrap();
-        assert_eq!(req.method, Method::Ping);
-    }
-
-    #[test]
-    fn response_round_trips() {
-        let resp = Response::ok(
-            9,
-            ResponseData::Spawned {
-                entity: EntityId {
-                    index: 2,
-                    generation: 1,
-                },
-            },
-        );
-        let json = serde_json::to_string(&resp).unwrap();
-        let back: Response = serde_json::from_str(&json).unwrap();
-        assert_eq!(resp, back);
-    }
-
-    #[test]
-    fn error_response_round_trips() {
-        let resp = Response::err(
-            3,
-            RemoteError::UnknownComponent {
-                type_name: "game::Missing".into(),
-            },
-        );
-        let json = serde_json::to_string(&resp).unwrap();
-        let back: Response = serde_json::from_str(&json).unwrap();
-        assert_eq!(resp, back);
-    }
-
-    /// A host built before this field existed sends a reply without it.
-    /// That has to keep parsing, and has to arrive as "nobody said"
-    /// rather than as a project running infinitely fast.
-    #[test]
-    fn a_reply_without_host_metrics_still_parses() {
-        let json =
-            r#"{"id":1,"result":{"kind":"entities","entities":[],"revision":7,"full":true}}"#;
-        let parsed: Response = serde_json::from_str(json).expect("older host still understood");
-        match parsed.payload {
-            ResponsePayload::Result(ResponseData::Entities { host, revision, .. }) => {
-                assert_eq!(host, None, "absent, not zeroed");
-                assert_eq!(revision, 7);
-            }
-            other => panic!("expected entities, got {other:?}"),
-        }
-    }
-
-    /// And a reply that carries them survives the round trip.
-    #[test]
-    fn host_metrics_round_trip() {
-        let resp = Response::ok(
-            9,
-            ResponseData::Entities {
-                entities: Vec::new(),
-                removed: Vec::new(),
-                revision: 2,
-                full: false,
-                host: Some(HostMetrics {
-                    frame_ms: 16.67,
-                    cpu_frame_ms: 4.2,
-                    ticks_instant: 59.99,
-                    ticks_per_second: 60.0,
-                }),
-            },
-        );
-        let json = serde_json::to_string(&resp).unwrap();
-        let back: Response = serde_json::from_str(&json).unwrap();
-        assert_eq!(resp, back);
-    }
-
-    /// Nothing to say costs nothing to send: the field is skipped, so a
-    /// host with no measurement yet does not widen every snapshot.
-    #[test]
-    fn absent_host_metrics_are_not_serialized() {
-        let resp = Response::ok(
-            1,
-            ResponseData::Entities {
-                entities: Vec::new(),
-                removed: Vec::new(),
-                revision: 1,
-                full: true,
-                host: None,
-            },
-        );
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(!json.contains("host"), "{json}");
-    }
-}
+mod tests;

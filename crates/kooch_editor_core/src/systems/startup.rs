@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use kooch_core::gpu::GpuContext;
-use kooch_core::power::{self, PowerProfile};
 use kooch_core::raw_event::RawEventHandler;
 use kooch_core::resource::Resources;
 use kooch_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
@@ -86,6 +85,9 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     let vram_tracker = std::sync::Arc::new(kooch_render::EngineVramTracker::new());
     meshlet_stage.set_vram_tracker(vram_tracker.clone());
     let meshlet_blit = MeshletBlit::new(gpu.device(), gpu.format());
+    // #785 — per-pass GPU timings for the editor. Built here, while the
+    // `gpu` borrow is alive, and inserted below with the rest.
+    let gpu_scopes = kooch_core::gpu::GpuScopes::new(gpu.device(), gpu.queue());
 
     // The Game panel's view. A second view of this stage rather than a
     // second stage: it shares the mesh pool, the scene instances and the
@@ -114,11 +116,11 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         snap_settings: kooch_gizmos_handles::SnapSettings::default(),
         gizmo_drag_start: None,
         selected_asset: None,
+        build_selection: None,
         current_folder: None,
     };
 
     let handler: Box<dyn RawEventHandler> = Box::new(EguiEventHandler { winit_state });
-    let power_profile: PowerProfile = power::detect();
     resources.insert(overlay);
     // Today the only handler: the editor builds its own plugin set in
     // `bootstrap.rs` and `InputPlugin` is not in it. It still registers
@@ -138,6 +140,19 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     resources.insert(meshlet_stage);
     resources.insert(meshlet_blit);
     resources.insert(vram_tracker);
+    // The stage's own scopes (`shadows`, `cull`, `raster + shade`) are
+    // recorded by `kooch_render` the moment this resource exists;
+    // without it the editor could profile its CPU and nothing else,
+    // which is half the question when the thing being authored is a
+    // frame.
+    //
+    // ⚠️ Each viewport renders the scene, so those scopes appear twice
+    // per editor frame — once for View and once for Game — the same way
+    // the CPU scope `frame` does.
+    if let Some(scopes) = gpu_scopes {
+        resources.insert(scopes);
+        tracing::info!("editor: GPU scopes enabled");
+    }
     // Debug-view selector for the meshlet pipeline (#451). Default
     // Off keeps the production normal-debug path; the View toolbar
     // dropdown writes through this resource per-frame.
@@ -152,7 +167,6 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     // artists can crank it higher to force coarser LOD selection
     // at editor distances and visually sanity-check the chain.
     resources.insert(MeshletLodSettings::default());
-    resources.insert(power_profile);
 
     tracing::info!("Editor overlay initialized");
 }

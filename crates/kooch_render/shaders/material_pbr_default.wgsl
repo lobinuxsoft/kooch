@@ -18,6 +18,11 @@ struct MaterialParams {
     // x metallic, y roughness, z emissive, w pad.
     metallic_roughness_emissive_pad: vec4<f32>,
     texture_indices: vec4<u32>,
+    // xy tiling, zw offset. See `MaterialParams` in `material/mod.rs`:
+    // this struct is declared here and in two other shaders, and a test
+    // reads all three because a field added to two of them fails
+    // silently rather than at compile time.
+    uv_scale_offset: vec4<f32>,
 }
 
 @group(2) @binding(0) var<storage, read> materials: array<MaterialParams>;
@@ -26,10 +31,6 @@ struct MaterialParams {
 @group(4) @binding(1) var normal_tex: texture_2d<f32>;
 @group(4) @binding(2) var metal_rough_tex: texture_2d<f32>;
 @group(4) @binding(3) var material_sampler: sampler;
-
-// `MeshletDebugMode::Normals`. Kept in sync with the Rust enum by the
-// test in `debug.rs` that pins the discriminant.
-const DEBUG_MODE_NORMALS: u32 = 11u;
 
 struct FsInput {
     // @invariant: the Equal depth test against the material-depth target
@@ -57,37 +58,58 @@ fn fs_material(in: FsInput) -> @location(0) vec4<f32> {
     let surf = resolve_vertex_output(in.position);
     let mat = materials[screen.material_id];
 
+    // 🔴 The DERIVATIVES scale with the coordinate, and forgetting
+    // that is the trap. `textureSampleGrad` picks the mip from how
+    // fast the uv moves between pixels; tiling a texture twenty
+    // times makes it move twenty times faster, and handing the
+    // untiled derivatives selects a level about four steps too
+    // sharp. The result is the aliasing the mip chain exists to
+    // remove, on exactly the surfaces that asked for tiling.
+    let uv = surf.uv * mat.uv_scale_offset.xy + mat.uv_scale_offset.zw;
+    // 🔴 The mip bias rides on the SAME multiply (#881). A bias is
+    // `lod += b`, and `lod` is `log2(footprint)`, so scaling the
+    // footprint by `exp2(b)` is the bias exactly — no `log2` per
+    // pixel and no sampler feature, which wgpu does not expose
+    // anyway.
+    let derivative_scale = mat.uv_scale_offset.xy * screen.mip_bias_scale;
+    let ddx_uv = surf.ddx_uv * derivative_scale;
+    let ddy_uv = surf.ddy_uv * derivative_scale;
+
     // Analytical uv derivatives → correct mip selection. Automatic quad
     // derivatives are wrong here: neighbouring fragments in the same 2×2
     // quad may reconstruct from different triangles.
     let albedo = textureSampleGrad(
-        albedo_tex, material_sampler, surf.uv, surf.ddx_uv, surf.ddy_uv);
+        albedo_tex, material_sampler, uv, ddx_uv, ddy_uv);
     let base = albedo.rgb * mat.base_color.rgb;
 
     // Perturb the interpolated normal by the tangent-space normal map.
     let n_ts = textureSampleGrad(
-        normal_tex, material_sampler, surf.uv, surf.ddx_uv, surf.ddy_uv).xyz * 2.0 - 1.0;
+        normal_tex, material_sampler, uv, ddx_uv, ddy_uv).xyz * 2.0 - 1.0;
     let n = normalize(surf.world_normal);
     let t = normalize(surf.world_tangent.xyz);
     let b = cross(n, t) * surf.world_tangent.w;
     let world_n = normalize(mat3x3<f32>(t, b, n) * n_ts);
 
-    // The world-space normal as colour. Until #441 this WAS the shading
-    // model; it is now one entry in the debug dropdown, which is what a
-    // debug view was always supposed to be.
-    if (screen.debug_mode == DEBUG_MODE_NORMALS) {
-        return vec4<f32>(world_n * 0.5 + 0.5, 1.0);
+    // The debug views (#743), and the only place this path mentions
+    // them. In a production pipeline `inti_debug_is_view` is the stub's
+    // literal `false`, so this whole branch — and every view behind it —
+    // is gone before the shader is register-allocated.
+    if (inti_debug_is_view(screen.debug_mode)) {
+        return vec4<f32>(
+            inti_debug_view(screen.debug_mode, surf.world_position, world_n, in.position.xy),
+            1.0);
     }
 
     // glTF packing: green is roughness, blue is metallic. The 1×1
     // fallback is white, so a material with no map multiplies its
     // scalars by 1 and there is no branch.
     let mr = textureSampleGrad(
-        metal_rough_tex, material_sampler, surf.uv, surf.ddx_uv, surf.ddy_uv);
+        metal_rough_tex, material_sampler, uv, ddx_uv, ddy_uv);
     let metallic = mat.metallic_roughness_emissive_pad.x * mr.b;
     let roughness = mat.metallic_roughness_emissive_pad.y * mr.g;
 
-    var radiance = inti_shade(surf.world_position, world_n, base, metallic, roughness);
+    var radiance = inti_shade(
+        surf.world_position, world_n, base, metallic, roughness, in.position.xy, surf.flags);
     // Emissive is radiance the surface produces rather than reflects, so
     // it joins before tonemapping and ignores every light in the scene.
     radiance += base * mat.metallic_roughness_emissive_pad.z;

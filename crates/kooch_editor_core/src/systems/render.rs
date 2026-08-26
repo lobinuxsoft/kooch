@@ -124,6 +124,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .is_some_and(|ps| ps.is_project_loaded());
 
     let (display_data, mut gather_stages) = if project_loaded {
+        profiling::scope!("editor: gather frame data");
         FrameDisplayData::gather(resources)
     } else {
         (FrameDisplayData::empty(), Default::default())
@@ -159,6 +160,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .expect("MeshGizmoRenderer not found");
     let mesh_gizmo_batch = resources.remove::<MeshBatch>().unwrap_or_default();
     let mut project_state = resources.remove::<ProjectState>();
+    let mut dlss = resources
+        .remove::<crate::dlss_sdk::SdkInstall>()
+        .unwrap_or_default();
     let mut undo_stack = resources
         .remove::<UndoStack>()
         .unwrap_or_else(UndoStack::new);
@@ -174,12 +178,35 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .copied()
         .unwrap_or_default();
     let mut meshlet_lod_settings = resources.remove::<MeshletLodSettings>().unwrap_or_default();
+    // The lights-per-pixel view's top of scale (#817). Out of the map
+    // and back like the LOD threshold, so the panel edits the same value
+    // the shading pass will read.
+    let mut lights_hot = resources
+        .remove::<kooch_lighting::LightsHot>()
+        .unwrap_or_default();
+    // Out of the map and back like the rest: the panel edits the same
+    // settings the clustering passes will read this frame.
+    let mut cluster_settings = resources
+        .remove::<kooch_lighting::ClusterSettings>()
+        .unwrap_or_default();
+    let mut specular_floor = resources
+        .remove::<kooch_lighting::SpecularFloor>()
+        .unwrap_or_default();
     // Stats are produced by last frame's viewport render and re-published
     // as a Resource. Read-only here — copied so we don't keep the borrow
     // through the egui pass.
     let meshlet_stats = resources
         .get::<MeshletRenderStats>()
         .copied()
+        .unwrap_or_default();
+    // 🔴 The GAME viewport's own, published under its own key. The
+    // resource above is written by the View camera's render alone, so
+    // the Game tab's overlay used to describe a frustum nobody was
+    // looking through — and a page count that never moved while the
+    // game camera did.
+    let game_stats = resources
+        .get::<crate::viewport::game::GameViewStats>()
+        .map(|s| s.0)
         .unwrap_or_default();
 
     // #463.4 — last frame's GPU timing (when adapter exposes
@@ -218,17 +245,58 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             .resize_if_needed(gpu.device(), &mut overlay.renderer);
     }
 
+    // 🔴 Which history the Edit menu describes follows which one a
+    // Ctrl+Z would reach. With a project open that is the remote one —
+    // the local stack still holds commands, but they describe the mirror
+    // and nothing will ever run them again. Reading the wrong one is how
+    // the menu offered "Undo Duplicate Entity" for an edit made before
+    // the project was opened.
+    // Which document the Edit menu is describing, and therefore which
+    // history it reads. The kind comes from the asset database rather
+    // than the Inspector's own snapshot: both know, and the database
+    // knows before the panel has drawn.
+    let document = crate::history::resolve(
+        overlay.focused_tab,
+        overlay
+            .selected_asset
+            .map(|guid| (guid, asset_kind(resources, guid))),
+        resources
+            .get::<crate::state::OpenInputMap>()
+            .map(|open| open.path.clone())
+            .as_deref(),
+    );
+    let (can_undo, can_redo, undo_desc, redo_desc) = match document.as_ref() {
+        // A document of its own, with a history of its own.
+        Some(document) if !document.is_world() => {
+            let histories = resources.get::<crate::history::documents::DocumentHistories>();
+            (
+                histories.is_some_and(|h| h.can_undo(document)),
+                histories.is_some_and(|h| h.can_redo(document)),
+                histories.and_then(|h| h.undo_description(document).map(String::from)),
+                histories.and_then(|h| h.redo_description(document).map(String::from)),
+            )
+        }
+        _ => world_history(resources, &undo_stack),
+    };
+
     let toolbar = ToolbarInfo {
-        can_undo: undo_stack.can_undo(),
-        can_redo: undo_stack.can_redo(),
-        undo_desc: undo_stack.undo_description().map(String::from),
-        redo_desc: undo_stack.redo_description().map(String::from),
+        can_undo,
+        can_redo,
+        undo_desc,
+        redo_desc,
+        document,
+        clipboard_has_entities: resources
+            .get::<crate::clipboard::EntityClipboard>()
+            .is_some_and(|clipboard| !clipboard.is_empty()),
         remote: resources
             .get::<crate::remote_session::RemoteState>()
             .and_then(|s| s.session.as_ref().map(|s| s.state())),
         remote_stale: resources
             .get::<crate::remote_session::RemoteState>()
             .and_then(|s| s.session.as_ref()?.stale_reason().map(String::from)),
+        scripts_behind: resources
+            .get::<crate::script_sync::ScriptSync>()
+            .is_some_and(|sync| sync.state == crate::script_sync::SyncState::NeedsRebuild),
         // In remote mode the project runs gameplay in place, so Play
         // is a wire toggle rather than a launched process.
         is_playing: is_playing
@@ -249,10 +317,6 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let controller_snapshot = resources
         .get::<EditorCameraController>()
         .cloned()
-        .unwrap_or_default();
-    let power_profile = resources
-        .get::<kooch_core::power::PowerProfile>()
-        .copied()
         .unwrap_or_default();
 
     // Snapshot the AssetDatabase once per frame for the inspector's
@@ -338,6 +402,37 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<crate::actions::PendingPrefabOverwrite>()
         .cloned();
 
+    // The Build panel's view of things. Assembled here rather than in
+    // the panel because the panel draws and does not read resources —
+    // and because the job has to be polled whether or not its tab is
+    // even visible (#758).
+    let build_panel = {
+        // Two statements, not one: polling takes `resources` mutably and
+        // so does loading the presets, and the first borrow has to end
+        // before the second begins.
+        let (status, log) = match resources.get_mut::<crate::build::BuildState>() {
+            Some(state) => {
+                state.poll();
+                (
+                    state
+                        .job
+                        .as_ref()
+                        .map(crate::build::BuildJob::status)
+                        .cloned(),
+                    state.log.clone(),
+                )
+            }
+            None => (None, Vec::new()),
+        };
+        let presets = crate::panels::build::presets_in(resources, &asset_catalog);
+        crate::panels::build::BuildPanel {
+            presets,
+            status,
+            log,
+            project: project_loaded,
+        }
+    };
+
     // #691 — everything above was assembling what the UI is about to
     // read: the hierarchy, the inspector's view of it, the asset
     // catalog. It walks the world, so it grows with the scene.
@@ -347,10 +442,26 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         ..Default::default()
     };
 
+    // What the isolated light casts, in words (#743). Read before the
+    // UI runs because the panel has no `Resources`, and computed only
+    // while the view is open — it is three component lookups, but three
+    // that no other frame has any reason to pay for.
+    let single_light_note = meshlet_debug_mode
+        .needs_selected_light()
+        .then(|| overlay.selected_entities.first().copied())
+        .flatten()
+        .and_then(|entity| kooch_lighting::shadow_note(resources, entity));
+
+    // Read before the UI borrows nothing else from `resources`: the
+    // report is inserted once at startup and never changes.
+    let preflight = resources.get::<crate::preflight::Report>().cloned();
+
     let ui_start = std::time::Instant::now();
     let (full_output, mut actions) = run_editor_ui(
         &mut overlay,
         &mut project_state,
+        &mut dlss,
+        preflight.as_ref(),
         raw_input,
         project_loaded,
         &display_data,
@@ -372,7 +483,6 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                 .map(|h| h.mode())
                 .unwrap_or_default(),
         },
-        power_profile,
         &asset_catalog,
         asset_detail.as_ref(),
         open_input_map.as_ref(),
@@ -380,8 +490,13 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         project_crate_root.as_deref(),
         &mut meshlet_debug_mode,
         meshlet_debug_caps,
+        single_light_note,
         &mut meshlet_lod_settings,
+        &mut lights_hot,
+        &mut cluster_settings,
+        &mut specular_floor,
         meshlet_stats,
+        game_stats,
         resources
             .get::<crate::perf::EditorPerfStats>()
             .copied()
@@ -394,6 +509,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut console,
         &connect_output,
         prefab_overwrite.as_ref(),
+        &build_panel,
+        crate::editor_camera::editor_camera_rotation(resources),
     );
     stages.ui_ms = crate::perf::ms_since(ui_start);
     let input_start = std::time::Instant::now();
@@ -426,6 +543,24 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // the resource map before the viewport render pass picks them up.
     resources.insert(meshlet_debug_mode);
     resources.insert(meshlet_lod_settings);
+    resources.insert(lights_hot);
+    resources.insert(cluster_settings);
+    resources.insert(specular_floor);
+
+    // Which light the single-light view isolates (#743): the selection,
+    // because "one light at a time" is what selecting a light already
+    // means and a second list to pick from is a second thing to keep in
+    // step with the scene.
+    //
+    // Only while the view is open. Off, the resource carries `None` and
+    // `GpuLights::update` skips resolving a slot — a shipped game never
+    // inserts it at all and pays nothing.
+    resources.insert(kooch_lighting::DebugLight(
+        meshlet_debug_mode
+            .needs_selected_light()
+            .then(|| overlay.selected_entities.first().copied())
+            .flatten(),
+    ));
 
     if let Some(size) = viewport_request {
         viewport.request_size(size);
@@ -519,7 +654,14 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         game.has_camera = false;
     }
 
-    {
+    // The View panel, gated the way the Game panel above already is:
+    // `viewport_request` is `Some` this frame iff the tab was actually
+    // drawn. View and Game ship as sibling tabs, so the common case is
+    // one of them hidden — and a hidden view must cost NOTHING: no
+    // cull, no raster, no sky, no shadow-page slice. The user's rule,
+    // stated verbatim: "todo lo que no es visible, no tiene que
+    // consumir".
+    if viewport_request.is_some() {
         // The meshlet stage + blit are constructed at startup and live
         // for the whole editor session; if either is missing, another
         // system removed them mid-frame. Reconstruct minimal
@@ -559,10 +701,21 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     stages.viewport_ms = crate::perf::ms_since(viewport_start);
 
     let present_start = std::time::Instant::now();
-    let presented = present_editor_frame(&gpu, &mut overlay, &window, full_output);
+    // Taken out and put back the way `gpu` is: the frame's resolve and
+    // its boundary need `&mut`, and the viewport passes above only
+    // needed `&`.
+    let mut scopes = resources.remove::<kooch_core::gpu::GpuScopes>();
+    let presented = present_editor_frame(&gpu, &mut overlay, &window, full_output, scopes.as_mut());
+    if let Some(scopes) = scopes {
+        resources.insert(scopes);
+    }
     stages.present_ms = crate::perf::ms_since(present_start);
 
     resources.insert(gpu);
+    // Read before the overlay goes back, applied after this frame's edits
+    // — see `seal_histories`.
+    let ended = overlay.ctx.input(|i| i.pointer.any_released());
+    resources.insert(dlss);
     resources.insert(overlay);
     resources.insert(viewport);
     if let Some(game) = game_view {
@@ -585,6 +738,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
 
     let actions_start = std::time::Instant::now();
     apply_deferred_actions(resources, &actions, &mut undo_stack);
+    if ended {
+        seal_histories(resources);
+    }
     stages.actions_ms = crate::perf::ms_since(actions_start);
 
     resources.insert(undo_stack);
@@ -702,5 +858,78 @@ fn apply_viewport_click(
         (None, false) => overlay.selected_entities.clear(),
         // Ctrl+click on nothing is a miss, not "deselect everything".
         (None, true) => {}
+    }
+}
+
+/// What the scene's history can offer, from whichever one is driving it.
+///
+/// 🔴 With a project open that is the remote one — the local stack still
+/// holds commands, but they describe the mirror and nothing will ever run
+/// them again. Reading the wrong one is how the menu offered "Undo
+/// Duplicate Entity" for an edit made before the project was opened.
+fn world_history(
+    resources: &kooch_core::resource::Resources,
+    undo_stack: &UndoStack,
+) -> (bool, bool, Option<String>, Option<String>) {
+    let remote = resources
+        .get::<crate::remote_session::RemoteState>()
+        .is_some_and(|state| state.is_connected())
+        .then(|| resources.get::<crate::actions::remote_undo::RemoteHistory>())
+        .flatten();
+    match remote {
+        Some(history) => (
+            history.can_undo(),
+            history.can_redo(),
+            history.undo_description().map(String::from),
+            history.redo_description().map(String::from),
+        ),
+        None => (
+            undo_stack.can_undo(),
+            undo_stack.can_redo(),
+            undo_stack.undo_description().map(String::from),
+            undo_stack.redo_description().map(String::from),
+        ),
+    }
+}
+
+/// Whether a guid names a prefab or an ordinary asset.
+///
+/// By the type the asset database recorded, which is the same answer the
+/// Inspector reaches through its own snapshot — and available here
+/// before the Inspector has drawn.
+fn asset_kind(
+    resources: &kooch_core::resource::Resources,
+    guid: kooch_core::Guid,
+) -> crate::history::AssetKind {
+    let prefab = resources
+        .get::<kooch_core::asset_database::AssetDatabase>()
+        .and_then(|db| db.entry(guid)?.type_name.clone())
+        .is_some_and(|name| name == std::any::type_name::<kooch_ecs::scene::SceneDocument>());
+    match prefab {
+        true => crate::history::AssetKind::Prefab,
+        false => crate::history::AssetKind::Asset,
+    }
+}
+
+/// Closes the current run of edits in every history.
+///
+/// 🔴 Called *after* this frame's edits are applied, never before: a seal
+/// applied first would close the group those edits are still filling, and
+/// every frame of a drag would be its own step again — the bug the merge
+/// rule exists to fix.
+///
+/// A released pointer is the boundary that covers what a person actually
+/// does: it ends a drag, and it is also how they leave one field for the
+/// next, since focus changes follow a click.
+///
+/// Both of them, because the user does not know which one their last
+/// edit went to — they clicked a field, and whether that was a prefab's
+/// or an entity's is the editor's bookkeeping, not theirs.
+fn seal_histories(resources: &mut Resources) {
+    if let Some(history) = resources.get_mut::<crate::actions::remote_undo::RemoteHistory>() {
+        history.seal();
+    }
+    if let Some(histories) = resources.get_mut::<crate::history::documents::DocumentHistories>() {
+        histories.seal();
     }
 }

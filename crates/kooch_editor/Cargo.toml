@@ -15,3 +15,22 @@ kooch_render.workspace = true
 kooch_window.workspace = true
 kooch_world.workspace = true
 tracing.workspace = true
+
+[features]
+# 🔴 ON by default, and that is a rule rather than a convenience: an
+# editor without a profiler is not an editor. It is the tool that answers
+# "why is this frame slow", the whole reason #785 exists, and a build of
+# it that cannot answer that is a build somebody has to notice is wrong —
+# which is exactly what happened, twice, before this line existed.
+#
+# The engine's own `profiling` feature stays opt-in and must: a shipped
+# GAME carries no instrumentation (#558). The editor is a tool, not a
+# game, and the two decisions have nothing to do with each other.
+#
+# Turning it off takes `--no-default-features`, which is loud enough that
+# whoever types it meant it. `the_editor_ships_with_its_profiler` is what
+# fails if it is turned off by accident.
+default = ["profiling"]
+
+# See kooch_editor_core's feature of the same name.
+profiling = ["kooch_editor_core/profiling"]

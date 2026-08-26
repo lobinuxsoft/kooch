@@ -40,6 +40,7 @@
 //! ```
 
 mod attrs;
+mod system_attr;
 mod type_mapping;
 mod unit_struct;
 mod util;
@@ -50,8 +51,8 @@ use syn::{Data, DeriveInput, Fields, parse_macro_input};
 
 use crate::attrs::{
     parse_category_attr, parse_field_asset_type, parse_field_bits, parse_field_choices,
-    parse_field_doc, parse_field_requires, parse_field_shown_when, parse_field_skip,
-    parse_inspector_attr,
+    parse_field_doc, parse_field_group, parse_field_requires, parse_field_shown_when,
+    parse_field_skip, parse_inspector_attr,
 };
 use crate::type_mapping::type_mapping;
 use crate::unit_struct::unit_struct_impl;
@@ -62,6 +63,30 @@ use crate::util::{is_entity, is_entity_ref, option_inner};
 /// Generates `reflect_fields`, `reflect_get`, `reflect_set`, and
 /// `reflect_default` based on the struct's fields. Each field type
 /// must map to a known `FieldKind` / `ReflectValue` variant.
+/// Declares which frame stage a system binds into, and how.
+///
+/// ```ignore
+/// #[system]                     // Update, gated by Play — the default
+/// #[system(PreUpdate)]          // PreUpdate, gated by Play
+/// #[system(PostUpdate, always)] // PostUpdate, runs while editing too
+/// ```
+///
+/// 🔴 **Expands to the function unchanged.** It is read by the editor's
+/// codegen, which scans `src/` and writes `registrations.rs`; before
+/// this, that scan bound every system it found to `Stage::Update` with
+/// `run_if_playing` because there was nothing to read. Deleting the
+/// attribute therefore never breaks a build — the system returns to the
+/// default binding.
+///
+/// It still validates: a mistyped stage is a compile error naming the
+/// fourteen, rather than a system that quietly stays in `Update`.
+///
+/// See `system_attr` for why `always` has to be a word.
+#[proc_macro_attribute]
+pub fn system(args: TokenStream, item: TokenStream) -> TokenStream {
+    crate::system_attr::system_impl(args, item)
+}
+
 #[proc_macro_derive(Reflect, attributes(reflect))]
 pub fn derive_reflect(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -115,6 +140,14 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
         // branch below, so a field cannot gain a tooltip on one code
         // path and lose it on another.
         let field_doc = parse_field_doc(field);
+        // #830 — the Inspector heading this field is drawn under.
+        // Harvested beside the doc comment for the same reason: every
+        // FieldMeta branch below needs it, and a field must not gain a
+        // heading on one code path and lose it on another.
+        let field_group = match parse_field_group(field) {
+            Ok(group) => group.unwrap_or_default(),
+            Err(e) => return e,
+        };
 
         // `#[reflect(skip)]` opts the field out of the inspector +
         // get/set paths entirely. Used for handle-style fields that
@@ -149,6 +182,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     asset_type: #asset_type,
                     requires: "",
                     doc: #field_doc,
+                    group: #field_group,
                 }
             });
             get_arms.push(quote! {
@@ -216,6 +250,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     asset_type: "",
                     requires: #requires,
                     doc: #field_doc,
+                    group: #field_group,
                 }
             });
 
@@ -277,6 +312,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     asset_type: "",
                     requires: "",
                     doc: #field_doc,
+                    group: #field_group,
                 }
             });
 
@@ -396,6 +432,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 asset_type: "",
                 requires: "",
                 doc: #field_doc,
+                group: #field_group,
             }
         });
 

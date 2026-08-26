@@ -93,9 +93,23 @@ them, the remote protocol mirrored them — and no render crate read one.
 | `GpuLight` | `gpu_light.rs` | connected (#441) | 64 B `repr(C)` record. Direction from the transform, never a field. Spot cone pre-packed as the MAD the shader evaluates. AoS on purpose — every invocation reads all of one light; SoA is what *culling* will want, and that is a different buffer. |
 | `extract_lights` | `extract.rs` | connected (#441) | The ECS walk, pure and GPU-free. Warns past 256 lights and never clips. |
 | `GpuLights` | `buffer.rs` | connected (#441) | Buffer residency, geometric growth, one bind group for both shading paths. |
-| `AmbientLight`, `Exposure` | `frame.rs` | connected (#441) | `Resources` entries with defaults. **Neither is reachable from the editor** — no Inspector, no panel, no menu. A `Resource` with no UI is the next `invisible` in the making. |
+| `AmbientLight`, `Exposure` | `frame.rs` | connected (#744) | Was unreachable from the editor; now authored in a `.rendersettings` asset and applied per frame. `PhysicalCamera` (aperture / shutter / ISO) is the control worth using — EV100 is correct and unusable. |
+| `PhysicalCamera` | `frame.rs` | connected (#744) | Presets: `sunny()` EV 15, `default()` EV ≈ 9.9, `indoor()` EV 7. |
+| Shadows | `kooch_render::shadow` | connected (#476) | Cascade fit, split scheme, LOD selector, filter and both biases all ported from Bevy 0.19 — see the roadmap for what that cost and why. |
+| `ShadowSettings` | `shadow/settings.rs` | connected (#476) | Distance, cascade resolution and an off switch, authored in `.rendersettings`. Reached the pass on the same frame — the Resource-with-no-UI failure has now been committed three times and this is the version that is not it. |
+| Alpha-cut shadows | — | **not built** | The depth pass has no fragment stage, so foliage casts the shadow of its quad. Needs a second pipeline for the materials that ask. |
+| Punctual shadows | — | **not built** | Only the directional light casts, and only the first one. #734. |
 | `inti_pbr_shader(group)` | `lib.rs` | connected (#441) | The shading model as WGSL, bind-group index substituted textually. Concatenated by both paths so the BRDF cannot fork. |
 | Volumetrics, bloom, area lights | — | **not built** | The crate's original doc comment promised all three. It now promises what it has. |
+
+## Assets — cross-crate
+
+| Capability | Where | Status | Notes |
+|---|---|---|---|
+| `register_reflected_asset!` | `kooch_ecs::reflect::asset_registry` | connected (#744) | An asset type registered with it is **editable in the Inspector with no editor changes**. Before it, a new asset type cost three edits in `kooch_editor_core` and anything missed displayed "No import settings for X". |
+| Scan adoption | `kooch_core::asset_database::scan` | connected (#744) | A file with no `.meta` is adopted when a registered loader claims its extension. Broke the circle where the browser showed what the database registered, the database registered what had a `.meta`, and the `.meta` appeared when something loaded the file — so a hand-written file was invisible forever. `MEMORY.md` recorded the symptom twice before anyone followed it to the `continue` causing it. |
+| `RenderSettings` | `kooch_render::settings` | connected (#744) | The project's `.rendersettings`. Absent, the engine defaults apply and nothing errors. |
+| Field tooltips | derive + 3 bridges | connected (#737) | The `Reflect` derive harvests `#[doc]`; it travels in-process, over the plugin ABI and over the remote protocol. The third is the one that mattered — Open Project always opens remote. |
 
 ## Input — `kooch_input`
 

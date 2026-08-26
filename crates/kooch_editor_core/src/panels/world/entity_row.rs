@@ -49,6 +49,40 @@ pub(super) fn is_descendant(
 
 /// Renders a single entity row. Mutates `selected` and `last_clicked_index`
 /// on click; pushes [`EditorAction`]s for context-menu operations and drag/drop.
+/// How many levels of indent a row at `depth` sits at.
+///
+/// 🔴 One more than its depth in the hierarchy, because every entity is
+/// inside a scene and the scene has a row of its own. Drawn at its own
+/// depth, a root entity started at the same column as the scene header
+/// above it — so a scene with four roots read as five scenes, and the one
+/// thing the tree was built to say went missing.
+///
+/// A single function rather than a `+ 1` at each site: the label's indent
+/// and the triangle's position are two readings of the same number, and
+/// they were already off by one from each other once.
+pub(super) fn indent_levels(depth: usize) -> usize {
+    depth + 1
+}
+
+/// Where this row's disclosure triangle goes, or `None` when the row is
+/// too narrow to hold one.
+///
+/// Measured from the label's own indentation rather than from a spacing
+/// constant, because the indent is TEXT — `"  "` per level — so its
+/// width is the font's, and a triangle placed by an assumed pixel step
+/// drifts away from the label it belongs to as the tree gets deeper.
+fn twisty_rect(ui: &egui::Ui, resp: &egui::Response, depth: usize) -> Option<egui::Rect> {
+    let icon_width = ui.spacing().icon_width;
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let space = ui.fonts_mut(|fonts| fonts.glyph_width(&font, ' '));
+    let left = resp.rect.left() + space * (indent_levels(depth) * 2) as f32;
+    let rect = egui::Rect::from_center_size(
+        egui::pos2(left + icon_width * 0.5, resp.rect.center().y),
+        egui::vec2(icon_width, icon_width),
+    );
+    resp.rect.contains_rect(rect).then_some(rect)
+}
+
 pub(super) fn draw_entity_row(
     ui: &mut egui::Ui,
     idx: usize,
@@ -59,6 +93,10 @@ pub(super) fn draw_entity_row(
     reflected_types: &[ReflectedTypeInfo],
     actions: &mut Vec<EditorAction>,
     last_clicked_index: &mut Option<usize>,
+    // `Some(open)` when this entity has children, `None` when it is a
+    // leaf. Decided by the caller, which is also what builds the row
+    // list — the two have to agree about what is hidden.
+    subtree: Option<bool>,
 ) {
     let display_name = display_name_for(info);
     let mut label = build_label(info, display_name.as_deref());
@@ -69,8 +107,12 @@ pub(super) fn draw_entity_row(
     }
     let is_selected = selected.contains(&info.entity);
 
-    let indent_str = "  ".repeat(info.depth);
-    let indented_label = format!("{indent_str}{label}");
+    let indent_str = "  ".repeat(indent_levels(info.depth));
+    // Two more spaces for the disclosure triangle, on every row and not
+    // only the ones that have one: without them a leaf's text sits two
+    // characters left of its siblings' and the column reads as ragged
+    // depth that is not there.
+    let indented_label = format!("{indent_str}  {label}");
 
     // Check if this entity is the one being dragged.
     let being_dragged =
@@ -83,6 +125,30 @@ pub(super) fn draw_entity_row(
         .sense(egui::Sense::click_and_drag())
         .dimmed(being_dragged)
         .show(ui);
+
+    // 🔴 The triangle is painted onto the row and hit-tested out of the
+    // row's own response, rather than being a widget of its own. One
+    // response was already the rule here — "two widgets would let the
+    // drag overlay steal the click that selects the row" — and a second
+    // sensing widget inside a row that is also a drag source is exactly
+    // that bug with a new name.
+    if let Some(open) = subtree
+        && let Some(twisty) = twisty_rect(ui, &resp, info.depth)
+    {
+        let mut icon_resp = resp.clone();
+        icon_resp.rect = twisty;
+        egui::collapsing_header::paint_default_icon(ui, if open { 1.0 } else { 0.0 }, &icon_resp);
+        // A click that landed on the triangle toggles and selects
+        // nothing. Returning early is what keeps it from doing both.
+        if resp.clicked()
+            && resp
+                .interact_pointer_pos()
+                .is_some_and(|at| twisty.x_range().contains(at.x))
+        {
+            ui.data_mut(|data| data.insert_persisted(super::subtree_id(info.entity), !open));
+            return;
+        }
+    }
 
     // Single response handles both click and drag.
     resp.dnd_set_drag_payload(info.entity);
@@ -165,18 +231,76 @@ fn handle_drop_targets(
     if !being_dragged && let Some(dragged) = resp.dnd_hover_payload::<Entity>() {
         let d = *dragged;
         if d != info.entity && !is_descendant(info.entity, d, entities) {
-            ui.painter().rect_filled(
-                resp.rect,
-                2.0,
-                egui::Color32::from_rgba_unmultiplied(60, 130, 230, 40),
-            );
+            let intent = drop_intent(ui, resp);
+            match intent {
+                // Onto the row: become its child.
+                DropIntent::Into => {
+                    ui.painter().rect_filled(
+                        resp.rect,
+                        2.0,
+                        egui::Color32::from_rgba_unmultiplied(60, 130, 230, 40),
+                    );
+                }
+                // Between two rows: become a sibling, at that spot. Drawn
+                // as a bar in the gap rather than by making the rows move
+                // apart — `ScrollArea::show_rows` places every row from
+                // one height, so a row that grew mid-drag would put every
+                // row below it in the wrong place.
+                DropIntent::Before | DropIntent::After => {
+                    let y = match intent {
+                        DropIntent::Before => resp.rect.top(),
+                        _ => resp.rect.bottom(),
+                    };
+                    let left = resp.rect.left() + sibling_indent(ui, info.depth);
+                    ui.painter().rect_filled(
+                        egui::Rect::from_min_max(
+                            egui::pos2(left, y - 1.5),
+                            egui::pos2(resp.rect.right(), y + 1.5),
+                        ),
+                        1.0,
+                        egui::Color32::from_rgb(90, 160, 245),
+                    );
+                }
+            }
             if let Some(released) = resp.dnd_release_payload::<Entity>() {
                 let r = *released;
                 if r != info.entity && !is_descendant(info.entity, r, entities) {
+                    if intent != DropIntent::Into {
+                        // 🔴 Its siblings, not its children. Dropping in
+                        // the gap between two rows means "beside them" —
+                        // which is also the only gesture that can take an
+                        // entity *out* of a parent, since every row's
+                        // middle already means "into".
+                        actions.push(EditorAction::MoveEntity {
+                            entity: r,
+                            new_parent: info.parent,
+                            before: match intent {
+                                DropIntent::Before => Some(info.entity),
+                                _ => next_sibling(info, entities),
+                            },
+                        });
+                        if let Some(parent) = info.parent {
+                            reveal_chain(ui, parent, entities);
+                        }
+                        return;
+                    }
                     actions.push(EditorAction::Reparent {
                         entity: r,
                         new_parent: Some(info.entity),
                     });
+                    // 🔴 Open the new parent and everything above it,
+                    // right up to the root. Dropping onto a collapsed
+                    // entity otherwise makes the dragged one *vanish*:
+                    // the reparent works, and its row is inside a subtree
+                    // that is not listed. Nothing says where it went, and
+                    // the obvious reading is that the drag deleted it.
+                    //
+                    // Done here rather than after the action lands
+                    // because the chain to open is the one above the drop
+                    // target, which is known now — and the reparent has
+                    // not happened yet, so asking the hierarchy would
+                    // still describe the old one.
+                    reveal_chain(ui, info.entity, entities);
                 }
             }
         }
@@ -286,6 +410,29 @@ fn handle_context_menu(
                 }
             }
             ui.close();
+        }
+        ui.separator();
+
+        // Two destinations, because they are two different intents and
+        // guessing between them is how an entity ends up somewhere the
+        // user has to go find it.
+        //
+        // 🔴 Both name a scene without saying one. "Child" takes the
+        // parent's scene, and "in this scene" takes this entity's — so
+        // neither can put something in the active scene when the entity
+        // right-clicked is in another, which is what every spawn did
+        // before there was anywhere else to say.
+        ui.menu_button("New Child", |ui| {
+            super::spawn_entries(
+                ui,
+                actions,
+                crate::actions::SpawnTarget::ChildOf(info.entity),
+            );
+        });
+        if let Some(scene) = info.scene {
+            ui.menu_button("New in This Scene", |ui| {
+                super::spawn_entries(ui, actions, crate::actions::SpawnTarget::Scene(scene));
+            });
         }
         ui.separator();
 
@@ -422,4 +569,69 @@ fn handle_context_menu(
             }
         }
     });
+}
+
+/// Opens `entity` and every ancestor of it, so a child dropped onto it
+/// has a row.
+///
+/// Walks up rather than down: what has to be listed is the chain from
+/// the drop target to its root, and each collapsed link in it hides
+/// everything below.
+pub(super) fn reveal_chain(ui: &egui::Ui, entity: Entity, entities: &[EntityDisplayInfo]) {
+    let mut at = Some(entity);
+    while let Some(current) = at {
+        ui.data_mut(|data| data.insert_persisted(super::subtree_id(current), true));
+        at = entities
+            .iter()
+            .find(|e| e.entity == current)
+            .and_then(|e| e.parent);
+    }
+}
+
+/// What a drop on this row means, from where the pointer is in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DropIntent {
+    /// In the gap above: a sibling, in front of this row.
+    Before,
+    /// On the row itself: a child of it.
+    Into,
+    /// In the gap below: a sibling, behind this row.
+    After,
+}
+
+/// Splits a row into an insert band, a parent band, and an insert band.
+///
+/// A quarter each end. Smaller and the gap is a target nobody can hit;
+/// larger and "make this a child", which is the commoner gesture, starts
+/// missing.
+fn drop_intent(ui: &egui::Ui, resp: &egui::Response) -> DropIntent {
+    let Some(pointer) = ui.ctx().pointer_interact_pos() else {
+        return DropIntent::Into;
+    };
+    let band = resp.rect.height() * 0.25;
+    if pointer.y < resp.rect.top() + band {
+        DropIntent::Before
+    } else if pointer.y > resp.rect.bottom() - band {
+        DropIntent::After
+    } else {
+        DropIntent::Into
+    }
+}
+
+/// Where the insertion bar starts: level with the row's own label, so it
+/// shows which *depth* the entity would land at, not only which gap.
+fn sibling_indent(ui: &egui::Ui, depth: usize) -> f32 {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let space = ui.fonts_mut(|fonts| fonts.glyph_width(&font, ' '));
+    space * (indent_levels(depth) * 2) as f32
+}
+
+/// The row after `info` among its own siblings, or `None` if it is last.
+///
+/// Read out of the display list, which is already in the order the panel
+/// shows — the same order `place` measures "before that one" against.
+fn next_sibling(info: &EntityDisplayInfo, entities: &[EntityDisplayInfo]) -> Option<Entity> {
+    let mut siblings = entities.iter().filter(|e| e.parent == info.parent);
+    siblings.find(|e| e.entity == info.entity)?;
+    siblings.next().map(|e| e.entity)
 }

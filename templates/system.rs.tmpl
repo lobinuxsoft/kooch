@@ -17,13 +17,62 @@ use kooch::prelude::*;
 
 /// The `{{name}}` system. A system is any `fn(&mut Resources)`.
 ///
-/// You do not register it by hand. Press Register Scripts and the editor
-/// regenerates `src/registrations.rs`, adding it to `Stage::Update`
-/// behind the `Playing` gate — so it runs when you press Play, not while
-/// you are authoring.
+/// # It registers itself
 ///
-/// To run in a different stage, register it yourself in your own plugin:
-/// `registrations.rs` is overwritten without warning.
+/// You do not add it anywhere. The editor watches `src/` and rewrites
+/// `src/registrations.rs` when it changes — so saving this file is
+/// enough, from here or from any other editor.
+///
+/// ⚠️ Registering is not compiling. The generated file names your system
+/// within a second; the editor still runs the *last build* of your
+/// project until you rebuild it. The toolbar's Resync button pulses
+/// while those two disagree.
+///
+/// # `#[system(...)]` — where it runs
+///
+/// Without the attribute a system lands in `Stage::Update`, gated so it
+/// runs only while playing. The attribute says otherwise:
+///
+/// ```ignore
+/// #[system]                     // Update, gated by Play — the default
+/// #[system(PreUpdate)]          // a different stage, still gated
+/// #[system(PostUpdate, always)] // and running while you author, too
+/// ```
+///
+/// `always` drops the Play gate. Reach for it when the work has to
+/// happen in the editor as well: a gizmo, an overlay, a streaming pump.
+///
+/// A stage that is not one of the fourteen is a compile error, not a
+/// system that quietly stays in `Update`.
+///
+/// # The fourteen, in the order a frame runs them
+///
+/// | Stage | What belongs here |
+/// |---|---|
+/// | `Startup` | Once, at launch. Load, allocate, seed. |
+/// | `First` | The very top of the frame. |
+/// | `Input` | Reading devices into intent. |
+/// | `PreUpdate` | Preparing what `Update` will need. |
+/// | `Update` | **Gameplay.** Where a system goes unless it cannot. |
+/// | `PostUpdate` | After gameplay — and where the engine resolves
+/// |   | `Transform` into `GlobalTransform`. |
+/// | `GpuSync` | Handing this frame's data to the GPU. |
+/// | `Gpu` | Compute submitted with the frame's encoder. |
+/// | `Physics` | Fixed timestep. **May run several times a frame, or
+/// |   | none**, so never put per-frame work here. |
+/// | `PostPhysics` | Same timestep, after the solver. |
+/// | `PreRender` | Last chance before drawing. |
+/// | `Render` | Drawing. |
+/// | `PostRender` | After drawing. |
+/// | `Last` | The very end of the frame. |
+///
+/// 🔴 **`PostUpdate` is the one that bites.** It is where a local
+/// `Transform` becomes the `GlobalTransform` that meshes, lights and
+/// cameras actually read. Write a transform *before* it and the change
+/// lands this frame. Write it *after* — `PostUpdate`, `Gpu`, anywhere
+/// later — and everything downstream renders one frame behind, forever,
+/// with no error and no log line.
+#[system(Update)]
 pub fn {{name}}(resources: &mut Resources) {
     let _ = resources;
     // Read/write resources and component storages here.

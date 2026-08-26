@@ -241,6 +241,29 @@ pub(super) fn resolve_deferred(resources: &mut Resources, deferred: Vec<Deferred
             continue;
         };
 
+        // A reference from disk names a **file**; the world is keyed by
+        // **instance**. When exactly one copy of that file is open, that
+        // is the one it means. When several are, nothing in the reference
+        // says which — the same case Unity closes by forbidding
+        // cross-scene references outright.
+        let scene = match by_id.contains_key(&(scene, id)) {
+            true => scene,
+            false => match instances_of(resources, scene).as_slice() {
+                [only] => *only,
+                [] => scene,
+                several => {
+                    tracing::warn!(
+                        target: "kooch_ecs::scene",
+                        field = %deferred.field,
+                        copies = several.len(),
+                        "reference names a scene that is open more than once; \
+                         nothing in it says which copy, so it is left unset",
+                    );
+                    scene
+                }
+            },
+        };
+
         let resolved = match by_id.get(&(scene, id)) {
             Some(&target) => ReflectValue::EntityRef(Some(EntityRef::live(target))),
             None => {
@@ -308,4 +331,16 @@ pub(super) fn to_persistent(
             ReflectValue::EntityRef(None)
         }
     }
+}
+
+/// The instance ids of every open copy of the file `source`.
+///
+/// Empty when there is no [`SceneManager`](crate::SceneManager) — a
+/// headless load with no open set, where a reference can only mean the
+/// scene it already names.
+fn instances_of(resources: &Resources, source: Guid) -> Vec<Guid> {
+    resources
+        .get::<crate::scene_manager::SceneManager>()
+        .map(|manager| manager.instances_of(source).map(|scene| scene.id).collect())
+        .unwrap_or_default()
 }

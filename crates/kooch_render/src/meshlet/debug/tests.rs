@@ -1,0 +1,453 @@
+use super::*;
+
+#[test]
+fn off_is_zero() {
+    assert_eq!(MeshletDebugMode::Off.as_u32(), 0);
+    assert_eq!(MeshletDebugMode::default(), MeshletDebugMode::Off);
+}
+
+/// WGSL cannot import a Rust constant, so `inti_debug.wgsl` declares
+/// the discriminants itself and this test is the only thing holding the
+/// two ends together — renumber a variant and the dropdown silently
+/// selects a different view from the one it names.
+///
+/// It reads the shader text rather than restating the numbers: a copy of
+/// the literals here would go stale in exactly the same way as the copy
+/// in the shader, and agree with nothing.
+#[test]
+fn discriminants_match_the_shader() {
+    let source = kooch_lighting::inti_debug_shader();
+    for (mode, name) in [
+        (MeshletDebugMode::Normals, "INTI_DEBUG_NORMALS"),
+        (
+            MeshletDebugMode::ShadowCascades,
+            "INTI_DEBUG_SHADOW_CASCADES",
+        ),
+        (
+            MeshletDebugMode::ContactShadows,
+            "INTI_DEBUG_CONTACT_SHADOWS",
+        ),
+        (MeshletDebugMode::SingleLight, "INTI_DEBUG_SINGLE_LIGHT"),
+        (MeshletDebugMode::LightsPerPixel, "INTI_DEBUG_LIGHT_COUNT"),
+        (MeshletDebugMode::VirtualPages, "INTI_DEBUG_VIRTUAL_PAGES"),
+        (
+            MeshletDebugMode::VirtualPageTiles,
+            "INTI_DEBUG_VIRTUAL_TILES",
+        ),
+        (MeshletDebugMode::VirtualPageAge, "INTI_DEBUG_VIRTUAL_AGE"),
+        (MeshletDebugMode::LocalPageFaces, "INTI_DEBUG_LAMP_FACES"),
+        (MeshletDebugMode::LocalPageDepth, "INTI_DEBUG_LAMP_DEPTH"),
+    ] {
+        let declaration = format!("const {name}: u32 = {}u;", mode.as_u32());
+        assert!(
+            source.contains(&declaration),
+            "inti_debug.wgsl should declare `{declaration}` for {mode:?}",
+        );
+    }
+}
+
+/// The shader dispatches on `mode >= INTI_DEBUG_FIRST`, so a mode below
+/// that boundary never reaches `inti_debug_view` no matter what the
+/// dropdown says.
+#[test]
+fn every_inti_view_is_above_the_dispatch_floor() {
+    let floor = MeshletDebugMode::Normals.as_u32();
+    for mode in [
+        MeshletDebugMode::ShadowCascades,
+        MeshletDebugMode::ContactShadows,
+        MeshletDebugMode::SingleLight,
+        MeshletDebugMode::LightsPerPixel,
+    ] {
+        assert!(mode.as_u32() >= floor, "{mode:?} is below INTI_DEBUG_FIRST");
+    }
+}
+
+/// A mode the dropdown offers that the shader's own gate rejects paints
+/// BLACK, silently.
+///
+/// 🔴 The gate is not a range: modes 18 through 25 are resolved by other
+/// passes, so `inti_debug.wgsl` lists the high ones by name. Adding a
+/// variant to the enum and forgetting the gate gives a menu entry that
+/// blanks the screen, and the comment on `INTI_DEBUG_LAST` is there
+/// because it happened.
+#[test]
+fn every_paged_view_passes_the_shader_gate() {
+    let source = kooch_lighting::inti_debug_shader();
+    let gate = source
+        .find("return (mode >= INTI_DEBUG_FIRST")
+        .expect("the dispatch gate moved");
+    let block = &source[gate..source[gate..].find(';').unwrap() + gate];
+    for name in [
+        "INTI_DEBUG_VIRTUAL_PAGES",
+        "INTI_DEBUG_VIRTUAL_AGE",
+        "INTI_DEBUG_LAMP_FACES",
+        "INTI_DEBUG_LAMP_DEPTH",
+    ] {
+        assert!(
+            block.contains(name),
+            "`{name}` is above INTI_DEBUG_LAST and not named in the gate, so selecting \
+             it paints black instead of the view"
+        );
+    }
+}
+
+/// Every view whose shader reads `inti.debug_light` is listed in
+/// `needs_selected_light`.
+///
+/// # 🔴 The third time this happened
+///
+/// A view not listed gets `None` for the selection and renders its
+/// "nothing picked" branch forever, with nothing on screen to suggest
+/// the fault is in another crate entirely. It cost a removed view once,
+/// and then both lamp page views — which shipped painting the whole
+/// screen a flat colour, in the same commit that added a test for the
+/// dispatch gate and missed this.
+///
+/// The list cannot be trusted to be maintained, so this reads the
+/// shader: a mode whose branch touches `debug_light` has to be in it.
+#[test]
+fn every_view_that_reads_the_selected_light_is_listed() {
+    let source = kooch_lighting::inti_debug_shader();
+    for &mode in MeshletDebugMode::all_implemented() {
+        // The constant this mode dispatches on, and the function that
+        // constant calls.
+        let Some(name) = source
+            .lines()
+            .zip(source.lines().skip(1))
+            .find(|(doc, _)| doc.contains(&format!("MeshletDebugMode::{mode:?}`")))
+            .and_then(|(_, decl)| decl.split_whitespace().nth(1))
+            .map(|c| c.trim_end_matches(':').to_owned())
+        else {
+            continue;
+        };
+        let Some(at) = source.find(&format!("mode == {name}) {{")) else {
+            continue;
+        };
+        let call = &source[at..(at + 200).min(source.len())];
+        let Some(open) = call.find("return inti_") else {
+            continue;
+        };
+        let func = call[open + 7..]
+            .split('(')
+            .next()
+            .expect("a call has a name")
+            .to_owned();
+        let Some(body) = source.find(&format!("fn {func}(")) else {
+            continue;
+        };
+        let end = source[body..]
+            .find("\n}\n")
+            .map(|e| body + e)
+            .unwrap_or(source.len());
+        let reads = source[body..end].contains("inti.debug_light");
+        assert_eq!(
+            reads,
+            mode.needs_selected_light(),
+            "`{func}` reads debug_light = {reads} but {mode:?}.needs_selected_light() = {}; \
+             an unlisted view gets no selection and paints one flat colour forever",
+            mode.needs_selected_light(),
+        );
+    }
+}
+
+#[test]
+fn normals_is_selectable_on_every_device() {
+    // It reads no atomic texture — it is the old production path.
+    assert!(!MeshletDebugMode::Normals.needs_texture_atomic());
+    assert!(MeshletDebugMode::all_implemented().contains(&MeshletDebugMode::Normals));
+}
+
+#[test]
+fn needs_texture_atomic_covers_advanced_modes() {
+    assert!(MeshletDebugMode::TriangleDensity.needs_texture_atomic());
+    assert!(MeshletDebugMode::Overdraw.needs_texture_atomic());
+    assert!(MeshletDebugMode::HiZRejected.needs_texture_atomic());
+    assert!(MeshletDebugMode::BackfaceRejected.needs_texture_atomic());
+    assert!(MeshletDebugMode::FrustumRejected.needs_texture_atomic());
+    // Baseline-safe modes never lift the atomic feature gate.
+    assert!(!MeshletDebugMode::Off.needs_texture_atomic());
+    assert!(!MeshletDebugMode::MeshletIds.needs_texture_atomic());
+    assert!(!MeshletDebugMode::InstanceIds.needs_texture_atomic());
+    assert!(!MeshletDebugMode::CullPassthrough.needs_texture_atomic());
+    assert!(!MeshletDebugMode::OnlyLod0.needs_texture_atomic());
+    assert!(!MeshletDebugMode::OnlyRoots.needs_texture_atomic());
+}
+
+#[test]
+fn all_available_with_caps_filters_atomic_modes() {
+    // Conservative caps (texture_atomic missing): only the
+    // baseline-safe subset of `all_implemented()` survives.
+    let no_atomic = MeshletDebugCaps::from_flags(false);
+    let filtered = MeshletDebugMode::all_available_with_caps(&no_atomic);
+    for mode in &filtered {
+        assert!(
+            !mode.needs_texture_atomic(),
+            "{mode:?} leaked through the filter without atomic support",
+        );
+    }
+    // With atomic support, the filter is identity over `all_implemented`.
+    let with_atomic = MeshletDebugCaps::from_flags(true);
+    let unfiltered = MeshletDebugMode::all_available_with_caps(&with_atomic);
+    assert_eq!(unfiltered.len(), MeshletDebugMode::all_implemented().len());
+}
+
+/// The same predicate decides two things that look unrelated: whether
+/// the cull shader records reject reasons, and whether the HUD has
+/// per-stage survivor counts to show at all (#703).
+///
+/// A mode added later that measures the counters but returns `None`
+/// here would read them and then hide them. One that returns `Some`
+/// without the shader writing reasons would show four zeros. Both
+/// failures are silent, which is why this is pinned rather than left
+/// to the two call sites to agree.
+#[test]
+fn only_the_modes_that_measure_the_counters_report_them() {
+    let measures = |mode: MeshletDebugMode| mode.reject_reason_code().is_some();
+
+    // These three ask the cull shader to record, so the HUD gets rows.
+    assert!(measures(MeshletDebugMode::FrustumRejected));
+    assert!(measures(MeshletDebugMode::BackfaceRejected));
+    assert!(measures(MeshletDebugMode::HiZRejected));
+
+    // These do not — and the rows have to be absent rather than
+    // showing whatever the last measuring frame happened to read.
+    assert!(!measures(MeshletDebugMode::Off));
+    assert!(!measures(MeshletDebugMode::TriangleDensity));
+    assert!(!measures(MeshletDebugMode::Overdraw));
+}
+
+#[test]
+fn reject_reason_code_tracks_cull_shader_constants() {
+    // `REJECT_REASON_*` in meshlet_cull/atomic.wgsl pin these.
+    // Reordering or renumbering breaks the overlay's match.
+    assert_eq!(
+        MeshletDebugMode::FrustumRejected.reject_reason_code(),
+        Some(2)
+    );
+    assert_eq!(
+        MeshletDebugMode::BackfaceRejected.reject_reason_code(),
+        Some(3)
+    );
+    assert_eq!(MeshletDebugMode::HiZRejected.reject_reason_code(), Some(4));
+    // Non-reject modes never write into reject_reasons[] — the
+    // orchestrator must NOT lift `debug_active` for them.
+    assert!(MeshletDebugMode::Off.reject_reason_code().is_none());
+    assert!(
+        MeshletDebugMode::TriangleDensity
+            .reject_reason_code()
+            .is_none()
+    );
+    assert!(MeshletDebugMode::Overdraw.reject_reason_code().is_none());
+    assert!(
+        MeshletDebugMode::CullPassthrough
+            .reject_reason_code()
+            .is_none()
+    );
+    assert!(MeshletDebugMode::OnlyLod0.reject_reason_code().is_none());
+    assert!(MeshletDebugMode::OnlyRoots.reject_reason_code().is_none());
+    assert!(MeshletDebugMode::MeshletIds.reject_reason_code().is_none());
+    assert!(MeshletDebugMode::InstanceIds.reject_reason_code().is_none());
+}
+
+#[test]
+fn discriminants_are_stable() {
+    // GPU shader assumes these exact values. Reordering breaks
+    // every active debug mode silently — flip this test first.
+    assert_eq!(MeshletDebugMode::Off.as_u32(), 0);
+    assert_eq!(MeshletDebugMode::MeshletIds.as_u32(), 1);
+    assert_eq!(MeshletDebugMode::InstanceIds.as_u32(), 2);
+    assert_eq!(MeshletDebugMode::TriangleDensity.as_u32(), 3);
+    assert_eq!(MeshletDebugMode::Overdraw.as_u32(), 4);
+    assert_eq!(MeshletDebugMode::HiZRejected.as_u32(), 5);
+    assert_eq!(MeshletDebugMode::BackfaceRejected.as_u32(), 6);
+    assert_eq!(MeshletDebugMode::CullPassthrough.as_u32(), 7);
+    assert_eq!(MeshletDebugMode::OnlyLod0.as_u32(), 8);
+    assert_eq!(MeshletDebugMode::OnlyRoots.as_u32(), 9);
+    assert_eq!(MeshletDebugMode::FrustumRejected.as_u32(), 10);
+    assert_eq!(MeshletDebugMode::Normals.as_u32(), 11);
+    assert_eq!(MeshletDebugMode::ShadowCascades.as_u32(), 12);
+    assert_eq!(MeshletDebugMode::ContactShadows.as_u32(), 13);
+    assert_eq!(MeshletDebugMode::SingleLight.as_u32(), 14);
+}
+
+/// Every mode that reads `IntiFrame::debug_light` has to answer `true`
+/// here or it silently gets nothing — a view once shipped rendering flat
+/// grey because the editor gated the selection on `== SingleLight`.
+#[test]
+fn every_mode_that_reads_a_light_says_so() {
+    assert!(MeshletDebugMode::SingleLight.needs_selected_light());
+    // And the ones that do not, so the editor is not resolving a
+    // selection sixty times a second for a view that ignores it.
+    assert!(!MeshletDebugMode::Off.needs_selected_light());
+    assert!(!MeshletDebugMode::Normals.needs_selected_light());
+    assert!(!MeshletDebugMode::ShadowCascades.needs_selected_light());
+}
+
+/// The view reads the froxel, not a texture atomic, so it is offered on
+/// every adapter — including the ones the density heatmaps skip.
+#[test]
+fn lights_per_pixel_is_always_offered() {
+    assert!(!MeshletDebugMode::LightsPerPixel.needs_texture_atomic());
+    assert!(MeshletDebugMode::all_implemented().contains(&MeshletDebugMode::LightsPerPixel));
+}
+
+/// 🔴 The scale is a uniform, not a baked constant, so the editor can
+/// move it. A shader that went back to a constant would ignore the
+/// control silently — the picture would simply never change.
+#[test]
+fn the_scale_comes_from_the_uniform() {
+    let source = kooch_lighting::inti_debug_shader();
+    assert!(
+        source.contains("inti.debug_lights_hot"),
+        "the lights-per-pixel view should read its top of scale from the frame uniform",
+    );
+}
+
+/// 🔴 The invariant this whole staircase rests on.
+///
+/// Every debug mode above the Inti floor replaces the shading, which is
+/// why nothing temporal runs under one — except these six, which exist
+/// precisely to inspect the temporal pass and are useless if it is
+/// skipped. A later tidy-up of `replaces_shading` back into a `>= 11`
+/// would turn the tool off exactly when it is reached for, and nothing
+/// would report it: the dropdown would still list them and the frame
+/// would still look plausible.
+#[test]
+fn the_fsr_views_leave_the_upscaler_running() {
+    for mode in [
+        MeshletDebugMode::Fsr3Input,
+        MeshletDebugMode::Fsr3Motion,
+        MeshletDebugMode::Fsr3Masks,
+        MeshletDebugMode::Fsr3Upsample,
+        MeshletDebugMode::Fsr3History,
+        MeshletDebugMode::Fsr3Locks,
+        MeshletDebugMode::Fsr3Weights,
+    ] {
+        assert!(
+            !mode.replaces_shading(),
+            "{mode:?} replaces the shading, so the upscaler it is meant to inspect never runs",
+        );
+        assert!(mode.as_u32() > MeshletDebugMode::Normals.as_u32());
+    }
+}
+
+/// And the converse, or the exemption above would be free to grow until
+/// a genuine Inti view stopped being one.
+#[test]
+fn every_inti_view_still_replaces_the_shading() {
+    for mode in [
+        MeshletDebugMode::Normals,
+        MeshletDebugMode::ShadowCascades,
+        MeshletDebugMode::ContactShadows,
+        MeshletDebugMode::SingleLight,
+        MeshletDebugMode::LightsPerPixel,
+        MeshletDebugMode::PointShadowFactor,
+        MeshletDebugMode::PointCubeFaces,
+        MeshletDebugMode::TextureMipLevel,
+    ] {
+        assert!(
+            mode.replaces_shading(),
+            "{mode:?} stopped replacing the shading"
+        );
+        assert_eq!(mode.fsr3_stage(), 0);
+    }
+}
+
+/// The stage numbers are what the shader switches on, so a duplicate or
+/// a gap silently shows the wrong intermediate.
+#[test]
+fn the_fsr_stages_are_one_to_six() {
+    // Enumerated directly: the views retired from the DROPDOWN (the
+    // upscaler works and the user asked for the clutter gone), but the
+    // variants and their shader stages remain the diagnosis tools for
+    // the next regression, and this contract still guards them.
+    let stages: Vec<u32> = [
+        MeshletDebugMode::Fsr3Input,
+        MeshletDebugMode::Fsr3Motion,
+        MeshletDebugMode::Fsr3Masks,
+        MeshletDebugMode::Fsr3Upsample,
+        MeshletDebugMode::Fsr3History,
+        MeshletDebugMode::Fsr3Locks,
+        MeshletDebugMode::Fsr3Weights,
+    ]
+    .iter()
+    .map(|m| m.fsr3_stage())
+    .collect();
+    assert_eq!(stages, [1, 2, 3, 4, 5, 6, 7]);
+}
+
+/// Off is not a stage, and it is the value every other technique passes.
+#[test]
+fn off_asks_for_no_stage() {
+    assert_eq!(MeshletDebugMode::Off.fsr3_stage(), 0);
+    assert!(!MeshletDebugMode::Off.replaces_shading());
+}
+
+/// 🔴 The three steps that show radiance must NOT bypass the tonemap.
+///
+/// Bypassing it was the first attempt, and it painted a perfectly good
+/// frame black: radiance without the filmic curve is nearly nothing in
+/// any dimly-lit scene, so the instrument reported a defect that was not
+/// there. The numeric steps are the opposite case and must bypass it, or
+/// a 0..1 ramp comes back crushed.
+#[test]
+fn the_radiance_steps_keep_the_tonemap() {
+    for mode in [
+        MeshletDebugMode::Fsr3Input,
+        MeshletDebugMode::Fsr3Upsample,
+        MeshletDebugMode::Fsr3History,
+    ] {
+        assert!(
+            !mode.is_display_referred(),
+            "{mode:?} shows radiance, so bypassing the tonemap reads as black",
+        );
+    }
+    for mode in [
+        MeshletDebugMode::Fsr3Motion,
+        MeshletDebugMode::Fsr3Masks,
+        MeshletDebugMode::Fsr3Locks,
+        MeshletDebugMode::Fsr3Weights,
+        MeshletDebugMode::Normals,
+        MeshletDebugMode::TextureMipLevel,
+    ] {
+        assert!(
+            mode.is_display_referred(),
+            "{mode:?} is a 0..1 legend, so the filmic curve would crush it",
+        );
+    }
+}
+
+/// Off is production shading and must keep the curve like any frame.
+#[test]
+fn off_is_not_display_referred() {
+    assert!(!MeshletDebugMode::Off.is_display_referred());
+}
+
+/// 🔴 Inti's dispatch is a RANGE, and it has to stay one.
+///
+/// It was an open-ended `mode >= INTI_DEBUG_FIRST`, and the fallthrough
+/// for a mode it does not implement is black. So every discriminant
+/// added above the range silently became "an Inti view Inti does not
+/// know", and its surface was painted black before the pass that was
+/// meant to answer for it ever ran — which is exactly what happened to
+/// FSR's six steps, and what the texture-mip view escapes only because
+/// the material shader tests for it first.
+///
+/// This asserts the shader's two bounds against the enum, the way
+/// `discriminants_match_the_shader` already does for the names.
+#[test]
+fn the_inti_range_stops_where_inti_stops() {
+    let shader = include_str!("../../../../kooch_lighting/shaders/inti_debug.wgsl");
+    assert!(
+        shader.contains("mode >= INTI_DEBUG_FIRST && mode <= INTI_DEBUG_LAST"),
+        "the Inti dispatch is open-ended again, so every mode above it renders black",
+    );
+    assert!(
+        shader.contains("const INTI_DEBUG_LAST: u32 = INTI_DEBUG_POINT_CUBE;"),
+        "the top of the range moved without this test being told",
+    );
+    // And the enum agrees about where that top is: everything above it
+    // is resolved somewhere other than Inti.
+    assert_eq!(MeshletDebugMode::PointCubeFaces.as_u32(), 17);
+    assert_eq!(MeshletDebugMode::TextureMipLevel.as_u32(), 18);
+}

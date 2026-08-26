@@ -62,7 +62,9 @@ struct MeshInstance {
     lod_bias: f32,
     lod_force_level: i32,
     group_base: u32,
-    _pad0: u32,
+    // #804 — per-instance bits; bit 0 is "receives shadows". Was
+    // `_pad0`, so the 96-byte stride is unchanged.
+    flags: u32,
     _pad1: u32,
     _pad2: u32,
 }
@@ -84,6 +86,9 @@ struct VertexOutput {
     ddy_uv: vec2<f32>,
     world_tangent: vec4<f32>,
     material_id: u32,
+    // #804 — the instance's bits, carried through so the shading path
+    // can skip a shadow fetch this surface never wanted.
+    flags: u32,
 }
 
 struct PartialDerivatives {
@@ -111,10 +116,26 @@ fn frag_coord_to_ndc(frag_coord: vec2<f32>) -> vec2<f32> {
 
 // Perspective-correct barycentrics + analytical screen-space derivatives.
 // Verbatim structure from Bevy/The-Forge; layout-agnostic.
+// 🔴 `two_over_screen_size`, and the name is the whole story. NDC spans
+// 2 units across `screen_size` pixels, so converting a derivative from
+// "per NDC unit" to "per pixel" multiplies by `2 / screen_size`. The
+// upstream this is ported from names the parameter exactly that —
+// The-Forge's `CalcFullBary(..., float2 two_over_windowsize)` — and
+// Bevy renamed it to `half_screen_size` and passes `viewport.zw / 2.0`,
+// which is its RECIPROCAL. We ported the name and the arithmetic with
+// it.
+//
+// It is not merely a scale. The value feeds `1 / (interp_inv_w +
+// ddx_sum)` below: at the right magnitude `ddx_sum` is negligible and
+// what comes out is the derivative; at 250000x it dominates the divide
+// and the expression collapses onto `-barycentrics`, which is a
+// position inside the triangle and has no relationship to the camera at
+// all. Measured before the fix: mip level 10 at two metres and level
+// 0.6 at forty.
 fn compute_partial_derivatives(
     world_positions: array<vec4<f32>, 3>,
     ndc_uv: vec2<f32>,
-    half_screen_size: vec2<f32>,
+    two_over_screen_size: vec2<f32>,
 ) -> PartialDerivatives {
     var result: PartialDerivatives;
 
@@ -144,10 +165,10 @@ fn compute_partial_derivatives(
         interp_w * (delta_v.x * result.ddx.z + delta_v.y * result.ddy.z),
     );
 
-    result.ddx *= half_screen_size.x;
-    result.ddy *= half_screen_size.y;
-    ddx_sum *= half_screen_size.x;
-    ddy_sum *= half_screen_size.y;
+    result.ddx *= two_over_screen_size.x;
+    result.ddy *= two_over_screen_size.y;
+    ddx_sum *= two_over_screen_size.x;
+    ddy_sum *= two_over_screen_size.y;
 
     result.ddy *= -1.0;
     ddy_sum *= -1.0;
@@ -233,8 +254,8 @@ fn resolve_surface(visible_slot: u32, tri_idx: u32, frag_coord: vec2<f32>) -> Ve
     let wp2 = corner_world_position(inst, g2);
 
     let ndc = frag_coord_to_ndc(frag_coord);
-    let half_screen = vec2<f32>(screen.size) * 0.5;
-    let pd = compute_partial_derivatives(array<vec4<f32>, 3>(wp0, wp1, wp2), ndc, half_screen);
+    let two_over_screen = 2.0 / vec2<f32>(screen.size);
+    let pd = compute_partial_derivatives(array<vec4<f32>, 3>(wp0, wp1, wp2), ndc, two_over_screen);
 
     let world_position = (mat3x4<f32>(wp0, wp1, wp2) * pd.barycentrics).xyz;
 
@@ -270,5 +291,6 @@ fn resolve_surface(visible_slot: u32, tri_idx: u32, frag_coord: vec2<f32>) -> Ve
     out.ddy_uv = ddy_uv;
     out.world_tangent = world_tangent;
     out.material_id = inst.material_id;
+    out.flags = inst.flags;
     return out;
 }

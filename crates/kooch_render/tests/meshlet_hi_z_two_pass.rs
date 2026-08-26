@@ -127,10 +127,8 @@ fn single_frame_first_render_does_not_crash_with_empty_prev_pyramid() {
         });
     commands.apply(&mut resources);
 
-    let cam = Vec3::new(0.0, 0.0, 4.0);
-    let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
-    let proj = kooch_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
-    let stats = stage.render_with_assets_primary(&device, &queue, &resources, proj * view, cam);
+    let camera = kooch_render::ViewCamera::looking_at(Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO);
+    let stats = stage.render_with_assets_primary(&device, &queue, &resources, &camera, 1.0);
     assert_eq!(
         stats.instances_uploaded, 1,
         "single visible cube must upload"
@@ -225,10 +223,8 @@ fn two_pass_visible_set_stays_stable_across_frames_in_static_scene() {
     }
     commands.apply(&mut resources);
 
-    let cam = Vec3::new(0.0, 0.0, 4.0);
-    let view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, -10.0), Vec3::Y);
-    let proj = kooch_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
-    let view_proj = proj * view;
+    let camera =
+        kooch_render::ViewCamera::looking_at(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -10.0));
 
     // Render N frames of a static scene. The visible-meshlet set
     // (= what the deferred shader ends up rendering) MUST stay
@@ -237,7 +233,7 @@ fn two_pass_visible_set_stays_stable_across_frames_in_static_scene() {
     // equal the single-pass output for the same camera + scene.
     let mut counts = Vec::with_capacity(4);
     for _ in 0..4 {
-        let _ = stage.render_with_assets_primary(&device, &queue, &resources, view_proj, cam);
+        let _ = stage.render_with_assets_primary(&device, &queue, &resources, &camera, 1.0);
         let visible = read_u32(&device, &queue, stage.cull().visible_count_buffer());
         counts.push(visible);
     }

@@ -26,11 +26,7 @@ fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
     }))
     .ok()?;
 
-    let needed = wgpu::Features::TEXTURE_ATOMIC
-        | wgpu::Features::TEXTURE_INT64_ATOMIC
-        | wgpu::Features::SHADER_INT64
-        | wgpu::Features::SHADER_INT64_ATOMIC_MIN_MAX
-        | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+    let needed = kooch_core::gpu::all_required_features();
     if !adapter.features().contains(needed) {
         return None;
     }
@@ -97,6 +93,9 @@ fn vbuf64_stage_creates_without_uncaptured_errors() {
         &device,
         meshlet_bgl,
         wgpu::TextureFormat::Depth32Float,
+        // Render and output, which are the same until a technique
+        // upscales (#481 step 4).
+        (256, 256),
         (256, 256),
         None,
     );

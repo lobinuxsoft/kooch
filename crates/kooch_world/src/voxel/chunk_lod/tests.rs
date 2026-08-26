@@ -38,8 +38,12 @@ fn chunk_lod_pass_writes_expected_mask_for_distance() {
             label: Some("chunk_lod_test_encoder"),
         });
         pass.record(
-            &device, &queue, &mut encoder, &grid,
-            Vec3::ZERO, DEFAULT_LOD_DISTANCE_THRESHOLDS,
+            &device,
+            &queue,
+            &mut encoder,
+            &grid,
+            Vec3::ZERO,
+            DEFAULT_LOD_DISTANCE_THRESHOLDS,
         );
         queue.submit(std::iter::once(encoder.finish()));
         let mask = read_mask(&device, &queue, &grid);
@@ -62,8 +66,12 @@ fn chunk_lod_mask_always_includes_lod_zero() {
         label: Some("chunk_lod_test_encoder"),
     });
     pass.record(
-        &device, &queue, &mut encoder, &grid,
-        Vec3::ZERO, DEFAULT_LOD_DISTANCE_THRESHOLDS,
+        &device,
+        &queue,
+        &mut encoder,
+        &grid,
+        Vec3::ZERO,
+        DEFAULT_LOD_DISTANCE_THRESHOLDS,
     );
     queue.submit(std::iter::once(encoder.finish()));
     let mask = read_mask(&device, &queue, &grid);

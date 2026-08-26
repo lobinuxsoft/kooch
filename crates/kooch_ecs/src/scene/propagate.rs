@@ -184,10 +184,35 @@ pub fn plan(resources: &Resources, prefab: Guid) -> (Vec<PlannedWrite>, Vec<Plan
 ///
 /// Stripping these would cut an instance loose from its prefab and orphan
 /// its children, which no prefab edit should ever do.
+///
+/// 🔴 `SceneMember` is on this list for a reason that is easy to miss: it
+/// is *never* written to a prefab file. It is derived on load and holds
+/// which scene an entity belongs to. So the comparison above — live
+/// components against the ones the prefab describes — sees it on every
+/// instance, finds it in no document, and calls it debris.
+///
+/// It stripped scene membership from every prefab-derived entity on the
+/// first propagation pass. In `many_lights` that was 181 of 185 entities
+/// dropping out of their scene and into "Unsaved" (#955), and nothing
+/// failed: they were tagged correctly at load and quietly untagged a
+/// moment later. Saving would then have written four entities.
+///
+/// The same argument as `Parent`, one level up. `Parent` holds an entity
+/// to its parent; this holds it to its scene.
 fn is_bookkeeping(type_name: &str) -> bool {
     matches!(
         type_name.rsplit("::").next().unwrap_or(type_name),
-        "PrefabInstance" | "PrefabMember" | "Parent" | "Children" | "GlobalTransform"
+        "PrefabInstance"
+            | "PrefabMember"
+            | "Parent"
+            | "Children"
+            | "GlobalTransform"
+            | "SceneMember"
+            // Where an instance sits among its siblings is the scene's
+            // business, not the prefab's — a prefab has no siblings.
+            // Propagating over it would reshuffle every instance of a
+            // prefab the moment somebody edited it (#961).
+            | "Order"
     )
 }
 

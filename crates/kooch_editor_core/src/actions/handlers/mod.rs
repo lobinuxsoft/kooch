@@ -23,6 +23,7 @@ use crate::actions::EditorAction;
 // The remote path resolves a prefab's destination with the same rules as
 // the local one, rather than a second copy that could disagree about where
 // prefabs live.
+pub(crate) use assets::{persist_asset, write_material};
 pub(crate) use prefab::PendingHostReloads;
 pub(crate) use prefab::{
     asset_saved, entity_name, prefab_path, prefab_saved, project_root as prefab_root,
@@ -43,6 +44,16 @@ pub(super) fn apply_non_ecs_action(
         return;
     }
     match action {
+        // The scene's undo is the caller's business in local mode and the
+        // wire's in remote mode; a document's is neither.
+        EditorAction::Undo(document) | EditorAction::Redo(document) if !document.is_world() => {
+            crate::history::documents::step(
+                resources,
+                document,
+                matches!(action, EditorAction::Undo(_)),
+            );
+        }
+        EditorAction::CopyEntities(entities) => handle_copy(resources, entities),
         EditorAction::SaveScene => handle_save_scene(resources),
         // Removing the pending prompt already happened in `apply_actions`;
         // there is nothing left for this to do.
@@ -94,6 +105,18 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::OpenSceneAdditive => handle_open_scene_additive(resources),
         EditorAction::CloseScene(id) => handle_close_scene(resources, *id),
         EditorAction::SetActiveScene(id) => handle_set_active_scene(resources, *id),
+        EditorAction::SaveOpenScene(id) => handle_save_open_scene(resources, *id, false),
+        EditorAction::SaveOpenSceneAs(id) => handle_save_open_scene(resources, *id, true),
+        EditorAction::RevertOpenScene(id) => handle_revert_open_scene(resources, *id, undo_stack),
+        EditorAction::MoveEntity {
+            entity,
+            new_parent,
+            before,
+        } => {
+            if !kooch_ecs::order::place(resources, *entity, *new_parent, *before) {
+                tracing::warn!("an entity cannot be moved into its own subtree");
+            }
+        }
         EditorAction::Play => handle_play(resources),
         EditorAction::Stop => handle_stop(resources),
         EditorAction::OpenProject(path) => handle_open_project(resources, path),
@@ -109,9 +132,15 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::CleanProject => handle_clean_project(resources),
         EditorAction::LaunchProject(path) => handle_launch_project(resources, path),
         EditorAction::CancelLaunch => handle_cancel_launch(resources),
-        EditorAction::SetPowerProfile(profile) => handle_set_power_profile(resources, *profile),
+        EditorAction::UpdateEngine => handle_update_engine(resources),
+        EditorAction::MoveProjectToEngine(path) => handle_move_project_to_engine(resources, &path),
+        EditorAction::KeepEngine => handle_keep_engine(resources),
+        EditorAction::RemoveEngine(version) => handle_remove_engine(version),
         EditorAction::SetIdeCommand { command } => {
             handle_set_ide_command(resources, command.clone());
+        }
+        EditorAction::SetLaunchEnv { value } => {
+            handle_set_launch_env(resources, value.clone());
         }
         EditorAction::EditMaterial {
             guid,
@@ -120,15 +149,62 @@ pub(super) fn apply_non_ecs_action(
         } => {
             handle_edit_material(resources, *guid, material, *commit);
         }
+        EditorAction::SetImageImport { guid, import } => {
+            handle_set_image_import(resources, *guid, *import);
+        }
+        EditorAction::EditAssetField {
+            guid,
+            field,
+            value,
+            commit,
+        } => {
+            handle_edit_asset_field(resources, *guid, field, value.clone(), *commit);
+        }
         EditorAction::ImportAssets { files, dest } => handle_import_assets(resources, files, dest),
         // ECS actions and Undo/Redo handled by caller.
         _ => {}
     }
 }
 
+/// Fills the clipboard from the selection.
+///
+/// The one handler that is the same in both modes: reading an entity is
+/// reading the local ECS whether that ECS is the world or a mirror of
+/// one, and nothing is sent anywhere. `Copy` is the only edit-menu
+/// command that never touches the project.
+///
+/// An empty selection leaves the clipboard alone rather than clearing it.
+/// Ctrl+C with nothing selected is a miss, and a miss should not cost the
+/// user what they copied a minute ago.
+fn handle_copy(resources: &mut Resources, entities: &[kooch_ecs::entity::Entity]) {
+    if entities.is_empty() {
+        return;
+    }
+    let states: Vec<_> = entities
+        .iter()
+        .map(|entity| crate::actions::entity_state::capture(resources, *entity))
+        .collect();
+    if resources
+        .get::<crate::clipboard::EntityClipboard>()
+        .is_none()
+    {
+        resources.insert(crate::clipboard::EntityClipboard::default());
+    }
+    if let Some(clipboard) = resources.get_mut::<crate::clipboard::EntityClipboard>() {
+        tracing::debug!(
+            target: "kooch_editor_core::clipboard",
+            entities = states.len(),
+            "copied",
+        );
+        clipboard.set(states);
+    }
+}
+
 /// Copies each source file into `dest`, then forces a project asset
 /// re-scan so the new files register (and get `.meta` sidecars) and
-use assets::{handle_edit_material, handle_import_assets};
+use assets::{
+    handle_edit_asset_field, handle_edit_material, handle_import_assets, handle_set_image_import,
+};
 use play::{handle_play, handle_stop};
 use project::{
     handle_clean_project, handle_close_project, handle_create_project, handle_launch_project,
@@ -136,9 +212,10 @@ use project::{
 };
 use remote::handle_rebuild_remote;
 use scene::{
-    handle_close_scene, handle_open_scene, handle_open_scene_additive, handle_save_scene,
-    handle_set_active_scene,
+    handle_close_scene, handle_open_scene, handle_open_scene_additive, handle_revert_open_scene,
+    handle_save_open_scene, handle_save_scene, handle_set_active_scene,
 };
 use settings::{
-    handle_cancel_launch, handle_reparent, handle_set_ide_command, handle_set_power_profile,
+    handle_cancel_launch, handle_keep_engine, handle_move_project_to_engine, handle_remove_engine,
+    handle_reparent, handle_set_ide_command, handle_set_launch_env, handle_update_engine,
 };

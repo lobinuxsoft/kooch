@@ -138,10 +138,61 @@ fn the_components_that_hold_an_instance_together_are_never_removed() {
         "kooch_ecs::hierarchy::Parent",
         "kooch_ecs::hierarchy::Children",
         "kooch_ecs::transform::GlobalTransform",
+        // 🔴 Never written to a prefab file — derived on load — so the
+        // comparison finds it on every instance, in no document, and
+        // calls it debris. It stripped scene membership from 181 of
+        // `many_lights`' 185 entities on the first pass (#955).
+        "kooch_ecs::scene_member::SceneMember",
+        // 🔴 The scene's business, not the prefab's — a prefab has no
+        // siblings to sit among, so `Order` is on every instance and in
+        // no prefab document, which is the exact shape this list is for.
+        // Editing a prefab would have reshuffled every instance of it
+        // (#961).
+        "kooch_ecs::order::Order",
     ] {
         assert!(is_bookkeeping(name), "{name} would have been stripped");
     }
     assert!(!is_bookkeeping("kooch_ecs::transform::Transform"));
+}
+
+/// The list has to hold every component the engine derives rather than
+/// stores, and this is the check that says so out loud.
+///
+/// The comment above the list says it "gets extended by whoever adds the
+/// next structural component and forgets". That is what happened to
+/// `SceneMember`, and the failure was invisible: the entities were tagged
+/// correctly at load and untagged a moment later, so the World panel
+/// showed them under "Unsaved" and a save would have written four
+/// entities out of a hundred and eighty-five.
+#[test]
+fn a_derived_component_is_not_debris() {
+    // Named by its short name the way `is_bookkeeping` matches, so a
+    // rename that breaks the string is caught here rather than in a
+    // scene file six weeks later.
+    let short = std::any::type_name::<crate::scene_member::SceneMember>();
+    assert!(
+        is_bookkeeping(short),
+        "{short} is derived, never stored, and would be stripped from every instance",
+    );
+}
+
+/// And the same for where an instance sits.
+///
+/// 🔴 This list has now been forgotten twice, by two different people
+/// adding two different scene-level components — `SceneMember` and then
+/// `Order`. Both are on every instance and in no prefab document, which
+/// is precisely what the comparison calls debris.
+///
+/// The failure mode is identical and equally quiet: the ordering looks
+/// right until somebody edits the prefab, and then every instance of it
+/// jumps back into whatever order the file happened to be in.
+#[test]
+fn where_an_instance_sits_is_not_debris() {
+    let short = std::any::type_name::<crate::order::Order>();
+    assert!(
+        is_bookkeeping(short),
+        "{short} belongs to the scene, and would be stripped from every instance",
+    );
 }
 
 #[test]

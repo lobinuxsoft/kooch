@@ -26,6 +26,17 @@ pub enum ReflectError {
     /// entities exist. Seeing one here means that pass did not run, and
     /// storing it would leave a component pointing nowhere.
     UnresolvedEntityRef { field: String },
+    /// The value has the field's kind but not a form the field accepts —
+    /// a `String` field that stores a parsed type, given text that does
+    /// not parse.
+    ///
+    /// Distinct from [`Self::TypeMismatch`], which is about the kind:
+    /// reporting a bad GUID as "expected String, got String" would say
+    /// nothing about what is actually wrong.
+    InvalidValue {
+        field: String,
+        expected: &'static str,
+    },
 }
 
 impl fmt::Display for ReflectError {
@@ -45,6 +56,9 @@ impl fmt::Display for ReflectError {
                 f,
                 "type mismatch on field '{field}': expected {expected:?}, got {got:?}"
             ),
+            Self::InvalidValue { field, expected } => {
+                write!(f, "field '{field}' cannot be read as {expected}")
+            }
             Self::ComponentNotFound => write!(f, "component not found for entity"),
             Self::ReadOnly => write!(f, "storage is read-only from CPU"),
         }

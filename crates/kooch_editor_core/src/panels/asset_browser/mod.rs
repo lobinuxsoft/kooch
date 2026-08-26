@@ -36,6 +36,7 @@ pub(crate) fn draw_asset_browser_content(
     current_folder: &mut Option<PathBuf>,
     engine_root: Option<&Path>,
     project_root: Option<&Path>,
+    main_scene: Option<&Path>,
     actions: &mut Vec<EditorAction>,
 ) {
     // Full panel area, captured before content so drop detection can
@@ -121,6 +122,9 @@ pub(crate) fn draw_asset_browser_content(
                 pending: &mut pending,
                 writable: true,
                 nav,
+                has_settings: has_render_settings(catalog, project_root),
+                project_root,
+                main_scene,
             };
             // Cleared here and refilled as rows are drawn, so the list the
             // keyboard reads next frame is exactly what is on screen now.
@@ -185,10 +189,19 @@ fn import_destination(
     current_folder: Option<&Path>,
     project_root: Option<&Path>,
 ) -> Option<PathBuf> {
-    let project_root = project_root?;
+    // 🔴 Always inside `assets/`, and the selected folder only when it
+    // already is. A dropped texture used to land in whatever folder was
+    // selected — or in the **project root** when none was, beside
+    // `Cargo.toml`, where nothing registers it, no build carries it, and
+    // the Asset Browser still lists it as though it were an asset.
+    //
+    // The same rule the "New …" menu enforces (#765), applied to the
+    // other way a file enters a project. A rule that holds for one
+    // entrance and not the other is not a rule.
+    let assets = project_root?.join("assets");
     match current_folder {
-        Some(dir) if dir.starts_with(project_root) => Some(dir.to_path_buf()),
-        _ => Some(project_root.to_path_buf()),
+        Some(dir) if dir.starts_with(&assets) => Some(dir.to_path_buf()),
+        _ => Some(assets),
     }
 }
 
@@ -220,6 +233,22 @@ fn draw_drop_banner(ui: &mut egui::Ui, project_root: Option<&Path>, dest: Option
             ));
         }
     }
+}
+
+/// Whether the project already holds a `.rendersettings`.
+///
+/// By type and not by extension, because that is how the renderer finds
+/// it (`apply_render_settings_system`) — an entry the catalog does not
+/// type is one the renderer will not read either, and the menu has to
+/// agree with what actually takes effect.
+///
+/// Scoped to the project: the engine ships assets too, and one of those
+/// must not stop a project from authoring its own.
+fn has_render_settings(catalog: &[AssetCatalogEntry], project_root: Option<&Path>) -> bool {
+    let wanted = std::any::type_name::<kooch_render::settings::RenderSettings>();
+    catalog.iter().any(|entry| {
+        entry.type_name == wanted && project_root.is_some_and(|root| entry.path.starts_with(root))
+    })
 }
 
 /// Catalog entries whose path lives under `root`.
@@ -307,3 +336,6 @@ fn asset_guid_at(path: &Path) -> Option<Guid> {
         .ok()
         .map(|meta| meta.guid)
 }
+
+#[cfg(test)]
+mod settings_tests;

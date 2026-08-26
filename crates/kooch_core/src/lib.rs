@@ -42,6 +42,13 @@
 //! * Physics stages run N times per frame to catch up to real time
 //! ```
 
+// Re-exported because `AssetMeta::import` and
+// `LoadContext::with_import` both carry a `toml::Table` in their public
+// signatures: a crate that writes an importer already depends on this
+// type, and making it add the dependency by hand is how two versions of
+// the same parser end up in one build.
+pub use toml;
+
 pub mod aabb;
 pub mod app;
 pub mod asset_database;
@@ -60,17 +67,28 @@ pub mod guid;
 pub mod log_console;
 pub mod pipeline_cache;
 pub mod plugin;
-pub mod power;
 pub mod prelude;
+pub mod profiler;
 pub mod raw_event;
 pub mod resource;
 pub mod run_state;
 pub mod runner;
 pub mod scene_paths;
 pub mod schedule;
+/// Whether this build carries a profiling scope per system.
+///
+/// 🔴 Exists to be asserted by the crates that select the feature. A
+/// profiling build whose scopes compiled out is not a build that fails —
+/// it is a build whose captures quietly look like the ones from before
+/// the scopes existed, with `PreUpdate` reporting one number and no
+/// children. That already happened once, between adding the scopes and
+/// noticing the editor never enabled them.
+pub const CPU_SCOPES: bool = cfg!(feature = "cpu-profiler");
+
 pub mod stage;
 pub mod system;
 pub mod time;
+pub mod window_mode;
 
 /// Re-exported so `register_asset!` resolves from any crate.
 #[doc(hidden)]
@@ -81,6 +99,8 @@ pub use guid::Guid;
 
 #[cfg(feature = "dynamic")]
 pub mod dynamic;
+
+pub mod log_file;
 
 /// Initializes the tracing subscriber for logging.
 ///
@@ -96,6 +116,7 @@ pub mod dynamic;
 /// }
 /// ```
 pub use log_console::{LogBuffer, LogEntry, strip_ansi};
+pub use log_file::{SharedLog, log_panics, open_log};
 
 /// Installs tracing with a console buffer beside stdout, and hands the
 /// buffer back.
@@ -164,6 +185,51 @@ pub fn init_tracing_if_needed() {
     use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    // 🔴 The file is what a shipped game can be debugged from (#964). It
+    // has no terminal — started from Steam, from a launcher, or by
+    // double-click — and under Proton its stdout is not forwarded at
+    // all, so without this a Windows build cannot say anything to
+    // anybody.
+    //
+    // Beside stdout rather than instead of it: someone running from a
+    // terminal keeps what they had.
+    let file = log_file::open_log();
+    if let Some((log, ref path)) = file {
+        // Installed before the subscriber, so a panic during setup is
+        // still caught — the run this exists for is the one that dies
+        // early.
+        log_file::log_panics(log.clone());
+        let writer = log.clone();
+        let installed = match json_wanted() {
+            true => tracing_subscriber::registry()
+                .with(fmt::layer().json().flatten_event(true))
+                .with(
+                    fmt::layer()
+                        .with_ansi(false)
+                        .with_writer(move || writer.clone()),
+                )
+                .with(filter)
+                .try_init(),
+            false => tracing_subscriber::registry()
+                .with(fmt::layer().with_ansi(ansi_wanted()))
+                .with(
+                    fmt::layer()
+                        .with_ansi(false)
+                        .with_writer(move || writer.clone()),
+                )
+                .with(filter)
+                .try_init(),
+        };
+        if installed.is_ok() {
+            // Said once, on the line above everything else, because
+            // "where is the log" is the first question anyone asks and
+            // the answer differs per platform and per install.
+            tracing::info!(path = %path.display(), "logging to file");
+        }
+        return;
+    }
+
     if json_wanted() {
         let _ = tracing_subscriber::registry()
             .with(fmt::layer().json().flatten_event(true))

@@ -28,10 +28,10 @@ impl MeshletCull {
             self.capacity,
         );
 
-        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(params));
+        let params_binding = self.stage_params(queue, params);
         encoder.clear_buffer(&self.visible_count, 0, None);
 
-        let cull_bg = self.build_cull_bg(pipelines, device, mesh);
+        let cull_bg = self.build_cull_bg(pipelines, device, mesh, params_binding);
 
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -68,11 +68,11 @@ impl MeshletCull {
             self.capacity,
         );
 
-        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(params));
+        let params_binding = self.stage_params(queue, params);
         queue.write_buffer(&self.hi_z_params_buffer, 0, bytemuck::bytes_of(hi_z_params));
         encoder.clear_buffer(&self.visible_count, 0, None);
 
-        let cull_bg = self.build_cull_bg(pipelines, device, mesh);
+        let cull_bg = self.build_cull_bg(pipelines, device, mesh, params_binding);
         let hi_z_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_hi_z_bg"),
             layout: &pipelines.hi_z_bgl,

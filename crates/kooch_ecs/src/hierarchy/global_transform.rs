@@ -93,6 +93,7 @@ impl Reflect for GlobalTransform {
     fn reflect_fields(&self) -> &'static [FieldMeta] {
         static FIELDS: &[FieldMeta] = &[FieldMeta {
             name: "matrix",
+            group: "",
             doc: "World-space transform, recomputed every frame from this entity's \
 Transform and its parents'.\n\nRead-only in practice: writing here is overwritten by the next \
 propagation pass. Edit Transform instead.",

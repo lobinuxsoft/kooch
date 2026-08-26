@@ -33,58 +33,88 @@ your component types without compiling them. The `rlib` beside it is what your b
 so the shipped game is an ordinary statically linked executable — no dynamic loading at
 runtime.
 
-The engine dependency carries feature flags, and each one buys something specific:
+**The project declares its own features, and the default one is the game.**
 
 ```toml
-kooch = { path = "…", features = [
-    "editor",                 # the embedded editor, so `cargo run` opens it
-    "physics",                # rigid bodies — without it, PhysicsBody is inert
-    "gravity",                # gravity sources — without it, PointGravity pulls on nothing
-    "remote",                 # `--remote`, so the standalone editor can drive this project
-    "physics-debug-render",   # the solver's own account of itself, for the overlay
-    "dynamic",                # the plugin API — without it, lib.rs does not compile
-] }
+[features]
+default = ["game"]
+game = ["kooch/physics", "kooch/gravity", "kooch/camera", "kooch/audio"]
+editor = [
+    "game",
+    "kooch/editor",
+    "kooch/remote",
+    "kooch/dynamic",
+    "kooch/physics-debug-render",
+]
+
+[dependencies]
+kooch = { path = "…" }
 ```
 
-`dynamic` is the one that is not optional in practice: leave it out and `lib.rs` fails to
-build, because `kooch::kooch_plugin_api` is compiled out.
+Each one buys something specific. `physics` gives you rigid bodies — without it a
+`PhysicsBody` is an inert component and nothing ever falls. `gravity` is the same story one
+level up: a `PointGravity` that pulls on nothing. `camera` is the third: a `VirtualCamera`
+that moves no camera.
 
-### `main.rs` — three ways to run
+The `editor` three are what authoring needs and a game does not: `kooch/editor` is the
+embedded editor, `kooch/remote` is the socket the standalone editor drives your project
+over, `kooch/dynamic` is the plugin API that lets it list your components without compiling
+them, and `physics-debug-render` compiles the solver walk the physics overlay draws.
+
+### 🔴 Why the game is the default, and why it matters
+
+A shipped build must contain the game and nothing else. Bundling the editor ships the
+*engine's authoring surface* next to your game — the tooling that authored it, in the same
+artefact — plus a file-dialog stack, an HTTP listener, and a reflected description of every
+type you registered.
+
+`editor` is opt-in and the authoring binary asks for it with `required-features`, so the
+guarantee belongs to the **build**, not to a `cfg` somebody has to get right. Check it
+yourself:
+
+```sh
+cargo tree -e normal | grep kooch_editor_core          # nothing
+cargo tree -e normal --features editor | grep kooch_editor_core   # there it is
+```
+
+Not "the linker drops it" — cargo never compiles it.
+
+⚠️ **Reflection stays in a game build**, and that is not an oversight: a `.scene` is
+deserialised by type name, so the game needs the registry to load its own scenes. What
+leaves is the editor, the remote server and the plugin API.
+
+### `main.rs` — the game, and nothing else
 
 ```rust
+use PROJECT_CRATE::registrations;
+
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--game") {
-        // The game. Systems run.
-        let mut app = App::new();
-        app.add_plugins(DefaultPlugins);
-        app.add_plugin(registrations::ProjectRegistrations { run_systems: true });
-        app.run();
-    } else if args.iter().any(|a| a == "--remote") {
-        // Headless authoring host for the standalone editor.
-        // Systems register but start paused; the editor's Play flips them on.
-        let mut app = App::new();
-        app.add_plugins(RemoteHostPlugins);
-        app.add_plugin(registrations::ProjectRegistrations { run_systems: false });
-        app.add_plugin(kooch::kooch_remote::RemotePlugin::new());
-        app.run();
-    } else {
-        // The editor, embedded in your project.
-        kooch::kooch_editor_core::run_editor_with(
-            registrations::ProjectRegistrations { run_systems: false },
-        );
-    }
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins);
+    app.add_plugin(registrations::ProjectRegistrations { run_systems: true });
+    app.run();
 }
 ```
 
+No flags and no modes. Authoring lives in `src/editor.rs`, which is a second `[[bin]]`
+gated behind the `editor` feature, so this file cannot reach it.
+
 | Command | What you get |
 |---|---|
-| `cargo run` | The editor, with your components in it |
-| `cargo run -- --game` | The game |
-| `cargo run -- --remote` | A headless host for the standalone editor to drive |
+| `cargo run` | Your game |
+| `cargo run --features editor --bin <crate>_editor` | The editor, with your components |
+| `cargo run --features editor --bin <crate>_editor -- --remote` | A headless host for the standalone editor to drive |
 
 `--remote` is headless on purpose: the editor draws that world in its own viewport, so a
 window here would show the same scene twice.
+
+The editor passes `--features editor` on every build it runs for you, so none of this is
+something to remember while authoring — it matters the day you ship.
+
+⚠️ **Older projects are migrated when they open.** One exception: a `main.rs` you edited is
+left exactly as it is, with a warning, because a migration that silently deleted a line of
+your gameplay would be worse than one that did nothing. Move your setup into the plain
+`App::new()` form above and the release build is the game only.
 
 ### `registrations.rs` — do not edit
 

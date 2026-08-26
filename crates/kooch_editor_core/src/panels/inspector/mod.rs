@@ -41,7 +41,7 @@ pub(crate) use asset_view::{
     AssetDetail, ImageImportInfo, MeshImportInfo, PrefabComponentView, PrefabDetail,
     PrefabEntityView, ResolvedComponent,
 };
-pub(crate) use widgets::{AssetCatalogEntry, draw_asset_picker};
+pub(crate) use widgets::{AssetCatalogEntry, AssetSource, draw_asset_picker};
 
 /// Threshold for considering a cached Euler still in sync with the
 /// underlying quaternion. Compared against `|dot(actual, reconstructed)|`

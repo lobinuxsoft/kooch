@@ -41,6 +41,23 @@ pub(crate) enum EditorTab {
     AssetBrowser,
     InputMap,
     Console,
+    /// Making a shipped game out of the project (#758).
+    Build,
+    /// Where the frame actually goes (#785).
+    ///
+    /// 🔴 The variant exists whether or not the `profiling` feature is
+    /// compiled in, and the panel says so when it is not. A variant
+    /// behind `#[cfg]` would make the serialised dock layout mean
+    /// different things in two builds of the same editor — open the
+    /// layout in the other one and deserialisation fails on a tab that
+    /// does not exist, taking the user's whole arrangement with it.
+    Profiler,
+    /// The performance metrics as a REAL dock tab (#942-class ask from
+    /// the user): the overlay sidebar drew translucent over the game
+    /// view and could not be read. Sections pin out into floating
+    /// windows from here; the overlay stays available behind its
+    /// chevron but defaults hidden.
+    Performance,
 }
 
 /// The `.inputmap` currently open in the Input Map panel.
@@ -101,6 +118,9 @@ pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::Console,
     EditorTab::AssetBrowser,
     EditorTab::InputMap,
+    EditorTab::Build,
+    EditorTab::Profiler,
+    EditorTab::Performance,
 ];
 
 impl EditorTab {
@@ -108,14 +128,25 @@ impl EditorTab {
     pub(crate) fn label(&self) -> String {
         match self {
             Self::World => format!("{} World", crate::icons::GLOBE),
-            Self::View => format!("{} View", crate::icons::EYE),
-            Self::Game => format!("{} Game", crate::icons::GAME_CONTROLLER),
+            // "Edit View" / "Game View", the user's naming: both are
+            // real views of the same world, one through the authoring
+            // camera and one through the gameplay camera. NOT "World
+            // View" — the entity-hierarchy panel is already called
+            // World, and two near-homonym tabs cost more than they
+            // say. The VARIANTS stay `View`/`Game`: they are the names
+            // serialized into saved dock layouts, and renaming a
+            // serialized name breaks data silently.
+            Self::View => format!("{} Edit View", crate::icons::EYE),
+            Self::Game => format!("{} Game View", crate::icons::GAME_CONTROLLER),
             Self::Inspector => format!("{} Inspector", crate::icons::SLIDERS),
             Self::Archetypes => format!("{} Archetypes", crate::icons::TREE_STRUCTURE),
             Self::Components => format!("{} Components", crate::icons::LIST_BULLETS),
             Self::AssetBrowser => format!("{} Assets", crate::icons::FOLDER_OPEN),
             Self::InputMap => format!("{} Input Map", crate::icons::SLIDERS),
             Self::Console => format!("{} Console", crate::icons::TERMINAL),
+            Self::Build => format!("{} Build", crate::icons::PACKAGE),
+            Self::Profiler => format!("{} Profiler", crate::icons::CHART_BAR),
+            Self::Performance => format!("{} Performance", crate::icons::FADERS),
         }
     }
 }
@@ -127,10 +158,11 @@ impl std::fmt::Display for EditorTab {
 }
 
 /// Creates the default 3-panel dock layout: World | View + Game |
-/// Inspector.
-/// Per-frame performance metrics are not a dock tab — the View panel
-/// renders them as a vertical overlay anchored to its right edge, so
-/// they are always visible alongside what the artist is looking at.
+/// Inspector + Performance.
+/// The performance metrics are a dock tab beside the Inspector; the
+/// in-viewport overlay still exists behind its chevron for whoever
+/// wants numbers over the picture, but defaults hidden — drawn over
+/// the game it could not be read.
 ///
 /// Game sits as a *sibling tab* of View rather than a split: the two
 /// answer the same question from different cameras, so the common
@@ -145,7 +177,11 @@ pub(crate) fn default_dock_state() -> DockState<EditorTab> {
     surface.split_left(NodeIndex::root(), 0.2, vec![EditorTab::World]);
 
     let surface = state.main_surface_mut();
-    surface.split_right(NodeIndex::root(), 0.7, vec![EditorTab::Inspector]);
+    surface.split_right(
+        NodeIndex::root(),
+        0.7,
+        vec![EditorTab::Inspector, EditorTab::Performance],
+    );
 
     state
 }
@@ -246,6 +282,8 @@ pub struct EditorOverlay {
     /// so the render system can resolve the asset's data snapshot before
     /// the egui frame runs.
     pub(crate) selected_asset: Option<kooch_core::Guid>,
+    /// Which build preset the Build panel has selected (#758).
+    pub(crate) build_selection: Option<kooch_core::Guid>,
     /// Folder selected in the Asset Browser tree — the destination for
     /// drag-and-drop imports. `None` falls back to the project assets
     /// root. Only project folders are valid targets (engine is read-only).
@@ -350,6 +388,12 @@ pub(crate) struct SceneDisplayInfo {
     pub(crate) id: kooch_core::Guid,
     /// File stem, or "Untitled" for a scene never saved.
     pub(crate) name: String,
+    /// Where it came from, or `None` for one never saved.
+    ///
+    /// Carried beside the name so "Save" can write to the file the scene
+    /// came from without asking, and fall back to asking when there is no
+    /// file yet. The stem alone cannot say where it lives.
+    pub(crate) path: Option<std::path::PathBuf>,
     pub(crate) dirty: bool,
     pub(crate) active: bool,
 }

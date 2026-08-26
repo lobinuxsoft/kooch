@@ -12,10 +12,59 @@ use crate::project_state::{LauncherStatus, ProjectState};
 /// Actions that the launch screen can produce.
 pub enum LaunchAction {
     OpenProject(PathBuf),
-    CreateProject { name: String, parent_path: PathBuf },
+    CreateProject {
+        name: String,
+        parent_path: PathBuf,
+    },
     RemoveRecent(PathBuf),
+    /// Move a project onto this editor's engine, from the launcher,
+    /// before it is opened (#800).
+    MoveProjectToEngine(PathBuf),
     LaunchProject(PathBuf),
     CancelLaunch,
+}
+
+/// One project's engine version, and the button that moves it.
+///
+/// Drawn only for a project that still exists: a missing directory has
+/// no manifest to read, and offering to move it would write nothing.
+fn draw_engine_column(
+    ui: &mut egui::Ui,
+    entry: &crate::project::RecentProject,
+    actions: &mut Vec<LaunchAction>,
+) {
+    let editor = crate::engine_vendor::editor_engine_version();
+    let Some(project) = crate::project::project_engine_version(&entry.path) else {
+        return;
+    };
+
+    if project == editor {
+        ui.label(
+            egui::RichText::new(format!("engine {project}"))
+                .weak()
+                .small(),
+        );
+        return;
+    }
+
+    // Different version: say so, and offer the move. Not a silent
+    // upgrade — moving means the next build is a full rebuild, and that
+    // is the user's call to make.
+    if ui
+        .small_button(format!("{} Use {editor}", icons::PACKAGE))
+        .on_hover_text(format!(
+            "Points this project at engine {editor} without opening it.\n\
+             Its next build is a full rebuild.",
+        ))
+        .clicked()
+    {
+        actions.push(LaunchAction::MoveProjectToEngine(entry.path.clone()));
+    }
+    ui.label(
+        egui::RichText::new(format!("engine {project}"))
+            .weak()
+            .small(),
+    );
 }
 
 /// Draws the full launch screen UI. Returns a list of actions to apply.
@@ -40,7 +89,23 @@ pub fn draw_launch_screen(
             ui.add_space(40.0);
             ui.heading(egui::RichText::new("Kóoch").size(32.0).strong());
             ui.add_space(8.0);
-            ui.label(egui::RichText::new("Project Manager").size(14.0).weak());
+            // The editor's own version, next to the word that names the
+            // screen. Each row below shows the engine version its
+            // project is pinned to, and the two being different is
+            // normal — but the comparison is unreadable while only one
+            // of the two numbers is on screen.
+            ui.label(
+                egui::RichText::new(format!(
+                    "Project Manager · {}",
+                    crate::engine_vendor::editor_engine_version()
+                ))
+                .size(14.0)
+                .weak(),
+            )
+            .on_hover_text(
+                "This editor's version. A project pinned to another one keeps building \
+                 against the engine it names — use its button to move it here.",
+            );
             ui.add_space(24.0);
         });
 
@@ -135,6 +200,16 @@ pub fn draw_launch_screen(
                                     .weak()
                                     .small(),
                             );
+
+                            // 🔴 Which engine this project builds against,
+                            // and the chance to change it *here* — before
+                            // opening. Opening compiles the project's
+                            // plugin and only then compares versions, so a
+                            // mismatch discovered there costs a compile
+                            // against the engine being left behind (#800).
+                            if exists {
+                                draw_engine_column(ui, entry, &mut actions);
+                            }
                         });
                     });
                 }

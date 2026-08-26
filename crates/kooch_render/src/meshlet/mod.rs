@@ -35,7 +35,7 @@ mod builder;
 mod caps;
 mod cull;
 mod debug;
-mod deferred;
+pub(crate) mod deferred;
 mod dispatcher;
 mod drawer;
 mod gpu_meshlet;
@@ -62,7 +62,8 @@ pub use builder::{
 };
 pub use caps::MeshletDebugCaps;
 pub use cull::{
-    CullParams, camera_in_backface_cone, extract_frustum_planes, sphere_outside_frustum,
+    CullParams, camera_in_backface_cone, extract_frustum_planes, projection_scale_y,
+    sphere_outside_frustum,
 };
 pub use debug::{MeshletDebugMode, MeshletLodSettings};
 pub use deferred::{DEFERRED_COLOR_FORMAT, MeshletDeferredShader};
@@ -74,11 +75,12 @@ pub use gpu_meshlet::{
 pub use gpu_timers::MeshletGpuTimers;
 pub use loader::MeshletMeshLoader;
 pub use material_pass::{
-    MATERIAL_DEPTH_FORMAT, MATERIAL_PASS_INTI_GROUP, MATERIAL_PBR_DEFAULT_BODY,
-    RESOLVE_MATERIAL_DEPTH_SHADER, SURFACE_RECONSTRUCT_SHADER, VISIBILITY_BUFFER_RESOLVE_SHADER,
-    compose_material_shader,
+    MATERIAL_DEPTH_FORMAT, MATERIAL_PASS_CONTACT_DEPTH_BINDING, MATERIAL_PASS_CONTACT_UBO_BINDING,
+    MATERIAL_PASS_INTI_GROUP, MATERIAL_PBR_COMPUTE_BODY, MATERIAL_PBR_DEFAULT_BODY,
+    RESOLVE_MATERIAL_DEPTH_SHADER, SHADING_TILE_SIZE, SURFACE_RECONSTRUCT_SHADER,
+    VISIBILITY_BUFFER_RESOLVE_SHADER, compose_material_shader,
 };
-pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshDescriptor, MeshHandle};
+pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshBounds, MeshDescriptor, MeshHandle};
 pub use reject_overlay::{MeshletRejectOverlay, RejectReason};
 pub use render_stage::{MeshletRenderStage, MeshletRenderStageConfig, MeshletRenderStats, ViewId};
 pub use scene::{
@@ -86,5 +88,16 @@ pub use scene::{
 };
 pub use stage_counters::{CullStageCounts, MeshletStageCounters};
 pub use system::{MeshletPipeline, instance_at_origin};
-pub use vbuf64_stage::Vbuf64Stage;
+pub use vbuf64_stage::{JITTER_BASE_PHASES, Jitter, ShadingRate, Vbuf64Stage};
+
+/// `KOOCH_COMPUTE_SHADING`, when it says anything. See
+/// [`crate::quality`] for why the variable outranks the settings asset.
+pub fn compute_shading_override() -> Option<bool> {
+    vbuf64_stage::compute_shading_override()
+}
+
+/// `KOOCH_SHADING_RATE`, when it says anything.
+pub fn shading_rate_override() -> Option<ShadingRate> {
+    vbuf64_stage::shading_rate_override()
+}
 pub use vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};

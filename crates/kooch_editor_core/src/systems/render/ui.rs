@@ -25,6 +25,17 @@ use super::frame_display::FrameDisplayData;
 pub(super) struct ToolbarInfo {
     pub(super) can_undo: bool,
     pub(super) can_redo: bool,
+    /// Whether Ctrl+V has anything to paste.
+    pub(super) clipboard_has_entities: bool,
+    /// The document a Ctrl+Z would reach, resolved from the focus the
+    /// dock reported *last* frame.
+    ///
+    /// One frame behind by construction: the panels write their focus
+    /// while they draw, and this is read before they do. It costs
+    /// nothing a person can produce — a click and a chord in the same
+    /// sixteen milliseconds — and it buys one answer shared by the menu,
+    /// the toolbar and the keyboard rather than three that can disagree.
+    pub(super) document: Option<crate::history::Document>,
     pub(super) undo_desc: Option<String>,
     pub(super) redo_desc: Option<String>,
     pub(super) is_playing: bool,
@@ -32,6 +43,9 @@ pub(super) struct ToolbarInfo {
     pub(super) remote: Option<ConnectionState>,
     /// Why the remote snapshot stopped tracking, when it has.
     pub(super) remote_stale: Option<String>,
+    /// `registrations.rs` was rewritten since the project was last
+    /// built, so the loaded code is behind its source.
+    pub(super) scripts_behind: bool,
 }
 
 /// Handles to the viewport resource consumed by the UI: a read-only
@@ -60,12 +74,13 @@ pub(super) struct ViewportUi<'a> {
 pub(super) fn run_editor_ui(
     overlay: &mut EditorOverlay,
     project_state: &mut Option<ProjectState>,
+    dlss: &mut crate::dlss_sdk::SdkInstall,
+    preflight: Option<&crate::preflight::Report>,
     raw_input: egui::RawInput,
     project_loaded: bool,
     data: &FrameDisplayData,
     toolbar: &ToolbarInfo,
     viewport: ViewportUi<'_>,
-    power_profile: kooch_core::power::PowerProfile,
     asset_catalog: &[crate::panels::inspector::AssetCatalogEntry],
     asset_detail: Option<&crate::panels::inspector::AssetDetail>,
     open_input_map: Option<&crate::state::OpenInputMap>,
@@ -73,8 +88,14 @@ pub(super) fn run_editor_ui(
     project_assets_root: Option<&std::path::Path>,
     meshlet_debug_mode: &mut MeshletDebugMode,
     meshlet_debug_caps: MeshletDebugCaps,
+    single_light_note: Option<&str>,
     meshlet_lod_settings: &mut MeshletLodSettings,
+    lights_hot: &mut kooch_lighting::LightsHot,
+    cluster_settings: &mut kooch_lighting::ClusterSettings,
+    specular_floor: &mut kooch_lighting::SpecularFloor,
     meshlet_stats: MeshletRenderStats,
+    // The Game viewport's own; see `GameViewStats`.
+    game_stats: MeshletRenderStats,
     perf_stats: crate::perf::EditorPerfStats,
     gizmo_visibility: &mut crate::gizmos::GizmoVisibility,
     gizmo_groups: &[crate::gizmos::GizmoGroup],
@@ -84,10 +105,41 @@ pub(super) fn run_editor_ui(
     console: &mut crate::panels::console::ConsoleState,
     connect_output: &[String],
     prefab_overwrite: Option<&PendingPrefabOverwrite>,
+    build: &crate::panels::build::BuildPanel,
+    editor_camera_rotation: Option<glam::Quat>,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
+    // 🔴 One frame boundary per editor frame, and it has to be exactly
+    // here. puffin builds its flamegraph out of the scopes that closed
+    // between two `new_frame` calls; called twice a frame the graph is
+    // two half-frames, and never called it grows one unbounded frame
+    // that never renders. Free when the feature is off — the whole block
+    // is compiled out.
+    // ⚠️ Guarded by the recording flag, not only by the feature. A frame
+    // boundary while stopped would keep rotating buffers for a history
+    // nobody asked for, and "stopped" has to mean the profiler is doing
+    // nothing rather than doing less.
+    #[cfg(feature = "profiling")]
+    if puffin::are_scopes_on() {
+        puffin::GlobalProfiler::lock().new_frame();
+        // After `new_frame`, never before: the request has to land on a
+        // frame that will not come out empty, or puffin takes the flag
+        // and drops it. See `SNAPSHOT_COUNTDOWN`.
+        use std::sync::atomic::Ordering;
+        let left = crate::panels::profiler::SNAPSHOT_COUNTDOWN.load(Ordering::Relaxed);
+        if left > 0 {
+            crate::panels::profiler::SNAPSHOT_COUNTDOWN.store(left - 1, Ordering::Relaxed);
+            puffin::GlobalProfiler::lock().emit_scope_snapshot();
+        }
+    }
+    profiling::scope!("editor ui");
+
     let mut selected = std::mem::take(&mut overlay.selected_entities);
     let mut pinned_gizmos = std::mem::take(&mut overlay.pinned_gizmos);
     let mut selected_asset = overlay.selected_asset;
+    // The scene this project opens with (#808), resolved once for the
+    // frame: every row of the asset tree compares against it, and the
+    // manifest is not something a draw should be re-reading per file.
+    let main_scene = crate::actions::main_scene_path(project_state.as_ref());
     let mut current_folder = overlay.current_folder.take();
     let selected_before = selected.clone();
     let asset_before = selected_asset;
@@ -117,25 +169,45 @@ pub(super) fn run_editor_ui(
                 toolbar.is_playing,
                 toolbar.remote,
                 toolbar.remote_stale.as_deref(),
+                toolbar.scripts_behind,
                 toolbar.can_undo,
                 toolbar.can_redo,
                 toolbar.undo_desc.as_deref(),
                 toolbar.redo_desc.as_deref(),
-                power_profile,
                 project_state
                     .as_ref()
                     .and_then(|ps| ps.editor_config.ide_command.as_deref()),
+                crate::menu_bar::EditMenu {
+                    selected: &selected,
+                    clipboard_has_entities: toolbar.clipboard_has_entities,
+                    document: toolbar.document.as_ref(),
+                },
             );
 
             // Drawn on the context rather than inside a panel: a window is
             // free-floating, and nesting it in the menu bar's `Ui` would
             // clip it to that strip.
+            if let Some(report) = preflight {
+                crate::menu_bar::draw_preflight_window(ui.ctx(), report);
+            }
             crate::menu_bar::draw_settings_window(
                 ui.ctx(),
                 &mut actions,
                 project_state
                     .as_ref()
                     .and_then(|ps| ps.editor_config.ide_command.as_deref()),
+                project_state
+                    .as_ref()
+                    .and_then(|ps| ps.active_project.as_ref())
+                    .map(|p| p.manifest.engine_version.as_str()),
+                // `None` with no project open: a launch line is stored
+                // against a project's path, so there is nowhere to put
+                // one and the field is not drawn.
+                project_state.as_ref().and_then(|ps| {
+                    let root = &ps.active_project.as_ref()?.root_path;
+                    Some(ps.editor_config.launch_env_for(root))
+                }),
+                dlss,
             );
 
             // A build is running and the dock has nothing to show yet.
@@ -165,6 +237,9 @@ pub(super) fn run_editor_ui(
             }
 
             let mut tab_viewer = EditorTabViewer {
+                editor_camera_rotation,
+                build,
+                build_selection: &mut overlay.build_selection,
                 pinned: &mut pinned_gizmos,
                 focused_tab: &mut overlay.focused_tab,
                 accent: ui.visuals().selection.bg_fill,
@@ -205,12 +280,19 @@ pub(super) fn run_editor_ui(
                 asset_detail,
                 open_input_map,
                 current_folder: &mut current_folder,
+                clipboard_has_entities: toolbar.clipboard_has_entities,
                 engine_assets_root,
                 project_assets_root,
+                main_scene: main_scene.as_deref(),
                 meshlet_debug_mode,
                 meshlet_debug_caps,
+                single_light_note,
                 meshlet_lod_settings,
+                lights_hot,
+                cluster_settings,
+                specular_floor,
                 meshlet_stats,
+                game_stats,
                 perf_stats,
             };
 
@@ -228,6 +310,18 @@ pub(super) fn run_editor_ui(
             if !editable {
                 shade_out(ui, dock_rect);
             }
+
+            // After the dock, never before: the chords are gated on which
+            // panel has focus, and the dock is what decides that. Read
+            // above the dock they answered with last frame's focus, which
+            // is how a shortcut ends up working only on the second press.
+            crate::shortcuts::gather(
+                ui,
+                overlay.focused_tab,
+                toolbar.document.as_ref(),
+                &selected,
+                &mut actions,
+            );
         } else if let Some(ps) = project_state.as_mut() {
             let launch_actions = launch_screen::draw_launch_screen(ui, ps);
             forward_launch_actions(launch_actions, &mut actions);
@@ -235,6 +329,14 @@ pub(super) fn run_editor_ui(
 
         if let Some(pending) = prefab_overwrite {
             draw_prefab_overwrite_prompt(ui, pending, &mut actions);
+        }
+
+        if let Some(status) = project_state
+            .as_ref()
+            .and_then(|ps| ps.engine_status.as_ref())
+            .filter(|s| s.difference.wants_a_decision())
+        {
+            draw_engine_notice(ui, status, &mut actions);
         }
     });
 
@@ -265,6 +367,9 @@ fn forward_launch_actions(launch_actions: Vec<LaunchAction>, actions: &mut Vec<E
                 actions.push(EditorAction::CreateProject { name, parent_path })
             }
             LaunchAction::RemoveRecent(path) => actions.push(EditorAction::RemoveRecent(path)),
+            LaunchAction::MoveProjectToEngine(path) => {
+                actions.push(EditorAction::MoveProjectToEngine(path))
+            }
             LaunchAction::LaunchProject(path) => actions.push(EditorAction::LaunchProject(path)),
             LaunchAction::CancelLaunch => actions.push(EditorAction::CancelLaunch),
         }
@@ -349,6 +454,94 @@ fn draw_connecting_banner(ui: &mut egui::Ui, output: &[String]) {
 /// So the destructive thing is the correct thing, and a prompt is what
 /// makes it safe. A modal rather than an inline confirmation because it is
 /// answering for a file the user cannot see from here.
+/// Says the engine this editor ships is not the one the project builds
+/// against, and lets the user decide.
+///
+/// 🔴 A window and not a `Modal`, unlike its neighbour above. Replacing a
+/// prefab is a question about the action you just took, so it blocks
+/// until answered; this is a question about the machine, asked while
+/// somebody is opening a project to do something else entirely. Blocking
+/// on it would mean the editor demands an answer about its toolchain
+/// before letting anyone look at a scene.
+///
+/// The wording carries the cost, because the cost is the whole reason
+/// this is a question: installing makes the next build a full one.
+fn draw_engine_notice(
+    ui: &egui::Ui,
+    status: &crate::engine_vendor::EngineStatus,
+    actions: &mut Vec<EditorAction>,
+) {
+    let mut answered = None;
+    egui::Window::new(format!("{} Engine", icons::PACKAGE))
+        .collapsible(false)
+        .resizable(false)
+        // Centred, not tucked into a corner. It is a question about
+        // whether the next build takes minutes; in the bottom right it
+        // read as a notification to ignore, which on a 4K screen is a
+        // long way from where anyone is looking.
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ui.ctx(), |ui| {
+            ui.set_max_width(380.0);
+            ui.label(status.headline());
+            ui.add_space(6.0);
+
+            if let Some(path) = status.installed.as_ref() {
+                ui.weak(path.display().to_string());
+                ui.add_space(6.0);
+            }
+
+            match status.difference {
+                // 🔴 The version cannot tell these apart, so the text
+                // has to. Same number on both sides and a real
+                // difference is the normal state while the engine
+                // itself is being worked on.
+                crate::engine_vendor::Difference::Rebuilt => ui.weak(
+                    "Installing replaces it. The next build of this project is a full \
+                     rebuild, and anything already compiled against the old engine is \
+                     rebuilt with it.",
+                ),
+                // This editor cannot install that version — writing its
+                // own source under another version's name puts an engine
+                // on disk under a name that is not its own (#761).
+                _ => ui.weak(
+                    "This editor can only install the version it ships. Installing moves \
+                     the project onto it, and the next build is a full rebuild.",
+                ),
+            };
+            ui.add_space(12.0);
+
+            ui.horizontal(|ui| {
+                if ui
+                    .button("Install")
+                    .on_hover_text("Replaces the installed engine with this editor's")
+                    .clicked()
+                {
+                    answered = Some(true);
+                }
+                if ui
+                    .button("Keep")
+                    .on_hover_text(
+                        "Leaves it alone. Holds until something else installs over it — \
+                         engines are named by version, so two of the same version have \
+                         nowhere separate to live.",
+                    )
+                    .clicked()
+                {
+                    answered = Some(false);
+                }
+            });
+        });
+
+    // Both answers are actions: this draws, and the action layer owns the
+    // state. Keeping has to be said out loud too, or the notice returns
+    // next frame.
+    match answered {
+        Some(true) => actions.push(EditorAction::UpdateEngine),
+        Some(false) => actions.push(EditorAction::KeepEngine),
+        None => {}
+    }
+}
+
 fn draw_prefab_overwrite_prompt(
     ui: &egui::Ui,
     pending: &PendingPrefabOverwrite,

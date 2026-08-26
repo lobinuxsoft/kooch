@@ -29,6 +29,7 @@ impl Reflect for Health {
             asset_type: "",
             requires: "",
             doc: "",
+            group: "",
         }];
         FIELDS
     }

@@ -77,21 +77,34 @@ A system is registered into a stage, and stages run in a fixed order every frame
 
 | Stage | For |
 |---|---|
-| `Startup` | Once, at startup |
-| `First` | Beginning of frame |
-| `Input` | Input processing |
-| `PreUpdate` | Preparation |
+| `Startup` | Once, at launch. Load, allocate, seed. |
+| `First` | The very top of the frame. |
+| `Input` | Reading devices into intent. |
+| `PreUpdate` | Preparing what `Update` will need. |
 | **`Update`** | **Your game logic — the default choice** |
-| `PostUpdate` | Cleanup after update |
-| `GpuSync`, `Gpu` | GPU sync and submission |
-| `Physics`, `PostPhysics` | Fixed timestep |
-| `PreRender`, `Render` | Rendering |
+| `PostUpdate` | After gameplay, and where `Transform` becomes `GlobalTransform`. |
+| `GpuSync` | Handing this frame's data to the GPU. |
+| `Gpu` | Compute submitted with the frame's encoder. |
+| `Physics` | Fixed timestep. May run several times a frame, or none. |
+| `PostPhysics` | Same timestep, after the solver. |
+| `PreRender` | Last chance before drawing. |
+| `Render` | Drawing. |
+| `PostRender` | After drawing. |
+| `Last` | The very end of the frame. |
 
 If you do not have a reason, `Update` is the reason.
 
+🔴 **`PostUpdate` is the one that bites.** It is where a local `Transform` is resolved into the
+`GlobalTransform` that meshes, lights and cameras actually read. Write a transform *before* it
+and the change lands this frame. Write it *after* — `PostUpdate`, `Gpu`, anywhere later — and
+everything downstream renders **one frame behind, forever**, with no error and no log line. The
+symptom is shadows or child objects that lag when the camera moves, which is not a bug anybody
+traces back to a stage.
+
 Physics runs on a **fixed** timestep, so a system in `Physics` or `PostPhysics` should use
 `Time::fixed_delta_secs()` rather than `delta_secs()`. Using the wrong one is a bug that only
-shows up when the frame rate changes.
+shows up when the frame rate changes. It may also run **several times in one frame, or none at
+all**, so nothing that must happen once per frame belongs there.
 
 ## The `Playing` gate
 
@@ -150,13 +163,44 @@ commands.entity(target).despawn();
 
 ## Registration
 
-You do not write it. The editor finds `pub fn regenerate_health(_: &mut Resources)` and
-regenerates `registrations.rs`:
+You do not write it. The editor watches `src/`, finds
+`pub fn regenerate_health(_: &mut Resources)`, and regenerates `registrations.rs`:
 
 ```rust
 app.add_system(Stage::Update, run_if_playing(health::regenerate_health));
 ```
 
-**`Update` is the only stage it picks**, and it is not configurable from the editor. To run
-somewhere else, register the system by hand in your own plugin rather than fighting the
-generated file — `registrations.rs` is overwritten without warning.
+It watches by **polling**, so saving from any editor is enough — including one that is not
+this one. There is no button to press.
+
+### Saying where it goes
+
+`Update` behind the `Playing` gate is what a system gets when it says nothing. `#[system(...)]`
+says otherwise:
+
+```rust
+#[system]                     // Update, gated by Play — the default
+#[system(PreUpdate)]          // a different stage, still gated
+#[system(PostUpdate, always)] // and running while you author, too
+```
+
+`always` drops the `Playing` gate. Reach for it when the work has to happen in the editor as
+well: a gizmo, an overlay, a streaming pump. It is a word rather than something inferred
+because it is the one thing no amount of reading a function can tell you — a system that must
+run while paused looks exactly like a gameplay one.
+
+The attribute **expands to nothing**. It is read by the editor when it regenerates the file;
+the compiler passes your function through untouched, and deleting the attribute never breaks a
+build. What it does do is *validate*: a stage that is not one of the fourteen is a compile error
+naming them, where a comment with the same typo would leave the system in `Update` forever and
+never say so.
+
+### Registered is not compiled
+
+⚠️ The generated file names your system within a second of you saving. **The editor still runs
+the last build of your project.** Those two disagree until you rebuild, and the toolbar's
+Resync button pulses while they do.
+
+This matters because the gap is invisible: the editor lists a project's components and systems
+out of its compiled dylib, so something added ten seconds ago exists in `registrations.rs` and
+in no binary anywhere. The symptom is *"I pressed Play and my system did not run"*.
