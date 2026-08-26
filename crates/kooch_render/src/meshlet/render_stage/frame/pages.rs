@@ -247,6 +247,19 @@ impl MeshletRenderStage {
         if (scene_changed || caster_lost)
             && let Some(marker) = self.page_marker.as_mut()
         {
+            // 🔴 Said out loud, because everything this lever does
+            // happens on the GPU and leaves no number behind: the table
+            // it empties is refilled by the next frame's marking, so a
+            // void that fired and a void that never ran look identical
+            // in the panel one frame later. Edge-triggered by nature —
+            // both conditions are events.
+            tracing::info!(
+                target: "kooch_render::shadow",
+                epoch = settings.scene_epoch,
+                scene_changed,
+                caster_lost,
+                "voiding the shadow page table",
+            );
             marker.void();
         }
         // The pool is the memory budget, and changing it changes the
