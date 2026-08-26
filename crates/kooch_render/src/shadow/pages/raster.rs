@@ -278,6 +278,13 @@ pub struct PageRasterizer {
     /// The frame the moved list was last uploaded and any overflow
     /// bump applied — once per frame, not per view.
     moved_frame: Option<u32>,
+    /// The scene set this cache holds pages for.
+    ///
+    /// 🔴 `None` until the first frame, so a fresh rasterizer does not
+    /// void a cache it has not filled. After that a mismatch means the
+    /// world was replaced, and every stamp in the pool describes
+    /// geometry that may no longer exist (#971).
+    scene_epoch: Option<u32>,
 
     compact_bgl: wgpu::BindGroupLayout,
     compact: wgpu::ComputePipeline,
@@ -680,6 +687,7 @@ impl PageRasterizer {
                 mapped_at_creation: false,
             }),
             scene_gen: 0,
+            scene_epoch: None,
             moved_frame: None,
             compact_bgl,
             compact,
@@ -765,6 +773,52 @@ impl PageRasterizer {
     /// Stamps the frame the age debug view measures against.
     pub fn set_frame(&mut self, frame: u32) {
         self.frame = frame;
+    }
+
+    /// Voids every cached page when the world was replaced.
+    ///
+    /// # 🔴 Why the other invalidations cannot cover this
+    ///
+    /// Every one of them answers a *continuous* question. The moved
+    /// list carries what shifted since last frame; `age_view` evicts
+    /// what nobody asked for; the clipmap recycles the ring that
+    /// scrolled out. All three assume the world persists and only some
+    /// of it changed.
+    ///
+    /// Loading a scene breaks that assumption. **Despawning is not
+    /// moving**: the outgoing entities did not shift, they stopped
+    /// existing, so nothing put them on the moved list and their pages
+    /// stayed resident — holding depth for geometry that no longer had
+    /// anything to cast it. Sampled as the incoming scene's occlusion,
+    /// it looked like large straight shadows that matched nothing on
+    /// screen (#971).
+    ///
+    /// Loading is the mirror and just as quiet: entities that were
+    /// never anywhere did not move either, so an additive load casts
+    /// nothing until something unrelated forces a redraw.
+    ///
+    /// ⚠️ One bump per change, never per caster. UE5 invalidates per
+    /// instance because it streams a world continuously; doing that on
+    /// a load is how they reached a `DEVICE_HUNG` after level
+    /// streaming. A scene change is rare and explicit — one full
+    /// redraw is the cheap answer, and the right one until the
+    /// by-reach invalidation of #866 exists.
+    pub fn set_scene_epoch(&mut self, epoch: u32) {
+        if self.scene_epoch == Some(epoch) {
+            return;
+        }
+        // Not on the first frame: a rasterizer that has drawn nothing
+        // has nothing to void, and bumping here would throw away the
+        // pages the very first scene just filled.
+        if self.scene_epoch.is_some() {
+            tracing::debug!(
+                target: "kooch_render::shadow",
+                epoch,
+                "the scene set changed; voiding the page cache",
+            );
+            self.scene_gen = self.scene_gen.wrapping_add(1);
+        }
+        self.scene_epoch = Some(epoch);
     }
 
     /// The readers' PCF footprint width, from the settings. Takes

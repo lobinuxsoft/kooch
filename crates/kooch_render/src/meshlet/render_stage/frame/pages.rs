@@ -41,6 +41,16 @@ struct PageSettings {
     softness: u32,
     /// The coverage gate (#944). See `ShadowSettings::page_min_pixels`.
     min_pixels: u32,
+    /// How many times the set of loaded scenes has changed.
+    ///
+    /// 🔴 Carried so the raster can notice a world it did not draw.
+    /// Everything else that voids a page is *continuous* — the camera
+    /// moves, a caster moves, the pool fills — and a scene being
+    /// swapped out is none of those. The outgoing entities did not
+    /// move; they stopped existing, which a movement diff cannot see,
+    /// so their pages stayed resident and were sampled as the new
+    /// scene's occlusion (#971).
+    scene_epoch: u32,
 }
 
 /// A camera's index into the pool's slices.
@@ -129,6 +139,13 @@ fn page_settings(resources: &Resources) -> PageSettings {
         density: shadows.page_density,
         softness: shadows.page_softness,
         min_pixels: shadows.page_min_pixels,
+        // Absent in a headless test and in any host without a manager,
+        // where zero is right: nothing ever changes, so nothing ever
+        // needs voiding.
+        scene_epoch: resources
+            .get::<kooch_ecs::SceneManager>()
+            .map(|manager| manager.epoch())
+            .unwrap_or(0),
         pool: PoolConfig {
             pages: shadows.pool_pages.clamp(PAGES_RANGE.0, PAGES_RANGE.1),
             // Filled in by the caller, which is the only place that
@@ -437,6 +454,10 @@ impl MeshletRenderStage {
         // and that call found nothing to stamp.
         raster.set_frame(marker.life().frame);
         raster.set_softness(settings.softness);
+        // Before anything reads a stamp this frame: a world that was
+        // replaced must not be sampled through the previous one's
+        // pages (#971).
+        raster.set_scene_epoch(settings.scene_epoch);
         let threads = scene_params.instance_count * scene_params.meshlets_per_mesh;
         raster.ensure_capacity(device, threads, threads);
         raster.record(
@@ -630,13 +651,19 @@ impl MeshletRenderStage {
     /// Game tab's overlay out of it and got the Edit view's camera —
     /// same scene, different frustum, and every reading taken from that
     /// panel described a camera nobody was looking through.
-    pub fn page_marking_for(&self, view: crate::meshlet::render_stage::ViewId) -> Option<MarkCounts> {
+    pub fn page_marking_for(
+        &self,
+        view: crate::meshlet::render_stage::ViewId,
+    ) -> Option<MarkCounts> {
         let want = page_view_index(view);
         self.page_marking_last.filter(|c| c.view == want)
     }
 
     /// The raster counts belonging to ONE view, for the same reason.
-    pub fn page_raster_for(&self, view: crate::meshlet::render_stage::ViewId) -> Option<RasterCounts> {
+    pub fn page_raster_for(
+        &self,
+        view: crate::meshlet::render_stage::ViewId,
+    ) -> Option<RasterCounts> {
         let want = page_view_index(view);
         self.page_raster_last.filter(|c| c.view == want)
     }
