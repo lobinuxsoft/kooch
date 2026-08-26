@@ -278,6 +278,12 @@ pub struct PageRasterizer {
     /// The frame the moved list was last uploaded and any overflow
     /// bump applied — once per frame, not per view.
     moved_frame: Option<u32>,
+    /// Whether the moved list is currently past [`MOVED_CAPACITY`].
+    ///
+    /// Kept only so the report fires on the EDGE. The condition is a
+    /// per-frame one and a line per frame at 150 Hz is not a report,
+    /// it is a denial of service on the console.
+    flooded: bool,
     /// The scene set this cache holds pages for.
     ///
     /// 🔴 `None` until the first frame, so a fresh rasterizer does not
@@ -689,6 +695,7 @@ impl PageRasterizer {
             scene_gen: 0,
             scene_epoch: None,
             moved_frame: None,
+            flooded: false,
             compact_bgl,
             compact,
             expand_args_pass,
@@ -1107,9 +1114,33 @@ impl PageRasterizer {
         }
         self.moved_frame = Some(self.frame);
         if moved.len() > MOVED_CAPACITY as usize {
+            // 🔴 Said out loud, because the fallback is silent and
+            // total: past the cap the scene generation bumps, which
+            // voids EVERY page every frame it happens. The panel then
+            // reports a pool at 100 % hit — the slots are reused — over
+            // a raster redrawing all of them, and the two readings
+            // together look like a working cache. A scene that trips
+            // this permanently has no page cache at all.
+            if !self.flooded {
+                self.flooded = true;
+                tracing::warn!(
+                    target: "kooch_render::shadow",
+                    moved = moved.len(),
+                    capacity = MOVED_CAPACITY,
+                    "the moved-caster list overflowed; every page redraws while it does",
+                );
+            }
             self.scene_gen = self.scene_gen.wrapping_add(1);
             queue.write_buffer(&self.moved, 0, bytemuck::bytes_of(&[0.0f32; 4]));
             return;
+        }
+        if self.flooded {
+            self.flooded = false;
+            tracing::info!(
+                target: "kooch_render::shadow",
+                moved = moved.len(),
+                "the moved-caster list fits again; the page cache is live",
+            );
         }
         let mut data = Vec::with_capacity(1 + moved.len());
         data.push([moved.len() as f32, 0.0, 0.0, 0.0]);
