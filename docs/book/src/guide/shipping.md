@@ -29,6 +29,9 @@ build/
     My Game.exe
     assets.kpack
     project.kooch
+    libstdc++-6.dll   ) mingw's C++ runtime — the game does not
+    libgcc_s_seh-1.dll  ) start on Windows without these three
+    libwinpthread-1.dll )
 ```
 
 Each platform gets a folder of its own under the preset's output
@@ -256,6 +259,27 @@ sudo pacman -S mingw-w64-gcc                            # Arch
 ```
 
 The C23 workaround `metis` requires is passed for you.
+
+### The three DLLs beside a Windows build
+
+`meshopt` is C++, so the executable links mingw's C++ standard library —
+and on mingw that library is a DLL that ships with the *compiler*, not
+with Windows. Leave it behind and the build runs on the machine that made
+it and nowhere else, failing with a Windows dialog naming a file.
+
+They travel automatically, stripped of their debug symbols on the way
+(Fedora's `libstdc++-6.dll` is 29.7 MB installed and 2.5 MB shipped), and
+the build **fails** rather than producing a folder that looks complete
+and holds a game that cannot start.
+
+**Do not delete them.** They are three unexplained files beside a game,
+which is exactly the shape of a file somebody tidies away — and the game
+stops working the moment they go.
+
+They are not linked statically because that does not work: mingw's
+`libstdc++.a` mixes static and dynamic symbols, so `-static-libstdc++`
+and `-static` both leave the import in place. The problem is open
+upstream in rust-lang/rust#65911.
 
 A preset with no platform ticked builds nothing, and says so instead of
 guessing that you meant this machine.

@@ -230,6 +230,26 @@ fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
                             .join("\n"),
                     );
                 }
+                if !package.runtime.is_empty() {
+                    // 🔴 Three DLLs the game cannot start without, and
+                    // nothing else in the folder explains them. An
+                    // unexplained file beside a game gets deleted, and
+                    // deleting these turns a working build into a
+                    // Windows dialog on somebody else's machine.
+                    ui.weak(format!(
+                        "    {} mingw runtime files travelled — the game will not \
+                         start on Windows without them beside the executable.",
+                        package.runtime.len(),
+                    ))
+                    .on_hover_text(
+                        package
+                            .runtime
+                            .iter()
+                            .map(|path| path.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    );
+                }
                 if !package.shadowed.is_empty() {
                     // Worth surfacing: the engine's version of those
                     // files is simply not in the build, and nothing else

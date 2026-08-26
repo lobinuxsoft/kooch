@@ -19,6 +19,7 @@ pub mod compile;
 ///   carries: the SDK before cargo, the runtime and the notices after.
 pub mod dlss;
 pub mod key;
+pub mod mingw;
 pub mod package;
 pub mod platform;
 pub mod preset;
