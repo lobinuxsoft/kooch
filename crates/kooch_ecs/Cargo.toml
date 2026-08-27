@@ -27,3 +27,6 @@ serde_json.workspace = true
 
 [features]
 dynamic = ["kooch_core/dynamic", "dep:kooch_plugin_api"]
+# Components and systems that exist to MEASURE the engine. A game build
+# never turns this on — see `src/testing.rs` and #558.
+testing = []

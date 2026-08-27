@@ -25,8 +25,8 @@
 //! # Use
 //!
 //! ```text
-//! cargo run --example make_dense_scene --features editor,physics -- <parent>
-//! cargo run --example make_dense_scene --features editor,physics -- <parent> 2000 4 128
+//! cargo run --example make_dense_scene --features editor,physics,testing -- <parent>
+//! cargo run --example make_dense_scene --features editor,physics,testing -- <parent> 2000 4 128
 //! ```
 //!
 //! The arguments are `<parent> [cubes] [dragons] [lights]`.
@@ -63,19 +63,6 @@ const MESH_TYPE: &str = "kooch_render::meshlet::asset::MeshletMesh";
 /// Spacing between instances, in world units. Wide enough that the
 /// meshes do not intersect at the scales used below.
 const SPACING: f32 = 3.0;
-
-/// The component that turns a light pivot, so the lights MOVE.
-///
-/// 🔴 A game's type name inside an engine example, deliberately. The
-/// engine has no animator of its own, and a light that never moves is
-/// the one case the shadow page cache handles for free: its pages are
-/// drawn once and every later frame is a hit. A scene built to measure
-/// shadows with static lights measures the cache, not the shadows.
-///
-/// `roll_a_ball` registers this. Any other project opens the scene
-/// fine and simply gets still lights — an unknown component is dropped
-/// on load, not an error.
-const SPIN_TYPE: &str = "roll_a_ball::registrations::components::spin::Spin";
 
 /// How far a light orbits from its pivot, and how fast.
 ///
@@ -203,7 +190,7 @@ fn scene(assets: &Assets, cubes: usize, dragons: usize, lights: usize) -> SceneD
             (row as f32 - columns as f32 * 0.5) * SPACING,
         );
 
-        // Skulls spread evenly rather than clumped at one end: a cluster
+        // Dragons spread evenly rather than clumped at one end: a cluster
         // of them in one corner would be culled away as a group and the
         // frame would not show what it costs to keep them.
         let stride = if dragons == 0 {
@@ -348,8 +335,13 @@ fn pivot(label: &str, position: Vec3) -> EntityDescription {
                 type_name: type_name_of::<kooch_ecs::transform::Transform>(),
                 fields: vec![("position".to_owned(), ReflectValue::Vec3(position))],
             },
+            // 🔴 The engine's own, behind the `testing` feature — which
+            // is why this example needs that feature to build. A scene
+            // opened by a project compiled without it gets still
+            // lights: an unregistered component is dropped on load, not
+            // an error, so nothing says the benchmark stopped moving.
             ComponentDescription {
-                type_name: SPIN_TYPE.to_owned(),
+                type_name: type_name_of::<kooch_ecs::testing::spin::Spin>(),
                 fields: vec![
                     ("axis".to_owned(), ReflectValue::Vec3(Vec3::Y)),
                     ("degrees".to_owned(), ReflectValue::F32(ORBIT_DEGREES)),

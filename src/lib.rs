@@ -327,6 +327,13 @@ impl kooch_core::plugin::PluginGroup for RemoteHostPlugins {
         #[cfg(feature = "physics")]
         let builder = builder.add(kooch_physics::PhysicsPlugin::new());
 
+        // 🔴 And for the same reason it needs the testing systems. The
+        // host owns the transforms; the editor draws what the host
+        // produced. Left out here, a benchmark scene's lights sit still
+        // in exactly the mode the measurements are taken in.
+        #[cfg(feature = "testing")]
+        let builder = builder.add(kooch_ecs::testing::TestingPlugin);
+
         // Gravity that points somewhere other than down. Inert until a
         // scene holds a source, so adding it changes nothing on its own.
         #[cfg(all(feature = "physics", feature = "gravity"))]
@@ -364,6 +371,12 @@ impl kooch_core::plugin::PluginGroup for DefaultPlugins {
         // from a build that did not ask for the feature.
         #[cfg(feature = "profiling")]
         let builder = builder.add(crate::profiler::ProfilingPlugin::default());
+
+        // Components a MEASUREMENT needs and a game does not. Absent
+        // from a build that did not ask for the feature, the same way
+        // the profiler above is — see `kooch_ecs::testing` and #558.
+        #[cfg(feature = "testing")]
+        let builder = builder.add(kooch_ecs::testing::TestingPlugin);
 
         #[cfg(all(feature = "physics", feature = "gravity"))]
         let builder = builder.add(kooch_gravity::GravityPlugin);

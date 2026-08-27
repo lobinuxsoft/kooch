@@ -235,6 +235,10 @@ physics = ["dep:kooch_physics"]
 # the physics_smoke example prints counts from. Never enabled by a game
 # build — see #558.
 physics-debug-render = ["physics", "kooch_physics/debug-render"]
+# Components and systems that exist to MEASURE the engine — a spinning
+# pivot so a benchmark can have lights that MOVE. Never enabled by a
+# game build, like `physics-debug-render` above: see #558.
+testing = ["kooch_ecs/testing"]
 camera = ["dep:kooch_camera"]
 gravity = ["dep:kooch_gravity", "physics", "kooch_camera?/gravity"]
 world = ["dep:kooch_world"]
