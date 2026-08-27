@@ -209,6 +209,102 @@ wants these values sets them.
 
 ---
 
+## 🎯 The order, decided 2026-08-26 — wire what is already built, then the atmosphere
+
+Two sessions of shadow-page work ended with the page pool stable and
+verified on the handheld (#971, #973, #873 all closed). What that week
+taught is the criterion for what comes next, and it is not "the biggest
+number in the table".
+
+**Both #971 and #973 were features that existed and were not reached.**
+The scene epoch was computed and read from a process that never moved it;
+the page table's slots were released by passes that no longer walked
+them. Neither needed a new technique. Both were a wire that was not
+connected, and both cost a day precisely because nothing said so.
+
+So the queue starts with the two remaining cases of the same shape:
+
+### 1. #950 — Hi-Z occlusion culling, built and never called
+
+`dispatch_scene_pool_atomic_hi_z` tests meshlets against the previous
+frame's depth pyramid, and **its only caller is the fallback path for
+adapters without int64 atomics**. Every path this hardware runs calls the
+plain `dispatch_scene_pool_atomic`, which stops at frustum + normal cone.
+
+Occlusion culling exists in this engine and has never executed on the
+target. Lowest implementation cost of anything on this list, already
+reviewed, and it helps every consumer — main view and shadows alike.
+
+### 2. #949 — the sun has no depth rejection at all
+
+#940 landed Olsson §4's receiver bound and it reaches **lamps only**.
+`mark_sun` records nothing and the check sits inside `if !id.is_sun`. The
+sun is the consumer that actually rasterises — 17.4 ms of the 41.8 ms GPU
+frame in #948 — and it is the one with no rejection.
+
+The mechanism is written, the table word is allocated, and the issue
+names both files and both lines.
+
+### Then the atmosphere, in this order and not another
+
+**#976 sky → #977 froxel grid + fog → #731 clouds**, with #978 (wind)
+feeding all three and #979 (surfel GI) deliberately last.
+
+Fog and clouds are lit BY the atmosphere. Built before it they get a hack
+for a light source and are rebuilt when the real one lands, so the sky
+goes first — and its LUT parameterisation has to be settled before
+anything consumes it.
+
+🔴 **The grid in #977 is the whole design, and it serves five consumers**:
+light clustering (#780), aerial perspective, volumetric fog, clouds
+(#731) and the sky itself. Two corrections from the owner got it there:
+
+- Clouds are fog. He shipped Godot's volumetric fog *as the cloud medium*
+  in `stellar_delivery` and it was cheap, so there is no second
+  long-range grid to design — `volumetric_fog_length` and the Z spread
+  are parameters, and they were already used that way.
+- The sky is the far slice. This roadmap's first draft claimed froxels
+  could not reach it. `projection.rs:92` is
+  `perspective_infinite_reverse_rh` and `cluster/grid.rs` is logarithmic
+  in Z: there is no far plane and no reach limit. What the LUTs buy is
+  not reach — transmittance and multi-scattering are TWO-parameter
+  functions every froxel needs, and multi-scattering is an iterative
+  solve. They are the froxel pass's inputs, not its alternative.
+
+⚠️ #731's clouds remain switched off at 39.83 ms against a 13.9 ms
+budget, and the measured win there is quarter resolution plus temporal
+reprojection — which still waits on motion vectors (#481/#732). The
+froxel volume replaces the per-pixel march; the reprojection is what
+takes it from affordable to cheap.
+
+### What is NOT next, and why
+
+- **#771** — resolved in fact. The sky pass without clouds is 1.22 ms;
+  the raymarch was 97 % of it and it is off.
+- **#839** — narrowed, not open. The measured project runs
+  `contact_shadow_steps: 6` with `dominant: true`: six taps for one
+  light, not 224 for fourteen. The uncapped case is the *default*, not
+  what ships.
+- **#803** — 452 ms of pipeline compilation is real and is a load stall,
+  not frame time. Worth doing, not worth doing first.
+
+### ⚠️ Standing hazard, no issue yet
+
+The page table's address space is a function of the light count
+(`padded_lights` rounds to 64), so an open world crossing a step clears
+the whole table — correct since #973 and expensive. Padding to
+`LAMP_CULLS` once would stop the layout moving at all, and it trades
+table and bitmap memory nobody has measured.
+
+### 🔴 The test net for all of this is unreliable
+
+`page_marking`'s 33 GPU tests SIGSEGV intermittently under radv,
+**verified on clean `development`**, and the lib suite does it too. #725
+already describes the shape. Every shadow-page fix this week was
+validated by screenshots and unit tests, not by that suite.
+
+---
+
 ## Next — the graphics queue, with the budget as the gate
 
 ⚠️ **2026-08-17: that 13.89 ms is unverified, and #769 is closed carrying
