@@ -1031,6 +1031,66 @@ fn shadow_page_readout(
          already in the atlas and does not have to be rasterised again; movement \
          invalidation re-lists what a caster passed through.",
     );
+    // 🔴 The ledger, printed only when it does not close. `adopt_view`
+    // states this as an invariant it cannot check — "a funded request
+    // cannot find the free list empty" — and the frame that violates it
+    // is the frame whose pages render unshadowed (#973).
+    if !counts.pool.balanced() {
+        ui.label(
+            egui::RichText::new(format!(
+                "the allocator's ledger does not close — {} resident + {} free of {}",
+                counts.pool.allocated(),
+                counts.pool.free,
+                counts.pool.capacity
+            ))
+            .small()
+            .color(egui::Color32::from_rgb(220, 120, 90)),
+        )
+        .on_hover_text(
+            "Every slot of the slice is either held by a resident or sitting on the free \
+             list. When the two do not add up, slots left the accounting without the \
+             double-free counter firing, and requests the plan funded fail to allocate. \
+             Only checked once the bump allocator has handed out the whole slice.",
+        );
+    }
+    // 🔴 Every take and every give-back of this frame, so the shortfall
+    // above can be attributed to an operation rather than inferred. The
+    // reading that names the defect: `empty` above zero while the ledger
+    // still shows free slots — a pop that found nothing on a list that
+    // is not.
+    ui.label(
+        egui::RichText::new(format!(
+            "slots: {} popped + {} bumped taken · {} pushed back · {} pops found nothing",
+            counts.pool.popped, counts.pool.bumped, counts.pool.pushed, counts.pool.empty
+        ))
+        .small()
+        .color(if counts.pool.empty > 0 && counts.pool.free > 0 {
+            egui::Color32::from_rgb(220, 120, 90)
+        } else {
+            egui::Color32::GRAY
+        }),
+    )
+    .on_hover_text(
+        "A slot is taken either off the free list or from the bump, and given back only to \
+         the free list. Pops that found nothing WHILE the ledger reports free slots is the \
+         contention case: the count and the array are two separate atomics, so a popper \
+         that drives the count below zero makes another popper read the underflow and give \
+         up on a list that still holds slots.",
+    );
+    ui.label(
+        egui::RichText::new(format!(
+            "ledger: {} demanded · {} free · bump at {} of {}",
+            counts.pool.demand, counts.pool.free, counts.pool.high, counts.pool.capacity
+        ))
+        .small()
+        .weak(),
+    )
+    .on_hover_text(
+        "What the frame asked for, what the free list held after seating, and how far the \
+         bump allocator has ever reached. The bump never goes down — a freed slot returns \
+         to the free list — so once it reaches the capacity every allocation must come off \
+         that list, and an empty list then fails a request the plan had funded.",
+    );
     if counts.pool.leaked > 0 {
         ui.label(
             egui::RichText::new(format!(

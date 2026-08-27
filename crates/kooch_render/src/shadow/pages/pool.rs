@@ -459,6 +459,35 @@ pub struct PoolCounts {
     /// have given up `LOCAL_BIAS_MAX` levels and the demand still does
     /// not fit — the shadow everyone sees degrades last.
     pub bias_sun: u32,
+    /// Slots the bump allocator has ever handed out, which never goes
+    /// down: a freed slot returns to the free list, not to the bump. Once
+    /// this reaches [`Self::capacity`] every allocation must come off the
+    /// free list, and a request that arrives with the list empty fails
+    /// even though slots are logically free.
+    pub high: u32,
+    /// Slots on this view's free list after the frame was seated.
+    pub free: u32,
+    /// Pages the frame's screen asked for — the total `plan_view`
+    /// budgeted against.
+    ///
+    /// 🔴 What the plan does NOT count is the residents this frame did
+    /// not ask for. They hold slots, `preempt_view` is supposed to be
+    /// the valve for them, and `demand + free + preempted` against the
+    /// capacity is what says whether that valve closed the arithmetic.
+    pub demand: u32,
+    /// Slots taken off the free list this frame.
+    pub popped: u32,
+    /// Slots taken from the bump — never handed out before.
+    pub bumped: u32,
+    /// Slots given back to the free list this frame.
+    pub pushed: u32,
+    /// Pops that found the list empty.
+    ///
+    /// 🔴 With free slots still in the ledger, this is contention and
+    /// not a full pool: the count and the array are two atomics with
+    /// nothing ordering them, so a popper that drives the count below
+    /// zero makes another popper read an underflow.
+    pub empty: u32,
     /// Physical pages THIS VIEW owns, so the two numbers above are
     /// readable without knowing how the build was configured.
     ///
@@ -506,6 +535,16 @@ impl PoolCounts {
             return 0.0;
         }
         self.reused as f32 / requests as f32 * 100.0
+    }
+
+    /// Whether the allocator's ledger closes: every slot is either held
+    /// by a resident or sitting on the free list.
+    ///
+    /// Only meaningful once the bump has handed out the whole slice —
+    /// before that, the untouched tail is neither resident nor free and
+    /// the sum is short by design.
+    pub fn balanced(&self) -> bool {
+        self.high < self.capacity || self.allocated() + self.free == self.capacity
     }
 
     /// How full the pool ran, as a percentage.

@@ -38,7 +38,7 @@ const GROUP: u32 = 8;
 /// 11 pages kept alive, 12 pages evicted, 13 unused (was tombstones
 /// swept). The rest spare, because a storage buffer is rounded up
 /// anyway.
-const COUNTERS: u64 = 20;
+const COUNTERS: u64 = 24;
 /// Words per view in the rank-state buffer: a 32-bucket demand
 /// histogram, the plan's three words, then the persistent bias and
 /// patience (#943), padded to 40 — then the OCCUPANCY BITMAP, one bit
@@ -281,6 +281,8 @@ pub struct PageMarker {
     /// The coverage gate (#944), in projected screen pixels. 0 = off,
     /// which is what a directly-constructed marker measures with.
     coverage: u32,
+    /// The distance gate, in multiples of a light's own range. 0 = off.
+    reach: u32,
     last: Option<MarkCounts>,
 }
 
@@ -360,6 +362,7 @@ impl PageMarker {
             clipmap,
             capacity: (1, 1),
             coverage: 0,
+            reach: 0,
             last: None,
         }
     }
@@ -368,6 +371,12 @@ impl PageMarker {
     /// marks no pages (#944). The sun is never gated.
     pub fn set_coverage(&mut self, pixels: u32) {
         self.coverage = pixels;
+    }
+
+    /// How far a light may cast from, in multiples of its own range.
+    /// Zero is no limit. See `ShadowSettings::page_light_reach`.
+    pub fn set_reach(&mut self, ranges: u32) {
+        self.reach = ranges;
     }
 
     /// The last count that came back, a frame or two old.
@@ -495,6 +504,44 @@ impl PageMarker {
         if (slots, views) != self.capacity {
             self.marks = marks_buffer(device, self.config, self.clipmap, slots, views);
             self.rank = rank_buffer(device, views);
+            // 🔴 The TABLE goes with them, and it did not (#973).
+            //
+            // A view's span is a function of the light count — see
+            // `span` — and so is `view_base`. Change the number of
+            // lights and every entry in the table names a different
+            // page than the one whose slot it holds. The two buffers
+            // above were already rebuilt for that reason; the table and
+            // the free list were left standing.
+            //
+            // What that costs is a SLOW LEAK, which is why it took a
+            // day to see. The passes that release a slot — `age_view`,
+            // `preempt_view` — only ever walk the CURRENT span, so an
+            // entry that fell outside it is never visited again and its
+            // slot never returns. Nothing is double-freed, so `leaked`
+            // stays at zero and the panel reports a healthy pool that is
+            // quietly smaller every time the scene changes. Measured on
+            // a round trip out of a heavy scene and back: 529 slots
+            // accounted for, then 528, then 491, and the 38 missing are
+            // exactly the requests that failed to allocate and rendered
+            // unshadowed.
+            //
+            // It also explains the only workaround anyone found: raising
+            // `shadow_pool_pages` recreates `alloc` through
+            // `PagePool::resize`, which does not fix anything — it
+            // restarts the accounting.
+            //
+            // Whole-table because the re-addressing is whole-table: a
+            // partial eviction over the new span would leave exactly the
+            // entries the new span cannot reach, which are the ones that
+            // leak.
+            self.pool.clear(encoder);
+            self.life.rebuilt = true;
+            tracing::info!(
+                target: "kooch_render::shadow",
+                slots,
+                views,
+                "the page table was re-addressed; clearing it and the free list",
+            );
             self.capacity = (slots, views);
         }
         // The flat table is one entry per addressable page, so its size
@@ -574,7 +621,9 @@ impl PageMarker {
                     // stops walking the light list, which is the whole
                     // 20.3 ms.
                     if self.cluster { 1.0 } else { 0.0 },
-                    0.0,
+                    // The distance gate, in multiples of a light's own
+                    // range. See `light_out_of_reach`.
+                    self.reach as f32,
                 ],
             }),
         );
@@ -998,6 +1047,13 @@ impl Readback {
                         denied: words[13],
                         preempted: words[14],
                         cutoff: words[15],
+                        high: words[17],
+                        free: words[18],
+                        demand: words[19],
+                        popped: words[20],
+                        bumped: words[21],
+                        pushed: words[22],
+                        empty: words[23],
                         bias_local: words[4] & 0xff,
                         bias_sun: words[4] >> 8,
                         capacity,
