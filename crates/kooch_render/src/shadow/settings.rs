@@ -90,6 +90,27 @@ pub struct ShadowSettings {
     /// 1 = bilinear; wider = Castano-style box with bilinear edges,
     /// `(width + 1)²` loads per light per pixel (#941).
     pub page_softness: u32,
+    /// How far a shadow lookup steps along the receiver's NORMAL before
+    /// comparing, as a multiple of the clipmap texel it landed on.
+    ///
+    /// 🔴 The multiplier is per TEXEL, and a clipmap texel is 0.1 mm at
+    /// level 0 and five metres at level 16. So this number is not a
+    /// distance — it decides one, and the distance it decides spans
+    /// five orders of magnitude across the chain. See
+    /// [`Self::page_bias_max`], which is the cap that keeps it finite.
+    pub page_normal_bias: f32,
+    /// How far the same lookup steps TOWARDS the light, in metres.
+    /// Constant across the chain, unlike the normal step.
+    pub page_depth_bias: f32,
+    /// A ceiling on the world-space normal step, in metres. 0 = none,
+    /// which is what shipped.
+    ///
+    /// 🔴 Without it the step grows with the texel: 0.58 m at clipmap
+    /// level 12, 9.2 m at level 16. A receiver pushed metres along its
+    /// own normal leaves the volume its caster shadows, the depth test
+    /// answers LIT, and the shadow ends in a straight line at the level
+    /// boundary — with the page present, resident and correctly drawn.
+    pub page_bias_max: f32,
     /// Projected radius in screen pixels under which a local light
     /// casts no pages (#944). 0 = every light casts.
     pub page_min_pixels: u32,
@@ -130,6 +151,9 @@ impl Default for ShadowSettings {
             page_density: 100,
             pool_pages: crate::shadow::pages::pool::DEFAULT_PAGES,
             page_softness: 1,
+            page_normal_bias: 1.8,
+            page_depth_bias: 0.02,
+            page_bias_max: 0.0,
             page_min_pixels: 8,
             // 🔴 Off, because it is a behaviour change and nothing has
             // measured what it costs yet: a light out of reach stops

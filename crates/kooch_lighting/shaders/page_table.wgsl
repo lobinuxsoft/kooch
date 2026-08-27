@@ -541,12 +541,24 @@ struct PageRaster {
     // structure.
     chain: vec4<u32>,
     // x the clipmap's level-0 extent in metres, y the orthographic half
-    // span, z the atlas side in texels, w unused.
+    // span, z the atlas side in texels, w the PCF box width in texels.
     world: vec4<f32>,
     // xyz the camera, w unused.
     eye: vec4<f32>,
     // xyz the sun's direction, w 1 when there is one.
     sun: vec4<f32>,
+    // x the normal step as a multiple of the texel, y the step towards
+    // the light in metres, z a ceiling on the normal step in metres
+    // (0 = none), w unused.
+    //
+    // 🔴 `x` multiplies a TEXEL, and a clipmap texel is 0.1 mm at level
+    // 0 and five metres at level 16 — so one constant here is five
+    // orders of magnitude of world-space offset across the chain. `z`
+    // is what makes that finite: without it the step reaches 9.2 m at
+    // the coarsest level, which walks the receiver out of the volume
+    // its caster shadows and answers LIT with the page present and
+    // correctly drawn.
+    bias: vec4<f32>,
 }
 
 // Which of the six cube faces a direction lands on, and its position
