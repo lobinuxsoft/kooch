@@ -25,6 +25,7 @@ impl Reflect for Health {
             kind: FieldKind::U32,
             choices: &[],
             bits: &[],
+            range: None,
             shown_when: None,
             asset_type: "",
             requires: "",

@@ -208,6 +208,34 @@ pub(crate) fn parse_field_shown_when(field: &syn::Field) -> Result<Option<syn::E
     Ok(None)
 }
 
+/// Parses `#[reflect(range = PATH)]` from a field's attributes.
+///
+/// Returns `Ok(Some(expr))` with the path pointing to a
+/// `::kooch_ecs::reflect::FieldRange` constant when present. Same shape
+/// as `shown_when` deliberately: a constant rather than a literal
+/// triple, so the bounds have a name and one place to change.
+pub(crate) fn parse_field_range(field: &syn::Field) -> Result<Option<syn::Expr>, TokenStream> {
+    for attr in &field.attrs {
+        if !attr.path().is_ident("reflect") {
+            continue;
+        }
+        let nested = match attr
+            .parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
+        {
+            Ok(n) => n,
+            Err(e) => return Err(e.to_compile_error().into()),
+        };
+        for meta in nested {
+            if let Meta::NameValue(MetaNameValue { path, value, .. }) = meta
+                && path.is_ident("range")
+            {
+                return Ok(Some(value));
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// Parses `#[reflect(group = "...")]` from a field's attributes.
 ///
 /// The heading the Inspector draws the field under. Consecutive fields

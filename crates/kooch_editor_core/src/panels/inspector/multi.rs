@@ -13,7 +13,7 @@ use crate::state::{EntityDisplayInfo, ReflectedTypeInfo};
 
 use super::widgets::{
     AssetCatalogEntry, FieldContext, bits_for, choices_for, draw_readonly_value, draw_value_widget,
-    requires_for,
+    range_for, requires_for,
 };
 
 /// A field value across multiple selected entities.
@@ -313,6 +313,7 @@ fn draw_multi_reflected_fields(
                     assets: asset_catalog,
                     entities,
                     requires: requires_for(field_metas, name),
+                    range: range_for(field_metas, name),
                 };
                 match multi_val {
                     MultiFieldValue::Uniform(value) => {

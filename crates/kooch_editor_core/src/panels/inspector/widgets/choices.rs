@@ -248,3 +248,16 @@ pub(crate) fn requires_for(field_metas: Option<&'static [FieldMeta]>, name: &str
         .map(|m| m.requires)
         .unwrap_or("")
 }
+
+/// The numeric bounds declared for one field, if any.
+///
+/// Mirrors [`choices_for`]: the metadata is per component and the
+/// widget is drawn per field, so the lookup happens where the value is.
+pub(crate) fn range_for(
+    field_metas: Option<&'static [FieldMeta]>,
+    name: &str,
+) -> Option<&'static kooch_ecs::reflect::FieldRange> {
+    field_metas
+        .and_then(|metas| metas.iter().find(|m| m.name == name))
+        .and_then(|m| m.range)
+}

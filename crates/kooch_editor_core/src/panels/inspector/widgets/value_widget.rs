@@ -32,6 +32,11 @@ pub(in crate::panels::inspector) struct FieldContext<'a> {
     /// `FieldMeta::requires`: a component the reference's target must
     /// carry, or `""` for no constraint.
     pub requires: &'a str,
+    /// Bounds and granularity for a numeric field. `Some` draws a
+    /// SLIDER over the interval instead of an unbounded drag — see
+    /// [`kooch_ecs::reflect::FieldMeta::range`] for why the bound
+    /// matters more than the widget.
+    pub range: Option<&'static kooch_ecs::reflect::FieldRange>,
 }
 
 /// Draws an editable widget for a single reflected value.
@@ -46,6 +51,7 @@ pub(in crate::panels::inspector) fn draw_value_widget(
         choices,
         bits,
         assets: asset_catalog,
+        range,
         ..
     } = *field;
     if !choices.is_empty() {
@@ -55,6 +61,14 @@ pub(in crate::panels::inspector) fn draw_value_widget(
     }
     if !bits.is_empty() {
         return draw_bitmask(ui, value, bits, field_name);
+    }
+    // A declared interval wins over the free drag for every numeric
+    // kind: the bound is what stops a settings file holding a value the
+    // engine cannot honour.
+    if let Some(range) = range
+        && let Some(new) = draw_ranged(ui, value, range)
+    {
+        return Some(new);
     }
     match value {
         ReflectValue::F32(v) => {
@@ -307,5 +321,42 @@ pub(in crate::panels::inspector) fn draw_value_widget(
             });
             None
         }
+    }
+}
+
+/// A slider over a declared interval, for whichever numeric kind the
+/// field holds.
+///
+/// Returns `None` for a non-numeric value so the caller falls through to
+/// the ordinary widget — a range on a `String` is a mistake in the
+/// declaration, and drawing nothing would hide it.
+fn draw_ranged(
+    ui: &mut egui::Ui,
+    value: &ReflectValue,
+    range: &kooch_ecs::reflect::FieldRange,
+) -> Option<ReflectValue> {
+    let (min, max) = (range.min, range.max);
+    match value {
+        ReflectValue::F32(v) => {
+            let mut val = *v as f64;
+            let mut slider = egui::Slider::new(&mut val, min..=max);
+            if range.step > 0.0 {
+                slider = slider.step_by(range.step);
+            }
+            ui.add(slider)
+                .changed()
+                .then(|| ReflectValue::F32(val as f32))
+        }
+        ReflectValue::U32(v) => {
+            let mut val = *v as f64;
+            let mut slider = egui::Slider::new(&mut val, min..=max);
+            if range.step > 0.0 {
+                slider = slider.step_by(range.step);
+            }
+            ui.add(slider)
+                .changed()
+                .then(|| ReflectValue::U32(val.round().max(0.0) as u32))
+        }
+        _ => None,
     }
 }
