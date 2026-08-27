@@ -177,6 +177,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     kind: ::kooch_ecs::reflect::FieldKind::AssetRef,
                     choices: &[],
                     bits: &[],
+                    range: None,
                     // An asset picker has no variant to depend on yet.
                     shown_when: ::core::option::Option::None,
                     asset_type: #asset_type,
@@ -246,6 +247,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     kind: ::kooch_ecs::reflect::FieldKind::EntityRef,
                     choices: &[],
                     bits: &[],
+                    range: None,
                     shown_when: #shown_when_expr,
                     asset_type: "",
                     requires: #requires,
@@ -308,6 +310,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     kind: ::kooch_ecs::reflect::FieldKind::EntityRef,
                     choices: &[],
                     bits: &[],
+                    range: None,
                     shown_when: #shown_when_expr,
                     asset_type: "",
                     requires: "",
@@ -414,6 +417,11 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             Ok(None) => quote! { &[] },
             Err(e) => return e,
         };
+        let range_expr = match crate::attrs::parse_field_range(field) {
+            Ok(Some(path)) => quote! { Some(&#path) },
+            Ok(None) => quote! { None },
+            Err(e) => return e,
+        };
         let shown_when_expr = match parse_field_shown_when(field) {
             Ok(Some(expr)) => quote! { ::core::option::Option::Some(&#expr) },
             Ok(None) => quote! { ::core::option::Option::None },
@@ -428,6 +436,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 kind: ::kooch_ecs::reflect::FieldKind::#kind_ident,
                 choices: #choices_expr,
                 bits: #bits_expr,
+                range: #range_expr,
                 shown_when: #shown_when_expr,
                 asset_type: "",
                 requires: "",

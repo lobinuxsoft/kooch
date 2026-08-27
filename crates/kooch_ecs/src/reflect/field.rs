@@ -35,6 +35,27 @@ pub struct FieldMeta {
     /// things pass through each other and nothing says why. Named bits
     /// turn that into a checkbox someone can see is unticked.
     pub bits: &'static [FieldChoice],
+    /// Bounds and granularity for a numeric field. When set, the
+    /// inspector draws a SLIDER over the range instead of an unbounded
+    /// drag.
+    ///
+    /// # Why this is not `choices`
+    ///
+    /// A choice set answers "which of these", and its value is an
+    /// `i64` — so it cannot express a continuous quantity at all, let
+    /// alone one whose useful range is 0.01 to 8. Five labelled steps
+    /// over that span is a decision about where the interesting values
+    /// are, made by whoever wrote the list rather than by whoever is
+    /// tuning it.
+    ///
+    /// # Why bounds matter more than the widget
+    ///
+    /// An unbounded drag lets a settings file hold a number the engine
+    /// cannot honour, and the failure is silent: a LOD target of zero
+    /// means no level is ever fine enough and the cull emits nothing,
+    /// which is a black screen with a plausible-looking value behind
+    /// it. A range is where the legal interval is written down.
+    pub range: Option<&'static FieldRange>,
     /// When set, the field is only meaningful while another field of the
     /// same component holds one of the listed values — see
     /// [`FieldCondition`]. `None` means always shown.
@@ -96,6 +117,20 @@ pub struct FieldMeta {
     /// that appears twice draws twice rather than silently reordering
     /// the author's fields.
     pub group: &'static str,
+}
+
+/// Bounds and granularity for a numeric field — see
+/// [`FieldMeta::range`].
+///
+/// `f64` for every field so one type serves `f32`, `u32` and the rest:
+/// the inspector converts at the edge, and a range wide enough to be
+/// wrong for an integer would be wrong written as one too.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FieldRange {
+    pub min: f64,
+    pub max: f64,
+    /// Granularity. `0.0` leaves it to the widget.
+    pub step: f64,
 }
 
 /// A labelled value in a [`FieldMeta::choices`] set.

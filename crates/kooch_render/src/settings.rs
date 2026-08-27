@@ -199,7 +199,7 @@ pub struct RenderSettings {
     )]
     pub shadow_min_pixels: u32,
     /// How much simplification error a meshlet may show before the cull
-    /// picks a finer level, in **tenths of a pixel**.
+    /// picks a finer level, in PIXELS.
     ///
     /// This is the quality-against-cost lever of a meshlet renderer.
     /// The cull keeps the finest level whose own error fits under this
@@ -208,9 +208,15 @@ pub struct RenderSettings {
     /// roughly half the triangles it needs at 1.0, and on a handheld
     /// rendering at 480x270 that difference is not visible.
     ///
-    /// 🔴 Tenths because a choice is an integer, and one pixel is
-    /// already near the floor of what is useful — the interesting range
-    /// is 0.5 to 8, not 1 to 8.
+    /// 🔴 A continuous slider rather than a set of choices, because
+    /// this is a quantity to be TUNED against a picture and a frame
+    /// time, not one of five named states. Five labelled steps would be
+    /// a decision about where the interesting values are, made by
+    /// whoever wrote the list rather than by whoever is measuring.
+    ///
+    /// ⚠️ The floor is 0.01 and not 0. Zero means no level is ever fine
+    /// enough, the cull emits nothing, and the screen goes black with a
+    /// plausible-looking number behind it.
     ///
     /// ⚠️ It reaches the CAMERA's cull only. The virtual page raster
     /// deliberately holds its own target at one texel: a clipmap level
@@ -219,8 +225,8 @@ pub struct RenderSettings {
     /// double relaxation this project already removed from the
     /// cascades.
     #[serde(default = "default_meshlet_lod_error")]
-    #[reflect(group = "Geometry", choices = MESHLET_LOD_ERROR_CHOICES)]
-    pub meshlet_lod_error: u32,
+    #[reflect(group = "Geometry", range = MESHLET_LOD_ERROR_RANGE)]
+    pub meshlet_lod_error: f32,
     /// How far a local light may cast shadow pages from, in multiples
     /// of its OWN range. The light still SHADES past it; only its
     /// shadow stops being paid for.
@@ -744,11 +750,11 @@ fn default_shadow_min_pixels() -> u32 {
     8
 }
 
-/// 10 tenths — one pixel, which is what `MeshletLodSettings::default`
-/// has always been. Changing the default would change every existing
-/// project's geometry on the frame this landed.
-fn default_meshlet_lod_error() -> u32 {
-    10
+/// One pixel, which is what `MeshletLodSettings::default` has always
+/// been. Changing the default would change every existing project's
+/// geometry on the frame this landed.
+fn default_meshlet_lod_error() -> f32 {
+    1.0
 }
 
 /// 🔴 Zero, because turning it on is a behaviour change and nothing has
@@ -884,30 +890,17 @@ const SHADOW_DENSITY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 /// The steps are what the arithmetic makes meaningful rather than round
 /// numbers: a lamp contributes nothing past its range by definition, so
 /// 1 is the aggressive end and 8 is "only cut what is plainly pointless".
-/// Tenths of a pixel. 10 is what the engine ran at before this was
-/// reachable from a settings file at all.
-const MESHLET_LOD_ERROR_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
-    kooch_ecs::reflect::FieldChoice {
-        label: "0.5 px — sharpest, most triangles",
-        value: 5,
-    },
-    kooch_ecs::reflect::FieldChoice {
-        label: "1.0 px — the engine's default",
-        value: 10,
-    },
-    kooch_ecs::reflect::FieldChoice {
-        label: "2.0 px — about half the triangles",
-        value: 20,
-    },
-    kooch_ecs::reflect::FieldChoice {
-        label: "4.0 px — handheld",
-        value: 40,
-    },
-    kooch_ecs::reflect::FieldChoice {
-        label: "8.0 px — coarsest",
-        value: 80,
-    },
-];
+/// 0.01 to 8 pixels, in hundredths.
+///
+/// The floor is deliberately not zero — see `meshlet_lod_error`. The
+/// ceiling is where a mesh is already down to its root cluster on
+/// anything but a full-screen object, so past it the control stops
+/// doing anything.
+const MESHLET_LOD_ERROR_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::FieldRange {
+    min: 0.01,
+    max: 8.0,
+    step: 0.01,
+};
 
 const SHADOW_LIGHT_REACH_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
@@ -1143,10 +1136,11 @@ impl RenderSettings {
     /// a live slider in the editor and unreachable everywhere else.
     pub fn meshlet_lod(&self) -> crate::meshlet::MeshletLodSettings {
         crate::meshlet::MeshletLodSettings {
-            // Never zero: the selector divides nothing by it, but a
-            // target of zero means no level is ever fine enough and
-            // the cull emits nothing at all.
-            target_error_pixels: (self.meshlet_lod_error.max(1) as f32) / 10.0,
+            // Clamped rather than trusted: the range constrains the
+            // Inspector, and a settings file is a text file anyone can
+            // write a zero into. A target of zero means no level is
+            // ever fine enough and the cull emits nothing at all.
+            target_error_pixels: self.meshlet_lod_error.clamp(0.01, 8.0),
         }
     }
 

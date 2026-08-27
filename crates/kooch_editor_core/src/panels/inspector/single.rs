@@ -16,7 +16,7 @@ use super::RotationContext;
 use super::rotation::{draw_quat_with_cache, is_transform_rotation};
 use super::widgets::{
     AssetCatalogEntry, FieldContext, bits_for, choices_for, draw_readonly_value, draw_value_widget,
-    requires_for,
+    range_for, requires_for,
 };
 
 /// Draws an editable name field for the Name component (shown above the component list).
@@ -287,6 +287,7 @@ pub(super) fn draw_reflected_fields(
                             assets: asset_catalog,
                             entities,
                             requires: requires_for(field_metas, name),
+                            range: range_for(field_metas, name),
                         };
                         let new_value = match value {
                             ReflectValue::Quat(q) => {

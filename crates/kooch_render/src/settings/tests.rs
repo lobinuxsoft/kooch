@@ -340,13 +340,11 @@ fn the_lod_target_reaches_the_frame() {
     // frame reads. A shipped game found `None` and took 1.0 px forever,
     // so a project could not choose its own geometry budget at all.
     let settings = RenderSettings {
-        meshlet_lod_error: 40,
+        meshlet_lod_error: 4.0,
         ..Default::default()
     };
     assert_eq!(settings.meshlet_lod().target_error_pixels, 4.0);
-    // Tenths, because a choice is an integer and the useful range
-    // starts below one pixel.
-    assert_eq!(RenderSettings::default().meshlet_lod_error, 10);
+    assert_eq!(RenderSettings::default().meshlet_lod_error, 1.0);
     assert_eq!(
         RenderSettings::default().meshlet_lod().target_error_pixels,
         1.0,
@@ -354,11 +352,36 @@ fn the_lod_target_reaches_the_frame() {
     );
     // Zero would mean no level is ever fine enough and the cull emits
     // nothing, which is a black screen rather than a coarse one.
+    // A settings file is a text file, and the Inspector's range does
+    // not constrain what someone types into one.
     let zero = RenderSettings {
-        meshlet_lod_error: 0,
+        meshlet_lod_error: 0.0,
         ..Default::default()
     };
     assert!(zero.meshlet_lod().target_error_pixels > 0.0);
+    let huge = RenderSettings {
+        meshlet_lod_error: 9999.0,
+        ..Default::default()
+    };
+    assert_eq!(huge.meshlet_lod().target_error_pixels, 8.0);
+}
+
+#[test]
+fn the_lod_range_reaches_the_inspector() {
+    // The declaration travels a long way — attribute, macro, `FieldMeta`
+    // — and every step of it is silent when it drops something: the
+    // Inspector simply draws the unbounded drag it drew before, and the
+    // bound that stops a zero reaching the cull is quietly not there.
+    use kooch_ecs::reflect::Reflect;
+    let meta = RenderSettings::default()
+        .reflect_fields()
+        .iter()
+        .find(|f| f.name == "meshlet_lod_error")
+        .expect("the field is reflected");
+    let range = meta.range.expect("the field declares a range");
+    assert_eq!(range.min, 0.01, "zero would emit no geometry at all");
+    assert_eq!(range.max, 8.0);
+    assert_eq!(range.step, 0.01);
 }
 
 #[test]
