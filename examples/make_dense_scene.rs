@@ -9,12 +9,12 @@
 //! expensive one's rate.
 //!
 //! This lays out mostly cubes (1 meshlet each) around a handful of dragons
-//! (6510 meshlets each). With the defaults:
+//! (~4700 meshlets each). With the defaults:
 //!
 //! ```text
 //! 600 cubes + 8 dragons = 608 instances
-//! dispatched: 608 × 6510 = 3,958,080 threads
-//! useful:     600 × 1 + 8 × 6510 = 52,680
+//! dispatched: 608 × 4700 = 2,857,600 threads
+//! useful:     600 × 1 + 8 × 4700 = 38,200
 //! waste:      ~75×
 //! ```
 //!
@@ -110,7 +110,11 @@ fn main() {
     // The arithmetic the scene exists to make visible. Printed rather than
     // left implicit so the number to beat is on screen before the editor
     // opens.
-    const DRAGON_MESHLETS: usize = 6510;
+    // ⚠️ Approximate, and it has to be: the builder does not produce the
+    // same count twice. Six imports of this exact file measured 4598 to
+    // 4931 — see #984. Printed as a scale, not as a figure to subtract
+    // one run's from another's.
+    const DRAGON_MESHLETS: usize = 4700;
     let dispatched = instances * DRAGON_MESHLETS;
     let useful = cubes + dragons * DRAGON_MESHLETS;
 
