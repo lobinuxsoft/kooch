@@ -8,26 +8,39 @@
 //! one expensive asset exists*, because every cheap one is charged at the
 //! expensive one's rate.
 //!
-//! This lays out mostly cubes (1 meshlet each) around a handful of skulls
-//! (4393 meshlets each). With the defaults:
+//! This lays out mostly cubes (1 meshlet each) around a handful of dragons
+//! (6510 meshlets each). With the defaults:
 //!
 //! ```text
-//! 600 cubes + 8 skulls = 608 instances
-//! dispatched: 608 × 4393 = 2,670,944 threads
-//! useful:     600 × 1 + 8 × 4393 = 35,744
+//! 600 cubes + 8 dragons = 608 instances
+//! dispatched: 608 × 6510 = 3,958,080 threads
+//! useful:     600 × 1 + 8 × 6510 = 52,680
 //! waste:      ~75×
 //! ```
 //!
-//! Raise `--skulls` and the ratio improves; raise `--cubes` and it gets
+//! Raise `--dragons` and the ratio improves; raise `--cubes` and it gets
 //! worse. That asymmetry *is* the bug: adding cheap objects should not cost
 //! more per object.
 //!
 //! # Use
 //!
 //! ```text
-//! cargo run --example make_dense_scene --features editor,physics -- /var/mnt/DATA
-//! cargo run --example make_dense_scene --features editor,physics -- /var/mnt/DATA 2000 4
+//! cargo run --example make_dense_scene --features editor,physics -- <parent>
+//! cargo run --example make_dense_scene --features editor,physics -- <parent> 2000 4 128
 //! ```
+//!
+//! The arguments are `<parent> [cubes] [dragons] [lights]`.
+//!
+//! # The lights MOVE, and that is the point
+//!
+//! A sun, plus `lights` pivots each carrying a point or a spot light at
+//! the end of an arm, all of them casting and all of them turning.
+//!
+//! 🔴 Static lights are the case the shadow page cache handles for
+//! free: their pages are drawn once and every later frame is a hit. The
+//! budget was cleared on a scene whose lights did not move, and the
+//! roadmap records that the moving case has never been measured on the
+//! device. This scene is that case.
 //!
 //! Then open the project in the editor and read the perf HUD.
 //!
@@ -51,6 +64,27 @@ const MESH_TYPE: &str = "kooch_render::meshlet::asset::MeshletMesh";
 /// meshes do not intersect at the scales used below.
 const SPACING: f32 = 3.0;
 
+/// The component that turns a light pivot, so the lights MOVE.
+///
+/// 🔴 A game's type name inside an engine example, deliberately. The
+/// engine has no animator of its own, and a light that never moves is
+/// the one case the shadow page cache handles for free: its pages are
+/// drawn once and every later frame is a hit. A scene built to measure
+/// shadows with static lights measures the cache, not the shadows.
+///
+/// `roll_a_ball` registers this. Any other project opens the scene
+/// fine and simply gets still lights — an unknown component is dropped
+/// on load, not an error.
+const SPIN_TYPE: &str = "roll_a_ball::registrations::components::spin::Spin";
+
+/// How far a light orbits from its pivot, and how fast.
+///
+/// The radius is over a page of the sun's finest clipmap level at the
+/// default extent, so an orbiting light crosses page boundaries rather
+/// than jittering inside one — crossing is what invalidates.
+const ORBIT_RADIUS: f32 = 6.0;
+const ORBIT_DEGREES: f32 = 45.0;
+
 fn main() {
     let engine_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut args = std::env::args().skip(1);
@@ -59,7 +93,8 @@ fn main() {
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
     let cubes: usize = args.next().and_then(|a| a.parse().ok()).unwrap_or(600);
-    let skulls: usize = args.next().and_then(|a| a.parse().ok()).unwrap_or(8);
+    let dragons: usize = args.next().and_then(|a| a.parse().ok()).unwrap_or(8);
+    let lights: usize = args.next().and_then(|a| a.parse().ok()).unwrap_or(64);
 
     let name = "DenseScene";
     let root = parent.join(name);
@@ -76,11 +111,11 @@ fn main() {
     let assets = Assets::read(&engine_root);
     let root = kooch_editor_core::project::create_project(name, &parent, &engine_root)
         .expect("creating the project");
-    let document = scene(&assets, cubes, skulls);
+    let document = scene(&assets, cubes, dragons, lights);
     // Mesh instances only. The camera and the sky are entities too, but
     // they carry no `MeshRenderer`, so they never reach the cull — and
     // counting them would overstate the figure this scene exists to show.
-    let instances = cubes + skulls;
+    let instances = cubes + dragons;
     document
         .save(&root.join(kooch_core::scene_paths::DEFAULT_SCENE_REL_PATH))
         .expect("writing the scene");
@@ -88,17 +123,22 @@ fn main() {
     // The arithmetic the scene exists to make visible. Printed rather than
     // left implicit so the number to beat is on screen before the editor
     // opens.
-    const SKULL_MESHLETS: usize = 4393;
-    let dispatched = instances * SKULL_MESHLETS;
-    let useful = cubes + skulls * SKULL_MESHLETS;
+    const DRAGON_MESHLETS: usize = 6510;
+    let dispatched = instances * DRAGON_MESHLETS;
+    let useful = cubes + dragons * DRAGON_MESHLETS;
 
     println!("\nproject ready: {}\n", root.display());
     println!(
-        "  {cubes} cubes + {skulls} skulls = {instances} mesh instances \
-         ({} entities with the camera and sky)",
+        "  {cubes} cubes + {dragons} dragons = {instances} mesh instances \
+         ({} entities with the camera, sky, sun and lights)",
         document.entities.len(),
     );
-    println!("  dispatched: {instances} × {SKULL_MESHLETS} = {dispatched} threads");
+    println!(
+        "  {lights} orbiting lights ({} point + {} spot), all casting",
+        lights.div_ceil(2),
+        lights / 2,
+    );
+    println!("  dispatched: {instances} × {DRAGON_MESHLETS} = {dispatched} threads");
     println!("  useful:     {useful}");
     println!("  waste:      {:.0}×\n", dispatched as f64 / useful as f64);
     println!("  cd {} && cargo run -- --remote", root.display());
@@ -112,14 +152,14 @@ fn main() {
 /// silently the day an asset is reimported.
 struct Assets {
     cube: Guid,
-    skull: Guid,
+    dragon: Guid,
 }
 
 impl Assets {
     fn read(engine_root: &Path) -> Self {
         Self {
             cube: guid_of(engine_root, "assets/meshes/primitives/cube.glb.meta"),
-            skull: guid_of(engine_root, "assets/meshes/scattering_skull.glb.meta"),
+            dragon: guid_of(engine_root, "assets/meshes/dragon.glb.meta"),
         }
     }
 }
@@ -140,18 +180,19 @@ fn guid_of(engine_root: &Path, relative: &str) -> Guid {
         .unwrap_or_else(|e| panic!("bad guid in {}: {e}", path.display()))
 }
 
-/// Cubes on a grid, skulls spread through it, one camera far enough back
+/// Cubes on a grid, dragons spread through it, one camera far enough back
 /// to hold the whole thing.
-fn scene(assets: &Assets, cubes: usize, skulls: usize) -> SceneDocument {
-    let total = cubes + skulls;
+fn scene(assets: &Assets, cubes: usize, dragons: usize, lights: usize) -> SceneDocument {
+    let total = cubes + dragons;
     // Square-ish grid, so the camera distance below stays predictable
     // whatever the counts are.
     let columns = (total as f64).sqrt().ceil().max(1.0) as usize;
     let extent = columns as f32 * SPACING;
 
-    let mut entities = Vec::with_capacity(total + 2);
+    let mut entities = Vec::with_capacity(total + lights * 2 + 3);
     entities.push(camera(Vec3::new(0.0, extent * 0.45, extent * 0.9)));
     entities.push(sky());
+    entities.push(sun());
 
     for index in 0..total {
         let column = index % columns;
@@ -165,18 +206,47 @@ fn scene(assets: &Assets, cubes: usize, skulls: usize) -> SceneDocument {
         // Skulls spread evenly rather than clumped at one end: a cluster
         // of them in one corner would be culled away as a group and the
         // frame would not show what it costs to keep them.
-        let stride = if skulls == 0 {
+        let stride = if dragons == 0 {
             usize::MAX
         } else {
-            total / skulls.max(1)
+            total / dragons.max(1)
         };
-        let is_skull = skulls > 0 && index % stride.max(1) == 0 && index / stride.max(1) < skulls;
+        let is_dragon =
+            dragons > 0 && index % stride.max(1) == 0 && index / stride.max(1) < dragons;
 
-        entities.push(if is_skull {
-            instance(&format!("Skull {index}"), assets.skull, position, 1.0)
+        entities.push(if is_dragon {
+            instance(&format!("Dragon {index}"), assets.dragon, position, 1.0)
         } else {
             instance(&format!("Cube {index}"), assets.cube, position, 1.0)
         });
+    }
+
+    // The lights, spread over the SAME grid the meshes cover so every
+    // one of them has something to cast onto. Spread rather than
+    // clustered for the reason the dragons are: a clump culls as one.
+    //
+    // 🔴 Alternating point and spot, because they take different paths
+    // through the page code — a point owns six cube faces and a spot
+    // one frustum — and a scene with only one kind leaves half the
+    // rasteriser unmeasured.
+    for index in 0..lights {
+        let angle = index as f32 / lights.max(1) as f32 * std::f32::consts::TAU;
+        // Two turns of a spiral, so the lights do not land on one ring
+        // at one distance from the camera.
+        let reach = extent
+            * 0.5
+            * ((index as f32 / lights.max(1) as f32) * 2.0)
+                .fract()
+                .max(0.15);
+        let pivot_at = Vec3::new(angle.cos() * reach, 2.5, angle.sin() * reach);
+
+        let pivot_index = entities.len();
+        entities.push(pivot(&format!("Light Pivot {index}"), pivot_at));
+        entities.push(orbiting_light(
+            &format!("Light {index}"),
+            pivot_index,
+            index % 2 == 0,
+        ));
     }
 
     SceneDocument {
@@ -232,6 +302,101 @@ fn camera(position: Vec3) -> EntityDescription {
                 fields: vec![],
             },
         ],
+    }
+}
+
+/// The sun. One per scene, and the consumer that actually rasterises
+/// — the clipmap is its own, and every caster in its column pairs with
+/// every page of it.
+fn sun() -> EntityDescription {
+    EntityDescription {
+        name: "Sun".to_owned(),
+        parent_index: None,
+        parent: None,
+        components: vec![
+            name_of("Sun"),
+            ComponentDescription {
+                type_name: type_name_of::<kooch_ecs::transform::Transform>(),
+                fields: vec![(
+                    "position".to_owned(),
+                    ReflectValue::Vec3(Vec3::new(0.0, 40.0, 0.0)),
+                )],
+            },
+            ComponentDescription {
+                type_name: type_name_of::<kooch_ecs::directional_light::DirectionalLight>(),
+                fields: vec![
+                    ("active".to_owned(), ReflectValue::Bool(true)),
+                    ("intensity".to_owned(), ReflectValue::F32(2000.0)),
+                    ("cast_shadows".to_owned(), ReflectValue::Bool(true)),
+                ],
+            },
+        ],
+    }
+}
+
+/// A turning pivot. Carries no light itself — the light hangs off it at
+/// [`ORBIT_RADIUS`], so turning the pivot MOVES the light rather than
+/// merely rotating it in place.
+fn pivot(label: &str, position: Vec3) -> EntityDescription {
+    EntityDescription {
+        name: label.to_owned(),
+        parent_index: None,
+        parent: None,
+        components: vec![
+            name_of(label),
+            ComponentDescription {
+                type_name: type_name_of::<kooch_ecs::transform::Transform>(),
+                fields: vec![("position".to_owned(), ReflectValue::Vec3(position))],
+            },
+            ComponentDescription {
+                type_name: SPIN_TYPE.to_owned(),
+                fields: vec![
+                    ("axis".to_owned(), ReflectValue::Vec3(Vec3::Y)),
+                    ("degrees".to_owned(), ReflectValue::F32(ORBIT_DEGREES)),
+                ],
+            },
+        ],
+    }
+}
+
+/// One light, parented to a pivot so it orbits.
+///
+/// `point` picks which kind; see the loop in [`scene`] for why the two
+/// alternate.
+fn orbiting_light(label: &str, pivot_index: usize, point: bool) -> EntityDescription {
+    let transform = ComponentDescription {
+        type_name: type_name_of::<kooch_ecs::transform::Transform>(),
+        fields: vec![(
+            "position".to_owned(),
+            ReflectValue::Vec3(Vec3::new(ORBIT_RADIUS, 0.0, 0.0)),
+        )],
+    };
+    let light = if point {
+        ComponentDescription {
+            type_name: type_name_of::<kooch_ecs::point_light::PointLight>(),
+            fields: vec![
+                ("active".to_owned(), ReflectValue::Bool(true)),
+                ("intensity".to_owned(), ReflectValue::F32(8000.0)),
+                ("range".to_owned(), ReflectValue::F32(12.0)),
+                ("cast_shadows".to_owned(), ReflectValue::Bool(true)),
+            ],
+        }
+    } else {
+        ComponentDescription {
+            type_name: type_name_of::<kooch_ecs::spot_light::SpotLight>(),
+            fields: vec![
+                ("active".to_owned(), ReflectValue::Bool(true)),
+                ("intensity".to_owned(), ReflectValue::F32(12000.0)),
+                ("range".to_owned(), ReflectValue::F32(16.0)),
+                ("cast_shadows".to_owned(), ReflectValue::Bool(true)),
+            ],
+        }
+    };
+    EntityDescription {
+        name: label.to_owned(),
+        parent_index: Some(pivot_index),
+        parent: None,
+        components: vec![name_of(label), transform, light],
     }
 }
 

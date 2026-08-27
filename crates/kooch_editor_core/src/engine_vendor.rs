@@ -145,11 +145,20 @@ const COPY: [&str; 6] = [
     "LICENSE.md",
 ];
 
-/// Engine assets a *game* needs at runtime. The engine's `assets/` is
-/// 13 MB, and 12.7 MB of that is two demo glTFs that no shipped game
-/// loads — so this takes the two directories that are actually
-/// referenced and leaves the samples behind.
-pub(crate) const COPY_ASSETS: [&str; 2] = ["materials", "meshes/primitives"];
+/// Engine assets a *game* needs at runtime.
+///
+/// 🔴 This used to be `meshes/primitives`, to leave behind two demo
+/// glTFs that made `assets/` 13 MB. It also left behind `suzanne.glb`,
+/// which is 70 KB and which the editor's own spawn menu offers — so a
+/// project that spawned one and shipped it got a scene that loads and
+/// draws nothing, the exact failure `build::package` warns about. It
+/// had been that way unnoticed because the guid resolves fine in the
+/// editor, where the engine root is the source tree.
+///
+/// The demos are gone rather than filtered now, so `meshes` can travel
+/// whole: what is left is the primitives, plus Suzanne and the dragon
+/// as the two deliberate test meshes — one trivial, one expensive.
+pub(crate) const COPY_ASSETS: [&str; 2] = ["materials", "meshes"];
 
 #[derive(Debug)]
 pub enum VendorError {
