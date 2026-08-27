@@ -118,6 +118,14 @@ fn main() {
     let assets = Assets::read(&engine_root);
     let root = kooch_editor_core::project::create_project(name, &parent, &engine_root)
         .expect("creating the project");
+    // 🔴 The scene this writes uses `kooch_ecs::testing::spin::Spin`,
+    // and the project template does not ask for the feature that
+    // registers it. Without this the generator produces a benchmark
+    // whose lights DO NOT MOVE — and an unregistered component is
+    // dropped on load without an error, so the only symptom is the one
+    // case the page cache handles for free quietly becoming the case
+    // being measured.
+    enable_testing(&root);
     let document = scene(&assets, cubes, dragons, lights, spacing);
     // Mesh instances only. The camera and the sky are entities too, but
     // they carry no `MeshRenderer`, so they never reach the cull — and
@@ -158,6 +166,39 @@ fn main() {
     println!("  waste:      {:.0}×\n", dispatched as f64 / useful as f64);
     println!("  cd {} && cargo run -- --remote", root.display());
     println!("  then in the editor: Open Remote\n");
+}
+
+/// Adds `kooch/testing` to the generated project's `editor` feature.
+///
+/// Rewritten rather than templated because the template is every
+/// project's, and only a benchmark needs the engine's testing
+/// components. Idempotent: a manifest that already asks for it is left
+/// alone.
+fn enable_testing(root: &Path) {
+    let manifest = root.join("Cargo.toml");
+    let Ok(text) = std::fs::read_to_string(&manifest) else {
+        eprintln!(
+            "no Cargo.toml at {}; lights will not move",
+            manifest.display()
+        );
+        return;
+    };
+    if text.contains("kooch/testing") {
+        return;
+    }
+    let Some(anchor) = text.find("    \"kooch/physics-debug-render\",\n") else {
+        eprintln!("the editor feature list moved; lights will not move");
+        return;
+    };
+    let insert = anchor + "    \"kooch/physics-debug-render\",\n".len();
+    let mut out = String::with_capacity(text.len() + 64);
+    out.push_str(&text[..insert]);
+    out.push_str("    # What registers `Spin`, so this benchmark's lights MOVE.\n");
+    out.push_str("    \"kooch/testing\",\n");
+    out.push_str(&text[insert..]);
+    if let Err(e) = std::fs::write(&manifest, out) {
+        eprintln!("could not enable `testing`: {e}; lights will not move");
+    }
 }
 
 /// The engine-shipped assets the scene points at.
