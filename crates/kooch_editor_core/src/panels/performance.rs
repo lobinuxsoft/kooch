@@ -758,21 +758,31 @@ fn debug_controls(
              disappearing where anybody looks.",
         );
     });
+    // 🔴 A READOUT now, for the same reason as the shadow-page section
+    // below. This was a live drag that only the editor ever inserted the
+    // resource for, so the value was reachable while editing and
+    // hardcoded to 1.0 in every shipped game — the shape of #744 and of
+    // `virtual_shadows` before it. It is `meshlet_lod_error` in the
+    // project's render settings now, and the file is the only author.
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("LOD ≤").small())
-            .on_hover_text("Pixel-error threshold for the continuous-LOD selector.");
-        ui.add(
-            crate::numeric::drag(&mut meshlet_lod_settings.target_error_pixels)
-                .speed(0.05)
-                .range(0.1_f32..=50.0_f32)
-                .max_decimals(2)
-                .suffix(" px"),
-        )
-        .on_hover_text(
-            "Lower values keep more meshlets at any given distance. \
-             Crank this up to force coarser LOD selection and visually \
-             confirm the chain is being descended.",
+        ui.label(egui::RichText::new("LOD ≤").small());
+        ui.label(
+            egui::RichText::new(format!(
+                "{:.2} px",
+                meshlet_lod_settings.target_error_pixels
+            ))
+            .small()
+            .strong(),
         );
+        ui.label(egui::RichText::new("· render settings").small().weak())
+            .on_hover_text(
+                "Pixel-error threshold for the continuous-LOD selector, from the \
+                 project's render settings (`meshlet_lod_error`, group Geometry). \
+                 Lower keeps more meshlets at any given distance; raising it walks \
+                 every object down its chain at once. Edited there rather than here \
+                 so a game gets the value the project chose — as a panel knob it \
+                 reached the editor and nothing else.",
+            );
     });
 }
 

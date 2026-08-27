@@ -364,7 +364,7 @@ pub enum MeshletDebugMode {
 /// `lod_error` falls under the target AND its parent's exceeds it.
 /// Lower values keep more detail at any given distance; higher values
 /// drop to coarser parents earlier.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MeshletLodSettings {
     pub target_error_pixels: f32,
 }
