@@ -333,6 +333,35 @@ fn shadow_min_pixels_reaches_the_settings() {
 }
 
 #[test]
+fn the_lod_target_reaches_the_frame() {
+    // The same class one more time, and the one with the widest blast
+    // radius: this is the quality-against-cost lever of a meshlet
+    // renderer, and only the editor ever inserted the resource the
+    // frame reads. A shipped game found `None` and took 1.0 px forever,
+    // so a project could not choose its own geometry budget at all.
+    let settings = RenderSettings {
+        meshlet_lod_error: 40,
+        ..Default::default()
+    };
+    assert_eq!(settings.meshlet_lod().target_error_pixels, 4.0);
+    // Tenths, because a choice is an integer and the useful range
+    // starts below one pixel.
+    assert_eq!(RenderSettings::default().meshlet_lod_error, 10);
+    assert_eq!(
+        RenderSettings::default().meshlet_lod().target_error_pixels,
+        1.0,
+        "the default has to be what the engine ran at before the setting existed",
+    );
+    // Zero would mean no level is ever fine enough and the cull emits
+    // nothing, which is a black screen rather than a coarse one.
+    let zero = RenderSettings {
+        meshlet_lod_error: 0,
+        ..Default::default()
+    };
+    assert!(zero.meshlet_lod().target_error_pixels > 0.0);
+}
+
+#[test]
 fn the_frame_never_asks_for_render_settings() {
     // The bug's CLASS, not its instance. `RenderSettings` is the
     // author's asset; what a frame may read is the derived struct

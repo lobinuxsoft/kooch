@@ -198,6 +198,29 @@ pub struct RenderSettings {
         shown_when = PAGES_ON
     )]
     pub shadow_min_pixels: u32,
+    /// How much simplification error a meshlet may show before the cull
+    /// picks a finer level, in **tenths of a pixel**.
+    ///
+    /// This is the quality-against-cost lever of a meshlet renderer.
+    /// The cull keeps the finest level whose own error fits under this
+    /// and whose parent's does not, so raising it walks every object
+    /// down its LOD chain at once: at 2.0 px a mesh is drawn with
+    /// roughly half the triangles it needs at 1.0, and on a handheld
+    /// rendering at 480x270 that difference is not visible.
+    ///
+    /// 🔴 Tenths because a choice is an integer, and one pixel is
+    /// already near the floor of what is useful — the interesting range
+    /// is 0.5 to 8, not 1 to 8.
+    ///
+    /// ⚠️ It reaches the CAMERA's cull only. The virtual page raster
+    /// deliberately holds its own target at one texel: a clipmap level
+    /// is already a texel density and the cull is handed that density
+    /// directly, so applying the screen's target on top would be the
+    /// double relaxation this project already removed from the
+    /// cascades.
+    #[serde(default = "default_meshlet_lod_error")]
+    #[reflect(group = "Geometry", choices = MESHLET_LOD_ERROR_CHOICES)]
+    pub meshlet_lod_error: u32,
     /// How far a local light may cast shadow pages from, in multiples
     /// of its OWN range. The light still SHADES past it; only its
     /// shadow stops being paid for.
@@ -721,6 +744,13 @@ fn default_shadow_min_pixels() -> u32 {
     8
 }
 
+/// 10 tenths — one pixel, which is what `MeshletLodSettings::default`
+/// has always been. Changing the default would change every existing
+/// project's geometry on the frame this landed.
+fn default_meshlet_lod_error() -> u32 {
+    10
+}
+
 /// 🔴 Zero, because turning it on is a behaviour change and nothing has
 /// measured what it costs. A threshold chosen from a whiteboard is how
 /// `DEFAULT_PAGES` came to sit at half of Epic's for a year.
@@ -854,6 +884,31 @@ const SHADOW_DENSITY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 /// The steps are what the arithmetic makes meaningful rather than round
 /// numbers: a lamp contributes nothing past its range by definition, so
 /// 1 is the aggressive end and 8 is "only cut what is plainly pointless".
+/// Tenths of a pixel. 10 is what the engine ran at before this was
+/// reachable from a settings file at all.
+const MESHLET_LOD_ERROR_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
+    kooch_ecs::reflect::FieldChoice {
+        label: "0.5 px — sharpest, most triangles",
+        value: 5,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "1.0 px — the engine's default",
+        value: 10,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "2.0 px — about half the triangles",
+        value: 20,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "4.0 px — handheld",
+        value: 40,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "8.0 px — coarsest",
+        value: 80,
+    },
+];
+
 const SHADOW_LIGHT_REACH_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
         label: "Off — distance never gates",
@@ -1028,6 +1083,7 @@ impl Default for RenderSettings {
         let shadows = ShadowSettings::default();
         let contact = ContactShadowSettings::default();
         Self {
+            meshlet_lod_error: default_meshlet_lod_error(),
             aperture_f_stops: camera.aperture_f_stops,
             shutter_speed_s: camera.shutter_speed_s,
             sensitivity_iso: camera.sensitivity_iso,
@@ -1076,6 +1132,21 @@ impl RenderSettings {
             sky_color: self.ambient_sky_color,
             ground_color: self.ambient_ground_color,
             intensity: self.ambient_intensity,
+        }
+    }
+
+    /// The camera cull's LOD target, as the frame wants it.
+    ///
+    /// 🔴 The resource this returns already existed and the frame
+    /// already read it — only the editor ever inserted it, so a shipped
+    /// game found `None` and fell back to the default. The value was
+    /// a live slider in the editor and unreachable everywhere else.
+    pub fn meshlet_lod(&self) -> crate::meshlet::MeshletLodSettings {
+        crate::meshlet::MeshletLodSettings {
+            // Never zero: the selector divides nothing by it, but a
+            // target of zero means no level is ever fine enough and
+            // the cull emits nothing at all.
+            target_error_pixels: (self.meshlet_lod_error.max(1) as f32) / 10.0,
         }
     }
 
@@ -1188,6 +1259,7 @@ impl RenderSettings {
         let shading = self.shading();
         resources.insert(shading);
         resources.insert(self.temporal());
+        resources.insert(self.meshlet_lod());
     }
 }
 
@@ -1262,6 +1334,7 @@ pub fn apply_render_settings_system(resources: &mut Resources) {
     let contact = settings.contact_shadows();
     let shading = settings.shading();
     let temporal = without_missing_dlss(settings.temporal(), resources);
+    let meshlet_lod = settings.meshlet_lod();
     let presentation = settings.presentation();
     let window_mode = settings.window_mode();
     let stale = resources.get::<crate::quality::Presentation>() != Some(&presentation)
@@ -1271,7 +1344,8 @@ pub fn apply_render_settings_system(resources: &mut Resources) {
         || resources.get::<ShadowSettings>() != Some(&shadows)
         || resources.get::<ContactShadowSettings>() != Some(&contact)
         || resources.get::<crate::quality::ShadingSettings>() != Some(&shading)
-        || resources.get::<crate::quality::TemporalSettings>() != Some(&temporal);
+        || resources.get::<crate::quality::TemporalSettings>() != Some(&temporal)
+        || resources.get::<crate::meshlet::MeshletLodSettings>() != Some(&meshlet_lod);
     if stale {
         settings.apply(resources);
         // 🔴 After `apply`, which inserts the technique the FILE asked
