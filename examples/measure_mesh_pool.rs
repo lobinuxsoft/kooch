@@ -84,6 +84,35 @@ fn main() {
             meshlet_count,
             mib(total),
         );
+
+        // 🔴 The count alone cannot tell a good mesh from a broken one.
+        // A mesh exported with every triangle carrying its own three
+        // vertices has no shared EDGES, so the simplifier has nothing to
+        // collapse: it produces ONE level and a pile of tiny meshlets,
+        // which reads on this line as a perfectly healthy total. The
+        // chain is what says whether the LOD work happened at all.
+        //
+        // Suzanne arrived that way and looked fine at 188 meshlets.
+        let mut per_level: std::collections::BTreeMap<u32, usize> =
+            std::collections::BTreeMap::new();
+        for descriptor in &meshlets.meshlets {
+            *per_level.entry(descriptor.lod_level).or_default() += 1;
+        }
+        let chain = per_level
+            .iter()
+            .map(|(level, count)| format!("L{level}:{count}"))
+            .collect::<Vec<_>>()
+            .join("  ");
+        // One meshlet is a mesh with nothing left to simplify — a cube
+        // is supposed to look like this. MANY meshlets at one level is
+        // the broken shape: enough geometry to deserve a chain, and no
+        // chain.
+        let verdict = if per_level.len() <= 1 && meshlet_count > 1 {
+            "  🔴 ONE LEVEL — no LOD chain; is the mesh welded?"
+        } else {
+            ""
+        };
+        println!("{:<44} {chain}{verdict}", "");
     }
 
     println!();
