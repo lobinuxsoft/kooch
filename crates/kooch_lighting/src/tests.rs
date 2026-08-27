@@ -279,3 +279,41 @@ fn the_atlas_is_never_hardware_filtered() {
         "a sampler on the page atlas reads across page borders",
     );
 }
+
+/// The page age view says WHITE for a page with no content, and not for
+/// a page requested this frame.
+///
+/// 🔴 A grep, and it exists because the difference is invisible: the
+/// view read word 1 — the frame a page was last REQUESTED — and the
+/// marking rewrites that every frame it asks for a page. Everything on
+/// screen is asked for every frame, so the comparison was zero for
+/// every pixel and the view returned white before reaching its own hue
+/// or fade. It painted the whole screen, always, and looked like a view
+/// of something.
+///
+/// Word 3 is the content generation: zero means the page was claimed
+/// and never drawn into, which is a hole a shadow can actually have.
+#[test]
+fn the_age_view_paints_missing_content() {
+    let source = crate::inti_debug_shader();
+    let start = source
+        .find("fn inti_page_age_debug(")
+        .expect("the view is in the shader");
+    let end = source[start..]
+        .find("\nfn ")
+        .map(|o| o + start + 1)
+        .unwrap_or(source.len());
+    let body = &source[start..end];
+    assert!(
+        body.contains("inti_page_slots[page * PAGE_CELL + 3u] == 0u"),
+        "white has to mean NO CONTENT — word 3 — not `frame - age`",
+    );
+    let white = body
+        .find("return vec3<f32>(1.0);")
+        .expect("the view still paints white somewhere");
+    let requested = body.find("inti_pages.views.w - age").unwrap_or(usize::MAX);
+    assert!(
+        white < requested,
+        "the content test has to come FIRST, or the request age shadows it again",
+    );
+}

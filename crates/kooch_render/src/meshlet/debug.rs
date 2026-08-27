@@ -296,17 +296,30 @@ pub enum MeshletDebugMode {
     /// still frame. This answers what CHANGED, on three independent
     /// signals:
     ///
-    /// - **White** — allocated this frame. A sweep of white travelling
-    ///   with the camera is the allocator churning, and a flicker that
-    ///   rides that sweep is an allocation fault.
+    /// - **White** — the page has NO CONTENT: resident, correctly
+    ///   addressed, and never drawn into. Whatever its slot holds
+    ///   belonged to whoever had the slot last, so the depth test
+    ///   answers against a stranger's geometry.
+    ///
+    ///   🔴 This used to read "allocated this frame" and painted the
+    ///   whole screen white, always. Word 1 is the frame a page was
+    ///   last REQUESTED and the marking asks for every visible page
+    ///   every frame, so `frame - age` was zero everywhere and the view
+    ///   returned before reaching its own hue and fade. It could not
+    ///   answer the question it was built for, which is how it went
+    ///   unnoticed: a view that is always white looks like a view of
+    ///   something.
     /// - **Hue** — the clipmap level the walk stopped at. A band that
     ///   jumps between two colours frame to frame is the reader crossing
     ///   a level boundary, which moves the texel size and the rect under
     ///   it.
-    /// - **Brightness** — frames since the page was last requested, full
-    ///   at one and dim by sixteen. A page dimming while still on screen
-    ///   is marking having stopped asking for it while the reader keeps
-    ///   finding it.
+    /// - **Brightness** — frames since the page was last requested,
+    ///   full at one and dim by sixteen.
+    ///
+    ///   ⚠️ INERT for anything on screen, for the reason above: the
+    ///   marking refreshes that word every frame it asks. It needs the
+    ///   frame a page was ALLOCATED, recorded apart from the frame it
+    ///   was requested, and that word does not exist yet.
     ///
     /// Black is no page at any level; magenta is the paged path off.
     VirtualPageAge = 28,
