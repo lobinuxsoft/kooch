@@ -956,9 +956,23 @@ fn inti_page_shadow(
         // the only reason the offset has to be computed inside the walk
         // rather than once before it.
         let texel_world = extent / f32(side * page_texels);
+        // 🔴 CAPPED, and the cap is the whole point. The step is a
+        // multiple of the TEXEL, and a clipmap texel is 0.1 mm at level
+        // 0 and 5.12 m at level 16 — so the same constant is 0.0002 m
+        // of offset at the finest level and 9.2 m at the coarsest. Nine
+        // metres walks a receiver clean out of the volume its caster
+        // shadows: the page is present, resident and correctly drawn,
+        // and the comparison still answers LIT.
+        //
+        // ⚠️ `bias.z` of 0 means NO cap, which is what shipped and what
+        // a project with no settings file still gets.
+        var offset = texel_world * inti_pages.bias.x;
+        if inti_pages.bias.z > 0.0 {
+            offset = min(offset, inti_pages.bias.z);
+        }
         let sampled = world_position
-            + normal * (texel_world * INTI_NORMAL_BIAS)
-            + to_light * INTI_DEPTH_BIAS;
+            + normal * offset
+            + to_light * inti_pages.bias.y;
 
         // The plane is ABSOLUTE and the grid is snapped, so a texel's
         // footprint does not slide with the camera. See `sun_centre`.

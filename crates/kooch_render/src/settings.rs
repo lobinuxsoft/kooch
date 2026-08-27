@@ -198,6 +198,51 @@ pub struct RenderSettings {
         shown_when = PAGES_ON
     )]
     pub shadow_min_pixels: u32,
+    /// How far a shadow lookup steps along the receiver's NORMAL before
+    /// comparing, as a MULTIPLE OF THE CLIPMAP TEXEL it landed on.
+    ///
+    /// 🔴 It multiplies a texel, and a clipmap texel is 0.1 mm at level
+    /// 0 and 5.12 m at level 16. So this is not a distance: it decides
+    /// one, and the one it decides spans five orders of magnitude
+    /// across the chain. Raise it to kill acne, and the far levels lose
+    /// their shadows first.
+    #[serde(default = "default_shadow_normal_bias")]
+    #[reflect(
+        group = "Shadows: virtual pages",
+        range = SHADOW_NORMAL_BIAS_RANGE,
+        shown_when = PAGES_ON
+    )]
+    pub shadow_normal_bias: f32,
+    /// How far the same lookup steps TOWARDS the light, in metres.
+    /// Constant across the chain, unlike the normal step above.
+    #[serde(default = "default_shadow_depth_bias")]
+    #[reflect(
+        group = "Shadows: virtual pages",
+        range = SHADOW_DEPTH_BIAS_RANGE,
+        shown_when = PAGES_ON
+    )]
+    pub shadow_depth_bias: f32,
+    /// A ceiling on the world-space normal step, in METRES. 0 disables
+    /// it, which is what shipped.
+    ///
+    /// 🔴 Without a cap the step follows the texel: 0.58 m at clipmap
+    /// level 12, 2.3 m at 14, 9.2 m at 16. A receiver pushed metres
+    /// along its own normal leaves the volume its caster shadows, so
+    /// the depth test answers LIT — and the shadow ends in a straight
+    /// line at the level boundary, with the page present, resident and
+    /// correctly drawn. That failure is indistinguishable from a
+    /// missing page in a shaded frame; `Virtual shadow pages` paints it
+    /// GREEN, which is what separates the three.
+    ///
+    /// ⚠️ Too low and the acne the normal step exists to prevent comes
+    /// back on the fine levels. This is a ceiling, not a replacement.
+    #[serde(default = "default_shadow_bias_max")]
+    #[reflect(
+        group = "Shadows: virtual pages",
+        range = SHADOW_BIAS_MAX_RANGE,
+        shown_when = PAGES_ON
+    )]
+    pub shadow_bias_max: f32,
     /// How much simplification error a meshlet may show before the cull
     /// picks a finer level, in PIXELS.
     ///
@@ -753,6 +798,25 @@ fn default_shadow_min_pixels() -> u32 {
 /// One pixel, which is what `MeshletLodSettings::default` has always
 /// been. Changing the default would change every existing project's
 /// geometry on the frame this landed.
+/// What `inti_pbr.wgsl` held as a constant before the settings could
+/// reach it.
+fn default_shadow_normal_bias() -> f32 {
+    1.8
+}
+
+/// Likewise.
+fn default_shadow_depth_bias() -> f32 {
+    0.02
+}
+
+/// 🔴 Zero — OFF — because turning it on is a behaviour change and the
+/// value that is right has not been measured yet. The same reasoning as
+/// `shadow_light_reach`: a cap chosen from arithmetic rather than from a
+/// picture is a number nobody validated.
+fn default_shadow_bias_max() -> f32 {
+    0.0
+}
+
 fn default_meshlet_lod_error() -> f32 {
     1.0
 }
@@ -896,6 +960,26 @@ const SHADOW_DENSITY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 /// ceiling is where a mesh is already down to its root cluster on
 /// anything but a full-screen object, so past it the control stops
 /// doing anything.
+const SHADOW_NORMAL_BIAS_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::FieldRange {
+    min: 0.0,
+    max: 8.0,
+    step: 0.05,
+};
+
+const SHADOW_DEPTH_BIAS_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::FieldRange {
+    min: 0.0,
+    max: 0.5,
+    step: 0.001,
+};
+
+/// Up to a metre. Past that it is not a cap on anything the chain
+/// produces below level 14.
+const SHADOW_BIAS_MAX_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::FieldRange {
+    min: 0.0,
+    max: 1.0,
+    step: 0.005,
+};
+
 const MESHLET_LOD_ERROR_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::FieldRange {
     min: 0.01,
     max: 8.0,
@@ -1076,6 +1160,9 @@ impl Default for RenderSettings {
         let shadows = ShadowSettings::default();
         let contact = ContactShadowSettings::default();
         Self {
+            shadow_normal_bias: default_shadow_normal_bias(),
+            shadow_depth_bias: default_shadow_depth_bias(),
+            shadow_bias_max: default_shadow_bias_max(),
             meshlet_lod_error: default_meshlet_lod_error(),
             aperture_f_stops: camera.aperture_f_stops,
             shutter_speed_s: camera.shutter_speed_s,
@@ -1146,6 +1233,9 @@ impl RenderSettings {
 
     pub fn shadows(&self) -> ShadowSettings {
         ShadowSettings {
+            page_normal_bias: self.shadow_normal_bias,
+            page_depth_bias: self.shadow_depth_bias,
+            page_bias_max: self.shadow_bias_max,
             max_distance: self.shadow_distance,
             cascade_texels: self.shadow_cascade_texels,
             enabled: self.shadows_enabled,

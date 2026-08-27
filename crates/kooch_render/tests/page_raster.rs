@@ -1237,9 +1237,15 @@ fn a_clipmap_texel_is_not_one_size() {
 ///
 /// 🔴 A grep, because the alternative is a GPU test that reproduces the
 /// whole shading bind group to observe one term. What it guards is
-/// narrow and exact: `INTI_NORMAL_BIAS` has to be multiplied by a
-/// per-level texel size inside the walk, and the comparison has to be
-/// against `receiver` alone. Both halves regressed together once.
+/// narrow and exact: the normal step has to be multiplied by a
+/// per-level texel size INSIDE the walk, the depth step has to be
+/// carried, and the comparison has to be against `receiver` alone.
+/// All of them regressed together once.
+///
+/// 🔴 And the step has to be CAPPED. Uncapped it follows the texel —
+/// 0.0002 m at clipmap level 0 and 9.2 m at level 16 — and nine metres
+/// walks a receiver clean out of the volume its caster shadows, so the
+/// comparison answers LIT with the page present and correctly drawn.
 #[test]
 fn the_page_reader_biases_in_texels() {
     let source = kooch_lighting::inti_pbr_shader(1);
@@ -1253,12 +1259,16 @@ fn the_page_reader_biases_in_texels() {
     let body = &source[start..end];
 
     assert!(
-        body.contains("texel_world * INTI_NORMAL_BIAS"),
+        body.contains("texel_world * inti_pages.bias.x"),
         "the offset has to scale with the level's texel"
     );
     assert!(
-        body.contains("to_light * INTI_DEPTH_BIAS"),
+        body.contains("to_light * inti_pages.bias.y"),
         "and carry the cascade's depth term too"
+    );
+    assert!(
+        body.contains("min(offset, inti_pages.bias.z)"),
+        "and the offset has to be capped, or the coarse levels lose their shadows"
     );
     assert!(
         !body.contains("receiver + bias"),

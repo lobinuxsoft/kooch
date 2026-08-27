@@ -385,6 +385,33 @@ fn the_lod_range_reaches_the_inspector() {
 }
 
 #[test]
+fn the_shadow_bias_reaches_the_settings() {
+    // Two WGSL constants, unreachable from any project, deciding
+    // whether a shadow exists at all — the same class as the LOD target
+    // above and as `virtual_shadows` before it.
+    let settings = RenderSettings {
+        shadow_normal_bias: 0.5,
+        shadow_depth_bias: 0.05,
+        shadow_bias_max: 0.04,
+        ..Default::default()
+    };
+    let shadows = settings.shadows();
+    assert_eq!(shadows.page_normal_bias, 0.5);
+    assert_eq!(shadows.page_depth_bias, 0.05);
+    assert_eq!(shadows.page_bias_max, 0.04);
+
+    // The defaults have to be what `inti_pbr.wgsl` held, so a project
+    // with no settings file renders exactly as it did before.
+    let default = RenderSettings::default();
+    assert_eq!(default.shadow_normal_bias, 1.8);
+    assert_eq!(default.shadow_depth_bias, 0.02);
+    assert_eq!(
+        default.shadow_bias_max, 0.0,
+        "the cap is OFF by default: turning it on is a behaviour change",
+    );
+}
+
+#[test]
 fn the_frame_never_asks_for_render_settings() {
     // The bug's CLASS, not its instance. `RenderSettings` is the
     // author's asset; what a frame may read is the derived struct

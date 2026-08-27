@@ -240,6 +240,7 @@ struct RasterUniform {
     world: [f32; 4],
     eye: [f32; 4],
     sun: [f32; 4],
+    bias: [f32; 4],
 }
 
 #[repr(C)]
@@ -325,6 +326,10 @@ pub struct PageRasterizer {
     /// The readers' PCF footprint width in texels, carried in
     /// `world.w`. 1 = bilinear. See `inti_page_filter` (#941).
     softness: u32,
+    /// The readers' shadow bias, carried in `bias`: the normal step as
+    /// a multiple of the texel, the step towards the light in metres,
+    /// and a ceiling on the first in metres (0 = none).
+    bias: [f32; 3],
     /// Triangles a meshlet may hold — the builder's cap, and the fixed
     /// vertex count the indirect draw issues.
     triangles: u32,
@@ -720,6 +725,10 @@ impl PageRasterizer {
             clear_bgl,
             frame: 0,
             softness: 1,
+            // What `inti_pbr.wgsl` held as constants before the
+            // settings could reach it, so a project with no settings
+            // file renders exactly as it did.
+            bias: [1.8, 0.02, 0.0],
             triangles: max_triangles_per_meshlet.max(1),
             culls: (0..levels)
                 .map(|_| MeshletCull::new(device, 1, max_triangles_per_meshlet))
@@ -847,6 +856,12 @@ impl PageRasterizer {
     /// effect at the next `write_uniform`.
     pub fn set_softness(&mut self, texels: u32) {
         self.softness = texels.max(1);
+    }
+
+    /// The readers' shadow bias, from the settings. Takes effect at the
+    /// next `write_uniform`, the way the softness does.
+    pub fn set_bias(&mut self, normal: f32, depth: f32, max_world: f32) {
+        self.bias = [normal.max(0.0), depth.max(0.0), max_world.max(0.0)];
     }
 
     pub fn triangles_per_meshlet(&self) -> u32 {
@@ -1226,6 +1241,9 @@ impl PageRasterizer {
                 ],
                 eye: [eye.x, eye.y, eye.z, 0.0],
                 sun: [d.x, d.y, d.z, 1.0],
+                // Same reason as the softness above: the shading binds
+                // this exact buffer, so one write serves both.
+                bias: [self.bias[0], self.bias[1], self.bias[2], 0.0],
             }),
         );
     }
