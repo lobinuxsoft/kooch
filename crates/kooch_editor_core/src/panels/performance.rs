@@ -1147,9 +1147,10 @@ fn shadow_page_readout(
             let per_pair = raster.tests as f32 / raster.pairs.max(1) as f32;
             ui.label(
                 egui::RichText::new(format!(
-                    "{} pair tests · {per_pair:.0} per pair · {} depth-rejected · worst level {} at {}",
+                    "{} pair tests · {per_pair:.0} per pair · {} lamp-rejected · {} sun-rejected · worst level {} at {}",
                     thousands(raster.tests),
-                    raster.depth_rejected,
+                    thousands(raster.depth_rejected as u64),
+                    thousands(raster.sun_rejected as u64),
                     raster.worst.0,
                     thousands(raster.worst.1)
                 ))
