@@ -562,15 +562,22 @@ fn inti_page_age_debug(world_position: vec3<f32>) -> vec3<f32> {
         // page can be resident, correctly addressed and hold whatever
         // the slot's previous owner left in it.
         //
-        // ⚠️ The age fade below is inert until the frame a page was
-        // ALLOCATED is recorded apart from the frame it was requested.
-        // Kept rather than deleted because the hue is still the level
-        // the walk stopped at, which is half of what this view is for.
         if inti_page_slots[page * PAGE_CELL + 3u] == 0u {
             return vec3<f32>(1.0);
         }
-        let age = inti_page_slots[page * PAGE_CELL + 1u];
-        let since = inti_pages.views.w - age;
+        // Frames since the page was ALLOCATED — word 5, written only by
+        // `page_stamp`. Not word 1, which `page_refresh` rewrites every
+        // frame the marking asks for the page: that one is zero for
+        // everything on screen, by definition, and reading it here is
+        // what made this view useless.
+        //
+        // ⚠️ `since` is unsigned and saturates rather than going
+        // negative. Subtracting one from an unsigned zero does not give
+        // minus one, it gives four billion, and the fade below clamped
+        // every visible pixel to its floor — a constant wearing the
+        // costume of a signal.
+        let born = inti_page_slots[page * PAGE_CELL + 5u];
+        let since = select(0u, inti_pages.views.w - born, inti_pages.views.w >= born);
 
         var hue = vec3<f32>(0.6);
         switch level % 6u {
@@ -581,8 +588,11 @@ fn inti_page_age_debug(world_position: vec3<f32>) -> vec3<f32> {
             case 4u: { hue = vec3<f32>(0.3, 0.6, 1.0); }
             default: { hue = vec3<f32>(0.75, 0.4, 1.0); }
         }
-        // Full at one frame, a fifth by sixteen.
-        let fade = clamp(1.0 - f32(since - 1u) / 16.0, 0.2, 1.0);
+        // Full the frame it was allocated, a fifth by sixteen. A sweep
+        // of bright travelling with the camera is the allocator
+        // churning, and a flicker that rides that sweep is an
+        // allocation fault.
+        let fade = clamp(1.0 - f32(since) / 16.0, 0.2, 1.0);
         return hue * fade;
     }
     // Nothing at any level.

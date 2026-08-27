@@ -299,16 +299,33 @@ fn the_flat_table_is_megabytes_not_108() {
     let slots = super::mark::padded_lights(101) + 1;
     let entries = super::mark::span(config, clipmap, slots);
     let bytes = entries * super::pool::PAGE_CELL as u64 * 4;
-    // Four words an entry since the receivers' ask joined the slot,
-    // the age and the listing.
+    // SIX words an entry: the slot, the frame last requested, the
+    // listing, the content generation, the receivers' ask, and the
+    // frame the page was ALLOCATED.
+    //
+    // 🔴 That last one cost 2.1 MiB a view and it is worth naming why
+    // it was paid. The frame a page was requested is rewritten every
+    // frame the marking asks, so it can never say "this page is new" —
+    // and the page age debug view, built on it, painted every pixel of
+    // every frame white. An instrument that cannot fail visibly is
+    // worse than no instrument: it was reached for to diagnose a
+    // shadow and reported nothing, twice, before anyone read its
+    // arithmetic.
     assert!(
-        bytes < 12 * 1024 * 1024,
+        bytes < 14 * 1024 * 1024,
         "one view's table is {bytes} bytes"
     );
     let flat = 28_409_856u64 * 4;
+    // ⚠️ EIGHT, and it used to be ten. The sixth word moved this from
+    // 10.5x under the flat answer to 8.8x, so "an order of magnitude"
+    // has stopped being literally true. Written down rather than
+    // quietly rounded: the conclusion the comparison exists for — that
+    // the flat table is a fraction of what the full chain would cost —
+    // is unchanged, and the day it needs a ninth word this is the line
+    // that should be argued with.
     assert!(
-        bytes * 10 < flat,
-        "{bytes} bytes has stopped being an order of magnitude under          the full-chain flat answer's {flat}"
+        bytes * 8 < flat,
+        "{bytes} bytes has stopped being a fraction of the full-chain flat answer's {flat}"
     );
 }
 

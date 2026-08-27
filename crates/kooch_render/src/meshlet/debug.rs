@@ -313,13 +313,17 @@ pub enum MeshletDebugMode {
     ///   jumps between two colours frame to frame is the reader crossing
     ///   a level boundary, which moves the texel size and the rect under
     ///   it.
-    /// - **Brightness** — frames since the page was last requested,
-    ///   full at one and dim by sixteen.
+    /// - **Brightness** — frames since the page was ALLOCATED, full on
+    ///   the frame it was claimed and a fifth by sixteen. A sweep of
+    ///   bright travelling with the camera is the allocator churning,
+    ///   and a flicker that rides that sweep is an allocation fault.
     ///
-    ///   ⚠️ INERT for anything on screen, for the reason above: the
-    ///   marking refreshes that word every frame it asks. It needs the
-    ///   frame a page was ALLOCATED, recorded apart from the frame it
-    ///   was requested, and that word does not exist yet.
+    ///   🔴 The allocation frame, and NOT the frame the page was last
+    ///   requested. The marking refreshes that one every frame it asks,
+    ///   so it is zero for everything on screen and cannot say "new".
+    ///   Worse, the fade computed `since - 1` on an unsigned zero,
+    ///   which is four billion, and clamped every visible pixel to its
+    ///   floor — a constant wearing the costume of a signal.
     ///
     /// Black is no page at any level; magenta is the paged path off.
     VirtualPageAge = 28,

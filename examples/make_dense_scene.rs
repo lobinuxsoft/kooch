@@ -29,7 +29,14 @@
 //! cargo run --example make_dense_scene --features editor,physics,testing -- <parent> 2000 4 128
 //! ```
 //!
-//! The arguments are `<parent> [cubes] [dragons] [lights]`.
+//! The arguments are `<parent> [cubes] [dragons] [lights] [spacing]`.
+//!
+//! 🔴 `spacing` is how the sun's CHAIN gets exercised. Level 0 of the
+//! clipmap spans 1.3 m and level 16 spans 84 km, and everything that
+//! changes across it — the texel a shadow is quantised to, the bias
+//! derived from that texel, which level the reader stops at — is one
+//! constant in a scene 190 m wide. `-- <parent> 2000 24 64 30` puts the
+//! same objects over 1.4 km and walks eight levels instead of two.
 //!
 //! # The lights MOVE, and that is the point
 //!
@@ -60,8 +67,16 @@ use kooch_ecs::scene::{ComponentDescription, EntityDescription, SceneDocument};
 /// Asset type name recorded on the `.meta` sidecar.
 const MESH_TYPE: &str = "kooch_render::meshlet::asset::MeshletMesh";
 
-/// Spacing between instances, in world units. Wide enough that the
-/// meshes do not intersect at the scales used below.
+/// Spacing between instances, in world units, when nobody says
+/// otherwise. Wide enough that the meshes do not intersect.
+///
+/// 🔴 Overridable because DISTANCE is its own test. The sun's clipmap
+/// spans 1.3 m at level 0 and 84 km at level 16, and every property
+/// that changes across that chain — the texel a shadow is quantised
+/// to, the bias derived from it, which level the reader stops at — is
+/// invisible in a scene 190 m across. Spreading the same object count
+/// over kilometres costs nothing and is the only way to walk the
+/// chain.
 const SPACING: f32 = 3.0;
 
 /// How far a light orbits from its pivot, and how fast.
@@ -82,6 +97,11 @@ fn main() {
     let cubes: usize = args.next().and_then(|a| a.parse().ok()).unwrap_or(600);
     let dragons: usize = args.next().and_then(|a| a.parse().ok()).unwrap_or(8);
     let lights: usize = args.next().and_then(|a| a.parse().ok()).unwrap_or(64);
+    let spacing: f32 = args
+        .next()
+        .and_then(|a| a.parse().ok())
+        .unwrap_or(SPACING)
+        .max(0.1);
 
     let name = "DenseScene";
     let root = parent.join(name);
@@ -98,7 +118,7 @@ fn main() {
     let assets = Assets::read(&engine_root);
     let root = kooch_editor_core::project::create_project(name, &parent, &engine_root)
         .expect("creating the project");
-    let document = scene(&assets, cubes, dragons, lights);
+    let document = scene(&assets, cubes, dragons, lights, spacing);
     // Mesh instances only. The camera and the sky are entities too, but
     // they carry no `MeshRenderer`, so they never reach the cull — and
     // counting them would overstate the figure this scene exists to show.
@@ -123,6 +143,10 @@ fn main() {
         "  {cubes} cubes + {dragons} dragons = {instances} mesh instances \
          ({} entities with the camera, sky, sun and lights)",
         document.entities.len(),
+    );
+    println!(
+        "  {:.0} m across at {spacing:.1} m spacing",
+        (document.entities.len() as f64).sqrt().ceil() * spacing as f64,
     );
     println!(
         "  {lights} orbiting lights ({} point + {} spot), all casting",
@@ -173,12 +197,18 @@ fn guid_of(engine_root: &Path, relative: &str) -> Guid {
 
 /// Cubes on a grid, dragons spread through it, one camera far enough back
 /// to hold the whole thing.
-fn scene(assets: &Assets, cubes: usize, dragons: usize, lights: usize) -> SceneDocument {
+fn scene(
+    assets: &Assets,
+    cubes: usize,
+    dragons: usize,
+    lights: usize,
+    spacing: f32,
+) -> SceneDocument {
     let total = cubes + dragons;
     // Square-ish grid, so the camera distance below stays predictable
     // whatever the counts are.
     let columns = (total as f64).sqrt().ceil().max(1.0) as usize;
-    let extent = columns as f32 * SPACING;
+    let extent = columns as f32 * spacing;
 
     let mut entities = Vec::with_capacity(total + lights * 2 + 3);
     entities.push(camera(Vec3::new(0.0, extent * 0.45, extent * 0.9)));
@@ -189,9 +219,9 @@ fn scene(assets: &Assets, cubes: usize, dragons: usize, lights: usize) -> SceneD
         let column = index % columns;
         let row = index / columns;
         let position = Vec3::new(
-            (column as f32 - columns as f32 * 0.5) * SPACING,
+            (column as f32 - columns as f32 * 0.5) * spacing,
             0.0,
-            (row as f32 - columns as f32 * 0.5) * SPACING,
+            (row as f32 - columns as f32 * 0.5) * spacing,
         );
 
         // Dragons spread evenly rather than clumped at one end: a cluster
