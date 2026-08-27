@@ -599,7 +599,19 @@ impl PageMarker {
                     self.pool.config().per_row(),
                     self.pool.config().slice(),
                 ],
-                life: self.life.words(),
+                // `words()` leaves the fourth word at zero; the sun's
+                // half-span rides it (#949). The marking needs the same
+                // number the depth pass normalises by, and it is the
+                // ONLY place a receiver's `along` can be biased into
+                // the non-negative range an `atomicMax` over bitcast
+                // floats requires. Not `sun.w`, which two other crates
+                // read as "is there a sun" — a span under 0.5 would
+                // turn every one of those off without a word.
+                life: {
+                    let mut life = self.life.words();
+                    life[3] = super::raster::SUN_SPAN.to_bits();
+                    life
+                },
                 // How many output pixels one depth pixel covers, per
                 // axis. 1 when nothing is upscaling.
                 paint: [

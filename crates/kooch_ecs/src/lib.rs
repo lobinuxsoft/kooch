@@ -44,6 +44,8 @@ pub mod scene_member;
 pub mod sky_renderer;
 pub mod spot_light;
 pub mod storage;
+#[cfg(feature = "testing")]
+pub mod testing;
 pub mod transform;
 pub mod world_snapshot;
 

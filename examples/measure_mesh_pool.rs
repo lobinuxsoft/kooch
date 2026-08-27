@@ -29,8 +29,7 @@ fn mib(bytes: u64) -> f64 {
 
 fn main() {
     let assets = [
-        "assets/meshes/scattering_skull.glb",
-        "assets/meshes/damaged_helmet.glb",
+        "assets/meshes/dragon.glb",
         "assets/meshes/suzanne.glb",
         "assets/meshes/primitives/cube.glb",
     ];

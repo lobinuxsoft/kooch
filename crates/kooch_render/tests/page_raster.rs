@@ -118,17 +118,27 @@ fn the_counters_name_every_level() {
         sun + 256,
         "the lamp buckets moved; `LAMP_CULLS` and the shader's constant have to move together"
     );
-    assert_eq!(raster.count_slots(), buckets * 3 + 6);
+    // …and last the two receiver-bound rejections, the lamps' (#940)
+    // and the sun's (#949), which are counted apart because they
+    // measure different properties of a scene.
+    assert_eq!(raster.count_slots(), buckets * 3 + 7);
     let mut words = vec![0u32; raster.count_slots() as usize];
     words[0] = 7;
     words[1] = 5;
     words[2] = 9;
     words[buckets as usize + 1] = 42;
     words[buckets as usize + 2] = 900;
+    // The two rejections sit at the tail, and the point of the pair is
+    // that a reader can tell them apart: a compact scene leaves the
+    // sun's bound nothing to reject while the lamps' still bites.
+    words[buckets as usize * 3 + 5] = 11;
+    words[buckets as usize * 3 + 6] = 77;
     let counts = raster.decode(&words, 1);
     assert_eq!(counts.pages, 21, "every bucket sums");
     assert_eq!(counts.local, 42, "local pages are reported, not hidden");
     assert_eq!(counts.pairs, 900);
+    assert_eq!(counts.depth_rejected, 11, "the lamps' bound, alone");
+    assert_eq!(counts.sun_rejected, 77, "the sun's bound, alone");
     assert_eq!(counts.view, 1);
 }
 

@@ -206,6 +206,21 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     if abs(along) > raster.world.y + radius {
         return;
     }
+    // #949 — Olsson §4's receiver bound on the sun's axis. The lamp's
+    // twin sits above, and the asymmetry is the whole point: a lamp is
+    // a point, so a radius bounds it in every direction at once. The
+    // sun is directional, so only the FAR side can go. A caster nearer
+    // the sun than every receiver here still shadows them, however far
+    // away it is, and that side is never rejected.
+    //
+    // `entry.z` holds `along + span` max-reduced over this page's
+    // receivers — the same bias, from the same snapped origin, that
+    // `mark_sun` wrote. Zero means the marking recorded nothing, which
+    // keeps the caster: the safe way for this to be wrong.
+    if entry.z != 0u && (along + raster.world.y) - radius > bitcast<f32>(entry.z) {
+        atomicAdd(&page_counts[buckets * 3u + 6u], 1u);
+        return;
+    }
 
     let slot = atomicAdd(&page_counts[buckets + 2u], 1u);
     if slot >= raster.chain.y {

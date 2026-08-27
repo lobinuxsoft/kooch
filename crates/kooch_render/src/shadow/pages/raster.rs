@@ -192,6 +192,15 @@ pub struct RasterCounts {
     /// nearest point lay beyond every receiver the page shades, so
     /// drawing it could change nothing.
     pub depth_rejected: u32,
+    /// The same, for the SUN (#949) — counted apart on purpose.
+    ///
+    /// 🔴 A lamp bounds by radius and the sun by its own axis, so the
+    /// two answer different questions about a scene: lamps say how
+    /// much of a room is behind the walls that light it, the sun says
+    /// how deep the world is. Summed together they say neither, and
+    /// the number this was built to read is whether a COMPACT scene
+    /// leaves the sun's bound with nothing to reject.
+    pub sun_rejected: u32,
     /// Which camera this is.
     pub view: u32,
     /// Meshlet/page tests the expansion ran, summed over the levels.
@@ -909,6 +918,7 @@ impl PageRasterizer {
             overflow: words[levels + 3],
             cached: words[levels + 4],
             depth_rejected: words.get(levels * 3 + 5).copied().unwrap_or(0),
+            sun_rejected: words.get(levels * 3 + 6).copied().unwrap_or(0),
             view,
         }
     }
@@ -952,9 +962,10 @@ fn count_slots(buckets: u32) -> u32 {
     // time, because unlike the product it is not a number two buffers
     // already hold.
     //
-    // Plus one at the very end: lamp pairs the receiver bound rejected
-    // (#940).
-    buckets * 3 + 6
+    // Plus two at the very end: pairs the receiver bound rejected, the
+    // lamps' (#940) and the sun's (#949), kept apart because they
+    // measure different properties of a scene.
+    buckets * 3 + 7
 }
 
 /// The atlas: one square layer per camera.

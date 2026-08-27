@@ -63,7 +63,7 @@ struct PageView {
     paint: vec4<f32>,
     // x THIS FRAME's index, y how many frames a page may go unrequested
     // before it is evicted, z 1 when the pool is being rebuilt from
-    // nothing, w unused.
+    // nothing, w the sun's half-span in metres, bitcast (#949).
     //
     // 🔴 The frame index is what makes the pool persistent. A page is
     // not freed because a frame ended; it is freed because `max_age`
@@ -565,6 +565,37 @@ fn sun_page_for(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
 // One page of the sun's clipmap, marked.
 fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let page = sun_page_for(slot, world, wanted);
+    // #949 — the receiver bound, on the sun's axis rather than the
+    // lamp's radius. `mark_local` records how FAR a receiver is; a
+    // lamp is a point, so distance alone bounds it and any direction
+    // may occlude. The sun is directional, so only ONE side can be
+    // culled: a caster nearer the sun than the receiver shadows it
+    // legitimately at any distance, and a caster further along shadows
+    // nobody being shaded here.
+    //
+    // 🔴 The bias is not a trick, it is the depth pass's own
+    // normalisation. `page_depth` writes `1.0 - (along + span) / (2 *
+    // span)`, so `along + span` is already the quantity that pass
+    // treats as non-negative. It has to be non-negative here for a
+    // different reason: an `atomicMax` over bitcast floats orders
+    // correctly only while the sign bit is clear, and a raw signed
+    // `along` would make the max pick the receiver NEAREST the sun —
+    // the exact opposite — while zero stopped meaning "unrecorded".
+    if page.x < pages.pool.x {
+        let basis = sun_basis(pages.sun.xyz);
+        let eye = pages.eye_and_base.xyz;
+        // The SAME origin the expansion measures a caster from: the
+        // level's snapped depth grid, not the raw camera. Measuring
+        // the two ends of one comparison from different origins is
+        // what #948 cost a day over.
+        let along = dot(world - eye, basis[2])
+            + sun_drift(eye, basis, pages.eye_and_base.w, pages.strides.x, page.y);
+        let span = bitcast<f32>(pages.life.w);
+        atomicMax(
+            &table_cells[page.x * PAGE_CELL + 4u],
+            bitcast<u32>(max(along + span, 0.0)),
+        );
+    }
     if mark_bit(page.x, true) {
         atomicAdd(&rank_state[rank_base() + rank_sun(page.y)], 1u);
     }
