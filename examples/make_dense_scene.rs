@@ -103,21 +103,35 @@ fn main() {
         .unwrap_or(SPACING)
         .max(0.1);
 
-    let name = "DenseScene";
-    let root = parent.join(name);
-    // Never deletes. A generator that wipes a directory is a generator
-    // that can destroy work someone did in the editor.
-    if root.exists() {
-        eprintln!(
-            "{} already exists. Delete it yourself, or pass a different parent directory.",
-            root.display(),
-        );
-        std::process::exit(1);
-    }
-
     let assets = Assets::read(&engine_root);
-    let root = kooch_editor_core::project::create_project(name, &parent, &engine_root)
-        .expect("creating the project");
+
+    // 🔴 An EXISTING project is written into, rather than a new one
+    // being made beside it. A benchmark in a project of its own has
+    // none of the settings, none of the input map and none of the
+    // camera the thing being measured actually ships with — and a
+    // scene is a file, so there is no reason it cannot live where the
+    // rest of the work does.
+    let existing = parent.join(kooch_core::scene_paths::PROJECT_MANIFEST_FILE);
+    let (root, into_existing) = if existing.is_file() {
+        (parent.clone(), true)
+    } else {
+        let name = "DenseScene";
+        let root = parent.join(name);
+        // Never deletes. A generator that wipes a directory is a
+        // generator that can destroy work someone did in the editor.
+        if root.exists() {
+            eprintln!(
+                "{} already exists. Delete it yourself, or pass a different parent directory.",
+                root.display(),
+            );
+            std::process::exit(1);
+        }
+        (
+            kooch_editor_core::project::create_project(name, &parent, &engine_root)
+                .expect("creating the project"),
+            false,
+        )
+    };
     // 🔴 The scene this writes uses `kooch_ecs::testing::spin::Spin`,
     // and the project template does not ask for the feature that
     // registers it. Without this the generator produces a benchmark
@@ -131,9 +145,25 @@ fn main() {
     // they carry no `MeshRenderer`, so they never reach the cull — and
     // counting them would overstate the figure this scene exists to show.
     let instances = cubes + dragons;
-    document
-        .save(&root.join(kooch_core::scene_paths::DEFAULT_SCENE_REL_PATH))
-        .expect("writing the scene");
+    // ⚠️ Beside the project's own scenes, never over them. Writing to
+    // `DEFAULT_SCENE_REL_PATH` in a project somebody works in would
+    // replace the scene they opened the editor for.
+    let scene_path = if into_existing {
+        root.join("assets/scenes/dense.scene")
+    } else {
+        root.join(kooch_core::scene_paths::DEFAULT_SCENE_REL_PATH)
+    };
+    if into_existing && scene_path.exists() {
+        eprintln!(
+            "{} already exists; delete it yourself.",
+            scene_path.display()
+        );
+        std::process::exit(1);
+    }
+    if let Some(dir) = scene_path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    document.save(&scene_path).expect("writing the scene");
 
     // The arithmetic the scene exists to make visible. Printed rather than
     // left implicit so the number to beat is on screen before the editor
@@ -250,9 +280,20 @@ fn scene(
     // whatever the counts are.
     let columns = (total as f64).sqrt().ceil().max(1.0) as usize;
     let extent = columns as f32 * spacing;
+    // 🔴 Objects scale WITH the field. Spreading them over a kilometre
+    // and leaving them a metre across produces a scene that is empty
+    // to look at: a 1 m cube at 1.4 km is under a pixel, so the whole
+    // benchmark renders as noise on the horizon. Spacing sets the
+    // distances; this keeps them things you can see at those
+    // distances.
+    let scale = (spacing * 0.25).max(1.0);
 
     let mut entities = Vec::with_capacity(total + lights * 2 + 3);
-    entities.push(camera(Vec3::new(0.0, extent * 0.45, extent * 0.9)));
+    // 🔴 Low and INSIDE the field, not above it looking down. What is
+    // under test is what happens to a shadow across DISTANCE, and a
+    // camera that holds the whole layout puts every object at roughly
+    // the same range — which is the one framing that cannot show it.
+    entities.push(camera(Vec3::new(0.0, scale * 2.0, extent * 0.42)));
     entities.push(sky());
     entities.push(sun());
 
@@ -277,9 +318,9 @@ fn scene(
             dragons > 0 && index % stride.max(1) == 0 && index / stride.max(1) < dragons;
 
         entities.push(if is_dragon {
-            instance(&format!("Dragon {index}"), assets.dragon, position, 1.0)
+            instance(&format!("Dragon {index}"), assets.dragon, position, scale)
         } else {
-            instance(&format!("Cube {index}"), assets.cube, position, 1.0)
+            instance(&format!("Cube {index}"), assets.cube, position, scale)
         });
     }
 
@@ -300,7 +341,7 @@ fn scene(
             * ((index as f32 / lights.max(1) as f32) * 2.0)
                 .fract()
                 .max(0.15);
-        let pivot_at = Vec3::new(angle.cos() * reach, 2.5, angle.sin() * reach);
+        let pivot_at = Vec3::new(angle.cos() * reach, scale * 1.5, angle.sin() * reach);
 
         let pivot_index = entities.len();
         entities.push(pivot(&format!("Light Pivot {index}"), pivot_at));
@@ -308,6 +349,7 @@ fn scene(
             &format!("Light {index}"),
             pivot_index,
             index % 2 == 0,
+            scale,
         ));
     }
 
@@ -430,12 +472,18 @@ fn pivot(label: &str, position: Vec3) -> EntityDescription {
 ///
 /// `point` picks which kind; see the loop in [`scene`] for why the two
 /// alternate.
-fn orbiting_light(label: &str, pivot_index: usize, point: bool) -> EntityDescription {
+fn orbiting_light(label: &str, pivot_index: usize, point: bool, scale: f32) -> EntityDescription {
+    // 🔴 The arm and the reach scale with the field too. A lamp with a
+    // 12 m range on a 6 m arm lights nothing in a world laid out 30 m
+    // apart, and a benchmark whose lamps reach nothing is a benchmark
+    // of the sun with extra entities.
+    let arm = ORBIT_RADIUS * scale;
+    let range = (12.0 * scale, 16.0 * scale);
     let transform = ComponentDescription {
         type_name: type_name_of::<kooch_ecs::transform::Transform>(),
         fields: vec![(
             "position".to_owned(),
-            ReflectValue::Vec3(Vec3::new(ORBIT_RADIUS, 0.0, 0.0)),
+            ReflectValue::Vec3(Vec3::new(arm, 0.0, 0.0)),
         )],
     };
     let light = if point {
@@ -443,8 +491,11 @@ fn orbiting_light(label: &str, pivot_index: usize, point: bool) -> EntityDescrip
             type_name: type_name_of::<kooch_ecs::point_light::PointLight>(),
             fields: vec![
                 ("active".to_owned(), ReflectValue::Bool(true)),
-                ("intensity".to_owned(), ReflectValue::F32(8000.0)),
-                ("range".to_owned(), ReflectValue::F32(12.0)),
+                (
+                    "intensity".to_owned(),
+                    ReflectValue::F32(8000.0 * scale * scale),
+                ),
+                ("range".to_owned(), ReflectValue::F32(range.0)),
                 ("cast_shadows".to_owned(), ReflectValue::Bool(true)),
             ],
         }
@@ -453,8 +504,11 @@ fn orbiting_light(label: &str, pivot_index: usize, point: bool) -> EntityDescrip
             type_name: type_name_of::<kooch_ecs::spot_light::SpotLight>(),
             fields: vec![
                 ("active".to_owned(), ReflectValue::Bool(true)),
-                ("intensity".to_owned(), ReflectValue::F32(12000.0)),
-                ("range".to_owned(), ReflectValue::F32(16.0)),
+                (
+                    "intensity".to_owned(),
+                    ReflectValue::F32(12000.0 * scale * scale),
+                ),
+                ("range".to_owned(), ReflectValue::F32(range.1)),
                 ("cast_shadows".to_owned(), ReflectValue::Bool(true)),
             ],
         }
