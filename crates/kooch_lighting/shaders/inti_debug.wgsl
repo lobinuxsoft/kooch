@@ -543,14 +543,34 @@ fn inti_page_age_debug(world_position: vec3<f32>) -> vec3<f32> {
             continue;
         }
 
-        let age = inti_page_slots[page * PAGE_CELL + 1u];
-        let since = inti_pages.views.w - age;
-        // Allocated this frame. White, and deliberately the loudest
-        // thing on screen: it is the signal a flicker has to be
-        // correlated against.
-        if since == 0u {
+        // 🔴 WHITE is "this page has no content", and it used to be
+        // "allocated this frame" — which painted the whole screen.
+        //
+        // Word 1 is the frame a page was last REQUESTED, and
+        // `page_refresh` rewrites it every frame the marking asks for
+        // the page. Everything visible is asked for every frame by
+        // definition, so `frame - age` was zero for every pixel and the
+        // view returned white before reaching the hue or the fade. The
+        // three independent signals its documentation promised were one
+        // signal, and it could not answer the question it was built
+        // for.
+        //
+        // Word 3 is the content generation, and zero means "never drawn
+        // into" — `page_stamp` writes it on a fresh claim and
+        // `cs_compact` replaces it when the page is listed for a draw.
+        // That is the distinction a hole in a shadow actually needs: a
+        // page can be resident, correctly addressed and hold whatever
+        // the slot's previous owner left in it.
+        //
+        // ⚠️ The age fade below is inert until the frame a page was
+        // ALLOCATED is recorded apart from the frame it was requested.
+        // Kept rather than deleted because the hue is still the level
+        // the walk stopped at, which is half of what this view is for.
+        if inti_page_slots[page * PAGE_CELL + 3u] == 0u {
             return vec3<f32>(1.0);
         }
+        let age = inti_page_slots[page * PAGE_CELL + 1u];
+        let since = inti_pages.views.w - age;
 
         var hue = vec3<f32>(0.6);
         switch level % 6u {
