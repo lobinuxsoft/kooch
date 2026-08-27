@@ -311,9 +311,17 @@ fn the_age_view_paints_missing_content() {
     let white = body
         .find("return vec3<f32>(1.0);")
         .expect("the view still paints white somewhere");
-    let requested = body.find("inti_pages.views.w - age").unwrap_or(usize::MAX);
     assert!(
-        white < requested,
-        "the content test has to come FIRST, or the request age shadows it again",
+        body.contains("PAGE_CELL + 5u"),
+        "the fade has to read the ALLOCATION frame, not the request frame",
+    );
+    assert!(
+        !body.contains("since - 1u"),
+        "`since - 1u` at zero is four billion on a u32, and clamps every pixel to the floor",
+    );
+    let born = body.find("PAGE_CELL + 5u").expect("checked above");
+    assert!(
+        white < born,
+        "the content test has to come FIRST, or the age shadows it again",
     );
 }

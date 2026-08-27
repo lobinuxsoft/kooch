@@ -261,6 +261,13 @@ fn page_stamp(entry: u32, slot: u32, frame: u32) {
     // A fresh claim has no content: whatever the slot held belonged to
     // whoever held it last. Zero is "never drawn" to the cache.
     atomicStore(&table_cells[entry * PAGE_CELL + 3u], 0u);
+    // 🔴 The frame this page was ALLOCATED, and the only place it is
+    // written. `page_refresh` deliberately does not touch it: word 1
+    // means "still wanted" and is rewritten every frame the marking
+    // asks, so it can never distinguish a page that is new from one
+    // that has been resident for a minute. Reading the two as one is
+    // what made the age debug view paint every pixel white.
+    atomicStore(&table_cells[entry * PAGE_CELL + 5u], frame);
 }
 
 fn page_refresh(entry: u32, frame: u32) {

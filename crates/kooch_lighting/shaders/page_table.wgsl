@@ -73,7 +73,12 @@ const PAGE_ABSENT: u32 = 0u;
 ///
 /// 🔴 Interleaved because `max_storage_buffers_per_shader_stage` is
 /// eight on the downlevel defaults; see the marking pass's binding.
-const PAGE_CELL: u32 = 5u;
+/// Word 5 is the frame a page was ALLOCATED, written only by
+/// `page_stamp`. Distinct from word 1, which `page_refresh` rewrites
+/// every frame the marking asks for the page — so word 1 says "still
+/// wanted" and can never say "new". The page age debug view was built
+/// on word 1 and painted the whole screen as a result.
+const PAGE_CELL: u32 = 6u;
 
 /// Culls a frame is willing to run for local lights — one per lamp,
 /// the way the retired cube path ran one per face (#777). A lamp's
