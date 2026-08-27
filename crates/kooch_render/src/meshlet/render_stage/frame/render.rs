@@ -329,6 +329,13 @@ impl MeshletRenderStage {
         // forced multi-instance LOD descent to the closest one's
         // verdict (#474).
         let required_group_capacity = self.pipeline.instance_group_capacity(&instances).max(1);
+        // 🔴 Carried on the params so the LAMP cull sizes its arena by
+        // the same number. Its arena is `[slot * capacity + group]`, so
+        // the over-approximation the main cull can afford in one row
+        // becomes 2.4 GB across sixty-four — past `max_buffer_size`,
+        // which wgpu answers with an invalid buffer and a validation
+        // error on every submit for the rest of the run.
+        let scene_params = scene_params.with_groups(required_group_capacity);
 
         // 🎯 ONE walk of the light archetypes, for the whole view.
         //

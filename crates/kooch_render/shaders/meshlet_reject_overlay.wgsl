@@ -89,7 +89,10 @@ struct MeshInstance {
 struct SceneCullParams {
     instance_count: u32,
     meshlets_per_mesh: u32,
-    _pad0: u32,
+    // The scene's real LOD-group count. Read by the CPU to size the
+    // group-error arenas, never by a shader — it is here because this
+    // is the struct that already reaches everything that needs it.
+    group_capacity: u32,
     _pad1: u32,
 }
 

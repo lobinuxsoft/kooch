@@ -1598,6 +1598,7 @@ impl PageRasterizer {
                 lamp_slots as u32,
                 scene_params.instance_count,
                 scene_params.meshlets_per_mesh,
+                scene_params.group_capacity,
                 lod_target,
             );
         }

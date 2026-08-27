@@ -237,13 +237,27 @@ impl LampCull {
         lamp_slots: u32,
         instance_count: u32,
         meshlets_per_mesh: u32,
+        group_capacity: u32,
         lod_target: f32,
     ) {
-        self.ensure_groups(
-            device,
-            instance_count.saturating_mul(meshlets_per_mesh),
-            lamp_slots,
-        );
+        // 🔴 The scene's REAL group count, not `instances × meshlets`.
+        // This arena is indexed `[slot * capacity + group]` — one row a
+        // lamp — so the over-approximation the single-row main cull can
+        // afford is multiplied by up to `LAMP_CULLS` here. Measured on
+        // 2024 instances, 4700 meshlets and 64 lamps: 2.4 GB against
+        // 6.6 MB, and the first of those is past `max_buffer_size`, so
+        // wgpu hands back an INVALID buffer and every submit fails for
+        // the rest of the run.
+        //
+        // ⚠️ Falls back to the old over-approximation when the count is
+        // absent, because a zero here would size the arena to nothing
+        // and the reduction would write out of bounds.
+        let groups = if group_capacity > 0 {
+            group_capacity
+        } else {
+            instance_count.saturating_mul(meshlets_per_mesh)
+        };
+        self.ensure_groups(device, groups, lamp_slots);
         queue.write_buffer(
             &self.uniform,
             0,
