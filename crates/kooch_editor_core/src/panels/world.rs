@@ -51,8 +51,6 @@ pub(crate) fn draw_world_content(
     ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
     ui.separator();
 
-    handle_keyboard(ui, focused, entities, selected, last_clicked_index, actions);
-
     // Every line the panel will show, headers included, before any of
     // them is drawn. Collapsed scenes contribute their header and
     // nothing else, so the list is exactly what is on screen and its
@@ -66,6 +64,34 @@ pub(crate) fn draw_world_content(
     }
 
     let rows = build_rows(ui, entities, scenes, &filter);
+    // 🔴 What the panel is actually SHOWING, in the order it shows it —
+    // the filter applied, collapsed subtrees left out. Every gesture that
+    // spans more than one row reads this instead of the display list:
+    // Shift+Click, Ctrl+A and the arrows all used to walk `entities`, so
+    // a range between two visible rows swept up every hidden entity
+    // between them and Ctrl+A selected two thousand while four were on
+    // screen.
+    let listed: Vec<usize> = rows
+        .iter()
+        .filter_map(|row| match row {
+            WorldRow::Entity(idx) => Some(*idx),
+            _ => None,
+        })
+        .collect();
+    // ⚠️ After the rows, so it can be told what is listed — which means a
+    // selection moved by the keyboard is revealed and scrolled to on the
+    // NEXT frame rather than this one. One frame, and only for the
+    // arrows: a click is handled inside the row, where the rows already
+    // exist.
+    handle_keyboard(
+        ui,
+        focused,
+        entities,
+        &listed,
+        selected,
+        last_clicked_index,
+        actions,
+    );
     let row_h = entity_row::row_height(ui);
     let scroll_to = focus.and_then(|focus| scroll_offset_for(ui, &rows, entities, focus, row_h));
 
@@ -143,6 +169,7 @@ pub(crate) fn draw_world_content(
                         selected,
                         pinned,
                         reflected_types,
+                        &listed,
                         clipboard_has_entities,
                         actions,
                         last_clicked_index,
@@ -913,6 +940,8 @@ fn handle_keyboard(
     ui: &egui::Ui,
     focused: bool,
     entities: &[EntityDisplayInfo],
+    // The display indices the panel is showing, in order.
+    listed: &[usize],
     selected: &mut Vec<Entity>,
     last_clicked_index: &mut Option<usize>,
     actions: &mut Vec<EditorAction>,
@@ -939,10 +968,18 @@ fn handle_keyboard(
 
     // Keyboard navigation: Ctrl+A to select all.
     let kb_select_all = ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A));
-    if kb_select_all && !entities.is_empty() {
+    if kb_select_all && !listed.is_empty() {
+        // "All" means all of what is on screen. Under a filter it used to
+        // mean all two thousand, which is the opposite of what filtering
+        // was for.
         selected.clear();
-        selected.extend(entities.iter().map(|e| e.entity));
-        *last_clicked_index = Some(entities.len() - 1);
+        selected.extend(
+            listed
+                .iter()
+                .filter_map(|&i| entities.get(i))
+                .map(|e| e.entity),
+        );
+        *last_clicked_index = listed.last().copied();
     }
 
     // Keyboard navigation: Arrow Up/Down.
@@ -950,13 +987,18 @@ fn handle_keyboard(
     let kb_down = ui.input(|i| i.key_pressed(egui::Key::ArrowDown));
     let kb_shift = ui.input(|i| i.modifiers.shift);
 
-    if (kb_up || kb_down) && !entities.is_empty() {
-        let current_idx = last_clicked_index.unwrap_or(0);
-        let new_idx = if kb_up {
-            current_idx.saturating_sub(1)
-        } else {
-            (current_idx + 1).min(entities.len() - 1)
+    if (kb_up || kb_down) && !listed.is_empty() {
+        // Stepping through the LISTED rows, not the display list, or an
+        // arrow lands on an entity the filter removed and the panel shows
+        // nothing moving.
+        let here = last_clicked_index
+            .and_then(|idx| listed.iter().position(|&i| i == idx))
+            .unwrap_or(0);
+        let next = match kb_up {
+            true => here.saturating_sub(1),
+            false => (here + 1).min(listed.len() - 1),
         };
+        let new_idx = listed[next];
 
         if kb_shift {
             // Extend selection to include the new index.

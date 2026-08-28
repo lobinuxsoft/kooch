@@ -378,6 +378,7 @@ fn a_row_advances_the_cursor_by_exactly_one_pitch() {
             &mut Vec::new(),
             &mut std::collections::HashSet::new(),
             &[],
+            &[0],
             false,
             &mut Vec::new(),
             &mut None,
@@ -423,6 +424,7 @@ fn a_very_long_name_does_not_make_its_row_taller() {
             &mut Vec::new(),
             &mut std::collections::HashSet::new(),
             &[],
+            &[0],
             false,
             &mut Vec::new(),
             &mut None,
@@ -839,4 +841,32 @@ fn no_match_says_so() {
         "{}",
         rows.len()
     );
+}
+
+/// 🔴 A range spans what is on SCREEN, not what is in the display list.
+///
+/// Filtering 2000 entities down to three and shift-picking the first and
+/// the last used to select every entity lying between them — which is
+/// the opposite of what filtering is for. Same fault under a collapsed
+/// parent, which quietly took its hidden children.
+#[test]
+fn a_shift_range_stays_inside_the_filter() {
+    use super::entity_row::listed_range;
+
+    // Rows 3, 7 and 900 survived the filter; everything else is hidden.
+    let listed = [3usize, 7, 900];
+
+    let span = listed_range(&listed, 3, 900).expect("both ends are listed");
+
+    assert_eq!(span, &[3, 7, 900]);
+}
+
+/// An anchor the filter has since removed is not an end of a range.
+#[test]
+fn a_range_from_a_hidden_anchor_is_no_range() {
+    use super::entity_row::listed_range;
+
+    let listed = [3usize, 7, 900];
+
+    assert!(listed_range(&listed, 42, 900).is_none());
 }
