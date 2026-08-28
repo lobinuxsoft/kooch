@@ -88,7 +88,17 @@ pub struct CullParams {
     /// (`if projection[3][3] == 1.0`), and this engine had no such
     /// branch because until shadows there was no orthographic view.
     pub lod_orthographic: u32,
-    pub _pad_lod: [u32; 3],
+    /// Projected radius, in pixels, under which an INSTANCE is
+    /// rejected before it ever becomes meshlets (#1002). `0` = off,
+    /// which is what ships.
+    ///
+    /// 🔴 Read only by `cs_cull_instances`, and that placement is the
+    /// point: rejecting an instance costs one thread where rejecting
+    /// its meshlets costs one each. The same
+    /// `lod_error_to_pixel_factor` projects it, so the threshold is in
+    /// the units the LOD target is already authored in.
+    pub min_screen_pixels: f32,
+    pub _pad_lod: [u32; 2],
     pub view_proj: [[f32; 4]; 4],
 }
 
@@ -109,9 +119,18 @@ impl CullParams {
             debug_mode: 0,
             debug_active: 0,
             lod_orthographic: 0,
-            _pad_lod: [0; 3],
+            min_screen_pixels: 0.0,
+            _pad_lod: [0; 2],
             view_proj: view_projection.to_cols_array_2d(),
         }
+    }
+
+    /// Rejects an instance whose bounding sphere covers fewer than
+    /// `pixels` on screen, before it is expanded into meshlets
+    /// (#1002). `0` disables the test.
+    pub fn with_min_screen_pixels(mut self, pixels: f32) -> Self {
+        self.min_screen_pixels = pixels.max(0.0);
+        self
     }
 
     /// Sets the cull-side debug mode. Mirrors the deferred shader's

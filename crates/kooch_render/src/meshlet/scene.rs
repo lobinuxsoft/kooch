@@ -136,7 +136,13 @@ pub struct SceneCullParams {
     /// this struct because this is what already reaches every pass that
     /// needs it.
     pub group_capacity: u32,
-    pub _pad1: u32,
+    /// Chunk slots the two-level cull's list holds (#1002).
+    ///
+    /// 🔴 A CAPACITY, not a count. `cs_cull_instances` reserves chunks
+    /// with an atomic that is never clamped — that is how an overflow
+    /// stays visible — so every reader clamps to this instead, and the
+    /// writer drops past it rather than scribbling off the end.
+    pub chunk_capacity: u32,
 }
 
 impl SceneCullParams {
@@ -145,7 +151,7 @@ impl SceneCullParams {
             instance_count,
             meshlets_per_mesh,
             group_capacity: 0,
-            _pad1: 0,
+            chunk_capacity: 0,
         }
     }
 
@@ -153,6 +159,12 @@ impl SceneCullParams {
     /// indexed by group.
     pub fn with_groups(mut self, groups: u32) -> Self {
         self.group_capacity = groups;
+        self
+    }
+
+    /// The chunk list's capacity, which the two-level cull clamps to.
+    pub fn with_chunks(mut self, chunks: u32) -> Self {
+        self.chunk_capacity = chunks;
         self
     }
 }

@@ -50,6 +50,19 @@ mod types;
 
 use crate::meshlet::cull::CullParams;
 
+/// Words before the chunk list in [`MeshletCull::chunks`]. Mirrors
+/// `CHUNK_LIST` in `meshlet_cull/two_level.wgsl`.
+pub(super) const CHUNK_HEADER_WORDS: u64 = 6;
+
+/// Byte offset of the indirect dispatch args inside the same buffer.
+/// Mirrors `CHUNK_ARGS`.
+pub(super) const CHUNK_ARGS_OFFSET: u64 = 3 * 4;
+
+/// Meshlets one chunk covers — the two-level cull's workgroup size.
+/// Mirrors `CULL_GROUP`.
+pub const CULL_CHUNK_MESHLETS: u32 = 64;
+
+pub use dispatch::chunks_for;
 pub use pipelines::MeshletCullPipelines;
 pub use types::{DrawIndirectArgs, HiZTestParams};
 
@@ -103,6 +116,18 @@ pub struct MeshletCull {
     /// `CullParams.debug_active != 0`. Cleared per frame; readback
     /// drives the editor's stats overlay.
     pub(super) stage_counters: wgpu::Buffer,
+    /// The two-level cull's chunk list and its header (#1002). One
+    /// buffer because the pipeline layout is already at seven of the
+    /// eight storage buffers a compute stage may bind:
+    /// `[0]` chunk count, `[1]` chunks dropped, `[2]` surviving
+    /// instances, `[3..6)` the indirect args the expansion runs under,
+    /// then one word per chunk.
+    ///
+    /// INDIRECT as well as STORAGE — `cs_cull_expand_args` writes the
+    /// args the very next dispatch reads out of the same allocation.
+    pub(super) chunks: wgpu::Buffer,
+    /// Chunk slots `chunks` holds, not counting the header.
+    pub(super) chunk_capacity: u32,
 
     pub(super) capacity: u32,
     pub(super) vertex_count_per_instance: u32,
@@ -205,6 +230,47 @@ impl MeshletCull {
             "grew group_max_err buffer to fit scene",
         );
         self.group_capacity = new_capacity;
+    }
+
+    /// Grows the two-level cull's chunk list to hold `required`
+    /// chunks (#1002).
+    ///
+    /// The worst case is `instances × ⌈heaviest / 64⌉` — the same
+    /// rectangle the one-level cull dispatched, divided by the
+    /// workgroup. That is a *memory* over-approximation of four bytes
+    /// a chunk, where the old one was a *thread* over-approximation of
+    /// nine million lanes, and only one of those is worth being
+    /// precise about.
+    pub fn ensure_chunk_capacity(&mut self, device: &wgpu::Device, required: u32) {
+        if required <= self.chunk_capacity {
+            return;
+        }
+        let new_capacity = required
+            .checked_next_power_of_two()
+            .unwrap_or(required)
+            .max(self.chunk_capacity.saturating_mul(2));
+        self.chunks = Self::chunk_buffer(device, new_capacity);
+        tracing::info!(
+            target: "kooch_render::meshlet::cull",
+            old_capacity = self.chunk_capacity,
+            new_capacity,
+            required,
+            "grew the two-level cull chunk list to fit scene",
+        );
+        self.chunk_capacity = new_capacity;
+    }
+
+    /// Header plus one word per chunk. See [`Self::chunks`].
+    pub(super) fn chunk_buffer(device: &wgpu::Device, chunks: u32) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("meshlet_cull_chunks"),
+            size: (CHUNK_HEADER_WORDS + chunks as u64) * 4,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
     }
 
     /// Grows `visible_meshlets` so it can hold at least `required`

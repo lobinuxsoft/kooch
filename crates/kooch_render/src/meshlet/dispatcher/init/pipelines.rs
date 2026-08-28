@@ -190,6 +190,47 @@ impl MeshletCullPipelines {
                 cache: None,
             });
 
+        // Two-level cull (#1002). All four entries share one layout:
+        // the cull group(0), the pool group(1), the scene group(2),
+        // `group_max_err` + bounds + chunk list at group(3) and the
+        // debug buffers at group(4) — the same five the rectangle
+        // entries bind, so one set of bind groups drives every pass.
+        let chunked_bgl = build_chunked_bgl(device);
+        let pipeline_layout_chunked =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("meshlet_cull_chunked_pipeline_layout"),
+                bind_group_layouts: &[
+                    Some(&cull_bgl),
+                    Some(&pool_bgl),
+                    Some(&scene_bgl),
+                    Some(&chunked_bgl),
+                    Some(&debug_bgl),
+                ],
+                immediate_size: 0,
+            });
+        let chunked = |label: &str, entry: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout_chunked),
+                module: &shader,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let pipeline_cull_instances =
+            chunked("meshlet_cull_instances_pipeline", "cs_cull_instances");
+        let pipeline_cull_expand_args =
+            chunked("meshlet_cull_expand_args_pipeline", "cs_cull_expand_args");
+        let pipeline_lod_group_max_err_chunked = chunked(
+            "meshlet_lod_group_max_err_chunked_pipeline",
+            "cs_lod_group_max_err_chunked",
+        );
+        let pipeline_cull_scene_pool_atomic_chunked = chunked(
+            "meshlet_cull_scene_pool_atomic_chunked_pipeline",
+            "cs_cull_scene_pool_atomic_chunked",
+        );
+
         Self {
             pipeline,
             pipeline_hi_z,
@@ -200,6 +241,10 @@ impl MeshletCullPipelines {
             pipeline_lod_compute_group_max_err_hi_z,
             pipeline_cull_scene_pool_atomic_hi_z,
             pipeline_cull_pass_b,
+            pipeline_cull_instances,
+            pipeline_cull_expand_args,
+            pipeline_lod_group_max_err_chunked,
+            pipeline_cull_scene_pool_atomic_chunked,
             cull_bgl,
             extended_cull_bgl,
             hi_z_bgl,
@@ -209,6 +254,7 @@ impl MeshletCullPipelines {
             pool_bgl,
             group_err_bgl,
             debug_bgl,
+            chunked_bgl,
         }
     }
 }

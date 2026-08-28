@@ -771,6 +771,7 @@ fn does_the_shadow_close_up_at_a_finer_lod() {
         rig.resources
             .insert(kooch_render::meshlet::MeshletLodSettings {
                 target_error_pixels: target,
+                ..Default::default()
             });
         // Straight down on the lamp's own axis, so the whole silhouette
         // of the shadow is in frame and a hole in it cannot hide behind

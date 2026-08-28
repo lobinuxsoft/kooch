@@ -272,6 +272,23 @@ pub struct RenderSettings {
     #[serde(default = "default_meshlet_lod_error")]
     #[reflect(group = "Geometry", range = MESHLET_LOD_ERROR_RANGE)]
     pub meshlet_lod_error: f32,
+    /// Projected radius, in pixels, under which an instance is dropped
+    /// before it becomes meshlets (#1002). `0` = draw everything the
+    /// frustum holds, which is what shipped.
+    ///
+    /// 🔴 This is the render distance, and it is a SIZE rather than a
+    /// distance on purpose: the projection is infinite reverse-Z and
+    /// `far` never arrives. A metre threshold would have to be
+    /// re-authored per scene; eight pixels means the same thing in
+    /// every one.
+    #[serde(default = "default_meshlet_min_pixels")]
+    #[reflect(group = "Geometry", range = MESHLET_MIN_PIXELS_RANGE)]
+    pub meshlet_min_pixels: f32,
+    /// Reject instances first and expand only the survivors (#1002),
+    /// instead of dispatching `instances × the heaviest mesh`.
+    #[serde(default = "default_meshlet_two_level")]
+    #[reflect(group = "Geometry")]
+    pub meshlet_two_level: bool,
     /// How far a local light may cast shadow pages from, in multiples
     /// of its OWN range. The light still SHADES past it; only its
     /// shadow stops being paid for.
@@ -821,6 +838,21 @@ fn default_meshlet_lod_error() -> f32 {
     1.0
 }
 
+/// 🔴 Zero — every instance the frustum holds is drawn, which is what
+/// shipped. Turning it on hides geometry, and what a non-zero value
+/// hides is a judgement the author makes, not a default anyone
+/// inherits.
+fn default_meshlet_min_pixels() -> f32 {
+    0.0
+}
+
+/// On. The two-level shape draws exactly the same meshlets as the
+/// rectangle did — it only stops dispatching the ones that were never
+/// going to survive a bounds check.
+fn default_meshlet_two_level() -> bool {
+    true
+}
+
 /// 🔴 Zero, because turning it on is a behaviour change and nothing has
 /// measured what it costs. A threshold chosen from a whiteboard is how
 /// `DEFAULT_PAGES` came to sit at half of Epic's for a year.
@@ -960,6 +992,15 @@ const SHADOW_DENSITY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 /// ceiling is where a mesh is already down to its root cluster on
 /// anything but a full-screen object, so past it the control stops
 /// doing anything.
+/// Zero is off; 64 pixels is already a quarter of a 256-tall viewport,
+/// past which the control stops being a reach and starts being a
+/// deletion.
+const MESHLET_MIN_PIXELS_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::FieldRange {
+    min: 0.0,
+    max: 64.0,
+    step: 0.5,
+};
+
 const SHADOW_NORMAL_BIAS_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::FieldRange {
     min: 0.0,
     max: 8.0,
@@ -1164,6 +1205,8 @@ impl Default for RenderSettings {
             shadow_depth_bias: default_shadow_depth_bias(),
             shadow_bias_max: default_shadow_bias_max(),
             meshlet_lod_error: default_meshlet_lod_error(),
+            meshlet_min_pixels: default_meshlet_min_pixels(),
+            meshlet_two_level: default_meshlet_two_level(),
             aperture_f_stops: camera.aperture_f_stops,
             shutter_speed_s: camera.shutter_speed_s,
             sensitivity_iso: camera.sensitivity_iso,
@@ -1228,6 +1271,10 @@ impl RenderSettings {
             // write a zero into. A target of zero means no level is
             // ever fine enough and the cull emits nothing at all.
             target_error_pixels: self.meshlet_lod_error.clamp(0.01, 8.0),
+            // Not clamped to a floor the way the LOD target is: zero is
+            // the meaningful "off", not a degenerate value.
+            min_screen_pixels: self.meshlet_min_pixels.clamp(0.0, 256.0),
+            two_level: self.meshlet_two_level,
         }
     }
 

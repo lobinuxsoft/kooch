@@ -143,6 +143,12 @@ impl MeshletCull {
                 | wgpu::BufferUsages::COPY_DST,
         });
 
+        // The chunk list starts small and grows with the scene the
+        // same way `visible_meshlets` does — a scene that never runs
+        // the two-level path pays 1 KiB for the header and the guess.
+        let initial_chunk_capacity: u32 = 256;
+        let chunks = MeshletCull::chunk_buffer(device, initial_chunk_capacity);
+
         Self {
             params_buffer,
             hi_z_params_buffer,
@@ -156,6 +162,8 @@ impl MeshletCull {
             group_capacity: initial_group_capacity,
             reject_reasons,
             stage_counters,
+            chunks,
+            chunk_capacity: initial_chunk_capacity,
             capacity,
             vertex_count_per_instance,
             params_stride,

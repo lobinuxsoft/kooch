@@ -31,6 +31,7 @@ fn cull_shader_parses_and_validates() {
         include_str!("../../../shaders/meshlet_cull/pool.wgsl"),
         include_str!("../../../shaders/meshlet_cull/atomic.wgsl"),
         include_str!("../../../shaders/meshlet_cull/atomic_hi_z.wgsl"),
+        include_str!("../../../shaders/meshlet_cull/two_level.wgsl"),
     );
     let module =
         naga::front::wgsl::parse_str(CULL_SHADER_SOURCE).expect("meshlet_cull.wgsl should parse");
@@ -81,5 +82,117 @@ fn the_ring_covers_the_worst_case() {
         per_frame,
         kooch_lighting::MAX_POINT_SHADOWS,
         EDITOR_VIEWS,
+    );
+}
+
+/// The number in #1002, on the scene it was measured on.
+///
+/// `dense.scene` is 2026 instances against a heaviest mesh of 4755
+/// meshlets. The one-level cull dispatched that rectangle — 9 633 630
+/// threads for ~116 000 real meshlets. The chunk list is the same
+/// rectangle over the workgroup, and it sizes a BUFFER rather than a
+/// dispatch: 608 KB instead of nine million lanes.
+#[test]
+fn the_dense_scene_fits_in_chunks() {
+    let rectangle = 2026u32 * 4755;
+    assert_eq!(rectangle, 9_633_630, "the number the issue reports");
+
+    let chunks = chunks_for(2026, 4755);
+    assert_eq!(chunks, 2026 * 75);
+    assert!(
+        chunks < rectangle / 60,
+        "{chunks} chunks against {rectangle} threads",
+    );
+}
+
+/// A one-meshlet mesh gets one chunk, not a fraction and not zero.
+#[test]
+fn a_single_meshlet_takes_one_chunk() {
+    assert_eq!(chunks_for(2000, 1), 2000);
+    // An empty pool still has to produce a legal dispatch size.
+    assert_eq!(chunks_for(0, 0), 1);
+}
+
+/// 🔴 A chunk is a workgroup, and the two constants saying so live in
+/// two languages.
+///
+/// `CULL_CHUNK_MESHLETS` sizes the buffer on the CPU and `CULL_GROUP`
+/// slices the meshlets on the GPU. If they drift, the list is too
+/// small and the instance pass silently drops the tail of the scene —
+/// which reads as geometry that vanishes at a certain instance count
+/// and nothing else.
+#[test]
+fn the_chunk_constants_agree() {
+    const WGSL: &str = include_str!("../../../shaders/meshlet_cull/two_level.wgsl");
+
+    let named = |name: &str| -> u64 {
+        let at = WGSL
+            .find(&format!("const {name}: u32 = "))
+            .unwrap_or_else(|| panic!("{name} is not declared in two_level.wgsl"));
+        WGSL[at..]
+            .split_once("= ")
+            .and_then(|(_, rest)| rest.split_once('u'))
+            .and_then(|(digits, _)| digits.trim().parse().ok())
+            .unwrap_or_else(|| panic!("{name} is not a plain literal"))
+    };
+
+    assert_eq!(named("CULL_GROUP"), CULL_CHUNK_MESHLETS as u64);
+    assert_eq!(named("CHUNK_LIST"), CHUNK_HEADER_WORDS);
+    assert_eq!(named("CHUNK_ARGS") * 4, CHUNK_ARGS_OFFSET);
+    assert_eq!(named("MAX_GROUPS_PER_DIM"), 65_535);
+}
+
+/// The chunk word packs an instance and a chunk index into 32 bits,
+/// and the low field has to hold the heaviest mesh the tree ships.
+///
+/// 256 chunks is 16 384 meshlets in ONE mesh; `dense.scene`'s dragon
+/// is 4755. The assertion is that the headroom is real, not that the
+/// dragon fits by luck.
+#[test]
+fn the_chunk_index_holds_a_heavy_mesh() {
+    const WGSL: &str = include_str!("../../../shaders/meshlet_cull/two_level.wgsl");
+    assert!(WGSL.contains("const MAX_CHUNKS_PER_INSTANCE: u32 = 256u;"));
+    assert!(WGSL.contains("const CHUNK_INDEX_MASK: u32 = 255u;"));
+    assert!(
+        256 * CULL_CHUNK_MESHLETS >= 4755 * 3,
+        "the cap must clear the heaviest asset with room over",
+    );
+}
+
+/// The two GPU structs are 16 and 208 bytes, and the fields #1002
+/// added went into padding rather than past it.
+///
+/// A struct that grew is not a compile error — wgpu reports it as
+/// `min_binding_size`, which reads like a binding problem and not like
+/// a layout one.
+#[test]
+fn the_param_structs_did_not_grow() {
+    use crate::meshlet::cull::CullParams;
+    use crate::meshlet::scene::SceneCullParams;
+
+    assert_eq!(std::mem::size_of::<SceneCullParams>(), 16);
+    assert_eq!(std::mem::size_of::<CullParams>(), 208);
+}
+
+/// The reach is off unless somebody authored it, and it never goes
+/// negative — a negative threshold would reject nothing while reading
+/// as if it rejected everything.
+#[test]
+fn the_reach_defaults_to_off() {
+    use crate::meshlet::cull::CullParams;
+    use glam::{Mat4, Vec3};
+
+    let params = CullParams::new(Mat4::IDENTITY, Vec3::ZERO, 1);
+    assert_eq!(params.min_screen_pixels, 0.0);
+    assert_eq!(
+        params.with_min_screen_pixels(-4.0).min_screen_pixels,
+        0.0,
+        "a negative reach is clamped, not honoured",
+    );
+    assert_eq!(
+        CullParams::new(Mat4::IDENTITY, Vec3::ZERO, 1)
+            .with_min_screen_pixels(8.0)
+            .min_screen_pixels,
+        8.0,
     );
 }

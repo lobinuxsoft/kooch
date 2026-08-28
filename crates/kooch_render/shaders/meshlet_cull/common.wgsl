@@ -54,7 +54,10 @@ struct CullParams {
     // push `view_proj` to the next boundary and inflate the struct to
     // 224 bytes against the host's 208. wgpu reports that as
     // "min_binding_size" and it reads like a binding problem.
-    _pad_lod0: u32,
+    // Projected instance radius in pixels under which the two-level
+    // cull rejects an instance whole (#1002). 0 = off. Was `_pad_lod0`,
+    // so the 208-byte host layout is unchanged.
+    min_screen_pixels: f32,
     _pad_lod1: u32,
     _pad_lod2: u32,
     // Clip-from-world matrix used by the AABB-vs-frustum test in

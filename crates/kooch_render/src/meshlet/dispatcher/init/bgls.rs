@@ -291,3 +291,54 @@ pub(super) fn build_hi_z_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
         ],
     })
 }
+
+/// Group 3 of the chunked cull (#1002): the per-group error arena the
+/// #465 descent already used, plus the per-mesh bounding spheres the
+/// instance pass tests and the chunk list it fills.
+///
+/// 🔴 One group, not two. `max_bind_groups` is six and the atomic cull
+/// already spends five — a group of its own for the chunk list would
+/// be the sixth and last. Binding 0 stays `group_max_err` so the two
+/// meshlet-domain passes keep the layout they had.
+///
+/// `mesh_bounds` is the same buffer `lamp_cull` culls instances with —
+/// spheres rather than boxes because they survive an arbitrary
+/// rotation (#847).
+pub(super) fn build_chunked_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let rw = wgpu::BindingType::Buffer {
+        ty: wgpu::BufferBindingType::Storage { read_only: false },
+        has_dynamic_offset: false,
+        min_binding_size: None,
+    };
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("meshlet_cull_chunked_bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: rw,
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(4),
+                },
+                count: None,
+            },
+        ],
+    })
+}
