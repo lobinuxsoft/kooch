@@ -31,19 +31,15 @@ fn display_name(stem: &str) -> String {
     }
 }
 
-/// Renders the "+ Spawn" menu button. Pushes one or more
-/// `EditorAction::Spawn` entries to `actions` when the user picks an item.
-pub(super) fn draw_spawn_menu(ui: &mut egui::Ui, actions: &mut Vec<EditorAction>) {
-    ui.menu_button(format!("{} Spawn", icons::PLUS), |ui| {
-        spawn_entries(ui, actions, crate::actions::SpawnTarget::Active);
-    });
-}
-
-/// The entries themselves, without the button that opens them.
+/// The spawn entries, shared by every menu that offers them.
 ///
-/// Split out so the right-click menu on the World panel's empty space
-/// offers exactly what the toolbar does. Two lists would drift, and the
-/// one that drifts is always the one fewer people use (#591).
+/// 🔴 One list, four callers: the panel's empty space, a scene header,
+/// a row's "New Child" and its "New in This Scene". There used to be a
+/// fifth — a toolbar button — and the reason it is gone is the reason
+/// this function exists: a second list of the same commands is a list
+/// that drifts, and the one that drifts is always the one fewer people
+/// use (#591). Every one of these menus names a place, which a toolbar
+/// button standing above the list never could.
 pub(super) fn spawn_entries(
     ui: &mut egui::Ui,
     actions: &mut Vec<EditorAction>,

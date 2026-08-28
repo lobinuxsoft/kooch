@@ -14,7 +14,7 @@ use crate::state::{EntityDisplayInfo, ReflectedTypeInfo, SceneDisplayInfo};
 use self::entity_row::draw_entity_row;
 use self::filter::{WorldFilter, draw_filter_bar};
 use self::scene_bar::draw_scene_bar;
-use self::spawn_menu::{draw_spawn_menu, spawn_entries};
+use self::spawn_menu::spawn_entries;
 
 /// Content of the "World" tab — entity hierarchy list with context menu.
 pub(crate) fn draw_world_content(
@@ -39,53 +39,6 @@ pub(crate) fn draw_world_content(
     ));
     ui.separator();
 
-    ui.horizontal(|ui| {
-        draw_spawn_menu(ui, actions);
-        let any_selected = !selected.is_empty();
-        // The three clipboard commands, from the same table the menu and
-        // the keyboard read. Each button says its chord, because a
-        // toolbar is where a shortcut is learned — nobody reads a manual
-        // to find out that Ctrl+D exists.
-        for chord in [
-            crate::shortcuts::EditChord::Duplicate,
-            crate::shortcuts::EditChord::Copy,
-            crate::shortcuts::EditChord::Paste,
-        ] {
-            let enabled = match chord {
-                crate::shortcuts::EditChord::Paste => clipboard_has_entities,
-                _ => any_selected,
-            };
-            let icon = match chord {
-                crate::shortcuts::EditChord::Paste => icons::PACKAGE,
-                _ => icons::COPY,
-            };
-            if ui
-                .add_enabled(
-                    enabled,
-                    egui::Button::new(format!("{icon} {}", chord.label())),
-                )
-                .on_hover_text(format!("{}\n\n{}", chord.chord(), chord.tooltip()))
-                .clicked()
-            {
-                actions.extend(crate::shortcuts::actions_for(
-                    chord,
-                    selected,
-                    Some(&crate::history::Document::World),
-                ));
-            }
-        }
-        if ui
-            .add_enabled(
-                any_selected,
-                egui::Button::new(format!("{} Despawn", icons::TRASH)),
-            )
-            .clicked()
-        {
-            for entity in selected.drain(..) {
-                actions.push(EditorAction::Despawn(entity));
-            }
-        }
-    });
     ui.separator();
 
     // Read, drawn, written back. Held in egui's temp store rather than
@@ -190,6 +143,7 @@ pub(crate) fn draw_world_content(
                         selected,
                         pinned,
                         reflected_types,
+                        clipboard_has_entities,
                         actions,
                         last_clicked_index,
                         subtree,

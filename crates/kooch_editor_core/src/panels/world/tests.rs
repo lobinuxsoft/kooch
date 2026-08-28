@@ -378,6 +378,7 @@ fn a_row_advances_the_cursor_by_exactly_one_pitch() {
             &mut Vec::new(),
             &mut std::collections::HashSet::new(),
             &[],
+            false,
             &mut Vec::new(),
             &mut None,
             // A leaf: these rigs plant a single entity with no children.
@@ -422,6 +423,7 @@ fn a_very_long_name_does_not_make_its_row_taller() {
             &mut Vec::new(),
             &mut std::collections::HashSet::new(),
             &[],
+            false,
             &mut Vec::new(),
             &mut None,
             // A leaf: these rigs plant a single entity with no children.
