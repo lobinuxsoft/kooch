@@ -24,12 +24,14 @@ pub(crate) struct PasteCommand {
     states: Vec<EntityState>,
     /// What the last execute built, so undo knows what to take away.
     pasted: Vec<Entity>,
+    /// Which scene the copies land in.
+    into: crate::actions::SpawnTarget,
 }
 
 impl PasteCommand {
     /// `None` for an empty clipboard: a command that does nothing still
     /// takes a slot in the history, and undoing it would look broken.
-    pub fn new(resources: &Resources) -> Option<Self> {
+    pub fn new(resources: &Resources, into: crate::actions::SpawnTarget) -> Option<Self> {
         let states = resources
             .get::<crate::clipboard::EntityClipboard>()?
             .states()
@@ -39,6 +41,7 @@ impl PasteCommand {
             false => Some(Self {
                 states,
                 pasted: Vec::new(),
+                into,
             }),
         }
     }
@@ -47,6 +50,11 @@ impl PasteCommand {
 impl EditorCommand for PasteCommand {
     fn execute(&mut self, resources: &mut Resources) {
         self.pasted.clear();
+        // 🔴 Resolved once for the whole paste, not once per entity.
+        // `SpawnTarget::NewScene` makes a scene every time it is asked,
+        // so resolving it inside the loop would give a clipboard of five
+        // entities five scenes holding one each.
+        let scene = super::place::resolve_scene(resources, self.into);
         for state in &self.states {
             let mut commands = resources.remove::<Commands>().expect("Commands not found");
             let entity = commands.spawn(resources).id();
@@ -58,6 +66,13 @@ impl EditorCommand for PasteCommand {
             // entity called the same thing.
             if let Some(name) = entity_state::copy_name(state) {
                 rename(resources, entity, &name);
+            }
+            // Without this the copy carries no `SceneMember`, lands
+            // under "Unsaved", and is adopted by whichever scene happens
+            // to be active at the next save — which is why pasting into
+            // a scene used to look like it created a new one.
+            if let Some(scene) = scene {
+                super::place::adopt(resources, entity, scene);
             }
             self.pasted.push(entity);
         }

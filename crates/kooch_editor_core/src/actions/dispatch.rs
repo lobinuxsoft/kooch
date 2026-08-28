@@ -58,8 +58,8 @@ pub(super) fn action_to_command(
         }
         // `None` for an empty clipboard, which is also what makes Ctrl+V
         // before any Ctrl+C a no-op rather than an empty history entry.
-        EditorAction::PasteEntities => {
-            PasteCommand::new(resources).map(|cmd| Box::new(cmd) as Box<dyn EditorCommand>)
+        EditorAction::PasteEntities { into } => {
+            PasteCommand::new(resources, *into).map(|cmd| Box::new(cmd) as Box<dyn EditorCommand>)
         }
         EditorAction::SetField {
             entity,

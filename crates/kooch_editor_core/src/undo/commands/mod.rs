@@ -7,6 +7,7 @@ mod despawn;
 mod duplicate;
 mod dynamic_component;
 mod paste;
+mod place;
 mod set_field;
 mod spawn;
 mod spawn_mesh;

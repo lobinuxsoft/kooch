@@ -474,7 +474,7 @@ fn label_of(action: &EditorAction) -> String {
         EditorAction::SpawnMesh { .. } => "Spawn Mesh Entity".to_owned(),
         EditorAction::Despawn(_) => "Despawn Entity".to_owned(),
         EditorAction::Duplicate(_) => "Duplicate Entity".to_owned(),
-        EditorAction::PasteEntities => "Paste".to_owned(),
+        EditorAction::PasteEntities { .. } => "Paste".to_owned(),
         EditorAction::InstantiatePrefab { .. } => "Instantiate Prefab".to_owned(),
         EditorAction::SetField { field, .. } => format!("Set {field}"),
         EditorAction::AddComponent { .. } => "Add Component".to_owned(),
@@ -728,7 +728,7 @@ fn rebuild(
 ) -> Result<Vec<EntityId>, String> {
     let mut created: Vec<EntityId> = Vec::with_capacity(reborn.len());
     for entry in reborn {
-        let id = super::remote_edit::build(client, mirror, &entry.state)?;
+        let id = super::remote_edit::build(client, mirror, &entry.state, None)?;
         created.push(id);
         let parent = match entry.parent {
             Some(Ancestor::Existing(id)) => Some(id),

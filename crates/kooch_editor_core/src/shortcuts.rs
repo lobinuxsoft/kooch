@@ -175,7 +175,13 @@ pub(crate) fn actions_for(
             true => Vec::new(),
             false => vec![EditorAction::CopyEntities(selected.to_vec())],
         },
-        EditChord::Paste => vec![EditorAction::PasteEntities],
+        // The active scene, because a chord has no pointer and so names
+        // no place. Every gesture that DOES name one — a right click on
+        // a scene header, on the panel's empty space — builds its own
+        // action with that target instead of coming through here.
+        EditChord::Paste => vec![EditorAction::PasteEntities {
+            into: crate::actions::SpawnTarget::Active,
+        }],
     }
 }
 

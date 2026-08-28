@@ -80,11 +80,16 @@ pub(crate) enum EditorAction {
     /// there. Carries the selection because the clipboard is filled from
     /// a panel that has one and the handler has not.
     CopyEntities(Vec<Entity>),
-    /// Build the clipboard's contents as new entities.
+    /// Build the clipboard's contents as new entities, in `into`.
     ///
-    /// Takes no argument: what to paste is whatever was copied, and a
-    /// paste that named its own source would be a duplicate.
-    PasteEntities,
+    /// 🔴 It names the DESTINATION and not the source. What to paste is
+    /// whatever was copied — a paste that named its own source would be
+    /// a duplicate — but where it lands is a choice, and leaving it
+    /// unnamed is what made entities copied out of one scene appear
+    /// under "Unsaved" instead of in the scene somebody right-clicked.
+    PasteEntities {
+        into: SpawnTarget,
+    },
     SetField {
         entity: Entity,
         component: ComponentId,
@@ -542,7 +547,7 @@ impl EditorAction {
             // Both read or write entities, so both wait for a world to
             // read them out of.
             | Self::CopyEntities(_)
-            | Self::PasteEntities
+            | Self::PasteEntities { .. }
             | Self::SetField { .. }
             | Self::AddComponent { .. }
             | Self::RemoveComponent { .. }

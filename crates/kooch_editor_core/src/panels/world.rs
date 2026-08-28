@@ -136,7 +136,9 @@ pub(crate) fn draw_world_content(
         let at_end = range.end >= rows.len();
         for index in range {
             match &rows[index] {
-                WorldRow::Group(header) => draw_group_header(ui, header, row_h, actions),
+                WorldRow::Group(header) => {
+                    draw_group_header(ui, header, row_h, clipboard_has_entities, actions)
+                }
                 WorldRow::Note(text) => {
                     // Indented like the entities it stands in for, or the
                     // note explaining an empty scene sits further left
@@ -205,6 +207,19 @@ pub(crate) fn draw_world_content(
             ui.label("New scene");
             ui.separator();
             spawn_entries(ui, actions, crate::actions::SpawnTarget::NewScene);
+            if ui
+                .add_enabled(
+                    clipboard_has_entities,
+                    egui::Button::new(format!("{} Paste", icons::PACKAGE)),
+                )
+                .on_hover_text("Put what was copied into a scene of its own")
+                .clicked()
+            {
+                actions.push(EditorAction::PasteEntities {
+                    into: crate::actions::SpawnTarget::NewScene,
+                });
+                ui.close();
+            }
         });
         // A prefab dropped into the hierarchy spawns at the position it
         // was authored at: a list of names has no geometry to read a
@@ -629,6 +644,7 @@ fn draw_group_header(
     ui: &mut egui::Ui,
     header: &GroupHeader,
     row_h: f32,
+    clipboard_has_entities: bool,
     actions: &mut Vec<EditorAction>,
 ) {
     let size = egui::vec2(ui.available_width(), row_h);
@@ -639,7 +655,7 @@ fn draw_group_header(
         open = !open;
         ui.data_mut(|data| data.insert_persisted(header.id, open));
     }
-    scene_context_menu(&resp, header, actions);
+    scene_context_menu(&resp, header, clipboard_has_entities, actions);
 
     if !ui.is_rect_visible(rect) {
         return;
@@ -696,6 +712,7 @@ const DIRTY_SCENE: egui::Color32 = egui::Color32::from_rgb(210, 150, 60);
 fn scene_context_menu(
     resp: &egui::Response,
     header: &GroupHeader,
+    clipboard_has_entities: bool,
     actions: &mut Vec<EditorAction>,
 ) {
     let Some(scene) = header.scene else {
@@ -744,6 +761,22 @@ fn scene_context_menu(
         ui.menu_button("New", |ui| {
             spawn_entries(ui, actions, crate::actions::SpawnTarget::Scene(scene));
         });
+        // Into *this* scene, for the same reason. Copying out of one
+        // scene and pasting into another is the gesture that used to
+        // leave the copies under "Unsaved" with nothing saying why.
+        if ui
+            .add_enabled(
+                clipboard_has_entities,
+                egui::Button::new(format!("{} Paste", icons::PACKAGE)),
+            )
+            .on_hover_text("Put what was copied into this scene")
+            .clicked()
+        {
+            actions.push(EditorAction::PasteEntities {
+                into: crate::actions::SpawnTarget::Scene(scene),
+            });
+            ui.close();
+        }
     });
 }
 
