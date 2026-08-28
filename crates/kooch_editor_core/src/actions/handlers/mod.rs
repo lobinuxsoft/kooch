@@ -101,8 +101,10 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::InstantiatePrefab { prefab: guid, at } => {
             prefab::handle_instantiate_prefab(resources, *guid, *at)
         }
-        EditorAction::OpenScene => handle_open_scene(resources, undo_stack),
-        EditorAction::OpenSceneAdditive => handle_open_scene_additive(resources),
+        EditorAction::OpenScene { path } => handle_open_scene(resources, undo_stack, path.clone()),
+        EditorAction::OpenSceneAdditive { path } => {
+            handle_open_scene_additive(resources, path.clone())
+        }
         EditorAction::CloseScene(id) => handle_close_scene(resources, *id),
         EditorAction::SetActiveScene(id) => handle_set_active_scene(resources, *id),
         EditorAction::SaveOpenScene(id) => handle_save_open_scene(resources, *id, false),

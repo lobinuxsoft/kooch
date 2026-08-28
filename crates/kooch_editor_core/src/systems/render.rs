@@ -64,7 +64,9 @@ fn apply_deferred_actions(
     if actions.is_empty() && !crate::actions::prefab_propagate::anything_queued(resources) {
         return;
     }
-    let has_open_scene = actions.iter().any(|a| matches!(a, EditorAction::OpenScene));
+    let has_open_scene = actions
+        .iter()
+        .any(|a| matches!(a, EditorAction::OpenScene { .. }));
 
     apply_actions(resources, actions, undo_stack);
 

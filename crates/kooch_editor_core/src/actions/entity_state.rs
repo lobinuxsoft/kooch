@@ -168,13 +168,36 @@ pub(crate) fn copy_name(state: &EntityState) -> Option<String> {
 pub(crate) fn as_copy(state: &EntityState) -> EntityState {
     let name = copy_name(state);
     let mut copy = state.clone();
-    // 🔴 Membership is not part of what was copied. `capture` takes every
-    // reflected component and `SceneMember` is one, so a copy carried the
-    // scene it came OUT of — and restoring it wrote that scene straight
-    // over wherever the paste had just been placed. Which file a copy
-    // lands in is the paste's decision, and only the paste's.
-    copy.components
-        .retain(|c| c.name != std::any::type_name::<kooch_ecs::SceneMember>());
+    // 🔴 A copy carries what the entity IS, never who it BELONGS TO.
+    //
+    // `capture` takes every reflected component, and three of them are
+    // what `propagate::is_bookkeeping` calls bookkeeping — they name
+    // something outside the entity, and none of those names survives
+    // being duplicated:
+    //
+    // - `SceneMember` named the scene the copy came OUT of, and
+    //   restoring it wrote that scene over wherever the paste had just
+    //   placed the entity. Which file a copy lands in is the paste's
+    //   decision, and only the paste's.
+    // - `PrefabMember` named the ORIGINAL's instance root. 🔴 That one
+    //   did not merely misplace the copy, it deleted it: `capture` in
+    //   `scene/document.rs` skips any entity whose `PrefabMember.root`
+    //   is not itself, because the rest of an instance comes back from
+    //   the prefab. So the copy was visible in the editor, saved without
+    //   complaint, and was absent from the file — which is exactly what
+    //   was reported.
+    // - `PrefabInstance` is a REFERENCE to a prefab, and a reference is
+    //   not something a clipboard can duplicate: a second instance has
+    //   to be instantiated, not copied field by field. The copy keeps
+    //   the values it had and loses the link. ⚠️ "Paste as a new
+    //   instance" is a real feature and this is not it.
+    for bookkeeping in [
+        std::any::type_name::<kooch_ecs::SceneMember>(),
+        std::any::type_name::<kooch_ecs::prefab_instance::PrefabMember>(),
+        std::any::type_name::<kooch_ecs::prefab_instance::PrefabInstance>(),
+    ] {
+        copy.components.retain(|c| c.name != bookkeeping);
+    }
     copy.name = name.clone();
     let Some(name) = name else {
         return copy;

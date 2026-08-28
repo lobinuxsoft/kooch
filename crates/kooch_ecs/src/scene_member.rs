@@ -63,7 +63,7 @@ static FIELDS: &[FieldMeta] = &[FieldMeta {
     kind: FieldKind::String,
     choices: &[],
     bits: &[],
-            range: None,
+    range: None,
     shown_when: None,
     asset_type: "",
     requires: "",

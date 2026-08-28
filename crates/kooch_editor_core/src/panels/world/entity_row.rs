@@ -91,6 +91,9 @@ pub(super) fn draw_entity_row(
     selected: &mut Vec<Entity>,
     pinned: &mut HashSet<Entity>,
     reflected_types: &[ReflectedTypeInfo],
+    // The display indices the panel is showing, in order — see
+    // `listed_range`.
+    listed: &[usize],
     clipboard_has_entities: bool,
     actions: &mut Vec<EditorAction>,
     last_clicked_index: &mut Option<usize>,
@@ -162,6 +165,7 @@ pub(super) fn draw_entity_row(
         info,
         entities,
         selected,
+        listed,
         last_clicked_index,
         is_selected,
     );
@@ -324,6 +328,23 @@ fn handle_drop_targets(
     }
 }
 
+/// The rows a Shift+Click spans, as display indices.
+///
+/// 🔴 Measured inside what the panel is SHOWING, never inside the
+/// display list. A range between two visible rows used to take every
+/// index between them, so under a filter picking the first and last
+/// match selected all two thousand entities lying between — and with a
+/// collapsed parent it quietly selected its hidden children too.
+///
+/// `None` when either end is not on screen: a range needs two ends, and
+/// an anchor that has since been filtered out is not one. The caller
+/// treats that as a plain click rather than guessing a span.
+pub(super) fn listed_range(listed: &[usize], anchor: usize, idx: usize) -> Option<&[usize]> {
+    let from = listed.iter().position(|&i| i == anchor)?;
+    let here = listed.iter().position(|&i| i == idx)?;
+    Some(&listed[from.min(here)..=from.max(here)])
+}
+
 fn handle_click(
     resp: &egui::Response,
     ui: &egui::Ui,
@@ -331,6 +352,7 @@ fn handle_click(
     info: &EntityDisplayInfo,
     entities: &[EntityDisplayInfo],
     selected: &mut Vec<Entity>,
+    listed: &[usize],
     last_clicked_index: &mut Option<usize>,
     is_selected: bool,
 ) {
@@ -339,15 +361,19 @@ fn handle_click(
     }
     let modifiers = ui.input(|i| i.modifiers);
     if modifiers.shift {
-        // Shift+Click: range selection from anchor to current.
-        let anchor = last_clicked_index.unwrap_or(0);
-        let range_start = anchor.min(idx);
-        let range_end = anchor.max(idx);
+        // Shift+Click: range selection from anchor to current, over the
+        // rows on screen. See `listed_range`.
+        let anchor = last_clicked_index.unwrap_or(idx);
+        let span = listed_range(listed, anchor, idx);
         if !modifiers.ctrl && !modifiers.command {
             selected.clear();
         }
-        for i in range_start..=range_end {
-            let entity = entities[i].entity;
+        // No span means the anchor is not listed any more, so there is
+        // nothing to reach across: this is a click on one row.
+        for &i in span.unwrap_or(std::slice::from_ref(&idx)) {
+            let Some(entity) = entities.get(i).map(|e| e.entity) else {
+                continue;
+            };
             if !selected.contains(&entity) {
                 selected.push(entity);
             }

@@ -107,7 +107,7 @@ pub(crate) fn draw_menu_bar(
                     ui.close();
                 }
                 if ui.button("Open Scene...").clicked() {
-                    actions.push(EditorAction::OpenScene);
+                    actions.push(EditorAction::OpenScene { path: None });
                     ui.close();
                 }
                 // Disabled while driving a project: the world here is a
@@ -128,7 +128,7 @@ pub(crate) fn draw_menu_bar(
                         "Load a scene beside the ones already open"
                     });
                 if additive.clicked() {
-                    actions.push(EditorAction::OpenSceneAdditive);
+                    actions.push(EditorAction::OpenSceneAdditive { path: None });
                     ui.close();
                 }
                 ui.separator();

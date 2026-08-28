@@ -62,9 +62,22 @@ pub(super) fn handle_revert_open_scene(
     }
 }
 
-pub(super) fn handle_open_scene(resources: &mut Resources, undo_stack: &mut UndoStack) {
-    let Some(path) = scene_dialog(resources).pick_file() else {
-        return;
+/// Replaces the world with a scene.
+///
+/// `named` is the file when the caller already had one — an Assets panel
+/// row is a path, and raising a dialog for the file just clicked is the
+/// same fault as having no way to name it.
+pub(super) fn handle_open_scene(
+    resources: &mut Resources,
+    undo_stack: &mut UndoStack,
+    named: Option<std::path::PathBuf>,
+) {
+    let path = match named {
+        Some(path) => path,
+        None => match scene_dialog(resources).pick_file() {
+            Some(path) => path,
+            None => return,
+        },
     };
     match load_scene(resources, &path) {
         Ok(()) => {
@@ -80,24 +93,31 @@ pub(super) fn handle_open_scene(resources: &mut Resources, undo_stack: &mut Undo
 /// The undo stack is left alone: nothing that was already open changed,
 /// so the history of edits to those scenes is still valid. A replacing
 /// load clears it because the entities those edits name are gone.
-pub(super) fn handle_open_scene_additive(resources: &mut Resources) {
-    // The menu greys this out while mirroring a project, but the action
-    // can reach here by other routes (a shortcut, a replayed action), and
-    // the failure it guards against is silent: entities that exist only
-    // on this side, invisible in the game, whose every edit is dropped.
+pub(super) fn handle_open_scene_additive(
+    resources: &mut Resources,
+    named: Option<std::path::PathBuf>,
+) {
+    // 🔴 The connected case is no longer refused here — it is ROUTED, to
+    // `Method::LoadSceneAdditive`, so the scene arrives where the world
+    // lives. Reaching this function while connected now means the route
+    // was not taken, which is a bug rather than a mode.
     if resources
         .get::<crate::remote_session::RemoteState>()
         .is_some_and(|state| state.is_connected())
     {
         tracing::warn!(
-            "additive scene loading is unavailable while a project is open; \
-             the world shown here mirrors the project",
+            "additive load fell through to the local path while a project is open; \
+             the scene would exist only on this side",
         );
         return;
     }
 
-    let Some(path) = scene_dialog(resources).pick_file() else {
-        return;
+    let path = match named {
+        Some(path) => path,
+        None => match scene_dialog(resources).pick_file() {
+            Some(path) => path,
+            None => return,
+        },
     };
     match open_scene_additive(resources, &path) {
         Ok(id) => tracing::info!("scene {id} loaded additively from {}", path.display()),
