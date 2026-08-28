@@ -866,6 +866,7 @@ fn scene_context_menu(
         ui.menu_button("New", |ui| {
             spawn_entries(ui, actions, crate::actions::SpawnTarget::Scene(scene));
         });
+
         // Into *this* scene, for the same reason. Copying out of one
         // scene and pasting into another is the gesture that used to
         // leave the copies under "Unsaved" with nothing saying why.
@@ -880,6 +881,28 @@ fn scene_context_menu(
             actions.push(EditorAction::PasteEntities {
                 into: crate::actions::SpawnTarget::Scene(scene),
             });
+            ui.close();
+        }
+        ui.separator();
+        // 🔴 The only way to close ONE scene without the scene bar, which
+        // hides itself under two scenes — so the moment additive opening
+        // gave you a second scene, closing either one had no gesture but
+        // that bar. Right-clicking the scene you want gone is the obvious
+        // place to ask.
+        //
+        // No confirmation and no icon: `CloseScene` discards unsaved
+        // edits, and the label says which scene by being ON it. The
+        // hover text is where the warning goes, because a dialog for
+        // every close is how people stop reading dialogs.
+        if ui
+            .button("Close Scene")
+            .on_hover_text(match header.dirty {
+                true => "Close this scene — ITS UNSAVED EDITS ARE DISCARDED",
+                false => "Close this scene, leaving the others open",
+            })
+            .clicked()
+        {
+            actions.push(EditorAction::CloseScene(scene));
             ui.close();
         }
     });

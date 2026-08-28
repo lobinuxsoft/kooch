@@ -192,3 +192,39 @@ fn a_copy_does_not_carry_its_scene() {
     let names: Vec<&str> = copy.components.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, vec![std::any::type_name::<Transform>()]);
 }
+
+/// 🔴 The copy of a prefab instance used to VANISH on save.
+///
+/// `PrefabMember` names the instance root, and `SceneDocument::capture`
+/// skips any entity whose root is not itself — the rest of an instance
+/// comes back from the prefab. A copy inherited the ORIGINAL's root, so
+/// the save decided the copy belonged to an instance that was not it and
+/// wrote nothing. Visible in the editor, saved without complaint, absent
+/// from the file.
+#[test]
+fn a_copy_carries_no_prefab_bookkeeping() {
+    use kooch_ecs::prefab_instance::{PrefabInstance, PrefabMember};
+
+    let state = EntityState {
+        name: Some("Player".to_owned()),
+        components: vec![
+            ComponentState {
+                name: std::any::type_name::<PrefabMember>().to_owned(),
+                fields: Vec::new(),
+            },
+            ComponentState {
+                name: std::any::type_name::<PrefabInstance>().to_owned(),
+                fields: Vec::new(),
+            },
+            ComponentState {
+                name: std::any::type_name::<Transform>().to_owned(),
+                fields: Vec::new(),
+            },
+        ],
+    };
+
+    let copy = as_copy(&state);
+
+    let names: Vec<&str> = copy.components.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, vec![std::any::type_name::<Transform>()]);
+}
