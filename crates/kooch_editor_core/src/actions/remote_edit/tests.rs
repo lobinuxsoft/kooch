@@ -943,7 +943,12 @@ fn a_paste_is_built_and_undone() {
     clipboard.set(vec![crate::actions::entity_state::capture(&editor, source)]);
     editor.insert(clipboard);
 
-    assert!(dispatch(&mut editor, &EditorAction::PasteEntities));
+    assert!(dispatch(
+        &mut editor,
+        &EditorAction::PasteEntities {
+            into: crate::actions::SpawnTarget::Active,
+        }
+    ));
     let entities = RemoteClient::new(&socket).list_entities().unwrap();
     assert_eq!(entities.len(), 2, "the paste did not reach the project");
     assert!(

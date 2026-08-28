@@ -1,3 +1,4 @@
+use super::filter::WorldFilter;
 use super::*;
 use crate::state::EntityDisplayInfo;
 use crate::state::ReflectedFields;
@@ -54,7 +55,7 @@ fn a_selection_far_down_the_list_scrolls_into_view() {
     let selected = vec![entities[900].entity];
 
     let offset = with_ui(|ui| {
-        let rows = build_rows(ui, &entities, &[]);
+        let rows = build_rows(ui, &entities, &[], &WorldFilter::default());
         // The list has been sitting at the top.
         ui.data_mut(|d| d.insert_temp(visible_range_id(), (0usize, 20usize)));
         let focus = newly_focused(ui, &selected).expect("selection is new");
@@ -146,7 +147,7 @@ fn selecting_a_visible_row_leaves_the_list_alone() {
     let selected = vec![entities[5].entity];
 
     let offset = with_ui(|ui| {
-        let rows = build_rows(ui, &entities, &[]);
+        let rows = build_rows(ui, &entities, &[], &WorldFilter::default());
         ui.data_mut(|d| d.insert_temp(visible_range_id(), (0usize, 20usize)));
         let focus = newly_focused(ui, &selected).expect("selection is new");
         scroll_offset_for(ui, &rows, &entities, focus, 20.0)
@@ -189,7 +190,7 @@ fn a_selection_inside_a_collapsed_group_is_revealed() {
         // Close the second group: its twenty entities leave the list.
         GroupHeader::scene(&scenes[1], 20).open(ui);
         ui.data_mut(|d| d.insert_persisted(egui::Id::new(("world_group_open", second)), false));
-        let closed = build_rows(ui, &entities, &scenes);
+        let closed = build_rows(ui, &entities, &scenes, &WorldFilter::default());
         assert!(
             !closed.iter().any(|row| matches!(row, WorldRow::Entity(idx)
                     if entities[*idx].entity == hidden)),
@@ -197,7 +198,7 @@ fn a_selection_inside_a_collapsed_group_is_revealed() {
         );
 
         reveal_group_of(ui, &entities, &scenes, hidden);
-        let opened = build_rows(ui, &entities, &scenes);
+        let opened = build_rows(ui, &entities, &scenes, &WorldFilter::default());
         let index = opened.iter().position(|row| {
             matches!(row, WorldRow::Entity(idx)
                 if entities[*idx].entity == hidden)
@@ -220,7 +221,7 @@ fn a_single_scene_still_gets_a_root() {
     let id = kooch_core::Guid::new_v4();
     let entities: Vec<_> = (0..1000).map(|i| entity_info(i, Some(id))).collect();
     let scenes = vec![scene_info(id, true)];
-    let rows = with_ui(|ui| build_rows(ui, &entities, &scenes));
+    let rows = with_ui(|ui| build_rows(ui, &entities, &scenes, &WorldFilter::default()));
 
     assert!(
         matches!(rows.first(), Some(WorldRow::Group(_))),
@@ -241,7 +242,7 @@ fn a_single_scene_still_gets_a_root() {
 #[test]
 fn entities_without_a_scene_get_their_own_group() {
     let entities: Vec<_> = (0..10).map(|i| entity_info(i, None)).collect();
-    let rows = with_ui(|ui| build_rows(ui, &entities, &[]));
+    let rows = with_ui(|ui| build_rows(ui, &entities, &[], &WorldFilter::default()));
 
     assert!(matches!(rows.first(), Some(WorldRow::Group(_))));
     let listed = rows
@@ -265,7 +266,7 @@ fn a_collapsed_group_contributes_only_its_header() {
     // Only `b` is active, so `a` defaults closed.
     let scenes = vec![scene_info(a, false), scene_info(b, true)];
 
-    let rows = with_ui(|ui| build_rows(ui, &entities, &scenes));
+    let rows = with_ui(|ui| build_rows(ui, &entities, &scenes, &WorldFilter::default()));
 
     let headers = rows
         .iter()
@@ -291,7 +292,7 @@ fn a_collapsed_scenes_entities_do_not_become_unsaved() {
         .collect();
     let scenes = vec![scene_info(a, false), scene_info(b, true)];
 
-    let rows = with_ui(|ui| build_rows(ui, &entities, &scenes));
+    let rows = with_ui(|ui| build_rows(ui, &entities, &scenes, &WorldFilter::default()));
     assert_eq!(
         rows.iter()
             .filter(|row| matches!(row, WorldRow::Group(_)))
@@ -309,7 +310,7 @@ fn an_entity_in_no_scene_is_still_reachable() {
     entities.push(entity_info(99, None));
     let scenes = vec![scene_info(a, true), scene_info(b, true)];
 
-    let rows = with_ui(|ui| build_rows(ui, &entities, &scenes));
+    let rows = with_ui(|ui| build_rows(ui, &entities, &scenes, &WorldFilter::default()));
     assert!(
         rows.iter()
             .any(|row| matches!(row, WorldRow::Entity(idx) if *idx == 4)),
@@ -473,9 +474,9 @@ fn a_collapsed_parent_hides_its_subtree() {
     let scenes = vec![scene_info(id, true)];
 
     let (open, closed) = with_ui(|ui| {
-        let open = entity_rows(&build_rows(ui, &entities, &scenes));
+        let open = entity_rows(&build_rows(ui, &entities, &scenes, &WorldFilter::default()));
         ui.data_mut(|data| data.insert_persisted(subtree_id(entities[0].entity), false));
-        let closed = entity_rows(&build_rows(ui, &entities, &scenes));
+        let closed = entity_rows(&build_rows(ui, &entities, &scenes, &WorldFilter::default()));
         (open, closed)
     });
 
@@ -501,8 +502,8 @@ fn a_prefab_instance_starts_collapsed() {
 
     let (plain_rows, instance_rows) = with_ui(|ui| {
         (
-            entity_rows(&build_rows(ui, &plain, &scenes)),
-            entity_rows(&build_rows(ui, &instance, &scenes)),
+            entity_rows(&build_rows(ui, &plain, &scenes, &WorldFilter::default())),
+            entity_rows(&build_rows(ui, &instance, &scenes, &WorldFilter::default())),
         )
     });
 
@@ -533,7 +534,7 @@ fn only_the_instances_root_starts_collapsed() {
     let rows = with_ui(|ui| {
         // Open the root, and nothing else.
         ui.data_mut(|data| data.insert_persisted(subtree_id(entities[0].entity), true));
-        entity_rows(&build_rows(ui, &entities, &scenes))
+        entity_rows(&build_rows(ui, &entities, &scenes, &WorldFilter::default()))
     });
 
     assert_eq!(
@@ -562,12 +563,12 @@ fn a_reveal_opens_collapsed_ancestors() {
         // Collapse the scene too, so both guards are under test.
         ui.data_mut(|data| data.insert_persisted(egui::Id::new(("world_group_open", id)), false));
         assert_eq!(
-            entity_rows(&build_rows(ui, &entities, &scenes)),
+            entity_rows(&build_rows(ui, &entities, &scenes, &WorldFilter::default())),
             0,
             "nothing was hidden, so the test proves nothing",
         );
         super::reveal_group_of(ui, &entities, &scenes, child);
-        entity_rows(&build_rows(ui, &entities, &scenes))
+        entity_rows(&build_rows(ui, &entities, &scenes, &WorldFilter::default()))
     });
 
     assert_eq!(rows, 2, "the revealed child still had no row");
@@ -660,13 +661,13 @@ fn a_drop_target_opens_up_to_its_root() {
             ui.data_mut(|d| d.insert_persisted(subtree_id(e.entity), false));
         }
         assert_eq!(
-            entity_rows(&build_rows(ui, &entities, &scenes)),
+            entity_rows(&build_rows(ui, &entities, &scenes, &WorldFilter::default())),
             1,
             "nothing was collapsed, so the test proves nothing",
         );
         // Dropping onto the leaf: its whole chain has to open.
         super::entity_row::reveal_chain(ui, entities[2].entity, &entities);
-        entity_rows(&build_rows(ui, &entities, &scenes))
+        entity_rows(&build_rows(ui, &entities, &scenes, &WorldFilter::default()))
     });
 
     assert_eq!(rows, 3, "the drop target's chain stayed folded");
@@ -688,4 +689,152 @@ fn an_unsaved_scene_cannot_discard() {
     );
     info.path = Some(std::path::PathBuf::from("scenes/station.scene"));
     assert!(super::GroupHeader::scene(&info, 1).has_file);
+}
+
+/// Which entities a filtered list ended up listing, by display index.
+fn matched_indices(rows: &[WorldRow]) -> Vec<usize> {
+    rows.iter()
+        .filter_map(|row| match row {
+            WorldRow::Entity(idx) => Some(*idx),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A component with no fields, for the type filter to find.
+fn carrying(index: u32, scene: Option<kooch_core::Guid>, types: &[&str]) -> EntityDisplayInfo {
+    let mut info = entity_info(index, scene);
+    info.components = types
+        .iter()
+        .map(|name| crate::state::ComponentDisplayInfo {
+            type_id: std::any::TypeId::of::<()>(),
+            component: kooch_ecs::component::ComponentId::INVALID,
+            short_name: (*name).to_owned().into(),
+            fields: ReflectedFields::Values(Vec::new()),
+            field_metas: None,
+            visibility: Default::default(),
+        })
+        .collect();
+    info
+}
+
+/// Gives an entity a `Name`, which is what the text filter reads.
+fn called(mut info: EntityDisplayInfo, name: &str) -> EntityDisplayInfo {
+    info.components.push(crate::state::ComponentDisplayInfo {
+        type_id: std::any::TypeId::of::<()>(),
+        component: kooch_ecs::component::ComponentId::INVALID,
+        short_name: "Name".into(),
+        fields: ReflectedFields::Values(vec![(
+            "value".to_owned(),
+            kooch_ecs::reflect::ReflectValue::String(name.to_owned()),
+        )]),
+        field_metas: None,
+        visibility: Default::default(),
+    });
+    info
+}
+
+/// The question that cost a day and a half: how many directional lights
+/// are in this scene? A name box cannot ask it.
+#[test]
+fn a_type_filter_finds_both_suns() {
+    let scene = kooch_core::Guid::new_v4();
+    let mut entities: Vec<_> = (0..500)
+        .map(|i| carrying(i, Some(scene), &["MeshRenderer"]))
+        .collect();
+    entities.push(carrying(500, Some(scene), &["DirectionalLight"]));
+    entities.push(carrying(501, Some(scene), &["DirectionalLight"]));
+    let scenes = vec![scene_info(scene, true)];
+
+    let filter = WorldFilter {
+        text: String::new(),
+        component: Some("DirectionalLight".to_owned()),
+    };
+    let rows = with_ui(|ui| matched_indices(&build_rows(ui, &entities, &scenes, &filter)));
+
+    assert_eq!(rows, vec![500, 501]);
+}
+
+#[test]
+fn a_name_filter_is_case_insensitive() {
+    let scene = kooch_core::Guid::new_v4();
+    let entities = vec![
+        called(entity_info(0, Some(scene)), "Player"),
+        called(entity_info(1, Some(scene)), "Ground"),
+    ];
+    let scenes = vec![scene_info(scene, true)];
+
+    let filter = WorldFilter {
+        text: "play".to_owned(),
+        component: None,
+    };
+    let rows = with_ui(|ui| matched_indices(&build_rows(ui, &entities, &scenes, &filter)));
+
+    assert_eq!(rows, vec![0]);
+}
+
+/// Two narrowings that widened each other would be a filter nobody
+/// could predict.
+#[test]
+fn both_terms_narrow_together() {
+    let scene = kooch_core::Guid::new_v4();
+    let entities = vec![
+        called(carrying(0, Some(scene), &["DirectionalLight"]), "Sun"),
+        called(carrying(1, Some(scene), &["DirectionalLight"]), "Moon"),
+        called(carrying(2, Some(scene), &["PointLight"]), "Sun lamp"),
+    ];
+    let scenes = vec![scene_info(scene, true)];
+
+    let filter = WorldFilter {
+        text: "sun".to_owned(),
+        component: Some("DirectionalLight".to_owned()),
+    };
+    let rows = with_ui(|ui| matched_indices(&build_rows(ui, &entities, &scenes, &filter)));
+
+    assert_eq!(rows, vec![0]);
+}
+
+/// A match hidden under a closed parent is a search that found the thing
+/// and did not show it.
+#[test]
+fn a_filter_reaches_into_collapsed_subtrees() {
+    let scene = kooch_core::Guid::new_v4();
+    let mut parent = called(entity_info(0, Some(scene)), "Rig");
+    let child = called(entity_info(1, Some(scene)), "Sun");
+    parent.children = vec![child.entity];
+    let entities = vec![parent, child];
+    let scenes = vec![scene_info(scene, true)];
+
+    let filter = WorldFilter {
+        text: "sun".to_owned(),
+        component: None,
+    };
+    let rows = with_ui(|ui| {
+        // Closed, which without the filter hides row 1 entirely.
+        ui.data_mut(|d| d.insert_persisted(subtree_id(entities[0].entity), false));
+        matched_indices(&build_rows(ui, &entities, &scenes, &filter))
+    });
+
+    assert_eq!(rows, vec![1]);
+}
+
+/// An empty panel is indistinguishable from an empty world, so it says
+/// which one it is.
+#[test]
+fn no_match_says_so() {
+    let scene = kooch_core::Guid::new_v4();
+    let entities = vec![called(entity_info(0, Some(scene)), "Player")];
+    let scenes = vec![scene_info(scene, true)];
+
+    let filter = WorldFilter {
+        text: "nothing here".to_owned(),
+        component: None,
+    };
+    let rows = with_ui(|ui| build_rows(ui, &entities, &scenes, &filter));
+
+    assert!(
+        matches!(rows.as_slice(), [WorldRow::Note(_)]),
+        "{}",
+        rows.len()
+    );
 }

@@ -81,7 +81,12 @@ fn clearing_empties_both_stacks() {
 /// words the local commands use.
 #[test]
 fn a_step_is_labelled_by_action() {
-    assert_eq!(label_of(&EditorAction::PasteEntities), "Paste");
+    assert_eq!(
+        label_of(&EditorAction::PasteEntities {
+            into: crate::actions::SpawnTarget::Active,
+        }),
+        "Paste"
+    );
     assert_eq!(
         label_of(&EditorAction::Duplicate(kooch_ecs::entity::Entity::new(
             1, 0

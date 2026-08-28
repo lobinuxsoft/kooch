@@ -1,6 +1,7 @@
 //! World panel — entity hierarchy list with context menu.
 
 pub(crate) mod entity_row;
+mod filter;
 mod scene_bar;
 mod spawn_menu;
 
@@ -11,6 +12,7 @@ use crate::icons;
 use crate::state::{EntityDisplayInfo, ReflectedTypeInfo, SceneDisplayInfo};
 
 use self::entity_row::draw_entity_row;
+use self::filter::{WorldFilter, draw_filter_bar};
 use self::scene_bar::draw_scene_bar;
 use self::spawn_menu::{draw_spawn_menu, spawn_entries};
 
@@ -86,6 +88,16 @@ pub(crate) fn draw_world_content(
     });
     ui.separator();
 
+    // Read, drawn, written back. Held in egui's temp store rather than
+    // threaded through the editor's state for the same reason the group
+    // flags are: it is view state of one panel and it should not outlive
+    // the session. See `WorldFilter`.
+    let filter_id = egui::Id::new("world_filter");
+    let mut filter = ui.data_mut(|d| d.get_temp::<WorldFilter>(filter_id).unwrap_or_default());
+    draw_filter_bar(ui, entities, &mut filter);
+    ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
+    ui.separator();
+
     handle_keyboard(ui, focused, entities, selected, last_clicked_index, actions);
 
     // Every line the panel will show, headers included, before any of
@@ -100,7 +112,7 @@ pub(crate) fn draw_world_content(
         reveal_group_of(ui, entities, scenes, focus);
     }
 
-    let rows = build_rows(ui, entities, scenes);
+    let rows = build_rows(ui, entities, scenes, &filter);
     let row_h = entity_row::row_height(ui);
     let scroll_to = focus.and_then(|focus| scroll_offset_for(ui, &rows, entities, focus, row_h));
 
@@ -320,6 +332,35 @@ impl GroupHeader {
             scene: Some(scene.id),
             dirty: scene.dirty,
             has_file: scene.path.is_some(),
+        }
+    }
+
+    /// A scene's header while the panel is filtered.
+    ///
+    /// 🔴 Always open, and it says `shown of total`. A collapsible group
+    /// under a filter is a second way to hide a row somebody is looking
+    /// for, and a bare count would read as the scene having shrunk.
+    fn filtered(scene: &SceneDisplayInfo, shown: usize, total: usize) -> Self {
+        let dirty = if scene.dirty { "*" } else { "" };
+        Self {
+            id: egui::Id::new(("world_group_filtered", scene.id)),
+            label: format!("{dirty}{} ({shown} of {total})", scene.name),
+            default_open: true,
+            scene: Some(scene.id),
+            dirty: scene.dirty,
+            has_file: scene.path.is_some(),
+        }
+    }
+
+    /// The unsaved pseudo-group's header while filtered.
+    fn unsaved_filtered(shown: usize, total: usize) -> Self {
+        Self {
+            id: egui::Id::new("world_group_filtered_unsaved"),
+            label: format!("Unsaved ({shown} of {total})"),
+            default_open: true,
+            scene: None,
+            dirty: false,
+            has_file: false,
         }
     }
 
@@ -567,6 +608,7 @@ fn build_rows(
     ui: &egui::Ui,
     entities: &[EntityDisplayInfo],
     scenes: &[SceneDisplayInfo],
+    filter: &WorldFilter,
 ) -> Vec<WorldRow> {
     let mut rows = Vec::with_capacity(entities.len() + scenes.len() + 1);
     let mut grouped = vec![false; entities.len()];
@@ -592,6 +634,31 @@ fn build_rows(
             grouped[idx] = true;
         }
 
+        if filter.active() {
+            let matched: Vec<usize> = members
+                .iter()
+                .copied()
+                .filter(|&idx| entities.get(idx).is_some_and(|info| filter.matches(info)))
+                .collect();
+            // A header over nothing is a row that says "not here" in the
+            // most expensive way available. Skipped entirely.
+            if matched.is_empty() {
+                continue;
+            }
+            rows.push(WorldRow::Group(GroupHeader::filtered(
+                scene,
+                matched.len(),
+                members.len(),
+            )));
+            // 🔴 Flat, and the collapse state is ignored. A match hidden
+            // under a closed parent is a search that found the thing and
+            // did not show it, which is worse than finding nothing. The
+            // rows keep their own indent, so each one still says where
+            // it lives.
+            rows.extend(matched.into_iter().map(WorldRow::Entity));
+            continue;
+        }
+
         let header = GroupHeader::scene(scene, members.len());
         let open = header.is_open(ui);
         rows.push(WorldRow::Group(header));
@@ -614,15 +681,36 @@ fn build_rows(
         .map(|(idx, _)| idx)
         .collect();
     if !orphans.is_empty() {
-        let header = GroupHeader::unsaved(orphans.len());
-        let open = header.is_open(ui);
-        rows.push(WorldRow::Group(header));
-        if open {
-            rows.push(WorldRow::Note(
-                "Not in any scene yet — saved with the active one.".to_owned(),
-            ));
-            push_members(ui, entities, &orphans, &mut rows);
+        if filter.active() {
+            let matched: Vec<usize> = orphans
+                .iter()
+                .copied()
+                .filter(|&idx| entities.get(idx).is_some_and(|info| filter.matches(info)))
+                .collect();
+            if !matched.is_empty() {
+                rows.push(WorldRow::Group(GroupHeader::unsaved_filtered(
+                    matched.len(),
+                    orphans.len(),
+                )));
+                rows.extend(matched.into_iter().map(WorldRow::Entity));
+            }
+        } else {
+            let header = GroupHeader::unsaved(orphans.len());
+            let open = header.is_open(ui);
+            rows.push(WorldRow::Group(header));
+            if open {
+                rows.push(WorldRow::Note(
+                    "Not in any scene yet — saved with the active one.".to_owned(),
+                ));
+                push_members(ui, entities, &orphans, &mut rows);
+            }
         }
+    }
+
+    // Says so, rather than showing an empty panel that is
+    // indistinguishable from an empty world.
+    if filter.active() && rows.is_empty() {
+        rows.push(WorldRow::Note("No entity matches the filter.".to_owned()));
     }
 
     rows
