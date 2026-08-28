@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-20 — 🔴 **a frame cap is a PERFORMANCE setting on this part: the same work costs 3.9 ms of GPU capped at 72 fps and 13.2 ms uncapped, because capped the GPU idles 68 % of the time and holds ~1210 MHz instead of throttling to ~850.** `gpu_busy_percent` reads 32 % and the scopes agree. **The budget is met with the preset below** — 13.88 ms frame, and at 8 W capped only **28 % of it is used**. The lever was the upscaler, not the shading: `upscale: 3` (FSR 3.1) cost 11.355 ms of a 23.36 ms frame and `upscale: 2` (SGSR 2) costs 2.062. 🔴 **The ~11 ms shading floor #885 was built to decompose no longer exists** — the whole shading pass is 3.272 ms today — and the instrument built for it measured something else instead: a full-screen sweep per material **in the project** costs 178 µs on the device, which is 0.71 ms here and 3.7 ms for a game with twenty materials. **#826 is removed, not deferred.** Cutting a froxel's light list by COUNT is incompatible with a cluster grid being continuous, and that is a property of the idea rather than of any implementation of it: see the entry below. The remaining queue is the contact march's cap (#839) and #731. The budget is unchanged, still unmet, and now measured against the SETTLED clock rather than the boosted one — 40.7 ms, not 27.8.
+Last updated 2026-08-28 — 🔴 **there is no render distance in this engine.** `perspective_infinite_reverse_rh` never receives `PerspectiveCamera::far`, and no `draw_distance`/`cull_distance` exists anywhere in the tree, so every instance in a scene is in frustum forever — free at 190 m, the whole frame at 1410 m. Two silent limits cost a day each (#996 buffer sizes, #997 the 65 535 dispatch ceiling) and `dense.scene` opened; what it showed is in the order below. 🔴 **a frame cap is a PERFORMANCE setting on this part: the same work costs 3.9 ms of GPU capped at 72 fps and 13.2 ms uncapped, because capped the GPU idles 68 % of the time and holds ~1210 MHz instead of throttling to ~850.** `gpu_busy_percent` reads 32 % and the scopes agree. **The budget is met with the preset below** — 13.88 ms frame, and at 8 W capped only **28 % of it is used**. The lever was the upscaler, not the shading: `upscale: 3` (FSR 3.1) cost 11.355 ms of a 23.36 ms frame and `upscale: 2` (SGSR 2) costs 2.062. 🔴 **The ~11 ms shading floor #885 was built to decompose no longer exists** — the whole shading pass is 3.272 ms today — and the instrument built for it measured something else instead: a full-screen sweep per material **in the project** costs 178 µs on the device, which is 0.71 ms here and 3.7 ms for a game with twenty materials. **#826 is removed, not deferred.** Cutting a froxel's light list by COUNT is incompatible with a cluster grid being continuous, and that is a property of the idea rather than of any implementation of it: see the entry below. The remaining queue is the contact march's cap (#839) and #731. The budget is unchanged, still unmet, and now measured against the SETTLED clock rather than the boosted one — 40.7 ms, not 27.8.
 
 ---
 
@@ -208,6 +208,110 @@ recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
 
 ---
+
+## 🎯 The order, decided 2026-08-28 — the dense scene opened, and named three things
+
+`dense.scene` — 2024 instances over 1410 m, 64 orbiting lights, all
+casting — is the first scene in this project that is neither a room nor
+a bench. Getting it to open took two fixes, and what it showed once open
+is worth more than either.
+
+### What it took to open it at all
+
+- **#996** — `wgpu::Limits` fields not named fall through to
+  `Limits::default()` **without a word in the log**. The lamp cull's
+  buffer was sized by a default nobody wrote.
+- **#997** — `dispatch_workgroups(x, …)` caps at **65 535** per
+  dimension on every backend. 2024 instances × 4953 meshlets ÷ 64 is
+  156 639, so the frame died on a validation error and kept dying.
+  Folded into two dimensions; below the ceiling the dispatch is
+  bit-for-bit the old one.
+
+Two instances of the same shape in two days: **a limit inherited in
+silence**. That joins "a feature that exists and is not reached" as a
+failure mode this roadmap now watches for by name.
+
+### 1. 🔴 There is no render distance. At all
+
+`projection.rs:92` builds `perspective_infinite_reverse_rh`, and
+`PerspectiveCamera::far` is **never passed to it** — `far` reaches the
+shadow cascade fit (`shadow/pass.rs:144`) and the page grid
+(`shadow/pages.rs:544`) and nothing else. `grep` finds no
+`draw_distance`, no `cull_distance` and no `render_distance` anywhere in
+the tree.
+
+So every instance in a scene is inside the frustum forever. At 190 m
+across that is free. At 1410 m it is the frame, and the owner named it
+from the seat — *"empieza a pegar en la performance"* — before any
+number below was in.
+
+⚠️ **The infinite projection is not the thing to change.** It is what
+makes `ndc.z = near / distance` exact, and contact shadows, SSR, fog,
+the atmosphere and the temporal upscaler all read depth that way;
+`projection.rs` already argues this at length. What is missing is a
+**cull-side** reach — a distance past which an instance is rejected
+before it ever becomes meshlets, plus a fade so it does not pop.
+
+It wants the same instance-level pre-pass as item 2, and it is adjacent
+to #448 (imposters), which is what belongs on the far side of a reach,
+and to #950, which would cut many of the same instances for a different
+reason. **No issue yet.**
+
+### 2. 🔴 `meshlets_per_mesh` is a SCENE-WIDE maximum
+
+The scene cull dispatches `instance_count × meshlets_per_mesh`, and that
+second term is the max over every mesh registered — not per instance. In
+`dense.scene`:
+
+| | instances | real meshlets | threads paid |
+|---|---|---|---|
+| cube | 2000 | 1 | 4953 |
+| dragon | 24 | 4953 | 4953 |
+
+**98.8 % of a 10 M-thread dispatch is padding**, and it is contagious:
+adding one dragon to a scene of cubes multiplies the whole cull by 4953.
+Adding a cheap object should not cost more per object.
+
+The fix is the two-level cull every Nanite-shaped renderer has — reject
+instances first, expand only the survivors into meshlets — which is the
+same pre-pass a render distance hangs off. **No issue yet.**
+
+### 3. ⚠️ The moved-caster list overflows, and the panel says everything is fine
+
+`MOVED_CAPACITY = 256`. `dense.scene` reports `moved=2064`, past which
+the scene generation bumps and **every page redraws every frame** —
+while the panel still reads a 100 % pool hit rate. The two readings
+together look like a working cache, which is the kind of failure nobody
+recognises by sight.
+
+The 256 is arbitrary and the panel's reading is misleading. Both are the
+issue. **No issue yet.**
+
+### What was NOT wrong, checked against the code
+
+Reported as *"las sombras se ven muy mal"* over a screenshot. None of it
+was the shadow path:
+
+- **`render_scale: 50` with `sharpening: 0`** in the project's own
+  `.rendersettings`. SGSR 2 reconstructing 880×442 into 1617×884 with
+  the RCAS pass at zero — which `settings.rs:508` already calls *"how an
+  upscaler earns the verdict we tried it, it looked worse, we turned it
+  off"*. Every stair-step on every silhouette is that, and a shadow is
+  the finest detail in the frame, so it dies first.
+- **Sun azimuth 0°.** The light pointed down the camera's own axis, so
+  every shadow fell behind its own caster and 2000 boxes on a white
+  floor cast nothing visible. The one shadow on screen was the ball's,
+  seen end-on and squashed by perspective into a line to the vanishing
+  point.
+- `shadow_distance: 200` is **cascades only** and `virtual_shadows` is
+  on, so it is never read. `contact_shadow_length: 0.3` m is invisible
+  at 30 m spacing, but it is not the cause either.
+
+🔴 **Judge a shadow at `render_scale: 100`, or you are judging the
+reconstruction.**
+
+---
+
 
 ## 🎯 The order, decided 2026-08-26 — wire what is already built, then the atmosphere
 
