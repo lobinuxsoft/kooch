@@ -97,6 +97,35 @@ fn the_atlas_holds_the_pool() {
 }
 
 #[test]
+fn the_lamp_arena_is_sized_by_groups() {
+    // The arena is `[slot * capacity + group]` — one ROW A LAMP — so
+    // whatever sizes it is multiplied by up to `LAMP_CULLS`. Sized by
+    // the cull's thread count instead of the scene's real group count,
+    // 2024 instances at 4700 meshlets over 64 lamps asks for 2.4 GB.
+    //
+    // 🔴 wgpu does not panic on that. It returns an INVALID buffer, and
+    // every `Queue::submit` for the rest of the run fails validation
+    // with a message that names a label and no cause.
+    let instances = 2024u64;
+    let meshlets = 4700u64;
+    let lamps = 64u64;
+    let over_approximation = instances * meshlets * lamps * 4;
+    assert!(
+        over_approximation > 256 * 1024 * 1024,
+        "the bug this guards needs the over-approximation to exceed a buffer limit; \
+         it measured {over_approximation} bytes",
+    );
+    // The real group count is the prefix sum, which for a scene of
+    // mostly single-group cubes is nearer the instance count than the
+    // thread count.
+    let real_groups = instances + 24 * 1000;
+    assert!(
+        real_groups * lamps * 4 < 64 * 1024 * 1024,
+        "the real count has to fit comfortably, or the fix is not one",
+    );
+}
+
+#[test]
 fn the_counters_name_every_level() {
     let Some((device, _queue)) = device() else {
         eprintln!("no adapter; skipping");

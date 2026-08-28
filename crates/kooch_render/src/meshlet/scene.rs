@@ -122,7 +122,20 @@ impl Default for MeshInstance {
 pub struct SceneCullParams {
     pub instance_count: u32,
     pub meshlets_per_mesh: u32,
-    pub _pad0: u32,
+    /// LOD groups the scene actually has — `instance_group_capacity`'s
+    /// O(1) prefix sum, not `instance_count * meshlets_per_mesh`.
+    ///
+    /// 🔴 The two differ by orders of magnitude and one of them cannot
+    /// be used to size a per-LIGHT arena. A group-error arena indexed
+    /// `[slot * capacity + group]` over 2024 instances, 4700 meshlets
+    /// and 64 lamps is 2.4 GB with the over-approximation and 6.6 MB
+    /// with the real count — and 2.4 GB is past `max_buffer_size`, so
+    /// wgpu returns an INVALID buffer and every submit fails.
+    ///
+    /// ⚠️ Read by the CPU to size buffers, not by any shader. It rides
+    /// this struct because this is what already reaches every pass that
+    /// needs it.
+    pub group_capacity: u32,
     pub _pad1: u32,
 }
 
@@ -131,9 +144,16 @@ impl SceneCullParams {
         Self {
             instance_count,
             meshlets_per_mesh,
-            _pad0: 0,
+            group_capacity: 0,
             _pad1: 0,
         }
+    }
+
+    /// The scene's real LOD-group count, for whoever sizes an arena
+    /// indexed by group.
+    pub fn with_groups(mut self, groups: u32) -> Self {
+        self.group_capacity = groups;
+        self
     }
 }
 
