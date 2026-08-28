@@ -324,8 +324,11 @@ fn run_cull_scene_pool_atomic_hi_z(thread_id: u32) {
 }
 
 @compute @workgroup_size(64, 1, 1)
-fn cs_cull_scene_pool_atomic_hi_z(@builtin(global_invocation_id) gid: vec3<u32>) {
-    run_cull_scene_pool_atomic_hi_z(gid.x);
+fn cs_cull_scene_pool_atomic_hi_z(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    run_cull_scene_pool_atomic_hi_z(linear_thread(gid, groups));
 }
 
 // ---------------------------------------------------------------
@@ -373,6 +376,9 @@ fn run_cull_pass_b(thread_id: u32) {
 }
 
 @compute @workgroup_size(64, 1, 1)
-fn cs_cull_pass_b(@builtin(global_invocation_id) gid: vec3<u32>) {
-    run_cull_pass_b(gid.x);
+fn cs_cull_pass_b(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    run_cull_pass_b(linear_thread(gid, groups));
 }

@@ -1,6 +1,7 @@
 use crate::meshlet::cull::CullParams;
 use crate::meshlet::pool::GpuGlobalMeshPool;
 use crate::meshlet::scene::{MeshletScene, SceneCullParams};
+use kooch_core::gpu::tiled_workgroups;
 
 use super::super::MeshletCull;
 use super::super::pipelines::MeshletCullPipelines;
@@ -123,8 +124,8 @@ impl MeshletCull {
             pass.set_bind_group(0, &cull_bg, &[]);
             pass.set_bind_group(1, &pool_bg, &[]);
             pass.set_bind_group(2, &scene_bg, &[]);
-            let workgroups = total_threads.div_ceil(64).max(1);
-            pass.dispatch_workgroups(workgroups, 1, 1);
+            let (groups_x, groups_y) = tiled_workgroups(total_threads, 64);
+            pass.dispatch_workgroups(groups_x, groups_y, 1);
         }
 
         self.mirror_count_to_indirect_args(encoder);

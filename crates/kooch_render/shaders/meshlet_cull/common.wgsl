@@ -249,3 +249,20 @@ fn occluded_by_hi_z(center_world: vec3<f32>, radius: f32) -> bool {
 // pipeline layout `[group(0)]` and `cs_cull_hi_z`'s layout
 // `[group(0), group(1)]` — naga sees the Hi-Z bindings only from the
 // second branch, never references them from `cs_cull`.
+
+// A dispatch dimension holds at most 65 535 workgroups — 4 194 240
+// threads at 64 per group. A scene-wide cull runs one thread per
+// (instance × meshlet), so an open world reaches that with a few
+// hundred detailed models and the dispatch is rejected outright.
+//
+// The host folds the excess into a second dimension
+// (`kooch_core::gpu::tiled_workgroups`); this reverses it. Below the
+// ceiling `gid.y` is 0 and this is exactly `gid.x`, so the 1-D path
+// costs one multiply-add and nothing else.
+//
+// ⚠️ The tiled form OVER-COVERS: the last row dispatches threads past
+// the real count. Every `run_*` below guards on its own total, and
+// must keep doing so.
+fn linear_thread(gid: vec3<u32>, groups: vec3<u32>) -> u32 {
+    return gid.y * (groups.x * 64u) + gid.x;
+}

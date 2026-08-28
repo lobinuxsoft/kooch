@@ -148,14 +148,18 @@ fn lod_pixel_error_world_pool(lod_error: f32, world_center: vec3<f32>, world_sca
 }
 
 @compute @workgroup_size(64, 1, 1)
-fn cs_lod_compute_group_max_err(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn cs_lod_compute_group_max_err(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    let thread_id = linear_thread(gid, groups);
     let max_meshlets = scene_params.meshlets_per_mesh;
     let total_threads = scene_params.instance_count * max_meshlets;
-    if (gid.x >= total_threads) {
+    if (thread_id >= total_threads) {
         return;
     }
-    let instance_id = gid.x / max_meshlets;
-    let meshlet_offset = gid.x % max_meshlets;
+    let instance_id = thread_id / max_meshlets;
+    let meshlet_offset = thread_id % max_meshlets;
 
     let inst = instances[instance_id];
     let mesh_desc = pool_mesh_descriptors[inst.mesh_id];
@@ -303,6 +307,9 @@ fn run_cull_scene_pool_atomic(thread_id: u32) {
 }
 
 @compute @workgroup_size(64, 1, 1)
-fn cs_cull_scene_pool_atomic(@builtin(global_invocation_id) gid: vec3<u32>) {
-    run_cull_scene_pool_atomic(gid.x);
+fn cs_cull_scene_pool_atomic(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    run_cull_scene_pool_atomic(linear_thread(gid, groups));
 }

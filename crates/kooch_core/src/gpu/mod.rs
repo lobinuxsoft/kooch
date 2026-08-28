@@ -18,7 +18,7 @@ mod context;
 pub mod dlss;
 mod error;
 mod features;
-mod limits;
+pub mod limits;
 mod profiler;
 
 #[cfg(test)]
@@ -28,4 +28,5 @@ pub use context::{GpuContext, vsync_override};
 pub use dlss::{DlssRuntime, DlssSdk, DlssSupport};
 pub use error::GpuError;
 pub use features::{all_required_features, engine_features, vbuf64_features};
+pub use limits::{MAX_WORKGROUPS_PER_DIM, tiled_workgroups};
 pub use profiler::{GpuQuery, GpuScopes};

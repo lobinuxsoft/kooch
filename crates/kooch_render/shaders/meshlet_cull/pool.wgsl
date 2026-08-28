@@ -126,6 +126,9 @@ fn run_cull_scene_pool(thread_id: u32) {
 }
 
 @compute @workgroup_size(64, 1, 1)
-fn cs_cull_scene_pool(@builtin(global_invocation_id) gid: vec3<u32>) {
-    run_cull_scene_pool(gid.x);
+fn cs_cull_scene_pool(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    run_cull_scene_pool(linear_thread(gid, groups));
 }
