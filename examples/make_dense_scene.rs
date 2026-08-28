@@ -51,11 +51,23 @@
 //!
 //! Then open the project in the editor and read the perf HUD.
 //!
-//! # No physics
+//! # One collider, and only one
 //!
-//! Nothing here has a collider. The measurement is of the cull, and a
-//! solver stepping six hundred bodies would put its own cost in the same
-//! frame time.
+//! The ground is a static body so a player can be dropped in and WALK
+//! the field — reading a shadow at 1.4 km means getting to 1.4 km, and
+//! a flying camera reads a different picture than a thing standing on
+//! the surface the shadow lands on.
+//!
+//! Nothing else has a collider. The measurement is of the cull, and a
+//! solver stepping six hundred bodies would put its own cost in the
+//! same frame time; one static box costs the solver nothing.
+//!
+//! # No sky
+//!
+//! The `SkyRenderer` is deliberately absent until the atmospheric sky
+//! replaces it (#976). A scene that carries the old one is a scene
+//! whose background is a known-broken thing, and this exists to read
+//! shadows against the ground, not to look at the horizon.
 
 use std::path::{Path, PathBuf};
 
@@ -141,9 +153,11 @@ fn main() {
     // being measured.
     enable_testing(&root);
     let document = scene(&assets, cubes, dragons, lights, spacing);
-    // Mesh instances only. The camera and the sky are entities too, but
-    // they carry no `MeshRenderer`, so they never reach the cull — and
-    // counting them would overstate the figure this scene exists to show.
+    // Mesh instances only. The camera and the lights are entities too,
+    // but they carry no `MeshRenderer`, so they never reach the cull —
+    // and counting them would overstate the figure this scene exists to
+    // show. The ground does reach it, and is one instance of one
+    // meshlet: below the noise of either count below.
     let instances = cubes + dragons;
     // ⚠️ Beside the project's own scenes, never over them. Writing to
     // `DEFAULT_SCENE_REL_PATH` in a project somebody works in would
@@ -179,7 +193,7 @@ fn main() {
     println!("\nproject ready: {}\n", root.display());
     println!(
         "  {cubes} cubes + {dragons} dragons = {instances} mesh instances \
-         ({} entities with the camera, sky, sun and lights)",
+         ({} entities with the camera, ground, sun and lights)",
         document.entities.len(),
     );
     println!(
@@ -294,15 +308,18 @@ fn scene(
     // camera that holds the whole layout puts every object at roughly
     // the same range — which is the one framing that cannot show it.
     entities.push(camera(Vec3::new(0.0, scale * 2.0, extent * 0.42)));
-    entities.push(sky());
+    entities.push(ground(assets.cube, extent));
     entities.push(sun());
 
     for index in 0..total {
         let column = index % columns;
         let row = index / columns;
+        // Lifted by half its own size, so the box RESTS on the ground
+        // rather than being buried to its waist in it. The ground's top
+        // face is y = 0 — see `ground`.
         let position = Vec3::new(
             (column as f32 - columns as f32 * 0.5) * spacing,
-            0.0,
+            scale * 0.5,
             (row as f32 - columns as f32 * 0.5) * spacing,
         );
 
@@ -521,16 +538,73 @@ fn orbiting_light(label: &str, pivot_index: usize, point: bool, scale: f32) -> E
     }
 }
 
-fn sky() -> EntityDescription {
+/// The surface everything stands on, and the one the sun's shadow is
+/// READ on.
+///
+/// A unit cube scaled to cover the field, so the mesh and the collider
+/// are sized by the same transform and cannot drift apart. Sunk by half
+/// its thickness, which puts its top face at exactly y = 0 — the plane
+/// every other instance is placed relative to.
+///
+/// 🔴 It does not CAST. A caster 1.4 km across sits in every page of
+/// the sun's clipmap at every level, and a flat slab contributes
+/// nothing to a shadow but its own silhouette at the horizon. Leaving
+/// it on would pay the whole chain for it, every frame, to draw an
+/// edge nobody is looking at. It RECEIVES, which is the entire point.
+fn ground(mesh: Guid, extent: f32) -> EntityDescription {
+    use kooch_physics::components::{Collider, KIND_STATIC, PhysicsBody, SHAPE_CUBOID};
+
+    // Past the last object rather than up to it: an instance at the rim
+    // of the grid standing on the rim of the floor reads as a bug.
+    const MARGIN: f32 = 1.15;
+    const THICKNESS: f32 = 2.0;
+    let size = Vec3::new(extent * MARGIN, THICKNESS, extent * MARGIN);
+
     EntityDescription {
-        name: "Sky".to_owned(),
+        name: "Ground".to_owned(),
         parent_index: None,
         parent: None,
         components: vec![
-            name_of("Sky"),
+            name_of("Ground"),
             ComponentDescription {
-                type_name: type_name_of::<kooch_ecs::sky_renderer::SkyRenderer>(),
-                fields: vec![],
+                type_name: type_name_of::<kooch_ecs::transform::Transform>(),
+                fields: vec![
+                    (
+                        "position".to_owned(),
+                        ReflectValue::Vec3(Vec3::new(0.0, -THICKNESS * 0.5, 0.0)),
+                    ),
+                    ("scale".to_owned(), ReflectValue::Vec3(size)),
+                ],
+            },
+            ComponentDescription {
+                type_name: type_name_of::<kooch_ecs::mesh_renderer::MeshRenderer>(),
+                fields: vec![
+                    (
+                        "mesh".to_owned(),
+                        ReflectValue::AssetRef {
+                            guid: Some(mesh),
+                            asset_type: MESH_TYPE.to_owned(),
+                        },
+                    ),
+                    ("cast_shadows".to_owned(), ReflectValue::Bool(false)),
+                    ("receive_shadows".to_owned(), ReflectValue::Bool(true)),
+                ],
+            },
+            // Unit half-extents: the transform above sizes both this and
+            // the mesh, so what you see is what you land on.
+            ComponentDescription {
+                type_name: type_name_of::<Collider>(),
+                fields: vec![
+                    ("shape".to_owned(), ReflectValue::U32(SHAPE_CUBOID)),
+                    (
+                        "half_extents".to_owned(),
+                        ReflectValue::Vec3(Vec3::splat(0.5)),
+                    ),
+                ],
+            },
+            ComponentDescription {
+                type_name: type_name_of::<PhysicsBody>(),
+                fields: vec![("kind".to_owned(), ReflectValue::U32(KIND_STATIC))],
             },
         ],
     }
