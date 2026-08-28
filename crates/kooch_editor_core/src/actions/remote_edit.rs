@@ -139,7 +139,7 @@ fn selects_what_it_makes(action: &EditorAction) -> bool {
     matches!(
         action,
         EditorAction::Duplicate(_)
-            | EditorAction::PasteEntities
+            | EditorAction::PasteEntities { .. }
             | EditorAction::Spawn { .. }
             | EditorAction::SpawnMesh { .. }
             | EditorAction::InstantiatePrefab { .. }
@@ -294,7 +294,7 @@ fn duplicate(
     let state = crate::actions::entity_state::as_copy(&crate::actions::entity_state::capture(
         resources, entity,
     ));
-    let copy = build(client, mirror, &state)?;
+    let copy = build(client, mirror, &state, None)?;
     tracing::info!(
         target: "kooch_editor_core::remote_edit::duplicate",
         components = state.components.len(),
@@ -316,11 +316,13 @@ pub(super) fn build(
     client: &kooch_remote::RemoteClient,
     mirror: &crate::remote_mirror::RemoteMirror,
     state: &crate::actions::entity_state::EntityState,
+    // Which scene to author it into, or `None` to let the captured state
+    // restore its own — an undone despawn belongs where it was, a paste
+    // belongs where it was asked for.
+    scene: Option<kooch_core::Guid>,
 ) -> Result<kooch_remote::protocol::EntityId, String> {
-    // Rebuilt from a captured state — a paste or an undone despawn. Its
-    // scene is restored with the rest of it, not decided here.
     let id = client
-        .spawn(state.name.as_deref(), None, None)
+        .spawn(state.name.as_deref(), scene, None)
         .map_err(|e| e.to_string())?;
     for component in &state.components {
         if let Err(e) = client.add_component(id, &component.name) {
@@ -401,7 +403,19 @@ enum Edit<'a> {
     /// Owned, unlike its neighbours: the values come from the clipboard
     /// resource, and the borrow of `Resources` that reads it ends before
     /// the send that needs the session out of the same `Resources`.
-    Paste(Vec<crate::actions::entity_state::EntityState>),
+    Paste {
+        /// Where the copies land. Named for the same reason
+        /// [`Edit::Spawn`]'s is: a paste into a scene somebody
+        /// right-clicked must not arrive in the active one.
+        into: crate::actions::SpawnTarget,
+        states: Vec<crate::actions::entity_state::EntityState>,
+    },
+    /// Re-home an entity: the membership is a component, so this is an
+    /// add plus a set rather than a call of its own.
+    MoveToScene {
+        entity: crate::actions::Entity,
+        scene: kooch_core::Guid,
+    },
     Spawn {
         name: Option<String>,
         /// Component types the action asked for beyond the base ones.
@@ -511,15 +525,22 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
             new_parent: *new_parent,
         }),
         EditorAction::Duplicate(entity) => Some(Edit::Duplicate(*entity)),
+        EditorAction::MoveToScene { entity, scene } => Some(Edit::MoveToScene {
+            entity: *entity,
+            scene: *scene,
+        }),
         // Nothing to send for an empty clipboard, and `None` here would
         // send it down the local path instead of doing nothing.
-        EditorAction::PasteEntities => {
+        EditorAction::PasteEntities { into } => {
             let states = resources
                 .get::<crate::clipboard::EntityClipboard>()?
                 .states();
             match states.is_empty() {
                 true => None,
-                false => Some(Edit::Paste(states.to_vec())),
+                false => Some(Edit::Paste {
+                    into: *into,
+                    states: states.to_vec(),
+                }),
             }
         }
         EditorAction::Spawn { name, extra, into } => Some(Edit::Spawn {
@@ -745,12 +766,51 @@ fn send(
             created.push(duplicate(entity, &client, mirror, resources)?);
             Ok(())
         }
-        Edit::Paste(states) => {
+        Edit::MoveToScene { entity, scene } => {
+            let id = remote(entity)?;
+            // Already there for anything that belongs to a scene, and an
+            // error here is not a failure: the set below is the edit,
+            // and it needs the component to exist however it got there.
+            // 🔴 The FULL path. `resolve_component` looks the name up in
+            // the registry, which keys by `std::any::type_name` — a short
+            // name comes back `UnknownComponent` and the whole edit is
+            // dropped.
+            let member = std::any::type_name::<kooch_ecs::SceneMember>();
+            if let Err(e) = client.add_component(id, member) {
+                tracing::debug!(
+                    target: "kooch_editor_core::remote_edit::move_to_scene",
+                    "SceneMember was not added, assuming it is already there: {e}",
+                );
+            }
+            client
+                .set_field(
+                    id,
+                    member,
+                    "scene",
+                    kooch_ecs::reflect::ReflectValue::String(scene.to_string()),
+                )
+                .map_err(map_err)
+        }
+        Edit::Paste { into, states } => {
+            // 🔴 Once for the whole paste. `NewScene` asks the project to
+            // make one, and asking per entity would hand a clipboard of
+            // five entities five scenes holding one each.
+            let scene = match into {
+                crate::actions::SpawnTarget::Active => None,
+                crate::actions::SpawnTarget::Scene(id) => Some(id),
+                // Not reachable from the panel — nothing offers "paste
+                // as a child of" — and the mirror has no scene lookup to
+                // answer it with. Treated as the active scene rather
+                // than invented.
+                crate::actions::SpawnTarget::ChildOf(_) => None,
+                crate::actions::SpawnTarget::NewScene => Some(client.new_scene().map_err(map_err)?),
+            };
             for state in &states {
                 created.push(build(
                     &client,
                     mirror,
                     &crate::actions::entity_state::as_copy(state),
+                    scene,
                 )?);
             }
             Ok(())

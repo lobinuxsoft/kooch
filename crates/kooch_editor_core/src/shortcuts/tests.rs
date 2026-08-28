@@ -89,7 +89,10 @@ fn an_empty_selection_asks_nothing() {
 #[test]
 fn paste_ignores_the_selection() {
     let actions = actions_for(EditChord::Paste, &[], None);
-    assert!(matches!(actions.as_slice(), [EditorAction::PasteEntities]));
+    assert!(matches!(
+        actions.as_slice(),
+        [EditorAction::PasteEntities { .. }]
+    ));
 }
 
 /// Every chord is unique, and every one of them says so in the UI. A

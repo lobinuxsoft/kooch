@@ -91,6 +91,7 @@ pub(super) fn draw_entity_row(
     selected: &mut Vec<Entity>,
     pinned: &mut HashSet<Entity>,
     reflected_types: &[ReflectedTypeInfo],
+    clipboard_has_entities: bool,
     actions: &mut Vec<EditorAction>,
     last_clicked_index: &mut Option<usize>,
     // `Some(open)` when this entity has children, `None` when it is a
@@ -171,6 +172,7 @@ pub(super) fn draw_entity_row(
         selected,
         pinned,
         reflected_types,
+        clipboard_has_entities,
         actions,
     );
 }
@@ -374,9 +376,17 @@ fn handle_context_menu(
     selected: &mut Vec<Entity>,
     pinned: &mut HashSet<Entity>,
     reflected_types: &[ReflectedTypeInfo],
+    clipboard_has_entities: bool,
     actions: &mut Vec<EditorAction>,
 ) {
     resp.context_menu(|ui| {
+        // 🔴 Without this the menu takes egui's default and every label
+        // wraps — "Duplicate" one character per line. It was always too
+        // narrow; adding entries that say their chord is what made it
+        // impossible to miss. Same idiom as the View and Game panels'
+        // menus.
+        ui.set_min_width(240.0);
+
         // Ensure the right-clicked entity is selected.
         if !selected.contains(&info.entity) {
             selected.clear();
@@ -410,6 +420,55 @@ fn handle_context_menu(
                 }
             }
             ui.close();
+        }
+        ui.separator();
+
+        // The clipboard three, read out of the same table the keyboard
+        // reads. They live here rather than on a toolbar because the
+        // pointer is what names the selection and the place — and two
+        // lists of the same commands is one list that drifts.
+        //
+        // Each says its chord: a menu is where a shortcut is learned.
+        for chord in [
+            crate::shortcuts::EditChord::Duplicate,
+            crate::shortcuts::EditChord::Copy,
+            crate::shortcuts::EditChord::Paste,
+        ] {
+            let enabled = match chord {
+                crate::shortcuts::EditChord::Paste => clipboard_has_entities,
+                _ => true,
+            };
+            let icon = match chord {
+                crate::shortcuts::EditChord::Paste => icons::PACKAGE,
+                _ => icons::COPY,
+            };
+            if ui
+                .add_enabled(
+                    enabled,
+                    egui::Button::new(format!("{icon} {}", chord.label()))
+                        .shortcut_text(chord.chord()),
+                )
+                .on_hover_text(chord.tooltip())
+                .clicked()
+            {
+                // 🔴 Paste is rebuilt with THIS entity's scene rather
+                // than taken from the table. A menu opened on a row
+                // names a place; the chord that fills the table has no
+                // pointer and so names the active scene.
+                match (chord, info.scene) {
+                    (crate::shortcuts::EditChord::Paste, Some(scene)) => {
+                        actions.push(EditorAction::PasteEntities {
+                            into: crate::actions::SpawnTarget::Scene(scene),
+                        });
+                    }
+                    _ => actions.extend(crate::shortcuts::actions_for(
+                        chord,
+                        selected,
+                        Some(&crate::history::Document::World),
+                    )),
+                }
+                ui.close();
+            }
         }
         ui.separator();
 

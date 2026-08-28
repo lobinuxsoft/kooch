@@ -136,27 +136,15 @@ impl SpawnCommand {
     fn place(&self, resources: &mut Resources, entity: Entity) {
         use crate::actions::SpawnTarget;
 
-        let scene = match self.into {
-            SpawnTarget::Active => active_scene(resources),
-            SpawnTarget::Scene(id) => Some(id),
-            SpawnTarget::ChildOf(parent) => {
-                kooch_ecs::hierarchy::reparent(resources, entity, Some(parent));
-                // The parent's scene, because an entity's scene *is* its
-                // parent's: authoring a child into another would write it
-                // to a file its parent is not in.
-                scene_of(resources, parent).or_else(|| active_scene(resources))
-            }
-            SpawnTarget::NewScene => resources
-                .get_mut::<kooch_ecs::SceneManager>()
-                .map(|manager| manager.new_scene()),
-        };
-        let Some(scene) = scene else {
+        // Before the lookup, because `ChildOf`'s answer is the parent's
+        // scene and the parent is only a parent once this has run.
+        if let SpawnTarget::ChildOf(parent) = self.into {
+            kooch_ecs::hierarchy::reparent(resources, entity, Some(parent));
+        }
+        let Some(scene) = super::place::resolve_scene(resources, self.into) else {
             return;
         };
-        tag_with_scene(resources, entity, scene);
-        if let Some(manager) = resources.get_mut::<kooch_ecs::SceneManager>() {
-            manager.mark_scene_dirty(scene);
-        }
+        super::place::adopt(resources, entity, scene);
     }
 
     fn spawn_fresh(&self, resources: &mut Resources) -> Entity {
@@ -189,37 +177,5 @@ impl EditorCommand for SpawnCommand {
 
     fn description(&self) -> &str {
         "Spawn Entity"
-    }
-}
-
-/// The scene new entities land in, if there is one.
-fn active_scene(resources: &Resources) -> Option<kooch_core::Guid> {
-    resources.get::<kooch_ecs::SceneManager>()?.active_id()
-}
-
-/// Which scene an entity belongs to.
-fn scene_of(resources: &Resources, entity: Entity) -> Option<kooch_core::Guid> {
-    resources
-        .get::<ComponentRegistry>()?
-        .get_cpu::<kooch_ecs::SceneMember>()?
-        .get(entity)
-        .map(|member| member.scene)
-}
-
-/// Records which scene the entity belongs to, archetype included.
-fn tag_with_scene(resources: &mut Resources, entity: Entity, scene: kooch_core::Guid) {
-    use kooch_ecs::SceneMember;
-
-    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-        registry.register_cpu_reflected::<SceneMember>();
-        if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
-            storage.insert(entity, SceneMember::new(scene));
-        }
-    }
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let next = archetypes.archetype_after_add_dynamic(current, TypeId::of::<SceneMember>());
-        archetypes.register_entity(entity, next);
     }
 }

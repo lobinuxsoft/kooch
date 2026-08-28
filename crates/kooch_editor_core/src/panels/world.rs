@@ -1,6 +1,7 @@
 //! World panel — entity hierarchy list with context menu.
 
 pub(crate) mod entity_row;
+mod filter;
 mod scene_bar;
 mod spawn_menu;
 
@@ -11,8 +12,9 @@ use crate::icons;
 use crate::state::{EntityDisplayInfo, ReflectedTypeInfo, SceneDisplayInfo};
 
 use self::entity_row::draw_entity_row;
+use self::filter::{WorldFilter, draw_filter_bar};
 use self::scene_bar::draw_scene_bar;
-use self::spawn_menu::{draw_spawn_menu, spawn_entries};
+use self::spawn_menu::spawn_entries;
 
 /// Content of the "World" tab — entity hierarchy list with context menu.
 pub(crate) fn draw_world_content(
@@ -37,53 +39,16 @@ pub(crate) fn draw_world_content(
     ));
     ui.separator();
 
-    ui.horizontal(|ui| {
-        draw_spawn_menu(ui, actions);
-        let any_selected = !selected.is_empty();
-        // The three clipboard commands, from the same table the menu and
-        // the keyboard read. Each button says its chord, because a
-        // toolbar is where a shortcut is learned — nobody reads a manual
-        // to find out that Ctrl+D exists.
-        for chord in [
-            crate::shortcuts::EditChord::Duplicate,
-            crate::shortcuts::EditChord::Copy,
-            crate::shortcuts::EditChord::Paste,
-        ] {
-            let enabled = match chord {
-                crate::shortcuts::EditChord::Paste => clipboard_has_entities,
-                _ => any_selected,
-            };
-            let icon = match chord {
-                crate::shortcuts::EditChord::Paste => icons::PACKAGE,
-                _ => icons::COPY,
-            };
-            if ui
-                .add_enabled(
-                    enabled,
-                    egui::Button::new(format!("{icon} {}", chord.label())),
-                )
-                .on_hover_text(format!("{}\n\n{}", chord.chord(), chord.tooltip()))
-                .clicked()
-            {
-                actions.extend(crate::shortcuts::actions_for(
-                    chord,
-                    selected,
-                    Some(&crate::history::Document::World),
-                ));
-            }
-        }
-        if ui
-            .add_enabled(
-                any_selected,
-                egui::Button::new(format!("{} Despawn", icons::TRASH)),
-            )
-            .clicked()
-        {
-            for entity in selected.drain(..) {
-                actions.push(EditorAction::Despawn(entity));
-            }
-        }
-    });
+    ui.separator();
+
+    // Read, drawn, written back. Held in egui's temp store rather than
+    // threaded through the editor's state for the same reason the group
+    // flags are: it is view state of one panel and it should not outlive
+    // the session. See `WorldFilter`.
+    let filter_id = egui::Id::new("world_filter");
+    let mut filter = ui.data_mut(|d| d.get_temp::<WorldFilter>(filter_id).unwrap_or_default());
+    draw_filter_bar(ui, entities, &mut filter);
+    ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
     ui.separator();
 
     handle_keyboard(ui, focused, entities, selected, last_clicked_index, actions);
@@ -100,9 +65,28 @@ pub(crate) fn draw_world_content(
         reveal_group_of(ui, entities, scenes, focus);
     }
 
-    let rows = build_rows(ui, entities, scenes);
+    let rows = build_rows(ui, entities, scenes, &filter);
     let row_h = entity_row::row_height(ui);
     let scroll_to = focus.and_then(|focus| scroll_offset_for(ui, &rows, entities, focus, row_h));
+
+    // 🔴 Claimed BEFORE the list, over the whole panel, and that order
+    // is the fix rather than a detail. The target used to be allocated
+    // INSIDE the virtualized closure, out of what was left under the
+    // last row — which meant it existed only once the list had drawn its
+    // final row (never, in a scene of two thousand, unless scrolled to
+    // the bottom) and measured zero high when the groups were collapsed,
+    // because inside `show_rows` `max_rect` is the virtualized CONTENT,
+    // not the panel. Either way there was nothing under the pointer and
+    // the right click landed on a background that offered nothing.
+    //
+    // Claimed first, every row drawn afterwards sits on top of it and
+    // wins the overlap, so this answers exactly where no row is.
+    let background_rect = ui.available_rect_before_wrap();
+    let background = ui.interact(
+        background_rect,
+        ui.id().with("world_background"),
+        egui::Sense::click(),
+    );
 
     let mut area = egui::ScrollArea::vertical()
         .id_salt("world_tree")
@@ -133,10 +117,11 @@ pub(crate) fn draw_world_content(
         // the parent chain to reject a cyclic reparent) is paid for
         // the rows a person can see rather than for the ones the
         // scroll position happens to be nowhere near.
-        let at_end = range.end >= rows.len();
         for index in range {
             match &rows[index] {
-                WorldRow::Group(header) => draw_group_header(ui, header, row_h, actions),
+                WorldRow::Group(header) => {
+                    draw_group_header(ui, header, row_h, clipboard_has_entities, selected, actions)
+                }
                 WorldRow::Note(text) => {
                     // Indented like the entities it stands in for, or the
                     // note explaining an empty scene sits further left
@@ -158,6 +143,7 @@ pub(crate) fn draw_world_content(
                         selected,
                         pinned,
                         reflected_types,
+                        clipboard_has_entities,
                         actions,
                         last_clicked_index,
                         subtree,
@@ -165,88 +151,81 @@ pub(crate) fn draw_world_content(
                 }
             }
         }
+    });
 
-        // Empty space: click to deselect, right-click to create, drop
-        // target to unparent an entity.
-        //
-        // Only once the last row has been drawn, and only across what
-        // is genuinely left over. `available_rect_before_wrap` is the
-        // wrong question inside a virtualized list: the rows that are
-        // scrolled past still hold their space, so "what is left"
-        // includes theirs, and claiming it drew this target beside
-        // the list rather than under it.
-        if !at_end {
-            return;
-        }
-        let remaining = egui::Rect::from_min_max(
-            egui::pos2(ui.max_rect().left(), ui.cursor().top()),
-            ui.max_rect().max,
-        );
-        if remaining.height() < 1.0 || remaining.width() < 1.0 {
-            return;
-        }
-        let empty_resp = ui.allocate_rect(remaining, egui::Sense::click_and_drag());
-        if empty_resp.clicked() {
-            selected.clear();
-            *last_clicked_index = None;
-        }
+    if background.clicked() {
+        selected.clear();
+        *last_clicked_index = None;
+    }
 
-        // The same entries the toolbar's Spawn button offers, reached
-        // where people actually reach for them: right-click in the
-        // empty part of the hierarchy. A row's own right-click menu
-        // handles per-entity actions, including Add Component (#591).
-        //
-        // 🔴 Into a scene of its own, not the active one. Right-clicking
-        // past the last row is not "put this somewhere" — there is no
-        // row under the pointer to name a somewhere. It is "start
-        // something new", and since an entity has to belong to a scene,
-        // starting one is what makes the gesture answerable.
-        empty_resp.context_menu(|ui| {
-            ui.label("New scene");
-            ui.separator();
-            spawn_entries(ui, actions, crate::actions::SpawnTarget::NewScene);
-        });
-        // A prefab dropped into the hierarchy spawns at the position it
-        // was authored at: a list of names has no geometry to read a
-        // place out of, and defaulting to the origin would silently move
-        // a prefab that was deliberately authored elsewhere. Drop it in
-        // the View panel to choose a spot.
-        // Filtered by type the way an Inspector asset slot is: a mesh
-        // dragged over the hierarchy is not something to instance.
-        if empty_resp
-            .dnd_hover_payload::<crate::drag_drop::DraggedAsset>()
-            .is_some_and(|a| a.type_name == crate::drag_drop::PREFAB_TYPE_NAME)
+    // The same entries the toolbar's Spawn button offers, reached
+    // where people actually reach for them: right-click in the
+    // empty part of the hierarchy. A row's own right-click menu
+    // handles per-entity actions, including Add Component (#591).
+    //
+    // 🔴 Into a scene of its own, not the active one. Right-clicking
+    // past the last row is not "put this somewhere" — there is no
+    // row under the pointer to name a somewhere. It is "start
+    // something new", and since an entity has to belong to a scene,
+    // starting one is what makes the gesture answerable.
+    background.context_menu(|ui| {
+        ui.set_min_width(240.0);
+        ui.label("New scene");
+        ui.separator();
+        spawn_entries(ui, actions, crate::actions::SpawnTarget::NewScene);
+        if ui
+            .add_enabled(
+                clipboard_has_entities,
+                egui::Button::new(format!("{} Paste", icons::PACKAGE)),
+            )
+            .on_hover_text("Put what was copied into a scene of its own")
+            .clicked()
         {
-            ui.painter().rect_filled(
-                remaining,
-                0.0,
-                egui::Color32::from_rgba_unmultiplied(60, 200, 100, 40),
-            );
-            if let Some(prefab) = empty_resp.dnd_release_payload::<crate::drag_drop::DraggedAsset>()
-            {
-                actions.push(EditorAction::InstantiatePrefab {
-                    prefab: prefab.guid,
-                    at: crate::viewport_pick::DropPoint::Authored,
-                });
-            }
-        }
-        if empty_resp.dnd_hover_payload::<Entity>().is_some() {
-            ui.painter().rect_filled(
-                remaining,
-                0.0,
-                egui::Color32::from_rgba_unmultiplied(100, 100, 100, 20),
-            );
-        }
-        if let Some(dragged) = empty_resp.dnd_release_payload::<Entity>() {
-            let d = *dragged;
-            if entities.iter().any(|e| e.entity == d && e.parent.is_some()) {
-                actions.push(EditorAction::Reparent {
-                    entity: d,
-                    new_parent: None,
-                });
-            }
+            actions.push(EditorAction::PasteEntities {
+                into: crate::actions::SpawnTarget::NewScene,
+            });
+            ui.close();
         }
     });
+    // A prefab dropped into the hierarchy spawns at the position it
+    // was authored at: a list of names has no geometry to read a
+    // place out of, and defaulting to the origin would silently move
+    // a prefab that was deliberately authored elsewhere. Drop it in
+    // the View panel to choose a spot.
+    // Filtered by type the way an Inspector asset slot is: a mesh
+    // dragged over the hierarchy is not something to instance.
+    if background
+        .dnd_hover_payload::<crate::drag_drop::DraggedAsset>()
+        .is_some_and(|a| a.type_name == crate::drag_drop::PREFAB_TYPE_NAME)
+    {
+        ui.painter().rect_filled(
+            background_rect,
+            0.0,
+            egui::Color32::from_rgba_unmultiplied(60, 200, 100, 40),
+        );
+        if let Some(prefab) = background.dnd_release_payload::<crate::drag_drop::DraggedAsset>() {
+            actions.push(EditorAction::InstantiatePrefab {
+                prefab: prefab.guid,
+                at: crate::viewport_pick::DropPoint::Authored,
+            });
+        }
+    }
+    if background.dnd_hover_payload::<Entity>().is_some() {
+        ui.painter().rect_filled(
+            background_rect,
+            0.0,
+            egui::Color32::from_rgba_unmultiplied(100, 100, 100, 20),
+        );
+    }
+    if let Some(dragged) = background.dnd_release_payload::<Entity>() {
+        let d = *dragged;
+        if entities.iter().any(|e| e.entity == d && e.parent.is_some()) {
+            actions.push(EditorAction::Reparent {
+                entity: d,
+                new_parent: None,
+            });
+        }
+    }
 }
 
 /// One line of the hierarchy, as the virtualized list addresses it.
@@ -290,6 +269,12 @@ struct GroupHeader {
     /// What separates "discard changes" from "delete everything": a scene
     /// with no file has nothing to be read back from.
     has_file: bool,
+    /// Whether new entities land here.
+    ///
+    /// Carried so the header's own menu can say so and change it. With
+    /// one scene open `draw_scene_bar` hides itself, and this row is then
+    /// the only thing on screen that names the scene at all.
+    active: bool,
 }
 
 impl GroupHeader {
@@ -308,6 +293,38 @@ impl GroupHeader {
             scene: Some(scene.id),
             dirty: scene.dirty,
             has_file: scene.path.is_some(),
+            active: scene.active,
+        }
+    }
+
+    /// A scene's header while the panel is filtered.
+    ///
+    /// 🔴 Always open, and it says `shown of total`. A collapsible group
+    /// under a filter is a second way to hide a row somebody is looking
+    /// for, and a bare count would read as the scene having shrunk.
+    fn filtered(scene: &SceneDisplayInfo, shown: usize, total: usize) -> Self {
+        let dirty = if scene.dirty { "*" } else { "" };
+        Self {
+            id: egui::Id::new(("world_group_filtered", scene.id)),
+            label: format!("{dirty}{} ({shown} of {total})", scene.name),
+            default_open: true,
+            scene: Some(scene.id),
+            dirty: scene.dirty,
+            has_file: scene.path.is_some(),
+            active: scene.active,
+        }
+    }
+
+    /// The unsaved pseudo-group's header while filtered.
+    fn unsaved_filtered(shown: usize, total: usize) -> Self {
+        Self {
+            id: egui::Id::new("world_group_filtered_unsaved"),
+            label: format!("Unsaved ({shown} of {total})"),
+            default_open: true,
+            scene: None,
+            dirty: false,
+            has_file: false,
+            active: false,
         }
     }
 
@@ -319,6 +336,7 @@ impl GroupHeader {
             scene: None,
             dirty: false,
             has_file: false,
+            active: false,
         }
     }
 
@@ -555,6 +573,7 @@ fn build_rows(
     ui: &egui::Ui,
     entities: &[EntityDisplayInfo],
     scenes: &[SceneDisplayInfo],
+    filter: &WorldFilter,
 ) -> Vec<WorldRow> {
     let mut rows = Vec::with_capacity(entities.len() + scenes.len() + 1);
     let mut grouped = vec![false; entities.len()];
@@ -580,6 +599,31 @@ fn build_rows(
             grouped[idx] = true;
         }
 
+        if filter.active() {
+            let matched: Vec<usize> = members
+                .iter()
+                .copied()
+                .filter(|&idx| entities.get(idx).is_some_and(|info| filter.matches(info)))
+                .collect();
+            // A header over nothing is a row that says "not here" in the
+            // most expensive way available. Skipped entirely.
+            if matched.is_empty() {
+                continue;
+            }
+            rows.push(WorldRow::Group(GroupHeader::filtered(
+                scene,
+                matched.len(),
+                members.len(),
+            )));
+            // 🔴 Flat, and the collapse state is ignored. A match hidden
+            // under a closed parent is a search that found the thing and
+            // did not show it, which is worse than finding nothing. The
+            // rows keep their own indent, so each one still says where
+            // it lives.
+            rows.extend(matched.into_iter().map(WorldRow::Entity));
+            continue;
+        }
+
         let header = GroupHeader::scene(scene, members.len());
         let open = header.is_open(ui);
         rows.push(WorldRow::Group(header));
@@ -602,15 +646,36 @@ fn build_rows(
         .map(|(idx, _)| idx)
         .collect();
     if !orphans.is_empty() {
-        let header = GroupHeader::unsaved(orphans.len());
-        let open = header.is_open(ui);
-        rows.push(WorldRow::Group(header));
-        if open {
-            rows.push(WorldRow::Note(
-                "Not in any scene yet — saved with the active one.".to_owned(),
-            ));
-            push_members(ui, entities, &orphans, &mut rows);
+        if filter.active() {
+            let matched: Vec<usize> = orphans
+                .iter()
+                .copied()
+                .filter(|&idx| entities.get(idx).is_some_and(|info| filter.matches(info)))
+                .collect();
+            if !matched.is_empty() {
+                rows.push(WorldRow::Group(GroupHeader::unsaved_filtered(
+                    matched.len(),
+                    orphans.len(),
+                )));
+                rows.extend(matched.into_iter().map(WorldRow::Entity));
+            }
+        } else {
+            let header = GroupHeader::unsaved(orphans.len());
+            let open = header.is_open(ui);
+            rows.push(WorldRow::Group(header));
+            if open {
+                rows.push(WorldRow::Note(
+                    "Not in any scene yet — saved with the active one.".to_owned(),
+                ));
+                push_members(ui, entities, &orphans, &mut rows);
+            }
         }
+    }
+
+    // Says so, rather than showing an empty panel that is
+    // indistinguishable from an empty world.
+    if filter.active() && rows.is_empty() {
+        rows.push(WorldRow::Note("No entity matches the filter.".to_owned()));
     }
 
     rows
@@ -629,6 +694,8 @@ fn draw_group_header(
     ui: &mut egui::Ui,
     header: &GroupHeader,
     row_h: f32,
+    clipboard_has_entities: bool,
+    selected: &[Entity],
     actions: &mut Vec<EditorAction>,
 ) {
     let size = egui::vec2(ui.available_width(), row_h);
@@ -639,7 +706,25 @@ fn draw_group_header(
         open = !open;
         ui.data_mut(|data| data.insert_persisted(header.id, open));
     }
-    scene_context_menu(&resp, header, actions);
+    scene_context_menu(&resp, header, clipboard_has_entities, actions);
+    // Dropping a row here re-homes it. The direct-manipulation form of
+    // the menu's Paste, and a MOVE: an entity belongs to exactly one
+    // scene, so the one it came from stops holding it.
+    let dropped = header
+        .scene
+        .and_then(|scene| resp.dnd_release_payload::<Entity>().map(|e| (scene, *e)));
+    if let Some((scene, dragged)) = dropped {
+        // The whole selection when the row being dragged is part of it:
+        // selecting six and dragging one of them means the six, which is
+        // what every other panel that drags does.
+        let moving: Vec<Entity> = match selected.contains(&dragged) {
+            true => selected.to_vec(),
+            false => vec![dragged],
+        };
+        for entity in moving {
+            actions.push(EditorAction::MoveToScene { entity, scene });
+        }
+    }
 
     if !ui.is_rect_visible(rect) {
         return;
@@ -666,6 +751,17 @@ fn draw_group_header(
             false => visuals.text_color(),
         },
     );
+
+    // Over the row rather than under it, so the header still reads
+    // through the tint. Only for a group that is a scene: "Unsaved" is
+    // not a place an entity can be moved TO.
+    if header.scene.is_some() && resp.dnd_hover_payload::<Entity>().is_some() {
+        ui.painter().rect_filled(
+            rect,
+            0.0,
+            egui::Color32::from_rgba_unmultiplied(60, 200, 100, 40),
+        );
+    }
 }
 
 /// The colour of a scene that has edits not on disk.
@@ -696,12 +792,38 @@ const DIRTY_SCENE: egui::Color32 = egui::Color32::from_rgb(210, 150, 60);
 fn scene_context_menu(
     resp: &egui::Response,
     header: &GroupHeader,
+    clipboard_has_entities: bool,
     actions: &mut Vec<EditorAction>,
 ) {
     let Some(scene) = header.scene else {
         return;
     };
     resp.context_menu(|ui| {
+        ui.set_min_width(240.0);
+        // 🔴 The only place the active scene can be chosen when a single
+        // scene is open: `draw_scene_bar` hides itself under two scenes,
+        // so with one there was nothing on screen naming it and nothing
+        // to click. "I cannot select the scene" is a correct reading of
+        // a panel that never offered.
+        match header.active {
+            // Says so rather than offering nothing: a menu that is silent
+            // about which scene is active leaves the question unanswered
+            // in the one place it was asked.
+            true => {
+                ui.add_enabled(false, egui::Button::new("Active scene"));
+            }
+            false => {
+                if ui
+                    .button("Make Active")
+                    .on_hover_text("New entities land in this scene")
+                    .clicked()
+                {
+                    actions.push(EditorAction::SetActiveScene(scene));
+                    ui.close();
+                }
+            }
+        }
+        ui.separator();
         // No icon on either. There is no verified Phosphor codepoint for
         // a save glyph in `icons`, and that module's own note says why
         // guessing one is not an option: a wrong codepoint is still a
@@ -744,6 +866,22 @@ fn scene_context_menu(
         ui.menu_button("New", |ui| {
             spawn_entries(ui, actions, crate::actions::SpawnTarget::Scene(scene));
         });
+        // Into *this* scene, for the same reason. Copying out of one
+        // scene and pasting into another is the gesture that used to
+        // leave the copies under "Unsaved" with nothing saying why.
+        if ui
+            .add_enabled(
+                clipboard_has_entities,
+                egui::Button::new(format!("{} Paste", icons::PACKAGE)),
+            )
+            .on_hover_text("Put what was copied into this scene")
+            .clicked()
+        {
+            actions.push(EditorAction::PasteEntities {
+                into: crate::actions::SpawnTarget::Scene(scene),
+            });
+            ui.close();
+        }
     });
 }
 

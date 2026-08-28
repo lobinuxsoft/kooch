@@ -168,6 +168,13 @@ pub(crate) fn copy_name(state: &EntityState) -> Option<String> {
 pub(crate) fn as_copy(state: &EntityState) -> EntityState {
     let name = copy_name(state);
     let mut copy = state.clone();
+    // 🔴 Membership is not part of what was copied. `capture` takes every
+    // reflected component and `SceneMember` is one, so a copy carried the
+    // scene it came OUT of — and restoring it wrote that scene straight
+    // over wherever the paste had just been placed. Which file a copy
+    // lands in is the paste's decision, and only the paste's.
+    copy.components
+        .retain(|c| c.name != std::any::type_name::<kooch_ecs::SceneMember>());
     copy.name = name.clone();
     let Some(name) = name else {
         return copy;
