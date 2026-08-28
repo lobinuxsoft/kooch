@@ -24,7 +24,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.26.0"
+version = "0.27.0"
 edition = "2024"
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/lobinuxsoft/kooch"
@@ -252,6 +252,9 @@ editor = ["dep:kooch_editor_core"]
 # whole build to the Vulkan backend, Windows included — see
 # `kooch_core::gpu::dlss`.
 dlss = ["render", "kooch_render/dlss"]
+# DLSS with NVIDIA's debug overlay. A debugging build, never a shipped
+# one — see `kooch_render`'s entry.
+dlss-debug-overlay = ["dlss", "kooch_render/dlss-debug-overlay"]
 dynamic = ["kooch_core/dynamic", "kooch_ecs/dynamic", "dep:kooch_plugin_api"]
 # Streams this game's frames to a profiler over TCP, and turns on the
 # puffin backend for every `profiling::scope!` in the workspace — feature
