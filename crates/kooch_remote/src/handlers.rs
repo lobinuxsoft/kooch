@@ -171,6 +171,10 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             Ok(()) => Response::ok(id, ResponseData::Ok),
             Err(e) => Response::err(id, e),
         },
+        Method::LoadSceneAdditive { path } => match load_scene_additive(resources, path) {
+            Ok(scene) => Response::ok(id, ResponseData::SceneOpened { scene }),
+            Err(e) => Response::err(id, e),
+        },
         Method::SetPlaying { playing } => match set_playing(resources, *playing) {
             Ok(()) => Response::ok(id, ResponseData::Ok),
             Err(e) => Response::err(id, e),
@@ -675,6 +679,32 @@ fn load_scene(resources: &mut Resources, path: &str) -> Result<(), RemoteError> 
     // before it even knew what was in it.
     kooch_ecs::scene::propagate::refresh_all(resources);
     Ok(())
+}
+
+/// Opens a scene beside the ones already loaded.
+///
+/// Unlike [`load_scene`] nothing is despawned, so the entities already
+/// in the world keep their identities and every handle the client holds
+/// stays valid.
+fn load_scene_additive(
+    resources: &mut Resources,
+    path: &str,
+) -> Result<kooch_core::Guid, RemoteError> {
+    let path = std::path::PathBuf::from(path);
+    let mut manager = resources
+        .remove::<kooch_ecs::SceneManager>()
+        .ok_or_else(|| RemoteError::Unavailable {
+            detail: "no SceneManager".to_owned(),
+        })?;
+    let opened = manager.open_additive(&path, resources);
+    resources.insert(manager);
+    let scene = opened.map_err(|e| RemoteError::SceneError {
+        detail: e.to_string(),
+    })?;
+    // Same reason as `load_scene`: a prefab edited while this scene was
+    // closed left stale copies in it, and this is where it arrives.
+    kooch_ecs::scene::propagate::refresh_all(resources);
+    Ok(scene)
 }
 
 /// Records that the scene holding `entity` has edits not on disk.

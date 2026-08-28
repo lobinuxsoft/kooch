@@ -369,6 +369,17 @@ impl RemoteClient {
         })
     }
 
+    /// Opens a scene beside the ones already loaded, and answers with its
+    /// identity.
+    pub fn load_scene_additive(&self, path: &str) -> Result<kooch_core::Guid, ClientError> {
+        match self.call(Method::LoadSceneAdditive {
+            path: path.to_owned(),
+        })? {
+            ResponseData::SceneOpened { scene } => Ok(scene),
+            other => Err(ClientError::Unexpected(other)),
+        }
+    }
+
     /// Runs a method whose only success shape is [`ResponseData::Ok`].
     fn expect_ok(&self, method: Method) -> Result<(), ClientError> {
         match self.call(method)? {

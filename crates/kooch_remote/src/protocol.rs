@@ -306,6 +306,15 @@ pub enum Method {
     NewScene,
     /// Replace the live ECS with a scene file from the server's disk.
     LoadScene { path: String },
+    /// Open a scene file BESIDE what is already loaded, and make it
+    /// active. Returns its identity as [`ResponseData::SceneOpened`].
+    ///
+    /// 🔴 Distinct from [`Self::LoadScene`], which replaces the world.
+    /// Additive loading existed only editor-side, which meant it was
+    /// unavailable exactly when a project is open — and a project being
+    /// open is the normal case, since the world shown in the editor is
+    /// the project's. The scenes have to arrive where the world lives.
+    LoadSceneAdditive { path: String },
     /// Start or stop the project's gameplay systems in place.
     ///
     /// Starting snapshots the world first and stopping restores that
