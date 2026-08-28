@@ -434,7 +434,7 @@ pub(crate) fn record(
     // Loading a scene replaces the world every step in the history
     // describes. Keeping them would offer to undo an edit to an entity
     // that no longer exists, against ids the project has since reused.
-    if matches!(action, EditorAction::OpenScene) {
+    if matches!(action, EditorAction::OpenScene { .. }) {
         if let Some(history) = resources.get_mut::<RemoteHistory>() {
             history.clear();
         }

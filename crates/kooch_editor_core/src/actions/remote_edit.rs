@@ -452,7 +452,15 @@ enum Edit<'a> {
         scene: kooch_core::Guid,
         as_new: bool,
     },
-    LoadScene,
+    LoadScene {
+        /// The file, or `None` to ask for one. The dialog runs on THIS
+        /// side either way: the project has no window to put it in.
+        path: Option<std::path::PathBuf>,
+    },
+    /// Open a scene beside what is already loaded, in the project.
+    LoadSceneAdditive {
+        path: Option<std::path::PathBuf>,
+    },
     /// Capture one of the project's entities as a prefab file.
     SavePrefab {
         entity: kooch_ecs::entity::Entity,
@@ -559,7 +567,7 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
         // saving it locally would write a partly-parked copy over the
         // project's own scene file.
         EditorAction::SaveScene => Some(Edit::SaveScene),
-        EditorAction::OpenScene => Some(Edit::LoadScene),
+        EditorAction::OpenScene { path } => Some(Edit::LoadScene { path: path.clone() }),
         // Same reason as scene I/O: the world being captured is the
         // project's, and the mirror is a view of it. Writing the mirror
         // would save a partly-parked copy — every component this editor
@@ -624,11 +632,27 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
             parent: *new_parent,
             before: *before,
         }),
-        EditorAction::OpenSceneAdditive
-        | EditorAction::CloseScene(_)
-        | EditorAction::SetActiveScene(_) => None,
+        EditorAction::OpenSceneAdditive { path } => {
+            Some(Edit::LoadSceneAdditive { path: path.clone() })
+        }
+        EditorAction::CloseScene(_) | EditorAction::SetActiveScene(_) => None,
         // Not something remote mode owns (project mgmt, settings, …).
         _ => None,
+    }
+}
+
+/// The file the caller named, or one asked for now.
+///
+/// The dialog runs on the EDITOR side even for a project-side load: the
+/// project has no window to put a file picker in, and the path it is
+/// handed is a path on the shared filesystem either way.
+fn named_or_asked(
+    resources: &Resources,
+    path: Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    match path {
+        Some(path) => Some(path),
+        None => crate::actions::scene_io::scene_dialog(resources).pick_file(),
     }
 }
 
@@ -938,8 +962,17 @@ fn send(
             client.move_entity(entity, parent, before).map_err(map_err)
         }
         Edit::RevertOneScene(scene) => client.revert_scene(Some(scene)).map_err(map_err),
-        Edit::LoadScene => match crate::actions::scene_io::scene_dialog(resources).pick_file() {
+        Edit::LoadScene { path } => match named_or_asked(resources, path) {
             Some(path) => client.load_scene(&path.to_string_lossy()).map_err(map_err),
+            None => Ok(()),
+        },
+        Edit::LoadSceneAdditive { path } => match named_or_asked(resources, path) {
+            Some(path) => client
+                .load_scene_additive(&path.to_string_lossy())
+                .map(|scene| {
+                    tracing::info!(%scene, "scene opened additively in the project");
+                })
+                .map_err(map_err),
             None => Ok(()),
         },
         Edit::SetPlaying(playing) => client.set_playing(playing).map_err(map_err),

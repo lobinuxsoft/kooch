@@ -132,7 +132,15 @@ pub(crate) enum EditorAction {
     Undo(crate::history::Document),
     Redo(crate::history::Document),
     SaveScene,
-    OpenScene,
+    /// Replace the world with a scene file.
+    ///
+    /// `None` raises a file dialog — the File menu, which has no file in
+    /// mind. `Some` is a caller that already named one: an Assets panel
+    /// row IS the path, and asking for a file the click just identified
+    /// is the same fault as having no way to name it at all.
+    OpenScene {
+        path: Option<std::path::PathBuf>,
+    },
     /// Write an entity and its descendants to a scene file — a prefab.
     ///
     /// A prefab is a scene; see
@@ -239,7 +247,12 @@ pub(crate) enum EditorAction {
     /// Open a scene beside the ones already loaded, rather than replacing
     /// them. The scene becomes the active one, so newly spawned entities
     /// land in it.
-    OpenSceneAdditive,
+    ///
+    /// `None` asks; `Some` is a caller that already named the file. See
+    /// [`Self::OpenScene`].
+    OpenSceneAdditive {
+        path: Option<std::path::PathBuf>,
+    },
     /// Close one open scene, despawning only its entities.
     CloseScene(kooch_core::Guid),
     /// Make an already-open scene the one new entities are authored into.
@@ -568,8 +581,8 @@ impl EditorAction {
             | Self::SaveScene
             | Self::SavePrefab { .. }
             | Self::InstantiatePrefab { .. }
-            | Self::OpenScene
-            | Self::OpenSceneAdditive
+            | Self::OpenScene { .. }
+            | Self::OpenSceneAdditive { .. }
             | Self::CloseScene(_)
             | Self::SetActiveScene(_)
             | Self::SaveOpenScene(_)
