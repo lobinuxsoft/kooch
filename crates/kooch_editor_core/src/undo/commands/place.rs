@@ -81,3 +81,20 @@ pub(super) fn adopt(resources: &mut Resources, entity: Entity, scene: kooch_core
         manager.mark_scene_dirty(scene);
     }
 }
+
+/// Takes the membership away, so undoing a move back to "no scene"
+/// restores what was there rather than an arbitrary scene.
+pub(super) fn disown(resources: &mut Resources, entity: Entity) {
+    use kooch_ecs::SceneMember;
+
+    let type_id = TypeId::of::<SceneMember>();
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.remove_component(entity, &type_id);
+    }
+    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
+        && let Some(current) = archetypes.entity_archetype(entity)
+    {
+        let next = archetypes.archetype_after_remove_dynamic(current, type_id);
+        archetypes.register_entity(entity, next);
+    }
+}

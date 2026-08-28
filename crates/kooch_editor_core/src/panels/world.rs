@@ -167,7 +167,7 @@ pub(crate) fn draw_world_content(
         for index in range {
             match &rows[index] {
                 WorldRow::Group(header) => {
-                    draw_group_header(ui, header, row_h, clipboard_has_entities, actions)
+                    draw_group_header(ui, header, row_h, clipboard_has_entities, selected, actions)
                 }
                 WorldRow::Note(text) => {
                     // Indented like the entities it stands in for, or the
@@ -730,6 +730,7 @@ fn draw_group_header(
     header: &GroupHeader,
     row_h: f32,
     clipboard_has_entities: bool,
+    selected: &[Entity],
     actions: &mut Vec<EditorAction>,
 ) {
     let size = egui::vec2(ui.available_width(), row_h);
@@ -741,6 +742,24 @@ fn draw_group_header(
         ui.data_mut(|data| data.insert_persisted(header.id, open));
     }
     scene_context_menu(&resp, header, clipboard_has_entities, actions);
+    // Dropping a row here re-homes it. The direct-manipulation form of
+    // the menu's Paste, and a MOVE: an entity belongs to exactly one
+    // scene, so the one it came from stops holding it.
+    let dropped = header
+        .scene
+        .and_then(|scene| resp.dnd_release_payload::<Entity>().map(|e| (scene, *e)));
+    if let Some((scene, dragged)) = dropped {
+        // The whole selection when the row being dragged is part of it:
+        // selecting six and dragging one of them means the six, which is
+        // what every other panel that drags does.
+        let moving: Vec<Entity> = match selected.contains(&dragged) {
+            true => selected.to_vec(),
+            false => vec![dragged],
+        };
+        for entity in moving {
+            actions.push(EditorAction::MoveToScene { entity, scene });
+        }
+    }
 
     if !ui.is_rect_visible(rect) {
         return;
@@ -767,6 +786,17 @@ fn draw_group_header(
             false => visuals.text_color(),
         },
     );
+
+    // Over the row rather than under it, so the header still reads
+    // through the tint. Only for a group that is a scene: "Unsaved" is
+    // not a place an entity can be moved TO.
+    if header.scene.is_some() && resp.dnd_hover_payload::<Entity>().is_some() {
+        ui.painter().rect_filled(
+            rect,
+            0.0,
+            egui::Color32::from_rgba_unmultiplied(60, 200, 100, 40),
+        );
+    }
 }
 
 /// The colour of a scene that has edits not on disk.

@@ -410,6 +410,12 @@ enum Edit<'a> {
         into: crate::actions::SpawnTarget,
         states: Vec<crate::actions::entity_state::EntityState>,
     },
+    /// Re-home an entity: the membership is a component, so this is an
+    /// add plus a set rather than a call of its own.
+    MoveToScene {
+        entity: crate::actions::Entity,
+        scene: kooch_core::Guid,
+    },
     Spawn {
         name: Option<String>,
         /// Component types the action asked for beyond the base ones.
@@ -519,6 +525,10 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
             new_parent: *new_parent,
         }),
         EditorAction::Duplicate(entity) => Some(Edit::Duplicate(*entity)),
+        EditorAction::MoveToScene { entity, scene } => Some(Edit::MoveToScene {
+            entity: *entity,
+            scene: *scene,
+        }),
         // Nothing to send for an empty clipboard, and `None` here would
         // send it down the local path instead of doing nothing.
         EditorAction::PasteEntities { into } => {
@@ -755,6 +765,26 @@ fn send(
         Edit::Duplicate(entity) => {
             created.push(duplicate(entity, &client, mirror, resources)?);
             Ok(())
+        }
+        Edit::MoveToScene { entity, scene } => {
+            let id = remote(entity)?;
+            // Already there for anything that belongs to a scene, and an
+            // error here is not a failure: the set below is the edit,
+            // and it needs the component to exist however it got there.
+            if let Err(e) = client.add_component(id, "SceneMember") {
+                tracing::debug!(
+                    target: "kooch_editor_core::remote_edit::move_to_scene",
+                    "SceneMember was not added, assuming it is already there: {e}",
+                );
+            }
+            client
+                .set_field(
+                    id,
+                    "SceneMember",
+                    "scene",
+                    kooch_ecs::reflect::ReflectValue::String(scene.to_string()),
+                )
+                .map_err(map_err)
         }
         Edit::Paste { into, states } => {
             // 🔴 Once for the whole paste. `NewScene` asks the project to

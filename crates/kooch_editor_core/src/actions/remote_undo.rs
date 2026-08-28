@@ -475,6 +475,7 @@ fn label_of(action: &EditorAction) -> String {
         EditorAction::Despawn(_) => "Despawn Entity".to_owned(),
         EditorAction::Duplicate(_) => "Duplicate Entity".to_owned(),
         EditorAction::PasteEntities { .. } => "Paste".to_owned(),
+        EditorAction::MoveToScene { .. } => "Move to Scene".to_owned(),
         EditorAction::InstantiatePrefab { .. } => "Instantiate Prefab".to_owned(),
         EditorAction::SetField { field, .. } => format!("Set {field}"),
         EditorAction::AddComponent { .. } => "Add Component".to_owned(),

@@ -90,6 +90,17 @@ pub(crate) enum EditorAction {
     PasteEntities {
         into: SpawnTarget,
     },
+    /// Re-home an entity into another open scene.
+    ///
+    /// 🔴 A move, not a copy. Dragging a row onto a scene header is the
+    /// direct-manipulation form of the paste target above, and an entity
+    /// belongs to exactly one scene — so the source stops holding it and
+    /// both files are dirty afterwards.
+    MoveToScene {
+        entity: Entity,
+        scene: kooch_core::Guid,
+    },
+
     SetField {
         entity: Entity,
         component: ComponentId,
@@ -548,6 +559,7 @@ impl EditorAction {
             // read them out of.
             | Self::CopyEntities(_)
             | Self::PasteEntities { .. }
+            | Self::MoveToScene { .. }
             | Self::SetField { .. }
             | Self::AddComponent { .. }
             | Self::RemoveComponent { .. }
