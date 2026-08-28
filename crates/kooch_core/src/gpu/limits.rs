@@ -70,6 +70,61 @@ pub(super) const TARGET_MAX_STORAGE_BUFFERS_PER_STAGE: u32 = 16;
 /// and the failure would surface on the handheld, over SSH, in a build
 /// nobody wants to make twice. The portable floor is the useful number;
 /// what was missing was saying so out loud.
+/// How many workgroups one `dispatch_workgroups` dimension may hold.
+///
+/// # 🔴 The ceiling is on the DISPATCH, not on the work
+///
+/// At 64 threads per group this dimension tops out at **4 194 240
+/// threads**. A cull that runs one thread per (instance × meshlet)
+/// reaches that at, say, 846 copies of a 4 953-meshlet dragon — an
+/// unremarkable open-world scene, not a stress test.
+///
+/// Past it the dispatch is **rejected outright**: the whole encoder
+/// fails validation and the frame draws nothing, once per frame,
+/// forever. A dense scene reported it as `[156639, 1, 1] must be less
+/// or equal to 65535` and nothing else — no hint that the count came
+/// from a cull, or which one.
+///
+/// # The fix is to fold, not to cap
+///
+/// [`tiled_workgroups`] spills the excess into a second dimension and
+/// the shader re-linearises it from `num_workgroups`. Clamping instead
+/// would silently stop culling past the 4.2 M-th meshlet, which is
+/// worse than crashing: the scene would render, missing geometry, and
+/// look like a bug in the LOD chain.
+///
+/// # ⚠️ Every backend guarantees exactly this and no more
+///
+/// 65 535 is the Vulkan / D3D12 / Metal floor and also what desktop
+/// adapters actually report — the RX 9070 XT included. Unlike the
+/// buffer sizes there is no headroom to leave on the table here.
+pub const MAX_WORKGROUPS_PER_DIM: u32 = 65_535;
+
+/// Split `threads` into a 2-D workgroup count that no dimension
+/// overflows, given a 1-D `workgroup_size`.
+///
+/// Returns `(x, y)` for `dispatch_workgroups(x, y, 1)`. Below the
+/// ceiling `y` is 1 and the dispatch is the plain 1-D one; above it
+/// `x` saturates and `y` carries the rest, so the shader recovers its
+/// linear index as `gid.y * (num_workgroups.x * workgroup_size) +
+/// gid.x`.
+///
+/// The tiled form over-covers — the last row runs threads past
+/// `threads`. Every caller already guards on its own count, which is
+/// why this returns the shape and not the bound.
+pub fn tiled_workgroups(threads: u32, workgroup_size: u32) -> (u32, u32) {
+    debug_assert!(workgroup_size > 0, "a workgroup cannot be empty");
+    let groups = threads.div_ceil(workgroup_size.max(1)).max(1);
+    if groups <= MAX_WORKGROUPS_PER_DIM {
+        (groups, 1)
+    } else {
+        (
+            MAX_WORKGROUPS_PER_DIM,
+            groups.div_ceil(MAX_WORKGROUPS_PER_DIM),
+        )
+    }
+}
+
 pub(super) const TARGET_MAX_BUFFER_SIZE: u64 = 256 << 20;
 pub(super) const TARGET_MAX_STORAGE_BUFFER_BINDING_SIZE: u64 = 128 << 20;
 
@@ -88,6 +143,8 @@ pub(super) fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
     let buffer_size = TARGET_MAX_BUFFER_SIZE.min(adapter_limits.max_buffer_size);
     let binding_size =
         TARGET_MAX_STORAGE_BUFFER_BINDING_SIZE.min(adapter_limits.max_storage_buffer_binding_size);
+    let workgroups_per_dim =
+        MAX_WORKGROUPS_PER_DIM.min(adapter_limits.max_compute_workgroups_per_dimension);
 
     if invocations < TARGET_MAX_COMPUTE_INVOCATIONS_PER_WORKGROUP {
         tracing::warn!(
@@ -132,6 +189,19 @@ pub(super) fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
             "adapter clamped max_buffer_size; a buffer past it is not rejected at creation — wgpu returns an INVALID buffer and every later submit fails naming a label and no cause"
         );
     }
+    if workgroups_per_dim < MAX_WORKGROUPS_PER_DIM {
+        // 🔴 Not a graceful degradation. `tiled_workgroups` saturates a
+        // dimension at MAX_WORKGROUPS_PER_DIM, so an adapter below it
+        // rejects the very dispatch the tiling exists to make legal.
+        // 65 535 is the floor Vulkan, D3D12 and Metal all guarantee;
+        // reaching this branch means the assumption the tiling rests on
+        // is false on this machine, and it should be said that way.
+        tracing::warn!(
+            requested = MAX_WORKGROUPS_PER_DIM,
+            granted = workgroups_per_dim,
+            "adapter reports fewer workgroups per dimension than every backend guarantees; tiled cull dispatches will be rejected on this device"
+        );
+    }
     if binding_size < TARGET_MAX_STORAGE_BUFFER_BINDING_SIZE {
         tracing::warn!(
             requested_mib = TARGET_MAX_STORAGE_BUFFER_BINDING_SIZE / (1 << 20),
@@ -161,6 +231,60 @@ pub(super) fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
         max_storage_buffers_per_shader_stage: storage_buffers,
         max_buffer_size: buffer_size,
         max_storage_buffer_binding_size: binding_size,
+        max_compute_workgroups_per_dimension: workgroups_per_dim,
         ..wgpu::Limits::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shape the shader reverses: `gid.y * (x * size) + gid.x`.
+    fn covered(threads: u32, size: u32) -> u64 {
+        let (x, y) = tiled_workgroups(threads, size);
+        u64::from(x) * u64::from(y) * u64::from(size)
+    }
+
+    #[test]
+    fn a_small_count_stays_one_dimensional() {
+        assert_eq!(tiled_workgroups(64 * 100, 64), (100, 1));
+        // Zero work still dispatches one group; the shader's own bound
+        // check discards it. Returning (0, ..) would be a no-op the
+        // callers do not expect.
+        assert_eq!(tiled_workgroups(0, 64), (1, 1));
+    }
+
+    #[test]
+    fn the_last_one_dimensional_count_is_exact() {
+        let threads = MAX_WORKGROUPS_PER_DIM * 64;
+        assert_eq!(tiled_workgroups(threads, 64), (MAX_WORKGROUPS_PER_DIM, 1));
+        assert_eq!(tiled_workgroups(threads + 1, 64).1, 2);
+    }
+
+    /// 2024 dragons × 4953 meshlets — the dense scene that found this.
+    /// A 1-D dispatch asks for 156 639 groups and wgpu rejects the whole
+    /// encoder; the fold has to cover the count without exceeding the
+    /// ceiling in either dimension.
+    #[test]
+    fn the_dense_scene_fits_in_two_dimensions() {
+        let threads = 2024u32 * 4953;
+        let (x, y) = tiled_workgroups(threads, 64);
+        assert!(x <= MAX_WORKGROUPS_PER_DIM, "x overflows: {x}");
+        assert!(y <= MAX_WORKGROUPS_PER_DIM, "y overflows: {y}");
+        assert!(covered(threads, 64) >= u64::from(threads));
+    }
+
+    /// Over-covering is fine — every `run_*` guards on its own total —
+    /// but UNDER-covering silently drops meshlets, which renders as
+    /// missing geometry and reads like an LOD bug.
+    #[test]
+    fn no_count_is_left_uncovered() {
+        for threads in [1, 63, 65, 4_194_240, 4_194_241, 10_024_872, u32::MAX] {
+            assert!(
+                covered(threads, 64) >= u64::from(threads),
+                "{threads} threads under-covered"
+            );
+        }
     }
 }

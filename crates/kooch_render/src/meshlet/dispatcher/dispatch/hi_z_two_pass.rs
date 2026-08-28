@@ -1,6 +1,7 @@
 use crate::meshlet::cull::CullParams;
 use crate::meshlet::pool::GpuGlobalMeshPool;
 use crate::meshlet::scene::{MeshletScene, SceneCullParams};
+use kooch_core::gpu::tiled_workgroups;
 
 use super::super::MeshletCull;
 use super::super::pipelines::MeshletCullPipelines;
@@ -127,7 +128,7 @@ impl MeshletCull {
             }],
         });
 
-        let workgroups = total_threads.div_ceil(64).max(1);
+        let (groups_x, groups_y) = tiled_workgroups(total_threads, 64);
 
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -139,7 +140,7 @@ impl MeshletCull {
             pass.set_bind_group(1, &pool_bg, &[]);
             pass.set_bind_group(2, &scene_with_hi_z_bg, &[]);
             pass.set_bind_group(3, &group_err_bg, &[]);
-            pass.dispatch_workgroups(workgroups, 1, 1);
+            pass.dispatch_workgroups(groups_x, groups_y, 1);
         }
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -151,7 +152,7 @@ impl MeshletCull {
             pass.set_bind_group(1, &pool_bg, &[]);
             pass.set_bind_group(2, &scene_with_hi_z_bg, &[]);
             pass.set_bind_group(3, &group_err_bg, &[]);
-            pass.dispatch_workgroups(workgroups, 1, 1);
+            pass.dispatch_workgroups(groups_x, groups_y, 1);
         }
 
         // Mirror visible_count → indirect_args.instance_count so the
@@ -284,7 +285,7 @@ impl MeshletCull {
         // Worst-case dispatch: one thread per `capacity` slot. The
         // shader early-outs against `culled_count` so threads past
         // the actual reject-queue length pay only an atomic load.
-        let workgroups = self.capacity.div_ceil(64).max(1);
+        let (groups_x, groups_y) = tiled_workgroups(self.capacity, 64);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("meshlet_cull_pass_b_pass"),
@@ -295,7 +296,7 @@ impl MeshletCull {
             pass.set_bind_group(1, &pool_bg, &[]);
             pass.set_bind_group(2, &scene_with_hi_z_bg, &[]);
             pass.set_bind_group(3, &group_err_bg, &[]);
-            pass.dispatch_workgroups(workgroups, 1, 1);
+            pass.dispatch_workgroups(groups_x, groups_y, 1);
         }
 
         // Final mirror: visible_count now reflects pass A + pass B

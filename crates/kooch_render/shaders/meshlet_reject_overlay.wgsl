@@ -195,19 +195,28 @@ fn paint_v_line(y0: u32, y1: u32, x: u32, thickness: u32, color: vec4<f32>) {
 }
 
 @compute @workgroup_size(64, 1, 1)
-fn cs_reject_overlay(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn cs_reject_overlay(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    // This overlay walks `reject_reasons[]`, one entry per cull
+    // thread, so it inherits the cull's dispatch shape exactly —
+    // including the 2-D fold past 65 535 workgroups. Duplicated from
+    // `meshlet_cull/common.wgsl` because this shader is compiled
+    // standalone; the two must move together.
+    let thread_id = gid.y * (groups.x * 64u) + gid.x;
     let max_meshlets = scene_params.meshlets_per_mesh;
     let total_threads = scene_params.instance_count * max_meshlets;
-    if (gid.x >= total_threads) {
+    if (thread_id >= total_threads) {
         return;
     }
-    let reason = reject_reasons[gid.x];
+    let reason = reject_reasons[thread_id];
     if (reason != params.selected_reason) {
         return;
     }
 
-    let instance_id = gid.x / max_meshlets;
-    let meshlet_offset = gid.x % max_meshlets;
+    let instance_id = thread_id / max_meshlets;
+    let meshlet_offset = thread_id % max_meshlets;
     let inst = instances[instance_id];
     let mesh_desc = mesh_descriptors[inst.mesh_id];
     if (meshlet_offset >= mesh_desc.meshlet_count) {

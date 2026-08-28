@@ -29,6 +29,8 @@
 //! AND `cull_params.debug_active` was set so the SSBO actually
 //! carries this frame's reasons.
 
+use kooch_core::gpu::tiled_workgroups;
+
 use std::num::NonZeroU64;
 
 use bytemuck::{Pod, Zeroable};
@@ -250,7 +252,7 @@ impl MeshletRejectOverlay {
             ],
         });
 
-        let workgroups = total_threads.div_ceil(64).max(1);
+        let (groups_x, groups_y) = tiled_workgroups(total_threads, 64);
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("meshlet_reject_overlay_pass"),
             timestamp_writes: None,
@@ -260,7 +262,7 @@ impl MeshletRejectOverlay {
         pass.set_bind_group(1, &pool_bg, &[]);
         pass.set_bind_group(2, &scene_bg, &[]);
         pass.set_bind_group(3, &debug_bg, &[]);
-        pass.dispatch_workgroups(workgroups, 1, 1);
+        pass.dispatch_workgroups(groups_x, groups_y, 1);
     }
 }
 

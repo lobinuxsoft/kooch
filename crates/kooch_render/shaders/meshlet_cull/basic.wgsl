@@ -39,11 +39,17 @@ fn run_cull_with_hi_z(meshlet_id: u32) {
 }
 
 @compute @workgroup_size(64, 1, 1)
-fn cs_cull(@builtin(global_invocation_id) gid: vec3<u32>) {
-    run_cull_basic(gid.x);
+fn cs_cull(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    run_cull_basic(linear_thread(gid, groups));
 }
 
 @compute @workgroup_size(64, 1, 1)
-fn cs_cull_hi_z(@builtin(global_invocation_id) gid: vec3<u32>) {
-    run_cull_with_hi_z(gid.x);
+fn cs_cull_hi_z(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    run_cull_with_hi_z(linear_thread(gid, groups));
 }
