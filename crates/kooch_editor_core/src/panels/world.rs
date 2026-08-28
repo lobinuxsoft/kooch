@@ -104,6 +104,25 @@ pub(crate) fn draw_world_content(
     let row_h = entity_row::row_height(ui);
     let scroll_to = focus.and_then(|focus| scroll_offset_for(ui, &rows, entities, focus, row_h));
 
+    // 🔴 Claimed BEFORE the list, over the whole panel, and that order
+    // is the fix rather than a detail. The target used to be allocated
+    // INSIDE the virtualized closure, out of what was left under the
+    // last row — which meant it existed only once the list had drawn its
+    // final row (never, in a scene of two thousand, unless scrolled to
+    // the bottom) and measured zero high when the groups were collapsed,
+    // because inside `show_rows` `max_rect` is the virtualized CONTENT,
+    // not the panel. Either way there was nothing under the pointer and
+    // the right click landed on a background that offered nothing.
+    //
+    // Claimed first, every row drawn afterwards sits on top of it and
+    // wins the overlap, so this answers exactly where no row is.
+    let background_rect = ui.available_rect_before_wrap();
+    let background = ui.interact(
+        background_rect,
+        ui.id().with("world_background"),
+        egui::Sense::click(),
+    );
+
     let mut area = egui::ScrollArea::vertical()
         .id_salt("world_tree")
         // Fills the panel instead of shrinking to whatever is drawn. A
@@ -133,7 +152,6 @@ pub(crate) fn draw_world_content(
         // the parent chain to reject a cyclic reparent) is paid for
         // the rows a person can see rather than for the ones the
         // scroll position happens to be nowhere near.
-        let at_end = range.end >= rows.len();
         for index in range {
             match &rows[index] {
                 WorldRow::Group(header) => {
@@ -167,101 +185,80 @@ pub(crate) fn draw_world_content(
                 }
             }
         }
+    });
 
-        // Empty space: click to deselect, right-click to create, drop
-        // target to unparent an entity.
-        //
-        // Only once the last row has been drawn, and only across what
-        // is genuinely left over. `available_rect_before_wrap` is the
-        // wrong question inside a virtualized list: the rows that are
-        // scrolled past still hold their space, so "what is left"
-        // includes theirs, and claiming it drew this target beside
-        // the list rather than under it.
-        if !at_end {
-            return;
-        }
-        let remaining = egui::Rect::from_min_max(
-            egui::pos2(ui.max_rect().left(), ui.cursor().top()),
-            ui.max_rect().max,
-        );
-        if remaining.height() < 1.0 || remaining.width() < 1.0 {
-            return;
-        }
-        let empty_resp = ui.allocate_rect(remaining, egui::Sense::click_and_drag());
-        if empty_resp.clicked() {
-            selected.clear();
-            *last_clicked_index = None;
-        }
+    if background.clicked() {
+        selected.clear();
+        *last_clicked_index = None;
+    }
 
-        // The same entries the toolbar's Spawn button offers, reached
-        // where people actually reach for them: right-click in the
-        // empty part of the hierarchy. A row's own right-click menu
-        // handles per-entity actions, including Add Component (#591).
-        //
-        // 🔴 Into a scene of its own, not the active one. Right-clicking
-        // past the last row is not "put this somewhere" — there is no
-        // row under the pointer to name a somewhere. It is "start
-        // something new", and since an entity has to belong to a scene,
-        // starting one is what makes the gesture answerable.
-        empty_resp.context_menu(|ui| {
-            ui.label("New scene");
-            ui.separator();
-            spawn_entries(ui, actions, crate::actions::SpawnTarget::NewScene);
-            if ui
-                .add_enabled(
-                    clipboard_has_entities,
-                    egui::Button::new(format!("{} Paste", icons::PACKAGE)),
-                )
-                .on_hover_text("Put what was copied into a scene of its own")
-                .clicked()
-            {
-                actions.push(EditorAction::PasteEntities {
-                    into: crate::actions::SpawnTarget::NewScene,
-                });
-                ui.close();
-            }
-        });
-        // A prefab dropped into the hierarchy spawns at the position it
-        // was authored at: a list of names has no geometry to read a
-        // place out of, and defaulting to the origin would silently move
-        // a prefab that was deliberately authored elsewhere. Drop it in
-        // the View panel to choose a spot.
-        // Filtered by type the way an Inspector asset slot is: a mesh
-        // dragged over the hierarchy is not something to instance.
-        if empty_resp
-            .dnd_hover_payload::<crate::drag_drop::DraggedAsset>()
-            .is_some_and(|a| a.type_name == crate::drag_drop::PREFAB_TYPE_NAME)
+    // The same entries the toolbar's Spawn button offers, reached
+    // where people actually reach for them: right-click in the
+    // empty part of the hierarchy. A row's own right-click menu
+    // handles per-entity actions, including Add Component (#591).
+    //
+    // 🔴 Into a scene of its own, not the active one. Right-clicking
+    // past the last row is not "put this somewhere" — there is no
+    // row under the pointer to name a somewhere. It is "start
+    // something new", and since an entity has to belong to a scene,
+    // starting one is what makes the gesture answerable.
+    background.context_menu(|ui| {
+        ui.label("New scene");
+        ui.separator();
+        spawn_entries(ui, actions, crate::actions::SpawnTarget::NewScene);
+        if ui
+            .add_enabled(
+                clipboard_has_entities,
+                egui::Button::new(format!("{} Paste", icons::PACKAGE)),
+            )
+            .on_hover_text("Put what was copied into a scene of its own")
+            .clicked()
         {
-            ui.painter().rect_filled(
-                remaining,
-                0.0,
-                egui::Color32::from_rgba_unmultiplied(60, 200, 100, 40),
-            );
-            if let Some(prefab) = empty_resp.dnd_release_payload::<crate::drag_drop::DraggedAsset>()
-            {
-                actions.push(EditorAction::InstantiatePrefab {
-                    prefab: prefab.guid,
-                    at: crate::viewport_pick::DropPoint::Authored,
-                });
-            }
-        }
-        if empty_resp.dnd_hover_payload::<Entity>().is_some() {
-            ui.painter().rect_filled(
-                remaining,
-                0.0,
-                egui::Color32::from_rgba_unmultiplied(100, 100, 100, 20),
-            );
-        }
-        if let Some(dragged) = empty_resp.dnd_release_payload::<Entity>() {
-            let d = *dragged;
-            if entities.iter().any(|e| e.entity == d && e.parent.is_some()) {
-                actions.push(EditorAction::Reparent {
-                    entity: d,
-                    new_parent: None,
-                });
-            }
+            actions.push(EditorAction::PasteEntities {
+                into: crate::actions::SpawnTarget::NewScene,
+            });
+            ui.close();
         }
     });
+    // A prefab dropped into the hierarchy spawns at the position it
+    // was authored at: a list of names has no geometry to read a
+    // place out of, and defaulting to the origin would silently move
+    // a prefab that was deliberately authored elsewhere. Drop it in
+    // the View panel to choose a spot.
+    // Filtered by type the way an Inspector asset slot is: a mesh
+    // dragged over the hierarchy is not something to instance.
+    if background
+        .dnd_hover_payload::<crate::drag_drop::DraggedAsset>()
+        .is_some_and(|a| a.type_name == crate::drag_drop::PREFAB_TYPE_NAME)
+    {
+        ui.painter().rect_filled(
+            background_rect,
+            0.0,
+            egui::Color32::from_rgba_unmultiplied(60, 200, 100, 40),
+        );
+        if let Some(prefab) = background.dnd_release_payload::<crate::drag_drop::DraggedAsset>() {
+            actions.push(EditorAction::InstantiatePrefab {
+                prefab: prefab.guid,
+                at: crate::viewport_pick::DropPoint::Authored,
+            });
+        }
+    }
+    if background.dnd_hover_payload::<Entity>().is_some() {
+        ui.painter().rect_filled(
+            background_rect,
+            0.0,
+            egui::Color32::from_rgba_unmultiplied(100, 100, 100, 20),
+        );
+    }
+    if let Some(dragged) = background.dnd_release_payload::<Entity>() {
+        let d = *dragged;
+        if entities.iter().any(|e| e.entity == d && e.parent.is_some()) {
+            actions.push(EditorAction::Reparent {
+                entity: d,
+                new_parent: None,
+            });
+        }
+    }
 }
 
 /// One line of the hierarchy, as the virtualized list addresses it.
