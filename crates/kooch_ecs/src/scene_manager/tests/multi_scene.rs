@@ -732,3 +732,59 @@ fn editing_a_scene_leaves_the_epoch_alone() {
         "editing a scene voided every shadow page in the pool",
     );
 }
+
+/// A scratch scene's contents are never written into somebody else's file.
+///
+/// 🔴 The rule the editor's "New scene" gesture rests on: a scene nobody
+/// saved by name, and everything in it, is LOST rather than folded into
+/// whatever file was saved. Losing it is the preferred failure — the
+/// alternative is work appearing inside a file the user did not choose,
+/// which nothing on screen would say.
+///
+/// Note what makes it hold: membership. `adopt_unowned` hands the active
+/// scene every entity with NO `SceneMember`, and an entity authored into
+/// a scratch scene has one. That is the whole distance between "lost"
+/// and "silently merged", so it is worth a test of its own.
+#[test]
+fn a_scratch_scene_is_never_folded_into_a_saved_one() {
+    use crate::scene::SceneDocument;
+
+    let first = write_scene("scratch_isolation", &[1, 2]);
+
+    let mut resources = setup_resources();
+    let mut manager = SceneManager::new();
+    manager.load(&first, &mut resources).unwrap();
+    let first_id = manager.active_id().unwrap();
+
+    // "Right-click the empty space and spawn something": a scene of its
+    // own, never saved, holding one entity.
+    let scratch = manager.new_scene();
+    let stray = {
+        let mut commands = resources.remove::<Commands>().unwrap();
+        let entity = commands
+            .spawn(&mut resources)
+            .insert_reflected(super::single_scene::Health { hp: 999 })
+            .id();
+        commands.apply(&mut resources);
+        resources.insert(commands);
+        entity
+    };
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.register_cpu_reflected::<SceneMember>();
+        if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
+            storage.insert(stray, SceneMember::new(scratch));
+        }
+    }
+
+    manager.set_active(first_id);
+    manager
+        .save_scene(first_id, &mut resources)
+        .expect("saves the loaded scene");
+
+    let written = SceneDocument::load(&first).expect("reads back");
+    assert_eq!(
+        written.entities.len(),
+        2,
+        "the scratch scene's entity was written into a file nobody aimed at",
+    );
+}
