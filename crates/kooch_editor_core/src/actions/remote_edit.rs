@@ -771,7 +771,12 @@ fn send(
             // Already there for anything that belongs to a scene, and an
             // error here is not a failure: the set below is the edit,
             // and it needs the component to exist however it got there.
-            if let Err(e) = client.add_component(id, "SceneMember") {
+            // 🔴 The FULL path. `resolve_component` looks the name up in
+            // the registry, which keys by `std::any::type_name` — a short
+            // name comes back `UnknownComponent` and the whole edit is
+            // dropped.
+            let member = std::any::type_name::<kooch_ecs::SceneMember>();
+            if let Err(e) = client.add_component(id, member) {
                 tracing::debug!(
                     target: "kooch_editor_core::remote_edit::move_to_scene",
                     "SceneMember was not added, assuming it is already there: {e}",
@@ -780,7 +785,7 @@ fn send(
             client
                 .set_field(
                     id,
-                    "SceneMember",
+                    member,
                     "scene",
                     kooch_ecs::reflect::ReflectValue::String(scene.to_string()),
                 )

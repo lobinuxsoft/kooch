@@ -380,6 +380,13 @@ fn handle_context_menu(
     actions: &mut Vec<EditorAction>,
 ) {
     resp.context_menu(|ui| {
+        // 🔴 Without this the menu takes egui's default and every label
+        // wraps — "Duplicate" one character per line. It was always too
+        // narrow; adding entries that say their chord is what made it
+        // impossible to miss. Same idiom as the View and Game panels'
+        // menus.
+        ui.set_min_width(240.0);
+
         // Ensure the right-clicked entity is selected.
         if !selected.contains(&info.entity) {
             selected.clear();

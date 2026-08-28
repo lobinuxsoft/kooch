@@ -161,3 +161,34 @@ fn a_copy_is_named_after_it() {
     assert_eq!(copy_name(&named).as_deref(), Some("Hero Copy"));
     assert_eq!(copy_name(&EntityState::default()), None);
 }
+
+/// 🔴 A copy carries what the entity IS, not which file it came out of.
+///
+/// `capture` takes every reflected component and `SceneMember` is one,
+/// so the copy used to name its source scene — and restoring it wrote
+/// that scene over wherever the paste had just placed the entity. The
+/// symptom was a paste that ignored the scene it was asked for.
+#[test]
+fn a_copy_does_not_carry_its_scene() {
+    let state = EntityState {
+        name: Some("Hero".to_owned()),
+        components: vec![
+            ComponentState {
+                name: std::any::type_name::<kooch_ecs::SceneMember>().to_owned(),
+                fields: vec![(
+                    "scene".to_owned(),
+                    ReflectValue::String(kooch_core::Guid::new_v4().to_string()),
+                )],
+            },
+            ComponentState {
+                name: std::any::type_name::<Transform>().to_owned(),
+                fields: Vec::new(),
+            },
+        ],
+    };
+
+    let copy = as_copy(&state);
+
+    let names: Vec<&str> = copy.components.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, vec![std::any::type_name::<Transform>()]);
+}

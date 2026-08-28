@@ -169,6 +169,7 @@ pub(crate) fn draw_world_content(
     // something new", and since an entity has to belong to a scene,
     // starting one is what makes the gesture answerable.
     background.context_menu(|ui| {
+        ui.set_min_width(240.0);
         ui.label("New scene");
         ui.separator();
         spawn_entries(ui, actions, crate::actions::SpawnTarget::NewScene);
@@ -268,6 +269,12 @@ struct GroupHeader {
     /// What separates "discard changes" from "delete everything": a scene
     /// with no file has nothing to be read back from.
     has_file: bool,
+    /// Whether new entities land here.
+    ///
+    /// Carried so the header's own menu can say so and change it. With
+    /// one scene open `draw_scene_bar` hides itself, and this row is then
+    /// the only thing on screen that names the scene at all.
+    active: bool,
 }
 
 impl GroupHeader {
@@ -286,6 +293,7 @@ impl GroupHeader {
             scene: Some(scene.id),
             dirty: scene.dirty,
             has_file: scene.path.is_some(),
+            active: scene.active,
         }
     }
 
@@ -303,6 +311,7 @@ impl GroupHeader {
             scene: Some(scene.id),
             dirty: scene.dirty,
             has_file: scene.path.is_some(),
+            active: scene.active,
         }
     }
 
@@ -315,6 +324,7 @@ impl GroupHeader {
             scene: None,
             dirty: false,
             has_file: false,
+            active: false,
         }
     }
 
@@ -326,6 +336,7 @@ impl GroupHeader {
             scene: None,
             dirty: false,
             has_file: false,
+            active: false,
         }
     }
 
@@ -788,6 +799,31 @@ fn scene_context_menu(
         return;
     };
     resp.context_menu(|ui| {
+        ui.set_min_width(240.0);
+        // 🔴 The only place the active scene can be chosen when a single
+        // scene is open: `draw_scene_bar` hides itself under two scenes,
+        // so with one there was nothing on screen naming it and nothing
+        // to click. "I cannot select the scene" is a correct reading of
+        // a panel that never offered.
+        match header.active {
+            // Says so rather than offering nothing: a menu that is silent
+            // about which scene is active leaves the question unanswered
+            // in the one place it was asked.
+            true => {
+                ui.add_enabled(false, egui::Button::new("Active scene"));
+            }
+            false => {
+                if ui
+                    .button("Make Active")
+                    .on_hover_text("New entities land in this scene")
+                    .clicked()
+                {
+                    actions.push(EditorAction::SetActiveScene(scene));
+                    ui.close();
+                }
+            }
+        }
+        ui.separator();
         // No icon on either. There is no verified Phosphor codepoint for
         // a save glyph in `icons`, and that module's own note says why
         // guessing one is not an option: a wrong codepoint is still a
