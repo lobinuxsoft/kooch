@@ -221,7 +221,16 @@ pub(super) fn render_leaf(
             .extension()
             .and_then(|e| e.to_str())
             .is_some_and(|e| e.eq_ignore_ascii_case(kooch_input::actions::INPUT_ACTION_EXTENSION));
-        ctx.actions.push(if is_input_map {
+        // 🔴 A scene opens the scene. It used to go to the IDE as text,
+        // which is a true answer to "what is this file" and never the one
+        // anybody double-clicking a level was asking. Additive stays on
+        // the context menu: a double click is one gesture and it has to
+        // mean one thing.
+        ctx.actions.push(if super::menus::is_scene(&leaf.path) {
+            EditorAction::OpenScene {
+                path: Some(leaf.path.clone()),
+            }
+        } else if is_input_map {
             EditorAction::OpenInputMap {
                 path: leaf.path.clone(),
             }

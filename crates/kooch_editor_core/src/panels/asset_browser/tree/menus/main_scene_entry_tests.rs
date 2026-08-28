@@ -43,3 +43,26 @@ fn a_read_only_root_offers_nothing() {
         false
     ));
 }
+
+/// A scene opens; a prefab is the same format and does not.
+///
+/// The extension is the only thing separating them, so this is the test
+/// that stops "Open Scene" appearing on a prefab and replacing the world
+/// with a single object and no camera.
+#[test]
+fn only_a_scene_offers_opening() {
+    assert!(super::is_scene(Path::new("/p/assets/scenes/level.scene")));
+    assert!(!super::is_scene(Path::new("/p/assets/prefabs/tree.prefab")));
+    assert!(!super::is_scene(Path::new("/p/assets/notes.md")));
+}
+
+/// 🔴 Opening does NOT ask whether the folder is writable.
+///
+/// A scene vendored read-only with the engine is a perfectly ordinary
+/// thing to want to open; making it the project's main scene is not.
+#[test]
+fn a_read_only_scene_still_opens() {
+    let engine = Path::new("/engine/assets/scenes/demo.scene");
+    assert!(super::is_scene(engine));
+    assert!(!super::offers_main_scene(engine, false));
+}

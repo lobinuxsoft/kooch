@@ -182,6 +182,38 @@ pub(super) fn leaf_menu(
     rename: &mut Option<RenameState>,
     is_main_scene: bool,
 ) {
+    ui.set_min_width(240.0);
+    // Opening comes first: it is what a scene is FOR, and it was the one
+    // thing this menu could not do. Reaching a scene meant File > Open
+    // Scene and navigating to the file already under the pointer.
+    //
+    // 🔴 Keyed on the extension, not on `offers_main_scene`, which also
+    // asks whether the folder is writable. Opening a read-only scene --
+    // one vendored with the engine -- is a perfectly ordinary thing to
+    // want; setting it as the project's main scene is not.
+    if is_scene(&leaf.path) {
+        if ui
+            .button(format!("{} Open Scene", icons::FOLDER_OPEN))
+            .on_hover_text("Replace what is open with this scene")
+            .clicked()
+        {
+            actions.push(EditorAction::OpenScene {
+                path: Some(leaf.path.clone()),
+            });
+            ui.close();
+        }
+        if ui
+            .button(format!("{} Open Additive", icons::PLUS))
+            .on_hover_text("Open this scene beside the ones already open")
+            .clicked()
+        {
+            actions.push(EditorAction::OpenSceneAdditive {
+                path: Some(leaf.path.clone()),
+            });
+            ui.close();
+        }
+        ui.separator();
+    }
     if offers_main_scene(&leaf.path, writable) {
         // Offered as disabled rather than hidden on the scene that
         // already is the main one: a menu that changes shape depending on
@@ -298,10 +330,16 @@ pub(super) fn leaf_menu(
 /// one would start with a single object and no camera. The extension is
 /// the only thing separating them — see `PREFAB_EXTENSION`.
 pub(super) fn offers_main_scene(path: &Path, writable: bool) -> bool {
-    writable
-        && path
-            .extension()
-            .is_some_and(|ext| ext == crate::project::SCENE_EXTENSION)
+    writable && is_scene(path)
+}
+
+/// Whether this file is a scene rather than a prefab.
+///
+/// The extension is the only thing separating them: same format, and a
+/// prefab carries exactly one root.
+pub(super) fn is_scene(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext == crate::project::SCENE_EXTENSION)
 }
 
 #[cfg(test)]
