@@ -434,7 +434,15 @@ pub(crate) fn record(
     // Loading a scene replaces the world every step in the history
     // describes. Keeping them would offer to undo an edit to an entity
     // that no longer exists, against ids the project has since reused.
-    if matches!(action, EditorAction::OpenScene { .. }) {
+    //
+    // 🔴 Closing one does the same to part of it, and the history has no
+    // way to say which part: an entry names entities, not scenes. So the
+    // whole stack goes, which is what the local path has always done —
+    // `handle_close_scene`'s doc says why in the same words.
+    if matches!(
+        action,
+        EditorAction::OpenScene { .. } | EditorAction::CloseScene(_)
+    ) {
         if let Some(history) = resources.get_mut::<RemoteHistory>() {
             history.clear();
         }

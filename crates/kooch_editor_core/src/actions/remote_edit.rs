@@ -461,6 +461,10 @@ enum Edit<'a> {
     LoadSceneAdditive {
         path: Option<std::path::PathBuf>,
     },
+    /// Close one open scene in the project.
+    CloseScene(kooch_core::Guid),
+    /// Point the project's active slot at an already-open scene.
+    SetActiveScene(kooch_core::Guid),
     /// Capture one of the project's entities as a prefab file.
     SavePrefab {
         entity: kooch_ecs::entity::Entity,
@@ -635,7 +639,14 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
         EditorAction::OpenSceneAdditive { path } => {
             Some(Edit::LoadSceneAdditive { path: path.clone() })
         }
-        EditorAction::CloseScene(_) | EditorAction::SetActiveScene(_) => None,
+        // 🔴 Both act on the OPEN SET, which is the project's. The panel
+        // lists the project's scenes — `gather_scenes` prefers
+        // `remote_scenes` — so acting on the editor's own manager asked
+        // it to close a scene it had never heard of, and it said so:
+        // *"asked to close scene …, which is not open"*. The gesture and
+        // its target were in different processes.
+        EditorAction::CloseScene(scene) => Some(Edit::CloseScene(*scene)),
+        EditorAction::SetActiveScene(scene) => Some(Edit::SetActiveScene(*scene)),
         // Not something remote mode owns (project mgmt, settings, …).
         _ => None,
     }
@@ -966,6 +977,8 @@ fn send(
             Some(path) => client.load_scene(&path.to_string_lossy()).map_err(map_err),
             None => Ok(()),
         },
+        Edit::CloseScene(scene) => client.close_scene(scene).map_err(map_err),
+        Edit::SetActiveScene(scene) => client.set_active_scene(scene).map_err(map_err),
         Edit::LoadSceneAdditive { path } => match named_or_asked(resources, path) {
             Some(path) => client
                 .load_scene_additive(&path.to_string_lossy())

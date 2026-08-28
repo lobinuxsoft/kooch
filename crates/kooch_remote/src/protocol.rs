@@ -306,6 +306,16 @@ pub enum Method {
     NewScene,
     /// Replace the live ECS with a scene file from the server's disk.
     LoadScene { path: String },
+    /// Close one open scene, despawning only its entities.
+    ///
+    /// 🔴 Belongs to the project for the same reason the loads do: the
+    /// open set is the project's, and the editor listing it is a view.
+    /// Closing in the view left the scene open in the world and answered
+    /// *"asked to close scene …, which is not open"* — the editor's own
+    /// manager had never heard of it.
+    CloseScene { scene: Guid },
+    /// Make an already-open scene the one new entities are authored into.
+    SetActiveScene { scene: Guid },
     /// Open a scene file BESIDE what is already loaded, and make it
     /// active. Returns its identity as [`ResponseData::SceneOpened`].
     ///

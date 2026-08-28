@@ -171,6 +171,14 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             Ok(()) => Response::ok(id, ResponseData::Ok),
             Err(e) => Response::err(id, e),
         },
+        Method::CloseScene { scene } => match close_scene(resources, *scene) {
+            Ok(()) => Response::ok(id, ResponseData::Ok),
+            Err(e) => Response::err(id, e),
+        },
+        Method::SetActiveScene { scene } => match set_active_scene(resources, *scene) {
+            Ok(()) => Response::ok(id, ResponseData::Ok),
+            Err(e) => Response::err(id, e),
+        },
         Method::LoadSceneAdditive { path } => match load_scene_additive(resources, path) {
             Ok(scene) => Response::ok(id, ResponseData::SceneOpened { scene }),
             Err(e) => Response::err(id, e),
@@ -679,6 +687,42 @@ fn load_scene(resources: &mut Resources, path: &str) -> Result<(), RemoteError> 
     // before it even knew what was in it.
     kooch_ecs::scene::propagate::refresh_all(resources);
     Ok(())
+}
+
+/// Closes one open scene, despawning only its entities.
+///
+/// Unsaved edits go with it. Asking about them is the editor's job —
+/// only it has a window to ask in.
+fn close_scene(resources: &mut Resources, scene: kooch_core::Guid) -> Result<(), RemoteError> {
+    let mut manager = resources
+        .remove::<kooch_ecs::SceneManager>()
+        .ok_or_else(|| RemoteError::Unavailable {
+            detail: "no SceneManager".to_owned(),
+        })?;
+    let closed = manager.close(scene, resources);
+    resources.insert(manager);
+    match closed {
+        true => Ok(()),
+        false => Err(RemoteError::SceneError {
+            detail: format!("scene {scene} is not open"),
+        }),
+    }
+}
+
+/// Points the active slot at an already-open scene.
+fn set_active_scene(resources: &mut Resources, scene: kooch_core::Guid) -> Result<(), RemoteError> {
+    let known = resources
+        .get_mut::<kooch_ecs::SceneManager>()
+        .ok_or_else(|| RemoteError::Unavailable {
+            detail: "no SceneManager".to_owned(),
+        })?
+        .set_active(scene);
+    match known {
+        true => Ok(()),
+        false => Err(RemoteError::SceneError {
+            detail: format!("scene {scene} is not open"),
+        }),
+    }
 }
 
 /// Opens a scene beside the ones already loaded.
