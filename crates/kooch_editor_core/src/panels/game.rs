@@ -223,9 +223,15 @@ fn frame_time_card(ui: &mut egui::Ui, perf: &crate::perf::EditorPerfStats) {
             .map(|ms| format!("GPU:      {ms:.2} ms"))
             .unwrap_or_else(|| "GPU:      n/a".to_owned());
         ui.label(egui::RichText::new(gpu).color(green).monospace().size(12.0));
+        // Amber when vsync is on: every number above is then capped by
+        // the display and the reader has to know before trusting them.
+        let (mode, mode_colour) = match perf.vsync {
+            true => ("vsync", amber),
+            false => ("novsync", green),
+        };
         ui.label(
-            egui::RichText::new(format!("FPS:      {:.0}", perf.fps_avg))
-                .color(green)
+            egui::RichText::new(format!("FPS:      {:.0}  {mode}", perf.fps_avg))
+                .color(mode_colour)
                 .monospace()
                 .size(12.0),
         );

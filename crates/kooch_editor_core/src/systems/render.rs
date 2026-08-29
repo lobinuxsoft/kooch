@@ -233,8 +233,12 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<kooch_core::gpu::GpuScopes>()
         .and_then(|scopes| scopes.frame_ms())
         .or(meshlet_stats.gpu_frame_ms);
+    // Read off the surface rather than off a setting: `.rendersettings`
+    // describes the project's window, and this is the editor's.
+    let vsync = gpu.vsync();
     if let Some(stats) = resources.get_mut::<crate::perf::EditorPerfStats>() {
         stats.gpu_frame_ms = gpu_ms;
+        stats.vsync = vsync;
         stats.vram_tracked_bytes = vram_bytes;
         // #463.6 — three editor passes always run regardless of
         // scene contents: sky background, viewport blit, egui

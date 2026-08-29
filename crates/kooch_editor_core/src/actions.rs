@@ -919,7 +919,11 @@ pub(crate) fn apply_actions(
         queued.splice(0..0, reloads);
     }
     if !queued.is_empty() {
-        tracing::info!(
+        // 🔴 `debug`, not `info`. A live prefab drains every frame, so at
+        // `info` this printed sixty identical lines a second and buried
+        // every other message in the Console — including the ones a
+        // measurement run is there to read.
+        tracing::debug!(
             target: "kooch_editor_core::prefab",
             drained = queued.len(),
             "propagation drained into actions",

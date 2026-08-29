@@ -71,6 +71,15 @@ pub struct EditorPerfStats {
     /// `wgpu::Features::TIMESTAMP_QUERY`. `None` if the adapter does
     /// not expose timestamp queries.
     pub gpu_frame_ms: Option<f32>,
+    /// Whether the editor's own surface is presenting with vsync.
+    ///
+    /// 🔴 On the HUD because it decides how to read every other number
+    /// here. A vsync-locked frame reports the vblank as if it were work,
+    /// so three different scenes measured 17.1, 17.3 and 17.4 ms while
+    /// their GPU time moved and nobody could tell the cap from the cost.
+    /// It is also NOT the `vsync` in `.rendersettings` — that one is the
+    /// project's window, and the editor has its own.
+    pub vsync: bool,
     /// Sum of bytes the engine knows it has allocated through wgpu
     /// (vertex / index / uniform / storage buffers + textures we
     /// own, including the GlobalMeshPool, vis-buffer, deferred
