@@ -65,3 +65,27 @@ fn no_presentation_means_no_change() {
     super::apply_presentation_system(&mut resources);
     assert!(resources.get::<crate::quality::Presentation>().is_none());
 }
+
+/// `KOOCH_PRESENT_MODE` outranks the settings asset.
+mod present_precedence {
+    use super::super::wanted_vsync;
+
+    #[test]
+    fn the_asset_decides_when_nobody_overrides() {
+        assert!(wanted_vsync(true, None));
+        assert!(!wanted_vsync(false, None));
+    }
+
+    #[test]
+    fn novsync_beats_an_asset_asking_for_it() {
+        // The regression: the variable was read at surface creation and
+        // then undone here on the first frame, so a measurement run
+        // reported the vblank as work.
+        assert!(!wanted_vsync(true, Some(false)));
+    }
+
+    #[test]
+    fn vsync_beats_an_asset_turning_it_off() {
+        assert!(wanted_vsync(false, Some(true)));
+    }
+}

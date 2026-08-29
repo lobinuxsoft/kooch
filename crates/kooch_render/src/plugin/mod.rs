@@ -73,6 +73,13 @@ impl Plugin for RenderPlugin {
 /// it compares against the mode the surface is already presenting with,
 /// so the common case of "the resource says what it said last frame"
 /// costs one comparison rather than a swapchain rebuild.
+///
+/// 🔴 `KOOCH_PRESENT_MODE` wins over the asset, and it has to. The
+/// variable was read once at surface creation and then overwritten here
+/// on the first frame, so a `novsync` measurement run presented with
+/// vsync anyway and reported the vblank as if it were work — the exact
+/// thing the variable exists to stop. An override that any settings file
+/// silently undoes is not an override.
 fn apply_presentation_system(resources: &mut Resources) {
     let Some(wanted) = resources.get::<crate::quality::Presentation>().copied() else {
         return;
@@ -80,7 +87,15 @@ fn apply_presentation_system(resources: &mut Resources) {
     let Some(gpu) = resources.get_mut::<GpuContext>() else {
         return;
     };
-    gpu.set_vsync(wanted.vsync);
+    gpu.set_vsync(wanted_vsync(
+        wanted.vsync,
+        kooch_core::gpu::vsync_override(),
+    ));
+}
+
+/// The precedence rule, split out so it is testable without a GPU.
+fn wanted_vsync(asset: bool, over: Option<bool>) -> bool {
+    over.unwrap_or(asset)
 }
 
 /// Surface-sized depth texture owned by the render plugin. Recreated when
