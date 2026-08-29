@@ -72,9 +72,22 @@ pub(crate) fn frame_timer_system(resources: &mut Resources) {
                 / state.frame_ms_history.len() as f32;
             let fps_avg = if avg_ms > 0.0 { 1000.0 / avg_ms } else { 0.0 };
 
+            // 🔴 The WORST of the window, not another average. A
+            // stutter is the only frame time a person actually feels,
+            // and an average over sixty frames is built to hide it: a
+            // 30 ms hitch inside a second of 6 ms frames moves the mean
+            // by 0.4 ms. Two rounds of "it drops frames when I move"
+            // were reported against a HUD that had no way to show it.
+            let worst_ms = state
+                .frame_ms_history
+                .iter()
+                .copied()
+                .fold(0.0_f32, f32::max);
+
             if let Some(stats) = resources.get_mut::<EditorPerfStats>() {
                 stats.fps_instant = fps_instant;
                 stats.fps_avg = fps_avg;
+                stats.worst_ms = worst_ms;
                 // The same average `fps_avg` is derived from, kept as
                 // milliseconds so the HUD does not make the reader
                 // divide 1000 by a frame rate to find the budget.

@@ -55,6 +55,13 @@ pub struct EditorPerfStats {
     /// `remote_sync_system`, and the HUD showed the 7.66. A budget you
     /// cannot exceed is not a budget.
     pub frame_ms: f32,
+    /// The longest frame in the same window `frame_ms` averages.
+    ///
+    /// 🔴 The only number here that shows a stutter. Everything else
+    /// is a mean over sixty frames, which is exactly the shape that
+    /// hides one bad frame in a second of good ones — and one bad
+    /// frame is the whole of what a person perceives as a hitch.
+    pub worst_ms: f32,
     /// Wall-clock duration of the editor render system in
     /// milliseconds. Excludes GPU work AND everything outside the
     /// render system — see [`Self::frame_ms`].

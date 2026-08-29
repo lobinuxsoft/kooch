@@ -202,6 +202,15 @@ fn frame_time_card(ui: &mut egui::Ui, perf: &crate::perf::EditorPerfStats) {
                 .monospace()
                 .size(12.0),
         );
+        // Amber whenever the window held a frame twice the average:
+        // that is a hitch, and it is invisible in every other row.
+        let spiky = perf.worst_ms > perf.frame_ms * 2.0 && perf.worst_ms > 16.7;
+        ui.label(
+            egui::RichText::new(format!("  worst:  {:.2} ms", perf.worst_ms))
+                .color(if spiky { amber } else { green })
+                .monospace()
+                .size(12.0),
+        );
         ui.label(
             egui::RichText::new(format!("  render: {:.2} ms", perf.cpu_frame_ms))
                 .color(green)
