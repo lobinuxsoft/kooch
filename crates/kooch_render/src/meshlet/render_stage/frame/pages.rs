@@ -574,7 +574,19 @@ impl MeshletRenderStage {
         raster.set_scene_epoch(settings.scene_epoch);
         raster.set_two_level(settings.two_level);
         let threads = scene_params.instance_count * scene_params.meshlets_per_mesh;
-        raster.ensure_capacity(device, threads, threads, scene_params.chunk_capacity);
+        // 🔴 `group_capacity`, NOT `threads` (#1011). The arena is
+        // indexed by LOD group, and the scene has 24 108 of them —
+        // handing it the cull rectangle instead asked for 16.7 M, a
+        // 700x over-allocation that the clipmap then paid for seventeen
+        // times: 1.1 GiB resident and 1.1 GiB of `clear_buffer` every
+        // frame. The camera has always passed the right number; this
+        // path copied the wrong argument.
+        raster.ensure_capacity(
+            device,
+            threads,
+            scene_params.group_capacity,
+            scene_params.chunk_capacity,
+        );
         raster.record(
             device,
             queue,

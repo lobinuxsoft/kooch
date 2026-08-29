@@ -1450,6 +1450,10 @@ impl PageRasterizer {
             cull.ensure_capacity(device, meshlets.max(1));
             cull.ensure_group_capacity(device, groups.max(1));
             cull.ensure_chunk_capacity(device, chunks.max(1));
+            // 🔴 Nothing reads these culls' reject buffer — the debug
+            // overlay is wired to the camera's — so its per-frame clear
+            // is 67 MiB times seventeen levels of pure memset (#1011).
+            cull.set_rejects(false);
         }
     }
 

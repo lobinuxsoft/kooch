@@ -58,7 +58,9 @@ impl MeshletCull {
         // which the overlay treats as no-op. Cost is negligible
         // (single buffer clear per frame) and only paid when the
         // dispatcher runs the atomic path at all.
-        encoder.clear_buffer(&self.reject_reasons, 0, None);
+        if self.rejects {
+            encoder.clear_buffer(&self.reject_reasons, 0, None);
+        }
         // Reset the per-stage survivor counters (#454.6) — cull
         // shader atomicAdds per cluster, so stale frame N-1 totals
         // would compound otherwise. 16-byte clear is essentially

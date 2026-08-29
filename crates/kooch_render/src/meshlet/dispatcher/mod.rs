@@ -141,6 +141,8 @@ pub struct MeshletCull {
     pub(super) chunk_args: wgpu::Buffer,
     /// Chunk slots `chunks` holds, not counting the header.
     pub(super) chunk_capacity: u32,
+    /// Whether anyone reads `reject_reasons`. See [`Self::set_rejects`].
+    pub(super) rejects: bool,
 
     pub(super) capacity: u32,
     pub(super) vertex_count_per_instance: u32,
@@ -221,6 +223,27 @@ impl MeshletCull {
     /// Grows `group_max_err` so it covers at least `required` group
     /// ids. No-op when current capacity already covers the request.
     /// Geometric growth — same pattern as [`Self::ensure_capacity`].
+    /// Whether anything will READ `reject_reasons` after the dispatch.
+    ///
+    /// 🔴 Off, the per-frame clear is skipped — and that clear is not
+    /// small. The buffer is one `u32` per cull thread, so on
+    /// `dense.scene` it is 67 MiB, and the virtual page raster runs
+    /// seventeen culls a frame: 1.1 GiB of memset every frame for a
+    /// debug overlay that is only ever wired to the CAMERA's cull.
+    ///
+    /// The stale values it leaves behind are exactly what the clear
+    /// existed to hide, which is why this is a flag and not a deletion:
+    /// whoever turns the overlay on turns this back on with it.
+    pub fn set_rejects(&mut self, rejects: bool) {
+        self.rejects = rejects;
+    }
+
+    /// Whether the reject buffer is worth clearing. See
+    /// [`Self::set_rejects`].
+    pub(super) fn reads_rejects(&self) -> bool {
+        self.rejects
+    }
+
     pub fn ensure_group_capacity(&mut self, device: &wgpu::Device, required: u32) {
         if required <= self.group_capacity {
             return;

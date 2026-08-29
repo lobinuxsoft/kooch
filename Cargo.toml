@@ -24,8 +24,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.28.9"authors = ["lobinuxsoft"]
-
+version = "0.28.10"
 [workspace.dependencies]
 # Profiling (#785). Adopted rather than written: the policy is never to
 # implement what a maintained crate covers, and these are pinned to the

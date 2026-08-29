@@ -173,6 +173,10 @@ impl MeshletCull {
             chunks,
             chunk_args,
             chunk_capacity: initial_chunk_capacity,
+            // The debug overlay is wired to the camera's cull, so the
+            // default is the one that keeps it honest. Paths nobody
+            // inspects turn it off.
+            rejects: true,
             capacity,
             vertex_count_per_instance,
             params_stride,

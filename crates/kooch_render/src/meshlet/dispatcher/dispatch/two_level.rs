@@ -89,7 +89,9 @@ impl MeshletCull {
         );
         encoder.clear_buffer(&self.visible_count, 0, None);
         encoder.clear_buffer(&self.group_max_err, 0, None);
-        encoder.clear_buffer(&self.reject_reasons, 0, None);
+        if self.rejects {
+            encoder.clear_buffer(&self.reject_reasons, 0, None);
+        }
         encoder.clear_buffer(&self.stage_counters, 0, None);
         // 🔴 The chunk HEADER only. Clearing the list too would be a
         // memset of the whole rectangle every frame — the cost this
