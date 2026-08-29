@@ -85,6 +85,7 @@ impl RemoteSyncState {
 /// Advances the handshake, refreshes the snapshot, and re-applies the
 /// mirror. No-op in local mode (no session).
 pub(crate) fn remote_sync_system(resources: &mut Resources) {
+    profiling::scope!("remote sync");
     // Taken out of Resources: the mirror mutates the ECS through the
     // same `Resources` it lives in.
     let Some(mut state) = resources.remove::<RemoteState>() else {
@@ -182,7 +183,36 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
             return;
         }
         let started = Instant::now();
-        session.refresh();
+        // 🔴 While playing the editor cannot edit, so it does not need
+        // the world — it needs what moved (#1012). `refresh` makes the
+        // host reflect every field of every component of every entity
+        // into strings before it diffs: 38.9 ms of a 46 ms frame on
+        // `dense.scene`, waited for on this thread. The cheap pull reads
+        // one column and compares floats.
+        //
+        // `None` is the host declining: its entity set changed, so a
+        // transform diff would describe a world this does not have. The
+        // full pull runs on that frame and the cheap one resumes.
+        let moved = if *playing {
+            profiling::scope!("remote: pull moved");
+            session.refresh_moved()
+        } else {
+            None
+        };
+        match moved {
+            Some(moved) => {
+                refresh = Some(started.elapsed());
+                sync.last_pull = Some(Instant::now());
+                profiling::scope!("remote: apply moved");
+                mirror.apply_moved(&moved, resources);
+                record_stats(resources, session, refresh, Duration::ZERO);
+                return;
+            }
+            None => {
+                profiling::scope!("remote: pull");
+                session.refresh();
+            }
+        }
         refresh = Some(started.elapsed());
         sync.last_pull = Some(Instant::now());
     }
@@ -196,6 +226,7 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
     // been applied, and the mirror on that frame is empty.
     let applying = Instant::now();
     let mirror_time = if just_connected || session.changed_last_refresh() {
+        profiling::scope!("remote: apply");
         mirror.apply(session.snapshot(), resources);
         // Now that the snapshot has landed, whatever the last creation
         // made has a mirror handle to select.

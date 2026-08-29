@@ -156,6 +156,16 @@ pub struct RemoteSession {
     /// old world in place, and diffing onto a world we are not sure of
     /// would compound the error silently.
     revision: Option<u64>,
+    /// The revision of the last [`Self::refresh_moved`] reply.
+    ///
+    /// 🔴 Its OWN counter, and that is not tidiness. The host keeps a
+    /// cache per method and each bumps only when its own reply carried
+    /// something, so the two numbers diverge the moment the editor uses
+    /// both. Sharing one made every cheap pull hand the host a revision
+    /// it had never issued, which it correctly answered `full` — so the
+    /// full pull ran anyway, every frame, and the cheap path was dead
+    /// code that measured as no improvement at all.
+    moved_revision: Option<u64>,
     /// Component schema, pulled once on connect.
     schema: Vec<ComponentSchema>,
     /// Why the snapshot stopped tracking the project, or `None` while it
@@ -243,6 +253,7 @@ impl RemoteSession {
             scenes: None,
             changed_last_refresh: true,
             revision: None,
+            moved_revision: None,
             schema: Vec::new(),
             stale: None,
         })
@@ -261,6 +272,7 @@ impl RemoteSession {
             scenes: None,
             changed_last_refresh: true,
             revision: None,
+            moved_revision: None,
             schema: Vec::new(),
             stale: None,
         }
@@ -370,6 +382,65 @@ impl RemoteSession {
     /// set, empty included.
     pub fn open_scenes(&self) -> Option<&[kooch_remote::protocol::SceneEntry]> {
         self.scenes.as_deref()
+    }
+
+    /// The play-mode pull: what moved, and nothing else (#1012).
+    ///
+    /// Returns the transforms to write, or `None` when the host refused
+    /// the question — the entity set changed and the caller has to
+    /// [`Self::refresh`] instead on this frame.
+    ///
+    /// 🔴 The revision is SHARED with `refresh`, deliberately. Two
+    /// counters would drift the moment the editor alternated between the
+    /// two pulls, and a diff computed against the wrong one describes a
+    /// world nobody holds. The host keeps a cache per method and both
+    /// answer `full` when the revision handed to them is not theirs, so
+    /// the first pull after a switch is a full one and correct.
+    pub fn refresh_moved(&mut self) -> Option<Vec<kooch_remote::protocol::MovedTransform>> {
+        if self.state != ConnectionState::Connected {
+            return Some(Vec::new());
+        }
+        match self.client.list_moved_since(self.moved_revision) {
+            Ok(update) => {
+                if update.host.is_some() {
+                    self.host_metrics = update.host;
+                }
+                // Kept whatever the answer: the host has described a
+                // world to this counter and the next cheap pull has to
+                // diff against that one. Dropping it here is what made
+                // every reply `full`.
+                self.moved_revision = Some(update.revision);
+                if update.full {
+                    // The host declined — its entity set changed. The
+                    // SNAPSHOT revision is the one that must not be
+                    // trusted now, since the full pull that follows has
+                    // to be a full one.
+                    self.revision = None;
+                    return None;
+                }
+                self.changed_last_refresh = !update.moved.is_empty() || !update.removed.is_empty();
+                if !update.removed.is_empty() {
+                    // A despawn is structure. Let the full path handle
+                    // it rather than teaching the cheap one to unmap ids.
+                    self.revision = None;
+                    return None;
+                }
+                Some(update.moved)
+            }
+            Err(e) => {
+                self.revision = None;
+                self.moved_revision = None;
+                self.changed_last_refresh = false;
+                let reason = e.to_string();
+                if self.stale.replace(reason.clone()).is_none() {
+                    tracing::warn!(
+                        "the remote snapshot stopped updating: {reason}. \
+                         The editor is showing the last world it could read",
+                    );
+                }
+                Some(Vec::new())
+            }
+        }
     }
 
     pub fn refresh(&mut self) {

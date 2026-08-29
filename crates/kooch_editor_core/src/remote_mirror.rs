@@ -103,11 +103,44 @@ impl RemoteMirror {
     /// open headers and the gizmo all address entities by handle, so
     /// respawning the world every refresh would drop the user's selection
     /// twice a second, and once per frame while the project is playing.
+    /// Writes only the transforms the project reported moved (#1012).
+    ///
+    /// The play-mode counterpart to [`Self::apply`], and the reason the
+    /// editor goes read-only under Play: everything `apply` does beyond
+    /// this — reflecting every field of every component, retiring
+    /// components, rebuilding the hierarchy, diffing the scene set —
+    /// exists so a field can be typed into. Nothing can be typed into
+    /// while the project is playing, so none of it is carried.
+    ///
+    /// 🔴 Structure is NOT handled here, and must not be. An id with no
+    /// mapping is skipped rather than spawned: the host answers `full`
+    /// when its entity set changes, and the caller pulls a whole
+    /// snapshot on that frame. Spawning from a transform would produce
+    /// an entity with a position and no mesh.
+    pub fn apply_moved(
+        &mut self,
+        moved: &[kooch_remote::protocol::MovedTransform],
+        resources: &mut Resources,
+    ) {
+        profiling::scope!("mirror: moved");
+        for entry in moved {
+            let Some(&entity) = self.id_map.get(&entry.id) else {
+                continue;
+            };
+            let matrix = glam::Mat4::from_cols_array(&entry.matrix);
+            write_transform(resources, entity, matrix);
+        }
+    }
+
     pub fn apply(&mut self, snapshot: &[EntitySnapshot], resources: &mut Resources) {
-        self.retain_only(snapshot, resources);
+        {
+            profiling::scope!("mirror: retain");
+            self.retain_only(snapshot, resources);
+        }
 
         // First pass: reuse or create the local entity for each snapshot
         // entry, so every id is mapped before anything reads the map.
+        profiling::scope!("mirror: map");
         for snap in snapshot {
             if !self.id_map.contains_key(&snap.id) {
                 let entity = self.spawn_mirror(resources);
@@ -120,11 +153,14 @@ impl RemoteMirror {
         // pass above because a component can point at another entity, and
         // translating that reference needs the whole map — an entity later
         // in the snapshot than the one referring to it is ordinary.
-        for snap in snapshot {
-            let Some(&entity) = self.id_map.get(&snap.id) else {
-                continue;
-            };
-            self.sync_components(resources, entity, snap);
+        {
+            profiling::scope!("mirror: components");
+            for snap in snapshot {
+                let Some(&entity) = self.id_map.get(&snap.id) else {
+                    continue;
+                };
+                self.sync_components(resources, entity, snap);
+            }
         }
 
         // Third pass: the two things that travel beside the components
@@ -136,6 +172,7 @@ impl RemoteMirror {
         // entity the project reports with no parent has to *lose* its local
         // `Parent`, or unparenting is invisible in the mirror while
         // parenting works, which is exactly how it read.
+        profiling::scope!("mirror: hierarchy");
         for snap in snapshot {
             let Some(&child) = self.id_map.get(&snap.id) else {
                 continue;
@@ -438,4 +475,26 @@ fn update_archetype_add(resources: &mut Resources, entity: Entity, type_id: std:
 
 fn type_id<T: 'static>() -> std::any::TypeId {
     std::any::TypeId::of::<T>()
+}
+
+/// Writes one entity's local transform, decomposed the way the component
+/// stores it.
+///
+/// `GlobalTransform` is left alone: the propagation stage derives it
+/// from this and the hierarchy, and writing both would make the two
+/// disagree on any frame the parent moved and the child did not.
+fn write_transform(resources: &mut Resources, entity: Entity, matrix: glam::Mat4) {
+    let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
+        return;
+    };
+    let Some(storage) = registry.get_cpu_mut::<kooch_ecs::Transform>() else {
+        return;
+    };
+    let Some(transform) = storage.get_mut(entity) else {
+        return;
+    };
+    let (scale, rotation, translation) = matrix.to_scale_rotation_translation();
+    transform.position = translation;
+    transform.rotation = rotation;
+    transform.scale = scale;
 }

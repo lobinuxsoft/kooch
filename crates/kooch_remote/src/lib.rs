@@ -41,6 +41,7 @@ pub mod plugin;
 pub use serde_json;
 
 pub mod extensions;
+pub mod moved_cache;
 pub mod protocol;
 pub mod server;
 pub mod snapshot_cache;

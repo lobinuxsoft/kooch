@@ -21,8 +21,9 @@ mod common;
 use common::{build_cube_mesh, build_sphere_mesh, try_acquire_device};
 use glam::{Mat4, Vec3};
 use kooch_render::meshlet::{
-    CullParams, DEFAULT_MAX_TRIANGLES, GlobalMeshPool, MeshInstance, MeshletCull,
-    MeshletCullPipelines, MeshletScene, SceneCullParams, build_default_meshlets, chunks_for,
+    CullParams, DEFAULT_MAX_TRIANGLES, GlobalMeshPool, LodConfig, MeshInstance, MeshletCull,
+    MeshletCullPipelines, MeshletScene, SceneCullParams, build_default_meshlets,
+    build_meshlets_lod_chain, chunks_for,
 };
 
 struct Rig {
@@ -216,5 +217,225 @@ fn the_reach_drops_the_far_instance() {
     assert!(
         !near_only.is_empty(),
         "the reach also ate the instance in front of the camera",
+    );
+}
+
+/// 🔴 The test above builds its meshes with `build_default_meshlets`,
+/// which is SINGLE LOD: every meshlet is a root, and a root always
+/// passes the selector. So it never ran the LOD descent at all — the
+/// part of the cull the two-level split had to reproduce exactly, and
+/// the part that decides which of a mesh's several versions is drawn.
+///
+/// A chain, many instances, and distances spread far enough that the
+/// selector lands on different levels for different copies. If the two
+/// paths disagree here, the picture disagrees: a meshlet drawn at the
+/// wrong level overlaps the one that should have replaced it.
+#[test]
+fn both_culls_agree_down_the_lod_chain() {
+    let Some((device, queue)) = try_acquire_device() else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+
+    let chain = build_meshlets_lod_chain(
+        &build_sphere_mesh(24, 32),
+        64,
+        DEFAULT_MAX_TRIANGLES,
+        0.5,
+        LodConfig::default(),
+    )
+    .expect("lod chain");
+    assert!(
+        chain
+            .meshlets
+            .iter()
+            .any(|m| m.parent_meshlet_index != u32::MAX),
+        "the fixture has no chain, so this test would prove nothing",
+    );
+
+    // A cube beside it, so `meshlets_per_mesh` is the sphere's and the
+    // cubes pay a stride they do not need — the condition #1002 is
+    // about, and the one that makes the two paths differ in shape.
+    let cube = build_default_meshlets(&build_cube_mesh()).expect("cube meshlets");
+
+    let mut pool = GlobalMeshPool::new();
+    let chain_handle = pool.register(&chain);
+    let cube_handle = pool.register(&cube);
+    let gpu_pool = pool.upload(&device);
+    let per_mesh = gpu_pool.max_meshlets_per_mesh.max(1);
+
+    // Down the z axis, so consecutive copies sit at different projected
+    // sizes and the selector descends at different points along the row.
+    let mut instances = Vec::new();
+    for i in 0..64u32 {
+        let z = -(i as f32) * 4.0;
+        let mesh = if i % 3 == 0 {
+            cube_handle.mesh_id
+        } else {
+            chain_handle.mesh_id
+        };
+        instances.push(MeshInstance::new(
+            Mat4::from_translation(Vec3::new(((i % 5) as f32 - 2.0) * 3.0, 0.0, z)),
+            mesh,
+            0,
+        ));
+    }
+
+    let scene = MeshletScene::new(&device, instances.len() as u32);
+    scene.upload_instances(&queue, &instances);
+
+    let count = instances.len() as u32;
+    let threads = count * per_mesh;
+    let mut cull = MeshletCull::new(&device, threads.max(1) * 2, DEFAULT_MAX_TRIANGLES as u32);
+    cull.ensure_capacity(&device, threads);
+    cull.ensure_group_capacity(&device, threads);
+    cull.ensure_chunk_capacity(&device, chunks_for(count, per_mesh));
+
+    let rig = Rig {
+        pipelines: MeshletCullPipelines::new(&device),
+        device,
+        queue,
+        pool: gpu_pool,
+        scene,
+        cull,
+        instances: count,
+        per_mesh,
+    };
+
+    let rectangle = rig.survivors(false, 0.0);
+    let chunked = rig.survivors(true, 0.0);
+
+    assert!(
+        rectangle.len() > 64,
+        "only {} survivors — the fixture is not exercising the chain",
+        rectangle.len(),
+    );
+    assert_eq!(
+        rectangle,
+        chunked,
+        "the two culls picked different LOD levels: {} vs {} survivors",
+        rectangle.len(),
+        chunked.len(),
+    );
+}
+
+/// 🔴 The instance-level frustum test is a rejection the one-level cull
+/// never made, and the tests above put everything comfortably in the
+/// middle of the screen — where a bounding sphere that is too small, or
+/// centred wrong, or unscaled, looks exactly like a correct one.
+///
+/// This is the case that tells them apart: instances straddling the
+/// frustum planes, where part of the mesh is on screen and its centre is
+/// not. Rejecting one of those loses a whole model, which is what
+/// "several models have no mesh" looks like from the outside.
+#[test]
+fn nothing_is_lost_at_the_frustum_edge() {
+    let Some((device, queue)) = try_acquire_device() else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+
+    // A ring of instances at the edges and corners of a 60° view, at
+    // several depths, plus a few big ones the camera sits inside.
+    let mut places = Vec::new();
+    for depth in [3.0f32, 8.0, 20.0] {
+        let half = depth * (30.0f32.to_radians()).tan();
+        for (x, y) in [
+            (half, 0.0),
+            (-half, 0.0),
+            (0.0, half),
+            (0.0, -half),
+            (half, half),
+            (-half, -half),
+            // Just past the edge: some meshlets still cross into view.
+            (half * 1.15, 0.0),
+            (-half * 1.15, half * 1.15),
+        ] {
+            places.push(Vec3::new(x, y, -depth));
+        }
+    }
+    // Around and behind the eye, which sits at (0, 0.5, 6).
+    places.push(Vec3::new(0.0, 0.5, 6.0));
+    places.push(Vec3::new(0.0, 0.5, 5.0));
+
+    let rig = rig(device, queue, &places);
+
+    let rectangle = rig.survivors(false, 0.0);
+    let chunked = rig.survivors(true, 0.0);
+
+    assert!(!rectangle.is_empty(), "the fixture put nothing on screen");
+    assert_eq!(
+        rectangle,
+        chunked,
+        "the instance cull dropped what the meshlet cull kept: {} vs {}",
+        rectangle.len(),
+        chunked.len(),
+    );
+}
+
+/// A scaled instance's bounding sphere has to be scaled with it.
+///
+/// An unscaled radius is invisible at scale 1 — which is what every
+/// other fixture here uses — and drops the object the moment anyone
+/// enlarges it in the editor.
+#[test]
+fn a_scaled_instance_keeps_its_bounds() {
+    let Some((device, queue)) = try_acquire_device() else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+
+    let cube = build_default_meshlets(&build_cube_mesh()).expect("cube meshlets");
+    let sphere = build_default_meshlets(&build_sphere_mesh(16, 24)).expect("sphere meshlets");
+    let mut pool = GlobalMeshPool::new();
+    let cube_handle = pool.register(&cube);
+    let sphere_handle = pool.register(&sphere);
+    let gpu_pool = pool.upload(&device);
+    let per_mesh = gpu_pool.max_meshlets_per_mesh.max(1);
+
+    // Big and off to the side: at scale 1 its centre is outside the
+    // frustum, and only the scaled radius brings it back in.
+    let instances = vec![
+        MeshInstance::new(
+            Mat4::from_scale_rotation_translation(
+                Vec3::splat(20.0),
+                glam::Quat::IDENTITY,
+                Vec3::new(-14.0, 0.0, -6.0),
+            ),
+            cube_handle.mesh_id,
+            0,
+        ),
+        MeshInstance::new(
+            Mat4::from_translation(Vec3::new(0.0, 0.0, -3.0)),
+            sphere_handle.mesh_id,
+            0,
+        ),
+    ];
+
+    let scene = MeshletScene::new(&device, instances.len() as u32);
+    scene.upload_instances(&queue, &instances);
+
+    let count = instances.len() as u32;
+    let threads = count * per_mesh;
+    let mut cull = MeshletCull::new(&device, threads.max(1) * 2, DEFAULT_MAX_TRIANGLES as u32);
+    cull.ensure_capacity(&device, threads);
+    cull.ensure_group_capacity(&device, threads);
+    cull.ensure_chunk_capacity(&device, chunks_for(count, per_mesh));
+
+    let rig = Rig {
+        pipelines: MeshletCullPipelines::new(&device),
+        device,
+        queue,
+        pool: gpu_pool,
+        scene,
+        cull,
+        instances: count,
+        per_mesh,
+    };
+
+    assert_eq!(
+        rig.survivors(false, 0.0),
+        rig.survivors(true, 0.0),
+        "the scaled instance's sphere did not follow its transform",
     );
 }

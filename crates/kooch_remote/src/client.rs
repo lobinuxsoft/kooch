@@ -185,6 +185,30 @@ impl RemoteClient {
     /// [`EntityUpdate::full`] — a caller must not assume, because
     /// merging what it thought was a diff would keep entities the
     /// project has deleted.
+    /// What moved since `since` — the play-mode pull (#1012).
+    ///
+    /// A `full` reply is the host declining the question, not an error:
+    /// the entity set changed, so the caller has to ask
+    /// [`Self::list_entities_since`] instead on that frame.
+    pub fn list_moved_since(&self, since: Option<u64>) -> Result<MovedUpdate, ClientError> {
+        match self.call(Method::ListMoved { since })? {
+            ResponseData::Moved {
+                moved,
+                removed,
+                revision,
+                full,
+                host,
+            } => Ok(MovedUpdate {
+                moved,
+                removed,
+                revision,
+                full,
+                host,
+            }),
+            other => Err(ClientError::Unexpected(other)),
+        }
+    }
+
     pub fn list_entities_since(&self, since: Option<u64>) -> Result<EntityUpdate, ClientError> {
         match self.call(Method::ListEntities { since })? {
             ResponseData::Entities {
@@ -484,4 +508,21 @@ pub struct EntityUpdate {
     /// Not diffed: it arrives whole or not at all, so a caller replaces
     /// its list rather than merging into one.
     pub scenes: Option<Vec<crate::protocol::SceneEntry>>,
+}
+
+/// One reply to [`RemoteClient::list_moved_since`] (#1012).
+///
+/// 🔴 `full` here does NOT carry a world. It means the host refused the
+/// question — the entity set changed — and the caller has to ask
+/// [`RemoteClient::list_entities_since`] on that frame. A caller that
+/// read it the way it reads `EntityUpdate::full` would clear its mirror
+/// and replace it with nothing.
+#[derive(Debug, Clone)]
+pub struct MovedUpdate {
+    pub moved: Vec<crate::protocol::MovedTransform>,
+    pub removed: Vec<crate::protocol::EntityId>,
+    /// Pass back as `since` on the next call.
+    pub revision: u64,
+    pub full: bool,
+    pub host: Option<crate::protocol::HostMetrics>,
 }
