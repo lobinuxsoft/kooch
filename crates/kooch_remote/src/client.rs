@@ -460,6 +460,40 @@ impl RemoteClient {
     }
 
     /// Connects, writes one JSON line, and reads the reply line.
+    /// Sends a method and does NOT wait for the reply (#1013).
+    ///
+    /// 🔴 The wait is the cost, not the payload. `call` blocks this
+    /// thread until the host reaches its next `Stage::First` and answers
+    /// — measured at 5.9 ms a frame for the input snapshot, whose reply
+    /// the caller was discarding with `let _ =`. A caller that does not
+    /// read the answer has no reason to be slept for it.
+    ///
+    /// The host still queues, executes and writes the reply; the write
+    /// lands on a closed pipe and `serve_one` already logs that at debug
+    /// and carries on. Nothing is lost that anyone was reading.
+    ///
+    /// ⚠️ Errors REACHING the host are still returned — a socket that
+    /// will not accept is worth knowing about. What is given up is the
+    /// host's opinion of the request, so this is only for methods whose
+    /// answer nobody wants.
+    pub fn notify(&self, method: Method) -> Result<(), ClientError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let request = Request { id, method };
+        let body =
+            serde_json::to_string(&request).map_err(|e| ClientError::Decode(e.to_string()))?;
+
+        let name = self
+            .name
+            .as_str()
+            .to_ns_name::<GenericNamespaced>()
+            .map_err(|e| ClientError::Decode(format!("invalid socket name: {e}")))?;
+        let mut stream = Stream::connect(name)?;
+        stream.write_all(body.as_bytes())?;
+        stream.write_all(b"\n")?;
+        stream.flush()?;
+        Ok(())
+    }
+
     fn round_trip(&self, body: &str) -> Result<String, ClientError> {
         let name = self
             .name
