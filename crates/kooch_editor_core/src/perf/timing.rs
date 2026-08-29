@@ -75,6 +75,10 @@ pub(crate) fn frame_timer_system(resources: &mut Resources) {
             if let Some(stats) = resources.get_mut::<EditorPerfStats>() {
                 stats.fps_instant = fps_instant;
                 stats.fps_avg = fps_avg;
+                // The same average `fps_avg` is derived from, kept as
+                // milliseconds so the HUD does not make the reader
+                // divide 1000 by a frame rate to find the budget.
+                stats.frame_ms = avg_ms;
             }
         } else {
             state.frame_ms_history.clear();

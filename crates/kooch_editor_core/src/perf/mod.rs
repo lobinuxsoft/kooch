@@ -44,8 +44,20 @@ pub struct EditorPerfStats {
     /// Frame rate averaged over the last 60 frames. Smoother for
     /// reading at a glance; instant catches stalls.
     pub fps_avg: f32,
+    /// Wall-clock milliseconds between two frames, averaged over the
+    /// same window as `fps_avg` — the WHOLE frame.
+    ///
+    /// 🔴 The only number here that is the frame. `cpu_frame_ms` is
+    /// the render system alone, so everything before it — input, the
+    /// remote snapshot pull, physics, transform propagation — is
+    /// outside it. On `dense.scene` the render system read 7.66 ms
+    /// while the frame was 50.9 and forty of those were
+    /// `remote_sync_system`, and the HUD showed the 7.66. A budget you
+    /// cannot exceed is not a budget.
+    pub frame_ms: f32,
     /// Wall-clock duration of the editor render system in
-    /// milliseconds. Excludes GPU work.
+    /// milliseconds. Excludes GPU work AND everything outside the
+    /// render system — see [`Self::frame_ms`].
     pub cpu_frame_ms: f32,
     /// Sampled CPU usage of the editor process (0.0..=100.0 across
     /// all cores summed, matches `top`'s convention). Refreshed at
