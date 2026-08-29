@@ -60,6 +60,11 @@ struct PageSettings {
     /// so their pages stayed resident and were sampled as the new
     /// scene's occlusion (#971).
     scene_epoch: u32,
+    /// Whether the clipmap culls enter per instance (#1002).
+    ///
+    /// Carried through `PageSettings` rather than read at the raster,
+    /// because that is where every other knob this path obeys arrives.
+    two_level: bool,
 }
 
 /// A camera's index into the pool's slices.
@@ -163,7 +168,12 @@ fn page_settings(resources: &Resources) -> PageSettings {
         .get::<crate::shadow::ShadowSettings>()
         .copied()
         .unwrap_or_default();
+    let lod = resources
+        .get::<crate::meshlet::MeshletLodSettings>()
+        .copied()
+        .unwrap_or_default();
     PageSettings {
+        two_level: lod.two_level,
         // 🔴 The environment force is ORed HERE **as well as** in
         // `RenderSettings::shadows()`, and the duplication is the point.
         // `shadows()` only runs when the project HAS a settings asset —
@@ -562,8 +572,9 @@ impl MeshletRenderStage {
         // replaced must not be sampled through the previous one's
         // pages (#971).
         raster.set_scene_epoch(settings.scene_epoch);
+        raster.set_two_level(settings.two_level);
         let threads = scene_params.instance_count * scene_params.meshlets_per_mesh;
-        raster.ensure_capacity(device, threads, threads);
+        raster.ensure_capacity(device, threads, threads, scene_params.chunk_capacity);
         raster.record(
             device,
             queue,
