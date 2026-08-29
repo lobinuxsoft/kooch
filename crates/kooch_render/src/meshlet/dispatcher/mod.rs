@@ -340,9 +340,21 @@ impl MeshletCull {
         // cull thread, sized to the same `capacity`. Growing them in
         // lock-step keeps a single `ensure_capacity` call sufficient
         // for both the production rasterizer and the debug overlay.
+        //
+        // 🔴 Unless nobody reads it, and then it is the BGL's minimum.
+        // `record_reject` is already gated on `params.debug_active`, so
+        // for a cull with no overlay this buffer is never written and
+        // never read — and at one u32 per cull thread it was 67 MiB a
+        // level, seventeen levels deep, in each of the two processes a
+        // remote session runs. Measured as 9.57 GiB of VRAM held by an
+        // editor sitting still (#1011).
+        let reject_bytes = match self.rejects {
+            true => new_capacity as u64 * 4,
+            false => 4,
+        };
         let reject_reasons = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_reject_reasons"),
-            size: new_capacity as u64 * 4,
+            size: reject_bytes,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,

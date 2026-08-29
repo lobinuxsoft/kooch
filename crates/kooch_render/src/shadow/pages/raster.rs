@@ -1447,13 +1447,16 @@ impl PageRasterizer {
         chunks: u32,
     ) {
         for cull in &mut self.culls {
+            // 🔴 FIRST, and that ordering is the whole of it: nothing
+            // reads these culls' reject buffer — the debug overlay is
+            // wired to the camera's — and `ensure_capacity` decides its
+            // size from this flag. Set afterwards, the allocation had
+            // already happened at full size and never shrank, because
+            // `ensure_capacity` returns early once capacity fits.
+            cull.set_rejects(false);
             cull.ensure_capacity(device, meshlets.max(1));
             cull.ensure_group_capacity(device, groups.max(1));
             cull.ensure_chunk_capacity(device, chunks.max(1));
-            // 🔴 Nothing reads these culls' reject buffer — the debug
-            // overlay is wired to the camera's — so its per-frame clear
-            // is 67 MiB times seventeen levels of pure memset (#1011).
-            cull.set_rejects(false);
         }
     }
 
