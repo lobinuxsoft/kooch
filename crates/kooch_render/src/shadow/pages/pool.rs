@@ -243,10 +243,33 @@ impl PoolLife {
 
 /// Frames a page survives unrequested when nobody says otherwise.
 ///
-/// A second at 60 Hz. Long enough that a camera sweeping across a scene
-/// and back finds its pages still there; short enough that the pool is
-/// not holding a minute of somewhere else.
+/// 🔴 The FALLBACK only, for a caller with no clock. The real horizon
+/// is [`DEFAULT_AGE_SECONDS`], converted per frame — see
+/// `page_age_frames`. A constant in frames means the cache remembers
+/// less the faster the renderer gets, which is precisely backwards.
 pub const DEFAULT_MAX_AGE: u32 = 60;
+
+/// How long a page survives unrequested, when nobody says otherwise.
+///
+/// One second. Long enough that a camera sweeping across a scene and
+/// back finds its pages still there; short enough that the pool is not
+/// holding a minute of somewhere else. This was always the intent — it
+/// just used to be written as "60", which stopped meaning a second the
+/// moment the frame stopped taking 16.7 ms.
+pub const DEFAULT_AGE_SECONDS: f32 = 1.0;
+
+/// `KOOCH_SHADOW_PAGE_SECONDS`, read once.
+pub fn age_seconds() -> f32 {
+    static SECONDS: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *SECONDS.get_or_init(|| {
+        std::env::var("KOOCH_SHADOW_PAGE_SECONDS")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .filter(|s| *s > 0.0)
+            .unwrap_or(DEFAULT_AGE_SECONDS)
+            .min(16.0)
+    })
+}
 
 /// `KOOCH_SHADOW_PAGE_AGE`, read once. See [`PoolLife`] for why the
 /// default is long rather than short.
