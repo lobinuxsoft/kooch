@@ -5,7 +5,9 @@ use kooch_core::gpu::tiled_workgroups;
 
 use super::super::MeshletCull;
 use super::super::pipelines::MeshletCullPipelines;
-use super::super::{CHUNK_ARGS_OFFSET, CHUNK_HEADER_WORDS, CULL_CHUNK_MESHLETS};
+use super::super::{
+    CHUNK_ARGS_OFFSET, CHUNK_HEADER_WORDS, CULL_CHUNK_MESHLETS, DISPATCH_ARGS_BYTES,
+};
 
 /// Chunks the worst case needs: every instance surviving, each expanded
 /// at the heaviest mesh in the pool.
@@ -35,6 +37,14 @@ impl MeshletCull {
     /// 3. `cs_lod_group_max_err_chunked` — #465's pass 1, indirect.
     /// 4. `cs_cull_scene_pool_atomic_chunked` — #465's pass 2,
     ///    indirect.
+    ///
+    /// 🔴 In TWO compute passes with a buffer copy between them, and
+    /// that is a wgpu rule rather than a preference: a buffer may not
+    /// be `STORAGE_READ_WRITE` and `INDIRECT` inside one usage scope.
+    /// `chunks` has to stay bound as storage for the expansion to read
+    /// the list, so the three words it dispatches off are copied into
+    /// `chunk_args` first — the same move
+    /// `mirror_count_to_indirect_args` makes for `visible_count`.
     ///
     /// The two extra dispatches are the price. What they buy on
     /// `dense.scene` is the meshlet domain entered on the order of the
@@ -171,16 +181,20 @@ impl MeshletCull {
             ],
         });
 
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("meshlet_cull_chunked_pass"),
-                timestamp_writes: None,
-            });
+        let bind = |pass: &mut wgpu::ComputePass<'_>| {
             pass.set_bind_group(0, &cull_bg, &[]);
             pass.set_bind_group(1, &pool_bg, &[]);
             pass.set_bind_group(2, &scene_bg, &[]);
             pass.set_bind_group(3, &chunked_bg, &[]);
             pass.set_bind_group(4, &debug_bg, &[]);
+        };
+
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("meshlet_cull_instances_pass"),
+                timestamp_writes: None,
+            });
+            bind(&mut pass);
 
             pass.set_pipeline(&pipelines.pipeline_cull_instances);
             let (groups_x, groups_y) = tiled_workgroups(scene_params.instance_count, 64);
@@ -188,6 +202,22 @@ impl MeshletCull {
 
             pass.set_pipeline(&pipelines.pipeline_cull_expand_args);
             pass.dispatch_workgroups(1, 1, 1);
+        }
+
+        encoder.copy_buffer_to_buffer(
+            &self.chunks,
+            CHUNK_ARGS_OFFSET,
+            &self.chunk_args,
+            0,
+            DISPATCH_ARGS_BYTES,
+        );
+
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("meshlet_cull_expand_pass"),
+                timestamp_writes: None,
+            });
+            bind(&mut pass);
 
             // The size of these two was decided by the GPU one pass ago
             // and the CPU never learns it. That is the property the
@@ -195,10 +225,10 @@ impl MeshletCull {
             // readback, and a readback in the hot path is a frame of
             // latency.
             pass.set_pipeline(&pipelines.pipeline_lod_group_max_err_chunked);
-            pass.dispatch_workgroups_indirect(&self.chunks, CHUNK_ARGS_OFFSET);
+            pass.dispatch_workgroups_indirect(&self.chunk_args, 0);
 
             pass.set_pipeline(&pipelines.pipeline_cull_scene_pool_atomic_chunked);
-            pass.dispatch_workgroups_indirect(&self.chunks, CHUNK_ARGS_OFFSET);
+            pass.dispatch_workgroups_indirect(&self.chunk_args, 0);
         }
 
         self.mirror_count_to_indirect_args(encoder);

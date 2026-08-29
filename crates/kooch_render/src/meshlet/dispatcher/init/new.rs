@@ -148,6 +148,14 @@ impl MeshletCull {
         // the two-level path pays 1 KiB for the header and the guess.
         let initial_chunk_capacity: u32 = 256;
         let chunks = MeshletCull::chunk_buffer(device, initial_chunk_capacity);
+        // Never grows and never binds: three words the expansion
+        // dispatches off, filled by a copy out of `chunks`.
+        let chunk_args = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("meshlet_cull_chunk_args"),
+            size: super::super::DISPATCH_ARGS_BYTES,
+            usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         Self {
             params_buffer,
@@ -163,6 +171,7 @@ impl MeshletCull {
             reject_reasons,
             stage_counters,
             chunks,
+            chunk_args,
             chunk_capacity: initial_chunk_capacity,
             capacity,
             vertex_count_per_instance,

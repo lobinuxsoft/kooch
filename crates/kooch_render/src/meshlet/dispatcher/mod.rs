@@ -54,9 +54,14 @@ use crate::meshlet::cull::CullParams;
 /// `CHUNK_LIST` in `meshlet_cull/two_level.wgsl`.
 pub(super) const CHUNK_HEADER_WORDS: u64 = 6;
 
-/// Byte offset of the indirect dispatch args inside the same buffer.
-/// Mirrors `CHUNK_ARGS`.
+/// Byte offset `cs_cull_expand_args` writes the dispatch args at,
+/// inside `chunks`. Mirrors `CHUNK_ARGS`. They are copied out of here
+/// into [`MeshletCull::chunk_args`] before anything dispatches off
+/// them.
 pub(super) const CHUNK_ARGS_OFFSET: u64 = 3 * 4;
+
+/// Three `u32` — the x, y, z of a `dispatch_workgroups_indirect`.
+pub(super) const DISPATCH_ARGS_BYTES: u64 = 12;
 
 /// Meshlets one chunk covers — the two-level cull's workgroup size.
 /// Mirrors `CULL_GROUP`.
@@ -123,9 +128,17 @@ pub struct MeshletCull {
     /// instances, `[3..6)` the indirect args the expansion runs under,
     /// then one word per chunk.
     ///
-    /// INDIRECT as well as STORAGE — `cs_cull_expand_args` writes the
-    /// args the very next dispatch reads out of the same allocation.
     pub(super) chunks: wgpu::Buffer,
+    /// The chunk count, copied out of `chunks` into a buffer of its own
+    /// so the expansion can dispatch off it.
+    ///
+    /// 🔴 A COPY, and not the same allocation, because wgpu refuses a
+    /// buffer that is both `STORAGE_READ_WRITE` and `INDIRECT` inside
+    /// one usage scope — and `chunks` has to stay bound as storage for
+    /// the expansion to read the list at all. `mirror_count_to_indirect_args`
+    /// solves the identical problem for `visible_count` the identical
+    /// way; this is that idiom, not a new one.
+    pub(super) chunk_args: wgpu::Buffer,
     /// Chunk slots `chunks` holds, not counting the header.
     pub(super) chunk_capacity: u32,
 
@@ -265,8 +278,9 @@ impl MeshletCull {
         device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_cull_chunks"),
             size: (CHUNK_HEADER_WORDS + chunks as u64) * 4,
+            // No `INDIRECT`: it is bound as storage for the whole pass
+            // and wgpu treats the two as exclusive within one scope.
             usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::INDIRECT
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
