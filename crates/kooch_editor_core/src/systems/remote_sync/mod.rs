@@ -140,12 +140,19 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
                 // would write an empty scene: mirrored entities are
                 // ephemeral, so they are excluded from the document.
                 *playing = false;
+                // Otherwise the pump keeps knocking on a socket nobody
+                // answers, once every backoff, forever.
+                session.set_pulling(false);
                 mirror.clear(resources);
             }
             return;
         }
         ConnectionState::Connected => {}
     }
+
+    // The background pull follows Play, not the frame: it costs a
+    // project frame slice per pull and only play mode reads it (#1014).
+    session.set_pulling(*playing);
 
     // A gizmo drag is an edit the project has not been told about yet —
     // it only goes over the wire when the user lets go. Applying the
@@ -194,7 +201,12 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
         // transform diff would describe a world this does not have. The
         // full pull runs on that frame and the cheap one resumes.
         let moved = if *playing {
-            profiling::scope!("remote: pull moved");
+            // 🔴 Not a round trip. The pump pulled this while the
+            // previous frame was drawing, so this reads an inbox
+            // (#1014). Waiting for it here was 9.5 ms of a 17.3 ms
+            // frame — sequential with the render, so it landed on the
+            // frame time in full.
+            profiling::scope!("remote: take moved");
             session.refresh_moved()
         } else {
             None

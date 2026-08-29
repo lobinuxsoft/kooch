@@ -39,6 +39,7 @@ pub(crate) mod panels;
 #[cfg(feature = "profiling")]
 pub use panels::profiler::keep_all_frames;
 pub mod dlss_sdk;
+pub mod moved_pump;
 pub mod perf;
 mod picking;
 pub mod play_state;

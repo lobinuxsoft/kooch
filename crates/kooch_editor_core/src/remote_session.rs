@@ -108,7 +108,9 @@ pub struct RemoteSession {
     /// Captured child stdout/stderr, newest last.
     output: Arc<Mutex<Vec<String>>>,
     /// HTTP client bound to the project's server port.
-    client: RemoteClient,
+    ///
+    /// Shared so [`MovedPump`] can call it from its own thread.
+    client: Arc<RemoteClient>,
     state: ConnectionState,
     /// Last entity snapshot pulled by [`Self::refresh`].
     ///
@@ -156,16 +158,17 @@ pub struct RemoteSession {
     /// old world in place, and diffing onto a world we are not sure of
     /// would compound the error silently.
     revision: Option<u64>,
-    /// The revision of the last [`Self::refresh_moved`] reply.
+    /// The worker that keeps the play-mode transform delta fresh.
     ///
-    /// 🔴 Its OWN counter, and that is not tidiness. The host keeps a
-    /// cache per method and each bumps only when its own reply carried
-    /// something, so the two numbers diverge the moment the editor uses
-    /// both. Sharing one made every cheap pull hand the host a revision
-    /// it had never issued, which it correctly answered `full` — so the
-    /// full pull ran anyway, every frame, and the cheap path was dead
-    /// code that measured as no improvement at all.
-    moved_revision: Option<u64>,
+    /// 🔴 The revision lives on the WORKER, not here. It is the one
+    /// making the calls, so it is the only place that can chain a
+    /// reply's revision onto the next request. The editor holding it
+    /// meant one round trip per editor frame, waited for — 9.5 ms of a
+    /// 17.3 ms frame (#1014).
+    ///
+    /// `None` until the first pull: attaching costs a thread, and a
+    /// session that never plays never needs one.
+    pump: Option<crate::moved_pump::MovedPump>,
     /// Component schema, pulled once on connect.
     schema: Vec<ComponentSchema>,
     /// Why the snapshot stopped tracking the project, or `None` while it
@@ -246,14 +249,14 @@ impl RemoteSession {
         Ok(Self {
             child: Some(child),
             output,
-            client: RemoteClient::new(socket),
+            client: Arc::new(RemoteClient::new(socket)),
             state: ConnectionState::Connecting,
             snapshot: Vec::new(),
             host_metrics: None,
             scenes: None,
             changed_last_refresh: true,
             revision: None,
-            moved_revision: None,
+            pump: None,
             schema: Vec::new(),
             stale: None,
         })
@@ -265,14 +268,14 @@ impl RemoteSession {
         Self {
             child: None,
             output: Arc::new(Mutex::new(Vec::new())),
-            client: RemoteClient::new(socket),
+            client: Arc::new(RemoteClient::new(socket)),
             state: ConnectionState::Connecting,
             snapshot: Vec::new(),
             host_metrics: None,
             scenes: None,
             changed_last_refresh: true,
             revision: None,
-            moved_revision: None,
+            pump: None,
             schema: Vec::new(),
             stale: None,
         }
@@ -384,63 +387,90 @@ impl RemoteSession {
         self.scenes.as_deref()
     }
 
+    /// Turns the background transform pull on or off (#1014).
+    ///
+    /// On while the project plays, off otherwise: the paused editor
+    /// pulls the whole world on its own idle cadence, and a worker
+    /// asking what moved every frame would spend a slice of every
+    /// *project* frame answering a question nobody reads.
+    ///
+    /// The worker thread is started by the first `true` and outlives the
+    /// pauses — a play/stop cycle should not cost a thread each way.
+    pub fn set_pulling(&mut self, pulling: bool) {
+        if !pulling && self.pump.is_none() {
+            return;
+        }
+        let client = Arc::clone(&self.client);
+        self.pump
+            .get_or_insert_with(|| crate::moved_pump::MovedPump::spawn(client))
+            .set_running(pulling);
+    }
+
     /// The play-mode pull: what moved, and nothing else (#1012).
     ///
-    /// Returns the transforms to write, or `None` when the host refused
-    /// the question — the entity set changed and the caller has to
+    /// Does NOT talk to the project — it drains what the pump already
+    /// pulled while the previous frame was drawing (#1014). Returns the
+    /// transforms to write, or `None` when the project refused the
+    /// question: its entity set changed, and the caller has to
     /// [`Self::refresh`] instead on this frame.
     ///
-    /// 🔴 The revision is SHARED with `refresh`, deliberately. Two
-    /// counters would drift the moment the editor alternated between the
-    /// two pulls, and a diff computed against the wrong one describes a
-    /// world nobody holds. The host keeps a cache per method and both
-    /// answer `full` when the revision handed to them is not theirs, so
-    /// the first pull after a switch is a full one and correct.
+    /// Several deltas can land in one editor frame if the project runs
+    /// ahead of it. They concatenate rather than merge: each is a diff
+    /// on the one before, [`crate::remote_mirror::RemoteMirror::apply_moved`]
+    /// writes per entity, so the last write for an entity is the newest
+    /// one — which is exactly what merging would have produced, without
+    /// building a map to find out.
     pub fn refresh_moved(&mut self) -> Option<Vec<kooch_remote::protocol::MovedTransform>> {
         if self.state != ConnectionState::Connected {
             return Some(Vec::new());
         }
-        match self.client.list_moved_since(self.moved_revision) {
-            Ok(update) => {
-                if update.host.is_some() {
-                    self.host_metrics = update.host;
-                }
-                // Kept whatever the answer: the host has described a
-                // world to this counter and the next cheap pull has to
-                // diff against that one. Dropping it here is what made
-                // every reply `full`.
-                self.moved_revision = Some(update.revision);
-                if update.full {
-                    // The host declined — its entity set changed. The
-                    // SNAPSHOT revision is the one that must not be
-                    // trusted now, since the full pull that follows has
-                    // to be a full one.
-                    self.revision = None;
-                    return None;
-                }
-                self.changed_last_refresh = !update.moved.is_empty() || !update.removed.is_empty();
-                if !update.removed.is_empty() {
+        let Some(pump) = self.pump.as_ref() else {
+            // `set_pulling` has not run yet. Nothing has been asked, so
+            // there is nothing to answer with; the full pull covers it.
+            return None;
+        };
+        let mut pulled = Vec::new();
+        pump.drain(&mut pulled);
+
+        let mut moved = Vec::new();
+        // Either the project declined or the exchange failed. In both
+        // cases what this side holds cannot be diffed onto.
+        let mut structural = false;
+        for reply in pulled {
+            match reply {
+                crate::moved_pump::Pulled::Update(update) => {
+                    if update.host.is_some() {
+                        self.host_metrics = update.host;
+                    }
                     // A despawn is structure. Let the full path handle
                     // it rather than teaching the cheap one to unmap ids.
-                    self.revision = None;
-                    return None;
+                    if update.full || !update.removed.is_empty() {
+                        structural = true;
+                        moved.clear();
+                    } else {
+                        moved.extend(update.moved);
+                    }
                 }
-                Some(update.moved)
-            }
-            Err(e) => {
-                self.revision = None;
-                self.moved_revision = None;
-                self.changed_last_refresh = false;
-                let reason = e.to_string();
-                if self.stale.replace(reason.clone()).is_none() {
-                    tracing::warn!(
-                        "the remote snapshot stopped updating: {reason}. \
-                         The editor is showing the last world it could read",
-                    );
+                crate::moved_pump::Pulled::Failed(reason) => {
+                    structural = true;
+                    moved.clear();
+                    if self.stale.replace(reason.clone()).is_none() {
+                        tracing::warn!(
+                            "the remote snapshot stopped updating: {reason}. \
+                             The editor is showing the last world it could read",
+                        );
+                    }
                 }
-                Some(Vec::new())
             }
         }
+        self.changed_last_refresh = !moved.is_empty();
+        if structural {
+            // The SNAPSHOT revision is the one that must not be trusted
+            // now: the full pull that follows has to be a full one.
+            self.revision = None;
+            return None;
+        }
+        Some(moved)
     }
 
     pub fn refresh(&mut self) {
