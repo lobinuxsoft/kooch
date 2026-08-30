@@ -979,11 +979,32 @@ pub fn shadow_density_choices() -> &'static [kooch_ecs::reflect::FieldChoice] {
     SHADOW_DENSITY_CHOICES
 }
 
-/// 100 is the ceiling and the rest go down from it, because that is
-/// what a quality setting means: nobody reaches for a graphics option
-/// hoping to find something ABOVE maximum.
+/// 🔴 100 % is a REFERENCE, not a maximum, and the list used to stop
+/// there — "nobody reaches for a graphics option hoping to find
+/// something above maximum".
 ///
-/// 🔴 The values below 100 are not all powers of two, and 75 is the
+/// That reasoning holds for a quality tier and is wrong for this
+/// number. 100 % means one shadow texel per screen pixel measured in
+/// the SUN's plane, and a texel lands square only on a surface facing
+/// the sun. On one tilted by θ it lands as a rectangle `1 / cos θ`
+/// long — at 11° of elevation, five times — so the receiver is already
+/// under one texel per pixel with the control at its old ceiling. The
+/// setting was pinned on the wrong side of the case that needs it.
+///
+/// Epic's is a signed LOD bias for the same reason, and it goes
+/// negative: `r.Shadow.Virtual.ResolutionLodBiasDirectional`, where
+/// *"lowering the value by -1 doubles the resolution of shadows with
+/// the associated performance tradeoffs"*. They name the artefact
+/// **projective aliasing** — *"when a shadow is cast on a surface
+/// almost parallel to the light direction"*.
+///
+/// ⚠️ The tradeoff is not gentle: a level is a quarter of the pages, so
+/// 200 % is 4x and 400 % is 16x. The pass already clamped to 400 — this
+/// list was the only thing holding the ceiling at 100. Read the pool's
+/// `slice used` on the performance panel before leaving one of the top
+/// two on.
+///
+/// The values below 100 are not all powers of two, and 75 is the
 /// interesting one. A page's level is `floor(log2(...))`, so 75 % does
 /// NOT make every texel three quarters the size — it moves the RADIUS
 /// at which the chain steps to the next level. Part of the scene lands
@@ -1006,6 +1027,14 @@ const SHADOW_DENSITY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
         label: "Full — 100 %, one texel per screen pixel",
         value: 100,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Double — 200 %, one level finer · 4x the pages",
+        value: 200,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Quadruple — 400 %, two levels finer · 16x the pages",
+        value: 400,
     },
 ];
 

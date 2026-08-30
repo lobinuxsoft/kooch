@@ -1454,9 +1454,22 @@ fn the_page_reader_biases_in_texels() {
         + start;
     let body = &source[start..end];
 
+    // 🔴 Matched without the whitespace, because the expression grew a
+    // third factor and wrapped across lines. A grep test that pins the
+    // FORMATTING fails on a change that never touched the behaviour,
+    // which is how this one first fired.
+    let dense: String = body.chars().filter(|c| !c.is_whitespace()).collect();
     assert!(
-        body.contains("texel_world * inti_pages.bias.x"),
+        dense.contains("texel_world*inti_pages.bias.x"),
         "the offset has to scale with the level's texel"
+    );
+    // #1017 — and by the INCIDENCE. A texel is square in the sun's
+    // basis, so on a surface tilted by θ it lands `1 / cos θ` long and
+    // the depth runs `tan θ` across it. Dropping this factor puts the
+    // reader back on one constant for every angle.
+    assert!(
+        dense.contains("page_bias_scale(n_dot_l,inti_pages.bias.w)"),
+        "the offset has to scale with the incidence, and cap it"
     );
     assert!(
         body.contains("to_light * inti_pages.bias.y"),
@@ -1867,14 +1880,36 @@ fn the_paged_shadow_resolves_like_a_cascade() {
         worst.0,
     );
 
-    // And the ceiling really is the ceiling: a list with something
-    // above the default is a list whose maximum is a lie.
-    let top = kooch_render::settings::shadow_density_choices()
-        .iter()
-        .map(|choice| choice.value)
-        .max()
-        .expect("the density list is empty");
-    assert_eq!(top, density as i64, "the list offers more than the default");
+    // 🔴 The list REACHES past the default now, and the entries above it
+    // have to say what they cost.
+    //
+    // This assertion used to be `top == default`, guarding "a list with
+    // something above the default is a list whose maximum is a lie".
+    // That is right for a quality tier and wrong for this number: 100 %
+    // is one texel per screen pixel measured in the SUN's plane, and a
+    // texel lands square only on a surface facing the sun. A receiver
+    // tilted by 79° is already under one texel per pixel with the
+    // control at its old ceiling — so the ceiling was pinned on the
+    // wrong side of the case that needs it, and the pass had clamped to
+    // 400 the whole time. Epic's equivalent goes negative for the same
+    // reason.
+    //
+    // What replaces it is the guard that actually matters: an option
+    // that multiplies the page count must NAME the multiplier, because
+    // the pool overflows without a word and its failure looks like a
+    // missing shadow.
+    let choices = kooch_render::settings::shadow_density_choices();
+    assert!(
+        choices.iter().any(|choice| choice.value == density as i64),
+        "the default density is not one of the options"
+    );
+    for choice in choices.iter().filter(|c| c.value > density as i64) {
+        assert!(
+            choice.label.contains("the pages"),
+            "`{}` asks for more pages than the default without saying how many",
+            choice.label,
+        );
+    }
 }
 
 /// The expansion's cost is reported as the product it is.
