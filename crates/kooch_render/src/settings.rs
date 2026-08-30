@@ -243,6 +243,27 @@ pub struct RenderSettings {
         shown_when = PAGES_ON
     )]
     pub shadow_bias_max: f32,
+    /// A ceiling on the receiver's own depth GRADIENT, as a slope —
+    /// `tan` of the incidence, per axis.
+    ///
+    /// 🔴 The reader gives every filter tap the depth the receiving
+    /// PLANE has where that tap looks, rather than the depth under the
+    /// pixel. That is what a tilted receiver needs and what no scalar
+    /// bias can supply: how much depth a tap crosses depends on WHICH
+    /// WAY it moved, so one number has to cover the worst axis on every
+    /// axis and detaches the shadow along the one that needed nothing.
+    ///
+    /// ⚠️ A ceiling because the slope diverges as the surface turns
+    /// edge-on, and an unbounded one extrapolates a tap to any depth at
+    /// all — a lit pixel in the middle of a shadow. 4 is `tan 76°`;
+    /// 0 disables the term and restores one depth for every tap.
+    #[serde(default = "default_shadow_bias_slope")]
+    #[reflect(
+        group = "Shadows: virtual pages",
+        range = SHADOW_BIAS_SLOPE_RANGE,
+        shown_when = PAGES_ON
+    )]
+    pub shadow_bias_slope: f32,
     /// How much simplification error a meshlet may show before the cull
     /// picks a finer level, in PIXELS.
     ///
@@ -834,6 +855,15 @@ fn default_shadow_bias_max() -> f32 {
     0.0
 }
 
+/// 🔴 NOT zero, unlike `default_shadow_bias_max`. That one is a distance
+/// in metres whose right value depends on the scene; this one is an
+/// ANGLE the receiver's own geometry fixes. 4 is `tan 76°`, past which a
+/// surface is nearly edge-on to the sun and the extrapolation stops
+/// being a correction and starts being a divergence.
+fn default_shadow_bias_slope() -> f32 {
+    4.0
+}
+
 fn default_meshlet_lod_error() -> f32 {
     1.0
 }
@@ -1050,6 +1080,14 @@ const SHADOW_BIAS_MAX_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect
     step: 0.005,
 };
 
+/// 0 is one depth for every tap — what shipped. 8 is `tan 83°`, past
+/// which the clamp is not clamping anything the geometry reaches.
+const SHADOW_BIAS_SLOPE_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::FieldRange {
+    min: 0.0,
+    max: 8.0,
+    step: 0.1,
+};
+
 const MESHLET_LOD_ERROR_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::FieldRange {
     min: 0.01,
     max: 8.0,
@@ -1233,6 +1271,7 @@ impl Default for RenderSettings {
             shadow_normal_bias: default_shadow_normal_bias(),
             shadow_depth_bias: default_shadow_depth_bias(),
             shadow_bias_max: default_shadow_bias_max(),
+            shadow_bias_slope: default_shadow_bias_slope(),
             meshlet_lod_error: default_meshlet_lod_error(),
             meshlet_min_pixels: default_meshlet_min_pixels(),
             meshlet_two_level: default_meshlet_two_level(),
@@ -1312,6 +1351,7 @@ impl RenderSettings {
             page_normal_bias: self.shadow_normal_bias,
             page_depth_bias: self.shadow_depth_bias,
             page_bias_max: self.shadow_bias_max,
+            page_bias_slope: self.shadow_bias_slope,
             max_distance: self.shadow_distance,
             cascade_texels: self.shadow_cascade_texels,
             enabled: self.shadows_enabled,

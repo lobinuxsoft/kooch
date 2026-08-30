@@ -1204,6 +1204,151 @@ fn a_light_facing_triangle_is_the_front_face() {
     );
 }
 
+/// The receiver's gradient at a few incidences, through the SHADER'S OWN
+/// `receiver_slope` rather than a Rust mirror of it.
+const SLOPE: &str = r#"
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
+
+@compute @workgroup_size(1, 1, 1)
+fn cs_slope() {
+    // Sun straight down. `texel / (2 * span)` is 1 here, so the numbers
+    // below are the plane's own slope with no scaling to unpick.
+    let basis = sun_basis(vec3<f32>(0.0, -1.0, 0.0));
+    let span = 0.5;
+    let texel = 1.0;
+
+    // A floor under a vertical sun faces the light: no run at all.
+    let flat = receiver_slope(vec3<f32>(0.0, 1.0, 0.0), basis, texel, span, 8.0);
+    out[0] = flat.x;
+    out[1] = flat.y;
+
+    // Tilted 45 degrees about ONE axis. The whole claim of this file is
+    // that the gradient appears on that axis and nowhere else.
+    let n = normalize(vec3<f32>(0.0, cos(radians(45.0)), sin(radians(45.0))));
+    let tilt = receiver_slope(n, basis, texel, span, 8.0);
+    out[2] = tilt.x;
+    out[3] = tilt.y;
+
+    // Edge-on to the sun, where the ratio diverges and only the clamp
+    // answers.
+    let edge = receiver_slope(vec3<f32>(0.0, 0.0, 1.0), basis, texel, span, 3.0);
+    out[4] = edge.x;
+    out[5] = edge.y;
+
+    // A clamp of zero turns the term off at any incidence.
+    let off = receiver_slope(n, basis, texel, span, 0.0);
+    out[6] = off.x;
+    out[7] = off.y;
+}
+"#;
+
+/// The receiver's gradient is per AXIS, not one number.
+///
+/// 🔴 This is the property a scalar bias cannot have, and the reason the
+/// first attempt at #1017 measured as doing nothing. How much depth a
+/// filter tap crosses depends on WHICH WAY it moved: along the tilt it
+/// crosses the whole run, across it none. A single multiplier has to
+/// cover the worst axis on every axis, so it detaches the shadow along
+/// the one that needed no correction — and three captures at 79° of
+/// incidence, with the multiplier at 0, at 8, and replaced by a constant
+/// raised to the same step, were indistinguishable from each other.
+#[test]
+fn a_tilt_gradient_is_directional() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("receiver_slope"),
+        source: wgpu::ShaderSource::Wgsl(format!("{}\n{SLOPE}", kooch_lighting::PAGE_TABLE).into()),
+    });
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[Some(&bgl)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(&layout),
+        module: &module,
+        entry_point: Some("cs_slope"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 32,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    queue.submit([encoder.finish()]);
+
+    let out: Vec<f32> = read_words(&device, &queue, &buffer)
+        .into_iter()
+        .map(f32::from_bits)
+        .collect();
+
+    assert!(
+        out[0].abs() < 1e-4 && out[1].abs() < 1e-4,
+        "a surface facing the sun has no run across its texel, got ({}, {})",
+        out[0],
+        out[1]
+    );
+    // 🔴 The assertion the whole change exists for.
+    assert!(
+        out[2].abs() < 1e-4,
+        "the axis the surface did NOT tilt about picked up a gradient of {} — that is a \
+         scalar wearing a vector's shape, and it detaches the shadow along the axis that \
+         needed no correction",
+        out[2]
+    );
+    assert!(
+        (out[3].abs() - 1.0).abs() < 1e-3,
+        "at 45 degrees the plane falls one depth unit per texel; the tilted axis reads {}",
+        out[3]
+    );
+    assert!(
+        (out[5].abs() - 3.0).abs() < 1e-3,
+        "edge-on the ratio diverges and the clamp is the only answer: expected 3, got {}",
+        out[5]
+    );
+    assert!(
+        out[6].abs() < 1e-6 && out[7].abs() < 1e-6,
+        "a clamp of 0 has to restore one depth for every tap, or no project can go back \
+         to the numbers it tuned; got ({}, {})",
+        out[6],
+        out[7]
+    );
+}
+
 /// The indirect draw has to issue enough vertices for a WHOLE meshlet.
 ///
 /// 🔴 The defect, and it looked like everything except what it was. The

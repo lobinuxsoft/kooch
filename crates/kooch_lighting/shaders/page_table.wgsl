@@ -260,6 +260,56 @@ fn sun_basis(direction: vec3<f32>) -> mat3x3<f32> {
     return mat3x3<f32>(s, u, f);
 }
 
+/// The receiver's own depth gradient, in STORED-DEPTH units per texel of
+/// offset inside its page. One number per axis, and the pair is the
+/// whole point.
+///
+/// # 🔴 Why a scalar bias cannot do this job
+///
+/// A page is square in the sun's basis, so on a surface tilted by `θ` it
+/// lands as a rectangle and the receiver's own depth runs across it. The
+/// obvious repair is to grow the bias with `tan θ` — and it does not
+/// work, because how much depth a tap crosses depends on WHICH WAY the
+/// tap moved. Stepping along the tilt crosses the whole run; stepping
+/// across it crosses none. A scalar has to cover the worst axis on every
+/// axis, so it detaches the shadow in the direction that needed nothing.
+///
+/// This is the gradient itself: `-n.xy / n.z` in the sun's frame, which
+/// is the plane's own slope, scaled into the depth encoding and into
+/// texels. A tap `k` texels away compares against `receiver + dot(this,
+/// k)` — the depth the receiver ACTUALLY has where that tap is looking,
+/// rather than the depth it has where the pixel is.
+///
+/// ⚠️ `limit` is not optional. The ratio diverges as the surface turns
+/// edge-on to the sun, and an unbounded gradient extrapolates a tap to
+/// any depth at all, which reads as a lit pixel in the middle of a
+/// shadow. Unreal clamp theirs for the same stated reason.
+///
+/// The basis is orthonormal, so it is its own normal matrix: this is a
+/// projection onto the sun's axes, not an inverse transpose.
+fn receiver_slope(
+    normal: vec3<f32>,
+    basis: mat3x3<f32>,
+    texel_world: f32,
+    span: f32,
+    limit: f32,
+) -> vec2<f32> {
+    let n = vec3<f32>(
+        dot(normal, basis[0]),
+        dot(normal, basis[1]),
+        dot(normal, basis[2]),
+    );
+    // Magnitude floored, sign kept: `n.z` passes through zero exactly
+    // when the surface turns edge-on, and both sides of it are real
+    // surfaces that still have to be shaded.
+    let size = max(abs(n.z), 1e-4);
+    let denom = select(-size, size, n.z >= 0.0);
+    let ratio = clamp(n.xy / denom, vec2<f32>(-limit), vec2<f32>(limit));
+    // Into the depth encoding: `receiver` falls as `along` grows over
+    // `2 * span`, and the plane's own fall cancels that sign.
+    return ratio * (texel_world / (2.0 * max(span, 1e-6)));
+}
+
 /// The clipmap's centre for one level, SNAPPED to that level's page
 /// grid.
 ///

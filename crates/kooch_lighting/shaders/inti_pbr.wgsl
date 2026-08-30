@@ -851,6 +851,10 @@ fn inti_page_filter(
     layer: i32,
     texel: vec2<f32>,
     receiver: f32,
+    // The receiver's depth gradient per texel (#1017). Zero puts every
+    // tap back on the pixel's own depth, which is what a scalar bias
+    // assumes and what the lamps still pass.
+    slope: vec2<f32>,
     page_texels: u32,
 ) -> f32 {
     let width = max(u32(inti_pages.world.w), 1u);
@@ -880,9 +884,17 @@ fn inti_page_filter(
             );
             let at = vec2<i32>(origin + tap);
             let stored = textureLoad(inti_page_atlas, at, layer, 0);
+            // 🔴 This tap's OWN depth, not the pixel's. The receiver is
+            // a plane, so a tap `k` texels away looks at a part of it
+            // sitting `dot(slope, k)` further along the light. Comparing
+            // every tap against the depth under the PIXEL is what makes
+            // a tilted surface shadow itself, and no scalar bias can
+            // repair it because the error depends on which way the tap
+            // moved. See `receiver_slope`.
+            let here = receiver + dot(slope, tap - texel);
             // Reversed-Z: a LARGER stored depth is closer to the light,
             // so it is an occluder.
-            let hit = select(1.0, 0.0, stored > receiver);
+            let hit = select(1.0, 0.0, stored > here);
             lit = lit + hit * wx * wy;
         }
     }
@@ -1008,9 +1020,14 @@ fn inti_page_shadow(
         let layer = i32(place.z);
         let texel = within * f32(page_texels);
 
+        // 🔴 The receiver-plane gradient, in the texels of THIS level.
+        // `bias.w` clamps it, and 0 disables the term entirely — which
+        // is the A/B that says whether it is doing anything.
+        let slope = receiver_slope(normal, basis, texel_world, span, inti_pages.bias.w);
+
         // Bilinear PCF, clamped inside the page — see
         // `inti_page_filter` for both halves of that sentence.
-        return inti_page_filter(origin, layer, texel, receiver, page_texels);
+        return inti_page_filter(origin, layer, texel, receiver, slope, page_texels);
     }
     // No page anywhere in the chain. Lit, not shadowed: a point nobody
     // marked is a point the frame never looked at, and guessing dark
@@ -1122,9 +1139,17 @@ fn inti_local_page_shadow(
         let layer = i32(place.z);
         let texel = within * f32(page_texels);
 
+        // 🔴 No gradient here YET, and the zero is deliberate rather
+        // than an omission. A lamp's page is a PERSPECTIVE projection
+        // storing `PAGE_NEAR / major`, so its receiver plane has a
+        // different derivation than the sun's linear span — the same
+        // repair, a different algebra. Passing zero is exactly today's
+        // behaviour, so the sun's fix can be measured on its own.
+        let slope = vec2<f32>(0.0);
+
         // Bilinear PCF, clamped inside the page — see
         // `inti_page_filter` for both halves of that sentence.
-        return inti_page_filter(origin, layer, texel, receiver, page_texels);
+        return inti_page_filter(origin, layer, texel, receiver, slope, page_texels);
     }
     // No page anywhere in the chain: lit, for the same reason the sun's
     // reader is. A point nobody marked is a point the frame never looked

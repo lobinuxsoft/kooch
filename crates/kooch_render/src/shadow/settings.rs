@@ -111,6 +111,16 @@ pub struct ShadowSettings {
     /// answers LIT, and the shadow ends in a straight line at the level
     /// boundary — with the page present, resident and correctly drawn.
     pub page_bias_max: f32,
+    /// A ceiling on the receiver's own depth GRADIENT, as a slope
+    /// (`tan` of the incidence, per axis) — #1017.
+    ///
+    /// The reader compares every filter tap against the depth the
+    /// receiving plane actually has where that tap looks, instead of
+    /// against the depth under the pixel. This bounds that
+    /// extrapolation: the slope diverges as a surface turns edge-on to
+    /// the sun, and an unbounded one reads as a lit pixel inside a
+    /// shadow. 0 disables the term.
+    pub page_bias_slope: f32,
     /// Projected radius in screen pixels under which a local light
     /// casts no pages (#944). 0 = every light casts.
     pub page_min_pixels: u32,
@@ -154,6 +164,12 @@ impl Default for ShadowSettings {
             page_normal_bias: 1.8,
             page_depth_bias: 0.02,
             page_bias_max: 0.0,
+            // 🔴 ON, unlike the cap above it. That one is a distance in
+            // metres nobody has measured for a given scene; this is the
+            // receiver's own geometry, and leaving it at 0 ships the
+            // defect behind a setting no project knows to turn on.
+            // 4 is `tan 76°`, past which a surface is nearly edge-on.
+            page_bias_slope: 4.0,
             page_min_pixels: 8,
             // 🔴 Off, because it is a behaviour change and nothing has
             // measured what it costs yet: a light out of reach stops
