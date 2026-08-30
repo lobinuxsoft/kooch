@@ -178,3 +178,51 @@ fn nesting_survives_the_bridge() {
         .unwrap_or(0);
     assert!(deepest >= 1, "the inner scope came back as a sibling");
 }
+
+/// 🔴 A nested scope is inside its parent's range, so adding both
+/// counts the same nanoseconds twice.
+///
+/// This exists because the flamegraph read `shadow pages 33.9 ms` on a
+/// frame the GPU finished in nine: `shadow pages` contains `page raster`
+/// which contains `page cull`, and a naive sum reports the deepest work
+/// once per level it is nested under.
+#[cfg(feature = "gpu-profiler")]
+#[test]
+fn nesting_is_not_counted_twice() {
+    use super::gpu_span_ms;
+
+    let leaf = |label: &str, from: f64, to: f64| wgpu_profiler::GpuTimerQueryResult {
+        label: label.to_owned(),
+        time: Some(from..to),
+        nested_queries: Vec::new(),
+        pid: 0,
+        tid: std::thread::current().id(),
+    };
+
+    let mut parent = leaf("shadow pages", 0.0, 0.009);
+    parent.nested_queries = vec![leaf("page raster", 0.001, 0.008)];
+    let results = vec![parent, leaf("main view", 0.010, 0.0105)];
+
+    let ms = gpu_span_ms(&results);
+    assert!(
+        (ms - 9.5).abs() < 0.01,
+        "expected the two top-level spans (9 + 0.5), got {ms}",
+    );
+}
+
+/// A scope the driver never resolved is skipped, not counted as zero —
+/// a zero would drag the average down and read as the GPU speeding up.
+#[cfg(feature = "gpu-profiler")]
+#[test]
+fn an_unresolved_scope_is_skipped() {
+    use super::gpu_span_ms;
+
+    let unresolved = wgpu_profiler::GpuTimerQueryResult {
+        label: "never resolved".to_owned(),
+        time: None,
+        nested_queries: Vec::new(),
+        pid: 0,
+        tid: std::thread::current().id(),
+    };
+    assert_eq!(gpu_span_ms(&[unresolved]), 0.0);
+}

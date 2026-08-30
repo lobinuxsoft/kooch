@@ -35,7 +35,11 @@ struct SceneCullParams {
     // group-error arenas, never by a shader — it is here because this
     // is the struct that already reaches everything that needs it.
     group_capacity: u32,
-    _pad1: u32,
+    // Chunk slots the two-level cull's list holds (#1002). A CAPACITY,
+    // not a count: `cs_cull_instances` reserves with an atomic that is
+    // never clamped, so every reader clamps to this instead. Was
+    // `_pad1`, so the 16-byte layout is unchanged.
+    chunk_capacity: u32,
 }
 
 @group(2) @binding(0) var<storage, read> instances: array<MeshInstance>;

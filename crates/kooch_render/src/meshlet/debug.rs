@@ -384,12 +384,36 @@ pub enum MeshletDebugMode {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MeshletLodSettings {
     pub target_error_pixels: f32,
+    /// Reject an INSTANCE whose bounding sphere covers fewer than this
+    /// many pixels, before it is expanded into meshlets (#1002).
+    /// `0` = off.
+    ///
+    /// 🔴 The render distance this engine has, and the one it can
+    /// have. `projection.rs` is `perspective_infinite_reverse_rh` and
+    /// `ndc.z = near / distance` being exact is what contact shadows,
+    /// SSR, fog, the atmosphere and the temporal upscaler all read — a
+    /// far plane would break five consumers to serve one. A cull-side
+    /// screen size breaks none of them.
+    pub min_screen_pixels: f32,
+    /// Whether the cull rejects instances first and expands only the
+    /// survivors (#1002), instead of dispatching
+    /// `instances × the heaviest mesh in the scene`.
+    ///
+    /// A switch rather than a replacement, because the two shapes have
+    /// to be comparable in one build to say what the change bought.
+    pub two_level: bool,
 }
 
 impl Default for MeshletLodSettings {
     fn default() -> Self {
         Self {
             target_error_pixels: 1.0,
+            // 🔴 Off, because a threshold picked from a whiteboard is
+            // how `DEFAULT_PAGES` sat at half of Epic's for a year.
+            // The two-level shape is a pure win and ships on; what it
+            // hides is a judgement and ships off.
+            min_screen_pixels: 0.0,
+            two_level: true,
         }
     }
 }

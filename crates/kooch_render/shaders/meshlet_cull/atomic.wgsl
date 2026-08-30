@@ -78,6 +78,16 @@ const REJECT_REASON_BACKFACE: u32 = 3u;
 // LUT today; surfaced separately so the debug HUD can split LOD
 // drops from genuinely out-of-range threads later.
 const REJECT_REASON_LOD: u32 = 5u;
+// #1002 — the two-level cull dropped the whole INSTANCE before it
+// became meshlets. Written at the instance's first rectangle slot, so
+// the overlay draws one box per rejected instance rather than one per
+// meshlet it never expanded.
+const REJECT_REASON_INSTANCE: u32 = 6u;
+// Same pass, the other test: the instance projects to fewer pixels
+// than `params.min_screen_pixels`. Separate from the frustum reject
+// because "off screen" and "too small to matter" are different
+// answers and only one of them is a setting.
+const REJECT_REASON_REACH: u32 = 7u;
 
 fn record_reject(thread_id: u32, reason: u32) {
     if (params.debug_active != 0u) {
@@ -147,20 +157,11 @@ fn lod_pixel_error_world_pool(lod_error: f32, world_center: vec3<f32>, world_sca
     return world_error * params.lod_error_to_pixel_factor / dist;
 }
 
-@compute @workgroup_size(64, 1, 1)
-fn cs_lod_compute_group_max_err(
-    @builtin(global_invocation_id) gid: vec3<u32>,
-    @builtin(num_workgroups) groups: vec3<u32>,
-) {
-    let thread_id = linear_thread(gid, groups);
-    let max_meshlets = scene_params.meshlets_per_mesh;
-    let total_threads = scene_params.instance_count * max_meshlets;
-    if (thread_id >= total_threads) {
-        return;
-    }
-    let instance_id = thread_id / max_meshlets;
-    let meshlet_offset = thread_id % max_meshlets;
-
+// Pass 1's body, once the thread knows WHICH meshlet it owns. Split
+// out so the two-level cull (#1002) can reach the same reduction from
+// a chunk instead of from a rectangle index — the decision has to be
+// identical in both passes or a group descends half-way.
+fn lod_group_max_err(instance_id: u32, meshlet_offset: u32) {
     let inst = instances[instance_id];
     let mesh_desc = pool_mesh_descriptors[inst.mesh_id];
     if (meshlet_offset >= mesh_desc.meshlet_count) {
@@ -202,17 +203,26 @@ fn cs_lod_compute_group_max_err(
     atomicMax(&group_max_err[slot], parent_err_bits);
 }
 
-fn run_cull_scene_pool_atomic(thread_id: u32) {
+@compute @workgroup_size(64, 1, 1)
+fn cs_lod_compute_group_max_err(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    let thread_id = linear_thread(gid, groups);
     let max_meshlets = scene_params.meshlets_per_mesh;
-    let total_threads = scene_params.instance_count * max_meshlets;
-    // Out-of-dispatch threads have no reject_reasons[] slot to claim
-    // (the buffer is sized to total_threads). Bail before touching it.
-    if (thread_id >= total_threads) {
+    if (thread_id >= scene_params.instance_count * max_meshlets) {
         return;
     }
-    let instance_id = thread_id / max_meshlets;
-    let meshlet_offset = thread_id % max_meshlets;
+    lod_group_max_err(thread_id / max_meshlets, thread_id % max_meshlets);
+}
 
+// Pass 2's body, once the thread knows WHICH meshlet it owns.
+//
+// `thread_id` is the slot in `reject_reasons`, and it stays the
+// RECTANGLE index even when a chunk found the meshlet — the overlay
+// decodes it with `thread_id / meshlets_per_mesh` and keeping the
+// debug buffer in the old domain leaves it working untouched.
+fn cull_pool_atomic(thread_id: u32, instance_id: u32, meshlet_offset: u32) {
     let inst = instances[instance_id];
     let mesh_desc = pool_mesh_descriptors[inst.mesh_id];
     if (meshlet_offset >= mesh_desc.meshlet_count) {
@@ -311,5 +321,12 @@ fn cs_cull_scene_pool_atomic(
     @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(num_workgroups) groups: vec3<u32>,
 ) {
-    run_cull_scene_pool_atomic(linear_thread(gid, groups));
+    let thread_id = linear_thread(gid, groups);
+    let max_meshlets = scene_params.meshlets_per_mesh;
+    // Out-of-dispatch threads have no reject_reasons[] slot to claim
+    // (the buffer is sized to total_threads). Bail before touching it.
+    if (thread_id >= scene_params.instance_count * max_meshlets) {
+        return;
+    }
+    cull_pool_atomic(thread_id, thread_id / max_meshlets, thread_id % max_meshlets);
 }

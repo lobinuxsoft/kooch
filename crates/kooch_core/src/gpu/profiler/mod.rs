@@ -75,6 +75,7 @@ pub struct GpuScopes {
     /// A frame that ends with an open query is a bug in a call site,
     /// and it repeats every frame. Log it once.
     reported_error: bool,
+    frame_ms: Option<f32>,
 }
 
 /// Handle for one open GPU scope, closed by [`GpuScopes::end`].
@@ -110,12 +111,29 @@ impl GpuScopes {
                 profiler,
                 timestamp_period: queue.get_timestamp_period(),
                 reported_error: false,
+                frame_ms: None,
             }),
             Err(err) => {
                 tracing::warn!(?err, "GPU scopes disabled: profiler creation failed");
                 None
             }
         }
+    }
+
+    /// What the GPU spent this frame, across EVERY scope — shadows
+    /// included.
+    ///
+    /// 🔴 Not the same number as `MeshletRenderStats::gpu_frame_ms`,
+    /// which times the main view's cull → raster → shade chain and
+    /// nothing else. On `dense.scene` that read 0.55 ms while the
+    /// shadow page passes took about nine, so the HUD's "GPU" row was
+    /// a third of the GPU and the largest cost in the frame had never
+    /// appeared on screen.
+    ///
+    /// `None` until the ring hands back a finished frame — two or three
+    /// after the first submit — and whenever the feature is off.
+    pub fn frame_ms(&self) -> Option<f32> {
+        self.frame_ms
     }
 
     /// Opens a top-level scope on `encoder` and hands the encoder back.
@@ -179,9 +197,28 @@ impl GpuScopes {
             return;
         }
         if let Some(results) = self.profiler.process_finished_frame(self.timestamp_period) {
+            self.frame_ms = Some(gpu_span_ms(&results));
             puffin_bridge::report(&results);
         }
     }
+}
+
+/// The frame's GPU span, in milliseconds, from a finished batch.
+///
+/// 🔴 Sums the TOP-LEVEL scopes only. A nested scope is already inside
+/// its parent's range, so adding it counts the same nanoseconds twice —
+/// which is how a frame of nine milliseconds reads as thirty.
+///
+/// A scope without a time is one the driver never resolved; skipped
+/// rather than counted as zero, since zero would drag an average down
+/// and read as the GPU getting faster.
+#[cfg(feature = "gpu-profiler")]
+pub(crate) fn gpu_span_ms(results: &[wgpu_profiler::GpuTimerQueryResult]) -> f32 {
+    results
+        .iter()
+        .filter_map(|scope| scope.time.as_ref())
+        .map(|span| (span.end - span.start) as f32 * 1000.0)
+        .sum()
 }
 
 /// GPU scopes compiled out. Every method is present and does nothing,
@@ -217,4 +254,8 @@ impl GpuScopes {
     pub fn resolve(&mut self, _encoder: &mut wgpu::CommandEncoder) {}
 
     pub fn end_frame(&mut self, _queue: &wgpu::Queue) {}
+
+    pub fn frame_ms(&self) -> Option<f32> {
+        None
+    }
 }

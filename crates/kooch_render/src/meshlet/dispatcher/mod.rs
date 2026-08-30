@@ -50,6 +50,24 @@ mod types;
 
 use crate::meshlet::cull::CullParams;
 
+/// Words before the chunk list in [`MeshletCull::chunks`]. Mirrors
+/// `CHUNK_LIST` in `meshlet_cull/two_level.wgsl`.
+pub(super) const CHUNK_HEADER_WORDS: u64 = 6;
+
+/// Byte offset `cs_cull_expand_args` writes the dispatch args at,
+/// inside `chunks`. Mirrors `CHUNK_ARGS`. They are copied out of here
+/// into [`MeshletCull::chunk_args`] before anything dispatches off
+/// them.
+pub(super) const CHUNK_ARGS_OFFSET: u64 = 3 * 4;
+
+/// Three `u32` — the x, y, z of a `dispatch_workgroups_indirect`.
+pub(super) const DISPATCH_ARGS_BYTES: u64 = 12;
+
+/// Meshlets one chunk covers — the two-level cull's workgroup size.
+/// Mirrors `CULL_GROUP`.
+pub const CULL_CHUNK_MESHLETS: u32 = 64;
+
+pub use dispatch::chunks_for;
 pub use pipelines::MeshletCullPipelines;
 pub use types::{DrawIndirectArgs, HiZTestParams};
 
@@ -103,6 +121,28 @@ pub struct MeshletCull {
     /// `CullParams.debug_active != 0`. Cleared per frame; readback
     /// drives the editor's stats overlay.
     pub(super) stage_counters: wgpu::Buffer,
+    /// The two-level cull's chunk list and its header (#1002). One
+    /// buffer because the pipeline layout is already at seven of the
+    /// eight storage buffers a compute stage may bind:
+    /// `[0]` chunk count, `[1]` chunks dropped, `[2]` surviving
+    /// instances, `[3..6)` the indirect args the expansion runs under,
+    /// then one word per chunk.
+    ///
+    pub(super) chunks: wgpu::Buffer,
+    /// The chunk count, copied out of `chunks` into a buffer of its own
+    /// so the expansion can dispatch off it.
+    ///
+    /// 🔴 A COPY, and not the same allocation, because wgpu refuses a
+    /// buffer that is both `STORAGE_READ_WRITE` and `INDIRECT` inside
+    /// one usage scope — and `chunks` has to stay bound as storage for
+    /// the expansion to read the list at all. `mirror_count_to_indirect_args`
+    /// solves the identical problem for `visible_count` the identical
+    /// way; this is that idiom, not a new one.
+    pub(super) chunk_args: wgpu::Buffer,
+    /// Chunk slots `chunks` holds, not counting the header.
+    pub(super) chunk_capacity: u32,
+    /// Whether anyone reads `reject_reasons`. See [`Self::set_rejects`].
+    pub(super) rejects: bool,
 
     pub(super) capacity: u32,
     pub(super) vertex_count_per_instance: u32,
@@ -183,6 +223,27 @@ impl MeshletCull {
     /// Grows `group_max_err` so it covers at least `required` group
     /// ids. No-op when current capacity already covers the request.
     /// Geometric growth — same pattern as [`Self::ensure_capacity`].
+    /// Whether anything will READ `reject_reasons` after the dispatch.
+    ///
+    /// 🔴 Off, the per-frame clear is skipped — and that clear is not
+    /// small. The buffer is one `u32` per cull thread, so on
+    /// `dense.scene` it is 67 MiB, and the virtual page raster runs
+    /// seventeen culls a frame: 1.1 GiB of memset every frame for a
+    /// debug overlay that is only ever wired to the CAMERA's cull.
+    ///
+    /// The stale values it leaves behind are exactly what the clear
+    /// existed to hide, which is why this is a flag and not a deletion:
+    /// whoever turns the overlay on turns this back on with it.
+    pub fn set_rejects(&mut self, rejects: bool) {
+        self.rejects = rejects;
+    }
+
+    /// Whether the reject buffer is worth clearing. See
+    /// [`Self::set_rejects`].
+    pub(super) fn reads_rejects(&self) -> bool {
+        self.rejects
+    }
+
     pub fn ensure_group_capacity(&mut self, device: &wgpu::Device, required: u32) {
         if required <= self.group_capacity {
             return;
@@ -205,6 +266,48 @@ impl MeshletCull {
             "grew group_max_err buffer to fit scene",
         );
         self.group_capacity = new_capacity;
+    }
+
+    /// Grows the two-level cull's chunk list to hold `required`
+    /// chunks (#1002).
+    ///
+    /// The worst case is `instances × ⌈heaviest / 64⌉` — the same
+    /// rectangle the one-level cull dispatched, divided by the
+    /// workgroup. That is a *memory* over-approximation of four bytes
+    /// a chunk, where the old one was a *thread* over-approximation of
+    /// nine million lanes, and only one of those is worth being
+    /// precise about.
+    pub fn ensure_chunk_capacity(&mut self, device: &wgpu::Device, required: u32) {
+        if required <= self.chunk_capacity {
+            return;
+        }
+        let new_capacity = required
+            .checked_next_power_of_two()
+            .unwrap_or(required)
+            .max(self.chunk_capacity.saturating_mul(2));
+        self.chunks = Self::chunk_buffer(device, new_capacity);
+        tracing::info!(
+            target: "kooch_render::meshlet::cull",
+            old_capacity = self.chunk_capacity,
+            new_capacity,
+            required,
+            "grew the two-level cull chunk list to fit scene",
+        );
+        self.chunk_capacity = new_capacity;
+    }
+
+    /// Header plus one word per chunk. See [`Self::chunks`].
+    pub(super) fn chunk_buffer(device: &wgpu::Device, chunks: u32) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("meshlet_cull_chunks"),
+            size: (CHUNK_HEADER_WORDS + chunks as u64) * 4,
+            // No `INDIRECT`: it is bound as storage for the whole pass
+            // and wgpu treats the two as exclusive within one scope.
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
     }
 
     /// Grows `visible_meshlets` so it can hold at least `required`
@@ -237,9 +340,21 @@ impl MeshletCull {
         // cull thread, sized to the same `capacity`. Growing them in
         // lock-step keeps a single `ensure_capacity` call sufficient
         // for both the production rasterizer and the debug overlay.
+        //
+        // 🔴 Unless nobody reads it, and then it is the BGL's minimum.
+        // `record_reject` is already gated on `params.debug_active`, so
+        // for a cull with no overlay this buffer is never written and
+        // never read — and at one u32 per cull thread it was 67 MiB a
+        // level, seventeen levels deep, in each of the two processes a
+        // remote session runs. Measured as 9.57 GiB of VRAM held by an
+        // editor sitting still (#1011).
+        let reject_bytes = match self.rejects {
+            true => new_capacity as u64 * 4,
+            false => 4,
+        };
         let reject_reasons = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_reject_reasons"),
-            size: new_capacity as u64 * 4,
+            size: reject_bytes,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,

@@ -47,7 +47,14 @@ fn ecs() -> Resources {
 }
 
 fn call(resources: &mut Resources, method: Method) -> ResponseData {
-    let response = handle(&Request { id: 1, method }, resources);
+    let response = handle(
+        &Request {
+            id: 1,
+            notify: false,
+            method,
+        },
+        resources,
+    );
     match response.payload {
         ResponsePayload::Result(data) => data,
         ResponsePayload::Error(e) => panic!("unexpected error: {e:?}"),
@@ -181,6 +188,7 @@ fn unknown_component_is_a_typed_error() {
     let response = handle(
         &Request {
             id: 2,
+            notify: false,
             method: Method::AddComponent {
                 entity,
                 component: "game::NotHere".into(),
@@ -877,6 +885,7 @@ fn saving_without_a_manager_is_refused() {
     let response = handle(
         &Request {
             id: 1,
+            notify: false,
             method: Method::SaveScene {
                 path: out.to_string_lossy().into_owned(),
                 scene: None,
@@ -1187,6 +1196,7 @@ fn an_unsaved_scene_refuses_to_revert() {
     let response = handle(
         &Request {
             id: 1,
+            notify: false,
             method: Method::RevertScene { scene: None },
         },
         &mut resources,
@@ -1296,6 +1306,7 @@ fn a_move_into_itself_is_refused() {
     let response = handle(
         &Request {
             id: 1,
+            notify: false,
             method: Method::MoveEntity {
                 entity: root,
                 parent: Some(child),
@@ -1357,4 +1368,40 @@ fn membership_travels_beside_the_components_not_among_them() {
         !named.iter().any(|name| name.contains("SceneMember")),
         "membership travelled twice: {named:?}",
     );
+}
+
+/// 🔴 `notify` must not wait for the host.
+///
+/// This is the whole point of it: `call` sleeps the caller until the
+/// host reaches its next `Stage::First`, which cost the editor 5.9 ms a
+/// frame for an input snapshot whose reply it discarded. A `notify` that
+/// blocked would be `call` with the answer thrown away — the same bill,
+/// less information.
+///
+/// The server here never drains its queue, so a `call` would sit until
+/// the test gave up. `notify` returning promptly is the assertion.
+#[test]
+fn notify_does_not_wait_for_the_host() {
+    let server = RemoteServer::start(&test_socket_name()).expect("bind a port");
+    let client = RemoteClient::new(server.name());
+
+    let started = std::time::Instant::now();
+    client
+        .notify(kooch_remote::protocol::Method::Ping)
+        .expect("the socket accepted the notification");
+    let elapsed = started.elapsed();
+
+    assert!(
+        elapsed < std::time::Duration::from_millis(200),
+        "notify waited {elapsed:?} for a host that never answers",
+    );
+    // And it really did arrive — a `notify` that dropped the request on
+    // the floor would also return fast.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut arrived = false;
+    while std::time::Instant::now() < deadline && !arrived {
+        arrived = !server.take_pending().is_empty();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(arrived, "the host never saw the notification");
 }

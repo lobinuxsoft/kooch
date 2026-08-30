@@ -108,16 +108,56 @@ answers *which half of the fused pass is the cost*.
 
 ### Cull
 
-One compute thread per (instance × meshlet). Each thread tests its own
-meshlet and, if it survives, appends its `(instance_id, meshlet_id)` to a
-`visible_meshlets` buffer with an atomic bump. The draw that follows is
-`draw_indirect` off a count the GPU wrote — the CPU never learns how many
-meshlets survived, and does not need to.
+Two levels. **Instances first**, one thread each, testing the mesh's
+bounding sphere against the frustum and then against a screen-size
+threshold. Every survivor reserves `⌈its own meshlet_count / 64⌉`
+*chunks* in a list, and a single thread turns that count into indirect
+dispatch args. **Then meshlets**, one workgroup per chunk, one lane per
+meshlet — so the meshlet domain is entered at each instance's own count.
+
+Each meshlet thread tests its meshlet and, if it survives, appends its
+`(instance_id, meshlet_id)` to a `visible_meshlets` buffer with an
+atomic bump. The draw that follows is `draw_indirect` off a count the
+GPU wrote — the CPU never learns how many meshlets survived, and does
+not need to. Neither does it learn the chunk count: the expansion is
+`dispatch_workgroups_indirect` off a number that exists only on the GPU,
+because a readback in the hot path is a frame of latency.
 
 Tests, in order: **frustum** against the meshlet's AABB, **backface** via
 its normal cone, and **LOD chain descent** — a meshlet is drawn when its
 own screen-projected error falls under the target and its parent's does
-not.
+not. The instance level runs the two passes of the LOD descent over the
+same chunks, because a group that descends in one pass and not the other
+is a hole in a surface.
+
+> 🔴 This was one dispatch, and its shape was a RECTANGLE:
+> `instance_count × the heaviest mesh registered anywhere in the scene`.
+> Every thread past a mesh's own meshlet count existed to fail a bounds
+> check. On `dense.scene` that was **9 633 630 threads for about 116 000
+> real meshlets — 98.8 % padding**, and the frame was CPU-bound on it.
+>
+> The property that made it a scaling bug rather than a constant factor
+> is that it was **contagious**: importing one detailed prop raised the
+> stride for every instance of every other mesh, so a field of
+> one-meshlet cubes got slower because a dragon existed. What remains is
+> at most 63 wasted lanes per surviving instance — a constant, and one
+> nothing else in the scene can change.
+
+**Render distance** hangs off the instance level, as
+`meshlet_min_pixels` — an instance whose bounding sphere projects to
+fewer than that many pixels is rejected before it becomes meshlets.
+`0` is off, which is what ships.
+
+> 🔴 A size, not a distance, and that is forced rather than chosen. The
+> projection is `perspective_infinite_reverse_rh`; `far` never arrives
+> and `ndc.z = near / distance` being exact is what contact shadows,
+> SSR, fog, the atmosphere and the temporal upscaler all read. A far
+> plane would break five consumers to serve one.
+>
+> It reaches `cs_cull_instances` and nothing else — deliberately. A
+> shadow cascade is orthographic and its "pixels" are shadow texels;
+> rejecting a caster because it is small on the CAMERA is how a shadow
+> loses the object throwing it.
 
 > 🔴 The LOD selector read the projection scale from a single matrix
 > element for a long time. That element is `f × (camera up · world up)`,

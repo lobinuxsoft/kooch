@@ -185,6 +185,30 @@ impl RemoteClient {
     /// [`EntityUpdate::full`] — a caller must not assume, because
     /// merging what it thought was a diff would keep entities the
     /// project has deleted.
+    /// What moved since `since` — the play-mode pull (#1012).
+    ///
+    /// A `full` reply is the host declining the question, not an error:
+    /// the entity set changed, so the caller has to ask
+    /// [`Self::list_entities_since`] instead on that frame.
+    pub fn list_moved_since(&self, since: Option<u64>) -> Result<MovedUpdate, ClientError> {
+        match self.call(Method::ListMoved { since })? {
+            ResponseData::Moved {
+                moved,
+                removed,
+                revision,
+                full,
+                host,
+            } => Ok(MovedUpdate {
+                moved,
+                removed,
+                revision,
+                full,
+                host,
+            }),
+            other => Err(ClientError::Unexpected(other)),
+        }
+    }
+
     pub fn list_entities_since(&self, since: Option<u64>) -> Result<EntityUpdate, ClientError> {
         match self.call(Method::ListEntities { since })? {
             ResponseData::Entities {
@@ -403,7 +427,11 @@ impl RemoteClient {
     /// typed [`RemoteError`] to [`ClientError::Remote`].
     pub fn call(&self, method: Method) -> Result<ResponseData, ClientError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let request = Request { id, method };
+        let request = Request {
+            id,
+            notify: false,
+            method,
+        };
         let body =
             serde_json::to_string(&request).map_err(|e| ClientError::Decode(e.to_string()))?;
 
@@ -436,6 +464,47 @@ impl RemoteClient {
     }
 
     /// Connects, writes one JSON line, and reads the reply line.
+    /// Sends a method and does NOT wait for the reply (#1013).
+    ///
+    /// 🔴 The wait is the cost, not the payload. `call` blocks this
+    /// thread until the host reaches its next `Stage::First` and answers
+    /// — measured at 5.9 ms a frame for the input snapshot, whose reply
+    /// the caller was discarding with `let _ =`. A caller that does not
+    /// read the answer has no reason to be slept for it.
+    ///
+    /// The host still queues, executes and writes the reply; the write
+    /// lands on a closed pipe and `serve_one` already logs that at debug
+    /// and carries on. Nothing is lost that anyone was reading.
+    ///
+    /// ⚠️ Errors REACHING the host are still returned — a socket that
+    /// will not accept is worth knowing about. What is given up is the
+    /// host's opinion of the request, so this is only for methods whose
+    /// answer nobody wants.
+    pub fn notify(&self, method: Method) -> Result<(), ClientError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        // Marked so the SERVER can skip the reply too. Without this the
+        // caller stopped waiting and the listener thread did not —
+        // and that thread is the one the next request needs (#1015).
+        let request = Request {
+            id,
+            notify: true,
+            method,
+        };
+        let body =
+            serde_json::to_string(&request).map_err(|e| ClientError::Decode(e.to_string()))?;
+
+        let name = self
+            .name
+            .as_str()
+            .to_ns_name::<GenericNamespaced>()
+            .map_err(|e| ClientError::Decode(format!("invalid socket name: {e}")))?;
+        let mut stream = Stream::connect(name)?;
+        stream.write_all(body.as_bytes())?;
+        stream.write_all(b"\n")?;
+        stream.flush()?;
+        Ok(())
+    }
+
     fn round_trip(&self, body: &str) -> Result<String, ClientError> {
         let name = self
             .name
@@ -484,4 +553,21 @@ pub struct EntityUpdate {
     /// Not diffed: it arrives whole or not at all, so a caller replaces
     /// its list rather than merging into one.
     pub scenes: Option<Vec<crate::protocol::SceneEntry>>,
+}
+
+/// One reply to [`RemoteClient::list_moved_since`] (#1012).
+///
+/// 🔴 `full` here does NOT carry a world. It means the host refused the
+/// question — the entity set changed — and the caller has to ask
+/// [`RemoteClient::list_entities_since`] on that frame. A caller that
+/// read it the way it reads `EntityUpdate::full` would clear its mirror
+/// and replace it with nothing.
+#[derive(Debug, Clone)]
+pub struct MovedUpdate {
+    pub moved: Vec<crate::protocol::MovedTransform>,
+    pub removed: Vec<crate::protocol::EntityId>,
+    /// Pass back as `since` on the next call.
+    pub revision: u64,
+    pub full: bool,
+    pub host: Option<crate::protocol::HostMetrics>,
 }

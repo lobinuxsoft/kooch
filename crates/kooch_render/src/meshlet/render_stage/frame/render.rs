@@ -335,7 +335,17 @@ impl MeshletRenderStage {
         // becomes 2.4 GB across sixty-four — past `max_buffer_size`,
         // which wgpu answers with an invalid buffer and a validation
         // error on every submit for the rest of the run.
-        let scene_params = scene_params.with_groups(required_group_capacity);
+        // The chunk list is sized off the SAME rectangle the old
+        // dispatch used, divided by the workgroup — a buffer of four
+        // bytes a chunk, where the thing being replaced was nine
+        // million lanes.
+        let required_chunks = crate::meshlet::dispatcher::chunks_for(
+            scene_params.instance_count,
+            scene_params.meshlets_per_mesh,
+        );
+        let scene_params = scene_params
+            .with_groups(required_group_capacity)
+            .with_chunks(required_chunks);
 
         // 🎯 ONE walk of the light archetypes, for the whole view.
         //
@@ -433,12 +443,11 @@ impl MeshletRenderStage {
         // would keep detail the raster cannot resolve — paying for
         // triangles that land inside one sample.
         let viewport_h_px = self.views[view_id].render_size.1 as f32;
-        let lod_target = resources
+        let lod_settings = resources
             .get::<MeshletLodSettings>()
             .copied()
-            .unwrap_or_default()
-            .target_error_pixels
-            .max(0.01);
+            .unwrap_or_default();
+        let lod_target = lod_settings.target_error_pixels.max(0.01);
         let debug_mode_enum = resources
             .get::<MeshletDebugMode>()
             .copied()
@@ -452,7 +461,14 @@ impl MeshletRenderStage {
         let cull_params = CullParams::new(view_proj, cam_pos, max_meshlets_per_mesh)
             .with_lod(viewport_h_px, proj_scale_y, lod_target)
             .with_debug_mode(debug_mode)
-            .with_debug_active(debug_active);
+            .with_debug_active(debug_active)
+            // 🔴 Read only by `cs_cull_instances`, so it reaches the
+            // main view and NOT the cascades: a shadow cascade is
+            // orthographic and its "pixels" are shadow texels, where
+            // this number is authored against the screen. Rejecting a
+            // caster because it is small on the CAMERA is how a shadow
+            // loses the object throwing it.
+            .with_min_screen_pixels(lod_settings.min_screen_pixels);
 
         // Grow visible_meshlets if the scene now needs more slots
         // than the dispatcher was sized for. Geometric growth absorbs
@@ -463,6 +479,9 @@ impl MeshletRenderStage {
         self.views[view_id]
             .cull
             .ensure_group_capacity(device, required_group_capacity);
+        self.views[view_id]
+            .cull
+            .ensure_chunk_capacity(device, required_chunks);
 
         // Build the meshlet + material bind groups. The `gpu_pool`
         // re-borrow lives only as long as `meshlet_bg` construction;

@@ -44,8 +44,27 @@ pub struct EditorPerfStats {
     /// Frame rate averaged over the last 60 frames. Smoother for
     /// reading at a glance; instant catches stalls.
     pub fps_avg: f32,
+    /// Wall-clock milliseconds between two frames, averaged over the
+    /// same window as `fps_avg` — the WHOLE frame.
+    ///
+    /// 🔴 The only number here that is the frame. `cpu_frame_ms` is
+    /// the render system alone, so everything before it — input, the
+    /// remote snapshot pull, physics, transform propagation — is
+    /// outside it. On `dense.scene` the render system read 7.66 ms
+    /// while the frame was 50.9 and forty of those were
+    /// `remote_sync_system`, and the HUD showed the 7.66. A budget you
+    /// cannot exceed is not a budget.
+    pub frame_ms: f32,
+    /// The longest frame in the same window `frame_ms` averages.
+    ///
+    /// 🔴 The only number here that shows a stutter. Everything else
+    /// is a mean over sixty frames, which is exactly the shape that
+    /// hides one bad frame in a second of good ones — and one bad
+    /// frame is the whole of what a person perceives as a hitch.
+    pub worst_ms: f32,
     /// Wall-clock duration of the editor render system in
-    /// milliseconds. Excludes GPU work.
+    /// milliseconds. Excludes GPU work AND everything outside the
+    /// render system — see [`Self::frame_ms`].
     pub cpu_frame_ms: f32,
     /// Sampled CPU usage of the editor process (0.0..=100.0 across
     /// all cores summed, matches `top`'s convention). Refreshed at
@@ -59,6 +78,15 @@ pub struct EditorPerfStats {
     /// `wgpu::Features::TIMESTAMP_QUERY`. `None` if the adapter does
     /// not expose timestamp queries.
     pub gpu_frame_ms: Option<f32>,
+    /// Whether the editor's own surface is presenting with vsync.
+    ///
+    /// 🔴 On the HUD because it decides how to read every other number
+    /// here. A vsync-locked frame reports the vblank as if it were work,
+    /// so three different scenes measured 17.1, 17.3 and 17.4 ms while
+    /// their GPU time moved and nobody could tell the cap from the cost.
+    /// It is also NOT the `vsync` in `.rendersettings` — that one is the
+    /// project's window, and the editor has its own.
+    pub vsync: bool,
     /// Sum of bytes the engine knows it has allocated through wgpu
     /// (vertex / index / uniform / storage buffers + textures we
     /// own, including the GlobalMeshPool, vis-buffer, deferred

@@ -229,6 +229,11 @@ fn serve_one(conn: Stream, tx: &Sender<PendingRequest>, waker: &FrameWaker) -> b
 
     let response = match serde_json::from_str::<Request>(&line) {
         Ok(request) => {
+            // 🔴 Read BEFORE the move, and acted on after the queue: a
+            // push has no reader, so blocking this thread on the main
+            // loop's answer buys nothing and costs the next caller a
+            // whole host frame (#1015).
+            let quiet = request.notify;
             let (reply_tx, reply_rx) = channel::<Response>();
             let pending = PendingRequest {
                 request,
@@ -243,6 +248,14 @@ fn serve_one(conn: Stream, tx: &Sender<PendingRequest>, waker: &FrameWaker) -> b
             // find nothing, and go back to sleep just as the request
             // lands — a wake for the previous request, wasted on this one.
             waker.wake();
+            if quiet {
+                // Queued and done. The main loop still executes it — the
+                // reply simply lands on a dropped channel, which `handle`
+                // already tolerates. What is given up is an answer nobody
+                // was going to read; what is bought is the listener being
+                // free to accept the pull that comes in behind it.
+                return true;
+            }
             // Block until the main thread executes and answers. If the
             // reply channel drops, the caller gets nothing and times out.
             match reply_rx.recv() {

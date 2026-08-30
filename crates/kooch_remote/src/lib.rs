@@ -41,11 +41,12 @@ pub mod plugin;
 pub use serde_json;
 
 pub mod extensions;
+pub mod moved_cache;
 pub mod protocol;
 pub mod server;
 pub mod snapshot_cache;
 
-pub use client::{CallStats, ClientError, RemoteClient};
+pub use client::{CallStats, ClientError, MovedUpdate, RemoteClient};
 pub use plugin::RemotePlugin;
 pub use protocol::{Request, Response};
 pub use server::{DEFAULT_NAME, NAME_ENV, RemoteServer};

@@ -119,6 +119,39 @@ impl PoolConfig {
         self.clamped().1
     }
 
+    /// The same pool, shrunk until one view's layer fits `max_side`.
+    ///
+    /// 🔴 A layer is SQUARE, so halving the views doubles a layer's
+    /// area and widens it by √2 — which is how a pool that the editor
+    /// renders fine produces a texture the game cannot allocate. Six
+    /// thousand pages across two views is 56x56 pages, 7168 texels; the
+    /// same pool across the game's ONE view is 79x79, **10112 texels,
+    /// past this engine's 8192 limit**. `create_texture` then hands
+    /// back an error texture, every view of it is invalid, and the
+    /// frame renders nothing while erroring sixty times a second.
+    ///
+    /// Clamping loses pages, which loses shadow resolution under load.
+    /// That is a bad trade and it is still the right one: the
+    /// alternative is a build that draws a blue screen.
+    pub fn fit_atlas(mut self, max_side: u32, page: u32) -> Self {
+        let per_row = (max_side / page.max(1)).max(1);
+        let ceiling = per_row
+            .saturating_mul(per_row)
+            .saturating_mul(self.views.max(1));
+        if self.pages > ceiling {
+            tracing::warn!(
+                target: "kooch_render::shadow",
+                asked = self.pages,
+                granted = ceiling,
+                views = self.views,
+                max_side,
+                "the shadow pool does not fit one atlas layer; clamping it",
+            );
+            self.pages = ceiling.clamp(PAGES_RANGE.0, PAGES_RANGE.1);
+        }
+        self
+    }
+
     /// The same pool, sliced between `views` cameras.
     pub fn with_views(self, views: u32) -> Self {
         Self {
@@ -243,10 +276,33 @@ impl PoolLife {
 
 /// Frames a page survives unrequested when nobody says otherwise.
 ///
-/// A second at 60 Hz. Long enough that a camera sweeping across a scene
-/// and back finds its pages still there; short enough that the pool is
-/// not holding a minute of somewhere else.
+/// 🔴 The FALLBACK only, for a caller with no clock. The real horizon
+/// is [`DEFAULT_AGE_SECONDS`], converted per frame — see
+/// `page_age_frames`. A constant in frames means the cache remembers
+/// less the faster the renderer gets, which is precisely backwards.
 pub const DEFAULT_MAX_AGE: u32 = 60;
+
+/// How long a page survives unrequested, when nobody says otherwise.
+///
+/// One second. Long enough that a camera sweeping across a scene and
+/// back finds its pages still there; short enough that the pool is not
+/// holding a minute of somewhere else. This was always the intent — it
+/// just used to be written as "60", which stopped meaning a second the
+/// moment the frame stopped taking 16.7 ms.
+pub const DEFAULT_AGE_SECONDS: f32 = 1.0;
+
+/// `KOOCH_SHADOW_PAGE_SECONDS`, read once.
+pub fn age_seconds() -> f32 {
+    static SECONDS: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *SECONDS.get_or_init(|| {
+        std::env::var("KOOCH_SHADOW_PAGE_SECONDS")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .filter(|s| *s > 0.0)
+            .unwrap_or(DEFAULT_AGE_SECONDS)
+            .min(16.0)
+    })
+}
 
 /// `KOOCH_SHADOW_PAGE_AGE`, read once. See [`PoolLife`] for why the
 /// default is long rather than short.
@@ -553,5 +609,43 @@ impl PoolCounts {
             return 0.0;
         }
         self.allocated() as f32 / self.capacity as f32 * 100.0
+    }
+}
+
+#[cfg(test)]
+mod atlas_fit_tests {
+    use super::*;
+
+    /// The exact shape that shipped a blue screen: the same pool the
+    /// editor renders across two views does not fit the game's one.
+    #[test]
+    fn one_view_is_the_case_two_views_hid() {
+        let pool = PoolConfig {
+            pages: 6144,
+            views: 2,
+        };
+        assert_eq!(pool.per_row() * 128, 7168, "two views fit as-is");
+        assert_eq!(pool.fit_atlas(8192, 128).pages, 6144);
+
+        let alone = PoolConfig {
+            pages: 6144,
+            views: 1,
+        };
+        assert_eq!(alone.per_row() * 128, 10112, "one view overflows");
+        let fitted = alone.fit_atlas(8192, 128);
+        assert!(
+            fitted.per_row() * 128 <= 8192,
+            "still {}",
+            fitted.per_row() * 128
+        );
+    }
+
+    #[test]
+    fn a_pool_that_fits_is_left_alone() {
+        let pool = PoolConfig {
+            pages: 1024,
+            views: 1,
+        };
+        assert_eq!(pool.fit_atlas(8192, 128), pool);
     }
 }

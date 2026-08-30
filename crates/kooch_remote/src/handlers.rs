@@ -22,6 +22,7 @@ use kooch_ecs::scene::{SceneDocument, sync_scene_to_ecs};
 use kooch_ecs::transform::Transform;
 use kooch_ecs::world_snapshot::WorldSnapshot;
 
+use crate::protocol::MovedTransform;
 use crate::protocol::{
     ComponentSchema, ComponentSnapshot, EntityId, EntitySnapshot, FieldSchema, Method, RemoteError,
     Request, Response, ResponseData, SceneEntry,
@@ -52,6 +53,7 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             }
         }
         Method::ListEntities { since } => list_entities(id, resources, *since),
+        Method::ListMoved { since } => list_moved(id, resources, *since),
         Method::GetSchema => get_schema(id, resources),
         Method::SetField {
             entity,
@@ -287,6 +289,78 @@ fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Resp
             full: delta.full,
             host: host_metrics(resources),
             scenes: open_scenes(resources),
+        },
+    )
+}
+
+/// What moved since the caller's revision, and nothing else (#1012).
+///
+/// 🔴 No reflection. `list_entities` walks every component of every
+/// entity through `reflect_get_fields` and allocates a `String` for each
+/// type name — 38.9 ms on 2159 entities, every frame, before it diffs.
+/// This reads one component column directly and compares sixteen floats.
+///
+/// The reply is `full` when the entity set changed, which is the host
+/// saying *ask the other question*: a transform diff describes a world
+/// the caller has, and a spawn means it no longer does.
+fn list_moved(id: u64, resources: &mut Resources, since: Option<u64>) -> Response {
+    let current = {
+        let Some(registry) = resources.get::<ComponentRegistry>() else {
+            return Response::err(
+                id,
+                RemoteError::Unavailable {
+                    detail: "no ComponentRegistry".into(),
+                },
+            );
+        };
+        let Some(transforms) = registry.get_cpu::<Transform>() else {
+            return Response::err(
+                id,
+                RemoteError::Unavailable {
+                    detail: "no Transform storage".into(),
+                },
+            );
+        };
+        // 🔴 ONE pass over the Transform column, not a walk of every
+        // archetype with a lookup per entity. `list_entities` does the
+        // latter because it needs every component of every entity;
+        // this needs one component, and the storage already holds
+        // exactly the entities that have it.
+        //
+        // ⚠️ Despawn is DEFERRED — `EntityAllocator::despawn` queues —
+        // so the column can still list an entity that is gone. The
+        // allocator check is an index, not another hash.
+        let alive = resources.get::<EntityAllocator>();
+        let live = |entity: Entity| alive.is_none_or(|a| a.is_alive(entity));
+        let mut current: Vec<MovedTransform> = transforms
+            .iter()
+            .filter(|(entity, _)| live(**entity))
+            .map(|(&entity, transform)| MovedTransform {
+                id: entity.into(),
+                matrix: transform.to_matrix().to_cols_array(),
+            })
+            .collect();
+        // The cache compares by id, and a HashMap hands them out in an
+        // order that changes with its own internals. Sorted so the
+        // reply is stable frame to frame and a diff means what it says.
+        current.sort_unstable_by_key(|m| m.id.index);
+        current
+    };
+
+    let mut cache = resources
+        .remove::<crate::moved_cache::MovedCache>()
+        .unwrap_or_default();
+    let delta = cache.reply(current, since);
+    resources.insert(cache);
+
+    Response::ok(
+        id,
+        ResponseData::Moved {
+            moved: delta.moved,
+            removed: delta.removed,
+            revision: delta.revision,
+            full: delta.full,
+            host: host_metrics(resources),
         },
     )
 }

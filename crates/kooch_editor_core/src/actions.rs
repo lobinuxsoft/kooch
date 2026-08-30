@@ -668,6 +668,123 @@ impl EditorAction {
             | Self::CreateFile { .. } => false,
         }
     }
+
+    /// Whether this changes the project's WORLD, and so must be refused
+    /// while the project is playing.
+    ///
+    /// # Why the editor goes read-only under Play
+    ///
+    /// The engine accepts edits from the editor only while it is not
+    /// simulating. An edit sent mid-play lands in a world the game is
+    /// already stepping, so the next tick either overwrites it or
+    /// simulates from a state the author never saw — and the editor
+    /// showed neither as an error.
+    ///
+    /// It is also what makes the frame affordable. The mirror carries
+    /// editing machinery — a reflected copy of every component of every
+    /// entity — that exists so a field can be typed into. Nothing can be
+    /// typed into while this returns `true`, so nothing has to be
+    /// carried, and #1012's thin play pull is that consequence rather
+    /// than a separate optimisation.
+    ///
+    /// # Why an exhaustive match
+    ///
+    /// The same reason [`Self::needs_a_live_world`] has one, and the
+    /// same failure if it did not: a wildcard would let the next variant
+    /// added default to "allowed", and an edit that slips through under
+    /// Play is invisible until a simulation diverges.
+    pub(crate) fn is_a_world_edit(&self) -> bool {
+        match self {
+            // Structure and content of the world.
+            Self::Spawn { .. }
+            | Self::SpawnMesh { .. }
+            | Self::Despawn(_)
+            | Self::Duplicate(_)
+            | Self::PasteEntities { .. }
+            | Self::MoveToScene { .. }
+            | Self::SetField { .. }
+            | Self::AddComponent { .. }
+            | Self::RemoveComponent { .. }
+            | Self::TransformEdit { .. }
+            | Self::Reparent { .. }
+            | Self::MoveEntity { .. }
+            | Self::InstantiatePrefab { .. }
+            | Self::PropagatePrefab(_)
+            | Self::RevertToPrefab { .. }
+            // Persisting the world is not a mutation of it, but it
+            // writes a FILE from a world mid-simulation — the ball
+            // wherever it happened to roll. That is not the scene the
+            // author saved, and it overwrites the one that was.
+            | Self::SaveScene
+            | Self::SavePrefab { .. }
+            | Self::SaveOpenScene(_)
+            | Self::SaveOpenSceneAs(_)
+            | Self::RevertOpenScene(_)
+            // Swapping what is loaded under a running simulation.
+            | Self::OpenScene { .. }
+            | Self::OpenSceneAdditive { .. }
+            | Self::CloseScene(_)
+            | Self::SetActiveScene(_) => true,
+
+            // 🔴 Undo is refused rather than queued. A stack whose
+            // entries describe a world that has since been simulated
+            // cannot be replayed onto it, and holding the presses to
+            // apply on Stop would undo several steps at once, at a
+            // moment the user is not looking at the thing being undone.
+            Self::Undo(document) | Self::Redo(document) => document.is_world(),
+
+            // Reading the world is fine — a copy takes nothing away, and
+            // the clipboard is the editor's.
+            Self::CopyEntities(_)
+            // Play and Stop are the control itself.
+            | Self::Play
+            | Self::Stop
+            // Everything below is a file, a preference, or session
+            // lifecycle. None of them is the running world.
+            | Self::RegisterScripts
+            | Self::AcknowledgeScriptSync
+            | Self::BuildProject(_)
+            | Self::CancelBuild
+            | Self::OpenProject(_)
+            | Self::RebuildRemote
+            | Self::CreateProject { .. }
+            | Self::CloseProject
+            | Self::LaunchProject(_)
+            | Self::CancelLaunch
+            | Self::RemoveRecent(_)
+            | Self::CleanProject
+            | Self::CancelPrefabOverwrite
+            | Self::KeepEngine
+            | Self::MoveProjectToEngine(_)
+            | Self::UpdateEngine
+            | Self::RemoveEngine(_)
+            | Self::ReloadAssetOnHost(_)
+            | Self::EditPrefabField { .. }
+            | Self::EditPrefabComponent { .. }
+            | Self::SavePrefabAsset(_)
+            | Self::OpenInputMap { .. }
+            | Self::EditInputMap(_)
+            | Self::SaveInputMap
+            | Self::InputMapFocused
+            | Self::SetIdeCommand { .. }
+            | Self::SetLaunchEnv { .. }
+            | Self::EditMaterial { .. }
+            | Self::SetImageImport { .. }
+            | Self::EditAssetField { .. }
+            | Self::ImportAssets { .. }
+            | Self::CreateFolder { .. }
+            | Self::CreateMaterial { .. }
+            | Self::RenameAsset { .. }
+            | Self::RenameFolder { .. }
+            | Self::DuplicateAsset { .. }
+            | Self::DeleteAsset { .. }
+            | Self::DeleteFolder { .. }
+            | Self::RevealInFileManager { .. }
+            | Self::OpenInIde { .. }
+            | Self::SetMainScene { .. }
+            | Self::CreateFile { .. } => false,
+        }
+    }
 }
 
 /// Prefabs edited in the Inspector whose file is behind the cache.
@@ -802,7 +919,11 @@ pub(crate) fn apply_actions(
         queued.splice(0..0, reloads);
     }
     if !queued.is_empty() {
-        tracing::info!(
+        // 🔴 `debug`, not `info`. A live prefab drains every frame, so at
+        // `info` this printed sixty identical lines a second and buried
+        // every other message in the Console — including the ones a
+        // measurement run is there to read.
+        tracing::debug!(
             target: "kooch_editor_core::prefab",
             drained = queued.len(),
             "propagation drained into actions",
@@ -859,8 +980,29 @@ pub(crate) fn apply_actions(
         return;
     }
 
+    // 🔴 A playing project owns its world and the editor does not get to
+    // touch it. Refused here rather than greyed out in each panel: there
+    // are a dozen ways to reach a world edit — a chord, a context menu, a
+    // dragged handle, a typed field — and disabling them one at a time is
+    // how one of them stays live. See `is_a_world_edit`.
+    let playing = resources
+        .get::<crate::remote_session::RemoteState>()
+        .is_some_and(|state| state.playing);
+    if playing {
+        let refused = actions.iter().filter(|a| a.is_a_world_edit()).count();
+        if refused > 0 {
+            tracing::warn!(
+                refused,
+                "the project is playing — stop it to edit the world",
+            );
+        }
+    }
+
     if remote {
         for action in actions.iter().copied() {
+            if playing && action.is_a_world_edit() {
+                continue;
+            }
             if !remote_edit::dispatch(resources, action) {
                 apply_non_ecs_action(action, resources, undo_stack);
             }

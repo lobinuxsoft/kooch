@@ -44,6 +44,18 @@ pub struct MeshletCullPipelines {
     /// extended cull / scene-with-hi-z bind groups (with the pyramid
     /// view swapped from `hiz_prev` to `hiz_curr`).
     pub(super) pipeline_cull_pass_b: wgpu::ComputePipeline,
+    /// Level one of the two-level cull (#1002): one thread per
+    /// INSTANCE, writing a chunk per 64 meshlets of each survivor.
+    pub(super) pipeline_cull_instances: wgpu::ComputePipeline,
+    /// Turns the chunk count — a number that exists only on the GPU —
+    /// into the indirect args `pipeline_cull_expand` runs under.
+    pub(super) pipeline_cull_expand_args: wgpu::ComputePipeline,
+    /// #465's pass 1, reached from a chunk instead of a rectangle.
+    pub(super) pipeline_lod_group_max_err_chunked: wgpu::ComputePipeline,
+    /// #465's pass 2, reached from a chunk. The meshlet domain is
+    /// entered at each instance's OWN count instead of at the scene's
+    /// heaviest mesh — which is the whole of #1002.
+    pub(super) pipeline_cull_scene_pool_atomic_chunked: wgpu::ComputePipeline,
 
     pub(super) cull_bgl: wgpu::BindGroupLayout,
     /// Cull BGL used by the Hi-Z 2-pass path. Identical to `cull_bgl`
@@ -65,6 +77,9 @@ pub struct MeshletCullPipelines {
     /// pipeline layout; the reject-overlay raster pass reuses it
     /// to read the same buffer back at draw time.
     pub(super) debug_bgl: wgpu::BindGroupLayout,
+    /// Group 3 of the chunked cull: `group_max_err`, the per-mesh
+    /// bounding spheres and the chunk list.
+    pub(super) chunked_bgl: wgpu::BindGroupLayout,
 }
 
 impl MeshletCullPipelines {

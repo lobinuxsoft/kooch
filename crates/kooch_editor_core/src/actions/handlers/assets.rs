@@ -281,9 +281,59 @@ pub(crate) fn persist_asset(
         tracing::error!(guid = %guid, "failed to serialise the asset; not persisted");
         return;
     };
+    // 🔴 A write that changes nothing is not a write. The Inspector
+    // reports an edit every frame for some widgets even with the pointer
+    // up, and each one landed here: a file write on the project disk —
+    // NTFS over FUSE — plus a synchronous round trip telling the project
+    // to re-read it, sixty times a second, with the same bytes every
+    // time. Comparing against what is already there is a page-cache read
+    // and settles it for every widget at once, whichever one misreports.
+    if !needs_write(path, &text) {
+        return;
+    }
     if let Err(e) = std::fs::write(path, text) {
         tracing::error!(path = %path.display(), error = %e, "failed to write asset");
         return;
     }
     super::asset_saved(resources, path);
+}
+
+/// Whether `text` differs from what `path` already holds.
+///
+/// A missing or unreadable file needs the write: the caller's job is to
+/// make the file say `text`, and "cannot tell" is not "already right".
+pub(crate) fn needs_write(path: &std::path::Path, text: &str) -> bool {
+    !std::fs::read_to_string(path).is_ok_and(|on_disk| on_disk == text)
+}
+
+#[cfg(test)]
+mod write_guard_tests {
+    use super::needs_write;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("kooch_write_guard_{name}"));
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    #[test]
+    fn identical_bytes_need_no_write() {
+        let path = scratch("same");
+        std::fs::write(&path, "(vsync: false)").unwrap();
+        assert!(!needs_write(&path, "(vsync: false)"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_changed_value_needs_the_write() {
+        let path = scratch("changed");
+        std::fs::write(&path, "(vsync: false)").unwrap();
+        assert!(needs_write(&path, "(vsync: true)"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_missing_file_needs_the_write() {
+        assert!(needs_write(&scratch("absent"), "(vsync: true)"));
+    }
 }

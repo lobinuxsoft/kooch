@@ -222,8 +222,23 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<std::sync::Arc<kooch_render::EngineVramTracker>>()
         .map(|t| t.bytes())
         .unwrap_or(0);
+    // 🔴 EVERY scope, not the meshlet chain. `meshlet_stats.gpu_frame_ms`
+    // times cull → raster → shade for the main view and nothing else,
+    // so the shadow page passes were never in it: on `dense.scene` the
+    // HUD read 0.55 ms while the pages took about nine. The largest GPU
+    // cost in the engine had no row on screen. Falls back to the
+    // meshlet chain when the scopes are off, which is honest about
+    // being a lower bound rather than silently reporting nothing.
+    let gpu_ms = resources
+        .get::<kooch_core::gpu::GpuScopes>()
+        .and_then(|scopes| scopes.frame_ms())
+        .or(meshlet_stats.gpu_frame_ms);
+    // Read off the surface rather than off a setting: `.rendersettings`
+    // describes the project's window, and this is the editor's.
+    let vsync = gpu.vsync();
     if let Some(stats) = resources.get_mut::<crate::perf::EditorPerfStats>() {
-        stats.gpu_frame_ms = meshlet_stats.gpu_frame_ms;
+        stats.gpu_frame_ms = gpu_ms;
+        stats.vsync = vsync;
         stats.vram_tracked_bytes = vram_bytes;
         // #463.6 — three editor passes always run regardless of
         // scene contents: sky background, viewport blit, egui

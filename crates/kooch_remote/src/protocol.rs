@@ -50,6 +50,17 @@ pub struct ComponentSnapshot {
     pub fields: Vec<(String, ReflectValue)>,
 }
 
+/// One entity's local transform, as the columns of its matrix.
+///
+/// A matrix and not a translation/rotation/scale triple: the mirror
+/// writes `Transform`, and rebuilding one from three fields is three
+/// conversions the host already did once.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MovedTransform {
+    pub id: EntityId,
+    pub matrix: [f32; 16],
+}
+
 /// One entity with its name and components, as seen over the wire.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EntitySnapshot {
@@ -171,6 +182,22 @@ pub enum Method {
     /// decides, and says which it sent, because a client that assumed
     /// wrong would silently keep entities the project had deleted.
     ListEntities {
+        #[serde(default)]
+        since: Option<u64>,
+    },
+    /// The transforms that moved since `since`, and nothing else
+    /// (#1012).
+    ///
+    /// 🔴 A separate method rather than a flag on [`Self::ListEntities`],
+    /// because it answers a different question. That one asks *what is
+    /// the world*, and the host answers by reflecting every field of
+    /// every component of every entity into strings — 38.9 ms on 2159
+    /// entities — and only then diffs. This one asks *what moved*, which
+    /// is a direct read of one component and a compare.
+    ///
+    /// The editor uses it while the project is playing, where it cannot
+    /// edit anything anyway and only needs to draw what it is told.
+    ListMoved {
         #[serde(default)]
         since: Option<u64>,
     },
@@ -339,6 +366,22 @@ pub struct Request {
     /// Correlation id, echoed back verbatim.
     #[serde(default)]
     pub id: u64,
+    /// Whether the sender has already stopped listening (#1015).
+    ///
+    /// 🔴 The server has ONE listener thread and `serve_one` blocks it
+    /// on the main loop's reply before it can accept the next
+    /// connection. A caller that will not read the answer still cost a
+    /// whole host frame of that thread, so holding a key — one input
+    /// push per frame on top of the editor's pull — put two blocking
+    /// connections through a queue that serves one. The pull then landed
+    /// every OTHER host frame and a full refresh queued behind both:
+    /// measured as 41 ms of a 49 ms editor frame, and only ever while a
+    /// key was down.
+    ///
+    /// `#[serde(default)]`, so a request from an older client reads as
+    /// `false` and keeps the reply it is waiting for.
+    #[serde(default)]
+    pub notify: bool,
     #[serde(flatten)]
     pub method: Method,
 }
@@ -355,6 +398,21 @@ pub enum ResponseData {
     /// otherwise. `removed` is always the entities that went away since
     /// the caller's revision — empty in a full reply, since absence
     /// already says it.
+    /// Reply to [`Method::ListMoved`].
+    ///
+    /// `full` means the host could not answer the question asked — the
+    /// entity SET changed, so a transform diff would describe a world
+    /// the caller does not have. The caller pulls a whole
+    /// [`Method::ListEntities`] on that frame and resumes.
+    Moved {
+        moved: Vec<MovedTransform>,
+        #[serde(default)]
+        removed: Vec<EntityId>,
+        revision: u64,
+        full: bool,
+        #[serde(default)]
+        host: Option<HostMetrics>,
+    },
     Entities {
         entities: Vec<EntitySnapshot>,
         /// Entities that no longer exist. Only meaningful in a diff.

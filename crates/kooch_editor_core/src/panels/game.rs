@@ -182,24 +182,65 @@ fn overlay_stack(
     );
 }
 
-/// Godot's frame-time card: three green numbers.
+/// Godot's frame-time card: four green numbers.
+///
+/// 🔴 `Frame` is FIRST and the others are its parts. It used to open
+/// on `CPU Time`, which is the render system alone — so a frame
+/// spending forty of its fifty milliseconds in `remote_sync_system`
+/// reported 7.66 ms and looked healthy. Whatever the top line says is
+/// what gets optimised, so the top line has to be the frame.
 fn frame_time_card(ui: &mut egui::Ui, perf: &crate::perf::EditorPerfStats) {
     let green = egui::Color32::from_rgb(140, 220, 130);
+    let amber = egui::Color32::from_rgb(240, 200, 110);
     crate::panels::performance::stack_card(ui, |ui| {
+        // Amber once the frame misses 60 Hz — the one number worth a
+        // colour, because it is the one the player feels.
+        let frame_colour = if perf.frame_ms > 16.7 { amber } else { green };
         ui.label(
-            egui::RichText::new(format!("CPU Time: {:.2} ms", perf.cpu_frame_ms))
+            egui::RichText::new(format!("Frame:    {:.2} ms", perf.frame_ms))
+                .color(frame_colour)
+                .monospace()
+                .size(12.0),
+        );
+        // Amber whenever the window held a frame twice the average:
+        // that is a hitch, and it is invisible in every other row.
+        let spiky = perf.worst_ms > perf.frame_ms * 2.0 && perf.worst_ms > 16.7;
+        ui.label(
+            egui::RichText::new(format!("  worst:  {:.2} ms", perf.worst_ms))
+                .color(if spiky { amber } else { green })
+                .monospace()
+                .size(12.0),
+        );
+        ui.label(
+            egui::RichText::new(format!("  render: {:.2} ms", perf.cpu_frame_ms))
+                .color(green)
+                .monospace()
+                .size(12.0),
+        );
+        // What the frame spends OUTSIDE the render system: input, the
+        // remote pull, physics, propagation. Named rather than left as
+        // a subtraction the reader has to do.
+        let outside = (perf.frame_ms - perf.cpu_frame_ms).max(0.0);
+        ui.label(
+            egui::RichText::new(format!("  other:  {outside:.2} ms"))
                 .color(green)
                 .monospace()
                 .size(12.0),
         );
         let gpu = perf
             .gpu_frame_ms
-            .map(|ms| format!("GPU Time: {ms:.2} ms"))
-            .unwrap_or_else(|| "GPU Time: n/a".to_owned());
+            .map(|ms| format!("GPU:      {ms:.2} ms"))
+            .unwrap_or_else(|| "GPU:      n/a".to_owned());
         ui.label(egui::RichText::new(gpu).color(green).monospace().size(12.0));
+        // Amber when vsync is on: every number above is then capped by
+        // the display and the reader has to know before trusting them.
+        let (mode, mode_colour) = match perf.vsync {
+            true => ("vsync", amber),
+            false => ("novsync", green),
+        };
         ui.label(
-            egui::RichText::new(format!("FPS: {:.0}", perf.fps_avg))
-                .color(green)
+            egui::RichText::new(format!("FPS:      {:.0}  {mode}", perf.fps_avg))
+                .color(mode_colour)
                 .monospace()
                 .size(12.0),
         );

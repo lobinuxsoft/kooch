@@ -61,10 +61,16 @@ pub(crate) fn send_input_to_host(resources: &mut Resources) {
             return;
         }
     };
+    // 🔴 Sent, not asked. The reply was already being thrown away with
+    // `let _ =`, and waiting for it cost 5.9 ms a frame — the editor
+    // slept until the host reached its next `Stage::First` to receive an
+    // acknowledgement nobody read (#1013).
+    //
     // A host built without the input plugin has no such extension, and
     // says so every frame. Not logged for the same reason the physics
-    // overlay does not: a line per frame is not a diagnostic.
-    let _ = session.client().call(Method::Extension {
+    // overlay does not: a line per frame is not a diagnostic — and now
+    // there is not even a reply to ignore.
+    let _ = session.client().notify(Method::Extension {
         name: "input.state".to_owned(),
         payload,
     });

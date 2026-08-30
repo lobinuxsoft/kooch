@@ -334,6 +334,9 @@ pub struct PageRasterizer {
     /// vertex count the indirect draw issues.
     triangles: u32,
     culls: Vec<MeshletCull>,
+    /// Whether the level culls enter per instance or per rectangle cell.
+    /// See [`Self::set_two_level`].
+    two_level: bool,
     /// The one hierarchical cull every lamp shares (#939). Its
     /// survivors land in fixed slices the expansion indexes by slot;
     /// no cull object, bind group or dispatch exists per lamp.
@@ -730,6 +733,7 @@ impl PageRasterizer {
             // file renders exactly as it did.
             bias: [1.8, 0.02, 0.0],
             triangles: max_triangles_per_meshlet.max(1),
+            two_level: crate::meshlet::MeshletLodSettings::default().two_level,
             culls: (0..levels)
                 .map(|_| MeshletCull::new(device, 1, max_triangles_per_meshlet))
                 .collect(),
@@ -1435,11 +1439,42 @@ impl PageRasterizer {
     /// Grows every clipmap level's cull to the scene. The lamps'
     /// shared arena sizes itself at record time, when the frame's
     /// active light count is known.
-    pub fn ensure_capacity(&mut self, device: &wgpu::Device, meshlets: u32, groups: u32) {
+    pub fn ensure_capacity(
+        &mut self,
+        device: &wgpu::Device,
+        meshlets: u32,
+        groups: u32,
+        chunks: u32,
+    ) {
         for cull in &mut self.culls {
+            // 🔴 FIRST, and that ordering is the whole of it: nothing
+            // reads these culls' reject buffer — the debug overlay is
+            // wired to the camera's — and `ensure_capacity` decides its
+            // size from this flag. Set afterwards, the allocation had
+            // already happened at full size and never shrank, because
+            // `ensure_capacity` returns early once capacity fits.
+            cull.set_rejects(false);
             cull.ensure_capacity(device, meshlets.max(1));
             cull.ensure_group_capacity(device, groups.max(1));
+            cull.ensure_chunk_capacity(device, chunks.max(1));
         }
+    }
+
+    /// Chooses the cull's dispatch shape for every clipmap level (#1002).
+    ///
+    /// 🔴 The camera got the two-level cull and this path did not, which
+    /// is where the cost actually is: the clipmap runs SEVENTEEN culls a
+    /// frame, each one a full `instances x heaviest mesh` rectangle.
+    /// Measured at 7.4 ms of a 10.9 ms GPU frame on `dense.scene` —
+    /// 68 % of it — and toggling the setting moved it by 0.02 ms,
+    /// because the setting did not reach here at all.
+    ///
+    /// Drop-in for what it draws: `min_screen_pixels` is 0 on this path,
+    /// so `cs_cull_instances` runs the frustum test and nothing else.
+    /// Rejecting a caster for being small ON THE CAMERA is how a shadow
+    /// loses the object throwing it, and that test stays off here.
+    pub fn set_two_level(&mut self, two_level: bool) {
+        self.two_level = two_level;
     }
 
     /// The clipmap level's orthographic clip-from-world.
@@ -1549,16 +1584,29 @@ impl PageRasterizer {
                     self.config.virtual_size as f32,
                     lod_target.max(0.01),
                 );
-                self.culls[level as usize].dispatch_scene_pool_atomic(
-                    cull_pipelines,
-                    device,
-                    queue,
-                    encoder,
-                    mesh_pool,
-                    scene,
-                    &params,
-                    scene_params,
-                );
+                if self.two_level {
+                    self.culls[level as usize].dispatch_scene_pool_atomic_chunked(
+                        cull_pipelines,
+                        device,
+                        queue,
+                        encoder,
+                        mesh_pool,
+                        scene,
+                        &params,
+                        scene_params,
+                    );
+                } else {
+                    self.culls[level as usize].dispatch_scene_pool_atomic(
+                        cull_pipelines,
+                        device,
+                        queue,
+                        encoder,
+                        mesh_pool,
+                        scene,
+                        &params,
+                        scene_params,
+                    );
+                }
                 // The expansion's dispatch size is pages times survivors,
                 // and the survivor count only exists on the GPU.
                 encoder.copy_buffer_to_buffer(

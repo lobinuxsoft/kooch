@@ -618,8 +618,22 @@ fn lamp_face_page(view: u32, face: u32, level: u32, cell: (u32, u32), lights: u3
 /// coarse page pairs against a coarse clipmap bucket's survivors —
 /// the exact machinery behind "the shadow is a deformed blob", so an
 /// empty or garbage coarse page fails here rather than on screen.
+/// 🔴 Run under BOTH cull dispatch shapes (#1002). The clipmap culls
+/// used to enter per rectangle cell and now enter per instance; what
+/// they must not change is a single texel of what lands in the atlas.
+/// This test draws real depth and reads it back, so a shape that lost
+/// geometry fails here rather than on screen.
 #[test]
 fn a_lamp_page_holds_what_its_light_sees() {
+    lamp_page_holds_its_view(false);
+}
+
+#[test]
+fn the_two_level_cull_draws_the_same_page() {
+    lamp_page_holds_its_view(true);
+}
+
+fn lamp_page_holds_its_view(two_level: bool) {
     use glam::{Mat4, Vec3};
     use kooch_render::meshlet::{
         MeshInstance, MeshletCullPipelines, MeshletScene, SceneCullParams, build_default_meshlets,
@@ -746,8 +760,10 @@ fn a_lamp_page_holds_what_its_light_sees() {
         cull_pipelines.meshlet_bind_group_layout(),
         &gpu_pool,
     );
+    raster.set_two_level(two_level);
     let threads = instances.len() as u32 * meshlets_per_mesh;
-    raster.ensure_capacity(&device, threads, threads);
+    let chunks = kooch_render::meshlet::chunks_for(instances.len() as u32, meshlets_per_mesh);
+    raster.ensure_capacity(&device, threads, threads, chunks);
 
     let mut encoder = device.create_command_encoder(&Default::default());
     raster.record(
@@ -2443,7 +2459,8 @@ fn a_caster_behind_every_receiver_pairs_nothing() {
             &gpu_pool,
         );
         let threads = instances.len() as u32 * meshlets_per_mesh;
-        raster.ensure_capacity(&device, threads, threads);
+        let chunks = kooch_render::meshlet::chunks_for(instances.len() as u32, meshlets_per_mesh);
+        raster.ensure_capacity(&device, threads, threads, chunks);
 
         let mut encoder = device.create_command_encoder(&Default::default());
         raster.record(

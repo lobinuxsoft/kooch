@@ -62,16 +62,39 @@ impl MeshletRenderStage {
         {
             profiling::scope!("cull: view");
             let query = scopes.map(|s| s.begin("cull", &mut encoder));
-            self.views[view_id].cull.dispatch_scene_pool_atomic(
-                &self.cull_pipelines,
-                device,
-                queue,
-                &mut encoder,
-                gpu_pool,
-                &self.scene,
-                cull_params,
-                scene_params,
-            );
+            // #1002 — same two passes, entered per instance instead of
+            // per cell of an `instances × heaviest mesh` rectangle. The
+            // switch exists so the two shapes stay comparable in one
+            // build; it is not a fallback for a path that works.
+            let two_level = resources
+                .get::<crate::meshlet::MeshletLodSettings>()
+                .copied()
+                .unwrap_or_default()
+                .two_level;
+            let cull = &self.views[view_id].cull;
+            if two_level {
+                cull.dispatch_scene_pool_atomic_chunked(
+                    &self.cull_pipelines,
+                    device,
+                    queue,
+                    &mut encoder,
+                    gpu_pool,
+                    &self.scene,
+                    cull_params,
+                    scene_params,
+                );
+            } else {
+                cull.dispatch_scene_pool_atomic(
+                    &self.cull_pipelines,
+                    device,
+                    queue,
+                    &mut encoder,
+                    gpu_pool,
+                    &self.scene,
+                    cull_params,
+                    scene_params,
+                );
+            }
             if let (Some(scopes), Some(query)) = (scopes, query) {
                 scopes.end(&mut encoder, query);
             }

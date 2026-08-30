@@ -60,6 +60,11 @@ struct PageSettings {
     /// so their pages stayed resident and were sampled as the new
     /// scene's occlusion (#971).
     scene_epoch: u32,
+    /// Whether the clipmap culls enter per instance (#1002).
+    ///
+    /// Carried through `PageSettings` rather than read at the raster,
+    /// because that is where every other knob this path obeys arrives.
+    two_level: bool,
 }
 
 /// A camera's index into the pool's slices.
@@ -112,6 +117,40 @@ fn page_frame(resources: &Resources) -> u32 {
         .unwrap_or(0)
 }
 
+/// How many frames a page may go unrequested, for THIS frame rate.
+///
+/// 🔴 The residency horizon is a DURATION and the uniform counts
+/// frames, so the conversion has to happen every frame. Held as a
+/// constant it silently tightens as the renderer gets faster: 60 frames
+/// was written as "a second at 60 Hz", and the frame it was measured
+/// against then went to 150 — which turned the same constant into
+/// 0.4 s. The camera sweeping across a scene and back stopped finding
+/// its pages there, and the redraw storm that followed reads as a
+/// stutter that arrived WITH the optimisation.
+///
+/// Clamped at both ends: a frame-time spike must not evict the world,
+/// and a stalled clock must not make the pool immortal.
+fn page_age_frames(resources: &Resources) -> u32 {
+    let Some(delta) = resources
+        .get::<kooch_core::time::Time>()
+        .map(|t| t.delta_secs())
+        .filter(|d| *d > 0.0)
+    else {
+        // No clock: keep the documented default rather than invent one.
+        return crate::shadow::pages::pool::age_from_environment();
+    };
+    age_frames(crate::shadow::pages::pool::age_seconds(), delta)
+}
+
+/// The conversion itself, split out so it is testable without a clock.
+fn age_frames(seconds: f32, delta: f32) -> u32 {
+    ((seconds / delta).ceil() as u32).clamp(AGE_FRAMES_MIN, AGE_FRAMES_MAX)
+}
+
+/// Floor and ceiling on the converted horizon. See [`page_age_frames`].
+const AGE_FRAMES_MIN: u32 = 30;
+const AGE_FRAMES_MAX: u32 = 1024;
+
 /// The scene epoch, as the page machine can see it from here.
 ///
 /// ⚠️ Zero is ambiguous and the ambiguity cost a day: "no manager in
@@ -163,7 +202,12 @@ fn page_settings(resources: &Resources) -> PageSettings {
         .get::<crate::shadow::ShadowSettings>()
         .copied()
         .unwrap_or_default();
+    let lod = resources
+        .get::<crate::meshlet::MeshletLodSettings>()
+        .copied()
+        .unwrap_or_default();
     PageSettings {
+        two_level: lod.two_level,
         // 🔴 The environment force is ORed HERE **as well as** in
         // `RenderSettings::shadows()`, and the duplication is the point.
         // `shadows()` only runs when the project HAS a settings asset —
@@ -223,7 +267,14 @@ impl MeshletRenderStage {
         // pass that cannot be seen cannot be blamed, and the CPU cost of
         // this track was argued about for an hour without one.
         profiling::scope!("shadow pages");
-        let settings = self.page_settings_for_views(resources, debug);
+        // 🔴 Clamped HERE and nowhere later: `per_row` is the page
+        // ADDRESSING, so the atlas, the table and every shader that
+        // resolves a page id have to agree on one number. Fitting the
+        // texture alone would leave the addressing describing a layer
+        // that does not exist.
+        let settings = self
+            .page_settings_for_views(resources, debug)
+            .fit_atlas(device.limits().max_texture_dimension_2d);
         if !settings.enabled {
             self.release_pages(device);
             return;
@@ -257,6 +308,7 @@ impl MeshletRenderStage {
         // that never evicts rather than one that evicts constantly.
         if let Some(marker) = self.page_marker.as_mut() {
             marker.set_frame(page_frame(resources));
+            marker.set_max_age(page_age_frames(resources));
         }
         // 🔴 AFTER `set_frame` and never before it: a new frame index
         // clears the rebuild flag, so voiding first would void nothing.
@@ -562,8 +614,21 @@ impl MeshletRenderStage {
         // replaced must not be sampled through the previous one's
         // pages (#971).
         raster.set_scene_epoch(settings.scene_epoch);
+        raster.set_two_level(settings.two_level);
         let threads = scene_params.instance_count * scene_params.meshlets_per_mesh;
-        raster.ensure_capacity(device, threads, threads);
+        // 🔴 `group_capacity`, NOT `threads` (#1011). The arena is
+        // indexed by LOD group, and the scene has 24 108 of them —
+        // handing it the cull rectangle instead asked for 16.7 M, a
+        // 700x over-allocation that the clipmap then paid for seventeen
+        // times: 1.1 GiB resident and 1.1 GiB of `clear_buffer` every
+        // frame. The camera has always passed the right number; this
+        // path copied the wrong argument.
+        raster.ensure_capacity(
+            device,
+            threads,
+            scene_params.group_capacity,
+            scene_params.chunk_capacity,
+        );
         raster.record(
             device,
             queue,
@@ -810,3 +875,38 @@ impl MeshletRenderStage {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod age_horizon_tests {
+    use super::{AGE_FRAMES_MAX, AGE_FRAMES_MIN, age_frames};
+
+    /// The horizon is a duration, so a faster renderer counts MORE
+    /// frames to reach the same second — the property the constant it
+    /// replaced could not have.
+    #[test]
+    fn a_faster_frame_holds_more_frames() {
+        assert_eq!(age_frames(1.0, 1.0 / 60.0), 60);
+        assert_eq!(age_frames(1.0, 1.0 / 150.0), 150);
+        assert_eq!(age_frames(1.0, 1.0 / 240.0), 240);
+    }
+
+    #[test]
+    fn a_stall_cannot_evict_the_world() {
+        // Half a second a frame would round to 2 without the floor,
+        // and two frames of memory is a pool that thrashes on a hitch.
+        assert_eq!(age_frames(1.0, 0.5), AGE_FRAMES_MIN);
+    }
+
+    #[test]
+    fn a_stopped_clock_cannot_be_immortal() {
+        assert_eq!(age_frames(1.0, 1.0 / 100_000.0), AGE_FRAMES_MAX);
+    }
+}
+
+impl PageSettings {
+    /// The same settings with a pool one atlas layer can actually hold.
+    fn fit_atlas(mut self, max_side: u32) -> Self {
+        self.pool = self.pool.fit_atlas(max_side, PageConfig::default().page);
+        self
+    }
+}

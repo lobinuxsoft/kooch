@@ -62,12 +62,20 @@ pub(crate) fn present_editor_frame(
         &screen_descriptor,
     );
 
-    let output = match gpu.surface().get_current_texture() {
-        wgpu::CurrentSurfaceTexture::Success(tex)
-        | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => tex,
-        status => {
-            tracing::warn!(?status, "Failed to acquire surface texture");
-            return false;
+    // 🔴 Both swapchain calls carry a scope, because either one can be
+    // the vblank wait and they are not interchangeable: `acquire` blocks
+    // when no image is free, `present` blocks when the queue is full.
+    // Unscoped, the wait landed outside the flamegraph entirely and the
+    // profiler reported a 9.6 ms frame while the clock said 17.4.
+    let output = {
+        profiling::scope!("surface acquire");
+        match gpu.surface().get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(tex)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => tex,
+            status => {
+                tracing::warn!(?status, "Failed to acquire surface texture");
+                return false;
+            }
         }
     };
     let view = output
@@ -116,7 +124,10 @@ pub(crate) fn present_editor_frame(
     let mut buffers = extra_buffers;
     buffers.push(encoder.finish());
     gpu.queue().submit(buffers);
-    output.present();
+    {
+        profiling::scope!("surface present");
+        output.present();
+    }
     // After every submit of the frame, never between them.
     if let Some(scopes) = scopes {
         scopes.end_frame(gpu.queue());
