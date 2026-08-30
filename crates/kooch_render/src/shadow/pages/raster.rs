@@ -241,6 +241,14 @@ struct RasterUniform {
     eye: [f32; 4],
     sun: [f32; 4],
     bias: [f32; 4],
+    /// `x` the atlas layer this pass is attached to, `y` its view.
+    ///
+    /// 🔴 A pass owns ONE layer, and with a view spread across several
+    /// the draws have to know which. A page whose slot lands elsewhere
+    /// emits a degenerate triangle rather than drawing at the same
+    /// texels of the wrong layer — which is what "it does not fail, it
+    /// corrupts" meant (#1016).
+    layer: [u32; 4],
 }
 
 #[repr(C)]
@@ -769,12 +777,14 @@ impl PageRasterizer {
     /// atlas and the uniform are all this frame's and the hazard is
     /// gone with the ordering that caused it. The write jumping to the
     /// front of the submit is now exactly what is wanted.
+    /// The uniform slice a VIEW's readers bind — its first layer's.
+    ///
+    /// The shading samples the whole atlas through `page_place`, which
+    /// resolves a layer from the slot, so any of the view's slices
+    /// describes the world identically. Only the depth passes care
+    /// which layer they are attached to; they use [`Self::layer_span`].
     pub fn uniform_span(&self, view: u32) -> (u64, u64) {
-        let layers = atlas_layers(self.pool);
-        (
-            self.uniform_stride * view.min(layers - 1) as u64,
-            std::mem::size_of::<RasterUniform>() as u64,
-        )
+        self.layer_span(self.layer_of(view, 0))
     }
 
     pub fn atlas_texture(&self) -> &wgpu::Texture {
@@ -1180,7 +1190,26 @@ impl PageRasterizer {
 
     /// The uniform every raster pass reads. Written once a frame,
     /// before any of them.
+    /// 🔴 One per LAYER of the view, not one per view (#1016). A depth
+    /// pass attaches a single layer and its draws test their page
+    /// against `layer.x`, so each layer needs its own slice with its
+    /// own number in it. The buffer was already sized by
+    /// `atlas_layers`, so there has always been room.
     fn write_uniform(&self, queue: &wgpu::Queue, view: u32, eye: Vec3, sun: Vec3, lights: u32) {
+        for local in 0..self.pool.layers_per_view() {
+            self.write_layer_uniform(queue, view, local, eye, sun, lights);
+        }
+    }
+
+    fn write_layer_uniform(
+        &self,
+        queue: &wgpu::Queue,
+        view: u32,
+        local: u32,
+        eye: Vec3,
+        sun: Vec3,
+        lights: u32,
+    ) {
         let d = sun.normalize_or(Vec3::NEG_Y);
         // The sun's region starts after the PADDED light slots, the way
         // marking lays the space out — see `padded_lights` for why the
@@ -1188,9 +1217,10 @@ impl PageRasterizer {
         let sun_slot = super::mark::padded_lights(lights);
         let stride = super::mark::stride(self.config, self.clipmap);
         let view_span = super::mark::span(self.config, self.clipmap, sun_slot + 1);
+        let layer = self.layer_of(view, local);
         queue.write_buffer(
             &self.uniform,
-            self.uniform_span(view).0,
+            self.layer_span(layer).0,
             bytemuck::bytes_of(&RasterUniform {
                 space: [
                     stride,
@@ -1248,8 +1278,28 @@ impl PageRasterizer {
                 // Same reason as the softness above: the shading binds
                 // this exact buffer, so one write serves both.
                 bias: [self.bias[0], self.bias[1], self.bias[2], 0.0],
+                layer: [layer, view, 0, 0],
             }),
         );
+    }
+
+    /// The atlas layer a view's `local`-th layer is, globally.
+    ///
+    /// Slots are global and a view's are contiguous, so its layers are
+    /// contiguous too — which is what lets `slot / slice` name a layer
+    /// without being told whose it is.
+    pub fn layer_of(&self, view: u32, local: u32) -> u32 {
+        let per_view = self.pool.layers_per_view();
+        (view.min(self.pool.view_count() - 1) * per_view + local.min(per_view - 1))
+            .min(atlas_layers(self.pool) - 1)
+    }
+
+    /// The uniform slice a LAYER reads, for the pass attached to it.
+    pub fn layer_span(&self, layer: u32) -> (u64, u64) {
+        (
+            self.uniform_stride * layer.min(atlas_layers(self.pool) - 1) as u64,
+            std::mem::size_of::<RasterUniform>() as u64,
+        )
     }
 
     /// The table becomes a dense list, bucketed by level, and the
@@ -1748,7 +1798,15 @@ impl PageRasterizer {
         close(track, expand_query, encoder);
 
         let depth_query = nested(track, "page depth", encoder);
-        {
+        // 🔴 One pass per LAYER of this view (#1016). A render pass
+        // attaches a single layer, so a view spread across several
+        // needs one each — and the draws inside test their page against
+        // the layer they are in, because a page's rect is the same
+        // texels of every layer. One pass while the pool fits a layer,
+        // which is what the editor's two views still do.
+        for local in 0..self.pool.layers_per_view() {
+            let layer = self.layer_of(view, local);
+            let layer_offset = self.layer_span(layer).0 as u32;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow pages: depth"),
                 color_attachments: &[],
@@ -1759,7 +1817,7 @@ impl PageRasterizer {
                     // depth, and only the dirty pages' rects are wiped,
                     // by the quad draw below. The array still keeps one
                     // camera out of the other's pages.
-                    view: &self.layers[view as usize],
+                    view: &self.layers[layer as usize],
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -1774,10 +1832,10 @@ impl PageRasterizer {
             // (reversed-Z 0 — "nothing between here and the light"),
             // depth test Always. Then the pairs draw over clean rects.
             pass.set_pipeline(&self.page_clear);
-            pass.set_bind_group(0, &bound.clear, &[uniform_offset]);
+            pass.set_bind_group(0, &bound.clear, &[layer_offset]);
             pass.draw_indirect(&self.draw_args, 16);
             pass.set_pipeline(&self.depth);
-            pass.set_bind_group(0, &bound.depth, &[uniform_offset]);
+            pass.set_bind_group(0, &bound.depth, &[layer_offset]);
             pass.set_bind_group(1, meshlet_bg, &[]);
             pass.set_bind_group(2, &bound.instances, &[]);
             pass.draw_indirect(&self.draw_args, 0);

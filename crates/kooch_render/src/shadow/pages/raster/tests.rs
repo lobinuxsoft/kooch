@@ -96,6 +96,7 @@ fn the_uniform_fields_line_up() {
         ("eye", std::mem::offset_of!(RasterUniform, eye)),
         ("sun", std::mem::offset_of!(RasterUniform, sun)),
         ("bias", std::mem::offset_of!(RasterUniform, bias)),
+        ("layer", std::mem::offset_of!(RasterUniform, layer)),
     ];
     let theirs = shader_offsets(&compact_source(), "PageRaster");
     assert_eq!(theirs.len(), mine.len(), "field count");

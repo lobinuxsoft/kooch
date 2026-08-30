@@ -169,6 +169,15 @@ fn page_geometry(vertex_index: u32, instance_index: u32) -> PageGeom {
     );
     out.rect = page_atlas_rect(pair.y, raster.views.z, raster.pool.z, raster.pool.w);
 
+    // 🔴 This pass owns ONE layer, and a page in another one would land
+    // on the same texels of the wrong layer — corruption, not a miss.
+    // Out of the clip volume, the same way the meshlet tail below is.
+    if page_layer(pair.y, raster.views.z) != raster.layer.x {
+        out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        out.dead = true;
+        return out;
+    }
+
     let triangle_idx = vertex_index / 3u;
     let corner_idx = vertex_index % 3u;
     // The draw is indirect with a fixed vertex count per meshlet, so the
@@ -289,6 +298,11 @@ fn vs_page_clear(
     @builtin(instance_index) instance_index: u32,
 ) -> @builtin(position) vec4<f32> {
     let slot = clear_dirty[1u + instance_index];
+    // The clear wipes a page's rect, so a slot from another layer would
+    // wipe a page that is not dirty. Same gate as the depth draw.
+    if page_layer(slot, raster.views.z) != raster.layer.x {
+        return vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    }
     let rect = page_atlas_rect(slot, raster.views.z, raster.pool.z, raster.pool.w);
     // Strip order: (-1,-1) (1,-1) (-1,1) (1,1).
     let corner = vec2<f32>(
