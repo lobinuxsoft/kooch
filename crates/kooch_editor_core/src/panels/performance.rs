@@ -795,6 +795,20 @@ fn debug_controls(
 /// `Shadows: virtual pages` group beside the cascades it replaces. What
 /// stays here is what a settings file cannot hold: what the last frame
 /// actually did.
+///
+/// # 🔴 Grouped and tabulated, because a wall of prose is not a readout
+///
+/// Every number here earned its place by naming a defect, and they were
+/// printed as fourteen sentences of identical weight and colour. At the
+/// size this card actually renders that is unreadable: answering "how
+/// full is the pool" meant reading a paragraph to find one figure inside
+/// it, and the coloured ALERTS — the lines that say the frame is wrong —
+/// sat in the middle of the run, where they look like more grey text.
+///
+/// So the numbers get the columns: label left, value right, monospace,
+/// four named blocks. Anything that argues rather than measures moved
+/// into hover text, which is where an explanation belongs, and the
+/// alerts moved to the top, which is where a failure belongs.
 fn shadow_page_readout(
     ui: &mut egui::Ui,
     page_counts: Option<kooch_render::shadow::pages::mark::MarkCounts>,
@@ -804,181 +818,101 @@ fn shadow_page_readout(
 
     let Some(counts) = page_counts else {
         ui.label(
-            egui::RichText::new("pages: waiting for the first readback")
+            egui::RichText::new("waiting for the first readback")
                 .small()
                 .weak(),
         );
         return;
     };
 
+    // 🔴 Every reading that says the frame is WRONG, before anything
+    // that says it is fine. Each of these was already computed and each
+    // was invisible: a red line in the eleventh position of eleven grey
+    // ones is not an alert, it is more text.
+    let pool = counts.pool;
     if counts.overflow > 0 {
-        ui.label(
-            egui::RichText::new(format!(
+        alert(
+            ui,
+            &format!(
                 "{} pages past the buffer — every number below is a floor",
-                counts.overflow
-            ))
-            .small()
-            .color(egui::Color32::from_rgb(220, 120, 90)),
+                thousands(counts.overflow as u64)
+            ),
+            "The marking wrote more pages than the readback buffer holds, so the counts \
+             below are truncated rather than wrong-by-a-little.",
         );
     }
-
-    // MiB, because pages are the unit and megabytes are the budget.
-    let config = PageConfig::default();
-    let mib = counts.resident as f64 * config.page_bytes() as f64 / (1024.0 * 1024.0);
-    ui.label(
-        egui::RichText::new(format!(
-            "view {} · {} pages · {mib:.1} MiB · at {}x{}",
-            counts.view, counts.resident, counts.size.0, counts.size.1
-        ))
-        .small(),
-    )
-    .on_hover_text(
-        "Distinct pages the frame would make resident, at 128-texel pages and Depth32Float. \
-         The resolution is part of the reading, not context: a page count without it is not \
-         a number, and the View and Game tabs are two cameras at two sizes. \
-         Read it against Unreal's own pool, which is 4096 pages for the WHOLE scene by \
-         default (6144 for open worlds, 8192 thrashes) — and against this engine's 152 MiB \
-         of fixed shadow allocations, which stand whether or not a light casts.",
-    );
-    // 🔴 The count is for EVERY light the grid holds, not the handful
-    // that have a shadow slot today — and that is the measurement, not
-    // an oversight. A virtual shadow map exists for many lights; counting
-    // only the four that fit today's slots would be measuring the cap
-    // the feature is meant to remove.
-    ui.label(
-        egui::RichText::new(if counts.culled > 0 {
-            format!(
-                "{} samples · {} sample/light pairs · {} gated by coverage",
-                counts.samples, counts.pairs, counts.culled
-            )
-        } else {
-            format!(
-                "{} samples · {} sample/light pairs · every light casting",
-                counts.samples, counts.pairs
-            )
-        })
-        .small()
-        .weak(),
-    )
-    .on_hover_text(
-        "The pass walks the froxel grid, which holds every light that reaches a pixel — so \
-         this is what the scene would cost with ALL of its lights casting. Pairs divided \
-         by samples is the grid's own lights-per-pixel. Gated pairs are lights whose whole \
-         range projects under `shadow_min_pixels` on screen (#944): they still shade, but \
-         a shadow nobody can resolve claims no pages.",
-    );
-    // 🔴 What the same work would cost per FROXEL instead of per pixel.
-    // Olsson §III derives shadow resolution and page masks from
-    // cluster/light pairs rather than sample/light pairs, because
-    // cluster bounds are "several orders of magnitude fewer than the
-    // samples". This line is that claim, in this scene, as a number
-    // rather than an argument (#952).
-    if counts.froxels > 0 && counts.samples > 0 {
-        // 🔴 `pairs` counts a different thing on each path, so the ratio
-        // has to be read from the side that owns it. Dividing froxel
-        // pairs by samples printed `0.0 lights each` and a made-up
-        // multiplier beside it.
-        let (lights_each, walked, other) = if counts.by_froxel {
-            let each = counts.pairs as f32 / counts.froxels as f32;
-            (each, counts.pairs as f32, counts.samples as f32 * each)
-        } else {
-            let each = counts.pairs as f32 / counts.samples as f32;
-            (each, counts.pairs as f32, counts.froxels as f32 * each)
-        };
-        let ratio = (walked.max(1.0) / other.max(1.0)).max(other.max(1.0) / walked.max(1.0));
-        let shape = if counts.by_froxel {
-            "per froxel"
-        } else {
-            "per pixel"
-        };
-        // 🔴 Derived from this engine's own budget, not from folklore.
-        // On the OneXFly `shade: compute` measured 5.5 ms at 17.9 lights
-        // per pixel — about 0.31 ms a light — against a 13.9 ms frame.
-        // Holding the shading loop near 2 ms, a fifth of the budget,
-        // puts the sustainable average at six or seven. A PEAK may run
-        // to twice that before the cells holding it stop being a
-        // rounding error, so the alert fires at sixteen.
-        const OVERLAP_WARN: u32 = 16;
-        if counts.peak_lights > 0 {
-            let over = counts.peak_lights > OVERLAP_WARN;
-            let text = egui::RichText::new(format!(
-                "worst froxel holds {} lights{}",
-                counts.peak_lights,
-                if over { " — overlapping" } else { "" }
-            ))
-            .small();
-            ui.label(if over {
-                text.color(egui::Color32::from_rgb(240, 180, 60))
-            } else {
-                text.weak()
-            })
-            .on_hover_text(
-                "Point and spot lights whose ranges overlap all land in the same froxel, \
-                 and every pixel of that froxel walks all of them — in the shading loop \
-                 and again in the page marking. Overlap is invisible while authoring: \
-                 lights are placed one at a time and the cell they share is not drawn \
-                 anywhere.\n\nThe threshold is this engine's own. Shading measured 5.5 ms \
-                 at 17.9 lights per pixel on the OneXFly, about 0.31 ms a light, against a \
-                 13.9 ms frame.",
-            );
-        }
-        ui.label(
-            egui::RichText::new(format!(
-                "{} froxels occupied · {:.1} lights each · walking {} · {:.0}× the other way",
-                counts.froxels, lights_each, shape, ratio,
-            ))
-            .small()
-            .weak(),
-        )
-        .on_hover_text(
-            "Froxels of this view that held visible surface, counted from the depth \
-             buffer. The marking runs per (pixel, light); the same walk over occupied \
-             froxels would run per (froxel, light), and this is the ratio between the \
-             two. It is an upper bound on the win: a froxel's bounds project to a RANGE \
-             of pages rather than one, so a cluster pass marks conservatively and spends \
-             pool slots the per-pixel version never asked for.",
+    if pool.overflow > 0 {
+        alert(
+            ui,
+            &format!(
+                "{} pages unallocated — the pool is full",
+                thousands(pool.overflow as u64)
+            ),
+            "Pages the frame needed and the pool could not give a slot to. They render \
+             unshadowed. Epic's own pool overflow shows up as checkerboard corruption or \
+             missing shadows, which is exactly the kind of failure nobody recognises by \
+             sight — so it is named here instead.",
         );
     }
-    // 🔴 The comparison that makes the number mean something, and it is
-    // one budget for every light in the scene rather than per light.
-    // It is now this engine's OWN pool rather than a figure quoted from
-    // Epic: the allocator that hands the slots out is what reports the
-    // capacity.
-    ui.label(
-        egui::RichText::new(format!(
-            "{} of {} pages in this view's slice · {:.0}% full",
-            counts.pool.allocated(),
-            counts.pool.capacity,
-            counts.pool.load()
-        ))
-        .small()
-        .weak(),
-    )
-    .on_hover_text(
-        "The physical pool the pages are allocated out of, in the same dispatch that marks \
-         them: the thread that flips a page's mark bit is the one that claims its slot. \
-         The pool is SLICED between the cameras — a layer of the atlas each — so this is \
-         what THIS view may spend, not the whole budget: a camera cannot take another \
-         camera's pages and cannot be robbed of its own. \
-         Epic's default pool is 4096 pages for the WHOLE scene — 6144 for open worlds, 8192 \
-         thrashes — and `KOOCH_SHADOW_POOL_PAGES` moves this one.",
-    );
-    // 🔴 The split that explains everything else on this panel. Marking
-    // counts what a hundred casting lights WOULD need; only the sun's
-    // pages are rasterised, so only they spend the pool. Before the two
-    // were separated, local pages took 991 of each camera's 1024 slots
-    // and the sun got 33 — a pool reporting itself full while doing
-    // nothing.
-    if counts.pool.denied > 0 {
-        ui.label(
-            egui::RichText::new(format!(
-                "{} denied by rank — the plan funded down to rank {}",
-                counts.pool.denied, counts.pool.cutoff
-            ))
-            .small()
-            .color(egui::Color32::from_rgb(230, 190, 90)),
-        )
-        .on_hover_text(
+    if !pool.balanced() {
+        alert(
+            ui,
+            &format!(
+                "ledger does not close — {} resident + {} free of {}",
+                pool.allocated(),
+                pool.free,
+                pool.capacity
+            ),
+            "Every slot of the slice is either held by a resident or sitting on the free \
+             list. When the two do not add up, slots left the accounting without the \
+             double-free counter firing, and requests the plan funded fail to allocate. \
+             Only checked once the bump allocator has handed out the whole slice.",
+        );
+    }
+    if pool.empty > 0 && pool.free > 0 {
+        alert(
+            ui,
+            &format!(
+                "{} pops found nothing on a list that is not empty",
+                pool.empty
+            ),
+            "The contention case: the count and the array are two separate atomics, so a \
+             popper that drives the count below zero makes another popper read the \
+             underflow and give up on a list that still holds slots.",
+        );
+    }
+    if pool.leaked > 0 {
+        alert(
+            ui,
+            &format!(
+                "{} slots fell out of the free list — a double free",
+                pool.leaked
+            ),
+            "The free list cannot hold more slots than the slice has. Always zero, or the \
+             allocator is wrong.",
+        );
+    }
+    if let Some(raster) = raster_counts
+        && (raster.dropped > 0 || raster.overflow > 0)
+    {
+        alert(
+            ui,
+            &format!(
+                "{} pages dropped · {} pairs past the list — shadows are missing",
+                raster.dropped, raster.overflow
+            ),
+            "The raster could not draw everything the marking asked for, so some resident \
+             pages hold no depth and shade as lit.",
+        );
+    }
+    if pool.denied > 0 {
+        warn(
+            ui,
+            &format!(
+                "{} denied by rank — funded down to rank {}",
+                thousands(pool.denied as u64),
+                pool.cutoff
+            ),
             "The frame wanted more pages than this view's slice holds, so the seating plan \
              (#942) ranked the demand and funded it coarsest-first: the sun's clipmap ahead \
              of every local light, and within any chain the coarse levels ahead of the fine. \
@@ -986,16 +920,13 @@ fn shadow_page_readout(
              number to shrink it is #943's resolution bias, not a bigger pool.",
         );
     }
-    if counts.pool.bias_local > 0 || counts.pool.bias_sun > 0 {
-        ui.label(
-            egui::RichText::new(format!(
-                "resolution bias: locals +{} · sun +{} levels",
-                counts.pool.bias_local, counts.pool.bias_sun
-            ))
-            .small()
-            .weak(),
-        )
-        .on_hover_text(
+    if pool.bias_local > 0 || pool.bias_sun > 0 {
+        warn(
+            ui,
+            &format!(
+                "asking coarser — locals +{} · sun +{} levels",
+                pool.bias_local, pool.bias_sun
+            ),
             "The demand did not fit the slice, so the marking asks coarser (#943): each \
              level is a quarter of the pages. Locals pay up to four levels before the sun \
              pays one, and it unwinds on its own when the demand shrinks. A bias that sits \
@@ -1003,234 +934,299 @@ fn shadow_page_readout(
              `shadow_pool_pages` or lower `shadow_density`.",
         );
     }
-    if counts.pool.preempted > 0 {
-        ui.label(
-            egui::RichText::new(format!(
-                "{} residents preempted — their seat went to a higher rank",
-                counts.pool.preempted
-            ))
-            .small()
-            .weak(),
-        )
-        .on_hover_text(
-            "Pages evicted by PRESSURE rather than by age: the plan did not fund their rank \
-             this frame. A camera that stopped moving should drive this to zero within a \
-             frame — persistent churn here means the demand is oscillating around the \
-             cutoff rank.",
+
+    // MiB, because pages are the unit and megabytes are the budget.
+    let config = PageConfig::default();
+    let mib = counts.resident as f64 * config.page_bytes() as f64 / (1024.0 * 1024.0);
+    block(ui, "Atlas");
+    grid(ui, "shadow_pages_atlas", |ui| {
+        metric(ui, "view", &counts.view.to_string());
+        metric_with_tooltip(
+            ui,
+            "resident",
+            &format!("{} pages", thousands(counts.resident as u64)),
+            "Distinct pages the frame would make resident, at 128-texel pages and \
+             Depth32Float. Read it against Unreal's own pool, which is 4096 pages for the \
+             WHOLE scene by default (6144 for open worlds, 8192 thrashes) — and against \
+             this engine's 152 MiB of fixed shadow allocations, which stand whether or not \
+             a light casts.",
         );
-    }
-    // 🔴 The reading persistence exists to produce. A still camera
-    // should sit at 100 %: every page it wants is one it already has,
-    // so the raster draws nothing and the atlas is last frame's.
-    ui.label(
-        egui::RichText::new(format!(
-            "{} reused · {} new · {} evicted · {:.0}% hit",
-            counts.pool.reused,
-            counts.pool.claims,
-            counts.pool.evicted,
-            counts.pool.hit_rate()
-        ))
-        .small()
-        .weak(),
-    )
-    .on_hover_text(
-        "The pool PERSISTS between frames: a page is freed when nothing has asked for it in \
-         `max_age` frames (60 by default — Epic's `MaxPageAgeSinceLastRequest`, \
-         `KOOCH_SHADOW_PAGE_AGE` overrides it), or the moment the seating plan stops \
-         funding its rank under pressure (#942). A reused page is one whose depth is \
-         already in the atlas and does not have to be rasterised again; movement \
-         invalidation re-lists what a caster passed through.",
-    );
-    // 🔴 The ledger, printed only when it does not close. `adopt_view`
-    // states this as an invariant it cannot check — "a funded request
-    // cannot find the free list empty" — and the frame that violates it
-    // is the frame whose pages render unshadowed (#973).
-    if !counts.pool.balanced() {
-        ui.label(
-            egui::RichText::new(format!(
-                "the allocator's ledger does not close — {} resident + {} free of {}",
-                counts.pool.allocated(),
-                counts.pool.free,
-                counts.pool.capacity
-            ))
-            .small()
-            .color(egui::Color32::from_rgb(220, 120, 90)),
-        )
-        .on_hover_text(
-            "Every slot of the slice is either held by a resident or sitting on the free \
-             list. When the two do not add up, slots left the accounting without the \
-             double-free counter firing, and requests the plan funded fail to allocate. \
-             Only checked once the bump allocator has handed out the whole slice.",
+        metric(ui, "memory", &format!("{mib:.1} MiB"));
+        metric_with_tooltip(
+            ui,
+            "viewport",
+            &format!("{}x{}", counts.size.0, counts.size.1),
+            "Part of the reading, not context: a page count without a resolution is not a \
+             number, and the View and Game tabs are two cameras at two sizes.",
         );
-    }
-    // 🔴 Every take and every give-back of this frame, so the shortfall
-    // above can be attributed to an operation rather than inferred. The
-    // reading that names the defect: `empty` above zero while the ledger
-    // still shows free slots — a pop that found nothing on a list that
-    // is not.
-    ui.label(
-        egui::RichText::new(format!(
-            "slots: {} popped + {} bumped taken · {} pushed back · {} pops found nothing",
-            counts.pool.popped, counts.pool.bumped, counts.pool.pushed, counts.pool.empty
-        ))
-        .small()
-        .color(if counts.pool.empty > 0 && counts.pool.free > 0 {
-            egui::Color32::from_rgb(220, 120, 90)
-        } else {
-            egui::Color32::GRAY
-        }),
-    )
-    .on_hover_text(
-        "A slot is taken either off the free list or from the bump, and given back only to \
-         the free list. Pops that found nothing WHILE the ledger reports free slots is the \
-         contention case: the count and the array are two separate atomics, so a popper \
-         that drives the count below zero makes another popper read the underflow and give \
-         up on a list that still holds slots.",
-    );
-    ui.label(
-        egui::RichText::new(format!(
-            "ledger: {} demanded · {} free · bump at {} of {}",
-            counts.pool.demand, counts.pool.free, counts.pool.high, counts.pool.capacity
-        ))
-        .small()
-        .weak(),
-    )
-    .on_hover_text(
-        "What the frame asked for, what the free list held after seating, and how far the \
-         bump allocator has ever reached. The bump never goes down — a freed slot returns \
-         to the free list — so once it reaches the capacity every allocation must come off \
-         that list, and an empty list then fails a request the plan had funded.",
-    );
-    if counts.pool.leaked > 0 {
-        ui.label(
-            egui::RichText::new(format!(
-                "{} slots fell out of the free list — a double free",
-                counts.pool.leaked
-            ))
-            .small()
-            .color(egui::Color32::from_rgb(220, 120, 90)),
-        )
-        .on_hover_text(
-            "The free list cannot hold more slots than the slice has, so this is the              allocator releasing a slot twice. Always zero, or the allocator is wrong.",
+    });
+
+    block(ui, "Pool");
+    grid(ui, "shadow_pages_pool", |ui| {
+        metric_with_tooltip(
+            ui,
+            "slice used",
+            &format!(
+                "{} / {}  ({:.0}%)",
+                thousands(pool.allocated() as u64),
+                thousands(pool.capacity as u64),
+                pool.load()
+            ),
+            "The pool is SLICED between the cameras — a layer of the atlas each — so this \
+             is what THIS view may spend, not the whole budget: a camera cannot take \
+             another camera's pages and cannot be robbed of its own. \
+             `shadow_pool_pages` moves it.",
         );
-    }
-    if counts.pool.overflow > 0 {
-        ui.label(
-            egui::RichText::new(format!(
-                "{} pages went unallocated — the pool is full",
-                counts.pool.overflow
-            ))
-            .small()
-            .color(egui::Color32::from_rgb(220, 120, 90)),
-        )
-        .on_hover_text(
-            "Pages the frame needed and the pool could not give a slot to. They render \
-             unshadowed. Epic's own pool overflow shows up as checkerboard corruption or \
-             missing shadows, which is exactly the kind of failure nobody recognises by \
-             sight — so it is named here instead.",
+        metric_with_tooltip(
+            ui,
+            "hit rate",
+            &format!("{:.0}%", pool.hit_rate()),
+            "The reading persistence exists to produce. A STILL camera should sit at 100%: \
+             every page it wants is one it already has, so the raster draws nothing and the \
+             atlas is last frame's. A page is freed when nothing has asked for it in \
+             `shadow_page_seconds`, or the moment the seating plan stops funding its rank \
+             under pressure (#942).",
         );
-    }
-    if let Some(raster) = raster_counts {
+        metric(
+            ui,
+            "reused / new",
+            &format!(
+                "{} / {}",
+                thousands(pool.reused as u64),
+                thousands(pool.claims as u64)
+            ),
+        );
+        metric(ui, "evicted", &thousands(pool.evicted as u64));
+        if pool.preempted > 0 {
+            metric_with_tooltip(
+                ui,
+                "preempted",
+                &thousands(pool.preempted as u64),
+                "Pages evicted by PRESSURE rather than by age: the plan did not fund their \
+                 rank this frame. A camera that stopped moving should drive this to zero \
+                 within a frame — persistent churn here means the demand is oscillating \
+                 around the cutoff rank.",
+            );
+        }
+        metric(
+            ui,
+            "demand / free",
+            &format!("{} / {}", pool.demand, pool.free),
+        );
+        metric_with_tooltip(
+            ui,
+            "bump",
+            &format!(
+                "{} of {}",
+                thousands(pool.high as u64),
+                thousands(pool.capacity as u64)
+            ),
+            "How far the bump allocator has ever reached. It never goes down — a freed slot \
+             returns to the free list — so once it reaches capacity every allocation must \
+             come off that list.",
+        );
+        metric_with_tooltip(
+            ui,
+            "slots",
+            &format!(
+                "{} popped · {} bumped · {} back",
+                pool.popped, pool.bumped, pool.pushed
+            ),
+            "Every take and every give-back of this frame, so a shortfall can be attributed \
+             to an operation rather than inferred. A slot is taken either off the free list \
+             or from the bump, and given back only to the free list.",
+        );
+    });
+
+    block(ui, "Marking");
+    grid(ui, "shadow_pages_marking", |ui| {
+        // 🔴 The count is for EVERY light the grid holds, not the
+        // handful that have a shadow slot today — and that is the
+        // measurement, not an oversight. Counting only the four that fit
+        // today's slots would be measuring the cap the feature removes.
+        metric_with_tooltip(
+            ui,
+            "samples",
+            &thousands(counts.samples as u64),
+            "The pass walks the froxel grid, which holds every light that reaches a pixel — \
+             so these numbers are what the scene would cost with ALL of its lights casting.",
+        );
+        metric(ui, "light pairs", &thousands(counts.pairs as u64));
+        metric_with_tooltip(
+            ui,
+            "gated by coverage",
+            &if counts.culled > 0 {
+                thousands(counts.culled as u64)
+            } else {
+                "0 — every light casting".to_owned()
+            },
+            "Lights whose whole range projects under `shadow_min_pixels` on screen (#944): \
+             they still shade, but a shadow nobody can resolve claims no pages.",
+        );
+        if counts.froxels > 0 && counts.samples > 0 {
+            // 🔴 `pairs` counts a different thing on each path, so the
+            // ratio has to be read from the side that owns it. Dividing
+            // froxel pairs by samples printed `0.0 lights each` and a
+            // made-up multiplier beside it.
+            let (lights_each, walked, other) = if counts.by_froxel {
+                let each = counts.pairs as f32 / counts.froxels as f32;
+                (each, counts.pairs as f32, counts.samples as f32 * each)
+            } else {
+                let each = counts.pairs as f32 / counts.samples as f32;
+                (each, counts.pairs as f32, counts.froxels as f32 * each)
+            };
+            let ratio = (walked.max(1.0) / other.max(1.0)).max(other.max(1.0) / walked.max(1.0));
+            metric(ui, "froxels occupied", &thousands(counts.froxels as u64));
+            metric(ui, "lights each", &format!("{lights_each:.1}"));
+            // 🔴 Olsson §III derives shadow resolution from cluster/light
+            // pairs rather than sample/light pairs, because cluster
+            // bounds are "several orders of magnitude fewer than the
+            // samples". This row is that claim, in this scene, as a
+            // number rather than an argument (#952).
+            metric_with_tooltip(
+                ui,
+                "walking",
+                &format!(
+                    "{} · {ratio:.0}x the other way",
+                    if counts.by_froxel {
+                        "per froxel"
+                    } else {
+                        "per pixel"
+                    }
+                ),
+                "The marking runs per (pixel, light); the same walk over occupied froxels \
+                 would run per (froxel, light), and this is the ratio between the two. It \
+                 is an upper bound on the win: a froxel's bounds project to a RANGE of \
+                 pages rather than one, so a cluster pass marks conservatively and spends \
+                 pool slots the per-pixel version never asked for.",
+            );
+            // 🔴 Derived from this engine's own budget, not from
+            // folklore. On the OneXFly `shade: compute` measured 5.5 ms
+            // at 17.9 lights per pixel — about 0.31 ms a light — against
+            // a 13.9 ms frame. Holding the shading loop near 2 ms, a
+            // fifth of the budget, puts the sustainable average at six or
+            // seven; a PEAK may run to twice that, so the alert fires at
+            // sixteen.
+            const OVERLAP_WARN: u32 = 16;
+            if counts.peak_lights > 0 {
+                let text = format!("{} lights", counts.peak_lights);
+                let tip = "Point and spot lights whose ranges overlap all land in the same \
+                           froxel, and every pixel of that froxel walks all of them — in \
+                           the shading loop and again in the page marking. Overlap is \
+                           invisible while authoring: lights are placed one at a time and \
+                           the cell they share is not drawn anywhere.";
+                if counts.peak_lights > OVERLAP_WARN {
+                    metric_coloured(
+                        ui,
+                        "worst froxel",
+                        &format!("{text} — overlapping"),
+                        egui::Color32::from_rgb(240, 180, 60),
+                        tip,
+                    );
+                } else {
+                    metric_with_tooltip(ui, "worst froxel", &text, tip);
+                }
+            }
+        }
+    });
+
+    let Some(raster) = raster_counts else {
+        return;
+    };
+    block(ui, "Raster");
+    grid(ui, "shadow_pages_raster", |ui| {
         // 🔴 What was actually DRAWN, against what was asked for. The
         // marking count above is a request; this is the answer, and the
-        // two differing is the single most useful thing this panel can
-        // say.
-        ui.label(
-            egui::RichText::new(format!(
-                "{} pages rastered · {} cached · {} meshlet/page pairs",
-                raster.pages, raster.cached, raster.pairs
-            ))
-            .small()
-            .weak(),
-        )
-        .on_hover_text(
-            "The pages the depth raster actually filled, the resident pages whose \
-             content survived from an earlier frame (the cache — those cost nothing), \
-             and the meshlet/page pairs drawn to fill the dirty ones. A still scene \
-             should raster near zero; UE5's rule of thumb is under 5% of residents.",
+        // two differing is the single most useful thing this panel says.
+        metric_with_tooltip(
+            ui,
+            "rastered",
+            &format!("{} pages", thousands(raster.pages as u64)),
+            "The pages the depth raster actually filled. A still scene should raster near \
+             zero; UE5's rule of thumb is under 5% of residents.",
         );
+        metric_with_tooltip(
+            ui,
+            "cached",
+            &thousands(raster.cached as u64),
+            "Resident pages whose content survived from an earlier frame. They cost nothing.",
+        );
+        metric(ui, "meshlet pairs", &thousands(raster.pairs as u64));
+        if raster.local > 0 {
+            metric_with_tooltip(
+                ui,
+                "local-light pages",
+                &thousands(raster.local as u64),
+                "Pages belonging to point and spot lights, rasterised this frame. They share \
+                 the sun's buckets: a bucket is an OCTAVE of world texel size, so a lamp and \
+                 the sun that want the same fineness draw from the same survivor list. \
+                 ⚠️ They spend the same pool the sun does.",
+            );
+        }
         // 🔴 The number that decides the shape of the local-light
         // raster. The expansion is a product — a level's pages times a
         // level's surviving meshlets — so what it costs is the
         // combinations it walks, not the pairs it finds.
         if raster.tests > 0 {
             let per_pair = raster.tests as f32 / raster.pairs.max(1) as f32;
-            ui.label(
-                egui::RichText::new(format!(
-                    "{} pair tests · {per_pair:.0} per pair · {} lamp-rejected · {} sun-rejected · worst level {} at {}",
-                    thousands(raster.tests),
-                    thousands(raster.depth_rejected as u64),
-                    thousands(raster.sun_rejected as u64),
-                    raster.worst.0,
-                    thousands(raster.worst.1)
-                ))
-                .small()
-                .weak(),
-            )
-            .on_hover_text(
+            metric_with_tooltip(
+                ui,
+                "pair tests",
+                &format!("{} · {per_pair:.0} per pair", thousands(raster.tests)),
                 "The expansion asks, for every page of a level and every meshlet that \
                  survived that level's cull, whether the two touch. So its cost is pages \
-                 TIMES meshlets, and the pairs it emits are what is left after the \
-                 question is answered — the ratio is how much of the pass is spent \
-                 proving a miss. \
-                 ⚠️ It is also the number that decides whether local lights are \
-                 affordable: they multiply the page side by roughly eighty, and the \
-                 inverse form — asking which pages a meshlet touches — was measured \
-                 WORSE for the sun, because a meshlet's rect covers up to 16384 cells at \
-                 the finest clipmap levels while only twenty pages are resident there.",
+                 TIMES meshlets, and the pairs it emits are what is left after the question \
+                 is answered — the ratio is how much of the pass is spent proving a miss. \
+                 ⚠️ It is also the number that decides whether local lights are affordable: \
+                 they multiply the page side by roughly eighty, and the inverse form — \
+                 asking which pages a meshlet touches — was measured WORSE for the sun, \
+                 because a meshlet's rect covers up to 16384 cells at the finest clipmap \
+                 levels while only twenty pages are resident there.",
+            );
+            metric(
+                ui,
+                "rejected",
+                &format!(
+                    "{} lamp · {} sun",
+                    thousands(raster.depth_rejected as u64),
+                    thousands(raster.sun_rejected as u64)
+                ),
+            );
+            metric_with_tooltip(
+                ui,
+                "worst level",
+                &format!("{} at {}", raster.worst.0, thousands(raster.worst.1)),
+                "The clipmap level whose expansion walked the most combinations. A level \
+                 far above the others is the one to bias.",
             );
             // 🔴 The counted cost of the shape this pass does NOT use.
             // Both numbers are measured every frame so the choice
             // between them is arithmetic instead of an opinion — which
-            // is the thing that was missing the last time one of them
-            // shipped everywhere at once.
+            // is what was missing the last time one of them shipped
+            // everywhere at once.
             let save = raster.tests.saturating_sub(raster.hybrid);
             let cut = save as f32 / raster.tests.max(1) as f32 * 100.0;
-            ui.label(
-                egui::RichText::new(format!(
-                    "scatter would run {} · per-level best {} ({cut:.0}% off)",
+            metric_with_tooltip(
+                ui,
+                "scatter would cost",
+                &format!(
+                    "{} · best {} ({cut:.0}% off)",
                     thousands(raster.scatter),
-                    thousands(raster.hybrid),
-                ))
-                .small()
-                .weak(),
-            )
-            .on_hover_text(
-                "There are two ways to find which meshlet belongs in which page.                  PAIRING walks every resident page against every survivor, which is                  what runs today. SCATTERING walks the cells each meshlet's bounds                  cover and looks them up, which is what the first number would cost —                  counted here without being run.                  Neither wins everywhere: a page at level 0 is centimetres wide so one                  meshlet covers thousands of cells against a handful of resident pages,                  while at level 12 a page is hundreds of metres and every meshlet lands                  in exactly one cell.                  The second number takes the cheaper shape at each level separately, and                  the percentage is the whole prize a hybrid has to offer.",
+                    thousands(raster.hybrid)
+                ),
+                "There are two ways to find which meshlet belongs in which page. PAIRING \
+                 walks every resident page against every survivor, which is what runs \
+                 today. SCATTERING walks the cells each meshlet's bounds cover and looks \
+                 them up, which is what the first number would cost — counted here without \
+                 being run. Neither wins everywhere: a page at level 0 is centimetres wide \
+                 so one meshlet covers thousands of cells against a handful of resident \
+                 pages, while at level 12 a page is hundreds of metres and every meshlet \
+                 lands in exactly one cell. The second number takes the cheaper shape at \
+                 each level separately, and the percentage is the whole prize a hybrid has \
+                 to offer.",
             );
         }
-        if raster.local > 0 {
-            ui.label(
-                egui::RichText::new(format!(
-                    "{} local-light pages drawn",
-                    thousands(raster.local as u64),
-                ))
-                .small()
-                .weak(),
-            )
-            .on_hover_text(
-                "Pages belonging to point and spot lights, rasterised this frame. They \
-                 share the sun's buckets: a bucket is an OCTAVE of world texel size, so a \
-                 lamp and the sun that want the same fineness draw from the same survivor \
-                 list — which is what lets the local half cost no cull of its own. \
-                 A page carries its light in its own key, so nothing downstream needs the \
-                 list split by lamp; a bucket per light per level would be the 4848-view \
-                 shape this exists to avoid. \
-                 ⚠️ They spend the same pool the sun does. When the pool fills, the \
-                 overflow line above says so.",
-            );
-        }
-        if raster.dropped > 0 || raster.overflow > 0 {
-            ui.label(
-                egui::RichText::new(format!(
-                    "{} pages dropped · {} pairs past the list — shadows are missing",
-                    raster.dropped, raster.overflow
-                ))
-                .small()
-                .color(egui::Color32::from_rgb(220, 120, 90)),
-            );
-        }
-    }
+    });
     // The hash's two failure meters — tombstones walked and inserts out
     // of probes — are gone with the hash: the flat table has no probe
     // run to degrade. See `page_table.wgsl`.
@@ -1383,6 +1379,60 @@ fn grid(ui: &mut egui::Ui, salt: &str, body: impl FnOnce(&mut egui::Ui)) {
 fn metric(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.label(label);
     ui.label(egui::RichText::new(value).monospace());
+    ui.end_row();
+}
+
+/// A named block heading inside a section.
+///
+/// The section title is one level up and says WHAT is being measured;
+/// this says which half of the pipeline a row belongs to. Without it the
+/// pool's counters and the raster's sit in one undifferentiated run, and
+/// a reader looking for "how full is the pool" has to know the order
+/// they happen to be printed in.
+fn block(ui: &mut egui::Ui, title: &str) {
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new(title).small().strong());
+}
+
+/// A reading that says the frame is WRONG, in the colour reserved for it.
+///
+/// 🔴 Drawn before every healthy counter rather than in the position the
+/// number happens to be computed in. A red line sitting eleventh in a
+/// list of eleven grey ones is not an alert.
+fn alert(ui: &mut egui::Ui, text: &str, tooltip: &str) {
+    ui.label(
+        egui::RichText::new(text)
+            .small()
+            .color(egui::Color32::from_rgb(220, 120, 90)),
+    )
+    .on_hover_text(tooltip);
+}
+
+/// A reading that says the frame is under PRESSURE but still correct —
+/// the pool rationing, not the pool failing. Amber rather than red, and
+/// the distinction is the point: one is a budget being spent, the other
+/// is a bug.
+fn warn(ui: &mut egui::Ui, text: &str, tooltip: &str) {
+    ui.label(
+        egui::RichText::new(text)
+            .small()
+            .color(egui::Color32::from_rgb(230, 190, 90)),
+    )
+    .on_hover_text(tooltip);
+}
+
+/// [`metric_with_tooltip`] with the value in a colour, for a row that is
+/// inside its grid but past a threshold.
+fn metric_coloured(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &str,
+    colour: egui::Color32,
+    tooltip: &str,
+) {
+    ui.label(label).on_hover_text(tooltip);
+    ui.label(egui::RichText::new(value).monospace().color(colour))
+        .on_hover_text(tooltip);
     ui.end_row();
 }
 
