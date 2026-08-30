@@ -142,7 +142,16 @@ impl PoolConfig {
     /// The cap belongs on the LAYER; the pages then spill into more of
     /// them (#1016).
     pub fn fit_atlas(mut self, max_side: u32, page: u32) -> Self {
-        self.row_cap = (max_side / page.max(1)).max(1);
+        let device = (max_side / page.max(1)).max(1);
+        // 🔴 An override that can only make the layer SMALLER, and it
+        // exists because the multi-layer path is otherwise unreachable
+        // where anyone can look at it. The pool is split between views,
+        // so the editor's two cameras get half each: even the maximum
+        // 8192 pages is 4096 a view, which is exactly one 64x64 layer.
+        // Only a single-view build ever crosses — and a build has no
+        // Shadow pages panel. A cap the tester can lower turns "trust
+        // the unit test" into "look at it".
+        self.row_cap = row_cap_from_environment().unwrap_or(device).min(device);
         self
     }
 
@@ -322,6 +331,28 @@ pub const DEFAULT_MAX_AGE: u32 = 60;
 /// moment the frame stopped taking 16.7 ms.
 pub const DEFAULT_AGE_SECONDS: f32 = 1.0;
 
+/// `KOOCH_SHADOW_ROW_CAP`, read once — pages a layer may hold across.
+///
+/// Only ever narrows what the device allows, so it cannot be used to
+/// ask for a texture the driver would refuse.
+pub fn row_cap_from_environment() -> Option<u32> {
+    static CAP: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| {
+        let cap = std::env::var("KOOCH_SHADOW_ROW_CAP")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|c| *c > 0);
+        if let Some(cap) = cap {
+            tracing::info!(
+                target: "kooch_render::shadow",
+                cap,
+                "KOOCH_SHADOW_ROW_CAP: the atlas layer is narrowed on purpose",
+            );
+        }
+        cap
+    })
+}
+
 /// `KOOCH_SHADOW_PAGE_SECONDS`, read once.
 pub fn age_seconds() -> f32 {
     static SECONDS: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
@@ -394,6 +425,24 @@ pub struct PagePool {
 
 impl PagePool {
     pub fn new(device: &wgpu::Device, config: PoolConfig) -> Self {
+        // 🔴 Said out loud because a BUILD has no Shadow pages panel,
+        // and the layer split only ever happens in a build: the pool is
+        // divided between views, so the editor's two cameras never
+        // cross a layer boundary. Without this line the one
+        // configuration that exercises the multi-layer path is also the
+        // one nobody can inspect.
+        tracing::info!(
+            target: "kooch_render::shadow",
+            pages = config.pages,
+            views = config.view_count(),
+            per_row = config.per_row(),
+            per_layer = config.slice(),
+            layers_per_view = config.layers_per_view(),
+            layers = config.layers(),
+            slots_per_view = config.slots(),
+            total = config.total(),
+            "the shadow page atlas is laid out",
+        );
         Self {
             slots: table_buffer(device, "shadow_page_cells", PAGE_CELL),
             alloc: table_buffer(
