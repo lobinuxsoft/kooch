@@ -209,6 +209,85 @@ wants these values sets them.
 
 ---
 
+## 🎯 The order, decided 2026-08-30 — the cost was never where it looked
+
+A night on `dense.scene` took the GPU frame from **10.88 ms to 3.5 ms**
+and the editor's frame, with a key held, from **49 ms to clean**. Almost
+none of it was the thing the profiler pointed at, and that is the lesson
+worth keeping.
+
+### What actually paid
+
+| | before | after | what it really was |
+|---|---|---|---|
+| `page cull` | 7.40 ms | **0.80** | 2.3 GiB of `clear_buffer` a frame, not culling |
+| `other`, key held | 41.23 ms | **~1** | one listener thread, not payload size |
+| the standalone build | blue screen | renders | 10112 texels against an 8192 limit |
+| pages, one view | 4096 | **6144** | the cap belonged on the layer |
+
+**#1002** put the camera's cull on instances instead of an
+`instances x heaviest mesh` rectangle, and the clipmap kept the
+rectangle: seventeen culls a frame, and toggling the setting moved the
+number by 0.02 ms because it never reached that path.
+
+But the 4.5 ms that survived were not work. `group_max_err` is indexed
+by LOD group — 24 108 of them — and the page path handed it the cull
+rectangle, asking for 16.7 M. `reject_reasons` is only read by an
+overlay wired to the camera's cull. **Both were cleared in full on all
+seventeen dispatches.**
+
+### 🔴 Three failure modes this roadmap now watches for
+
+**1. An instrument that cannot express the complaint.** Two rounds of
+"it drops frames when I move" were reported against a HUD whose every
+row is a mean over sixty frames — the shape built to hide a hitch. A
+30 ms spike inside a second of 6 ms frames moves the average by 0.4 ms.
+Adding `worst:` made a 113 ms spike visible **with the GPU at 3.55 ms**,
+which ended the search in one reading.
+
+**2. A constant that meant a duration.** `DEFAULT_MAX_AGE = 60`, and its
+own doc called it "a second at 60 Hz". At 150 FPS it became 0.4 s, so
+the page cache forgot twice as fast — *a stutter that arrived with the
+optimisation that caused it*. Anything measured in frames that means a
+duration is a bug waiting for the frame rate to change.
+
+**3. Fixing the half that does not cost anything.** `notify` made the
+CLIENT stop waiting for a reply nobody read. The server's single
+listener kept blocking on the main loop before it could accept the next
+connection, so holding a key put two blocking connections through a
+queue that serves one. **The cost moved rather than left.**
+
+### What is open, in order
+
+1. **#1012** — a spawn makes the cheap play-mode pull give up and fall
+   back to reflecting every field of every component of every entity.
+   Send the entity that appeared, not the 2159.
+2. **#1018** — a camera translation redraws 1472 pages in one frame,
+   between two frames that redraw none. ⚠️ The issue carries an explicit
+   *do not theorise before the counter exists*: three hypotheses have
+   already been wrong on this artifact.
+3. **#1017** — a page is square to the SUN and a rectangle on the
+   ground, stretched by `1 / cos(incidence)`. At 10° that is 5.8x, and
+   it is why raising `shadow_bias_max` cannot fix the contact gap: the
+   bias multiplies one texel, so it overshoots on the short axis while
+   still falling short on the long one.
+4. **#1011** — half done. `visible_meshlets` is still sized by the cull
+   rectangle, 16.7 M entries a level.
+5. **#1019** — the far-layer guard. `a_page_on_the_far_layer_draws_the_same`
+   passes with the layer gate disabled, so #1020 is validated by
+   observation and not by that test.
+
+### The method that worked, and the one that did not
+
+Every real finding this session came from **reading a number**, and
+every wasted hour came from **asserting one**. The worst was computing
+`10112` correctly and discarding it against a `max_texture_dimension_2d`
+of 16384 that was never read — the engine asks for 8192. A calculation
+checked against an invented constant is worse than no calculation: it
+closes the right line of enquiry with false confidence.
+
+---
+
 ## 🎯 The order, decided 2026-08-28 — the dense scene opened, and named three things
 
 `dense.scene` — 2024 instances over 1410 m, 64 orbiting lights, all
