@@ -157,3 +157,254 @@ fn a_resident_page_lights_its_ancestors() {
         "level 0 lit up for a page marked on level 1",
     );
 }
+
+/// Rectangles to ask about, and the answer the pyramid gives for each.
+const PROBE: &str = r#"
+@group(0) @binding(0) var pyramid: texture_2d_array<u32>;
+@group(0) @binding(1) var<storage, read> rects: array<vec4<u32>>;
+@group(0) @binding(2) var<storage, read_write> answers: array<u32>;
+@group(0) @binding(3) var<uniform> shape: vec4<u32>;
+
+@compute @workgroup_size(64, 1, 1)
+fn cs_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= arrayLength(&rects) {
+        return;
+    }
+    let hit = overlaps_any_page(pyramid, rects[gid.x], shape.x, shape.y);
+    // The mip rides along so the test can pin the CHOICE, not only the
+    // answer: too high a mip is still safe and still wrong.
+    answers[gid.x] = select(0u, 1u, hit) | (overlap_mip(rects[gid.x], shape.y) << 1u);
+}
+"#;
+
+/// The constant-time answer may never miss a resident page.
+///
+/// 🔴 The two directions are not equally bad and the assertions say so.
+/// A FALSE NEGATIVE drops a caster: the expansion never pairs it with
+/// the page it belongs in, the page is drawn without it, and the shadow
+/// is missing with every counter reporting health. A false positive is
+/// one pair tested and discarded. So the first is checked exhaustively
+/// against the slow answer, and the second only has to stay away from
+/// the degenerate case — a function that returned `true` always would
+/// satisfy the safety property and be worthless.
+#[test]
+fn the_pyramid_never_misses_a_page() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let config = PageConfig {
+        page: 128,
+        virtual_size: 128 * 16,
+        ..PageConfig::default()
+    };
+    let clipmap = ClipmapConfig {
+        base: 1.28,
+        levels: 2,
+    };
+    let side = config.side(0);
+    let mips = PagePyramid::mip_count(side);
+    let level = 0u32;
+    // Scattered on purpose: one in a corner, one that shares a mip-2
+    // block with nothing, one adjacent to another so a block holds two.
+    let resident = [(0u32, 0u32), (5u32, 9u32), (6u32, 9u32), (15u32, 2u32)];
+
+    let entries = (side * side * clipmap.levels) as usize;
+    let mut words = vec![0u32; entries * 6];
+    for &(x, y) in &resident {
+        let page = level * side * side + y * side + x;
+        words[page as usize * 6] = 1;
+    }
+    let table = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (words.len() * 4) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&table, 0, bytemuck::cast_slice(&words));
+
+    let pyramid = PagePyramid::new(&device, config, clipmap);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    pyramid.build(&device, &queue, &mut encoder, &table, 0);
+    queue.submit([encoder.finish()]);
+
+    // Every rectangle up to 4 pages a side, everywhere on the grid.
+    let mut rects: Vec<[u32; 4]> = Vec::new();
+    for y in 0..side {
+        for x in 0..side {
+            for size in 1..=4u32 {
+                rects.push([
+                    x,
+                    y,
+                    (x + size - 1).min(side - 1),
+                    (y + size - 1).min(side - 1),
+                ]);
+            }
+        }
+    }
+    let truth: Vec<bool> = rects
+        .iter()
+        .map(|r| {
+            resident
+                .iter()
+                .any(|&(x, y)| x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3])
+        })
+        .collect();
+
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("page_overlap_probe"),
+        source: wgpu::ShaderSource::Wgsl(format!("{OVERLAP}\n{PROBE}").into()),
+    });
+    let storage = |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    };
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            storage(1, true),
+            storage(2, false),
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[Some(&bgl)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(&layout),
+        module: &module,
+        entry_point: Some("cs_probe"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+
+    let flat: Vec<u32> = rects.iter().flatten().copied().collect();
+    let rect_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (flat.len() * 4) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&rect_buf, 0, bytemuck::cast_slice(&flat));
+    let out = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (rects.len() * 4) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let shape = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 16,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&shape, 0, bytemuck::cast_slice(&[level, mips, 0u32, 0u32]));
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(pyramid.view()),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: rect_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: out.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: shape.as_entire_binding(),
+            },
+        ],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups((rects.len() as u32).div_ceil(64), 1, 1);
+    }
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (rects.len() * 4) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    encoder.copy_buffer_to_buffer(&out, 0, &staging, 0, (rects.len() * 4) as u64);
+    queue.submit([encoder.finish()]);
+    staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    let _ = device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: Some(std::time::Duration::from_secs(30)),
+    });
+    let answers: Vec<u32> =
+        bytemuck::cast_slice::<u8, u32>(&staging.slice(..).get_mapped_range()).to_vec();
+
+    // The smallest mip at which both axes collapse to two texels — the
+    // definition, spelled out here so the shader's bit trick is checked
+    // against the thing it is a trick FOR.
+    let wanted_mip = |r: &[u32; 4]| {
+        (0..mips)
+            .find(|m| (r[2] >> m) - (r[0] >> m) <= 1 && (r[3] >> m) - (r[1] >> m) <= 1)
+            .unwrap_or(mips - 1)
+    };
+
+    let mut over = 0usize;
+    for (i, rect) in rects.iter().enumerate() {
+        let said = answers[i] & 1 != 0;
+        assert_eq!(
+            answers[i] >> 1,
+            wanted_mip(rect),
+            "rect {rect:?} was answered at the wrong mip — too high is still safe and still              reads a block bigger than it needs, which is pairs tested for nothing",
+        );
+        assert!(
+            !truth[i] || said,
+            "rect {rect:?} contains a resident page and the pyramid denied it — that is a \
+             caster the expansion never pairs, a page drawn without it, and a shadow \
+             missing with every counter reporting health",
+        );
+        if said && !truth[i] {
+            over += 1;
+        }
+    }
+    // A function returning `true` always would pass the loop above.
+    let loose = over as f32 / rects.len() as f32;
+    assert!(
+        loose < 0.5,
+        "{:.0}% of rectangles were over-reported; the block granularity is meant to cost a \
+         few discarded pairs, not to answer yes to everything",
+        loose * 100.0
+    );
+}

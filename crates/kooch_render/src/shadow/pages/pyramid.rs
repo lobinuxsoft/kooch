@@ -33,6 +33,12 @@
 use super::PageConfig;
 use crate::shadow::pages::ClipmapConfig;
 
+/// The overlap query over this pyramid: no bindings of its own, so
+/// every caller passes the texture it already has. The expansion and
+/// the tests include the same text, which is the only arrangement in
+/// which a test of it says anything about the frame.
+pub const OVERLAP: &str = include_str!("../../../shaders/page_overlap.wgsl");
+
 /// The format is the smallest one every backend accepts as a storage
 /// texture: `R8Uint` is not guaranteed writable, and a single bit is
 /// what is being stored either way.
