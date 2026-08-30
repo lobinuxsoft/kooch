@@ -892,6 +892,24 @@ fn shadow_page_readout(
              allocator is wrong.",
         );
     }
+    // 🔴 First of the raster's alerts, because it is the one that looks
+    // like something else entirely. These pages render LIT with nothing
+    // wrong upstream of them — resident, allocated, correctly keyed —
+    // so in a shaded frame it reads as a bias that overshot or a page
+    // that never arrived, and both of those send you to the wrong knob.
+    if let Some(raster) = raster_counts
+        && raster.unfilled > 0
+    {
+        alert(
+            ui,
+            &format!(
+                "{} pages have no geometry — bucket {} culled to nothing",
+                thousands(raster.unfilled as u64),
+                raster.unfilled_first
+            ),
+            "The expansion is dispatched as `pages * meshlets`, so a bucket holding pages              whose cull produced no survivors runs zero threads and emits no pairs. The              pages are still resident and still cleared, and a cleared page stores 0 — FAR              under reversed-Z — so every reader over it answers that nothing occludes.              The result is a bright patch in the middle of a shadow with the page present              and correct.\n\nLook at the bucket named: the sun's clipmap owns the first              levels, then one bucket per lamp. A sun level with pages and no survivors is              its cull disagreeing with what the marking asked for.",
+        );
+    }
     if let Some(raster) = raster_counts
         && (raster.dropped > 0 || raster.overflow > 0)
     {

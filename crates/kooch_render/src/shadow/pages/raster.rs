@@ -228,6 +228,23 @@ pub struct RasterCounts {
     /// offer, and it is the only number that says whether the hybrid is
     /// worth building.
     pub hybrid: u64,
+    /// Pages sitting in a bucket whose cull produced NO survivors.
+    ///
+    /// 🔴 These render LIT, and that is the whole reason the counter
+    /// exists. `cs_expand_args` sizes the expansion as `pages *
+    /// meshlets`, so a bucket holding pages and no meshlets dispatches
+    /// zero threads and emits no pairs — while the pages themselves are
+    /// still resident and still cleared. A cleared page stores 0, which
+    /// is FAR under reversed-Z, so every reader over it answers
+    /// "nothing occludes here": a bright patch, with the page present,
+    /// allocated and correctly keyed.
+    ///
+    /// By sight it is indistinguishable from a missing page or from a
+    /// bias that overshot. That is why it is a number.
+    pub unfilled: u32,
+    /// The lowest bucket in that state, so the reading names one.
+    /// `u32::MAX` when there is none.
+    pub unfilled_first: u32,
 }
 
 #[repr(C)]
@@ -920,11 +937,18 @@ impl PageRasterizer {
         let mut worst = (0u32, 0u64);
         let mut scatter = 0u64;
         let mut hybrid = 0u64;
+        let mut unfilled = 0u32;
+        let mut unfilled_first = u32::MAX;
         for level in 0..levels {
             let pages = words[level].min(cap) as u64;
             let meshlets = words.get(levels + 5 + level).copied().unwrap_or(0) as u64;
             let cells = words.get(levels * 2 + 5 + level).copied().unwrap_or(0) as u64;
             let work = pages * meshlets;
+            // 🔴 Pages with nothing to draw into them. See `unfilled`.
+            if pages > 0 && meshlets == 0 {
+                unfilled += pages as u32;
+                unfilled_first = unfilled_first.min(level as u32);
+            }
             tests += work;
             scatter += cells;
             // The choice a hybrid would make at this level, which is
@@ -941,6 +965,8 @@ impl PageRasterizer {
             worst,
             scatter,
             hybrid,
+            unfilled,
+            unfilled_first,
             pages: words[..levels].iter().map(|&n| n.min(cap)).sum(),
             // 🔴 Every listed page, the sun's and the lamps' alike,
             // because they share buckets now: a lamp and the sun that
