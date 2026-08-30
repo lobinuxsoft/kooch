@@ -77,6 +77,7 @@ fn set_field_routes_to_the_server() {
         let hero = match handle(
             &Request {
                 id: 0,
+                notify: false,
                 method: Method::Spawn {
                     name: Some("Hero".into()),
                     scene: None,
@@ -95,6 +96,7 @@ fn set_field_routes_to_the_server() {
         handle(
             &Request {
                 id: 1,
+                notify: false,
                 method: Method::AddComponent {
                     entity: hero,
                     component: transform_ty.into(),
@@ -477,6 +479,7 @@ fn reparent_reaches_the_project() {
             handle(
                 &Request {
                     id: 1,
+                    notify: false,
                     method: Method::Spawn {
                         name: Some(name.to_owned()),
                         scene: None,
@@ -669,6 +672,7 @@ fn an_undone_field_goes_back() {
         let hero = match handle(
             &Request {
                 id: 0,
+                notify: false,
                 method: Method::Spawn {
                     name: Some("Hero".into()),
                     scene: None,
@@ -687,6 +691,7 @@ fn an_undone_field_goes_back() {
         handle(
             &Request {
                 id: 1,
+                notify: false,
                 method: Method::AddComponent {
                     entity: hero,
                     component: transform_ty.into(),
@@ -774,6 +779,7 @@ fn an_undone_despawn_rebuilds_it() {
         let hero = match handle(
             &Request {
                 id: 0,
+                notify: false,
                 method: Method::Spawn {
                     name: Some("Hero".into()),
                     scene: None,
@@ -792,6 +798,7 @@ fn an_undone_despawn_rebuilds_it() {
         handle(
             &Request {
                 id: 1,
+                notify: false,
                 method: Method::AddComponent {
                     entity: hero,
                     component: transform_ty.into(),
@@ -802,6 +809,7 @@ fn an_undone_despawn_rebuilds_it() {
         handle(
             &Request {
                 id: 2,
+                notify: false,
                 method: Method::SetField {
                     entity: hero,
                     component: transform_ty.into(),
@@ -888,6 +896,7 @@ fn a_paste_is_built_and_undone() {
         let hero = match handle(
             &Request {
                 id: 0,
+                notify: false,
                 method: Method::Spawn {
                     name: Some("Hero".into()),
                     scene: None,
@@ -906,6 +915,7 @@ fn a_paste_is_built_and_undone() {
         handle(
             &Request {
                 id: 1,
+                notify: false,
                 method: Method::AddComponent {
                     entity: hero,
                     component: transform_ty.into(),

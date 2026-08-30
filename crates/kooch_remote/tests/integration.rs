@@ -47,7 +47,14 @@ fn ecs() -> Resources {
 }
 
 fn call(resources: &mut Resources, method: Method) -> ResponseData {
-    let response = handle(&Request { id: 1, method }, resources);
+    let response = handle(
+        &Request {
+            id: 1,
+            notify: false,
+            method,
+        },
+        resources,
+    );
     match response.payload {
         ResponsePayload::Result(data) => data,
         ResponsePayload::Error(e) => panic!("unexpected error: {e:?}"),
@@ -181,6 +188,7 @@ fn unknown_component_is_a_typed_error() {
     let response = handle(
         &Request {
             id: 2,
+            notify: false,
             method: Method::AddComponent {
                 entity,
                 component: "game::NotHere".into(),
@@ -877,6 +885,7 @@ fn saving_without_a_manager_is_refused() {
     let response = handle(
         &Request {
             id: 1,
+            notify: false,
             method: Method::SaveScene {
                 path: out.to_string_lossy().into_owned(),
                 scene: None,
@@ -1187,6 +1196,7 @@ fn an_unsaved_scene_refuses_to_revert() {
     let response = handle(
         &Request {
             id: 1,
+            notify: false,
             method: Method::RevertScene { scene: None },
         },
         &mut resources,
@@ -1296,6 +1306,7 @@ fn a_move_into_itself_is_refused() {
     let response = handle(
         &Request {
             id: 1,
+            notify: false,
             method: Method::MoveEntity {
                 entity: root,
                 parent: Some(child),

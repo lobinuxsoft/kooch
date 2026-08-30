@@ -366,6 +366,22 @@ pub struct Request {
     /// Correlation id, echoed back verbatim.
     #[serde(default)]
     pub id: u64,
+    /// Whether the sender has already stopped listening (#1015).
+    ///
+    /// 🔴 The server has ONE listener thread and `serve_one` blocks it
+    /// on the main loop's reply before it can accept the next
+    /// connection. A caller that will not read the answer still cost a
+    /// whole host frame of that thread, so holding a key — one input
+    /// push per frame on top of the editor's pull — put two blocking
+    /// connections through a queue that serves one. The pull then landed
+    /// every OTHER host frame and a full refresh queued behind both:
+    /// measured as 41 ms of a 49 ms editor frame, and only ever while a
+    /// key was down.
+    ///
+    /// `#[serde(default)]`, so a request from an older client reads as
+    /// `false` and keeps the reply it is waiting for.
+    #[serde(default)]
+    pub notify: bool,
     #[serde(flatten)]
     pub method: Method,
 }

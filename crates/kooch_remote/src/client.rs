@@ -427,7 +427,11 @@ impl RemoteClient {
     /// typed [`RemoteError`] to [`ClientError::Remote`].
     pub fn call(&self, method: Method) -> Result<ResponseData, ClientError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let request = Request { id, method };
+        let request = Request {
+            id,
+            notify: false,
+            method,
+        };
         let body =
             serde_json::to_string(&request).map_err(|e| ClientError::Decode(e.to_string()))?;
 
@@ -478,7 +482,14 @@ impl RemoteClient {
     /// answer nobody wants.
     pub fn notify(&self, method: Method) -> Result<(), ClientError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let request = Request { id, method };
+        // Marked so the SERVER can skip the reply too. Without this the
+        // caller stopped waiting and the listener thread did not —
+        // and that thread is the one the next request needs (#1015).
+        let request = Request {
+            id,
+            notify: true,
+            method,
+        };
         let body =
             serde_json::to_string(&request).map_err(|e| ClientError::Decode(e.to_string()))?;
 

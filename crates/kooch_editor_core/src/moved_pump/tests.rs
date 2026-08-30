@@ -47,6 +47,7 @@ fn seeded_ecs() -> Resources {
     handle(
         &kooch_remote::protocol::Request {
             id: 0,
+            notify: false,
             method: Method::Spawn {
                 name: Some("Hero".into()),
                 scene: None,
