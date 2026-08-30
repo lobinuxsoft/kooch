@@ -892,22 +892,51 @@ fn shadow_page_readout(
              allocator is wrong.",
         );
     }
-    // 🔴 First of the raster's alerts, because it is the one that looks
-    // like something else entirely. These pages render LIT with nothing
-    // wrong upstream of them — resident, allocated, correctly keyed —
-    // so in a shaded frame it reads as a bias that overshot or a page
-    // that never arrived, and both of those send you to the wrong knob.
+    // 🔴 RED only for the sun, amber for the lamps, and the split is
+    // the reading rather than a refinement of it.
+    //
+    // A LAMP with resident pages and no survivors is usually telling the
+    // truth: the marking makes a page resident because a RECEIVER asked
+    // to be shadowed there, and with no caster inside that light's reach
+    // nothing occludes, so an empty page answers correctly. What it
+    // costs is the clear, every frame, for every one of them.
+    //
+    // The sun is the opposite. Its clipmap covers the whole view, so the
+    // same reading means its cull threw away geometry the marking had
+    // already committed pages to — and those pages render LIT with a
+    // caster standing in them, which by sight is a bias that overshot or
+    // a page that never arrived. Both send you to the wrong knob.
     if let Some(raster) = raster_counts
-        && raster.unfilled > 0
+        && raster.unfilled_sun > 0
     {
         alert(
             ui,
             &format!(
-                "{} pages have no geometry — bucket {} culled to nothing",
-                thousands(raster.unfilled as u64),
+                "{} SUN pages have no geometry — the cull dropped what the marking asked for",
+                thousands(raster.unfilled_sun as u64),
+            ),
+            "The expansion is dispatched as `pages * meshlets`, so a clipmap level holding \
+             pages whose cull produced no survivors runs zero threads and emits no pairs. \
+             The pages stay resident and still get cleared, and a cleared page stores 0 — \
+             FAR under reversed-Z — so every reader over it answers that nothing occludes: \
+             a bright patch, with the page present, allocated and correctly keyed.",
+        );
+    }
+    if let Some(raster) = raster_counts
+        && raster.unfilled > raster.unfilled_sun
+    {
+        warn(
+            ui,
+            &format!(
+                "{} lamp pages cleared for nothing — lowest bucket {}",
+                thousands((raster.unfilled - raster.unfilled_sun) as u64),
                 raster.unfilled_first
             ),
-            "The expansion is dispatched as `pages * meshlets`, so a bucket holding pages              whose cull produced no survivors runs zero threads and emits no pairs. The              pages are still resident and still cleared, and a cleared page stores 0 — FAR              under reversed-Z — so every reader over it answers that nothing occludes.              The result is a bright patch in the middle of a shadow with the page present              and correct.\n\nLook at the bucket named: the sun's clipmap owns the first              levels, then one bucket per lamp. A sun level with pages and no survivors is              its cull disagreeing with what the marking asked for.",
+            "Pages a local light made resident and its own cull then found no caster for. \
+             Usually correct — the page exists because a receiver asked to be shadowed \
+             there, and with nothing in reach to cast, lit IS the answer. It is counted \
+             because the clear is paid every frame regardless.\n\nBuckets: the sun's \
+             clipmap owns the first levels, then one per lamp.",
         );
     }
     if let Some(raster) = raster_counts

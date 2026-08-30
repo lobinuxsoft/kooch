@@ -245,6 +245,20 @@ pub struct RasterCounts {
     /// The lowest bucket in that state, so the reading names one.
     /// `u32::MAX` when there is none.
     pub unfilled_first: u32,
+    /// How many of [`Self::unfilled`] belong to the SUN's clipmap.
+    ///
+    /// 🔴 The split is the reading, not a refinement of it. A LAMP with
+    /// resident pages and no survivors is usually telling the truth:
+    /// the marking makes a page resident because a RECEIVER asked to be
+    /// shadowed there, and if no caster is within that light's reach
+    /// then nothing occludes and an empty page answers correctly. It is
+    /// wasted raster, not a wrong picture.
+    ///
+    /// The sun is the opposite. Its clipmap covers the whole view, so a
+    /// level with pages and no survivors means its cull threw away
+    /// geometry the marking had already committed pages to — and those
+    /// pages render lit with a caster standing in them.
+    pub unfilled_sun: u32,
 }
 
 #[repr(C)]
@@ -938,16 +952,22 @@ impl PageRasterizer {
         let mut scatter = 0u64;
         let mut hybrid = 0u64;
         let mut unfilled = 0u32;
+        let mut unfilled_sun = 0u32;
         let mut unfilled_first = u32::MAX;
         for level in 0..levels {
             let pages = words[level].min(cap) as u64;
             let meshlets = words.get(levels + 5 + level).copied().unwrap_or(0) as u64;
             let cells = words.get(levels * 2 + 5 + level).copied().unwrap_or(0) as u64;
             let work = pages * meshlets;
-            // 🔴 Pages with nothing to draw into them. See `unfilled`.
+            // 🔴 Pages with nothing to draw into them. See `unfilled`,
+            // and `unfilled_sun` for why the two halves read
+            // differently.
             if pages > 0 && meshlets == 0 {
                 unfilled += pages as u32;
                 unfilled_first = unfilled_first.min(level as u32);
+                if (level as u32) < self.clipmap.levels {
+                    unfilled_sun += pages as u32;
+                }
             }
             tests += work;
             scatter += cells;
@@ -967,6 +987,7 @@ impl PageRasterizer {
             hybrid,
             unfilled,
             unfilled_first,
+            unfilled_sun,
             pages: words[..levels].iter().map(|&n| n.min(cap)).sum(),
             // 🔴 Every listed page, the sun's and the lamps' alike,
             // because they share buckets now: a lamp and the sun that
