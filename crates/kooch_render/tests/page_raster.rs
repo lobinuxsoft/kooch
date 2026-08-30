@@ -31,6 +31,7 @@ fn small() -> PoolConfig {
     PoolConfig {
         pages: 64,
         views: VIEWS,
+        row_cap: u32::MAX,
     }
 }
 

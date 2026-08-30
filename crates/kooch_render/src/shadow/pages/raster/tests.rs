@@ -238,7 +238,11 @@ fn copied_fields(source: &str) -> std::collections::BTreeSet<&str> {
 #[test]
 fn a_view_owns_its_slice() {
     for views in 1..=4u32 {
-        let pool = PoolConfig { pages: 2048, views };
+        let pool = PoolConfig {
+            pages: 2048,
+            views,
+            row_cap: u32::MAX,
+        };
         let slice = pool.slice();
         assert!(slice > 0);
         assert_eq!(pool.total(), slice * views, "every view gets one");
@@ -262,11 +266,13 @@ fn slicing_does_not_grow_the_atlas() {
     let one = PoolConfig {
         pages: 2048,
         views: 1,
+        row_cap: u32::MAX,
     }
     .atlas_bytes(config);
     let two = PoolConfig {
         pages: 2048,
         views: 2,
+        row_cap: u32::MAX,
     }
     .atlas_bytes(config);
     assert!(

@@ -335,7 +335,11 @@ fn the_atlas_is_square_enough() {
     // wider than a handful of texels.
     let page = PageConfig::default();
     for pages in [64u32, 1000, 4096, 8192] {
-        let config = PoolConfig { pages, views: 1 };
+        let config = PoolConfig {
+            pages,
+            views: 1,
+            row_cap: u32::MAX,
+        };
         let side = config.per_row() * page.page;
         assert!(side <= 16384, "{pages} pages want a {side}-texel atlas");
         assert!(

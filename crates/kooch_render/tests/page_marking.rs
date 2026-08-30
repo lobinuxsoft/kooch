@@ -775,7 +775,11 @@ fn a_full_pool_denies_by_rank() {
     // NEAR surface, because a far one is one coarse clipmap level and a
     // handful of pages — not enough to overflow even a four-page pool.
     let resources = world();
-    let small = PoolConfig { pages: 4, views: 1 };
+    let small = PoolConfig {
+        pages: 4,
+        views: 1,
+        row_cap: u32::MAX,
+    };
     let (_marker, counts) = run_pool(
         &device,
         &queue,
@@ -901,6 +905,7 @@ fn a_view_clears_only_its_own_pages() {
         PoolConfig {
             pages: 512,
             views: 2,
+            row_cap: u32::MAX,
         },
     );
 
@@ -1149,7 +1154,11 @@ fn an_evicted_slot_comes_back() {
     let resources = world();
     // A pool sized so that ONE frame fits and six do not, which is what
     // makes recycling the only way through.
-    let pool = PoolConfig { pages: 8, views: 1 };
+    let pool = PoolConfig {
+        pages: 8,
+        views: 1,
+        row_cap: u32::MAX,
+    };
     let frames = run_frames(
         &device,
         &queue,
@@ -1424,7 +1433,11 @@ fn the_survivors_are_the_top_ranks() {
     // A lamp alongside the sun, so the demand spans both classes and
     // the local ranks are really in the contest they are meant to lose.
     add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
-    let small = PoolConfig { pages: 4, views: 1 };
+    let small = PoolConfig {
+        pages: 4,
+        views: 1,
+        row_cap: u32::MAX,
+    };
     let (marker, counts) = run_pool(
         &device,
         &queue,
@@ -1467,7 +1480,11 @@ fn a_saturated_pool_reseats_on_move() {
         return;
     };
     let resources = world();
-    let small = PoolConfig { pages: 4, views: 1 };
+    let small = PoolConfig {
+        pages: 4,
+        views: 1,
+        row_cap: u32::MAX,
+    };
     let eye = Vec3::ZERO;
     let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
     let proj = projection();
@@ -1538,7 +1555,11 @@ fn the_bias_settles_the_denials() {
         return;
     };
     let resources = world();
-    let small = PoolConfig { pages: 4, views: 1 };
+    let small = PoolConfig {
+        pages: 4,
+        views: 1,
+        row_cap: u32::MAX,
+    };
     let eye = Vec3::ZERO;
     let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
     let proj = projection();
@@ -1947,6 +1968,7 @@ fn lamps_that_overrun_the_pool_spare_the_sun() {
         PoolConfig {
             pages: 12,
             views: 1,
+            row_cap: u32::MAX,
         },
     );
 
@@ -2098,6 +2120,7 @@ fn the_bias_reaches_its_value_in_one_step() {
             PoolConfig {
                 pages: 12,
                 views: 1,
+                row_cap: u32::MAX,
             },
         );
 

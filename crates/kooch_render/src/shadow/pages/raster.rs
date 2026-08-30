@@ -159,7 +159,7 @@ pub const SUN_SPAN: f32 = 2000.0;
 /// level, and a bucket that silently clamped would drop shadows without
 /// saying so.
 fn bucket(pool: PoolConfig) -> u32 {
-    pool.slice()
+    pool.slots()
 }
 
 /// What the raster did.
@@ -697,9 +697,9 @@ impl PageRasterizer {
             }),
             dirty: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_dirty"),
-                // A header word, then at most one slot per page of one
-                // view's slice — the most one compaction can list.
-                size: (1 + pool.slice() as u64) * 4,
+                // A header word, then at most one slot per page a view
+                // owns — the most one compaction can list.
+                size: (1 + pool.slots() as u64) * 4,
                 usage: storage,
                 mapped_at_creation: false,
             }),
@@ -946,7 +946,7 @@ impl PageRasterizer {
 /// Layers the atlas really has, which is the view count the pool was
 /// built for.
 fn atlas_layers(pool: PoolConfig) -> u32 {
-    pool.slices()
+    pool.layers()
 }
 
 /// Pairs one frame may draw.
@@ -1003,7 +1003,7 @@ fn atlas_texture(device: &wgpu::Device, config: PageConfig, pool: PoolConfig) ->
         size: wgpu::Extent3d {
             width: side,
             height: side,
-            depth_or_array_layers: pool.slices(),
+            depth_or_array_layers: pool.layers(),
         },
         mip_level_count: 1,
         sample_count: 1,
