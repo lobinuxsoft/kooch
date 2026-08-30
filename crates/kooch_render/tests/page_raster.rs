@@ -2706,3 +2706,46 @@ fn a_caster_behind_every_receiver_pairs_nothing() {
         "the rejected counter does not account for the missing pairs"
     );
 }
+
+/// A cleared page outlives the generation it was cleared under, and only
+/// a lamp's does.
+///
+/// 🔴 A grep, because the alternative is a fixture with a spinning lamp,
+/// a cull, and a readback to observe one skipped listing. What it guards
+/// is exact and was measured: `dense.scene` spins 64 light pivots, every
+/// spin turns that lamp's generation over, and every one of its pages
+/// then misses the cache gate and is listed and cleared to produce the
+/// same nothing. 902 of the 924 pages one frame rasterised; 1469 of 1491
+/// in another.
+///
+/// Empty content does not depend on a generation — a page with no caster
+/// in reach reads lit whether or not the lamp moved — so the stamp says
+/// EMPTY and the gate honours it while the bucket stays empty.
+///
+/// ⚠️ The sun is excluded and has to be. Its pages carry an invariant
+/// the lamps' do not: one whose ADDRESSING changed under a snap crossing
+/// must redraw even though its content would be identical, because the
+/// listing is what writes the way back into the table.
+/// `a_still_suns_page_caches` caught this gate applying to the sun.
+#[test]
+fn an_empty_lamp_page_stops_relisting() {
+    let table = kooch_lighting::PAGE_TABLE;
+    let compact = include_str!("../shaders/page_compact.wgsl");
+    let dense: String = compact.chars().filter(|c| !c.is_whitespace()).collect();
+
+    assert!(
+        table.contains("const PAGE_EMPTY: u32 = 2u;"),
+        "the sentinel has to be EVEN: every generation ends `h | 1`, and that is the whole \
+         reason no generation can be mistaken for it",
+    );
+    assert!(
+        dense.contains("if!id.is_sun&&stamp==PAGE_EMPTY&&survivors==0u{"),
+        "the cache gate has to honour an empty lamp page, or a moving light relists every \
+         page it owns every frame to clear it to the same nothing",
+    );
+    assert!(
+        dense.contains("select(gen,PAGE_EMPTY,!id.is_sun&&survivors==0u)"),
+        "a lamp page with no survivors has to be stamped EMPTY rather than with the \
+         generation, or the gate above can never fire",
+    );
+}

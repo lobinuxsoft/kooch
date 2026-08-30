@@ -80,6 +80,16 @@ const PAGE_ABSENT: u32 = 0u;
 /// on word 1 and painted the whole screen as a result.
 const PAGE_CELL: u32 = 6u;
 
+/// Content stamp meaning "this page is CLEARED", which is true under
+/// every generation rather than under one.
+///
+/// 🔴 Even on purpose, and that is the whole guarantee: every
+/// generation ends with `h | 1`, so no generation can ever be mistaken
+/// for this and no page can keep stale depth by colliding with it.
+/// `0` is already taken — it means "no valid content" and must always
+/// redraw — so the sentinel is the next even number.
+const PAGE_EMPTY: u32 = 2u;
+
 /// Culls a frame is willing to run for local lights — one per lamp,
 /// the way the retired cube path ran one per face (#777). A lamp's
 /// bucket is `chain.x + slot`, so a light past this cap has pages that
