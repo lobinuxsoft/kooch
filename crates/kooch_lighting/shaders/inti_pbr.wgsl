@@ -966,17 +966,7 @@ fn inti_page_shadow(
         //
         // ⚠️ `bias.z` of 0 means NO cap, which is what shipped and what
         // a project with no settings file still gets.
-        //
-        // 🔴 Scaled by the incidence too (#1017). The cap above is in
-        // METRES and this one is in TEXELS, and they answer different
-        // failures: `bias.z` stops a coarse level's five-metre texel
-        // from walking the receiver out of its caster's volume, while
-        // `bias.w` stops `tan` from diverging as the sun grazes. A
-        // clipmap needs both — the first bounds the texel, the second
-        // bounds the multiple of it.
-        var offset = texel_world
-            * inti_pages.bias.x
-            * page_bias_scale(n_dot_l, inti_pages.bias.w);
+        var offset = texel_world * inti_pages.bias.x;
         if inti_pages.bias.z > 0.0 {
             offset = min(offset, inti_pages.bias.z);
         }
