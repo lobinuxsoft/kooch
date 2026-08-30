@@ -97,6 +97,23 @@ pub struct PoolConfig {
     pub pages: u32,
     /// Cameras sharing it.
     pub views: u32,
+    /// Pages a layer may hold across, from the device's texture limit
+    /// (#1016).
+    ///
+    /// 🔴 The atlas used to be ONE square layer per view, so the budget
+    /// and the texture width were the same knob: 6144 pages across the
+    /// editor's two views is 56x56 pages — 7168 texels — and the same
+    /// pool across the game's ONE view is 79x79, **10112, past the 8192
+    /// limit**. `create_texture` returned an error texture and the build
+    /// rendered nothing.
+    ///
+    /// With a cap the two come apart: the layer stops growing and the
+    /// LAYERS multiply instead, so the page budget is whatever was
+    /// asked for and the texture is whatever the device can hold.
+    ///
+    /// `u32::MAX` is "no device said otherwise", which is what every
+    /// test and every default gets.
+    pub row_cap: u32,
 }
 
 impl Default for PoolConfig {
@@ -104,6 +121,8 @@ impl Default for PoolConfig {
         Self {
             pages: pages_from_environment(),
             views: 1,
+            // No device has spoken yet; `fit_atlas` is what narrows it.
+            row_cap: u32::MAX,
         }
     }
 }
@@ -114,41 +133,25 @@ impl PoolConfig {
     /// 🔴 Read this and never the field. The atlas clamps its layer
     /// count and the mark bitmap sizes itself from the same number; two
     /// readings of it that disagree put a camera on a layer the texture
-    /// does not have.
-    pub fn slices(&self) -> u32 {
-        self.clamped().1
-    }
 
-    /// The same pool, shrunk until one view's layer fits `max_side`.
+    /// The same pool, told how wide a layer the device can hold.
     ///
-    /// 🔴 A layer is SQUARE, so halving the views doubles a layer's
-    /// area and widens it by √2 — which is how a pool that the editor
-    /// renders fine produces a texture the game cannot allocate. Six
-    /// thousand pages across two views is 56x56 pages, 7168 texels; the
-    /// same pool across the game's ONE view is 79x79, **10112 texels,
-    /// past this engine's 8192 limit**. `create_texture` then hands
-    /// back an error texture, every view of it is invalid, and the
-    /// frame renders nothing while erroring sixty times a second.
-    ///
-    /// Clamping loses pages, which loses shadow resolution under load.
-    /// That is a bad trade and it is still the right one: the
-    /// alternative is a build that draws a blue screen.
+    /// 🔴 It no longer shrinks the budget. The previous version clamped
+    /// `pages` until one square layer fit, which cost a third of the
+    /// page budget on a single-view build — 6144 asked, 4096 granted.
+    /// The cap belongs on the LAYER; the pages then spill into more of
+    /// them (#1016).
     pub fn fit_atlas(mut self, max_side: u32, page: u32) -> Self {
-        let per_row = (max_side / page.max(1)).max(1);
-        let ceiling = per_row
-            .saturating_mul(per_row)
-            .saturating_mul(self.views.max(1));
-        if self.pages > ceiling {
-            tracing::warn!(
-                target: "kooch_render::shadow",
-                asked = self.pages,
-                granted = ceiling,
-                views = self.views,
-                max_side,
-                "the shadow pool does not fit one atlas layer; clamping it",
-            );
-            self.pages = ceiling.clamp(PAGES_RANGE.0, PAGES_RANGE.1);
-        }
+        let device = (max_side / page.max(1)).max(1);
+        // 🔴 An override that can only make the layer SMALLER, and it
+        // exists because the multi-layer path is otherwise unreachable
+        // where anyone can look at it. The pool is split between views,
+        // so the editor's two cameras get half each: even the maximum
+        // 8192 pages is 4096 a view, which is exactly one 64x64 layer.
+        // Only a single-view build ever crosses — and a build has no
+        // Shadow pages panel. A cap the tester can lower turns "trust
+        // the unit test" into "look at it".
+        self.row_cap = row_cap_from_environment().unwrap_or(device).min(device);
         self
     }
 
@@ -175,23 +178,60 @@ impl PoolConfig {
     /// texels.
     pub fn per_row(&self) -> u32 {
         let (pages, views) = self.clamped();
-        ((pages.div_ceil(views)) as f64).sqrt().ceil().max(1.0) as u32
+        let square = ((pages.div_ceil(views)) as f64).sqrt().ceil().max(1.0) as u32;
+        square.min(self.row_cap.max(1))
     }
 
-    /// Pages one view owns — its slice of the pool, and the capacity
-    /// every per-view counter is read against.
+    /// Pages ONE LAYER holds. `page_place` reads a slot as
+    /// `slot % slice` inside the layer and `slot / slice` for the layer
+    /// itself, so this is the number the shaders address by.
     pub fn slice(&self) -> u32 {
         self.per_row().pow(2)
     }
 
-    /// Pages the pool really holds, which is the slice times the views.
+    /// Layers one view needs to hold its share of the budget (#1016).
+    ///
+    /// One until the cap bites. Past it the layer stops widening and
+    /// this grows instead, which is the whole point: 6144 pages across
+    /// one view is two layers of 4096, not one square of 10112.
+    pub fn layers_per_view(&self) -> u32 {
+        let (pages, views) = self.clamped();
+        pages.div_ceil(views).div_ceil(self.slice().max(1)).max(1)
+    }
+
+    /// Pages one view owns, across all of its layers — the capacity
+    /// every per-view counter is read against.
+    pub fn slots(&self) -> u32 {
+        self.slice() * self.layers_per_view()
+    }
+
+    /// The atlas's array depth. NOT the view count — see
+    /// [`Self::views`].
+    ///
+    /// 🔴 These two were one number while a view owned exactly one
+    /// layer, and every reader picked whichever meaning it happened to
+    /// need. Split, because a reader that wants "how many cameras" and
+    /// one that wants "how deep is the texture" now get different
+    /// answers, and mixing them puts a camera on a layer the texture
+    /// does not have.
+    pub fn layers(&self) -> u32 {
+        self.clamped().1 * self.layers_per_view()
+    }
+
+    /// Cameras sharing the pool, clamped to what the layout allows.
+    pub fn view_count(&self) -> u32 {
+        self.clamped().1
+    }
+
+    /// Pages the pool really holds, which is a view's slots times the
+    /// views.
     ///
     /// 🔴 Not `pages`: a layer is square, so the budget is rounded UP to
     /// the next square rather than trimmed to fit. Asking for 2048 across
     /// one view buys 2116. The number the atlas costs is this one, and
     /// it is the one reported.
     pub fn total(&self) -> u32 {
-        self.slice() * self.clamped().1
+        self.slots() * self.clamped().1
     }
 
     /// Where a view's slice starts, in global slot numbers.
@@ -201,7 +241,7 @@ impl PoolConfig {
     /// remainder. Nothing that samples a page has to be told which view
     /// filled it.
     pub fn base(&self, view: u32) -> u32 {
-        view.min(self.clamped().1 - 1) * self.slice()
+        view.min(self.clamped().1 - 1) * self.slots()
     }
 
     /// What the atlas costs, at `Depth32Float`.
@@ -291,6 +331,28 @@ pub const DEFAULT_MAX_AGE: u32 = 60;
 /// moment the frame stopped taking 16.7 ms.
 pub const DEFAULT_AGE_SECONDS: f32 = 1.0;
 
+/// `KOOCH_SHADOW_ROW_CAP`, read once — pages a layer may hold across.
+///
+/// Only ever narrows what the device allows, so it cannot be used to
+/// ask for a texture the driver would refuse.
+pub fn row_cap_from_environment() -> Option<u32> {
+    static CAP: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| {
+        let cap = std::env::var("KOOCH_SHADOW_ROW_CAP")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|c| *c > 0);
+        if let Some(cap) = cap {
+            tracing::info!(
+                target: "kooch_render::shadow",
+                cap,
+                "KOOCH_SHADOW_ROW_CAP: the atlas layer is narrowed on purpose",
+            );
+        }
+        cap
+    })
+}
+
 /// `KOOCH_SHADOW_PAGE_SECONDS`, read once.
 pub fn age_seconds() -> f32 {
     static SECONDS: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
@@ -363,12 +425,30 @@ pub struct PagePool {
 
 impl PagePool {
     pub fn new(device: &wgpu::Device, config: PoolConfig) -> Self {
+        // 🔴 Said out loud because a BUILD has no Shadow pages panel,
+        // and the layer split only ever happens in a build: the pool is
+        // divided between views, so the editor's two cameras never
+        // cross a layer boundary. Without this line the one
+        // configuration that exercises the multi-layer path is also the
+        // one nobody can inspect.
+        tracing::info!(
+            target: "kooch_render::shadow",
+            pages = config.pages,
+            views = config.view_count(),
+            per_row = config.per_row(),
+            per_layer = config.slice(),
+            layers_per_view = config.layers_per_view(),
+            layers = config.layers(),
+            slots_per_view = config.slots(),
+            total = config.total(),
+            "the shadow page atlas is laid out",
+        );
         Self {
             slots: table_buffer(device, "shadow_page_cells", PAGE_CELL),
             alloc: table_buffer(
                 device,
                 "shadow_page_alloc",
-                config.slices() * (config.slice() + 2),
+                config.view_count() * (config.slots() + 2),
             ),
             config,
             entries: 1,
@@ -418,7 +498,7 @@ impl PagePool {
         self.alloc = table_buffer(
             device,
             "shadow_page_alloc",
-            self.config.slices() * (self.config.slice() + 2),
+            self.config.view_count() * (self.config.slots() + 2),
         );
         self.entries = entries;
         true
@@ -613,39 +693,68 @@ impl PoolCounts {
 }
 
 #[cfg(test)]
-mod atlas_fit_tests {
+mod atlas_layer_tests {
     use super::*;
+
+    fn pool(pages: u32, views: u32) -> PoolConfig {
+        PoolConfig {
+            pages,
+            views,
+            row_cap: u32::MAX,
+        }
+    }
 
     /// The exact shape that shipped a blue screen: the same pool the
     /// editor renders across two views does not fit the game's one.
     #[test]
     fn one_view_is_the_case_two_views_hid() {
-        let pool = PoolConfig {
-            pages: 6144,
-            views: 2,
-        };
-        assert_eq!(pool.per_row() * 128, 7168, "two views fit as-is");
-        assert_eq!(pool.fit_atlas(8192, 128).pages, 6144);
+        assert_eq!(pool(6144, 2).per_row() * 128, 7168, "two views fit");
+        assert_eq!(pool(6144, 1).per_row() * 128, 10112, "one view does not");
+    }
 
-        let alone = PoolConfig {
-            pages: 6144,
-            views: 1,
-        };
-        assert_eq!(alone.per_row() * 128, 10112, "one view overflows");
-        let fitted = alone.fit_atlas(8192, 128);
+    /// 🔴 The budget survives the cap. The clamp this replaces bought
+    /// 4096 of the 6144 asked for; the layers keep all of them.
+    #[test]
+    fn the_cap_multiplies_layers_not_lost_pages() {
+        let capped = pool(6144, 1).fit_atlas(8192, 128);
+        assert_eq!(capped.per_row(), 64, "a layer stops at the limit");
+        assert_eq!(capped.per_row() * 128, 8192);
+        assert_eq!(capped.slice(), 4096, "pages a layer holds");
+        assert_eq!(capped.layers_per_view(), 2);
+        assert_eq!(capped.layers(), 2, "the atlas grew in depth");
         assert!(
-            fitted.per_row() * 128 <= 8192,
-            "still {}",
-            fitted.per_row() * 128
+            capped.slots() >= 6144,
+            "kept the budget: {}",
+            capped.slots()
         );
     }
 
+    /// A pool that already fits gains nothing and loses nothing.
     #[test]
-    fn a_pool_that_fits_is_left_alone() {
-        let pool = PoolConfig {
-            pages: 1024,
-            views: 1,
-        };
-        assert_eq!(pool.fit_atlas(8192, 128), pool);
+    fn a_pool_that_fits_stays_one_layer() {
+        let small = pool(1024, 1).fit_atlas(8192, 128);
+        assert_eq!(small.layers_per_view(), 1);
+        assert_eq!(small.layers(), 1);
+        assert_eq!(small.slots(), small.slice());
+    }
+
+    /// Two views keep one layer each, so the editor's atlas is the
+    /// shape it always was.
+    #[test]
+    fn two_views_keep_a_layer_each() {
+        let two = pool(6144, 2).fit_atlas(8192, 128);
+        assert_eq!(two.layers_per_view(), 1);
+        assert_eq!(two.layers(), 2);
+    }
+
+    /// 🔴 Slots are global and a view's are contiguous, which is what
+    /// lets `slot / slice` name a layer without knowing whose it is.
+    #[test]
+    fn a_views_slots_are_its_own_layers() {
+        let p = pool(6144, 2).fit_atlas(8192, 128);
+        assert_eq!(p.base(0), 0);
+        assert_eq!(p.base(1), p.slots());
+        // The layer a view's first and last slot land in.
+        assert_eq!(p.base(1) / p.slice(), p.layers_per_view());
     }
 }

@@ -135,6 +135,16 @@ fn page_origin(slot: u32, per_row: u32, page: u32) -> vec2<u32> {
     return vec2<u32>(slot % per_row, slot / per_row) * page;
 }
 
+/// The atlas layer a physical slot lives in.
+///
+/// 🔴 A page's rect is the SAME texels of every layer, so a draw whose
+/// slot belongs elsewhere does not miss — it overwrites another page.
+/// A pass attaches one layer and every draw inside it tests this
+/// against the layer it is attached to (#1016).
+fn page_layer(slot: u32, slice: u32) -> u32 {
+    return slot / max(slice, 1u);
+}
+
 /// A physical slot taken apart: `xy` the page's origin in texels inside
 /// its layer, `z` the layer.
 ///
@@ -564,6 +574,12 @@ struct PageRaster {
     // its caster shadows and answers LIT with the page present and
     // correctly drawn.
     bias: vec4<f32>,
+    // x the atlas layer this pass is attached to, y its view.
+    //
+    // 🔴 A pass owns ONE layer. A page whose slot lands in another one
+    // must not draw: its rect is the same texels of a DIFFERENT layer,
+    // so drawing it there is not a miss, it is corruption (#1016).
+    layer: vec4<u32>,
 }
 
 // Which of the six cube faces a direction lands on, and its position

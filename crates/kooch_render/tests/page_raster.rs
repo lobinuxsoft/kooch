@@ -31,6 +31,7 @@ fn small() -> PoolConfig {
     PoolConfig {
         pages: 64,
         views: VIEWS,
+        row_cap: u32::MAX,
     }
 }
 
@@ -625,15 +626,35 @@ fn lamp_face_page(view: u32, face: u32, level: u32, cell: (u32, u32), lights: u3
 /// geometry fails here rather than on screen.
 #[test]
 fn a_lamp_page_holds_what_its_light_sees() {
-    lamp_page_holds_its_view(false);
+    lamp_page_holds_its_view(false, small(), 7);
 }
 
 #[test]
 fn the_two_level_cull_draws_the_same_page() {
-    lamp_page_holds_its_view(true);
+    lamp_page_holds_its_view(true, small(), 7);
 }
 
-fn lamp_page_holds_its_view(two_level: bool) {
+/// 🔴 The acceptance for #1016: the SAME page, read back from a pool
+/// whose view spans two layers, with the coarse page living in the
+/// second one.
+///
+/// A page's rect is the same texels of every layer, so a depth pass
+/// that drew every page into the layer it happened to be attached to
+/// would put the coarse page's depth on top of some other page — and
+/// pass every test that only ever looked at layer zero.
+#[test]
+fn a_page_on_the_far_layer_draws_the_same() {
+    // 64 pages across two views is 32 each; a cap of four pages a row
+    // makes a layer hold 16, so each view needs two.
+    let split = small().fit_atlas(4 * PageConfig::default().page, PageConfig::default().page);
+    assert_eq!(split.slice(), 16, "a layer holds sixteen pages");
+    assert_eq!(split.layers_per_view(), 2, "so a view needs two layers");
+    // Slot 20 is page 4 of layer 1 — the far layer, and view 0's.
+    assert_eq!(20 / split.slice(), 1, "the coarse page is on layer one");
+    lamp_page_holds_its_view(true, split, 20);
+}
+
+fn lamp_page_holds_its_view(two_level: bool, budget: PoolConfig, coarse_slot: u32) {
     use glam::{Mat4, Vec3};
     use kooch_render::meshlet::{
         MeshInstance, MeshletCullPipelines, MeshletScene, SceneCullParams, build_default_meshlets,
@@ -731,15 +752,21 @@ fn lamp_page_holds_its_view(two_level: bool) {
     let coarse_level = fine_level + 3;
     let coarse = lamp_face_page(0, 3, coarse_level, (1, 1), LIGHTS);
 
-    let mut page_pool = PagePool::new(&device, small());
+    let mut page_pool = PagePool::new(&device, budget);
     let entries = VIEWS * span(LIGHTS);
     page_pool.ensure_entries(&device, entries);
     let cell = PAGE_CELL as usize;
     let mut slots = vec![0u32; entries as usize * cell];
-    const FINE_SLOT: u32 = 3;
-    const COARSE_SLOT: u32 = 7;
+    // 🔴 FOUR, not three, and that is the whole of what makes the
+    // far-layer case detectable: with a layer of sixteen pages, slot 4
+    // and slot 20 are the SAME rect of different layers. A depth pass
+    // that drew every page into whichever layer it was attached to
+    // would put the coarse page's depth on top of this one — and a
+    // test whose two pages had different rects would never see it.
+    const FINE_SLOT: u32 = 4;
+    let coarse_slot = coarse_slot;
     slots[fine as usize * cell] = FINE_SLOT + 1;
-    slots[coarse as usize * cell] = COARSE_SLOT + 1;
+    slots[coarse as usize * cell] = coarse_slot + 1;
     queue.write_buffer(page_pool.slots(), 0, bytemuck::cast_slice(&slots));
 
     // Built the way the FRAME builds it — against the cull pipelines'
@@ -752,7 +779,7 @@ fn lamp_page_holds_its_view(two_level: bool) {
         cull_pipelines.meshlet_bind_group_layout(),
         PageConfig::default(),
         ClipmapConfig::default(),
-        small(),
+        budget,
         kooch_render::meshlet::DEFAULT_MAX_TRIANGLES as u32,
     );
     let meshlet_bg = kooch_render::meshlet::pool_meshlet_bind_group(
@@ -833,11 +860,11 @@ fn lamp_page_holds_its_view(two_level: bool) {
     let floor_depth = 0.05 / 4.0;
     let page = config.page;
     let read_page =
-        |slot: u32| -> Vec<f32> { read_atlas_page(&device, &queue, &raster, slot, page) };
+        |slot: u32| -> Vec<f32> { read_atlas_page(&device, &queue, &raster, budget, slot, page) };
 
     for (name, slot, min_box, max_box) in [
         ("fine", FINE_SLOT, 0.005, 0.30),
-        ("coarse", COARSE_SLOT, 0.002, 0.40),
+        ("coarse", coarse_slot, 0.002, 0.40),
     ] {
         let texels = read_page(slot);
         let total = texels.len() as f32;
@@ -915,7 +942,7 @@ fn lamp_page_holds_its_view(two_level: bool) {
         "the cached counter does not carry both pages: {:?}",
         &counts[buckets..buckets + 5]
     );
-    let texels = read_atlas_page(&device, &queue, &raster, FINE_SLOT, page);
+    let texels = read_atlas_page(&device, &queue, &raster, budget, FINE_SLOT, page);
     let floor = texels
         .iter()
         .filter(|d| (**d - floor_depth).abs() < 0.002)
@@ -966,7 +993,7 @@ fn lamp_page_holds_its_view(two_level: bool) {
         "pages stayed cached across an invalidation"
     );
     // And the redraw reproduces the scene.
-    let texels = read_atlas_page(&device, &queue, &raster, FINE_SLOT, page);
+    let texels = read_atlas_page(&device, &queue, &raster, budget, FINE_SLOT, page);
     let floor = texels
         .iter()
         .filter(|d| (**d - floor_depth).abs() < 0.002)
@@ -987,10 +1014,10 @@ fn read_atlas_page(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     raster: &PageRasterizer,
+    pool: PoolConfig,
     slot: u32,
     page: u32,
 ) -> Vec<f32> {
-    let pool = small();
     let side = pool.per_row() * page;
     let origin_x = (slot % pool.per_row()) * page;
     let origin_y = (slot / pool.per_row() % pool.per_row()) * page;

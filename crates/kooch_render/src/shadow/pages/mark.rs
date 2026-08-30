@@ -499,7 +499,7 @@ impl PageMarker {
         // see `padded_lights`.
         let padded = padded_lights(count);
         let slots = padded + 1;
-        let views = self.pool.config().slices();
+        let views = self.pool.config().view_count();
         let view = view.min(views - 1);
         if (slots, views) != self.capacity {
             self.marks = marks_buffer(device, self.config, self.clipmap, slots, views);
@@ -597,7 +597,13 @@ impl PageMarker {
                     self.pool.entries(),
                     self.pool.config().total(),
                     self.pool.config().per_row(),
-                    self.pool.config().slice(),
+                    // 🔴 A VIEW's pages, not a layer's (#1016). Every
+                    // reader of this word — the free list's stride, the
+                    // bump's ceiling, the seat budget — asks "how many
+                    // pages does this camera own". The layer stride is
+                    // a different number and lives in the raster's
+                    // uniform, where `page_place` reads it.
+                    self.pool.config().slots(),
                 ],
                 // `words()` leaves the fourth word at zero; the sun's
                 // half-span rides it (#949). The marking needs the same
@@ -747,7 +753,7 @@ impl PageMarker {
             Label {
                 size: viewport,
                 view,
-                capacity: self.pool.config().slice(),
+                capacity: self.pool.config().slots(),
             },
         );
     }

@@ -238,6 +238,9 @@ fn page_settings(resources: &Resources) -> PageSettings {
             // Filled in by the caller, which is the only place that
             // knows how many cameras are alive.
             views: 1,
+            // Likewise: the device's texture limit arrives with the
+            // device, in `fit_atlas`.
+            row_cap: u32::MAX,
         },
     }
 }
