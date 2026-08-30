@@ -24,8 +24,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.28.13"# implement what a maintained crate covers, and these are pinned to the
-# versions this workspace already uses.
+version = "0.28.14"# versions this workspace already uses.
 #
 # 🔴 `wgpu-profiler` 0.28 is on wgpu 30; 0.27 is the one that matches
 # wgpu 29. Taking "latest" here is a compile error, not an upgrade.

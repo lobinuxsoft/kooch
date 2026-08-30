@@ -267,7 +267,14 @@ impl MeshletRenderStage {
         // pass that cannot be seen cannot be blamed, and the CPU cost of
         // this track was argued about for an hour without one.
         profiling::scope!("shadow pages");
-        let settings = self.page_settings_for_views(resources, debug);
+        // 🔴 Clamped HERE and nowhere later: `per_row` is the page
+        // ADDRESSING, so the atlas, the table and every shader that
+        // resolves a page id have to agree on one number. Fitting the
+        // texture alone would leave the addressing describing a layer
+        // that does not exist.
+        let settings = self
+            .page_settings_for_views(resources, debug)
+            .fit_atlas(device.limits().max_texture_dimension_2d);
         if !settings.enabled {
             self.release_pages(device);
             return;
@@ -893,5 +900,13 @@ mod age_horizon_tests {
     #[test]
     fn a_stopped_clock_cannot_be_immortal() {
         assert_eq!(age_frames(1.0, 1.0 / 100_000.0), AGE_FRAMES_MAX);
+    }
+}
+
+impl PageSettings {
+    /// The same settings with a pool one atlas layer can actually hold.
+    fn fit_atlas(mut self, max_side: u32) -> Self {
+        self.pool = self.pool.fit_atlas(max_side, PageConfig::default().page);
+        self
     }
 }
