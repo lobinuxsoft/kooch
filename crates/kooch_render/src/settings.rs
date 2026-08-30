@@ -243,6 +243,26 @@ pub struct RenderSettings {
         shown_when = PAGES_ON
     )]
     pub shadow_bias_max: f32,
+    /// A ceiling on how far the INCIDENCE may grow the normal step,
+    /// as a multiple of the step a surface facing the sun takes.
+    ///
+    /// 🔴 The normal step multiplies a texel, and a clipmap texel is
+    /// square in the SUN's basis — never on the ground. On a surface
+    /// tilted by `θ` it lands as a rectangle `t / cos θ` long, and the
+    /// receiver's own depth runs `t · tan θ` across it. `tan θ` is the
+    /// factor the step needs, and a scalar bias does not have it: any
+    /// value big enough for a grazing surface detaches the shadow of a
+    /// facing one.
+    ///
+    /// ⚠️ It is a CAP because `tan` diverges. 4 stops the growth at
+    /// about 76°; 0 restores the scalar bias this replaced.
+    #[serde(default = "default_shadow_bias_slope")]
+    #[reflect(
+        group = "Shadows: virtual pages",
+        range = SHADOW_BIAS_SLOPE_RANGE,
+        shown_when = PAGES_ON
+    )]
+    pub shadow_bias_slope: f32,
     /// How much simplification error a meshlet may show before the cull
     /// picks a finer level, in PIXELS.
     ///
@@ -834,6 +854,17 @@ fn default_shadow_bias_max() -> f32 {
     0.0
 }
 
+/// 🔴 NOT zero, unlike `default_shadow_bias_max` above, and the two are
+/// asked in different units for a reason. That one is a distance in
+/// metres, so the value that is right depends on the scene and picking
+/// one from arithmetic is how `DEFAULT_PAGES` ended up wrong. This one
+/// is an ANGLE: 4 is `tan 76°`, and past 76° of incidence a surface is
+/// nearly edge-on to the sun, where the growth stops mattering and the
+/// divergence starts.
+fn default_shadow_bias_slope() -> f32 {
+    4.0
+}
+
 fn default_meshlet_lod_error() -> f32 {
     1.0
 }
@@ -1021,6 +1052,14 @@ const SHADOW_BIAS_MAX_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect
     step: 0.005,
 };
 
+/// 0 is the scalar bias, 8 is `tan 83°` — past that the cap is not
+/// capping anything the chain reaches.
+const SHADOW_BIAS_SLOPE_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::FieldRange {
+    min: 0.0,
+    max: 8.0,
+    step: 0.1,
+};
+
 const MESHLET_LOD_ERROR_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::FieldRange {
     min: 0.01,
     max: 8.0,
@@ -1204,6 +1243,7 @@ impl Default for RenderSettings {
             shadow_normal_bias: default_shadow_normal_bias(),
             shadow_depth_bias: default_shadow_depth_bias(),
             shadow_bias_max: default_shadow_bias_max(),
+            shadow_bias_slope: default_shadow_bias_slope(),
             meshlet_lod_error: default_meshlet_lod_error(),
             meshlet_min_pixels: default_meshlet_min_pixels(),
             meshlet_two_level: default_meshlet_two_level(),
@@ -1283,6 +1323,7 @@ impl RenderSettings {
             page_normal_bias: self.shadow_normal_bias,
             page_depth_bias: self.shadow_depth_bias,
             page_bias_max: self.shadow_bias_max,
+            page_bias_slope: self.shadow_bias_slope,
             max_distance: self.shadow_distance,
             cascade_texels: self.shadow_cascade_texels,
             enabled: self.shadows_enabled,

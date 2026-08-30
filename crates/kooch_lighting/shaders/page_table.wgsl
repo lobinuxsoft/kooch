@@ -260,6 +260,40 @@ fn sun_basis(direction: vec3<f32>) -> mat3x3<f32> {
     return mat3x3<f32>(s, u, f);
 }
 
+/// How much bigger the normal step has to be at this incidence, as a
+/// multiple of the step a surface facing the sun needs. 1 = no growth.
+///
+/// # 🔴 A page is square in the SUN's basis, never on the ground
+///
+/// `sun_basis` builds the clipmap's axes from the light direction, so a
+/// texel is `t x t` measured in the plane perpendicular to the sun. On a
+/// surface tilted by `θ` from that plane it lands as a RECTANGLE, `t`
+/// across one axis and `t / cos θ` across the other, and the receiver's
+/// own depth runs `t · tan θ` over that stretch. That run is the acne:
+/// the page stores one depth for the whole texel and the surface inside
+/// it spans that much.
+///
+/// A scalar bias cannot cover it. Multiplying one texel by a constant
+/// gives the same step at every incidence, so any value large enough for
+/// a grazing surface overshoots on a facing one and detaches its shadow
+/// — which is what "I raised the bias and the gap is still there" is.
+/// `tan θ` is the factor the geometry actually asks for, recovered from
+/// `n_dot_l` alone.
+///
+/// ⚠️ `cap` is not optional. `tan` diverges at grazing incidence, where
+/// `n_dot_l` reaches zero and the step would run to infinity, and an
+/// uncapped slope term is why the CASCADE path carries one removed —
+/// see `inti_sample_cascade_record`. The cap is that term's missing
+/// half, expressed as an angle: 4 stops the growth at about 76°.
+fn page_bias_scale(n_dot_l: f32, cap: f32) -> f32 {
+    // Behind the surface: nothing to shade, and the tangent below is
+    // meaningless there. The caller is about to read a page anyway, so
+    // hand back the flat step rather than a negative one.
+    let facing = max(n_dot_l, 1e-3);
+    let tangent = sqrt(max(1.0 - facing * facing, 0.0)) / facing;
+    return 1.0 + min(tangent, max(cap, 0.0));
+}
+
 /// The clipmap's centre for one level, SNAPPED to that level's page
 /// grid.
 ///

@@ -1204,6 +1204,130 @@ fn a_light_facing_triangle_is_the_front_face() {
     );
 }
 
+/// The bias the geometry asks for at one incidence, run through the
+/// SHADER'S OWN `page_bias_scale` rather than a Rust mirror of it.
+const SLANT: &str = r#"
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
+
+@compute @workgroup_size(1, 1, 1)
+fn cs_slant() {
+    // Facing the sun: the texel lands square, nothing to compensate.
+    out[0] = page_bias_scale(1.0, 4.0);
+    // 45 degrees: the footprint is 1.41x long and the depth runs one
+    // whole texel across it, so the step doubles.
+    out[1] = page_bias_scale(cos(radians(45.0)), 4.0);
+    // Edge-on, where `tan` diverges and only the cap answers.
+    out[2] = page_bias_scale(0.0, 4.0);
+    // A cap of zero is the scalar bias this replaced, at ANY incidence.
+    out[3] = page_bias_scale(cos(radians(45.0)), 0.0);
+}
+"#;
+
+/// A tilted receiver needs more normal step than a facing one.
+///
+/// 🔴 The defect, and it is why raising the bias never closed the gap.
+/// `sun_basis` builds the clipmap from the light direction, so a texel
+/// is square in the SUN's plane and a RECTANGLE on any surface not
+/// perpendicular to it — `t / cos θ` long, with the receiver's own depth
+/// running `t · tan θ` across that stretch. `inti_page_shadow` took
+/// `n_dot_l` as a parameter and never read it, so the step was one
+/// constant at every incidence: too much on a facing surface, where it
+/// detaches the shadow, and too little on a grazing one, where the acne
+/// is. No value of a scalar is right for both.
+#[test]
+fn a_tilted_surface_asks_more_bias() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("page_slant"),
+        source: wgpu::ShaderSource::Wgsl(format!("{}\n{SLANT}", kooch_lighting::PAGE_TABLE).into()),
+    });
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[Some(&bgl)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(&layout),
+        module: &module,
+        entry_point: Some("cs_slant"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 16,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    queue.submit([encoder.finish()]);
+
+    let out: Vec<f32> = read_words(&device, &queue, &buffer)
+        .into_iter()
+        .map(f32::from_bits)
+        .collect();
+
+    assert!(
+        (out[0] - 1.0).abs() < 1e-3,
+        "a surface facing the sun should take the flat step, took {}x",
+        out[0]
+    );
+    assert!(
+        (out[1] - 2.0).abs() < 1e-3,
+        "at 45 degrees the depth runs one whole texel, so the step doubles; took {}x",
+        out[1]
+    );
+    assert!(
+        out[1] > out[0],
+        "the step did not grow with the tilt: {} at 45 degrees against {} facing — this is \
+         the scalar bias, and no value of it covers both",
+        out[1],
+        out[0]
+    );
+    assert!(
+        (out[2] - 5.0).abs() < 1e-3,
+        "edge-on, `tan` diverges and only the cap answers: expected 1 + 4, got {}",
+        out[2]
+    );
+    assert!(
+        (out[3] - 1.0).abs() < 1e-3,
+        "a cap of 0 has to restore the scalar bias exactly, or no project can go back to \
+         the numbers it tuned; got {}x at 45 degrees",
+        out[3]
+    );
+}
+
 /// The indirect draw has to issue enough vertices for a WHOLE meshlet.
 ///
 /// 🔴 The defect, and it looked like everything except what it was. The

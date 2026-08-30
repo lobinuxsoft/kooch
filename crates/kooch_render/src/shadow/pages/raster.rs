@@ -336,8 +336,9 @@ pub struct PageRasterizer {
     softness: u32,
     /// The readers' shadow bias, carried in `bias`: the normal step as
     /// a multiple of the texel, the step towards the light in metres,
-    /// and a ceiling on the first in metres (0 = none).
-    bias: [f32; 3],
+    /// a ceiling on the first in metres (0 = none), and a ceiling on
+    /// how far the INCIDENCE may grow it (0 = not at all).
+    bias: [f32; 4],
     /// Triangles a meshlet may hold — the builder's cap, and the fixed
     /// vertex count the indirect draw issues.
     triangles: u32,
@@ -739,7 +740,7 @@ impl PageRasterizer {
             // What `inti_pbr.wgsl` held as constants before the
             // settings could reach it, so a project with no settings
             // file renders exactly as it did.
-            bias: [1.8, 0.02, 0.0],
+            bias: [1.8, 0.02, 0.0, 4.0],
             triangles: max_triangles_per_meshlet.max(1),
             two_level: crate::meshlet::MeshletLodSettings::default().two_level,
             culls: (0..levels)
@@ -874,8 +875,13 @@ impl PageRasterizer {
 
     /// The readers' shadow bias, from the settings. Takes effect at the
     /// next `write_uniform`, the way the softness does.
-    pub fn set_bias(&mut self, normal: f32, depth: f32, max_world: f32) {
-        self.bias = [normal.max(0.0), depth.max(0.0), max_world.max(0.0)];
+    pub fn set_bias(&mut self, normal: f32, depth: f32, max_world: f32, slope: f32) {
+        self.bias = [
+            normal.max(0.0),
+            depth.max(0.0),
+            max_world.max(0.0),
+            slope.max(0.0),
+        ];
     }
 
     pub fn triangles_per_meshlet(&self) -> u32 {
@@ -1277,7 +1283,7 @@ impl PageRasterizer {
                 sun: [d.x, d.y, d.z, 1.0],
                 // Same reason as the softness above: the shading binds
                 // this exact buffer, so one write serves both.
-                bias: [self.bias[0], self.bias[1], self.bias[2], 0.0],
+                bias: self.bias,
                 layer: [layer, view, 0, 0],
             }),
         );

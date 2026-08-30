@@ -111,6 +111,15 @@ pub struct ShadowSettings {
     /// answers LIT, and the shadow ends in a straight line at the level
     /// boundary — with the page present, resident and correctly drawn.
     pub page_bias_max: f32,
+    /// A ceiling on how far the incidence may grow the normal step, as
+    /// a multiple of the step a surface facing the sun takes (#1017).
+    ///
+    /// A clipmap texel is square in the SUN's basis, so on a tilted
+    /// surface it lands as a rectangle and the depth across it runs
+    /// `tan θ`. That is the factor the step needs; this caps it, because
+    /// `tan` diverges at grazing incidence. 0 = no growth, which is the
+    /// scalar bias this replaced.
+    pub page_bias_slope: f32,
     /// Projected radius in screen pixels under which a local light
     /// casts no pages (#944). 0 = every light casts.
     pub page_min_pixels: u32,
@@ -154,6 +163,13 @@ impl Default for ShadowSettings {
             page_normal_bias: 1.8,
             page_depth_bias: 0.02,
             page_bias_max: 0.0,
+            // 🔴 ON, unlike `page_bias_max` beside it, and the asymmetry
+            // is deliberate: that one is a distance nobody has measured
+            // for this scene, this one is an ANGLE the geometry fixes.
+            // 4 caps the growth at about 76° of incidence, past which a
+            // surface is nearly edge-on to the sun and a detached shadow
+            // is the lesser artefact.
+            page_bias_slope: 4.0,
             page_min_pixels: 8,
             // 🔴 Off, because it is a behaviour change and nothing has
             // measured what it costs yet: a light out of reach stops

@@ -44,8 +44,10 @@ struct PageSettings {
     /// the shading binds. See `ShadowSettings::page_softness`.
     softness: u32,
     /// The readers' bias: normal step per texel, depth step in metres,
-    /// and the ceiling on the first. See `ShadowSettings`.
-    bias: (f32, f32, f32),
+    /// the metre ceiling on the first, and the incidence ceiling on it
+    /// (#1017) — a texel is square to the SUN, so a tilted receiver
+    /// needs `tan θ` more step than a facing one.
+    bias: (f32, f32, f32, f32),
     /// The coverage gate (#944). See `ShadowSettings::page_min_pixels`.
     min_pixels: u32,
     /// The distance gate. See `ShadowSettings::page_light_reach`.
@@ -226,6 +228,7 @@ fn page_settings(resources: &Resources) -> PageSettings {
             shadows.page_normal_bias,
             shadows.page_depth_bias,
             shadows.page_bias_max,
+            shadows.page_bias_slope,
         ),
         min_pixels: shadows.page_min_pixels,
         reach: shadows.page_light_reach,
@@ -612,7 +615,12 @@ impl MeshletRenderStage {
         // and that call found nothing to stamp.
         raster.set_frame(marker.life().frame);
         raster.set_softness(settings.softness);
-        raster.set_bias(settings.bias.0, settings.bias.1, settings.bias.2);
+        raster.set_bias(
+            settings.bias.0,
+            settings.bias.1,
+            settings.bias.2,
+            settings.bias.3,
+        );
         // Before anything reads a stamp this frame: a world that was
         // replaced must not be sampled through the previous one's
         // pages (#971).
