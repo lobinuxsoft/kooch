@@ -103,7 +103,23 @@ pub const LAMP_CULLS: u32 = 256;
 /// Moved-caster spheres a frame may upload for page invalidation.
 /// Past it, the scene generation bumps instead — every page redraws
 /// once, which is coarse and never wrong.
+/// Moved casters the list starts with. GROWN to what the frame
+/// actually moved — see [`PageRasterizer::ensure_moved`].
 const MOVED_CAPACITY: u32 = 256;
+
+/// Bytes a moved-caster list of `spheres` needs: the count header, then
+/// one world sphere each.
+fn moved_bytes(spheres: u32) -> u64 {
+    (1 + u64::from(spheres)) * 16
+}
+
+/// The most moved casters the list will ever be grown to, at sixteen
+/// bytes each.
+///
+/// 🔴 A ceiling, not a budget. Past it the scene generation bumps and
+/// EVERY page redraws — which is correct and ruinously expensive, so it
+/// is said out loud rather than absorbed.
+const MOVED_CEILING: u32 = 1 << 20;
 
 /// FNV-1a over a word, for the content generations. Collisions cache a
 /// stale page for one configuration change in four billion; accepted.
@@ -348,6 +364,8 @@ pub struct PageRasterizer {
     /// `[0].x` count, then world spheres of every caster that moved
     /// this frame, old and new bounds alike.
     moved: wgpu::Buffer,
+    /// Spheres [`Self::moved`] currently holds. Grown with the scene.
+    moved_capacity: u32,
     /// Folded into every generation. Bumped when the moved list
     /// overflows its buffer — the coarse, honest fallback — and when a
     /// pair overflow was observed, because a stamped page whose pairs
@@ -356,7 +374,7 @@ pub struct PageRasterizer {
     /// The frame the moved list was last uploaded and any overflow
     /// bump applied — once per frame, not per view.
     moved_frame: Option<u32>,
-    /// Whether the moved list is currently past [`MOVED_CAPACITY`].
+    /// Whether the moved list is currently past [`MOVED_CEILING`].
     ///
     /// Kept only so the report fires on the EDGE. The condition is a
     /// per-frame one and a line per frame at 150 Hz is not a report,
@@ -482,6 +500,9 @@ struct BoundKeys {
     /// The lamps' survivor arena — fixed-size today, in the key so a
     /// future growth path cannot silently skip the rebuild.
     lamp_survivors: wgpu::Buffer,
+    /// The moved-caster spheres, which GROW with the scene. That future
+    /// the field above anticipates arrived here first.
+    moved: wgpu::Buffer,
 }
 
 impl PageRasterizer {
@@ -801,10 +822,11 @@ impl PageRasterizer {
             }),
             moved: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_moved"),
-                size: (1 + MOVED_CAPACITY as u64) * 16,
+                size: moved_bytes(MOVED_CAPACITY),
                 usage: storage,
                 mapped_at_creation: false,
             }),
+            moved_capacity: MOVED_CAPACITY,
             scene_gen: 0,
             scene_epoch: None,
             moved_frame: None,
@@ -1369,12 +1391,13 @@ impl PageRasterizer {
     /// Uploads the frame's moved-caster spheres — once, not per view —
     /// or, past the buffer, bumps the scene generation so everything
     /// redraws instead of something staying silently stale.
-    fn write_moved(&mut self, queue: &wgpu::Queue, moved: &[[f32; 4]]) {
+    fn write_moved(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, moved: &[[f32; 4]]) {
         if self.moved_frame == Some(self.frame) {
             return;
         }
         self.moved_frame = Some(self.frame);
-        if moved.len() > MOVED_CAPACITY as usize {
+        self.ensure_moved(device, moved.len());
+        if moved.len() > self.moved_capacity as usize {
             // 🔴 Said out loud, because the fallback is silent and
             // total: past the cap the scene generation bumps, which
             // voids EVERY page every frame it happens. The panel then
@@ -1387,8 +1410,8 @@ impl PageRasterizer {
                 tracing::warn!(
                     target: "kooch_render::shadow",
                     moved = moved.len(),
-                    capacity = MOVED_CAPACITY,
-                    "the moved-caster list overflowed; every page redraws while it does",
+                    ceiling = MOVED_CEILING,
+                    "the moved-caster list is past its ceiling; every page redraws while it is",
                 );
             }
             self.scene_gen = self.scene_gen.wrapping_add(1);
@@ -1407,6 +1430,44 @@ impl PageRasterizer {
         data.push([moved.len() as f32, 0.0, 0.0, 0.0]);
         data.extend_from_slice(moved);
         queue.write_buffer(&self.moved, 0, bytemuck::cast_slice(&data));
+    }
+
+    /// Grows the moved-caster list to what this frame actually moved.
+    ///
+    /// # 🔴 A fixed 256 was not a budget, it was a cache switch
+    ///
+    /// Past the cap `write_moved` bumps the scene generation, which
+    /// voids EVERY page every frame it happens. Measured on
+    /// `dense.scene`, which spins 2026 casters against a cap of 256: the
+    /// warning fired continuously and the page cache did not exist —
+    /// `rastered 692 / cached 332`, two thirds of the atlas redrawn per
+    /// frame for a scene whose geometry never changes shape.
+    ///
+    /// The list is sixteen bytes a sphere. Two thousand of them is
+    /// 32 KiB, against a shadow atlas measured at 52 MiB. There was
+    /// never a memory argument for the cap.
+    ///
+    /// It keeps a ceiling because the count is unbounded in principle,
+    /// and the ceiling still says so out loud — that fallback is total
+    /// and silent otherwise. See [`MOVED_CEILING`].
+    fn ensure_moved(&mut self, device: &wgpu::Device, spheres: usize) {
+        let wanted = u32::try_from(spheres)
+            .unwrap_or(u32::MAX)
+            .min(MOVED_CEILING);
+        if wanted <= self.moved_capacity {
+            return;
+        }
+        self.moved_capacity = wanted;
+        self.moved = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("page_raster_moved"),
+            size: moved_bytes(self.moved_capacity),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // 🔴 The bind groups hold the OLD buffer. `BoundKeys` carries
+        // `moved` for exactly this, and a cached group pointing at a
+        // freed buffer is a validation error every frame.
+        self.bound = None;
     }
 
     /// The uniform every raster pass reads. Written once a frame,
@@ -1630,6 +1691,7 @@ impl PageRasterizer {
                 .map(|c| c.visible_meshlets_buffer().clone())
                 .collect(),
             lamp_survivors: self.lamp_cull.survivors().clone(),
+            moved: self.moved.clone(),
         };
         if self.bound.as_ref().is_some_and(|b| b.keys == keys) {
             return;
@@ -1803,7 +1865,7 @@ impl PageRasterizer {
         let buckets = self.buckets();
         let light_count = lamps.len() as u32;
         let view = view.min(atlas_layers(self.pool) - 1);
-        self.write_moved(queue, moved);
+        self.write_moved(device, queue, moved);
         self.write_uniform(queue, view, eye, sun, light_count);
         self.write_gens(queue, view, eye, sun, lamps);
         let uniform_offset = self.uniform_span(view).0 as u32;

@@ -258,6 +258,33 @@ fn the_lamp_dispatch_outgrows_one_dimension() {
     }
 }
 
+/// The moved-caster list is sized by what the scene moves, not by a
+/// constant.
+///
+/// 🔴 The cap was not a memory budget, it was a cache switch. Past it
+/// `write_moved` bumps the scene generation, which voids every page
+/// every frame it happens — and `dense.scene` spins 2026 casters against
+/// a cap of 256, so it happened continuously. The panel then reads a
+/// pool at 100% hit over a raster redrawing two thirds of the atlas, and
+/// the two together look like a working cache.
+#[test]
+fn the_moved_list_is_sized_by_the_scene() {
+    // Measured on `dense.scene`, from the engine's own warning.
+    let spinning = 2026u64;
+    let old_cap = 256u64;
+    assert!(
+        spinning > old_cap,
+        "the bug this guards needs the scene to outrun the cap"
+    );
+    // Sixteen bytes a sphere, against a shadow atlas measured at 52 MiB.
+    // There was never a memory argument for the cap.
+    assert!(
+        spinning * 16 < 64 * 1024,
+        "the whole list is {} bytes; a cap that small was never about memory",
+        spinning * 16
+    );
+}
+
 #[test]
 fn the_counters_name_every_level() {
     let Some((device, _queue)) = device() else {
