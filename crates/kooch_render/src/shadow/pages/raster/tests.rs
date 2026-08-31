@@ -346,3 +346,65 @@ fn a_metre_voids_the_fine_levels_only() {
         "the coarsest level, whose pages are hundreds of metres, redrew for one"
     );
 }
+
+/// Every page of a level's window has to sit inside the box its cull
+/// runs against.
+///
+/// # 🔴 The failure is a lit band that crawls with the camera
+///
+/// `sun_window` places a level's window on the SNAPPED page grid and
+/// the cull box used to be centred on the camera, which is not on it.
+/// The two are the same size and offset by however far the camera sits
+/// into its own page, so the window's lowest band — up to a whole page
+/// wide, and 655 m at the coarsest level — lay outside the box.
+///
+/// Geometry there is culled. The pages there are marked by their
+/// receivers and drawn anyway, empty, and an empty page stores far
+/// depth under reversed-Z: every reader over it answers "nothing
+/// occludes here". A lit band at each level's edge, which is a ring at
+/// a fixed distance from the camera, and the offset changes as the
+/// camera moves so the ring crawls.
+///
+/// The window is computed here from `sun_window`'s own formula rather
+/// than from the function under test, or this would only prove that a
+/// number equals itself.
+#[test]
+fn the_cull_box_covers_the_window() {
+    let clipmap = ClipmapConfig::default();
+    let side = PageConfig::default().side(0);
+    let s = side as f32;
+    let sun = Vec3::new(0.3, -1.0, 0.2);
+    let (right, up, _) = sun_frame(sun);
+
+    for level in [0u32, 1, 7, 12, clipmap.levels - 1] {
+        let width = clipmap.base * (level as f32).exp2() / s;
+        // A whole page of offsets: the defect IS the fraction of a page
+        // the camera sits into, so an eye on the grid lines would pass
+        // either way.
+        for step in 0..8 {
+            let frac = step as f32 / 8.0;
+            let eye = Vec3::new(frac * width, 3.0, frac * width * 0.5);
+            let clip = level_clip(clipmap, side, level, eye, sun);
+
+            let plane = glam::Vec2::new(eye.dot(right), eye.dot(up));
+            let low = (plane / width).floor() - glam::Vec2::splat((s * 0.5).floor());
+            for corner in [
+                low,
+                low + glam::Vec2::new(s, 0.0),
+                low + glam::Vec2::new(0.0, s),
+                low + glam::Vec2::splat(s),
+            ] {
+                let world = right * (corner.x * width) + up * (corner.y * width);
+                let ndc = clip * world.extend(1.0);
+                assert!(
+                    ndc.x.abs() <= 1.0 + 1e-3 && ndc.y.abs() <= 1.0 + 1e-3,
+                    "level {level}, camera {frac} of a page in: the window corner \
+                     {corner:?} lands at ({}, {}) — outside the cull box, so casters \
+                     there are dropped while their pages are drawn empty and read lit",
+                    ndc.x,
+                    ndc.y,
+                );
+            }
+        }
+    }
+}

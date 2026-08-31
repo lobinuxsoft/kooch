@@ -1115,6 +1115,86 @@ fn count_slots(buckets: u32) -> u32 {
     buckets * 3 + 9
 }
 
+/// The sun's frame: right, up, and the direction it shines along.
+///
+/// Mirrors `sun_basis` in `page_table.wgsl` term for term. The sun has
+/// no position, so this is the only place its orientation means
+/// anything, and a second copy free to pick a different `up` would cull
+/// against one grid and rasterise into another.
+fn sun_frame(sun: Vec3) -> (Vec3, Vec3, Vec3) {
+    let f = sun.normalize_or(Vec3::NEG_Y);
+    let up = if f.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
+    let right = f.cross(up).normalize();
+    (right, right.cross(f), f)
+}
+
+/// The world point a level's cull box is centred on.
+///
+/// # 🔴 The page WINDOW's centre, and not the camera
+///
+/// This used to be the eye, and the difference is a band of geometry
+/// that is culled while its pages are drawn.
+///
+/// `sun_window` puts a level's window at `floor(plane / width) - 64`
+/// pages, so the window runs from `p - f - 64w` to `p - f + 64w` where
+/// `f` is how far the camera sits into its own page. A box centred on
+/// the eye runs from `p - 64w` to `p + 64w`. The two are the same SIZE
+/// and offset by `f`: the window's lowest band, up to a whole page
+/// wide, lies outside the box on every axis.
+///
+/// A caster whose bounds fall entirely in that band is culled — while
+/// the pages covering it were marked by their receivers and get drawn
+/// anyway, empty. An empty page stores far depth under reversed-Z, so
+/// every reader over it answers "nothing occludes here": a lit band at
+/// each level's edge, which is a ring at a fixed distance from the
+/// camera. And `f` changes as the camera moves, so the ring crawls.
+///
+/// The depth axis gets the same treatment for the same reason:
+/// `sun_drift` measures a page's stored depth from `floor(along / width
+/// + 0.5) * width`, so the box's near and far planes are centred there
+/// rather than on the camera.
+fn level_origin(base: f32, side: u32, level: u32, eye: Vec3, sun: Vec3) -> Vec3 {
+    let (right, up, f) = sun_frame(sun);
+    let s = side.max(1) as f32;
+    let width = base * (level as f32).exp2() / s;
+    let plane = glam::Vec2::new(eye.dot(right), eye.dot(up));
+    let low = (plane / width).floor() - glam::Vec2::splat((s * 0.5).floor());
+    let centre = (low + glam::Vec2::splat(s * 0.5)) * width;
+    // ⚠️ `floor(x + 0.5)` and never `round`, mirroring `sun_drift`:
+    // WGSL rounds halves to even and Rust rounds them away from zero.
+    let along = (eye.dot(f) / width + 0.5).floor() * width;
+    right * centre.x + up * centre.y + f * along
+}
+
+/// The clipmap level's orthographic clip-from-world.
+///
+/// 🔴 Built to agree with `sun_basis` and `sun_page_rect` in the shader,
+/// term for term. This matrix decides which meshlets survive and those
+/// two decide where they land, so a disagreement is geometry culled for
+/// one page and drawn into another. Free rather than a method so a test
+/// can hold it against `sun_window`'s own arithmetic without a device.
+fn level_clip(clipmap: ClipmapConfig, side: u32, level: u32, eye: Vec3, sun: Vec3) -> Mat4 {
+    let (right, up, f) = sun_frame(sun);
+    let rotation = Mat4::from_cols(
+        glam::Vec4::new(right.x, up.x, f.x, 0.0),
+        glam::Vec4::new(right.y, up.y, f.y, 0.0),
+        glam::Vec4::new(right.z, up.z, f.z, 0.0),
+        glam::Vec4::W,
+    );
+    let half = clipmap.extent(level) * 0.5;
+    // Reversed-Z orthographic: 1 at the near plane, 0 at the far,
+    // matching `page_depth.wgsl`'s `1 - (z + span) / (2 * span)`.
+    let projection = Mat4::from_cols(
+        glam::Vec4::new(1.0 / half, 0.0, 0.0, 0.0),
+        glam::Vec4::new(0.0, 1.0 / half, 0.0, 0.0),
+        glam::Vec4::new(0.0, 0.0, -1.0 / (2.0 * SUN_SPAN), 0.0),
+        glam::Vec4::new(0.0, 0.0, 0.5, 1.0),
+    );
+    projection
+        * rotation
+        * Mat4::from_translation(-level_origin(clipmap.base, side, level, eye, sun))
+}
+
 /// The atlas: one square layer per camera.
 ///
 /// 🔴 An ARRAY and not one big surface, and that is the whole shape of
@@ -1660,32 +1740,8 @@ impl PageRasterizer {
     }
 
     /// The clipmap level's orthographic clip-from-world.
-    ///
-    /// 🔴 Built to agree with `sun_basis` and `sun_page_rect` in the
-    /// shader, term for term. This matrix decides which meshlets survive
-    /// and those two decide where they land, so a disagreement is
-    /// geometry culled for one page and drawn into another.
     fn level_clip(&self, level: u32, eye: Vec3, sun: Vec3) -> Mat4 {
-        let f = sun.normalize_or(Vec3::NEG_Y);
-        let up = if f.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
-        let s = f.cross(up).normalize();
-        let u = s.cross(f);
-        let rotation = Mat4::from_cols(
-            glam::Vec4::new(s.x, u.x, f.x, 0.0),
-            glam::Vec4::new(s.y, u.y, f.y, 0.0),
-            glam::Vec4::new(s.z, u.z, f.z, 0.0),
-            glam::Vec4::W,
-        );
-        let half = self.clipmap.extent(level) * 0.5;
-        // Reversed-Z orthographic: 1 at the near plane, 0 at the far,
-        // matching `page_depth.wgsl`'s `1 - (z + span) / (2 * span)`.
-        let projection = Mat4::from_cols(
-            glam::Vec4::new(1.0 / half, 0.0, 0.0, 0.0),
-            glam::Vec4::new(0.0, 1.0 / half, 0.0, 0.0),
-            glam::Vec4::new(0.0, 0.0, -1.0 / (2.0 * SUN_SPAN), 0.0),
-            glam::Vec4::new(0.0, 0.0, 0.5, 1.0),
-        );
-        projection * rotation * Mat4::from_translation(-eye)
+        level_clip(self.clipmap, self.config.side(0), level, eye, sun)
     }
 
     /// Culls, compacts, expands and draws. Call **after** the marking
