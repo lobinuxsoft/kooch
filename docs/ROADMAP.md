@@ -209,6 +209,70 @@ wants these values sets them.
 
 ---
 
+## 🎯 2026-08-30, evening — five causes eliminated, the sixth still standing
+
+Eight hours on one artefact: a bright patch inside a shadow on
+`dense.scene`. It is **still there**. What the day produced instead is
+four measured wins and, more usefully, a list of what the artefact is
+NOT — each entry closed by a capture rather than an argument.
+
+### What landed (#1023)
+
+| Change | Effect |
+|---|---|
+| Receiver-plane bias | `shadow_normal_bias` **8.0 → 1.0** with no acne returning |
+| A cleared lamp page outlives its generation | **902 → 8** pages rasterised per frame |
+| The panel is a table with alerts | What made the last four rounds diagnosable |
+| `shadow_density` past 100 % | Epic's LOD bias; the pass already clamped to 400 |
+
+Off by default and unfinished: the **march** (`shadow_page_march`,
+Unreal's SMRT shape, +0.67 ms, introduces peter-panning) and the
+**residency pyramid** with its overlap query (#1022 units 1 and 2,
+nothing reads them).
+
+### The five, and how each was closed
+
+1. **Resolution** — 16x the shadow density did not move it.
+2. **A scalar bias** — 0, 8, and a constant raised to the same step were
+   indistinguishable at 79° of incidence. No magnitude substitutes for a
+   direction; Unreal's is a two-component gradient.
+3. **The marking running on last frame's depth** — it persists with the
+   camera perfectly still, so it is not the phase order.
+4. **Missing or unfilled pages** — the debug view paints it GREEN, and
+   `unfilled_sun` reads 0 in every capture.
+5. **The single-tap query** — the march does not fix it and breaks cube
+   shadow edges.
+
+### Where it goes next
+
+The reading the elimination now supports, and the user's from the
+start: **the meshlet cull and the order the shadow work happens in.**
+
+Unreal walk INSTANCES, project their bounds into the shadow map, and
+ask whether any page they touch is resident — work generated from the
+geometry side. This engine goes the other way: a per-light cull produces
+survivors and the expansion pairs `pages × survivors`, so the two halves
+are decided independently and can disagree. That inversion is **#1022**,
+and it is the last structural difference from Unreal not yet ruled out.
+
+⚠️ Its unit 3 is not justified by today's numbers on their own —
+`unfilled_sun` is 0 and pairing beats scatter 4x — so it has to be
+entered as a CORRECTNESS change, not a performance one.
+
+### Method, three notes worth keeping
+
+- **The instrument came before the hypothesis, except when it did not.**
+  Every real finding came from a number on the panel; every wasted hour
+  came from a theory tested by rebuilding instead of by reading one.
+- **An instrument can be wrong too.** A debug view painted the whole
+  frame orange because it recomputed "the level this pixel wanted" from
+  the READER's containment floor, while the marking picks
+  `max(containment, density)`. Two nouns, one name.
+- **Falsify the test, not just the code.** Three of this branch's tests
+  were deliberately broken to prove they bite. One of them — the
+  overlap query's mip choice — caught a closed-form bit trick that was
+  wrong in the expensive direction on the first try.
+
 ## 🎯 The order, decided 2026-08-30 — the cost was never where it looked
 
 A night on `dense.scene` took the GPU frame from **10.88 ms to 3.5 ms**
