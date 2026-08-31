@@ -2089,8 +2089,17 @@ fn the_paged_shadow_resolves_like_a_cascade() {
     // claims the page path "looks about the same" there is a figure to
     // answer with.
     let distances = [5.0_f32, 10.0, 20.0, 40.0, 80.0];
-    let density = kooch_render::settings::RenderSettings::default().shadow_density;
-    assert_eq!(density, 100, "the default is the top of the list");
+    // 🔴 The REFERENCE density, taken from the choices list rather than
+    // from `Default`. It used to read the default and assert it was 100,
+    // which was the same number by coincidence until the defaults moved
+    // to what the engine is tuned at — and the comparison below is
+    // against a cascade at full rate, so it has to be measured at the
+    // reference whatever a project happens to ship.
+    let density = kooch_render::settings::shadow_density_choices()
+        .iter()
+        .map(|choice| choice.value as u32)
+        .find(|value| *value == 100)
+        .expect("100 % is the reference the cascade comparison is made at");
 
     let mut worst: (f32, f32) = (0.0, 0.0);
     for distance in distances {
