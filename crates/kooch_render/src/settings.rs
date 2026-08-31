@@ -313,7 +313,7 @@ pub struct RenderSettings {
     /// ⚠️ The pairs it emits are the same pairs — the tests that decide
     /// which survive are one shared function. This is a COST switch,
     /// and a picture that changes with it is a finding, not a feature.
-    #[serde(default)]
+    #[serde(default = "default_shadow_page_geometry")]
     #[reflect(group = "Shadows: virtual pages", shown_when = PAGES_ON)]
     pub shadow_page_geometry: bool,
     /// How far, in PAGES, a receiver dilates its page request — Epic's
@@ -755,21 +755,21 @@ const ANISOTROPY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 /// costs a GPU to draw frames nobody sees. Measuring is the exception
 /// and `KOOCH_PRESENT_MODE=novsync` is how it asks.
 fn default_vsync() -> bool {
-    true
+    false
 }
 
 /// Windowed. The mode that works on every platform and every
 /// compositor, and the one an author has to opt out of rather than into
 /// — a file that predates this field must not take the display.
 fn default_window_mode() -> u32 {
-    0
+    1
 }
 
 /// Off, like every other quality setting in this file: it costs
 /// bandwidth on the surfaces that already cover the most pixels, and a
 /// project that never asked for that should not pay it.
 fn default_anisotropy() -> u32 {
-    1
+    2
 }
 
 /// The techniques the inspector offers.
@@ -818,7 +818,7 @@ const UPSCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 /// temporal technique rewrites every pixel of the image, which is not
 /// something to adopt for a project that never asked for it.
 fn default_upscale() -> u32 {
-    0
+    2
 }
 
 /// 🔴 `render_scale` is only shown for techniques that reconstruct.
@@ -859,7 +859,7 @@ const RENDER_SCALE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 ];
 
 fn default_render_scale() -> u32 {
-    100
+    50
 }
 
 /// One shadow texel per screen pixel, which is Epic's ask and the
@@ -892,11 +892,11 @@ fn default_render_scale() -> u32 {
 /// 1 — the bilinear the retired cube path had in hardware. Softness is
 /// paid per light per pixel, so it is opted into, not defaulted.
 fn default_shadow_softness() -> u32 {
-    1
+    3
 }
 
 fn default_shadow_density() -> u32 {
-    100
+    50
 }
 
 /// 8: on a 1080p screen, a light whose whole reach projects to a
@@ -911,12 +911,12 @@ fn default_shadow_min_pixels() -> u32 {
 /// What `inti_pbr.wgsl` held as a constant before the settings could
 /// reach it.
 fn default_shadow_normal_bias() -> f32 {
-    1.8
+    4.0
 }
 
 /// Likewise.
 fn default_shadow_depth_bias() -> f32 {
-    0.02
+    0.2
 }
 
 /// 🔴 Zero — OFF — because turning it on is a behaviour change and the
@@ -924,7 +924,7 @@ fn default_shadow_depth_bias() -> f32 {
 /// `shadow_light_reach`: a cap chosen from arithmetic rather than from a
 /// picture is a number nobody validated.
 fn default_shadow_bias_max() -> f32 {
-    0.0
+    0.5
 }
 
 /// 🔴 NOT zero, unlike `default_shadow_bias_max`. That one is a distance
@@ -933,7 +933,7 @@ fn default_shadow_bias_max() -> f32 {
 /// surface is nearly edge-on to the sun and the extrapolation stops
 /// being a correction and starts being a divergence.
 fn default_shadow_bias_slope() -> f32 {
-    4.0
+    0.0
 }
 
 /// Half a page each way, so a receiver in the outer half of its page
@@ -941,11 +941,11 @@ fn default_shadow_bias_slope() -> f32 {
 /// border in texels; half a page is the coarsest version of the same
 /// idea and the one whose cost is easiest to read off the panel.
 fn default_shadow_page_halo() -> f32 {
-    0.5
+    0.0
 }
 
 fn default_meshlet_lod_error() -> f32 {
-    1.0
+    0.5
 }
 
 /// 🔴 Zero — every instance the frustum holds is drawn, which is what
@@ -967,7 +967,7 @@ fn default_meshlet_two_level() -> bool {
 /// measured what it costs. A threshold chosen from a whiteboard is how
 /// `DEFAULT_PAGES` came to sit at half of Epic's for a year.
 fn default_shadow_light_reach() -> u32 {
-    0
+    2
 }
 
 /// 🔴 Off. The cascades are what every scene in the project was authored
@@ -1251,7 +1251,7 @@ const SHADOW_SOFTNESS_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 /// below 100 without this is half the change, and the half that gets
 /// judged.
 fn default_sharpening() -> u32 {
-    0
+    50
 }
 
 /// The two rates that exist. Quarter rate is deliberately absent: at
@@ -1279,7 +1279,7 @@ fn default_iso() -> f32 {
     PhysicalCamera::default().sensitivity_iso
 }
 fn default_sky() -> glam::Vec3 {
-    AmbientLight::default().sky_color
+    glam::Vec3::new(0.27272725, 0.58441556, 1.0)
 }
 fn default_ground() -> glam::Vec3 {
     AmbientLight::default().ground_color
@@ -1291,28 +1291,28 @@ fn default_shadows_enabled() -> bool {
     ShadowSettings::default().enabled
 }
 fn default_shadow_distance() -> f32 {
-    ShadowSettings::default().max_distance
+    200.0
 }
 fn default_cascade_texels() -> u32 {
-    ShadowSettings::default().cascade_texels
+    512
 }
 fn default_sun_softness() -> f32 {
-    ShadowSettings::default().sun_softness
+    0.005
 }
 fn default_first_cascade() -> f32 {
-    ShadowSettings::default().first_cascade_distance
+    20.0
 }
 fn default_contact_steps() -> u32 {
-    ContactShadowSettings::default().linear_steps
+    6
 }
 fn default_contact_length() -> f32 {
     ContactShadowSettings::default().length
 }
 fn default_point_shadows() -> u32 {
-    crate::shadow::DEFAULT_POINT_SHADOWS
+    100
 }
 fn default_contact_dominant() -> bool {
-    ContactShadowSettings::default().dominant_only
+    false
 }
 fn default_contact_thickness() -> f32 {
     ContactShadowSettings::default().thickness
@@ -1336,54 +1336,65 @@ fn default_contact_thickness() -> f32 {
 /// Inspector; turning one on is a decision, and a decision has somebody
 /// looking at the screen when it is taken.
 fn default_compute_shading() -> bool {
-    false
+    true
 }
 fn default_shading_rate() -> u32 {
     crate::meshlet::ShadingRate::Full.factor()
 }
 
 impl Default for RenderSettings {
-    /// The same values the engine uses with no settings asset at all —
-    /// deliberately, so adding the file changes nothing until someone
-    /// edits it.
+    /// What a NEW settings asset holds, and what the engine uses with no
+    /// asset at all.
+    ///
+    /// # 🔴 Every field goes through its own `default_*`, and that is
+    /// not style
+    ///
+    /// Serde fills a MISSING field from `#[serde(default = "…")]` and an
+    /// absent FILE from here. Half of these used to read from
+    /// `ShadowSettings::default()`, `ContactShadowSettings::default()`
+    /// and `AmbientLight::default()` instead, so the two answers were
+    /// only equal by coincidence — and moving one of them would have
+    /// silently made a project with an old asset render differently from
+    /// a project with none.
+    ///
+    /// The `default_*` functions are now the single source, and they
+    /// hold literals rather than delegating: these are the ASSET's
+    /// defaults, and they must not move because another subsystem's own
+    /// `Default` did.
     fn default() -> Self {
-        let camera = PhysicalCamera::default();
-        let ambient = AmbientLight::default();
-        let shadows = ShadowSettings::default();
-        let contact = ContactShadowSettings::default();
         Self {
             shadow_normal_bias: default_shadow_normal_bias(),
             shadow_depth_bias: default_shadow_depth_bias(),
             shadow_bias_max: default_shadow_bias_max(),
             shadow_bias_slope: default_shadow_bias_slope(),
             shadow_page_march: false,
-            shadow_page_geometry: false,
+            shadow_page_geometry: default_shadow_page_geometry(),
             shadow_page_halo: default_shadow_page_halo(),
             meshlet_lod_error: default_meshlet_lod_error(),
             meshlet_min_pixels: default_meshlet_min_pixels(),
             meshlet_two_level: default_meshlet_two_level(),
-            aperture_f_stops: camera.aperture_f_stops,
-            shutter_speed_s: camera.shutter_speed_s,
-            sensitivity_iso: camera.sensitivity_iso,
-            ambient_sky_color: ambient.sky_color,
-            ambient_ground_color: ambient.ground_color,
-            ambient_intensity: ambient.intensity,
-            shadows_enabled: shadows.enabled,
-            shadow_distance: shadows.max_distance,
-            shadow_cascade_texels: shadows.cascade_texels,
-            shadow_softness: shadows.page_softness,
-            shadow_min_pixels: shadows.page_min_pixels,
-            shadow_light_reach: shadows.page_light_reach,
-            sun_softness: shadows.sun_softness,
-            shadow_first_cascade_distance: shadows.first_cascade_distance,
-            contact_shadow_steps: contact.linear_steps,
-            contact_shadow_length: contact.length,
-            contact_shadow_thickness: contact.thickness,
-            contact_shadow_dominant: contact.dominant_only,
-            point_shadows: shadows.point_shadows,
+            aperture_f_stops: default_aperture(),
+            shutter_speed_s: default_shutter(),
+            sensitivity_iso: default_iso(),
+            ambient_sky_color: default_sky(),
+            ambient_ground_color: default_ground(),
+            ambient_intensity: default_ambient_intensity(),
+            shadows_enabled: default_shadows_enabled(),
+            shadow_distance: default_shadow_distance(),
+            shadow_cascade_texels: default_cascade_texels(),
+            shadow_softness: default_shadow_softness(),
+            shadow_min_pixels: default_shadow_min_pixels(),
+            shadow_light_reach: default_shadow_light_reach(),
+            sun_softness: default_sun_softness(),
+            shadow_first_cascade_distance: default_first_cascade(),
+            contact_shadow_steps: default_contact_steps(),
+            contact_shadow_length: default_contact_length(),
+            contact_shadow_thickness: default_contact_thickness(),
+            contact_shadow_dominant: default_contact_dominant(),
+            point_shadows: default_point_shadows(),
             compute_shading: default_compute_shading(),
             shading_rate: default_shading_rate(),
-            upscale: 0,
+            upscale: default_upscale(),
             render_scale: default_render_scale(),
             shadow_density: default_shadow_density(),
             virtual_shadows: default_virtual_shadows(),
@@ -1394,6 +1405,12 @@ impl Default for RenderSettings {
             window_mode: default_window_mode(),
         }
     }
+}
+
+/// Whether the expansion runs from the geometry (#1022). Measured at
+/// ~1850x under the pairing it replaces, on `dense.scene`.
+fn default_shadow_page_geometry() -> bool {
+    true
 }
 
 impl RenderSettings {

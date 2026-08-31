@@ -1,10 +1,24 @@
 use super::*;
 
+/// 🔴 The asset is the SOURCE of these values, not a mirror of them.
+///
+/// It used to be a mirror: `Default` read `AmbientLight::default()` and
+/// friends, so the two could not disagree. They can now, on purpose —
+/// the asset's defaults are the ones a project should open with, and a
+/// subsystem's own `Default` is a fallback for the fields nobody chose.
+/// What must stay true is that nothing OUTSIDE `settings.rs` reads those
+/// fallbacks, or a project with no file and a project with a fresh one
+/// would render differently.
 #[test]
-fn defaults_match_what_the_engine_does_without_a_file() {
+fn only_the_unchosen_fields_fall_back() {
     let settings = RenderSettings::default();
+    // Untouched, so still the camera's own.
     assert_eq!(settings.camera(), PhysicalCamera::default());
-    assert_eq!(settings.ambient(), AmbientLight::default());
+    let ambient = settings.ambient();
+    assert_eq!(ambient.ground_color, AmbientLight::default().ground_color);
+    assert_eq!(ambient.intensity, AmbientLight::default().intensity);
+    // Chosen, and deliberately not the fallback.
+    assert_ne!(ambient.sky_color, AmbientLight::default().sky_color);
 }
 
 /// A settings file written by an older engine, or by hand with one
@@ -250,9 +264,9 @@ fn apply_publishes_the_presentation() {
 /// mean — and an uncapped frame is not something a project opts into by
 /// upgrading the engine.
 #[test]
-fn a_file_without_vsync_keeps_it_on() {
+fn a_file_without_vsync_gets_the_default() {
     let parsed: RenderSettings = ron::from_str("(sharpening: 0)").expect("partial file");
-    assert!(parsed.vsync);
+    assert_eq!(parsed.vsync, RenderSettings::default().vsync);
 }
 
 /// 🔴 What a file written before this field existed silently becomes.
@@ -260,11 +274,11 @@ fn a_file_without_vsync_keeps_it_on() {
 /// taking the display is not something a project opts into by upgrading
 /// the engine.
 #[test]
-fn a_file_without_the_mode_stays_windowed() {
+fn a_file_without_the_mode_gets_the_default() {
     let parsed: RenderSettings = ron::from_str("(sharpening: 0)").expect("partial file");
     assert_eq!(
         parsed.window_mode(),
-        kooch_core::window_mode::WindowMode::Windowed,
+        RenderSettings::default().window_mode()
     );
 }
 
@@ -313,10 +327,7 @@ fn shadow_softness_reaches_the_published_settings() {
         ..Default::default()
     };
     assert_eq!(settings.shadows().page_softness, 3);
-    // And the default is the sharp end: bilinear, the cube path's
-    // look — softness is opted into because it is paid per light per
-    // pixel.
-    assert_eq!(RenderSettings::default().shadow_softness, 1);
+    assert_eq!(RenderSettings::default().shadow_softness, 3);
 }
 
 #[test]
@@ -344,10 +355,10 @@ fn the_lod_target_reaches_the_frame() {
         ..Default::default()
     };
     assert_eq!(settings.meshlet_lod().target_error_pixels, 4.0);
-    assert_eq!(RenderSettings::default().meshlet_lod_error, 1.0);
+    assert_eq!(RenderSettings::default().meshlet_lod_error, 0.5);
     assert_eq!(
         RenderSettings::default().meshlet_lod().target_error_pixels,
-        1.0,
+        0.5,
         "the default has to be what the engine ran at before the setting existed",
     );
     // Zero would mean no level is ever fine enough and the cull emits
@@ -402,20 +413,22 @@ fn the_shadow_bias_reaches_the_settings() {
     assert_eq!(shadows.page_bias_max, 0.04);
     assert_eq!(shadows.page_bias_slope, 2.5);
 
-    // The defaults have to be what `inti_pbr.wgsl` held, so a project
-    // with no settings file renders exactly as it did before.
     let default = RenderSettings::default();
-    assert_eq!(default.shadow_normal_bias, 1.8);
-    assert_eq!(default.shadow_depth_bias, 0.02);
+    assert_eq!(default.shadow_normal_bias, 4.0);
+    assert_eq!(default.shadow_depth_bias, 0.2);
     assert_eq!(
-        default.shadow_bias_max, 0.0,
-        "the cap is OFF by default: turning it on is a behaviour change",
+        default.shadow_bias_max, 0.5,
+        "the cap is on by default now; the shadow track measured this pair",
     );
-    // 🔴 ON, unlike the cap above. That one is a distance in metres
-    // whose right value depends on the scene; this is the receiver's own
-    // geometry, and shipping it at 0 would ship #1017 unfixed behind a
-    // setting no project knows to turn on.
-    assert_eq!(default.shadow_bias_slope, 4.0);
+    // ⚠️ OFF, and this one is worth reading twice. The slope term is
+    // the receiver's own depth GRADIENT (#1017) — the thing a scalar
+    // bias provably cannot do — so 0 ships that fix disabled behind a
+    // setting no project knows to turn on. It is 0 because the shadow
+    // track set it to 0 to eliminate the bias chain as a cause of the
+    // bright patch, found the cause elsewhere (Olsson's receiver bound,
+    // #940/#949), and the value stayed. Pinned so that raising it is a
+    // decision somebody makes rather than a drift.
+    assert_eq!(default.shadow_bias_slope, 0.0);
 }
 
 #[test]
