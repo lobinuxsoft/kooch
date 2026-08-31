@@ -1,56 +1,33 @@
-//! Components and systems that exist to MEASURE the engine, not to ship
-//! in a game.
+//! A pivot that turns on its own axis.
 //!
-//! # Why this is a feature and not just a module
+//! # 🔴 The name is a scar, not a description
 //!
-//! A shipped game may not carry what it does not use — the same rule
-//! `physics-debug-render` follows, and the reason #558 exists. With
-//! `testing` off, nothing below is compiled: the component is not
-//! registered, the system is not scheduled, and the type name never
-//! reaches a scene file.
+//! This module was gated behind a `testing` feature, on the rule that a
+//! shipped game may not carry what it does not use (#558). [`Spin`] no
+//! longer qualifies, and it never really did: the bar that module set
+//! was "removing it from a release build must not change what a player
+//! sees", and removing this stops every orbiting light in the scene.
 //!
-//! # What belongs here
+//! It could not be reached from a build at all, which is how it was
+//! found — a game exported with lights that move in the editor and stand
+//! still in the build, because an unregistered component is DROPPED on
+//! load rather than refused.
 //!
-//! Only things a *measurement* needs and a game does not. The bar is
-//! whether removing it from a release build could change what a player
-//! sees; if it could, it is not a testing helper.
+//! # Why it is still called `testing`
 //!
-//! 🔴 A component here still writes its type name into any scene that
-//! uses it. Turning the feature off later does not corrupt those scenes
-//! — an unregistered component is dropped on load rather than erroring
-//! — but the entity comes back without it, so a benchmark scene saved
-//! with `testing` on and opened with it off is a scene whose lights
-//! have stopped moving, silently. That is the intended failure and it
-//! is why nothing a game needs may live here.
+//! Because a scene stores `"kooch_ecs::testing::spin::Spin"` and
+//! resolves it by that string. Renaming the module is not a refactor,
+//! it is a data migration: every entity carrying a `Spin` would come
+//! back without one, no error and nothing in the log. There is no
+//! `serde(alias)` for component type names here yet, and until there is,
+//! the honest move is to leave the path alone and say why.
+//!
+//! # What used to live here
+//!
+//! `TestingPlugin`, which registered the component and scheduled its
+//! system only when the feature was on. [`EcsPlugin`](crate::plugin) does
+//! both unconditionally now. The `testing` feature still exists and is
+//! empty — projects name it in their manifests, and removing it would
+//! break their builds for no gain.
 
 pub mod spin;
-
-use crate::component::ComponentRegistry;
-use kooch_core::app::App;
-use kooch_core::plugin::Plugin;
-use kooch_core::stage::Stage;
-
-/// Registers everything in this module.
-///
-/// Added by `DefaultPlugins` only when the `testing` feature is on, so a
-/// build without it has no way to reach any of this.
-pub struct TestingPlugin;
-
-impl Plugin for TestingPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_system(Stage::Startup, register_testing_components);
-        // 🔴 `Update`, and not the default talking. This writes a local
-        // `Transform`; whatever orbits reads its `GlobalTransform`,
-        // which the engine resolves during `PostUpdate`. Written after
-        // that, every orbiting light renders one frame behind its pivot
-        // forever — shadows that lag the camera, with nothing on screen
-        // to say why.
-        app.add_system(Stage::Update, spin::spin_pivots);
-    }
-}
-
-fn register_testing_components(resources: &mut kooch_core::resource::Resources) {
-    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-        registry.register_cpu_reflected::<spin::Spin>();
-    }
-}

@@ -64,6 +64,13 @@ fn register_builtin_components(resources: &mut kooch_core::resource::Resources) 
         registry.register_cpu_reflected::<crate::prefab_instance::PrefabMember>();
         registry.register_cpu_reflected::<LodForceLevel>();
         registry.register_cpu_reflected::<PersistentId>();
+        // 🔴 Unconditional, and it used to be behind the `testing`
+        // feature. An unregistered component is DROPPED on load rather
+        // than refused, so a scene exported without this came back with
+        // its pivots gone — lights that orbit in the editor and stand
+        // still in the build, with nothing said. See `crate::testing`
+        // for why the module keeps that name.
+        registry.register_cpu_reflected::<crate::testing::spin::Spin>();
     }
 }
 
@@ -88,6 +95,14 @@ impl Plugin for EcsPlugin {
         // 1. Apply deferred commands (spawn/despawn/insert/remove).
         // 2. Clean up despawned entities from component storages.
         // Hierarchy sync and transform propagation run before GPU sync.
+        // 🔴 `Update`, and the stage is load-bearing. This writes a
+        // local `Transform`; whatever orbits reads its
+        // `GlobalTransform`, which `transform_propagation_system`
+        // resolves in `PostUpdate` below. Scheduled after that, every
+        // orbiting light would render one frame behind its pivot
+        // forever — shadows lagging the camera, with nothing on screen
+        // to say why.
+        app.add_system(Stage::Update, crate::testing::spin::spin_pivots);
         app.add_system(Stage::PostUpdate, hierarchy_sync_system);
         app.add_system(Stage::PostUpdate, transform_propagation_system);
 
