@@ -228,6 +228,37 @@ pub struct RasterCounts {
     /// offer, and it is the only number that says whether the hybrid is
     /// worth building.
     pub hybrid: u64,
+    /// Pages sitting in a bucket whose cull produced NO survivors.
+    ///
+    /// 🔴 These render LIT, and that is the whole reason the counter
+    /// exists. `cs_expand_args` sizes the expansion as `pages *
+    /// meshlets`, so a bucket holding pages and no meshlets dispatches
+    /// zero threads and emits no pairs — while the pages themselves are
+    /// still resident and still cleared. A cleared page stores 0, which
+    /// is FAR under reversed-Z, so every reader over it answers
+    /// "nothing occludes here": a bright patch, with the page present,
+    /// allocated and correctly keyed.
+    ///
+    /// By sight it is indistinguishable from a missing page or from a
+    /// bias that overshot. That is why it is a number.
+    pub unfilled: u32,
+    /// The lowest bucket in that state, so the reading names one.
+    /// `u32::MAX` when there is none.
+    pub unfilled_first: u32,
+    /// How many of [`Self::unfilled`] belong to the SUN's clipmap.
+    ///
+    /// 🔴 The split is the reading, not a refinement of it. A LAMP with
+    /// resident pages and no survivors is usually telling the truth:
+    /// the marking makes a page resident because a RECEIVER asked to be
+    /// shadowed there, and if no caster is within that light's reach
+    /// then nothing occludes and an empty page answers correctly. It is
+    /// wasted raster, not a wrong picture.
+    ///
+    /// The sun is the opposite. Its clipmap covers the whole view, so a
+    /// level with pages and no survivors means its cull threw away
+    /// geometry the marking had already committed pages to — and those
+    /// pages render lit with a caster standing in them.
+    pub unfilled_sun: u32,
 }
 
 #[repr(C)]
@@ -335,9 +366,14 @@ pub struct PageRasterizer {
     /// `world.w`. 1 = bilinear. See `inti_page_filter` (#941).
     softness: u32,
     /// The readers' shadow bias, carried in `bias`: the normal step as
-    /// a multiple of the texel, the step towards the light in metres,
-    /// and a ceiling on the first in metres (0 = none).
-    bias: [f32; 3],
+    /// a multiple of the texel, the step towards the light in metres, a
+    /// ceiling on the first in metres (0 = none), and a ceiling on the
+    /// receiver's own depth gradient (0 = the term is off).
+    bias: [f32; 4],
+    /// Whether the shading marches the atlas instead of sampling one
+    /// texel through a PCF box (#1017). Carried to the shader in the
+    /// raster uniform's spare word, which the shading binds anyway.
+    march: bool,
     /// Triangles a meshlet may hold — the builder's cap, and the fixed
     /// vertex count the indirect draw issues.
     triangles: u32,
@@ -739,7 +775,8 @@ impl PageRasterizer {
             // What `inti_pbr.wgsl` held as constants before the
             // settings could reach it, so a project with no settings
             // file renders exactly as it did.
-            bias: [1.8, 0.02, 0.0],
+            bias: [1.8, 0.02, 0.0, 4.0],
+            march: false,
             triangles: max_triangles_per_meshlet.max(1),
             two_level: crate::meshlet::MeshletLodSettings::default().two_level,
             culls: (0..levels)
@@ -874,8 +911,18 @@ impl PageRasterizer {
 
     /// The readers' shadow bias, from the settings. Takes effect at the
     /// next `write_uniform`, the way the softness does.
-    pub fn set_bias(&mut self, normal: f32, depth: f32, max_world: f32) {
-        self.bias = [normal.max(0.0), depth.max(0.0), max_world.max(0.0)];
+    /// Which reader the shading uses: the PCF box, or the march.
+    pub fn set_march(&mut self, on: bool) {
+        self.march = on;
+    }
+
+    pub fn set_bias(&mut self, normal: f32, depth: f32, max_world: f32, slope: f32) {
+        self.bias = [
+            normal.max(0.0),
+            depth.max(0.0),
+            max_world.max(0.0),
+            slope.max(0.0),
+        ];
     }
 
     pub fn triangles_per_meshlet(&self) -> u32 {
@@ -914,11 +961,24 @@ impl PageRasterizer {
         let mut worst = (0u32, 0u64);
         let mut scatter = 0u64;
         let mut hybrid = 0u64;
+        let mut unfilled = 0u32;
+        let mut unfilled_sun = 0u32;
+        let mut unfilled_first = u32::MAX;
         for level in 0..levels {
             let pages = words[level].min(cap) as u64;
             let meshlets = words.get(levels + 5 + level).copied().unwrap_or(0) as u64;
             let cells = words.get(levels * 2 + 5 + level).copied().unwrap_or(0) as u64;
             let work = pages * meshlets;
+            // 🔴 Pages with nothing to draw into them. See `unfilled`,
+            // and `unfilled_sun` for why the two halves read
+            // differently.
+            if pages > 0 && meshlets == 0 {
+                unfilled += pages as u32;
+                unfilled_first = unfilled_first.min(level as u32);
+                if (level as u32) < self.clipmap.levels {
+                    unfilled_sun += pages as u32;
+                }
+            }
             tests += work;
             scatter += cells;
             // The choice a hybrid would make at this level, which is
@@ -935,6 +995,9 @@ impl PageRasterizer {
             worst,
             scatter,
             hybrid,
+            unfilled,
+            unfilled_first,
+            unfilled_sun,
             pages: words[..levels].iter().map(|&n| n.min(cap)).sum(),
             // 🔴 Every listed page, the sun's and the lamps' alike,
             // because they share buckets now: a lamp and the sun that
@@ -1277,8 +1340,8 @@ impl PageRasterizer {
                 sun: [d.x, d.y, d.z, 1.0],
                 // Same reason as the softness above: the shading binds
                 // this exact buffer, so one write serves both.
-                bias: [self.bias[0], self.bias[1], self.bias[2], 0.0],
-                layer: [layer, view, 0, 0],
+                bias: self.bias,
+                layer: [layer, view, u32::from(self.march), 0],
             }),
         );
     }

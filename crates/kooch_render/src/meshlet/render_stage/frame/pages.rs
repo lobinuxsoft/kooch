@@ -44,9 +44,13 @@ struct PageSettings {
     /// the shading binds. See `ShadowSettings::page_softness`.
     softness: u32,
     /// The readers' bias: normal step per texel, depth step in metres,
-    /// and the ceiling on the first. See `ShadowSettings`.
-    bias: (f32, f32, f32),
+    /// the metre ceiling on the first, and the ceiling on the receiver's
+    /// own depth GRADIENT (#1017) — the term that gives each filter tap
+    /// the depth its own part of the receiving plane has.
+    bias: (f32, f32, f32, f32),
     /// The coverage gate (#944). See `ShadowSettings::page_min_pixels`.
+    /// Whether the shading marches the atlas (#1017).
+    march: bool,
     min_pixels: u32,
     /// The distance gate. See `ShadowSettings::page_light_reach`.
     reach: u32,
@@ -226,7 +230,9 @@ fn page_settings(resources: &Resources) -> PageSettings {
             shadows.page_normal_bias,
             shadows.page_depth_bias,
             shadows.page_bias_max,
+            shadows.page_bias_slope,
         ),
+        march: shadows.page_march,
         min_pixels: shadows.page_min_pixels,
         reach: shadows.page_light_reach,
         // Absent in a headless test and in any host without a manager,
@@ -612,7 +618,13 @@ impl MeshletRenderStage {
         // and that call found nothing to stamp.
         raster.set_frame(marker.life().frame);
         raster.set_softness(settings.softness);
-        raster.set_bias(settings.bias.0, settings.bias.1, settings.bias.2);
+        raster.set_march(settings.march);
+        raster.set_bias(
+            settings.bias.0,
+            settings.bias.1,
+            settings.bias.2,
+            settings.bias.3,
+        );
         // Before anything reads a stamp this frame: a world that was
         // replaced must not be sampled through the previous one's
         // pages (#971).

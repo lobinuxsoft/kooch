@@ -149,7 +149,42 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         // 0 means "no content" and must never match a generation.
         gen = gen | 1u;
     }
-    if table_slots[entry * PAGE_CELL + 3u] == gen {
+    let stamp = table_slots[entry * PAGE_CELL + 3u];
+    if stamp == gen {
+        atomicAdd(&page_counts[buckets + 4u], 1u);
+        return;
+    }
+    // 🔴 An EMPTY page is valid under every generation, and that is what
+    // rescues a moving light (#1022).
+    //
+    // A bucket whose cull produced no survivors has nothing to draw, so
+    // listing its pages accomplishes exactly one thing: clearing them.
+    // Cleared, they hold no depth and read as lit — which is the RIGHT
+    // answer when no caster is in reach. And that answer does not depend
+    // on the generation: empty is empty whether or not the lamp moved.
+    //
+    // Without this, a lamp with a `Spin` on it turns its generation over
+    // every frame, every one of its pages misses the gate, and every one
+    // is listed and cleared to produce the same nothing. Measured on
+    // `dense.scene`, which spins 64 of them: 902 of the 924 pages the
+    // frame rasterised, and 1469 of 1491 in another capture — 98.5% of
+    // the pass.
+    //
+    // The sentinel is EVEN, and that is why it can never be mistaken for
+    // a generation: `gens_for` ends every one of them with `h | 1` and
+    // the sun's per-page mix does the same, so all of them are odd.
+    //
+    // ⚠️ LAMPS ONLY, and the restriction is not caution — it is what
+    // was measured. `unfilled_sun` reads 0 in every capture taken, so
+    // the sun has never once been in this state, while the lamps are in
+    // it for 98% of the pass. And the sun's cache has an invariant the
+    // lamps do not: a page whose ADDRESSING changed under a snap
+    // crossing has to redraw even though its content would be
+    // identical, because `cs_compact` writes the way back into the
+    // table when it lists. `a_still_suns_page_caches` guards exactly
+    // that, and caught this gate applying to the sun.
+    let survivors = visible_counts[slot];
+    if !id.is_sun && stamp == PAGE_EMPTY && survivors == 0u {
         atomicAdd(&page_counts[buckets + 4u], 1u);
         return;
     }
@@ -182,7 +217,10 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
     // draw because nothing between the two can fail — the one thing
     // that can, a pair-list overflow, is counted and handled by the
     // CPU bumping the scene generation.
-    table_slots[entry * PAGE_CELL + 3u] = gen;
+    // Stamped EMPTY rather than with the generation when there is
+    // nothing to draw: the content about to be produced is "cleared",
+    // which outlives any generation. See the gate above.
+    table_slots[entry * PAGE_CELL + 3u] = select(gen, PAGE_EMPTY, !id.is_sun && survivors == 0u);
     let d = atomicAdd(&dirty[0], 1u);
     if d + 1u < arrayLength(&dirty) {
         atomicStore(&dirty[1u + d], stored - 1u);

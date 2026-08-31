@@ -1204,6 +1204,151 @@ fn a_light_facing_triangle_is_the_front_face() {
     );
 }
 
+/// The receiver's gradient at a few incidences, through the SHADER'S OWN
+/// `receiver_slope` rather than a Rust mirror of it.
+const SLOPE: &str = r#"
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
+
+@compute @workgroup_size(1, 1, 1)
+fn cs_slope() {
+    // Sun straight down. `texel / (2 * span)` is 1 here, so the numbers
+    // below are the plane's own slope with no scaling to unpick.
+    let basis = sun_basis(vec3<f32>(0.0, -1.0, 0.0));
+    let span = 0.5;
+    let texel = 1.0;
+
+    // A floor under a vertical sun faces the light: no run at all.
+    let flat = receiver_slope(vec3<f32>(0.0, 1.0, 0.0), basis, texel, span, 8.0);
+    out[0] = flat.x;
+    out[1] = flat.y;
+
+    // Tilted 45 degrees about ONE axis. The whole claim of this file is
+    // that the gradient appears on that axis and nowhere else.
+    let n = normalize(vec3<f32>(0.0, cos(radians(45.0)), sin(radians(45.0))));
+    let tilt = receiver_slope(n, basis, texel, span, 8.0);
+    out[2] = tilt.x;
+    out[3] = tilt.y;
+
+    // Edge-on to the sun, where the ratio diverges and only the clamp
+    // answers.
+    let edge = receiver_slope(vec3<f32>(0.0, 0.0, 1.0), basis, texel, span, 3.0);
+    out[4] = edge.x;
+    out[5] = edge.y;
+
+    // A clamp of zero turns the term off at any incidence.
+    let off = receiver_slope(n, basis, texel, span, 0.0);
+    out[6] = off.x;
+    out[7] = off.y;
+}
+"#;
+
+/// The receiver's gradient is per AXIS, not one number.
+///
+/// 🔴 This is the property a scalar bias cannot have, and the reason the
+/// first attempt at #1017 measured as doing nothing. How much depth a
+/// filter tap crosses depends on WHICH WAY it moved: along the tilt it
+/// crosses the whole run, across it none. A single multiplier has to
+/// cover the worst axis on every axis, so it detaches the shadow along
+/// the one that needed no correction — and three captures at 79° of
+/// incidence, with the multiplier at 0, at 8, and replaced by a constant
+/// raised to the same step, were indistinguishable from each other.
+#[test]
+fn a_tilt_gradient_is_directional() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("receiver_slope"),
+        source: wgpu::ShaderSource::Wgsl(format!("{}\n{SLOPE}", kooch_lighting::PAGE_TABLE).into()),
+    });
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[Some(&bgl)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(&layout),
+        module: &module,
+        entry_point: Some("cs_slope"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 32,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    queue.submit([encoder.finish()]);
+
+    let out: Vec<f32> = read_words(&device, &queue, &buffer)
+        .into_iter()
+        .map(f32::from_bits)
+        .collect();
+
+    assert!(
+        out[0].abs() < 1e-4 && out[1].abs() < 1e-4,
+        "a surface facing the sun has no run across its texel, got ({}, {})",
+        out[0],
+        out[1]
+    );
+    // 🔴 The assertion the whole change exists for.
+    assert!(
+        out[2].abs() < 1e-4,
+        "the axis the surface did NOT tilt about picked up a gradient of {} — that is a \
+         scalar wearing a vector's shape, and it detaches the shadow along the axis that \
+         needed no correction",
+        out[2]
+    );
+    assert!(
+        (out[3].abs() - 1.0).abs() < 1e-3,
+        "at 45 degrees the plane falls one depth unit per texel; the tilted axis reads {}",
+        out[3]
+    );
+    assert!(
+        (out[5].abs() - 3.0).abs() < 1e-3,
+        "edge-on the ratio diverges and the clamp is the only answer: expected 3, got {}",
+        out[5]
+    );
+    assert!(
+        out[6].abs() < 1e-6 && out[7].abs() < 1e-6,
+        "a clamp of 0 has to restore one depth for every tap, or no project can go back \
+         to the numbers it tuned; got ({}, {})",
+        out[6],
+        out[7]
+    );
+}
+
 /// The indirect draw has to issue enough vertices for a WHOLE meshlet.
 ///
 /// 🔴 The defect, and it looked like everything except what it was. The
@@ -1330,8 +1475,13 @@ fn the_page_reader_biases_in_texels() {
         + start;
     let body = &source[start..end];
 
+    // 🔴 Matched without the whitespace, because the expression grew a
+    // third factor and wrapped across lines. A grep test that pins the
+    // FORMATTING fails on a change that never touched the behaviour,
+    // which is how this one first fired.
+    let dense: String = body.chars().filter(|c| !c.is_whitespace()).collect();
     assert!(
-        body.contains("texel_world * inti_pages.bias.x"),
+        dense.contains("texel_world*inti_pages.bias.x"),
         "the offset has to scale with the level's texel"
     );
     assert!(
@@ -1743,14 +1893,36 @@ fn the_paged_shadow_resolves_like_a_cascade() {
         worst.0,
     );
 
-    // And the ceiling really is the ceiling: a list with something
-    // above the default is a list whose maximum is a lie.
-    let top = kooch_render::settings::shadow_density_choices()
-        .iter()
-        .map(|choice| choice.value)
-        .max()
-        .expect("the density list is empty");
-    assert_eq!(top, density as i64, "the list offers more than the default");
+    // 🔴 The list REACHES past the default now, and the entries above it
+    // have to say what they cost.
+    //
+    // This assertion used to be `top == default`, guarding "a list with
+    // something above the default is a list whose maximum is a lie".
+    // That is right for a quality tier and wrong for this number: 100 %
+    // is one texel per screen pixel measured in the SUN's plane, and a
+    // texel lands square only on a surface facing the sun. A receiver
+    // tilted by 79° is already under one texel per pixel with the
+    // control at its old ceiling — so the ceiling was pinned on the
+    // wrong side of the case that needs it, and the pass had clamped to
+    // 400 the whole time. Epic's equivalent goes negative for the same
+    // reason.
+    //
+    // What replaces it is the guard that actually matters: an option
+    // that multiplies the page count must NAME the multiplier, because
+    // the pool overflows without a word and its failure looks like a
+    // missing shadow.
+    let choices = kooch_render::settings::shadow_density_choices();
+    assert!(
+        choices.iter().any(|choice| choice.value == density as i64),
+        "the default density is not one of the options"
+    );
+    for choice in choices.iter().filter(|c| c.value > density as i64) {
+        assert!(
+            choice.label.contains("the pages"),
+            "`{}` asks for more pages than the default without saying how many",
+            choice.label,
+        );
+    }
 }
 
 /// The expansion's cost is reported as the product it is.
@@ -2532,5 +2704,102 @@ fn a_caster_behind_every_receiver_pairs_nothing() {
         open_pairs - bounded_pairs,
         bounded_rejected,
         "the rejected counter does not account for the missing pairs"
+    );
+}
+
+/// A cleared page outlives the generation it was cleared under, and only
+/// a lamp's does.
+///
+/// 🔴 A grep, because the alternative is a fixture with a spinning lamp,
+/// a cull, and a readback to observe one skipped listing. What it guards
+/// is exact and was measured: `dense.scene` spins 64 light pivots, every
+/// spin turns that lamp's generation over, and every one of its pages
+/// then misses the cache gate and is listed and cleared to produce the
+/// same nothing. 902 of the 924 pages one frame rasterised; 1469 of 1491
+/// in another.
+///
+/// Empty content does not depend on a generation — a page with no caster
+/// in reach reads lit whether or not the lamp moved — so the stamp says
+/// EMPTY and the gate honours it while the bucket stays empty.
+///
+/// ⚠️ The sun is excluded and has to be. Its pages carry an invariant
+/// the lamps' do not: one whose ADDRESSING changed under a snap crossing
+/// must redraw even though its content would be identical, because the
+/// listing is what writes the way back into the table.
+/// `a_still_suns_page_caches` caught this gate applying to the sun.
+#[test]
+fn an_empty_lamp_page_stops_relisting() {
+    let table = kooch_lighting::PAGE_TABLE;
+    let compact = include_str!("../shaders/page_compact.wgsl");
+    let dense: String = compact.chars().filter(|c| !c.is_whitespace()).collect();
+
+    assert!(
+        table.contains("const PAGE_EMPTY: u32 = 2u;"),
+        "the sentinel has to be EVEN: every generation ends `h | 1`, and that is the whole \
+         reason no generation can be mistaken for it",
+    );
+    assert!(
+        dense.contains("if!id.is_sun&&stamp==PAGE_EMPTY&&survivors==0u{"),
+        "the cache gate has to honour an empty lamp page, or a moving light relists every \
+         page it owns every frame to clear it to the same nothing",
+    );
+    assert!(
+        dense.contains("select(gen,PAGE_EMPTY,!id.is_sun&&survivors==0u)"),
+        "a lamp page with no survivors has to be stamped EMPTY rather than with the \
+         generation, or the gate above can never fire",
+    );
+}
+
+/// The march is a different QUESTION, not a wider filter.
+///
+/// 🔴 A grep, because observing it needs an atlas with a caster whose
+/// footprint misses one texel — the exact configuration that is hard to
+/// build on purpose and easy to hit by accident, which is why the
+/// artefact survived four rounds of tuning the reader that cannot see
+/// it.
+///
+/// What it pins is the part that would be quietly lost in a cleanup:
+/// the rays have to SPREAD. Stepping along the sun's own axis does not
+/// move the sample in the sun's plane at all — `basis[2]` is
+/// perpendicular to the two axes a page is addressed by — so an
+/// unjittered march reads one texel at several depths and answers
+/// exactly what the single tap already answered. The spread is the
+/// mechanism, not a soft-shadow nicety on top of it.
+#[test]
+fn the_march_spreads_over_the_suns_disc() {
+    let shading = kooch_lighting::inti_pbr_shader(1);
+    let start = shading
+        .find("fn inti_page_march(")
+        .expect("the march is in the shader");
+    let end = shading[start..]
+        .find("\nfn inti_page_shadow(")
+        .expect("the march ends")
+        + start;
+    let body: String = shading[start..end]
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        body.contains("inti.sun_softness"),
+        "the rays have to open over the sun's ANGULAR SIZE; without a spread every step \
+         reads the same texel and the march answers what the single tap already did",
+    );
+    assert!(
+        body.contains("basis[0]*") && body.contains("basis[1]*"),
+        "the spread has to be in the sun's two PLANE axes — offsetting along `basis[2]` is \
+         the degenerate direction, the one that does not move the sample in the page",
+    );
+    assert!(
+        body.contains("abs(reference-previous)*1.05"),
+        "the tolerance has to be measured from the ray's own step, or the march has \
+         reacquired the constant it exists to remove",
+    );
+    // And the box reader is still reachable, because nothing has
+    // measured what the march costs.
+    assert!(
+        shading.contains("inti_pages.layer.z != 0u"),
+        "the march has to stay selectable; it replaces the reader every shipped frame goes \
+         through and its cost is unmeasured",
     );
 }

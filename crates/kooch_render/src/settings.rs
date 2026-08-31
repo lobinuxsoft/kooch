@@ -243,6 +243,51 @@ pub struct RenderSettings {
         shown_when = PAGES_ON
     )]
     pub shadow_bias_max: f32,
+    /// A ceiling on the receiver's own depth GRADIENT, as a slope —
+    /// `tan` of the incidence, per axis.
+    ///
+    /// 🔴 The reader gives every filter tap the depth the receiving
+    /// PLANE has where that tap looks, rather than the depth under the
+    /// pixel. That is what a tilted receiver needs and what no scalar
+    /// bias can supply: how much depth a tap crosses depends on WHICH
+    /// WAY it moved, so one number has to cover the worst axis on every
+    /// axis and detaches the shadow along the one that needed nothing.
+    ///
+    /// ⚠️ A ceiling because the slope diverges as the surface turns
+    /// edge-on, and an unbounded one extrapolates a tap to any depth at
+    /// all — a lit pixel in the middle of a shadow. 4 is `tan 76°`;
+    /// 0 disables the term and restores one depth for every tap.
+    #[serde(default = "default_shadow_bias_slope")]
+    #[reflect(
+        group = "Shadows: virtual pages",
+        range = SHADOW_BIAS_SLOPE_RANGE,
+        shown_when = PAGES_ON
+    )]
+    pub shadow_bias_slope: f32,
+    /// March the shadow atlas instead of sampling one texel through a
+    /// PCF box.
+    ///
+    /// 🔴 The two readers ask different questions. The box asks what is
+    /// stored under this pixel and filters the answer, so an occluder
+    /// that did not land in that texel is not found and the pixel comes
+    /// out LIT — a hole inside a shadow with the page present, resident
+    /// and correctly drawn. Widening the box does not repair it: every
+    /// tap is still one comparison at one place, and the taps that miss
+    /// vote lit.
+    ///
+    /// The march asks whether anything blocks along a ray, several
+    /// samples per ray, over rays spread across the sun's angular size
+    /// (`sun_softness`). It carries no bias constant at all — each step
+    /// compares against how far the ray's own depth moved since the
+    /// last, which tightens on a surface facing the sun and loosens on
+    /// a grazing one by exactly the geometry's own amount. Unreal's
+    /// SMRT is the same shape.
+    ///
+    /// ⚠️ Costs rays times steps of page lookups where the box costs
+    /// `(width + 1)²` taps in one page. Measure before shipping it on.
+    #[serde(default)]
+    #[reflect(group = "Shadows: virtual pages", shown_when = PAGES_ON)]
+    pub shadow_page_march: bool,
     /// How much simplification error a meshlet may show before the cull
     /// picks a finer level, in PIXELS.
     ///
@@ -834,6 +879,15 @@ fn default_shadow_bias_max() -> f32 {
     0.0
 }
 
+/// 🔴 NOT zero, unlike `default_shadow_bias_max`. That one is a distance
+/// in metres whose right value depends on the scene; this one is an
+/// ANGLE the receiver's own geometry fixes. 4 is `tan 76°`, past which a
+/// surface is nearly edge-on to the sun and the extrapolation stops
+/// being a correction and starts being a divergence.
+fn default_shadow_bias_slope() -> f32 {
+    4.0
+}
+
 fn default_meshlet_lod_error() -> f32 {
     1.0
 }
@@ -948,11 +1002,32 @@ pub fn shadow_density_choices() -> &'static [kooch_ecs::reflect::FieldChoice] {
     SHADOW_DENSITY_CHOICES
 }
 
-/// 100 is the ceiling and the rest go down from it, because that is
-/// what a quality setting means: nobody reaches for a graphics option
-/// hoping to find something ABOVE maximum.
+/// 🔴 100 % is a REFERENCE, not a maximum, and the list used to stop
+/// there — "nobody reaches for a graphics option hoping to find
+/// something above maximum".
 ///
-/// 🔴 The values below 100 are not all powers of two, and 75 is the
+/// That reasoning holds for a quality tier and is wrong for this
+/// number. 100 % means one shadow texel per screen pixel measured in
+/// the SUN's plane, and a texel lands square only on a surface facing
+/// the sun. On one tilted by θ it lands as a rectangle `1 / cos θ`
+/// long — at 11° of elevation, five times — so the receiver is already
+/// under one texel per pixel with the control at its old ceiling. The
+/// setting was pinned on the wrong side of the case that needs it.
+///
+/// Epic's is a signed LOD bias for the same reason, and it goes
+/// negative: `r.Shadow.Virtual.ResolutionLodBiasDirectional`, where
+/// *"lowering the value by -1 doubles the resolution of shadows with
+/// the associated performance tradeoffs"*. They name the artefact
+/// **projective aliasing** — *"when a shadow is cast on a surface
+/// almost parallel to the light direction"*.
+///
+/// ⚠️ The tradeoff is not gentle: a level is a quarter of the pages, so
+/// 200 % is 4x and 400 % is 16x. The pass already clamped to 400 — this
+/// list was the only thing holding the ceiling at 100. Read the pool's
+/// `slice used` on the performance panel before leaving one of the top
+/// two on.
+///
+/// The values below 100 are not all powers of two, and 75 is the
 /// interesting one. A page's level is `floor(log2(...))`, so 75 % does
 /// NOT make every texel three quarters the size — it moves the RADIUS
 /// at which the chain steps to the next level. Part of the scene lands
@@ -975,6 +1050,14 @@ const SHADOW_DENSITY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
         label: "Full — 100 %, one texel per screen pixel",
         value: 100,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Double — 200 %, one level finer · 4x the pages",
+        value: 200,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "Quadruple — 400 %, two levels finer · 16x the pages",
+        value: 400,
     },
 ];
 
@@ -1019,6 +1102,14 @@ const SHADOW_BIAS_MAX_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect
     min: 0.0,
     max: 1.0,
     step: 0.005,
+};
+
+/// 0 is one depth for every tap — what shipped. 8 is `tan 83°`, past
+/// which the clamp is not clamping anything the geometry reaches.
+const SHADOW_BIAS_SLOPE_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::FieldRange {
+    min: 0.0,
+    max: 8.0,
+    step: 0.1,
 };
 
 const MESHLET_LOD_ERROR_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::FieldRange {
@@ -1204,6 +1295,8 @@ impl Default for RenderSettings {
             shadow_normal_bias: default_shadow_normal_bias(),
             shadow_depth_bias: default_shadow_depth_bias(),
             shadow_bias_max: default_shadow_bias_max(),
+            shadow_bias_slope: default_shadow_bias_slope(),
+            shadow_page_march: false,
             meshlet_lod_error: default_meshlet_lod_error(),
             meshlet_min_pixels: default_meshlet_min_pixels(),
             meshlet_two_level: default_meshlet_two_level(),
@@ -1283,6 +1376,8 @@ impl RenderSettings {
             page_normal_bias: self.shadow_normal_bias,
             page_depth_bias: self.shadow_depth_bias,
             page_bias_max: self.shadow_bias_max,
+            page_bias_slope: self.shadow_bias_slope,
+            page_march: self.shadow_page_march,
             max_distance: self.shadow_distance,
             cascade_texels: self.shadow_cascade_texels,
             enabled: self.shadows_enabled,

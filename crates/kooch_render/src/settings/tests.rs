@@ -393,12 +393,14 @@ fn the_shadow_bias_reaches_the_settings() {
         shadow_normal_bias: 0.5,
         shadow_depth_bias: 0.05,
         shadow_bias_max: 0.04,
+        shadow_bias_slope: 2.5,
         ..Default::default()
     };
     let shadows = settings.shadows();
     assert_eq!(shadows.page_normal_bias, 0.5);
     assert_eq!(shadows.page_depth_bias, 0.05);
     assert_eq!(shadows.page_bias_max, 0.04);
+    assert_eq!(shadows.page_bias_slope, 2.5);
 
     // The defaults have to be what `inti_pbr.wgsl` held, so a project
     // with no settings file renders exactly as it did before.
@@ -409,6 +411,11 @@ fn the_shadow_bias_reaches_the_settings() {
         default.shadow_bias_max, 0.0,
         "the cap is OFF by default: turning it on is a behaviour change",
     );
+    // 🔴 ON, unlike the cap above. That one is a distance in metres
+    // whose right value depends on the scene; this is the receiver's own
+    // geometry, and shipping it at 0 would ship #1017 unfixed behind a
+    // setting no project knows to turn on.
+    assert_eq!(default.shadow_bias_slope, 4.0);
 }
 
 #[test]
