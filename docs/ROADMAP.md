@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-28 — 🔴 **there is no render distance in this engine.** `perspective_infinite_reverse_rh` never receives `PerspectiveCamera::far`, and no `draw_distance`/`cull_distance` exists anywhere in the tree, so every instance in a scene is in frustum forever — free at 190 m, the whole frame at 1410 m. Two silent limits cost a day each (#996 buffer sizes, #997 the 65 535 dispatch ceiling) and `dense.scene` opened; what it showed is in the order below. 🔴 **a frame cap is a PERFORMANCE setting on this part: the same work costs 3.9 ms of GPU capped at 72 fps and 13.2 ms uncapped, because capped the GPU idles 68 % of the time and holds ~1210 MHz instead of throttling to ~850.** `gpu_busy_percent` reads 32 % and the scopes agree. **The budget is met with the preset below** — 13.88 ms frame, and at 8 W capped only **28 % of it is used**. The lever was the upscaler, not the shading: `upscale: 3` (FSR 3.1) cost 11.355 ms of a 23.36 ms frame and `upscale: 2` (SGSR 2) costs 2.062. 🔴 **The ~11 ms shading floor #885 was built to decompose no longer exists** — the whole shading pass is 3.272 ms today — and the instrument built for it measured something else instead: a full-screen sweep per material **in the project** costs 178 µs on the device, which is 0.71 ms here and 3.7 ms for a game with twenty materials. **#826 is removed, not deferred.** Cutting a froxel's light list by COUNT is incompatible with a cluster grid being continuous, and that is a property of the idea rather than of any implementation of it: see the entry below. The remaining queue is the contact march's cap (#839) and #731. The budget is unchanged, still unmet, and now measured against the SETTLED clock rather than the boosted one — 40.7 ms, not 27.8.
+Last updated 2026-08-31 — 🔴 **the bright patch is fixed: it was Olsson's receiver bound, and the debug view had no colour for it.** A page drawn *without one caster* paints green, the same as a bad bias, so four correct eliminations pointed nowhere before the bound was tried. #1022 landed and is worth its claim — `geometry walk 245` against `pair tests 452 432`. **Next is #1009**, the distant-light tier: 32 point lights exhaust the pool (`slice used 1024/1024`, `free 0`) because a lamp is either a full chain or nothing, and Unreal's middle tier — one page per distant light, round-robin at one update a frame — is what is missing. — 🔴 **there is no render distance in this engine.** `perspective_infinite_reverse_rh` never receives `PerspectiveCamera::far`, and no `draw_distance`/`cull_distance` exists anywhere in the tree, so every instance in a scene is in frustum forever — free at 190 m, the whole frame at 1410 m. Two silent limits cost a day each (#996 buffer sizes, #997 the 65 535 dispatch ceiling) and `dense.scene` opened; what it showed is in the order below. 🔴 **a frame cap is a PERFORMANCE setting on this part: the same work costs 3.9 ms of GPU capped at 72 fps and 13.2 ms uncapped, because capped the GPU idles 68 % of the time and holds ~1210 MHz instead of throttling to ~850.** `gpu_busy_percent` reads 32 % and the scopes agree. **The budget is met with the preset below** — 13.88 ms frame, and at 8 W capped only **28 % of it is used**. The lever was the upscaler, not the shading: `upscale: 3` (FSR 3.1) cost 11.355 ms of a 23.36 ms frame and `upscale: 2` (SGSR 2) costs 2.062. 🔴 **The ~11 ms shading floor #885 was built to decompose no longer exists** — the whole shading pass is 3.272 ms today — and the instrument built for it measured something else instead: a full-screen sweep per material **in the project** costs 178 µs on the device, which is 0.71 ms here and 3.7 ms for a game with twenty materials. **#826 is removed, not deferred.** Cutting a froxel's light list by COUNT is incompatible with a cluster grid being continuous, and that is a property of the idea rather than of any implementation of it: see the entry below. The remaining queue is the contact march's cap (#839) and #731. The budget is unchanged, still unmet, and now measured against the SETTLED clock rather than the boosted one — 40.7 ms, not 27.8.
 
 ---
 
@@ -206,6 +206,99 @@ what the engine did before any of this existed, for the reason
 `settings.rs:510` argues at length: a serde default is not a
 recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
+
+---
+
+## 🎯 2026-08-31 — the sixth cause was none of the five, and the instrument could not name it
+
+The bright patch inside a shadow is **fixed**. It was **Olsson's receiver bound**
+(#940/#949), and it is removed rather than repaired.
+
+The bound rejected a caster whose nearest point lay beyond a page's furthest
+RECORDED receiver. That record only ever covers the receivers that marked *that
+level*, while the reader **climbs to coarser levels** whenever its own does not
+answer. A receiver that climbed met a bound written by other receivers entirely
+and lost the caster it needed — the page drawn with the ground in it and without
+the occluder, which shades lit.
+
+Removed, not fixed, and the arithmetic is why: it saved **7 % of the sun's
+candidates**, measured (`rejected 18 sun` against 227 emitted pairs). Making it
+correct means the marking writing the bound on every level the reader could
+reach — seventeen atomics per sample instead of one, over 1.2 M samples a frame.
+`PAGE_LOD` moved into the word it vacated, so the reader's new jump table costs
+no memory and `PAGE_CELL` stays at six.
+
+### 🔴 The lesson is the instrument, not the bug
+
+`VirtualPages` separates three faults: **red** no page, **yellow** allocated and
+never drawn, **green** the comparison is wrong. Its yellow tests `stored <= 0.0`
+at a **single texel**, so it only catches a page nothing was drawn into. **A page
+drawn without one caster is green** — indistinguishable from a bad bias.
+
+The hunt therefore went through the bias, the depth space, the page latency and
+the pass order before the bound was tried, and *each of those was ruled out with
+evidence that pointed nowhere*. An instrument that cannot name the fault it was
+built for is worse than a slow search: it makes the wrong answers look
+eliminated. Giving that case a colour is the first thing to do next time this
+class of artefact appears.
+
+### What the search left behind, all of it real
+
+Each of these was a genuine defect found while looking somewhere else, and each
+is in `development`:
+
+- **The sun's cull box sat on the camera**, while `sun_window` sits on the
+  snapped page grid. Same size, offset by however far the camera is into its own
+  page — the window's lowest band, up to a whole page and **655 m at the coarsest
+  level**, lay outside the box the cull runs against.
+- **The page table was built after the culls**, so a cull could not ask about
+  pages and had to gate on a box decided apart from the marking. Now: lamp cull,
+  invalidate, compact, pyramid, level culls, expand.
+- **The marking read the previous frame's depth.** `Vbuf64Stage::render` is split
+  into `render_geometry` and `render_shading`; the page work runs between them.
+  Unreal's order, and the only window where both halves are right at once.
+- **A resident page with no content read as a hit**, which ended the reader's
+  climb at the one level that could not answer.
+- **A PCF tap that left its page was clamped to the edge**, so a shadow crossing
+  a page seam read the receiver's own page and found nothing.
+- **Page dilation** (Epic's `PageDilationOffset`), with the diagonal dithered off
+  the thread index — a fixed direction asks for two of the eight neighbours and
+  never the side the camera is moving towards.
+
+### #1022 landed, and it is worth what it claimed
+
+```
+geometry walk      245 · 1 per pair
+pair tests     452 432 · 1993 per pair
+meshlet pairs      227
+```
+
+The descent touches 245 pages to emit 227 pairs — 93 % hit rate, **~1850x under**
+what pairing spends for the same pairs. `shadow_page_geometry`, off by default,
+and `both_expansions_emit_the_same_pairs` compares the two lists as sets.
+
+Also landed: the reader **jumps** to the level that answers instead of walking up
+to seventeen misses per pixel per light (Unreal's `LODOffset`), and
+`the_page_passes_are_profiled` now counts GPU scopes opened against closed — a
+reorder dropped a `close`, wgpu rejected the encoder every frame, and 509 green
+tests said nothing while the compiler reported it as an unused variable.
+
+### Next — #1009, the distant-light tier
+
+Point and spot lights still cast nothing in `dense.scene`, and the reason is
+measured: **the pool is exhausted**. `slice used 1024/1024`, `free 0`,
+`bump 1024 of 1024`, `preempted 4`, and the pressure system already
+`asking coarser — locals +2`. A page with no slot is not readable, so the shadow
+is absent while every other counter reads healthy.
+
+A lamp here is binary — a full chain of six faces, or gated to nothing by
+`page_min_pixels`. Unreal have the middle: **single-page shadow maps** for lights
+under a footprint threshold (`r.Shadow.Virtual.DistantLightMode`), updated
+**round-robin at one light per frame** (`MaxDistantUpdatePerFrame`), allocated
+from their own id range below the full ones. One page per light instead of a
+chain.
+
+That tier is #1009, rewritten with the plan and labelled `next-session`.
 
 ---
 
