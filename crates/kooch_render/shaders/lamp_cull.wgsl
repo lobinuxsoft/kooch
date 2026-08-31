@@ -156,13 +156,19 @@ fn lamp_pixel_error(lod_error: f32, world_center: vec3<f32>, world_scale: f32, e
 // mesh bounds survive an arbitrary rotation where an AABB would need
 // rebuilding, which is why the pool stores them as spheres (#847).
 @compute @workgroup_size(LAMP_GROUP, 1, 1)
-fn cs_lamp_pairs(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn cs_lamp_pairs(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
     let instances = lamp.scene.x;
-    if gid.x >= lamp.scene.z * instances {
+    // Tiled like the two passes below: this product is lamps times
+    // instances and passes the one-dimension limit at 4.2 M.
+    let thread = lamp_thread(gid, groups);
+    if thread >= lamp.scene.z * instances {
         return;
     }
-    let slot = gid.x / instances;
-    let instance = gid.x % instances;
+    let slot = thread / instances;
+    let instance = thread % instances;
     let light = lamp_lights[slot];
     // Directional lights are a prefix of the buffer and never mark a
     // local page; their slots stay empty rather than shifting everyone
@@ -186,15 +192,60 @@ fn cs_lamp_pairs(@builtin(global_invocation_id) gid: vec3<u32>) {
     atomicStore(&lamp_pairs[3u + index * 2u], instance);
 }
 
+// Workgroups one dimension of a dispatch may hold. Mirrors
+// `MAX_WORKGROUPS_PER_DIM` in `kooch_core::gpu::limits` — the Vulkan,
+// D3D12 and Metal floor, and what desktop adapters actually report.
+const LAMP_DIM_LIMIT: u32 = 65535u;
+
 // The meshlet-domain dispatch size: pairs times the pool-wide meshlet
 // max, a number that only exists on the GPU once the pairs are counted.
+//
+// # 🔴 TWO dimensions, because one cannot hold it
+//
+// `lamp.scene.y` is `meshlets_per_mesh`, and that is the maximum over
+// the WHOLE scene rather than this mesh's own count — so the product is
+// `pairs * scene_max`, and it passes 65 535 workgroups long before a
+// scene is interesting. Measured on `dense.scene`: 2157 instances at a
+// scene max of 4563 meshlets, 64 lamps, so even the old cap of 16 384
+// pairs asks for 1.17 MILLION workgroups. Eighteen times the limit.
+//
+// An indirect dispatch past `maxComputeWorkGroupCount` is undefined, and
+// what it does here is nothing: the two heavy passes never ran, every
+// lamp bucket kept zero survivors, and every lamp page was stamped empty
+// and cleared. The reader then answers "nothing occludes" over a page
+// that is resident, correctly keyed and perfectly blank — no lamp in the
+// scene cast a shadow, with every counter reading healthy.
+//
+// The engine already has the shape for this: `tiled_workgroups` spills
+// the excess into `y` and the shader re-linearises from
+// `num_workgroups.x`. Its own comment says why clamping is not the
+// alternative — the scene renders with geometry missing and it reads as
+// a bug in the LOD chain. That is exactly what happened.
+//
+// ⚠️ This makes the dispatch legal, not small. `pairs * scene_max` is
+// still overwhelmingly empty threads, and the fix for that is the
+// chunking the camera's cull already has (`chunks_for`).
 @compute @workgroup_size(1, 1, 1)
 fn cs_lamp_args() {
     let pairs = min(atomicLoad(&lamp_pairs[0]), lamp.scene.w);
     let threads = pairs * lamp.scene.y;
-    lamp_args[0] = (threads + LAMP_GROUP - 1u) / LAMP_GROUP;
-    lamp_args[1] = 1u;
+    let groups = max((threads + LAMP_GROUP - 1u) / LAMP_GROUP, 1u);
+    if groups <= LAMP_DIM_LIMIT {
+        lamp_args[0] = groups;
+        lamp_args[1] = 1u;
+    } else {
+        lamp_args[0] = LAMP_DIM_LIMIT;
+        lamp_args[1] = (groups + LAMP_DIM_LIMIT - 1u) / LAMP_DIM_LIMIT;
+    }
     lamp_args[2] = 1u;
+}
+
+// The linear thread index of a dispatch that may be two-dimensional.
+//
+// Mirrors `tiled_workgroups`: `x` saturates at the limit and `y` carries
+// the rest, so the row stride is the whole `x` extent in THREADS.
+fn lamp_thread(gid: vec3<u32>, groups: vec3<u32>) -> u32 {
+    return gid.y * (groups.x * LAMP_GROUP) + gid.x;
 }
 
 // The #465 reduction, every lamp at once: per child, contribute the
@@ -203,14 +254,18 @@ fn cs_lamp_args() {
 // two's descent decision is coherent per lamp — no torn seam, no hole
 // in a caster.
 @compute @workgroup_size(LAMP_GROUP, 1, 1)
-fn cs_lamp_err(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn cs_lamp_err(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
     let per_mesh = lamp.scene.y;
     let pairs = min(atomicLoad(&lamp_pairs[0]), lamp.scene.w);
-    if gid.x >= pairs * per_mesh {
+    let thread = lamp_thread(gid, groups);
+    if thread >= pairs * per_mesh {
         return;
     }
-    let pair = gid.x / per_mesh;
-    let offset = gid.x % per_mesh;
+    let pair = thread / per_mesh;
+    let offset = thread % per_mesh;
     let slot = atomicLoad(&lamp_pairs[2u + pair * 2u]);
     let instance = atomicLoad(&lamp_pairs[3u + pair * 2u]);
 
@@ -242,14 +297,18 @@ fn cs_lamp_err(@builtin(global_invocation_id) gid: vec3<u32>) {
 // same tests the retired cube path ran per light, in one dispatch for
 // all of them.
 @compute @workgroup_size(LAMP_GROUP, 1, 1)
-fn cs_lamp_cull(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn cs_lamp_cull(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
     let per_mesh = lamp.scene.y;
     let pairs = min(atomicLoad(&lamp_pairs[0]), lamp.scene.w);
-    if gid.x >= pairs * per_mesh {
+    let thread = lamp_thread(gid, groups);
+    if thread >= pairs * per_mesh {
         return;
     }
-    let pair = gid.x / per_mesh;
-    let offset = gid.x % per_mesh;
+    let pair = thread / per_mesh;
+    let offset = thread % per_mesh;
     let slot = atomicLoad(&lamp_pairs[2u + pair * 2u]);
     let instance = atomicLoad(&lamp_pairs[3u + pair * 2u]);
 

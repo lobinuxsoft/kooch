@@ -376,11 +376,14 @@ impl LampCull {
         });
         pass.set_pipeline(&self.pairs_pass);
         pass.set_bind_group(0, &bound.pairs, &[]);
-        pass.dispatch_workgroups(
-            (lamp_slots.min(LAMP_CULLS) * instance_count.max(1)).div_ceil(64),
-            1,
-            1,
+        // 🔴 Tiled. Lamps times instances passes 65 535 workgroups at
+        // 4.2 M, and a dimension over the limit is undefined — see
+        // `cs_lamp_args` for what that cost the two passes after it.
+        let (x, y) = kooch_core::gpu::limits::tiled_workgroups(
+            lamp_slots.min(LAMP_CULLS) * instance_count.max(1),
+            64,
         );
+        pass.dispatch_workgroups(x, y, 1);
         pass.set_pipeline(&self.args_pass);
         pass.set_bind_group(0, &bound.args, &[]);
         pass.dispatch_workgroups(1, 1, 1);

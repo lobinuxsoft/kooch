@@ -194,6 +194,70 @@ fn the_view_clear_leaves_the_lamp_buckets() {
     );
 }
 
+/// The lamps' meshlet passes are dispatched over `pairs * meshlets`, and
+/// that product does not fit one dispatch dimension.
+///
+/// # 🔴 Why no GPU test in this file can catch it
+///
+/// The rigs here draw two instances of a cube. `meshlets_per_mesh` is
+/// one, the pair count is two, the dispatch is a single workgroup, and
+/// it will be a single workgroup no matter what the arithmetic does.
+/// `dense.scene` is 2157 instances at a SCENE-WIDE max of 4563 meshlets
+/// with 64 lamps — and `meshlets_per_mesh` is the maximum over the whole
+/// pool, not this mesh's own count, so it multiplies every pair.
+///
+/// An indirect dispatch past `maxComputeWorkGroupCount` is undefined,
+/// and here it did nothing: the culls never ran, every lamp bucket kept
+/// zero survivors, every lamp page was stamped empty and cleared, and
+/// every reader answered "nothing occludes" over a page that was
+/// resident and correctly keyed. No lamp in the scene cast a shadow and
+/// no counter said why.
+#[test]
+fn the_lamp_dispatch_outgrows_one_dimension() {
+    use kooch_core::gpu::limits::{MAX_WORKGROUPS_PER_DIM, tiled_workgroups};
+
+    // Measured on `dense.scene`, from the cull's own growth logs:
+    // `visible_meshlets required = 9 842 308` over 2157 instances.
+    let instances = 2157u32;
+    let scene_max_meshlets = 9_842_308u32 / instances;
+    let lamps = 64u32;
+    // Even the pair cap this path shipped with is far past the limit.
+    let old_pair_cap = 16_384u32;
+    let threads = old_pair_cap * scene_max_meshlets;
+    let flat = threads.div_ceil(64);
+    assert!(
+        flat > MAX_WORKGROUPS_PER_DIM,
+        "the bug this guards needs the flat count to exceed the limit;          it measured {flat} against {MAX_WORKGROUPS_PER_DIM}"
+    );
+
+    // Tiled, both dimensions are legal and every thread is still covered.
+    let (x, y) = tiled_workgroups(threads, 64);
+    assert!(x <= MAX_WORKGROUPS_PER_DIM && y <= MAX_WORKGROUPS_PER_DIM);
+    assert!(
+        u64::from(x) * u64::from(y) * 64 >= u64::from(threads),
+        "the tiled shape does not cover every thread"
+    );
+
+    // And the pre-pass's own dispatch, which is lamps times instances.
+    let (px, py) = tiled_workgroups(lamps * instances, 64);
+    assert!(px <= MAX_WORKGROUPS_PER_DIM && py <= MAX_WORKGROUPS_PER_DIM);
+
+    // The shaders must read the second dimension, or tiling the args
+    // just runs the same threads several times.
+    let source = include_str!("../shaders/lamp_cull.wgsl");
+    for entry in ["cs_lamp_pairs", "cs_lamp_err", "cs_lamp_cull"] {
+        let at = source
+            .find(&format!("fn {entry}("))
+            .unwrap_or_else(|| panic!("lamp_cull.wgsl has no {entry}"));
+        let body = &source[at..at + 400];
+        assert!(
+            body.contains("num_workgroups"),
+            "{entry} indexes by gid.x alone; a tiled dispatch would run row zero              {} times over",
+            "y"
+        );
+    }
+}
+
 #[test]
 fn the_counters_name_every_level() {
     let Some((device, _queue)) = device() else {
