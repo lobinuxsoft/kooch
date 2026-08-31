@@ -268,9 +268,9 @@ impl PoolConfig {
 /// moved from slot 2 to slot 1 with the camera and the sun standing
 /// still.
 ///
-/// That matters because `vbuf64.render` rasterises and shades in ONE
-/// pass: the shading samples an atlas a frame old while reading this
-/// frame's table. The two agree only while a page's slot holds. Before
+/// That matters because the shading reads the page TABLE to find a
+/// page's slot and then samples the ATLAS at it, and the two are filled
+/// by different passes. The two agree only while a page's slot holds. Before
 /// persistence they agreed by accident — the allocator was a bump from
 /// zero and handed the same page the same slot. A free list has no such
 /// order, and the symptom is what the user saw: artefacts that flash and
@@ -384,10 +384,9 @@ pub fn age_from_environment() -> u32 {
 ///
 /// 🔴 Aged **one view at a time, by a pass** — `age_view` in
 /// `page_mark.wgsl` — and not by `clear_buffer`. The table is shared
-/// between the cameras and the raster is fused with the shading, so a
-/// view samples an atlas a frame old: wiping the whole table at the top
-/// of a frame leaves whichever view marks second reading what the first
-/// one just erased. [`Self::clear`] remains for the one caller that
+/// between the cameras and each of them marks, rasters and shades in
+/// turn: wiping the whole table at the top of a frame leaves whichever
+/// view marks second reading what the first one just erased. [`Self::clear`] remains for the one caller that
 /// really does own the whole table — a test, or a rebuild.
 ///
 /// # 🔴 It PERSISTS, and that is what the third buffer is for

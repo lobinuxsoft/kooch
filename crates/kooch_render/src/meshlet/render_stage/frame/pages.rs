@@ -51,6 +51,10 @@ struct PageSettings {
     /// The coverage gate (#944). See `ShadowSettings::page_min_pixels`.
     /// Whether the shading marches the atlas (#1017).
     march: bool,
+    /// Whether the expansion runs from the geometry (#1022).
+    geometry: bool,
+    /// How far, in pages, a receiver dilates its request (#1022).
+    halo: f32,
     min_pixels: u32,
     /// The distance gate. See `ShadowSettings::page_light_reach`.
     reach: u32,
@@ -233,6 +237,8 @@ fn page_settings(resources: &Resources) -> PageSettings {
             shadows.page_bias_slope,
         ),
         march: shadows.page_march,
+        geometry: shadows.page_geometry,
+        halo: shadows.page_halo,
         min_pixels: shadows.page_min_pixels,
         reach: shadows.page_light_reach,
         // Absent in a headless test and in any host without a manager,
@@ -384,6 +390,7 @@ impl MeshletRenderStage {
             marker
         });
         marker.set_coverage(settings.min_pixels);
+        marker.set_halo(settings.halo);
         marker.set_reach(settings.reach);
         let sun = self.light_frame.as_ref().and_then(|(_, frame)| frame.sun());
         let slice = page_view_index(view_id);
@@ -522,8 +529,9 @@ impl MeshletRenderStage {
     /// on the other camera. One viewport with shadows and one without
     /// is what that looks like.
     ///
-    /// The table and atlas it points at are a frame old, which is the
-    /// standing limitation of a fused raster and not this call's doing.
+    /// The table and atlas it points at are THIS frame's: the raster
+    /// and the shading are two calls now, and the page work runs
+    /// between them.
     pub(super) fn bind_page_shadows(
         &mut self,
         device: &wgpu::Device,
@@ -619,6 +627,7 @@ impl MeshletRenderStage {
         raster.set_frame(marker.life().frame);
         raster.set_softness(settings.softness);
         raster.set_march(settings.march);
+        raster.set_geometry(settings.geometry);
         raster.set_bias(
             settings.bias.0,
             settings.bias.1,

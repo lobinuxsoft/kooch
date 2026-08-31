@@ -78,6 +78,27 @@ struct PageView {
     // density of 50 % doubles `wanted`, which is one level coarser in
     // BOTH axes — a quarter of the pages.
     density: vec4<f32>,
+    // x how far, in PAGES, a receiver dilates its request; 0 = off.
+    //
+    // 🔴 Epic's `PageDilationOffset`. A receiver marks its own page and
+    // the two the offset reaches, so the page the camera is about to
+    // cross into is already resident and already drawn before anything
+    // samples it.
+    //
+    // That matters here more than it does for them. `vbuf64.render`
+    // rasterises and SHADES in one pass, so the atlas the shading
+    // samples is a frame old: a page allocated this frame is read this
+    // frame with whatever its slot held last frame — cleared, which is
+    // far depth under reversed-Z, which every reader answers "nothing
+    // occludes here". A lit hole for one frame, every time a page turns
+    // over. Standing on a level boundary turns pages over continuously,
+    // which is exactly where it was reported.
+    //
+    // The dilated request is a residency request only: it does NOT
+    // record a receiver bound, because the receiver that asked is not
+    // inside the page it reaches. A bound of zero means "unrecorded"
+    // and keeps every caster, which is the safe way to be wrong.
+    halo: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> view: ClusterView;
@@ -505,10 +526,6 @@ fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     // u32s, which is what lets an atomicMax hold a distance.
     if page.x < pages.pool.x {
         let d = length(world - lights[light].position);
-        atomicMax(
-            &table_cells[page.x * PAGE_CELL + 4u],
-            bitcast<u32>(max(d, 0.0)),
-        );
     }
     // 🔴 CLAIMED now, and the flag was a guard rather than an oversight.
     // A page claimed is a page in the table, and a page in the table
@@ -569,8 +586,23 @@ fn sun_page_for(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     return vec2<u32>(index, level);
 }
 
+/// A dilated request: residency only, no receiver bound.
+///
+/// Skips the page the real receiver already marked, the way Epic's
+/// `MarkPage` compares the dilated offset against the original before
+/// marking it.
+fn mark_sun_halo(slot: u32, world: vec3<f32>, wanted: f32, centre: u32) {
+    let page = sun_page_for(slot, world, wanted);
+    if page.x == centre {
+        return;
+    }
+    if mark_bit(page.x, true) {
+        atomicAdd(&rank_state[rank_base() + rank_sun(page.y)], 1u);
+    }
+}
+
 // One page of the sun's clipmap, marked.
-fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
+fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32, dither: vec2<f32>) -> vec2<u32> {
     let page = sun_page_for(slot, world, wanted);
     // #949 — the receiver bound, on the sun's axis rather than the
     // lamp's radius. `mark_local` records how FAR a receiver is; a
@@ -598,13 +630,36 @@ fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
         let along = dot(world - eye, basis[2])
             + sun_drift(eye, basis, pages.eye_and_base.w, pages.strides.x, page.y);
         let span = bitcast<f32>(pages.life.w);
-        atomicMax(
-            &table_cells[page.x * PAGE_CELL + 4u],
-            bitcast<u32>(max(along + span, 0.0)),
-        );
     }
     if mark_bit(page.x, true) {
         atomicAdd(&rank_state[rank_base() + rank_sun(page.y)], 1u);
+    }
+    // The halo, in the sun's own plane. Offsetting the WORLD position
+    // rather than the page index is what makes it free of special
+    // cases: `sun_page_for` re-picks the level, re-wraps the cell and
+    // re-derives the index, so a receiver sitting on a LEVEL boundary
+    // dilates across it and asks for the page of the level it is about
+    // to enter — which is the case this exists for, not merely the page
+    // next door.
+    let halo = pages.halo.x;
+    if halo > 0.0 {
+        let basis = sun_basis(pages.sun.xyz);
+        let width = pages.eye_and_base.w * exp2(f32(page.y)) / f32(max(pages.strides.x, 1u));
+        // 🔴 `dither` is why this covers a ring and not a line.
+        //
+        // A FIXED diagonal — which is what this was — dilates every
+        // pixel in the same direction in the SUN's frame, so three of
+        // the four diagonals are never asked for and the halo does
+        // nothing on the side the camera happens to be moving towards.
+        // Epic's `PageDilationDither` flips each component on a bit of
+        // the thread's own index, and their comment says why one
+        // diagonal per pixel is enough: *"as long as there's at least a
+        // single pixel near the edge the adjacent one will get
+        // mapped"*. Over a 2x2 block of pixels all four are covered,
+        // for two marks per pixel instead of eight.
+        let step = (basis[0] * dither.x + basis[1] * dither.y) * (halo * width);
+        mark_sun_halo(slot, world + step, wanted, page.x);
+        mark_sun_halo(slot, world - step, wanted, page.x);
     }
     return page;
 }
@@ -740,7 +795,19 @@ fn mark_pixel(id: vec3<u32>) {
     let local_wanted = wanted * exp2(f32(bias & 0xffu));
 
     if pages.sun.w > 0.5 {
-        _ = mark_sun(pages.sampling.y, world, wanted * exp2(f32(bias >> 8u)));
+        // One diagonal per thread, which one decided by the thread's own
+        // parity — Epic's `PageDilationDither`, off `GroupIndex` there.
+        //
+        // ⚠️ `id`, not `pixel`. `pixel` is `id.xy * rate`, so at any even
+        // rate every thread has the same parity and the pattern
+        // collapses back to the fixed diagonal it exists to replace —
+        // silently, because the halo would still mark two pages and the
+        // counters would still go up.
+        let dither = vec2<f32>(
+            select(-1.0, 1.0, (id.x & 1u) != 0u),
+            select(-1.0, 1.0, (id.y & 1u) != 0u),
+        );
+        _ = mark_sun(pages.sampling.y, world, wanted * exp2(f32(bias >> 8u)), dither);
     }
 
     if view.dimensions.w == 0u {
@@ -998,7 +1065,6 @@ fn age_view(@builtin(global_invocation_id) id: vec3<u32>) {
     // the one thread per entry that already runs first, so the reset
     // rides it. Zero means "no receiver recorded", which every reader
     // treats as "never reject".
-    atomicStore(&table_cells[entry * PAGE_CELL + 4u], 0u);
     let stored = atomicLoad(&table_cells[entry * PAGE_CELL]);
     if stored == PAGE_ABSENT { return; }
 
@@ -1561,7 +1627,6 @@ fn mark_face_rect(
             // #940's receiver bound, from the froxel's furthest corner
             // rather than a sample: larger, so it rejects less, which is
             // the safe direction for a bound that culls casters.
-            atomicMax(&table_cells[index * PAGE_CELL + 4u], bitcast<u32>(max(reach, 0.0)));
             // 🔴 `mark_bit`, not `page_touch`. `page_touch` only
             // refreshes an entry that already exists; the bit is what
             // makes a page EXIST, and what `plan_view` later ranks. The

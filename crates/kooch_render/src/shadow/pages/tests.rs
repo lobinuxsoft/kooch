@@ -311,6 +311,11 @@ fn the_flat_table_is_megabytes_not_108() {
     // worse than no instrument: it was reached for to diagnose a
     // shadow and reported nothing, twice, before anyone read its
     // arithmetic.
+    //
+    // 🔴 Still SIX. `PAGE_LOD` was added and cost nothing: it took the
+    // word Olsson's receiver bound used to own, and that bound is gone
+    // — its record covered one level per receiver while the reader
+    // climbs, so a receiver that climbed lost the caster it needed.
     assert!(
         bytes < 14 * 1024 * 1024,
         "one view's table is {bytes} bytes"
@@ -321,8 +326,12 @@ fn the_flat_table_is_megabytes_not_108() {
     // has stopped being literally true. Written down rather than
     // quietly rounded: the conclusion the comparison exists for — that
     // the flat table is a fraction of what the full chain would cost —
-    // is unchanged, and the day it needs a ninth word this is the line
-    // that should be argued with.
+    // is unchanged, and the day it needs a seventh word this is the
+    // line that should be argued with.
+    //
+    // It nearly did. `PAGE_LOD` was going to be that word, until the
+    // receiver bound it replaced turned out to be the bug and freed
+    // one.
     assert!(
         bytes * 8 < flat,
         "{bytes} bytes has stopped being a fraction of the full-chain flat answer's {flat}"

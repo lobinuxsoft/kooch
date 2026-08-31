@@ -218,6 +218,9 @@ struct PageMarkView {
     paint: [f32; 4],
     life: [u32; 4],
     density: [f32; 4],
+    /// x how far, in PAGES, a receiver dilates its request. Mirrors
+    /// `halo` in `page_mark.wgsl`.
+    halo: [f32; 4],
 }
 
 /// The pass, its buffers, and the ring that brings the count home.
@@ -283,6 +286,10 @@ pub struct PageMarker {
     coverage: u32,
     /// The distance gate, in multiples of a light's own range. 0 = off.
     reach: u32,
+    /// How far, in PAGES, a receiver dilates its request (#1022).
+    /// 0 = off, which is what a directly-constructed marker measures
+    /// with. Epic's `PageDilationOffset`.
+    halo: f32,
     last: Option<MarkCounts>,
 }
 
@@ -362,9 +369,21 @@ impl PageMarker {
             clipmap,
             capacity: (1, 1),
             coverage: 0,
+            halo: 0.0,
             reach: 0,
             last: None,
         }
+    }
+
+    /// How far, in pages, a receiver dilates its page request.
+    ///
+    /// 🔴 Margin against a request that arrives late. The marking reads
+    /// a depth buffer to decide which pages exist, and a receiver that
+    /// crosses a page — or a clipmap level — asks for one nothing has
+    /// asked for before. The halo asks for it early, so the page is
+    /// resident and drawn by the time anything samples it.
+    pub fn set_halo(&mut self, pages: f32) {
+        self.halo = pages.max(0.0);
     }
 
     /// Projected radius, in screen pixels, under which a local light
@@ -643,6 +662,7 @@ impl PageMarker {
                     // range. See `light_out_of_reach`.
                     self.reach as f32,
                 ],
+                halo: [self.halo, 0.0, 0.0, 0.0],
             }),
         );
 

@@ -148,10 +148,12 @@ fn the_counters_name_every_level() {
         sun + 256,
         "the lamp buckets moved; `LAMP_CULLS` and the shader's constant have to move together"
     );
-    // …and last the two receiver-bound rejections, the lamps' (#940)
-    // and the sun's (#949), which are counted apart because they
-    // measure different properties of a scene.
-    assert_eq!(raster.count_slots(), buckets * 3 + 7);
+    // …then the two receiver-bound rejections, the lamps' (#940) and
+    // the sun's (#949), which are counted apart because they measure
+    // different properties of a scene — and last the inverted
+    // expansion's own two (#1022): the pages its descents reached, and
+    // the descents that ran out of stack.
+    assert_eq!(raster.count_slots(), buckets * 3 + 9);
     let mut words = vec![0u32; raster.count_slots() as usize];
     words[0] = 7;
     words[1] = 5;
@@ -163,12 +165,24 @@ fn the_counters_name_every_level() {
     // sun's bound nothing to reject while the lamps' still bites.
     words[buckets as usize * 3 + 5] = 11;
     words[buckets as usize * 3 + 6] = 77;
+    // The inverted shape's cost, which is a MEASURED number and not the
+    // `pages * meshlets` product the paired one reports. A reader that
+    // took `tests` for both would compare a walk against an area.
+    words[buckets as usize * 3 + 7] = 1234;
     let counts = raster.decode(&words, 1);
     assert_eq!(counts.pages, 21, "every bucket sums");
     assert_eq!(counts.local, 42, "local pages are reported, not hidden");
     assert_eq!(counts.pairs, 900);
     assert_eq!(counts.depth_rejected, 11, "the lamps' bound, alone");
     assert_eq!(counts.sun_rejected, 77, "the sun's bound, alone");
+    assert_eq!(
+        counts.walk, 1234,
+        "the descent's own cost, counted where it happens"
+    );
+    assert_eq!(
+        counts.walk_overflow, 0,
+        "a descent that drops a subtree drops a caster, so the healthy reading is zero",
+    );
     assert_eq!(counts.view, 1);
 }
 
@@ -1767,28 +1781,48 @@ fn cs_snap(@builtin(global_invocation_id) id: vec3<u32>) {
 /// costing a page at the edge of the screen. THIS frame's geometry fills
 /// them, which is what the shading compares against.
 #[test]
-fn the_marking_is_recorded_before_the_shading() {
+fn the_marking_sits_between_raster_and_shading() {
     let source = include_str!("../src/meshlet/render_stage/frame/render_r64.rs");
 
+    let raster = source
+        .find(".render_geometry(")
+        .expect("the frame rasterises");
     let mark = source
         .find("self.record_page_marking(")
         .expect("the frame marks pages");
     let bind = source
         .find("self.bind_page_shadows(")
         .expect("the frame binds them");
-    let shade = source.find(".render(").expect("the frame has a fused pass");
+    let shade = source.find(".render_shading(").expect("the frame shades");
 
+    // 🔴 The window, and it is one line wide on both sides.
+    //
+    // Before the raster the depth buffer still holds the PREVIOUS
+    // frame, so the marking asks for pages where the geometry used to
+    // be — a receiver that crossed a clipmap level boundary lands on a
+    // page nobody requested, and a page that does not exist shades as
+    // lit. That is what this order exists to stop, and it is Unreal's:
+    // depth, then page management, then shading.
+    //
+    // After the shading is worse and was tried: the atlas is then a
+    // frame old, so a moving object is compared against its OWN caster
+    // from the previous frame and shadows itself.
+    assert!(
+        raster < mark,
+        "the marking reads a depth buffer the raster has not filled yet, so it asks for \
+         pages where the geometry was last frame"
+    );
     assert!(
         mark < bind,
         "the shading is pointed at the pages before they are marked"
     );
     assert!(
         bind < shade,
-        "the fused pass runs before it is pointed at this camera's pages"
+        "the shading runs before it is pointed at this camera's pages"
     );
 
     // And the paint is the half that stays behind, because it writes the
-    // colour buffer the fused pass is about to overwrite.
+    // colour buffer the shading is about to overwrite.
     let paint = source
         .find("self.record_page_paint(")
         .expect("the frame paints the debug view");
@@ -2042,6 +2076,24 @@ fn the_page_passes_are_profiled() {
         assert!(
             source.contains("#[profiling::function]"),
             "{name} records GPU work in a function the profiler cannot see"
+        );
+    }
+
+    // 🔴 Every scope OPENED has to be closed, and nothing above checks
+    // that. A `nested()` without its `close()` is not a missing timing:
+    // wgpu refuses the whole encoder — "a debug group was not popped
+    // before the encoder was finished" — and the frame stops being
+    // submitted at all. It shipped that way once, from a reorder that
+    // moved a `close` out from under the scope it belonged to, and the
+    // only warning was an unused variable nobody read.
+    {
+        let source = include_str!("../src/shadow/pages/raster.rs");
+        let opened = source.matches("= nested(track,").count();
+        let closed = source.matches("close(track,").count();
+        assert_eq!(
+            opened, closed,
+            "pages/raster.rs opens {opened} GPU scopes and closes {closed}; an unpopped \
+             debug group makes wgpu reject the encoder and the frame never reaches the queue"
         );
     }
 
@@ -2540,172 +2592,23 @@ fn a_point_behind_a_face_gets_a_negative_w() {
     );
 }
 
-/// #940's acceptance, planted: a caster whose nearest point lies beyond
-/// the page's furthest receiver produces no pair for that page. Two
-/// identical runs — one with the receiver bound planted, one without —
-/// and the rejected counter has to equal the pairs that vanished.
-#[test]
-fn a_caster_behind_every_receiver_pairs_nothing() {
-    use glam::{Mat4, Vec3};
-    use kooch_render::meshlet::{
-        MeshInstance, MeshletCullPipelines, MeshletScene, SceneCullParams, build_default_meshlets,
-    };
-
-    let Some((device, queue)) = common::try_acquire_device() else {
-        eprintln!("no adapter; skipping");
-        return;
-    };
-    let (device, queue) = (&device, &queue);
-    let device = device.clone();
-    let queue = queue.clone();
-
-    // The lamp rig's scene, plus one cube BELOW the floor: the floor's
-    // receivers sit 4 m from the lamp, the deep cube at ~6 m — behind
-    // every receiver the page shades, occluding nothing.
-    let mesh = kooch_render::mesh::primitives::Primitive::Cube {
-        half_extents: Vec3::splat(0.5),
-    }
-    .build();
-    let meshlet_mesh = build_default_meshlets(&mesh).expect("cube builds");
-    let mut pool = kooch_render::meshlet::GlobalMeshPool::new();
-    let handle = pool.register(&meshlet_mesh);
-    let gpu_pool = pool.upload(&device);
-    let meshlets_per_mesh = gpu_pool.max_meshlets_per_mesh.max(1);
-
-    let instances = vec![
-        MeshInstance::new(
-            Mat4::from_scale_rotation_translation(
-                Vec3::new(40.0, 1.0, 40.0),
-                glam::Quat::IDENTITY,
-                Vec3::new(0.0, -0.5, 0.0),
-            ),
-            handle.mesh_id,
-            0,
-        ),
-        MeshInstance::new(
-            Mat4::from_scale_rotation_translation(
-                Vec3::splat(0.5),
-                glam::Quat::IDENTITY,
-                Vec3::new(0.45, 2.0, -0.45),
-            ),
-            handle.mesh_id,
-            0,
-        ),
-        // The caster behind everything: same ray as the occluder, past
-        // the floor. Distance ~6 m, radius ~0.43 m.
-        MeshInstance::new(
-            Mat4::from_scale_rotation_translation(
-                Vec3::splat(0.5),
-                glam::Quat::IDENTITY,
-                Vec3::new(0.45, -2.0, -0.45),
-            ),
-            handle.mesh_id,
-            0,
-        ),
-    ];
-
-    const LIGHTS: u32 = 1;
-    let lamp = Vec3::new(0.0, 4.0, 0.0);
-    let records = [kooch_lighting::GpuLight {
-        position: lamp.to_array(),
-        range: 20.0,
-        kind: 1,
-        ..Default::default()
-    }];
-
-    let config = PageConfig::default();
-    let fine_level = config.local_floor();
-    let fine_side = config.side(fine_level);
-    let fine = lamp_face_page(0, 3, fine_level, (fine_side / 2, fine_side / 2), LIGHTS);
-
-    // One run of the whole pipeline against a planted table. `bound`
-    // is the fifth word: the furthest receiver, or 0 for "no data".
-    let run = |bound: f32| -> (u32, u32) {
-        let scene = MeshletScene::new(&device, instances.len() as u32);
-        scene.upload_instances(&queue, &instances);
-        let scene_params = SceneCullParams::new(instances.len() as u32, meshlets_per_mesh);
-        let lights_buffer = {
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("depth_reject_test_light"),
-                size: std::mem::size_of_val(&records) as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&records));
-            buffer
-        };
-        let mut page_pool = PagePool::new(&device, small());
-        let entries = VIEWS * span(LIGHTS);
-        page_pool.ensure_entries(&device, entries);
-        let cell = PAGE_CELL as usize;
-        let mut slots = vec![0u32; entries as usize * cell];
-        slots[fine as usize * cell] = 3 + 1;
-        slots[fine as usize * cell + 4] = bound.to_bits();
-        queue.write_buffer(page_pool.slots(), 0, bytemuck::cast_slice(&slots));
-
-        let cull_pipelines = MeshletCullPipelines::new(&device);
-        let mut raster = PageRasterizer::new(
-            &device,
-            cull_pipelines.meshlet_bind_group_layout(),
-            PageConfig::default(),
-            ClipmapConfig::default(),
-            small(),
-            kooch_render::meshlet::DEFAULT_MAX_TRIANGLES as u32,
-        );
-        let meshlet_bg = kooch_render::meshlet::pool_meshlet_bind_group(
-            &device,
-            cull_pipelines.meshlet_bind_group_layout(),
-            &gpu_pool,
-        );
-        let threads = instances.len() as u32 * meshlets_per_mesh;
-        let chunks = kooch_render::meshlet::chunks_for(instances.len() as u32, meshlets_per_mesh);
-        raster.ensure_capacity(&device, threads, threads, chunks);
-
-        let mut encoder = device.create_command_encoder(&Default::default());
-        raster.record(
-            &device,
-            &queue,
-            &mut encoder,
-            &cull_pipelines,
-            &gpu_pool,
-            &scene,
-            &meshlet_bg,
-            scene.instance_buffer(),
-            &page_pool,
-            &scene_params,
-            0,
-            Vec3::new(0.0, 1.0, 8.0),
-            Vec3::NEG_Y,
-            &records,
-            &lights_buffer,
-            &[],
-            1.0,
-            None,
-        );
-        queue.submit([encoder.finish()]);
-        let counts = read_words(&device, &queue, raster.counts_buffer());
-        let buckets = raster.buckets() as usize;
-        (counts[buckets + 2], counts[buckets * 3 + 5])
-    };
-
-    // The floor's receivers are 4 m away; 4.05 clears them all and is
-    // still well short of the deep cube's ~5.6 m nearest point. The
-    // floor itself survives — its radius is huge, so its NEAREST point
-    // is nearer than any receiver, which is the conservative side.
-    let (open_pairs, open_rejected) = run(0.0);
-    let (bounded_pairs, bounded_rejected) = run(4.05);
-    assert_eq!(open_rejected, 0, "an absent bound rejected something");
-    assert!(open_pairs > 0, "the rig paired nothing at all");
-    assert!(
-        bounded_rejected > 0,
-        "a caster behind every receiver was not rejected"
-    );
-    assert_eq!(
-        open_pairs - bounded_pairs,
-        bounded_rejected,
-        "the rejected counter does not account for the missing pairs"
-    );
-}
+/// 🔴 `a_caster_behind_every_receiver_pairs_nothing` lived here and is
+/// gone with the bound it tested.
+///
+/// Olsson §4's receiver bound rejected a caster whose nearest point lay
+/// beyond a page's furthest RECORDED receiver. The record only ever
+/// covered the receivers that marked THAT level, while the reader
+/// climbs to coarser ones — so a receiver that climbed met a bound
+/// written by other receivers and lost the caster it needed. The page
+/// was then drawn with the ground in it and without the occluder, which
+/// shades lit and which `VirtualPages` paints GREEN, the colour it
+/// documents as "the comparison is wrong".
+///
+/// It saved 7% of the sun's candidates, measured. Making it correct
+/// means the marking writing the bound on every level the reader could
+/// reach — seventeen atomics per sample instead of one, over 1.2M
+/// samples a frame — which costs more than it saved. Removed rather
+/// than left behind a switch.
 
 /// A cleared page outlives the generation it was cleared under, and only
 /// a lamp's does.
@@ -2801,5 +2704,395 @@ fn the_march_spreads_over_the_suns_disc() {
         shading.contains("inti_pages.layer.z != 0u"),
         "the march has to stay selectable; it replaces the reader every shipped frame goes \
          through and its cost is unmeasured",
+    );
+}
+
+/// The inverted expansion emits the SAME pairs as the paired one.
+///
+/// # 🔴 The only claim #1022 is allowed to make
+///
+/// One shape walks every listed page against every survivor; the other
+/// runs one thread per survivor and descends the page pyramid to the
+/// pages it lands in. They reach a page from opposite ends and then ask
+/// the same three questions about it — `sun_pair` is one function, and
+/// this is the test that says so.
+///
+/// So the switch is a COST switch. If this ever fails, the two halves
+/// of the pass disagree about which caster belongs in which page, and
+/// that disagreement is exactly the artefact the whole line of work is
+/// chasing: it would be a finding, not a regression to paper over.
+///
+/// The pages are planted around the toroidal seam on purpose — absolute
+/// indices −2..1 wrap to cells 126, 127, 0, 1 — because a rectangle
+/// that crosses it becomes four rectangles in the table's own
+/// coordinates, and a descent that ignored the wrap would read the far
+/// side of the world.
+#[test]
+fn both_expansions_emit_the_same_pairs() {
+    use glam::{Mat4, Vec3};
+    use kooch_render::meshlet::{
+        MeshInstance, MeshletCullPipelines, MeshletScene, SceneCullParams, build_default_meshlets,
+    };
+
+    // 🔴 The shared device and not `device()`: the meshlet cull binds a
+    // fifth group and the downlevel default is four.
+    let Some((device, queue)) = common::try_acquire_device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let (device, queue) = (device.clone(), queue.clone());
+
+    let mesh = kooch_render::mesh::primitives::Primitive::Cube {
+        half_extents: Vec3::splat(0.5),
+    }
+    .build();
+    let meshlet_mesh = build_default_meshlets(&mesh).expect("cube builds");
+    let mut pool = kooch_render::meshlet::GlobalMeshPool::new();
+    let handle = pool.register(&meshlet_mesh);
+    let gpu_pool = pool.upload(&device);
+    let meshlets_per_mesh = gpu_pool.max_meshlets_per_mesh.max(1);
+
+    let instances = vec![
+        MeshInstance::new(
+            Mat4::from_scale_rotation_translation(
+                Vec3::new(40.0, 1.0, 40.0),
+                glam::Quat::IDENTITY,
+                Vec3::new(0.0, -0.5, 0.0),
+            ),
+            handle.mesh_id,
+            0,
+        ),
+        MeshInstance::new(
+            Mat4::from_scale_rotation_translation(
+                Vec3::splat(1.5),
+                glam::Quat::IDENTITY,
+                Vec3::new(1.0, 2.0, -1.0),
+            ),
+            handle.mesh_id,
+            0,
+        ),
+    ];
+
+    const LIGHTS: u32 = 1;
+    const LEVEL: u32 = 8;
+    // The sun, and nothing else: a directional light owns no bucket of
+    // its own, so every pair this counts is the clipmap's.
+    let lamps = [kooch_lighting::GpuLight {
+        kind: kooch_lighting::LIGHT_KIND_DIRECTIONAL,
+        ..Default::default()
+    }];
+    // Level 8's pages are 2.56 m wide, so the floor covers absolute
+    // indices −8..7 and these four straddle the seam.
+    let cells: Vec<(u32, u32)> = [126u32, 127, 0, 1]
+        .iter()
+        .flat_map(|&x| [126u32, 127, 0, 1].iter().map(move |&y| (x, y)))
+        .collect();
+
+    let run = |geometry: bool| -> Vec<[u32; 3]> {
+        // Each run gets its own pool and its own rasteriser: a page
+        // listed once is stamped, and the second run would cache it and
+        // list nothing.
+        let scene = MeshletScene::new(&device, instances.len() as u32);
+        scene.upload_instances(&queue, &instances);
+        let scene_params = SceneCullParams::new(instances.len() as u32, meshlets_per_mesh);
+        let lights_buffer = {
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("both_expansions_light"),
+                size: std::mem::size_of_val(&lamps) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&lamps));
+            buffer
+        };
+        let mut page_pool = PagePool::new(&device, small());
+        let entries = VIEWS * span(LIGHTS);
+        page_pool.ensure_entries(&device, entries);
+        let cell = PAGE_CELL as usize;
+        let mut slots = vec![0u32; entries as usize * cell];
+        for (index, &(x, y)) in cells.iter().enumerate() {
+            let page = sun_page(0, LEVEL, (x, y), LIGHTS);
+            slots[page as usize * cell] = index as u32 + 1;
+        }
+        queue.write_buffer(page_pool.slots(), 0, bytemuck::cast_slice(&slots));
+
+        let cull_pipelines = MeshletCullPipelines::new(&device);
+        // Built against the CULL's layout, not the pool's: the depth
+        // draw shares it and the two differ in visibility.
+        let mut raster = PageRasterizer::new(
+            &device,
+            cull_pipelines.meshlet_bind_group_layout(),
+            PageConfig::default(),
+            ClipmapConfig::default(),
+            small(),
+            kooch_render::meshlet::DEFAULT_MAX_TRIANGLES as u32,
+        );
+        raster.set_geometry(geometry);
+        // ⚠️ The per-instance cull, not the chunked one. The two-level
+        // path produces ZERO survivors at every level in this rig — it
+        // enters per rectangle cell and this scene has no cell data to
+        // enter by — so leaving it on would compare two empty lists and
+        // pass for the wrong reason.
+        raster.set_two_level(false);
+        let meshlet_bg = kooch_render::meshlet::pool_meshlet_bind_group(
+            &device,
+            cull_pipelines.meshlet_bind_group_layout(),
+            &gpu_pool,
+        );
+        let threads = instances.len() as u32 * meshlets_per_mesh;
+        let chunks = kooch_render::meshlet::chunks_for(instances.len() as u32, meshlets_per_mesh);
+        raster.ensure_capacity(&device, threads, threads, chunks);
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+        raster.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &cull_pipelines,
+            &gpu_pool,
+            &scene,
+            &meshlet_bg,
+            scene.instance_buffer(),
+            &page_pool,
+            &scene_params,
+            0,
+            Vec3::new(0.4, 3.0, 0.4),
+            Vec3::NEG_Y,
+            &lamps,
+            &lights_buffer,
+            &[],
+            1.0,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+
+        let counts = read_words(&device, &queue, raster.counts_buffer());
+        let buckets = raster.buckets() as usize;
+        let emitted = counts[buckets + 2] as usize;
+        assert!(
+            counts[LEVEL as usize] > 0 && counts[buckets + 5 + LEVEL as usize] > 0,
+            "the rig planted no pages or the cull kept no survivors at level {LEVEL}",
+        );
+        // The descent's own counter says which shape actually ran. A
+        // silent fallback to pairing would make the comparison below
+        // compare the paired shape against itself.
+        let walk = counts[buckets * 3 + 7];
+        assert_eq!(
+            walk > 0,
+            geometry,
+            "the expansion did not run the shape it was asked for",
+        );
+        assert_eq!(counts[buckets + 3], 0, "the pair list overflowed");
+        assert_eq!(
+            counts[buckets * 3 + 8],
+            0,
+            "a descent ran out of stack and dropped a subtree",
+        );
+        let words = read_words(&device, &queue, raster.pairs_buffer());
+        // The order is whatever the atomics handed out; the SET is the
+        // claim.
+        let mut pairs: Vec<[u32; 3]> = (0..emitted)
+            .map(|i| [words[i * 4], words[i * 4 + 1], words[i * 4 + 2]])
+            .collect();
+        pairs.sort_unstable();
+        pairs
+    };
+
+    let paired = run(false);
+    let inverted = run(true);
+    assert!(
+        !paired.is_empty(),
+        "the rig paired nothing, so the comparison proves nothing",
+    );
+    assert_eq!(
+        paired.len(),
+        inverted.len(),
+        "the two shapes emitted different numbers of pairs",
+    );
+    assert_eq!(
+        paired, inverted,
+        "the two shapes disagree about which caster belongs in which page",
+    );
+}
+
+/// A resident page with no content has to read as a MISS, and the
+/// reader has to keep climbing when it does.
+///
+/// # 🔴 Resident is not readable
+///
+/// `PAGE_CELL` says the fourth word is the content stamp and that zero
+/// means "no valid content". A page reaches that state by being freshly
+/// claimed, by being invalidated, or by its bucket overflowing so the
+/// compaction never listed it — and the atlas under its slot then holds
+/// whatever was there before, or a clear. A clear is far depth under
+/// reversed-Z, which every reader answers "nothing occludes here".
+///
+/// Reporting it as a hit does not only read one wrong texel: it ENDS
+/// the walk. `inti_page_shadow` climbs the clipmap until a level
+/// answers — Unreal's "onwards to coarser levels if no valid data is
+/// present" — and a present, empty page stops the search at the one
+/// level that cannot answer, with a coarser one right above it holding
+/// the shadow. The panel already called this out; its `pages dropped`
+/// alert says "some resident pages hold no depth and shade as lit". The
+/// reader was the half that did not know.
+#[test]
+fn an_empty_page_is_not_a_hit() {
+    let source = kooch_lighting::inti_pbr_shader(1);
+    let start = source
+        .find("fn inti_page_lookup(")
+        .expect("the lookup is in the shader");
+    let end = source[start..].find("\nfn ").expect("the lookup ends") + start;
+    let body = &source[start..end];
+
+    let dense: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(
+        dense.contains("inti_page_slots[page*PAGE_CELL+3u]==0u"),
+        "the lookup does not check the content stamp, so a resident page with no depth \
+         reads as a hit and shades lit",
+    );
+    assert!(
+        body.contains("return PAGE_MISS;"),
+        "and it has to answer PAGE_MISS, which is what makes the caller climb",
+    );
+
+    // The other half of the pair: the climb itself. A lookup that
+    // reports the miss buys nothing if the caller gives up on it.
+    let walk_start = source
+        .find("fn inti_page_shadow(")
+        .expect("the reader is in the shader");
+    let walk_end = source[walk_start..]
+        .find("\nfn inti_local_page_shadow(")
+        .expect("the reader ends")
+        + walk_start;
+    let walk = &source[walk_start..walk_end];
+    let walk_dense: String = walk.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(
+        walk_dense.contains("level=level+1u"),
+        "the sun's reader has to walk to coarser levels, or a missing page is a lit pixel \
+         however honestly the lookup reported it",
+    );
+}
+
+/// A PCF tap that leaves its page is resolved through the table.
+///
+/// # 🔴 Clamping is a lit band along every page seam
+///
+/// The kernel is `W` texels wide, so a receiver within `W/2` of a page
+/// edge has taps that belong to the neighbouring page — and whenever a
+/// shadow crosses a seam the occluder's depth is exactly there. Folded
+/// back onto the edge, those taps read the receiver's own page, find
+/// nothing, and the pixel answers LIT with the page present, resident
+/// and correctly drawn.
+///
+/// That is the third of the three faults `VirtualPages` separates, and
+/// it is the one that looks like the other two: the debug view paints
+/// it green — a real page whose COMPARISON is wrong — while a missing
+/// page is red and an undrawn one yellow. A texel is centimetres at the
+/// fine levels and metres at the coarse ones, so the same defect is a
+/// hairline near the camera and a wedge further out.
+///
+/// Unreal resolve every sample through the page table inside
+/// `SampleBilinear` for exactly this reason.
+#[test]
+fn a_tap_off_the_page_finds_its_neighbour() {
+    let source = kooch_lighting::inti_pbr_shader(1);
+    let start = source
+        .find("fn inti_page_filter(")
+        .expect("the filter is in the shader");
+    let end = source[start..].find("\nfn ").expect("the filter ends") + start;
+    let body = &source[start..end];
+
+    assert!(
+        body.contains("inti_page_lookup(page)"),
+        "a tap that leaves its page is not resolved through the table, so it folds back \
+         onto the edge and reads the wrong page's depth",
+    );
+    assert!(
+        body.contains("let outside ="),
+        "the filter does not test whether a tap left the page at all",
+    );
+    // The fallback has to stay: a neighbour that is absent must clamp
+    // rather than read somebody else's slot.
+    assert!(
+        body.contains("clamp(raw,"),
+        "an absent neighbour has to fall back to the clamp",
+    );
+    // And the lamps must NOT re-resolve: their pages are six faces of a
+    // chain, so a step off an edge crosses a face and lands nowhere this
+    // arithmetic can index.
+    let sun = source
+        .find("fn inti_page_shadow(")
+        .expect("the sun's reader is in the shader");
+    let lamp = source
+        .find("fn inti_local_page_shadow(")
+        .expect("the lamps' reader is in the shader");
+    assert!(
+        source[lamp..].contains("PAGE_UNLISTED,"),
+        "the lamps have to opt out of the neighbour walk",
+    );
+    assert!(
+        !source[sun..lamp].contains("PAGE_UNLISTED,"),
+        "the sun has to opt IN, or the fix does nothing where it was measured",
+    );
+}
+
+/// The reader jumps to the level that answers instead of walking to it.
+///
+/// # 🔴 Up to seventeen misses per pixel PER LIGHT
+///
+/// The walk starts at the containment floor and the marking chose
+/// `max(contain, density)`, so the common case is `density - contain`
+/// levels of pure misses before the first hit, with the whole chain as
+/// the ceiling. Each miss is one indexed read — the flat table's whole
+/// point — and seventeen of them per pixel per light is not cheap.
+///
+/// `cs_lod_offsets` walks the chain once per page per frame and writes
+/// the answer into `PAGE_LOD`; the reader then does two reads. That is
+/// Unreal's `LODOffset` beside its `bAnyLODValid` bit.
+///
+/// The loop stays, and must: the hint is a frame's worth of arithmetic
+/// over a table that other passes are still writing, so a stale one has
+/// to degrade into the walk rather than into a wrong answer.
+#[test]
+fn the_reader_jumps_to_the_level_that_answers() {
+    let source = kooch_lighting::inti_pbr_shader(1);
+    let start = source
+        .find("fn inti_page_shadow(")
+        .expect("the reader is in the shader");
+    let end = source[start..]
+        .find("\nfn inti_local_page_shadow(")
+        .expect("the reader ends")
+        + start;
+    let body = &source[start..end];
+
+    assert!(
+        body.contains("PAGE_LOD"),
+        "the reader still climbs the clipmap one level at a time",
+    );
+    assert!(
+        body.contains("PAGE_NO_LOD"),
+        "and it has to tell 'no coarser page' from a jump of zero",
+    );
+    assert!(
+        body.contains("level = level + 1u"),
+        "the walk has to remain as the fallback for a stale hint",
+    );
+
+    // The writer, and the ordering that makes it mean anything.
+    let compact = include_str!("../shaders/page_compact.wgsl");
+    assert!(
+        compact.contains("fn cs_lod_offsets("),
+        "nothing fills the jump table",
+    );
+    let stamp = compact
+        .find("PAGE_CELL + 3u] = select(gen")
+        .expect("the compaction stamps content");
+    let fill = compact
+        .find("fn cs_lod_offsets(")
+        .expect("the pass is in the shader");
+    assert!(
+        stamp < fill,
+        "the jump table is filled before the stamps it reads, so it would point at pages \
+         that hold a clear",
     );
 }

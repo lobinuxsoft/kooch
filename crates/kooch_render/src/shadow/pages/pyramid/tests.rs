@@ -1,4 +1,5 @@
 use super::*;
+use crate::shadow::pages::pool::PAGE_CELL;
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::default();
@@ -14,7 +15,12 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     .ok()
 }
 
-/// A table with exactly one resident page, at `(level, x, y)`.
+/// The `page_list` index the fixture's one listed page carries. An
+/// arbitrary number on purpose: the pyramid has to hand back what the
+/// compaction wrote, not a bit that happens to be set.
+const LISTING: u32 = 37;
+
+/// A table with exactly one LISTED page, at `(level, x, y)`.
 fn table_with(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -23,10 +29,17 @@ fn table_with(
     at: (u32, u32, u32),
 ) -> wgpu::Buffer {
     let entries = (side * side * levels) as usize;
-    let mut words = vec![0u32; entries * 6];
+    // Every entry starts UNLISTED, which is what the compaction leaves
+    // behind for the pages it did not list. Zero would read as
+    // "listing 0" and put every cached page in the pyramid.
+    let mut words = vec![0u32; entries * PAGE_CELL as usize];
+    for entry in 0..entries {
+        words[entry * PAGE_CELL as usize + 2] = u32::MAX;
+    }
     let page = at.0 * side * side + at.2 * side + at.1;
     // Entries store `slot + 1`, so any non-zero word is resident.
-    words[page as usize * 6] = 1;
+    words[page as usize * PAGE_CELL as usize] = 1;
+    words[page as usize * PAGE_CELL as usize + 2] = LISTING;
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: (words.len() * 4) as u64,
@@ -105,7 +118,7 @@ fn read_mip(
 /// one is only wasted raster. The first is why the structure has to be
 /// proven before anything reads it.
 #[test]
-fn a_resident_page_lights_its_ancestors() {
+fn a_listed_page_lights_its_ancestors() {
     let Some((device, queue)) = device() else {
         eprintln!("no adapter; skipping");
         return;
@@ -136,15 +149,17 @@ fn a_resident_page_lights_its_ancestors() {
         let texels = read_mip(&device, &queue, pyramid.texture(), mip, at.0, mip_side);
         let want = ((at.2 >> mip) * mip_side + (at.1 >> mip)) as usize;
         assert_eq!(
-            texels[want], 1,
+            texels[want],
+            LISTING + 1,
             "mip {mip} lost the page at ({}, {}) — an ancestor that reads 0 is a caster the \
              overlap test rejects, and the geometry stops being drawn with nothing failing",
-            at.1, at.2
+            at.1,
+            at.2
         );
         let lit = texels.iter().filter(|&&t| t != 0).count();
         assert_eq!(
             lit, 1,
-            "mip {mip} lit {lit} texels for one resident page — wasted raster, and it means \
+            "mip {mip} lit {lit} texels for one listed page — wasted raster, and it means \
              the reduction read outside its own block",
         );
     }
@@ -155,6 +170,60 @@ fn a_resident_page_lights_its_ancestors() {
     assert!(
         other.iter().all(|&t| t == 0),
         "level 0 lit up for a page marked on level 1",
+    );
+}
+
+/// A page that is RESIDENT but not listed has to stay dark.
+///
+/// 🔴 The failure this guards is not an artefact, it is the cache. Most
+/// of the atlas is resident at any moment and almost none of it is
+/// listed — listing is the compaction's decision that a page redraws
+/// this frame. A pyramid seeded on residency answers `true` for every
+/// cached page, the inverted expansion pairs against all of them, and
+/// the frame rasterises the whole atlas every frame while every counter
+/// reports health. That is #477 undone in one texture.
+#[test]
+fn a_cached_page_stays_dark() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let config = PageConfig {
+        page: 128,
+        virtual_size: 128 * 16,
+        ..PageConfig::default()
+    };
+    let clipmap = ClipmapConfig {
+        base: 1.28,
+        levels: 1,
+    };
+    let side = config.side(0);
+    let entries = (side * side * clipmap.levels) as usize;
+    let mut words = vec![0u32; entries * PAGE_CELL as usize];
+    // Every page resident, every one of them cached: a slot in the
+    // pool, no listing.
+    for entry in 0..entries {
+        words[entry * PAGE_CELL as usize] = entry as u32 + 1;
+        words[entry * PAGE_CELL as usize + 2] = u32::MAX;
+    }
+    let table = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (words.len() * 4) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&table, 0, bytemuck::cast_slice(&words));
+
+    let pyramid = PagePyramid::new(&device, config, clipmap);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    pyramid.build(&device, &queue, &mut encoder, &table, 0);
+    queue.submit([encoder.finish()]);
+
+    let top = PagePyramid::mip_count(side) - 1;
+    let texels = read_mip(&device, &queue, pyramid.texture(), top, 0, 1);
+    assert_eq!(
+        texels[0], 0,
+        "a full, entirely cached atlas lit the pyramid — every page would be rasterised again",
     );
 }
 
@@ -210,10 +279,14 @@ fn the_pyramid_never_misses_a_page() {
     let resident = [(0u32, 0u32), (5u32, 9u32), (6u32, 9u32), (15u32, 2u32)];
 
     let entries = (side * side * clipmap.levels) as usize;
-    let mut words = vec![0u32; entries * 6];
-    for &(x, y) in &resident {
+    let mut words = vec![0u32; entries * PAGE_CELL as usize];
+    for entry in 0..entries {
+        words[entry * PAGE_CELL as usize + 2] = u32::MAX;
+    }
+    for (listing, &(x, y)) in resident.iter().enumerate() {
         let page = level * side * side + y * side + x;
-        words[page as usize * 6] = 1;
+        words[page as usize * PAGE_CELL as usize] = 1;
+        words[page as usize * PAGE_CELL as usize + 2] = listing as u32;
     }
     let table = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,

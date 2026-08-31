@@ -43,6 +43,7 @@ use crate::meshlet::{
 };
 
 use super::pool::{PagePool, PoolConfig};
+use super::pyramid::PagePyramid;
 use super::{ClipmapConfig, PageConfig};
 
 use kooch_core::gpu::{GpuQuery, GpuScopes};
@@ -259,6 +260,25 @@ pub struct RasterCounts {
     /// geometry the marking had already committed pages to — and those
     /// pages render lit with a caster standing in them.
     pub unfilled_sun: u32,
+    /// Pages the INVERTED expansion reached, counted where they happen
+    /// (#1022).
+    ///
+    /// 🔴 The only honest figure for that shape. [`Self::tests`] is
+    /// `pages * meshlets` — a product of two counters the CPU already
+    /// had, exact for the paired shape and meaningless for this one,
+    /// which touches a page only when the pyramid says something under
+    /// the rectangle is being drawn. Zero while the expansion runs the
+    /// paired way.
+    pub walk: u64,
+    /// Descents that ran out of stack.
+    ///
+    /// 🔴 Must be zero, and it is not a performance number. A descent
+    /// that cannot push DROPS the subtree — a caster that stops being
+    /// drawn into pages that asked for it, which is the exact artefact
+    /// this whole line of work is chasing. The bound is `3 * depth + 4`
+    /// and the stack is bigger than that today; the counter is there
+    /// for the day the page size changes.
+    pub walk_overflow: u32,
 }
 
 #[repr(C)]
@@ -344,6 +364,8 @@ pub struct PageRasterizer {
     compact_bgl: wgpu::BindGroupLayout,
     compact: wgpu::ComputePipeline,
     expand_args_pass: wgpu::ComputePipeline,
+    /// Fills `PAGE_LOD` so the reader jumps instead of walking.
+    lod_offsets: wgpu::ComputePipeline,
     draw_args_pass: wgpu::ComputePipeline,
 
     expand_bgl: wgpu::BindGroupLayout,
@@ -374,6 +396,16 @@ pub struct PageRasterizer {
     /// texel through a PCF box (#1017). Carried to the shader in the
     /// raster uniform's spare word, which the shading binds anyway.
     march: bool,
+    /// Whether the expansion runs from the GEOMETRY — one thread per
+    /// surviving meshlet, descending the page pyramid to the pages it
+    /// lands in — instead of pairing every listed page against every
+    /// survivor (#1022). The sun's buckets only.
+    geometry: bool,
+    /// The page pyramid the inverted expansion descends. Built every
+    /// frame after the compaction, whether or not anything reads it:
+    /// the binding is part of the layout either way, and a texture the
+    /// pass may sample has to hold this frame's answer.
+    pyramid: PagePyramid,
     /// Triangles a meshlet may hold — the builder's cap, and the fixed
     /// vertex count the indirect draw issues.
     triangles: u32,
@@ -489,7 +521,13 @@ impl PageRasterizer {
         // a frustum from the light's own position and range, not a slab.
         let expand_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("page_expand"),
-            source: wgpu::ShaderSource::Wgsl(format!("{CLUSTER_COMMON}\n{TABLE}\n{EXPAND}").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{CLUSTER_COMMON}\n{TABLE}\n{}\n{EXPAND}",
+                    super::pyramid::OVERLAP
+                )
+                .into(),
+            ),
         });
         // The depth pass builds a lamp's frustum from the light record.
         //
@@ -531,6 +569,7 @@ impl PageRasterizer {
         };
         let compact = compute("cs_compact", &compact_module, &compact_layout_pipeline);
         let expand_args_pass = compute("cs_expand_args", &compact_module, &compact_layout_pipeline);
+        let lod_offsets = compute("cs_lod_offsets", &compact_module, &compact_layout_pipeline);
         let draw_args_pass = compute("cs_draw_args", &compact_module, &compact_layout_pipeline);
         let invalidate_bgl = invalidate_layout(device);
         let invalidate_pipeline_layout =
@@ -714,7 +753,11 @@ impl PageRasterizer {
             pairs: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_pairs"),
                 size: PAIR_CAPACITY as u64 * 16,
-                usage: storage,
+                // COPY_SRC so a test can read the pairs back: the one
+                // claim #1022 makes is that the two shapes emit the
+                // SAME ones, and that is only checkable by comparing
+                // the lists.
+                usage: storage | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
             visible_counts: device.create_buffer(&wgpu::BufferDescriptor {
@@ -760,6 +803,7 @@ impl PageRasterizer {
             compact_bgl,
             compact,
             expand_args_pass,
+            lod_offsets,
             draw_args_pass,
             expand_bgl,
             storage_bgl,
@@ -777,6 +821,8 @@ impl PageRasterizer {
             // file renders exactly as it did.
             bias: [1.8, 0.02, 0.0, 4.0],
             march: false,
+            geometry: false,
+            pyramid: PagePyramid::new(device, config, clipmap),
             triangles: max_triangles_per_meshlet.max(1),
             two_level: crate::meshlet::MeshletLodSettings::default().two_level,
             culls: (0..levels)
@@ -911,6 +957,12 @@ impl PageRasterizer {
 
     /// The readers' shadow bias, from the settings. Takes effect at the
     /// next `write_uniform`, the way the softness does.
+    /// Which direction the expansion runs: pages against survivors, or
+    /// one survivor down the pyramid to its pages.
+    pub fn set_geometry(&mut self, on: bool) {
+        self.geometry = on;
+    }
+
     /// Which reader the shading uses: the PCF box, or the march.
     pub fn set_march(&mut self, on: bool) {
         self.march = on;
@@ -1011,6 +1063,8 @@ impl PageRasterizer {
             cached: words[levels + 4],
             depth_rejected: words.get(levels * 3 + 5).copied().unwrap_or(0),
             sun_rejected: words.get(levels * 3 + 6).copied().unwrap_or(0),
+            walk: words.get(levels * 3 + 7).copied().unwrap_or(0) as u64,
+            walk_overflow: words.get(levels * 3 + 8).copied().unwrap_or(0),
             view,
         }
     }
@@ -1054,10 +1108,95 @@ fn count_slots(buckets: u32) -> u32 {
     // time, because unlike the product it is not a number two buffers
     // already hold.
     //
-    // Plus two at the very end: pairs the receiver bound rejected, the
+    // Plus four at the very end: pairs the receiver bound rejected, the
     // lamps' (#940) and the sun's (#949), kept apart because they
-    // measure different properties of a scene.
-    buckets * 3 + 7
+    // measure different properties of a scene — then the inverted
+    // expansion's own two, the pages its descents reached and the
+    // descents that ran out of stack (#1022). The first of those is
+    // the only honest cost figure for that shape: `pages * meshlets`
+    // is the product the paired one pays and says nothing about a walk
+    // that visits what the pyramid points at.
+    buckets * 3 + 9
+}
+
+/// The sun's frame: right, up, and the direction it shines along.
+///
+/// Mirrors `sun_basis` in `page_table.wgsl` term for term. The sun has
+/// no position, so this is the only place its orientation means
+/// anything, and a second copy free to pick a different `up` would cull
+/// against one grid and rasterise into another.
+fn sun_frame(sun: Vec3) -> (Vec3, Vec3, Vec3) {
+    let f = sun.normalize_or(Vec3::NEG_Y);
+    let up = if f.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
+    let right = f.cross(up).normalize();
+    (right, right.cross(f), f)
+}
+
+/// The world point a level's cull box is centred on.
+///
+/// # 🔴 The page WINDOW's centre, and not the camera
+///
+/// This used to be the eye, and the difference is a band of geometry
+/// that is culled while its pages are drawn.
+///
+/// `sun_window` puts a level's window at `floor(plane / width) - 64`
+/// pages, so the window runs from `p - f - 64w` to `p - f + 64w` where
+/// `f` is how far the camera sits into its own page. A box centred on
+/// the eye runs from `p - 64w` to `p + 64w`. The two are the same SIZE
+/// and offset by `f`: the window's lowest band, up to a whole page
+/// wide, lies outside the box on every axis.
+///
+/// A caster whose bounds fall entirely in that band is culled — while
+/// the pages covering it were marked by their receivers and get drawn
+/// anyway, empty. An empty page stores far depth under reversed-Z, so
+/// every reader over it answers "nothing occludes here": a lit band at
+/// each level's edge, which is a ring at a fixed distance from the
+/// camera. And `f` changes as the camera moves, so the ring crawls.
+///
+/// The depth axis gets the same treatment for the same reason:
+/// `sun_drift` measures a page's stored depth from `floor(along / width
+/// + 0.5) * width`, so the box's near and far planes are centred there
+/// rather than on the camera.
+fn level_origin(base: f32, side: u32, level: u32, eye: Vec3, sun: Vec3) -> Vec3 {
+    let (right, up, f) = sun_frame(sun);
+    let s = side.max(1) as f32;
+    let width = base * (level as f32).exp2() / s;
+    let plane = glam::Vec2::new(eye.dot(right), eye.dot(up));
+    let low = (plane / width).floor() - glam::Vec2::splat((s * 0.5).floor());
+    let centre = (low + glam::Vec2::splat(s * 0.5)) * width;
+    // ⚠️ `floor(x + 0.5)` and never `round`, mirroring `sun_drift`:
+    // WGSL rounds halves to even and Rust rounds them away from zero.
+    let along = (eye.dot(f) / width + 0.5).floor() * width;
+    right * centre.x + up * centre.y + f * along
+}
+
+/// The clipmap level's orthographic clip-from-world.
+///
+/// 🔴 Built to agree with `sun_basis` and `sun_page_rect` in the shader,
+/// term for term. This matrix decides which meshlets survive and those
+/// two decide where they land, so a disagreement is geometry culled for
+/// one page and drawn into another. Free rather than a method so a test
+/// can hold it against `sun_window`'s own arithmetic without a device.
+fn level_clip(clipmap: ClipmapConfig, side: u32, level: u32, eye: Vec3, sun: Vec3) -> Mat4 {
+    let (right, up, f) = sun_frame(sun);
+    let rotation = Mat4::from_cols(
+        glam::Vec4::new(right.x, up.x, f.x, 0.0),
+        glam::Vec4::new(right.y, up.y, f.y, 0.0),
+        glam::Vec4::new(right.z, up.z, f.z, 0.0),
+        glam::Vec4::W,
+    );
+    let half = clipmap.extent(level) * 0.5;
+    // Reversed-Z orthographic: 1 at the near plane, 0 at the far,
+    // matching `page_depth.wgsl`'s `1 - (z + span) / (2 * span)`.
+    let projection = Mat4::from_cols(
+        glam::Vec4::new(1.0 / half, 0.0, 0.0, 0.0),
+        glam::Vec4::new(0.0, 1.0 / half, 0.0, 0.0),
+        glam::Vec4::new(0.0, 0.0, -1.0 / (2.0 * SUN_SPAN), 0.0),
+        glam::Vec4::new(0.0, 0.0, 0.5, 1.0),
+    );
+    projection
+        * rotation
+        * Mat4::from_translation(-level_origin(clipmap.base, side, level, eye, sun))
 }
 
 /// The atlas: one square layer per camera.
@@ -1341,7 +1480,7 @@ impl PageRasterizer {
                 // Same reason as the softness above: the shading binds
                 // this exact buffer, so one write serves both.
                 bias: self.bias,
-                layer: [layer, view, u32::from(self.march), 0],
+                layer: [layer, view, u32::from(self.march), u32::from(self.geometry)],
             }),
         );
     }
@@ -1505,6 +1644,10 @@ impl PageRasterizer {
                         }),
                     },
                     entry(6, lights),
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: wgpu::BindingResource::TextureView(self.pyramid.view()),
+                    },
                 ],
             }),
             depth: device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1541,6 +1684,16 @@ impl PageRasterizer {
             descriptors: storage("page_raster_descriptors_bg", descriptors),
             keys,
         });
+    }
+
+    /// The `(page, slot, meshlet)` pairs the expansion emitted.
+    ///
+    /// 🔴 For the one test that can hold the inversion honest: the
+    /// paired shape and the geometry-first one must produce the same
+    /// SET — the order is whatever the atomics handed out, and comparing
+    /// it would be testing the scheduler.
+    pub fn pairs_buffer(&self) -> &wgpu::Buffer {
+        &self.pairs
     }
 
     /// The compacted pages, for whoever reads them back.
@@ -1591,32 +1744,8 @@ impl PageRasterizer {
     }
 
     /// The clipmap level's orthographic clip-from-world.
-    ///
-    /// 🔴 Built to agree with `sun_basis` and `sun_page_rect` in the
-    /// shader, term for term. This matrix decides which meshlets survive
-    /// and those two decide where they land, so a disagreement is
-    /// geometry culled for one page and drawn into another.
     fn level_clip(&self, level: u32, eye: Vec3, sun: Vec3) -> Mat4 {
-        let f = sun.normalize_or(Vec3::NEG_Y);
-        let up = if f.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
-        let s = f.cross(up).normalize();
-        let u = s.cross(f);
-        let rotation = Mat4::from_cols(
-            glam::Vec4::new(s.x, u.x, f.x, 0.0),
-            glam::Vec4::new(s.y, u.y, f.y, 0.0),
-            glam::Vec4::new(s.z, u.z, f.z, 0.0),
-            glam::Vec4::W,
-        );
-        let half = self.clipmap.extent(level) * 0.5;
-        // Reversed-Z orthographic: 1 at the near plane, 0 at the far,
-        // matching `page_depth.wgsl`'s `1 - (z + span) / (2 * span)`.
-        let projection = Mat4::from_cols(
-            glam::Vec4::new(1.0 / half, 0.0, 0.0, 0.0),
-            glam::Vec4::new(0.0, 1.0 / half, 0.0, 0.0),
-            glam::Vec4::new(0.0, 0.0, -1.0 / (2.0 * SUN_SPAN), 0.0),
-            glam::Vec4::new(0.0, 0.0, 0.5, 1.0),
-        );
-        projection * rotation * Mat4::from_translation(-eye)
+        level_clip(self.clipmap, self.config.side(0), level, eye, sun)
     }
 
     /// Culls, compacts, expands and draws. Call **after** the marking
@@ -1660,78 +1789,12 @@ impl PageRasterizer {
         self.write_gens(queue, view, eye, sun, lamps);
         let uniform_offset = self.uniform_span(view).0 as u32;
 
-        // 1. One cull per level. A level is a texel density and a
-        //    density is a LOD.
-        //
-        // 🔴 Seventeen-plus full cull dispatches per view per frame,
-        // each writing a uniform and recording its own passes. This is
-        // the only part of the track that is CPU work rather than GPU
-        // work, and it was invisible to the profiler until this scope
-        // existed.
-        // 🔴 Cleared BEFORE the culls: a bucket whose cull does not
-        // run this frame — a directional slot, a lamp past the cap —
+        // 🔴 Cleared BEFORE anything writes it: a bucket whose cull does
+        // not run this frame — a directional slot, a lamp past the cap —
         // must read zero survivors, and an unwritten storage buffer is
         // not zero, it is whatever the allocator handed over.
-        // `cs_expand_args` multiplies it by a page count either way.
         encoder.clear_buffer(&self.visible_counts, 0, None);
-        let cull_query = nested(track, "page cull", encoder);
-        {
-            profiling::scope!("cull: clipmap levels");
-            for level in 0..levels {
-                queue.write_buffer(
-                    &self.levels,
-                    level as u64 * self.level_stride,
-                    bytemuck::bytes_of(&ExpandLevel {
-                        level,
-                        _pad: [0; 3],
-                    }),
-                );
-                let clip = self.level_clip(level, eye, sun);
-                let params = CullParams::new(
-                    clip,
-                    eye - sun.normalize_or(Vec3::NEG_Y) * SUN_SPAN,
-                    scene_params.meshlets_per_mesh,
-                )
-                .with_orthographic_lod(
-                    self.clipmap.extent(level),
-                    self.config.virtual_size as f32,
-                    lod_target.max(0.01),
-                );
-                if self.two_level {
-                    self.culls[level as usize].dispatch_scene_pool_atomic_chunked(
-                        cull_pipelines,
-                        device,
-                        queue,
-                        encoder,
-                        mesh_pool,
-                        scene,
-                        &params,
-                        scene_params,
-                    );
-                } else {
-                    self.culls[level as usize].dispatch_scene_pool_atomic(
-                        cull_pipelines,
-                        device,
-                        queue,
-                        encoder,
-                        mesh_pool,
-                        scene,
-                        &params,
-                        scene_params,
-                    );
-                }
-                // The expansion's dispatch size is pages times survivors,
-                // and the survivor count only exists on the GPU.
-                encoder.copy_buffer_to_buffer(
-                    self.culls[level as usize].visible_count_buffer(),
-                    0,
-                    &self.visible_counts,
-                    level as u64 * 4,
-                    4,
-                );
-            }
-        }
-
+        let cull_query = nested(track, "page lamp cull", encoder);
         // 1b. The lamps' shared hierarchical cull (#939) — Olsson et
         //     al.'s light/instance pre-pass, then one group-coherent
         //     meshlet pass for every lamp at once. View-independent,
@@ -1793,10 +1856,10 @@ impl PageRasterizer {
         self.ensure_bound(device, page_pool, instances, &mesh_pool.meshlets, lights);
         let bound = self.bound.as_ref().expect("just built");
 
-        let expand_query = nested(track, "page expand", encoder);
+        let pages_query = nested(track, "page table", encoder);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("shadow pages: compact and expand"),
+                label: Some("shadow pages: invalidate and compact"),
                 timestamp_writes: None,
             });
             // 1c. Invalidation, BEFORE the compaction reads the stamps:
@@ -1811,13 +1874,141 @@ impl PageRasterizer {
             pass.set_pipeline(&self.compact);
             pass.set_bind_group(0, &bound.compact, &[uniform_offset]);
             pass.dispatch_workgroups(self.compact_threads(light_count).div_ceil(64), 1, 1);
+            // 2b. The reader's jump table, after the compaction because
+            //     "readable" means stamped and the stamp is what the
+            //     compaction writes.
+            let clipmap = levels * self.config.side(0).pow(2);
+            pass.set_pipeline(&self.lod_offsets);
+            pass.dispatch_workgroups(clipmap.div_ceil(64), 1, 1);
+        }
+
+        // 2b. The page pyramid, over the listing the compaction just
+        //     wrote (#1022). Its own passes, and that is why the
+        //     compute pass above ENDS here: the seed reads the third
+        //     table word, which `cs_compact` is what writes, and the
+        //     expansion below samples the texture this builds.
+        //
+        //     Built whether or not the inverted expansion is on. The
+        //     texture is in the layout either way, and a pass that may
+        //     sample it must not find the frame before's answer in it.
+        {
+            let sun_slot = super::mark::padded_lights(light_count);
+            let stride = super::mark::stride(self.config, self.clipmap);
+            let span = super::mark::span(self.config, self.clipmap, sun_slot + 1);
+            let base = u32::try_from(view as u64 * span).unwrap_or(u32::MAX) + sun_slot * stride;
+            self.pyramid
+                .build(device, queue, encoder, page_pool.slots(), base);
+        }
+
+        close(track, pages_query, encoder);
+
+        // 3. The culls, AFTER the page table is final.
+        //
+        // 🔴 The order is the whole point, and it used to be the other
+        // way round. Unreal build their per-page draw commands from a
+        // loop over INSTANCES that asks whether the pages an instance
+        // covers are resident — a question that only exists once the
+        // table has been built, which is why their page management runs
+        // first. Culling before the table is built is what forces a
+        // spatial gate that knows nothing about pages: a box, decided
+        // apart from the marking, free to disagree with it.
+        //
+        // Nothing reads the pyramid here YET. The passes are in the
+        // order that lets them, which is the half that could not be
+        // added later without moving everything.
+        //
+        // A level is a texel density and a density is a LOD, so this is
+        // where the LOD cut lives — the half Unreal also run per view.
+        //
+        // ⚠️ `visible_counts` is NOT cleared here. The lamps' cull wrote
+        // its buckets before the compaction, which reads them for the
+        // empty-page gate; a clear at this point would wipe them after
+        // that read and hand the expansion zero lamp survivors.
+        //
+        // 🔴 Seventeen-plus full cull dispatches per view per frame,
+        // each writing a uniform and recording its own passes. This is
+        // the only part of the track that is CPU work rather than GPU
+        // work, and it was invisible to the profiler until this scope
+        // existed.
+        let cull_query = nested(track, "page cull", encoder);
+        {
+            profiling::scope!("cull: clipmap levels");
+            for level in 0..levels {
+                queue.write_buffer(
+                    &self.levels,
+                    level as u64 * self.level_stride,
+                    bytemuck::bytes_of(&ExpandLevel {
+                        level,
+                        _pad: [0; 3],
+                    }),
+                );
+                let clip = self.level_clip(level, eye, sun);
+                let params = CullParams::new(
+                    clip,
+                    eye - sun.normalize_or(Vec3::NEG_Y) * SUN_SPAN,
+                    scene_params.meshlets_per_mesh,
+                )
+                .with_orthographic_lod(
+                    self.clipmap.extent(level),
+                    self.config.virtual_size as f32,
+                    lod_target.max(0.01),
+                );
+                if self.two_level {
+                    self.culls[level as usize].dispatch_scene_pool_atomic_chunked(
+                        cull_pipelines,
+                        device,
+                        queue,
+                        encoder,
+                        mesh_pool,
+                        scene,
+                        &params,
+                        scene_params,
+                    );
+                } else {
+                    self.culls[level as usize].dispatch_scene_pool_atomic(
+                        cull_pipelines,
+                        device,
+                        queue,
+                        encoder,
+                        mesh_pool,
+                        scene,
+                        &params,
+                        scene_params,
+                    );
+                }
+                // The expansion's dispatch size is pages times survivors,
+                // and the survivor count only exists on the GPU.
+                encoder.copy_buffer_to_buffer(
+                    self.culls[level as usize].visible_count_buffer(),
+                    0,
+                    &self.visible_counts,
+                    level as u64 * 4,
+                    4,
+                );
+            }
+        }
+        close(track, cull_query, encoder);
+
+        let expand_query = nested(track, "page expand", encoder);
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("shadow pages: expand"),
+                timestamp_writes: None,
+            });
+            // 4a. The dispatch sizes, HERE and not with the
+            //     compaction: they are a page count times a survivor
+            //     count, and the survivors only exist once the culls
+            //     above have run. Sized on the GPU because neither
+            //     number ever reaches the CPU.
             pass.set_pipeline(&self.expand_args_pass);
+            pass.set_bind_group(0, &bound.compact, &[uniform_offset]);
             pass.dispatch_workgroups(buckets.div_ceil(64), 1, 1);
 
-            // 3. Pairs. One indirect dispatch per level, sized by the
-            //    pass above rather than by a CPU guess. The only thing
-            //    that changes between levels is two dynamic offsets and
-            //    the visible list — no bind group is built here.
+            // 4b. Pairs. One indirect dispatch per level, sized by the
+            //     dispatch above rather than by a CPU guess. The only
+            //     thing that changes between levels is two dynamic
+            //     offsets and the visible list — no bind group is built
+            //     here.
             pass.set_pipeline(&self.expand);
             pass.set_bind_group(1, &bound.descriptors, &[]);
             pass.set_bind_group(3, &bound.instances, &[]);
@@ -2054,6 +2245,19 @@ fn expand_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             // eighth storage buffer of the stage, which is the entire
             // downlevel budget.
             buffer_entry(6, true, c),
+            // Which is why the pyramid is a TEXTURE. There is no ninth
+            // storage buffer to give it, and textures are a separate
+            // budget — the same constraint that decided Unreal's shape.
+            wgpu::BindGroupLayoutEntry {
+                binding: 7,
+                visibility: c,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ],
     })
 }

@@ -1,4 +1,4 @@
-//! A hierarchical residency pyramid over the sun's clipmap (#1022).
+//! A hierarchical page pyramid over the sun's clipmap (#1022).
 //!
 //! # 🔴 The question this exists to answer in constant time
 //!
@@ -12,9 +12,19 @@
 //! that measured it.
 //!
 //! At mip `M` one texel of this pyramid stands for a `2^M x 2^M` block
-//! of pages and holds 1 if ANY page in it is resident. A rectangle is
-//! answered by picking the mip where it spans at most two texels per
-//! axis and reading four of them, whatever its size.
+//! of pages and is non-zero if ANY page in it is being drawn. A
+//! rectangle is answered by picking the mip where it spans at most two
+//! texels per axis and reading four of them, whatever its size.
+//!
+//! # 🔴 LISTED, not resident
+//!
+//! Mip 0 carries `listing + 1` — the page's index in this frame's
+//! compacted `page_list` — and not a residency bit. Residency is what
+//! most of the atlas has: a cached page holds a physical slot and must
+//! NOT be drawn again. Seeding this on residency would rasterise the
+//! whole atlas every frame. Carrying the index rather than a bit is
+//! also what lets the descent build a pair from the same three words
+//! the paired shape reads, so the two cannot drift.
 //!
 //! # Why a texture
 //!
@@ -23,12 +33,12 @@
 //! the reader that will consume this has no ninth slot. Textures are a
 //! separate budget — the same reason Unreal's page flags live in one.
 //!
-//! # 🔴 Nothing reads it yet
+//! # ⚠️ Built AFTER the compaction
 //!
-//! Built and tested on its own so the structure can be proven before
-//! anything depends on it. Wiring it into the expansion is the step
-//! that changes what the frame draws, and it is deliberately not this
-//! one.
+//! The third table word is what `cs_compact` writes when it lists a
+//! page, so a build recorded before it describes the previous frame —
+//! pairs against pages nothing is drawing. `record` splits the compute
+//! pass around this for exactly that reason.
 
 use super::PageConfig;
 use crate::shadow::pages::ClipmapConfig;
@@ -228,6 +238,10 @@ impl PagePyramid {
     }
 
     /// Records mip 0 from the page table and every reduction above it.
+    ///
+    /// ⚠️ Must be recorded AFTER `cs_compact`: mip 0 reads the listing
+    /// word, and before the compaction that word belongs to the frame
+    /// before.
     ///
     /// `base` is the first table entry this view's sun owns — the
     /// pyramid describes ONE view's clipmap, because two viewports over

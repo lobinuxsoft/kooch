@@ -1199,6 +1199,42 @@ fn shadow_page_readout(
             "Resident pages whose content survived from an earlier frame. They cost nothing.",
         );
         metric(ui, "meshlet pairs", &thousands(raster.pairs as u64));
+        // 🔴 Directly under the pair count and NOT at the foot of this
+        // section, because the section does not fit the window: a
+        // reading placed after `scatter would cost` fell below the
+        // panel's edge and an A/B was called on an absence nobody could
+        // observe. A number that decides an experiment goes where the
+        // experiment can see it.
+        if raster.walk_overflow > 0 {
+            alert(
+                ui,
+                &format!(
+                    "descent overflow {}",
+                    thousands(raster.walk_overflow as u64)
+                ),
+                "A descent ran out of stack and DROPPED a subtree — casters that stop \
+                 being drawn into pages that asked for them, silently. The bound is \
+                 3 x depth + 4 and the stack is larger than that for every page size the \
+                 clipmap builds, so this reading means the page size changed.",
+            );
+        }
+        metric_with_tooltip(
+            ui,
+            "geometry walk",
+            &if raster.walk > 0 {
+                let per_pair = raster.walk as f32 / raster.pairs.max(1) as f32;
+                format!("{} · {per_pair:.0} per pair", thousands(raster.walk))
+            } else {
+                "off — pairing".to_owned()
+            },
+            "Pages the INVERTED expansion reached: one thread per surviving meshlet \
+             descending the page pyramid to the pages it lands in, Unreal's arrangement. \
+             Reads `off — pairing` when the other shape is running, so the line is there \
+             either way and a toggle can be told from a no-op. Compare against `pair \
+             tests`, which is what pairing costs for the same pairs — the emitted set is \
+             identical, one shared function decides it, so a picture that changes with \
+             the switch is a finding.",
+        );
         if raster.local > 0 {
             metric_with_tooltip(
                 ui,
@@ -1229,15 +1265,6 @@ fn shadow_page_readout(
                  asking which pages a meshlet touches — was measured WORSE for the sun, \
                  because a meshlet's rect covers up to 16384 cells at the finest clipmap \
                  levels while only twenty pages are resident there.",
-            );
-            metric(
-                ui,
-                "rejected",
-                &format!(
-                    "{} lamp · {} sun",
-                    thousands(raster.depth_rejected as u64),
-                    thousands(raster.sun_rejected as u64)
-                ),
             );
             metric_with_tooltip(
                 ui,

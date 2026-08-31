@@ -133,6 +133,13 @@ pub struct ShadowSettings {
     /// sun's disc, and needs no bias constant because its tolerance is
     /// measured from the ray itself.
     pub page_march: bool,
+    /// Whether the expansion runs from the geometry rather than pairing
+    /// pages against survivors (#1022). See
+    /// [`RenderSettings::shadow_page_geometry`].
+    pub page_geometry: bool,
+    /// How far, in pages, a receiver dilates its request (#1022). See
+    /// [`RenderSettings::shadow_page_halo`].
+    pub page_halo: f32,
     /// Projected radius in screen pixels under which a local light
     /// casts no pages (#944). 0 = every light casts.
     pub page_min_pixels: u32,
@@ -188,6 +195,11 @@ impl Default for ShadowSettings {
             // taken yet, and `virtual_pages` is the standing lesson
             // about defaulting a technique on before that.
             page_march: false,
+            // Off: the shape is new and what it costs on a real scene
+            // is a measurement nobody has taken. The pairs are the same
+            // pairs either way, so nothing is lost by measuring first.
+            page_geometry: false,
+            page_halo: 0.5,
             page_min_pixels: 8,
             // 🔴 Off, because it is a behaviour change and nothing has
             // measured what it costs yet: a light out of reach stops
