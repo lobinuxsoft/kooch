@@ -1210,6 +1210,20 @@ fn shadow_page_readout(
             &thousands(raster.cached as u64),
             "Resident pages whose content survived from an earlier frame. They cost nothing.",
         );
+        metric_with_tooltip(
+            ui,
+            "lamp survivors",
+            &if raster.lamp_survivors > 0 {
+                thousands(raster.lamp_survivors as u64)
+            } else {
+                "0 — no lamp can cast".to_owned()
+            },
+            "Meshlets the LAMPS' culls kept, over every bucket. Zero with lamp pages resident \
+             means their pages are stamped empty and cleared, and a cleared page reads as \
+             'nothing occludes' — every lamp stops casting with every other counter healthy. \
+             Read it against `lamp pages cleared for nothing`: that one says pages were \
+             cleared, this one says whether there was ever anything to put in them.",
+        );
         metric(ui, "meshlet pairs", &thousands(raster.pairs as u64));
         // 🔴 Directly under the pair count and NOT at the foot of this
         // section, because the section does not fit the window: a

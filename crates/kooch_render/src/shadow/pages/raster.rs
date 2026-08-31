@@ -204,6 +204,15 @@ pub struct RasterCounts {
     pub sun_rejected: u32,
     /// Which camera this is.
     pub view: u32,
+    /// Meshlets the LAMPS' culls kept this frame, over every bucket.
+    ///
+    /// 🔴 Zero here with lamp pages resident is the failure this whole
+    /// path keeps producing: the pages exist, their bucket has nothing
+    /// to draw, so they are stamped `PAGE_EMPTY` and cleared — and a
+    /// cleared page is far depth under reversed-Z, which every reader
+    /// answers "nothing occludes". Every lamp stops casting and every
+    /// other counter reads healthy.
+    pub lamp_survivors: u32,
     /// Meshlet/page tests the expansion ran, summed over the levels.
     ///
     /// 🔴 The expansion is a product — this level's pages times this
@@ -1016,9 +1025,18 @@ impl PageRasterizer {
         let mut unfilled = 0u32;
         let mut unfilled_sun = 0u32;
         let mut unfilled_first = u32::MAX;
+        let mut lamp_survivors = 0u64;
         for level in 0..levels {
             let pages = words[level].min(cap) as u64;
             let meshlets = words.get(levels + 5 + level).copied().unwrap_or(0) as u64;
+            // 🔴 The lamps' half of the survivor mirror, summed. `unfilled`
+            // says pages were cleared for want of geometry; only this says
+            // whether the culls found any to begin with. One is a cull that
+            // rejected everything, the other is a count that never arrived,
+            // and they need opposite fixes.
+            if (level as u32) >= self.clipmap.levels {
+                lamp_survivors += meshlets;
+            }
             let cells = words.get(levels * 2 + 5 + level).copied().unwrap_or(0) as u64;
             let work = pages * meshlets;
             // 🔴 Pages with nothing to draw into them. See `unfilled`,
@@ -1050,6 +1068,7 @@ impl PageRasterizer {
             unfilled,
             unfilled_first,
             unfilled_sun,
+            lamp_survivors: u32::try_from(lamp_survivors).unwrap_or(u32::MAX),
             pages: words[..levels].iter().map(|&n| n.min(cap)).sum(),
             // 🔴 Every listed page, the sun's and the lamps' alike,
             // because they share buckets now: a lamp and the sun that
