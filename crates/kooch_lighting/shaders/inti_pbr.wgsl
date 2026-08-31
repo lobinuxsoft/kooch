@@ -937,6 +937,16 @@ fn inti_page_filter(
             var tap = clamp(raw, vec2<f32>(0.0), vec2<f32>(last));
             var at = vec2<i32>(origin + tap);
             var tap_layer = layer;
+            // 🔴 Kept apart from `tap`, and the two stop agreeing the
+            // moment a tap resolves into another page.
+            //
+            // The gradient below needs how far the SAMPLE is from the
+            // pixel, in texels. `tap` is a coordinate inside whichever
+            // page the sample landed in, so once that is the neighbour
+            // it restarts from zero and `tap - texel` is off by a whole
+            // page — a gradient hundreds of texels long, applied at
+            // every seam. It drew a grey line along each one.
+            var reach = tap;
             if outside && level != PAGE_UNLISTED {
                 // Which page the tap fell into, in whole pages, and the
                 // wrapped cell it lands on — the same toroidal grid
@@ -962,6 +972,9 @@ fn inti_page_filter(
                     tap = raw - vec2<f32>(step) * f32(page_texels);
                     at = vec2<i32>(vec2<f32>(place.xy) + tap);
                     tap_layer = i32(place.z);
+                    // The sample really is `raw` texels from the corner
+                    // of the ORIGINAL page, whatever page holds it.
+                    reach = raw;
                 }
             }
             let stored = textureLoad(inti_page_atlas, at, tap_layer, 0);
@@ -972,7 +985,7 @@ fn inti_page_filter(
             // a tilted surface shadow itself, and no scalar bias can
             // repair it because the error depends on which way the tap
             // moved. See `receiver_slope`.
-            let here = receiver + dot(slope, tap - texel);
+            let here = receiver + dot(slope, reach - texel);
             // Reversed-Z: a LARGER stored depth is closer to the light,
             // so it is an occluder.
             let hit = select(1.0, 0.0, stored > here);
