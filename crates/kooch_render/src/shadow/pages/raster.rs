@@ -1785,78 +1785,12 @@ impl PageRasterizer {
         self.write_gens(queue, view, eye, sun, lamps);
         let uniform_offset = self.uniform_span(view).0 as u32;
 
-        // 1. One cull per level. A level is a texel density and a
-        //    density is a LOD.
-        //
-        // 🔴 Seventeen-plus full cull dispatches per view per frame,
-        // each writing a uniform and recording its own passes. This is
-        // the only part of the track that is CPU work rather than GPU
-        // work, and it was invisible to the profiler until this scope
-        // existed.
-        // 🔴 Cleared BEFORE the culls: a bucket whose cull does not
-        // run this frame — a directional slot, a lamp past the cap —
+        // 🔴 Cleared BEFORE anything writes it: a bucket whose cull does
+        // not run this frame — a directional slot, a lamp past the cap —
         // must read zero survivors, and an unwritten storage buffer is
         // not zero, it is whatever the allocator handed over.
-        // `cs_expand_args` multiplies it by a page count either way.
         encoder.clear_buffer(&self.visible_counts, 0, None);
-        let cull_query = nested(track, "page cull", encoder);
-        {
-            profiling::scope!("cull: clipmap levels");
-            for level in 0..levels {
-                queue.write_buffer(
-                    &self.levels,
-                    level as u64 * self.level_stride,
-                    bytemuck::bytes_of(&ExpandLevel {
-                        level,
-                        _pad: [0; 3],
-                    }),
-                );
-                let clip = self.level_clip(level, eye, sun);
-                let params = CullParams::new(
-                    clip,
-                    eye - sun.normalize_or(Vec3::NEG_Y) * SUN_SPAN,
-                    scene_params.meshlets_per_mesh,
-                )
-                .with_orthographic_lod(
-                    self.clipmap.extent(level),
-                    self.config.virtual_size as f32,
-                    lod_target.max(0.01),
-                );
-                if self.two_level {
-                    self.culls[level as usize].dispatch_scene_pool_atomic_chunked(
-                        cull_pipelines,
-                        device,
-                        queue,
-                        encoder,
-                        mesh_pool,
-                        scene,
-                        &params,
-                        scene_params,
-                    );
-                } else {
-                    self.culls[level as usize].dispatch_scene_pool_atomic(
-                        cull_pipelines,
-                        device,
-                        queue,
-                        encoder,
-                        mesh_pool,
-                        scene,
-                        &params,
-                        scene_params,
-                    );
-                }
-                // The expansion's dispatch size is pages times survivors,
-                // and the survivor count only exists on the GPU.
-                encoder.copy_buffer_to_buffer(
-                    self.culls[level as usize].visible_count_buffer(),
-                    0,
-                    &self.visible_counts,
-                    level as u64 * 4,
-                    4,
-                );
-            }
-        }
-
+        let cull_query = nested(track, "page lamp cull", encoder);
         // 1b. The lamps' shared hierarchical cull (#939) — Olsson et
         //     al.'s light/instance pre-pass, then one group-coherent
         //     meshlet pass for every lamp at once. View-independent,
@@ -1918,10 +1852,10 @@ impl PageRasterizer {
         self.ensure_bound(device, page_pool, instances, &mesh_pool.meshlets, lights);
         let bound = self.bound.as_ref().expect("just built");
 
-        let expand_query = nested(track, "page expand", encoder);
+        let pages_query = nested(track, "page table", encoder);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("shadow pages: compact and expand"),
+                label: Some("shadow pages: invalidate and compact"),
                 timestamp_writes: None,
             });
             // 1c. Invalidation, BEFORE the compaction reads the stamps:
@@ -1936,8 +1870,6 @@ impl PageRasterizer {
             pass.set_pipeline(&self.compact);
             pass.set_bind_group(0, &bound.compact, &[uniform_offset]);
             pass.dispatch_workgroups(self.compact_threads(light_count).div_ceil(64), 1, 1);
-            pass.set_pipeline(&self.expand_args_pass);
-            pass.dispatch_workgroups(buckets.div_ceil(64), 1, 1);
         }
 
         // 2b. The page pyramid, over the listing the compaction just
@@ -1958,15 +1890,114 @@ impl PageRasterizer {
                 .build(device, queue, encoder, page_pool.slots(), base);
         }
 
+        close(track, pages_query, encoder);
+
+        // 3. The culls, AFTER the page table is final.
+        //
+        // 🔴 The order is the whole point, and it used to be the other
+        // way round. Unreal build their per-page draw commands from a
+        // loop over INSTANCES that asks whether the pages an instance
+        // covers are resident — a question that only exists once the
+        // table has been built, which is why their page management runs
+        // first. Culling before the table is built is what forces a
+        // spatial gate that knows nothing about pages: a box, decided
+        // apart from the marking, free to disagree with it.
+        //
+        // Nothing reads the pyramid here YET. The passes are in the
+        // order that lets them, which is the half that could not be
+        // added later without moving everything.
+        //
+        // A level is a texel density and a density is a LOD, so this is
+        // where the LOD cut lives — the half Unreal also run per view.
+        //
+        // ⚠️ `visible_counts` is NOT cleared here. The lamps' cull wrote
+        // its buckets before the compaction, which reads them for the
+        // empty-page gate; a clear at this point would wipe them after
+        // that read and hand the expansion zero lamp survivors.
+        //
+        // 🔴 Seventeen-plus full cull dispatches per view per frame,
+        // each writing a uniform and recording its own passes. This is
+        // the only part of the track that is CPU work rather than GPU
+        // work, and it was invisible to the profiler until this scope
+        // existed.
+        let cull_query = nested(track, "page cull", encoder);
+        {
+            profiling::scope!("cull: clipmap levels");
+            for level in 0..levels {
+                queue.write_buffer(
+                    &self.levels,
+                    level as u64 * self.level_stride,
+                    bytemuck::bytes_of(&ExpandLevel {
+                        level,
+                        _pad: [0; 3],
+                    }),
+                );
+                let clip = self.level_clip(level, eye, sun);
+                let params = CullParams::new(
+                    clip,
+                    eye - sun.normalize_or(Vec3::NEG_Y) * SUN_SPAN,
+                    scene_params.meshlets_per_mesh,
+                )
+                .with_orthographic_lod(
+                    self.clipmap.extent(level),
+                    self.config.virtual_size as f32,
+                    lod_target.max(0.01),
+                );
+                if self.two_level {
+                    self.culls[level as usize].dispatch_scene_pool_atomic_chunked(
+                        cull_pipelines,
+                        device,
+                        queue,
+                        encoder,
+                        mesh_pool,
+                        scene,
+                        &params,
+                        scene_params,
+                    );
+                } else {
+                    self.culls[level as usize].dispatch_scene_pool_atomic(
+                        cull_pipelines,
+                        device,
+                        queue,
+                        encoder,
+                        mesh_pool,
+                        scene,
+                        &params,
+                        scene_params,
+                    );
+                }
+                // The expansion's dispatch size is pages times survivors,
+                // and the survivor count only exists on the GPU.
+                encoder.copy_buffer_to_buffer(
+                    self.culls[level as usize].visible_count_buffer(),
+                    0,
+                    &self.visible_counts,
+                    level as u64 * 4,
+                    4,
+                );
+            }
+        }
+
+        let expand_query = nested(track, "page expand", encoder);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("shadow pages: expand"),
                 timestamp_writes: None,
             });
-            // 3. Pairs. One indirect dispatch per level, sized by the
-            //    pass above rather than by a CPU guess. The only thing
-            //    that changes between levels is two dynamic offsets and
-            //    the visible list — no bind group is built here.
+            // 4a. The dispatch sizes, HERE and not with the
+            //     compaction: they are a page count times a survivor
+            //     count, and the survivors only exist once the culls
+            //     above have run. Sized on the GPU because neither
+            //     number ever reaches the CPU.
+            pass.set_pipeline(&self.expand_args_pass);
+            pass.set_bind_group(0, &bound.compact, &[uniform_offset]);
+            pass.dispatch_workgroups(buckets.div_ceil(64), 1, 1);
+
+            // 4b. Pairs. One indirect dispatch per level, sized by the
+            //     dispatch above rather than by a CPU guess. The only
+            //     thing that changes between levels is two dynamic
+            //     offsets and the visible list — no bind group is built
+            //     here.
             pass.set_pipeline(&self.expand);
             pass.set_bind_group(1, &bound.descriptors, &[]);
             pass.set_bind_group(3, &bound.instances, &[]);
