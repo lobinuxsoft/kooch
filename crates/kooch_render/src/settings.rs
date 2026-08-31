@@ -321,6 +321,26 @@ pub struct RenderSettings {
     #[serde(default = "default_true")]
     #[reflect(group = "Shadows: virtual pages", shown_when = PAGES_ON)]
     pub shadow_page_receiver_bound: bool,
+    /// How far, in PAGES, a receiver dilates its page request — Epic's
+    /// `PageDilationOffset`. 0 turns it off.
+    ///
+    /// 🔴 What it buys is a FRAME, not resolution. `vbuf64.render`
+    /// rasterises and shades in one pass, so the atlas the shading
+    /// samples is a frame old: a page allocated this frame is read with
+    /// whatever its slot held last frame — cleared, which is far depth
+    /// under reversed-Z, which every reader answers "nothing occludes
+    /// here". A lit hole for one frame, every time a page turns over,
+    /// and standing on a clipmap level boundary turns them over
+    /// continuously.
+    ///
+    /// A halo asks for the page before the camera reaches it, so the
+    /// content is already there when something samples it. It costs
+    /// residency: a receiver requests up to three pages instead of one,
+    /// and neighbours collapse onto the same page often enough that the
+    /// real figure is well under 3x — read `resident` on the panel.
+    #[serde(default = "default_shadow_page_halo")]
+    #[reflect(group = "Shadows: virtual pages", shown_when = PAGES_ON)]
+    pub shadow_page_halo: f32,
     /// How much simplification error a meshlet may show before the cull
     /// picks a finer level, in PIXELS.
     ///
@@ -921,6 +941,14 @@ fn default_shadow_bias_slope() -> f32 {
     4.0
 }
 
+/// Half a page each way, so a receiver in the outer half of its page
+/// already asks for the neighbour. Epic size their dilation from a
+/// border in texels; half a page is the coarsest version of the same
+/// idea and the one whose cost is easiest to read off the panel.
+fn default_shadow_page_halo() -> f32 {
+    0.5
+}
+
 /// A project written before the switch existed had the bound ON, so
 /// absence has to read as `true` or loading an old settings file would
 /// silently change what the frame draws.
@@ -1339,6 +1367,7 @@ impl Default for RenderSettings {
             shadow_page_march: false,
             shadow_page_geometry: false,
             shadow_page_receiver_bound: true,
+            shadow_page_halo: default_shadow_page_halo(),
             meshlet_lod_error: default_meshlet_lod_error(),
             meshlet_min_pixels: default_meshlet_min_pixels(),
             meshlet_two_level: default_meshlet_two_level(),
@@ -1422,6 +1451,7 @@ impl RenderSettings {
             page_march: self.shadow_page_march,
             page_geometry: self.shadow_page_geometry,
             page_receiver_bound: self.shadow_page_receiver_bound,
+            page_halo: self.shadow_page_halo,
             max_distance: self.shadow_distance,
             cascade_texels: self.shadow_cascade_texels,
             enabled: self.shadows_enabled,

@@ -174,6 +174,9 @@ fn wait(device: &wgpu::Device) {
 /// `OnceLock`, so one process cannot answer both ways; this can.
 thread_local! {
     static CLUSTER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// How far a receiver dilates its page request, in pages. Same
+    /// reason as `CLUSTER`: `run_pool` builds the marker itself.
+    static HALO: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
 }
 
 /// Runs `body` with the cluster/light marking on (#952).
@@ -228,6 +231,7 @@ fn run_pool(
     let depth_view = depth_texture(device, queue, depth);
     let mut marker = PageMarker::new(device, PageConfig::default(), ClipmapConfig::default());
     marker.set_cluster_marking(CLUSTER.with(|c| c.get()));
+    marker.set_halo(HALO.with(|h| h.get()));
     marker.set_pool(device, pool);
 
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -2211,5 +2215,59 @@ fn the_bias_reaches_its_value_in_one_step() {
         "the two marking paths settled on different resolutions for one \
          scene, which is a difference in what they MARK, not in how fast \
          the bias converges"
+    );
+}
+
+/// A dilated request asks for the neighbouring pages too.
+///
+/// # 🔴 What it buys is a FRAME
+///
+/// `vbuf64.render` rasterises and shades in one pass, so the atlas the
+/// shading samples is a frame old. A page allocated this frame is read
+/// with whatever its slot held last frame — cleared, which is far depth
+/// under reversed-Z, which every reader answers "nothing occludes
+/// here". One lit frame every time a page turns over, and standing on a
+/// clipmap level boundary turns them over continuously: that is where
+/// it was reported from, a player sitting exactly on the line where the
+/// resolution changes.
+///
+/// The halo asks for the page before the camera reaches it, so the
+/// content is there by the time anything samples it. Epic's
+/// `PageDilationOffset` in `PageMarking.ush` does the same thing, and
+/// theirs is a mitigation on top of a pipeline that has no such
+/// latency at all.
+///
+/// Both bounds matter. It must grow — a halo that asked for nothing new
+/// would buy no frame — and it must stay well under three times, or
+/// every receiver really is paying for three pages and the pool pays
+/// for all of them.
+#[test]
+fn a_halo_asks_for_the_neighbours() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let resources = world();
+    let sun = Some(Vec3::new(0.2, -1.0, 0.3));
+
+    HALO.with(|h| h.set(0.0));
+    let plain = run(&device, &queue, &resources, 0.5, sun);
+    HALO.with(|h| h.set(0.5));
+    let dilated = run(&device, &queue, &resources, 0.5, sun);
+    HALO.with(|h| h.set(0.0));
+
+    assert!(plain.resident > 0, "the rig marked nothing to dilate");
+    assert!(
+        dilated.resident > plain.resident,
+        "the halo asked for nothing new: {} against {}",
+        dilated.resident,
+        plain.resident,
+    );
+    assert!(
+        dilated.resident < plain.resident * 3,
+        "the halo cost the full 3x — {} against {} — so no two neighbours ever \
+         collapsed onto one page and the offset is far larger than a page",
+        dilated.resident,
+        plain.resident,
     );
 }

@@ -140,6 +140,9 @@ pub struct ShadowSettings {
     /// Whether the receiver bound may reject a caster (#940, #949). See
     /// [`RenderSettings::shadow_page_receiver_bound`].
     pub page_receiver_bound: bool,
+    /// How far, in pages, a receiver dilates its request (#1022). See
+    /// [`RenderSettings::shadow_page_halo`].
+    pub page_halo: f32,
     /// Projected radius in screen pixels under which a local light
     /// casts no pages (#944). 0 = every light casts.
     pub page_min_pixels: u32,
@@ -202,6 +205,7 @@ impl Default for ShadowSettings {
             // On: it is what shipped, and it is a real saving. The
             // switch exists to falsify it, not to default it away.
             page_receiver_bound: true,
+            page_halo: 0.5,
             page_min_pixels: 8,
             // 🔴 Off, because it is a behaviour change and nothing has
             // measured what it costs yet: a light out of reach stops

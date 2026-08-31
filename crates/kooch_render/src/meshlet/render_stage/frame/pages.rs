@@ -55,6 +55,8 @@ struct PageSettings {
     geometry: bool,
     /// Whether the receiver bound may reject a caster (#940, #949).
     receiver_bound: bool,
+    /// How far, in pages, a receiver dilates its request (#1022).
+    halo: f32,
     min_pixels: u32,
     /// The distance gate. See `ShadowSettings::page_light_reach`.
     reach: u32,
@@ -239,6 +241,7 @@ fn page_settings(resources: &Resources) -> PageSettings {
         march: shadows.page_march,
         geometry: shadows.page_geometry,
         receiver_bound: shadows.page_receiver_bound,
+        halo: shadows.page_halo,
         min_pixels: shadows.page_min_pixels,
         reach: shadows.page_light_reach,
         // Absent in a headless test and in any host without a manager,
@@ -390,6 +393,7 @@ impl MeshletRenderStage {
             marker
         });
         marker.set_coverage(settings.min_pixels);
+        marker.set_halo(settings.halo);
         marker.set_reach(settings.reach);
         let sun = self.light_frame.as_ref().and_then(|(_, frame)| frame.sun());
         let slice = page_view_index(view_id);
