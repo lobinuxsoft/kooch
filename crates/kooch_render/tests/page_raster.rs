@@ -162,6 +162,38 @@ fn the_pair_list_outgrows_a_constant() {
     );
 }
 
+/// The per-view clear of `visible_counts` must not reach the lamps'
+/// buckets.
+///
+/// # 🔴 A source check, because the defect needs two cameras to appear
+///
+/// `PageRasterizer::record` runs once per VIEW and `LampCull::record`
+/// once per FRAME, guarded by `lamp_frame`. So a clear that spans the
+/// whole buffer is undone for the sun — its culls rerun after it — and
+/// permanent for the lamps: the second camera wipes their survivor
+/// counts and then skips the cull that refills them.
+///
+/// A lamp bucket reading zero survivors is not a slow path. The
+/// compaction stamps its pages `PAGE_EMPTY` and clears them, and a
+/// cleared page is far depth under reversed-Z, which every reader
+/// answers "nothing occludes". Every lamp in the scene stops casting
+/// and every counter stays healthy.
+///
+/// Every headless test here runs ONE view, so nothing in this file can
+/// reproduce it. The editor has two.
+#[test]
+fn the_view_clear_leaves_the_lamp_buckets() {
+    let source = include_str!("../src/shadow/pages/raster.rs");
+    assert!(
+        !source.contains("clear_buffer(&self.visible_counts, 0, None)"),
+        "the per-view clear spans the whole buffer again; it must stop at the sun's levels,          because the lamps' cull runs once a frame and will not refill what a second view wiped"
+    );
+    assert!(
+        source.contains("clear_buffer(&self.visible_counts, 0, Some(levels as u64 * 4))"),
+        "the per-view clear no longer covers the sun's own levels"
+    );
+}
+
 #[test]
 fn the_counters_name_every_level() {
     let Some((device, _queue)) = device() else {

@@ -1793,7 +1793,28 @@ impl PageRasterizer {
         // not run this frame — a directional slot, a lamp past the cap —
         // must read zero survivors, and an unwritten storage buffer is
         // not zero, it is whatever the allocator handed over.
-        encoder.clear_buffer(&self.visible_counts, 0, None);
+        //
+        // 🔴 THE SUN'S SPAN ONLY, and the restriction is the whole point.
+        // This runs once per VIEW; the lamps' cull runs once per FRAME,
+        // guarded by `lamp_frame`. Clearing the whole buffer here meant
+        // the second camera wiped the lamp survivor counts and then
+        // skipped the cull that refills them, so every lamp bucket read
+        // zero for that view — and a page whose bucket has no survivors
+        // is stamped `PAGE_EMPTY` and CLEARED. A cleared page is far
+        // depth under reversed-Z, so every reader over it answers that
+        // nothing occludes.
+        //
+        // In the editor that is two viewports over one world: the sun
+        // kept its shadows, because its culls are per view and rerun
+        // after the clear, and every lamp in the scene silently stopped
+        // casting. The `Lamp shadow pages` views said it exactly — no
+        // white in `faces`, so every page was resident, and uniform
+        // green in `occlusion`, so every page was empty.
+        //
+        // `LampCull::record` already clears its own span, and its
+        // comment already said this one "covers the sun's span only".
+        // It did not.
+        encoder.clear_buffer(&self.visible_counts, 0, Some(levels as u64 * 4));
         let cull_query = nested(track, "page lamp cull", encoder);
         // 1b. The lamps' shared hierarchical cull (#939) — Olsson et
         //     al.'s light/instance pre-pass, then one group-coherent
