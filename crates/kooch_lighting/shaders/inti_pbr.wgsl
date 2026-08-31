@@ -1029,24 +1029,39 @@ fn inti_page_march(
     jitter: f32,
 ) -> f32 {
     let basis = sun_basis(inti_pages.sun.xyz);
-    let span = inti_pages.world.y;
+    let base = inti_pages.world.x;
+    let side = inti_pages.space.z;
+    let page_texels = inti_pages.pool.w;
     // Along the sun's axis, towards it. `basis[2]` points the way the
     // light travels, so the ray runs against it.
     let to_light = -basis[2];
-    // How far a ray reaches. The orthographic span is what the page
-    // depths are encoded over, so it is the distance past which nothing
-    // stored can occlude anything.
-    let reach = 2.0 * span;
+
+    // 🔴 How far a ray reaches, taken from the EXTENT of the clipmap
+    // level this receiver lands in rather than from the orthographic
+    // span.
+    //
+    // The span is 2000 metres. A ray that long put its very FIRST
+    // sample sixty metres away — the steps are quadratic — so the
+    // march never once looked near the surface it was shading, which
+    // is where every occluder that matters is. The level's extent is
+    // the right scale by construction: it is the quantity the page
+    // addressing itself is built on, so the ray is short where the
+    // texels are fine and long where they are coarse.
+    let raw = sun_plane(world_position, basis) - sun_plane(inti_pages.eye.xyz, basis);
+    let level = sun_level(max(abs(raw.x), abs(raw.y)) * 2.0, base, side);
+    let extent = base * exp2(f32(level));
+    let reach = extent;
+    // One texel of that level — the unit every other bias here is in.
+    let texel_world = extent / f32(side * page_texels);
+
     // The sun's angular radius, as the tangent of the half-angle. Zero
     // makes every ray identical and the march degenerate, so it has a
     // floor: a disc that small is a hard shadow either way.
     let spread = max(inti.sun_softness, 1e-3);
 
-    // Start the ray off the surface by the receiver's own slope, so the
-    // first samples do not read the surface itself. One texel of the
-    // level the pixel lands on, which `inti_page_read` re-derives per
-    // sample anyway.
-    let start = world_position + normal * (inti_pages.bias.x * 1e-3 * reach)
+    // Off the surface by the same texel multiple the box reader uses,
+    // so the first samples do not read the receiver itself.
+    let start = world_position + normal * (texel_world * inti_pages.bias.x)
         + to_light * inti_pages.bias.y;
 
     var lit = 0.0;
@@ -1081,9 +1096,18 @@ fn inti_page_march(
                 // to numeric precision and fully shadowed regions
                 // sparkle.
                 let tolerance = abs(reference - previous) * 1.05;
-                // Reversed-Z: a LARGER stored depth is nearer the light.
-                let difference = reference - read.x;
-                if difference > tolerance {
+                // 🔴 Reversed-Z: a LARGER stored depth is NEARER the
+                // light, so the occluder is the one whose stored depth
+                // EXCEEDS the sample's own — not the other way round.
+                //
+                // Inverted, this marks blocked whenever the sample is
+                // nearer the light than what is stored; every ray
+                // marches towards the light, so its own depth climbs
+                // past the ground it started from and every pixel ends
+                // up reporting itself occluded. The frame came out
+                // uniformly shadowed, with banding across every curved
+                // surface where the steps landed.
+                if read.x - reference > tolerance {
                     blocked = true;
                     break;
                 }
