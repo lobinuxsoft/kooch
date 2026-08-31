@@ -1977,6 +1977,7 @@ impl PageRasterizer {
                 );
             }
         }
+        close(track, cull_query, encoder);
 
         let expand_query = nested(track, "page expand", encoder);
         {

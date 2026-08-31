@@ -2059,6 +2059,24 @@ fn the_page_passes_are_profiled() {
         );
     }
 
+    // 🔴 Every scope OPENED has to be closed, and nothing above checks
+    // that. A `nested()` without its `close()` is not a missing timing:
+    // wgpu refuses the whole encoder — "a debug group was not popped
+    // before the encoder was finished" — and the frame stops being
+    // submitted at all. It shipped that way once, from a reorder that
+    // moved a `close` out from under the scope it belonged to, and the
+    // only warning was an unused variable nobody read.
+    {
+        let source = include_str!("../src/shadow/pages/raster.rs");
+        let opened = source.matches("= nested(track,").count();
+        let closed = source.matches("close(track,").count();
+        assert_eq!(
+            opened, closed,
+            "pages/raster.rs opens {opened} GPU scopes and closes {closed}; an unpopped \
+             debug group makes wgpu reject the encoder and the frame never reaches the queue"
+        );
+    }
+
     // 🔴 Everything above measures the CPU, and every line of it passed
     // while this track spent 34 ms per frame on the OneXFly that no
     // capture could see. `profiling::scope!` times the RECORDING —
