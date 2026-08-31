@@ -184,13 +184,24 @@ pub struct RenderSettings {
     )]
     pub shadow_softness: u32,
     /// Projected radius, in screen pixels, under which a local light
-    /// casts no shadow pages at all (#944). The light still SHADES —
-    /// only its shadow is judged not worth the pool it would spend:
-    /// a lamp whose whole reach covers forty pixels asks for the same
-    /// six-face mip chain as one filling the screen. Epic runs the
-    /// same gate as a pass, `PruneLightGridCS`, before anything marks.
+    /// becomes DISTANT: it casts from ONE page per cube face instead of
+    /// a six-face mip chain (#1009).
     ///
-    /// 0 disables the gate. The sun is never gated — it has no radius.
+    /// A lamp whose whole reach covers forty pixels used to ask for the
+    /// same chain as one filling the screen, which is why #944 made this
+    /// a gate that turned the light's shadow off. The gate did not
+    /// relieve the pressure that made it fire — measured on
+    /// `dense.scene`, it silenced 34 lamps and the pool was still at
+    /// `1024 / 1024`, because the thirty above the threshold took every
+    /// slot. Raising it now buys pool without losing shadows: six pages
+    /// for a point light, one for a spot.
+    ///
+    /// Epic classify on the same axis and throttle the result —
+    /// `r.Shadow.Virtual.DistantLightMode`, on by default.
+    ///
+    /// 0 puts every light on a chain. The sun is never demoted — it has
+    /// no radius. The knob that still turns a light's shadow off
+    /// entirely is [`Self::shadow_page_light_reach`].
     #[serde(default = "default_shadow_min_pixels")]
     #[reflect(
         group = "Shadows: virtual pages",
@@ -1188,11 +1199,11 @@ const SHADOW_LIGHT_REACH_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 
 const SHADOW_MIN_PIXELS_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
-        label: "Off — every light casts",
+        label: "Off — every light on a full chain",
         value: 0,
     },
     kooch_ecs::reflect::FieldChoice {
-        label: "4 px — gate only the invisible",
+        label: "4 px — demote only the invisible",
         value: 4,
     },
     kooch_ecs::reflect::FieldChoice {
@@ -1204,8 +1215,12 @@ const SHADOW_MIN_PIXELS_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
         value: 16,
     },
     kooch_ecs::reflect::FieldChoice {
-        label: "32 px — distant lamps go shadowless",
+        label: "32 px — distant lamps drop to one page",
         value: 32,
+    },
+    kooch_ecs::reflect::FieldChoice {
+        label: "64 px — only lamps filling the screen keep a chain",
+        value: 64,
     },
 ];
 

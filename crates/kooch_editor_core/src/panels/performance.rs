@@ -1101,14 +1101,26 @@ fn shadow_page_readout(
         metric(ui, "light pairs", &thousands(counts.pairs as u64));
         metric_with_tooltip(
             ui,
-            "gated by coverage",
+            "distant tier",
+            &if counts.distant > 0 {
+                thousands(counts.distant as u64)
+            } else {
+                "0 — every light on a chain".to_owned()
+            },
+            "Lights whose whole range projects under `shadow_min_pixels` on screen (#1009): \
+             they cast from ONE page per cube face rather than a chain. This used to be the \
+             number of lights casting nothing at all.",
+        );
+        metric_with_tooltip(
+            ui,
+            "gated by distance",
             &if counts.culled > 0 {
                 thousands(counts.culled as u64)
             } else {
                 "0 — every light casting".to_owned()
             },
-            "Lights whose whole range projects under `shadow_min_pixels` on screen (#944): \
-             they still shade, but a shadow nobody can resolve claims no pages.",
+            "Lights standing further than `shadow_page_light_reach` of their own ranges from \
+             the camera (#944): they still shade, but they claim no pages.",
         );
         if counts.froxels > 0 && counts.samples > 0 {
             // 🔴 `pairs` counts a different thing on each path, so the
