@@ -338,3 +338,73 @@ fn cs_draw_args() {
     draw_args[6] = 0u;
     draw_args[7] = 0u;
 }
+
+/// Fills `PAGE_LOD` for every page of the sun's clipmap: how many
+/// levels up the first READABLE page covering the same world position
+/// sits.
+///
+/// # 🔴 One walk here instead of one per pixel per light
+///
+/// `inti_page_shadow` climbs the clipmap until a level answers. It
+/// starts at the containment floor while the marking chose
+/// `max(contain, density)`, so the common case is `density - contain`
+/// levels of pure misses before the first hit — and the ceiling is the
+/// whole seventeen-level chain. Each miss is one indexed read, which is
+/// cheap; seventeen of them per pixel per light is not.
+///
+/// This walks the same chain once per page per frame and writes the
+/// answer down, which is what Unreal's `LODOffset` is. The reader then
+/// does two reads: the floor's entry to learn the jump, and the page it
+/// lands on.
+///
+/// # The cell is not the same cell
+///
+/// A page's world rect maps to a DIFFERENT cell at a coarser level,
+/// because the levels' page widths differ by a factor of two. Working
+/// in absolute world page indices makes it a shift: the page whose
+/// absolute index is `idx` at level `L` sits inside `idx >> k` at level
+/// `L + k`, and that index wraps into the coarser level's own window.
+/// Unreal do the same arithmetic in `CalcClipmapOffsetLevelPage`.
+///
+/// ⚠️ Runs AFTER `cs_compact`, because readable means resident AND
+/// stamped and the stamp is what the compaction writes.
+@compute @workgroup_size(64, 1, 1)
+fn cs_lod_offsets(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let side = raster.space.z;
+    let levels = raster.chain.x;
+    let per_level = side * side;
+    if gid.x >= levels * per_level {
+        return;
+    }
+    let level = gid.x / per_level;
+    let within = gid.x % per_level;
+    let cell = vec2<u32>(within % side, within / side);
+
+    let base = raster.views.x * raster.views.y + raster.space.w * raster.space.x;
+    let entry = base + level * per_level + cell.y * side + cell.x;
+
+    let basis = sun_basis(raster.sun.xyz);
+    let eye = raster.eye.xyz;
+    // This page's ABSOLUTE index on the level's world grid — the one
+    // identity that survives the wrap.
+    let absolute = sun_page_index(level, cell, eye, basis, raster.world.x, side);
+
+    var found = PAGE_NO_LOD;
+    for (var step = 0u; level + step < levels; step = step + 1u) {
+        let up = level + step;
+        // `>> step` on the absolute index, then wrapped into the coarser
+        // level's window the way `sun_cell` keys it.
+        let scaled = floor(absolute / exp2(f32(step)));
+        let coarse = vec2<u32>(wrap_to(scaled, f32(side)));
+        let at = base + up * per_level + coarse.y * side + coarse.x;
+        // Readable, not merely resident: a page with no content stamp
+        // holds a clear, and a clear reads as "nothing occludes".
+        if table_slots[at * PAGE_CELL] != PAGE_ABSENT
+            && table_slots[at * PAGE_CELL + 3u] != 0u
+        {
+            found = step;
+            break;
+        }
+    }
+    table_slots[entry * PAGE_CELL + PAGE_LOD] = found;
+}

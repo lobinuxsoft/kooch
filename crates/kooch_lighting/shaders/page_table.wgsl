@@ -78,7 +78,32 @@ const PAGE_ABSENT: u32 = 0u;
 /// every frame the marking asks for the page — so word 1 says "still
 /// wanted" and can never say "new". The page age debug view was built
 /// on word 1 and painted the whole screen as a result.
-const PAGE_CELL: u32 = 6u;
+const PAGE_CELL: u32 = 7u;
+
+/// The seventh word: how many clipmap levels UP from this page the
+/// first READABLE page covering the same world position sits, or
+/// `PAGE_NO_LOD` when there is none.
+///
+/// # 🔴 What it replaces
+///
+/// The reader used to WALK. It starts at the containment floor and the
+/// marking chose `max(contain, density)`, so a pixel spent
+/// `density - contain` levels of pure misses before its first hit —
+/// per pixel, per light, every frame. Each miss is cheap (the flat
+/// table is one indexed read, #477) and there can be seventeen of them.
+///
+/// With this the reader does two reads instead: the floor's entry to
+/// learn the jump, then the page it lands on. Unreal carry the same
+/// number as `LODOffset` beside a `bAnyLODValid` bit, for the same
+/// reason.
+///
+/// ⚠️ Written by a pass that runs AFTER the compaction stamps content,
+/// because "readable" means resident AND stamped — a resident page with
+/// no content is exactly what the walk had to skip.
+const PAGE_LOD: u32 = 6u;
+
+/// No coarser level holds a readable page for this position.
+const PAGE_NO_LOD: u32 = 0xffffffffu;
 
 /// Content stamp meaning "this page is CLEARED", which is true under
 /// every generation rather than under one.

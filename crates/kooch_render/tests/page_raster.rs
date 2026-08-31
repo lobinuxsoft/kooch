@@ -3200,3 +3200,64 @@ fn a_tap_off_the_page_finds_its_neighbour() {
         "the sun has to opt IN, or the fix does nothing where it was measured",
     );
 }
+
+/// The reader jumps to the level that answers instead of walking to it.
+///
+/// # 🔴 Up to seventeen misses per pixel PER LIGHT
+///
+/// The walk starts at the containment floor and the marking chose
+/// `max(contain, density)`, so the common case is `density - contain`
+/// levels of pure misses before the first hit, with the whole chain as
+/// the ceiling. Each miss is one indexed read — the flat table's whole
+/// point — and seventeen of them per pixel per light is not cheap.
+///
+/// `cs_lod_offsets` walks the chain once per page per frame and writes
+/// the answer into `PAGE_LOD`; the reader then does two reads. That is
+/// Unreal's `LODOffset` beside its `bAnyLODValid` bit.
+///
+/// The loop stays, and must: the hint is a frame's worth of arithmetic
+/// over a table that other passes are still writing, so a stale one has
+/// to degrade into the walk rather than into a wrong answer.
+#[test]
+fn the_reader_jumps_to_the_level_that_answers() {
+    let source = kooch_lighting::inti_pbr_shader(1);
+    let start = source
+        .find("fn inti_page_shadow(")
+        .expect("the reader is in the shader");
+    let end = source[start..]
+        .find("\nfn inti_local_page_shadow(")
+        .expect("the reader ends")
+        + start;
+    let body = &source[start..end];
+
+    assert!(
+        body.contains("PAGE_LOD"),
+        "the reader still climbs the clipmap one level at a time",
+    );
+    assert!(
+        body.contains("PAGE_NO_LOD"),
+        "and it has to tell 'no coarser page' from a jump of zero",
+    );
+    assert!(
+        body.contains("level = level + 1u"),
+        "the walk has to remain as the fallback for a stale hint",
+    );
+
+    // The writer, and the ordering that makes it mean anything.
+    let compact = include_str!("../shaders/page_compact.wgsl");
+    assert!(
+        compact.contains("fn cs_lod_offsets("),
+        "nothing fills the jump table",
+    );
+    let stamp = compact
+        .find("PAGE_CELL + 3u] = select(gen")
+        .expect("the compaction stamps content");
+    let fill = compact
+        .find("fn cs_lod_offsets(")
+        .expect("the pass is in the shader");
+    assert!(
+        stamp < fill,
+        "the jump table is filled before the stamps it reads, so it would point at pages \
+         that hold a clear",
+    );
+}

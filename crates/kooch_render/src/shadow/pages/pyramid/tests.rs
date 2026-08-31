@@ -1,4 +1,5 @@
 use super::*;
+use crate::shadow::pages::pool::PAGE_CELL;
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::default();
@@ -31,14 +32,14 @@ fn table_with(
     // Every entry starts UNLISTED, which is what the compaction leaves
     // behind for the pages it did not list. Zero would read as
     // "listing 0" and put every cached page in the pyramid.
-    let mut words = vec![0u32; entries * 6];
+    let mut words = vec![0u32; entries * PAGE_CELL as usize];
     for entry in 0..entries {
-        words[entry * 6 + 2] = u32::MAX;
+        words[entry * PAGE_CELL as usize + 2] = u32::MAX;
     }
     let page = at.0 * side * side + at.2 * side + at.1;
     // Entries store `slot + 1`, so any non-zero word is resident.
-    words[page as usize * 6] = 1;
-    words[page as usize * 6 + 2] = LISTING;
+    words[page as usize * PAGE_CELL as usize] = 1;
+    words[page as usize * PAGE_CELL as usize + 2] = LISTING;
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: (words.len() * 4) as u64,
@@ -198,12 +199,12 @@ fn a_cached_page_stays_dark() {
     };
     let side = config.side(0);
     let entries = (side * side * clipmap.levels) as usize;
-    let mut words = vec![0u32; entries * 6];
+    let mut words = vec![0u32; entries * PAGE_CELL as usize];
     // Every page resident, every one of them cached: a slot in the
     // pool, no listing.
     for entry in 0..entries {
-        words[entry * 6] = entry as u32 + 1;
-        words[entry * 6 + 2] = u32::MAX;
+        words[entry * PAGE_CELL as usize] = entry as u32 + 1;
+        words[entry * PAGE_CELL as usize + 2] = u32::MAX;
     }
     let table = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
@@ -278,14 +279,14 @@ fn the_pyramid_never_misses_a_page() {
     let resident = [(0u32, 0u32), (5u32, 9u32), (6u32, 9u32), (15u32, 2u32)];
 
     let entries = (side * side * clipmap.levels) as usize;
-    let mut words = vec![0u32; entries * 6];
+    let mut words = vec![0u32; entries * PAGE_CELL as usize];
     for entry in 0..entries {
-        words[entry * 6 + 2] = u32::MAX;
+        words[entry * PAGE_CELL as usize + 2] = u32::MAX;
     }
     for (listing, &(x, y)) in resident.iter().enumerate() {
         let page = level * side * side + y * side + x;
-        words[page as usize * 6] = 1;
-        words[page as usize * 6 + 2] = listing as u32;
+        words[page as usize * PAGE_CELL as usize] = 1;
+        words[page as usize * PAGE_CELL as usize + 2] = listing as u32;
     }
     let table = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,

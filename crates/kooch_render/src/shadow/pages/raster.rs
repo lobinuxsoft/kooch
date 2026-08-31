@@ -364,6 +364,8 @@ pub struct PageRasterizer {
     compact_bgl: wgpu::BindGroupLayout,
     compact: wgpu::ComputePipeline,
     expand_args_pass: wgpu::ComputePipeline,
+    /// Fills `PAGE_LOD` so the reader jumps instead of walking.
+    lod_offsets: wgpu::ComputePipeline,
     draw_args_pass: wgpu::ComputePipeline,
 
     expand_bgl: wgpu::BindGroupLayout,
@@ -574,6 +576,7 @@ impl PageRasterizer {
         };
         let compact = compute("cs_compact", &compact_module, &compact_layout_pipeline);
         let expand_args_pass = compute("cs_expand_args", &compact_module, &compact_layout_pipeline);
+        let lod_offsets = compute("cs_lod_offsets", &compact_module, &compact_layout_pipeline);
         let draw_args_pass = compute("cs_draw_args", &compact_module, &compact_layout_pipeline);
         let invalidate_bgl = invalidate_layout(device);
         let invalidate_pipeline_layout =
@@ -807,6 +810,7 @@ impl PageRasterizer {
             compact_bgl,
             compact,
             expand_args_pass,
+            lod_offsets,
             draw_args_pass,
             expand_bgl,
             storage_bgl,
@@ -1889,6 +1893,12 @@ impl PageRasterizer {
             pass.set_pipeline(&self.compact);
             pass.set_bind_group(0, &bound.compact, &[uniform_offset]);
             pass.dispatch_workgroups(self.compact_threads(light_count).div_ceil(64), 1, 1);
+            // 2b. The reader's jump table, after the compaction because
+            //     "readable" means stamped and the stamp is what the
+            //     compaction writes.
+            let clipmap = levels * self.config.side(0).pow(2);
+            pass.set_pipeline(&self.lod_offsets);
+            pass.dispatch_workgroups(clipmap.div_ceil(64), 1, 1);
         }
 
         // 2b. The page pyramid, over the listing the compaction just

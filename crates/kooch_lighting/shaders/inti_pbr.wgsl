@@ -1231,6 +1231,28 @@ fn inti_page_shadow(
     let reach = max(abs(raw.x), abs(raw.y)) * 2.0;
     var level = sun_level(reach, base, side);
 
+    // 🔴 The jump, instead of the walk. `cs_lod_offsets` wrote how many
+    // levels up the first READABLE page for this position sits, so the
+    // loop below starts there rather than climbing through the misses.
+    //
+    // The marking chose `max(contain, density)` and this starts at the
+    // containment floor, so the walk it replaces was `density - contain`
+    // pure misses per pixel per light, with the whole seventeen-level
+    // chain as its ceiling. Unreal's `LODOffset`, and the loop stays as
+    // the fallback for the frame where the hint is stale.
+    let floor_cell = sun_cell(world_position, inti_pages.eye.xyz, basis, base, side, level);
+    let floor_page = inti_pages.views.x * inti_pages.views.y
+        + inti_pages.space.w * inti_pages.space.x
+        + level * side * side
+        + floor_cell.y * side
+        + floor_cell.x;
+    if floor_page < inti_pages.pool.x {
+        let hint = inti_page_slots[floor_page * PAGE_CELL + PAGE_LOD];
+        if hint != PAGE_NO_LOD && level + hint < inti_pages.chain.x {
+            level = level + hint;
+        }
+    }
+
     for (; level < inti_pages.chain.x; level = level + 1u) {
         let extent = base * exp2(f32(level));
         // What one texel of THIS level covers, in metres: `side` pages
