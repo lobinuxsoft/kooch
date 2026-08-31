@@ -126,6 +126,42 @@ fn the_lamp_arena_is_sized_by_groups() {
     );
 }
 
+/// The pre-pass's pair list is a PRODUCT — lamps times instances — and
+/// a constant cannot hold one.
+///
+/// 🔴 The failure it caused is the one this whole track keeps meeting:
+/// silent and healthy-looking. `cs_lamp_pairs` claims a slot with an
+/// `atomicAdd` and drops the pair past the cap, so WHICH lamps keep
+/// their geometry is whichever threads arrived first. A lamp that loses
+/// its pairs still marks its pages, still gets them resident, still
+/// gets them listed — and its cull finds no survivor, so they are
+/// cleared. A cleared page is far depth under reversed-Z, which every
+/// reader answers "nothing occludes".
+///
+/// The two `Lamp shadow pages` views named it in one look: no white in
+/// `faces`, so every page was resident, and uniform green in
+/// `occlusion`, so every page was empty.
+#[test]
+fn the_pair_list_outgrows_a_constant() {
+    // `dense.scene`, measured: 2157 entities and 64 lamps, and the ones
+    // under test carry range 90 over a city this size — so the sphere
+    // test keeps most instances for most lamps.
+    let instances = 2157u64;
+    let lamps = 64u64;
+    let old_cap = 16_384u64;
+    assert!(
+        instances * lamps > old_cap * 8,
+        "the bug this guards needs the scene's bound to dwarf the old cap;          it measured {} pairs against {old_cap}",
+        instances * lamps,
+    );
+    // And the bound the list now grows to still fits a buffer, at the
+    // eight bytes a pair costs.
+    assert!(
+        instances * lamps * 8 < 16 * 1024 * 1024,
+        "the bound has to fit comfortably, or growing to it is not the fix",
+    );
+}
+
 #[test]
 fn the_counters_name_every_level() {
     let Some((device, _queue)) = device() else {
