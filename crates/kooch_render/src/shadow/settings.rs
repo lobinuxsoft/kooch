@@ -202,9 +202,11 @@ impl Default for ShadowSettings {
             // is a measurement nobody has taken. The pairs are the same
             // pairs either way, so nothing is lost by measuring first.
             page_geometry: false,
-            // On: it is what shipped, and it is a real saving. The
-            // switch exists to falsify it, not to default it away.
-            page_receiver_bound: true,
+            // OFF: the bound assumes every receiver that reads a page
+            // contributed to its bound, and the reader's climb to
+            // coarser levels breaks that. See
+            // `RenderSettings::shadow_page_receiver_bound`.
+            page_receiver_bound: false,
             page_halo: 0.5,
             page_min_pixels: 8,
             // 🔴 Off, because it is a behaviour change and nothing has
