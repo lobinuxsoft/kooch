@@ -78,7 +78,7 @@ const PAGE_ABSENT: u32 = 0u;
 /// every frame the marking asks for the page — so word 1 says "still
 /// wanted" and can never say "new". The page age debug view was built
 /// on word 1 and painted the whole screen as a result.
-const PAGE_CELL: u32 = 7u;
+const PAGE_CELL: u32 = 6u;
 
 /// The seventh word: how many clipmap levels UP from this page the
 /// first READABLE page covering the same world position sits, or
@@ -100,7 +100,21 @@ const PAGE_CELL: u32 = 7u;
 /// ⚠️ Written by a pass that runs AFTER the compaction stamps content,
 /// because "readable" means resident AND stamped — a resident page with
 /// no content is exactly what the walk had to skip.
-const PAGE_LOD: u32 = 6u;
+///
+/// 🔴 It sits in the word Olsson's receiver bound used to own, so the
+/// jump costs no memory at all. The bound is gone: it rejected a caster
+/// whose nearest point lay beyond a page's furthest RECORDED receiver,
+/// and the record only ever covered the receivers that marked THAT
+/// level while the reader climbs to coarser ones. A receiver that
+/// climbed landed on a bound written by other receivers and lost the
+/// caster it needed — the page drawn with the ground in it and without
+/// the occluder, which the debug view paints green.
+///
+/// Measured saving before it went: 7% of the sun's candidates. Making
+/// it correct means the marking writing the bound on every level the
+/// reader could reach, which is seventeen atomics per sample instead of
+/// one — more than it saves.
+const PAGE_LOD: u32 = 4u;
 
 /// No coarser level holds a readable page for this position.
 const PAGE_NO_LOD: u32 = 0xffffffffu;
@@ -643,17 +657,7 @@ struct PageRaster {
     // x the clipmap's level-0 extent in metres, y the orthographic half
     // span, z the atlas side in texels, w the PCF box width in texels.
     world: vec4<f32>,
-    // xyz the camera, w 1 when Olsson's receiver bound may reject a
-    // caster and 0 when it may not.
-    //
-    // 🔴 A switch and not a constant, because the bound is the only
-    // thing left in the expansion that DELETES geometry. It compares a
-    // caster against `entry.z` — the furthest receiver the MARKING
-    // recorded for that page — so a page whose furthest receiver was
-    // never marked rejects a caster that really does shadow it, and the
-    // page renders lit with everything else reporting health. Turning
-    // it off cannot make the picture wrong in the other direction: the
-    // worst it does is pair casters that occlude nothing.
+    // xyz the camera, w unused.
     eye: vec4<f32>,
     // xyz the sun's direction, w 1 when there is one.
     sun: vec4<f32>,

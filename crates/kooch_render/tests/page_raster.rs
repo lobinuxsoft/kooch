@@ -2592,188 +2592,23 @@ fn a_point_behind_a_face_gets_a_negative_w() {
     );
 }
 
-/// #940's acceptance, planted: a caster whose nearest point lies beyond
-/// the page's furthest receiver produces no pair for that page. Two
-/// identical runs — one with the receiver bound planted, one without —
-/// and the rejected counter has to equal the pairs that vanished.
-#[test]
-fn a_caster_behind_every_receiver_pairs_nothing() {
-    use glam::{Mat4, Vec3};
-    use kooch_render::meshlet::{
-        MeshInstance, MeshletCullPipelines, MeshletScene, SceneCullParams, build_default_meshlets,
-    };
-
-    let Some((device, queue)) = common::try_acquire_device() else {
-        eprintln!("no adapter; skipping");
-        return;
-    };
-    let (device, queue) = (&device, &queue);
-    let device = device.clone();
-    let queue = queue.clone();
-
-    // The lamp rig's scene, plus one cube BELOW the floor: the floor's
-    // receivers sit 4 m from the lamp, the deep cube at ~6 m — behind
-    // every receiver the page shades, occluding nothing.
-    let mesh = kooch_render::mesh::primitives::Primitive::Cube {
-        half_extents: Vec3::splat(0.5),
-    }
-    .build();
-    let meshlet_mesh = build_default_meshlets(&mesh).expect("cube builds");
-    let mut pool = kooch_render::meshlet::GlobalMeshPool::new();
-    let handle = pool.register(&meshlet_mesh);
-    let gpu_pool = pool.upload(&device);
-    let meshlets_per_mesh = gpu_pool.max_meshlets_per_mesh.max(1);
-
-    let instances = vec![
-        MeshInstance::new(
-            Mat4::from_scale_rotation_translation(
-                Vec3::new(40.0, 1.0, 40.0),
-                glam::Quat::IDENTITY,
-                Vec3::new(0.0, -0.5, 0.0),
-            ),
-            handle.mesh_id,
-            0,
-        ),
-        MeshInstance::new(
-            Mat4::from_scale_rotation_translation(
-                Vec3::splat(0.5),
-                glam::Quat::IDENTITY,
-                Vec3::new(0.45, 2.0, -0.45),
-            ),
-            handle.mesh_id,
-            0,
-        ),
-        // The caster behind everything: same ray as the occluder, past
-        // the floor. Distance ~6 m, radius ~0.43 m.
-        MeshInstance::new(
-            Mat4::from_scale_rotation_translation(
-                Vec3::splat(0.5),
-                glam::Quat::IDENTITY,
-                Vec3::new(0.45, -2.0, -0.45),
-            ),
-            handle.mesh_id,
-            0,
-        ),
-    ];
-
-    const LIGHTS: u32 = 1;
-    let lamp = Vec3::new(0.0, 4.0, 0.0);
-    let records = [kooch_lighting::GpuLight {
-        position: lamp.to_array(),
-        range: 20.0,
-        kind: 1,
-        ..Default::default()
-    }];
-
-    let config = PageConfig::default();
-    let fine_level = config.local_floor();
-    let fine_side = config.side(fine_level);
-    let fine = lamp_face_page(0, 3, fine_level, (fine_side / 2, fine_side / 2), LIGHTS);
-
-    // One run of the whole pipeline against a planted table. `bound`
-    // is the fifth word: the furthest receiver, or 0 for "no data".
-    let run_with = |bound: f32, receiver_bound: bool| -> (u32, u32) {
-        let scene = MeshletScene::new(&device, instances.len() as u32);
-        scene.upload_instances(&queue, &instances);
-        let scene_params = SceneCullParams::new(instances.len() as u32, meshlets_per_mesh);
-        let lights_buffer = {
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("depth_reject_test_light"),
-                size: std::mem::size_of_val(&records) as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&records));
-            buffer
-        };
-        let mut page_pool = PagePool::new(&device, small());
-        let entries = VIEWS * span(LIGHTS);
-        page_pool.ensure_entries(&device, entries);
-        let cell = PAGE_CELL as usize;
-        let mut slots = vec![0u32; entries as usize * cell];
-        slots[fine as usize * cell] = 3 + 1;
-        slots[fine as usize * cell + 4] = bound.to_bits();
-        queue.write_buffer(page_pool.slots(), 0, bytemuck::cast_slice(&slots));
-
-        let cull_pipelines = MeshletCullPipelines::new(&device);
-        let mut raster = PageRasterizer::new(
-            &device,
-            cull_pipelines.meshlet_bind_group_layout(),
-            PageConfig::default(),
-            ClipmapConfig::default(),
-            small(),
-            kooch_render::meshlet::DEFAULT_MAX_TRIANGLES as u32,
-        );
-        let meshlet_bg = kooch_render::meshlet::pool_meshlet_bind_group(
-            &device,
-            cull_pipelines.meshlet_bind_group_layout(),
-            &gpu_pool,
-        );
-        let threads = instances.len() as u32 * meshlets_per_mesh;
-        let chunks = kooch_render::meshlet::chunks_for(instances.len() as u32, meshlets_per_mesh);
-        raster.ensure_capacity(&device, threads, threads, chunks);
-        raster.set_receiver_bound(receiver_bound);
-
-        let mut encoder = device.create_command_encoder(&Default::default());
-        raster.record(
-            &device,
-            &queue,
-            &mut encoder,
-            &cull_pipelines,
-            &gpu_pool,
-            &scene,
-            &meshlet_bg,
-            scene.instance_buffer(),
-            &page_pool,
-            &scene_params,
-            0,
-            Vec3::new(0.0, 1.0, 8.0),
-            Vec3::NEG_Y,
-            &records,
-            &lights_buffer,
-            &[],
-            1.0,
-            None,
-        );
-        queue.submit([encoder.finish()]);
-        let counts = read_words(&device, &queue, raster.counts_buffer());
-        let buckets = raster.buckets() as usize;
-        (counts[buckets + 2], counts[buckets * 3 + 5])
-    };
-
-    // The floor's receivers are 4 m away; 4.05 clears them all and is
-    // still well short of the deep cube's ~5.6 m nearest point. The
-    // floor itself survives — its radius is huge, so its NEAREST point
-    // is nearer than any receiver, which is the conservative side.
-    let (open_pairs, open_rejected) = run_with(0.0, true);
-    let (bounded_pairs, bounded_rejected) = run_with(4.05, true);
-    assert_eq!(open_rejected, 0, "an absent bound rejected something");
-    assert!(open_pairs > 0, "the rig paired nothing at all");
-    assert!(
-        bounded_rejected > 0,
-        "a caster behind every receiver was not rejected"
-    );
-    assert_eq!(
-        open_pairs - bounded_pairs,
-        bounded_rejected,
-        "the rejected counter does not account for the missing pairs"
-    );
-
-    // 🔴 And the switch that turns it off has to actually turn it off.
-    // This is the only thing in the expansion that deletes geometry, so
-    // it is the one a missing shadow gets falsified against — a switch
-    // that quietly did nothing would make the experiment answer "not
-    // the bound" no matter what the bound was doing.
-    let (unbounded_pairs, unbounded_rejected) = run_with(4.05, false);
-    assert_eq!(
-        unbounded_rejected, 0,
-        "the bound rejected a caster with the switch off",
-    );
-    assert_eq!(
-        unbounded_pairs, open_pairs,
-        "with the bound off the pass has to emit exactly what an absent bound emits",
-    );
-}
+/// 🔴 `a_caster_behind_every_receiver_pairs_nothing` lived here and is
+/// gone with the bound it tested.
+///
+/// Olsson §4's receiver bound rejected a caster whose nearest point lay
+/// beyond a page's furthest RECORDED receiver. The record only ever
+/// covered the receivers that marked THAT level, while the reader
+/// climbs to coarser ones — so a receiver that climbed met a bound
+/// written by other receivers and lost the caster it needed. The page
+/// was then drawn with the ground in it and without the occluder, which
+/// shades lit and which `VirtualPages` paints GREEN, the colour it
+/// documents as "the comparison is wrong".
+///
+/// It saved 7% of the sun's candidates, measured. Making it correct
+/// means the marking writing the bound on every level the reader could
+/// reach — seventeen atomics per sample instead of one, over 1.2M
+/// samples a frame — which costs more than it saved. Removed rather
+/// than left behind a switch.
 
 /// A cleared page outlives the generation it was cleared under, and only
 /// a lamp's does.

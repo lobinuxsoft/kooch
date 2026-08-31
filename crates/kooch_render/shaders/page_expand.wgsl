@@ -151,24 +151,17 @@ fn sun_pair(
     if abs(along) > raster.world.y + radius {
         return;
     }
-    // #949 — Olsson §4's receiver bound on the sun's axis. The lamp's
-    // twin sits in `cs_expand`, and the asymmetry is the whole point: a
-    // lamp is a point, so a radius bounds it in every direction at
-    // once. The sun is directional, so only the FAR side can go. A
-    // caster nearer the sun than every receiver here still shadows
-    // them, however far away it is, and that side is never rejected.
+    // 🔴 Olsson §4's receiver bound used to reject a caster here, and
+    // it is gone. It compared the caster against the furthest receiver
+    // the MARKING recorded for this page, and the marking records one
+    // level per receiver while the reader climbs to coarser ones — so a
+    // receiver that climbed met a bound written by other receivers and
+    // lost the caster it needed. The page then holds the ground and not
+    // the occluder, which reads as lit and paints green.
     //
-    // `entry.z` holds `along + span` max-reduced over this page's
-    // receivers — the same bias, from the same snapped origin, that
-    // `mark_sun` wrote. Zero means the marking recorded nothing, which
-    // keeps the caster: the safe way for this to be wrong.
-    if raster.eye.w != 0.0
-        && entry.z != 0u
-        && (along + raster.world.y) - radius > bitcast<f32>(entry.z)
-    {
-        atomicAdd(&page_counts[buckets * 3u + 6u], 1u);
-        return;
-    }
+    // It saved 7% of the sun's candidates. Making it correct costs the
+    // marking seventeen atomics per sample instead of one, which is
+    // more than it saved.
 
     let slot = atomicAdd(&page_counts[buckets + 2u], 1u);
     if slot >= raster.chain.y {
@@ -424,19 +417,8 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
         if !cell_reaches(cone.xyz, cone.w, to_centre, radius, light.range) {
             return;
         }
-        // #940 — Olsson §4's receiver bound, at page granularity: a
-        // caster whose NEAREST point lies beyond this page's furthest
-        // receiver occludes nothing the frame shades. `entry.z` is the
-        // marking's radial atomicMax; zero means no receiver was
-        // recorded and nothing is rejected. The spot rotation above
-        // preserves length, so one comparison serves both kinds.
-        if raster.eye.w != 0.0
-            && entry.z != 0u
-            && length(to_centre) - radius > bitcast<f32>(entry.z)
-        {
-            atomicAdd(&page_counts[buckets * 3u + 5u], 1u);
-            return;
-        }
+        // #940's receiver bound is gone with the sun's twin above, and
+        // for the same reason: the lamps' reader walks their chain too.
         let slot = atomicAdd(&page_counts[buckets + 2u], 1u);
         if slot >= raster.chain.y {
             atomicAdd(&page_counts[buckets + 3u], 1u);

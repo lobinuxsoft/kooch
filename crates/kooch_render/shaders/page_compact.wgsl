@@ -205,7 +205,9 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
     page_list[listing] = vec4<u32>(
         page,
         stored - 1u,
-        table_slots[entry * PAGE_CELL + 4u],
+        // The third word is retired with Olsson's receiver bound; the
+        // slot it used now holds `PAGE_LOD`, which the draw never reads.
+        0u,
         0u,
     );
     // The way back: a pass that computes a page KEY can now reach the

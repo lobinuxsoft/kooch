@@ -35,7 +35,7 @@ use super::PageConfig;
 /// compacted page list, and the content stamp the cache runs on.
 /// Mirrors `PAGE_CELL` in `page_table.wgsl`, which is where the
 /// reason lives.
-pub const PAGE_CELL: u32 = 7;
+pub const PAGE_CELL: u32 = 6;
 
 /// `KOOCH_SHADOW_POOL_PAGES`, read once.
 ///

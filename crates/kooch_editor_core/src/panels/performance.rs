@@ -1266,15 +1266,6 @@ fn shadow_page_readout(
                  because a meshlet's rect covers up to 16384 cells at the finest clipmap \
                  levels while only twenty pages are resident there.",
             );
-            metric(
-                ui,
-                "rejected",
-                &format!(
-                    "{} lamp · {} sun",
-                    thousands(raster.depth_rejected as u64),
-                    thousands(raster.sun_rejected as u64)
-                ),
-            );
             metric_with_tooltip(
                 ui,
                 "worst level",

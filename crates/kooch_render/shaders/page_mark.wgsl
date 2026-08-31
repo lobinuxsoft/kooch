@@ -526,10 +526,6 @@ fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     // u32s, which is what lets an atomicMax hold a distance.
     if page.x < pages.pool.x {
         let d = length(world - lights[light].position);
-        atomicMax(
-            &table_cells[page.x * PAGE_CELL + 4u],
-            bitcast<u32>(max(d, 0.0)),
-        );
     }
     // 🔴 CLAIMED now, and the flag was a guard rather than an oversight.
     // A page claimed is a page in the table, and a page in the table
@@ -634,10 +630,6 @@ fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32, dither: vec2<f32>) -> vec2
         let along = dot(world - eye, basis[2])
             + sun_drift(eye, basis, pages.eye_and_base.w, pages.strides.x, page.y);
         let span = bitcast<f32>(pages.life.w);
-        atomicMax(
-            &table_cells[page.x * PAGE_CELL + 4u],
-            bitcast<u32>(max(along + span, 0.0)),
-        );
     }
     if mark_bit(page.x, true) {
         atomicAdd(&rank_state[rank_base() + rank_sun(page.y)], 1u);
@@ -1073,7 +1065,6 @@ fn age_view(@builtin(global_invocation_id) id: vec3<u32>) {
     // the one thread per entry that already runs first, so the reset
     // rides it. Zero means "no receiver recorded", which every reader
     // treats as "never reject".
-    atomicStore(&table_cells[entry * PAGE_CELL + 4u], 0u);
     let stored = atomicLoad(&table_cells[entry * PAGE_CELL]);
     if stored == PAGE_ABSENT { return; }
 
@@ -1636,7 +1627,6 @@ fn mark_face_rect(
             // #940's receiver bound, from the froxel's furthest corner
             // rather than a sample: larger, so it rejects less, which is
             // the safe direction for a bound that culls casters.
-            atomicMax(&table_cells[index * PAGE_CELL + 4u], bitcast<u32>(max(reach, 0.0)));
             // 🔴 `mark_bit`, not `page_touch`. `page_touch` only
             // refreshes an entry that already exists; the bit is what
             // makes a page EXIST, and what `plan_view` later ranks. The

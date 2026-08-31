@@ -312,35 +312,28 @@ fn the_flat_table_is_megabytes_not_108() {
     // shadow and reported nothing, twice, before anyone read its
     // arithmetic.
     //
-    // 🔴 And a seventh word was added on purpose, for another 2.1 MiB:
-    // `PAGE_LOD`, how many clipmap levels up the first readable page
-    // sits. It buys the reader two indexed reads where it used to walk
-    // the chain — up to seventeen misses per pixel PER LIGHT, every
-    // frame — so the memory is bought back in the one place this
-    // technique is expensive. Unreal carry the same number for the same
-    // reason. The ceiling moves with it rather than the word being
-    // packed into a spare bit of another: two writers on one word is
-    // how the frame counter above became unreadable.
+    // 🔴 Still SIX. `PAGE_LOD` was added and cost nothing: it took the
+    // word Olsson's receiver bound used to own, and that bound is gone
+    // — its record covered one level per receiver while the reader
+    // climbs, so a receiver that climbed lost the caster it needed.
     assert!(
-        bytes < 16 * 1024 * 1024,
+        bytes < 14 * 1024 * 1024,
         "one view's table is {bytes} bytes"
     );
     let flat = 28_409_856u64 * 4;
-    // ⚠️ SEVEN, and it has been ten and then eight. The sixth word took
-    // this from 10.5x under the flat answer to 8.8x; the seventh
-    // (`PAGE_LOD`) takes it to 7.5x. "An order of magnitude" stopped
-    // being literally true two words ago and is written down rather
-    // than quietly rounded.
+    // ⚠️ EIGHT, and it used to be ten. The sixth word moved this from
+    // 10.5x under the flat answer to 8.8x, so "an order of magnitude"
+    // has stopped being literally true. Written down rather than
+    // quietly rounded: the conclusion the comparison exists for — that
+    // the flat table is a fraction of what the full chain would cost —
+    // is unchanged, and the day it needs a seventh word this is the
+    // line that should be argued with.
     //
-    // Argued with rather than raised on reflex, which is what the line
-    // above asked for: the seventh word buys the READER two indexed
-    // reads where it walked up to seventeen, per pixel per light, every
-    // frame. That is the one place this technique is expensive, and
-    // 2.1 MiB a view is the cheap side of the trade. The conclusion the
-    // comparison exists for — that the flat table is a fraction of what
-    // the full chain would cost — is unchanged.
+    // It nearly did. `PAGE_LOD` was going to be that word, until the
+    // receiver bound it replaced turned out to be the bug and freed
+    // one.
     assert!(
-        bytes * 7 < flat,
+        bytes * 8 < flat,
         "{bytes} bytes has stopped being a fraction of the full-chain flat answer's {flat}"
     );
 }

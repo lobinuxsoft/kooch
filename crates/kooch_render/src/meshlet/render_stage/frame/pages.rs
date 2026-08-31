@@ -53,8 +53,6 @@ struct PageSettings {
     march: bool,
     /// Whether the expansion runs from the geometry (#1022).
     geometry: bool,
-    /// Whether the receiver bound may reject a caster (#940, #949).
-    receiver_bound: bool,
     /// How far, in pages, a receiver dilates its request (#1022).
     halo: f32,
     min_pixels: u32,
@@ -240,7 +238,6 @@ fn page_settings(resources: &Resources) -> PageSettings {
         ),
         march: shadows.page_march,
         geometry: shadows.page_geometry,
-        receiver_bound: shadows.page_receiver_bound,
         halo: shadows.page_halo,
         min_pixels: shadows.page_min_pixels,
         reach: shadows.page_light_reach,
@@ -631,7 +628,6 @@ impl MeshletRenderStage {
         raster.set_softness(settings.softness);
         raster.set_march(settings.march);
         raster.set_geometry(settings.geometry);
-        raster.set_receiver_bound(settings.receiver_bound);
         raster.set_bias(
             settings.bias.0,
             settings.bias.1,

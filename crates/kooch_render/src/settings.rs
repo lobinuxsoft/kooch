@@ -305,39 +305,6 @@ pub struct RenderSettings {
     #[serde(default)]
     #[reflect(group = "Shadows: virtual pages", shown_when = PAGES_ON)]
     pub shadow_page_geometry: bool,
-    /// Whether Olsson's receiver bound may reject a caster (#940, #949).
-    ///
-    /// 🔴 A falsifier, not a quality knob. This is the only thing left
-    /// in the expansion that DELETES geometry: a caster whose nearest
-    /// point lies beyond a page's furthest RECORDED receiver is dropped.
-    /// The record comes from the marking, so a page whose furthest
-    /// receiver was never marked drops a caster that really does shadow
-    /// it — and the page then renders lit with every counter healthy.
-    ///
-    /// 🔴 OFF by default, because its invariant does not hold.
-    ///
-    /// The bound is only sound if every receiver that will READ a page
-    /// contributed to that page's `entry.z`. The marking records one
-    /// level per receiver — `max(contain, density)` — while the reader
-    /// CLIMBS to coarser levels whenever its own does not answer. A
-    /// receiver that climbs lands on a page whose bound was written by
-    /// other receivers entirely, and that bound can exclude the very
-    /// caster it needed. The page is then drawn, with the ground in it
-    /// and without the caster, and the pixel shades lit.
-    ///
-    /// That is worth naming precisely because it does not look like a
-    /// dropped caster: the debug view paints it GREEN, the classification
-    /// for "a page with real depth whose comparison says lit", and the
-    /// hunt went through bias, depth space, page latency and pass order
-    /// before the switch was tried.
-    ///
-    /// Kept as a switch rather than deleted: the saving is real —
-    /// measured at 7% of the sun's candidates — and it becomes correct
-    /// again the day the marking records the bound on every level the
-    /// reader could climb to.
-    #[serde(default)]
-    #[reflect(group = "Shadows: virtual pages", shown_when = PAGES_ON)]
-    pub shadow_page_receiver_bound: bool,
     /// How far, in PAGES, a receiver dilates its page request — Epic's
     /// `PageDilationOffset`. 0 turns it off.
     ///
@@ -1376,7 +1343,6 @@ impl Default for RenderSettings {
             shadow_bias_slope: default_shadow_bias_slope(),
             shadow_page_march: false,
             shadow_page_geometry: false,
-            shadow_page_receiver_bound: false,
             shadow_page_halo: default_shadow_page_halo(),
             meshlet_lod_error: default_meshlet_lod_error(),
             meshlet_min_pixels: default_meshlet_min_pixels(),
@@ -1460,7 +1426,6 @@ impl RenderSettings {
             page_bias_slope: self.shadow_bias_slope,
             page_march: self.shadow_page_march,
             page_geometry: self.shadow_page_geometry,
-            page_receiver_bound: self.shadow_page_receiver_bound,
             page_halo: self.shadow_page_halo,
             max_distance: self.shadow_distance,
             cascade_texels: self.shadow_cascade_texels,
