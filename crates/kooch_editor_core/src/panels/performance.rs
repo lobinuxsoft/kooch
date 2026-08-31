@@ -1107,9 +1107,10 @@ fn shadow_page_readout(
             } else {
                 "0 — every light on a chain".to_owned()
             },
-            "Lights whose whole range projects under `shadow_min_pixels` on screen (#1009): \
-             they cast from ONE page per cube face rather than a chain. This used to be the \
-             number of lights casting nothing at all.",
+            "Lights that cast from ONE page per cube face rather than a chain (#1009). A light \
+             qualifies when the finest level ANY pixel could ask it for is already the \
+             coarsest it has — derived, no threshold — or when its whole range projects under \
+             `shadow_min_pixels`. This used to be the number of lights casting nothing at all.",
         );
         metric_with_tooltip(
             ui,

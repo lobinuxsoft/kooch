@@ -1199,7 +1199,7 @@ const SHADOW_LIGHT_REACH_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
 
 const SHADOW_MIN_PIXELS_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     kooch_ecs::reflect::FieldChoice {
-        label: "Off — every light on a full chain",
+        label: "Off — only the derived test demotes",
         value: 0,
     },
     kooch_ecs::reflect::FieldChoice {

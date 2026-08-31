@@ -982,7 +982,63 @@ fn light_out_of_reach(light: u32) -> bool {
 // `light_out_of_reach`, and it asks a genuinely different question —
 // see its own comment for why one number could not answer both.
 fn light_distant(light: u32) -> bool {
-    return pages.density.y > 0.0 && coverage_pixels(light) < pages.density.y;
+    return light_single_level(light)
+        || (pages.density.y > 0.0 && coverage_pixels(light) < pages.density.y);
+}
+
+// The world size of one screen pixel at `depth` along the view axis.
+// Mirrors what `mark_pixel` computes for its own sample, so the two
+// cannot answer differently about the same distance.
+fn pixel_world(depth: f32) -> f32 {
+    let focal = view.clip_from_view[1][1];
+    if abs(focal) < 1e-9 {
+        return 0.0;
+    }
+    return 2.0 * abs(depth) / (focal * max(view.viewport.y, 1.0));
+}
+
+// Whether the FINEST level any pixel could ask this light for is already
+// the coarsest one it has.
+//
+// # 🔴 Derived, where the threshold beside it is guessed
+//
+// `page_level` decides the level from the world size of a screen pixel
+// and the distance to the lamp. The finest level it can return for a
+// given light comes from the smallest pixel and the largest distance:
+// the pixel at the NEAREST point of the light's sphere, and a receiver
+// out at the edge of its range. If that is still the top of the chain,
+// no pixel anywhere can ask for anything finer — so one page per face is
+// not a demotion, it is the whole answer.
+//
+// Unreal ask exactly this question and phrase it in one line —
+// `bIsDistantLight = MinMipLevel == (MaxMipLevels - 1)`, "use distant
+// light only if we are sure that there's only one mip level" — over a
+// conservative mip taken from the light's nearest possible view depth
+// minus its radius. This is that, in the units this marking already
+// works in.
+//
+// It needs no threshold, which is the point. The projected-size test it
+// sits beside answers a proxy question and has to be tuned by hand:
+// measured on `dense.scene`, lamps of range 90 near the camera project
+// an enormous radius and `page_min_pixels` at 32 demoted NOTHING, while
+// the pool sat at 1024 of 1024 with `free 0` and pages flickered in and
+// out. The knob stays, because a project may want to demote harder than
+// correctness requires.
+fn light_single_level(light: u32) -> bool {
+    let record = lights[light];
+    if record.range <= 0.0 {
+        return false;
+    }
+    // The nearest the light's sphere can come to the camera, and so the
+    // smallest a screen pixel covering it can be.
+    let near = max(length(record.position - pages.eye_and_base.xyz) - record.range, 0.0);
+    let wanted = pixel_world(near) * pages.density.x;
+    if wanted <= 0.0 {
+        return false;
+    }
+    // Measured out at the range, which is the furthest a receiver of
+    // this light can sit and so the finest level it can ask for.
+    return page_level(record.range, wanted) >= pages.chain.z - 1u;
 }
 
 // Whether this light casts nothing at all.
