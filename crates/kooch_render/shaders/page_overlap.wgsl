@@ -1,7 +1,7 @@
-// "Does this rectangle touch any resident page?", in constant time
-// (#1022).
+// "Does this rectangle touch any page being drawn this frame?", in
+// constant time (#1022).
 //
-// Pure functions over the residency pyramid `page_pyramid.wgsl` builds:
+// Pure functions over the page pyramid `page_pyramid.wgsl` builds:
 // no bindings of its own, so the caller passes the texture it already
 // has bound. The expansion and the tests both include this and are
 // therefore asking the same question, which is the only way a test of
@@ -38,7 +38,7 @@ fn overlap_mip(rect: vec4<u32>, mips: u32) -> u32 {
     return mips - 1u;
 }
 
-/// `true` when any page under `rect` is resident.
+/// `true` when any page under `rect` is being drawn this frame.
 ///
 /// `rect` is inclusive, in PAGES, and already clamped to the level's
 /// grid — a rectangle running off the edge would wrap into the far side
@@ -46,7 +46,7 @@ fn overlap_mip(rect: vec4<u32>, mips: u32) -> u32 {
 ///
 /// ⚠️ Conservative by construction, and it has to be. At the chosen mip
 /// a texel stands for a whole block, so a rectangle that merely touches
-/// the block of a resident page answers `true`. That costs a caster
+/// the block of a listed page answers `true`. That costs a caster
 /// tested against a page it turns out to miss; the opposite error would
 /// drop geometry that does cast, and nothing downstream could tell.
 fn overlaps_any_page(

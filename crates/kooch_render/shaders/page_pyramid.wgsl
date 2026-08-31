@@ -1,20 +1,23 @@
-// A hierarchical residency pyramid over the sun's clipmap (#1022).
+// A hierarchical page pyramid over the sun's clipmap (#1022).
 //
 // # 🔴 What it is for
 //
 // Driving the shadow raster from the GEOMETRY means asking, per caster,
-// "does the rectangle this meshlet covers touch any page that is
-// resident?" — and a meshlet's rectangle covers up to 16384 cells at
-// the finest clipmap levels while a handful of pages are resident
-// there. Answering that by walking the rectangle is why the scatter
+// "does the rectangle this meshlet covers touch any page that is being
+// drawn?" — and a meshlet's rectangle covers up to 16384 cells at the
+// finest clipmap levels while a handful of pages are listed there. Answering that by walking the rectangle is why the scatter
 // shape was measured worse than pairing and why `page_compact.wgsl`
 // carries a note saying so.
 //
 // This is the structure that makes the question O(1) instead. At mip
-// `M` one texel stands for a `2^M x 2^M` block of pages and holds 1 if
-// ANY page in that block is resident. A rectangle is answered by
-// picking the mip where it spans at most two texels per axis and
-// reading four of them.
+// `M` one texel stands for a `2^M x 2^M` block of pages and is non-zero
+// if ANY page in that block is being drawn this frame. A rectangle is
+// answered by picking the mip where it spans at most two texels per
+// axis and reading four of them.
+//
+// Mip 0 carries more than a bit: the page's index in the compacted
+// `page_list`, so a descent that reaches a texel can build the pair
+// from the same three words the paired shape reads.
 //
 // # Why a texture and not a buffer
 //
@@ -43,11 +46,31 @@ struct PyramidShape {
 @group(1) @binding(0) var<storage, read> table_slots: array<u32>;
 @group(1) @binding(1) var seed_dst: texture_storage_2d_array<r32uint, write>;
 
-/// Mip 0: one texel per page, 1 when the page holds a physical slot.
+/// Mip 0: one texel per page, holding `listing + 1` when the page is in
+/// THIS FRAME's compacted list and 0 when it is not.
 ///
-/// Reads the SAME word the readers treat as residency — entries store
-/// `slot + 1`, so a cleared table is an empty pyramid and eviction
-/// writes `PAGE_ABSENT` into exactly this word.
+/// # 🔴 Listed, not resident — and the difference is the whole cache
+///
+/// Residency says "this page has a physical slot", which most of the
+/// atlas has: pages whose content is still valid from an earlier frame
+/// are resident and must NOT be drawn again. Listing says "the
+/// compaction decided this page redraws now", which is the set the
+/// expansion is allowed to make pairs against. Seeding residency here
+/// would rasterise every cached page every frame and undo #477 in one
+/// texture.
+///
+/// Carrying the listing INDEX rather than a bit is what lets the
+/// inverted expansion finish the job: a descent that lands on a texel
+/// reads `page_list[listing]` and has the page id, its physical slot
+/// and its receiver bound — the same three words the paired shape
+/// takes from the same buffer, so the two shapes cannot drift.
+///
+/// `+ 1` because 0 has to mean "nothing here": the OR-reduction above
+/// only tells resident blocks from empty ones if empty is zero.
+///
+/// ⚠️ Runs AFTER `cs_compact`, which is what writes the third word. A
+/// build recorded before it describes the previous frame's listing —
+/// pairs against pages that are not being drawn.
 @compute @workgroup_size(8, 8, 1)
 fn seed_pages(@builtin(global_invocation_id) gid: vec3<u32>) {
     let side = pyramid.shape.x;
@@ -55,12 +78,13 @@ fn seed_pages(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let page = pyramid.shape.z + gid.z * side * side + gid.y * side + gid.x;
-    let resident = table_slots[page * PAGE_CELL] != PAGE_ABSENT;
+    let listing = table_slots[page * PAGE_CELL + 2u];
+    let listed = table_slots[page * PAGE_CELL] != PAGE_ABSENT && listing != PAGE_UNLISTED;
     textureStore(
         seed_dst,
         vec2<i32>(vec2<u32>(gid.xy)),
         i32(gid.z),
-        vec4<u32>(select(0u, 1u, resident), 0u, 0u, 0u),
+        vec4<u32>(select(0u, listing + 1u, listed), 0u, 0u, 0u),
     );
 }
 
@@ -72,7 +96,7 @@ fn seed_pages(@builtin(global_invocation_id) gid: vec3<u32>) {
 /// Mip `M` from mip `M-1`: the OR of the four texels below.
 ///
 /// ⚠️ An ODD source side would drop its last row and column, and a
-/// dropped row is a resident page the pyramid denies — which turns into
+/// dropped row is a listed page the pyramid denies — which turns into
 /// a caster nobody draws. The side is a power of two by construction
 /// (`virtual_size / page`), and the clamp below keeps that assumption
 /// from being silent if it ever stops holding.
