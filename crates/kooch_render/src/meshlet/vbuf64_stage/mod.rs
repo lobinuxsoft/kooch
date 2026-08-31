@@ -549,60 +549,38 @@ impl Vbuf64Stage {
     /// the Hi-Z 2-pass orchestrator (#445 follow-up) will pass `false`
     /// for pass B once it ports onto this stage.
     #[allow(clippy::too_many_arguments)]
-    pub fn render(
+    /// The RASTER half: clears, then the R64 visibility buffer and the
+    /// depth that comes with it.
+    ///
+    /// # 🔴 Split from the shading so the shadows can run between them
+    ///
+    /// This is Unreal's order and the reason for it is the page
+    /// marking. The marking reads a depth buffer to find out which
+    /// receivers exist and therefore which pages do, and while both
+    /// halves lived in one call the only depth available to it was the
+    /// PREVIOUS frame's — pages were requested for where the geometry
+    /// used to be. Crossing a clipmap level boundary asks for a page
+    /// that was never requested, and a page that does not exist shades
+    /// as lit.
+    ///
+    /// Between this and [`Self::render_shading`] the depth is THIS
+    /// frame's, which is the only window in which the marking can be
+    /// right.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_geometry(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
-        depth_sample_view: &wgpu::TextureView,
-        color_view: &wgpu::TextureView,
         density_view: &wgpu::TextureView,
         density_mode: u32,
         meshlet_bg: &wgpu::BindGroup,
-        material_pipeline: Option<&crate::material::MaterialPipeline>,
-        lights_bg: &wgpu::BindGroup,
         cull: &MeshletCull,
         scene: &MeshletScene,
-        // #481 — the jittered matrix the raster and every reconstruction
-        // off its visibility buffer use.
         view_proj: glam::Mat4,
-        // …and the camera's own, which only the motion vectors read.
-        // Equal to `view_proj` whenever TAA is off. See
-        // [`Self::next_jitter`] for why they are handed down as a pair
-        // rather than one being derived here.
-        unjittered_view_proj: glam::Mat4,
-        contact: &crate::contact_shadow::ContactShadowUbo,
-        debug_mode: u32,
-        // #732 — the tonemap moved out of the shading shader, so the
-        // scalar it used to read from the Inti uniform has to reach
-        // the pass that applies it now.
-        exposure: f32,
         clear_depth: bool,
-        // #824 — the shading pass gets its own GPU scope, nested inside
-        // the caller's `raster + shade`.
-        //
-        // 🔴 Without it a capture cannot say which shading path produced
-        // it. `KOOCH_COMPUTE_SHADING` not reaching the process through
-        // Steam looks exactly like the compute path being no faster, and
-        // there would be nothing in the capture to tell the two apart.
-        //
-        // It also separates the two halves `raster + shade` fuses. The
-        // raster does not change between the paths, so measuring them
-        // together dilutes whatever the shading gained — a fifth off the
-        // shading reads as a tenth off the pair.
-        scopes: Option<&kooch_core::gpu::GpuScopes>,
-        parent: Option<&kooch_core::gpu::GpuQuery>,
-        // #536 — the adapter and the DLSS handles, which the frame's
-        // systems have already removed `GpuContext` from `Resources` to
-        // get at. `None` in every build and on every adapter that has
-        // no DLSS, which is most of them.
-        dlss_runtime: Option<&kooch_core::gpu::DlssRuntime>,
-    ) -> Option<Deferred> {
-        // 🔴 DLSS hands back a command buffer of its own that has to be
-        // submitted immediately after this frame's encoder, so it
-        // travels all the way out of here rather than being recorded.
-        let mut dlss_commands: Option<wgpu::CommandBuffer> = None;
+    ) {
         self.clear.dispatch(
             device,
             queue,
@@ -633,6 +611,63 @@ impl Vbuf64Stage {
             view_proj,
             clear_depth,
         );
+    }
+
+    /// The SHADING half. See [`Self::render_geometry`] for why the
+    /// two are apart.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_shading(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        depth_view: &wgpu::TextureView,
+        depth_sample_view: &wgpu::TextureView,
+        color_view: &wgpu::TextureView,
+        density_view: &wgpu::TextureView,
+        meshlet_bg: &wgpu::BindGroup,
+        material_pipeline: Option<&crate::material::MaterialPipeline>,
+        lights_bg: &wgpu::BindGroup,
+        cull: &MeshletCull,
+        scene: &MeshletScene,
+        // #481 — the jittered matrix the raster and every reconstruction
+        // off its visibility buffer use.
+        view_proj: glam::Mat4,
+        // …and the camera's own, which only the motion vectors read.
+        // Equal to `view_proj` whenever TAA is off. See
+        // [`Self::next_jitter`] for why they are handed down as a pair
+        // rather than one being derived here.
+        unjittered_view_proj: glam::Mat4,
+        contact: &crate::contact_shadow::ContactShadowUbo,
+        debug_mode: u32,
+        // #732 — the tonemap moved out of the shading shader, so the
+        // scalar it used to read from the Inti uniform has to reach
+        // the pass that applies it now.
+        exposure: f32,
+        // #824 — the shading pass gets its own GPU scope, nested inside
+        // the caller's `raster + shade`.
+        //
+        // 🔴 Without it a capture cannot say which shading path produced
+        // it. `KOOCH_COMPUTE_SHADING` not reaching the process through
+        // Steam looks exactly like the compute path being no faster, and
+        // there would be nothing in the capture to tell the two apart.
+        //
+        // It also separates the two halves `raster + shade` fuses. The
+        // raster does not change between the paths, so measuring them
+        // together dilutes whatever the shading gained — a fifth off the
+        // shading reads as a tenth off the pair.
+        scopes: Option<&kooch_core::gpu::GpuScopes>,
+        parent: Option<&kooch_core::gpu::GpuQuery>,
+        // #536 — the adapter and the DLSS handles, which the frame's
+        // systems have already removed `GpuContext` from `Resources` to
+        // get at. `None` in every build and on every adapter that has
+        // no DLSS, which is most of them.
+        dlss_runtime: Option<&kooch_core::gpu::DlssRuntime>,
+    ) -> Option<Deferred> {
+        // 🔴 DLSS hands back a command buffer of its own that has to be
+        // submitted immediately after this frame's encoder, so it
+        // travels all the way out of here rather than being recorded.
+        let mut dlss_commands: Option<wgpu::CommandBuffer> = None;
         // Motion vectors, right after the raster that fills the vbuf
         // they read and before anything that shades (#481). Its own
         // scope: it is a full-resolution pass that did not exist, and it

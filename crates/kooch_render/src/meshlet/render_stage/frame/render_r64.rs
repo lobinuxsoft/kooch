@@ -122,39 +122,11 @@ impl MeshletRenderStage {
             MeshletDebugMode::Overdraw => 2,
             _ => 0,
         };
-        // 🔴 Shadow pages (#866), BEFORE the fused pass and not after
-        // it. `vbuf64.render` rasterises and lights in one fragment
-        // shader, so whatever it samples has to be finished by the time
-        // it starts.
-        //
-        // The marking reads the depth buffer, which at this point still
-        // holds the LAST frame — the fused pass is what clears and
-        // refills it. That is Epic's arrangement and the trade is
-        // deliberate: last frame's depth decides which pages EXIST,
-        // which is off by however far the camera moved in a frame and
-        // costs a page at the edge of the screen; this frame's geometry
-        // fills them, which is what the shading compares against.
-        //
-        // The other way round — marking after the shading — meant the
-        // atlas was a frame old, so a moving object was compared against
-        // its OWN caster from the previous frame and shadowed itself.
-        self.record_page_marking(
-            device,
-            queue,
-            &mut encoder,
-            resources,
-            view_id,
-            unjittered_view_proj,
-            cam_pos,
-            scene_params,
-            meshlet_bg,
-            debug_mode,
-        );
-        self.bind_page_shadows(device, resources, view_id);
         let density_view = self.views[view_id]
             .triangle_density_view
             .as_ref()
-            .expect("density texture must be allocated whenever vbuf64 path is active");
+            .expect("density texture must be allocated whenever vbuf64 path is active")
+            .clone();
         // Stage 1 (Raster — R64 atomic vbuf is raster + fused shading
         // in one fragment shader; no separate deferred pass on this
         // path).
@@ -182,21 +154,76 @@ impl MeshletRenderStage {
             .vbuf64_stage
             .as_ref()
             .expect("path selected only when vbuf64_stage is Some");
+        // 1. The RASTER, which is what fills this frame's depth.
+        let raster_query = scopes.map(|s| s.begin("raster", &mut encoder));
+        {
+            profiling::scope!("raster");
+            vbuf64.render_geometry(
+                device,
+                queue,
+                &mut encoder,
+                &self.views[view_id].depth_view,
+                &density_view,
+                density_mode,
+                meshlet_bg,
+                &self.views[view_id].cull,
+                &self.scene,
+                view_proj,
+                /* clear_depth */ true,
+            );
+        }
+        if let (Some(scopes), Some(query)) = (scopes, raster_query) {
+            scopes.end(&mut encoder, query);
+        }
+
+        // 2. 🔴 Shadow pages (#866), BETWEEN the raster and the shading,
+        //    which is Unreal's order and the only window where both
+        //    halves can be right at once.
+        //
+        //    The marking reads the depth buffer to find out which
+        //    receivers exist and therefore which pages do. While the
+        //    raster and the shading were one call the only depth it
+        //    could read was the PREVIOUS frame's, so pages were
+        //    requested for where the geometry used to be — and a
+        //    receiver that crossed a clipmap level boundary landed on a
+        //    page nobody had asked for. A page that does not exist
+        //    shades as lit.
+        //
+        //    It cannot go after the shading either: that was tried, and
+        //    the atlas was then a frame old, so a moving object was
+        //    compared against its OWN caster from the previous frame
+        //    and shadowed itself.
+        self.record_page_marking(
+            device,
+            queue,
+            &mut encoder,
+            resources,
+            view_id,
+            unjittered_view_proj,
+            cam_pos,
+            scene_params,
+            meshlet_bg,
+            debug_mode,
+        );
+        self.bind_page_shadows(device, resources, view_id);
+
+        // 3. The SHADING, which samples the atlas the step above just
+        //    filled.
+        let vbuf64 = self.views[view_id]
+            .vbuf64_stage
+            .as_ref()
+            .expect("path selected only when vbuf64_stage is Some");
         let frame_dlss_commands = {
-            profiling::scope!("raster + shade (fused)");
-            // The prime suspect for the 96 % (#769): one fragment shader
-            // doing both the raster and the whole lighting evaluation, over
-            // every pixel the scene covers.
-            let shade_query = scopes.map(|s| s.begin("raster + shade", &mut encoder));
-            let dlss_commands = vbuf64.render(
+            profiling::scope!("shade");
+            let shade_query = scopes.map(|s| s.begin("shade", &mut encoder));
+            let dlss_commands = vbuf64.render_shading(
                 device,
                 queue,
                 &mut encoder,
                 &self.views[view_id].depth_view,
                 &self.views[view_id].depth_sample_view,
                 &self.views[view_id].color_view,
-                density_view,
-                density_mode,
+                &density_view,
                 meshlet_bg,
                 material_pipeline.as_deref(),
                 self.lights.bind_group(),
@@ -210,7 +237,6 @@ impl MeshletRenderStage {
                 // it used to read out of the Inti uniform is passed to
                 // the stage instead.
                 exposure,
-                /* clear_depth */ true,
                 scopes.as_deref(),
                 shade_query.as_ref(),
                 dlss_runtime.as_deref(),

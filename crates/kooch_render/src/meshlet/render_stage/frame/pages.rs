@@ -532,8 +532,9 @@ impl MeshletRenderStage {
     /// on the other camera. One viewport with shadows and one without
     /// is what that looks like.
     ///
-    /// The table and atlas it points at are a frame old, which is the
-    /// standing limitation of a fused raster and not this call's doing.
+    /// The table and atlas it points at are THIS frame's: the raster
+    /// and the shading are two calls now, and the page work runs
+    /// between them.
     pub(super) fn bind_page_shadows(
         &mut self,
         device: &wgpu::Device,

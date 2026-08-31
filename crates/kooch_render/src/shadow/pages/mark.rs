@@ -377,11 +377,11 @@ impl PageMarker {
 
     /// How far, in pages, a receiver dilates its page request.
     ///
-    /// 🔴 The frame the fused pass owes itself. The shading samples an
-    /// atlas a frame old, so a page allocated this frame reads as
-    /// cleared — far depth, "nothing occludes" — until the next one. A
-    /// halo asks for the page BEFORE the camera reaches it, so by the
-    /// time anything samples it the content is already there.
+    /// 🔴 Margin against a request that arrives late. The marking reads
+    /// a depth buffer to decide which pages exist, and a receiver that
+    /// crosses a page — or a clipmap level — asks for one nothing has
+    /// asked for before. The halo asks for it early, so the page is
+    /// resident and drawn by the time anything samples it.
     pub fn set_halo(&mut self, pages: f32) {
         self.halo = pages.max(0.0);
     }

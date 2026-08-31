@@ -1781,28 +1781,48 @@ fn cs_snap(@builtin(global_invocation_id) id: vec3<u32>) {
 /// costing a page at the edge of the screen. THIS frame's geometry fills
 /// them, which is what the shading compares against.
 #[test]
-fn the_marking_is_recorded_before_the_shading() {
+fn the_marking_sits_between_raster_and_shading() {
     let source = include_str!("../src/meshlet/render_stage/frame/render_r64.rs");
 
+    let raster = source
+        .find(".render_geometry(")
+        .expect("the frame rasterises");
     let mark = source
         .find("self.record_page_marking(")
         .expect("the frame marks pages");
     let bind = source
         .find("self.bind_page_shadows(")
         .expect("the frame binds them");
-    let shade = source.find(".render(").expect("the frame has a fused pass");
+    let shade = source.find(".render_shading(").expect("the frame shades");
 
+    // 🔴 The window, and it is one line wide on both sides.
+    //
+    // Before the raster the depth buffer still holds the PREVIOUS
+    // frame, so the marking asks for pages where the geometry used to
+    // be — a receiver that crossed a clipmap level boundary lands on a
+    // page nobody requested, and a page that does not exist shades as
+    // lit. That is what this order exists to stop, and it is Unreal's:
+    // depth, then page management, then shading.
+    //
+    // After the shading is worse and was tried: the atlas is then a
+    // frame old, so a moving object is compared against its OWN caster
+    // from the previous frame and shadows itself.
+    assert!(
+        raster < mark,
+        "the marking reads a depth buffer the raster has not filled yet, so it asks for \
+         pages where the geometry was last frame"
+    );
     assert!(
         mark < bind,
         "the shading is pointed at the pages before they are marked"
     );
     assert!(
         bind < shade,
-        "the fused pass runs before it is pointed at this camera's pages"
+        "the shading runs before it is pointed at this camera's pages"
     );
 
     // And the paint is the half that stays behind, because it writes the
-    // colour buffer the fused pass is about to overwrite.
+    // colour buffer the shading is about to overwrite.
     let paint = source
         .find("self.record_page_paint(")
         .expect("the frame paints the debug view");
