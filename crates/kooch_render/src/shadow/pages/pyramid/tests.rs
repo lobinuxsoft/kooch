@@ -152,7 +152,8 @@ fn a_listed_page_lights_its_ancestors() {
             LISTING + 1,
             "mip {mip} lost the page at ({}, {}) — an ancestor that reads 0 is a caster the \
              overlap test rejects, and the geometry stops being drawn with nothing failing",
-            at.1, at.2
+            at.1,
+            at.2
         );
         let lit = texels.iter().filter(|&&t| t != 0).count();
         assert_eq!(

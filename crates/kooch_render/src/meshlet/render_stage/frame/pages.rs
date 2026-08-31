@@ -51,6 +51,8 @@ struct PageSettings {
     /// The coverage gate (#944). See `ShadowSettings::page_min_pixels`.
     /// Whether the shading marches the atlas (#1017).
     march: bool,
+    /// Whether the expansion runs from the geometry (#1022).
+    geometry: bool,
     min_pixels: u32,
     /// The distance gate. See `ShadowSettings::page_light_reach`.
     reach: u32,
@@ -233,6 +235,7 @@ fn page_settings(resources: &Resources) -> PageSettings {
             shadows.page_bias_slope,
         ),
         march: shadows.page_march,
+        geometry: shadows.page_geometry,
         min_pixels: shadows.page_min_pixels,
         reach: shadows.page_light_reach,
         // Absent in a headless test and in any host without a manager,
@@ -619,6 +622,7 @@ impl MeshletRenderStage {
         raster.set_frame(marker.life().frame);
         raster.set_softness(settings.softness);
         raster.set_march(settings.march);
+        raster.set_geometry(settings.geometry);
         raster.set_bias(
             settings.bias.0,
             settings.bias.1,

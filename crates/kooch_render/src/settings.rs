@@ -288,6 +288,23 @@ pub struct RenderSettings {
     #[serde(default)]
     #[reflect(group = "Shadows: virtual pages", shown_when = PAGES_ON)]
     pub shadow_page_march: bool,
+    /// Runs the expansion from the GEOMETRY: one thread per surviving
+    /// meshlet, descending the page pyramid to the pages it lands in,
+    /// instead of pairing every listed page against every survivor
+    /// (#1022). The sun's clipmap only — a lamp's pages are six
+    /// frustums and a different grid.
+    ///
+    /// Unreal's arrangement. It makes one decision where the pass makes
+    /// two: the marking commits a page because a RECEIVER asked for it
+    /// and the cull produces survivors from the light's own view, and
+    /// nothing checks that the two agree.
+    ///
+    /// ⚠️ The pairs it emits are the same pairs — the tests that decide
+    /// which survive are one shared function. This is a COST switch,
+    /// and a picture that changes with it is a finding, not a feature.
+    #[serde(default)]
+    #[reflect(group = "Shadows: virtual pages", shown_when = PAGES_ON)]
+    pub shadow_page_geometry: bool,
     /// How much simplification error a meshlet may show before the cull
     /// picks a finer level, in PIXELS.
     ///
@@ -1297,6 +1314,7 @@ impl Default for RenderSettings {
             shadow_bias_max: default_shadow_bias_max(),
             shadow_bias_slope: default_shadow_bias_slope(),
             shadow_page_march: false,
+            shadow_page_geometry: false,
             meshlet_lod_error: default_meshlet_lod_error(),
             meshlet_min_pixels: default_meshlet_min_pixels(),
             meshlet_two_level: default_meshlet_two_level(),
@@ -1378,6 +1396,7 @@ impl RenderSettings {
             page_bias_max: self.shadow_bias_max,
             page_bias_slope: self.shadow_bias_slope,
             page_march: self.shadow_page_march,
+            page_geometry: self.shadow_page_geometry,
             max_distance: self.shadow_distance,
             cascade_texels: self.shadow_cascade_texels,
             enabled: self.shadows_enabled,

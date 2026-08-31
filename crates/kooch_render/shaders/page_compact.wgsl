@@ -302,7 +302,12 @@ fn cs_expand_args(@builtin(global_invocation_id) gid: vec3<u32>) {
     if level >= raster.chain.x {
         meshlets = min(meshlets, LAMP_SURVIVORS);
     }
-    let threads = pages * meshlets;
+    // 🔴 The inverted expansion runs ONE thread per survivor, and only
+    // for the sun's buckets — the pyramid it descends covers one
+    // clipmap. Sizing this the paired way would run the descent once
+    // per page and every pair would land `pages` times.
+    let inverted = raster.layer.w != 0u && level < raster.chain.x;
+    let threads = select(pages * meshlets, meshlets, inverted);
     expand_args[level * 3u + 0u] = (threads + EXPAND_GROUP - 1u) / EXPAND_GROUP;
     expand_args[level * 3u + 1u] = 1u;
     expand_args[level * 3u + 2u] = 1u;

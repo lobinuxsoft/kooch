@@ -43,6 +43,7 @@ use crate::meshlet::{
 };
 
 use super::pool::{PagePool, PoolConfig};
+use super::pyramid::PagePyramid;
 use super::{ClipmapConfig, PageConfig};
 
 use kooch_core::gpu::{GpuQuery, GpuScopes};
@@ -259,6 +260,25 @@ pub struct RasterCounts {
     /// geometry the marking had already committed pages to — and those
     /// pages render lit with a caster standing in them.
     pub unfilled_sun: u32,
+    /// Pages the INVERTED expansion reached, counted where they happen
+    /// (#1022).
+    ///
+    /// 🔴 The only honest figure for that shape. [`Self::tests`] is
+    /// `pages * meshlets` — a product of two counters the CPU already
+    /// had, exact for the paired shape and meaningless for this one,
+    /// which touches a page only when the pyramid says something under
+    /// the rectangle is being drawn. Zero while the expansion runs the
+    /// paired way.
+    pub walk: u64,
+    /// Descents that ran out of stack.
+    ///
+    /// 🔴 Must be zero, and it is not a performance number. A descent
+    /// that cannot push DROPS the subtree — a caster that stops being
+    /// drawn into pages that asked for it, which is the exact artefact
+    /// this whole line of work is chasing. The bound is `3 * depth + 4`
+    /// and the stack is bigger than that today; the counter is there
+    /// for the day the page size changes.
+    pub walk_overflow: u32,
 }
 
 #[repr(C)]
@@ -374,6 +394,16 @@ pub struct PageRasterizer {
     /// texel through a PCF box (#1017). Carried to the shader in the
     /// raster uniform's spare word, which the shading binds anyway.
     march: bool,
+    /// Whether the expansion runs from the GEOMETRY — one thread per
+    /// surviving meshlet, descending the page pyramid to the pages it
+    /// lands in — instead of pairing every listed page against every
+    /// survivor (#1022). The sun's buckets only.
+    geometry: bool,
+    /// The page pyramid the inverted expansion descends. Built every
+    /// frame after the compaction, whether or not anything reads it:
+    /// the binding is part of the layout either way, and a texture the
+    /// pass may sample has to hold this frame's answer.
+    pyramid: PagePyramid,
     /// Triangles a meshlet may hold — the builder's cap, and the fixed
     /// vertex count the indirect draw issues.
     triangles: u32,
@@ -489,7 +519,13 @@ impl PageRasterizer {
         // a frustum from the light's own position and range, not a slab.
         let expand_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("page_expand"),
-            source: wgpu::ShaderSource::Wgsl(format!("{CLUSTER_COMMON}\n{TABLE}\n{EXPAND}").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{CLUSTER_COMMON}\n{TABLE}\n{}\n{EXPAND}",
+                    super::pyramid::OVERLAP
+                )
+                .into(),
+            ),
         });
         // The depth pass builds a lamp's frustum from the light record.
         //
@@ -714,7 +750,11 @@ impl PageRasterizer {
             pairs: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_pairs"),
                 size: PAIR_CAPACITY as u64 * 16,
-                usage: storage,
+                // COPY_SRC so a test can read the pairs back: the one
+                // claim #1022 makes is that the two shapes emit the
+                // SAME ones, and that is only checkable by comparing
+                // the lists.
+                usage: storage | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
             visible_counts: device.create_buffer(&wgpu::BufferDescriptor {
@@ -777,6 +817,8 @@ impl PageRasterizer {
             // file renders exactly as it did.
             bias: [1.8, 0.02, 0.0, 4.0],
             march: false,
+            geometry: false,
+            pyramid: PagePyramid::new(device, config, clipmap),
             triangles: max_triangles_per_meshlet.max(1),
             two_level: crate::meshlet::MeshletLodSettings::default().two_level,
             culls: (0..levels)
@@ -911,6 +953,12 @@ impl PageRasterizer {
 
     /// The readers' shadow bias, from the settings. Takes effect at the
     /// next `write_uniform`, the way the softness does.
+    /// Which direction the expansion runs: pages against survivors, or
+    /// one survivor down the pyramid to its pages.
+    pub fn set_geometry(&mut self, on: bool) {
+        self.geometry = on;
+    }
+
     /// Which reader the shading uses: the PCF box, or the march.
     pub fn set_march(&mut self, on: bool) {
         self.march = on;
@@ -1011,6 +1059,8 @@ impl PageRasterizer {
             cached: words[levels + 4],
             depth_rejected: words.get(levels * 3 + 5).copied().unwrap_or(0),
             sun_rejected: words.get(levels * 3 + 6).copied().unwrap_or(0),
+            walk: words.get(levels * 3 + 7).copied().unwrap_or(0) as u64,
+            walk_overflow: words.get(levels * 3 + 8).copied().unwrap_or(0),
             view,
         }
     }
@@ -1054,10 +1104,15 @@ fn count_slots(buckets: u32) -> u32 {
     // time, because unlike the product it is not a number two buffers
     // already hold.
     //
-    // Plus two at the very end: pairs the receiver bound rejected, the
+    // Plus four at the very end: pairs the receiver bound rejected, the
     // lamps' (#940) and the sun's (#949), kept apart because they
-    // measure different properties of a scene.
-    buckets * 3 + 7
+    // measure different properties of a scene — then the inverted
+    // expansion's own two, the pages its descents reached and the
+    // descents that ran out of stack (#1022). The first of those is
+    // the only honest cost figure for that shape: `pages * meshlets`
+    // is the product the paired one pays and says nothing about a walk
+    // that visits what the pyramid points at.
+    buckets * 3 + 9
 }
 
 /// The atlas: one square layer per camera.
@@ -1341,7 +1396,7 @@ impl PageRasterizer {
                 // Same reason as the softness above: the shading binds
                 // this exact buffer, so one write serves both.
                 bias: self.bias,
-                layer: [layer, view, u32::from(self.march), 0],
+                layer: [layer, view, u32::from(self.march), u32::from(self.geometry)],
             }),
         );
     }
@@ -1505,6 +1560,10 @@ impl PageRasterizer {
                         }),
                     },
                     entry(6, lights),
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: wgpu::BindingResource::TextureView(self.pyramid.view()),
+                    },
                 ],
             }),
             depth: device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1541,6 +1600,16 @@ impl PageRasterizer {
             descriptors: storage("page_raster_descriptors_bg", descriptors),
             keys,
         });
+    }
+
+    /// The `(page, slot, meshlet)` pairs the expansion emitted.
+    ///
+    /// 🔴 For the one test that can hold the inversion honest: the
+    /// paired shape and the geometry-first one must produce the same
+    /// SET — the order is whatever the atomics handed out, and comparing
+    /// it would be testing the scheduler.
+    pub fn pairs_buffer(&self) -> &wgpu::Buffer {
+        &self.pairs
     }
 
     /// The compacted pages, for whoever reads them back.
@@ -1813,7 +1882,31 @@ impl PageRasterizer {
             pass.dispatch_workgroups(self.compact_threads(light_count).div_ceil(64), 1, 1);
             pass.set_pipeline(&self.expand_args_pass);
             pass.dispatch_workgroups(buckets.div_ceil(64), 1, 1);
+        }
 
+        // 2b. The page pyramid, over the listing the compaction just
+        //     wrote (#1022). Its own passes, and that is why the
+        //     compute pass above ENDS here: the seed reads the third
+        //     table word, which `cs_compact` is what writes, and the
+        //     expansion below samples the texture this builds.
+        //
+        //     Built whether or not the inverted expansion is on. The
+        //     texture is in the layout either way, and a pass that may
+        //     sample it must not find the frame before's answer in it.
+        {
+            let sun_slot = super::mark::padded_lights(light_count);
+            let stride = super::mark::stride(self.config, self.clipmap);
+            let span = super::mark::span(self.config, self.clipmap, sun_slot + 1);
+            let base = u32::try_from(view as u64 * span).unwrap_or(u32::MAX) + sun_slot * stride;
+            self.pyramid
+                .build(device, queue, encoder, page_pool.slots(), base);
+        }
+
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("shadow pages: expand"),
+                timestamp_writes: None,
+            });
             // 3. Pairs. One indirect dispatch per level, sized by the
             //    pass above rather than by a CPU guess. The only thing
             //    that changes between levels is two dynamic offsets and
@@ -2054,6 +2147,19 @@ fn expand_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             // eighth storage buffer of the stage, which is the entire
             // downlevel budget.
             buffer_entry(6, true, c),
+            // Which is why the pyramid is a TEXTURE. There is no ninth
+            // storage buffer to give it, and textures are a separate
+            // budget — the same constraint that decided Unreal's shape.
+            wgpu::BindGroupLayoutEntry {
+                binding: 7,
+                visibility: c,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ],
     })
 }

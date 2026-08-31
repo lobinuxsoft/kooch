@@ -6,9 +6,14 @@ use super::*;
 /// page table, then the pass. Parsing the pass alone stopped working
 /// the moment it reached for `ClusterLight`.
 /// The expansion as the device sees it. Same reason as
-/// `compact_source`: it reaches for `ClusterLight`.
+/// `compact_source`: it reaches for `ClusterLight` — and, since the
+/// inversion, for the overlap query over the page pyramid too. Anything
+/// this omits is a parse error that only the device would have found.
 fn expand_source() -> String {
-    format!("{CLUSTER_COMMON}\n{EXPAND}")
+    format!(
+        "{CLUSTER_COMMON}\n{}\n{EXPAND}",
+        crate::shadow::pages::pyramid::OVERLAP
+    )
 }
 
 fn compact_source() -> String {

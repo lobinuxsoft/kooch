@@ -148,10 +148,12 @@ fn the_counters_name_every_level() {
         sun + 256,
         "the lamp buckets moved; `LAMP_CULLS` and the shader's constant have to move together"
     );
-    // …and last the two receiver-bound rejections, the lamps' (#940)
-    // and the sun's (#949), which are counted apart because they
-    // measure different properties of a scene.
-    assert_eq!(raster.count_slots(), buckets * 3 + 7);
+    // …then the two receiver-bound rejections, the lamps' (#940) and
+    // the sun's (#949), which are counted apart because they measure
+    // different properties of a scene — and last the inverted
+    // expansion's own two (#1022): the pages its descents reached, and
+    // the descents that ran out of stack.
+    assert_eq!(raster.count_slots(), buckets * 3 + 9);
     let mut words = vec![0u32; raster.count_slots() as usize];
     words[0] = 7;
     words[1] = 5;
@@ -163,12 +165,24 @@ fn the_counters_name_every_level() {
     // sun's bound nothing to reject while the lamps' still bites.
     words[buckets as usize * 3 + 5] = 11;
     words[buckets as usize * 3 + 6] = 77;
+    // The inverted shape's cost, which is a MEASURED number and not the
+    // `pages * meshlets` product the paired one reports. A reader that
+    // took `tests` for both would compare a walk against an area.
+    words[buckets as usize * 3 + 7] = 1234;
     let counts = raster.decode(&words, 1);
     assert_eq!(counts.pages, 21, "every bucket sums");
     assert_eq!(counts.local, 42, "local pages are reported, not hidden");
     assert_eq!(counts.pairs, 900);
     assert_eq!(counts.depth_rejected, 11, "the lamps' bound, alone");
     assert_eq!(counts.sun_rejected, 77, "the sun's bound, alone");
+    assert_eq!(
+        counts.walk, 1234,
+        "the descent's own cost, counted where it happens"
+    );
+    assert_eq!(
+        counts.walk_overflow, 0,
+        "a descent that drops a subtree drops a caster, so the healthy reading is zero",
+    );
     assert_eq!(counts.view, 1);
 }
 
@@ -2801,5 +2815,213 @@ fn the_march_spreads_over_the_suns_disc() {
         shading.contains("inti_pages.layer.z != 0u"),
         "the march has to stay selectable; it replaces the reader every shipped frame goes \
          through and its cost is unmeasured",
+    );
+}
+
+/// The inverted expansion emits the SAME pairs as the paired one.
+///
+/// # 🔴 The only claim #1022 is allowed to make
+///
+/// One shape walks every listed page against every survivor; the other
+/// runs one thread per survivor and descends the page pyramid to the
+/// pages it lands in. They reach a page from opposite ends and then ask
+/// the same three questions about it — `sun_pair` is one function, and
+/// this is the test that says so.
+///
+/// So the switch is a COST switch. If this ever fails, the two halves
+/// of the pass disagree about which caster belongs in which page, and
+/// that disagreement is exactly the artefact the whole line of work is
+/// chasing: it would be a finding, not a regression to paper over.
+///
+/// The pages are planted around the toroidal seam on purpose — absolute
+/// indices −2..1 wrap to cells 126, 127, 0, 1 — because a rectangle
+/// that crosses it becomes four rectangles in the table's own
+/// coordinates, and a descent that ignored the wrap would read the far
+/// side of the world.
+#[test]
+fn both_expansions_emit_the_same_pairs() {
+    use glam::{Mat4, Vec3};
+    use kooch_render::meshlet::{
+        MeshInstance, MeshletCullPipelines, MeshletScene, SceneCullParams, build_default_meshlets,
+    };
+
+    // 🔴 The shared device and not `device()`: the meshlet cull binds a
+    // fifth group and the downlevel default is four.
+    let Some((device, queue)) = common::try_acquire_device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let (device, queue) = (device.clone(), queue.clone());
+
+    let mesh = kooch_render::mesh::primitives::Primitive::Cube {
+        half_extents: Vec3::splat(0.5),
+    }
+    .build();
+    let meshlet_mesh = build_default_meshlets(&mesh).expect("cube builds");
+    let mut pool = kooch_render::meshlet::GlobalMeshPool::new();
+    let handle = pool.register(&meshlet_mesh);
+    let gpu_pool = pool.upload(&device);
+    let meshlets_per_mesh = gpu_pool.max_meshlets_per_mesh.max(1);
+
+    let instances = vec![
+        MeshInstance::new(
+            Mat4::from_scale_rotation_translation(
+                Vec3::new(40.0, 1.0, 40.0),
+                glam::Quat::IDENTITY,
+                Vec3::new(0.0, -0.5, 0.0),
+            ),
+            handle.mesh_id,
+            0,
+        ),
+        MeshInstance::new(
+            Mat4::from_scale_rotation_translation(
+                Vec3::splat(1.5),
+                glam::Quat::IDENTITY,
+                Vec3::new(1.0, 2.0, -1.0),
+            ),
+            handle.mesh_id,
+            0,
+        ),
+    ];
+
+    const LIGHTS: u32 = 1;
+    const LEVEL: u32 = 8;
+    // The sun, and nothing else: a directional light owns no bucket of
+    // its own, so every pair this counts is the clipmap's.
+    let lamps = [kooch_lighting::GpuLight {
+        kind: kooch_lighting::LIGHT_KIND_DIRECTIONAL,
+        ..Default::default()
+    }];
+    // Level 8's pages are 2.56 m wide, so the floor covers absolute
+    // indices −8..7 and these four straddle the seam.
+    let cells: Vec<(u32, u32)> = [126u32, 127, 0, 1]
+        .iter()
+        .flat_map(|&x| [126u32, 127, 0, 1].iter().map(move |&y| (x, y)))
+        .collect();
+
+    let run = |geometry: bool| -> Vec<[u32; 3]> {
+        // Each run gets its own pool and its own rasteriser: a page
+        // listed once is stamped, and the second run would cache it and
+        // list nothing.
+        let scene = MeshletScene::new(&device, instances.len() as u32);
+        scene.upload_instances(&queue, &instances);
+        let scene_params = SceneCullParams::new(instances.len() as u32, meshlets_per_mesh);
+        let lights_buffer = {
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("both_expansions_light"),
+                size: std::mem::size_of_val(&lamps) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&lamps));
+            buffer
+        };
+        let mut page_pool = PagePool::new(&device, small());
+        let entries = VIEWS * span(LIGHTS);
+        page_pool.ensure_entries(&device, entries);
+        let cell = PAGE_CELL as usize;
+        let mut slots = vec![0u32; entries as usize * cell];
+        for (index, &(x, y)) in cells.iter().enumerate() {
+            let page = sun_page(0, LEVEL, (x, y), LIGHTS);
+            slots[page as usize * cell] = index as u32 + 1;
+        }
+        queue.write_buffer(page_pool.slots(), 0, bytemuck::cast_slice(&slots));
+
+        let cull_pipelines = MeshletCullPipelines::new(&device);
+        // Built against the CULL's layout, not the pool's: the depth
+        // draw shares it and the two differ in visibility.
+        let mut raster = PageRasterizer::new(
+            &device,
+            cull_pipelines.meshlet_bind_group_layout(),
+            PageConfig::default(),
+            ClipmapConfig::default(),
+            small(),
+            kooch_render::meshlet::DEFAULT_MAX_TRIANGLES as u32,
+        );
+        raster.set_geometry(geometry);
+        // ⚠️ The per-instance cull, not the chunked one. The two-level
+        // path produces ZERO survivors at every level in this rig — it
+        // enters per rectangle cell and this scene has no cell data to
+        // enter by — so leaving it on would compare two empty lists and
+        // pass for the wrong reason.
+        raster.set_two_level(false);
+        let meshlet_bg = kooch_render::meshlet::pool_meshlet_bind_group(
+            &device,
+            cull_pipelines.meshlet_bind_group_layout(),
+            &gpu_pool,
+        );
+        let threads = instances.len() as u32 * meshlets_per_mesh;
+        let chunks = kooch_render::meshlet::chunks_for(instances.len() as u32, meshlets_per_mesh);
+        raster.ensure_capacity(&device, threads, threads, chunks);
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+        raster.record(
+            &device,
+            &queue,
+            &mut encoder,
+            &cull_pipelines,
+            &gpu_pool,
+            &scene,
+            &meshlet_bg,
+            scene.instance_buffer(),
+            &page_pool,
+            &scene_params,
+            0,
+            Vec3::new(0.4, 3.0, 0.4),
+            Vec3::NEG_Y,
+            &lamps,
+            &lights_buffer,
+            &[],
+            1.0,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+
+        let counts = read_words(&device, &queue, raster.counts_buffer());
+        let buckets = raster.buckets() as usize;
+        let emitted = counts[buckets + 2] as usize;
+        assert!(
+            counts[LEVEL as usize] > 0 && counts[buckets + 5 + LEVEL as usize] > 0,
+            "the rig planted no pages or the cull kept no survivors at level {LEVEL}",
+        );
+        // The descent's own counter says which shape actually ran. A
+        // silent fallback to pairing would make the comparison below
+        // compare the paired shape against itself.
+        let walk = counts[buckets * 3 + 7];
+        assert_eq!(
+            walk > 0,
+            geometry,
+            "the expansion did not run the shape it was asked for",
+        );
+        assert_eq!(counts[buckets + 3], 0, "the pair list overflowed");
+        assert_eq!(
+            counts[buckets * 3 + 8],
+            0,
+            "a descent ran out of stack and dropped a subtree",
+        );
+        let words = read_words(&device, &queue, raster.pairs_buffer());
+        // The order is whatever the atomics handed out; the SET is the
+        // claim.
+        let mut pairs: Vec<[u32; 3]> = (0..emitted)
+            .map(|i| [words[i * 4], words[i * 4 + 1], words[i * 4 + 2]])
+            .collect();
+        pairs.sort_unstable();
+        pairs
+    };
+
+    let paired = run(false);
+    let inverted = run(true);
+    assert!(
+        !paired.is_empty(),
+        "the rig paired nothing, so the comparison proves nothing",
+    );
+    assert_eq!(
+        paired.len(),
+        inverted.len(),
+        "the two shapes emitted different numbers of pairs",
+    );
+    assert_eq!(
+        paired, inverted,
+        "the two shapes disagree about which caster belongs in which page",
     );
 }

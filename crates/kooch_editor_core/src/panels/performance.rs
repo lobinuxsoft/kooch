@@ -1273,6 +1273,29 @@ fn shadow_page_readout(
                  to offer.",
             );
         }
+        // The inverted shape's own cost, and it only exists while that
+        // shape is running (#1022). Placed under the two above so the
+        // three read as one comparison: what pairing pays, what a
+        // scatter would pay, and what the descent actually paid.
+        if raster.walk > 0 {
+            let per_pair = raster.walk as f32 / raster.pairs.max(1) as f32;
+            metric_with_tooltip(
+                ui,
+                "geometry walk",
+                &format!("{} · {per_pair:.0} per pair", thousands(raster.walk)),
+                "Pages the INVERTED expansion reached: one thread per surviving meshlet                  descending the page pyramid to the pages it lands in, Unreal's                  arrangement. Compare it against `pair tests`, which is what the other                  shape pays for the same pairs — the emitted set is identical, one shared                  function decides it. A picture that changes with the switch is a finding.",
+            );
+        }
+        if raster.walk_overflow > 0 {
+            alert(
+                ui,
+                &format!(
+                    "descent overflow {}",
+                    thousands(raster.walk_overflow as u64)
+                ),
+                "A descent ran out of stack and DROPPED a subtree — casters that stop                  being drawn into pages that asked for them, silently. The bound is                  3 x depth + 4 and the stack is larger than that for every page size the                  clipmap builds, so this reading means the page size changed.",
+            );
+        }
     });
     // The hash's two failure meters — tombstones walked and inserts out
     // of probes — are gone with the hash: the flat table has no probe
