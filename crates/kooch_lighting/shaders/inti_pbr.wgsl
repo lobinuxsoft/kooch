@@ -882,6 +882,13 @@ fn inti_page_filter(
     // assumes and what the lamps still pass.
     slope: vec2<f32>,
     page_texels: u32,
+    // The page's own identity on the sun's clipmap, so a tap that walks
+    // off its edge can find the page it landed in. `PAGE_UNLISTED` as
+    // the level means "clamp instead" — the lamps, whose grid is six
+    // faces of a chain and not one wrapped plane.
+    cell: vec2<u32>,
+    level: u32,
+    side: u32,
 ) -> f32 {
     let width = max(u32(inti_pages.world.w), 1u);
     let half = f32(width) * 0.5;
@@ -903,13 +910,61 @@ fn inti_page_filter(
             } else if x == width {
                 wx = frac.x;
             }
-            let tap = clamp(
-                corner + vec2<f32>(f32(x), f32(y)),
-                vec2<f32>(0.0),
-                vec2<f32>(last),
-            );
-            let at = vec2<i32>(origin + tap);
-            let stored = textureLoad(inti_page_atlas, at, layer, 0);
+            // 🔴 A tap that leaves this page is resolved through the
+            // TABLE, not folded back onto the edge.
+            //
+            // Clamping is what shipped and its price is a lit band along
+            // every page seam. The kernel is `W` texels wide, so a
+            // receiver within `W/2` of an edge has taps that belong to
+            // the neighbouring page — and whenever the shadow crosses a
+            // seam the occluder's depth is exactly there. Clamped, those
+            // taps read this page instead, find nothing, and the pixel
+            // answers LIT with the page present, resident and correctly
+            // drawn. The debug view calls that green: a real page whose
+            // COMPARISON is wrong.
+            //
+            // A texel is centimetres at the fine levels and metres at
+            // the coarse ones, so the band is a hairline near the camera
+            // and a wedge further out.
+            //
+            // Unreal resolve every sample the same way —
+            // `VirtualToPhysicalTexel` per tap inside `SampleBilinear`.
+            // The neighbour may be absent, and then this falls back to
+            // the clamp: no worse than before, and the level walk above
+            // has already tried the coarser levels.
+            let raw = corner + vec2<f32>(f32(x), f32(y));
+            let outside = raw.x < 0.0 || raw.y < 0.0 || raw.x > last || raw.y > last;
+            var tap = clamp(raw, vec2<f32>(0.0), vec2<f32>(last));
+            var at = vec2<i32>(origin + tap);
+            var tap_layer = layer;
+            if outside && level != PAGE_UNLISTED {
+                // Which page the tap fell into, in whole pages, and the
+                // wrapped cell it lands on — the same toroidal grid
+                // `sun_cell` keys by.
+                let step = vec2<i32>(floor(raw / f32(page_texels)));
+                let wide = i32(side);
+                let neighbour = vec2<u32>(
+                    (vec2<i32>(cell) + step + vec2<i32>(wide, wide)) % vec2<i32>(wide, wide),
+                );
+                let page = inti_pages.views.x * inti_pages.views.y
+                    + inti_pages.space.w * inti_pages.space.x
+                    + level * side * side
+                    + neighbour.y * side
+                    + neighbour.x;
+                let found = inti_page_lookup(page);
+                if found != PAGE_MISS {
+                    let place = page_place(
+                        found,
+                        inti_pages.views.z,
+                        inti_pages.pool.z,
+                        page_texels,
+                    );
+                    tap = raw - vec2<f32>(step) * f32(page_texels);
+                    at = vec2<i32>(vec2<f32>(place.xy) + tap);
+                    tap_layer = i32(place.z);
+                }
+            }
+            let stored = textureLoad(inti_page_atlas, at, tap_layer, 0);
             // 🔴 This tap's OWN depth, not the pixel's. The receiver is
             // a plane, so a tap `k` texels away looks at a part of it
             // sitting `dot(slope, k)` further along the light. Comparing
@@ -1243,7 +1298,17 @@ fn inti_page_shadow(
 
         // Bilinear PCF, clamped inside the page — see
         // `inti_page_filter` for both halves of that sentence.
-        return inti_page_filter(origin, layer, texel, receiver, slope, page_texels);
+        return inti_page_filter(
+            origin,
+            layer,
+            texel,
+            receiver,
+            slope,
+            page_texels,
+            cell,
+            level,
+            side,
+        );
     }
     // No page anywhere in the chain. Lit, not shadowed: a point nobody
     // marked is a point the frame never looked at, and guessing dark
@@ -1365,7 +1430,20 @@ fn inti_local_page_shadow(
 
         // Bilinear PCF, clamped inside the page — see
         // `inti_page_filter` for both halves of that sentence.
-        return inti_page_filter(origin, layer, texel, receiver, slope, page_texels);
+        // The lamps clamp: their pages are six faces of a chain, not
+        // one wrapped plane, so a tap off an edge crosses a FACE and the
+        // neighbour is not a step away on any grid this can index.
+        return inti_page_filter(
+            origin,
+            layer,
+            texel,
+            receiver,
+            slope,
+            page_texels,
+            vec2<u32>(0u),
+            PAGE_UNLISTED,
+            0u,
+        );
     }
     // No page anywhere in the chain: lit, for the same reason the sun's
     // reader is. A point nobody marked is a point the frame never looked

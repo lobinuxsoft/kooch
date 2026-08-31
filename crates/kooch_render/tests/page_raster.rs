@@ -3137,3 +3137,66 @@ fn an_empty_page_is_not_a_hit() {
          however honestly the lookup reported it",
     );
 }
+
+/// A PCF tap that leaves its page is resolved through the table.
+///
+/// # 🔴 Clamping is a lit band along every page seam
+///
+/// The kernel is `W` texels wide, so a receiver within `W/2` of a page
+/// edge has taps that belong to the neighbouring page — and whenever a
+/// shadow crosses a seam the occluder's depth is exactly there. Folded
+/// back onto the edge, those taps read the receiver's own page, find
+/// nothing, and the pixel answers LIT with the page present, resident
+/// and correctly drawn.
+///
+/// That is the third of the three faults `VirtualPages` separates, and
+/// it is the one that looks like the other two: the debug view paints
+/// it green — a real page whose COMPARISON is wrong — while a missing
+/// page is red and an undrawn one yellow. A texel is centimetres at the
+/// fine levels and metres at the coarse ones, so the same defect is a
+/// hairline near the camera and a wedge further out.
+///
+/// Unreal resolve every sample through the page table inside
+/// `SampleBilinear` for exactly this reason.
+#[test]
+fn a_tap_off_the_page_finds_its_neighbour() {
+    let source = kooch_lighting::inti_pbr_shader(1);
+    let start = source
+        .find("fn inti_page_filter(")
+        .expect("the filter is in the shader");
+    let end = source[start..].find("\nfn ").expect("the filter ends") + start;
+    let body = &source[start..end];
+
+    assert!(
+        body.contains("inti_page_lookup(page)"),
+        "a tap that leaves its page is not resolved through the table, so it folds back \
+         onto the edge and reads the wrong page's depth",
+    );
+    assert!(
+        body.contains("let outside ="),
+        "the filter does not test whether a tap left the page at all",
+    );
+    // The fallback has to stay: a neighbour that is absent must clamp
+    // rather than read somebody else's slot.
+    assert!(
+        body.contains("clamp(raw,"),
+        "an absent neighbour has to fall back to the clamp",
+    );
+    // And the lamps must NOT re-resolve: their pages are six faces of a
+    // chain, so a step off an edge crosses a face and lands nowhere this
+    // arithmetic can index.
+    let sun = source
+        .find("fn inti_page_shadow(")
+        .expect("the sun's reader is in the shader");
+    let lamp = source
+        .find("fn inti_local_page_shadow(")
+        .expect("the lamps' reader is in the shader");
+    assert!(
+        source[lamp..].contains("PAGE_UNLISTED,"),
+        "the lamps have to opt out of the neighbour walk",
+    );
+    assert!(
+        !source[sun..lamp].contains("PAGE_UNLISTED,"),
+        "the sun has to opt IN, or the fix does nothing where it was measured",
+    );
+}
