@@ -2749,3 +2749,57 @@ fn an_empty_lamp_page_stops_relisting() {
          generation, or the gate above can never fire",
     );
 }
+
+/// The march is a different QUESTION, not a wider filter.
+///
+/// 🔴 A grep, because observing it needs an atlas with a caster whose
+/// footprint misses one texel — the exact configuration that is hard to
+/// build on purpose and easy to hit by accident, which is why the
+/// artefact survived four rounds of tuning the reader that cannot see
+/// it.
+///
+/// What it pins is the part that would be quietly lost in a cleanup:
+/// the rays have to SPREAD. Stepping along the sun's own axis does not
+/// move the sample in the sun's plane at all — `basis[2]` is
+/// perpendicular to the two axes a page is addressed by — so an
+/// unjittered march reads one texel at several depths and answers
+/// exactly what the single tap already answered. The spread is the
+/// mechanism, not a soft-shadow nicety on top of it.
+#[test]
+fn the_march_spreads_over_the_suns_disc() {
+    let shading = kooch_lighting::inti_pbr_shader(1);
+    let start = shading
+        .find("fn inti_page_march(")
+        .expect("the march is in the shader");
+    let end = shading[start..]
+        .find("\nfn inti_page_shadow(")
+        .expect("the march ends")
+        + start;
+    let body: String = shading[start..end]
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        body.contains("inti.sun_softness"),
+        "the rays have to open over the sun's ANGULAR SIZE; without a spread every step \
+         reads the same texel and the march answers what the single tap already did",
+    );
+    assert!(
+        body.contains("basis[0]*") && body.contains("basis[1]*"),
+        "the spread has to be in the sun's two PLANE axes — offsetting along `basis[2]` is \
+         the degenerate direction, the one that does not move the sample in the page",
+    );
+    assert!(
+        body.contains("abs(reference-previous)*1.05"),
+        "the tolerance has to be measured from the ray's own step, or the march has \
+         reacquired the constant it exists to remove",
+    );
+    // And the box reader is still reachable, because nothing has
+    // measured what the march costs.
+    assert!(
+        shading.contains("inti_pages.layer.z != 0u"),
+        "the march has to stay selectable; it replaces the reader every shipped frame goes \
+         through and its cost is unmeasured",
+    );
+}

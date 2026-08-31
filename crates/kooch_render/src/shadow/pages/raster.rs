@@ -370,6 +370,10 @@ pub struct PageRasterizer {
     /// ceiling on the first in metres (0 = none), and a ceiling on the
     /// receiver's own depth gradient (0 = the term is off).
     bias: [f32; 4],
+    /// Whether the shading marches the atlas instead of sampling one
+    /// texel through a PCF box (#1017). Carried to the shader in the
+    /// raster uniform's spare word, which the shading binds anyway.
+    march: bool,
     /// Triangles a meshlet may hold — the builder's cap, and the fixed
     /// vertex count the indirect draw issues.
     triangles: u32,
@@ -772,6 +776,7 @@ impl PageRasterizer {
             // settings could reach it, so a project with no settings
             // file renders exactly as it did.
             bias: [1.8, 0.02, 0.0, 4.0],
+            march: false,
             triangles: max_triangles_per_meshlet.max(1),
             two_level: crate::meshlet::MeshletLodSettings::default().two_level,
             culls: (0..levels)
@@ -906,6 +911,11 @@ impl PageRasterizer {
 
     /// The readers' shadow bias, from the settings. Takes effect at the
     /// next `write_uniform`, the way the softness does.
+    /// Which reader the shading uses: the PCF box, or the march.
+    pub fn set_march(&mut self, on: bool) {
+        self.march = on;
+    }
+
     pub fn set_bias(&mut self, normal: f32, depth: f32, max_world: f32, slope: f32) {
         self.bias = [
             normal.max(0.0),
@@ -1331,7 +1341,7 @@ impl PageRasterizer {
                 // Same reason as the softness above: the shading binds
                 // this exact buffer, so one write serves both.
                 bias: self.bias,
-                layer: [layer, view, 0, 0],
+                layer: [layer, view, u32::from(self.march), 0],
             }),
         );
     }

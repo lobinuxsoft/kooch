@@ -121,6 +121,18 @@ pub struct ShadowSettings {
     /// the sun, and an unbounded one reads as a lit pixel inside a
     /// shadow. 0 disables the term.
     pub page_bias_slope: f32,
+    /// Whether the shading MARCHES the atlas rather than sampling one
+    /// texel through a PCF box (#1017).
+    ///
+    /// A single tap asks what is stored under the pixel, so an occluder
+    /// that did not land in that exact texel is not found and the pixel
+    /// is lit — a hole inside a shadow with the page present and
+    /// correctly drawn. Widening the filter cannot repair it: every tap
+    /// is still one comparison at one place. The march asks whether
+    /// anything blocks ALONG a ray, over several rays spread across the
+    /// sun's disc, and needs no bias constant because its tolerance is
+    /// measured from the ray itself.
+    pub page_march: bool,
     /// Projected radius in screen pixels under which a local light
     /// casts no pages (#944). 0 = every light casts.
     pub page_min_pixels: u32,
@@ -170,6 +182,12 @@ impl Default for ShadowSettings {
             // defect behind a setting no project knows to turn on.
             // 4 is `tan 76°`, past which a surface is nearly edge-on.
             page_bias_slope: 4.0,
+            // 🔴 OFF. It replaces the reader every shipped frame goes
+            // through and it costs rays times steps of lookups against
+            // the box's taps. Both of those are measurements nobody has
+            // taken yet, and `virtual_pages` is the standing lesson
+            // about defaulting a technique on before that.
+            page_march: false,
             page_min_pixels: 8,
             // 🔴 Off, because it is a behaviour change and nothing has
             // measured what it costs yet: a light out of reach stops

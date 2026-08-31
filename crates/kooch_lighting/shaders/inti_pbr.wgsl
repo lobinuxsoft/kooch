@@ -937,6 +937,167 @@ fn inti_page_filter(
 /// doc says why — *"moving along the surface instead of pushing depth is
 /// what stops acne without detaching the shadow"* — and a detached
 /// shadow is exactly what a depth-only bias produces where the gap
+/// One probe of the sun's atlas at a world position: what the page holds
+/// there, and what depth this position itself has.
+///
+/// Split out of `inti_page_shadow`'s walk so the march can ask the same
+/// question per sample. Returns `x` the stored depth, `y` this
+/// position's own depth in the same encoding, `z` 1 when a page was
+/// found and `0` when the chain holds none.
+fn inti_page_read(p: vec3<f32>, basis: mat3x3<f32>) -> vec3<f32> {
+    let base = inti_pages.world.x;
+    let span = inti_pages.world.y;
+    let side = inti_pages.space.z;
+    let page_texels = inti_pages.pool.w;
+
+    let raw = sun_plane(p, basis) - sun_plane(inti_pages.eye.xyz, basis);
+    let reach = max(abs(raw.x), abs(raw.y)) * 2.0;
+    var level = sun_level(reach, base, side);
+
+    for (; level < inti_pages.chain.x; level = level + 1u) {
+        let along = dot(p - inti_pages.eye.xyz, basis[2])
+            + sun_drift(inti_pages.eye.xyz, basis, base, side, level);
+        let mine = 1.0 - (along + span) / (2.0 * span);
+
+        let cell = sun_cell(p, inti_pages.eye.xyz, basis, base, side, level);
+        let page = inti_pages.views.x * inti_pages.views.y
+            + inti_pages.space.w * inti_pages.space.x
+            + level * side * side
+            + cell.y * side
+            + cell.x;
+        let slot = inti_page_lookup(page);
+        if slot == PAGE_MISS {
+            continue;
+        }
+        let rect = sun_page_rect(level, cell, inti_pages.eye.xyz, basis, base, side);
+        let within = (sun_plane(p, basis) - rect.xy) / rect.z + vec2<f32>(0.5);
+        let place = page_place(slot, inti_pages.views.z, inti_pages.pool.z, page_texels);
+        let texel = clamp(
+            floor(within * f32(page_texels)),
+            vec2<f32>(0.0),
+            vec2<f32>(f32(page_texels) - 1.0),
+        );
+        let at = vec2<i32>(vec2<f32>(place.xy) + texel);
+        let stored = textureLoad(inti_page_atlas, at, i32(place.z), 0);
+        return vec3<f32>(stored, mine, 1.0);
+    }
+    return vec3<f32>(0.0, 0.0, 0.0);
+}
+
+/// Rays cast over the sun's disc, and samples along each.
+///
+/// 🔴 A single ray is USELESS for a directional light, and that is the
+/// whole reason the spread exists rather than being a soft-shadow
+/// nicety. Stepping along the sun's own axis does not move the sample
+/// in the sun's plane at all — `basis[2]` is perpendicular to the two
+/// axes the page is addressed by — so every step of an unjittered march
+/// reads the SAME texel at a different reference depth. The rays have to
+/// open over the source's angular size for the march to see anything
+/// the single tap did not.
+const PAGE_RAYS: u32 = 4u;
+const PAGE_STEPS: u32 = 8u;
+
+/// Occlusion by marching the atlas instead of sampling one texel.
+///
+/// # 🔴 What a single tap cannot answer
+///
+/// The PCF reader asks "what is stored at the texel under this pixel",
+/// so an occluder that did not land in that exact texel is not found and
+/// the pixel is lit — a hole inside a shadow with the page present,
+/// resident and correctly drawn. Widening the filter does not fix it:
+/// every tap is still a comparison against ONE depth at ONE place, and
+/// the taps that miss vote lit.
+///
+/// This asks a different question — *does anything block along this
+/// ray* — and answers it with several samples per ray over several rays
+/// spread across the sun's disc. An occluder missed by one sample is
+/// found by another.
+///
+/// # The tolerance is measured, not chosen
+///
+/// Each step compares against how far the ray's OWN reference depth
+/// moved since the previous step. On a surface facing the sun that
+/// difference is tiny and the test is tight; on a grazing one it is
+/// large and the test loosens by exactly as much as the geometry
+/// demands. That is what makes the march need no bias constant at all,
+/// and it is the mechanism a scalar bias was standing in for badly.
+/// Unreal derive theirs the same way.
+fn inti_page_march(
+    world_position: vec3<f32>,
+    normal: vec3<f32>,
+    n_dot_l: f32,
+    jitter: f32,
+) -> f32 {
+    let basis = sun_basis(inti_pages.sun.xyz);
+    let span = inti_pages.world.y;
+    // Along the sun's axis, towards it. `basis[2]` points the way the
+    // light travels, so the ray runs against it.
+    let to_light = -basis[2];
+    // How far a ray reaches. The orthographic span is what the page
+    // depths are encoded over, so it is the distance past which nothing
+    // stored can occlude anything.
+    let reach = 2.0 * span;
+    // The sun's angular radius, as the tangent of the half-angle. Zero
+    // makes every ray identical and the march degenerate, so it has a
+    // floor: a disc that small is a hard shadow either way.
+    let spread = max(inti.sun_softness, 1e-3);
+
+    // Start the ray off the surface by the receiver's own slope, so the
+    // first samples do not read the surface itself. One texel of the
+    // level the pixel lands on, which `inti_page_read` re-derives per
+    // sample anyway.
+    let start = world_position + normal * (inti_pages.bias.x * 1e-3 * reach)
+        + to_light * inti_pages.bias.y;
+
+    var lit = 0.0;
+    for (var r = 0u; r < PAGE_RAYS; r = r + 1u) {
+        // Golden-angle spiral over the disc, rotated per pixel so the
+        // pattern does not print itself onto flat ground.
+        let t = (f32(r) + 0.5) / f32(PAGE_RAYS);
+        let angle = f32(r) * 2.39996323 + jitter * 6.2831853;
+        let radius = sqrt(t) * spread;
+        let dir = normalize(
+            to_light + basis[0] * (cos(angle) * radius) + basis[1] * (sin(angle) * radius),
+        );
+
+        var blocked = false;
+        var previous = -1.0;
+        for (var i = 1u; i <= PAGE_STEPS; i = i + 1u) {
+            // Quadratic in the step index: dense near the receiver,
+            // where contact shadows live and where a miss is most
+            // visible, sparse further out.
+            let f = f32(i) / f32(PAGE_STEPS);
+            let at = start + dir * (f * f * reach);
+            let read = inti_page_read(at, basis);
+            if read.z == 0.0 {
+                continue;
+            }
+            let reference = read.y;
+            if previous >= 0.0 {
+                // 🔴 The tolerance the geometry asks for, rather than a
+                // constant: how far this ray's own depth moved in one
+                // step. The 1.05 is Unreal's, and its reason is stated
+                // there — without a little slack, surfaces are missed
+                // to numeric precision and fully shadowed regions
+                // sparkle.
+                let tolerance = abs(reference - previous) * 1.05;
+                // Reversed-Z: a LARGER stored depth is nearer the light.
+                let difference = reference - read.x;
+                if difference > tolerance {
+                    blocked = true;
+                    break;
+                }
+            }
+            previous = reference;
+        }
+        if !blocked {
+            lit = lit + 1.0;
+        }
+    }
+    return lit / f32(PAGE_RAYS);
+}
+
+
 /// between caster and receiver is smaller than the bias itself.
 fn inti_page_shadow(
     world_position: vec3<f32>,
@@ -944,6 +1105,11 @@ fn inti_page_shadow(
     to_light: vec3<f32>,
     n_dot_l: f32,
 ) -> f32 {
+    // Which reader answers, from `shadow_page_march`. See
+    // `inti_page_march` for what the two ask differently.
+    if inti_pages.layer.z != 0u {
+        return inti_page_march(world_position, normal, n_dot_l, 0.0);
+    }
     let basis = sun_basis(inti_pages.sun.xyz);
 
     let base = inti_pages.world.x;

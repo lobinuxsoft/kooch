@@ -264,6 +264,30 @@ pub struct RenderSettings {
         shown_when = PAGES_ON
     )]
     pub shadow_bias_slope: f32,
+    /// March the shadow atlas instead of sampling one texel through a
+    /// PCF box.
+    ///
+    /// 🔴 The two readers ask different questions. The box asks what is
+    /// stored under this pixel and filters the answer, so an occluder
+    /// that did not land in that texel is not found and the pixel comes
+    /// out LIT — a hole inside a shadow with the page present, resident
+    /// and correctly drawn. Widening the box does not repair it: every
+    /// tap is still one comparison at one place, and the taps that miss
+    /// vote lit.
+    ///
+    /// The march asks whether anything blocks along a ray, several
+    /// samples per ray, over rays spread across the sun's angular size
+    /// (`sun_softness`). It carries no bias constant at all — each step
+    /// compares against how far the ray's own depth moved since the
+    /// last, which tightens on a surface facing the sun and loosens on
+    /// a grazing one by exactly the geometry's own amount. Unreal's
+    /// SMRT is the same shape.
+    ///
+    /// ⚠️ Costs rays times steps of page lookups where the box costs
+    /// `(width + 1)²` taps in one page. Measure before shipping it on.
+    #[serde(default)]
+    #[reflect(group = "Shadows: virtual pages", shown_when = PAGES_ON)]
+    pub shadow_page_march: bool,
     /// How much simplification error a meshlet may show before the cull
     /// picks a finer level, in PIXELS.
     ///
@@ -1272,6 +1296,7 @@ impl Default for RenderSettings {
             shadow_depth_bias: default_shadow_depth_bias(),
             shadow_bias_max: default_shadow_bias_max(),
             shadow_bias_slope: default_shadow_bias_slope(),
+            shadow_page_march: false,
             meshlet_lod_error: default_meshlet_lod_error(),
             meshlet_min_pixels: default_meshlet_min_pixels(),
             meshlet_two_level: default_meshlet_two_level(),
@@ -1352,6 +1377,7 @@ impl RenderSettings {
             page_depth_bias: self.shadow_depth_bias,
             page_bias_max: self.shadow_bias_max,
             page_bias_slope: self.shadow_bias_slope,
+            page_march: self.shadow_page_march,
             max_distance: self.shadow_distance,
             cascade_texels: self.shadow_cascade_texels,
             enabled: self.shadows_enabled,
