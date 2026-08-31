@@ -137,6 +137,9 @@ pub struct ShadowSettings {
     /// pages against survivors (#1022). See
     /// [`RenderSettings::shadow_page_geometry`].
     pub page_geometry: bool,
+    /// Whether the receiver bound may reject a caster (#940, #949). See
+    /// [`RenderSettings::shadow_page_receiver_bound`].
+    pub page_receiver_bound: bool,
     /// Projected radius in screen pixels under which a local light
     /// casts no pages (#944). 0 = every light casts.
     pub page_min_pixels: u32,
@@ -196,6 +199,9 @@ impl Default for ShadowSettings {
             // is a measurement nobody has taken. The pairs are the same
             // pairs either way, so nothing is lost by measuring first.
             page_geometry: false,
+            // On: it is what shipped, and it is a real saving. The
+            // switch exists to falsify it, not to default it away.
+            page_receiver_bound: true,
             page_min_pixels: 8,
             // 🔴 Off, because it is a behaviour change and nothing has
             // measured what it costs yet: a light out of reach stops

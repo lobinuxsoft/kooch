@@ -2652,7 +2652,7 @@ fn a_caster_behind_every_receiver_pairs_nothing() {
 
     // One run of the whole pipeline against a planted table. `bound`
     // is the fifth word: the furthest receiver, or 0 for "no data".
-    let run = |bound: f32| -> (u32, u32) {
+    let run_with = |bound: f32, receiver_bound: bool| -> (u32, u32) {
         let scene = MeshletScene::new(&device, instances.len() as u32);
         scene.upload_instances(&queue, &instances);
         let scene_params = SceneCullParams::new(instances.len() as u32, meshlets_per_mesh);
@@ -2692,6 +2692,7 @@ fn a_caster_behind_every_receiver_pairs_nothing() {
         let threads = instances.len() as u32 * meshlets_per_mesh;
         let chunks = kooch_render::meshlet::chunks_for(instances.len() as u32, meshlets_per_mesh);
         raster.ensure_capacity(&device, threads, threads, chunks);
+        raster.set_receiver_bound(receiver_bound);
 
         let mut encoder = device.create_command_encoder(&Default::default());
         raster.record(
@@ -2724,8 +2725,8 @@ fn a_caster_behind_every_receiver_pairs_nothing() {
     // still well short of the deep cube's ~5.6 m nearest point. The
     // floor itself survives — its radius is huge, so its NEAREST point
     // is nearer than any receiver, which is the conservative side.
-    let (open_pairs, open_rejected) = run(0.0);
-    let (bounded_pairs, bounded_rejected) = run(4.05);
+    let (open_pairs, open_rejected) = run_with(0.0, true);
+    let (bounded_pairs, bounded_rejected) = run_with(4.05, true);
     assert_eq!(open_rejected, 0, "an absent bound rejected something");
     assert!(open_pairs > 0, "the rig paired nothing at all");
     assert!(
@@ -2736,6 +2737,21 @@ fn a_caster_behind_every_receiver_pairs_nothing() {
         open_pairs - bounded_pairs,
         bounded_rejected,
         "the rejected counter does not account for the missing pairs"
+    );
+
+    // 🔴 And the switch that turns it off has to actually turn it off.
+    // This is the only thing in the expansion that deletes geometry, so
+    // it is the one a missing shadow gets falsified against — a switch
+    // that quietly did nothing would make the experiment answer "not
+    // the bound" no matter what the bound was doing.
+    let (unbounded_pairs, unbounded_rejected) = run_with(4.05, false);
+    assert_eq!(
+        unbounded_rejected, 0,
+        "the bound rejected a caster with the switch off",
+    );
+    assert_eq!(
+        unbounded_pairs, open_pairs,
+        "with the bound off the pass has to emit exactly what an absent bound emits",
     );
 }
 

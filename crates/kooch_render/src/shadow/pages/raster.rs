@@ -394,6 +394,13 @@ pub struct PageRasterizer {
     /// texel through a PCF box (#1017). Carried to the shader in the
     /// raster uniform's spare word, which the shading binds anyway.
     march: bool,
+    /// Whether Olsson's receiver bound may reject a caster (#940,
+    /// #949). The one remaining thing in the expansion that deletes
+    /// geometry, so it has a switch: it compares a caster against the
+    /// furthest receiver the MARKING recorded, and a page whose
+    /// furthest receiver was never marked rejects a caster that really
+    /// does shadow it.
+    receiver_bound: bool,
     /// Whether the expansion runs from the GEOMETRY — one thread per
     /// surviving meshlet, descending the page pyramid to the pages it
     /// lands in — instead of pairing every listed page against every
@@ -818,6 +825,7 @@ impl PageRasterizer {
             bias: [1.8, 0.02, 0.0, 4.0],
             march: false,
             geometry: false,
+            receiver_bound: true,
             pyramid: PagePyramid::new(device, config, clipmap),
             triangles: max_triangles_per_meshlet.max(1),
             two_level: crate::meshlet::MeshletLodSettings::default().two_level,
@@ -953,6 +961,12 @@ impl PageRasterizer {
 
     /// The readers' shadow bias, from the settings. Takes effect at the
     /// next `write_uniform`, the way the softness does.
+    /// Whether the receiver bound may reject a caster. Off pairs more
+    /// and cannot lose a shadow, which is what makes it a falsifier.
+    pub fn set_receiver_bound(&mut self, on: bool) {
+        self.receiver_bound = on;
+    }
+
     /// Which direction the expansion runs: pages against survivors, or
     /// one survivor down the pyramid to its pages.
     pub fn set_geometry(&mut self, on: bool) {
@@ -1471,7 +1485,12 @@ impl PageRasterizer {
                     // this exact buffer — one write serves both.
                     self.softness.max(1) as f32,
                 ],
-                eye: [eye.x, eye.y, eye.z, 0.0],
+                eye: [
+                    eye.x,
+                    eye.y,
+                    eye.z,
+                    f32::from(u8::from(self.receiver_bound)),
+                ],
                 sun: [d.x, d.y, d.z, 1.0],
                 // Same reason as the softness above: the shading binds
                 // this exact buffer, so one write serves both.

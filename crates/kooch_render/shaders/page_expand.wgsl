@@ -162,7 +162,10 @@ fn sun_pair(
     // receivers — the same bias, from the same snapped origin, that
     // `mark_sun` wrote. Zero means the marking recorded nothing, which
     // keeps the caster: the safe way for this to be wrong.
-    if entry.z != 0u && (along + raster.world.y) - radius > bitcast<f32>(entry.z) {
+    if raster.eye.w != 0.0
+        && entry.z != 0u
+        && (along + raster.world.y) - radius > bitcast<f32>(entry.z)
+    {
         atomicAdd(&page_counts[buckets * 3u + 6u], 1u);
         return;
     }
@@ -427,7 +430,10 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
         // marking's radial atomicMax; zero means no receiver was
         // recorded and nothing is rejected. The spot rotation above
         // preserves length, so one comparison serves both kinds.
-        if entry.z != 0u && length(to_centre) - radius > bitcast<f32>(entry.z) {
+        if raster.eye.w != 0.0
+            && entry.z != 0u
+            && length(to_centre) - radius > bitcast<f32>(entry.z)
+        {
             atomicAdd(&page_counts[buckets * 3u + 5u], 1u);
             return;
         }

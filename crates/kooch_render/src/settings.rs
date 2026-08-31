@@ -305,6 +305,22 @@ pub struct RenderSettings {
     #[serde(default)]
     #[reflect(group = "Shadows: virtual pages", shown_when = PAGES_ON)]
     pub shadow_page_geometry: bool,
+    /// Whether Olsson's receiver bound may reject a caster (#940, #949).
+    ///
+    /// 🔴 A falsifier, not a quality knob. This is the only thing left
+    /// in the expansion that DELETES geometry: a caster whose nearest
+    /// point lies beyond a page's furthest RECORDED receiver is dropped.
+    /// The record comes from the marking, so a page whose furthest
+    /// receiver was never marked drops a caster that really does shadow
+    /// it — and the page then renders lit with every counter healthy.
+    ///
+    /// Turn it off and the picture cannot get worse in the other
+    /// direction: the worst case is casters paired that occlude
+    /// nothing. If a missing shadow comes back with this off, the bound
+    /// is where it went.
+    #[serde(default = "default_true")]
+    #[reflect(group = "Shadows: virtual pages", shown_when = PAGES_ON)]
+    pub shadow_page_receiver_bound: bool,
     /// How much simplification error a meshlet may show before the cull
     /// picks a finer level, in PIXELS.
     ///
@@ -905,6 +921,13 @@ fn default_shadow_bias_slope() -> f32 {
     4.0
 }
 
+/// A project written before the switch existed had the bound ON, so
+/// absence has to read as `true` or loading an old settings file would
+/// silently change what the frame draws.
+fn default_true() -> bool {
+    true
+}
+
 fn default_meshlet_lod_error() -> f32 {
     1.0
 }
@@ -1315,6 +1338,7 @@ impl Default for RenderSettings {
             shadow_bias_slope: default_shadow_bias_slope(),
             shadow_page_march: false,
             shadow_page_geometry: false,
+            shadow_page_receiver_bound: true,
             meshlet_lod_error: default_meshlet_lod_error(),
             meshlet_min_pixels: default_meshlet_min_pixels(),
             meshlet_two_level: default_meshlet_two_level(),
@@ -1397,6 +1421,7 @@ impl RenderSettings {
             page_bias_slope: self.shadow_bias_slope,
             page_march: self.shadow_page_march,
             page_geometry: self.shadow_page_geometry,
+            page_receiver_bound: self.shadow_page_receiver_bound,
             max_distance: self.shadow_distance,
             cascade_texels: self.shadow_cascade_texels,
             enabled: self.shadows_enabled,

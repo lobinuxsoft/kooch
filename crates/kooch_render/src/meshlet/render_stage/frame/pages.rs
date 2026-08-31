@@ -53,6 +53,8 @@ struct PageSettings {
     march: bool,
     /// Whether the expansion runs from the geometry (#1022).
     geometry: bool,
+    /// Whether the receiver bound may reject a caster (#940, #949).
+    receiver_bound: bool,
     min_pixels: u32,
     /// The distance gate. See `ShadowSettings::page_light_reach`.
     reach: u32,
@@ -236,6 +238,7 @@ fn page_settings(resources: &Resources) -> PageSettings {
         ),
         march: shadows.page_march,
         geometry: shadows.page_geometry,
+        receiver_bound: shadows.page_receiver_bound,
         min_pixels: shadows.page_min_pixels,
         reach: shadows.page_light_reach,
         // Absent in a headless test and in any host without a manager,
@@ -623,6 +626,7 @@ impl MeshletRenderStage {
         raster.set_softness(settings.softness);
         raster.set_march(settings.march);
         raster.set_geometry(settings.geometry);
+        raster.set_receiver_bound(settings.receiver_bound);
         raster.set_bias(
             settings.bias.0,
             settings.bias.1,

@@ -618,7 +618,17 @@ struct PageRaster {
     // x the clipmap's level-0 extent in metres, y the orthographic half
     // span, z the atlas side in texels, w the PCF box width in texels.
     world: vec4<f32>,
-    // xyz the camera, w unused.
+    // xyz the camera, w 1 when Olsson's receiver bound may reject a
+    // caster and 0 when it may not.
+    //
+    // 🔴 A switch and not a constant, because the bound is the only
+    // thing left in the expansion that DELETES geometry. It compares a
+    // caster against `entry.z` — the furthest receiver the MARKING
+    // recorded for that page — so a page whose furthest receiver was
+    // never marked rejects a caster that really does shadow it, and the
+    // page renders lit with everything else reporting health. Turning
+    // it off cannot make the picture wrong in the other direction: the
+    // worst it does is pair casters that occlude nothing.
     eye: vec4<f32>,
     // xyz the sun's direction, w 1 when there is one.
     sun: vec4<f32>,
