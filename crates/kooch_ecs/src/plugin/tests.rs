@@ -25,7 +25,7 @@ fn plugin_registers_allocator_and_registry() {
 /// by this string; see that module for why renaming it is a data
 /// migration and not a refactor.
 #[test]
-fn a_spin_survives_a_build_without_features() {
+fn a_spin_ships_unconditionally() {
     let mut app = App::new();
     app.add_plugin(EcsPlugin);
     super::register_builtin_components(app.resources_mut());

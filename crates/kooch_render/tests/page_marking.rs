@@ -1695,7 +1695,7 @@ fn the_bias_settles_the_denials() {
 /// 34 lights and the pool was still full, because the thirty above it
 /// took every slot.
 #[test]
-fn a_tiny_light_drops_to_one_page() {
+fn a_tiny_light_is_distant() {
     let Some((device, queue)) = device() else {
         eprintln!("no adapter; skipping");
         return;

@@ -10,7 +10,7 @@ use super::*;
 /// fallbacks, or a project with no file and a project with a fresh one
 /// would render differently.
 #[test]
-fn only_the_unchosen_fields_fall_back() {
+fn unchosen_fields_fall_back() {
     let settings = RenderSettings::default();
     // Untouched, so still the camera's own.
     assert_eq!(settings.camera(), PhysicalCamera::default());
@@ -264,7 +264,7 @@ fn apply_publishes_the_presentation() {
 /// mean — and an uncapped frame is not something a project opts into by
 /// upgrading the engine.
 #[test]
-fn a_file_without_vsync_gets_the_default() {
+fn a_missing_vsync_defaults() {
     let parsed: RenderSettings = ron::from_str("(sharpening: 0)").expect("partial file");
     assert_eq!(parsed.vsync, RenderSettings::default().vsync);
 }
@@ -274,7 +274,7 @@ fn a_file_without_vsync_gets_the_default() {
 /// taking the display is not something a project opts into by upgrading
 /// the engine.
 #[test]
-fn a_file_without_the_mode_gets_the_default() {
+fn a_missing_mode_defaults() {
     let parsed: RenderSettings = ron::from_str("(sharpening: 0)").expect("partial file");
     assert_eq!(
         parsed.window_mode(),

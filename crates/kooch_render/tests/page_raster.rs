@@ -142,7 +142,7 @@ fn the_lamp_arena_is_sized_by_groups() {
 /// `faces`, so every page was resident, and uniform green in
 /// `occlusion`, so every page was empty.
 #[test]
-fn the_pair_list_outgrows_a_constant() {
+fn the_pair_list_outgrows_constants() {
     // `dense.scene`, measured: 2157 entities and 64 lamps, and the ones
     // under test carry range 90 over a city this size — so the sphere
     // test keeps most instances for most lamps.
@@ -182,7 +182,7 @@ fn the_pair_list_outgrows_a_constant() {
 /// Every headless test here runs ONE view, so nothing in this file can
 /// reproduce it. The editor has two.
 #[test]
-fn the_view_clear_leaves_the_lamp_buckets() {
+fn the_clear_spares_lamp_buckets() {
     let source = include_str!("../src/shadow/pages/raster.rs");
     assert!(
         !source.contains("clear_buffer(&self.visible_counts, 0, None)"),
@@ -213,7 +213,7 @@ fn the_view_clear_leaves_the_lamp_buckets() {
 /// resident and correctly keyed. No lamp in the scene cast a shadow and
 /// no counter said why.
 #[test]
-fn the_lamp_dispatch_outgrows_one_dimension() {
+fn the_dispatch_outgrows_one_dimension() {
     use kooch_core::gpu::limits::{MAX_WORKGROUPS_PER_DIM, tiled_workgroups};
 
     // Measured on `dense.scene`, from the cull's own growth logs:
@@ -268,7 +268,7 @@ fn the_lamp_dispatch_outgrows_one_dimension() {
 /// pool at 100% hit over a raster redrawing two thirds of the atlas, and
 /// the two together look like a working cache.
 #[test]
-fn the_moved_list_is_sized_by_the_scene() {
+fn the_moved_list_grows() {
     // Measured on `dense.scene`, from the engine's own warning.
     let spinning = 2026u64;
     let old_cap = 256u64;
@@ -815,7 +815,7 @@ fn the_two_level_cull_draws_the_same_page() {
 /// never been rasterised by anything but the editor, where "the lamp
 /// casts nothing" and "the page is empty" look identical.
 #[test]
-fn the_top_of_the_chain_is_one_page() {
+fn the_chain_top_draws() {
     let config = PageConfig::default();
     let top = config.levels() - 1;
     assert_eq!(
