@@ -640,12 +640,31 @@ fn lamp_face_page(view: u32, face: u32, level: u32, cell: (u32, u32), lights: u3
 /// geometry fails here rather than on screen.
 #[test]
 fn a_lamp_page_holds_what_its_light_sees() {
-    lamp_page_holds_its_view(false, small(), 7);
+    lamp_page_holds_its_view(false, small(), 7, coarse_level());
 }
 
 #[test]
 fn the_two_level_cull_draws_the_same_page() {
-    lamp_page_holds_its_view(true, small(), 7);
+    lamp_page_holds_its_view(true, small(), 7, coarse_level());
+}
+
+/// The TOP of a lamp's chain — one page for the whole cube face, which
+/// is the only page a distant light gets (#1009).
+///
+/// 🔴 The rig above plants the floor and three levels up, and stops
+/// three short of the top. So the level the distant tier depends on had
+/// never been rasterised by anything but the editor, where "the lamp
+/// casts nothing" and "the page is empty" look identical.
+#[test]
+fn the_top_of_the_chain_is_one_page() {
+    let config = PageConfig::default();
+    let top = config.levels() - 1;
+    assert_eq!(
+        config.side(top),
+        1,
+        "the top of the chain is not a single page"
+    );
+    lamp_page_holds_its_view(false, small(), 7, top);
 }
 
 /// 🔴 The acceptance for #1016: the SAME page, read back from a pool
@@ -665,10 +684,22 @@ fn a_page_on_the_far_layer_draws_the_same() {
     assert_eq!(split.layers_per_view(), 2, "so a view needs two layers");
     // Slot 20 is page 4 of layer 1 — the far layer, and view 0's.
     assert_eq!(20 / split.slice(), 1, "the coarse page is on layer one");
-    lamp_page_holds_its_view(true, split, 20);
+    lamp_page_holds_its_view(true, split, 20, coarse_level());
 }
 
-fn lamp_page_holds_its_view(two_level: bool, budget: PoolConfig, coarse_slot: u32) {
+/// Three levels above the chain's floor: coarse enough to pair against a
+/// coarse bucket's survivors, fine enough that its cell is a window
+/// rather than the whole face.
+fn coarse_level() -> u32 {
+    PageConfig::default().local_floor() + 3
+}
+
+fn lamp_page_holds_its_view(
+    two_level: bool,
+    budget: PoolConfig,
+    coarse_slot: u32,
+    coarse_level: u32,
+) {
     use glam::{Mat4, Vec3};
     use kooch_render::meshlet::{
         MeshInstance, MeshletCullPipelines, MeshletScene, SceneCullParams, build_default_meshlets,
@@ -763,8 +794,11 @@ fn lamp_page_holds_its_view(two_level: bool, budget: PoolConfig, coarse_slot: u3
     let fine_level = config.local_floor();
     let fine_side = config.side(fine_level);
     let fine = lamp_face_page(0, 3, fine_level, (fine_side / 2, fine_side / 2), LIGHTS);
-    let coarse_level = fine_level + 3;
-    let coarse = lamp_face_page(0, 3, coarse_level, (1, 1), LIGHTS);
+    // The cell under the lamp, whatever the level's grid is. At the top
+    // of the chain that grid is one page and this is (0, 0).
+    let coarse_side = config.side(coarse_level);
+    let coarse_cell = (coarse_side / 2, coarse_side / 2);
+    let coarse = lamp_face_page(0, 3, coarse_level, coarse_cell, LIGHTS);
 
     let mut page_pool = PagePool::new(&device, budget);
     let entries = VIEWS * span(LIGHTS);
