@@ -2271,3 +2271,40 @@ fn a_halo_asks_for_the_neighbours() {
         plain.resident,
     );
 }
+
+/// The dilation direction has to vary per thread.
+///
+/// # 🔴 A fixed diagonal is three quarters of a halo missing
+///
+/// The offset is applied as `±step`, so one diagonal covers two of the
+/// eight neighbours. Epic vary which diagonal on a bit of the thread's
+/// own index — `PageDilationDither` — and their comment says why that
+/// is enough: *"as long as there's at least a single pixel near the
+/// edge the adjacent one will get mapped"*. Over a 2x2 block all four
+/// diagonals are asked for, at two marks per pixel instead of eight.
+///
+/// A constant direction still marks two pages per pixel, still raises
+/// `resident`, and still passes a test that only counts. It just never
+/// asks for the pages on the other three sides — so the halo does
+/// nothing at all on the side the camera happens to be moving towards,
+/// which is the only side that matters.
+///
+/// ⚠️ And it has to come off the THREAD index, not the pixel: `pixel`
+/// is `id.xy * rate`, so at any even rate every thread shares a parity
+/// and the pattern collapses back to the constant it replaced.
+#[test]
+fn the_dilation_picks_a_diagonal_per_thread() {
+    let source = include_str!("../shaders/page_mark.wgsl");
+    let dense: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+
+    assert!(
+        dense.contains("select(-1.0,1.0,(id.x&1u)!=0u)")
+            && dense.contains("select(-1.0,1.0,(id.y&1u)!=0u)"),
+        "the dilation offset is not dithered off the thread index, so every pixel dilates \
+         the same way and three of the four diagonals are never requested",
+    );
+    assert!(
+        !dense.contains("(basis[0]+basis[1])*(halo*width)"),
+        "the fixed diagonal is back",
+    );
+}

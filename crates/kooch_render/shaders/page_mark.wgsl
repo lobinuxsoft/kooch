@@ -606,7 +606,7 @@ fn mark_sun_halo(slot: u32, world: vec3<f32>, wanted: f32, centre: u32) {
 }
 
 // One page of the sun's clipmap, marked.
-fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
+fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32, dither: vec2<f32>) -> vec2<u32> {
     let page = sun_page_for(slot, world, wanted);
     // #949 — the receiver bound, on the sun's axis rather than the
     // lamp's radius. `mark_local` records how FAR a receiver is; a
@@ -653,7 +653,19 @@ fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     if halo > 0.0 {
         let basis = sun_basis(pages.sun.xyz);
         let width = pages.eye_and_base.w * exp2(f32(page.y)) / f32(max(pages.strides.x, 1u));
-        let step = (basis[0] + basis[1]) * (halo * width);
+        // 🔴 `dither` is why this covers a ring and not a line.
+        //
+        // A FIXED diagonal — which is what this was — dilates every
+        // pixel in the same direction in the SUN's frame, so three of
+        // the four diagonals are never asked for and the halo does
+        // nothing on the side the camera happens to be moving towards.
+        // Epic's `PageDilationDither` flips each component on a bit of
+        // the thread's own index, and their comment says why one
+        // diagonal per pixel is enough: *"as long as there's at least a
+        // single pixel near the edge the adjacent one will get
+        // mapped"*. Over a 2x2 block of pixels all four are covered,
+        // for two marks per pixel instead of eight.
+        let step = (basis[0] * dither.x + basis[1] * dither.y) * (halo * width);
         mark_sun_halo(slot, world + step, wanted, page.x);
         mark_sun_halo(slot, world - step, wanted, page.x);
     }
@@ -791,7 +803,19 @@ fn mark_pixel(id: vec3<u32>) {
     let local_wanted = wanted * exp2(f32(bias & 0xffu));
 
     if pages.sun.w > 0.5 {
-        _ = mark_sun(pages.sampling.y, world, wanted * exp2(f32(bias >> 8u)));
+        // One diagonal per thread, which one decided by the thread's own
+        // parity — Epic's `PageDilationDither`, off `GroupIndex` there.
+        //
+        // ⚠️ `id`, not `pixel`. `pixel` is `id.xy * rate`, so at any even
+        // rate every thread has the same parity and the pattern
+        // collapses back to the fixed diagonal it exists to replace —
+        // silently, because the halo would still mark two pages and the
+        // counters would still go up.
+        let dither = vec2<f32>(
+            select(-1.0, 1.0, (id.x & 1u) != 0u),
+            select(-1.0, 1.0, (id.y & 1u) != 0u),
+        );
+        _ = mark_sun(pages.sampling.y, world, wanted * exp2(f32(bias >> 8u)), dither);
     }
 
     if view.dimensions.w == 0u {
