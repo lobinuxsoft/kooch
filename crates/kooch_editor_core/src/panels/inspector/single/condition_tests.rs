@@ -163,20 +163,31 @@ fn the_shadow_knobs_follow_the_technique() {
         assert!(has(&pages, field), "{field} is missing with pages on");
         assert!(!has(&cascades, field), "{field} shows with pages off");
     }
+    // 🔴 Inert with the pages on, and hidden for it. The virtual shadow
+    // map REPLACES the cascades rather than blending with them —
+    // `inti_shadow` returns to `inti_page_shadow` before it picks one —
+    // and the cube path is skipped wholesale: `draw_cascades` is
+    // `cascades_enabled && !virtual_pages`, the point and spot caster
+    // lists come back empty, and `classic_shadow_alloc` shrinks the
+    // classic atlas to 256 texels and one cube of 16.
+    //
+    // `shadow_cascade_texels` and `point_shadows` were in the list below
+    // — asserted visible in BOTH modes — until 89c5e71e hid them on
+    // purpose and left this test asserting the old answer. They size an
+    // atlas nothing draws into and nothing samples.
     for field in [
         "shadow_distance",
         "sun_softness",
         "shadow_first_cascade_distance",
+        "shadow_cascade_texels",
+        "point_shadows",
     ] {
         assert!(has(&cascades, field), "{field} is missing with pages off");
         assert!(!has(&pages, field), "{field} shows with pages on");
     }
-    for field in [
-        "shadows_enabled",
-        "shadow_cascade_texels",
-        "point_shadows",
-        "virtual_shadows",
-    ] {
+    // The two that mean something under either technique: one is the
+    // master switch and the other picks between them.
+    for field in ["shadows_enabled", "virtual_shadows"] {
         assert!(has(&pages, field), "{field} vanished with pages on");
         assert!(has(&cascades, field), "{field} vanished with pages off");
     }
