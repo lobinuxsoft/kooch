@@ -271,8 +271,18 @@ fn the_atomic_path_names_its_passes() {
         labels.iter().any(|l| l == "cull"),
         "no cull scope among {labels:?}"
     );
+    // 🔴 TWO scopes, not the fused one. `raster + shade` was split when
+    // the marking moved between the halves: `Vbuf64Stage::render` became
+    // `render_geometry` / `render_shading` so the page marking could read
+    // THIS frame's depth, which is the order Unreal use. A fused box
+    // cannot show that, and the comment below already argued for the
+    // split before the split existed.
     assert!(
-        labels.iter().any(|l| l == "raster + shade"),
+        labels.iter().any(|l| l == "raster"),
+        "no raster scope among {labels:?}"
+    );
+    assert!(
+        labels.iter().any(|l| l == "shade"),
         "no shading scope among {labels:?}"
     );
     // #824 — `raster + shade` fuses two halves that no longer change
