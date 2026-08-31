@@ -3059,3 +3059,61 @@ fn both_expansions_emit_the_same_pairs() {
         "the two shapes disagree about which caster belongs in which page",
     );
 }
+
+/// A resident page with no content has to read as a MISS, and the
+/// reader has to keep climbing when it does.
+///
+/// # 🔴 Resident is not readable
+///
+/// `PAGE_CELL` says the fourth word is the content stamp and that zero
+/// means "no valid content". A page reaches that state by being freshly
+/// claimed, by being invalidated, or by its bucket overflowing so the
+/// compaction never listed it — and the atlas under its slot then holds
+/// whatever was there before, or a clear. A clear is far depth under
+/// reversed-Z, which every reader answers "nothing occludes here".
+///
+/// Reporting it as a hit does not only read one wrong texel: it ENDS
+/// the walk. `inti_page_shadow` climbs the clipmap until a level
+/// answers — Unreal's "onwards to coarser levels if no valid data is
+/// present" — and a present, empty page stops the search at the one
+/// level that cannot answer, with a coarser one right above it holding
+/// the shadow. The panel already called this out; its `pages dropped`
+/// alert says "some resident pages hold no depth and shade as lit". The
+/// reader was the half that did not know.
+#[test]
+fn an_empty_page_is_not_a_hit() {
+    let source = kooch_lighting::inti_pbr_shader(1);
+    let start = source
+        .find("fn inti_page_lookup(")
+        .expect("the lookup is in the shader");
+    let end = source[start..].find("\nfn ").expect("the lookup ends") + start;
+    let body = &source[start..end];
+
+    let dense: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(
+        dense.contains("inti_page_slots[page*PAGE_CELL+3u]==0u"),
+        "the lookup does not check the content stamp, so a resident page with no depth \
+         reads as a hit and shades lit",
+    );
+    assert!(
+        body.contains("return PAGE_MISS;"),
+        "and it has to answer PAGE_MISS, which is what makes the caller climb",
+    );
+
+    // The other half of the pair: the climb itself. A lookup that
+    // reports the miss buys nothing if the caller gives up on it.
+    let walk_start = source
+        .find("fn inti_page_shadow(")
+        .expect("the reader is in the shader");
+    let walk_end = source[walk_start..]
+        .find("\nfn inti_local_page_shadow(")
+        .expect("the reader ends")
+        + walk_start;
+    let walk = &source[walk_start..walk_end];
+    let walk_dense: String = walk.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(
+        walk_dense.contains("level=level+1u"),
+        "the sun's reader has to walk to coarser levels, or a missing page is a lit pixel \
+         however honestly the lookup reported it",
+    );
+}

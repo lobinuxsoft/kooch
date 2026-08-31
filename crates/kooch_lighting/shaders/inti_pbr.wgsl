@@ -816,6 +816,32 @@ fn inti_page_lookup(page: u32) -> u32 {
     if stored == PAGE_ABSENT {
         return PAGE_MISS;
     }
+    // 🔴 Resident is not the same as READABLE, and treating them as the
+    // same is a lit hole.
+    //
+    // The fourth word is the content stamp and `PAGE_CELL` says what
+    // zero means: no valid content. A page reaches that state by being
+    // freshly claimed, by being invalidated, or by its bucket
+    // overflowing so the compaction never listed it — and in all three
+    // the atlas under its slot holds whatever was there before, or a
+    // clear. A clear is far depth under reversed-Z, so every reader
+    // over it answers "nothing occludes here".
+    //
+    // Reporting it as a hit also stops the caller's walk. `inti_page_
+    // shadow` climbs the clipmap until a level answers, which is
+    // Unreal's "onwards to coarser levels if no valid data is present"
+    // — but only if this says no. A page that is present and empty
+    // ended the search at the one level that could not answer, with a
+    // coarser one right above it holding the shadow.
+    //
+    // Non-zero and not the generation is still readable: the content is
+    // from an older generation the compaction chose not to redraw.
+    // `PAGE_EMPTY` is non-zero on purpose and means "cleared", which is
+    // a true answer — a lamp page with no caster in reach occludes
+    // nothing — so it reads as a hit, and must.
+    if inti_page_slots[page * PAGE_CELL + 3u] == 0u {
+        return PAGE_MISS;
+    }
     return stored - 1u;
 }
 
