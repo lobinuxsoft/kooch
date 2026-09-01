@@ -67,10 +67,29 @@ fn no_build_output_is_copied_at_any_depth() {
     );
 }
 
-/// The engine's `assets/` is 13 MB and 12.7 MB of it is demo models.
-/// A project gets what it runs on, not the samples.
+/// The engine's mesh library goes across whole — primitives AND the
+/// sample models.
+///
+/// # 🔴 This test used to assert the opposite
+///
+/// It was `assets_are_the_ones_a_game_runs_on_not_the_demos`, on the
+/// argument that `assets/meshes/` is 5.3 MB and 5.2 MB of it is samples
+/// (`dragon.glb` at 4 MB, `suzanne.glb` at 1.3), so a project should get
+/// only what it runs on.
+///
+/// That is the wrong trade here, and the reason is how a scene names a
+/// mesh: by ASSET ID, not by path. A scene built in this editor against
+/// the engine's dragon has no way to say so other than that id, so
+/// dropping the model from the vendored copy does not make the project
+/// smaller — it makes the mesh unresolvable in a build, silently, the
+/// way an unregistered component silently loses its entities. The
+/// engine's library is part of what this editor offers, and it has to be
+/// there for any project made with it.
+///
+/// Five megabytes is the price of that, and it is the cheap side of the
+/// trade.
 #[test]
-fn assets_are_the_ones_a_game_runs_on_not_the_demos() {
+fn the_mesh_library_ships_whole() {
     let dir = tmp("assets");
     let (engine, project) = (dir.join("engine_src"), dir.join("proj"));
     fake_engine(&engine);
@@ -81,8 +100,9 @@ fn assets_are_the_ones_a_game_runs_on_not_the_demos() {
     assert!(dest.join("assets/materials/default.material").is_file());
     assert!(dest.join("assets/meshes/primitives/cube.glb").is_file());
     assert!(
-        !dest.join("assets/meshes/demo.glb").exists(),
-        "a demo model was vendored into every project",
+        dest.join("assets/meshes/demo.glb").is_file(),
+        "a sample model did not reach the project; a scene naming it by \
+         asset id would find nothing in a build",
     );
 }
 

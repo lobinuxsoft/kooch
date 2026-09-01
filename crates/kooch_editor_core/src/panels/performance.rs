@@ -1101,14 +1101,27 @@ fn shadow_page_readout(
         metric(ui, "light pairs", &thousands(counts.pairs as u64));
         metric_with_tooltip(
             ui,
-            "gated by coverage",
+            "distant tier",
+            &if counts.distant > 0 {
+                thousands(counts.distant as u64)
+            } else {
+                "0 — every light on a chain".to_owned()
+            },
+            "Lights that cast from ONE page per cube face rather than a chain (#1009). A light \
+             qualifies when the finest level ANY pixel could ask it for is already the \
+             coarsest it has — derived, no threshold — or when its whole range projects under \
+             `shadow_min_pixels`. This used to be the number of lights casting nothing at all.",
+        );
+        metric_with_tooltip(
+            ui,
+            "gated by distance",
             &if counts.culled > 0 {
                 thousands(counts.culled as u64)
             } else {
                 "0 — every light casting".to_owned()
             },
-            "Lights whose whole range projects under `shadow_min_pixels` on screen (#944): \
-             they still shade, but a shadow nobody can resolve claims no pages.",
+            "Lights standing further than `shadow_page_light_reach` of their own ranges from \
+             the camera (#944): they still shade, but they claim no pages.",
         );
         if counts.froxels > 0 && counts.samples > 0 {
             // 🔴 `pairs` counts a different thing on each path, so the
@@ -1197,6 +1210,20 @@ fn shadow_page_readout(
             "cached",
             &thousands(raster.cached as u64),
             "Resident pages whose content survived from an earlier frame. They cost nothing.",
+        );
+        metric_with_tooltip(
+            ui,
+            "lamp survivors",
+            &if raster.lamp_survivors > 0 {
+                thousands(raster.lamp_survivors as u64)
+            } else {
+                "0 — no lamp can cast".to_owned()
+            },
+            "Meshlets the LAMPS' culls kept, over every bucket. Zero with lamp pages resident \
+             means their pages are stamped empty and cleared, and a cleared page reads as \
+             'nothing occludes' — every lamp stops casting with every other counter healthy. \
+             Read it against `lamp pages cleared for nothing`: that one says pages were \
+             cleared, this one says whether there was ever anything to put in them.",
         );
         metric(ui, "meshlet pairs", &thousands(raster.pairs as u64));
         // 🔴 Directly under the pair count and NOT at the foot of this

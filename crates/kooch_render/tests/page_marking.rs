@@ -177,6 +177,10 @@ thread_local! {
     /// How far a receiver dilates its page request, in pages. Same
     /// reason as `CLUSTER`: `run_pool` builds the marker itself.
     static HALO: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
+    /// The projected radius under which a light joins the distant tier
+    /// (#1009). Zero is the tier off, which is what every other test
+    /// here wants.
+    static COVERAGE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 /// Runs `body` with the cluster/light marking on (#952).
@@ -232,6 +236,7 @@ fn run_pool(
     let mut marker = PageMarker::new(device, PageConfig::default(), ClipmapConfig::default());
     marker.set_cluster_marking(CLUSTER.with(|c| c.get()));
     marker.set_halo(HALO.with(|h| h.get()));
+    marker.set_coverage(COVERAGE.with(|c| c.get()));
     marker.set_pool(device, pool);
 
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -1679,11 +1684,18 @@ fn the_bias_settles_the_denials() {
     assert_eq!(relaxed.pool.denied, 0, "relaxed and still denying");
 }
 
-/// A light too small on screen casts no pages (#944), and gets them
-/// back the moment the gate would pass it — here by turning the gate
-/// off, which is the same comparison a closer camera flips.
+/// A light too small on screen drops to ONE page per cube face instead
+/// of a chain (#1009), and gets its chain back the moment the threshold
+/// would pass it — here by turning it off, which is the same comparison
+/// a closer camera flips.
+///
+/// 🔴 This test used to be `a_tiny_light_casts_nothing` and asserted
+/// `resident == 0`. That was #944's cliff, and the measurement that
+/// retired it is in `light_distant`: on `dense.scene` the cliff silenced
+/// 34 lights and the pool was still full, because the thirty above it
+/// took every slot.
 #[test]
-fn a_tiny_light_casts_nothing() {
+fn a_tiny_light_is_distant() {
     let Some((device, queue)) = device() else {
         eprintln!("no adapter; skipping");
         return;
@@ -1721,7 +1733,12 @@ fn a_tiny_light_casts_nothing() {
             (SIZE, SIZE),
             0,
             1,
-            100,
+            // 🔴 The finest density the settings allow, so the chain
+            // case actually asks for a chain. At 100 the receivers this
+            // rig writes are far enough that `page_level` lands near the
+            // top by itself, and both runs came back with four pages —
+            // the tier looked free and proved nothing.
+            400,
             Paint {
                 target: &target,
                 on: false,
@@ -1736,18 +1753,29 @@ fn a_tiny_light_casts_nothing() {
     };
 
     let open = run_gated(0);
-    assert!(open.resident > 0, "the ungated lamp marked nothing");
-    assert_eq!(open.culled, 0, "an off gate culled something");
+    assert!(open.resident > 0, "the undemoted lamp marked nothing");
+    assert_eq!(open.distant, 0, "an off threshold demoted something");
 
-    let gated = run_gated(32);
-    assert_eq!(
-        gated.resident, 0,
-        "a lamp under the gate still marked pages"
+    let demoted = run_gated(32);
+    assert!(
+        demoted.resident > 0,
+        "a lamp under the threshold cast nothing: the cliff is back"
     );
-    assert!(gated.culled > 0, "nothing was counted as gated");
+    assert!(demoted.distant > 0, "nothing was counted as distant");
+    assert!(
+        demoted.resident <= 6,
+        "a distant lamp claimed {} pages; a cube has six faces and each gets one",
+        demoted.resident
+    );
+    assert!(
+        demoted.resident < open.resident,
+        "the tier cost as much as the chain: {} against {}",
+        demoted.resident,
+        open.resident
+    );
     assert_eq!(
-        gated.pairs, open.pairs,
-        "the gate changed the grid walk instead of the marking"
+        demoted.pairs, open.pairs,
+        "the threshold changed the grid walk instead of the marking"
     );
 }
 

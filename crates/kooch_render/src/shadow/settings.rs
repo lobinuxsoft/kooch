@@ -141,13 +141,16 @@ pub struct ShadowSettings {
     /// [`RenderSettings::shadow_page_halo`].
     pub page_halo: f32,
     /// Projected radius in screen pixels under which a local light
-    /// casts no pages (#944). 0 = every light casts.
+    /// becomes DISTANT: one page per cube face rather than a chain
+    /// (#1009). 0 = every light gets a chain. See
+    /// [`RenderSettings::shadow_min_pixels`].
     pub page_min_pixels: u32,
     /// How far a local light may cast pages from, in multiples of its
     /// OWN range. 0 = no distance limit, which is what shipped.
     ///
-    /// 🔴 Not the same question as [`Self::page_min_pixels`], though
-    /// both turn a light away. That one is a projected SIZE, so the
+    /// 🔴 Not the same question as [`Self::page_min_pixels`], and since
+    /// #1009 not even the same kind of answer: that one DEMOTES a light
+    /// and this one silences it. That one is a projected SIZE, so the
     /// distance it implies scales with the light's range and with the
     /// viewport — at 808x439 a range-50 light does not fall under eight
     /// pixels until 2.4 km, and a threshold high enough to cut it at a

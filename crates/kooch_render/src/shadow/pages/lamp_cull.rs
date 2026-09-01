@@ -27,9 +27,23 @@ const LAMP: &str = include_str!("../../../shaders/lamp_cull.wgsl");
 /// `LAMP_SURVIVORS` in `page_table.wgsl`.
 pub const LAMP_SURVIVORS: u32 = 4096;
 
-/// Light/instance pairs the pre-pass may emit. Past it, pairs are
-/// counted into the header's second word rather than silently lost.
+/// Light/instance pairs the pre-pass starts with. GROWN to the frame's
+/// own bound — see [`LampCull::ensure_pairs`].
 const PAIR_CAPACITY: u32 = 16384;
+
+/// Bytes a pair list of `pairs` needs: the two-word header, then the
+/// lamp slot and the instance index of every pair.
+fn pair_bytes(pairs: u32) -> u64 {
+    (2 + u64::from(pairs) * 2) * 4
+}
+
+/// The most pairs the list will ever be grown to, at eight bytes each.
+///
+/// 🔴 A ceiling, not a budget: past it the pre-pass drops pairs and the
+/// lamps that lose theirs cast nothing. It exists because the bound is a
+/// PRODUCT — lamps times instances — and a scene can make that product
+/// arbitrarily large. Hitting it is a warning, not a silence.
+const PAIR_CEILING: u32 = 1 << 22;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -75,6 +89,11 @@ pub struct LampCull {
     group_rows: u32,
     /// `[slot * LAMP_SURVIVORS ..]` — every lamp's packed survivors.
     survivors: wgpu::Buffer,
+    /// Pairs [`Self::pairs`] currently holds. Grown with the scene.
+    pair_capacity: u32,
+    /// Whether the pair list is currently clamped at [`PAIR_CEILING`],
+    /// so the warning is said once rather than every frame.
+    pairs_clamped: bool,
 
     pairs_bgl: wgpu::BindGroupLayout,
     args_bgl: wgpu::BindGroupLayout,
@@ -157,10 +176,12 @@ impl LampCull {
             }),
             pairs: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("lamp_cull_pairs"),
-                size: (2 + PAIR_CAPACITY as u64 * 2) * 4,
+                size: pair_bytes(PAIR_CAPACITY),
                 usage: storage,
                 mapped_at_creation: false,
             }),
+            pair_capacity: PAIR_CAPACITY,
+            pairs_clamped: false,
             args: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("lamp_cull_args"),
                 size: 12,
@@ -203,6 +224,64 @@ impl LampCull {
     /// uses; rows are the lights the frame actually has, NOT
     /// [`LAMP_CULLS`] — a 256-slot cap over an empty scene must not
     /// cost 256 rows of arena.
+    /// Grows the pre-pass's pair list to the frame's own bound.
+    ///
+    /// # 🔴 A fixed cap here does not degrade, it deletes a light
+    ///
+    /// `cs_lamp_pairs` emits one pair per (lamp, instance) the lamp's
+    /// range sphere reaches, claiming its slot with an `atomicAdd`. Past
+    /// the cap the pair is counted into the header's second word and
+    /// DROPPED — and which pairs make the cut is whichever threads got
+    /// there first, which is not a property of the scene.
+    ///
+    /// A lamp that loses its pairs keeps its pages. They are marked,
+    /// they are resident, they are listed, its cull produces no
+    /// survivors, so they are cleared — and a cleared page is far depth
+    /// under reversed-Z, which every reader answers "nothing occludes".
+    /// The lamp casts nothing and every counter reads healthy.
+    ///
+    /// Measured on `dense.scene`: 64 lamps of range 90 over 2157
+    /// instances is tens of thousands of pairs against a cap of 16 384.
+    /// The `Lamp shadow pages` views named it exactly — no white in
+    /// `faces` (every page resident) and uniform green in `occlusion`
+    /// (every page empty).
+    ///
+    /// The bound is a product, so it is clamped; the clamp says so out
+    /// loud, because the failure it causes is invisible everywhere else.
+    fn ensure_pairs(&mut self, device: &wgpu::Device, slots: u32, instances: u32) {
+        let wanted = u64::from(slots.clamp(1, LAMP_CULLS)) * u64::from(instances.max(1));
+        let capped = wanted > u64::from(PAIR_CEILING);
+        if capped != self.pairs_clamped {
+            self.pairs_clamped = capped;
+            if capped {
+                tracing::warn!(
+                    target: "kooch_render::shadow",
+                    wanted,
+                    ceiling = PAIR_CEILING,
+                    "the lamp pair list is capped; lamps past it cast no shadow at all",
+                );
+            } else {
+                tracing::info!(
+                    target: "kooch_render::shadow",
+                    wanted,
+                    "the lamp pair list fits the scene again",
+                );
+            }
+        }
+        let wanted = wanted.min(u64::from(PAIR_CEILING)) as u32;
+        if wanted <= self.pair_capacity {
+            return;
+        }
+        self.pair_capacity = wanted;
+        self.pairs = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("lamp_cull_pairs"),
+            size: pair_bytes(self.pair_capacity),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.bound = None;
+    }
+
     fn ensure_groups(&mut self, device: &wgpu::Device, groups: u32, slots: u32) {
         let groups = groups.max(1);
         let slots = slots.clamp(1, LAMP_CULLS);
@@ -258,6 +337,7 @@ impl LampCull {
             instance_count.saturating_mul(meshlets_per_mesh)
         };
         self.ensure_groups(device, groups, lamp_slots);
+        self.ensure_pairs(device, lamp_slots, instance_count);
         queue.write_buffer(
             &self.uniform,
             0,
@@ -266,7 +346,7 @@ impl LampCull {
                     instance_count.max(1),
                     meshlets_per_mesh.max(1),
                     lamp_slots.min(LAMP_CULLS),
-                    PAIR_CAPACITY,
+                    self.pair_capacity,
                 ],
                 arena: [self.group_capacity, sun_buckets, 0, 0],
                 lod: [
@@ -296,11 +376,14 @@ impl LampCull {
         });
         pass.set_pipeline(&self.pairs_pass);
         pass.set_bind_group(0, &bound.pairs, &[]);
-        pass.dispatch_workgroups(
-            (lamp_slots.min(LAMP_CULLS) * instance_count.max(1)).div_ceil(64),
-            1,
-            1,
+        // 🔴 Tiled. Lamps times instances passes 65 535 workgroups at
+        // 4.2 M, and a dimension over the limit is undefined — see
+        // `cs_lamp_args` for what that cost the two passes after it.
+        let (x, y) = kooch_core::gpu::limits::tiled_workgroups(
+            lamp_slots.min(LAMP_CULLS) * instance_count.max(1),
+            64,
         );
+        pass.dispatch_workgroups(x, y, 1);
         pass.set_pipeline(&self.args_pass);
         pass.set_bind_group(0, &bound.args, &[]);
         pass.dispatch_workgroups(1, 1, 1);

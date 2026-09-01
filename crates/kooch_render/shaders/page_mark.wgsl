@@ -71,12 +71,18 @@ struct PageView {
     // `MaxPageAgeSinceLastRequest` and it is the whole mechanism — a
     // page that survives is a page nothing has to rasterise again.
     life: vec4<u32>,
-    // x the RECIPROCAL of `shadow_density`, as a fraction of 1.
+    // x the RECIPROCAL of `shadow_density`, as a fraction of 1, y the
+    // projected radius under which a local light is DISTANT, z 1 when
+    // the per-light loop runs on froxels, w the distance gate in
+    // multiples of a light's own range.
     //
     // 🔴 The one lever the census found. It multiplies the world size a
     // screen pixel is allowed to ask a shadow texel to match, so a
     // density of 50 % doubles `wanted`, which is one level coarser in
     // BOTH axes — a quarter of the pages.
+    //
+    // 🔴 `y` demotes a light, it no longer silences one. See
+    // `light_distant` for what that comparison used to cost (#1009).
     density: vec4<f32>,
     // x how far, in PAGES, a receiver dilates its request; 0 = off.
     //
@@ -489,7 +495,9 @@ fn local_page_for(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let record = lights[light];
     var offset = world - record.position;
     let distance = max(length(offset), 0.05);
-    let level = page_level(distance, wanted);
+    // 🔴 A DISTANT light gets the top of its chain and nothing else,
+    // which is one page for the whole face. See `light_distant`.
+    let level = select(page_level(distance, wanted), pages.chain.z - 1u, light_distant(light));
     let side = level_side(level);
 
     // A spot's one face is aligned with ITS axis, not the world's —
@@ -518,15 +526,6 @@ fn local_page_for(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
 // One page of a local light's mip chain, marked.
 fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let page = local_page_for(light, world, wanted);
-    // #940: every sample is a RECEIVER, and the furthest one bounds
-    // what can occlude anything on this page — a caster whose nearest
-    // point lies beyond it shadows nobody the frame shades. Radial
-    // distance rather than face depth, so the bound is face-agnostic
-    // and errs toward keeping. Positive floats bitcast to ordered
-    // u32s, which is what lets an atomicMax hold a distance.
-    if page.x < pages.pool.x {
-        let d = length(world - lights[light].position);
-    }
     // 🔴 CLAIMED now, and the flag was a guard rather than an oversight.
     // A page claimed is a page in the table, and a page in the table
     // takes a pool slot from whoever else wanted one — with the census
@@ -706,12 +705,17 @@ fn page_color(index: u32, level: u32) -> vec3<f32> {
 ///
 /// A workgroup is `MARK_GROUP * MARK_GROUP` = 64 threads, so this trades
 /// up to 64 global atomics for one.
-var<workgroup> tally: array<atomic<u32>, 4>;
+var<workgroup> tally: array<atomic<u32>, 5>;
 const TALLY_SAMPLES: u32 = 0u;
 const TALLY_PAIRS: u32 = 1u;
 const TALLY_CULLED: u32 = 2u;
 /// The worst overlap — a MAX, not a sum, so the flush is a max too.
 const TALLY_PEAK: u32 = 3u;
+/// Pairs served by the DISTANT tier — one page per face rather than a
+/// chain (#1009). Counted for the same reason `TALLY_CULLED` is: a lamp
+/// demoted to one page and a lamp that never got a slot both show up as
+/// a soft, low-resolution shadow, and only this number tells them apart.
+const TALLY_DISTANT: u32 = 4u;
 
 /// 🔴 The barriers live HERE and the work lives in `mark_pixel`, because
 /// `workgroupBarrier` in non-uniform control flow is undefined and
@@ -723,7 +727,7 @@ fn mark_main(
     @builtin(global_invocation_id) id: vec3<u32>,
     @builtin(local_invocation_index) lane: u32,
 ) {
-    if lane < 4u {
+    if lane < 5u {
         atomicStore(&tally[lane], 0u);
     }
     workgroupBarrier();
@@ -745,6 +749,10 @@ fn mark_main(
         let peak = atomicLoad(&tally[TALLY_PEAK]);
         if peak != 0u {
             atomicMax(&counters[16], peak);
+        }
+        let distant = atomicLoad(&tally[TALLY_DISTANT]);
+        if distant != 0u {
+            atomicAdd(&counters[24], distant);
         }
     }
 }
@@ -860,6 +868,7 @@ fn mark_pixel(id: vec3<u32>) {
     // workgroup atomics at the end instead of two per light.
     var pairs = 0u;
     var culled = 0u;
+    var distant = 0u;
     for (var i = 0u; i < count; i = i + 1u) {
         let slot = start + i;
         if slot >= arrayLength(&indices) {
@@ -879,6 +888,9 @@ fn mark_pixel(id: vec3<u32>) {
             culled = culled + 1u;
             continue;
         }
+        if light_distant(light) {
+            distant = distant + 1u;
+        }
         _ = mark_local(light, world, local_wanted);
     }
     if pairs != 0u {
@@ -886,6 +898,9 @@ fn mark_pixel(id: vec3<u32>) {
     }
     if culled != 0u {
         atomicAdd(&tally[TALLY_CULLED], culled);
+    }
+    if distant != 0u {
+        atomicAdd(&tally[TALLY_DISTANT], distant);
     }
 }
 
@@ -929,16 +944,114 @@ fn light_out_of_reach(light: u32) -> bool {
     return distance > record.range * pages.density.w;
 }
 
-// The two gates as one question, so the three call sites cannot drift.
+// Whether this light is DISTANT: its whole range projects under
+// `page_min_pixels`, so it gets ONE page per cube face rather than a
+// chain of them.
 //
-// 🔴 They were three copies of one comparison, and #944's comment at the
-// first of them already warns that a path which quietly skips a light
-// the others count "would make the two disagree for a reason nothing
-// states". A second gate multiplies that risk by two.
-fn light_gated(light: u32) -> bool {
-    if pages.density.y > 0.0 && coverage_pixels(light) < pages.density.y {
-        return true;
+// # 🔴 A threshold between tiers, and it used to be a cliff
+//
+// This is #944's comparison and it used to turn the light OFF. That was
+// the only choice available then, because the alternative on offer was a
+// full chain — six faces addressed from the floor up — and a lamp that
+// cannot afford a chain really was cheaper as no shadow at all.
+//
+// It stopped being cheaper once there were enough lamps. Measured on
+// `dense.scene`, directional light off, 32 point lights and
+// `page_min_pixels` at 32: **34 lights gated to nothing** and the pool
+// still at `1024 / 1024` with `free 0`, because the thirty that passed
+// the gate took every slot. Both halves reported healthy — the culls
+// found casters, the raster said `cached 1020` — and the scene had no
+// lamp shadows at all. A gate that turns a light off does not relieve
+// the pressure that made it fire; it just spends the pool on the lights
+// above it.
+//
+// A light under the threshold now keeps its shadow at the coarsest
+// resolution its chain has: the top level, where a whole level IS one
+// page. Six pages for a point light and one for a spot, against the
+// hundreds a near lamp's chain can address.
+//
+// Epic classify on the same axis and call the result a distant light
+// (`r.Shadow.Virtual.DistantLightMode`, on by default): a light whose
+// footprint falls under the threshold is given a single-page shadow map
+// from its own id range instead of a full one, updated on a throttle.
+// The classification is the part that matters here; the addressing is
+// not copied, because a chain clamped to its own top already IS one
+// page and needs no second id space to say so.
+//
+// The gate that still turns a light off entirely is
+// `light_out_of_reach`, and it asks a genuinely different question —
+// see its own comment for why one number could not answer both.
+fn light_distant(light: u32) -> bool {
+    return light_single_level(light)
+        || (pages.density.y > 0.0 && coverage_pixels(light) < pages.density.y);
+}
+
+// The world size of one screen pixel at `depth` along the view axis.
+// Mirrors what `mark_pixel` computes for its own sample, so the two
+// cannot answer differently about the same distance.
+fn pixel_world(depth: f32) -> f32 {
+    let focal = view.clip_from_view[1][1];
+    if abs(focal) < 1e-9 {
+        return 0.0;
     }
+    return 2.0 * abs(depth) / (focal * max(view.viewport.y, 1.0));
+}
+
+// Whether the FINEST level any pixel could ask this light for is already
+// the coarsest one it has.
+//
+// # 🔴 Derived, where the threshold beside it is guessed
+//
+// `page_level` decides the level from the world size of a screen pixel
+// and the distance to the lamp. The finest level it can return for a
+// given light comes from the smallest pixel and the largest distance:
+// the pixel at the NEAREST point of the light's sphere, and a receiver
+// out at the edge of its range. If that is still the top of the chain,
+// no pixel anywhere can ask for anything finer — so one page per face is
+// not a demotion, it is the whole answer.
+//
+// Unreal ask exactly this question and phrase it in one line —
+// `bIsDistantLight = MinMipLevel == (MaxMipLevels - 1)`, "use distant
+// light only if we are sure that there's only one mip level" — over a
+// conservative mip taken from the light's nearest possible view depth
+// minus its radius. This is that, in the units this marking already
+// works in.
+//
+// It needs no threshold, which is the point. The projected-size test it
+// sits beside answers a proxy question and has to be tuned by hand:
+// measured on `dense.scene`, lamps of range 90 near the camera project
+// an enormous radius and `page_min_pixels` at 32 demoted NOTHING, while
+// the pool sat at 1024 of 1024 with `free 0` and pages flickered in and
+// out. The knob stays, because a project may want to demote harder than
+// correctness requires.
+fn light_single_level(light: u32) -> bool {
+    let record = lights[light];
+    if record.range <= 0.0 {
+        return false;
+    }
+    // The nearest the light's sphere can come to the camera, and so the
+    // smallest a screen pixel covering it can be.
+    let near = max(length(record.position - pages.eye_and_base.xyz) - record.range, 0.0);
+    let wanted = pixel_world(near) * pages.density.x;
+    if wanted <= 0.0 {
+        return false;
+    }
+    // Measured out at the range, which is the furthest a receiver of
+    // this light can sit and so the finest level it can ask for.
+    return page_level(record.range, wanted) >= pages.chain.z - 1u;
+}
+
+// Whether this light casts nothing at all.
+//
+// 🔴 One question in one place, so the call sites cannot drift. #944's
+// comment at the first of them already warns that a path which quietly
+// skips a light the others count "would make the two disagree for a
+// reason nothing states".
+//
+// Only the distance gate remains here. The projected-size comparison
+// moved to `light_distant`, where it demotes a light instead of
+// silencing it.
+fn light_gated(light: u32) -> bool {
     return light_out_of_reach(light);
 }
 
@@ -1494,6 +1607,7 @@ fn mark_froxels(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     var pairs = 0u;
     var culled = 0u;
+    var distant = 0u;
     for (var i = 0u; i < count; i = i + 1u) {
         let slot = record.offset + i;
         if slot >= arrayLength(&indices) {
@@ -1514,6 +1628,9 @@ fn mark_froxels(@builtin(global_invocation_id) gid: vec3<u32>) {
             culled = culled + 1u;
             continue;
         }
+        if light_distant(light) {
+            distant = distant + 1u;
+        }
         mark_froxel_light(light, corners, wanted);
     }
     // One thread per FROXEL, thousands rather than millions, so these go
@@ -1524,6 +1641,9 @@ fn mark_froxels(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     if culled != 0u {
         atomicAdd(&counters[6], culled);
+    }
+    if distant != 0u {
+        atomicAdd(&counters[24], distant);
     }
 }
 

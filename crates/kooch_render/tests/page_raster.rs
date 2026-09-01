@@ -126,6 +126,165 @@ fn the_lamp_arena_is_sized_by_groups() {
     );
 }
 
+/// The pre-pass's pair list is a PRODUCT — lamps times instances — and
+/// a constant cannot hold one.
+///
+/// 🔴 The failure it caused is the one this whole track keeps meeting:
+/// silent and healthy-looking. `cs_lamp_pairs` claims a slot with an
+/// `atomicAdd` and drops the pair past the cap, so WHICH lamps keep
+/// their geometry is whichever threads arrived first. A lamp that loses
+/// its pairs still marks its pages, still gets them resident, still
+/// gets them listed — and its cull finds no survivor, so they are
+/// cleared. A cleared page is far depth under reversed-Z, which every
+/// reader answers "nothing occludes".
+///
+/// The two `Lamp shadow pages` views named it in one look: no white in
+/// `faces`, so every page was resident, and uniform green in
+/// `occlusion`, so every page was empty.
+#[test]
+fn the_pair_list_outgrows_constants() {
+    // `dense.scene`, measured: 2157 entities and 64 lamps, and the ones
+    // under test carry range 90 over a city this size — so the sphere
+    // test keeps most instances for most lamps.
+    let instances = 2157u64;
+    let lamps = 64u64;
+    let old_cap = 16_384u64;
+    assert!(
+        instances * lamps > old_cap * 8,
+        "the bug this guards needs the scene's bound to dwarf the old cap;          it measured {} pairs against {old_cap}",
+        instances * lamps,
+    );
+    // And the bound the list now grows to still fits a buffer, at the
+    // eight bytes a pair costs.
+    assert!(
+        instances * lamps * 8 < 16 * 1024 * 1024,
+        "the bound has to fit comfortably, or growing to it is not the fix",
+    );
+}
+
+/// The per-view clear of `visible_counts` must not reach the lamps'
+/// buckets.
+///
+/// # 🔴 A source check, because the defect needs two cameras to appear
+///
+/// `PageRasterizer::record` runs once per VIEW and `LampCull::record`
+/// once per FRAME, guarded by `lamp_frame`. So a clear that spans the
+/// whole buffer is undone for the sun — its culls rerun after it — and
+/// permanent for the lamps: the second camera wipes their survivor
+/// counts and then skips the cull that refills them.
+///
+/// A lamp bucket reading zero survivors is not a slow path. The
+/// compaction stamps its pages `PAGE_EMPTY` and clears them, and a
+/// cleared page is far depth under reversed-Z, which every reader
+/// answers "nothing occludes". Every lamp in the scene stops casting
+/// and every counter stays healthy.
+///
+/// Every headless test here runs ONE view, so nothing in this file can
+/// reproduce it. The editor has two.
+#[test]
+fn the_clear_spares_lamp_buckets() {
+    let source = include_str!("../src/shadow/pages/raster.rs");
+    assert!(
+        !source.contains("clear_buffer(&self.visible_counts, 0, None)"),
+        "the per-view clear spans the whole buffer again; it must stop at the sun's levels,          because the lamps' cull runs once a frame and will not refill what a second view wiped"
+    );
+    assert!(
+        source.contains("clear_buffer(&self.visible_counts, 0, Some(levels as u64 * 4))"),
+        "the per-view clear no longer covers the sun's own levels"
+    );
+}
+
+/// The lamps' meshlet passes are dispatched over `pairs * meshlets`, and
+/// that product does not fit one dispatch dimension.
+///
+/// # 🔴 Why no GPU test in this file can catch it
+///
+/// The rigs here draw two instances of a cube. `meshlets_per_mesh` is
+/// one, the pair count is two, the dispatch is a single workgroup, and
+/// it will be a single workgroup no matter what the arithmetic does.
+/// `dense.scene` is 2157 instances at a SCENE-WIDE max of 4563 meshlets
+/// with 64 lamps — and `meshlets_per_mesh` is the maximum over the whole
+/// pool, not this mesh's own count, so it multiplies every pair.
+///
+/// An indirect dispatch past `maxComputeWorkGroupCount` is undefined,
+/// and here it did nothing: the culls never ran, every lamp bucket kept
+/// zero survivors, every lamp page was stamped empty and cleared, and
+/// every reader answered "nothing occludes" over a page that was
+/// resident and correctly keyed. No lamp in the scene cast a shadow and
+/// no counter said why.
+#[test]
+fn the_dispatch_outgrows_one_dimension() {
+    use kooch_core::gpu::limits::{MAX_WORKGROUPS_PER_DIM, tiled_workgroups};
+
+    // Measured on `dense.scene`, from the cull's own growth logs:
+    // `visible_meshlets required = 9 842 308` over 2157 instances.
+    let instances = 2157u32;
+    let scene_max_meshlets = 9_842_308u32 / instances;
+    let lamps = 64u32;
+    // Even the pair cap this path shipped with is far past the limit.
+    let old_pair_cap = 16_384u32;
+    let threads = old_pair_cap * scene_max_meshlets;
+    let flat = threads.div_ceil(64);
+    assert!(
+        flat > MAX_WORKGROUPS_PER_DIM,
+        "the bug this guards needs the flat count to exceed the limit;          it measured {flat} against {MAX_WORKGROUPS_PER_DIM}"
+    );
+
+    // Tiled, both dimensions are legal and every thread is still covered.
+    let (x, y) = tiled_workgroups(threads, 64);
+    assert!(x <= MAX_WORKGROUPS_PER_DIM && y <= MAX_WORKGROUPS_PER_DIM);
+    assert!(
+        u64::from(x) * u64::from(y) * 64 >= u64::from(threads),
+        "the tiled shape does not cover every thread"
+    );
+
+    // And the pre-pass's own dispatch, which is lamps times instances.
+    let (px, py) = tiled_workgroups(lamps * instances, 64);
+    assert!(px <= MAX_WORKGROUPS_PER_DIM && py <= MAX_WORKGROUPS_PER_DIM);
+
+    // The shaders must read the second dimension, or tiling the args
+    // just runs the same threads several times.
+    let source = include_str!("../shaders/lamp_cull.wgsl");
+    for entry in ["cs_lamp_pairs", "cs_lamp_err", "cs_lamp_cull"] {
+        let at = source
+            .find(&format!("fn {entry}("))
+            .unwrap_or_else(|| panic!("lamp_cull.wgsl has no {entry}"));
+        let body = &source[at..at + 400];
+        assert!(
+            body.contains("num_workgroups"),
+            "{entry} indexes by gid.x alone; a tiled dispatch would run row zero              {} times over",
+            "y"
+        );
+    }
+}
+
+/// The moved-caster list is sized by what the scene moves, not by a
+/// constant.
+///
+/// 🔴 The cap was not a memory budget, it was a cache switch. Past it
+/// `write_moved` bumps the scene generation, which voids every page
+/// every frame it happens — and `dense.scene` spins 2026 casters against
+/// a cap of 256, so it happened continuously. The panel then reads a
+/// pool at 100% hit over a raster redrawing two thirds of the atlas, and
+/// the two together look like a working cache.
+#[test]
+fn the_moved_list_grows() {
+    // Measured on `dense.scene`, from the engine's own warning.
+    let spinning = 2026u64;
+    let old_cap = 256u64;
+    assert!(
+        spinning > old_cap,
+        "the bug this guards needs the scene to outrun the cap"
+    );
+    // Sixteen bytes a sphere, against a shadow atlas measured at 52 MiB.
+    // There was never a memory argument for the cap.
+    assert!(
+        spinning * 16 < 64 * 1024,
+        "the whole list is {} bytes; a cap that small was never about memory",
+        spinning * 16
+    );
+}
+
 #[test]
 fn the_counters_name_every_level() {
     let Some((device, _queue)) = device() else {
@@ -640,12 +799,31 @@ fn lamp_face_page(view: u32, face: u32, level: u32, cell: (u32, u32), lights: u3
 /// geometry fails here rather than on screen.
 #[test]
 fn a_lamp_page_holds_what_its_light_sees() {
-    lamp_page_holds_its_view(false, small(), 7);
+    lamp_page_holds_its_view(false, small(), 7, coarse_level());
 }
 
 #[test]
 fn the_two_level_cull_draws_the_same_page() {
-    lamp_page_holds_its_view(true, small(), 7);
+    lamp_page_holds_its_view(true, small(), 7, coarse_level());
+}
+
+/// The TOP of a lamp's chain — one page for the whole cube face, which
+/// is the only page a distant light gets (#1009).
+///
+/// 🔴 The rig above plants the floor and three levels up, and stops
+/// three short of the top. So the level the distant tier depends on had
+/// never been rasterised by anything but the editor, where "the lamp
+/// casts nothing" and "the page is empty" look identical.
+#[test]
+fn the_chain_top_draws() {
+    let config = PageConfig::default();
+    let top = config.levels() - 1;
+    assert_eq!(
+        config.side(top),
+        1,
+        "the top of the chain is not a single page"
+    );
+    lamp_page_holds_its_view(false, small(), 7, top);
 }
 
 /// 🔴 The acceptance for #1016: the SAME page, read back from a pool
@@ -665,10 +843,22 @@ fn a_page_on_the_far_layer_draws_the_same() {
     assert_eq!(split.layers_per_view(), 2, "so a view needs two layers");
     // Slot 20 is page 4 of layer 1 — the far layer, and view 0's.
     assert_eq!(20 / split.slice(), 1, "the coarse page is on layer one");
-    lamp_page_holds_its_view(true, split, 20);
+    lamp_page_holds_its_view(true, split, 20, coarse_level());
 }
 
-fn lamp_page_holds_its_view(two_level: bool, budget: PoolConfig, coarse_slot: u32) {
+/// Three levels above the chain's floor: coarse enough to pair against a
+/// coarse bucket's survivors, fine enough that its cell is a window
+/// rather than the whole face.
+fn coarse_level() -> u32 {
+    PageConfig::default().local_floor() + 3
+}
+
+fn lamp_page_holds_its_view(
+    two_level: bool,
+    budget: PoolConfig,
+    coarse_slot: u32,
+    coarse_level: u32,
+) {
     use glam::{Mat4, Vec3};
     use kooch_render::meshlet::{
         MeshInstance, MeshletCullPipelines, MeshletScene, SceneCullParams, build_default_meshlets,
@@ -763,8 +953,11 @@ fn lamp_page_holds_its_view(two_level: bool, budget: PoolConfig, coarse_slot: u3
     let fine_level = config.local_floor();
     let fine_side = config.side(fine_level);
     let fine = lamp_face_page(0, 3, fine_level, (fine_side / 2, fine_side / 2), LIGHTS);
-    let coarse_level = fine_level + 3;
-    let coarse = lamp_face_page(0, 3, coarse_level, (1, 1), LIGHTS);
+    // The cell under the lamp, whatever the level's grid is. At the top
+    // of the chain that grid is one page and this is (0, 0).
+    let coarse_side = config.side(coarse_level);
+    let coarse_cell = (coarse_side / 2, coarse_side / 2);
+    let coarse = lamp_face_page(0, 3, coarse_level, coarse_cell, LIGHTS);
 
     let mut page_pool = PagePool::new(&device, budget);
     let entries = VIEWS * span(LIGHTS);
@@ -1896,8 +2089,17 @@ fn the_paged_shadow_resolves_like_a_cascade() {
     // claims the page path "looks about the same" there is a figure to
     // answer with.
     let distances = [5.0_f32, 10.0, 20.0, 40.0, 80.0];
-    let density = kooch_render::settings::RenderSettings::default().shadow_density;
-    assert_eq!(density, 100, "the default is the top of the list");
+    // 🔴 The REFERENCE density, taken from the choices list rather than
+    // from `Default`. It used to read the default and assert it was 100,
+    // which was the same number by coincidence until the defaults moved
+    // to what the engine is tuned at — and the comparison below is
+    // against a cascade at full rate, so it has to be measured at the
+    // reference whatever a project happens to ship.
+    let density = kooch_render::settings::shadow_density_choices()
+        .iter()
+        .map(|choice| choice.value as u32)
+        .find(|value| *value == 100)
+        .expect("100 % is the reference the cascade comparison is made at");
 
     let mut worst: (f32, f32) = (0.0, 0.0);
     for distance in distances {

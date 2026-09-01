@@ -44,7 +44,11 @@ pub mod scene_member;
 pub mod sky_renderer;
 pub mod spot_light;
 pub mod storage;
-#[cfg(feature = "testing")]
+// 🔴 NOT behind `testing`, despite the name. The name is the serialised
+// type path of what lives here (`kooch_ecs::testing::spin::Spin`) and a
+// scene resolves a component by that string, so renaming the module
+// would drop `Spin` from every entity that has one, silently. See the
+// module's own header.
 pub mod testing;
 pub mod transform;
 pub mod world_snapshot;

@@ -38,7 +38,7 @@ const GROUP: u32 = 8;
 /// 11 pages kept alive, 12 pages evicted, 13 unused (was tombstones
 /// swept). The rest spare, because a storage buffer is rounded up
 /// anyway.
-const COUNTERS: u64 = 24;
+const COUNTERS: u64 = 25;
 /// Words per view in the rank-state buffer: a 32-bucket demand
 /// histogram, the plan's three words, then the persistent bias and
 /// patience (#943), padded to 40 — then the OCCUPANCY BITMAP, one bit
@@ -158,10 +158,19 @@ pub struct MarkCounts {
     pub samples: u32,
     /// Sample/light pairs walked.
     pub pairs: u32,
-    /// Pairs the coverage gate turned away (#944): the light reaches
-    /// the sample, but its whole range projects under
-    /// `shadow_min_pixels` on screen, so it marks nothing.
+    /// Pairs the distance gate turned away (#944): the light reaches
+    /// the sample, but it stands more than `shadow_page_light_reach`
+    /// of its own ranges from the camera, so it marks nothing.
     pub culled: u32,
+    /// Pairs served by the DISTANT tier (#1009): the light's whole range
+    /// projects under `shadow_min_pixels`, so it marked ONE page of its
+    /// coarsest level rather than a chain.
+    ///
+    /// 🔴 Counted because the two cheap outcomes look alike on screen. A
+    /// lamp demoted to one page and a lamp whose pages found no slot
+    /// both give a soft, low-resolution shadow, and the pool counters
+    /// say nothing about which happened.
+    pub distant: u32,
     /// The most lights any one occupied froxel had to walk.
     ///
     /// 🔴 The average hides the case that hurts. `pairs / froxels` was
@@ -386,8 +395,13 @@ impl PageMarker {
         self.halo = pages.max(0.0);
     }
 
-    /// Projected radius, in screen pixels, under which a local light
-    /// marks no pages (#944). The sun is never gated.
+    /// Projected radius, in screen pixels, under which a local light is
+    /// DISTANT: one page per cube face instead of a chain (#1009). The
+    /// sun is never demoted.
+    ///
+    /// 🔴 It used to mean "marks no pages", and the rename of its
+    /// MEANING is the whole of #1009. See `light_distant` for the
+    /// measurement that moved it.
     pub fn set_coverage(&mut self, pixels: u32) {
         self.coverage = pixels;
     }
@@ -1072,6 +1086,7 @@ impl Readback {
                     pairs: words[2],
                     overflow: words[3],
                     culled: words[6],
+                    distant: words[24],
                     froxels: words[9],
                     peak_lights: words[16],
                     by_froxel: false,

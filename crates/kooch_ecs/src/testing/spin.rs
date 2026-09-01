@@ -26,13 +26,18 @@ use crate::Reflect;
 ///
 /// # Why the engine ships this at all
 ///
-/// A light that never moves is the one case the shadow page cache
-/// handles for free: its pages are drawn once and every later frame is
-/// a hit. A benchmark built with static lights measures the cache
-/// rather than the shadows, so the engine needs a way to make a light
-/// move that does not require a game to write one.
+/// It began as a measurement helper: a light that never moves is the one
+/// case the shadow page cache handles for free, so a benchmark built
+/// with static lights measures the cache rather than the shadows.
+///
+/// 🔴 It is not one. Gated behind `testing`, it was absent from every
+/// exported build — and an unregistered component is DROPPED on load
+/// rather than refused, so a game shipped with lights that orbited in
+/// the editor and stood still in the build, silently. A component whose
+/// removal changes what a player sees is engine content by definition.
+/// See [`crate::testing`] for why the module still carries that name.
 #[derive(Debug, Clone, Copy, Reflect)]
-#[reflect(category = "Testing")]
+#[reflect(category = "Animation")]
 pub struct Spin {
     /// Which way the pivot turns, in its parent's space. Normalised when
     /// used, so the Inspector can hold whatever is typed.
