@@ -3,8 +3,10 @@ use rapier3d::prelude::*;
 use glam::{Quat, Vec3};
 
 use crate::backend::{
-    ColliderInteraction, CollisionShape, CombineRule, InteractionMask, SurfaceMaterial,
+    ColliderInteraction, CollisionShape, CombineRule, InteractionMask, MIN_EXTENT, SurfaceMaterial,
 };
+
+use super::shapes::{ShapeError, shape_builder};
 
 /// Builds the Rapier collider for an engine shape.
 ///
@@ -14,14 +16,16 @@ use crate::backend::{
 /// `offset` becomes the collider's position relative to its parent body,
 /// which is how rapier expresses a shape that is not centred on the body.
 pub(super) fn collider_for(
-    shape: CollisionShape,
+    shape: &CollisionShape,
     offset: Vec3,
     material: SurfaceMaterial,
     interaction: ColliderInteraction,
-) -> Collider {
-    with_interaction(with_material(builder_for(shape), material), interaction)
-        .translation(offset)
-        .build()
+) -> Result<Collider, ShapeError> {
+    Ok(
+        with_interaction(with_material(builder_for(shape)?, material), interaction)
+            .translation(offset)
+            .build(),
+    )
 }
 
 /// Same, with a rotation in the body's local space.
@@ -30,15 +34,17 @@ pub(super) fn collider_for(
 /// can be rotated relative to the body, and dropping that would silently
 /// axis-align every attached shape.
 pub(super) fn collider_for_pose(
-    shape: CollisionShape,
+    shape: &CollisionShape,
     offset: Vec3,
     rotation: Quat,
     material: SurfaceMaterial,
     interaction: ColliderInteraction,
-) -> Collider {
-    with_interaction(with_material(builder_for(shape), material), interaction)
-        .position(Pose::from_parts(offset, rotation))
-        .build()
+) -> Result<Collider, ShapeError> {
+    Ok(
+        with_interaction(with_material(builder_for(shape)?, material), interaction)
+            .position(Pose::from_parts(offset, rotation))
+            .build(),
+    )
 }
 
 /// Applies the filtering, the sensor flag and the event opt-ins.
@@ -107,24 +113,8 @@ fn combine_rule(rule: CombineRule) -> CoefficientCombineRule {
 /// do not get a say. A density left at rapier's default would make a body
 /// weigh its authored mass *plus* its volume, which is exactly the units
 /// bug #618 exists to close.
-fn builder_for(shape: CollisionShape) -> ColliderBuilder {
-    shape_builder(shape).density(0.0)
-}
-
-/// The shape, before density or placement.
-fn shape_builder(shape: CollisionShape) -> ColliderBuilder {
-    match shape {
-        CollisionShape::Sphere { radius } => ColliderBuilder::ball(radius),
-        CollisionShape::Cuboid { half_extents } => ColliderBuilder::cuboid(
-            half_extents.x.max(1e-4),
-            half_extents.y.max(1e-4),
-            half_extents.z.max(1e-4),
-        ),
-        CollisionShape::Capsule {
-            radius,
-            half_height,
-        } => ColliderBuilder::capsule_y(half_height, radius),
-    }
+fn builder_for(shape: &CollisionShape) -> Result<ColliderBuilder, ShapeError> {
+    Ok(shape_builder(shape)?.density(0.0))
 }
 
 /// The mass properties a body of `mass` kg shaped like `shape` has.
@@ -134,22 +124,68 @@ fn shape_builder(shape: CollisionShape) -> ColliderBuilder {
 /// still resists rolling differently from tumbling — while the mass is
 /// exactly what the author typed.
 ///
-/// Clamped away from zero: `set_mass(0.0, true)` scales the inertia to
-/// zero too, and a body with no inertia takes infinite angular
-/// acceleration from any torque. A mass field mid-edit passes through zero
-/// on the way to the value the author means, and the NaNs it would produce
-/// outlive the typo.
+/// # A hollow shape still needs a tensor
+///
+/// A trimesh, a plane and a polyline all measure to zero inertia, and
+/// `set_mass(m, true)` scales zero to zero — leaving a body that takes
+/// infinite angular acceleration from any torque. Those fall back to the
+/// ball that encloses them, which is wrong in the way every engine is
+/// wrong here and finite in the way that matters.
+///
+/// Clamped away from zero for the same reason a dimension is: a mass field
+/// mid-edit passes through zero on the way to the value the author means,
+/// and the NaNs it would produce outlive the typo.
 pub(super) fn mass_properties_for(
-    shape: CollisionShape,
+    shape: &CollisionShape,
     mass: f32,
     center_of_mass: Option<Vec3>,
 ) -> MassProperties {
     const MIN_MASS: f32 = 1e-4;
 
-    let mut mprops = shape_builder(shape).build().shape().mass_properties(1.0);
+    let built = shape_builder(shape).map(|builder| builder.build());
+    let measured = built
+        .as_ref()
+        .map(|collider| collider.shape().mass_properties(1.0))
+        .unwrap_or_default();
+
+    let mut mprops = match usable(&measured) {
+        true => measured,
+        false => MassProperties::from_ball(1.0, enclosing_radius(built.as_ref().ok())),
+    };
     mprops.set_mass(mass.max(MIN_MASS), true);
     if let Some(center) = center_of_mass {
         mprops.local_com = center;
     }
     mprops
+}
+
+/// Whether these properties give the solver something finite to divide by.
+fn usable(mprops: &MassProperties) -> bool {
+    mprops.mass() > 0.0
+        && mprops.mass().is_finite()
+        && mprops
+            .principal_inertia()
+            .to_array()
+            .iter()
+            .all(|i| *i > 0.0 && i.is_finite())
+}
+
+/// The radius of a ball around the shape, or one metre when there is no
+/// shape to measure.
+///
+/// An infinite half-space measures infinite, so the AABB is clamped: the
+/// number only has to be finite and roughly the size of the thing.
+fn enclosing_radius(collider: Option<&Collider>) -> f32 {
+    const FALLBACK: f32 = 1.0;
+    const CEILING: f32 = 1.0e4;
+
+    let Some(collider) = collider else {
+        return FALLBACK;
+    };
+    let extents = collider.compute_aabb().extents();
+    let radius = extents.max_element() * 0.5;
+    match radius.is_finite() && radius > MIN_EXTENT {
+        true => radius.min(CEILING),
+        false => FALLBACK,
+    }
 }

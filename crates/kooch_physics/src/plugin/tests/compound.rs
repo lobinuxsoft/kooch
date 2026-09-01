@@ -221,12 +221,13 @@ fn a_grandchild_reaches_the_body_above_it() {
 fn moving_a_child_changes_the_digest() {
     let a = [crate::plugin::compound::Attachment {
         shape: crate::backend::CollisionShape::Sphere { radius: 1.0 },
+        spec: crate::components::Collider::default().shape_spec(None),
         offset: Vec3::ZERO,
         rotation: Quat::IDENTITY,
         material: Default::default(),
         interaction: Default::default(),
     }];
-    let mut b = a;
+    let mut b = a.clone();
     b[0].offset = Vec3::new(0.0, 0.1, 0.0);
 
     assert_ne!(digest(&a), digest(&b), "a moved shape must rebuild");

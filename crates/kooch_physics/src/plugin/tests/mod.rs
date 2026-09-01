@@ -160,8 +160,8 @@ fn shape_of(resources: &Resources, entity: Entity) -> CollisionShape {
         .unwrap()
         .spec(slot_of(resources, entity).expect("entity has no body"))
         .expect("slot is free")
-        .desc(Vec3::ZERO, Quat::IDENTITY)
-        .shape
+        .resolve(None)
+        .expect("the shape resolves without a mesh")
 }
 
 /// The pose the solver actually holds for an entity's body.

@@ -9,8 +9,8 @@
 //! - Gravity: `(0, -9.81, 0)`. Override via [`RapierBackend::set_gravity`].
 //! - Integration parameters: Rapier defaults (60 Hz hint, default solver
 //!   iterations, CCD enabled per-body but on-demand).
-//! - Friction / restitution coefficients: Rapier defaults (0.5 / 0.0).
-//!   PR-1 doesn't expose material override; lands with #137.
+//! - Friction / restitution coefficients: authored per collider, see
+//!   [`SurfaceMaterial`](crate::backend::SurfaceMaterial).
 
 mod backend;
 mod conv;
@@ -18,6 +18,7 @@ mod conv;
 mod debug;
 mod events;
 mod joints;
+mod shapes;
 
 #[cfg(test)]
 mod tests;

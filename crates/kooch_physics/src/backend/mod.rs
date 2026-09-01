@@ -11,13 +11,17 @@ mod events;
 mod interaction;
 mod joint;
 mod material;
+mod mesh_cache;
+mod shape;
 
-pub use body::{BodyDesc, BodyHandle, BodyKind, ColliderHandle, CollisionShape, RayHit};
+pub use body::{BodyDesc, BodyHandle, BodyKind, ColliderHandle, RayHit};
 pub use debug::{DebugCategories, DebugLine};
 pub use events::{CollisionEvent, ContactForceEvent};
 pub use interaction::{ColliderInteraction, InteractionMask};
 pub use joint::{BrokenJoint, JointDesc, JointHandle, JointKind, JointMotor, MotorModel};
 pub use material::{CombineRule, Damping, SurfaceMaterial};
+pub use mesh_cache::{ColliderMesh, ColliderMeshCache};
+pub use shape::{CollisionShape, MIN_EXTENT};
 
 use glam::{Quat, Vec3};
 

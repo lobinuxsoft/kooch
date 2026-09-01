@@ -25,15 +25,21 @@ use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::{Children, GlobalTransform};
 
-use crate::backend::{ColliderInteraction, CollisionShape, SurfaceMaterial};
-use crate::components::{Collider, PhysicsBody};
+use crate::backend::{ColliderInteraction, ColliderMeshCache, CollisionShape, SurfaceMaterial};
+use crate::components::{Collider, PhysicsBody, ShapeSpec};
 
 use super::world::scaled_shape;
 
 /// One shape contributed by a descendant, in the body's local space.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct Attachment {
     pub shape: CollisionShape,
+    /// The same geometry as plain old data, for [`digest`].
+    ///
+    /// Hashing the shape itself would walk every vertex of every child's
+    /// trimesh, every frame, to answer a question the spec answers in
+    /// thirteen `Copy` fields.
+    pub spec: ShapeSpec,
     pub offset: Vec3,
     pub rotation: Quat,
     /// The child's own surface. An ice patch welded onto a crate is still
@@ -54,6 +60,7 @@ pub(super) fn attachments_for(resources: &Resources, root: Entity) -> Vec<Attach
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Vec::new();
     };
+    let meshes = resources.get::<ColliderMeshCache>();
     let (Some(children), Some(globals)) = (
         registry.get_cpu::<Children>(),
         registry.get_cpu::<GlobalTransform>(),
@@ -89,13 +96,19 @@ pub(super) fn attachments_for(resources: &Resources, root: Entity) -> Vec<Attach
         {
             let local = to_local * world.matrix;
             let (scale, rotation, translation) = local.to_scale_rotation_translation();
-            found.push(Attachment {
-                shape: scaled_shape(collider, scale),
-                offset: translation + collider.center,
-                rotation,
-                material: collider.material(),
-                interaction: collider.interaction(),
-            });
+            // A child still waiting for its mesh contributes nothing this
+            // frame. Its epoch is in the digest, so the body rebuilds —
+            // and picks the shape up — the moment the mesh lands.
+            if let Some(shape) = scaled_shape(collider, scale, meshes) {
+                found.push(Attachment {
+                    shape,
+                    spec: collider.shape_spec(meshes),
+                    offset: translation + collider.center,
+                    rotation,
+                    material: collider.material(),
+                    interaction: collider.interaction(),
+                });
+            }
         }
 
         if let Some(grandchildren) = children.get(entity) {
@@ -160,28 +173,39 @@ pub(super) fn digest(attachments: &[Attachment]) -> u64 {
         for mask in [i.collision_groups, i.solver_groups] {
             (mask.memberships, mask.filter).hash(&mut hasher);
         }
-        match attachment.shape {
-            CollisionShape::Sphere { radius } => {
-                0u8.hash(&mut hasher);
-                radius.to_bits().hash(&mut hasher);
-            }
-            CollisionShape::Cuboid { half_extents } => {
-                1u8.hash(&mut hasher);
-                for value in half_extents.to_array() {
-                    value.to_bits().hash(&mut hasher);
-                }
-            }
-            CollisionShape::Capsule {
-                radius,
-                half_height,
-            } => {
-                2u8.hash(&mut hasher);
-                radius.to_bits().hash(&mut hasher);
-                half_height.to_bits().hash(&mut hasher);
-            }
-        }
+        hash_spec(&attachment.spec, &mut hasher);
     }
     hasher.finish()
+}
+
+/// A shape's authored identity, hashed field by field.
+///
+/// Floats have no `Hash`; their bits do, and bit equality is the right
+/// test here — a shape that moved by one ulp did move.
+fn hash_spec(spec: &ShapeSpec, hasher: &mut impl std::hash::Hasher) {
+    use std::hash::Hash;
+
+    spec.shape.hash(hasher);
+    for value in [
+        spec.radius,
+        spec.half_height,
+        spec.border_radius,
+        spec.voxel_size,
+    ]
+    .into_iter()
+    .chain(spec.half_extents.to_array())
+    .chain(spec.normal.to_array())
+    .chain(spec.point_a.to_array())
+    .chain(spec.point_b.to_array())
+    .chain(spec.point_c.to_array())
+    {
+        value.to_bits().hash(hasher);
+    }
+    spec.voxel_solid.hash(hasher);
+    spec.mesh.hash(hasher);
+    // What makes a mesh *arriving* reach the body that was authored
+    // before it: the GUID never changed, so nothing else here would.
+    spec.mesh_epoch.hash(hasher);
 }
 
 /// Warns that a body nested under another will not follow its parent.

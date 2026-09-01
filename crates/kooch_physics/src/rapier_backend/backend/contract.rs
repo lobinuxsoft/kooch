@@ -16,6 +16,7 @@ use crate::backend::{
 
 use super::super::conv::{collider_for, collider_for_pose, mass_properties_for};
 use super::super::joints::{JointEntry, JointRef, generic_joint_for, linear_impulse};
+use super::super::shapes::warn_refused;
 
 impl PhysicsBackend for RapierBackend {
     fn step(&mut self, dt: f32) {
@@ -62,7 +63,7 @@ impl PhysicsBackend for RapierBackend {
         let rb = RigidBodyBuilder::new(body_type)
             .pose(Pose::from_parts(desc.position, desc.rotation))
             .additional_mass_properties(mass_properties_for(
-                desc.shape,
+                &desc.shape,
                 desc.mass,
                 desc.center_of_mass,
             ))
@@ -70,17 +71,24 @@ impl PhysicsBackend for RapierBackend {
             .linear_damping(desc.damping.sanitised().linear)
             .angular_damping(desc.damping.sanitised().angular)
             .build();
-        let collider = collider_for(
-            desc.shape,
+        let rb_handle = self.bodies.insert(rb);
+        // A refused shape leaves the body real and uncollidable, which is
+        // a bug report the author can see. Substituting a ball would hide
+        // it behind geometry nobody wrote.
+        match collider_for(
+            &desc.shape,
             desc.shape_offset,
             desc.material,
             desc.interaction,
-        );
-        let rb_handle = self.bodies.insert(rb);
-        let collider_handle =
-            self.colliders
-                .insert_with_parent(collider, rb_handle, &mut self.bodies);
-        self.publish_aabb(collider_handle);
+        ) {
+            Ok(collider) => {
+                let collider_handle =
+                    self.colliders
+                        .insert_with_parent(collider, rb_handle, &mut self.bodies);
+                self.publish_aabb(collider_handle);
+            }
+            Err(error) => warn_refused(&desc.shape, &error),
+        }
         // Rapier defers this to the next step. The editor authors a world
         // it does not simulate, so without it every mass and centre of
         // mass read before pressing Play is stale — and a physics debug
@@ -101,7 +109,13 @@ impl PhysicsBackend for RapierBackend {
         interaction: ColliderInteraction,
     ) -> Option<ColliderHandle> {
         let rb_handle = *self.handles.get(body)?;
-        let collider = collider_for_pose(shape, offset, rotation, material, interaction);
+        let collider = match collider_for_pose(&shape, offset, rotation, material, interaction) {
+            Ok(collider) => collider,
+            Err(error) => {
+                warn_refused(&shape, &error);
+                return None;
+            }
+        };
         let handle = self
             .colliders
             .insert_with_parent(collider, rb_handle, &mut self.bodies);

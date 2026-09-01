@@ -26,10 +26,10 @@ use kooch_ecs::component::Component;
 use kooch_ecs::entity::Entity;
 
 use crate::backend::{
-    BodyDesc, BodyHandle, ColliderInteraction, CollisionShape, Damping, PhysicsBackend, RayHit,
-    SurfaceMaterial,
+    BodyDesc, BodyHandle, ColliderInteraction, ColliderMeshCache, CollisionShape, Damping,
+    PhysicsBackend, RayHit, SurfaceMaterial,
 };
-use crate::components::{Collider, PhysicsBody};
+use crate::components::{Collider, PhysicsBody, ShapeSpec};
 
 /// The physics body an entity owns, as a slot into [`PhysicsWorld`].
 ///
@@ -67,10 +67,13 @@ impl SolverBody {
 pub struct BodySpec {
     kind: u32,
     mass: f32,
-    shape: u32,
-    radius: f32,
-    half_height: f32,
-    half_extents: Vec3,
+    /// The authored geometry, as plain old data.
+    ///
+    /// The spec rather than the shape: a mesh-derived collider resolves
+    /// to hundreds of thousands of triangles, and this is compared every
+    /// frame. It carries the mesh's epoch, so a mesh arriving after the
+    /// body was built still reads as a change.
+    shape: ShapeSpec,
     /// The shape's authored centre, in the entity's local space.
     ///
     /// In the spec because it is baked into the collider when built: an
@@ -120,8 +123,13 @@ impl BodySpec {
     /// that made colliders "work at some sizes and not others": the mesh
     /// grew with the gizmo and the collider stayed at its authored
     /// dimensions.
-    pub fn new(body: &PhysicsBody, collider: &Collider, scale: Vec3) -> Self {
-        Self::with_attachments(body, collider, scale, 0)
+    pub fn new(
+        body: &PhysicsBody,
+        collider: &Collider,
+        scale: Vec3,
+        meshes: Option<&ColliderMeshCache>,
+    ) -> Self {
+        Self::with_attachments(body, collider, scale, 0, meshes)
     }
 
     /// Same, for a body that inherits shapes from its descendants.
@@ -130,15 +138,13 @@ impl BodySpec {
         collider: &Collider,
         scale: Vec3,
         attachments: u64,
+        meshes: Option<&ColliderMeshCache>,
     ) -> Self {
         Self {
             attachments,
             kind: body.kind,
             mass: body.mass,
-            shape: collider.shape,
-            radius: collider.radius,
-            half_height: collider.half_height,
-            half_extents: collider.half_extents,
+            shape: collider.shape_spec(meshes),
             center: collider.center,
             material: collider.material(),
             interaction: collider.interaction(),
@@ -149,34 +155,28 @@ impl BodySpec {
         }
     }
 
+    /// The geometry this body would be built from, at its authored scale.
+    ///
+    /// `None` while a mesh-derived collider is waiting for its mesh. The
+    /// sync pass reads that as "not yet" and tries again next frame,
+    /// which the epoch in the spec makes cheap: nothing rebuilds until
+    /// the answer actually changes.
+    pub fn resolve(&self, meshes: Option<&ColliderMeshCache>) -> Option<CollisionShape> {
+        Some(self.shape.resolve(meshes)?.scaled(self.scale))
+    }
+
+    /// `true` when this body names a mesh nothing has answered for.
+    pub fn awaits_mesh(&self, meshes: Option<&ColliderMeshCache>) -> bool {
+        self.shape.awaits_mesh(meshes)
+    }
+
     /// The descriptor that builds this body at a given pose.
     ///
-    /// # How scale folds into each shape
-    ///
-    /// Only a box scales exactly: its half-extents are per-axis, so a
-    /// non-uniform scale is exact. The round shapes have no non-uniform
-    /// form in Rapier — a non-uniformly scaled sphere is an ellipsoid, and
-    /// there is no ellipsoid primitive — so they follow the convention
-    /// every engine uses:
-    ///
-    /// - **Sphere**: radius times the largest axis scale. Enclosing the
-    ///   mesh beats intersecting it; a collider smaller than what you can
-    ///   see is the one that reads as a physics bug.
-    /// - **Capsule**: radius times the larger of the two horizontal
-    ///   scales, half-height times the vertical one, because the capsule
-    ///   runs along Y.
-    ///
-    /// A truly non-uniform round collider wants a convex hull (#137).
-    pub fn desc(&self, position: Vec3, rotation: Quat) -> BodyDesc {
+    /// Takes the resolved shape rather than resolving one: the sync pass
+    /// already has it, and resolving twice would clone a level's trimesh
+    /// for nothing.
+    pub fn desc(&self, shape: CollisionShape, position: Vec3, rotation: Quat) -> BodyDesc {
         let s = self.scale.abs();
-        let collider = Collider {
-            shape: self.shape,
-            radius: self.radius,
-            half_height: self.half_height,
-            half_extents: self.half_extents,
-            center: self.center,
-            ..Default::default()
-        };
         BodyDesc {
             kind: PhysicsBody {
                 kind: self.kind,
@@ -184,7 +184,7 @@ impl BodySpec {
                 ..Default::default()
             }
             .body_kind(),
-            shape: scaled_shape(&collider, self.scale),
+            shape,
             mass: self.mass,
             // Scaled with the body, because it is a point in the entity's
             // local space and the gizmo that scales the shape scales the
@@ -285,10 +285,11 @@ impl PhysicsWorld {
         &mut self,
         entity: Entity,
         spec: BodySpec,
+        shape: CollisionShape,
         position: Vec3,
         rotation: Quat,
     ) -> u32 {
-        let handle = self.backend.add_body(spec.desc(position, rotation));
+        let handle = self.backend.add_body(spec.desc(shape, position, rotation));
         let slot = Slot {
             entity,
             handle,
@@ -472,7 +473,7 @@ impl PhysicsWorld {
         for attachment in attachments {
             self.backend_mut().attach_collider(
                 handle,
-                attachment.shape,
+                attachment.shape.clone(),
                 attachment.offset,
                 attachment.rotation,
                 attachment.material,
@@ -482,44 +483,18 @@ impl PhysicsWorld {
     }
 }
 
-/// Folds a `Transform` scale into a collider's dimensions.
+/// The collider's geometry at a `Transform` scale, or `None` while a
+/// mesh-derived shape is waiting for its mesh.
 ///
-/// Rapier's shapes take no scale — they are built from dimensions — so
-/// scaling has to happen where the shape is built. Shared by the body's
-/// own shape and by the ones its descendants contribute, so a compound
-/// child scales the same way the body does.
-///
-/// # Why the round shapes are approximations
-///
-/// Only a box scales exactly: its half-extents are per-axis. A
-/// non-uniformly scaled sphere is an ellipsoid and Rapier has no
-/// ellipsoid primitive, so the round shapes follow the convention every
-/// engine uses:
-///
-/// - **Sphere**: radius times the largest axis scale. Enclosing the mesh
-///   beats intersecting it; a collider smaller than what you can see is
-///   the one that reads as a physics bug.
-/// - **Capsule**: radius times the larger of the two *horizontal* scales,
-///   half-height times the vertical one, because the capsule runs along Y.
-///   A tall thin capsule scaled on Y should get taller, not fatter.
-///
-/// A truly non-uniform round collider wants a convex hull (#137).
-pub(super) fn scaled_shape(collider: &Collider, scale: Vec3) -> CollisionShape {
-    let s = scale.abs();
-    let scaled = Collider {
-        shape: collider.shape,
-        radius: collider.radius * s.max_element(),
-        half_height: collider.half_height * s.y,
-        half_extents: collider.half_extents * s,
-        center: collider.center,
-        ..Default::default()
-    };
-    let scaled = match collider.shape {
-        crate::components::SHAPE_CAPSULE => Collider {
-            radius: collider.radius * s.x.max(s.z),
-            ..scaled
-        },
-        _ => scaled,
-    };
-    scaled.collision_shape()
+/// Shared by the body's own shape and by the ones its descendants
+/// contribute, so a compound child scales the same way the body does.
+/// The per-shape rules live on [`CollisionShape::scaled`], which is also
+/// what the collider gizmo mirrors — if those two ever disagree the
+/// outline shows a shape the solver is not using.
+pub(super) fn scaled_shape(
+    collider: &Collider,
+    scale: Vec3,
+    meshes: Option<&ColliderMeshCache>,
+) -> Option<CollisionShape> {
+    Some(collider.collision_shape(meshes)?.scaled(scale))
 }

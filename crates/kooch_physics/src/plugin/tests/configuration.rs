@@ -90,9 +90,8 @@ fn a_body_without_a_collider_falls_on_the_default_shape() {
             .unwrap()
             .spec(slot_of(&resources, entity).unwrap())
             .unwrap()
-            .desc(Vec3::ZERO, Quat::IDENTITY)
-            .shape,
-        CollisionShape::Sphere { radius: 0.5 }
+            .resolve(None),
+        Some(CollisionShape::Sphere { radius: 0.5 })
     );
     assert!(position(&resources, entity).y < 9.9);
 }

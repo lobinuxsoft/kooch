@@ -11,8 +11,8 @@ fn defaults_are_a_one_kilo_dynamic_unit_sphere() {
     assert_eq!(body.body_kind(), BodyKind::Dynamic);
     assert_eq!(body.mass, 1.0);
     assert_eq!(
-        Collider::default().collision_shape(),
-        CollisionShape::Sphere { radius: 0.5 }
+        Collider::default().collision_shape(None),
+        Some(CollisionShape::Sphere { radius: 0.5 })
     );
 }
 
@@ -30,8 +30,8 @@ fn unknown_discriminants_fall_back_instead_of_failing() {
         ..Default::default()
     };
     assert!(matches!(
-        collider.collision_shape(),
-        CollisionShape::Sphere { .. }
+        collider.collision_shape(None),
+        Some(CollisionShape::Sphere { .. })
     ));
 }
 
@@ -44,7 +44,7 @@ fn degenerate_dimensions_are_clamped() {
         half_extents: Vec3::ZERO,
         ..Default::default()
     };
-    let CollisionShape::Cuboid { half_extents } = collider.collision_shape() else {
+    let Some(CollisionShape::Cuboid { half_extents }) = collider.collision_shape(None) else {
         panic!("expected a cuboid");
     };
     assert!(half_extents.min_element() > 0.0);
@@ -64,17 +64,17 @@ fn switching_shape_keeps_the_other_parameters() {
     };
     collider.shape = SHAPE_CUBOID;
     assert_eq!(
-        collider.collision_shape(),
-        CollisionShape::Cuboid {
+        collider.collision_shape(None),
+        Some(CollisionShape::Cuboid {
             half_extents: Vec3::splat(2.0)
-        }
+        })
     );
     collider.shape = SHAPE_CAPSULE;
     assert_eq!(
-        collider.collision_shape(),
-        CollisionShape::Capsule {
+        collider.collision_shape(None),
+        Some(CollisionShape::Capsule {
             radius: 0.25,
             half_height: 1.0
-        }
+        })
     );
 }
