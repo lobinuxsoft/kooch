@@ -156,3 +156,16 @@ pub(super) fn add_to_archetype(
     let next = archetypes.archetype_after_add_dynamic(current, type_id);
     archetypes.register_entity(entity, next);
 }
+
+/// Runs `emit` with a local log buffer installed, and returns what it said.
+///
+/// Local rather than global: these tests run beside every other one in the
+/// crate, and a global default can only be set once per process.
+pub(super) fn captured(emit: impl FnOnce()) -> Vec<kooch_core::log_console::LogEntry> {
+    use tracing_subscriber::layer::SubscriberExt as _;
+
+    let buffer = kooch_core::log_console::LogBuffer::new();
+    let subscriber = tracing_subscriber::registry().with(buffer.layer());
+    tracing::subscriber::with_default(subscriber, emit);
+    buffer.snapshot()
+}

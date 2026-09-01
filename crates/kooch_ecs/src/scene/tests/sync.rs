@@ -533,3 +533,168 @@ fn a_round_trip_keeps_the_hierarchy_when_names_collide() {
         "the round-trip reattached the child to the wrong entity"
     );
 }
+
+/// A scene naming a type this binary has no Rust type for has to SAY so.
+///
+/// The rename to Kóoch moved every `type_name` from `ome_*` to `kooch_*`,
+/// so every saved scene named types that no longer existed. Nothing said
+/// so — it was caught by noticing things were missing (#719).
+#[test]
+fn an_unknown_type_warns_once() {
+    let mut resources = setup_resources();
+
+    let ghosts = (0..3)
+        .map(|i| EntityDescription {
+            name: format!("Haunted{i}"),
+            parent_index: None,
+            parent: None,
+            components: vec![ComponentDescription {
+                type_name: "my_game::Ghost".into(),
+                fields: vec![("spooky".into(), ReflectValue::U32(1))],
+            }],
+        })
+        .collect();
+    let id = kooch_core::Guid::new_v4();
+    let doc = SceneDocument {
+        id,
+        name: "Untitled Scene".into(),
+        version: "0.1.0".into(),
+        entities: ghosts,
+    };
+
+    let said = super::captured(|| {
+        sync_scene_to_ecs(&doc, &mut resources).unwrap();
+    });
+
+    let about_ghost: Vec<_> = said
+        .iter()
+        .filter(|e| e.message.contains("my_game::Ghost"))
+        .collect();
+    assert_eq!(
+        about_ghost.len(),
+        1,
+        "one unknown type is one problem, not one per entity: {said:#?}"
+    );
+    assert_eq!(about_ghost[0].level, tracing::Level::WARN);
+    assert!(
+        about_ghost[0].message.contains(&id.to_string()),
+        "with no path set, the scene's id is what greps: {}",
+        about_ghost[0].message,
+    );
+}
+
+/// The line names the file it read, not the document's `name`.
+///
+/// Every scene the editor creates carries `name: "Untitled Scene"`, so a
+/// complaint keyed on it names nothing at all.
+#[test]
+fn the_warning_names_the_file() {
+    let mut resources = setup_resources();
+
+    let doc = SceneDocument {
+        id: kooch_core::Guid::new_v4(),
+        name: "Untitled Scene".into(),
+        version: "0.1.0".into(),
+        entities: vec![EntityDescription {
+            name: "Haunted".into(),
+            parent_index: None,
+            parent: None,
+            components: vec![ComponentDescription {
+                type_name: "my_game::Ghost".into(),
+                fields: vec![],
+            }],
+        }],
+    };
+
+    let said = super::captured(|| {
+        crate::scene::loading_from(&mut resources, std::path::Path::new("assets/dense.scene"));
+        sync_scene_to_ecs(&doc, &mut resources).unwrap();
+    });
+
+    assert!(
+        said.iter()
+            .any(|e| e.message.contains("my_game::Ghost")
+                && e.message.contains("assets/dense.scene")),
+        "the file is the actionable half: {said:#?}"
+    );
+}
+
+/// Two loads warn twice.
+///
+/// Deduplicating for the life of the process would mean fixing the scene
+/// and reloading looks exactly like never having warned at all.
+#[test]
+fn a_second_load_warns_again() {
+    let mut resources = setup_resources();
+
+    let doc = SceneDocument {
+        id: kooch_core::Guid::new_v4(),
+        name: "haunted".into(),
+        version: "0.1.0".into(),
+        entities: vec![EntityDescription {
+            name: "Haunted".into(),
+            parent_index: None,
+            parent: None,
+            components: vec![ComponentDescription {
+                type_name: "my_game::Ghost".into(),
+                fields: vec![],
+            }],
+        }],
+    };
+
+    let said = super::captured(|| {
+        sync_scene_to_ecs(&doc, &mut resources).unwrap();
+        sync_scene_to_ecs(&doc, &mut resources).unwrap();
+    });
+
+    let about_ghost = said
+        .iter()
+        .filter(|e| e.message.contains("my_game::Ghost"))
+        .count();
+    assert_eq!(about_ghost, 2, "the report must reset per load: {said:#?}");
+}
+
+/// A field the component no longer has must not take the scene down.
+///
+/// The engine's policy is to break the data and fix it by hand rather than
+/// write migrations. Aborting here would empty the world instead — step one
+/// of the load already despawned it — which makes the policy unusable.
+#[test]
+fn a_dropped_field_keeps_loading() {
+    let mut resources = setup_resources();
+    resources
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .register_cpu_reflected::<Health>();
+
+    let doc = SceneDocument {
+        id: kooch_core::Guid::new_v4(),
+        name: "aged".into(),
+        version: "0.1.0".into(),
+        entities: vec![EntityDescription {
+            name: "Hero".into(),
+            parent_index: None,
+            parent: None,
+            components: vec![ComponentDescription {
+                type_name: std::any::type_name::<Health>().to_owned(),
+                fields: vec![
+                    ("armour".into(), ReflectValue::U32(9)),
+                    ("hp".into(), ReflectValue::U32(77)),
+                ],
+            }],
+        }],
+    };
+
+    let said = super::captured(|| {
+        sync_scene_to_ecs(&doc, &mut resources).expect("a dropped field is not a failed load");
+    });
+
+    let query = Query::<&Health>::new(&resources);
+    let hp: Vec<u32> = query.iter().map(|h| h.hp).collect();
+    assert_eq!(hp, vec![77], "the fields around the dropped one must land");
+    assert!(
+        said.iter()
+            .any(|e| e.message.contains("armour") && e.level == tracing::Level::DEBUG),
+        "dropping a removed field is routine, but not invisible: {said:#?}"
+    );
+}
