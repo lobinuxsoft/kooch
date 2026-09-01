@@ -7,6 +7,7 @@
 - [Getting Started](./guide/getting-started.md)
 - [The Editor](./editor/overview.md)
 - [Textures](./guide/textures.md)
+- [Colliders](./guide/colliders.md)
 - [Shipping a Game](./guide/shipping.md)
 
 # Scripting

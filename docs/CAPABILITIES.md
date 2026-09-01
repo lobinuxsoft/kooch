@@ -126,6 +126,18 @@ them, the remote protocol mirrored them — and no render crate read one.
 | `MockInputBackend` | `mock_backend.rs` | **orphan** to games | Injects keys and axes with no hardware — exactly what a cutscene, a tutorial or an automated test needs, and it is reachable only from the engine's own tests. |
 | Remote input over the wire | `remote_backend.rs` | connected | `Method::Extension("input.state")`; state, never events. |
 
+## Physics — `kooch_physics`
+
+| Capability | Where | Status | Notes |
+|---|---|---|---|
+| `PhysicsBackend` trait | `backend/mod.rs` | connected | The contract. Rapier lives only inside `rapier_backend`; every public type is glam, so a GPU solver later touches no authored scene. |
+| `CollisionShape` — 15 variants | `backend/shape.rs` | connected | Every shape rapier 0.34 ships. Analytic ones from typed numbers, mesh-derived ones from `ColliderMeshCache`. |
+| `ColliderMeshCache` | `backend/mesh_cache.rs` | connected | The one seam pointing outward. Defined in physics, filled by `kooch::collider_meshes` — the facade is the only crate that sees both a GUID and an asset database. |
+| Surface + filtering | `components/body/collider/` | connected | `friction`, `restitution` and their combine rules; four group masks; the sensor flag. All per collider, all baked at build time, so an Inspector edit retires and rebuilds the body. |
+| Compound bodies | `plugin/compound.rs` | connected | A descendant `Collider` with no body of its own joins the nearest ancestor that has one, at its own local pose. A dynamic body under another warns. |
+| `Heightfield` | `backend/shape.rs` | **invisible** | Builds and collides, and has no Inspector path: a height grid cannot be typed and there is no terrain asset to read one from. Reachable from code today. |
+| Collider gizmo | `kooch_editor_core/gizmos/collider.rs` | connected, partial | Draws every analytic shape at its effective size. Mesh-derived shapes draw nothing — a `Visualizer` gets a component, not `Resources`, so it cannot reach the cache. #574. |
+
 ## Camera — `kooch_camera`
 
 | Capability | Where | Status | Notes |
