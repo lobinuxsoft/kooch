@@ -19,6 +19,7 @@ use kooch_core::run_state::run_if_playing;
 use kooch_core::stage::Stage;
 use kooch_ecs::component::ComponentRegistry;
 
+use crate::backend::ColliderMeshCache;
 use crate::components::{Collider, Joint, PhysicsBody};
 use crate::rapier_backend::RapierBackend;
 
@@ -120,6 +121,10 @@ pub struct PhysicsComponentsPlugin;
 
 impl Plugin for PhysicsComponentsPlugin {
     fn build(&self, app: &mut App) {
+        // Empty, and inserted even where nothing fills it: a mesh-derived
+        // collider resolves to no geometry rather than to a stand-in, so
+        // an absent cache and an unfilled one have to behave the same.
+        app.insert_resource(ColliderMeshCache::new());
         app.add_system(Stage::Startup, register_components);
     }
 

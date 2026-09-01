@@ -10,6 +10,9 @@
 //! - [`backend`] — public trait + descriptor types (BodyDesc, BodyHandle,
 //!   CollisionShape, JointDesc, RayHit). Pure data + glam types, no
 //!   nalgebra leaks.
+//! - [`ColliderMeshCache`] — the one seam that points outward: a
+//!   mesh-derived collider names a GUID, and a crate that can already see
+//!   meshes fills this. Physics never learns what an asset is.
 //! - [`rapier_backend`] — concrete [`RapierBackend`] implementing the trait
 //!   on top of Rapier's CPU pipeline. Owns the `RigidBodySet`,
 //!   `ColliderSet`, `IslandManager`, etc.
@@ -28,9 +31,10 @@ pub mod plugin;
 pub mod rapier_backend;
 
 pub use backend::{
-    BodyDesc, BodyHandle, BodyKind, BrokenJoint, ColliderHandle, CollisionShape, JointDesc,
-    JointHandle, JointKind, JointMotor, MotorModel, PhysicsBackend, RayHit,
+    BodyDesc, BodyHandle, BodyKind, BrokenJoint, ColliderHandle, ColliderMesh, ColliderMeshCache,
+    CollisionShape, JointDesc, JointHandle, JointKind, JointMotor, MotorModel, PhysicsBackend,
+    RayHit,
 };
-pub use components::{Collider, Joint, PhysicsBody};
+pub use components::{Collider, Joint, PhysicsBody, ShapeSpec};
 pub use plugin::{JointRegistry, PhysicsComponentsPlugin, PhysicsPlugin, PhysicsWorld, SolverBody};
 pub use rapier_backend::RapierBackend;
