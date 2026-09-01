@@ -1015,6 +1015,21 @@ fn load_directly(resources: &mut Resources, path: &str) -> Result<(), RemoteErro
 /// The authored world, held while a play session runs so Stop can put
 /// it back. Present only between a start and the matching stop.
 ///
+/// Drops both diff caches, so the next reply describes the whole world.
+///
+/// 🔴 The restore is invisible to a diff. Both caches describe the world
+/// play STARTED from, and restoring makes the world equal to it again —
+/// so `SnapshotCache` reports nothing changed. Meanwhile the editor
+/// spent the play session learning the played positions from the cheap
+/// moved pull, which is the only one it makes while playing. Two caches
+/// describing one world, and the one that saw play is not the one that
+/// answers afterwards: stop said nothing and the editor kept drawing
+/// where play had left things (#1035).
+fn forget_the_world(resources: &mut Resources) {
+    resources.remove::<crate::snapshot_cache::SnapshotCache>();
+    resources.remove::<crate::moved_cache::MovedCache>();
+}
+
 /// A [`WorldSnapshot`], not a [`SceneDocument`]: the scene format is
 /// name-keyed, so loading one back respawns everything with fresh
 /// indices, fresh generations and a different order. Stop must be
@@ -1051,6 +1066,7 @@ fn set_playing(resources: &mut Resources, playing: bool) -> Result<(), RemoteErr
     kooch_core::run_state::Playing::set(resources, false);
     if let Some(snapshot) = resources.remove::<PlaySnapshot>() {
         snapshot.0.restore(resources);
+        forget_the_world(resources);
     }
     tracing::info!("remote: stop");
     Ok(())
