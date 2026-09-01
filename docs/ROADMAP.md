@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-31 — 🔴 **#1009 landed: the lamps cast again.** Four fixed-size caps deleted them in silence — a dispatch past 65 535 workgroups, a 16 384 pair list, a per-view clear over per-frame counts, and a 256-caster moved list that voided the page cache every frame. Each failed as a resident, correctly keyed, EMPTY page, which reads as lit. The distant tier is derived from `page_level` rather than tuned. **Next is the OneXFly measurement** — 5.36 ms on a 9070 XT decides nothing. — 🔴 **the bright patch is fixed: it was Olsson's receiver bound, and the debug view had no colour for it.** A page drawn *without one caster* paints green, the same as a bad bias, so four correct eliminations pointed nowhere before the bound was tried. #1022 landed and is worth its claim — `geometry walk 245` against `pair tests 452 432`. **Next is #1009**, the distant-light tier: 32 point lights exhaust the pool (`slice used 1024/1024`, `free 0`) because a lamp is either a full chain or nothing, and Unreal's middle tier — one page per distant light, round-robin at one update a frame — is what is missing. — 🔴 **there is no render distance in this engine.** `perspective_infinite_reverse_rh` never receives `PerspectiveCamera::far`, and no `draw_distance`/`cull_distance` exists anywhere in the tree, so every instance in a scene is in frustum forever — free at 190 m, the whole frame at 1410 m. Two silent limits cost a day each (#996 buffer sizes, #997 the 65 535 dispatch ceiling) and `dense.scene` opened; what it showed is in the order below. 🔴 **a frame cap is a PERFORMANCE setting on this part: the same work costs 3.9 ms of GPU capped at 72 fps and 13.2 ms uncapped, because capped the GPU idles 68 % of the time and holds ~1210 MHz instead of throttling to ~850.** `gpu_busy_percent` reads 32 % and the scopes agree. **The budget is met with the preset below** — 13.88 ms frame, and at 8 W capped only **28 % of it is used**. The lever was the upscaler, not the shading: `upscale: 3` (FSR 3.1) cost 11.355 ms of a 23.36 ms frame and `upscale: 2` (SGSR 2) costs 2.062. 🔴 **The ~11 ms shading floor #885 was built to decompose no longer exists** — the whole shading pass is 3.272 ms today — and the instrument built for it measured something else instead: a full-screen sweep per material **in the project** costs 178 µs on the device, which is 0.71 ms here and 3.7 ms for a game with twenty materials. **#826 is removed, not deferred.** Cutting a froxel's light list by COUNT is incompatible with a cluster grid being continuous, and that is a property of the idea rather than of any implementation of it: see the entry below. The remaining queue is the contact march's cap (#839) and #731. The budget is unchanged, still unmet, and now measured against the SETTLED clock rather than the boosted one — 40.7 ms, not 27.8.
+Last updated 2026-09-01 — 🔴 **the standing queue was mostly already done**: of the five issues in the 2026-08-30 order, three closed by reading the tree, and two of those had been fixed with nobody recording it. Verify against the code before scheduling. **Next is #719** — a scene naming an unknown component type loads silently, which already cost a shipped build every `Spin` pivot. — 🔴 **#1009 landed: the lamps cast again.** Four fixed-size caps deleted them in silence — a dispatch past 65 535 workgroups, a 16 384 pair list, a per-view clear over per-frame counts, and a 256-caster moved list that voided the page cache every frame. Each failed as a resident, correctly keyed, EMPTY page, which reads as lit. The distant tier is derived from `page_level` rather than tuned. **Next is the OneXFly measurement** — 5.36 ms on a 9070 XT decides nothing. — 🔴 **the bright patch is fixed: it was Olsson's receiver bound, and the debug view had no colour for it.** A page drawn *without one caster* paints green, the same as a bad bias, so four correct eliminations pointed nowhere before the bound was tried. #1022 landed and is worth its claim — `geometry walk 245` against `pair tests 452 432`. **Next is #1009**, the distant-light tier: 32 point lights exhaust the pool (`slice used 1024/1024`, `free 0`) because a lamp is either a full chain or nothing, and Unreal's middle tier — one page per distant light, round-robin at one update a frame — is what is missing. — 🔴 **there is no render distance in this engine.** `perspective_infinite_reverse_rh` never receives `PerspectiveCamera::far`, and no `draw_distance`/`cull_distance` exists anywhere in the tree, so every instance in a scene is in frustum forever — free at 190 m, the whole frame at 1410 m. Two silent limits cost a day each (#996 buffer sizes, #997 the 65 535 dispatch ceiling) and `dense.scene` opened; what it showed is in the order below. 🔴 **a frame cap is a PERFORMANCE setting on this part: the same work costs 3.9 ms of GPU capped at 72 fps and 13.2 ms uncapped, because capped the GPU idles 68 % of the time and holds ~1210 MHz instead of throttling to ~850.** `gpu_busy_percent` reads 32 % and the scopes agree. **The budget is met with the preset below** — 13.88 ms frame, and at 8 W capped only **28 % of it is used**. The lever was the upscaler, not the shading: `upscale: 3` (FSR 3.1) cost 11.355 ms of a 23.36 ms frame and `upscale: 2` (SGSR 2) costs 2.062. 🔴 **The ~11 ms shading floor #885 was built to decompose no longer exists** — the whole shading pass is 3.272 ms today — and the instrument built for it measured something else instead: a full-screen sweep per material **in the project** costs 178 µs on the device, which is 0.71 ms here and 3.7 ms for a game with twenty materials. **#826 is removed, not deferred.** Cutting a froxel's light list by COUNT is incompatible with a cluster grid being continuous, and that is a property of the idea rather than of any implementation of it: see the entry below. The remaining queue is the contact march's cap (#839) and #731. The budget is unchanged, still unmet, and now measured against the SETTLED clock rather than the boosted one — 40.7 ms, not 27.8.
 
 ---
 
@@ -208,6 +208,84 @@ recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
 
 ---
+
+## 🎯 The order, decided 2026-09-01 — the queue was mostly already done
+
+Five issues stood in the 2026-08-30 order. **Three were closed by reading the
+tree rather than the issue**, and two of the three had been fixed without anyone
+recording it.
+
+| | was | is |
+|---|---|---|
+| #1011 | group arena sized by the cull rectangle | **already fixed** — `frame/pages.rs` passes `scene_params.group_capacity` |
+| #1006 | moved-caster cap of 256 | **fixed today** by `a4a95c9e` |
+| #1018 | a camera translation redraws 1472 pages | **same cause as #1006.** The pool counters said `0 popped · 0 evicted · 100 % hit` and were true and irrelevant — the generation ABOVE the pool was voiding every page, and no pool counter can see that |
+| #1012 | play mode pulls the whole world | **open.** `moved_cache.rs:89` still reads `full: appeared || stale` |
+| #1019 | the far-layer page needs a two-frame guard | **open.** Invalidation is per LAMP, so both pages come back together and the test never reaches the state the corruption survives in |
+
+🔴 **Three issue bodies described a tree that had moved.** That is now the
+default assumption: verify against the code before scheduling anything.
+
+### What else closed
+
+**#1001** — a second directional light corrupts the paged sun — closed *not
+planned*. `Casters.sun` is a `bool`, `sun_gens` hashes one direction,
+`inti_pages.sun` is one `vec4`; two suns get one clipmap stamped by whichever
+was extracted last. Guarding a constraint **#782** exists to remove has a short
+life, so the finding moved into #782 instead.
+
+**#839 item 2** — the contact march has a tap budget. The cost is
+`steps x lights` and only the first factor had a number. `dominant_only` bounds
+the second to one and is **off by default** since the settings moved to what the
+project renders with. `TAP_BUDGET = 32`. Items 1 (the device measurement) and 3
+(the env switch, which already existed) are not this.
+
+### The extension point, re-scoped
+
+**#392** and **#872** are mechanism and discovery, and neither is worth much
+alone. Audited:
+
+- The plugin `Stage` enum already spans `Startup` → `Last`. **Code at any stage
+  is already reachable** for CPU systems.
+- `PluginSystem` gets `&mut dyn Engine` — spawn, despawn, register, add_system,
+  log, set_data, get_data. **No device, no queue, no encoder.**
+- `GpuSystem::dispatch(&self, pass: &mut wgpu::ComputePass)` — a compute pass.
+  So **a compute shader is expressible and a post-process is not**.
+- `add_system` appends. Two plugins that both want to run late fight over load
+  order instead of declaring a constraint.
+
+#392 is the door six written issues wait behind — #254, #33, #116, #484, plus
+#250/#784/#70 for shader authoring. It is not an isolated refactor.
+
+⚠️ It moves the pass order this week stabilised: the page marking runs BETWEEN
+`render_geometry` and `render_shading` so it reads this frame's depth. As
+systems that becomes an explicit `after`; a conversion that drops it gives
+shadows one frame late with nothing on screen to say why.
+
+### Next — #719, and the reason is this week's evidence
+
+**A scene naming an unknown component type loads silently.** Grepped: there is
+no `warn` anywhere in the scene loader for a type that does not resolve.
+
+It already cost a shipped build. `Spin` was behind the `testing` feature, so
+exported games opened with **every pivot gone** — lights that move in the editor
+and stand still in the game, no error, no log. Shipping `Spin` fixed the
+symptom; this is the class.
+
+The engine's stated policy is **do not write migrations, break the data and fix
+it by hand**. That is right for one private project — and it is only safe if
+breaking is LOUD. It is silent.
+
+Behind it: **#684** (`Cargo.lock` is gitignored, so builds are not
+reproducible — for an engine that vendors itself into every project and compiles
+on a handheld) and **#686** (`--no-default-features` does not compile; measured,
+two errors, `default_asset_plugin` cfg'd out).
+
+### Measurement, deliberately dropped
+
+The OneXFly capture gated #839's item 1, #865 and the classic-path decision. The
+user's call on 2026-09-01: *"dejemos las mediciones, están bastante bien."* The
+gate is lifted; #865 stays unmeasured on purpose.
 
 ## 🎯 2026-08-31, evening — the lamps never cast, and four caps deleted them in silence
 
