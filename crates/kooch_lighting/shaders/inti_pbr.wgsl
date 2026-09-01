@@ -2151,6 +2151,14 @@ fn inti_clustered_lights(
         spots_end = min(spots_end, cell.offset + inti.light_limit);
     }
 
+    // #839 — the tap count is `steps x lights`, and only the first
+    // factor had a number. With `dominant_only` off a froxel holding
+    // fourteen lights buys fourteen marches per pixel; this bounds the
+    // second factor. Beyond it a light still shades, it just does not
+    // march. 0 = no cap.
+    let march_cap = inti_contact_max_lights();
+    var marched = 0u;
+
     var acc = IntiAccum(vec3<f32>(0.0), vec3<f32>(0.0), 0.0, vec3<f32>(0.0));
     for (var i = cell.offset; i < spots_end; i = i + 1u) {
         // 🔴 Clamped against the list's real length. A frame whose
@@ -2161,8 +2169,13 @@ fn inti_clustered_lights(
         if (i >= inti.cluster_capacity) {
             break;
         }
+        let index = inti_cluster_indices[i];
+        let march = !dominant && (march_cap == 0u || marched < march_cap);
+        if march && (inti_lights[index].flags & INTI_LIGHT_CONTACT_SHADOWS) != 0u {
+            marched = marched + 1u;
+        }
         acc = inti_accumulate(acc, inti_light_lit(
-            surf, inti_lights[inti_cluster_indices[i]], inti_cluster_indices[i], frag_coord, !dominant));
+            surf, inti_lights[index], index, frag_coord, march));
     }
     return acc;
 }

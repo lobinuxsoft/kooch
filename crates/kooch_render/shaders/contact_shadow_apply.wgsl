@@ -168,6 +168,11 @@ fn inti_contact_dominant_only() -> bool {
     return contact_shadow.dominant_only != 0u;
 }
 
+/// Punctual lights per pixel that may march. 0 = no cap.
+fn inti_contact_max_lights() -> u32 {
+    return contact_shadow.max_lights;
+}
+
 /// How much of the light survives the march. `1.0` = unoccluded.
 ///
 /// ⚠️ Screen-space: an occluder outside the frame or behind the camera

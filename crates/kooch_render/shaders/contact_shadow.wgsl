@@ -73,8 +73,15 @@ struct ContactShadowView {
     /// strongest light, instead of once per light (#845). Read through
     /// `inti_contact_dominant_only` so the stub can answer too.
     dominant_only: u32,
+    /// Punctual lights per pixel that may march, or 0 for no cap.
+    ///
+    /// The tap count is `steps x lights` and nothing bounded the second
+    /// factor: with `dominant_only` off, a froxel holding fourteen
+    /// lights buys fourteen marches. Derived on the CPU from a tap
+    /// budget, so raising `linear_steps` lowers this rather than
+    /// multiplying with it.
+    max_lights: u32,
     _pad0: u32,
-    _pad1: u32,
 }
 
 @group(0) @binding({{CONTACT_SHADOW_UBO_BINDING}}) var<uniform> contact_shadow: ContactShadowView;
