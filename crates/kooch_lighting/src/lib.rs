@@ -231,6 +231,10 @@ fn inti_contact_shadow_debug(probe: ContactShadowProbe) -> vec3<f32> {
 fn inti_contact_dominant_only() -> bool {
     return false;
 }
+
+fn inti_contact_max_lights() -> u32 {
+    return 0u;
+}
 ";
 
 #[cfg(test)]

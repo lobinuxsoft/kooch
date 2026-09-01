@@ -118,8 +118,22 @@ pub struct ContactShadowUbo {
     pub linear_steps: u32,
     pub frame: u32,
     pub dominant_only: u32,
-    pub _pad: [u32; 2],
+    /// Punctual lights per pixel that may march. 0 = no cap.
+    pub max_lights: u32,
+    pub _pad: u32,
 }
+
+/// Depth taps per pixel the march may spend, across every light.
+///
+/// The cost is `steps x lights` and only the first had a number. With
+/// `dominant_only` off — which is the engine default — a froxel holding
+/// fourteen lights buys fourteen marches, so 16 steps is 224 taps per
+/// pixel that nothing bounds.
+///
+/// 32 is two lights at the default 16 steps, or five at 6. A light past
+/// it still shades; it does not march. `dominant_only` needs none of
+/// this: it marches once whatever the froxel holds (#845).
+const TAP_BUDGET: u32 = 32;
 
 impl ContactShadowUbo {
     /// One view's uniform for this frame.
@@ -135,9 +149,22 @@ impl ContactShadowUbo {
             linear_steps: settings.linear_steps,
             frame,
             dominant_only: u32::from(settings.dominant_only),
-            _pad: [0; 2],
+            max_lights: march_cap(settings),
+            _pad: 0,
         }
     }
+}
+
+/// Lights per pixel the budget affords at `settings.linear_steps`.
+///
+/// At least one whenever the march runs at all: a cap that reaches zero
+/// would turn the feature off through a knob nobody set. Zero only when
+/// `dominant_only` already bounds it, or the march is off.
+fn march_cap(settings: &ContactShadowSettings) -> u32 {
+    if settings.dominant_only || settings.linear_steps == 0 {
+        return 0;
+    }
+    (TAP_BUDGET / settings.linear_steps).max(1)
 }
 
 /// `KOOCH_CONTACT_SHADOW_STEPS=<count>`, read once. `0` marches nothing.

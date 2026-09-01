@@ -87,3 +87,35 @@ fn the_dominant_switch_says_nothing_when_unset() {
         assert_eq!(parse_dominant(Some(raw)), None, "{raw:?}");
     }
 }
+
+/// The tap budget bounds `steps x lights`, and never to zero.
+#[test]
+fn the_cap_bounds_the_product() {
+    let at = |steps: u32, dominant: bool| {
+        march_cap(&ContactShadowSettings {
+            linear_steps: steps,
+            dominant_only: dominant,
+            ..Default::default()
+        })
+    };
+
+    // Raising the steps lowers the lights, so the product stays under
+    // the budget instead of multiplying with it.
+    for steps in 1..=TAP_BUDGET {
+        let lights = at(steps, false);
+        assert!(lights >= 1, "{steps} steps capped the march to nothing");
+        assert!(
+            steps * lights <= TAP_BUDGET || lights == 1,
+            "{steps} steps x {lights} lights is past the {TAP_BUDGET}-tap budget",
+        );
+    }
+
+    // Past the budget one light still marches: the cap bounds the
+    // product, it does not turn the feature off behind a knob.
+    assert_eq!(at(TAP_BUDGET * 4, false), 1);
+
+    // The dominant path needs no cap — it marches once whatever the
+    // froxel holds (#845) — and a zero-step march has nothing to bound.
+    assert_eq!(at(16, true), 0);
+    assert_eq!(at(0, false), 0);
+}
