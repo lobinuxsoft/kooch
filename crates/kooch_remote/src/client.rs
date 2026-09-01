@@ -387,6 +387,30 @@ impl RemoteClient {
         Ok(())
     }
 
+    /// Every system the project schedules, in the order a frame runs
+    /// them, with whether each is running.
+    pub fn list_systems(&self) -> Result<Vec<crate::protocol::SystemEntry>, ClientError> {
+        match self.call(Method::ListSystems)? {
+            ResponseData::Systems { systems } => Ok(systems),
+            other => Err(ClientError::Unexpected(other)),
+        }
+    }
+
+    /// Stops or restarts one of the project's systems, from its next
+    /// frame. No rebuild.
+    pub fn set_system_enabled(
+        &self,
+        name: &str,
+        nth: u32,
+        enabled: bool,
+    ) -> Result<(), ClientError> {
+        self.expect_ok(Method::SetSystemEnabled {
+            name: name.to_owned(),
+            nth,
+            enabled,
+        })
+    }
+
     pub fn load_scene(&self, path: &str) -> Result<(), ClientError> {
         self.expect_ok(Method::LoadScene {
             path: path.to_owned(),

@@ -5,12 +5,18 @@
 //! consecutive GPU systems batched into a single command encoder.
 
 mod any_system;
+mod catalog;
 mod gpu_batch;
+mod identity;
 #[allow(clippy::module_inception)]
 mod schedule;
 mod system_scope;
+mod toggles;
 
 #[cfg(test)]
 mod tests;
 
-pub use schedule::{Schedule, SystemFn};
+pub use catalog::{SystemCatalog, SystemRecord};
+pub use identity::{SystemInfo, SystemKey, SystemSource, canonical, short_name};
+pub use schedule::{RUN_ORDER, Schedule, SystemFn};
+pub use toggles::SystemToggles;

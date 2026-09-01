@@ -247,6 +247,7 @@ pub(super) fn run_editor_ui(
                 inspector_nav: &mut overlay.inspector_nav,
                 entities: &data.entities,
                 scenes: &data.scenes,
+                systems: &data.systems,
                 archetypes: &data.archetypes,
                 component_types: &data.component_types,
                 selected: &mut selected,

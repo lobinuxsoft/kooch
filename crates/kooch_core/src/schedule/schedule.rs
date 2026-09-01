@@ -5,7 +5,10 @@ use crate::stage::Stage;
 use crate::system::{FunctionSystem, GpuSystem, System};
 
 use super::any_system::AnySystem;
+use super::catalog::{SystemCatalog, SystemRecord};
 use super::gpu_batch::run_gpu_batch;
+use super::identity::{SystemInfo, SystemKey, SystemSource};
+use super::toggles::SystemToggles;
 
 /// A system function that operates on resources.
 ///
@@ -47,6 +50,13 @@ pub struct Schedule {
     stages: BTreeMap<Stage, Vec<AnySystem>>,
     /// Whether startup has already run.
     startup_complete: bool,
+    /// Who the next system added belongs to.
+    ///
+    /// Set around a plugin's `build`, which is what lets every system be
+    /// attributed without a word at the call sites. The default is
+    /// `Project`: anything added straight onto the `App` outside a
+    /// plugin is the game's own `main`.
+    attributing: SystemSource,
 }
 
 impl Default for Schedule {
@@ -61,6 +71,7 @@ impl Schedule {
         Self {
             stages: BTreeMap::new(),
             startup_complete: false,
+            attributing: SystemSource::Project,
         }
     }
 
@@ -78,18 +89,22 @@ impl Schedule {
     where
         F: FnMut(&mut Resources) + Send + Sync + 'static,
     {
-        self.stages
-            .entry(stage)
-            .or_default()
-            .push(AnySystem::cpu(Box::new(FunctionSystem::new(system))));
+        let key = self.mint_key(std::any::type_name::<F>());
+        self.stages.entry(stage).or_default().push(AnySystem::cpu(
+            Box::new(FunctionSystem::new(system)),
+            self.attributing,
+            key,
+        ));
     }
 
     /// Adds a struct implementing [`System`] at the specified stage.
     pub fn add_cpu_system(&mut self, stage: Stage, system: impl System) {
-        self.stages
-            .entry(stage)
-            .or_default()
-            .push(AnySystem::cpu(Box::new(system)));
+        let key = self.mint_key(system.name());
+        self.stages.entry(stage).or_default().push(AnySystem::cpu(
+            Box::new(system),
+            self.attributing,
+            key,
+        ));
     }
 
     /// Adds a [`GpuSystem`] at the specified stage.
@@ -97,10 +112,12 @@ impl Schedule {
     /// GPU systems are lazily initialized when `GpuContext` first becomes
     /// available. Consecutive GPU systems are batched into one encoder.
     pub fn add_gpu_system(&mut self, stage: Stage, system: impl GpuSystem) {
-        self.stages
-            .entry(stage)
-            .or_default()
-            .push(AnySystem::gpu(Box::new(system)));
+        let key = self.mint_key(system.name());
+        self.stages.entry(stage).or_default().push(AnySystem::gpu(
+            Box::new(system),
+            self.attributing,
+            key,
+        ));
     }
 
     /// Runs all systems in the specified stage.
@@ -112,8 +129,30 @@ impl Schedule {
             return;
         };
 
+        // 🔴 Asked once per stage, not once per system. The common case
+        // is that nobody switched anything off, and this is what keeps
+        // that case free of a hash lookup per system per frame.
+        let any_off = resources
+            .get::<SystemToggles>()
+            .is_some_and(|toggles| !toggles.is_empty());
+
         let mut i = 0;
         while i < systems.len() {
+            // ⚠️ CPU only. Skipping a GPU system would take it out of the
+            // batch `run_gpu_batch` shares an encoder for, which changes
+            // how the frame is RECORDED and not just what runs. Moot
+            // today — nothing implements `GpuSystem` outside tests — and
+            // it belongs with #392, which is what will put real ones
+            // there.
+            if any_off
+                && !systems[i].is_gpu()
+                && resources
+                    .get::<SystemToggles>()
+                    .is_some_and(|toggles| toggles.is_disabled(systems[i].key()))
+            {
+                i += 1;
+                continue;
+            }
             if systems[i].is_gpu() {
                 // Batch consecutive GPU systems.
                 let gpu_start = i;
@@ -221,6 +260,76 @@ impl Schedule {
         })
     }
 
+    /// Attributes systems added from now on, returning the previous
+    /// setting so the caller can put it back.
+    ///
+    /// `App` wraps a plugin's `build` with this. Restoring rather than
+    /// resetting is what lets a plugin add another plugin without the
+    /// inner one swallowing the outer one's attribution.
+    pub fn attribute_to(&mut self, source: SystemSource) -> SystemSource {
+        std::mem::replace(&mut self.attributing, source)
+    }
+
+    /// Every system, in the order a frame runs them.
+    ///
+    /// 🔴 Not `Stage::ALL`, and not the `BTreeMap`'s own order. Both are
+    /// declaration order, where `Physics` sits after `Gpu` — but a frame
+    /// runs the fixed stages between `Update` and `PostUpdate`. A list
+    /// built on either would put physics in a place it never runs.
+    pub fn systems(&self) -> Vec<SystemInfo<'_>> {
+        RUN_ORDER
+            .iter()
+            .filter_map(|stage| Some((*stage, self.stages.get(stage)?)))
+            .flat_map(|(stage, systems)| {
+                systems.iter().map(move |system| SystemInfo {
+                    stage,
+                    name: system.name(),
+                    key: system.key(),
+                    source: system.source(),
+                    gpu: system.is_gpu(),
+                })
+            })
+            .collect()
+    }
+
+    /// The whole schedule, owned, for publishing into `Resources`.
+    ///
+    /// `systems()` borrows from the schedule, and the schedule lives on
+    /// the `App` rather than in `Resources` — so a panel, which is a
+    /// system, can only ever see a copy.
+    pub fn catalog(&self) -> SystemCatalog {
+        SystemCatalog::new(
+            self.systems()
+                .into_iter()
+                .map(|system| SystemRecord {
+                    stage: system.stage,
+                    name: system.name.to_owned(),
+                    key: system.key.clone(),
+                    source: system.source,
+                    gpu: system.gpu,
+                })
+                .collect(),
+        )
+    }
+
+    /// Builds the key for a system about to be added.
+    ///
+    /// `nth` counts the systems already scheduled under the same
+    /// canonical name. It stays 0 for anything with a name of its own,
+    /// and only climbs for anonymous closures — which share a
+    /// `type_name` with every other closure in their module, so without
+    /// this a toggle aimed at one would stop all of them.
+    fn mint_key(&self, name: &str) -> SystemKey {
+        let candidate = SystemKey::new(name);
+        let nth = self
+            .stages
+            .values()
+            .flatten()
+            .filter(|system| system.key().name == candidate.name)
+            .count() as u32;
+        SystemKey { nth, ..candidate }
+    }
+
     /// Returns `true` if startup has already completed.
     pub fn is_startup_complete(&self) -> bool {
         self.startup_complete
@@ -231,3 +340,26 @@ impl Schedule {
         self.startup_complete = false;
     }
 }
+
+/// The stages a frame runs, in the order it runs them.
+///
+/// Mirrors `run_startup` + `run_pre_physics` + `run_fixed_stages` +
+/// `run_post_physics`. Kept here beside them so the two can be read
+/// together, and pinned by a test — a list that drifts from the macros
+/// describes a frame nobody runs.
+pub const RUN_ORDER: [Stage; 14] = [
+    Stage::Startup,
+    Stage::First,
+    Stage::Input,
+    Stage::PreUpdate,
+    Stage::Update,
+    Stage::Physics,
+    Stage::PostPhysics,
+    Stage::PostUpdate,
+    Stage::GpuSync,
+    Stage::Gpu,
+    Stage::PreRender,
+    Stage::Render,
+    Stage::PostRender,
+    Stage::Last,
+];

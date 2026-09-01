@@ -9,6 +9,7 @@ pub(crate) mod input_map;
 pub(crate) mod inspector;
 pub(crate) mod performance;
 pub(crate) mod profiler;
+pub(crate) mod systems;
 pub(crate) mod view;
 pub(crate) mod world;
 

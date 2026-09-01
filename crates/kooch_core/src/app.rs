@@ -85,7 +85,14 @@ impl App {
     /// The plugin's `build` method is called immediately.
     /// The `finish` method is called when `run()` is invoked.
     pub fn add_plugin<P: Plugin + 'static>(&mut self, plugin: P) -> &mut Self {
+        // Everything the plugin schedules happens inside `build`, so
+        // bracketing it attributes every system without a word at any
+        // `add_system` call site. Restored rather than reset: a plugin
+        // may add another, and the inner one must not swallow the
+        // outer one's attribution.
+        let outer = self.schedule.attribute_to(plugin.source());
         plugin.build(self);
+        self.schedule.attribute_to(outer);
         self.pending_plugins.push(Box::new(plugin));
         self
     }
@@ -93,7 +100,9 @@ impl App {
     /// Adds a group of plugins to the application.
     pub fn add_plugins<G: PluginGroup>(&mut self, group: G) -> &mut Self {
         for plugin in group.build().finish() {
+            let outer = self.schedule.attribute_to(plugin.source());
             plugin.build(self);
+            self.schedule.attribute_to(outer);
             self.pending_plugins.push(plugin);
         }
         self
@@ -188,9 +197,24 @@ impl App {
     /// The method does not return until the application exits.
     pub fn run(mut self) {
         self.finish_plugins();
+        // After every plugin, because that is when the schedule is
+        // whole. A panel reads this rather than the schedule itself,
+        // which lives here and not in `Resources` (#982).
+        self.publish_systems();
 
         let runner = self.runner.take().unwrap_or(default_runner);
         runner(self);
+    }
+
+    /// Copies the schedule's description of itself into `Resources`.
+    ///
+    /// Called by [`Self::run`] once every plugin has been built. Call it
+    /// again after scheduling something later, or the catalog describes a
+    /// frame that has since grown.
+    pub fn publish_systems(&mut self) -> &mut Self {
+        let catalog = self.schedule.catalog();
+        self.resources.insert(catalog);
+        self
     }
 
     /// Loads a dynamic plugin from a shared library.

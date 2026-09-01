@@ -414,6 +414,16 @@ pub(crate) enum EditorAction {
     /// stores. An absolute path written into `project.kooch` would work
     /// on the machine that clicked and nowhere else, and nothing would
     /// report it until the game opened an empty scene.
+    /// Stop or restart one scheduled system, from its next frame.
+    ///
+    /// Addressed by name and occurrence, never by index: an index moves
+    /// the moment a plugin is added, and two anonymous closures in one
+    /// module share a name (#982).
+    SetSystemEnabled {
+        name: String,
+        nth: u32,
+        enabled: bool,
+    },
     SetMainScene {
         path: PathBuf,
     },
@@ -563,8 +573,13 @@ impl EditorAction {
     /// list grows past forty.
     pub(crate) fn needs_a_live_world(&self) -> bool {
         match self {
+            // Not the world's contents, but the project's schedule —
+            // and before the session connects this would land on the
+            // editor's own instead, silently switching off the wrong
+            // build's systems.
+            Self::SetSystemEnabled { .. }
             // Everything that reads or writes the world, or persists it.
-            Self::Spawn { .. }
+            | Self::Spawn { .. }
             | Self::SpawnMesh { .. }
             | Self::Despawn(_)
             | Self::Duplicate(_)
@@ -782,6 +797,10 @@ impl EditorAction {
             | Self::RevealInFileManager { .. }
             | Self::OpenInIde { .. }
             | Self::SetMainScene { .. }
+            // 🔴 NOT a world edit, on purpose. Switching a system off
+            // while it runs is the whole point of having the switch, so
+            // the Play guard must not block it.
+            | Self::SetSystemEnabled { .. }
             | Self::CreateFile { .. } => false,
         }
     }

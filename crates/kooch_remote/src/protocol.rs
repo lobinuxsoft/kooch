@@ -357,6 +357,44 @@ pub enum Method {
     /// Starting snapshots the world first and stopping restores that
     /// snapshot, so a play session leaves the authored scene untouched.
     SetPlaying { playing: bool },
+
+    /// Every system the project schedules, in the order a frame runs
+    /// them.
+    ///
+    /// The editor cannot read the project's schedule: it is a different
+    /// process, and even locally the schedule lives on the `App` rather
+    /// than in `Resources`.
+    ListSystems,
+
+    /// Stop or restart one system, from the next frame.
+    ///
+    /// Addressed by name and occurrence rather than by index: an index
+    /// moves the moment a plugin is added, and two anonymous closures in
+    /// one module share a name.
+    SetSystemEnabled {
+        name: String,
+        nth: u32,
+        enabled: bool,
+    },
+}
+
+/// One scheduled system, as the editor's panel shows it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SystemEntry {
+    /// The stage's name, not its discriminant: the wire outlives any one
+    /// build's enum, and a number would silently mean something else the
+    /// day a stage is inserted.
+    pub stage: String,
+    /// The full path, which is what a log or a profile says.
+    pub name: String,
+    /// What to put in the list, with the wrapper and the modules off.
+    pub short: String,
+    /// Which occurrence of `name` this is; 0 unless the name repeats.
+    pub nth: u32,
+    /// `true` when the project scheduled it, `false` for the engine.
+    pub project: bool,
+    pub gpu: bool,
+    pub enabled: bool,
 }
 
 /// A request: a method invocation carrying a client-chosen id, echoed in
@@ -459,6 +497,8 @@ pub enum ResponseData {
     Spawned { entity: EntityId },
     /// Reply to [`Method::NewScene`] — the new scene's identity.
     SceneOpened { scene: Guid },
+    /// Reply to [`Method::ListSystems`], in the order a frame runs them.
+    Systems { systems: Vec<SystemEntry> },
     /// Reply to any method that mutates but returns nothing.
     Ok,
     /// Reply to [`Method::Extension`] — whatever the handler returned,

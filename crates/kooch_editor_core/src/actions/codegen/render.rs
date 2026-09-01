@@ -58,6 +58,12 @@ pub(super) fn render_registrations(files: &[SourceFile]) -> String {
     s.push_str("    pub run_systems: bool,\n");
     s.push_str("}\n\n");
     s.push_str("impl Plugin for ProjectRegistrations {\n");
+    // So the editor's system panel can tell a project system from an
+    // engine one. Declared here because a plugin is the only thing that
+    // knows which side it is on (#982).
+    s.push_str("    fn source(&self) -> SystemSource {\n");
+    s.push_str("        SystemSource::Project\n");
+    s.push_str("    }\n\n");
     s.push_str("    fn build(&self, app: &mut App) {\n");
     s.push_str("        app.insert_resource(Playing(self.run_systems));\n");
     s.push_str("        app.add_system(Stage::Startup, register_components);\n");
