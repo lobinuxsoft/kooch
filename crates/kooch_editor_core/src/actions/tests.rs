@@ -53,3 +53,19 @@ fn preferences_and_file_work_stay_available() {
         .needs_a_live_world()
     );
 }
+
+/// Switching a system off is not an edit to the world, so the Play guard
+/// must not refuse it — stopping a system WHILE it runs is the point.
+#[test]
+fn a_system_toggle_survives_play() {
+    let action = EditorAction::SetSystemEnabled {
+        name: "game::jump".to_owned(),
+        nth: 0,
+        enabled: false,
+    };
+    assert!(!action.is_a_world_edit());
+    assert!(
+        action.needs_a_live_world(),
+        "before the project connects this would switch off the editor's own systems",
+    );
+}

@@ -64,6 +64,11 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     };
     let playing = matches!(edit, Edit::SetPlaying(playing) if playing);
     let is_play_toggle = matches!(edit, Edit::SetPlaying(_));
+    // 🔴 The panel draws the CACHED list, and the cache is only pulled
+    // once per connection. Without a re-read the project switches the
+    // system off and the checkbox springs straight back, which reads as
+    // the toggle not working at all (#982).
+    let is_system_toggle = matches!(edit, Edit::SetSystemEnabled { .. });
 
     // Recomputed before the send, which consumes `edit`. Deterministic —
     // the same inputs that produced the path the project is about to write.
@@ -97,6 +102,15 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
             Ok(()) => sent = true,
             Err(e) => tracing::warn!("remote edit dropped: {e}"),
         }
+    }
+
+    // Read back before the state goes home: the panel should show what
+    // the project did, not what it was asked to do.
+    if sent
+        && is_system_toggle
+        && let Some(session) = state.session.as_mut()
+    {
+        session.refresh_systems();
     }
 
     resources.insert(state);

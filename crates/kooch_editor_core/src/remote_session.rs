@@ -415,20 +415,6 @@ impl RemoteSession {
         }
     }
 
-    /// Stops or restarts one of the project's systems.
-    pub fn set_system_enabled(&mut self, name: &str, nth: u32, enabled: bool) {
-        if self.state != ConnectionState::Connected {
-            return;
-        }
-        if let Err(e) = self.client.set_system_enabled(name, nth, enabled) {
-            tracing::warn!("could not switch a system: {e}");
-            return;
-        }
-        // Read back rather than assumed: the panel should show what the
-        // project did, not what it was asked to do.
-        self.refresh_systems();
-    }
-
     /// Turns the background transform pull on or off (#1014).
     ///
     /// On while the project plays, off otherwise: the paused editor
