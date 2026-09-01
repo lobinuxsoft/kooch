@@ -772,6 +772,9 @@ impl MeshletRenderStage {
             return;
         };
         self.page_raster_last = Some(counts);
+        for (total, listed) in self.page_level_totals.iter_mut().zip(counts.by_level) {
+            *total = total.saturating_add(u64::from(listed));
+        }
         let before = logged(&mut self.page_raster_logged, counts.view);
         let notable = before.is_none_or(|last| {
             moved(last.pages, counts.pages)
@@ -894,6 +897,14 @@ impl MeshletRenderStage {
     ) -> Option<RasterCounts> {
         let want = page_view_index(view);
         self.page_raster_last.filter(|c| c.view == want)
+    }
+
+    /// Sun pages listed per clipmap level since the stage was built.
+    ///
+    /// Read against `by_level` on the frame beside it: that says what
+    /// this frame redrew, this says which level has been doing it.
+    pub fn page_level_totals(&self) -> &[u64] {
+        &self.page_level_totals
     }
 }
 

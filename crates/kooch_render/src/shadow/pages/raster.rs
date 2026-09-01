@@ -180,10 +180,27 @@ fn bucket(pool: PoolConfig) -> u32 {
 }
 
 /// What the raster did.
+/// Clipmap levels [`RasterCounts::by_level`] carries. The clipmap is 17
+/// by default; the array is fixed so the counts travel without an
+/// allocation per frame.
+pub const LEVEL_SLOTS: usize = 24;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RasterCounts {
-    /// Sun pages listed, per level summed.
+    /// Pages listed, every bucket summed — the sun's levels AND the
+    /// lamps'. Its doc said "sun" and its arithmetic never did; the
+    /// expression is `words[..buckets]`, and `buckets` is
+    /// `clipmap.levels + LAMP_CULLS`. [`Self::local`] is the lamps'
+    /// share and [`Self::by_level`] is the sun's, split.
     pub pages: u32,
+    /// Sun pages listed, PER LEVEL, index 0 the finest.
+    ///
+    /// 🔴 The sum answers "how many redrew" and cannot answer "why"
+    /// (#1018). A camera translation redraws 1472 pages in one frame
+    /// between two frames that redraw none, and the sum cannot tell one
+    /// level crossing a boundary from the whole chain re-snapping —
+    /// which is the question, and which have different causes.
+    pub by_level: [u32; LEVEL_SLOTS],
     /// Sun pages that did not fit their bucket. Non-zero means shadows
     /// are missing.
     pub dropped: u32,
@@ -1092,6 +1109,14 @@ impl PageRasterizer {
             unfilled_sun,
             lamp_survivors: u32::try_from(lamp_survivors).unwrap_or(u32::MAX),
             pages: words[..levels].iter().map(|&n| n.min(cap)).sum(),
+            by_level: {
+                let mut out = [0u32; LEVEL_SLOTS];
+                let sun = (self.clipmap.levels as usize).min(LEVEL_SLOTS).min(levels);
+                for (slot, word) in out.iter_mut().zip(&words[..sun]) {
+                    *slot = (*word).min(cap);
+                }
+                out
+            },
             // 🔴 Every listed page, the sun's and the lamps' alike,
             // because they share buckets now: a lamp and the sun that
             // want the same fineness are in the same list. `local` still

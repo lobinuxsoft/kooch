@@ -285,6 +285,46 @@ fn the_moved_list_grows() {
     );
 }
 
+/// The per-level split adds up to the sum beside it, and stops at the
+/// sun's levels.
+///
+/// #1018: the sum says how many pages redrew and cannot say which level
+/// did it. One level crossing a boundary and the whole chain re-snapping
+/// have different causes and the same total.
+#[test]
+fn the_split_matches_the_sum() {
+    let Some((device, _queue)) = device() else {
+        eprintln!("no adapter; skipping");
+        return;
+    };
+    let raster = rasterizer(&device);
+    let levels = ClipmapConfig::default().levels as usize;
+    let mut words = vec![0u32; raster.count_slots() as usize];
+    for (level, word) in words[..levels].iter_mut().enumerate() {
+        *word = level as u32 + 1;
+    }
+    // A lamp's bucket, which the split must not pick up.
+    words[levels] = 900;
+
+    let counts = raster.decode(&words, 0);
+    let split: u32 = counts.by_level.iter().sum();
+    let planted: u32 = (1..=levels as u32).sum();
+    assert_eq!(split, planted, "the sun's levels did not come back whole");
+    // 🔴 NOT equal to `pages`, and that is the field's doc being wrong
+    // rather than this. `pages` sums `words[..buckets]`, and `buckets`
+    // is `clipmap.levels + LAMP_CULLS` — so it carries the lamps too.
+    assert!(
+        counts.pages > split,
+        "the lamp bucket vanished from the total: {} against {split}",
+        counts.pages,
+    );
+    assert_eq!(counts.by_level[0], 1, "level 0 lost its count");
+    assert!(
+        counts.by_level[levels..].iter().all(|n| *n == 0),
+        "a lamp's bucket leaked into the sun's split",
+    );
+}
+
 #[test]
 fn the_counters_name_every_level() {
     let Some((device, _queue)) = device() else {

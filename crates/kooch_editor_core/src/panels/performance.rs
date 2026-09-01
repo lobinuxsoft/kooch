@@ -1293,6 +1293,28 @@ fn shadow_page_readout(
                  because a meshlet's rect covers up to 16384 cells at the finest clipmap \
                  levels while only twenty pages are resident there.",
             );
+            // #1018 — which level redrew, this frame and over the run.
+            // The sum says how many pages went; only the split says
+            // whether one level crossed a boundary or the whole chain
+            // re-snapped, and those have different causes.
+            let busiest = raster
+                .by_level
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, n)| **n)
+                .filter(|(_, n)| **n > 0);
+            metric_with_tooltip(
+                ui,
+                "redrawn level",
+                &match busiest {
+                    Some((level, pages)) => format!("{level} · {} pages", thousands(*pages as u64)),
+                    None => "nothing redrew".to_owned(),
+                },
+                "The clipmap level that redrew the most pages THIS frame. One level far \
+                 above the rest is a boundary being crossed; a flat spread is the whole \
+                 chain re-snapping. The readback lags, so read it against the running \
+                 total below rather than on its own.",
+            );
             metric_with_tooltip(
                 ui,
                 "worst level",

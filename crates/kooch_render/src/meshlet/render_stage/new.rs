@@ -94,6 +94,7 @@ impl MeshletRenderStage {
             page_marking_last: None,
             page_marking_logged: Vec::new(),
             page_raster: None,
+            page_level_totals: [0; crate::shadow::pages::raster::LEVEL_SLOTS],
             page_raster_last: None,
             page_raster_logged: Vec::new(),
             page_pool_config: None,

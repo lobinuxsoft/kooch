@@ -187,6 +187,14 @@ pub struct MeshletRenderStage {
     /// nothing to hold until pages are being marked.
     pub(super) page_raster: Option<crate::shadow::pages::raster::PageRasterizer>,
     pub(super) page_raster_last: Option<crate::shadow::pages::raster::RasterCounts>,
+    /// Sun pages listed per clipmap level, ACCUMULATED (#1018).
+    ///
+    /// 🔴 The readback lags several frames, so a per-frame row shows the
+    /// quiet frames and hides the storm — 1472 pages redrawn in one
+    /// frame between two that redraw none. A running total survives
+    /// that: whichever frames are sampled, the level doing the redrawing
+    /// is the one whose count climbs.
+    pub(super) page_level_totals: [u64; crate::shadow::pages::raster::LEVEL_SLOTS],
     pub(super) page_raster_logged: Vec<Option<crate::shadow::pages::raster::RasterCounts>>,
     /// The pool the atlas was built for. A change rebuilds it.
     pub(super) page_pool_config: Option<crate::shadow::pages::pool::PoolConfig>,
