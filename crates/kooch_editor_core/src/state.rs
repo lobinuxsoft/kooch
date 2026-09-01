@@ -58,6 +58,8 @@ pub(crate) enum EditorTab {
     /// windows from here; the overlay stays available behind its
     /// chevron but defaults hidden.
     Performance,
+    /// What runs each frame, and what is switched off (#982).
+    Systems,
 }
 
 /// The `.inputmap` currently open in the Input Map panel.
@@ -121,6 +123,7 @@ pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::Build,
     EditorTab::Profiler,
     EditorTab::Performance,
+    EditorTab::Systems,
 ];
 
 impl EditorTab {
@@ -128,6 +131,7 @@ impl EditorTab {
     pub(crate) fn label(&self) -> String {
         match self {
             Self::World => format!("{} World", crate::icons::GLOBE),
+            Self::Systems => format!("{} Systems", crate::icons::LIST_BULLETS),
             // "Edit View" / "Game View", the user's naming: both are
             // real views of the same world, one through the authoring
             // camera and one through the gameplay camera. NOT "World

@@ -870,3 +870,96 @@ fn a_range_from_a_hidden_anchor_is_no_range() {
 
     assert!(listed_range(&listed, 42, 900).is_none());
 }
+
+/// The "Unsaved" group used to suppress its whole menu because it is not
+/// a file. It stands over every scene-less entity, so with no scene open
+/// that left the panel with nowhere to put anything (#1033).
+#[test]
+fn the_unsaved_group_offers_a_menu() {
+    let ctx = egui::Context::default();
+    let screen = Some(egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(400.0, 600.0),
+    ));
+    // The pseudo-group's own row, which is the first line the panel draws
+    // when no scene is open.
+    let at = egui::pos2(200.0, 84.0);
+
+    let draw = |input: egui::RawInput| {
+        let mut entities = vec![entity_info(0, None)];
+        let mut selected = Vec::new();
+        let mut pinned = std::collections::HashSet::new();
+        let mut actions = Vec::new();
+        let mut last_clicked = None;
+        ctx.run_ui(input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                draw_world_content(
+                    ui,
+                    true,
+                    &mut entities,
+                    &mut selected,
+                    &mut pinned,
+                    &[],
+                    &mut actions,
+                    1,
+                    1,
+                    1,
+                    &mut last_clicked,
+                    &[],
+                    false,
+                );
+            });
+        });
+    };
+    let plain = || egui::RawInput {
+        screen_rect: screen,
+        ..Default::default()
+    };
+    let secondary = |pressed| egui::RawInput {
+        screen_rect: screen,
+        events: vec![egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Default::default(),
+        }],
+        ..Default::default()
+    };
+
+    // Two settling frames: the row list has to exist before a click can
+    // land on it, and the scroll area sizes itself on the second.
+    draw(plain());
+    draw(plain());
+    draw(egui::RawInput {
+        screen_rect: screen,
+        events: vec![egui::Event::PointerMoved(at)],
+        ..Default::default()
+    });
+    draw(secondary(true));
+    draw(secondary(false));
+    draw(plain());
+
+    let open = ctx.memory(|m| {
+        m.areas()
+            .visible_layer_ids()
+            .iter()
+            .any(|layer| format!("{:?}", layer.id).contains("popup"))
+    });
+    assert!(
+        open,
+        "right-clicking the Unsaved row must offer somewhere to put an entity"
+    );
+}
+
+/// An entity in no scene still has a root to put a sibling at.
+#[test]
+fn a_scene_less_row_spawns_at_root() {
+    use crate::actions::SpawnTarget;
+
+    let scene = kooch_core::Guid::new_v4();
+    assert_eq!(
+        entity_row::root_target(Some(scene)).1,
+        SpawnTarget::Scene(scene)
+    );
+    assert_eq!(entity_row::root_target(None).1, SpawnTarget::Active);
+}

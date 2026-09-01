@@ -223,6 +223,12 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
             None => {
                 profiling::scope!("remote: pull");
                 session.refresh();
+                // Once per connection. The list only changes when a
+                // plugin is added, which needs a rebuild, which
+                // reconnects — and a toggle reads it back itself.
+                if session.systems().is_none() {
+                    session.refresh_systems();
+                }
             }
         }
         refresh = Some(started.elapsed());

@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use super::identity::SystemSource;
+use super::toggles::SystemToggles;
 use crate::resource::Resources;
 use crate::stage::Stage;
 use crate::system::{GpuSystem, System};
@@ -381,4 +383,205 @@ fn each_system_gets_its_own_scope() {
         Some(physics),
         "the id was registered again instead of reused, which grows puffin's table every frame"
     );
+}
+
+// -- Who a system belongs to (#982) ------------------------------------
+
+/// The engine's own plugins take the default.
+struct EnginePlugin;
+impl crate::plugin::Plugin for EnginePlugin {
+    fn build(&self, app: &mut crate::app::App) {
+        app.add_system(Stage::Update, |_: &mut Resources| {});
+    }
+}
+
+/// What the editor's codegen writes for a project.
+struct ProjectPlugin;
+impl crate::plugin::Plugin for ProjectPlugin {
+    fn source(&self) -> SystemSource {
+        SystemSource::Project
+    }
+    fn build(&self, app: &mut crate::app::App) {
+        app.add_system(Stage::Update, |_: &mut Resources| {});
+    }
+}
+
+/// A plugin that adds another must not be swallowed by it.
+struct NestingPlugin;
+impl crate::plugin::Plugin for NestingPlugin {
+    fn source(&self) -> SystemSource {
+        SystemSource::Project
+    }
+    fn build(&self, app: &mut crate::app::App) {
+        app.add_plugin(EnginePlugin);
+        app.add_system(Stage::Update, |_: &mut Resources| {});
+    }
+}
+
+#[test]
+fn a_plugin_declares_its_systems_source() {
+    let mut app = crate::app::App::new();
+    app.add_plugin(EnginePlugin);
+    app.add_plugin(ProjectPlugin);
+
+    let sources: Vec<SystemSource> = app
+        .schedule()
+        .systems()
+        .iter()
+        .map(|system| system.source)
+        .collect();
+    assert_eq!(sources, vec![SystemSource::Engine, SystemSource::Project]);
+}
+
+/// The inner plugin restores what the outer one was using, or everything
+/// after a nested `add_plugin` is attributed to the inner one.
+#[test]
+fn a_nested_plugin_restores_the_outer_source() {
+    let mut app = crate::app::App::new();
+    app.add_plugin(NestingPlugin);
+
+    let sources: Vec<SystemSource> = app
+        .schedule()
+        .systems()
+        .iter()
+        .map(|system| system.source)
+        .collect();
+    assert_eq!(
+        sources,
+        vec![SystemSource::Engine, SystemSource::Project],
+        "the system added AFTER the nested plugin belongs to the outer one",
+    );
+}
+
+/// Added straight onto the `App`, outside any plugin: the game's own main.
+#[test]
+fn a_system_outside_a_plugin_is_the_projects() {
+    let mut app = crate::app::App::new();
+    app.add_system(Stage::Update, |_: &mut Resources| {});
+    assert_eq!(app.schedule().systems()[0].source, SystemSource::Project);
+}
+
+// -- The order the list claims to be in --------------------------------
+
+#[test]
+fn the_run_order_holds_every_stage_once() {
+    let mut seen = super::RUN_ORDER.to_vec();
+    seen.sort();
+    seen.dedup();
+    assert_eq!(
+        seen.len(),
+        Stage::ALL.len(),
+        "a stage is missing or doubled"
+    );
+}
+
+/// 🔴 The trap this list exists for. `Stage`'s own ordering puts
+/// `Physics = 8` after `Gpu = 7`, but a frame runs the fixed stages
+/// between `Update` and `PostUpdate` — so iterating the `BTreeMap` or
+/// `Stage::ALL` lists physics somewhere it never runs.
+#[test]
+fn the_fixed_stages_run_inside_the_frame() {
+    let at = |stage: Stage| super::RUN_ORDER.iter().position(|s| *s == stage).unwrap();
+    assert!(at(Stage::Update) < at(Stage::Physics));
+    assert!(at(Stage::PostPhysics) < at(Stage::PostUpdate));
+    assert!(
+        Stage::Gpu < Stage::Physics,
+        "if this fails the enum was reordered and this test is now vacuous",
+    );
+}
+
+// -- Switching a system off (#982 step 2) ------------------------------
+
+/// The whole point: a system that is switched off does not run, and the
+/// ones around it still do.
+#[test]
+fn a_disabled_system_does_not_run() {
+    fn ran_once(resources: &mut Resources) {
+        *resources.get_mut::<u32>().unwrap() += 1;
+    }
+    fn ran_twice(resources: &mut Resources) {
+        *resources.get_mut::<u32>().unwrap() += 10;
+    }
+
+    let mut schedule = Schedule::new();
+    schedule.add_system(Stage::Update, ran_once);
+    schedule.add_system(Stage::Update, ran_twice);
+
+    let mut resources = Resources::new();
+    resources.insert(0u32);
+
+    schedule.run_stage(Stage::Update, &mut resources);
+    assert_eq!(*resources.get::<u32>().unwrap(), 11, "both should have run");
+
+    let mut toggles = SystemToggles::new();
+    toggles.disable(std::any::type_name_of_val(&ran_once));
+    resources.insert(toggles);
+
+    schedule.run_stage(Stage::Update, &mut resources);
+    assert_eq!(
+        *resources.get::<u32>().unwrap(),
+        21,
+        "the disabled one ran, or the enabled one did not",
+    );
+}
+
+/// A build nobody expressed an opinion about runs exactly what it ran
+/// before any of this existed.
+#[test]
+fn no_toggles_resource_changes_nothing() {
+    fn counts(resources: &mut Resources) {
+        *resources.get_mut::<u32>().unwrap() += 1;
+    }
+
+    let mut schedule = Schedule::new();
+    schedule.add_system(Stage::Update, counts);
+
+    let mut resources = Resources::new();
+    resources.insert(0u32);
+    schedule.run_stage(Stage::Update, &mut resources);
+
+    assert_eq!(*resources.get::<u32>().unwrap(), 1);
+}
+
+/// Switching it back on is what makes the switch a switch.
+#[test]
+fn enabling_puts_a_system_back() {
+    fn counts(resources: &mut Resources) {
+        *resources.get_mut::<u32>().unwrap() += 1;
+    }
+
+    let mut schedule = Schedule::new();
+    schedule.add_system(Stage::Update, counts);
+
+    let mut resources = Resources::new();
+    resources.insert(0u32);
+    let mut toggles = SystemToggles::new();
+    toggles.disable(std::any::type_name_of_val(&counts));
+    resources.insert(toggles);
+
+    schedule.run_stage(Stage::Update, &mut resources);
+    assert_eq!(*resources.get::<u32>().unwrap(), 0, "it ran while off");
+
+    resources
+        .get_mut::<SystemToggles>()
+        .unwrap()
+        .enable(std::any::type_name_of_val(&counts));
+    schedule.run_stage(Stage::Update, &mut resources);
+    assert_eq!(*resources.get::<u32>().unwrap(), 1);
+}
+
+/// Two anonymous closures share a `type_name`, so the schedule has to
+/// hand them different keys or one toggle stops both.
+#[test]
+fn two_closures_get_different_keys() {
+    let mut schedule = Schedule::new();
+    schedule.add_system(Stage::Update, |_: &mut Resources| {});
+    schedule.add_system(Stage::Update, |_: &mut Resources| {});
+
+    let systems = schedule.systems();
+    assert_eq!(
+        systems[0].key.name, systems[1].key.name,
+        "if these differ the collision is gone and this test is vacuous",
+    );
+    assert_ne!(systems[0].key.nth, systems[1].key.nth);
 }

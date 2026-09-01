@@ -139,6 +139,11 @@ pub struct RemoteSession {
     /// closed every scene — a different thing, and the panel should show
     /// it rather than falling back to a list the editor made up.
     scenes: Option<Vec<kooch_remote::protocol::SceneEntry>>,
+    /// What the project schedules, and which of it is running.
+    ///
+    /// Pulled on the idle cadence rather than per frame: the list only
+    /// changes when a plugin is added, which needs a rebuild anyway.
+    systems: Option<Vec<kooch_remote::protocol::SystemEntry>>,
     /// Whether the last [`Self::refresh`] actually changed the world.
     ///
     /// The mirror walks every entity to apply a snapshot, which costs
@@ -254,6 +259,7 @@ impl RemoteSession {
             snapshot: Vec::new(),
             host_metrics: None,
             scenes: None,
+            systems: None,
             changed_last_refresh: true,
             revision: None,
             pump: None,
@@ -273,6 +279,7 @@ impl RemoteSession {
             snapshot: Vec::new(),
             host_metrics: None,
             scenes: None,
+            systems: None,
             changed_last_refresh: true,
             revision: None,
             pump: None,
@@ -385,6 +392,27 @@ impl RemoteSession {
     /// set, empty included.
     pub fn open_scenes(&self) -> Option<&[kooch_remote::protocol::SceneEntry]> {
         self.scenes.as_deref()
+    }
+
+    /// What the project schedules, or `None` if it has not said.
+    pub fn systems(&self) -> Option<&[kooch_remote::protocol::SystemEntry]> {
+        self.systems.as_deref()
+    }
+
+    /// Asks the project what it schedules, and whether each is running.
+    ///
+    /// Its own call rather than a field on the entity pull: the list is
+    /// asked for on the idle cadence and after a toggle, not per frame.
+    pub fn refresh_systems(&mut self) {
+        if self.state != ConnectionState::Connected {
+            return;
+        }
+        match self.client.list_systems() {
+            Ok(systems) => self.systems = Some(systems),
+            // Left as it was. A host too old to answer should leave the
+            // panel showing what it last knew rather than emptying it.
+            Err(e) => tracing::debug!("the project did not list its systems: {e}"),
+        }
     }
 
     /// Turns the background transform pull on or off (#1014).

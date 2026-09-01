@@ -615,3 +615,26 @@ fn the_game_half_is_not_gated() {
         "the part a game needs was gated behind the editor",
     );
 }
+
+/// The project's plugin has to say it is the project's, or the system
+/// panel groups every project system under the engine (#982).
+///
+/// Declared by the generated code rather than sniffed from the crate
+/// name: a plugin is the only thing that knows which side it is on.
+#[test]
+fn the_generated_plugin_names_its_source() {
+    let generated = super::super::render::render_registrations(&[source(
+        "player.rs",
+        &["Player"],
+        &["move_player"],
+    )]);
+
+    assert!(
+        generated.contains("fn source(&self) -> SystemSource"),
+        "the plugin does not declare a source:\n{generated}",
+    );
+    assert!(
+        generated.contains("SystemSource::Project"),
+        "the plugin declared a source that is not the project's:\n{generated}",
+    );
+}

@@ -1,3 +1,4 @@
+use super::identity::{SystemKey, SystemSource};
 use super::system_scope::{ScopeGuard, SystemScope};
 use crate::resource::Resources;
 use crate::system::{GpuSystem, System};
@@ -12,6 +13,12 @@ use crate::system::{GpuSystem, System};
 pub(super) struct AnySystem {
     kind: Kind,
     scope: SystemScope,
+    /// Which half of the build scheduled it, recorded here because the
+    /// plugin that added it is the only thing that knows.
+    source: SystemSource,
+    /// What a toggle addresses it by. Built once at registration, so the
+    /// per-frame check is a lookup rather than string work.
+    key: SystemKey,
 }
 
 /// Either a CPU or GPU system.
@@ -21,18 +28,30 @@ pub(super) enum Kind {
 }
 
 impl AnySystem {
-    pub(super) fn cpu(system: Box<dyn System>) -> Self {
+    pub(super) fn cpu(system: Box<dyn System>, source: SystemSource, key: SystemKey) -> Self {
         Self {
             kind: Kind::Cpu(system),
             scope: SystemScope::default(),
+            source,
+            key,
         }
     }
 
-    pub(super) fn gpu(system: Box<dyn GpuSystem>) -> Self {
+    pub(super) fn gpu(system: Box<dyn GpuSystem>, source: SystemSource, key: SystemKey) -> Self {
         Self {
             kind: Kind::Gpu(system),
             scope: SystemScope::default(),
+            source,
+            key,
         }
+    }
+
+    pub(super) fn source(&self) -> SystemSource {
+        self.source
+    }
+
+    pub(super) fn key(&self) -> &SystemKey {
+        &self.key
     }
 
     pub(super) fn name(&self) -> &str {

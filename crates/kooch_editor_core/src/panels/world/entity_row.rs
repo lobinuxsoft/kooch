@@ -514,11 +514,13 @@ fn handle_context_menu(
                 crate::actions::SpawnTarget::ChildOf(info.entity),
             );
         });
-        if let Some(scene) = info.scene {
-            ui.menu_button("New in This Scene", |ui| {
-                super::spawn_entries(ui, actions, crate::actions::SpawnTarget::Scene(scene));
-            });
-        }
+        // 🔴 Offered even with no scene, where it used to be hidden — and
+        // hiding it left `New Child` as the only spawn a row had, so an
+        // entity in no scene could only ever be nested under (#1033).
+        let (label, root) = root_target(info.scene);
+        ui.menu_button(label, |ui| {
+            super::spawn_entries(ui, actions, root);
+        });
         ui.separator();
 
         let count = selected.len();
@@ -719,4 +721,21 @@ fn next_sibling(info: &EntityDisplayInfo, entities: &[EntityDisplayInfo]) -> Opt
     let mut siblings = entities.iter().filter(|e| e.parent == info.parent);
     siblings.find(|e| e.entity == info.entity)?;
     siblings.next().map(|e| e.entity)
+}
+
+/// Where a row's root-level spawn goes, and what to call it.
+///
+/// An entity in no scene still has a root. Answering `None` with nothing
+/// left `New Child` as the only spawn a row offered, so a world with no
+/// scene open could only ever nest (#1033).
+pub(super) fn root_target(
+    scene: Option<kooch_core::Guid>,
+) -> (&'static str, crate::actions::SpawnTarget) {
+    match scene {
+        Some(scene) => (
+            "New in This Scene",
+            crate::actions::SpawnTarget::Scene(scene),
+        ),
+        None => ("New Beside This", crate::actions::SpawnTarget::Active),
+    }
 }

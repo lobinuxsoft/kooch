@@ -791,6 +791,36 @@ fn draw_group_header(
     }
 }
 
+/// What the "Unsaved" group offers: somewhere to put something, and
+/// nothing about files.
+///
+/// Aimed at the active scene rather than at the group. The group is not
+/// a place — it is the absence of one — so "here" cannot be honoured;
+/// the active scene is where an entity with no home already goes, which
+/// is what the group's own note says.
+fn unowned_entries(
+    ui: &mut egui::Ui,
+    clipboard_has_entities: bool,
+    actions: &mut Vec<EditorAction>,
+) {
+    ui.menu_button("New", |ui| {
+        spawn_entries(ui, actions, crate::actions::SpawnTarget::Active);
+    });
+    if ui
+        .add_enabled(
+            clipboard_has_entities,
+            egui::Button::new(format!("{} Paste", icons::PACKAGE)),
+        )
+        .on_hover_text("Put what was copied into the active scene")
+        .clicked()
+    {
+        actions.push(EditorAction::PasteEntities {
+            into: crate::actions::SpawnTarget::Active,
+        });
+        ui.close();
+    }
+}
+
 /// The colour of a scene that has edits not on disk.
 ///
 /// The same amber the code-sync control pulses in, because it means the
@@ -813,20 +843,27 @@ const DIRTY_SCENE: egui::Color32 = egui::Color32::from_rgb(210, 150, 60);
 /// somebody right-clicked is routinely not that one. Writing the wrong
 /// file is not a mistake the user can see until the next load.
 ///
-/// Nothing for the "Unsaved" pseudo-group — it is not a file, so there
-/// is nowhere for it to be saved to. Its entities go with the active
-/// scene, which is what its own note already says.
+/// Nothing about FILES for the "Unsaved" pseudo-group — it is not one,
+/// so there is nowhere for it to be saved to. Its entities go with the
+/// active scene, which is what its own note already says.
+///
+/// 🔴 It still gets the spawn entries. Suppressing the whole menu threw
+/// those out with the file half, and they have nothing to do with files:
+/// this row stands over every scene-less entity, so with no scene open
+/// it was the last place that could have offered a root to put something
+/// at, and it offered nothing (#1033).
 fn scene_context_menu(
     resp: &egui::Response,
     header: &GroupHeader,
     clipboard_has_entities: bool,
     actions: &mut Vec<EditorAction>,
 ) {
-    let Some(scene) = header.scene else {
-        return;
-    };
     resp.context_menu(|ui| {
         ui.set_min_width(240.0);
+        let Some(scene) = header.scene else {
+            unowned_entries(ui, clipboard_has_entities, actions);
+            return;
+        };
         // 🔴 The only place the active scene can be chosen when a single
         // scene is open: `draw_scene_bar` hides itself under two scenes,
         // so with one there was nothing on screen naming it and nothing

@@ -24,6 +24,18 @@ use crate::app::App;
 /// App::new().add_plugin(GamePlugin).run();
 /// ```
 pub trait Plugin: Send + Sync {
+    /// Which half of the build this plugin's systems belong to.
+    ///
+    /// Defaults to the engine, because the engine is what most plugins
+    /// are. A project's generated registrations say `Project`, and the
+    /// editor's codegen writes that line.
+    ///
+    /// 🔴 Declared, not sniffed from the crate name. A plugin is the only
+    /// thing that knows which side it is on.
+    fn source(&self) -> crate::schedule::SystemSource {
+        crate::schedule::SystemSource::Engine
+    }
+
     /// Called when the plugin is added to the app.
     ///
     /// Use this phase for:

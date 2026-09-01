@@ -15,7 +15,7 @@ pub use crate::plugin::{CorePlugin, MinimalPlugins, Plugin, PluginGroup, PluginG
 pub use crate::resource::Resources;
 pub use crate::run_state::{Playing, run_if_playing};
 pub use crate::runner::{Runner, default_runner, run_for_frames, run_once};
-pub use crate::schedule::{Schedule, SystemFn};
+pub use crate::schedule::{Schedule, SystemFn, SystemInfo, SystemKey, SystemSource, SystemToggles};
 pub use crate::stage::Stage;
 pub use crate::system::{FunctionSystem, GpuSystem, System};
 pub use crate::time::Time;
