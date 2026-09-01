@@ -211,3 +211,86 @@ fn stop_tells_the_caller_the_world_moved_back() {
         "stop said nothing, so the editor is still drawing where play left it",
     );
 }
+
+// -- The systems panel's wire (#982 step 3) -----------------------------
+
+fn catalog_of(names: &[(&str, kooch_core::schedule::SystemSource)]) -> Resources {
+    use kooch_core::schedule::{SystemCatalog, SystemKey, SystemRecord};
+
+    let mut resources = world();
+    resources.insert(SystemCatalog::new(
+        names
+            .iter()
+            .map(|(name, source)| SystemRecord {
+                stage: kooch_core::stage::Stage::Update,
+                name: (*name).to_owned(),
+                key: SystemKey::new(*name),
+                source: *source,
+                gpu: false,
+            })
+            .collect(),
+    ));
+    resources
+}
+
+/// A host that has not published yet is not a host with no systems, but
+/// the panel has nothing to draw either way — it must not panic.
+#[test]
+fn an_unpublished_host_lists_nothing() {
+    let resources = world();
+    assert!(list_systems(&resources).is_empty());
+}
+
+#[test]
+fn the_list_says_which_half_scheduled_each() {
+    use kooch_core::schedule::SystemSource;
+
+    let resources = catalog_of(&[
+        ("kooch_render::upload", SystemSource::Engine),
+        ("game::systems::jump", SystemSource::Project),
+    ]);
+
+    let listed = list_systems(&resources);
+    assert_eq!(listed.len(), 2);
+    assert!(!listed[0].project);
+    assert!(listed[1].project);
+    assert_eq!(listed[1].short, "jump", "the panel shows the short name");
+    assert!(listed.iter().all(|system| system.enabled));
+}
+
+/// The round trip the panel makes: switch one off, and the next list
+/// says so. Read back rather than assumed, because that is what the
+/// panel does.
+#[test]
+fn switching_one_off_shows_in_the_next_list() {
+    use kooch_core::schedule::SystemSource;
+
+    let mut resources = catalog_of(&[
+        ("kooch_render::upload", SystemSource::Engine),
+        ("game::systems::jump", SystemSource::Project),
+    ]);
+
+    set_system_enabled(&mut resources, "game::systems::jump", 0, false);
+
+    let listed = list_systems(&resources);
+    assert!(listed[0].enabled, "the engine one went off too");
+    assert!(!listed[1].enabled, "the project one is still running");
+
+    set_system_enabled(&mut resources, "game::systems::jump", 0, true);
+    assert!(list_systems(&resources).iter().all(|system| system.enabled));
+}
+
+/// A wrapped system is scheduled under the closure's name, so the panel
+/// has to address it by the same string the list handed it back.
+#[test]
+fn the_name_the_list_gives_is_the_name_that_toggles() {
+    use kooch_core::schedule::SystemSource;
+
+    let wrapped = "kooch_core::run_state::run_if_playing<game::jump>::{{closure}}";
+    let mut resources = catalog_of(&[(wrapped, SystemSource::Project)]);
+
+    let listed = list_systems(&resources);
+    set_system_enabled(&mut resources, &listed[0].name, listed[0].nth, false);
+
+    assert!(!list_systems(&resources)[0].enabled);
+}

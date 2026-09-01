@@ -189,6 +189,16 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             Ok(()) => Response::ok(id, ResponseData::Ok),
             Err(e) => Response::err(id, e),
         },
+        Method::ListSystems => Response::ok(
+            id,
+            ResponseData::Systems {
+                systems: list_systems(resources),
+            },
+        ),
+        Method::SetSystemEnabled { name, nth, enabled } => {
+            set_system_enabled(resources, name, *nth, *enabled);
+            Response::ok(id, ResponseData::Ok)
+        }
     }
 }
 
@@ -1028,6 +1038,51 @@ fn load_directly(resources: &mut Resources, path: &str) -> Result<(), RemoteErro
 fn forget_the_world(resources: &mut Resources) {
     resources.remove::<crate::snapshot_cache::SnapshotCache>();
     resources.remove::<crate::moved_cache::MovedCache>();
+}
+
+/// Every system the host schedules, with whether it is running.
+///
+/// Read from the catalog the `App` published rather than from the
+/// schedule, which lives on the `App` and never reaches a handler.
+/// Empty before `App::run` has published it, which is what a host that
+/// has not started looks like.
+fn list_systems(resources: &Resources) -> Vec<crate::protocol::SystemEntry> {
+    let Some(catalog) = resources.get::<kooch_core::schedule::SystemCatalog>() else {
+        return Vec::new();
+    };
+    let toggles = resources.get::<kooch_core::schedule::SystemToggles>();
+    catalog
+        .all()
+        .iter()
+        .map(|system| crate::protocol::SystemEntry {
+            stage: format!("{:?}", system.stage),
+            name: system.name.clone(),
+            short: system.short_name().to_owned(),
+            nth: system.key.nth,
+            project: system.source == kooch_core::schedule::SystemSource::Project,
+            gpu: system.gpu,
+            enabled: !toggles
+                .as_ref()
+                .is_some_and(|toggles| toggles.is_disabled(&system.key)),
+        })
+        .collect()
+}
+
+/// Stops or restarts one system, creating the toggle set on demand.
+fn set_system_enabled(resources: &mut Resources, name: &str, nth: u32, enabled: bool) {
+    use kooch_core::schedule::{SystemKey, SystemToggles};
+
+    if resources.get::<SystemToggles>().is_none() {
+        resources.insert(SystemToggles::new());
+    }
+    let Some(toggles) = resources.get_mut::<SystemToggles>() else {
+        return;
+    };
+    let key = SystemKey::nth(name, nth);
+    match enabled {
+        true => toggles.enable(key),
+        false => toggles.disable(key),
+    }
 }
 
 /// A [`WorldSnapshot`], not a [`SceneDocument`]: the scene format is

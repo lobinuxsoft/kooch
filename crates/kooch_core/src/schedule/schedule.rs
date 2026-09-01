@@ -5,6 +5,7 @@ use crate::stage::Stage;
 use crate::system::{FunctionSystem, GpuSystem, System};
 
 use super::any_system::AnySystem;
+use super::catalog::{SystemCatalog, SystemRecord};
 use super::gpu_batch::run_gpu_batch;
 use super::identity::{SystemInfo, SystemKey, SystemSource};
 use super::toggles::SystemToggles;
@@ -289,6 +290,26 @@ impl Schedule {
                 })
             })
             .collect()
+    }
+
+    /// The whole schedule, owned, for publishing into `Resources`.
+    ///
+    /// `systems()` borrows from the schedule, and the schedule lives on
+    /// the `App` rather than in `Resources` — so a panel, which is a
+    /// system, can only ever see a copy.
+    pub fn catalog(&self) -> SystemCatalog {
+        SystemCatalog::new(
+            self.systems()
+                .into_iter()
+                .map(|system| SystemRecord {
+                    stage: system.stage,
+                    name: system.name.to_owned(),
+                    key: system.key.clone(),
+                    source: system.source,
+                    gpu: system.gpu,
+                })
+                .collect(),
+        )
     }
 
     /// Builds the key for a system about to be added.

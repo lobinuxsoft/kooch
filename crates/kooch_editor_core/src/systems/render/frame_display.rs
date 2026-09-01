@@ -23,6 +23,7 @@ pub(super) struct FrameDisplayData {
     pub(super) archetype_count: usize,
     pub(super) active_archetype_count: usize,
     pub(super) scenes: Vec<SceneDisplayInfo>,
+    pub(super) systems: Vec<kooch_remote::protocol::SystemEntry>,
 }
 
 impl FrameDisplayData {
@@ -36,6 +37,7 @@ impl FrameDisplayData {
             archetype_count: 0,
             active_archetype_count: 0,
             scenes: Vec::new(),
+            systems: Vec::new(),
         }
     }
 
@@ -82,6 +84,7 @@ impl FrameDisplayData {
             .map_or(0, |a| a.archetype_count());
         let active_archetype_count = archetypes.iter().filter(|a| a.entity_count > 0).count();
         let scenes = gather_scenes(resources);
+        let systems = gather_systems(resources);
         (
             Self {
                 entities,
@@ -92,10 +95,57 @@ impl FrameDisplayData {
                 archetype_count,
                 active_archetype_count,
                 scenes,
+                systems,
             },
             stages,
         )
     }
+}
+
+/// What the project schedules, or what this editor does when there is no
+/// project.
+///
+/// 🔴 The project's, when one is connected. The editor's own schedule is
+/// a different set of systems in a different process, and listing it
+/// while a project is open would offer switches that do nothing to the
+/// world on screen.
+fn gather_systems(resources: &Resources) -> Vec<kooch_remote::protocol::SystemEntry> {
+    if let Some(systems) = resources
+        .get::<crate::remote_session::RemoteState>()
+        .and_then(|state| state.session.as_ref())
+        .and_then(|session| session.systems())
+    {
+        return systems.to_vec();
+    }
+    local_systems(resources)
+}
+
+/// The editor's own schedule, read from the catalog it published.
+///
+/// The fallback for local mode, and what makes the panel testable
+/// without a project.
+fn local_systems(resources: &Resources) -> Vec<kooch_remote::protocol::SystemEntry> {
+    use kooch_core::schedule::{SystemCatalog, SystemSource, SystemToggles};
+
+    let Some(catalog) = resources.get::<SystemCatalog>() else {
+        return Vec::new();
+    };
+    let toggles = resources.get::<SystemToggles>();
+    catalog
+        .all()
+        .iter()
+        .map(|system| kooch_remote::protocol::SystemEntry {
+            stage: format!("{:?}", system.stage),
+            name: system.name.clone(),
+            short: system.short_name().to_owned(),
+            nth: system.key.nth,
+            project: system.source == SystemSource::Project,
+            gpu: system.gpu,
+            enabled: !toggles
+                .as_ref()
+                .is_some_and(|toggles| toggles.is_disabled(&system.key)),
+        })
+        .collect()
 }
 
 /// Snapshots the open scenes for the World panel.

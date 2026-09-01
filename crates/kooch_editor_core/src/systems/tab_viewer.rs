@@ -41,6 +41,8 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) inspector_nav: &'a mut crate::panels::inspector::InspectorNav,
     pub(crate) entities: &'a [EntityDisplayInfo],
     pub(crate) scenes: &'a [crate::state::SceneDisplayInfo],
+    /// What the project schedules, and which of it is running (#982).
+    pub(crate) systems: &'a [kooch_remote::protocol::SystemEntry],
     pub(crate) archetypes: &'a [ArchetypeDisplayInfo],
     pub(crate) component_types: &'a [ComponentTypeInfo],
     pub(crate) selected: &'a mut Vec<Entity>,
@@ -335,6 +337,9 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 }
             }
             EditorTab::Components => draw_components_content(ui, self.component_types),
+            EditorTab::Systems => {
+                crate::panels::systems::draw_systems_content(ui, self.systems, self.actions)
+            }
             EditorTab::Profiler => crate::panels::profiler::draw_profiler_content(ui),
             EditorTab::Performance => crate::panels::performance::draw_performance_panel(
                 ui,

@@ -481,6 +481,13 @@ enum Edit<'a> {
     },
     /// Start or stop the project's gameplay systems in place.
     SetPlaying(bool),
+    /// Stop or restart one of the project's systems, from its next
+    /// frame.
+    SetSystemEnabled {
+        name: String,
+        nth: u32,
+        enabled: bool,
+    },
     /// Push a saved prefab's values into every instance the project holds.
     ///
     /// Carries the writes rather than a guid: working out *which* fields
@@ -609,6 +616,11 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
         }
         // Play runs the project's systems in the project we are already
         // driving, instead of launching a second copy of it.
+        EditorAction::SetSystemEnabled { name, nth, enabled } => Some(Edit::SetSystemEnabled {
+            name: name.clone(),
+            nth: *nth,
+            enabled: *enabled,
+        }),
         EditorAction::Play => Some(Edit::SetPlaying(true)),
         EditorAction::Stop => Some(Edit::SetPlaying(false)),
         // The wire protocol has one scene, so none of these have anything
@@ -989,6 +1001,9 @@ fn send(
             None => Ok(()),
         },
         Edit::SetPlaying(playing) => client.set_playing(playing).map_err(map_err),
+        Edit::SetSystemEnabled { name, nth, enabled } => client
+            .set_system_enabled(&name, nth, enabled)
+            .map_err(map_err),
         // Sent as ordinary field writes, but *not* as `EditorAction`s: an
         // edit on an instance is recorded as an override, so routing
         // propagation through the action layer would pin every field it

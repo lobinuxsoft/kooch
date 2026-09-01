@@ -197,9 +197,24 @@ impl App {
     /// The method does not return until the application exits.
     pub fn run(mut self) {
         self.finish_plugins();
+        // After every plugin, because that is when the schedule is
+        // whole. A panel reads this rather than the schedule itself,
+        // which lives here and not in `Resources` (#982).
+        self.publish_systems();
 
         let runner = self.runner.take().unwrap_or(default_runner);
         runner(self);
+    }
+
+    /// Copies the schedule's description of itself into `Resources`.
+    ///
+    /// Called by [`Self::run`] once every plugin has been built. Call it
+    /// again after scheduling something later, or the catalog describes a
+    /// frame that has since grown.
+    pub fn publish_systems(&mut self) -> &mut Self {
+        let catalog = self.schedule.catalog();
+        self.resources.insert(catalog);
+        self
     }
 
     /// Loads a dynamic plugin from a shared library.
