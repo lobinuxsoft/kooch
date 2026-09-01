@@ -1,7 +1,10 @@
 # Rust
 /target/
 **/*.rs.bk
-Cargo.lock
+# 🔴 Cargo.lock is NOT ignored. This workspace ships binaries, and
+# the editor copies the lock into every project it vendors itself
+# into — so an unversioned one means the resolution that reaches a
+# game is whichever machine happened to build it (#684).
 
 # IDE
 .idea/
