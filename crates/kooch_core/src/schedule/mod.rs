@@ -10,9 +10,11 @@ mod identity;
 #[allow(clippy::module_inception)]
 mod schedule;
 mod system_scope;
+mod toggles;
 
 #[cfg(test)]
 mod tests;
 
-pub use identity::{SystemInfo, SystemSource, short_name};
+pub use identity::{SystemInfo, SystemKey, SystemSource, canonical, short_name};
 pub use schedule::{RUN_ORDER, Schedule, SystemFn};
+pub use toggles::SystemToggles;

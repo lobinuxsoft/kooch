@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::identity::SystemSource;
+use super::toggles::SystemToggles;
 use crate::resource::Resources;
 use crate::stage::Stage;
 use crate::system::{GpuSystem, System};
@@ -487,4 +488,100 @@ fn the_fixed_stages_run_inside_the_frame() {
         Stage::Gpu < Stage::Physics,
         "if this fails the enum was reordered and this test is now vacuous",
     );
+}
+
+// -- Switching a system off (#982 step 2) ------------------------------
+
+/// The whole point: a system that is switched off does not run, and the
+/// ones around it still do.
+#[test]
+fn a_disabled_system_does_not_run() {
+    fn ran_once(resources: &mut Resources) {
+        *resources.get_mut::<u32>().unwrap() += 1;
+    }
+    fn ran_twice(resources: &mut Resources) {
+        *resources.get_mut::<u32>().unwrap() += 10;
+    }
+
+    let mut schedule = Schedule::new();
+    schedule.add_system(Stage::Update, ran_once);
+    schedule.add_system(Stage::Update, ran_twice);
+
+    let mut resources = Resources::new();
+    resources.insert(0u32);
+
+    schedule.run_stage(Stage::Update, &mut resources);
+    assert_eq!(*resources.get::<u32>().unwrap(), 11, "both should have run");
+
+    let mut toggles = SystemToggles::new();
+    toggles.disable(std::any::type_name_of_val(&ran_once));
+    resources.insert(toggles);
+
+    schedule.run_stage(Stage::Update, &mut resources);
+    assert_eq!(
+        *resources.get::<u32>().unwrap(),
+        21,
+        "the disabled one ran, or the enabled one did not",
+    );
+}
+
+/// A build nobody expressed an opinion about runs exactly what it ran
+/// before any of this existed.
+#[test]
+fn no_toggles_resource_changes_nothing() {
+    fn counts(resources: &mut Resources) {
+        *resources.get_mut::<u32>().unwrap() += 1;
+    }
+
+    let mut schedule = Schedule::new();
+    schedule.add_system(Stage::Update, counts);
+
+    let mut resources = Resources::new();
+    resources.insert(0u32);
+    schedule.run_stage(Stage::Update, &mut resources);
+
+    assert_eq!(*resources.get::<u32>().unwrap(), 1);
+}
+
+/// Switching it back on is what makes the switch a switch.
+#[test]
+fn enabling_puts_a_system_back() {
+    fn counts(resources: &mut Resources) {
+        *resources.get_mut::<u32>().unwrap() += 1;
+    }
+
+    let mut schedule = Schedule::new();
+    schedule.add_system(Stage::Update, counts);
+
+    let mut resources = Resources::new();
+    resources.insert(0u32);
+    let mut toggles = SystemToggles::new();
+    toggles.disable(std::any::type_name_of_val(&counts));
+    resources.insert(toggles);
+
+    schedule.run_stage(Stage::Update, &mut resources);
+    assert_eq!(*resources.get::<u32>().unwrap(), 0, "it ran while off");
+
+    resources
+        .get_mut::<SystemToggles>()
+        .unwrap()
+        .enable(std::any::type_name_of_val(&counts));
+    schedule.run_stage(Stage::Update, &mut resources);
+    assert_eq!(*resources.get::<u32>().unwrap(), 1);
+}
+
+/// Two anonymous closures share a `type_name`, so the schedule has to
+/// hand them different keys or one toggle stops both.
+#[test]
+fn two_closures_get_different_keys() {
+    let mut schedule = Schedule::new();
+    schedule.add_system(Stage::Update, |_: &mut Resources| {});
+    schedule.add_system(Stage::Update, |_: &mut Resources| {});
+
+    let systems = schedule.systems();
+    assert_eq!(
+        systems[0].key.name, systems[1].key.name,
+        "if these differ the collision is gone and this test is vacuous",
+    );
+    assert_ne!(systems[0].key.nth, systems[1].key.nth);
 }

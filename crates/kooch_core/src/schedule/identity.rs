@@ -16,12 +16,65 @@ pub enum SystemSource {
     Project,
 }
 
+/// What a toggle addresses a system by.
+///
+/// The canonical name plus which one it is, because a name is not always
+/// unique. Two anonymous closures in the same module get the **identical**
+/// `type_name` — measured, not assumed — and `dynamic/host.rs` wraps every
+/// system of a dynamic plugin in one closure, so that is not a corner
+/// case at scale.
+///
+/// `nth` is 0 for anything with a name of its own, which is 67 of the 72
+/// systems the engine schedules. It only climbs for the anonymous ones,
+/// and it is stable because plugins build in a fixed order.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SystemKey {
+    pub name: String,
+    pub nth: u32,
+}
+
+impl SystemKey {
+    /// The key for the first system with this name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: canonical(&name.into()).to_owned(),
+            nth: 0,
+        }
+    }
+
+    /// The key for the `nth` system sharing a name, counting from zero.
+    pub fn nth(name: impl Into<String>, nth: u32) -> Self {
+        Self {
+            nth,
+            ..Self::new(name)
+        }
+    }
+}
+
+impl From<&str> for SystemKey {
+    fn from(name: &str) -> Self {
+        Self::new(name)
+    }
+}
+
+/// The name a key is built from, with any wrapper taken off.
+///
+/// `run_if_playing(spin_pivots)` is scheduled as a closure, so the name
+/// the schedule holds is not the one a caller writing
+/// `disable(type_name_of_val(&spin_pivots))` would produce. Canonicalising
+/// both to the innermost path makes the two agree.
+pub fn canonical(name: &str) -> &str {
+    innermost(name)
+}
+
 /// One scheduled system, as a reader sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SystemInfo<'a> {
     pub stage: crate::stage::Stage,
-    /// The full path `type_name` gave, which is what a toggle keys on.
+    /// The full path `type_name` gave.
     pub name: &'a str,
+    /// What a toggle addresses it by.
+    pub key: &'a SystemKey,
     pub source: SystemSource,
     pub gpu: bool,
 }
@@ -58,7 +111,7 @@ pub fn short_name(name: &str) -> &str {
 ///
 /// `run_if_playing<a::b::sys>::{{closure}}` → `a::b::sys`. Wrappers nest,
 /// so this recurses rather than peeling one layer.
-fn innermost(name: &str) -> &str {
+pub(super) fn innermost(name: &str) -> &str {
     let Some(open) = name.find('<') else {
         return name;
     };

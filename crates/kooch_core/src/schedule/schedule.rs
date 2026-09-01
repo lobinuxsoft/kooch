@@ -6,7 +6,8 @@ use crate::system::{FunctionSystem, GpuSystem, System};
 
 use super::any_system::AnySystem;
 use super::gpu_batch::run_gpu_batch;
-use super::identity::{SystemInfo, SystemSource};
+use super::identity::{SystemInfo, SystemKey, SystemSource};
+use super::toggles::SystemToggles;
 
 /// A system function that operates on resources.
 ///
@@ -87,18 +88,22 @@ impl Schedule {
     where
         F: FnMut(&mut Resources) + Send + Sync + 'static,
     {
+        let key = self.mint_key(std::any::type_name::<F>());
         self.stages.entry(stage).or_default().push(AnySystem::cpu(
             Box::new(FunctionSystem::new(system)),
             self.attributing,
+            key,
         ));
     }
 
     /// Adds a struct implementing [`System`] at the specified stage.
     pub fn add_cpu_system(&mut self, stage: Stage, system: impl System) {
-        self.stages
-            .entry(stage)
-            .or_default()
-            .push(AnySystem::cpu(Box::new(system), self.attributing));
+        let key = self.mint_key(system.name());
+        self.stages.entry(stage).or_default().push(AnySystem::cpu(
+            Box::new(system),
+            self.attributing,
+            key,
+        ));
     }
 
     /// Adds a [`GpuSystem`] at the specified stage.
@@ -106,10 +111,12 @@ impl Schedule {
     /// GPU systems are lazily initialized when `GpuContext` first becomes
     /// available. Consecutive GPU systems are batched into one encoder.
     pub fn add_gpu_system(&mut self, stage: Stage, system: impl GpuSystem) {
-        self.stages
-            .entry(stage)
-            .or_default()
-            .push(AnySystem::gpu(Box::new(system), self.attributing));
+        let key = self.mint_key(system.name());
+        self.stages.entry(stage).or_default().push(AnySystem::gpu(
+            Box::new(system),
+            self.attributing,
+            key,
+        ));
     }
 
     /// Runs all systems in the specified stage.
@@ -121,8 +128,30 @@ impl Schedule {
             return;
         };
 
+        // 🔴 Asked once per stage, not once per system. The common case
+        // is that nobody switched anything off, and this is what keeps
+        // that case free of a hash lookup per system per frame.
+        let any_off = resources
+            .get::<SystemToggles>()
+            .is_some_and(|toggles| !toggles.is_empty());
+
         let mut i = 0;
         while i < systems.len() {
+            // ⚠️ CPU only. Skipping a GPU system would take it out of the
+            // batch `run_gpu_batch` shares an encoder for, which changes
+            // how the frame is RECORDED and not just what runs. Moot
+            // today — nothing implements `GpuSystem` outside tests — and
+            // it belongs with #392, which is what will put real ones
+            // there.
+            if any_off
+                && !systems[i].is_gpu()
+                && resources
+                    .get::<SystemToggles>()
+                    .is_some_and(|toggles| toggles.is_disabled(systems[i].key()))
+            {
+                i += 1;
+                continue;
+            }
             if systems[i].is_gpu() {
                 // Batch consecutive GPU systems.
                 let gpu_start = i;
@@ -254,11 +283,30 @@ impl Schedule {
                 systems.iter().map(move |system| SystemInfo {
                     stage,
                     name: system.name(),
+                    key: system.key(),
                     source: system.source(),
                     gpu: system.is_gpu(),
                 })
             })
             .collect()
+    }
+
+    /// Builds the key for a system about to be added.
+    ///
+    /// `nth` counts the systems already scheduled under the same
+    /// canonical name. It stays 0 for anything with a name of its own,
+    /// and only climbs for anonymous closures — which share a
+    /// `type_name` with every other closure in their module, so without
+    /// this a toggle aimed at one would stop all of them.
+    fn mint_key(&self, name: &str) -> SystemKey {
+        let candidate = SystemKey::new(name);
+        let nth = self
+            .stages
+            .values()
+            .flatten()
+            .filter(|system| system.key().name == candidate.name)
+            .count() as u32;
+        SystemKey { nth, ..candidate }
     }
 
     /// Returns `true` if startup has already completed.
