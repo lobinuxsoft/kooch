@@ -109,8 +109,27 @@ impl MeshletRenderStage {
                 "meshlet asset sync tick",
             );
         }
+        // Dropped the moment a GUID stops being pending, so a mesh that
+        // comes back and breaks again is reported again.
+        self.unresolved.retain(|guid| pending.contains(guid));
+
         if pending.is_empty() {
             return;
+        }
+
+        // 🔴 Every mesh in the scene failing is not N warnings, it is one
+        // broken run — and the actionable line was buried under a
+        // thousand correct ones. Said once, when the whole set is
+        // unresolved and none of it has been reported yet.
+        let all_broken = pending.len() == referenced.len() && self.unresolved.is_empty();
+        if all_broken && self.pipeline.registered_count() == 0 {
+            tracing::error!(
+                target: "kooch_render::meshlet::sync",
+                meshes = referenced.len(),
+                "not one mesh in this scene resolves, so nothing will draw. \
+                 The asset database is empty — a game started outside the \
+                 editor needs KOOCH_ENGINE_ROOT to find the engine's own assets",
+            );
         }
 
         for guid in pending {
@@ -131,12 +150,18 @@ impl MeshletRenderStage {
             let handle = match load_result {
                 Ok(h) => h,
                 Err(e) => {
-                    tracing::warn!(
-                        target: "kooch_render::meshlet::sync",
-                        guid = %guid,
-                        error = %e,
-                        "failed to load meshlet asset by GUID",
-                    );
+                    // `insert` answers "was this new" — the retry stays
+                    // every frame, because an asset can arrive late; only
+                    // the saying stops.
+                    if self.unresolved.insert(guid) {
+                        tracing::warn!(
+                            target: "kooch_render::meshlet::sync",
+                            guid = %guid,
+                            error = %e,
+                            "failed to load meshlet asset by GUID; \
+                             said once until it resolves",
+                        );
+                    }
                     continue;
                 }
             };
