@@ -24,6 +24,8 @@ pollster.workspace = true
 # The editor protocol's format. Reflected values have to survive it, and
 # JSON is where the ones RON takes in its stride go wrong.
 serde_json.workspace = true
+# A local subscriber, so a test can assert on what the load said.
+tracing-subscriber.workspace = true
 
 [features]
 dynamic = ["kooch_core/dynamic", "dep:kooch_plugin_api"]

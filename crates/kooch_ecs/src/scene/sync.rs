@@ -155,6 +155,22 @@ fn spawn_returning_as(
         registry.register_cpu_reflected::<crate::persistent_id::PersistentId>();
     }
 
+    // A fresh report per top-level load. A nested prefab shares the outer
+    // one, or a prefab placed 600 times says the same thing 600 times.
+    let nested = resources
+        .get::<InstancingChain>()
+        .is_some_and(|chain| !chain.0.is_empty());
+    if !nested {
+        // Taken, not read: an unset source belongs to whoever set it
+        // last, and reporting a stale path sends the user to the wrong
+        // file.
+        let source = resources
+            .remove::<LoadSource>()
+            .map(|source| source.0)
+            .unwrap_or_else(|| scene.id.to_string());
+        resources.insert(Reported::new(source));
+    }
+
     // First pass: spawn entities and insert components.
     // Track name → Entity for parent resolution.
     let mut name_to_entity: std::collections::HashMap<String, crate::entity::Entity> =
@@ -210,6 +226,7 @@ fn spawn_returning_as(
                 if let Some(dynamic) = resources.get_mut::<DynamicComponents>() {
                     dynamic.insert(entity, &comp_desc.type_name, comp_desc.fields.clone());
                 }
+                report_type(resources, &comp_desc.type_name);
                 continue;
             };
 
@@ -245,8 +262,14 @@ fn spawn_returning_as(
                     });
                     continue;
                 }
-                if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-                    registry.reflect_set_field(&type_id, entity, field_name, value.clone())?;
+                let wrote = match resources.get_mut::<ComponentRegistry>() {
+                    Some(registry) => {
+                        registry.reflect_set_field(&type_id, entity, field_name, value.clone())
+                    }
+                    None => Ok(()),
+                };
+                if let Err(error) = wrote {
+                    report_field(resources, &comp_desc.type_name, field_name, error);
                 }
             }
         }
@@ -328,6 +351,101 @@ fn spawn_returning_as(
 /// way *in*.
 #[derive(Default)]
 struct InstancingChain(Vec<kooch_core::Guid>);
+
+/// Where the next scene spawned came from.
+///
+/// The document's own `name` cannot serve: the editor writes "Untitled
+/// Scene" into every file it creates, so a complaint keyed on it names
+/// nothing. Set by whoever holds a path; a caller that has none — the
+/// remote client, a test — leaves it and gets the scene's id instead,
+/// which at least greps.
+struct LoadSource(String);
+
+/// Tells the next load which file it is reading.
+pub fn loading_from(resources: &mut Resources, path: &std::path::Path) {
+    resources.insert(LoadSource(path.display().to_string()));
+}
+
+/// What this load has already complained about.
+///
+/// One unknown type spread over 600 entities is one problem, not 600 log
+/// lines. Scoped to a load rather than to the process, so that fixing the
+/// scene and reloading is distinguishable from never having warned.
+struct Reported {
+    source: String,
+    types: std::collections::HashSet<String>,
+    fields: std::collections::HashSet<String>,
+}
+
+impl Reported {
+    fn new(source: String) -> Self {
+        Self {
+            source,
+            types: std::collections::HashSet::new(),
+            fields: std::collections::HashSet::new(),
+        }
+    }
+}
+
+/// Says a type did not resolve, once per type per load.
+///
+/// The component is parked and written back untouched, so nothing is lost
+/// on disk — but nothing runs it either, and that is what goes unnoticed:
+/// the rename to Kóoch moved every `type_name` and every scene loaded
+/// clean and wrong (#719).
+fn report_type(resources: &mut Resources, type_name: &str) {
+    let Some(reported) = resources.get_mut::<Reported>() else {
+        return;
+    };
+    if !reported.types.insert(type_name.to_owned()) {
+        return;
+    }
+    let scene = reported.source.clone();
+    tracing::warn!(
+        target: "kooch_ecs::scene",
+        scene,
+        component = %type_name,
+        "no type by that name in this build; the component is parked and \
+         written back untouched, but nothing will run it",
+    );
+}
+
+/// Says a stored value did not land, once per field per load.
+///
+/// A field the type no longer has is routine under the engine's
+/// break-and-fix policy, so it goes to `debug`; anything else is data that
+/// will not load and earns a warning. Neither fails the load:
+/// `sync_scene_to_ecs` despawns the world before spawning, so aborting
+/// here leaves nothing behind at all.
+fn report_field(
+    resources: &mut Resources,
+    type_name: &str,
+    field: &str,
+    error: crate::reflect::ReflectError,
+) {
+    let key = format!("{type_name}.{field}");
+    let Some(reported) = resources.get_mut::<Reported>() else {
+        return;
+    };
+    if !reported.fields.insert(key.clone()) {
+        return;
+    }
+    let scene = reported.source.clone();
+    match error {
+        crate::reflect::ReflectError::FieldNotFound(_) => tracing::debug!(
+            target: "kooch_ecs::scene",
+            scene,
+            field = %key,
+            "the component has no such field any more; the stored value is dropped",
+        ),
+        error => tracing::warn!(
+            target: "kooch_ecs::scene",
+            scene,
+            field = %key,
+            "a stored value did not load: {error}",
+        ),
+    }
+}
 
 /// The prefab a description references, if it is an instance.
 fn instance_source(entity_desc: &super::document::EntityDescription) -> Option<kooch_core::Guid> {

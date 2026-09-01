@@ -21,7 +21,8 @@ use kooch_core::Guid;
 use kooch_core::resource::Resources;
 
 use crate::scene::{
-    SceneDocument, SceneError, despawn_scene, spawn_scene_as, spawn_scene_into, sync_scene_to_ecs,
+    SceneDocument, SceneError, despawn_scene, loading_from, spawn_scene_as, spawn_scene_into,
+    sync_scene_to_ecs,
 };
 
 /// One open scene.
@@ -314,6 +315,7 @@ impl SceneManager {
         let text = String::from_utf8_lossy(&bytes);
         let doc = SceneDocument::parse(&text)?;
         let needs_id = Self::lacks_stored_id(&text);
+        loading_from(resources, path);
         sync_scene_to_ecs(&doc, resources)?;
 
         self.scenes.clear();
@@ -380,6 +382,7 @@ impl SceneManager {
             false => doc.id,
         };
 
+        loading_from(resources, path);
         spawn_scene_as(&doc, resources, instance)?;
         self.scenes.push(LoadedScene {
             id: instance,
@@ -430,6 +433,7 @@ impl SceneManager {
         let doc = SceneDocument::parse(&text)?;
 
         despawn_scene(id, resources);
+        loading_from(resources, &path);
         spawn_scene_into(&doc, resources)?;
 
         let was_active = self.active == Some(id);
