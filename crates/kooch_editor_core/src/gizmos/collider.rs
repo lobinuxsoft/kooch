@@ -20,12 +20,25 @@
 //! outline is drawn at the shape's centre, because an outline at the
 //! entity origin while the solver collides somewhere else is a lie in the
 //! one place the tool exists to tell the truth.
+//!
+//! # The mesh-derived shapes draw nothing
+//!
+//! A hull or a trimesh outline needs the vertices, which live in
+//! [`ColliderMeshCache`] — and a [`Visualizer`] is handed a component and
+//! a transform, not `Resources`. Drawing a sphere instead would be the
+//! same lie this file exists to avoid, so those draw nothing until #574
+//! widens the contract.
+//!
+//! [`ColliderMeshCache`]: kooch_physics::ColliderMeshCache
 
 use glam::{Mat3, Vec3};
 
 use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_gizmos::{Gizmos, Visualizer};
-use kooch_physics::components::{Collider, SHAPE_CAPSULE, SHAPE_CUBOID};
+use kooch_physics::components::{
+    Collider, SHAPE_CAPSULE, SHAPE_CONE, SHAPE_CUBOID, SHAPE_CYLINDER, SHAPE_HALF_SPACE,
+    SHAPE_ROUND_CYLINDER, SHAPE_SEGMENT, SHAPE_TRIANGLE, is_mesh_derived,
+};
 
 /// Wireframe colour for a solid collider.
 ///
@@ -47,25 +60,53 @@ impl Visualizer<Collider> for ColliderVisualizer {
         // actively mislead — worse than no outline at all, which is the
         // whole point of drawing one.
         let translation = translation + rotation * (collider.center * s);
+        // Corners are authored in the shape's own space, so they start
+        // from its centre rather than from the entity's origin.
+        let point = |local: Vec3| translation + rotation * (local * s);
 
+        // A hull's outline is its mesh's, and a visualizer cannot reach
+        // the cache that holds it. Nothing beats a sphere that is not
+        // what the solver collides against.
+        if is_mesh_derived(collider.shape) {
+            return;
+        }
+
+        // Radius follows the horizontal axes on everything aligned to Y:
+        // scaled on Y they get taller, not fatter.
+        let flat = collider.radius * s.x.max(s.z);
+        let tall = collider.half_height * s.y;
         match collider.shape {
             SHAPE_CUBOID => {
                 // A box is the one shape that scales exactly, per axis.
                 gizmos.wire_obb(translation, basis, collider.half_extents * s, SOLID);
             }
-            SHAPE_CAPSULE => {
-                // Radius follows the horizontal axes: a capsule scaled on
-                // Y gets taller, not fatter.
-                gizmos.wire_capsule(
-                    translation,
-                    basis,
-                    collider.radius * s.x.max(s.z),
-                    collider.half_height * s.y,
-                    SOLID,
-                );
+            SHAPE_CAPSULE => gizmos.wire_capsule(translation, basis, flat, tall, SOLID),
+            // The fillet is a fraction of the radius and would read as a
+            // wobble at gizmo line width, so both cylinders draw the same.
+            SHAPE_CYLINDER | SHAPE_ROUND_CYLINDER => {
+                gizmos.wire_cylinder(translation, basis, flat, tall, SOLID);
             }
-            // Sphere is the default for an unknown discriminant, matching
-            // `Collider::collision_shape` — a scene from a newer editor
+            SHAPE_CONE => gizmos.wire_cone(translation, basis, flat, tall, SOLID),
+            // Sized off the shape rather than the view: a patch that
+            // resized with the camera would read as geometry that moves.
+            SHAPE_HALF_SPACE => {
+                gizmos.wire_halfspace(translation, rotation * collider.normal, PLANE_PATCH, SOLID);
+            }
+            SHAPE_SEGMENT => {
+                gizmos.line(point(collider.point_a), point(collider.point_b), SOLID);
+            }
+            SHAPE_TRIANGLE => {
+                let (a, b, c) = (
+                    point(collider.point_a),
+                    point(collider.point_b),
+                    point(collider.point_c),
+                );
+                gizmos.line(a, b, SOLID);
+                gizmos.line(b, c, SOLID);
+                gizmos.line(c, a, SOLID);
+            }
+            // Sphere for the sphere and for an unknown discriminant,
+            // matching `ShapeSpec::resolve` — a scene from a newer editor
             // draws something rather than nothing.
             _ => {
                 gizmos.wire_sphere(translation, basis, collider.radius * s.max_element(), SOLID);
@@ -73,6 +114,12 @@ impl Visualizer<Collider> for ColliderVisualizer {
         }
     }
 }
+
+/// How far the half-space patch reaches from the shape's centre.
+///
+/// An infinite plane cannot be drawn; this is the suggestion of one, big
+/// enough to read as ground and small enough not to swallow the scene.
+const PLANE_PATCH: f32 = 5.0;
 
 #[cfg(test)]
 mod tests;

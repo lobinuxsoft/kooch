@@ -241,3 +241,58 @@ fn two_entities_produce_two_outlines_in_one_batch() {
         assert_eq!(near, single, "no outline at {centre:?}");
     }
 }
+
+/// The shapes #137 added draw their own outline. Falling back to a
+/// sphere would show a shape the solver is not using, in the one tool
+/// that exists to tell the truth about that.
+#[test]
+fn every_analytic_shape_draws_itself() {
+    for shape in [
+        SHAPE_CYLINDER,
+        SHAPE_ROUND_CYLINDER,
+        SHAPE_CONE,
+        SHAPE_HALF_SPACE,
+        SHAPE_SEGMENT,
+        SHAPE_TRIANGLE,
+    ] {
+        let collider = Collider {
+            shape,
+            ..Default::default()
+        };
+        assert!(
+            !draw(&collider, Mat4::IDENTITY).is_empty(),
+            "shape {shape} drew nothing"
+        );
+    }
+}
+
+/// A cone is not a sphere: its base is at `-half_height` and its apex at
+/// `+half_height`, so the outline has to be taller than it is wide.
+#[test]
+fn a_cone_is_drawn_pointing_up() {
+    let collider = Collider {
+        shape: SHAPE_CONE,
+        radius: 0.5,
+        half_height: 2.0,
+        ..Default::default()
+    };
+    let lines = draw(&collider, Mat4::IDENTITY);
+    let highest = lines
+        .iter()
+        .flat_map(|(a, b)| [a.y, b.y])
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!((highest - 2.0).abs() < 0.05, "apex at {highest}, not 2.0");
+    assert!(extent(&lines, Vec3::ZERO).x < 0.6, "it is not a cone");
+}
+
+/// A hull's outline is its mesh's, and a visualizer cannot reach the
+/// cache holding it. Nothing beats a sphere that is not what the solver
+/// collides against — see the module docs and #574.
+#[test]
+fn a_mesh_derived_shape_draws_nothing() {
+    let collider = Collider {
+        shape: kooch_physics::components::SHAPE_TRIMESH,
+        ..Default::default()
+    };
+    assert!(draw(&collider, Mat4::IDENTITY).is_empty());
+}

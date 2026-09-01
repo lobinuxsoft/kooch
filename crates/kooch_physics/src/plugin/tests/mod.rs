@@ -18,6 +18,7 @@ mod lifetime;
 mod mass;
 mod material;
 mod play_lifecycle;
+mod shapes;
 mod simulation;
 
 use std::any::TypeId;
@@ -59,6 +60,9 @@ fn world() -> Resources {
     r.insert(DynamicComponents::new());
     r.insert(Time::new());
     r.insert(PhysicsWorld::new(Box::new(RapierBackend::new())));
+    // Empty, the way `PhysicsComponentsPlugin` inserts it: a mesh-derived
+    // collider has to behave the same with an unfilled cache as with none.
+    r.insert(crate::backend::ColliderMeshCache::new());
 
     let registry = r.get_mut::<ComponentRegistry>().unwrap();
     registry.register_cpu_reflected::<Transform>();
