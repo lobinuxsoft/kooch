@@ -1,4 +1,7 @@
+use std::collections::HashSet;
 use std::sync::Arc;
+
+use kooch_core::Guid;
 
 slotmap::new_key_type! {
     /// Handle to one view inside a [`MeshletRenderStage`]. Returned by
@@ -131,6 +134,19 @@ pub struct MeshletRenderStage {
     /// `true` when the CPU pool has changed since the last
     /// `gpu_pool` rebuild. Cheap to check before each frame.
     pub(super) pool_dirty: bool,
+
+    /// Mesh GUIDs whose load already failed and was already said out
+    /// loud.
+    ///
+    /// 🔴 A failed load never enters the cache, so the GUID is still
+    /// `pending` next frame and the frame after — the retry loop is
+    /// unbounded by construction. Without this the warning is too:
+    /// 1068 lines for two GUIDs in nine seconds, and the log at 420 KB
+    /// (#693).
+    ///
+    /// An entry is dropped the moment the GUID resolves, so a mesh that
+    /// comes back and breaks again says so again.
+    pub(super) unresolved: HashSet<Guid>,
 
     pub(super) meshlet_bgl: wgpu::BindGroupLayout,
 
