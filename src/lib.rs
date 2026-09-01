@@ -319,8 +319,15 @@ impl kooch_core::plugin::PluginGroup for RemoteHostPlugins {
     fn build(self) -> kooch_core::plugin::PluginGroupBuilder {
         let builder = kooch_core::plugin::PluginGroupBuilder::new()
             .add(kooch_core::plugin::CorePlugin)
-            .add(kooch_ecs::EcsPlugin)
-            .add(default_asset_plugin().headless());
+            .add(kooch_ecs::EcsPlugin);
+
+        // 🔴 Gated the way `DefaultPlugins` already gates its own call.
+        // `AssetPlugin` lives in `kooch_render`, so a build without that
+        // feature has no asset plugin to add rather than a different one
+        // — and the group is what a headless host builds, which is
+        // exactly the configuration that drops `render` (#686).
+        #[cfg(feature = "render")]
+        let builder = builder.add(default_asset_plugin().headless());
 
         // The host is what actually simulates when the editor presses
         // Play, so it needs physics even though it draws nothing.
