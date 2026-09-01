@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-08-31 — 🔴 **the bright patch is fixed: it was Olsson's receiver bound, and the debug view had no colour for it.** A page drawn *without one caster* paints green, the same as a bad bias, so four correct eliminations pointed nowhere before the bound was tried. #1022 landed and is worth its claim — `geometry walk 245` against `pair tests 452 432`. **Next is #1009**, the distant-light tier: 32 point lights exhaust the pool (`slice used 1024/1024`, `free 0`) because a lamp is either a full chain or nothing, and Unreal's middle tier — one page per distant light, round-robin at one update a frame — is what is missing. — 🔴 **there is no render distance in this engine.** `perspective_infinite_reverse_rh` never receives `PerspectiveCamera::far`, and no `draw_distance`/`cull_distance` exists anywhere in the tree, so every instance in a scene is in frustum forever — free at 190 m, the whole frame at 1410 m. Two silent limits cost a day each (#996 buffer sizes, #997 the 65 535 dispatch ceiling) and `dense.scene` opened; what it showed is in the order below. 🔴 **a frame cap is a PERFORMANCE setting on this part: the same work costs 3.9 ms of GPU capped at 72 fps and 13.2 ms uncapped, because capped the GPU idles 68 % of the time and holds ~1210 MHz instead of throttling to ~850.** `gpu_busy_percent` reads 32 % and the scopes agree. **The budget is met with the preset below** — 13.88 ms frame, and at 8 W capped only **28 % of it is used**. The lever was the upscaler, not the shading: `upscale: 3` (FSR 3.1) cost 11.355 ms of a 23.36 ms frame and `upscale: 2` (SGSR 2) costs 2.062. 🔴 **The ~11 ms shading floor #885 was built to decompose no longer exists** — the whole shading pass is 3.272 ms today — and the instrument built for it measured something else instead: a full-screen sweep per material **in the project** costs 178 µs on the device, which is 0.71 ms here and 3.7 ms for a game with twenty materials. **#826 is removed, not deferred.** Cutting a froxel's light list by COUNT is incompatible with a cluster grid being continuous, and that is a property of the idea rather than of any implementation of it: see the entry below. The remaining queue is the contact march's cap (#839) and #731. The budget is unchanged, still unmet, and now measured against the SETTLED clock rather than the boosted one — 40.7 ms, not 27.8.
+Last updated 2026-08-31 — 🔴 **#1009 landed: the lamps cast again.** Four fixed-size caps deleted them in silence — a dispatch past 65 535 workgroups, a 16 384 pair list, a per-view clear over per-frame counts, and a 256-caster moved list that voided the page cache every frame. Each failed as a resident, correctly keyed, EMPTY page, which reads as lit. The distant tier is derived from `page_level` rather than tuned. **Next is the OneXFly measurement** — 5.36 ms on a 9070 XT decides nothing. — 🔴 **the bright patch is fixed: it was Olsson's receiver bound, and the debug view had no colour for it.** A page drawn *without one caster* paints green, the same as a bad bias, so four correct eliminations pointed nowhere before the bound was tried. #1022 landed and is worth its claim — `geometry walk 245` against `pair tests 452 432`. **Next is #1009**, the distant-light tier: 32 point lights exhaust the pool (`slice used 1024/1024`, `free 0`) because a lamp is either a full chain or nothing, and Unreal's middle tier — one page per distant light, round-robin at one update a frame — is what is missing. — 🔴 **there is no render distance in this engine.** `perspective_infinite_reverse_rh` never receives `PerspectiveCamera::far`, and no `draw_distance`/`cull_distance` exists anywhere in the tree, so every instance in a scene is in frustum forever — free at 190 m, the whole frame at 1410 m. Two silent limits cost a day each (#996 buffer sizes, #997 the 65 535 dispatch ceiling) and `dense.scene` opened; what it showed is in the order below. 🔴 **a frame cap is a PERFORMANCE setting on this part: the same work costs 3.9 ms of GPU capped at 72 fps and 13.2 ms uncapped, because capped the GPU idles 68 % of the time and holds ~1210 MHz instead of throttling to ~850.** `gpu_busy_percent` reads 32 % and the scopes agree. **The budget is met with the preset below** — 13.88 ms frame, and at 8 W capped only **28 % of it is used**. The lever was the upscaler, not the shading: `upscale: 3` (FSR 3.1) cost 11.355 ms of a 23.36 ms frame and `upscale: 2` (SGSR 2) costs 2.062. 🔴 **The ~11 ms shading floor #885 was built to decompose no longer exists** — the whole shading pass is 3.272 ms today — and the instrument built for it measured something else instead: a full-screen sweep per material **in the project** costs 178 µs on the device, which is 0.71 ms here and 3.7 ms for a game with twenty materials. **#826 is removed, not deferred.** Cutting a froxel's light list by COUNT is incompatible with a cluster grid being continuous, and that is a property of the idea rather than of any implementation of it: see the entry below. The remaining queue is the contact march's cap (#839) and #731. The budget is unchanged, still unmet, and now measured against the SETTLED clock rather than the boosted one — 40.7 ms, not 27.8.
 
 ---
 
@@ -208,6 +208,46 @@ recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
 
 ---
+
+## 🎯 2026-08-31, evening — the lamps never cast, and four caps deleted them in silence
+
+**#1009 landed.** `lamp survivors` went 0 → 33 851 and `dense.scene` has lamp shadows.
+
+Four independent bugs, one signature: the page is resident, correctly keyed, and
+**empty**. A cleared page is far depth under reversed-Z, so every reader answers
+"nothing occludes" — the lamp casts nothing and every counter reads healthy.
+
+- **The cull dispatch passed one workgroup dimension.** `pairs * meshlets_per_mesh`,
+  where the factor is the SCENE-WIDE meshlet max: 1.17 M workgroups against 65 535.
+  An indirect dispatch past the limit is undefined; it did nothing, so the lamps'
+  two heavy passes never ran. `limits.rs` had already written the warning.
+- **The pair list was a constant 16 384.** Overflow counted into a word nothing read.
+- **The per-view clear spanned the lamps' buckets.** `record` runs per view, the cull
+  per frame, so the second camera wiped what it would not refill. The comment in
+  `LampCull::record` already claimed the opposite.
+- **`MOVED_CAPACITY` was 256 against 2026 spinning casters.** Not a memory budget — a
+  cache switch. 16 bytes a sphere against a 52 MiB atlas.
+
+**The distant tier is derived, not tuned.** `page_min_pixels` was a cliff that silenced
+34 lamps while the pool stayed at `1024 / 1024`. A light now drops to the top of its
+chain — one page per face. The test is Epic's, `MinMipLevel == MaxMipLevels - 1`, which
+`page_level` already answers, so no threshold is needed.
+
+**The lesson is the funnels.** A lamp's geometry passes four fixed-size caps here, and
+each one fails as a lit shadow. Unreal have none: `OverlapsAnyValidPage` culls the
+instance against the page table itself, one Nanite pass for every shadow view at once.
+That is the shape to move to — it removes the class, not the bug.
+
+### Also
+`Spin` ships with the engine; exported games had lights that moved in the editor and
+stood still in the build. A new `.rendersettings` opens at the tuned values. Four
+standing test failures fixed, all in the classic path.
+
+### Next
+- **Measure on the OneXFly.** 5.36 ms on an RX 9070 XT says nothing about 13.9 ms there.
+  Every other decision waits on this, including whether the classic path survives.
+- **`chunks_for` for the lamps' cull.** `pairs * scene max` is legal now, not small.
+- **Geometry-first expansion for lamps.** `pair tests 303 015` for `3 020` pairs — 1 %.
 
 ## 🎯 2026-08-31 — the sixth cause was none of the five, and the instrument could not name it
 
