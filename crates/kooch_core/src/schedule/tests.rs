@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use super::identity::SystemSource;
 use crate::resource::Resources;
 use crate::stage::Stage;
 use crate::system::{GpuSystem, System};
@@ -380,5 +381,110 @@ fn each_system_gets_its_own_scope() {
         first.id(),
         Some(physics),
         "the id was registered again instead of reused, which grows puffin's table every frame"
+    );
+}
+
+// -- Who a system belongs to (#982) ------------------------------------
+
+/// The engine's own plugins take the default.
+struct EnginePlugin;
+impl crate::plugin::Plugin for EnginePlugin {
+    fn build(&self, app: &mut crate::app::App) {
+        app.add_system(Stage::Update, |_: &mut Resources| {});
+    }
+}
+
+/// What the editor's codegen writes for a project.
+struct ProjectPlugin;
+impl crate::plugin::Plugin for ProjectPlugin {
+    fn source(&self) -> SystemSource {
+        SystemSource::Project
+    }
+    fn build(&self, app: &mut crate::app::App) {
+        app.add_system(Stage::Update, |_: &mut Resources| {});
+    }
+}
+
+/// A plugin that adds another must not be swallowed by it.
+struct NestingPlugin;
+impl crate::plugin::Plugin for NestingPlugin {
+    fn source(&self) -> SystemSource {
+        SystemSource::Project
+    }
+    fn build(&self, app: &mut crate::app::App) {
+        app.add_plugin(EnginePlugin);
+        app.add_system(Stage::Update, |_: &mut Resources| {});
+    }
+}
+
+#[test]
+fn a_plugin_declares_its_systems_source() {
+    let mut app = crate::app::App::new();
+    app.add_plugin(EnginePlugin);
+    app.add_plugin(ProjectPlugin);
+
+    let sources: Vec<SystemSource> = app
+        .schedule()
+        .systems()
+        .iter()
+        .map(|system| system.source)
+        .collect();
+    assert_eq!(sources, vec![SystemSource::Engine, SystemSource::Project]);
+}
+
+/// The inner plugin restores what the outer one was using, or everything
+/// after a nested `add_plugin` is attributed to the inner one.
+#[test]
+fn a_nested_plugin_restores_the_outer_source() {
+    let mut app = crate::app::App::new();
+    app.add_plugin(NestingPlugin);
+
+    let sources: Vec<SystemSource> = app
+        .schedule()
+        .systems()
+        .iter()
+        .map(|system| system.source)
+        .collect();
+    assert_eq!(
+        sources,
+        vec![SystemSource::Engine, SystemSource::Project],
+        "the system added AFTER the nested plugin belongs to the outer one",
+    );
+}
+
+/// Added straight onto the `App`, outside any plugin: the game's own main.
+#[test]
+fn a_system_outside_a_plugin_is_the_projects() {
+    let mut app = crate::app::App::new();
+    app.add_system(Stage::Update, |_: &mut Resources| {});
+    assert_eq!(app.schedule().systems()[0].source, SystemSource::Project);
+}
+
+// -- The order the list claims to be in --------------------------------
+
+#[test]
+fn the_run_order_holds_every_stage_once() {
+    let mut seen = super::RUN_ORDER.to_vec();
+    seen.sort();
+    seen.dedup();
+    assert_eq!(
+        seen.len(),
+        Stage::ALL.len(),
+        "a stage is missing or doubled"
+    );
+}
+
+/// 🔴 The trap this list exists for. `Stage`'s own ordering puts
+/// `Physics = 8` after `Gpu = 7`, but a frame runs the fixed stages
+/// between `Update` and `PostUpdate` — so iterating the `BTreeMap` or
+/// `Stage::ALL` lists physics somewhere it never runs.
+#[test]
+fn the_fixed_stages_run_inside_the_frame() {
+    let at = |stage: Stage| super::RUN_ORDER.iter().position(|s| *s == stage).unwrap();
+    assert!(at(Stage::Update) < at(Stage::Physics));
+    assert!(at(Stage::PostPhysics) < at(Stage::PostUpdate));
+    assert!(
+        Stage::Gpu < Stage::Physics,
+        "if this fails the enum was reordered and this test is now vacuous",
     );
 }

@@ -6,6 +6,7 @@ use crate::system::{FunctionSystem, GpuSystem, System};
 
 use super::any_system::AnySystem;
 use super::gpu_batch::run_gpu_batch;
+use super::identity::{SystemInfo, SystemSource};
 
 /// A system function that operates on resources.
 ///
@@ -47,6 +48,13 @@ pub struct Schedule {
     stages: BTreeMap<Stage, Vec<AnySystem>>,
     /// Whether startup has already run.
     startup_complete: bool,
+    /// Who the next system added belongs to.
+    ///
+    /// Set around a plugin's `build`, which is what lets every system be
+    /// attributed without a word at the call sites. The default is
+    /// `Project`: anything added straight onto the `App` outside a
+    /// plugin is the game's own `main`.
+    attributing: SystemSource,
 }
 
 impl Default for Schedule {
@@ -61,6 +69,7 @@ impl Schedule {
         Self {
             stages: BTreeMap::new(),
             startup_complete: false,
+            attributing: SystemSource::Project,
         }
     }
 
@@ -78,10 +87,10 @@ impl Schedule {
     where
         F: FnMut(&mut Resources) + Send + Sync + 'static,
     {
-        self.stages
-            .entry(stage)
-            .or_default()
-            .push(AnySystem::cpu(Box::new(FunctionSystem::new(system))));
+        self.stages.entry(stage).or_default().push(AnySystem::cpu(
+            Box::new(FunctionSystem::new(system)),
+            self.attributing,
+        ));
     }
 
     /// Adds a struct implementing [`System`] at the specified stage.
@@ -89,7 +98,7 @@ impl Schedule {
         self.stages
             .entry(stage)
             .or_default()
-            .push(AnySystem::cpu(Box::new(system)));
+            .push(AnySystem::cpu(Box::new(system), self.attributing));
     }
 
     /// Adds a [`GpuSystem`] at the specified stage.
@@ -100,7 +109,7 @@ impl Schedule {
         self.stages
             .entry(stage)
             .or_default()
-            .push(AnySystem::gpu(Box::new(system)));
+            .push(AnySystem::gpu(Box::new(system), self.attributing));
     }
 
     /// Runs all systems in the specified stage.
@@ -221,6 +230,37 @@ impl Schedule {
         })
     }
 
+    /// Attributes systems added from now on, returning the previous
+    /// setting so the caller can put it back.
+    ///
+    /// `App` wraps a plugin's `build` with this. Restoring rather than
+    /// resetting is what lets a plugin add another plugin without the
+    /// inner one swallowing the outer one's attribution.
+    pub fn attribute_to(&mut self, source: SystemSource) -> SystemSource {
+        std::mem::replace(&mut self.attributing, source)
+    }
+
+    /// Every system, in the order a frame runs them.
+    ///
+    /// 🔴 Not `Stage::ALL`, and not the `BTreeMap`'s own order. Both are
+    /// declaration order, where `Physics` sits after `Gpu` — but a frame
+    /// runs the fixed stages between `Update` and `PostUpdate`. A list
+    /// built on either would put physics in a place it never runs.
+    pub fn systems(&self) -> Vec<SystemInfo<'_>> {
+        RUN_ORDER
+            .iter()
+            .filter_map(|stage| Some((*stage, self.stages.get(stage)?)))
+            .flat_map(|(stage, systems)| {
+                systems.iter().map(move |system| SystemInfo {
+                    stage,
+                    name: system.name(),
+                    source: system.source(),
+                    gpu: system.is_gpu(),
+                })
+            })
+            .collect()
+    }
+
     /// Returns `true` if startup has already completed.
     pub fn is_startup_complete(&self) -> bool {
         self.startup_complete
@@ -231,3 +271,26 @@ impl Schedule {
         self.startup_complete = false;
     }
 }
+
+/// The stages a frame runs, in the order it runs them.
+///
+/// Mirrors `run_startup` + `run_pre_physics` + `run_fixed_stages` +
+/// `run_post_physics`. Kept here beside them so the two can be read
+/// together, and pinned by a test — a list that drifts from the macros
+/// describes a frame nobody runs.
+pub const RUN_ORDER: [Stage; 14] = [
+    Stage::Startup,
+    Stage::First,
+    Stage::Input,
+    Stage::PreUpdate,
+    Stage::Update,
+    Stage::Physics,
+    Stage::PostPhysics,
+    Stage::PostUpdate,
+    Stage::GpuSync,
+    Stage::Gpu,
+    Stage::PreRender,
+    Stage::Render,
+    Stage::PostRender,
+    Stage::Last,
+];

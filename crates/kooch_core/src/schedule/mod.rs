@@ -6,6 +6,7 @@
 
 mod any_system;
 mod gpu_batch;
+mod identity;
 #[allow(clippy::module_inception)]
 mod schedule;
 mod system_scope;
@@ -13,4 +14,5 @@ mod system_scope;
 #[cfg(test)]
 mod tests;
 
-pub use schedule::{Schedule, SystemFn};
+pub use identity::{SystemInfo, SystemSource, short_name};
+pub use schedule::{RUN_ORDER, Schedule, SystemFn};
