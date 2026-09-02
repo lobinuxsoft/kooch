@@ -76,6 +76,77 @@ If you want the source to sit on the same entity as a scaled mesh, it can:
 the scale is simply ignored. Keeping them apart is still tidier, and it is
 what the `gravity_tour` scene does.
 
+## Sizing a planet
+
+A body stays on a curved surface only while gravity covers the centripetal
+acceleration its own speed demands:
+
+```
+v² / r  ≤  g          →          v_max = √(g · r)
+```
+
+Under it the body rolls. Over it, it is in orbit and leaves — not a bug and
+not something the engine can prevent, the same arithmetic that puts the ISS
+at 7.6 km/s rather than at walking pace.
+
+### In `PointGravity`'s own numbers
+
+`strength` (`s`) is quoted at `radius` (`R`), and a body of radius `b`
+standing on the surface has its centre at `r = R + b`. So:
+
+| You know | You want | Formula |
+|---|---|---|
+| `s`, `R` | top speed | `v_max = √( s·R² / (R + b) )` |
+| `R`, `v` | strength | `s = v² · (R + b) / R²` |
+| `s`, `v` | radius | `R = ( v² + √( v⁴ + 4·s·v²·b ) ) / 2s` |
+
+For a body much smaller than its planet these all collapse to the two worth
+memorising:
+
+```
+v_max ≈ √(s · R)                 R ≈ v² / s
+```
+
+**Speed is squared, radius is not.** Doubling the top speed needs four
+times the planet. At Earth gravity, 8 m/s needs a radius of 7 m and 20 m/s
+needs 41 m. A game about running fast on small worlds is not a game about
+Earth gravity, and no amount of tuning makes it one.
+
+### Gravity is not a free knob
+
+Raising `strength` to hold a faster body costs jump height, because both
+come from the same `g`:
+
+```
+h = (J/m)² / (2·g)
+```
+
+A 6 N·s jump on a 1 kg body, on a 4 m planet:
+
+| `strength` | `g` at the surface | holds | jumps |
+|---|---|---|---|
+| 9.81 | 7.75 | 5.91 m/s | 2.32 m |
+| 18 | 14.2 | 8.00 m/s | 1.27 m |
+| 25 | 19.8 | 9.43 m/s | 0.91 m |
+
+Growing the planet instead keeps both: radius 7 at 9.81 holds 8.01 m/s and
+still jumps 2.11 m.
+
+### A recipe
+
+1. **Pick the feel**: what is the body's top speed?
+2. **Pick the look**: how big should the planet be?
+3. **Solve for the third.** If the answer is a `strength` far from 9.81,
+   check the jump height before accepting it.
+4. **Set `range` past the play volume.** Beyond it the field stops and
+   `gravity_up` falls back to world up, so the controls quietly become
+   world-relative — which reads as "the gravity broke".
+
+None of this applies to `AreaGravity`, `PlaneGravity` or `GlobalGravity`.
+They are uniform: there is no curve to fall off, so any speed stays.
+`BoxGravity`'s faces are flat and behave the same — its *edges* are where a
+fast body launches, and `rounding` is the dial that softens them.
+
 ## Fields add
 
 Overlapping sources sum. Two planets pull along the vector sum, and a body
