@@ -24,9 +24,11 @@ pub(crate) struct BoxGravityVisualizer;
 
 impl Visualizer<BoxGravity> for BoxGravityVisualizer {
     fn draw(&self, field: &BoxGravity, transform: &GlobalTransform, gizmos: &mut Gizmos<'_>) {
-        let (scale, rotation, origin) = transform.matrix.to_scale_rotation_translation();
+        let (_, rotation, origin) = transform.matrix.to_scale_rotation_translation();
+        // No scale, because the field has none: its space is rigid, so
+        // every extent here is already metres. See `local_space`.
         let basis = Mat3::from_quat(rotation);
-        let half = field.half_extents.abs() * scale;
+        let half = field.half_extents.abs();
 
         gizmos.wire_obb(origin, basis, half, FIELD);
 
@@ -52,9 +54,13 @@ impl Visualizer<BoxGravity> for BoxGravityVisualizer {
         // own normal. This is the whole claim the component makes, and
         // there is nothing else in the editor that would show it.
         for normal in FACES {
-            let face = normal * half;
-            let base = face + normal * ARROW;
-            arrow(gizmos, origin + rotation * base, rotation * -normal, FIELD);
+            let face = basis * (normal * half);
+            arrow(
+                gizmos,
+                origin + face + rotation * normal * ARROW,
+                rotation * -normal,
+                FIELD,
+            );
         }
     }
 }

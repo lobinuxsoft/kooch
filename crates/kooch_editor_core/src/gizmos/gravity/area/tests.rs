@@ -58,17 +58,17 @@ fn an_area_turns_with_its_entity() {
 
 /// A scaled entity has a bigger zone, the same way the solver scales it.
 #[test]
-fn an_area_scales_with_its_entity() {
+fn a_scaled_area_is_the_same_size() {
     let field = AreaGravity {
         half_extents: Vec3::splat(5.0),
-        falloff: 0.0,
+        falloff: 10.0,
         ..Default::default()
     };
     let plain = reach(&draw(&AreaGravityVisualizer, &field, Mat4::IDENTITY));
     let scaled = reach(&draw(
         &AreaGravityVisualizer,
         &field,
-        Mat4::from_scale(Vec3::splat(2.0)),
+        Mat4::from_scale(Vec3::splat(8.0)),
     ));
-    assert!((scaled / plain - 2.0).abs() < 0.05, "{plain} then {scaled}");
+    assert!((scaled - plain).abs() < 1e-3, "{plain} then {scaled}");
 }

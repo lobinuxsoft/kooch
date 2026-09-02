@@ -16,15 +16,23 @@
 //! which is what gravity means and what an author expects from placing a
 //! planet in a scene.
 //!
-//! # Fields add
+//! # Fields add, until one is told to overrule
 //!
 //! Overlapping sources sum. Superposition is the blend: two planets pull
 //! along the vector sum with no weight for anyone to choose, and a body
 //! moving between them transitions smoothly because the arithmetic already
 //! says so.
+//!
+//! A zone that must *replace* rather than join — "inside this room down is
+//! -X, ignore the planet" — carries a [`GravityPriority`], and suppresses
+//! the levels below it in proportion to how strongly it reaches each point.
 
 pub mod plugin;
 pub mod sources;
 
-pub use plugin::{GravityComponentsPlugin, GravityPlugin, gravity_at, gravity_up};
-pub use sources::{AreaGravity, BoxGravity, GlobalGravity, PointGravity};
+pub use plugin::{
+    GravityComponentsPlugin, GravityPlugin, gravity_at, gravity_dominant, gravity_up,
+};
+pub use sources::{
+    AreaGravity, BoxGravity, GlobalGravity, GravityPriority, PlaneGravity, PointGravity,
+};

@@ -20,9 +20,10 @@
 //!
 //! What summing does not express is a zone that *replaces*: "inside this
 //! room, down is -X, ignore the planet". That wants a priority rather than
-//! a weight, and is deliberately absent until something asks for it.
+//! a weight, and it is [`GravityPriority`] — a separate component, so a
+//! scene that never needs one never carries it.
 //!
-//! # A volume you are inside, and a solid you are outside
+//! # A volume you are inside, a solid you are outside, and a floor
 //!
 //! [`AreaGravity`] and [`BoxGravity`] are both boxes and are not variants
 //! of each other. An area is a *region* with one uniform down — a corridor
@@ -30,13 +31,20 @@
 //! is a *solid* you stand on the outside of, and its direction differs at
 //! every point around it. Merging them would take a flag that inverts the
 //! meaning of every other field.
+//!
+//! [`PlaneGravity`] is neither: bounded in one axis and unbounded in the
+//! other two, which is the shape a level floor actually has.
 
 mod area;
 mod box_field;
 mod global;
+mod plane;
 mod point;
+mod priority;
 
 pub use area::AreaGravity;
 pub use box_field::BoxGravity;
 pub use global::GlobalGravity;
+pub use plane::PlaneGravity;
 pub use point::PointGravity;
+pub use priority::GravityPriority;

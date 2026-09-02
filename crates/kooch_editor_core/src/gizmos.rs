@@ -103,6 +103,7 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     registry.register::<kooch_gravity::PointGravity, gravity::PointGravityVisualizer>();
     registry.register::<kooch_gravity::AreaGravity, gravity::AreaGravityVisualizer>();
     registry.register::<kooch_gravity::BoxGravity, gravity::BoxGravityVisualizer>();
+    registry.register::<kooch_gravity::PlaneGravity, gravity::PlaneGravityVisualizer>();
     resources.insert(registry);
 
     if resources.get::<HandleSet>().is_none() {

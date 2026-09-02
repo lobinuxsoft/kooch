@@ -88,13 +88,26 @@ fn the_faces_turn_with_the_entity() {
     );
 }
 
+/// A field's space is rigid, so its extents are metres and the entity's
+/// scale places it without resizing it.
+///
+/// This used to assert the opposite. Scaling made `range: 20` on an
+/// entity at scale 8 pull from 160 m, which is neither what the field
+/// says nor what the Inspector shows.
 #[test]
-fn the_solid_scales_with_the_entity() {
-    let plain = reach(&draw(&BoxGravityVisualizer, &cube(), Mat4::IDENTITY));
+fn a_scaled_box_is_the_same_size() {
+    let field = BoxGravity {
+        half_extents: Vec3::splat(5.0),
+        rounding: 0.5,
+        range: 20.0,
+        falloff: 5.0,
+        ..Default::default()
+    };
+    let plain = reach(&draw(&BoxGravityVisualizer, &field, Mat4::IDENTITY));
     let scaled = reach(&draw(
         &BoxGravityVisualizer,
-        &cube(),
-        Mat4::from_scale(Vec3::splat(2.0)),
+        &field,
+        Mat4::from_scale(Vec3::splat(8.0)),
     ));
-    assert!((scaled / plain - 2.0).abs() < 0.05, "{plain} then {scaled}");
+    assert!((scaled - plain).abs() < 1e-3, "{plain} then {scaled}");
 }

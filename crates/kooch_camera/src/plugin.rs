@@ -15,7 +15,8 @@ use kooch_ecs::transform::Transform;
 
 use crate::target::CameraTarget;
 use crate::virtual_camera::{
-    INACTIVE_ALWAYS, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera,
+    INACTIVE_ALWAYS, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera, seed_reference,
+    transported,
 };
 
 /// Which way is up for a virtual camera, resolved from its `up_mode`.
@@ -100,11 +101,44 @@ impl Plugin for CameraPlugin {
         // It also means `dt` is the fixed step, which is what makes the
         // damping deterministic instead of frame-rate dependent.
         app.insert_resource(CameraBlend::default());
+        app.insert_resource(HorizonFrames::default());
         app.add_system(Stage::PostPhysics, run_if_playing(drive_virtual_cameras));
     }
 
     fn name(&self) -> &str {
         "CameraPlugin"
+    }
+}
+
+/// The yaw origin each vcam is measuring from, carried between frames.
+///
+/// # Why the Host holds this and not the vcam
+///
+/// It is not authored and it is not a setting — it is where the camera
+/// happened to be pointing, which is state the same shape as
+/// [`CameraBlend`]. Putting it on the component would serialise it into
+/// every scene and show it in the Inspector as a vector nobody should
+/// edit.
+///
+/// Rebuilt each frame from the vcams actually seen, so one that is
+/// deleted or goes inert leaves nothing behind.
+#[derive(Debug, Clone, Default)]
+pub struct HorizonFrames {
+    /// Per vcam: the up it last used, and the reference it carried.
+    frames: std::collections::HashMap<Entity, (Vec3, Vec3)>,
+}
+
+impl HorizonFrames {
+    /// This vcam's yaw origin on a new up, carried from the last one.
+    ///
+    /// A vcam with no history is seeded from a world axis, which is
+    /// discontinuous — see `seed_reference`. That only matters between
+    /// frames, and a first frame has none.
+    fn carry(&self, entity: Entity, up: Vec3) -> Vec3 {
+        match self.frames.get(&entity) {
+            Some((last_up, reference)) => transported(*reference, *last_up, up),
+            None => seed_reference(up),
+        }
     }
 }
 
@@ -157,7 +191,8 @@ impl CameraBlend {
 /// vcam poses separate is what makes blending (#671 phase 3) a matter of
 /// interpolating between two of them.
 pub fn drive_virtual_cameras(resources: &mut Resources) {
-    let plan = plan_vcam_poses(resources);
+    let (plan, horizons) = plan_vcam_poses(resources);
+    resources.insert(horizons);
     if plan.is_empty() {
         return;
     }
@@ -310,12 +345,16 @@ fn target_pose(
 /// Works out every vcam's pose without holding a borrow, because writing
 /// a `Transform` needs the storage mutably and reading the target's pose
 /// needs it shared.
-fn plan_vcam_poses(resources: &Resources) -> Vec<Pose> {
+fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames) {
+    let carried = resources
+        .get::<HorizonFrames>()
+        .cloned()
+        .unwrap_or_default();
     let Some(registry) = resources.get::<ComponentRegistry>() else {
-        return Vec::new();
+        return (Vec::new(), carried);
     };
     let Some(vcams) = registry.get_cpu::<VirtualCamera>() else {
-        return Vec::new();
+        return (Vec::new(), carried);
     };
     let cameras = registry.get_cpu::<PerspectiveCamera>();
     let transforms = registry.get_cpu::<Transform>();
@@ -338,6 +377,7 @@ fn plan_vcam_poses(resources: &Resources) -> Vec<Pose> {
     };
 
     let mut plan = Vec::new();
+    let mut horizons = HorizonFrames::default();
     for (&entity, vcam) in vcams.iter() {
         if vcam.is_inert() {
             continue;
@@ -368,12 +408,18 @@ fn plan_vcam_poses(resources: &Resources) -> Vec<Pose> {
         };
 
         let up = up_for(vcam, resources, target_pos, target_rot);
-        let (desired_pos, desired_rot) = vcam.desired(
+        // Carried, not derived: a yaw origin built from `up` alone has a
+        // pole, and a target rolling over it swings the camera half a
+        // turn. See `seed_reference`.
+        let reference = carried.carry(entity, up);
+        horizons.frames.insert(entity, (up, reference));
+        let (desired_pos, desired_rot) = vcam.desired_with(
             target_pos,
             target_rot,
             current.position,
             current.rotation,
             up,
+            reference,
         );
         let position = vcam.damped(current.position, desired_pos, dt);
         // Damped too, because `up` is not a constant any more: crossing
@@ -391,7 +437,7 @@ fn plan_vcam_poses(resources: &Resources) -> Vec<Pose> {
             blend_ease: vcam.blend_ease,
         });
     }
-    plan
+    (plan, horizons)
 }
 
 /// The virtual camera that drives the render camera this frame: highest priority, ties

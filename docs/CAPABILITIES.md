@@ -141,12 +141,29 @@ them, the remote protocol mirrored them — and no render crate read one.
 | Collider gizmo | `kooch_editor_core/gizmos/collider.rs` | connected | Every analytic shape at its effective size, plus hulls and convex pieces outlined from the cache the solver reads. A triangle mesh draws nothing on purpose: it *is* the render mesh. |
 | `Visualizer::draw_with` | `kooch_gizmos/visualizer.rs` | connected | The overload that gets `Resources`, for an outline whose geometry lives outside its component. Defaults to `draw`, so nothing else changed. |
 
+## Gravity — `kooch_gravity`
+
+| Capability | Where | Status | Notes |
+|---|---|---|---|
+| `GlobalGravity` | `sources/global.rs` | connected | The world vector as a component, so a level can author and switch it. |
+| Rigid field space | `plugin/collect.rs` | connected | Every source's distances are metres: a transform places a field and never resizes one. It carried the scale once, so `range: 20` on an entity scaled to 8 pulled from 160 m while the Inspector read 20 — and three sources scaled while `PointGravity` did not. |
+| `PointGravity` | `sources/point.rs` | connected | A planet. `strength` at a `radius` rather than `G·M`, clamped inside that radius so the pull towards a centre stays finite. |
+| `AreaGravity` | `sources/area.rs` | connected | A box you are *inside*, with its own down. Rotates with its entity. |
+| `BoxGravity` | `sources/box_field.rs` | connected | A solid you stand on the *outside* of — the gradient of a rounded box's SDF, so faces, edges and corners come out consistent with no special case. |
+| `PlaneGravity` | `sources/plane.rs` | connected | A floor: bounded along its normal, unbounded across it, and one-sided. What an area with enormous half-extents was pretending to be. |
+| `GravityPriority` | `sources/priority.rs` | connected | The zone that overrules rather than joins. Suppresses lower levels in proportion to its own reach, so crossing the boundary is a fade and not a snap. |
+| `gravity_at` / `gravity_up` | `plugin/mod.rs` | connected | The summed field, and which way is up in it. `gravity_up` is what the camera's `UP_GRAVITY` asks. |
+| `gravity_dominant` | `plugin/mod.rs` | **invisible** | Up according to the strongest single source, for orientation rather than force. Exported and in the prelude; nothing calls it until the character controller (#94) does. |
+| Impulse, not force | `plugin/apply.rs` | connected | Rapier's forces persist until `reset_forces`, so gravity as a force would compound. `mass × acceleration × dt` is equivalent over the step and composes with gameplay. Sleeping bodies are skipped unless the field itself changed, which is the whole reason a settled scene stays cheap. |
+| GPU buffer of sources | — | **not built** | No consumer. The solver is rapier and rapier is CPU, so a buffer on the GPU would have to be read back to be used. It arrives with whatever needs to ask which way is down *on* the GPU. |
+
 ## Camera — `kooch_camera`
 
 | Capability | Where | Status | Notes |
 |---|---|---|---|
 | `VirtualCamera`, `CameraBlend` | `plugin.rs` | connected | |
 | `CameraTarget` (tag + group) | `target.rs` | connected | Used by roll-a-ball, which lives in its own repo — measure "unused" against games too, not just this workspace. |
+| `HorizonFrames` | `plugin.rs` | connected | Where each vcam measures yaw from, carried between frames and transported onto each new up. Deriving it from `up` alone is impossible without a pole — the hairy ball theorem — and the pole was a 180° flip at one spot on every planet. |
 
 ## Assets — `kooch_core::asset_loader`
 
