@@ -181,6 +181,30 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// No-op for stale handles and non-dynamic bodies.
     fn apply_impulse(&mut self, handle: BodyHandle, impulse: Vec3, wake: bool);
 
+    /// Applies an instantaneous change in *angular* momentum.
+    ///
+    /// The rotational twin of [`apply_impulse`](Self::apply_impulse), and
+    /// everything said there about impulses versus forces, and about
+    /// `wake`, applies unchanged.
+    ///
+    /// # Why a rolling body wants this and not a push
+    ///
+    /// A ball driven by a linear impulse is *slid* along the ground and
+    /// spun only by the friction that catches up with it. It skids before
+    /// it rolls, it accelerates differently on ice than on stone for a
+    /// reason nobody authored, and it keeps sliding when you let go.
+    ///
+    /// A torque spins it, and the same friction turns that spin into
+    /// motion. That is what rolling is, and the contact does the work
+    /// instead of fighting it. Impulses stay for the things that really
+    /// are instantaneous pushes — a jump, a blast, a bat.
+    ///
+    /// The vector is an axis scaled by magnitude, in newton-metre-seconds,
+    /// world space.
+    ///
+    /// No-op for stale handles and non-dynamic bodies.
+    fn apply_torque_impulse(&mut self, handle: BodyHandle, torque: Vec3, wake: bool);
+
     /// Constrains two bodies to each other.
     ///
     /// Returns `None` when either body handle is stale, or when the

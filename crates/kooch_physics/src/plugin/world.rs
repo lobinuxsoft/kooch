@@ -401,6 +401,21 @@ impl PhysicsWorld {
     /// solver's level and can say so through [`backend_mut`].
     ///
     /// [`backend_mut`]: PhysicsWorld::backend_mut
+    /// Spins a body — the rotational twin of
+    /// [`apply_impulse`](Self::apply_impulse).
+    ///
+    /// What a rolling body wants. A linear impulse *slides* a ball and
+    /// lets friction spin it up late; a torque spins it and lets the same
+    /// friction carry it, which is what rolling is. Keep impulses for the
+    /// pushes that really are instantaneous — a jump, a blast.
+    pub fn apply_torque_impulse(&mut self, body: SolverBody, torque: Vec3) {
+        let Some(handle) = self.handle(body.slot()) else {
+            return;
+        };
+        self.backend_mut()
+            .apply_torque_impulse(handle, torque, true);
+    }
+
     pub fn apply_impulse(&mut self, body: SolverBody, impulse: Vec3) {
         let Some(handle) = self.handle(body.slot()) else {
             return;
