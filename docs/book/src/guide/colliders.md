@@ -62,6 +62,56 @@ Halving it multiplies the cell count by eight. The voxel shapes only
 beat a triangle mesh while they stay coarse — start at a tenth of the
 prop and go finer only if the collision visibly misses.
 
+## Baking one from the Inspector
+
+Select a mesh in the Asset Browser and its import settings grow two
+buttons:
+
+- **Create hull mesh** — one convex hull.
+- **Create convex parts** — a convex decomposition, for a concave prop
+  where a single hull would fill in the gap the design relies on.
+
+Both write a `.glb` into `<project>/assets/collision/`, and both appear
+in the same picker `Collider.mesh` uses. Point the collider at the result
+yourself: the bake is a new asset with its own GUID, and nothing
+repoints a collider behind your back.
+
+**Why a file and not a cache.** The hull is cheap enough to derive at
+load — 33 ms for a 76 000-vertex mesh, and the result is kept. The
+decomposition is not: 1.35 s for Suzanne, 2.58 s for that same dragon,
+and it runs again every time the body is rebuilt, which a scale drag
+does. Baked, it loads as pieces and VHACD never runs.
+
+A file also buys two things a cache cannot. You can open it in Blender
+and see what the solver will collide against. And it can be simplified
+*below* the exact hull, which nothing at runtime is allowed to do on its
+own.
+
+### `max faces`
+
+Zero keeps the exact hull, which is what qhull already reduces to — 76 038
+vertices come back as 387 — and is correct if dear. A budget simplifies
+and then re-hulls: `meshopt` collapses edges with no reason to keep the
+result convex, and a nearly-convex collider is one with a dent the solver
+will find.
+
+387 points is roughly 770 planes. For a dynamic prop that is a lot; other
+engines cap around 255 vertices for the same reason.
+
+### A bake remembers where it came from
+
+The sidecar records the source's GUID and a hash of its bytes, and the
+Inspector says so when the source has moved on:
+
+> The source changed since this was baked — re-bake it
+
+Without that a derived asset is a silent trap. Change the source mesh and
+the bake keeps its own GUID, nothing fails, and the prop goes on
+colliding with the shape it had last week.
+
+Re-baking overwrites in place and **keeps the GUID**, so every collider
+already pointing at it stays pointing at it.
+
 ## The mesh has to arrive first
 
 A mesh-derived collider names a GUID, and the engine resolves it through
@@ -72,6 +122,12 @@ be a floor nobody authored, in a place nobody looks.
 The moment the mesh lands, the collider is built. Nothing needs to be
 reloaded and the scene needs no second save; a body that briefly does
 not exist while a project starts is expected.
+
+Reading the mesh does **not** go through the render pipeline. The
+collider parses the `.glb` for positions and indices and stops there:
+asking the asset server for a `MeshletMesh` would build the whole
+simplification chain — 2.9 s for a 76 000-vertex mesh — and then decode
+LOD 0 straight back into the triangles it started from.
 
 A GUID that never resolves logs a warning naming it. That warning is the
 only clue a collider is missing, so it is worth reading:
