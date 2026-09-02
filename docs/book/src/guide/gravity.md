@@ -79,15 +79,34 @@ what the `gravity_tour` scene does.
 ## Sizing a planet
 
 A body stays on a curved surface only while gravity covers the centripetal
-acceleration its own speed demands:
+acceleration its own speed demands. Past that it does **not** fall off — it
+*orbits*, circling without touching. Leaving for good takes more still, and
+the two are always a factor of √2 apart:
 
 ```
-v² / r  ≤  g          →          v_max = √(g · r)
+stays on the ground   v ≤ √(g · r)
+leaves for good       v ≥ √(2 · g · r)
 ```
 
-Under it the body rolls. Over it, it is in orbit and leaves — not a bug and
-not something the engine can prevent, the same arithmetic that puts the ISS
-at 7.6 km/s rather than at walking pace.
+In between, gravity still has it. That is what an orbit is: falling toward
+the planet and missing. The ISS is there at 7.66 km/s, in a field still 90%
+as strong as at the surface.
+
+| | Earth | a 7 m planet at `strength` 12 |
+|---|---|---|
+| leaves the ground | 7.91 km/s | 9.49 m/s |
+| leaves for good | 11.18 km/s | 12.21 m/s |
+
+Earth's number is why none of this comes up on a flat level: a sprinter is
+791× below the threshold. On a seven-metre planet a rolling ball is *at* it.
+
+### `range` lowers the escape speed
+
+Past `range` there is no field left to climb against, so leaving costs less
+than the unlimited `√(2·g·r)` — 12.21 m/s instead of 13.42 in the table
+above. Beyond it `gravity_up` answers world up and the controls turn
+world-relative between one step and the next, which reads as the gravity
+breaking. Set `range` past anything the player can reach.
 
 ### In `PointGravity`'s own numbers
 
@@ -99,6 +118,12 @@ standing on the surface has its centre at `r = R + b`. So:
 | `s`, `R` | top speed | `v_max = √( s·R² / (R + b) )` |
 | `R`, `v` | strength | `s = v² · (R + b) / R²` |
 | `s`, `v` | radius | `R = ( v² + √( v⁴ + 4·s·v²·b ) ) / 2s` |
+
+**These assume the body stands outside `radius`.** `strength` is clamped
+inside it — `g = s · (R / max(r, R))²` — so setting `radius` beyond
+anything that walks on the planet gives a flat `g = s` near the surface,
+and the top speed is just `√(s · r)`. That is a legitimate way to author a
+small world: the pull stops changing under your feet.
 
 For a body much smaller than its planet these all collapse to the two worth
 memorising:
