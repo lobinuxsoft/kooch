@@ -35,10 +35,22 @@ use kooch_ecs::component::Component;
 /// This is a solid acting on what is outside it, with a different direction
 /// at every point. Same primitive, opposite job.
 ///
+/// # Every distance here scales with the entity
+///
+/// `half_extents`, `rounding`, `range` and `falloff` are all in the
+/// entity's local space, the way a [`Collider`] is: an entity at scale 8
+/// has a solid eight times the size and a reach eight times as far.
+/// `strength` does not scale, because an acceleration is not a length.
+///
+/// [`super::PointGravity`] is the exception — it measures in world space
+/// and scaling its entity changes nothing.
+///
+/// [`Collider`]: https://docs.rs/kooch_physics
+///
 /// # Default
 ///
 /// A 10 m cube at Earth strength, with the corners slightly rounded and a
-/// 20 m reach.
+/// 20 m reach — at scale 1.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Physics")]
 pub struct BoxGravity {
@@ -46,7 +58,7 @@ pub struct BoxGravity {
     pub half_extents: Vec3,
     /// Acceleration at the surface, in metres per second squared.
     pub strength: f32,
-    /// How gently gravity turns around the edges.
+    /// How gently gravity turns around the edges, in local space.
     ///
     /// The box is shrunk by this much before the closest point is taken,
     /// so the direction starts turning this far *before* the edge instead
@@ -54,11 +66,12 @@ pub struct BoxGravity {
     /// collapses the box to its centre and the field becomes a sphere —
     /// so this is the dial between a cube planet and a round one.
     pub rounding: f32,
-    /// How far from the surface the field holds at full strength.
+    /// How far from the surface the field holds at full strength, in
+    /// local space.
     ///
     /// Zero or less means unlimited, and `falloff` then never applies.
     pub range: f32,
-    /// How far past `range` the field fades to nothing.
+    /// How far past `range` the field fades to nothing, in local space.
     ///
     /// Without it a body leaving the planet's reach loses its gravity
     /// between one step and the next. Zero for a hard cutoff.

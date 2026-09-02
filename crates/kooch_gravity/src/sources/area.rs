@@ -15,9 +15,14 @@ use kooch_ecs::component::Component;
 /// This is a region you are *inside*. For a solid you stand on the outside
 /// of, whose direction changes around it, see [`super::BoxGravity`].
 ///
+/// # Every distance here scales with the entity
+///
+/// `half_extents` and `falloff` are in local space, so scaling the
+/// entity resizes the zone. `strength` does not scale.
+///
 /// # Default
 ///
-/// Earth-strength, downward, in a 10 m cube.
+/// Earth-strength, downward, in a 10 m cube — at scale 1.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Physics")]
 pub struct AreaGravity {
@@ -27,7 +32,8 @@ pub struct AreaGravity {
     pub strength: f32,
     /// Half-extents of the affected box, in the entity's local space.
     pub half_extents: Vec3,
-    /// How far outside the box the field fades to nothing.
+    /// How far outside the box the field fades to nothing, in local
+    /// space.
     ///
     /// Without it a body crossing the boundary changes direction between
     /// one step and the next, which reads as a jolt. Zero for a hard edge.

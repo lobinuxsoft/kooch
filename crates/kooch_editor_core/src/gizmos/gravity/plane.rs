@@ -19,9 +19,21 @@ pub(crate) struct PlaneGravityVisualizer;
 impl Visualizer<PlaneGravity> for PlaneGravityVisualizer {
     fn draw(&self, field: &PlaneGravity, transform: &GlobalTransform, gizmos: &mut Gizmos<'_>) {
         let (_, rotation, origin) = transform.matrix.to_scale_rotation_translation();
-        let Some(normal) = (rotation * field.normal).try_normalize() else {
+        let Some(local) = field.normal.try_normalize() else {
             return;
         };
+        let Some(normal) = (rotation * local).try_normalize() else {
+            return;
+        };
+
+        // `range` and `falloff` are heights in the field's own space, so
+        // a scaled entity reaches further. Stepping by the raw number
+        // drew a 12 m reach for a field acting at 96.
+        //
+        // Exact under a uniform scale or an axis-aligned normal; a
+        // tilted normal under a stretched entity is approximate, and so
+        // is every other box gizmo here for the same reason.
+        let step = |height: f32| transform.matrix.transform_vector3(local * height);
 
         // The surface. `wire_halfspace` marks which side is active with a
         // stub along the normal, which is the same thing it means for a
@@ -31,23 +43,23 @@ impl Visualizer<PlaneGravity> for PlaneGravityVisualizer {
         // The two heights an author edits. Without them a 5 m reach and a
         // 500 m one are the same picture.
         if field.range > 0.0 {
-            gizmos.wire_halfspace(origin + normal * field.range, normal, PATCH, FIELD);
+            gizmos.wire_halfspace(origin + step(field.range), normal, PATCH, FIELD);
             if field.falloff > 0.0 {
                 let outer = field.range + field.falloff;
-                gizmos.wire_halfspace(origin + normal * outer, normal, PATCH, EDGE);
+                gizmos.wire_halfspace(origin + step(outer), normal, PATCH, EDGE);
             }
         }
 
         // Pointing down, at the height where the pull is still full. An
         // arrow along the normal would read as a repulsor.
         let (u, v) = normal.any_orthonormal_pair();
-        let height = match field.range > 0.0 {
-            true => field.range,
-            false => PATCH,
+        let raised = match field.range > 0.0 {
+            true => step(field.range),
+            false => normal * PATCH,
         };
         for (a, b) in [(0.5, 0.5), (0.5, -0.5), (-0.5, 0.5), (-0.5, -0.5)] {
             let across = (u * a + v * b) * PATCH;
-            arrow(gizmos, origin + across + normal * height, -normal, FIELD);
+            arrow(gizmos, origin + across + raised, -normal, FIELD);
         }
     }
 }

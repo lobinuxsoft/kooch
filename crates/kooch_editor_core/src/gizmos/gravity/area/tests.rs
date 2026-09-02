@@ -72,3 +72,25 @@ fn an_area_scales_with_its_entity() {
     ));
     assert!((scaled / plain - 2.0).abs() < 0.05, "{plain} then {scaled}");
 }
+
+/// The fade band is in local space too, so it scales with the box it
+/// surrounds rather than staying a fixed number of metres.
+#[test]
+fn a_scaled_area_draws_its_true_fade() {
+    let field = AreaGravity {
+        half_extents: Vec3::splat(5.0),
+        falloff: 10.0,
+        ..Default::default()
+    };
+    let plain = reach(&draw(&AreaGravityVisualizer, &field, Mat4::IDENTITY));
+    let scaled = reach(&draw(
+        &AreaGravityVisualizer,
+        &field,
+        Mat4::from_scale(Vec3::splat(8.0)),
+    ));
+    let ratio = scaled / plain;
+    assert!(
+        (ratio - 8.0).abs() < 0.2,
+        "fade grew {ratio}x under a scale of 8"
+    );
+}

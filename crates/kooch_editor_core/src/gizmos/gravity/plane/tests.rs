@@ -44,3 +44,31 @@ fn a_plane_draws_out_to_its_falloff() {
         "reached {reach}, wanted 120"
     );
 }
+
+/// `range` and `falloff` are heights in the field's own space, so a
+/// scaled entity holds its pull that much further up.
+#[test]
+fn a_scaled_plane_draws_its_true_reach() {
+    let field = PlaneGravity {
+        range: 12.0,
+        falloff: 6.0,
+        ..Default::default()
+    };
+    let highest = |matrix| {
+        draw(&PlaneGravityVisualizer, &field, matrix)
+            .iter()
+            .flat_map(|(a, b)| [a.y, b.y])
+            .fold(f32::MIN, f32::max)
+    };
+    // `wire_halfspace` tops each patch with a stub half a patch long,
+    // marking the side the field acts on. It is a drawing convention and
+    // does not scale, so it comes off before the heights are compared.
+    const STUB: f32 = PATCH * 0.5;
+    let plain = highest(Mat4::IDENTITY) - STUB;
+    let scaled = highest(Mat4::from_scale(Vec3::splat(8.0))) - STUB;
+    assert!((plain - 18.0).abs() < 1e-3, "{plain}");
+    assert!(
+        (scaled - 144.0).abs() < 1e-3,
+        "the outer patch should ride the scale, got {scaled}",
+    );
+}

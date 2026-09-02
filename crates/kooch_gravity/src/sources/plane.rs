@@ -26,10 +26,16 @@ use kooch_ecs::component::Component;
 /// with an area means half-extents large enough to be a lie, and the box
 /// still acts from underneath.
 ///
+/// # Every distance here scales with the entity
+///
+/// `range` and `falloff` are heights in local space, so an entity at
+/// scale 8 holds its pull eight times as far up. `strength` does not
+/// scale.
+///
 /// # Default
 ///
 /// Earth-strength, pulling down, holding for 50 m above the plane and
-/// fading over the next 10.
+/// fading over the next 10 — at scale 1.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Physics")]
 pub struct PlaneGravity {
@@ -41,11 +47,12 @@ pub struct PlaneGravity {
     pub normal: Vec3,
     /// Acceleration in metres per second squared.
     pub strength: f32,
-    /// How far above the plane the field holds at full strength.
+    /// How far above the plane the field holds at full strength, in
+    /// local space.
     ///
     /// Zero or less means unlimited, and `falloff` then never applies.
     pub range: f32,
-    /// How far past `range` the field fades to nothing.
+    /// How far past `range` the field fades to nothing, in local space.
     ///
     /// Without it a body leaving the floor's reach loses its gravity between
     /// one step and the next. Zero for a hard cutoff.

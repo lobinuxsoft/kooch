@@ -25,8 +25,12 @@ pub(crate) struct BoxGravityVisualizer;
 impl Visualizer<BoxGravity> for BoxGravityVisualizer {
     fn draw(&self, field: &BoxGravity, transform: &GlobalTransform, gizmos: &mut Gizmos<'_>) {
         let (scale, rotation, origin) = transform.matrix.to_scale_rotation_translation();
-        let basis = Mat3::from_quat(rotation);
-        let half = field.half_extents.abs() * scale;
+        // The scale rides in the basis, and every extent below stays in
+        // the local units the field itself measures in. Scaling only
+        // `half_extents` and leaving `rounding`, `range` and `falloff`
+        // raw drew a reach of 65 m for a field that pulled at 240.
+        let basis = Mat3::from_quat(rotation) * Mat3::from_diagonal(scale);
+        let half = field.half_extents.abs();
 
         gizmos.wire_obb(origin, basis, half, FIELD);
 
@@ -51,10 +55,16 @@ impl Visualizer<BoxGravity> for BoxGravityVisualizer {
         // One arrow per face, landing on the face centre along that face's
         // own normal. This is the whole claim the component makes, and
         // there is nothing else in the editor that would show it.
+        // The face centre goes through the scaled basis; the arrow's own
+        // length does not, or a big planet would grow billboards.
         for normal in FACES {
-            let face = normal * half;
-            let base = face + normal * ARROW;
-            arrow(gizmos, origin + rotation * base, rotation * -normal, FIELD);
+            let face = basis * (normal * half);
+            arrow(
+                gizmos,
+                origin + face + rotation * normal * ARROW,
+                rotation * -normal,
+                FIELD,
+            );
         }
     }
 }

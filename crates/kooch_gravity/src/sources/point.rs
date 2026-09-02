@@ -11,6 +11,14 @@ use kooch_ecs::component::Component;
 /// entity moves the field, and parenting it to something makes the field
 /// follow.
 ///
+/// # This one does not scale with its entity
+///
+/// `radius` and `range` are world distances, so scaling the entity moves
+/// the field without resizing it. Every other source measures in local
+/// space and does resize — see [`super::BoxGravity`]. The split is
+/// because a point has no shape for a scale to stretch, and it is the
+/// one place the family is not uniform.
+///
 /// # Default
 ///
 /// Roughly Earth's surface gravity at a 50 m radius, which is a planet you
