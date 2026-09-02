@@ -21,6 +21,8 @@ mod joints;
 mod shapes;
 
 #[cfg(test)]
+mod query_tests;
+#[cfg(test)]
 mod tests;
 
 pub use backend::RapierBackend;

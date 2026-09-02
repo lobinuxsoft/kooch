@@ -72,7 +72,7 @@ fn with_interaction(builder: ColliderBuilder, interaction: ColliderInteraction) 
 /// [`InteractionMask::interacts_with`] documents: both sides have to agree.
 /// `Or` would let a one-sided claim through, which is the behaviour that
 /// makes filtering bugs impossible to reason about.
-fn groups(mask: InteractionMask) -> InteractionGroups {
+pub(super) fn groups(mask: InteractionMask) -> InteractionGroups {
     InteractionGroups::new(
         Group::from_bits_truncate(mask.memberships),
         Group::from_bits_truncate(mask.filter),

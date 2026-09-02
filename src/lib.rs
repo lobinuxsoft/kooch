@@ -172,7 +172,8 @@ pub mod prelude {
     // which is why gameplay reached past them for `backend_mut()`.
     #[cfg(feature = "physics")]
     pub use kooch_physics::{
-        Collider, Joint, PhysicsBody, PhysicsPlugin, PhysicsWorld, RayHit, SolverBody,
+        Collider, Joint, PhysicsBody, PhysicsPlugin, PhysicsWorld, PointHit, QueryFilter, RayHit,
+        ShapeAt, ShapeHit, SolverBody,
     };
 
     // `gravity_at` answers "which way is down here", and is the only

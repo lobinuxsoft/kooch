@@ -11,7 +11,7 @@ use super::RapierBackend;
 use crate::backend::{
     BodyDesc, BodyHandle, BodyKind, BrokenJoint, ColliderHandle, ColliderInteraction,
     CollisionEvent, CollisionShape, ContactForceEvent, JointDesc, JointHandle, PhysicsBackend,
-    RayHit, SurfaceMaterial,
+    PointHit, QueryFilter, RayHit, ShapeAt, ShapeHit, SurfaceMaterial,
 };
 
 use super::super::conv::{collider_for, collider_for_pose, mass_properties_for};
@@ -388,30 +388,47 @@ impl PhysicsBackend for RapierBackend {
         body.set_angvel(velocity, true);
     }
 
-    fn query_ray(&self, origin: Vec3, dir: Vec3, max_t: f32) -> Option<RayHit> {
-        let ray = Ray::new(origin, dir);
-        // Since 0.34 the query pipeline is a view borrowed from the
-        // broad-phase BVH rather than a mirror kept in sync by hand — so
-        // a query always sees the current colliders, with no `update`
-        // call to forget after a spawn or a teleport.
-        let pipeline = self.broad_phase.as_query_pipeline(
-            self.narrow_phase.query_dispatcher(),
-            &self.bodies,
-            &self.colliders,
-            QueryFilter::default(),
-        );
-        let (collider_handle, toi) = pipeline.cast_ray_and_get_normal(&ray, max_t, true)?;
-        let collider = self.colliders.get(collider_handle)?;
-        let parent = collider.parent()?;
-        // The reverse map, rather than the linear scan this used to do:
-        // events made the same lookup a per-event cost, so it earned an
-        // index, and the raycast gets it for free.
-        let body_handle = *self.body_lookup.get(&parent)?;
-        Some(RayHit {
-            body: body_handle,
-            t: toi.time_of_impact,
-            point: ray.origin + ray.dir * toi.time_of_impact,
-            normal: toi.normal,
-        })
+    fn query_ray(
+        &self,
+        origin: Vec3,
+        dir: Vec3,
+        max_t: f32,
+        filter: QueryFilter,
+    ) -> Option<RayHit> {
+        self.ray(origin, dir, max_t, filter)
+    }
+
+    fn query_ray_all(
+        &self,
+        origin: Vec3,
+        dir: Vec3,
+        max_t: f32,
+        filter: QueryFilter,
+        out: &mut dyn FnMut(RayHit) -> bool,
+    ) {
+        self.rays(origin, dir, max_t, filter, out);
+    }
+
+    fn query_sweep(
+        &self,
+        shape: ShapeAt<'_>,
+        dir: Vec3,
+        max_t: f32,
+        filter: QueryFilter,
+    ) -> Option<ShapeHit> {
+        self.sweep(shape, dir, max_t, filter)
+    }
+
+    fn query_point(&self, point: Vec3, max_distance: f32, filter: QueryFilter) -> Option<PointHit> {
+        self.point(point, max_distance, filter)
+    }
+
+    fn query_overlaps(
+        &self,
+        shape: ShapeAt<'_>,
+        filter: QueryFilter,
+        out: &mut dyn FnMut(BodyHandle) -> bool,
+    ) {
+        self.overlaps(shape, filter, out);
     }
 }

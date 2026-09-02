@@ -1,6 +1,6 @@
 use glam::{Quat, Vec3};
 
-use crate::backend::{BodyDesc, CollisionShape, PhysicsBackend};
+use crate::backend::{BodyDesc, CollisionShape, PhysicsBackend, QueryFilter};
 
 use super::backend::RapierBackend;
 
@@ -112,7 +112,12 @@ fn ray_hits_static_body() {
     ));
     // Ray from origin shooting +Z.
     let hit = backend
-        .query_ray(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), 100.0)
+        .query_ray(
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.0, 1.0),
+            100.0,
+            QueryFilter::ALL,
+        )
         .expect("ray should hit the sphere at z=5");
     assert_eq!(hit.body, body);
     // Front of sphere is at z = 4, so t ≈ 4.
@@ -122,7 +127,12 @@ fn ray_hits_static_body() {
 #[test]
 fn ray_misses_when_no_geometry() {
     let backend = RapierBackend::new();
-    let hit = backend.query_ray(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), 100.0);
+    let hit = backend.query_ray(
+        Vec3::ZERO,
+        Vec3::new(0.0, 0.0, 1.0),
+        100.0,
+        QueryFilter::ALL,
+    );
     assert!(hit.is_none());
 }
 
@@ -262,7 +272,7 @@ fn an_attached_shape_keeps_its_rotation() {
             .expect("attaches");
 
         backend
-            .query_ray(Vec3::new(0.7, 0.7, -5.0), Vec3::Z, 10.0)
+            .query_ray(Vec3::new(0.7, 0.7, -5.0), Vec3::Z, 10.0, QueryFilter::ALL)
             .is_some()
     }
 
