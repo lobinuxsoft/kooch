@@ -22,6 +22,11 @@ fn world() -> Resources {
     resources
 }
 
+/// The GUIDs the walk asks for, without the per-shape detail.
+fn guids(resources: &Resources) -> Vec<Guid> {
+    unanswered(resources).into_iter().map(|w| w.guid).collect()
+}
+
 fn with_collider(resources: &mut Resources, collider: Collider) {
     let mut commands = resources.remove::<Commands>().unwrap();
     let entity = commands.spawn(resources).id();
@@ -63,7 +68,49 @@ fn a_hull_asks_for_its_mesh() {
             ..Default::default()
         },
     );
-    assert_eq!(unanswered(&resources), vec![guid]);
+    assert_eq!(guids(&resources), vec![guid]);
+}
+
+/// A hull is the one shape that pays for a reduction, and the reduction
+/// costs 33 ms on a 76k mesh. A trimesh must not ask for one.
+#[test]
+fn only_a_hull_asks_for_the_reduction() {
+    let mut resources = world();
+    with_collider(
+        &mut resources,
+        Collider {
+            shape: kooch_physics::components::SHAPE_TRIMESH,
+            mesh: Some(Guid::new_v4()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(unanswered(&resources).len(), 1);
+    assert!(!unanswered(&resources)[0].hull);
+}
+
+/// Two colliders on one mesh, one of them a hull: the hull is wanted.
+/// Taking the first answer seen would make it depend on hash order.
+#[test]
+fn one_hull_among_many_still_reduces() {
+    let mut resources = world();
+    let guid = Guid::new_v4();
+    for shape in [
+        kooch_physics::components::SHAPE_TRIMESH,
+        SHAPE_CONVEX_HULL,
+        kooch_physics::components::SHAPE_POLYLINE,
+    ] {
+        with_collider(
+            &mut resources,
+            Collider {
+                shape,
+                mesh: Some(guid),
+                ..Default::default()
+            },
+        );
+    }
+    let wanted = unanswered(&resources);
+    assert_eq!(wanted.len(), 1, "asked once for one mesh");
+    assert!(wanted[0].hull);
 }
 
 /// A scene where a hundred crates share one collision mesh does one load,
@@ -83,7 +130,7 @@ fn an_answered_guid_is_not_asked_again() {
             },
         );
     }
-    assert_eq!(unanswered(&resources), vec![guid], "asked once, not thrice");
+    assert_eq!(guids(&resources), vec![guid], "asked once, not thrice");
 
     resources.get_mut::<ColliderMeshCache>().unwrap().fail(guid);
     assert!(unanswered(&resources).is_empty());

@@ -10,23 +10,46 @@
 //! the renderer has no business knowing what a collider is. This crate
 //! already sees both, and is the only one that should.
 //!
-//! Nothing here touches a GPU. The meshlet asset is a CPU struct; the
-//! cache holds plain points. A headless host resolves collision meshes
-//! exactly as a windowed game does.
+//! # It reads the file, not the render asset
+//!
+//! The obvious implementation asks the `AssetServer` for a `MeshletMesh`
+//! and decodes its LOD 0 back into triangles. It is also nearly three
+//! seconds of wasted work for a 76k-vertex mesh, measured in debug:
+//! building the meshlet LOD chain costs 2.9 s, and every one of the 4832
+//! meshlets it produces is thrown away by the decode on the next line.
+//! Parsing the `.glb` for positions and indices is 36 ms.
+//!
+//! In a windowed game the renderer builds those meshlets anyway and the
+//! collider would ride along for free. The editor's host is the case that
+//! matters: it simulates and draws nothing, so the whole chain is waste —
+//! as is a collision proxy that is never rendered.
 //!
 //! [`PhysicsBackend`]: kooch_physics::PhysicsBackend
 
+use std::path::{Path, PathBuf};
+
 use kooch_core::Guid;
 use kooch_core::app::App;
+use kooch_core::asset_database::AssetDatabase;
 use kooch_core::asset_loader::AssetServer;
-use kooch_core::assets::Assets;
+use kooch_core::asset_meta;
 use kooch_core::plugin::Plugin;
 use kooch_core::resource::Resources;
 use kooch_core::stage::Stage;
 use kooch_ecs::component::ComponentRegistry;
-use kooch_physics::components::{Collider, is_mesh_derived};
-use kooch_physics::{ColliderMesh, ColliderMeshCache};
-use kooch_render::meshlet::MeshletMesh;
+use kooch_physics::components::{Collider, SHAPE_CONVEX_HULL, is_mesh_derived};
+use kooch_physics::{ColliderMesh, ColliderMeshCache, hull_points};
+use kooch_render::mesh::{parse_mesh_bytes_full, parse_mesh_parts};
+
+/// The `[import]` key a baked collision asset carries, and the value that
+/// means "each primitive is one convex piece".
+///
+/// In the sidecar rather than inferred from the primitive count: an
+/// ordinary artist mesh is often several primitives, one per material,
+/// and reading those as convex pieces would silently turn one prop into
+/// a handful of overlapping hulls.
+pub const COLLISION_KEY: &str = "collision";
+pub const COLLISION_PARTS: &str = "parts";
 
 /// Resolves the meshes mesh-derived colliders name.
 pub struct ColliderMeshPlugin;
@@ -45,32 +68,74 @@ impl Plugin for ColliderMeshPlugin {
     }
 }
 
-/// Loads the mesh behind every mesh-derived collider that has no answer.
+/// What a collider still needs from a GUID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Wanted {
+    guid: Guid,
+    /// Whether anything asks for the convex hull of this mesh.
+    ///
+    /// Tracked separately because reducing one costs 33 ms on a 76k
+    /// mesh, and a collider that only ever wants the triangles should
+    /// not pay for a hull it will not use.
+    hull: bool,
+}
+
+/// Loads the mesh behind every mesh-derived collider that has no answer,
+/// and reduces the hull of every one that wants it.
 ///
 /// Asked once per GUID, not once per frame: an answer — including a
 /// failure — is kept, so a scene where a hundred crates share one
 /// collision mesh does one load.
 pub fn fill_collider_meshes(resources: &mut Resources) {
-    let wanted = unanswered(resources);
-    if wanted.is_empty() {
-        return;
-    }
-
-    for guid in wanted {
-        let mesh = load_mesh(resources, guid);
-        let Some(mut cache) = resources.remove::<ColliderMeshCache>() else {
-            return;
-        };
-        match mesh {
-            Some(mesh) => cache.insert(guid, mesh),
-            None => cache.fail(guid),
+    for want in unanswered(resources) {
+        if !answered(resources, want.guid) {
+            let mesh = load_mesh(resources, want.guid);
+            let Some(mut cache) = resources.remove::<ColliderMeshCache>() else {
+                return;
+            };
+            match mesh {
+                Some(mesh) => cache.insert(want.guid, mesh),
+                None => cache.fail(want.guid),
+            }
+            resources.insert(cache);
         }
-        resources.insert(cache);
+
+        if want.hull {
+            reduce_hull(resources, want.guid);
+        }
     }
 }
 
-/// The GUIDs mesh-derived colliders name that the cache has no answer for.
-fn unanswered(resources: &Resources) -> Vec<Guid> {
+/// Replaces a mesh's point cloud with its convex hull, once.
+///
+/// 76 038 points become 387. Everything downstream then works on the
+/// small set: the per-frame scale fold, the narrowphase, and eventually
+/// the gizmo outline.
+fn reduce_hull(resources: &mut Resources, guid: Guid) {
+    let Some(cache) = resources.get::<ColliderMeshCache>() else {
+        return;
+    };
+    if !cache.awaits_hull(guid) {
+        return;
+    }
+    let Some(hull) = cache.get(guid).and_then(|mesh| hull_points(&mesh.vertices)) else {
+        // A cloud with no volume. `shape_builder` refuses it by name when
+        // the body is built, which is where the author can act on it.
+        return;
+    };
+    if let Some(cache) = resources.get_mut::<ColliderMeshCache>() {
+        cache.insert_hull(guid, hull);
+    }
+}
+
+fn answered(resources: &Resources, guid: Guid) -> bool {
+    resources
+        .get::<ColliderMeshCache>()
+        .is_some_and(|cache| cache.answered(guid))
+}
+
+/// What mesh-derived colliders still need.
+fn unanswered(resources: &Resources) -> Vec<Wanted> {
     let Some(cache) = resources.get::<ColliderMeshCache>() else {
         return Vec::new();
     };
@@ -81,54 +146,131 @@ fn unanswered(resources: &Resources) -> Vec<Guid> {
         return Vec::new();
     };
 
-    let mut wanted: Vec<Guid> = colliders
-        .iter()
-        .filter(|(_, collider)| is_mesh_derived(collider.shape))
-        .filter_map(|(_, collider)| collider.mesh)
-        .filter(|guid| !cache.answered(*guid))
-        .collect();
+    let mut wanted: Vec<Wanted> = Vec::new();
+    for (_, collider) in colliders.iter() {
+        if !is_mesh_derived(collider.shape) {
+            continue;
+        }
+        let Some(guid) = collider.mesh else { continue };
+        let hull = collider.shape == SHAPE_CONVEX_HULL;
+        if cache.answered(guid) && !(hull && cache.awaits_hull(guid)) {
+            continue;
+        }
+        match wanted.iter_mut().find(|want| want.guid == guid) {
+            // Two colliders on one mesh, one wanting a hull: the hull is
+            // wanted. An `||` rather than the first answer seen.
+            Some(want) => want.hull |= hull,
+            None => wanted.push(Wanted { guid, hull }),
+        }
+    }
     // Component storage is a hash map, so the same scene asks in a
     // different order each run — and the cache's epoch is what bodies
-    // rebuild on. Sorted and deduplicated, two runs agree.
-    wanted.sort_unstable_by_key(|guid| guid.as_uuid().as_u128());
-    wanted.dedup();
+    // rebuild on. Sorted, two runs agree.
+    wanted.sort_unstable_by_key(|want| want.guid.as_uuid().as_u128());
     wanted
 }
 
-/// The mesh behind a GUID, at full detail, or `None` when it will not
-/// resolve.
+/// The mesh behind a GUID, or `None` when it will not resolve.
 ///
 /// Says why at `warn` — a collider that never appears is otherwise a body
 /// that silently is not there, and the GUID is the only clue.
 fn load_mesh(resources: &mut Resources, guid: Guid) -> Option<ColliderMesh> {
-    let mut server = resources.remove::<AssetServer>()?;
-    let loaded = server.load_by_guid::<MeshletMesh>(guid, resources);
-    resources.insert(server);
+    let path = path_of(resources, guid)?;
+    let bytes = read_bytes(resources, &path, guid)?;
+    let base = path.parent();
 
-    let handle = match loaded {
-        Ok(handle) => handle,
+    let mesh = match is_baked_parts(&path) {
+        true => parse_mesh_parts(&bytes, base)
+            .map(|parts| ColliderMesh {
+                parts,
+                ..Default::default()
+            })
+            .map_err(|error| error.to_string()),
+        false => parse_mesh_bytes_full(&bytes, 1.0, base)
+            .map(|mesh| ColliderMesh {
+                vertices: mesh
+                    .vertices
+                    .iter()
+                    .map(|vertex| glam::Vec3::from(vertex.position))
+                    .collect(),
+                indices: mesh
+                    .indices
+                    .chunks_exact(3)
+                    .map(|tri| [tri[0], tri[1], tri[2]])
+                    .collect(),
+                ..Default::default()
+            })
+            .map_err(|error| error.to_string()),
+    };
+
+    match mesh {
+        Ok(mesh) if !mesh.is_empty() => Some(mesh),
+        Ok(_) => {
+            warn(guid, "a collider names a mesh with no geometry in it");
+            None
+        }
         Err(error) => {
             tracing::warn!(
                 target: "kooch::collider_mesh",
                 guid = %guid,
-                error = %error,
-                "a collider names a mesh that will not load, so its body will not collide",
+                %error,
+                "a collider names a mesh that will not parse, so its body will not collide",
             );
-            return None;
+            None
         }
-    };
-
-    let mesh = resources.get::<Assets<MeshletMesh>>()?.get(handle)?;
-    let (vertices, indices) = mesh.lod0_triangles();
-    if vertices.is_empty() {
-        tracing::warn!(
-            target: "kooch::collider_mesh",
-            guid = %guid,
-            "a collider names a mesh with no vertices",
-        );
-        return None;
     }
-    Some(ColliderMesh { vertices, indices })
+}
+
+fn path_of(resources: &Resources, guid: Guid) -> Option<PathBuf> {
+    let db = resources.get::<AssetDatabase>()?;
+    match db.entry(guid) {
+        Some(entry) => Some(entry.path.clone()),
+        None => {
+            warn(
+                guid,
+                "a collider names a mesh the asset database does not know",
+            );
+            None
+        }
+    }
+}
+
+fn read_bytes(resources: &mut Resources, path: &Path, guid: Guid) -> Option<Vec<u8>> {
+    let mut server = resources.remove::<AssetServer>()?;
+    let bytes = server.read_bytes(path);
+    resources.insert(server);
+    match bytes {
+        Ok(bytes) => Some(bytes),
+        Err(error) => {
+            tracing::warn!(
+                target: "kooch::collider_mesh",
+                guid = %guid,
+                %error,
+                "a collider names a mesh that will not read, so its body will not collide",
+            );
+            None
+        }
+    }
+}
+
+/// Whether this asset's sidecar says its primitives are convex pieces.
+///
+/// A missing or unreadable sidecar reads as "ordinary mesh", which is the
+/// answer that keeps every asset authored before this existed working.
+fn is_baked_parts(path: &Path) -> bool {
+    asset_meta::read_meta(path)
+        .ok()
+        .and_then(|meta| meta.import)
+        .and_then(|import| {
+            import
+                .get(COLLISION_KEY)
+                .and_then(|v| v.as_str().map(str::to_owned))
+        })
+        .is_some_and(|value| value == COLLISION_PARTS)
+}
+
+fn warn(guid: Guid, message: &'static str) {
+    tracing::warn!(target: "kooch::collider_mesh", guid = %guid, "{message}");
 }
 
 #[cfg(test)]

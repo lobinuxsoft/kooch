@@ -109,6 +109,14 @@ pub enum CollisionShape {
     /// directly, so it is smaller than a baked trimesh and has no seam
     /// ghost-collisions. The shape terraforming needs.
     Voxels { size: Vec3, cells: Vec<IVec3> },
+    /// Several convex pieces under one collider.
+    ///
+    /// What a baked convex decomposition loads as. Distinct from
+    /// [`ConvexDecomposition`](Self::ConvexDecomposition), which hands
+    /// the backend a concave mesh and asks it to *find* the pieces —
+    /// VHACD, and seconds of it. Once they are found they are data, and
+    /// this is the shape that consumes them.
+    Compound { parts: Vec<Vec<Vec3>> },
     /// A mesh the backend voxelises at build time.
     ///
     /// Separate from [`Voxels`](Self::Voxels) because the voxelisation is
@@ -153,6 +161,7 @@ impl CollisionShape {
             Self::Triangle { .. } => "Triangle",
             Self::ConvexHull { .. } => "ConvexHull",
             Self::ConvexDecomposition { .. } => "ConvexDecomposition",
+            Self::Compound { .. } => "Compound",
             Self::TriMesh { .. } => "TriMesh",
             Self::Polyline { .. } => "Polyline",
             Self::Heightfield { .. } => "Heightfield",
@@ -254,6 +263,13 @@ impl CollisionShape {
             Self::ConvexDecomposition { vertices, indices } => Self::ConvexDecomposition {
                 vertices: scaled_points(vertices, s),
                 indices: indices.clone(),
+            },
+            // Each piece scales on its own. The union of the scaled
+            // pieces is the scaled union, so this stays a decomposition
+            // of the same solid — which is why a baked one survives the
+            // scale gizmo without VHACD running again.
+            Self::Compound { parts } => Self::Compound {
+                parts: parts.iter().map(|part| scaled_points(part, s)).collect(),
             },
             Self::TriMesh { vertices, indices } => Self::TriMesh {
                 vertices: scaled_points(vertices, s),

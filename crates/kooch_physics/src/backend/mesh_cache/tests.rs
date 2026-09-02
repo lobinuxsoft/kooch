@@ -4,6 +4,7 @@ fn triangle() -> ColliderMesh {
     ColliderMesh {
         vertices: vec![Vec3::ZERO, Vec3::X, Vec3::Y],
         indices: vec![[0, 1, 2]],
+        ..Default::default()
     }
 }
 

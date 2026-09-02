@@ -37,4 +37,4 @@ pub use backend::{
 };
 pub use components::{Collider, Joint, PhysicsBody, ShapeSpec};
 pub use plugin::{JointRegistry, PhysicsComponentsPlugin, PhysicsPlugin, PhysicsWorld, SolverBody};
-pub use rapier_backend::RapierBackend;
+pub use rapier_backend::{RapierBackend, hull_points};

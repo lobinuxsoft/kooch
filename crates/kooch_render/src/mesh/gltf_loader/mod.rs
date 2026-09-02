@@ -151,6 +151,50 @@ pub fn parse_mesh_bytes_with_scale(bytes: &[u8], import_scale: f32) -> Result<Me
 /// Documents without an explicit scene fall back to enumerating every
 /// mesh under the implicit identity transform — matches the gltf-rs
 /// crate's `default_scene` lookup convention.
+/// Every primitive's positions, kept apart, in scene space.
+///
+/// What [`parse_mesh_bytes_full`] flattens, this keeps separate — the one
+/// case that needs it is a baked convex decomposition, where each
+/// primitive *is* one convex piece and merging them would give back the
+/// concave solid the decomposition exists to avoid.
+///
+/// Positions only. A collider has no use for normals or UVs, and a piece
+/// is consumed as a point cloud.
+pub fn parse_mesh_parts(
+    bytes: &[u8],
+    base_dir: Option<&Path>,
+) -> Result<Vec<Vec<Vec3>>, GltfMeshError> {
+    let gltf = gltf::Gltf::from_slice(bytes)?;
+    let blob = gltf.blob.as_deref();
+    let document = gltf.document;
+    let buffers = buffers::collect_buffers(&document, blob, base_dir)?;
+
+    let mut parts = Vec::new();
+    match document
+        .default_scene()
+        .or_else(|| document.scenes().next())
+    {
+        Some(scene) => {
+            for root in scene.nodes() {
+                walk::walk_parts(&root, Mat4::IDENTITY, &buffers, &mut parts)?;
+            }
+        }
+        None => {
+            for mesh in document.meshes() {
+                for primitive in mesh.primitives() {
+                    parts.push(walk::primitive_points(
+                        &primitive,
+                        Mat4::IDENTITY,
+                        &buffers,
+                    )?);
+                }
+            }
+        }
+    }
+    parts.retain(|part| !part.is_empty());
+    Ok(parts)
+}
+
 pub fn parse_mesh_bytes_full(
     bytes: &[u8],
     import_scale: f32,

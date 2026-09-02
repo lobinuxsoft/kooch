@@ -466,14 +466,24 @@ impl PhysicsWorld {
     /// Visible only inside the plugin, because `Attachment` is: a `pub`
     /// signature naming a type nobody outside can name is a function that
     /// advertises itself and cannot be called.
-    pub(super) fn attach_all(&mut self, slot: u32, attachments: &[super::compound::Attachment]) {
+    pub(super) fn attach_all(
+        &mut self,
+        slot: u32,
+        attachments: &[super::compound::Attachment],
+        meshes: Option<&ColliderMeshCache>,
+    ) {
         let Some(handle) = self.handle(slot) else {
             return;
         };
         for attachment in attachments {
+            // Resolved here, once per body build, rather than in the
+            // per-frame walk that gathered it.
+            let Some(shape) = attachment.shape(meshes) else {
+                continue;
+            };
             self.backend_mut().attach_collider(
                 handle,
-                attachment.shape.clone(),
+                shape,
                 attachment.offset,
                 attachment.rotation,
                 attachment.material,

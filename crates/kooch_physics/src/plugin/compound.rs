@@ -28,18 +28,21 @@ use kooch_ecs::hierarchy::{Children, GlobalTransform};
 use crate::backend::{ColliderInteraction, ColliderMeshCache, CollisionShape, SurfaceMaterial};
 use crate::components::{Collider, PhysicsBody, ShapeSpec};
 
-use super::world::scaled_shape;
-
 /// One shape contributed by a descendant, in the body's local space.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Carries the *authored* geometry, never the resolved kind. This is
+/// gathered once per frame for every body in the scene, and resolving
+/// here would clone every child's point cloud sixty times a second to
+/// answer a question [`digest`] answers from `Copy` fields.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Attachment {
-    pub shape: CollisionShape,
-    /// The same geometry as plain old data, for [`digest`].
-    ///
-    /// Hashing the shape itself would walk every vertex of every child's
-    /// trimesh, every frame, to answer a question the spec answers in
-    /// thirteen `Copy` fields.
     pub spec: ShapeSpec,
+    /// The child's scale, relative to the body.
+    ///
+    /// Folded in when the shape is resolved rather than now — but kept
+    /// in the digest, because a child scaled in place changes its shape
+    /// while its offset and rotation stay put.
+    pub scale: Vec3,
     pub offset: Vec3,
     pub rotation: Quat,
     /// The child's own surface. An ice patch welded onto a crate is still
@@ -48,6 +51,17 @@ pub(super) struct Attachment {
     /// The child's own filtering and event opt-ins. A trigger volume
     /// parented to a crate is still a trigger volume.
     pub interaction: ColliderInteraction,
+}
+
+impl Attachment {
+    /// The geometry this contributes, at its own scale.
+    ///
+    /// `None` while a mesh-derived child waits for its mesh. Its epoch is
+    /// in the digest, so the body rebuilds — and picks the shape up — the
+    /// moment the mesh lands.
+    pub fn shape(&self, meshes: Option<&ColliderMeshCache>) -> Option<CollisionShape> {
+        Some(self.spec.resolve(meshes)?.scaled(self.scale))
+    }
 }
 
 /// Collects the shapes a body inherits from its descendants.
@@ -60,7 +74,6 @@ pub(super) fn attachments_for(resources: &Resources, root: Entity) -> Vec<Attach
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Vec::new();
     };
-    let meshes = resources.get::<ColliderMeshCache>();
     let (Some(children), Some(globals)) = (
         registry.get_cpu::<Children>(),
         registry.get_cpu::<GlobalTransform>(),
@@ -96,19 +109,17 @@ pub(super) fn attachments_for(resources: &Resources, root: Entity) -> Vec<Attach
         {
             let local = to_local * world.matrix;
             let (scale, rotation, translation) = local.to_scale_rotation_translation();
-            // A child still waiting for its mesh contributes nothing this
-            // frame. Its epoch is in the digest, so the body rebuilds —
-            // and picks the shape up — the moment the mesh lands.
-            if let Some(shape) = scaled_shape(collider, scale, meshes) {
-                found.push(Attachment {
-                    shape,
-                    spec: collider.shape_spec(meshes),
-                    offset: translation + collider.center,
-                    rotation,
-                    material: collider.material(),
-                    interaction: collider.interaction(),
-                });
-            }
+            found.push(Attachment {
+                // No cache here on purpose: the epoch belongs in the
+                // digest, and this walk runs for every body every frame.
+                // The resolve that needs it happens once, at attach.
+                spec: collider.shape_spec(None),
+                scale,
+                offset: translation + collider.center,
+                rotation,
+                material: collider.material(),
+                interaction: collider.interaction(),
+            });
         }
 
         if let Some(grandchildren) = children.get(entity) {
@@ -174,6 +185,11 @@ pub(super) fn digest(attachments: &[Attachment]) -> u64 {
             (mask.memberships, mask.filter).hash(&mut hasher);
         }
         hash_spec(&attachment.spec, &mut hasher);
+        // A child scaled in place changes its shape while its offset and
+        // rotation stay exactly where they were.
+        for value in attachment.scale.to_array() {
+            value.to_bits().hash(&mut hasher);
+        }
     }
     hasher.finish()
 }

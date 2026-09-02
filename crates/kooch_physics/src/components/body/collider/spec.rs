@@ -121,12 +121,17 @@ impl ShapeSpec {
         let size = self.voxel_size.max(MIN_EXTENT);
         let shape = match self.shape {
             SHAPE_CONVEX_HULL => CollisionShape::ConvexHull {
-                points: mesh.vertices.clone(),
+                points: mesh.hull_or_vertices().to_vec(),
             },
             SHAPE_POLYLINE => CollisionShape::Polyline {
                 vertices: mesh.vertices.clone(),
             },
             SHAPE_VOXELS => CollisionShape::voxels_from_points(Vec3::splat(size), &mesh.vertices),
+            // A baked decomposition is already the pieces, and skipping
+            // VHACD is the difference between milliseconds and seconds.
+            SHAPE_CONVEX_DECOMPOSITION if !mesh.parts.is_empty() => CollisionShape::Compound {
+                parts: mesh.parts.clone(),
+            },
             SHAPE_CONVEX_DECOMPOSITION => CollisionShape::ConvexDecomposition {
                 vertices: mesh.vertices.clone(),
                 indices: non_empty(&mesh.indices)?.to_vec(),

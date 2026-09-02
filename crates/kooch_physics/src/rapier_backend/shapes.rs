@@ -97,6 +97,7 @@ pub(super) fn shape_builder(shape: &CollisionShape) -> Result<ColliderBuilder, S
             non_empty(vertices)?;
             Ok(ColliderBuilder::convex_decomposition(vertices, indices))
         }
+        CollisionShape::Compound { parts } => compound(parts),
         CollisionShape::TriMesh { vertices, indices } => {
             non_empty(vertices)?;
             ColliderBuilder::trimesh(vertices.clone(), indices.clone())
@@ -156,6 +157,41 @@ fn fill_mode(solid: bool) -> FillMode {
             detect_cavities: false,
         },
         false => FillMode::SurfaceOnly,
+    }
+}
+
+/// One collider from several convex pieces, each at the body's origin.
+///
+/// The pieces already carry their own positions — they are point sets in
+/// the same space — so every pose is the identity. Rapier wants the pair
+/// anyway, because a compound is the general shape and this is its
+/// degenerate, useful case.
+fn compound(parts: &[Vec<Vec3>]) -> Result<ColliderBuilder, ShapeError> {
+    if parts.is_empty() {
+        return Err(ShapeError::NoGeometry);
+    }
+    let mut shapes = Vec::with_capacity(parts.len());
+    for part in parts {
+        non_empty(part)?;
+        let hull = SharedShape::convex_hull(part).ok_or(ShapeError::DegenerateHull)?;
+        shapes.push((Pose::IDENTITY, hull));
+    }
+    Ok(ColliderBuilder::compound(shapes))
+}
+
+/// The convex hull of a point cloud, as points.
+///
+/// The reduction is the whole point: 76 038 vertices of a dragon come
+/// back as 387. Everything downstream — the per-frame scale, the
+/// narrowphase, a gizmo outline — then works on the small set instead of
+/// re-deriving it from the large one.
+///
+/// `None` when the points have no volume, which is the same refusal
+/// [`shape_builder`] gives for a hull it cannot build.
+pub fn hull_points(points: &[Vec3]) -> Option<Vec<Vec3>> {
+    match points.len() >= 4 {
+        true => Some(rapier3d::parry::transformation::convex_hull(points).0),
+        false => None,
     }
 }
 

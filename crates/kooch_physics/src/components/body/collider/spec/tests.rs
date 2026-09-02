@@ -6,6 +6,7 @@ fn mesh() -> ColliderMesh {
     ColliderMesh {
         vertices: vec![Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::Z],
         indices: vec![[0, 1, 2], [0, 2, 3]],
+        ..Default::default()
     }
 }
 
@@ -92,6 +93,7 @@ fn topology_free_meshes_only_feed_a_hull() {
         ColliderMesh {
             vertices: vec![Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::Z],
             indices: Vec::new(),
+            ..Default::default()
         },
     );
     assert!(

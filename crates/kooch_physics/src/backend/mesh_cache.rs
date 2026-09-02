@@ -20,7 +20,16 @@ use std::collections::HashMap;
 use glam::Vec3;
 use kooch_core::Guid;
 
-/// A mesh, as physics sees it.
+/// A mesh, as physics sees it — with whatever reductions of it have
+/// already been paid for.
+///
+/// # Why the reductions live here
+///
+/// `hull` is 387 points where `vertices` is 76 038, and a body's shape is
+/// rebuilt whenever its spec changes — a scale drag, a friction edit.
+/// Deriving the hull each time means qhull over the large set every
+/// rebuild, and scaling it means cloning the large set every frame.
+/// Reduced once, both become the small set.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ColliderMesh {
     pub vertices: Vec<Vec3>,
@@ -29,12 +38,36 @@ pub struct ColliderMesh {
     /// Empty for a point cloud that only ever feeds a convex hull, which
     /// needs no topology.
     pub indices: Vec<[u32; 3]>,
+    /// The convex hull of `vertices`, or empty when nobody has asked.
+    ///
+    /// Computed on demand: a collider that only ever wants the triangles
+    /// should not pay for a hull it will not use.
+    pub hull: Vec<Vec3>,
+    /// Convex pieces, when the source was authored as several.
+    ///
+    /// Non-empty only for a **baked** decomposition — a `.glb` holding
+    /// one primitive per piece. Its presence is what lets a concave
+    /// collider skip VHACD, which is seconds rather than milliseconds.
+    pub parts: Vec<Vec<Vec3>>,
 }
 
 impl ColliderMesh {
     /// A mesh with no triangles worth colliding against.
     pub fn is_empty(&self) -> bool {
-        self.vertices.is_empty()
+        self.vertices.is_empty() && self.parts.is_empty()
+    }
+
+    /// The points a convex hull should be built from: the reduced set
+    /// when it exists, the full one until it does.
+    ///
+    /// Falling back rather than waiting — the hull of the full cloud is
+    /// the same hull, just dearer, so a body built the frame before the
+    /// reduction lands is correct and gets cheaper on its next rebuild.
+    pub fn hull_or_vertices(&self) -> &[Vec3] {
+        match self.hull.is_empty() {
+            true => &self.vertices,
+            false => &self.hull,
+        }
     }
 }
 
@@ -67,6 +100,24 @@ impl ColliderMeshCache {
         self.next_epoch += 1;
         self.entries
             .insert(guid, (self.next_epoch, Entry::Ready(mesh)));
+    }
+
+    /// Publishes the reduced hull for a mesh already in the cache.
+    ///
+    /// Bumps the epoch like any other answer, so a body built from the
+    /// full cloud is retired and rebuilt from the small one.
+    pub fn insert_hull(&mut self, guid: Guid, hull: Vec<Vec3>) {
+        let Some((epoch, Entry::Ready(mesh))) = self.entries.get_mut(&guid) else {
+            return;
+        };
+        mesh.hull = hull;
+        self.next_epoch += 1;
+        *epoch = self.next_epoch;
+    }
+
+    /// `true` when this GUID has a mesh whose hull has not been reduced.
+    pub fn awaits_hull(&self, guid: Guid) -> bool {
+        matches!(self.entries.get(&guid), Some((_, Entry::Ready(mesh))) if mesh.hull.is_empty())
     }
 
     /// Records that this GUID will not resolve.

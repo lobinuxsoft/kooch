@@ -25,7 +25,7 @@ use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::transform::Transform;
 
-use crate::backend::{ColliderMeshCache, CollisionShape};
+use crate::backend::ColliderMeshCache;
 use crate::components::{Collider, PhysicsBody};
 
 use super::world::{BodySpec, PhysicsWorld, SolverBody};
@@ -46,12 +46,6 @@ struct Authored {
     /// [`SolverBody`] already.
     claimed: Option<u32>,
     spec: BodySpec,
-    /// The geometry the spec resolves to, or `None` while a mesh-derived
-    /// collider waits for its mesh.
-    ///
-    /// Resolved once here rather than inside `BodySpec::desc`, because a
-    /// trimesh cloned per call is a level's worth of triangles per frame.
-    shape: Option<CollisionShape>,
     position: Vec3,
     rotation: Quat,
 }
@@ -134,7 +128,6 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
                     Authored {
                         entity,
                         claimed: slots.and_then(|s| s.get(entity)).map(SolverBody::slot),
-                        shape: spec.resolve(meshes),
                         spec,
                         position: transform.position,
                         rotation: transform.rotation,
@@ -217,10 +210,15 @@ fn create_missing_bodies(
         {
             continue;
         }
-        // No geometry yet: the mesh has not arrived. Skipped rather than
-        // built from a stand-in — the spec carries the cache's epoch, so
-        // this entity comes back the frame the mesh lands.
-        let Some(shape) = entry.shape.clone() else {
+        // Resolved here, not in the per-frame read: a trimesh cloned and
+        // scaled for every body every frame is a level's worth of
+        // triangles sixty times a second, to answer a question the spec
+        // already answered by value.
+        //
+        // No geometry yet means the mesh has not arrived. Skipped rather
+        // than built from a stand-in — the spec carries the cache's
+        // epoch, so this entity comes back the frame it lands.
+        let Some(shape) = entry.spec.resolve(resources.get::<ColliderMeshCache>()) else {
             continue;
         };
         let slot = world.insert(
@@ -234,7 +232,11 @@ fn create_missing_bodies(
         // Attached here rather than in `world.insert` because they are
         // gathered from the ECS, and `PhysicsWorld` deliberately knows
         // nothing about entities beyond the one that owns each slot.
-        world.attach_all(slot, &entry.attachments);
+        world.attach_all(
+            slot,
+            &entry.attachments,
+            resources.get::<ColliderMeshCache>(),
+        );
         // Point the entry at its new slot so the pose pass does not have
         // to go looking for it — a search there would be quadratic in the
         // number of bodies every time a scene loads.

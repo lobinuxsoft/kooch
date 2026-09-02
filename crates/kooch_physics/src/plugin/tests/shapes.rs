@@ -41,7 +41,11 @@ fn unit_cube() -> ColliderMesh {
         [0, 4, 7],
         [0, 7, 3],
     ];
-    ColliderMesh { vertices, indices }
+    ColliderMesh {
+        vertices,
+        indices,
+        ..Default::default()
+    }
 }
 
 /// Publishes `mesh` under a fresh GUID and returns it.
@@ -209,6 +213,7 @@ fn a_flat_hull_leaves_no_collider() {
     let flat = ColliderMesh {
         vertices: vec![Vec3::ZERO, Vec3::X, Vec3::X * 2.0],
         indices: Vec::new(),
+        ..Default::default()
     };
     let guid = publish(&mut resources, flat);
     let entity = spawn_body(
