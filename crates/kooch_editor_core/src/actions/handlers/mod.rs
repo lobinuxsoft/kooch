@@ -7,6 +7,7 @@
 //! makes that a deletion rather than a surgery.
 
 mod assets;
+mod collider;
 mod play;
 mod prefab;
 mod project;
@@ -150,6 +151,13 @@ pub(super) fn apply_non_ecs_action(
             commit,
         } => {
             handle_edit_material(resources, *guid, material, *commit);
+        }
+        EditorAction::BakeCollider {
+            source,
+            kind,
+            max_faces,
+        } => {
+            collider::handle_bake_collider(resources, *source, *kind, *max_faces);
         }
         EditorAction::SetImageImport { guid, import } => {
             handle_set_image_import(resources, *guid, *import);

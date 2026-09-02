@@ -220,7 +220,8 @@ fn a_grandchild_reaches_the_body_above_it() {
 #[test]
 fn moving_a_child_changes_the_digest() {
     let a = [crate::plugin::compound::Attachment {
-        shape: crate::backend::CollisionShape::Sphere { radius: 1.0 },
+        spec: crate::components::Collider::default().shape_spec(None),
+        scale: Vec3::ONE,
         offset: Vec3::ZERO,
         rotation: Quat::IDENTITY,
         material: Default::default(),
@@ -232,4 +233,26 @@ fn moving_a_child_changes_the_digest() {
     assert_ne!(digest(&a), digest(&b), "a moved shape must rebuild");
     assert_eq!(digest(&a), digest(&a), "and the digest is stable");
     assert_ne!(digest(&a), digest(&[]), "so must a removed one");
+}
+
+/// A child scaled in place keeps its offset and its rotation, so the
+/// scale is the only thing saying its shape changed.
+#[test]
+fn resizing_a_child_changes_the_digest() {
+    let base = [crate::plugin::compound::Attachment {
+        spec: crate::components::Collider::default().shape_spec(None),
+        scale: Vec3::ONE,
+        offset: Vec3::ZERO,
+        rotation: Quat::IDENTITY,
+        material: Default::default(),
+        interaction: Default::default(),
+    }];
+    let mut grown = base;
+    grown[0].scale = Vec3::splat(3.0);
+
+    assert_ne!(
+        digest(&base),
+        digest(&grown),
+        "a resized child must rebuild"
+    );
 }

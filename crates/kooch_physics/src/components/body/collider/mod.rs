@@ -3,60 +3,38 @@
 //!
 //! Same discriminant rule as [`PhysicsBody`](super::PhysicsBody): `shape` is
 //! a `u32` with a choice set, because reflection cannot express an enum.
+//! The choice set, and which fields each shape reads, live in
+//! [`shapes`]; the surface and filtering vocabularies live in [`groups`].
+
+mod groups;
+mod shapes;
+mod spec;
+
+pub use groups::{
+    COMBINE_AVERAGE, COMBINE_CHOICES, COMBINE_CLAMPED_SUM, COMBINE_MAX, COMBINE_MIN,
+    COMBINE_MULTIPLY, GROUP_BITS,
+};
+pub use shapes::{
+    BORDER_RADIUS_WHEN, ENDPOINTS_WHEN, HALF_EXTENTS_WHEN, HALF_HEIGHT_WHEN, MESH_DERIVED,
+    MESH_WHEN, NORMAL_WHEN, POINT_C_WHEN, RADIUS_WHEN, SHAPE_CAPSULE, SHAPE_CHOICES, SHAPE_CONE,
+    SHAPE_CONVEX_DECOMPOSITION, SHAPE_CONVEX_HULL, SHAPE_CUBOID, SHAPE_CYLINDER, SHAPE_HALF_SPACE,
+    SHAPE_POLYLINE, SHAPE_ROUND_CYLINDER, SHAPE_SEGMENT, SHAPE_SPHERE, SHAPE_TRIANGLE,
+    SHAPE_TRIMESH, SHAPE_VOXELIZED_MESH, SHAPE_VOXELS, VOXEL_SIZE_WHEN, VOXEL_SOLID_WHEN,
+    is_mesh_derived,
+};
+pub use spec::ShapeSpec;
+
+use groups::combine_rule;
 
 use glam::Vec3;
 
+use kooch_core::Guid;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
-use kooch_ecs::reflect::{FieldChoice, FieldCondition};
+use kooch_ecs::reflect::FieldCondition;
 
 use crate::backend::{
-    ColliderInteraction, CollisionShape, CombineRule, InteractionMask, SurfaceMaterial,
-};
-
-/// Ball of radius `radius`.
-pub const SHAPE_SPHERE: u32 = 0;
-/// Box of half-extents `half_extents`.
-pub const SHAPE_CUBOID: u32 = 1;
-/// Capsule along local Y: `radius` plus `half_height` excluding caps.
-pub const SHAPE_CAPSULE: u32 = 2;
-
-/// Labels for the `shape` dropdown in the Inspector.
-pub static SHAPE_CHOICES: &[FieldChoice] = &[
-    FieldChoice {
-        label: "Sphere",
-        value: SHAPE_SPHERE as i64,
-    },
-    FieldChoice {
-        label: "Cuboid",
-        value: SHAPE_CUBOID as i64,
-    },
-    FieldChoice {
-        label: "Capsule",
-        value: SHAPE_CAPSULE as i64,
-    },
-];
-
-/// Which shapes read `radius`: the ball and the capsule.
-///
-/// Beside the `SHAPE_*` constants on purpose — someone adding a shape is
-/// already editing here, and a condition kept in another file is a
-/// condition that goes stale.
-pub static RADIUS_WHEN: FieldCondition = FieldCondition {
-    field: "shape",
-    values: &[SHAPE_SPHERE as i64, SHAPE_CAPSULE as i64],
-};
-
-/// Which shapes read `half_extents`: only the box.
-pub static HALF_EXTENTS_WHEN: FieldCondition = FieldCondition {
-    field: "shape",
-    values: &[SHAPE_CUBOID as i64],
-};
-
-/// Which shapes read `half_height`: only the capsule.
-pub static HALF_HEIGHT_WHEN: FieldCondition = FieldCondition {
-    field: "shape",
-    values: &[SHAPE_CAPSULE as i64],
+    ColliderInteraction, ColliderMeshCache, CollisionShape, InteractionMask, SurfaceMaterial,
 };
 
 /// The collision geometry attached to a body.
@@ -87,9 +65,55 @@ pub struct Collider {
     /// Cuboid half-extents.
     #[reflect(shown_when = HALF_EXTENTS_WHEN)]
     pub half_extents: Vec3,
-    /// Capsule half-height, excluding the hemispherical caps.
+    /// Half the length along Y, excluding a capsule's caps.
     #[reflect(shown_when = HALF_HEIGHT_WHEN)]
     pub half_height: f32,
+    /// How far the rounded cylinder's rim is filleted.
+    ///
+    /// A sharp rim gives the solver one contact point to resolve, and a
+    /// wheel or a barrel rolling over a box edge catches on it. The
+    /// fillet costs nothing and is what stops the snag.
+    #[reflect(shown_when = BORDER_RADIUS_WHEN)]
+    pub border_radius: f32,
+    /// Which way the half-space's solid side faces away from.
+    ///
+    /// Normalised when the shape is built, and defaulted to up when it
+    /// has no direction to give — a plane with no side is one rapier
+    /// cannot build and the author cannot see.
+    #[reflect(shown_when = NORMAL_WHEN)]
+    pub normal: Vec3,
+    /// First corner of a segment or a triangle, in the shape's local
+    /// space.
+    #[reflect(shown_when = ENDPOINTS_WHEN)]
+    pub point_a: Vec3,
+    /// Second corner of a segment or a triangle.
+    #[reflect(shown_when = ENDPOINTS_WHEN)]
+    pub point_b: Vec3,
+    /// Third corner of a triangle.
+    #[reflect(shown_when = POINT_C_WHEN)]
+    pub point_c: Vec3,
+    /// The mesh a mesh-derived shape is built from.
+    ///
+    /// A hull, a decomposition or a trimesh cannot be typed in, so they
+    /// name a mesh and something outside physics resolves it — see
+    /// [`ColliderMeshCache`]. Usually the same mesh the entity draws, and
+    /// deliberately not assumed to be: colliding against a simplified
+    /// stand-in is the whole point of authoring it separately.
+    #[reflect(shown_when = MESH_WHEN)]
+    #[reflect(asset = "kooch_render::meshlet::asset::MeshletMesh")]
+    pub mesh: Option<Guid>,
+    /// Edge length of one voxel cell.
+    ///
+    /// The cost knob: halving it multiplies the cell count by eight, and
+    /// the voxel shape only beats a trimesh while it stays coarse.
+    #[reflect(shown_when = VOXEL_SIZE_WHEN)]
+    pub voxel_size: f32,
+    /// Fill the voxelised mesh's interior, not only its shell.
+    ///
+    /// A shell is what a hollow prop wants; a body dropped *inside* a
+    /// shell passes straight out through the other side.
+    #[reflect(shown_when = VOXEL_SOLID_WHEN)]
+    pub voxel_solid: bool,
     /// Resistance to sliding. 0 is frictionless; 1 is about rubber on dry
     /// tarmac. Above 1 is legal and useful for gameplay.
     pub friction: f32,
@@ -169,6 +193,14 @@ impl Default for Collider {
             radius: 0.5,
             half_extents: Vec3::splat(0.5),
             half_height: 0.5,
+            border_radius: 0.05,
+            normal: Vec3::Y,
+            point_a: Vec3::ZERO,
+            point_b: Vec3::Y,
+            point_c: Vec3::X,
+            mesh: None,
+            voxel_size: 0.25,
+            voxel_solid: true,
             friction: 0.5,
             friction_rule: COMBINE_AVERAGE,
             restitution: 0.0,
@@ -188,138 +220,12 @@ impl Default for Collider {
 
 impl Component for Collider {}
 
-/// The mean of the two coefficients. Rapier's default.
-pub const COMBINE_AVERAGE: u32 = 0;
-/// The smaller value — the slipperier surface wins.
-pub const COMBINE_MIN: u32 = 1;
-/// The product — both surfaces have to be high.
-pub const COMBINE_MULTIPLY: u32 = 2;
-/// The larger value — the stickier surface wins.
-pub const COMBINE_MAX: u32 = 3;
-/// The sum, clamped.
-pub const COMBINE_CLAMPED_SUM: u32 = 4;
-
-/// Labels for the combine-rule dropdowns.
-pub static COMBINE_CHOICES: &[FieldChoice] = &[
-    FieldChoice {
-        label: "Average",
-        value: COMBINE_AVERAGE as i64,
-    },
-    FieldChoice {
-        label: "Min (slipperier wins)",
-        value: COMBINE_MIN as i64,
-    },
-    FieldChoice {
-        label: "Multiply",
-        value: COMBINE_MULTIPLY as i64,
-    },
-    FieldChoice {
-        label: "Max (stickier wins)",
-        value: COMBINE_MAX as i64,
-    },
-    FieldChoice {
-        label: "Clamped sum",
-        value: COMBINE_CLAMPED_SUM as i64,
-    },
-];
-
-/// The collision groups, named.
-///
-/// Sixteen of rapier's thirty-two bits, named generically because the
-/// engine does not know what a project's layers mean. A game renames them
-/// by shipping its own labels; what matters here is that the Inspector
-/// shows *boxes* rather than a number, because a filtering mistake written
-/// as an integer fails silently — two things pass through each other and
-/// nothing says why.
-///
-/// The remaining sixteen are deliberately unnamed rather than absent: the
-/// widget preserves bits it does not know about, so a project using the
-/// high half by hand keeps it across an edit.
-pub static GROUP_BITS: &[FieldChoice] = &[
-    FieldChoice {
-        label: "Group 1",
-        value: 1 << 0,
-    },
-    FieldChoice {
-        label: "Group 2",
-        value: 1 << 1,
-    },
-    FieldChoice {
-        label: "Group 3",
-        value: 1 << 2,
-    },
-    FieldChoice {
-        label: "Group 4",
-        value: 1 << 3,
-    },
-    FieldChoice {
-        label: "Group 5",
-        value: 1 << 4,
-    },
-    FieldChoice {
-        label: "Group 6",
-        value: 1 << 5,
-    },
-    FieldChoice {
-        label: "Group 7",
-        value: 1 << 6,
-    },
-    FieldChoice {
-        label: "Group 8",
-        value: 1 << 7,
-    },
-    FieldChoice {
-        label: "Group 9",
-        value: 1 << 8,
-    },
-    FieldChoice {
-        label: "Group 10",
-        value: 1 << 9,
-    },
-    FieldChoice {
-        label: "Group 11",
-        value: 1 << 10,
-    },
-    FieldChoice {
-        label: "Group 12",
-        value: 1 << 11,
-    },
-    FieldChoice {
-        label: "Group 13",
-        value: 1 << 12,
-    },
-    FieldChoice {
-        label: "Group 14",
-        value: 1 << 13,
-    },
-    FieldChoice {
-        label: "Group 15",
-        value: 1 << 14,
-    },
-    FieldChoice {
-        label: "Group 16",
-        value: 1 << 15,
-    },
-];
-
 /// Which state reads `contact_force_threshold`: only a collider that asked
 /// for force events.
 pub static CONTACT_FORCE_WHEN: FieldCondition = FieldCondition {
     field: "contact_force_events",
     values: &[1],
 };
-
-/// The backend rule for a discriminant, defaulting to the average for one
-/// outside the known set — a scene from a newer editor stays loadable.
-fn combine_rule(discriminant: u32) -> CombineRule {
-    match discriminant {
-        COMBINE_MIN => CombineRule::Min,
-        COMBINE_MULTIPLY => CombineRule::Multiply,
-        COMBINE_MAX => CombineRule::Max,
-        COMBINE_CLAMPED_SUM => CombineRule::ClampedSum,
-        _ => CombineRule::Average,
-    }
-}
 
 impl Collider {
     /// The surface this collider presents on contact.
@@ -352,25 +258,36 @@ impl Collider {
         }
     }
 
-    /// Resolves the flat fields to the geometry the backend takes.
+    /// The authored identity of this collider's geometry.
     ///
-    /// Degenerate values are clamped rather than rejected: a collider
-    /// mid-edit in the Inspector passes through zero on the way to the
-    /// value the user is typing, and a zero-radius shape makes the
-    /// solver produce NaNs that outlive the typo.
-    pub fn collision_shape(&self) -> CollisionShape {
-        const MIN: f32 = 1e-4;
-        match self.shape {
-            SHAPE_CUBOID => CollisionShape::Cuboid {
-                half_extents: self.half_extents.max(Vec3::splat(MIN)),
-            },
-            SHAPE_CAPSULE => CollisionShape::Capsule {
-                radius: self.radius.max(MIN),
-                half_height: self.half_height.max(MIN),
-            },
-            _ => CollisionShape::Sphere {
-                radius: self.radius.max(MIN),
+    /// POD and comparable, so the sync pass can decide "the shape
+    /// changed" without resolving a mesh or hashing a point cloud.
+    /// `meshes` supplies the epoch that makes a mesh *arriving* count as
+    /// a change; `None` reads as "nothing has answered yet".
+    pub fn shape_spec(&self, meshes: Option<&ColliderMeshCache>) -> ShapeSpec {
+        ShapeSpec {
+            shape: self.shape,
+            radius: self.radius,
+            half_extents: self.half_extents,
+            half_height: self.half_height,
+            border_radius: self.border_radius,
+            normal: self.normal,
+            point_a: self.point_a,
+            point_b: self.point_b,
+            point_c: self.point_c,
+            voxel_size: self.voxel_size,
+            voxel_solid: self.voxel_solid,
+            mesh: self.mesh,
+            mesh_epoch: match (self.mesh, meshes) {
+                (Some(guid), Some(cache)) => cache.epoch(guid),
+                _ => 0,
             },
         }
+    }
+
+    /// The geometry the backend takes, or `None` while a mesh-derived
+    /// shape is still waiting for its mesh.
+    pub fn collision_shape(&self, meshes: Option<&ColliderMeshCache>) -> Option<CollisionShape> {
+        self.shape_spec(meshes).resolve(meshes)
     }
 }

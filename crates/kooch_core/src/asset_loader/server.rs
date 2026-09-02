@@ -235,6 +235,43 @@ impl AssetServer {
         self.load::<T>(path, resources)
     }
 
+    /// The asset's bytes, from a mounted pack or from disk, with no
+    /// loader involved.
+    ///
+    /// # Why this is public
+    ///
+    /// A consumer sometimes wants the *file*, not the type a loader
+    /// makes of it. The collision-mesh bridge is the case that forced
+    /// it: it needs positions and indices out of a `.glb`, and going
+    /// through the meshlet loader to get them builds a full LOD chain —
+    /// nearly three seconds for a 76k-vertex mesh — that it then decodes
+    /// straight back to triangles and throws away.
+    ///
+    /// Packs before disk, exactly as loading does, so a shipped game
+    /// reads what it shipped with.
+    pub fn read_bytes(&mut self, path: impl AsRef<Path>) -> AssetResult<Vec<u8>> {
+        let path = self.resolve_path(path.as_ref());
+        self.packs.read_or_disk(&path)
+    }
+
+    /// Same, for an asset addressed by [`Guid`].
+    pub fn read_bytes_by_guid(
+        &mut self,
+        guid: Guid,
+        resources: &Resources,
+    ) -> AssetResult<Vec<u8>> {
+        let db = resources
+            .get::<AssetDatabase>()
+            .ok_or(AssetError::MissingAssetStorage("AssetDatabase"))?;
+        let path = db
+            .entry(guid)
+            .ok_or(AssetError::UnknownGuid(guid))?
+            .path
+            .clone();
+        drop(db);
+        self.read_bytes(path)
+    }
+
     /// Returns the cached handle for `path` if `T` was loaded already,
     /// otherwise `None`. Does NOT trigger a load — read-only lookup.
     pub fn get_cached<T: Asset>(&self, path: impl AsRef<Path>) -> Option<Handle<T>> {

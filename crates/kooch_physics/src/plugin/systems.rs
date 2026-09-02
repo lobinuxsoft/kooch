@@ -25,6 +25,7 @@ use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::transform::Transform;
 
+use crate::backend::ColliderMeshCache;
 use crate::components::{Collider, PhysicsBody};
 
 use super::world::{BodySpec, PhysicsWorld, SolverBody};
@@ -96,6 +97,7 @@ pub fn physics_sync_system(resources: &mut Resources) {
 /// Returns `None` when there is no component registry to read.
 fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
     let registry = resources.get::<ComponentRegistry>()?;
+    let meshes = resources.get::<ColliderMeshCache>();
     let slots = registry.get_cpu::<SolverBody>();
 
     let bodies = registry.get_cpu::<PhysicsBody>();
@@ -116,15 +118,17 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
                         .copied()
                         .unwrap_or_default();
                     let attachments = super::compound::attachments_for(resources, entity);
+                    let spec = BodySpec::with_attachments(
+                        body,
+                        &collider,
+                        transform.scale,
+                        super::compound::digest(&attachments),
+                        meshes,
+                    );
                     Authored {
                         entity,
                         claimed: slots.and_then(|s| s.get(entity)).map(SolverBody::slot),
-                        spec: BodySpec::with_attachments(
-                            body,
-                            &collider,
-                            transform.scale,
-                            super::compound::digest(&attachments),
-                        ),
+                        spec,
                         position: transform.position,
                         rotation: transform.rotation,
                         attachments,
@@ -206,12 +210,33 @@ fn create_missing_bodies(
         {
             continue;
         }
-        let slot = world.insert(entry.entity, entry.spec, entry.position, entry.rotation);
+        // Resolved here, not in the per-frame read: a trimesh cloned and
+        // scaled for every body every frame is a level's worth of
+        // triangles sixty times a second, to answer a question the spec
+        // already answered by value.
+        //
+        // No geometry yet means the mesh has not arrived. Skipped rather
+        // than built from a stand-in — the spec carries the cache's
+        // epoch, so this entity comes back the frame it lands.
+        let Some(shape) = entry.spec.resolve(resources.get::<ColliderMeshCache>()) else {
+            continue;
+        };
+        let slot = world.insert(
+            entry.entity,
+            entry.spec,
+            shape,
+            entry.position,
+            entry.rotation,
+        );
         // Shapes inherited from descendants join the body it just built.
         // Attached here rather than in `world.insert` because they are
         // gathered from the ECS, and `PhysicsWorld` deliberately knows
         // nothing about entities beyond the one that owns each slot.
-        world.attach_all(slot, &entry.attachments);
+        world.attach_all(
+            slot,
+            &entry.attachments,
+            resources.get::<ColliderMeshCache>(),
+        );
         // Point the entry at its new slot so the pose pass does not have
         // to go looking for it — a search there would be quadratic in the
         // number of bodies every time a scene loads.

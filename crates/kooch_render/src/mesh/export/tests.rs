@@ -221,3 +221,51 @@ fn a_zero_target_still_leaves_geometry() {
         assert_eq!(out.index_count() % 3, 0);
     }
 }
+
+/// The seam a baked convex decomposition lives on: what the exporter
+/// writes, the importer has to read back as the same pieces. Merging
+/// them would give back the concave solid the decomposition exists to
+/// avoid, and nothing else in the engine would notice.
+#[test]
+fn parts_survive_the_round_trip() {
+    use crate::mesh::{parse_mesh_parts, to_glb_parts};
+
+    let cube = |offset: glam::Vec3| {
+        let corners: Vec<glam::Vec3> = (0..8)
+            .map(|i| {
+                offset
+                    + glam::Vec3::new((i & 1) as f32, ((i >> 1) & 1) as f32, ((i >> 2) & 1) as f32)
+            })
+            .collect();
+        // Two faces is enough to be a valid primitive; this is about the
+        // container, not about the geometry.
+        Mesh::from_triangles(&corners, &[[0, 1, 2], [1, 3, 2]])
+    };
+
+    let (near, far) = (cube(glam::Vec3::ZERO), cube(glam::Vec3::X * 10.0));
+    let glb = to_glb_parts(&[(&near, "part_0"), (&far, "part_1")]).expect("export");
+
+    let parts = parse_mesh_parts(&glb, None).expect("import");
+    assert_eq!(parts.len(), 2, "the pieces were merged");
+    assert_eq!(parts[0].0.len(), 8);
+    assert_eq!(parts[0].1.len(), 2, "the triangles came back too");
+    // Read back in order, and still where they were written.
+    assert!(
+        parts[1].0.iter().all(|p| p.x >= 10.0),
+        "the second piece moved"
+    );
+}
+
+/// One mesh has to go out the same shape it always did — `to_glb` now
+/// delegates, and a viewer reading the old files must read the new ones.
+#[test]
+fn a_single_mesh_still_writes_one_node() {
+    use crate::mesh::parse_mesh_parts;
+
+    let corners: Vec<glam::Vec3> = (0..8)
+        .map(|i| glam::Vec3::new((i & 1) as f32, ((i >> 1) & 1) as f32, ((i >> 2) & 1) as f32))
+        .collect();
+    let mesh = Mesh::from_triangles(&corners, &[[0, 1, 2], [1, 3, 2]]);
+    let glb = to_glb(&mesh, "solo").expect("export");
+    assert_eq!(parse_mesh_parts(&glb, None).expect("import").len(), 1);
+}

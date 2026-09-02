@@ -4,6 +4,7 @@ use glam::{Quat, Vec3};
 
 use super::interaction::ColliderInteraction;
 use super::material::{Damping, SurfaceMaterial};
+use super::shape::CollisionShape;
 
 /// How the solver treats a body's motion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,25 +18,14 @@ pub enum BodyKind {
     Static,
 }
 
-/// Collision primitive attached to a body. PR-1 covers the three shapes
-/// every game ships; convex hulls + trimesh + heightfield arrive with
-/// #137 (CollisionShape ECS component) and the asset pipeline.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum CollisionShape {
-    /// Solid ball, parametrised by `radius`.
-    Sphere { radius: f32 },
-    /// Axis-aligned box (in local space). `half_extents` are half the
-    /// total side length on each axis.
-    Cuboid { half_extents: Vec3 },
-    /// Capsule along the local Y axis. `half_height` excludes the
-    /// hemispherical caps; total length = `2 * (half_height + radius)`.
-    Capsule { radius: f32, half_height: f32 },
-}
-
 /// Construction descriptor handed to [`add_body`].
 ///
+/// Cloned rather than copied: [`CollisionShape`] owns its points once a
+/// collider is mesh-derived, and a descriptor that copies a level's
+/// trimesh by accident is not a descriptor anyone can afford.
+///
 /// [`add_body`]: super::PhysicsBackend::add_body
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct BodyDesc {
     pub kind: BodyKind,
     pub shape: CollisionShape,

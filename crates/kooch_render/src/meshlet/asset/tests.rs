@@ -73,3 +73,49 @@ fn empty_mesh_reports_zero_counts() {
     assert_eq!(mesh.total_vertex_count(), 0);
     assert_eq!(mesh.total_triangle_count(), 0);
 }
+
+/// Two meshlets holding the same surface at two levels of detail. Taking
+/// both as collision geometry gives two overlapping floors.
+fn two_lods() -> MeshletMesh {
+    let vertex = |x: f32| MeshVertex {
+        position: [x, 0.0, 0.0],
+        normal: [0.0, 1.0, 0.0],
+        uv: [0.0, 0.0],
+    };
+    let meshlet = |lod_level: u32, triangle_offset: u32| MeshletDescriptor {
+        vertex_offset: 0,
+        triangle_offset,
+        vertex_count: 3,
+        triangle_count: 1,
+        lod_level,
+        parent_meshlet_index: MESHLET_ROOT_PARENT,
+        group_index: MESHLET_GROUP_NONE,
+        children_group_index: MESHLET_GROUP_NONE,
+        ..bytemuck::Zeroable::zeroed()
+    };
+    MeshletMesh {
+        vertices: vec![vertex(0.0), vertex(1.0), vertex(2.0)],
+        meshlet_vertices: vec![0, 1, 2],
+        meshlet_triangles: vec![0, 1, 2, 2, 1, 0],
+        meshlets: vec![meshlet(0, 0), meshlet(1, 3)],
+        aabb: Aabb::empty(),
+    }
+}
+
+#[test]
+fn only_lod_zero_becomes_collision() {
+    let (vertices, indices) = two_lods().lod0_triangles();
+    assert_eq!(vertices.len(), 3, "the pool is returned whole");
+    assert_eq!(indices, vec![[0, 1, 2]], "the coarse copy stays out");
+}
+
+/// A corner is a byte into the meshlet's own vertex set, which is itself
+/// an index into the shared pool. Reading it as a pool index directly is
+/// the mistake that silently scrambles a collider.
+#[test]
+fn corners_resolve_through_the_pool() {
+    let mut mesh = two_lods();
+    mesh.meshlet_vertices = vec![2, 0, 1];
+    let (_, indices) = mesh.lod0_triangles();
+    assert_eq!(indices, vec![[2, 0, 1]]);
+}

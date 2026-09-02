@@ -38,7 +38,7 @@ use crate::state::{
 };
 
 pub(crate) use asset_view::{
-    AssetDetail, ImageImportInfo, MeshImportInfo, PrefabComponentView, PrefabDetail,
+    AssetDetail, BakedFrom, ImageImportInfo, MeshImportInfo, PrefabComponentView, PrefabDetail,
     PrefabEntityView, ResolvedComponent,
 };
 pub(crate) use widgets::{AssetCatalogEntry, AssetSource, draw_asset_picker};

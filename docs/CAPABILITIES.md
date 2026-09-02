@@ -126,6 +126,21 @@ them, the remote protocol mirrored them — and no render crate read one.
 | `MockInputBackend` | `mock_backend.rs` | **orphan** to games | Injects keys and axes with no hardware — exactly what a cutscene, a tutorial or an automated test needs, and it is reachable only from the engine's own tests. |
 | Remote input over the wire | `remote_backend.rs` | connected | `Method::Extension("input.state")`; state, never events. |
 
+## Physics — `kooch_physics`
+
+| Capability | Where | Status | Notes |
+|---|---|---|---|
+| `PhysicsBackend` trait | `backend/mod.rs` | connected | The contract. Rapier lives only inside `rapier_backend`; every public type is glam, so a GPU solver later touches no authored scene. |
+| `CollisionShape` — 15 variants | `backend/shape.rs` | connected | Every shape rapier 0.34 ships. Analytic ones from typed numbers, mesh-derived ones from `ColliderMeshCache`. |
+| `ColliderMeshCache` | `backend/mesh_cache.rs` | connected | The one seam pointing outward. Defined in physics, filled by `kooch::collider_meshes` — the facade is the only crate that sees both a GUID and an asset database. |
+| Surface + filtering | `components/body/collider/` | connected | `friction`, `restitution` and their combine rules; four group masks; the sensor flag. All per collider, all baked at build time, so an Inspector edit retires and rebuilds the body. |
+| Compound bodies | `plugin/compound.rs` | connected | A descendant `Collider` with no body of its own joins the nearest ancestor that has one, at its own local pose. A dynamic body under another warns. |
+| Baked collision meshes | `kooch_editor_core/actions/handlers/collider.rs` | connected | "Create hull mesh" / "Create convex parts" in a mesh asset's Inspector. Writes into the open project, records the source GUID + a byte hash, and says so when the source has moved on. |
+| Collision mesh loading | `kooch::collider_meshes` | connected | Parses the `.glb` directly. Going through `MeshletMesh` built a LOD chain — 2.9 s on a 76k mesh, measured in debug — and decoded it straight back to triangles. |
+| `Heightfield`, `Segment`, `Triangle`, `Polyline`, `Voxels`, `VoxelizedMesh` | `backend/shape.rs` | **invisible, deliberately** | Build, collide and are tested; none is in the dropdown. A height grid cannot be typed and there is no terrain asset to read one from; the other five are answers to questions no author has, and listing them made the menu a quiz. Discriminants kept, so a scene authored with one still loads. |
+| Collider gizmo | `kooch_editor_core/gizmos/collider.rs` | connected | Every analytic shape at its effective size, plus hulls and convex pieces outlined from the cache the solver reads. A triangle mesh draws nothing on purpose: it *is* the render mesh. |
+| `Visualizer::draw_with` | `kooch_gizmos/visualizer.rs` | connected | The overload that gets `Resources`, for an outline whose geometry lives outside its component. Defaults to `draw`, so nothing else changed. |
+
 ## Camera — `kooch_camera`
 
 | Capability | Where | Status | Notes |

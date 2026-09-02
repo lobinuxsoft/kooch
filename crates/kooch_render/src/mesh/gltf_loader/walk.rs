@@ -110,3 +110,61 @@ pub(super) fn ingest_primitive(
     out_indices.extend(primitive_indices.into_iter().map(|i| i + vertex_offset));
     Ok(())
 }
+
+/// Same walk as [`walk_node`], collecting one point set per primitive.
+pub(super) fn walk_parts(
+    node: &gltf::Node<'_>,
+    parent_xform: Mat4,
+    buffers: &[Vec<u8>],
+    out: &mut Vec<(Vec<Vec3>, Vec<[u32; 3]>)>,
+) -> Result<(), GltfMeshError> {
+    let world_xform = parent_xform * Mat4::from_cols_array_2d(&node.transform().matrix());
+
+    if let Some(mesh) = node.mesh() {
+        for primitive in mesh.primitives() {
+            out.push(primitive_geometry(&primitive, world_xform, buffers)?);
+        }
+    }
+    for child in node.children() {
+        walk_parts(&child, world_xform, buffers, out)?;
+    }
+    Ok(())
+}
+
+/// One primitive's positions and triangles, in the space `world_xform`
+/// puts them.
+///
+/// Goes through [`ingest_primitive`] rather than reading the accessor
+/// again, so a part is transformed by exactly the code the renderer
+/// uses. A second reader here would be a second thing to keep in step.
+///
+/// The triangles matter as much as the points for a baked collider: they
+/// are what says a piece is *already* a convex hull, which is what lets
+/// the solver skip hulling it again.
+pub(super) fn primitive_geometry(
+    primitive: &gltf::Primitive<'_>,
+    world_xform: Mat4,
+    buffers: &[Vec<u8>],
+) -> Result<(Vec<Vec3>, Vec<[u32; 3]>), GltfMeshError> {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    let mut aabb = Aabb::empty();
+    ingest_primitive(
+        primitive,
+        world_xform,
+        buffers,
+        &mut vertices,
+        &mut indices,
+        &mut aabb,
+    )?;
+    Ok((
+        vertices
+            .into_iter()
+            .map(|vertex| Vec3::from(vertex.position))
+            .collect(),
+        indices
+            .chunks_exact(3)
+            .map(|tri| [tri[0], tri[1], tri[2]])
+            .collect(),
+    ))
+}

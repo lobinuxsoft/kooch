@@ -38,6 +38,8 @@ pub const LICENSE: &str = include_str!("../LICENSE.md");
 // Named `profiler` and not `profiling` on purpose: a module of that name
 // in the crate root shadows the `profiling` facade crate for every path
 // written in this file.
+#[cfg(all(feature = "physics", feature = "render"))]
+pub mod collider_meshes;
 #[cfg(feature = "profiling")]
 pub mod profiler;
 mod scene_bootstrap;
@@ -334,6 +336,11 @@ impl kooch_core::plugin::PluginGroup for RemoteHostPlugins {
         #[cfg(feature = "physics")]
         let builder = builder.add(kooch_physics::PhysicsPlugin::new());
 
+        // Mesh-derived colliders. Needs both halves, which is why it is
+        // added from the facade rather than from either crate.
+        #[cfg(all(feature = "physics", feature = "render"))]
+        let builder = builder.add(crate::collider_meshes::ColliderMeshPlugin);
+
         // Gravity that points somewhere other than down. Inert until a
         // scene holds a source, so adding it changes nothing on its own.
         #[cfg(all(feature = "physics", feature = "gravity"))]
@@ -394,6 +401,11 @@ impl kooch_core::plugin::PluginGroup for DefaultPlugins {
 
         #[cfg(feature = "physics")]
         let builder = builder.add(kooch_physics::PhysicsPlugin::new());
+
+        // Mesh-derived colliders. Needs both halves, which is why it is
+        // added from the facade rather than from either crate.
+        #[cfg(all(feature = "physics", feature = "render"))]
+        let builder = builder.add(crate::collider_meshes::ColliderMeshPlugin);
 
         // Gravity that points somewhere other than down. Inert until a
         // scene holds a source, so adding it changes nothing on its own.

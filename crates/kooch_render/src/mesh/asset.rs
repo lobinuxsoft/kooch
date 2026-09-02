@@ -26,6 +26,46 @@ pub struct Mesh {
 }
 
 impl Mesh {
+    /// A mesh from bare positions and triangles.
+    ///
+    /// What the engine's own generators produce: a convex hull, a
+    /// decomposed piece. Normals are accumulated from the faces so the
+    /// result is shaded rather than black when an artist opens it, and
+    /// UVs are zero because a collision proxy has nothing to map.
+    pub fn from_triangles(positions: &[glam::Vec3], triangles: &[[u32; 3]]) -> Self {
+        let mut normals = vec![glam::Vec3::ZERO; positions.len()];
+        for tri in triangles {
+            let [a, b, c] = tri.map(|i| positions[i as usize]);
+            // Unnormalised on purpose: the cross product's length is
+            // twice the triangle's area, which weights a big face more
+            // than a sliver — the standard accumulation.
+            let face = (b - a).cross(c - a);
+            for index in tri {
+                normals[*index as usize] += face;
+            }
+        }
+
+        let mut aabb = Aabb::empty();
+        let vertices = positions
+            .iter()
+            .zip(&normals)
+            .map(|(position, normal)| {
+                aabb.expand(*position);
+                MeshVertex {
+                    position: position.to_array(),
+                    normal: normal.normalize_or(glam::Vec3::Y).to_array(),
+                    uv: [0.0, 0.0],
+                }
+            })
+            .collect();
+
+        Self {
+            vertices,
+            indices: triangles.iter().flatten().copied().collect(),
+            aabb,
+        }
+    }
+
     /// Empty mesh (no vertices, no indices). Useful as a placeholder while
     /// async loads complete.
     pub fn empty() -> Self {

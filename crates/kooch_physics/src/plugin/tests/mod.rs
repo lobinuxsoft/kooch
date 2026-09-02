@@ -18,6 +18,7 @@ mod lifetime;
 mod mass;
 mod material;
 mod play_lifecycle;
+mod shapes;
 mod simulation;
 
 use std::any::TypeId;
@@ -59,6 +60,9 @@ fn world() -> Resources {
     r.insert(DynamicComponents::new());
     r.insert(Time::new());
     r.insert(PhysicsWorld::new(Box::new(RapierBackend::new())));
+    // Empty, the way `PhysicsComponentsPlugin` inserts it: a mesh-derived
+    // collider has to behave the same with an unfilled cache as with none.
+    r.insert(crate::backend::ColliderMeshCache::new());
 
     let registry = r.get_mut::<ComponentRegistry>().unwrap();
     registry.register_cpu_reflected::<Transform>();
@@ -160,8 +164,8 @@ fn shape_of(resources: &Resources, entity: Entity) -> CollisionShape {
         .unwrap()
         .spec(slot_of(resources, entity).expect("entity has no body"))
         .expect("slot is free")
-        .desc(Vec3::ZERO, Quat::IDENTITY)
-        .shape
+        .resolve(None)
+        .expect("the shape resolves without a mesh")
 }
 
 /// The pose the solver actually holds for an entity's body.

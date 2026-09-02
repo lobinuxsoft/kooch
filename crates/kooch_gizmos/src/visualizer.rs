@@ -42,6 +42,26 @@ pub trait Visualizer<C: Component>: Send + Sync + 'static {
     /// decides to visualize. `transform` is the entity's
     /// world-space [`GlobalTransform`].
     fn draw(&self, component: &C, transform: &GlobalTransform, gizmos: &mut Gizmos<'_>);
+
+    /// Same, for a visualizer whose outline lives outside its component.
+    ///
+    /// Most do not need this: a `Collider`'s sphere is the radius on the
+    /// component, and a camera's frustum is its own numbers. A
+    /// mesh-derived collider is the case that is not — its shape is a
+    /// point cloud in a cache, and a visualizer that cannot reach it
+    /// draws either nothing or a lie.
+    ///
+    /// Defaults to [`draw`](Self::draw), so a visualizer that has
+    /// everything it needs implements one method and ignores this one.
+    fn draw_with(
+        &self,
+        component: &C,
+        transform: &GlobalTransform,
+        _resources: &Resources,
+        gizmos: &mut Gizmos<'_>,
+    ) {
+        self.draw(component, transform, gizmos);
+    }
 }
 
 /// Type-erased dispatch closure stored in the registry. Captures the
@@ -73,7 +93,7 @@ impl VisualizerRegistry {
         let dispatch: DispatchFn = Box::new(move |entity, resources, gizmos| {
             let query = Query::<(&C, &GlobalTransform)>::new(resources);
             if let Some((component, transform)) = query.get(entity) {
-                visualizer.draw(component, transform, gizmos);
+                visualizer.draw_with(component, transform, resources, gizmos);
             }
         });
         self.entries.insert(TypeId::of::<C>(), dispatch);

@@ -176,6 +176,44 @@ impl MeshletMesh {
     pub fn total_triangle_count(&self) -> u32 {
         self.meshlets.iter().map(|m| m.triangle_count).sum::<u32>()
     }
+
+    /// The full-detail surface, as a plain vertex and index buffer.
+    ///
+    /// LOD 0 only. The meshlet array holds the whole simplification DAG,
+    /// so taking every meshlet would stack the same surface at four
+    /// levels of detail on top of itself — which as collision geometry is
+    /// four overlapping floors.
+    ///
+    /// The vertex pool is returned whole rather than compacted: the
+    /// coarser levels reuse the same positions, so the pool is close to
+    /// the LOD 0 vertex set already, and remapping would cost a pass and
+    /// a map to save a fraction of it.
+    pub fn lod0_triangles(&self) -> (Vec<glam::Vec3>, Vec<[u32; 3]>) {
+        let vertices = self
+            .vertices
+            .iter()
+            .map(|vertex| glam::Vec3::from(vertex.position))
+            .collect();
+
+        let mut indices = Vec::with_capacity(self.total_triangle_count() as usize);
+        for meshlet in self.meshlets.iter().filter(|m| m.lod_level == 0) {
+            let corner = |triangle: u32, index: u32| -> u32 {
+                // `meshlet_triangles` is one byte per corner, indexing the
+                // meshlet's own vertex set rather than the shared pool.
+                let byte = meshlet.triangle_offset + triangle * 3 + index;
+                let local = self.meshlet_triangles[byte as usize] as u32;
+                self.meshlet_vertices[(meshlet.vertex_offset + local) as usize]
+            };
+            for triangle in 0..meshlet.triangle_count {
+                indices.push([
+                    corner(triangle, 0),
+                    corner(triangle, 1),
+                    corner(triangle, 2),
+                ]);
+            }
+        }
+        (vertices, indices)
+    }
 }
 
 #[cfg(test)]

@@ -44,6 +44,34 @@ pub(crate) use self::codegen::{
     SyncOutcome, initial_registrations, migrate_to_library, register_scripts, split_authoring,
 };
 
+/// What a collision bake produces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BakeKind {
+    /// One convex hull. The answer for a dynamic prop.
+    Hull,
+    /// Convex pieces that keep the hollows. Seconds of VHACD, which is
+    /// why the result is a file.
+    Parts,
+    /// The triangles, decimated to a budget.
+    ///
+    /// The only bake that can be *wrong*. Collapsing an edge moves the
+    /// surface, so a decimated floor is a floor in a slightly different
+    /// place — and slightly lower is a floor a character sinks into. The
+    /// two convex ones can only ever enclose more than they were given.
+    Mesh,
+}
+
+impl BakeKind {
+    /// The suffix its file takes, and the value its sidecar records.
+    pub(crate) fn tag(self) -> &'static str {
+        match self {
+            Self::Hull => "hull",
+            Self::Parts => "parts",
+            Self::Mesh => "mesh",
+        }
+    }
+}
+
 pub(crate) enum EditorAction {
     /// Spawn an entity with Name + Transform + optional extra components.
     /// The optional String sets the Name component value.
@@ -338,6 +366,21 @@ pub(crate) enum EditorAction {
         material: kooch_render::material::Material,
         /// `false` while a drag is still in flight — update memory only.
         commit: bool,
+    },
+    /// Bakes a collision mesh out of a render mesh, into the project.
+    ///
+    /// A file rather than a runtime cache because the concave case is
+    /// seconds of VHACD per body build, because an artist has to be able
+    /// to open what the solver collides against, and because a bake is
+    /// the only place a hull may be simplified below its exact form.
+    BakeCollider {
+        /// The mesh to derive from. Its own GUID is recorded in the
+        /// result's sidecar, so a stale bake is detectable.
+        source: kooch_core::Guid,
+        kind: BakeKind,
+        /// Face budget per piece. Zero keeps the exact hull, and is
+        /// refused for [`BakeKind::Mesh`], which has nothing else to do.
+        max_faces: u32,
     },
     /// Rewrites a texture's `[import]` table and re-imports it.
     ///
@@ -666,6 +709,7 @@ impl EditorAction {
             | Self::SetIdeCommand { .. }
             | Self::SetLaunchEnv { .. }
             | Self::EditMaterial { .. }
+            | Self::BakeCollider { .. }
             | Self::SetImageImport { .. }
             | Self::EditAssetField { .. }
             | Self::ImportAssets { .. }
@@ -784,6 +828,7 @@ impl EditorAction {
             | Self::SetIdeCommand { .. }
             | Self::SetLaunchEnv { .. }
             | Self::EditMaterial { .. }
+            | Self::BakeCollider { .. }
             | Self::SetImageImport { .. }
             | Self::EditAssetField { .. }
             | Self::ImportAssets { .. }
