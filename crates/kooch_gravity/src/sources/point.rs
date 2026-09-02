@@ -11,6 +11,34 @@ use kooch_ecs::component::Component;
 /// entity moves the field, and parenting it to something makes the field
 /// follow.
 ///
+/// # Sizing one
+///
+/// A body stays on the surface only while gravity covers the centripetal
+/// acceleration its own speed demands — `v² / r ≤ g`. Over that it is in
+/// orbit and leaves, which is arithmetic and not something the engine can
+/// prevent.
+///
+/// With `strength` `s` quoted at `radius` `R`, and a body of radius `b`
+/// whose centre therefore sits at `r = R + b`:
+///
+/// ```text
+/// top speed     v_max = sqrt( s·R² / (R + b) )
+/// strength      s     = v² · (R + b) / R²
+/// radius        R     = ( v² + sqrt( v⁴ + 4·s·v²·b ) ) / 2s
+/// ```
+///
+/// For a body much smaller than its planet, the two worth remembering:
+/// `v_max ≈ sqrt(s·R)` and `R ≈ v²/s`. Speed is squared and radius is
+/// not, so twice the top speed needs four times the planet: at 9.81,
+/// 8 m/s wants a 7 m radius and 20 m/s wants 41 m.
+///
+/// Raising `strength` instead is not free — jump height is
+/// `(J/m)² / (2·g)`, off the same `g`. On a 4 m planet, going from 9.81
+/// to 25 buys 5.9 → 9.4 m/s of grip and costs 2.32 → 0.91 m of jump.
+/// Growing the planet keeps both.
+///
+/// See the book's gravity guide for the worked tables.
+///
 /// # The entity's scale does not resize this
 ///
 /// `radius` and `range` are metres, as they are on every other source.
