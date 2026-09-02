@@ -8,6 +8,7 @@
 //! single file.
 
 mod contract;
+mod queries;
 
 use glam::Vec3;
 use rapier3d::geometry::ColliderHandle as RapierColliderHandle;

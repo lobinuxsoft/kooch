@@ -12,6 +12,7 @@ mod interaction;
 mod joint;
 mod material;
 mod mesh_cache;
+mod query;
 mod shape;
 
 pub use body::{BodyDesc, BodyHandle, BodyKind, ColliderHandle, RayHit};
@@ -21,6 +22,7 @@ pub use interaction::{ColliderInteraction, InteractionMask};
 pub use joint::{BrokenJoint, JointDesc, JointHandle, JointKind, JointMotor, MotorModel};
 pub use material::{CombineRule, Damping, SurfaceMaterial};
 pub use mesh_cache::{ColliderMesh, ColliderMeshCache};
+pub use query::{PointHit, QueryFilter, ShapeAt, ShapeHit};
 pub use shape::{CollisionShape, ConvexPart, MIN_EXTENT};
 
 use glam::{Quat, Vec3};
@@ -228,7 +230,66 @@ pub trait PhysicsBackend: Send + Sync + 'static {
 
     /// Casts a ray and returns the closest hit, if any. `dir` is expected
     /// to be normalized; `max_t` is the parametric cutoff.
-    fn query_ray(&self, origin: Vec3, dir: Vec3, max_t: f32) -> Option<RayHit>;
+    fn query_ray(&self, origin: Vec3, dir: Vec3, max_t: f32, filter: QueryFilter)
+    -> Option<RayHit>;
+
+    /// Every hit along a ray, for something that pierces.
+    ///
+    /// Handed to a callback rather than collected: this runs per frame
+    /// per shooter, and a `Vec` per call is an allocation per shot.
+    /// Returning `false` stops the walk.
+    ///
+    /// **Unordered.** The pipeline walks its acceleration structure, not
+    /// the ray, so hits arrive in whatever order the tree holds them.
+    /// A caller that needs nearest-first sorts what it kept, which is
+    /// cheaper than sorting what it discarded.
+    fn query_ray_all(
+        &self,
+        origin: Vec3,
+        dir: Vec3,
+        max_t: f32,
+        filter: QueryFilter,
+        out: &mut dyn FnMut(RayHit) -> bool,
+    );
+
+    /// Sweeps a shape along `dir` and returns the first thing it meets —
+    /// a *shape cast*.
+    ///
+    /// The query a ray cannot answer. A ray is a line of zero width: it
+    /// slips between two crates a body could never fit through, finds the
+    /// lip of a step rather than the step, and misses the thin wall a
+    /// fast projectile would hit. Sweeping the shape that is actually
+    /// moving is what a character controller tests a move with, and what
+    /// stops something quick from tunnelling.
+    ///
+    /// `dir` need not be normalised; `max_t` is measured in its lengths.
+    fn query_sweep(
+        &self,
+        shape: ShapeAt<'_>,
+        dir: Vec3,
+        max_t: f32,
+        filter: QueryFilter,
+    ) -> Option<ShapeHit>;
+
+    /// The nearest point on the nearest body, within `max_distance`.
+    ///
+    /// Also answers whether the queried point is *inside* something,
+    /// which is how a body that spawned in a wall finds its way out.
+    fn query_point(&self, point: Vec3, max_distance: f32, filter: QueryFilter) -> Option<PointHit>;
+
+    /// Every body a shape overlaps where it stands, moving nothing.
+    ///
+    /// An explosion radius, a selection box, "who is standing in this
+    /// room". Callback for the same reason [`query_ray_all`] takes one,
+    /// and returning `false` stops the walk.
+    ///
+    /// [`query_ray_all`]: Self::query_ray_all
+    fn query_overlaps(
+        &self,
+        shape: ShapeAt<'_>,
+        filter: QueryFilter,
+        out: &mut dyn FnMut(BodyHandle) -> bool,
+    );
 
     /// Appends line segments describing the solver's own state — see
     /// [`DebugLine`].

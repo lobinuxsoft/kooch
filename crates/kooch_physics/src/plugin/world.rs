@@ -27,7 +27,7 @@ use kooch_ecs::entity::Entity;
 
 use crate::backend::{
     BodyDesc, BodyHandle, ColliderInteraction, ColliderMeshCache, CollisionShape, Damping,
-    PhysicsBackend, RayHit, SurfaceMaterial,
+    PhysicsBackend, PointHit, QueryFilter, RayHit, ShapeAt, ShapeHit, SurfaceMaterial,
 };
 use crate::components::{Collider, PhysicsBody, ShapeSpec};
 
@@ -451,7 +451,73 @@ impl PhysicsWorld {
     /// its lengths. Not tied to a body — it is here so that asking the
     /// world a question does not require finding the backend first.
     pub fn raycast(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<RayHit> {
-        self.backend().query_ray(origin, direction, max_distance)
+        self.raycast_where(origin, direction, max_distance, QueryFilter::ALL)
+    }
+
+    /// The same, seeing only what a filter allows.
+    ///
+    /// A body probing its own surroundings wants
+    /// [`QueryFilter::excluding`] itself: a downward ray from a
+    /// character's centre finds the character first, every time.
+    pub fn raycast_where(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        max_distance: f32,
+        filter: QueryFilter,
+    ) -> Option<RayHit> {
+        self.backend()
+            .query_ray(origin, direction, max_distance, filter)
+    }
+
+    /// Every hit along a ray, unordered, for something that pierces.
+    pub fn raycast_all(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        max_distance: f32,
+        filter: QueryFilter,
+        out: &mut dyn FnMut(RayHit) -> bool,
+    ) {
+        self.backend()
+            .query_ray_all(origin, direction, max_distance, filter, out);
+    }
+
+    /// Sweeps a shape and returns the first thing it meets.
+    ///
+    /// What a character controller tests a move with: a ray is a line of
+    /// zero width and will slip between two crates a body cannot fit
+    /// through.
+    pub fn sweep(
+        &self,
+        shape: ShapeAt<'_>,
+        direction: Vec3,
+        max_distance: f32,
+        filter: QueryFilter,
+    ) -> Option<ShapeHit> {
+        self.backend()
+            .query_sweep(shape, direction, max_distance, filter)
+    }
+
+    /// Nearest point on the nearest body, and whether `point` is inside
+    /// it.
+    pub fn project_point(
+        &self,
+        point: Vec3,
+        max_distance: f32,
+        filter: QueryFilter,
+    ) -> Option<PointHit> {
+        self.backend().query_point(point, max_distance, filter)
+    }
+
+    /// Every body a shape overlaps where it stands, moving nothing.
+    pub fn overlaps(
+        &self,
+        shape: ShapeAt<'_>,
+        filter: QueryFilter,
+        out: &mut dyn FnMut(BodyHandle) -> bool,
+    ) {
+        self.backend().query_overlaps(shape, filter, out);
     }
 }
 
