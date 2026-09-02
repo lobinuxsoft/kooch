@@ -367,10 +367,36 @@ impl VirtualCamera {
         up: Vec3,
     ) -> (Vec3, glam::Quat) {
         let up = normalised_up(up);
+        self.desired_with(
+            target_pos,
+            target_rot,
+            current_pos,
+            current_rot,
+            up,
+            seed_reference(up),
+        )
+    }
+
+    /// The same, given the yaw origin to measure from.
+    ///
+    /// The overload exists because that origin cannot be derived from
+    /// `up` alone without a discontinuity — see [`seed_reference`]. The
+    /// Host carries one per vcam and transports it, and only the first
+    /// frame has nothing to carry.
+    pub fn desired_with(
+        &self,
+        target_pos: Vec3,
+        target_rot: glam::Quat,
+        current_pos: Vec3,
+        current_rot: glam::Quat,
+        up: Vec3,
+        reference: Vec3,
+    ) -> (Vec3, glam::Quat) {
+        let up = normalised_up(up);
         let position = match self.follow {
             FOLLOW_GLUED => target_pos,
             FOLLOW_SIMPLE => target_pos + self.offset,
-            FOLLOW_THIRD_PERSON => target_pos + self.arm(up),
+            FOLLOW_THIRD_PERSON => target_pos + self.arm(up, reference),
             // `None` keeps the camera wherever it is, which is what lets
             // a vcam do look-at only — a turret that tracks without moving.
             _ => current_pos,
@@ -378,7 +404,7 @@ impl VirtualCamera {
 
         let rotation = match self.look_at {
             LOOK_AT_MIMIC => target_rot,
-            LOOK_AT_SIMPLE => look_at(position, target_pos, up),
+            LOOK_AT_SIMPLE => look_at(position, target_pos, up, reference),
             _ => current_rot,
         };
 
@@ -396,13 +422,13 @@ impl VirtualCamera {
     /// exactly to the old fixed-axis formula, and with any other up the
     /// same yaw and pitch mean the same thing relative to the ground the
     /// target is standing on.
-    fn arm(&self, up: Vec3) -> Vec3 {
+    fn arm(&self, up: Vec3, reference: Vec3) -> Vec3 {
         // Clamped just shy of the poles: a fully vertical arm leaves no
         // horizontal basis, and the camera flips.
         let pitch = self.pitch.to_radians().clamp(-1.5533, 1.5533);
         let (sin_pitch, cos_pitch) = pitch.sin_cos();
 
-        let forward = horizon_reference(up);
+        let forward = flattened(reference, up);
         let swung = glam::Quat::from_axis_angle(up, self.yaw.to_radians()) * forward;
 
         (swung * cos_pitch + up * sin_pitch) * self.distance.max(0.0)
@@ -471,15 +497,24 @@ fn normalised_up(up: Vec3) -> Vec3 {
     }
 }
 
-/// A unit vector on the horizon plane of `up`, to swing the arm from.
+/// A first yaw origin for a vcam that has no previous one.
 ///
-/// Any direction perpendicular to `up` would do — yaw is measured from
-/// it — but it has to vary *continuously* with `up`, or a camera
-/// crossing between gravity fields would jump to a different yaw origin
-/// mid-flight. Projecting a fixed world axis onto the plane does that,
-/// and the axis is swapped only near the degenerate pole where the
-/// projection collapses.
-fn horizon_reference(up: Vec3) -> Vec3 {
+/// # Why this cannot be the per-frame answer
+///
+/// Any direction perpendicular to `up` will do — yaw is measured from
+/// it — but derived from `up` alone it cannot vary continuously. This
+/// projects a world axis onto the horizon plane, and that projection
+/// collapses where the axis lines up with `up`; the fallback axis is
+/// ninety degrees away, so a target rolling over that point swings the
+/// camera ninety degrees in, and ninety degrees back out. A hundred and
+/// eighty degrees of yaw nobody asked for, at one spot on every planet.
+///
+/// There is no choice of axis that avoids it. A vector field of
+/// references over the sphere would have to be continuous and nowhere
+/// zero, and the hairy ball theorem says no such field exists. So the
+/// reference is *carried* instead of derived — see [`transported`] —
+/// and this only ever answers the first frame.
+pub(crate) fn seed_reference(up: Vec3) -> Vec3 {
     let axis = if up.dot(Vec3::Z).abs() > 0.999 {
         Vec3::X
     } else {
@@ -488,12 +523,48 @@ fn horizon_reference(up: Vec3) -> Vec3 {
     (axis - up * axis.dot(up)).normalize()
 }
 
+/// Carries a yaw origin from one up to another, along the shortest arc.
+///
+/// The reference is only ever nudged by the same rotation that moved
+/// `up`, so it has no preferred direction to snap to and no pole to
+/// cross. This is what [`seed_reference`] cannot do.
+pub fn transported(reference: Vec3, from_up: Vec3, to_up: Vec3) -> Vec3 {
+    let (from_up, to_up) = (normalised_up(from_up), normalised_up(to_up));
+    let axis = from_up.cross(to_up);
+    // Unchanged, or exactly reversed. Reversed has no shortest arc —
+    // every perpendicular axis is equally short — so the reference is
+    // kept and re-flattened rather than spun through an arbitrary half
+    // turn, which is the flip this whole function exists to avoid.
+    let turn = match axis.length_squared() > 1e-12 {
+        true => glam::Quat::from_axis_angle(axis.normalize(), from_up.angle_between(to_up)),
+        false => glam::Quat::IDENTITY,
+    };
+    flattened(turn * reference, to_up)
+}
+
+/// A unit vector on the horizon plane of `up`, nearest to `reference`.
+///
+/// Transport keeps a carried reference perpendicular to `up` in exact
+/// arithmetic; in `f32` it drifts, and a basis built from a reference
+/// that has tilted a degree off the plane is a basis that is no longer
+/// square.
+fn flattened(reference: Vec3, up: Vec3) -> Vec3 {
+    let flat = reference - up * reference.dot(up);
+    // Parallel to `up`, so it names no direction on the horizon at all.
+    // Only reachable from a caller that handed in a reference for some
+    // other up entirely.
+    match flat.length_squared() > 1e-12 {
+        true => flat.normalize(),
+        false => seed_reference(up),
+    }
+}
+
 /// A rotation looking from `eye` towards `target`, keeping `up` up.
 ///
 /// Falls back to identity when the two coincide: a camera glued to what
 /// it looks at has no direction to face, and normalising a zero vector
 /// would hand the renderer a `NaN` pose.
-fn look_at(eye: Vec3, target: Vec3, up: Vec3) -> glam::Quat {
+fn look_at(eye: Vec3, target: Vec3, up: Vec3, reference: Vec3) -> glam::Quat {
     let forward = target - eye;
     if forward.length_squared() < 1e-12 {
         return glam::Quat::IDENTITY;
@@ -501,15 +572,12 @@ fn look_at(eye: Vec3, target: Vec3, up: Vec3) -> glam::Quat {
     let forward = forward.normalize();
     // Degenerate when looking along the up axis itself; nudge the
     // reference rather than producing a zero-length right vector.
-    let up = if forward.dot(up).abs() > 0.999 {
-        let fallback = if up.dot(Vec3::Z).abs() > 0.999 {
-            Vec3::X
-        } else {
-            Vec3::Z
-        };
-        (fallback - up * fallback.dot(up)).normalize()
-    } else {
-        up
+    // Looking along the up axis itself leaves no right vector. The
+    // carried reference is already on the horizon plane and already
+    // continuous, so it stands in without reintroducing a fixed axis.
+    let up = match forward.dot(up).abs() > 0.999 {
+        true => flattened(reference, up),
+        false => up,
     };
     // `forward × up`, not `up × forward`. The other order yields a basis
     // with determinant -1 — a reflection, not a rotation — and

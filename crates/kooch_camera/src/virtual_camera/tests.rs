@@ -473,3 +473,85 @@ fn looking_straight_down_stays_finite() {
     );
     assert!(rot.is_finite(), "straight down produced {rot:?}");
 }
+
+/// The regression this whole mechanism exists for.
+///
+/// A yaw origin derived from `up` alone collapses where the world axis
+/// it projects lines up with `up`, and the fallback axis is ninety
+/// degrees away — so a target rolling over that one spot swung the
+/// camera ninety degrees in and ninety back out. Carried instead, the
+/// arm sweeps.
+#[test]
+fn rolling_over_the_pole_does_not_flip() {
+    let vcam = VirtualCamera {
+        follow: FOLLOW_THIRD_PERSON,
+        distance: 5.0,
+        pitch: 0.0,
+        yaw: 0.0,
+        damping: false,
+        ..Default::default()
+    };
+
+    let mut up = Vec3::Y;
+    let mut reference = seed_reference(up);
+    let mut previous: Option<Vec3> = None;
+
+    // A full half turn of the up axis through +Z, which is exactly where
+    // the old construction swapped its reference axis.
+    for step in 0..=180 {
+        let angle = (step as f32).to_radians();
+        let next = Vec3::new(0.0, angle.cos(), angle.sin());
+        reference = transported(reference, up, next);
+        up = next;
+
+        let (position, _) = vcam.desired_with(
+            Vec3::ZERO,
+            glam::Quat::IDENTITY,
+            Vec3::ZERO,
+            glam::Quat::IDENTITY,
+            up,
+            reference,
+        );
+        if let Some(previous) = previous {
+            // One degree of arc at five metres is under a tenth of a
+            // metre. A flip is seven.
+            assert!(
+                (position - previous).length() < 0.5,
+                "the arm jumped {} at {step} degrees",
+                (position - previous).length(),
+            );
+        }
+        previous = Some(position);
+    }
+}
+
+#[test]
+fn a_carried_reference_stays_flat() {
+    let mut up = Vec3::Y;
+    let mut reference = seed_reference(up);
+    for step in 0..=90 {
+        let angle = (step as f32).to_radians();
+        let next = Vec3::new(angle.sin(), angle.cos(), 0.0);
+        reference = transported(reference, up, next);
+        up = next;
+        assert!(reference.dot(up).abs() < 1e-4, "drifted off the horizon");
+        assert!((reference.length() - 1.0).abs() < 1e-4);
+    }
+}
+
+/// Reversed has no shortest arc, so there is no turn to apply. Spinning
+/// through an arbitrary half turn is the flip, not the fix for it.
+#[test]
+fn a_reversed_up_keeps_its_reference() {
+    let reference = Vec3::Z;
+    let carried = transported(reference, Vec3::Y, Vec3::NEG_Y);
+    assert!(carried.is_finite());
+    assert!((carried - Vec3::Z).length() < 1e-5, "{carried}");
+}
+
+#[test]
+fn an_unchanged_up_changes_nothing() {
+    let reference = seed_reference(Vec3::Y);
+    let carried = transported(reference, Vec3::Y, Vec3::Y);
+    assert!((carried - reference).length() < 1e-5);
+}

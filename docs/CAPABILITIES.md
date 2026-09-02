@@ -162,6 +162,7 @@ them, the remote protocol mirrored them — and no render crate read one.
 |---|---|---|---|
 | `VirtualCamera`, `CameraBlend` | `plugin.rs` | connected | |
 | `CameraTarget` (tag + group) | `target.rs` | connected | Used by roll-a-ball, which lives in its own repo — measure "unused" against games too, not just this workspace. |
+| `HorizonFrames` | `plugin.rs` | connected | Where each vcam measures yaw from, carried between frames and transported onto each new up. Deriving it from `up` alone is impossible without a pole — the hairy ball theorem — and the pole was a 180° flip at one spot on every planet. |
 
 ## Assets — `kooch_core::asset_loader`
 
