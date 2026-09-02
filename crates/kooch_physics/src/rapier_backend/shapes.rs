@@ -179,20 +179,54 @@ fn compound(parts: &[Vec<Vec3>]) -> Result<ColliderBuilder, ShapeError> {
     Ok(ColliderBuilder::compound(shapes))
 }
 
-/// The convex hull of a point cloud, as points.
+/// The convex hull of a point cloud, as points and triangles.
 ///
 /// The reduction is the whole point: 76 038 vertices of a dragon come
 /// back as 387. Everything downstream — the per-frame scale, the
 /// narrowphase, a gizmo outline — then works on the small set instead of
-/// re-deriving it from the large one.
+/// re-deriving it from the large one. The triangles are what an exporter
+/// needs to write the hull out as a mesh.
 ///
 /// `None` when the points have no volume, which is the same refusal
 /// [`shape_builder`] gives for a hull it cannot build.
-pub fn hull_points(points: &[Vec3]) -> Option<Vec<Vec3>> {
-    match points.len() >= 4 {
-        true => Some(rapier3d::parry::transformation::convex_hull(points).0),
+pub fn hull_of(points: &[Vec3]) -> Option<(Vec<Vec3>, Vec<[u32; 3]>)> {
+    if points.len() < 4 {
+        return None;
+    }
+    let (hull, faces) = rapier3d::parry::transformation::convex_hull(points);
+    // Checked on the way out, not only on the way in: parry answers a
+    // collinear or coplanar cloud with something, and a "hull" of four
+    // points and no closed face is a collider nothing can hit. A
+    // tetrahedron is the smallest thing that encloses a volume.
+    match hull.len() >= 4 && faces.len() >= 4 {
+        true => Some((hull, faces)),
         false => None,
     }
+}
+
+/// A concave mesh, split into convex pieces.
+///
+/// VHACD, and it is not cheap: 1.35 s for a 2k-vertex Suzanne in debug,
+/// 2.58 s for a 76k dragon. That is why the result is worth baking into
+/// an asset rather than deriving whenever a body is built.
+///
+/// Each piece comes back as its own point cloud, which is what
+/// [`CollisionShape::Compound`] takes and what one primitive of an
+/// exported `.glb` holds.
+pub fn decompose(vertices: &[Vec3], indices: &[[u32; 3]]) -> Vec<Vec<Vec3>> {
+    use rapier3d::parry::transformation::vhacd::{VHACD, VHACDParameters};
+
+    if vertices.len() < 4 || indices.is_empty() {
+        return Vec::new();
+    }
+    VHACD::decompose(&VHACDParameters::default(), vertices, indices, true)
+        // One convex hull per part, at the finest downsampling — the
+        // pieces are the product, and a coarser hull of each would give
+        // back volume the decomposition just spent seconds removing.
+        .compute_convex_hulls(1)
+        .into_iter()
+        .map(|(points, _)| points)
+        .collect()
 }
 
 /// The height grid, checked against its own dimensions.

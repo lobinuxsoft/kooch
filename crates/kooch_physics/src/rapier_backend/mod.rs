@@ -24,4 +24,4 @@ mod shapes;
 mod tests;
 
 pub use backend::RapierBackend;
-pub use shapes::hull_points;
+pub use shapes::{decompose, hull_of};

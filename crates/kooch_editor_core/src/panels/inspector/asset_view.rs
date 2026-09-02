@@ -119,6 +119,24 @@ pub(crate) struct MeshImportInfo {
     pub triangles: u32,
     pub aabb_min: Vec3,
     pub aabb_max: Vec3,
+    /// Set when this mesh was baked from another one.
+    pub baked: Option<BakedFrom>,
+}
+
+/// What a baked collision mesh remembers about its source.
+///
+/// The whole reason a derived asset is not a silent trap: change the
+/// source and the bake keeps its own GUID, nothing fails, and the prop
+/// collides with the shape it had last week. This is what lets the
+/// Inspector say so.
+pub(crate) struct BakedFrom {
+    /// `"hull"` or `"parts"`.
+    pub kind: String,
+    /// The mesh it was derived from, if the database still knows it.
+    pub source: Option<String>,
+    /// `true` when the source's bytes no longer hash to what was
+    /// recorded — or when the source is gone.
+    pub stale: bool,
 }
 
 /// Read-only import statistics for a decoded image.
@@ -176,7 +194,7 @@ pub(crate) fn draw_asset_inspector(
                 reflected_types,
                 actions,
             ),
-            Some(AssetDetail::Mesh(info)) => draw_mesh_import(ui, info),
+            Some(AssetDetail::Mesh(info)) => draw_mesh_import(ui, entry.guid, info, actions),
             Some(AssetDetail::Image(info)) => draw_image_import(ui, entry.guid, info, actions),
             Some(AssetDetail::Reflected {
                 type_name,
@@ -332,7 +350,12 @@ fn texture_row(
     changed
 }
 
-fn draw_mesh_import(ui: &mut egui::Ui, info: &MeshImportInfo) {
+fn draw_mesh_import(
+    ui: &mut egui::Ui,
+    guid: Guid,
+    info: &MeshImportInfo,
+    actions: &mut Vec<EditorAction>,
+) {
     ui.weak("Import settings (read-only)");
     egui::Grid::new("mesh_import")
         .num_columns(2)
@@ -358,7 +381,102 @@ fn draw_mesh_import(ui: &mut egui::Ui, info: &MeshImportInfo) {
                 ),
             );
         });
+
+    if let Some(baked) = &info.baked {
+        ui.add_space(8.0);
+        draw_baked_origin(ui, baked);
+    }
+
+    ui.add_space(8.0);
+    draw_collider_bake(ui, guid, actions);
 }
+
+/// Where a baked collision mesh came from, and whether it is behind.
+fn draw_baked_origin(ui: &mut egui::Ui, baked: &BakedFrom) {
+    ui.weak(format!("Baked collision ({})", baked.kind));
+    match &baked.source {
+        Some(source) => {
+            ui.label(format!("from {source}"));
+        }
+        None => {
+            ui.label("from a mesh the asset database no longer knows");
+        }
+    }
+    if baked.stale {
+        // Amber, the same as the dirty-scene marker and a switched-off
+        // system: something here does not match what it claims to.
+        ui.colored_label(
+            egui::Color32::from_rgb(210, 150, 60),
+            "The source changed since this was baked — re-bake it",
+        );
+    }
+}
+
+/// The two collision meshes this mesh can be baked into.
+///
+/// Written into the open project, never beside the source: the engine's
+/// own assets are read-only, and its meshes get their colliders baked
+/// into the engine the way its primitives are.
+///
+/// A face budget rather than always the exact hull, because the exact
+/// hull of an organic mesh is a few hundred planes and the narrowphase
+/// pays for every one. Zero keeps it exact, which is the honest default.
+fn draw_collider_bake(ui: &mut egui::Ui, guid: Guid, actions: &mut Vec<EditorAction>) {
+    ui.weak("Collision mesh");
+    let max_faces = ui.data_mut(|d| *d.get_temp_mut_or(BAKE_FACES_ID.with(guid), 0u32));
+
+    ui.horizontal(|ui| {
+        if ui
+            .button("Create hull mesh")
+            .on_hover_text("One convex hull, written to assets/collision in this project")
+            .clicked()
+        {
+            actions.push(EditorAction::BakeCollider {
+                source: guid,
+                concave: false,
+                max_faces,
+            });
+        }
+        if ui
+            .button("Create convex parts")
+            .on_hover_text(
+                "Decomposes a concave mesh into convex pieces. Slow — seconds — which is \
+                 exactly why the result is a file",
+            )
+            .clicked()
+        {
+            actions.push(EditorAction::BakeCollider {
+                source: guid,
+                concave: true,
+                max_faces,
+            });
+        }
+    });
+
+    ui.horizontal(|ui| {
+        let mut faces = max_faces;
+        ui.add(
+            egui::DragValue::new(&mut faces)
+                .speed(4.0)
+                .range(0..=4096)
+                .prefix("max faces: "),
+        )
+        .on_hover_text("0 keeps the exact hull. A budget simplifies, then re-hulls to stay convex");
+        if faces != max_faces {
+            ui.data_mut(|d| d.insert_temp(BAKE_FACES_ID.with(guid), faces));
+        }
+        if faces == 0 {
+            ui.weak("exact");
+        }
+    });
+}
+
+/// Where the face budget lives between frames.
+///
+/// Per GUID, so switching assets does not carry one mesh's budget onto
+/// another — and deliberately not persisted: it is a knob for the bake
+/// about to happen, not a property of the asset.
+const BAKE_FACES_ID: egui::Id = egui::Id::NULL;
 
 fn draw_image_import(
     ui: &mut egui::Ui,

@@ -339,6 +339,21 @@ pub(crate) enum EditorAction {
         /// `false` while a drag is still in flight — update memory only.
         commit: bool,
     },
+    /// Bakes a collision mesh out of a render mesh, into the project.
+    ///
+    /// A file rather than a runtime cache because the concave case is
+    /// seconds of VHACD per body build, because an artist has to be able
+    /// to open what the solver collides against, and because a bake is
+    /// the only place a hull may be simplified below its exact form.
+    BakeCollider {
+        /// The mesh to derive from. Its own GUID is recorded in the
+        /// result's sidecar, so a stale bake is detectable.
+        source: kooch_core::Guid,
+        /// Decompose into convex pieces instead of taking one hull.
+        concave: bool,
+        /// Face budget per piece. Zero keeps the exact hull.
+        max_faces: u32,
+    },
     /// Rewrites a texture's `[import]` table and re-imports it.
     ///
     /// No `commit` flag, unlike the two below: this is a checkbox, and a
@@ -666,6 +681,7 @@ impl EditorAction {
             | Self::SetIdeCommand { .. }
             | Self::SetLaunchEnv { .. }
             | Self::EditMaterial { .. }
+            | Self::BakeCollider { .. }
             | Self::SetImageImport { .. }
             | Self::EditAssetField { .. }
             | Self::ImportAssets { .. }
@@ -784,6 +800,7 @@ impl EditorAction {
             | Self::SetIdeCommand { .. }
             | Self::SetLaunchEnv { .. }
             | Self::EditMaterial { .. }
+            | Self::BakeCollider { .. }
             | Self::SetImageImport { .. }
             | Self::EditAssetField { .. }
             | Self::ImportAssets { .. }

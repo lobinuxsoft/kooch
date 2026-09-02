@@ -16,7 +16,7 @@ use kooch_render::meshlet::MeshletMesh;
 use kooch_render::texture::{Image, ImageFormat};
 
 use crate::panels::inspector::{
-    AssetDetail, ImageImportInfo, MeshImportInfo, PrefabComponentView, PrefabDetail,
+    AssetDetail, BakedFrom, ImageImportInfo, MeshImportInfo, PrefabComponentView, PrefabDetail,
     PrefabEntityView, ResolvedComponent,
 };
 
@@ -62,6 +62,7 @@ fn gather_material(guid: Guid, resources: &mut Resources) -> Option<AssetDetail>
 }
 
 fn gather_mesh(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
+    let baked = baked_origin(guid, resources);
     let handle = load_handle::<MeshletMesh>(guid, resources)?;
     let meshes = resources.get::<Assets<MeshletMesh>>()?;
     let mesh = meshes.get(handle)?;
@@ -71,7 +72,60 @@ fn gather_mesh(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
         triangles: mesh.total_triangle_count(),
         aabb_min: mesh.aabb.min,
         aabb_max: mesh.aabb.max,
+        baked,
     }))
+}
+
+/// Reads a baked collider's sidecar, and re-hashes its source.
+///
+/// Done here rather than in the panel because it touches the disk, and
+/// only for an asset whose sidecar says it was baked — an ordinary mesh
+/// costs one `.meta` read it was going to make anyway.
+fn baked_origin(guid: Guid, resources: &mut Resources) -> Option<BakedFrom> {
+    use std::hash::{Hash, Hasher};
+
+    let path = resources
+        .get::<AssetDatabase>()?
+        .entry(guid)
+        .map(|entry| entry.path.clone())?;
+    let import = kooch_core::asset_meta::read_meta(&path).ok()?.import?;
+    let kind = import.get("collision").and_then(|v| v.as_str())?.to_owned();
+
+    let source = import
+        .get("source_guid")
+        .and_then(|v| v.as_str())
+        .and_then(|text| text.parse::<Guid>().ok());
+    let recorded = import.get("source_hash").and_then(|v| v.as_str());
+
+    let source_path = source.and_then(|guid| {
+        resources
+            .get::<AssetDatabase>()
+            .and_then(|db| db.entry(guid).map(|entry| entry.path.clone()))
+    });
+
+    let stale = match (&source_path, recorded) {
+        (Some(path), Some(recorded)) => match std::fs::read(path) {
+            Ok(bytes) => {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                bytes.hash(&mut hasher);
+                format!("{:016x}", hasher.finish()) != recorded
+            }
+            // Unreadable is not "unchanged": a source that cannot be
+            // hashed cannot be vouched for.
+            Err(_) => true,
+        },
+        _ => true,
+    };
+
+    Some(BakedFrom {
+        kind,
+        source: source_path.map(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string())
+        }),
+        stale,
+    })
 }
 
 /// Resolves a prefab into something the Inspector can draw.

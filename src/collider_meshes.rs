@@ -38,7 +38,7 @@ use kooch_core::resource::Resources;
 use kooch_core::stage::Stage;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_physics::components::{Collider, SHAPE_CONVEX_HULL, is_mesh_derived};
-use kooch_physics::{ColliderMesh, ColliderMeshCache, hull_points};
+use kooch_physics::{ColliderMesh, ColliderMeshCache, hull_of};
 use kooch_render::mesh::{parse_mesh_bytes_full, parse_mesh_parts};
 
 /// The `[import]` key a baked collision asset carries, and the value that
@@ -118,7 +118,11 @@ fn reduce_hull(resources: &mut Resources, guid: Guid) {
     if !cache.awaits_hull(guid) {
         return;
     }
-    let Some(hull) = cache.get(guid).and_then(|mesh| hull_points(&mesh.vertices)) else {
+    let Some(hull) = cache
+        .get(guid)
+        .and_then(|mesh| hull_of(&mesh.vertices))
+        .map(|(points, _)| points)
+    else {
         // A cloud with no volume. `shape_builder` refuses it by name when
         // the body is built, which is where the author can act on it.
         return;

@@ -72,31 +72,51 @@ impl std::error::Error for ExportError {}
 /// interleaved data, and it means the bytes are copied once rather than
 /// de-interleaved into three arrays.
 pub fn to_glb(mesh: &Mesh, name: &str) -> Result<Vec<u8>, ExportError> {
-    validate(mesh)?;
+    to_glb_parts(&[(mesh, name)])
+}
 
-    let vertex_bytes: &[u8] = bytemuck::cast_slice(&mesh.vertices);
-    // The index chunk has to start 4-byte aligned; `MeshVertex` is 32
-    // bytes so it already does, but padding here keeps that from being a
-    // silent assumption if the layout ever changes.
-    let index_offset = align_to_four(vertex_bytes.len());
-    let index_bytes: &[u8] = bytemuck::cast_slice(&mesh.indices);
+/// Serialises several meshes into one binary glTF, each its own node.
+///
+/// One buffer, one mesh and one node per part. What a baked convex
+/// decomposition needs: each piece has to stay a separate primitive,
+/// because merging them gives back the concave solid the decomposition
+/// exists to avoid — and because the importer reads one point set per
+/// primitive.
+pub fn to_glb_parts(parts: &[(&Mesh, &str)]) -> Result<Vec<u8>, ExportError> {
+    if parts.is_empty() {
+        return Err(ExportError::Empty);
+    }
+    for (mesh, _) in parts {
+        validate(mesh)?;
+    }
 
-    let mut bin = Vec::with_capacity(index_offset + index_bytes.len());
-    bin.extend_from_slice(vertex_bytes);
-    bin.resize(index_offset, 0);
-    bin.extend_from_slice(index_bytes);
+    let mut bin: Vec<u8> = Vec::new();
+    let mut spans = Vec::with_capacity(parts.len());
+    for (mesh, _) in parts {
+        let vertex_bytes: &[u8] = bytemuck::cast_slice(&mesh.vertices);
+        let index_bytes: &[u8] = bytemuck::cast_slice(&mesh.indices);
+
+        // Every view starts 4-byte aligned. `MeshVertex` is 32 bytes so
+        // the vertex chunk already does, but padding keeps that from
+        // being a silent assumption if the layout ever changes.
+        bin.resize(align_to_four(bin.len()), 0);
+        let vertex_offset = bin.len();
+        bin.extend_from_slice(vertex_bytes);
+        bin.resize(align_to_four(bin.len()), 0);
+        let index_offset = bin.len();
+        bin.extend_from_slice(index_bytes);
+
+        spans.push(Span {
+            vertex_offset,
+            vertex_len: vertex_bytes.len(),
+            index_offset,
+            index_len: index_bytes.len(),
+        });
+    }
     let total = align_to_four(bin.len());
     bin.resize(total, 0);
 
-    let root = build_root(
-        mesh,
-        name,
-        index_offset,
-        vertex_bytes.len(),
-        index_bytes.len(),
-        total,
-    );
-
+    let root = build_root(parts, &spans, total);
     let json_chunk =
         json::serialize::to_string(&root).map_err(|e| ExportError::Json(e.to_string()))?;
     let glb = gltf::binary::Glb {
@@ -112,6 +132,14 @@ pub fn to_glb(mesh: &Mesh, name: &str) -> Result<Vec<u8>, ExportError> {
     };
     glb.to_vec()
         .map_err(|e| ExportError::Container(e.to_string()))
+}
+
+/// Where one part's two views sit in the shared buffer.
+struct Span {
+    vertex_offset: usize,
+    vertex_len: usize,
+    index_offset: usize,
+    index_len: usize,
 }
 
 /// Rejects meshes that would serialise into an invalid asset.
@@ -133,17 +161,10 @@ fn validate(mesh: &Mesh) -> Result<(), ExportError> {
     Ok(())
 }
 
-/// Builds the glTF JSON for a single interleaved primitive.
-fn build_root(
-    mesh: &Mesh,
-    name: &str,
-    index_offset: usize,
-    vertex_len: usize,
-    index_len: usize,
-    buffer_len: usize,
-) -> json::Root {
+/// Builds the glTF JSON: one mesh and one node per part, over a shared
+/// buffer.
+fn build_root(parts: &[(&Mesh, &str)], spans: &[Span], buffer_len: usize) -> json::Root {
     let stride = mem::size_of::<MeshVertex>();
-    let count = USize64::from(mesh.vertices.len());
 
     let buffer = json::Buffer {
         byte_length: USize64::from(buffer_len),
@@ -153,85 +174,114 @@ fn build_root(
         extras: Default::default(),
     };
 
-    let vertex_view = json::buffer::View {
-        buffer: json::Index::new(0),
-        byte_length: USize64::from(vertex_len),
-        byte_offset: None,
-        byte_stride: Some(json::buffer::Stride(stride)),
-        name: None,
-        target: None,
-        extensions: None,
-        extras: Default::default(),
-    };
-    let index_view = json::buffer::View {
-        buffer: json::Index::new(0),
-        byte_length: USize64::from(index_len),
-        byte_offset: Some(USize64::from(index_offset)),
-        // Indices are tightly packed; a stride here is invalid glTF.
-        byte_stride: None,
-        name: None,
-        target: None,
-        extensions: None,
-        extras: Default::default(),
-    };
+    let mut views = Vec::with_capacity(parts.len() * 2);
+    let mut accessors = Vec::with_capacity(parts.len() * 4);
+    let mut meshes = Vec::with_capacity(parts.len());
+    let mut nodes = Vec::with_capacity(parts.len());
 
-    // POSITION is the one accessor glTF requires min/max on — viewers use
-    // it to frame the asset without reading the buffer.
-    let position = accessor(
-        0,
-        offset_of_position(),
-        count,
-        json::accessor::Type::Vec3,
-        json::accessor::ComponentType::F32,
-        Some(json::Value::from(mesh.aabb.min.to_array().to_vec())),
-        Some(json::Value::from(mesh.aabb.max.to_array().to_vec())),
-    );
-    let normal = accessor(
-        0,
-        offset_of_normal(),
-        count,
-        json::accessor::Type::Vec3,
-        json::accessor::ComponentType::F32,
-        None,
-        None,
-    );
-    let uv = accessor(
-        0,
-        offset_of_uv(),
-        count,
-        json::accessor::Type::Vec2,
-        json::accessor::ComponentType::F32,
-        None,
-        None,
-    );
-    let indices = accessor(
-        1,
-        0,
-        USize64::from(mesh.indices.len()),
-        json::accessor::Type::Scalar,
-        json::accessor::ComponentType::U32,
-        None,
-        None,
-    );
+    for (part, ((mesh, name), span)) in parts.iter().zip(spans).enumerate() {
+        views.push(json::buffer::View {
+            buffer: json::Index::new(0),
+            byte_length: USize64::from(span.vertex_len),
+            byte_offset: Some(USize64::from(span.vertex_offset)),
+            byte_stride: Some(json::buffer::Stride(stride)),
+            name: None,
+            target: None,
+            extensions: None,
+            extras: Default::default(),
+        });
+        views.push(json::buffer::View {
+            buffer: json::Index::new(0),
+            byte_length: USize64::from(span.index_len),
+            byte_offset: Some(USize64::from(span.index_offset)),
+            // Indices are tightly packed; a stride here is invalid glTF.
+            byte_stride: None,
+            name: None,
+            target: None,
+            extensions: None,
+            extras: Default::default(),
+        });
 
-    let primitive = json::mesh::Primitive {
-        attributes: [
-            (Valid(json::mesh::Semantic::Positions), json::Index::new(0)),
-            (Valid(json::mesh::Semantic::Normals), json::Index::new(1)),
-            (
-                Valid(json::mesh::Semantic::TexCoords(0)),
-                json::Index::new(2),
-            ),
-        ]
-        .into_iter()
-        .collect(),
-        indices: Some(json::Index::new(3)),
-        material: None,
-        mode: Valid(json::mesh::Mode::Triangles),
-        targets: None,
-        extensions: None,
-        extras: Default::default(),
-    };
+        let vertex_view = (part * 2) as u32;
+        let index_view = vertex_view + 1;
+        let count = USize64::from(mesh.vertices.len());
+
+        // POSITION is the one accessor glTF requires min/max on — viewers
+        // use it to frame the asset without reading the buffer.
+        accessors.push(accessor(
+            vertex_view,
+            offset_of_position(),
+            count,
+            json::accessor::Type::Vec3,
+            json::accessor::ComponentType::F32,
+            Some(json::Value::from(mesh.aabb.min.to_array().to_vec())),
+            Some(json::Value::from(mesh.aabb.max.to_array().to_vec())),
+        ));
+        accessors.push(accessor(
+            vertex_view,
+            offset_of_normal(),
+            count,
+            json::accessor::Type::Vec3,
+            json::accessor::ComponentType::F32,
+            None,
+            None,
+        ));
+        accessors.push(accessor(
+            vertex_view,
+            offset_of_uv(),
+            count,
+            json::accessor::Type::Vec2,
+            json::accessor::ComponentType::F32,
+            None,
+            None,
+        ));
+        accessors.push(accessor(
+            index_view,
+            0,
+            USize64::from(mesh.indices.len()),
+            json::accessor::Type::Scalar,
+            json::accessor::ComponentType::U32,
+            None,
+            None,
+        ));
+
+        let base = (part * 4) as u32;
+        meshes.push(json::Mesh {
+            name: Some((*name).to_owned()),
+            primitives: vec![json::mesh::Primitive {
+                attributes: [
+                    (
+                        Valid(json::mesh::Semantic::Positions),
+                        json::Index::new(base),
+                    ),
+                    (
+                        Valid(json::mesh::Semantic::Normals),
+                        json::Index::new(base + 1),
+                    ),
+                    (
+                        Valid(json::mesh::Semantic::TexCoords(0)),
+                        json::Index::new(base + 2),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+                indices: Some(json::Index::new(base + 3)),
+                material: None,
+                mode: Valid(json::mesh::Mode::Triangles),
+                targets: None,
+                extensions: None,
+                extras: Default::default(),
+            }],
+            weights: None,
+            extensions: None,
+            extras: Default::default(),
+        });
+        nodes.push(json::Node {
+            mesh: Some(json::Index::new(part as u32)),
+            name: Some((*name).to_owned()),
+            ..Default::default()
+        });
+    }
 
     json::Root {
         asset: json::Asset {
@@ -239,27 +289,17 @@ fn build_root(
             version: "2.0".into(),
             ..Default::default()
         },
-        accessors: vec![position, normal, uv, indices],
+        accessors,
         buffers: vec![buffer],
-        buffer_views: vec![vertex_view, index_view],
-        meshes: vec![json::Mesh {
-            name: Some(name.to_owned()),
-            primitives: vec![primitive],
-            weights: None,
-            extensions: None,
-            extras: Default::default(),
-        }],
-        nodes: vec![json::Node {
-            mesh: Some(json::Index::new(0)),
-            name: Some(name.to_owned()),
-            ..Default::default()
-        }],
+        buffer_views: views,
+        meshes,
         scenes: vec![json::Scene {
-            nodes: vec![json::Index::new(0)],
+            nodes: (0..nodes.len() as u32).map(json::Index::new).collect(),
             name: None,
             extensions: None,
             extras: Default::default(),
         }],
+        nodes,
         scene: Some(json::Index::new(0)),
         ..Default::default()
     }
