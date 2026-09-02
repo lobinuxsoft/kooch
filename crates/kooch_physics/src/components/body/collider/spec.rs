@@ -121,7 +121,7 @@ impl ShapeSpec {
         let size = self.voxel_size.max(MIN_EXTENT);
         let shape = match self.shape {
             SHAPE_CONVEX_HULL => CollisionShape::ConvexHull {
-                points: mesh.hull_or_vertices().to_vec(),
+                part: mesh.hull_or_vertices(),
             },
             SHAPE_POLYLINE => CollisionShape::Polyline {
                 vertices: mesh.vertices.clone(),

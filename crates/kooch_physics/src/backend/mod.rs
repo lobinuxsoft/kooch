@@ -21,7 +21,7 @@ pub use interaction::{ColliderInteraction, InteractionMask};
 pub use joint::{BrokenJoint, JointDesc, JointHandle, JointKind, JointMotor, MotorModel};
 pub use material::{CombineRule, Damping, SurfaceMaterial};
 pub use mesh_cache::{ColliderMesh, ColliderMeshCache};
-pub use shape::{CollisionShape, MIN_EXTENT};
+pub use shape::{CollisionShape, ConvexPart, MIN_EXTENT};
 
 use glam::{Quat, Vec3};
 

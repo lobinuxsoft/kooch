@@ -20,6 +20,8 @@ use std::collections::HashMap;
 use glam::Vec3;
 use kooch_core::Guid;
 
+use super::shape::ConvexPart;
+
 /// A mesh, as physics sees it — with whatever reductions of it have
 /// already been paid for.
 ///
@@ -41,14 +43,15 @@ pub struct ColliderMesh {
     /// The convex hull of `vertices`, or empty when nobody has asked.
     ///
     /// Computed on demand: a collider that only ever wants the triangles
-    /// should not pay for a hull it will not use.
-    pub hull: Vec<Vec3>,
+    /// should not pay for a hull it will not use. Carries its faces, so
+    /// the backend never re-derives what qhull already produced.
+    pub hull: ConvexPart,
     /// Convex pieces, when the source was authored as several.
     ///
     /// Non-empty only for a **baked** decomposition — a `.glb` holding
     /// one primitive per piece. Its presence is what lets a concave
     /// collider skip VHACD, which is seconds rather than milliseconds.
-    pub parts: Vec<Vec<Vec3>>,
+    pub parts: Vec<ConvexPart>,
 }
 
 impl ColliderMesh {
@@ -57,16 +60,16 @@ impl ColliderMesh {
         self.vertices.is_empty() && self.parts.is_empty()
     }
 
-    /// The points a convex hull should be built from: the reduced set
-    /// when it exists, the full one until it does.
+    /// The piece a convex hull should be built from: the reduced one when
+    /// it exists, the raw cloud until it does.
     ///
     /// Falling back rather than waiting — the hull of the full cloud is
     /// the same hull, just dearer, so a body built the frame before the
     /// reduction lands is correct and gets cheaper on its next rebuild.
-    pub fn hull_or_vertices(&self) -> &[Vec3] {
+    pub fn hull_or_vertices(&self) -> ConvexPart {
         match self.hull.is_empty() {
-            true => &self.vertices,
-            false => &self.hull,
+            true => ConvexPart::loose(self.vertices.clone()),
+            false => self.hull.clone(),
         }
     }
 }
@@ -106,7 +109,7 @@ impl ColliderMeshCache {
     ///
     /// Bumps the epoch like any other answer, so a body built from the
     /// full cloud is retired and rebuilt from the small one.
-    pub fn insert_hull(&mut self, guid: Guid, hull: Vec<Vec3>) {
+    pub fn insert_hull(&mut self, guid: Guid, hull: ConvexPart) {
         let Some((epoch, Entry::Ready(mesh))) = self.entries.get_mut(&guid) else {
             return;
         };

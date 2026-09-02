@@ -29,6 +29,62 @@ use glam::{IVec3, Vec3};
 /// produce NaNs that outlive the typo.
 pub const MIN_EXTENT: f32 = 1e-4;
 
+/// A convex piece: its points, and the faces that prove they are one.
+///
+/// # Why the faces are worth carrying
+///
+/// `ColliderBuilder::convex_hull` runs qhull every time a body is built —
+/// 162 µs on a 226-point hull in release, 570 µs in debug, to produce the
+/// same 226 points it was given. Once something convex is known to be
+/// convex, that pass buys nothing.
+///
+/// So `faces` is a claim: **these points are already a convex hull, and
+/// this is its topology.** Present, the backend builds the polyhedron
+/// directly. Absent, it hulls the points.
+///
+/// 🔴 The claim is trusted, not checked — verifying convexity is a pass
+/// over every face against every point. It is only ever made by the two
+/// places that can honestly make it: qhull's own output, and an asset the
+/// engine baked and marked as such in its sidecar. A mesh an artist
+/// authored is hulled.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ConvexPart {
+    pub points: Vec<Vec3>,
+    /// The hull's triangles, or empty when nobody has vouched for them.
+    pub faces: Vec<[u32; 3]>,
+}
+
+impl ConvexPart {
+    /// A point cloud with no claim about it.
+    pub fn loose(points: Vec<Vec3>) -> Self {
+        Self {
+            points,
+            faces: Vec::new(),
+        }
+    }
+
+    /// `true` when this carries a topology the backend can trust.
+    pub fn is_hulled(&self) -> bool {
+        !self.faces.is_empty()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+
+    /// The same piece at a scale.
+    ///
+    /// The faces survive: scaling by a positive diagonal maps a convex
+    /// hull to a convex hull with the same combinatorics, so the topology
+    /// that was true stays true.
+    pub fn scaled(&self, scale: Vec3) -> Self {
+        Self {
+            points: scaled_points(&self.points, scale),
+            faces: self.faces.clone(),
+        }
+    }
+}
+
 /// Collision geometry attached to a body.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CollisionShape {
@@ -70,7 +126,7 @@ pub enum CollisionShape {
     /// The standard answer for a dynamic prop whose visual mesh is too
     /// heavy to collide against: convex, so it has volume and an inertia
     /// tensor, and cheap for the narrowphase.
-    ConvexHull { points: Vec<Vec3> },
+    ConvexHull { part: ConvexPart },
     /// A concave mesh approximated by a set of convex parts.
     ///
     /// What a single hull cannot do: keep a concavity a designer is
@@ -116,7 +172,7 @@ pub enum CollisionShape {
     /// the backend a concave mesh and asks it to *find* the pieces —
     /// VHACD, and seconds of it. Once they are found they are data, and
     /// this is the shape that consumes them.
-    Compound { parts: Vec<Vec<Vec3>> },
+    Compound { parts: Vec<ConvexPart> },
     /// A mesh the backend voxelises at build time.
     ///
     /// Separate from [`Voxels`](Self::Voxels) because the voxelisation is
@@ -257,8 +313,8 @@ impl CollisionShape {
                 b: *b * s,
                 c: *c * s,
             },
-            Self::ConvexHull { points } => Self::ConvexHull {
-                points: scaled_points(points, s),
+            Self::ConvexHull { part } => Self::ConvexHull {
+                part: part.scaled(s),
             },
             Self::ConvexDecomposition { vertices, indices } => Self::ConvexDecomposition {
                 vertices: scaled_points(vertices, s),
@@ -269,7 +325,7 @@ impl CollisionShape {
             // of the same solid — which is why a baked one survives the
             // scale gizmo without VHACD running again.
             Self::Compound { parts } => Self::Compound {
-                parts: parts.iter().map(|part| scaled_points(part, s)).collect(),
+                parts: parts.iter().map(|part| part.scaled(s)).collect(),
             },
             Self::TriMesh { vertices, indices } => Self::TriMesh {
                 vertices: scaled_points(vertices, s),

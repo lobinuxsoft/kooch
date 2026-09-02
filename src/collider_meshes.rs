@@ -38,7 +38,7 @@ use kooch_core::resource::Resources;
 use kooch_core::stage::Stage;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_physics::components::{Collider, SHAPE_CONVEX_HULL, is_mesh_derived};
-use kooch_physics::{ColliderMesh, ColliderMeshCache, hull_of};
+use kooch_physics::{ColliderMesh, ColliderMeshCache, ConvexPart, hull_of};
 use kooch_render::mesh::{parse_mesh_bytes_full, parse_mesh_parts};
 
 /// The `[import]` key a baked collision asset carries, and the value that
@@ -50,6 +50,7 @@ use kooch_render::mesh::{parse_mesh_bytes_full, parse_mesh_parts};
 /// a handful of overlapping hulls.
 pub const COLLISION_KEY: &str = "collision";
 pub const COLLISION_PARTS: &str = "parts";
+pub const COLLISION_HULL: &str = "hull";
 
 /// Resolves the meshes mesh-derived colliders name.
 pub struct ColliderMeshPlugin;
@@ -108,9 +109,9 @@ pub fn fill_collider_meshes(resources: &mut Resources) {
 
 /// Replaces a mesh's point cloud with its convex hull, once.
 ///
-/// 76 038 points become 387. Everything downstream then works on the
-/// small set: the per-frame scale fold, the narrowphase, and eventually
-/// the gizmo outline.
+/// 76 038 points become 387, and the faces come back with them — so the
+/// backend builds the polyhedron straight from qhull's own output rather
+/// than asking qhull for it again on every body build.
 fn reduce_hull(resources: &mut Resources, guid: Guid) {
     let Some(cache) = resources.get::<ColliderMeshCache>() else {
         return;
@@ -118,17 +119,13 @@ fn reduce_hull(resources: &mut Resources, guid: Guid) {
     if !cache.awaits_hull(guid) {
         return;
     }
-    let Some(hull) = cache
-        .get(guid)
-        .and_then(|mesh| hull_of(&mesh.vertices))
-        .map(|(points, _)| points)
-    else {
+    let Some((points, faces)) = cache.get(guid).and_then(|mesh| hull_of(&mesh.vertices)) else {
         // A cloud with no volume. `shape_builder` refuses it by name when
         // the body is built, which is where the author can act on it.
         return;
     };
     if let Some(cache) = resources.get_mut::<ColliderMeshCache>() {
-        cache.insert_hull(guid, hull);
+        cache.insert_hull(guid, ConvexPart { points, faces });
     }
 }
 
@@ -183,14 +180,33 @@ fn load_mesh(resources: &mut Resources, guid: Guid) -> Option<ColliderMesh> {
     let bytes = read_bytes(resources, &path, guid)?;
     let base = path.parent();
 
-    let mesh = match is_baked_parts(&path) {
-        true => parse_mesh_parts(&bytes, base)
+    let mesh = match baked_kind(&path) {
+        // Baked pieces: each primitive is one convex hull, and its
+        // triangles are the engine's own claim that it is. Trusted, not
+        // checked — see `ConvexPart`.
+        Some(COLLISION_PARTS) => parse_mesh_parts(&bytes, base)
             .map(|parts| ColliderMesh {
-                parts,
+                parts: parts
+                    .into_iter()
+                    .map(|(points, faces)| ConvexPart { points, faces })
+                    .collect(),
                 ..Default::default()
             })
             .map_err(|error| error.to_string()),
-        false => parse_mesh_bytes_full(&bytes, 1.0, base)
+        // A baked hull is one convex piece, and the file is already it.
+        // Hulling it again gave back the same 226 points at 162 µs a
+        // build, which was the whole cost the bake existed to remove.
+        Some(COLLISION_HULL) => parse_mesh_parts(&bytes, base)
+            .map(|parts| {
+                let (points, faces) = parts.into_iter().next().unwrap_or_default();
+                ColliderMesh {
+                    vertices: points.clone(),
+                    hull: ConvexPart { points, faces },
+                    ..Default::default()
+                }
+            })
+            .map_err(|error| error.to_string()),
+        _ => parse_mesh_bytes_full(&bytes, 1.0, base)
             .map(|mesh| ColliderMesh {
                 vertices: mesh
                     .vertices
@@ -257,20 +273,26 @@ fn read_bytes(resources: &mut Resources, path: &Path, guid: Guid) -> Option<Vec<
     }
 }
 
-/// Whether this asset's sidecar says its primitives are convex pieces.
+/// What this asset's sidecar says it was baked as, if anything.
+///
+/// The line between "trust this topology" and "hull these points". Only
+/// the engine's own bake and the editor's button write this key, so a
+/// mesh an artist authored — or one edited by hand after the marker was
+/// removed — is hulled like any other.
 ///
 /// A missing or unreadable sidecar reads as "ordinary mesh", which is the
 /// answer that keeps every asset authored before this existed working.
-fn is_baked_parts(path: &Path) -> bool {
-    asset_meta::read_meta(path)
-        .ok()
-        .and_then(|meta| meta.import)
-        .and_then(|import| {
-            import
-                .get(COLLISION_KEY)
-                .and_then(|v| v.as_str().map(str::to_owned))
-        })
-        .is_some_and(|value| value == COLLISION_PARTS)
+fn baked_kind(path: &Path) -> Option<&'static str> {
+    let value = asset_meta::read_meta(path)
+        .ok()?
+        .import?
+        .get(COLLISION_KEY)
+        .and_then(|value| value.as_str().map(str::to_owned))?;
+    match value.as_str() {
+        COLLISION_PARTS => Some(COLLISION_PARTS),
+        COLLISION_HULL => Some(COLLISION_HULL),
+        _ => None,
+    }
 }
 
 fn warn(guid: Guid, message: &'static str) {

@@ -47,13 +47,22 @@ fn a_plane_keeps_its_facing() {
 #[test]
 fn a_hull_scales_every_point() {
     let scaled = CollisionShape::ConvexHull {
-        points: vec![Vec3::X, Vec3::Y],
+        part: ConvexPart {
+            points: vec![Vec3::X, Vec3::Y],
+            faces: vec![[0, 1, 0]],
+        },
     }
     .scaled(Vec3::splat(2.0));
     assert_eq!(
         scaled,
         CollisionShape::ConvexHull {
-            points: vec![Vec3::X * 2.0, Vec3::Y * 2.0]
+            part: ConvexPart {
+                points: vec![Vec3::X * 2.0, Vec3::Y * 2.0],
+                // The topology survives: a positive diagonal scale maps a
+                // convex hull to a convex hull with the same faces, so a
+                // claim that was true stays true.
+                faces: vec![[0, 1, 0]],
+            },
         }
     );
 }

@@ -55,10 +55,12 @@ fn every_analytic_shape_builds() {
 
 #[test]
 fn every_mesh_shape_builds() {
+    use crate::backend::ConvexPart;
+
     let (vertices, indices) = tetrahedron();
     let shapes = [
         CollisionShape::ConvexHull {
-            points: vertices.clone(),
+            part: ConvexPart::loose(vertices.clone()),
         },
         CollisionShape::ConvexDecomposition {
             vertices: vertices.clone(),
@@ -97,9 +99,14 @@ fn every_mesh_shape_builds() {
 /// producing a collider with no volume.
 #[test]
 fn a_flat_hull_is_refused() {
+    use crate::backend::ConvexPart;
+
     let collinear = vec![Vec3::ZERO, Vec3::X, Vec3::X * 2.0];
     assert_eq!(
-        shape_builder(&CollisionShape::ConvexHull { points: collinear }).err(),
+        shape_builder(&CollisionShape::ConvexHull {
+            part: ConvexPart::loose(collinear)
+        })
+        .err(),
         Some(ShapeError::DegenerateHull)
     );
 }
@@ -130,4 +137,30 @@ fn a_ragged_grid_is_refused() {
         .err(),
         Some(ShapeError::RaggedHeightfield)
     );
+}
+
+/// The whole point of a baked collider: faces that qhull already produced
+/// must not send it back through qhull.
+#[test]
+fn a_vouched_hull_skips_the_rebuild() {
+    use crate::backend::ConvexPart;
+
+    let (vertices, indices) = tetrahedron();
+    let vouched = CollisionShape::ConvexHull {
+        part: ConvexPart {
+            points: vertices.clone(),
+            faces: indices,
+        },
+    };
+    assert!(shape_builder(&vouched).is_ok());
+
+    // And a claim rapier cannot honour is still a refusal, not a shape
+    // nobody can hit.
+    let broken = CollisionShape::ConvexHull {
+        part: ConvexPart {
+            points: vertices,
+            faces: vec![[0, 0, 0]],
+        },
+    };
+    assert!(shape_builder(&broken).is_err());
 }

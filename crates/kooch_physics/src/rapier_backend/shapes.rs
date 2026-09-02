@@ -21,7 +21,7 @@ use rapier3d::prelude::*;
 
 use glam::Vec3;
 
-use crate::backend::{CollisionShape, MIN_EXTENT};
+use crate::backend::{CollisionShape, ConvexPart, MIN_EXTENT};
 
 /// Why a shape could not be built.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,10 +89,7 @@ pub(super) fn shape_builder(shape: &CollisionShape) -> Result<ColliderBuilder, S
         ))),
         CollisionShape::Segment { a, b } => Ok(ColliderBuilder::segment(*a, *b)),
         CollisionShape::Triangle { a, b, c } => Ok(ColliderBuilder::triangle(*a, *b, *c)),
-        CollisionShape::ConvexHull { points } => {
-            non_empty(points)?;
-            ColliderBuilder::convex_hull(points).ok_or(ShapeError::DegenerateHull)
-        }
+        CollisionShape::ConvexHull { part } => convex(part),
         CollisionShape::ConvexDecomposition { vertices, indices } => {
             non_empty(vertices)?;
             Ok(ColliderBuilder::convex_decomposition(vertices, indices))
@@ -160,21 +157,37 @@ fn fill_mode(solid: bool) -> FillMode {
     }
 }
 
+/// One convex piece, hulled only when nobody has vouched for its faces.
+///
+/// The fast path is not an optimisation with a caveat — it is the whole
+/// reason a baked collider is worth having. See [`ConvexPart`] for who is
+/// allowed to make the claim.
+fn convex(part: &ConvexPart) -> Result<ColliderBuilder, ShapeError> {
+    non_empty(&part.points)?;
+    match part.is_hulled() {
+        true => ColliderBuilder::convex_mesh(part.points.clone(), &part.faces)
+            .ok_or(ShapeError::DegenerateHull),
+        false => ColliderBuilder::convex_hull(&part.points).ok_or(ShapeError::DegenerateHull),
+    }
+}
+
 /// One collider from several convex pieces, each at the body's origin.
 ///
 /// The pieces already carry their own positions — they are point sets in
 /// the same space — so every pose is the identity. Rapier wants the pair
 /// anyway, because a compound is the general shape and this is its
 /// degenerate, useful case.
-fn compound(parts: &[Vec<Vec3>]) -> Result<ColliderBuilder, ShapeError> {
+fn compound(parts: &[ConvexPart]) -> Result<ColliderBuilder, ShapeError> {
     if parts.is_empty() {
         return Err(ShapeError::NoGeometry);
     }
     let mut shapes = Vec::with_capacity(parts.len());
     for part in parts {
-        non_empty(part)?;
-        let hull = SharedShape::convex_hull(part).ok_or(ShapeError::DegenerateHull)?;
-        shapes.push((Pose::IDENTITY, hull));
+        // Where the saving is largest: a decomposition is twelve pieces
+        // for Suzanne and twenty-six for the dragon, and every one of
+        // them would otherwise be hulled again on every body build.
+        let shape = convex(part)?.build().shared_shape().clone();
+        shapes.push((Pose::IDENTITY, shape));
     }
     Ok(ColliderBuilder::compound(shapes))
 }

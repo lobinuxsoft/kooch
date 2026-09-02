@@ -247,10 +247,11 @@ fn parts_survive_the_round_trip() {
 
     let parts = parse_mesh_parts(&glb, None).expect("import");
     assert_eq!(parts.len(), 2, "the pieces were merged");
-    assert_eq!(parts[0].len(), 8);
+    assert_eq!(parts[0].0.len(), 8);
+    assert_eq!(parts[0].1.len(), 2, "the triangles came back too");
     // Read back in order, and still where they were written.
     assert!(
-        parts[1].iter().all(|p| p.x >= 10.0),
+        parts[1].0.iter().all(|p| p.x >= 10.0),
         "the second piece moved"
     );
 }

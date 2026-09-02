@@ -64,10 +64,13 @@ fn a_decomposition_stays_in_pieces() {
     assert!(pieces("dragon_parts").len() > 1, "the pieces were merged");
 }
 
-/// Each piece has to be something a solver can build a hull from.
+/// Each piece has to be something a solver can build a hull from, and it
+/// has to carry the faces that say it already is one.
 ///
 /// Four points is a tetrahedron, the smallest thing that encloses a
-/// volume; anything less is a collider that cannot be hit.
+/// volume; anything less is a collider that cannot be hit. The faces are
+/// what let the backend skip hulling it again on every body build — a
+/// piece written without them still works and quietly costs that.
 #[test]
 fn every_piece_has_volume() {
     for name in [
@@ -78,15 +81,19 @@ fn every_piece_has_volume() {
     ] {
         let bytes = std::fs::read(collision_dir().join(format!("{name}.glb")))
             .unwrap_or_else(|e| panic!("{name}: {e}"));
-        for (index, piece) in parse_mesh_parts(&bytes, None)
+        for (index, (points, faces)) in parse_mesh_parts(&bytes, None)
             .unwrap_or_else(|e| panic!("{name}: {e}"))
             .iter()
             .enumerate()
         {
             assert!(
-                piece.len() >= 4,
+                points.len() >= 4,
                 "{name} piece {index} has {} points",
-                piece.len()
+                points.len()
+            );
+            assert!(
+                faces.len() >= 4,
+                "{name} piece {index} has no closed topology to vouch for it",
             );
         }
     }

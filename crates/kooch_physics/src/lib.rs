@@ -32,8 +32,8 @@ pub mod rapier_backend;
 
 pub use backend::{
     BodyDesc, BodyHandle, BodyKind, BrokenJoint, ColliderHandle, ColliderMesh, ColliderMeshCache,
-    CollisionShape, JointDesc, JointHandle, JointKind, JointMotor, MotorModel, PhysicsBackend,
-    RayHit,
+    CollisionShape, ConvexPart, JointDesc, JointHandle, JointKind, JointMotor, MotorModel,
+    PhysicsBackend, RayHit,
 };
 pub use components::{Collider, Joint, PhysicsBody, ShapeSpec};
 pub use plugin::{JointRegistry, PhysicsComponentsPlugin, PhysicsPlugin, PhysicsWorld, SolverBody};
