@@ -21,20 +21,26 @@
 //! entity origin while the solver collides somewhere else is a lie in the
 //! one place the tool exists to tell the truth.
 //!
-//! # The mesh-derived shapes draw nothing
+//! # The mesh-derived shapes
 //!
-//! A hull or a trimesh outline needs the vertices, which live in
-//! [`ColliderMeshCache`] — and a [`Visualizer`] is handed a component and
-//! a transform, not `Resources`. Drawing a sphere instead would be the
-//! same lie this file exists to avoid, so those draw nothing until #574
-//! widens the contract.
+//! A hull's outline is its own point cloud, which lives in
+//! [`ColliderMeshCache`] — so those go through
+//! [`Visualizer::draw_with`], the one path that gets `Resources`.
+//!
+//! Two of them still draw nothing, and it is not an omission. A triangle
+//! mesh and an underived decomposition *are* the render mesh, edge for
+//! edge: outlining them draws a second copy of what is already on screen,
+//! at a hundred thousand lines a frame. The outlines worth having are the
+//! ones that differ from what you can see — the hull, and the pieces.
 //!
 //! [`ColliderMeshCache`]: kooch_physics::ColliderMeshCache
 
 use glam::{Mat3, Vec3};
 
+use kooch_core::resource::Resources;
 use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_gizmos::{Gizmos, Visualizer};
+use kooch_physics::backend::{ColliderMeshCache, CollisionShape, ConvexPart};
 use kooch_physics::components::{
     Collider, SHAPE_CAPSULE, SHAPE_CONE, SHAPE_CUBOID, SHAPE_CYLINDER, SHAPE_HALF_SPACE,
     SHAPE_ROUND_CYLINDER, SHAPE_SEGMENT, SHAPE_TRIANGLE, is_mesh_derived,
@@ -51,6 +57,29 @@ const SOLID: Vec3 = Vec3::new(0.35, 0.95, 0.4);
 pub(crate) struct ColliderVisualizer;
 
 impl Visualizer<Collider> for ColliderVisualizer {
+    fn draw_with(
+        &self,
+        collider: &Collider,
+        transform: &GlobalTransform,
+        resources: &Resources,
+        gizmos: &mut Gizmos<'_>,
+    ) {
+        if is_mesh_derived(collider.shape) {
+            let (scale, rotation, translation) = transform.matrix.to_scale_rotation_translation();
+            let centre = translation + rotation * (collider.center * scale.abs());
+            draw_mesh_shape(
+                collider,
+                resources,
+                Mat3::from_quat(rotation),
+                centre,
+                scale,
+                gizmos,
+            );
+            return;
+        }
+        self.draw(collider, transform, gizmos);
+    }
+
     fn draw(&self, collider: &Collider, transform: &GlobalTransform, gizmos: &mut Gizmos<'_>) {
         let (scale, rotation, translation) = transform.matrix.to_scale_rotation_translation();
         let basis = Mat3::from_quat(rotation);
@@ -64,9 +93,8 @@ impl Visualizer<Collider> for ColliderVisualizer {
         // from its centre rather than from the entity's origin.
         let point = |local: Vec3| translation + rotation * (local * s);
 
-        // A hull's outline is its mesh's, and a visualizer cannot reach
-        // the cache that holds it. Nothing beats a sphere that is not
-        // what the solver collides against.
+        // Handled by `draw_with`, which can reach the points. A sphere
+        // here would be a shape the solver is not using.
         if is_mesh_derived(collider.shape) {
             return;
         }
@@ -114,6 +142,67 @@ impl Visualizer<Collider> for ColliderVisualizer {
         }
     }
 }
+
+/// The mesh-derived outlines, drawn from the cache the solver reads.
+///
+/// Same geometry the solver was handed, scale folded in the same way —
+/// `ShapeSpec::resolve` is the single place that decides both, so the
+/// outline cannot drift from the collider the way a second derivation
+/// would.
+fn draw_mesh_shape(
+    collider: &Collider,
+    resources: &Resources,
+    basis: Mat3,
+    translation: Vec3,
+    scale: Vec3,
+    gizmos: &mut Gizmos<'_>,
+) {
+    let meshes = resources.get::<ColliderMeshCache>();
+    let Some(shape) = collider.shape_spec(meshes).resolve(meshes) else {
+        // The mesh has not arrived. The body has not been built either,
+        // so an outline would be the only thing in the scene claiming
+        // there is a collider here.
+        return;
+    };
+
+    match shape.scaled(scale) {
+        CollisionShape::ConvexHull { part } => {
+            draw_part(&part, basis, translation, gizmos);
+        }
+        CollisionShape::Compound { parts } => {
+            for part in &parts {
+                draw_part(part, basis, translation, gizmos);
+            }
+        }
+        // A triangle mesh is the render mesh, edge for edge. Drawing it
+        // is a second copy of what is on screen, at a hundred thousand
+        // lines a frame.
+        _ => {}
+    }
+}
+
+/// One convex piece, in the entity's space.
+///
+/// Only when the faces are known: deriving them here would run qhull
+/// inside a draw call, once per selected entity per frame.
+fn draw_part(part: &ConvexPart, basis: Mat3, translation: Vec3, gizmos: &mut Gizmos<'_>) {
+    if !part.is_hulled() || part.faces.len() > MAX_OUTLINE_FACES {
+        return;
+    }
+    let points: Vec<Vec3> = part
+        .points
+        .iter()
+        .map(|point| translation + basis * *point)
+        .collect();
+    gizmos.wire_triangles(&points, &part.faces, SOLID);
+}
+
+/// Faces above which an outline stops being a drawing and starts being a
+/// wall of lines.
+///
+/// A hull is a few hundred; a decomposition is a few hundred per piece.
+/// Anything past this is not a shape anyone reads off the screen.
+const MAX_OUTLINE_FACES: usize = 4096;
 
 /// How far the half-space patch reaches from the shape's centre.
 ///

@@ -193,5 +193,10 @@ the same way the solver folds it, drawn at `center` rather than at the
 entity origin. An outline drawn from the authored numbers would lie
 exactly where a collider is most likely to be wrong.
 
-The mesh-derived shapes draw nothing yet. A wrong outline is worse than
-none in the one tool that exists to tell the truth about this.
+A convex hull and a set of convex pieces get outlined from the same
+points the solver was handed — which is the whole reason to draw them:
+they are exactly the shapes that *differ* from what you can see.
+
+A triangle mesh draws nothing, and that is not an omission. It **is** the
+render mesh, edge for edge, so an outline would be a second copy of what
+is already on screen at a hundred thousand lines a frame.

@@ -1,5 +1,6 @@
 use super::*;
 use glam::{Mat4, Quat};
+use kooch_core::resource::Resources;
 use kooch_gizmos::{GizmoBatch, MeshBatch};
 
 /// Draws one collider and returns the line segments produced.
@@ -285,14 +286,130 @@ fn a_cone_is_drawn_pointing_up() {
     assert!(extent(&lines, Vec3::ZERO).x < 0.6, "it is not a cone");
 }
 
-/// A hull's outline is its mesh's, and a visualizer cannot reach the
-/// cache holding it. Nothing beats a sphere that is not what the solver
-/// collides against — see the module docs and #574.
+/// A mesh-derived shape has nothing to draw from `draw` alone — its
+/// points are in the cache, which only `draw_with` can reach. A sphere
+/// here would be a shape the solver is not using.
 #[test]
-fn a_mesh_derived_shape_draws_nothing() {
+fn a_mesh_shape_draws_nothing_without_the_cache() {
     let collider = Collider {
-        shape: kooch_physics::components::SHAPE_TRIMESH,
+        shape: kooch_physics::components::SHAPE_CONVEX_HULL,
         ..Default::default()
     };
     assert!(draw(&collider, Mat4::IDENTITY).is_empty());
+}
+
+/// Draws one collider through the path that can reach the cache.
+fn draw_with(collider: &Collider, resources: &Resources, matrix: Mat4) -> Vec<(Vec3, Vec3)> {
+    let mut lines = GizmoBatch::default();
+    let mut meshes = MeshBatch::default();
+    {
+        let mut gizmos = Gizmos::new(&mut lines, &mut meshes);
+        ColliderVisualizer.draw_with(
+            collider,
+            &GlobalTransform { matrix },
+            resources,
+            &mut gizmos,
+        );
+    }
+    lines.lines.iter().map(|s| (s.start, s.end)).collect()
+}
+
+/// A tetrahedron, with the faces that say it is already a hull.
+fn cached_hull() -> (Resources, kooch_core::Guid) {
+    use kooch_physics::{ColliderMesh, ColliderMeshCache, ConvexPart};
+
+    let points = vec![
+        Vec3::ZERO,
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        Vec3::new(0.0, 0.0, 1.0),
+    ];
+    let faces = vec![[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]];
+
+    let guid = kooch_core::Guid::new_v4();
+    let mut cache = ColliderMeshCache::new();
+    cache.insert(
+        guid,
+        ColliderMesh {
+            vertices: points.clone(),
+            hull: ConvexPart { points, faces },
+            ..Default::default()
+        },
+    );
+    let mut resources = Resources::new();
+    resources.insert(cache);
+    (resources, guid)
+}
+
+/// The whole point of #574: a hull authored as a mesh gets an outline of
+/// that mesh's hull, not of a sphere and not of nothing.
+#[test]
+fn a_hull_outlines_its_cached_points() {
+    let (resources, guid) = cached_hull();
+    let collider = Collider {
+        shape: kooch_physics::components::SHAPE_CONVEX_HULL,
+        mesh: Some(guid),
+        ..Default::default()
+    };
+    let lines = draw_with(&collider, &resources, Mat4::IDENTITY);
+    assert!(!lines.is_empty(), "the hull drew nothing");
+    // A tetrahedron has six edges, and `wire_triangles` deduplicates the
+    // ones its four faces share.
+    assert_eq!(lines.len(), 6, "shared edges were drawn twice");
+}
+
+/// The outline follows the solver's scale folding, the same as every
+/// other shape here — an outline at the authored size would lie exactly
+/// where a scaled collider is most likely to be wrong.
+#[test]
+fn a_scaled_hull_outline_grows() {
+    let (resources, guid) = cached_hull();
+    let collider = Collider {
+        shape: kooch_physics::components::SHAPE_CONVEX_HULL,
+        mesh: Some(guid),
+        ..Default::default()
+    };
+    let plain = extent(
+        &draw_with(&collider, &resources, Mat4::IDENTITY),
+        Vec3::ZERO,
+    );
+    let scaled = extent(
+        &draw_with(
+            &collider,
+            &resources,
+            Mat4::from_scale_rotation_translation(Vec3::splat(3.0), Quat::IDENTITY, Vec3::ZERO),
+        ),
+        Vec3::ZERO,
+    );
+    assert!(
+        (scaled.max_element() - plain.max_element() * 3.0).abs() < 1e-4,
+        "{plain:?} -> {scaled:?}"
+    );
+}
+
+/// A mesh that has not arrived draws nothing — the body was not built
+/// either, so an outline would be the only thing claiming there is a
+/// collider here.
+#[test]
+fn an_unresolved_hull_draws_nothing() {
+    let resources = Resources::new();
+    let collider = Collider {
+        shape: kooch_physics::components::SHAPE_CONVEX_HULL,
+        mesh: Some(kooch_core::Guid::new_v4()),
+        ..Default::default()
+    };
+    assert!(draw_with(&collider, &resources, Mat4::IDENTITY).is_empty());
+}
+
+/// A triangle mesh IS the render mesh, edge for edge. Outlining it draws
+/// a second copy of what is already on screen.
+#[test]
+fn a_trimesh_draws_nothing() {
+    let (resources, guid) = cached_hull();
+    let collider = Collider {
+        shape: kooch_physics::components::SHAPE_TRIMESH,
+        mesh: Some(guid),
+        ..Default::default()
+    };
+    assert!(draw_with(&collider, &resources, Mat4::IDENTITY).is_empty());
 }
