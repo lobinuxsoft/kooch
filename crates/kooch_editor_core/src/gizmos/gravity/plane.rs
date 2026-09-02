@@ -26,14 +26,9 @@ impl Visualizer<PlaneGravity> for PlaneGravityVisualizer {
             return;
         };
 
-        // `range` and `falloff` are heights in the field's own space, so
-        // a scaled entity reaches further. Stepping by the raw number
-        // drew a 12 m reach for a field acting at 96.
-        //
-        // Exact under a uniform scale or an axis-aligned normal; a
-        // tilted normal under a stretched entity is approximate, and so
-        // is every other box gizmo here for the same reason.
-        let step = |height: f32| transform.matrix.transform_vector3(local * height);
+        // Metres along the world normal: the field's space is rigid, so
+        // a scaled entity does not reach further. See `local_space`.
+        let step = |height: f32| normal * height;
 
         // The surface. `wire_halfspace` marks which side is active with a
         // stub along the normal, which is the same thing it means for a

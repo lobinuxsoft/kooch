@@ -291,12 +291,26 @@ fn descending_levels(sources: &[Source]) -> Vec<i32> {
 
 /// Splits a transform into what a local-space field needs.
 ///
-/// The rotation alone, not the whole matrix: rotating a direction by a
-/// scaled matrix would scale the acceleration, and a stretched zone is not
-/// a stronger one.
+/// # The scale is dropped, and that is the whole point
+///
+/// Rigid — rotation and translation only — so the field's own space is
+/// the world's, turned and moved. Every distance a source carries is
+/// then a distance in metres, and scaling its entity places the field
+/// without resizing it.
+///
+/// Keeping the scale made a `range` of 20 on an entity scaled to 8 pull
+/// from 160 m, which is not what the field says and not what the
+/// Inspector shows. It also made three sources scale while
+/// [`PointGravity`] did not, because a point has no shape for a scale to
+/// stretch — an exception with nothing behind it but how the arithmetic
+/// happened to fall out.
+///
+/// A gravity field is not geometry to eyeball. Resize a zone by editing
+/// its extents.
 fn local_space(matrix: Mat4) -> LocalSpace {
+    let (_, rotation, translation) = matrix.to_scale_rotation_translation();
     LocalSpace {
-        to_local: matrix.inverse(),
-        rotation: matrix.to_scale_rotation_translation().1,
+        to_local: Mat4::from_rotation_translation(rotation, translation).inverse(),
+        rotation,
     }
 }

@@ -56,26 +56,25 @@ commands.spawn(&mut resources)
 That is not physical, and it is often what a game wants: a small planet you
 can walk on without the pull changing under your feet.
 
-## Scaling an entity scales its field
+## A transform places a field, it does not resize one
 
-Every distance a box, area or plane source carries — `half_extents`,
-`rounding`, `range`, `falloff` — is in the entity's **local space**, the
-same way a `Collider`'s half-extents are. An entity at scale 8 has a solid
-eight times the size and a reach eight times as far.
+Every distance a source carries — `half_extents`, `radius`, `rounding`,
+`range`, `falloff` — is in **metres**. Turning the entity turns the field
+and moving it moves the field, but scaling it does neither.
 
-`strength` does not scale. An acceleration is not a length.
+That is deliberate, and it was the other way round once. A field's space is
+rigid, so a `range` of 20 means twenty metres wherever the entity is and
+whatever its scale says. It used to mean twenty *local* units, which on an
+entity scaled to 8 — the obvious way to make a visible cube planet — pulled
+from a hundred and sixty metres away, with the Inspector still reading 20.
 
-This bites the first time it happens: a `BoxGravity` with a 20 m range,
-dropped onto an entity scaled to 8 to make a visible cube planet, pulls
-from **240 m away**. The number in the Inspector says 20 and it means 160.
+So resize a zone by editing its extents, not by dragging a scale handle. A
+gravity field is not geometry you eyeball; it is a number that has to mean
+what it says.
 
-**`PointGravity` is the exception.** Its `radius` and `range` are world
-distances, so scaling its entity moves the field without resizing it. A
-point has no shape for a scale to stretch.
-
-If you want the numbers to mean metres, keep the source on its own entity
-at scale 1 and let a separate entity carry the mesh. That is what the
-`gravity_tour` scene does, and it is why.
+If you want the source to sit on the same entity as a scaled mesh, it can:
+the scale is simply ignored. Keeping them apart is still tidier, and it is
+what the `gravity_tour` scene does.
 
 ## Fields add
 

@@ -35,30 +35,25 @@ use kooch_ecs::component::Component;
 /// This is a solid acting on what is outside it, with a different direction
 /// at every point. Same primitive, opposite job.
 ///
-/// # Every distance here scales with the entity
+/// # The entity's scale does not resize this
 ///
-/// `half_extents`, `rounding`, `range` and `falloff` are all in the
-/// entity's local space, the way a [`Collider`] is: an entity at scale 8
-/// has a solid eight times the size and a reach eight times as far.
-/// `strength` does not scale, because an acceleration is not a length.
-///
-/// [`super::PointGravity`] is the exception — it measures in world space
-/// and scaling its entity changes nothing.
-///
-/// [`Collider`]: https://docs.rs/kooch_physics
+/// `half_extents`, `rounding`, `range` and `falloff` are metres. A
+/// field's space is rigid — rotation and translation only — so scaling
+/// the entity places the source and nothing else. Resize a planet by
+/// editing its extents.
 ///
 /// # Default
 ///
 /// A 10 m cube at Earth strength, with the corners slightly rounded and a
-/// 20 m reach — at scale 1.
+/// 20 m reach.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Physics")]
 pub struct BoxGravity {
-    /// Half-extents of the solid, in the entity's local space.
+    /// Half-extents of the solid, in metres.
     pub half_extents: Vec3,
     /// Acceleration at the surface, in metres per second squared.
     pub strength: f32,
-    /// How gently gravity turns around the edges, in local space.
+    /// How gently gravity turns around the edges, in metres.
     ///
     /// The box is shrunk by this much before the closest point is taken,
     /// so the direction starts turning this far *before* the edge instead
@@ -67,11 +62,11 @@ pub struct BoxGravity {
     /// so this is the dial between a cube planet and a round one.
     pub rounding: f32,
     /// How far from the surface the field holds at full strength, in
-    /// local space.
+    /// metres.
     ///
     /// Zero or less means unlimited, and `falloff` then never applies.
     pub range: f32,
-    /// How far past `range` the field fades to nothing, in local space.
+    /// How far past `range` the field fades to nothing, in metres.
     ///
     /// Without it a body leaving the planet's reach loses its gravity
     /// between one step and the next. Zero for a hard cutoff.

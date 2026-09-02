@@ -709,3 +709,34 @@ fn the_dominant_source_ignores_the_weaker() {
         "up is away from the stronger planet: {dominant}",
     );
 }
+
+/// A field's space is rigid, so its extents are metres: scaling the
+/// entity places the source without resizing what it reaches.
+///
+/// The gizmo test is not enough. It pins what is *drawn*, and the whole
+/// failure being closed here was a drawing and a field that disagreed.
+#[test]
+fn scaling_a_source_does_not_resize_it() {
+    fn pull_at(scale: f32, height: f32) -> f32 {
+        let mut resources = world();
+        source_at(
+            &mut resources,
+            Transform {
+                position: Vec3::ZERO,
+                rotation: glam::Quat::IDENTITY,
+                scale: Vec3::splat(scale),
+            },
+            BoxGravity::default(),
+        );
+        plugin::gravity_at(&resources, Vec3::new(0.0, height, 0.0)).length()
+    }
+
+    // Inside the solid, in the band, and past the fade — the three
+    // answers a box source has.
+    for height in [2.0, 20.0, 100.0] {
+        assert!(
+            (pull_at(1.0, height) - pull_at(8.0, height)).abs() < 1e-4,
+            "a scale of 8 changed the pull at {height} m",
+        );
+    }
+}

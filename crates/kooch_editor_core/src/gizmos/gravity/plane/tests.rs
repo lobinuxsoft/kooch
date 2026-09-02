@@ -45,10 +45,10 @@ fn a_plane_draws_out_to_its_falloff() {
     );
 }
 
-/// `range` and `falloff` are heights in the field's own space, so a
-/// scaled entity holds its pull that much further up.
+/// A field's space is rigid, so `range` and `falloff` are metres and a
+/// scaled entity does not hold its pull further up.
 #[test]
-fn a_scaled_plane_draws_its_true_reach() {
+fn a_scaled_plane_is_the_same_height() {
     let field = PlaneGravity {
         range: 12.0,
         falloff: 6.0,
@@ -61,14 +61,14 @@ fn a_scaled_plane_draws_its_true_reach() {
             .fold(f32::MIN, f32::max)
     };
     // `wire_halfspace` tops each patch with a stub half a patch long,
-    // marking the side the field acts on. It is a drawing convention and
-    // does not scale, so it comes off before the heights are compared.
+    // marking the side the field acts on. A drawing convention, not a
+    // height, so it comes off before the comparison.
     const STUB: f32 = PATCH * 0.5;
     let plain = highest(Mat4::IDENTITY) - STUB;
     let scaled = highest(Mat4::from_scale(Vec3::splat(8.0))) - STUB;
     assert!((plain - 18.0).abs() < 1e-3, "{plain}");
     assert!(
-        (scaled - 144.0).abs() < 1e-3,
-        "the outer patch should ride the scale, got {scaled}",
+        (scaled - 18.0).abs() < 1e-3,
+        "a scale should not lift it: {scaled}"
     );
 }

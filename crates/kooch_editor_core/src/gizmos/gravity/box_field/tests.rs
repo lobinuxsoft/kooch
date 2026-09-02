@@ -88,23 +88,14 @@ fn the_faces_turn_with_the_entity() {
     );
 }
 
+/// A field's space is rigid, so its extents are metres and the entity's
+/// scale places it without resizing it.
+///
+/// This used to assert the opposite. Scaling made `range: 20` on an
+/// entity at scale 8 pull from 160 m, which is neither what the field
+/// says nor what the Inspector shows.
 #[test]
-fn the_solid_scales_with_the_entity() {
-    let plain = reach(&draw(&BoxGravityVisualizer, &cube(), Mat4::IDENTITY));
-    let scaled = reach(&draw(
-        &BoxGravityVisualizer,
-        &cube(),
-        Mat4::from_scale(Vec3::splat(2.0)),
-    ));
-    assert!((scaled / plain - 2.0).abs() < 0.05, "{plain} then {scaled}");
-}
-
-/// Every distance a box field carries is in its own local space, so a
-/// scaled entity reaches proportionally further. The gizmo scaled
-/// `half_extents` and left `range` and `falloff` raw, which drew a 65 m
-/// reach for a field that pulled at 240.
-#[test]
-fn a_scaled_box_draws_its_true_reach() {
+fn a_scaled_box_is_the_same_size() {
     let field = BoxGravity {
         half_extents: Vec3::splat(5.0),
         rounding: 0.5,
@@ -118,9 +109,5 @@ fn a_scaled_box_draws_its_true_reach() {
         &field,
         Mat4::from_scale(Vec3::splat(8.0)),
     ));
-    let ratio = scaled / plain;
-    assert!(
-        (ratio - 8.0).abs() < 0.2,
-        "reach grew {ratio}x under a scale of 8",
-    );
+    assert!((scaled - plain).abs() < 1e-3, "{plain} then {scaled}");
 }

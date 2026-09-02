@@ -146,6 +146,7 @@ them, the remote protocol mirrored them — and no render crate read one.
 | Capability | Where | Status | Notes |
 |---|---|---|---|
 | `GlobalGravity` | `sources/global.rs` | connected | The world vector as a component, so a level can author and switch it. |
+| Rigid field space | `plugin/collect.rs` | connected | Every source's distances are metres: a transform places a field and never resizes one. It carried the scale once, so `range: 20` on an entity scaled to 8 pulled from 160 m while the Inspector read 20 — and three sources scaled while `PointGravity` did not. |
 | `PointGravity` | `sources/point.rs` | connected | A planet. `strength` at a `radius` rather than `G·M`, clamped inside that radius so the pull towards a centre stays finite. |
 | `AreaGravity` | `sources/area.rs` | connected | A box you are *inside*, with its own down. Rotates with its entity. |
 | `BoxGravity` | `sources/box_field.rs` | connected | A solid you stand on the *outside* of — the gradient of a rounded box's SDF, so faces, edges and corners come out consistent with no special case. |

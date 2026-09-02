@@ -14,11 +14,10 @@ pub(crate) struct AreaGravityVisualizer;
 
 impl Visualizer<AreaGravity> for AreaGravityVisualizer {
     fn draw(&self, field: &AreaGravity, transform: &GlobalTransform, gizmos: &mut Gizmos<'_>) {
-        let (scale, rotation, origin) = transform.matrix.to_scale_rotation_translation();
-        // The scale rides in the basis, so `half_extents` and `falloff`
-        // stay in the local units the field measures in. Scaling one and
-        // not the other drew a fade band that was not where it acted.
-        let basis = Mat3::from_quat(rotation) * Mat3::from_diagonal(scale);
+        let (_, rotation, origin) = transform.matrix.to_scale_rotation_translation();
+        // No scale, because the field has none: its space is rigid, so
+        // `half_extents` and `falloff` are already metres.
+        let basis = Mat3::from_quat(rotation);
         let half = field.half_extents.abs();
 
         gizmos.wire_obb(origin, basis, half, FIELD);
