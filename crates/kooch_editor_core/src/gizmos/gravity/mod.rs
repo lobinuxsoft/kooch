@@ -18,11 +18,13 @@
 mod area;
 mod box_field;
 mod global;
+mod plane;
 mod point;
 
 pub(crate) use area::AreaGravityVisualizer;
 pub(crate) use box_field::BoxGravityVisualizer;
 pub(crate) use global::GlobalGravityVisualizer;
+pub(crate) use plane::PlaneGravityVisualizer;
 pub(crate) use point::PointGravityVisualizer;
 
 use glam::Vec3;

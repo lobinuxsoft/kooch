@@ -180,7 +180,8 @@ pub mod prelude {
     // from the solver ends up disagreeing about where the floor is.
     #[cfg(feature = "gravity")]
     pub use kooch_gravity::{
-        AreaGravity, BoxGravity, GlobalGravity, GravityPlugin, PointGravity, gravity_at, gravity_up,
+        AreaGravity, BoxGravity, GlobalGravity, GravityPlugin, GravityPriority, PlaneGravity,
+        PointGravity, gravity_at, gravity_dominant, gravity_up,
     };
 
     // The mode constants come along: without them `VirtualCamera` cannot

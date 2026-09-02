@@ -18,7 +18,9 @@ use kooch_ecs::dynamic_components::DynamicComponents;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::query::AccessTracker;
 use kooch_ecs::transform::Transform;
-use kooch_gravity::{AreaGravity, BoxGravity, GlobalGravity, PointGravity, plugin};
+use kooch_gravity::{
+    AreaGravity, BoxGravity, GlobalGravity, GravityPriority, PlaneGravity, PointGravity, plugin,
+};
 use kooch_physics::components::{Collider, KIND_STATIC, PhysicsBody, SHAPE_CUBOID};
 use kooch_physics::plugin::{
     PhysicsWorld, physics_step_system, physics_sync_system, physics_writeback_system,
@@ -45,6 +47,8 @@ fn world() -> Resources {
     registry.register_cpu_reflected::<PointGravity>();
     registry.register_cpu_reflected::<AreaGravity>();
     registry.register_cpu_reflected::<BoxGravity>();
+    registry.register_cpu_reflected::<PlaneGravity>();
+    registry.register_cpu_reflected::<GravityPriority>();
     r
 }
 
@@ -555,5 +559,153 @@ fn a_moved_source_wakes_what_it_pulls_on() {
     assert!(
         !sleeping(&resources),
         "the field changed and the settled crate slept through it",
+    );
+}
+
+/// Acceptance for #47: a floor is unbounded across itself, so walking far
+/// enough sideways does not walk out of its gravity. An area with large
+/// half-extents is the workaround this replaces, and it has an edge.
+#[test]
+fn a_plane_catches_a_body_far_aside() {
+    let mut resources = world();
+    Playing::set(&mut resources, true);
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        PlaneGravity::default(),
+    );
+    let body = body_at(&mut resources, Vec3::new(4000.0, 20.0, -4000.0));
+
+    simulate(&mut resources, 30);
+
+    let moved = position(&resources, body);
+    assert!(moved.y < 19.0, "should have fallen: {moved}");
+    assert!(
+        (moved.x - 4000.0).abs() < 1e-2 && (moved.z + 4000.0).abs() < 1e-2,
+        "a plane pulls along its normal only: {moved}",
+    );
+}
+
+/// Acceptance for #47: one-sided. A body under the plane is not dragged
+/// back up into it.
+#[test]
+fn a_plane_ignores_what_is_under_it() {
+    let mut resources = world();
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        PlaneGravity::default(),
+    );
+    assert_eq!(
+        plugin::gravity_at(&resources, Vec3::new(0.0, -1.0, 0.0)),
+        Vec3::ZERO,
+    );
+}
+
+/// Acceptance for #48: a room with its own down overrules the planet
+/// under it, instead of summing into a diagonal nobody authored.
+#[test]
+fn a_priority_zone_overrules_the_planet() {
+    let mut resources = world();
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        GlobalGravity::default(),
+    );
+    let room = source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        AreaGravity {
+            direction: Vec3::X,
+            ..Default::default()
+        },
+    );
+    insert(&mut resources, room, GravityPriority { level: 1 });
+
+    let inside = plugin::gravity_at(&resources, Vec3::ZERO);
+    assert!(
+        (inside - Vec3::new(9.81, 0.0, 0.0)).length() < 1e-3,
+        "the planet should be gone inside the room: {inside}",
+    );
+}
+
+/// Acceptance for #48: the override is proportional to the zone's own
+/// reach, so a body crossing the boundary is not snapped.
+#[test]
+fn suppression_fades_with_the_zone() {
+    let mut resources = world();
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        GlobalGravity::default(),
+    );
+    let room = source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        AreaGravity {
+            direction: Vec3::X,
+            half_extents: Vec3::splat(5.0),
+            falloff: 10.0,
+            ..Default::default()
+        },
+    );
+    insert(&mut resources, room, GravityPriority { level: 1 });
+
+    // Five metres outside a ten-metre fade: the room is at half strength,
+    // so half the planet is back.
+    let edge = plugin::gravity_at(&resources, Vec3::new(10.0, 0.0, 0.0));
+    assert!(
+        (edge - Vec3::new(4.905, -4.905, 0.0)).length() < 1e-3,
+        "half the room and half the planet: {edge}",
+    );
+}
+
+/// Equal levels sum, exactly as they did before priorities existed.
+#[test]
+fn equal_levels_still_sum() {
+    let mut resources = world();
+    for _ in 0..2 {
+        let source = source_at(
+            &mut resources,
+            Transform::from_position(Vec3::ZERO),
+            GlobalGravity::default(),
+        );
+        insert(&mut resources, source, GravityPriority { level: 3 });
+    }
+    let total = plugin::gravity_at(&resources, Vec3::ZERO);
+    assert!((total.y + 19.62).abs() < 1e-3, "{total}");
+}
+
+/// Acceptance for #48: "dominant gravity" for orientation. The sum points
+/// between two planets, which is correct and reads as a character standing
+/// at a slant; the dominant one snaps to whichever is winning.
+#[test]
+fn the_dominant_source_ignores_the_weaker() {
+    let mut resources = world();
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        PointGravity::default(),
+    );
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::new(50.0, 50.0, 0.0)),
+        PointGravity {
+            strength: 3.0,
+            ..Default::default()
+        },
+    );
+    let point = Vec3::new(0.0, 50.0, 0.0);
+
+    let summed = plugin::gravity_up(&resources, point);
+    assert!(
+        summed.x.abs() > 0.1,
+        "the sum leans towards the second: {summed}"
+    );
+
+    let dominant = plugin::gravity_dominant(&resources, point);
+    assert!(
+        (dominant - Vec3::Y).length() < 1e-3,
+        "up is away from the stronger planet: {dominant}",
     );
 }
