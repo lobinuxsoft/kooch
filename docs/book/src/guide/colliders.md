@@ -23,19 +23,27 @@ exact, has correct inertia, and costs the narrowphase almost nothing.
 | Cylinder (rounded rim) | + `border_radius` | The same, where the rim keeps snagging on box edges. |
 | Cone | `radius`, `half_height` | Spikes, funnels. |
 | Half-space | `normal` | An infinite ground plane. |
-| Segment, Triangle | `point_a`…`point_c` | Degenerate, and occasionally exactly right — a rail, a single ramp face. |
 
 **The ones built from a mesh.** These name a mesh asset and the engine
 resolves it; they cannot be typed in.
 
-| Shape | Needs | For |
+| Shape | What you get | For |
 |---|---|---|
-| Convex hull | vertices | A dynamic prop whose visual mesh is too heavy. The standard answer. |
-| Convex decomposition | triangles | A concave prop where a single hull would fill in the gap the design relies on. Expensive to build. |
-| Triangle mesh | triangles | Static level geometry. **Wrong for anything dynamic** — see below. |
-| Polyline | vertices | A wire, a rail, a boundary. No volume. |
-| Voxels | vertices | The cells the mesh's vertices land in. |
-| Voxelised mesh | triangles | The mesh rasterised into cells at `voxel_size`. Collides against the cells directly, so it has no seam ghost-collisions. |
+| **Convex — one hull** | The mesh shrink-wrapped. Hollows fill in. | A dynamic prop whose visual mesh is too heavy. **The answer nine times out of ten.** |
+| **Convex — several pieces** | Convex parts that together keep the hollows. | A concave prop where one hull would fill in the gap the design relies on. Expensive to derive — bake it. |
+| **Complex — exact, static only** | The triangles themselves. | Static level geometry. **Wrong for anything dynamic** — see below. |
+
+### What is not in the list
+
+`Segment`, `Triangle`, `Polyline`, `Voxels` and `Voxelised mesh` build,
+collide and are tested, and none of them answers a question an author
+actually has — offering them made the dropdown a quiz.
+
+They keep their discriminants and lose their labels, the same treatment
+`Heightfield` has: **a scene authored with one still loads, still
+resolves, and still shows its fields.** Nothing new picks one up by
+accident. They come back the day something needs them — the voxel shapes
+when terraforming does.
 
 ### The half-space is the floor you want
 

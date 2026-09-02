@@ -47,8 +47,26 @@ pub const SHAPE_VOXELIZED_MESH: u32 = 14;
 
 /// Labels for the `shape` dropdown in the Inspector.
 ///
-/// Ordered by what an author reaches for, not by discriminant: the
-/// primitives first, then the ones that need a mesh behind them.
+/// # Fewer entries than there are shapes
+///
+/// A discriminant is permanent — a scene stores the number — but a
+/// *label* is only a claim that something is worth reaching for.
+/// `Segment`, `Triangle`, `Polyline`, `Voxels` and `VoxelizedMesh` build,
+/// collide and are tested, and none of them is the answer to a question
+/// an author actually has. Offering them made the list a quiz.
+///
+/// So they keep their numbers and lose their labels, the same treatment
+/// `Heightfield` already had: a scene authored with one still loads,
+/// still resolves and still shows its fields, and nothing new picks one
+/// up by accident.
+///
+/// # Why these words
+///
+/// The vocabulary a developer arriving from Unity or Unreal already has.
+/// "Convex" and "complex" are what both call the same two things, and
+/// the trade is in the label rather than in a tooltip nobody opens: one
+/// hull is cheap and fills hollows, several keep them, and the exact
+/// mesh has no volume so it cannot move.
 pub static SHAPE_CHOICES: &[FieldChoice] = &[
     FieldChoice {
         label: "Sphere",
@@ -79,40 +97,24 @@ pub static SHAPE_CHOICES: &[FieldChoice] = &[
         value: SHAPE_HALF_SPACE as i64,
     },
     FieldChoice {
-        label: "Segment",
-        value: SHAPE_SEGMENT as i64,
-    },
-    FieldChoice {
-        label: "Triangle",
-        value: SHAPE_TRIANGLE as i64,
-    },
-    FieldChoice {
-        label: "Convex hull (from mesh)",
+        label: "Convex — one hull",
         value: SHAPE_CONVEX_HULL as i64,
     },
     FieldChoice {
-        label: "Convex decomposition (from mesh)",
+        label: "Convex — several pieces",
         value: SHAPE_CONVEX_DECOMPOSITION as i64,
     },
     FieldChoice {
-        label: "Triangle mesh (static only)",
+        label: "Complex — exact, static only",
         value: SHAPE_TRIMESH as i64,
-    },
-    FieldChoice {
-        label: "Polyline (from mesh)",
-        value: SHAPE_POLYLINE as i64,
-    },
-    FieldChoice {
-        label: "Voxels (mesh vertices)",
-        value: SHAPE_VOXELS as i64,
-    },
-    FieldChoice {
-        label: "Voxelised mesh",
-        value: SHAPE_VOXELIZED_MESH as i64,
     },
 ];
 
 /// The shapes built from a mesh asset rather than from typed numbers.
+///
+/// Wider than [`SHAPE_CHOICES`]: the shapes that lost their label still
+/// need their mesh resolved, or a scene authored with one loads a
+/// collider that never appears.
 ///
 /// One list, used by both the Inspector condition and
 /// [`ShapeSpec`](super::ShapeSpec) — a second copy is a copy that goes
@@ -169,6 +171,10 @@ pub static NORMAL_WHEN: FieldCondition = FieldCondition {
 };
 
 /// Which shapes read `point_a` and `point_b`.
+///
+/// Unreachable from the dropdown now, and kept so a scene that already
+/// holds a segment stays editable rather than showing a shape whose
+/// numbers are hidden.
 pub static ENDPOINTS_WHEN: FieldCondition = FieldCondition {
     field: "shape",
     values: &[SHAPE_SEGMENT as i64, SHAPE_TRIANGLE as i64],

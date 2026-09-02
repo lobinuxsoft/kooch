@@ -242,13 +242,17 @@ fn a_flat_hull_leaves_no_collider() {
 /// Every shape a scene can hold has to survive being written and read
 /// back, mesh-derived ones included — the GUID is the only thing standing
 /// in for geometry that cannot be typed.
+///
+/// Every *discriminant*, not every dropdown entry: five shapes lost their
+/// label and kept their number, and a scene authored with one before that
+/// still has to load.
 #[test]
 fn every_shape_round_trips_through_a_scene() {
-    use crate::components::SHAPE_CHOICES;
+    use crate::components::SHAPE_VOXELIZED_MESH;
 
-    for choice in SHAPE_CHOICES {
+    for shape in 0..=SHAPE_VOXELIZED_MESH {
         let collider = Collider {
-            shape: choice.value as u32,
+            shape,
             mesh: Some(kooch_core::Guid::new_v4()),
             ..Default::default()
         };
@@ -256,8 +260,61 @@ fn every_shape_round_trips_through_a_scene() {
         assert_eq!(
             restored.shape_spec(None),
             collider.shape_spec(None),
-            "{} lost geometry across a save",
+            "shape {shape} lost geometry across a save",
+        );
+    }
+}
+
+/// A dropdown entry that resolves to nothing is a shape an author can
+/// pick and then watch do nothing.
+#[test]
+fn every_offered_shape_resolves() {
+    use crate::backend::{ColliderMesh, ColliderMeshCache, ConvexPart};
+    use crate::components::SHAPE_CHOICES;
+
+    let guid = kooch_core::Guid::new_v4();
+    let mut cache = ColliderMeshCache::new();
+    cache.insert(
+        guid,
+        ColliderMesh {
+            parts: vec![ConvexPart::loose(unit_cube().vertices.clone())],
+            ..unit_cube()
+        },
+    );
+
+    for choice in SHAPE_CHOICES {
+        let collider = Collider {
+            shape: choice.value as u32,
+            mesh: Some(guid),
+            ..Default::default()
+        };
+        assert!(
+            collider.collision_shape(Some(&cache)).is_some(),
+            "{} resolves to nothing",
             choice.label,
+        );
+    }
+}
+
+/// The labels are what an author reads; two the same is a menu nobody can
+/// use, and a stale one outliving its shape is worse.
+#[test]
+fn the_labels_are_distinct() {
+    use crate::components::SHAPE_CHOICES;
+
+    let mut labels = std::collections::HashSet::new();
+    let mut values = std::collections::HashSet::new();
+    for choice in SHAPE_CHOICES {
+        assert!(
+            labels.insert(choice.label),
+            "{} is listed twice",
+            choice.label
+        );
+        assert!(
+            values.insert(choice.value),
+            "{} and something else share value {}",
+            choice.label,
+            choice.value,
         );
     }
 }

@@ -137,7 +137,7 @@ them, the remote protocol mirrored them — and no render crate read one.
 | Compound bodies | `plugin/compound.rs` | connected | A descendant `Collider` with no body of its own joins the nearest ancestor that has one, at its own local pose. A dynamic body under another warns. |
 | Baked collision meshes | `kooch_editor_core/actions/handlers/collider.rs` | connected | "Create hull mesh" / "Create convex parts" in a mesh asset's Inspector. Writes into the open project, records the source GUID + a byte hash, and says so when the source has moved on. |
 | Collision mesh loading | `kooch::collider_meshes` | connected | Parses the `.glb` directly. Going through `MeshletMesh` built a LOD chain — 2.9 s on a 76k mesh, measured in debug — and decoded it straight back to triangles. |
-| `Heightfield` | `backend/shape.rs` | **invisible** | Builds and collides, and has no Inspector path: a height grid cannot be typed and there is no terrain asset to read one from. Reachable from code today. |
+| `Heightfield`, `Segment`, `Triangle`, `Polyline`, `Voxels`, `VoxelizedMesh` | `backend/shape.rs` | **invisible, deliberately** | Build, collide and are tested; none is in the dropdown. A height grid cannot be typed and there is no terrain asset to read one from; the other five are answers to questions no author has, and listing them made the menu a quiz. Discriminants kept, so a scene authored with one still loads. |
 | Collider gizmo | `kooch_editor_core/gizmos/collider.rs` | connected, partial | Draws every analytic shape at its effective size. Mesh-derived shapes draw nothing — a `Visualizer` gets a component, not `Resources`, so it cannot reach the cache. #574. |
 
 ## Camera — `kooch_camera`
