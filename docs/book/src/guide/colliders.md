@@ -78,6 +78,9 @@ buttons:
 - **Create hull mesh** — one convex hull.
 - **Create convex parts** — a convex decomposition, for a concave prop
   where a single hull would fill in the gap the design relies on.
+- **Create simplified mesh** — the same triangles, decimated to the
+  budget. For static level geometry too heavy to collide against as it
+  is. Needs a budget: without one it writes the same triangles back out.
 
 Both write a `.glb` into `<project>/assets/collision/`, and both appear
 in the same picker `Collider.mesh` uses. Point the collider at the result
@@ -105,6 +108,22 @@ will find.
 
 387 points is roughly 770 planes. For a dynamic prop that is a lot; other
 engines cap around 255 vertices for the same reason.
+
+### The simplified mesh is the one that can be wrong
+
+A hull only ever *encloses* more than it was given, so a budget makes it
+coarser and never makes it miss. Decimation is different: collapsing an
+edge **moves the surface**, and a floor that drifted down by a centimetre
+is a floor a character sinks into.
+
+The console says how far it moved, in mesh units:
+
+```
+simplified collision mesh; the deviation is how far the surface moved
+  from=91211 to=2000 deviation=0.043
+```
+
+That number is the reason to look at the result rather than trust it.
 
 ### A bake remembers where it came from
 

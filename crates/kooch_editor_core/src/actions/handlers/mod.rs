@@ -154,10 +154,10 @@ pub(super) fn apply_non_ecs_action(
         }
         EditorAction::BakeCollider {
             source,
-            concave,
+            kind,
             max_faces,
         } => {
-            collider::handle_bake_collider(resources, *source, *concave, *max_faces);
+            collider::handle_bake_collider(resources, *source, *kind, *max_faces);
         }
         EditorAction::SetImageImport { guid, import } => {
             handle_set_image_import(resources, *guid, *import);

@@ -51,6 +51,13 @@ use kooch_render::mesh::{parse_mesh_bytes_full, parse_mesh_parts};
 pub const COLLISION_KEY: &str = "collision";
 pub const COLLISION_PARTS: &str = "parts";
 pub const COLLISION_HULL: &str = "hull";
+/// A decimated copy of the source's triangles.
+///
+/// 🔴 Deliberately **not** one of the values that earns the trusted-faces
+/// path. A simplified mesh is still a mesh — concave, open, whatever the
+/// source was — and handing rapier its triangles as a convex polyhedron
+/// would be a shape with no relation to what anyone authored.
+pub const COLLISION_MESH: &str = "mesh";
 
 /// Resolves the meshes mesh-derived colliders name.
 pub struct ColliderMeshPlugin;
@@ -291,6 +298,8 @@ fn baked_kind(path: &Path) -> Option<&'static str> {
     match value.as_str() {
         COLLISION_PARTS => Some(COLLISION_PARTS),
         COLLISION_HULL => Some(COLLISION_HULL),
+        // `COLLISION_MESH` lands here with everything else: it is an
+        // ordinary triangle mesh and takes the ordinary path.
         _ => None,
     }
 }

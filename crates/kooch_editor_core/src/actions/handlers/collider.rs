@@ -34,6 +34,7 @@ use kooch_render::mesh::{
     Mesh, SimplifyTarget, parse_mesh_bytes_full, simplify, to_glb, to_glb_parts,
 };
 
+use crate::actions::BakeKind;
 use crate::project_state::ProjectState;
 
 /// Where baked colliders land, under the project's asset root.
@@ -52,15 +53,20 @@ const KEY_HASH: &str = "source_hash";
 
 /// Builds a collision mesh beside the project's assets.
 ///
-/// `concave` picks the decomposition over the single hull. `max_faces`
-/// caps each piece; zero means the exact hull, which is what qhull
-/// already reduces to and is correct if dearer.
+/// `max_faces` caps each convex piece; zero means the exact hull, which
+/// is what qhull already reduces to and is correct if dearer. For
+/// [`BakeKind::Mesh`] a budget is the entire operation, so zero is a
+/// refusal rather than a copy.
 pub(super) fn handle_bake_collider(
     resources: &mut Resources,
     source: Guid,
-    concave: bool,
+    kind: BakeKind,
     max_faces: u32,
 ) {
+    if kind == BakeKind::Mesh && max_faces == 0 {
+        tracing::warn!("Create simplified mesh: set a face budget, or the result is a copy");
+        return;
+    }
     let Some(out_dir) = project_collision_dir(resources) else {
         tracing::warn!(
             "Create collision mesh: no project is open, so there is nowhere to write it"
@@ -89,13 +95,18 @@ pub(super) fn handle_bake_collider(
         .map(|tri| [tri[0], tri[1], tri[2]])
         .collect();
 
-    let pieces = match concave {
-        true => decompose(&positions, &triangles),
-        false => vec![positions],
+    let parts: Vec<Mesh> = match kind {
+        // Not hulled at all: the triangles are the product, decimated.
+        BakeKind::Mesh => vec![decimate(&mesh, max_faces, source)],
+        BakeKind::Parts => decompose(&positions, &triangles)
+            .iter()
+            .filter_map(|points| hull_mesh(points, max_faces))
+            .collect(),
+        BakeKind::Hull => hull_mesh(&positions, max_faces).into_iter().collect(),
     };
-    let parts: Vec<Mesh> = pieces
-        .iter()
-        .filter_map(|points| hull_mesh(points, max_faces))
+    let parts: Vec<Mesh> = parts
+        .into_iter()
+        .filter(|m| !m.indices.is_empty())
         .collect();
     if parts.is_empty() {
         tracing::warn!(
@@ -105,10 +116,7 @@ pub(super) fn handle_bake_collider(
         return;
     }
 
-    let suffix = match concave {
-        true => "parts",
-        false => "hull",
-    };
+    let suffix = kind.tag();
     let stem = source_path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -153,6 +161,24 @@ pub(super) fn handle_bake_collider(
         pieces = parts.len(),
         "collision mesh written; point the collider's mesh at it",
     );
+}
+
+/// The mesh's own triangles, decimated to a budget.
+///
+/// Reports how far the surface moved, in mesh units. That number is the
+/// one thing that makes this bake reviewable: a floor that drifted down
+/// by a centimetre is a floor a character sinks into, and nothing else
+/// would say so.
+fn decimate(mesh: &Mesh, max_faces: u32, source: Guid) -> Mesh {
+    let (smaller, error) = simplify(mesh, SimplifyTarget::Triangles(max_faces));
+    tracing::info!(
+        guid = %source,
+        from = mesh.indices.len() / 3,
+        to = smaller.indices.len() / 3,
+        deviation = error,
+        "simplified collision mesh; the deviation is how far the surface moved",
+    );
+    smaller
 }
 
 /// The convex hull of a point cloud, as a mesh, optionally decimated.

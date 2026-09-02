@@ -96,3 +96,34 @@ fn rebaking_keeps_the_guid() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A decimated mesh is the one bake that keeps the source's topology
+/// rather than replacing it with a hull, so it has to actually shrink.
+#[test]
+fn decimation_removes_triangles() {
+    let points = sphere_points();
+    let (hull, faces) = hull_of(&points).expect("has volume");
+    let mesh = Mesh::from_triangles(&hull, &faces);
+
+    let smaller = decimate(&mesh, 64, Guid::new_v4());
+    assert!(
+        smaller.indices.len() < mesh.indices.len(),
+        "{} faces did not come down from {}",
+        smaller.indices.len() / 3,
+        mesh.indices.len() / 3,
+    );
+    assert!(!smaller.indices.is_empty(), "it decimated to nothing");
+}
+
+/// Unlike a hull, this bake can move the surface — so the caller is told
+/// how far, and a target it cannot reach is the mesh unchanged rather
+/// than an error.
+#[test]
+fn an_unreachable_target_returns_the_mesh() {
+    let corners: Vec<Vec3> = (0..8)
+        .map(|i| Vec3::new((i & 1) as f32, ((i >> 1) & 1) as f32, ((i >> 2) & 1) as f32))
+        .collect();
+    let mesh = hull_mesh(&corners, 0).expect("a cube has volume");
+    let same = decimate(&mesh, 100_000, Guid::new_v4());
+    assert_eq!(same.indices.len(), mesh.indices.len());
+}

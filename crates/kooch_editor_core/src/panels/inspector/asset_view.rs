@@ -21,7 +21,7 @@ use kooch_render::material::Material;
 
 use super::prefab_view;
 use super::{AssetCatalogEntry, draw_asset_picker};
-use crate::actions::EditorAction;
+use crate::actions::{BakeKind, EditorAction};
 
 /// Canonical asset type name the texture pickers filter by.
 const IMAGE_TYPE: &str = "kooch_render::texture::asset::Image";
@@ -425,32 +425,49 @@ fn draw_collider_bake(ui: &mut egui::Ui, guid: Guid, actions: &mut Vec<EditorAct
     ui.weak("Collision mesh");
     let max_faces = ui.data_mut(|d| *d.get_temp_mut_or(BAKE_FACES_ID.with(guid), 0u32));
 
+    let mut bake = |ui: &mut egui::Ui, kind: BakeKind, label: &str, hint: &str, enabled: bool| {
+        if ui
+            .add_enabled(enabled, egui::Button::new(label))
+            .on_hover_text(hint)
+            .on_disabled_hover_text("Set a face budget below, or the result is a copy")
+            .clicked()
+        {
+            actions.push(EditorAction::BakeCollider {
+                source: guid,
+                kind,
+                max_faces,
+            });
+        }
+    };
+
     ui.horizontal(|ui| {
-        if ui
-            .button("Create hull mesh")
-            .on_hover_text("One convex hull, written to assets/collision in this project")
-            .clicked()
-        {
-            actions.push(EditorAction::BakeCollider {
-                source: guid,
-                concave: false,
-                max_faces,
-            });
-        }
-        if ui
-            .button("Create convex parts")
-            .on_hover_text(
-                "Decomposes a concave mesh into convex pieces. Slow — seconds — which is \
-                 exactly why the result is a file",
-            )
-            .clicked()
-        {
-            actions.push(EditorAction::BakeCollider {
-                source: guid,
-                concave: true,
-                max_faces,
-            });
-        }
+        bake(
+            ui,
+            BakeKind::Hull,
+            "Create hull mesh",
+            "One convex hull, written to assets/collision in this project",
+            true,
+        );
+        bake(
+            ui,
+            BakeKind::Parts,
+            "Create convex parts",
+            "Decomposes a concave mesh into convex pieces. Slow — seconds — which is \
+             exactly why the result is a file",
+            true,
+        );
+    });
+    ui.horizontal(|ui| {
+        // Needs a budget by construction: decimating to "no limit" writes
+        // the same triangles back out under a new GUID.
+        bake(
+            ui,
+            BakeKind::Mesh,
+            "Create simplified mesh",
+            "The same triangles, decimated to the budget. For static level \
+             geometry — and the only bake that MOVES the surface, so check it",
+            max_faces > 0,
+        );
     });
 
     ui.horizontal(|ui| {
@@ -458,7 +475,7 @@ fn draw_collider_bake(ui: &mut egui::Ui, guid: Guid, actions: &mut Vec<EditorAct
         ui.add(
             egui::DragValue::new(&mut faces)
                 .speed(4.0)
-                .range(0..=4096)
+                .range(0..=65536)
                 .prefix("max faces: "),
         )
         .on_hover_text("0 keeps the exact hull. A budget simplifies, then re-hulls to stay convex");
