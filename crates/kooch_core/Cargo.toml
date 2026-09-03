@@ -68,3 +68,6 @@ cpu-profiler = ["dep:puffin"]
 # With it on the instance is Vulkan-only, which on Windows moves every
 # player off D3D12, so it is a decision a build makes, not a default.
 dlss = ["dep:dlss_wgpu"]
+
+[dev-dependencies]
+libloading.workspace = true
