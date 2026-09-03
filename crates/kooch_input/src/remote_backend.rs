@@ -390,3 +390,6 @@ impl InputBackend for RemoteInputBackend {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod repeat_tests;
