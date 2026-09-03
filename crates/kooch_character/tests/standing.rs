@@ -462,3 +462,72 @@ fn it_pushes_a_crate_and_is_pushed_back() {
         "and the character should still be on the floor",
     );
 }
+
+/// Walks the character at `entity` along +X for `steps` frames, at a
+/// walking pace, and reports the highest it ever got.
+fn walk(resources: &mut Resources, entity: Entity, steps: u32) -> f32 {
+    let mut highest = f32::MIN;
+    for _ in 0..steps {
+        let body = resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<kooch_physics::plugin::SolverBody>())
+            .and_then(|s| s.get(entity))
+            .copied();
+        if let Some(body) = body
+            && let Some(world) = resources.get_mut::<PhysicsWorld>()
+        {
+            let speed = world.linear_velocity(body).unwrap_or(Vec3::ZERO).x;
+            if speed < 3.0 {
+                world.apply_impulse(body, Vec3::X * 0.05);
+            }
+        }
+        simulate(resources, 1);
+        highest = highest.max(position(resources, entity).y);
+    }
+    highest
+}
+
+/// How far up a riser of `height` the character gets, in metres.
+fn onto_a_step(height: f32) -> f32 {
+    let mut resources = world();
+    Playing::set(&mut resources, true);
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        GlobalGravity::default(),
+    );
+    floor(
+        &mut resources,
+        Vec3::new(0.0, -1.0, 0.0),
+        Vec3::new(4.0, 0.5, 6.0),
+    );
+    // Long enough that reaching the top is the only way past it.
+    floor(
+        &mut resources,
+        Vec3::new(10.0, height - 2.5, 0.0),
+        Vec3::new(6.0, 2.0, 6.0),
+    );
+    let hero = character(&mut resources, Vec3::new(0.0, 0.5, 0.0));
+    simulate(&mut resources, 180);
+    let start = position(&resources, hero).y;
+    walk(&mut resources, hero, 300) - start
+}
+
+/// The headline claim: a step is climbed by the spring alone, with
+/// nothing in the code that knows what a step is.
+#[test]
+fn a_low_step_is_climbed() {
+    let rose = onto_a_step(0.6);
+    assert!(rose > 0.55, "should have got up a 0.6 m step, rose {rose}");
+}
+
+/// And the other half — the same mechanism has to refuse a wall, or
+/// "climbs steps" means "walks through the level".
+#[test]
+fn a_tall_step_is_not() {
+    let rose = onto_a_step(1.0);
+    assert!(
+        rose < 0.2,
+        "should have been stopped by a 1 m wall, rose {rose}"
+    );
+}
