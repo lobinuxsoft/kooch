@@ -329,7 +329,7 @@ pub(crate) enum EditorAction {
     /// Rebuild the project and reconnect to the fresh binary. The only
     /// way to pick up code added since the session started — Rust is
     /// compiled ahead of time — and the way back from a dead session.
-    RebuildRemote,
+    RebuildAndRun,
     CreateProject {
         name: String,
         parent_path: PathBuf,
@@ -661,7 +661,7 @@ impl EditorAction {
             Self::BuildProject(_)
             | Self::CancelBuild
             | Self::OpenProject(_)
-            | Self::RebuildRemote
+            | Self::RebuildAndRun
             | Self::CreateProject { .. }
             | Self::CloseProject
             | Self::LaunchProject(_)
@@ -805,7 +805,7 @@ impl EditorAction {
             | Self::BuildProject(_)
             | Self::CancelBuild
             | Self::OpenProject(_)
-            | Self::RebuildRemote
+            | Self::RebuildAndRun
             | Self::CreateProject { .. }
             | Self::CloseProject
             | Self::LaunchProject(_)

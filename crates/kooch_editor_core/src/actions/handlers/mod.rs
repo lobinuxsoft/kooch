@@ -123,7 +123,7 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::Play => handle_play(resources),
         EditorAction::Stop => handle_stop(resources),
         EditorAction::OpenProject(path) => handle_open_project(resources, path),
-        EditorAction::RebuildRemote => handle_rebuild_remote(resources),
+        EditorAction::RebuildAndRun => handle_rebuild_and_run(resources),
         EditorAction::CreateProject { name, parent_path } => {
             handle_create_project(resources, name, parent_path);
         }
@@ -220,7 +220,7 @@ use project::{
     handle_clean_project, handle_close_project, handle_create_project, handle_launch_project,
     handle_open_project, handle_remove_recent,
 };
-use remote::handle_rebuild_remote;
+use remote::handle_rebuild_and_run;
 use scene::{
     handle_close_scene, handle_open_scene, handle_open_scene_additive, handle_revert_open_scene,
     handle_save_open_scene, handle_save_scene, handle_set_active_scene,

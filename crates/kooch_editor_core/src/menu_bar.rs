@@ -354,16 +354,23 @@ fn draw_remote_status(
     if ui
         .add_enabled(
             remote != ConnectionState::Connecting,
-            egui::Button::new(icons::ARROWS_CLOCKWISE),
+            // 🔴 Labelled, and not with the sync glyph. This drew
+            // `ARROWS_CLOCKWISE` with no text, directly beside a Code
+            // Sync that draws the same glyph WITH text — two buttons
+            // that look like the same button, doing unrelated jobs. One
+            // rewrites a generated file; this one recompiles the project
+            // and restarts it.
+            egui::Button::new(format!("{} Rebuild & Run", icons::PACKAGE)),
         )
         .on_hover_text(
-            "Rebuild & Relaunch — recompiles the project and reconnects. \
-             Needed to pick up code added since it started, and the way \
-             back from a project that exited.",
+            "Recompiles the project and restarts it. This is what picks up a \
+             changed system body, and the way back from a project that exited.\n\n\
+             Not Code Sync, which only rewrites the generated registrations and \
+             compiles nothing.",
         )
         .clicked()
     {
-        actions.push(EditorAction::RebuildRemote);
+        actions.push(EditorAction::RebuildAndRun);
     }
     ui.label(egui::RichText::new(format!("{icon} {text}")).color(color))
         .on_hover_text(hover);
