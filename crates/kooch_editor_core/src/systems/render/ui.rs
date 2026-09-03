@@ -80,6 +80,7 @@ pub(super) fn run_editor_ui(
     project_state: &mut Option<ProjectState>,
     dlss: &mut crate::dlss_sdk::SdkInstall,
     preflight: Option<&crate::preflight::Report>,
+    installing: Option<&crate::install::Progress>,
     raw_input: egui::RawInput,
     project_loaded: bool,
     data: &FrameDisplayData,
@@ -196,6 +197,7 @@ pub(super) fn run_editor_ui(
                     ui.ctx(),
                     report,
                     toolbar.install_blocked.as_ref(),
+                    installing,
                     &mut actions,
                 );
             }

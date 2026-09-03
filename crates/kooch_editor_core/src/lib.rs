@@ -210,6 +210,11 @@ impl Plugin for EditorPlugin {
         // says the build fell behind, this says it caught up. Reloading
         // first would clear a notice the same frame that raised it.
         app.add_system(Stage::PreUpdate, code_reload::reload_code_system);
+        // Idle until something starts an install. It exists because the
+        // first version blocked the frame on `rpm-ostree`, which writes
+        // an image and takes minutes — the editor froze with nothing on
+        // screen and was reported as doing nothing.
+        app.add_system(Stage::PreUpdate, install::poll_install_system);
         // Remote mode: advance the handshake and pull the project's
         // world into the local mirror. PreUpdate so the panels and the
         // viewport see a snapshot that is at most one frame stale.

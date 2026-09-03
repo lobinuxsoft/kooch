@@ -479,6 +479,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // Read before the UI borrows nothing else from `resources`: the
     // report is inserted once at startup and never changes.
     let preflight = resources.get::<crate::preflight::Report>().cloned();
+    let installing = resources
+        .get::<crate::install::Installing>()
+        .map(crate::install::Installing::progress);
 
     let ui_start = std::time::Instant::now();
     let (full_output, mut actions) = run_editor_ui(
@@ -486,6 +489,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &mut project_state,
         &mut dlss,
         preflight.as_ref(),
+        installing.as_ref(),
         raw_input,
         project_loaded,
         &display_data,
