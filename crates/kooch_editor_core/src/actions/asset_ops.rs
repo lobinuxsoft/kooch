@@ -107,7 +107,10 @@ fn create_file(resources: &mut Resources, folder: &Path, name: &str, kind: NewFi
                 kooch_input::actions::ControlType::Button,
             );
             match kooch_input::actions::save_action(&action, &file) {
-                Ok(guid) => tracing::info!(file = %file.display(), %guid, "input action created"),
+                Ok(guid) => {
+                    tracing::debug!(file = %file.display(), %guid, "input action written");
+                    asset_created(resources, &file, "input action");
+                }
                 Err(e) => {
                     tracing::error!(file = %file.display(), error = %e, "failed to write action")
                 }
@@ -380,15 +383,31 @@ fn create_material(resources: &mut Resources, folder: &Path, name: &str) {
 ///   anything over there.
 fn write_asset(resources: &mut Resources, file: &Path, text: &str, what: &str) {
     match std::fs::write(file, text) {
-        Ok(()) => {
-            tracing::info!(file = %file.display(), "{what} created");
-            force_rescan(resources);
-            crate::actions::handlers::asset_saved(resources, file);
-        }
+        Ok(()) => asset_created(resources, file, what),
         Err(e) => {
             tracing::error!(file = %file.display(), error = %e, "failed to write {what}")
         }
     }
+}
+
+/// The half of [`write_asset`] that is not the write.
+///
+/// 🔴 A file on disk with a `.meta` beside it is **not yet an asset**.
+/// The pickers read `AssetDatabase`, which lives in memory, and the full
+/// scan only re-runs when the active project changes — so a file created
+/// mid-session is authored, saved, and invisible to everything that
+/// would reference it until the project is reopened.
+///
+/// Two calls, because there are two places that do not know:
+/// [`force_rescan`] so the eager import sees it next frame, and
+/// `asset_saved` so **the running project** is told. A kind that writes
+/// itself by some other route — an input action goes through
+/// `save_action` — still has to come back through here. Same lesson as
+/// #759, which fixed render settings and left the path beside it.
+fn asset_created(resources: &mut Resources, file: &Path, what: &str) {
+    tracing::info!(file = %file.display(), "{what} created");
+    force_rescan(resources);
+    crate::actions::handlers::asset_saved(resources, file);
 }
 
 fn rename_asset(resources: &mut Resources, path: &Path, new_name: &str) {
