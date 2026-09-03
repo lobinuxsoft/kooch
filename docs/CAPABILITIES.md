@@ -24,6 +24,9 @@ was found by using the editor, never by reading the code.
 - `Query` — an entire archetype-matching query system — is used by tests
   and one file.
 - `RenderGraph` — 497 lines — is instantiated by nobody.
+- `unload_project_plugins` had **zero callers**, so the editor could load a
+  project's code and never swap it — reopening the project was the only way
+  to see a component change (#733).
 
 The engine **grows faster than it connects**. This file is the counter to
 that: before building something, look here for the thing that already
@@ -214,6 +217,9 @@ mechanics.
 | `asset_saved` | `actions/handlers/prefab.rs` | connected | Every write of an asset goes through it: prefab, material edit, material creation, input action, import, duplicate. Was two prefab-only helpers, which is why the other five did nothing. |
 | Script codegen (module tree) | `actions/codegen/` | connected | Mirrors `src/` folders as a module tree. |
 | Play standalone (`handle_play`) | `play_state.rs` | **orphan** | Launches `cargo run -- --game` in its own process, saves the scene to a temp file, captures stdout into the Console — and only runs when *not* remote, while Open Project is always remote. #720. |
+| `reload_project_plugins` | `project_plugin.rs` | connected | Unload + load as one operation, with the type registry restored when the new library declares nothing. Was two halves that had never run in sequence: `unload_project_plugins` had no callers at all. |
+| `CodeReload` | `code_reload.rs` | connected | Stats the project's `.so` once a second and swaps it when it moves. Polls rather than watches, for the same reason `script_sync` does: inotify drops events on this FUSE mount. |
+| `Reloaded` | `project_plugin/reload.rs` | connected | Names what a swap changed — a lost type, a dropped field, a field that changed kind. The engine breaks data rather than migrating it, which is only safe while breaking is loud. |
 | Register Scripts | `actions/asset_ops.rs` | connected but misplaced | Rescans the whole project, yet the button only exists in the context menu of a `.rs` file — so with no `.rs` left there is no way to regenerate. |
 
 ## What is still disconnected
