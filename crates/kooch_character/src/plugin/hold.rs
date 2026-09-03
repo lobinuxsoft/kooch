@@ -9,13 +9,14 @@ use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::transform::Transform;
 use kooch_gravity::gravity_at;
-use kooch_physics::backend::{CollisionShape, ShapeAt};
 use kooch_physics::plugin::{PhysicsWorld, SolverBody};
 
 use crate::controller::CharacterController;
 use crate::facing::Facing;
 use crate::grounded::Grounded;
+use crate::plugin::sense::{self, Footing};
 use crate::plugin::{turn, walk};
+use crate::touching::Touching;
 use crate::walk::Walk;
 
 /// One character's worth of work, read before the world is borrowed.
@@ -64,9 +65,12 @@ pub fn hold_characters(resources: &mut Resources) {
         return;
     };
     let mut goals = resources.remove::<walk::WalkGoals>().unwrap_or_default();
-    let found: Vec<(Entity, Grounded)> = planned
+    let found: Vec<(Entity, Grounded, Touching)> = planned
         .iter()
-        .map(|plan| (plan.entity, hold_one(&mut world, &mut goals, plan, dt)))
+        .map(|plan| {
+            let (grounded, touching) = hold_one(&mut world, &mut goals, plan, dt);
+            (plan.entity, grounded, touching)
+        })
         .collect();
     resources.insert(world);
     resources.insert(goals);
@@ -74,11 +78,19 @@ pub fn hold_characters(resources: &mut Resources) {
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return;
     };
-    let Some(storage) = registry.get_cpu_mut::<Grounded>() else {
-        return;
-    };
-    for (entity, grounded) in found {
-        storage.insert(entity, grounded);
+    if let Some(storage) = registry.get_cpu_mut::<Grounded>() {
+        for (entity, grounded, _) in &found {
+            storage.insert(*entity, *grounded);
+        }
+    }
+    // Only where one is authored: a character that has no use for walls
+    // should not grow the component by being simulated.
+    if let Some(storage) = registry.get_cpu_mut::<Touching>() {
+        for (entity, _, touching) in &found {
+            if storage.get(*entity).is_some() {
+                storage.insert(*entity, *touching);
+            }
+        }
     }
 }
 
@@ -157,43 +169,66 @@ fn hold_one(
     goals: &mut walk::WalkGoals,
     plan: &Planned,
     dt: f32,
-) -> Grounded {
+) -> (Grounded, Touching) {
     let controller = &plan.controller;
-    let probe = CollisionShape::Sphere {
-        radius: controller
-            .probe_radius
-            .max(kooch_physics::backend::MIN_EXTENT),
-    };
-    // Blind to itself. A downward sweep from a character's own centre
-    // finds the character, every time.
     let filter = world.without(plan.body);
-    let hit = world.sweep(
-        ShapeAt::new(&probe, plan.position),
-        -plan.up,
-        controller.probe.max(0.0),
-        filter,
-    );
-    let standing = hit
-        .map(|hit| controller.stands_on(hit.normal, plan.up))
+    let under = sense::under(world, controller, plan.position, plan.up, filter);
+    let standing = under
+        .as_ref()
+        .map(|under| under.footing.stands())
         .unwrap_or(false);
 
     // Stood on the surface, not on the field. A ramp is something to
     // stand *on*, and a character that walks up one bolt upright reads
-    // as a sprite. Only when it counts as ground: aligning to a wall the
-    // spring is merely pushing off would lay the character on its side.
-    let stand = match (standing, hit) {
-        (true, Some(hit)) => hit.normal.try_normalize().unwrap_or(plan.up),
+    // as a sprite. Only when it counts as ground: aligning to a step's
+    // riser or to a wall would lay the character on its side.
+    let stand = match (standing, under.as_ref()) {
+        (true, Some(under)) => under.normal.try_normalize().unwrap_or(plan.up),
         _ => plan.up,
+    };
+
+    // Where it is steering, or where it is going when nothing is asked:
+    // a body pressed against a wall has almost no velocity into it,
+    // which is exactly when a wall slide needs to know the wall is
+    // there.
+    let velocity = world.linear_velocity(plan.body).unwrap_or(Vec3::ZERO);
+    let along = match plan.facing.length_squared() > 1e-6 {
+        true => plan.facing,
+        false => velocity,
+    };
+    let touching = match sense::ahead(world, controller, plan.position, along, plan.up, filter) {
+        Some((normal, distance)) => Touching {
+            wall: true,
+            normal,
+            distance,
+        },
+        None => Touching::default(),
     };
 
     // Before the turn, because the lean is drawn from it.
     let pushed = walk_one(world, goals, plan, standing, dt);
     turn_one(world, plan, stand, pushed, dt);
 
-    let Some(hit) = hit else {
-        return Grounded::default();
+    let Some(under) = under else {
+        return (Grounded::default(), touching);
     };
-    let gap = (plan.position - hit.point).dot(plan.up);
+    let gap = (plan.position - under.point).dot(plan.up);
+
+    // Too steep to walk, with nothing to arrive at. Holding the body up
+    // here is a character that climbs a cliff: the spring cancels
+    // gravity, so a slope it has already refused to walk carries it to
+    // the top. Reported so an animation can see it, and left to gravity
+    // so it slides back down.
+    if !under.footing.holds() {
+        return (
+            Grounded {
+                standing: false,
+                normal: under.normal,
+                distance: gap,
+            },
+            touching,
+        );
+    }
 
     let velocity = world.linear_velocity(plan.body).unwrap_or(Vec3::ZERO);
     // Measured along the surface, not along the field. Walking up a ramp
@@ -201,16 +236,19 @@ fn hold_one(
     // against the field it reads as most of the walking speed — which
     // is why a character on a slope could not jump: it looked like it
     // was already leaving.
-    let leaving = velocity.dot(hit.normal.normalize_or(plan.up));
+    let leaving = velocity.dot(under.normal.normalize_or(plan.up));
     // Leaving the ground under its own power. The spring would spend the
     // next frames pulling it straight back down, which is a jump that
     // never happens — see `RISING`.
     if leaving > RISING {
-        return Grounded {
-            standing: false,
-            normal: hit.normal,
-            distance: gap,
-        };
+        return (
+            Grounded {
+                standing: false,
+                normal: under.normal,
+                distance: gap,
+            },
+            touching,
+        );
     }
     let speed = velocity.dot(plan.up);
 
@@ -234,11 +272,14 @@ fn hold_one(
         world.apply_impulse(plan.body, plan.up * acceleration * mass * dt);
     }
 
-    Grounded {
-        standing,
-        normal: hit.normal,
-        distance: gap,
-    }
+    (
+        Grounded {
+            standing,
+            normal: under.normal,
+            distance: gap,
+        },
+        touching,
+    )
 }
 
 /// Chases the goal velocity, and reports the acceleration it used.

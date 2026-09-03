@@ -196,7 +196,9 @@ pub mod prelude {
     // controller cannot know where gameplay is steering, so gameplay
     // writes it.
     #[cfg(feature = "character")]
-    pub use kooch_character::{CharacterController, CharacterPlugin, Facing, Grounded, Walk};
+    pub use kooch_character::{
+        CharacterController, CharacterPlugin, Facing, Grounded, Touching, Walk,
+    };
 
     // The mode constants come along: without them `VirtualCamera` cannot
     // be configured from code at all, and `UP_GRAVITY` is what makes a

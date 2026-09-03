@@ -1,6 +1,7 @@
 //! Holding the capsule up, and publishing what it is standing on.
 
 mod hold;
+pub mod sense;
 pub mod turn;
 pub mod walk;
 
@@ -14,6 +15,7 @@ use kooch_ecs::component::ComponentRegistry;
 use crate::controller::CharacterController;
 use crate::facing::Facing;
 use crate::grounded::Grounded;
+use crate::touching::Touching;
 use crate::walk::Walk;
 
 pub use hold::hold_characters;
@@ -34,6 +36,7 @@ impl Plugin for CharacterComponentsPlugin {
                 registry.register_cpu_reflected::<CharacterController>();
                 registry.register_cpu_reflected::<Facing>();
                 registry.register_cpu_reflected::<Grounded>();
+                registry.register_cpu_reflected::<Touching>();
                 registry.register_cpu_reflected::<Walk>();
             }
         });

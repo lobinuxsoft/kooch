@@ -8,7 +8,7 @@
 use glam::Vec3;
 
 use kooch_character::plugin::hold_characters;
-use kooch_character::{CharacterController, Facing, Grounded, Walk};
+use kooch_character::{CharacterController, Facing, Grounded, Touching, Walk};
 use kooch_core::resource::Resources;
 use kooch_core::run_state::Playing;
 use kooch_core::time::Time;
@@ -48,6 +48,7 @@ fn world() -> Resources {
     registry.register_cpu_reflected::<CharacterController>();
     registry.register_cpu_reflected::<Facing>();
     registry.register_cpu_reflected::<Grounded>();
+    registry.register_cpu_reflected::<Touching>();
     registry.register_cpu_reflected::<Walk>();
     r
 }
@@ -828,4 +829,94 @@ fn a_climb_is_still_standing() {
         }
     }
     assert!(refused < 10, "lost the ground {refused} frames out of 180");
+}
+
+/// Acceptance: a slope too steep to walk takes the character back down.
+///
+/// The spring cancels gravity, so holding the body up against a surface
+/// it has already refused to walk carried it straight to the top —
+/// climbing a cliff by standing on it. A step's riser gives the *same*
+/// contact normal, which is why this is decided by looking for a ledge
+/// rather than by the normal alone.
+#[test]
+fn a_steep_slope_slides() {
+    let mut resources = world();
+    Playing::set(&mut resources, true);
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        GlobalGravity::default(),
+    );
+    slab(
+        &mut resources,
+        Vec3::new(0.0, -1.0, 0.0),
+        Vec3::new(16.0, 0.5, 12.0),
+        glam::Quat::from_rotation_z(65f32.to_radians()),
+    );
+    let hero = character(&mut resources, Vec3::new(-2.0, 6.0, 0.0));
+    insert(&mut resources, hero, Walk::default());
+    simulate(&mut resources, 60);
+
+    // Walking straight up it, as hard as it can.
+    let start = position(&resources, hero).y;
+    insert(&mut resources, hero, Facing { direction: Vec3::X });
+    simulate(&mut resources, 180);
+    let ended = position(&resources, hero).y;
+
+    assert!(
+        ended < start,
+        "should have slid down a 65 degree slope, went from {start} to {ended}",
+    );
+    assert!(
+        !grounded(&resources, hero).standing,
+        "and never counted as standing on it",
+    );
+}
+
+/// Acceptance: the wall a character is pressed against has a name.
+///
+/// Without it a wall slide, a wall jump and a shoulder animation each
+/// cast their own probe — three chances to disagree about whether there
+/// is a wall, which is the mistake `Grounded` was made to stop.
+#[test]
+fn a_wall_is_reported() {
+    let mut resources = world();
+    let hero = on_the_floor(&mut resources);
+    insert(&mut resources, hero, Walk::default());
+    insert(&mut resources, hero, Touching::default());
+    // Its face at x = 1, well inside the character's reach.
+    floor(
+        &mut resources,
+        Vec3::new(3.0, 2.0, 0.0),
+        Vec3::new(2.0, 3.0, 6.0),
+    );
+
+    let facing = |resources: &Resources| {
+        resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<Touching>())
+            .and_then(|s| s.get(hero))
+            .copied()
+            .expect("no Touching")
+    };
+
+    insert(
+        &mut resources,
+        hero,
+        Facing {
+            direction: Vec3::NEG_X,
+        },
+    );
+    simulate(&mut resources, 60);
+    assert!(!facing(&resources).wall, "nothing behind it");
+
+    insert(&mut resources, hero, Facing { direction: Vec3::X });
+    simulate(&mut resources, 120);
+    let found = facing(&resources);
+    assert!(found.wall, "should have found the wall");
+    assert!(
+        found.normal.x < -0.9,
+        "and it faces back at the character: {}",
+        found.normal,
+    );
 }

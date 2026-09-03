@@ -41,6 +41,7 @@ mod physics_debug;
 pub(crate) use physics_debug::PhysicsDebugOverlay;
 mod lights;
 mod parent_space;
+mod touching;
 mod virtual_camera;
 mod visibility;
 mod visualizers;
@@ -126,6 +127,10 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     // and one that is merely slow look the same standing still; the
     // difference is whether the goal went to zero.
     registry.register::<kooch_character::Walk, walk::WalkVisualizer>();
+    // The wall, drawn like the ground: a slide that refuses to start is
+    // either a wall nobody found or a normal pointing somewhere
+    // unexpected, and those look identical in the Inspector.
+    registry.register::<kooch_character::Touching, touching::TouchingVisualizer>();
     resources.insert(registry);
 
     if resources.get::<HandleSet>().is_none() {

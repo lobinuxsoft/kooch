@@ -89,6 +89,25 @@ pub struct CharacterController {
     ///
     /// [`Grounded`]: crate::Grounded
     pub max_slope: f32,
+    /// The tallest obstruction that counts as a step rather than a
+    /// wall, in metres.
+    ///
+    /// # Why this exists at all
+    ///
+    /// A step's riser and a wall give the *same* contact normal —
+    /// `[-1, 0, 0]` either way — so refusing to hold the body up against
+    /// steep surfaces refuses steps too, and the character stops being
+    /// able to climb one. The difference is not the normal, it is
+    /// whether there is ground to arrive at: a second probe looks for a
+    /// ledge this far above the contact, and finding one is what makes
+    /// it a step.
+    pub step_height: f32,
+    /// How far ahead to look for a wall, in metres.
+    ///
+    /// Written to [`Touching`](crate::Touching). Wants to be a little
+    /// more than the character's own radius, or the probe ends inside
+    /// the capsule and never reaches anything.
+    pub reach: f32,
 }
 
 impl Default for CharacterController {
@@ -105,6 +124,8 @@ impl Default for CharacterController {
             damping: 7.0,
             turn_speed: 10.0,
             max_slope: 50.0,
+            step_height: 0.5,
+            reach: 0.7,
         }
     }
 }
