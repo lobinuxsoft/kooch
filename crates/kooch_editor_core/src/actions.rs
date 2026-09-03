@@ -543,6 +543,9 @@ pub(crate) enum EditorAction {
     /// stopped is worse than an interrupted one.
     CancelBuild,
     RegisterScripts,
+    /// Install what `preflight` found missing, and restart if this
+    /// machine's package manager needs it. See [`crate::install`].
+    InstallRequirements,
     /// The author saw the resync notice. Clears it; the rebuild is
     /// theirs to run.
     AcknowledgeScriptSync,
@@ -650,6 +653,7 @@ impl EditorAction {
             | Self::Play
             | Self::Stop
             | Self::RegisterScripts
+            | Self::InstallRequirements
             | Self::AcknowledgeScriptSync => true,
 
             // Session and project lifecycle: these are how a user gets
@@ -801,6 +805,7 @@ impl EditorAction {
             // Everything below is a file, a preference, or session
             // lifecycle. None of them is the running world.
             | Self::RegisterScripts
+            | Self::InstallRequirements
             | Self::AcknowledgeScriptSync
             | Self::BuildProject(_)
             | Self::CancelBuild

@@ -592,13 +592,17 @@ fn draw_launch_env(
 /// otherwise. The check runs once at startup because installing any of
 /// it ends in a reboot, so the answer cannot change underneath.
 ///
-/// It does **not** install. On an image-based distribution — which both
-/// of this project's Linux targets are — a package writes a new image and
-/// needs a reboot, which is not something an editor may do behind a
-/// dialog. What it removes is the web search: the requirement, why it is
-/// needed, and the exact command for *this* machine.
-pub(crate) fn draw_preflight_window(ctx: &egui::Context, report: &crate::preflight::Report) {
-    if report.is_ready() {
+/// 🔴 It **can** install, and that ends in a restart — see
+/// [`crate::install`]. The command is shown either way, because the
+/// button is unavailable exactly when it matters most: with unsaved
+/// scenes open, where a restart would take the author's work with it.
+pub(crate) fn draw_preflight_window(
+    ctx: &egui::Context,
+    report: &crate::preflight::Report,
+    blocked: Option<&crate::install::Refusal>,
+    actions: &mut Vec<EditorAction>,
+) {
+    if report.is_quiet() {
         return;
     }
     let id = egui::Id::new("kooch_preflight_window_open");
@@ -607,17 +611,23 @@ pub(crate) fn draw_preflight_window(ctx: &egui::Context, report: &crate::preflig
         return;
     }
 
-    egui::Window::new("This machine cannot build a project yet")
+    let title = match report.is_ready() {
+        true => "This machine could build faster",
+        false => "This machine cannot build a project yet",
+    };
+    egui::Window::new(title)
         .open(&mut open)
         .resizable(true)
         .default_width(520.0)
         .collapsible(false)
         .show(ctx, |ui| {
-            ui.label(
-                "A project made with this editor compiles the engine, so it needs a \
-                 Rust toolchain and the system libraries the engine links against. \
-                 These are missing:",
-            );
+            if !report.missing.is_empty() {
+                ui.label(
+                    "A project made with this editor compiles the engine, so it needs a \
+                     Rust toolchain and the system libraries the engine links against. \
+                     These are missing:",
+                );
+            }
             ui.add_space(6.0);
             for requirement in &report.missing {
                 ui.label(egui::RichText::new(requirement.name).strong());
@@ -631,11 +641,29 @@ pub(crate) fn draw_preflight_window(ctx: &egui::Context, report: &crate::preflig
                 ui.add_space(4.0);
             }
 
+            // 🔴 The optional half is listed apart and last. Mixing
+            // "you cannot build without this" with "this would be
+            // faster" is how a list gets read diagonally — which is
+            // exactly how three packages once got installed for nothing.
+            if !report.wanted.is_empty() {
+                ui.separator();
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("Not required — installed in the same step:").weak());
+                ui.add_space(4.0);
+                for requirement in &report.wanted {
+                    ui.label(egui::RichText::new(requirement.name).strong());
+                    ui.weak(requirement.why);
+                    ui.add_space(4.0);
+                }
+            }
+
             match report.command() {
                 Some(command) => {
                     ui.separator();
                     ui.add_space(4.0);
-                    ui.label("Paste this whole block, then reopen the editor:");
+                    draw_install_button(ui, report, blocked, actions);
+                    ui.add_space(6.0);
+                    ui.label("Or paste this whole block yourself:");
                     ui.code(&command);
                     if ui.button(format!("{} Copy", icons::COPY)).clicked() {
                         ctx.copy_text(command);
@@ -655,6 +683,59 @@ pub(crate) fn draw_preflight_window(ctx: &egui::Context, report: &crate::preflig
         });
 
     ctx.data_mut(|d| d.insert_temp(id, open));
+}
+
+/// The install control, and the sentence that says what it will do.
+///
+/// 🔴 Disabled with the reason showing rather than hidden. "Why is there
+/// no button" is a worse question than "why can I not press this one",
+/// and the answer — unsaved work — is one the author can act on in five
+/// seconds.
+fn draw_install_button(
+    ui: &mut egui::Ui,
+    report: &crate::preflight::Report,
+    blocked: Option<&crate::install::Refusal>,
+    actions: &mut Vec<EditorAction>,
+) {
+    let label = match report.reboots() {
+        true => "Install and restart this machine",
+        false => "Install these now",
+    };
+    let response = ui.add_enabled(
+        blocked.is_none(),
+        egui::Button::new(format!("{} {label}", icons::PACKAGE)),
+    );
+    match blocked {
+        Some(reason) => {
+            response.on_disabled_hover_text(reason.to_string());
+        }
+        None => {
+            if response.clicked() {
+                actions.push(EditorAction::InstallRequirements);
+            }
+        }
+    }
+    // Said in the window, not only in a hover: a restart is not a
+    // footnote, and a hover is not read by someone already reaching for
+    // the button.
+    if report.reboots() {
+        ui.label(
+            egui::RichText::new(
+                "Your system installs packages into a new image, so this restarts the \
+                 computer when it finishes. Nothing is restarted if the install fails.",
+            )
+            .weak(),
+        );
+    }
+    if report.needs_rust() {
+        ui.label(
+            egui::RichText::new(
+                "Rust is not included: rustup installs into your own home, and this \
+                 cannot run it for you. Use the line below after the restart.",
+            )
+            .weak(),
+        );
+    }
 }
 
 /// Where the Settings window's open flag lives.

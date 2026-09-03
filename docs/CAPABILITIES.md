@@ -220,6 +220,8 @@ mechanics.
 | `reload_project_plugins` | `project_plugin.rs` | connected | Unload + load as one operation, with the type registry restored when the new library declares nothing. Was two halves that had never run in sequence: `unload_project_plugins` had no callers at all. |
 | `CodeReload` | `code_reload.rs` | connected | Stats the project's `.so` once a second and swaps it when it moves. Polls rather than watches, for the same reason `script_sync` does: inotify drops events on this FUSE mount. |
 | `Reloaded` | `project_plugin/reload.rs` | connected | Names what a swap changed — a lost type, a dropped field, a field that changed kind. The engine breaks data rather than migrating it, which is only safe while breaking is loud. |
+| `preflight::Report` | `preflight.rs` | connected | What this machine is missing, probed the way the build probes it. Detected once at startup and drawn as a window. Its list is documented in [`REQUIREMENTS.md`](REQUIREMENTS.md). |
+| `install::run` | `install.rs` | connected | Runs the install through `pkexec` and restarts when the distribution needs it. Refuses while a scene is dirty — a restart with unsaved work is the editor destroying the author's work to save them a paste. |
 | Register Scripts | `actions/asset_ops.rs` | connected but misplaced | Rescans the whole project, yet the button only exists in the context menu of a `.rs` file — so with no `.rs` left there is no way to regenerate. |
 
 ## What is still disconnected

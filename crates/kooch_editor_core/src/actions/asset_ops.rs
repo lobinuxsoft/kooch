@@ -46,6 +46,17 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
         EditorAction::CreateFile { folder, name, kind } => {
             create_file(resources, folder, name, *kind)
         }
+        EditorAction::InstallRequirements => {
+            let report = resources.get::<crate::preflight::Report>().cloned();
+            match report {
+                Some(report) => {
+                    if let Err(refusal) = crate::install::run(resources, &report) {
+                        tracing::warn!("{refusal}");
+                    }
+                }
+                None => tracing::error!("no preflight report to install from"),
+            }
+        }
         EditorAction::RegisterScripts => {
             // A click is a question, and all three outcomes used to look
             // identical from the other side of it: nothing happened.

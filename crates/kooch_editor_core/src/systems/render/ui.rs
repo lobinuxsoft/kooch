@@ -39,6 +39,10 @@ pub(super) struct ToolbarInfo {
     pub(super) undo_desc: Option<String>,
     pub(super) redo_desc: Option<String>,
     pub(super) is_playing: bool,
+    /// Why the preflight window's install button is unavailable, or
+    /// `None` when it may run. Computed per frame because the answer
+    /// includes whether a scene is dirty.
+    pub(super) install_blocked: Option<crate::install::Refusal>,
     /// Where the remote session stands, or `None` in local mode.
     pub(super) remote: Option<ConnectionState>,
     /// Why the remote snapshot stopped tracking, when it has.
@@ -188,7 +192,12 @@ pub(super) fn run_editor_ui(
             // free-floating, and nesting it in the menu bar's `Ui` would
             // clip it to that strip.
             if let Some(report) = preflight {
-                crate::menu_bar::draw_preflight_window(ui.ctx(), report);
+                crate::menu_bar::draw_preflight_window(
+                    ui.ctx(),
+                    report,
+                    toolbar.install_blocked.as_ref(),
+                    &mut actions,
+                );
             }
             crate::menu_bar::draw_settings_window(
                 ui.ctx(),
