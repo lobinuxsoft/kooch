@@ -27,6 +27,10 @@ use std::path::{Path, PathBuf};
 use kooch_core::dynamic::{EngineHost, PluginLoader};
 use kooch_core::resource::Resources;
 
+mod reload;
+
+pub use reload::{Changed, Reloaded};
+
 /// Keeps loaded project plugins alive for as long as the project is open.
 ///
 /// Dropping this unloads the libraries, which invalidates every vtable
@@ -221,6 +225,59 @@ pub fn unload_project_plugins(resources: &mut Resources) {
         resources.insert(types);
     }
     resources.remove::<ProjectPlugins>();
+}
+
+/// Swaps the project's library for the one on disk right now.
+///
+/// Unload, then load. Both halves have existed since the library first
+/// loaded and nothing had ever run them in sequence — which is the whole
+/// of what stopped a code change reaching the editor without reopening
+/// the project.
+///
+/// # What crosses the swap
+///
+/// Component **instances**. They live in `DynamicComponents` keyed by
+/// type name, holding `ReflectValue`s, so no byte on an entity was
+/// written by the code being unloaded. That is what makes this sound
+/// rather than merely lucky: nothing in this process points into the old
+/// library except the `Library` handle being dropped.
+///
+/// # A failed load does not cost the old types
+///
+/// 🔴 Unloading first and finding the new library unloadable would leave
+/// the editor with no types at all — a project that looks empty because
+/// a build failed. So the registry is snapshotted, and put back when the
+/// load registers nothing.
+pub fn reload_project_plugins(
+    resources: &mut Resources,
+    project_root: &Path,
+    crate_name: &str,
+) -> Reloaded {
+    let before = resources
+        .get::<kooch_ecs::component::DynamicTypeRegistry>()
+        .cloned()
+        .unwrap_or_default();
+
+    unload_project_plugins(resources);
+    let registered = load_project_plugin(resources, project_root, crate_name);
+
+    if registered == 0 && !before.is_empty() {
+        tracing::warn!(
+            "the rebuilt library declared nothing — keeping the types from before the \
+             reload, because a project with no components is what a failed build looks \
+             like from here",
+        );
+        resources.insert(before);
+        return Reloaded::default();
+    }
+
+    let after = resources
+        .get::<kooch_ecs::component::DynamicTypeRegistry>()
+        .cloned()
+        .unwrap_or_default();
+    let report = Reloaded::between(&before, &after);
+    report.report();
+    report
 }
 
 /// The source name a library's types were registered under.

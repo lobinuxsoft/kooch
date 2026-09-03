@@ -43,3 +43,128 @@ fn the_source_name_matches_what_the_bridge_derives() {
         Some("my_game")
     );
 }
+
+// ---- the swap itself ------------------------------------------------
+
+use kooch_core::dynamic::{ComponentBridge, PluginData};
+use kooch_ecs::component::DynamicTypeRegistry;
+use kooch_ecs::component::plugin_bridge::register_schema;
+
+/// Where the workspace put the example plugin.
+fn example_library() -> std::path::PathBuf {
+    let mut dir = std::env::current_exe().expect("test exe");
+    dir.pop();
+    if dir.ends_with("deps") {
+        dir.pop();
+    }
+    #[cfg(target_os = "windows")]
+    let name = "example_plugin.dll";
+    #[cfg(target_os = "linux")]
+    let name = "libexample_plugin.so";
+    #[cfg(target_os = "macos")]
+    let name = "libexample_plugin.dylib";
+    dir.join(name)
+}
+
+/// A scratch project whose `target/debug` holds a real, loadable library.
+///
+/// A copy rather than the workspace's own: the swap unmaps what it
+/// loaded, and pointing two tests at one file is how they start
+/// depending on each other's order.
+fn plugin_project(name: &str) -> (std::path::PathBuf, Resources) {
+    let source = example_library();
+    assert!(
+        source.exists(),
+        "no example plugin at {}. Build it first:\n  cargo build -p example_plugin",
+        source.display(),
+    );
+    let root = std::env::temp_dir().join(format!("kooch_reload_{name}"));
+    let _ = std::fs::remove_dir_all(&root);
+    let target = root.join("target").join("debug");
+    std::fs::create_dir_all(&target).expect("create target");
+    std::fs::copy(&source, target.join(source.file_name().expect("file name")))
+        .expect("copy library");
+
+    let mut resources = Resources::new();
+    resources.insert(PluginData::new());
+    resources.insert(DynamicTypeRegistry::new());
+    // The same bridge the ECS plugin installs: types land in the
+    // registry by name, sourced from their own path prefix.
+    resources.insert(ComponentBridge::new(|resources, schema| {
+        let source = schema
+            .type_name
+            .split("::")
+            .next()
+            .unwrap_or(&schema.type_name)
+            .to_owned();
+        let registry = resources
+            .get_mut::<DynamicTypeRegistry>()
+            .expect("the registry is inserted beside this bridge");
+        register_schema(registry, schema, &source)
+    }));
+    (root, resources)
+}
+
+fn declares(resources: &Resources, type_name: &str) -> bool {
+    resources
+        .get::<DynamicTypeRegistry>()
+        .is_some_and(|r| r.contains(type_name))
+}
+
+/// 🔴 The whole feature: unload and load run in sequence and the types
+/// come back. Before this, `unload_project_plugins` had no callers at
+/// all and a code change reached the editor only by reopening the
+/// project.
+#[test]
+fn a_reload_swaps_the_library() {
+    let (root, mut resources) = plugin_project("swap");
+    assert!(
+        load_project_plugin(&mut resources, &root, "example_plugin") > 0,
+        "nothing registered — the build stamp carries the engine version, and this \
+         version moves on every PR:\n  cargo build -p example_plugin",
+    );
+    assert!(declares(&resources, "example_plugin::Health"));
+
+    let report = reload_project_plugins(&mut resources, &root, "example_plugin");
+
+    assert!(
+        declares(&resources, "example_plugin::Health"),
+        "the swap unloaded the types and did not bring them back",
+    );
+    assert!(
+        report.is_quiet(),
+        "the same library reported a change: {report:?}",
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 🔴 A build that fails leaves no library to load. Unloading first and
+/// finding nothing would empty the editor — a project that looks like it
+/// has no components, because a compile error happened somewhere else.
+#[test]
+fn a_failed_reload_keeps_the_types() {
+    let (root, mut resources) = plugin_project("failed");
+    assert!(
+        load_project_plugin(&mut resources, &root, "example_plugin") > 0,
+        "nothing registered — rebuild the example plugin at this engine version:\n  \
+         cargo build -p example_plugin",
+    );
+
+    std::fs::remove_file(
+        root.join("target")
+            .join("debug")
+            .join(example_library().file_name().expect("file name")),
+    )
+    .expect("remove the library");
+    let report = reload_project_plugins(&mut resources, &root, "example_plugin");
+
+    assert!(
+        declares(&resources, "example_plugin::Health"),
+        "a failed build emptied the editor's type registry",
+    );
+    assert!(
+        report.is_quiet(),
+        "a refusal reported changes it did not make"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
