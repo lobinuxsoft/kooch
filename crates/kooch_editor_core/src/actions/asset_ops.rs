@@ -47,8 +47,19 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
             create_file(resources, folder, name, *kind)
         }
         EditorAction::RegisterScripts => {
-            // The outcome matters to the poll, not to a menu click.
-            let _ = super::codegen::register_scripts(resources);
+            // A click is a question, and all three outcomes used to look
+            // identical from the other side of it: nothing happened.
+            // `Unchanged` is both the common answer and the confusing
+            // one — most edits are to a body or a field, and this file
+            // names neither.
+            if super::codegen::register_scripts(resources) == super::codegen::SyncOutcome::Unchanged
+            {
+                tracing::info!(
+                    "registrations already name every component and system in src/ — a field, \
+                     a body or a default is not in this file, and needs a rebuild rather than \
+                     a rescan",
+                );
+            }
         }
         EditorAction::AcknowledgeScriptSync => {
             if let Some(sync) = resources.get_mut::<crate::script_sync::ScriptSync>() {

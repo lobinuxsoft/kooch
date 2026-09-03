@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use super::{ScriptSync, SyncState, fingerprint};
+use super::{ScriptSync, SyncState, fingerprint, sync_scripts_system};
 
 /// A directory of its own, the way the rest of this crate does it —
 /// there is no `tempfile` in this workspace.
@@ -99,4 +99,93 @@ fn acknowledging_clears_the_warning() {
     };
     sync.acknowledge();
     assert_eq!(sync.state, SyncState::Current);
+}
+
+// ---- what a move in src/ means for the build ------------------------
+
+use kooch_core::resource::Resources;
+
+use crate::actions::register_scripts;
+use crate::project_state::{ActiveProject, ProjectState};
+
+/// A project with a `src/` the codegen can scan, and the resources the
+/// poll reads.
+fn project(name: &str) -> (std::path::PathBuf, Resources) {
+    let root = std::env::temp_dir().join(format!("kooch_sync_project_{name}"));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).expect("create src");
+
+    let mut state = ProjectState::new();
+    state.active_project = Some(ActiveProject {
+        manifest: crate::project::ProjectManifest::new(name),
+        root_path: root.clone(),
+    });
+    let mut resources = Resources::new();
+    resources.insert(state);
+    resources.insert(ScriptSync::default());
+    (root, resources)
+}
+
+/// 🔴 The one that motivated the change: a field is not in the generated
+/// file, and the editor reads fields out of the compiled dylib.
+///
+/// Reported as *"modifiqué el script y le di a Code Sync y no hizo
+/// nada"*. It did exactly what it was told; the notice was keyed on the
+/// generated file changing, so the edits that change no type — a field,
+/// a body, a default — left it dark while the build went stale.
+#[test]
+fn an_edit_that_regenerates_nothing_still_asks() {
+    let (root, mut resources) = project("field_edit");
+    let src = root.join("src");
+    write(&src, "main.rs", "fn main() {}\n");
+    write(
+        &src,
+        "thing.rs",
+        "#[derive(Default, Reflect)]\npub struct Health {}\nimpl Component for Health {}\n",
+    );
+    // The state the author is in: registrations current, build current.
+    register_scripts(&mut resources);
+    let generated = std::fs::read_to_string(src.join("registrations.rs")).expect("generated");
+
+    // A field. The type is the same, so the render will be too.
+    write(
+        &src,
+        "thing.rs",
+        "#[derive(Default, Reflect)]\npub struct Health {\n    pub hp: f32,\n}\n\
+         impl Component for Health {}\n",
+    );
+    // A fingerprint the walk cannot match, which is what `src/` moving
+    // looks like to the poll — without waiting on a filesystem clock.
+    let sync = resources.get_mut::<ScriptSync>().expect("sync");
+    sync.fingerprint = Some((Duration::ZERO, 99));
+    sync.next_poll = None;
+
+    sync_scripts_system(&mut resources);
+
+    assert_eq!(
+        std::fs::read_to_string(src.join("registrations.rs")).expect("generated"),
+        generated,
+        "the edit rewrote the generated file, so this no longer tests the silent case",
+    );
+    let sync = resources.get::<ScriptSync>().expect("sync");
+    assert_eq!(
+        sync.state,
+        SyncState::NeedsRebuild,
+        "a field was added and the editor still claimed the build was current",
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A first sighting records and acts on nothing: opening a project would
+/// otherwise announce a rebuild for a build that was already correct.
+#[test]
+fn opening_a_project_asks_for_nothing() {
+    let (root, mut resources) = project("first_sighting");
+    write(&root.join("src"), "thing.rs", "pub fn tick() {}\n");
+
+    sync_scripts_system(&mut resources);
+
+    let sync = resources.get::<ScriptSync>().expect("sync");
+    assert_eq!(sync.state, SyncState::Current);
+    let _ = std::fs::remove_dir_all(&root);
 }
