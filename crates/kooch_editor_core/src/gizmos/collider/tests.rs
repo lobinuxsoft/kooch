@@ -307,6 +307,7 @@ fn draw_with(collider: &Collider, resources: &Resources, matrix: Mat4) -> Vec<(V
         ColliderVisualizer.draw_with(
             collider,
             &GlobalTransform { matrix },
+            kooch_ecs::Entity::new(0, 0),
             resources,
             &mut gizmos,
         );

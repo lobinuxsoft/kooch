@@ -11,6 +11,7 @@ use glam::Vec3;
 
 use kooch_character::Grounded;
 use kooch_core::resource::Resources;
+use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_gizmos::{Gizmos, Visualizer};
 
@@ -36,6 +37,7 @@ impl Visualizer<Grounded> for GroundedVisualizer {
         &self,
         found: &Grounded,
         transform: &GlobalTransform,
+        _entity: Entity,
         resources: &Resources,
         gizmos: &mut Gizmos<'_>,
     ) {

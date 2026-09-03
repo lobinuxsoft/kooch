@@ -52,3 +52,45 @@ fn it_draws_along_the_local_up() {
         .fold(f32::MAX, f32::min);
     assert!(lowest < -1.0, "it should reach below the origin: {lowest}");
 }
+
+/// Everything `draw_at` drew, given a collider reach.
+fn with_reach(controller: &CharacterController, reach: Option<f32>) -> Vec<(Vec3, Vec3)> {
+    use kooch_gizmos::{GizmoBatch, Gizmos, MeshBatch};
+    let mut lines = GizmoBatch::default();
+    let mut meshes = MeshBatch::default();
+    {
+        let mut gizmos = Gizmos::new(&mut lines, &mut meshes);
+        draw_at(
+            controller,
+            &GlobalTransform {
+                matrix: Mat4::IDENTITY,
+            },
+            Vec3::Y,
+            reach,
+            &mut gizmos,
+        );
+    }
+    lines.lines.iter().map(|s| (s.start, s.end)).collect()
+}
+
+/// The mistake the whole gizmo exists to catch: a capsule that reaches
+/// further down than the height it is asked to ride at rests on the
+/// floor, and nothing in either Inspector says so.
+#[test]
+fn a_collider_that_cannot_float_is_marked() {
+    let controller = CharacterController::default();
+    let clears = with_reach(&controller, Some(0.9)).len();
+    let sinks = with_reach(&controller, Some(1.22)).len();
+    assert!(
+        sinks > clears,
+        "a reach past the ride height should draw the warning: {sinks} vs {clears}",
+    );
+}
+
+/// And without a collider to compare against it says nothing, rather
+/// than drawing a reach of zero — which would read as "this clears".
+#[test]
+fn an_unknown_reach_draws_nothing() {
+    let controller = CharacterController::default();
+    assert!(with_reach(&controller, None).len() < with_reach(&controller, Some(0.9)).len());
+}

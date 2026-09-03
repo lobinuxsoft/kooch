@@ -46,10 +46,11 @@ pub trait Visualizer<C: Component>: Send + Sync + 'static {
     /// Same, for a visualizer whose outline lives outside its component.
     ///
     /// Most do not need this: a `Collider`'s sphere is the radius on the
-    /// component, and a camera's frustum is its own numbers. A
-    /// mesh-derived collider is the case that is not — its shape is a
-    /// point cloud in a cache, and a visualizer that cannot reach it
-    /// draws either nothing or a lie.
+    /// component, and a camera's frustum is its own numbers. Two cases
+    /// are not — a mesh-derived collider, whose shape is a point cloud
+    /// in a cache, and a character controller, whose ride height is only
+    /// wrong relative to the `Collider` beside it. Both draw either
+    /// nothing or a lie without `entity` and `resources`.
     ///
     /// Defaults to [`draw`](Self::draw), so a visualizer that has
     /// everything it needs implements one method and ignores this one.
@@ -57,6 +58,7 @@ pub trait Visualizer<C: Component>: Send + Sync + 'static {
         &self,
         component: &C,
         transform: &GlobalTransform,
+        _entity: Entity,
         _resources: &Resources,
         gizmos: &mut Gizmos<'_>,
     ) {
@@ -93,7 +95,7 @@ impl VisualizerRegistry {
         let dispatch: DispatchFn = Box::new(move |entity, resources, gizmos| {
             let query = Query::<(&C, &GlobalTransform)>::new(resources);
             if let Some((component, transform)) = query.get(entity) {
-                visualizer.draw_with(component, transform, resources, gizmos);
+                visualizer.draw_with(component, transform, entity, resources, gizmos);
             }
         });
         self.entries.insert(TypeId::of::<C>(), dispatch);

@@ -19,8 +19,12 @@ use glam::{Mat3, Vec3};
 
 use kooch_character::CharacterController;
 use kooch_core::resource::Resources;
+use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::GlobalTransform;
+use kooch_ecs::query::Query;
 use kooch_gizmos::{Gizmos, Visualizer};
+use kooch_physics::backend::ColliderMeshCache;
+use kooch_physics::components::Collider;
 
 /// Amber: the same "this is wrong and you cannot see why" the stale-bake
 /// warning uses.
@@ -43,14 +47,16 @@ impl Visualizer<CharacterController> for CharacterVisualizer {
         gizmos: &mut Gizmos<'_>,
     ) {
         // Without `Resources` there is no field to ask, so up is world
-        // up — which is also what the controller would use.
-        draw_at(controller, transform, Vec3::Y, gizmos);
+        // up — which is also what the controller would use. And no
+        // sibling collider, so nothing to check the ride height against.
+        draw_at(controller, transform, Vec3::Y, None, gizmos);
     }
 
     fn draw_with(
         &self,
         controller: &CharacterController,
         transform: &GlobalTransform,
+        entity: Entity,
         resources: &Resources,
         gizmos: &mut Gizmos<'_>,
     ) {
@@ -58,14 +64,38 @@ impl Visualizer<CharacterController> for CharacterVisualizer {
         // The same answer the controller will get, not the entity's own
         // rotation: a capsule knocked flat still has the field's up.
         let up = kooch_gravity::gravity_up(resources, origin);
-        draw_at(controller, transform, up, gizmos);
+        draw_at(
+            controller,
+            transform,
+            up,
+            reach(entity, transform, resources),
+            gizmos,
+        );
     }
+}
+
+/// How far the sibling collider hangs below the origin, scaled.
+///
+/// `None` when there is no collider, or when its shape is a point cloud
+/// the cache has not answered for — drawing a reach of zero would say
+/// "any ride height clears this", which is the lie this exists to stop.
+fn reach(entity: Entity, transform: &GlobalTransform, resources: &Resources) -> Option<f32> {
+    let collider = *Query::<&Collider>::new(resources).get(entity)?;
+    let meshes = resources.get::<ColliderMeshCache>();
+    let scale = transform.matrix.to_scale_rotation_translation().0;
+    collider
+        .shape_spec(meshes)
+        .resolve(meshes)?
+        .scaled(scale)
+        .reach()
+        .map(|reach| reach + (collider.center * scale.abs()).y.min(0.0).abs())
 }
 
 fn draw_at(
     controller: &CharacterController,
     transform: &GlobalTransform,
     up: Vec3,
+    reach: Option<f32>,
     gizmos: &mut Gizmos<'_>,
 ) {
     let origin = transform.matrix.to_scale_rotation_translation().2;
@@ -92,6 +122,26 @@ fn draw_at(
     if controller.probe < controller.ride_height {
         gizmos.line(end, rest, REFUSED);
         gizmos.wire_circle(rest, u, v, radius * 1.4, REFUSED);
+    }
+
+    // The collider's own floor. Above the rest disc it is the clearance
+    // the character walks with; below it, the ride height is asking for
+    // a height the geometry is already occupying and the capsule rests
+    // on the ground instead of floating — the one mistake this whole
+    // gizmo exists to catch, and it is invisible in the Inspector
+    // because the two numbers live on different components.
+    if let Some(reach) = reach {
+        let sole = origin - up * reach;
+        let sunk = reach >= controller.ride_height;
+        let colour = match sunk {
+            true => REFUSED,
+            false => EDGE,
+        };
+        gizmos.wire_circle(sole, u, v, radius, colour);
+        if sunk {
+            gizmos.line(sole, rest, REFUSED);
+            gizmos.wire_circle(rest, u, v, radius * 1.7, REFUSED);
+        }
     }
 
     // The slope limit, as the cone it is. "Why can I not walk up this
