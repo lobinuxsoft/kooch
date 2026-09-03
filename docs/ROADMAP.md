@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-09-03 — ⚠️ **#815 landed, and the interesting half is that half of it was already done.** The asset browser has refused Delete on the engine's tree since it drew one: `writable` is `false` for that root and both context menus gate on it. The *handler* asked nothing — `delete_asset` called `remove_file` and `delete_folder` called `remove_dir_all` on whatever path arrived. **Enforcement lived in the drawing code, which is the layer that can only refuse the clicks it happens to draw.** Twenty lines above them `workspace_for` already told a project path from an engine one, under a comment reading *"Engine assets are read-only"* — a promise no code kept. The guard now sits in front of both removals and asks the project first, because an editor built from a project resolves its engine root to that same project and engine-first would turn every asset in it undeletable. — 🎉 **#94 landed: the character controller, and it took eight rounds of play testing to become one.** Every fix in it was found by *playing* and then measured by reverting: a jump that rose 0.145 m of a 1.27 m arc, a landing that dipped 0.000 m, a character still doing 1 m/s a second after the stick was released, a body leaning 28.6° into a wall it was shoving, a climb that lost the ground on 172 frames out of 180, a 65° slope walked up from y=1.0 to y=20.0, and a wall run that never saw the wall it was running along on 60 frames out of 60. **None of that was visible in a test until someone played it, and none of it was ambiguous once it was.** The through-line is one idea: **one pass senses, many mechanics read** — `sense::under` and `sense::beside` cast, `Grounded` and `Touching` carry the answer, and `Walk`/`Sprint`/`Jump`/`WallJump`/`WallSlide`/`WallRun` decide. Two systems each casting their own ground ray is how `apply_movement` and `apply_jump` came to be wrong in the *same* way, both reading "grounded" in mid-air, because rapier casts rays solid and a downward one from a body's own centre finds that body at zero distance. **Next is #815** — an engine asset can be deleted and it breaks every project on the machine, not just the open one. — 🔴 **the standing queue was mostly already done**: of the five issues in the 2026-08-30 order, three closed by reading the tree, and two of those had been fixed with nobody recording it. Verify against the code before scheduling. **Next is #719** — a scene naming an unknown component type loads silently, which already cost a shipped build every `Spin` pivot. — 🔴 **#1009 landed: the lamps cast again.** Four fixed-size caps deleted them in silence — a dispatch past 65 535 workgroups, a 16 384 pair list, a per-view clear over per-frame counts, and a 256-caster moved list that voided the page cache every frame. Each failed as a resident, correctly keyed, EMPTY page, which reads as lit. The distant tier is derived from `page_level` rather than tuned. **Next is the OneXFly measurement** — 5.36 ms on a 9070 XT decides nothing. — 🔴 **the bright patch is fixed: it was Olsson's receiver bound, and the debug view had no colour for it.** A page drawn *without one caster* paints green, the same as a bad bias, so four correct eliminations pointed nowhere before the bound was tried. #1022 landed and is worth its claim — `geometry walk 245` against `pair tests 452 432`. **Next is #1009**, the distant-light tier: 32 point lights exhaust the pool (`slice used 1024/1024`, `free 0`) because a lamp is either a full chain or nothing, and Unreal's middle tier — one page per distant light, round-robin at one update a frame — is what is missing. — 🔴 **there is no render distance in this engine.** `perspective_infinite_reverse_rh` never receives `PerspectiveCamera::far`, and no `draw_distance`/`cull_distance` exists anywhere in the tree, so every instance in a scene is in frustum forever — free at 190 m, the whole frame at 1410 m. Two silent limits cost a day each (#996 buffer sizes, #997 the 65 535 dispatch ceiling) and `dense.scene` opened; what it showed is in the order below. 🔴 **a frame cap is a PERFORMANCE setting on this part: the same work costs 3.9 ms of GPU capped at 72 fps and 13.2 ms uncapped, because capped the GPU idles 68 % of the time and holds ~1210 MHz instead of throttling to ~850.** `gpu_busy_percent` reads 32 % and the scopes agree. **The budget is met with the preset below** — 13.88 ms frame, and at 8 W capped only **28 % of it is used**. The lever was the upscaler, not the shading: `upscale: 3` (FSR 3.1) cost 11.355 ms of a 23.36 ms frame and `upscale: 2` (SGSR 2) costs 2.062. 🔴 **The ~11 ms shading floor #885 was built to decompose no longer exists** — the whole shading pass is 3.272 ms today — and the instrument built for it measured something else instead: a full-screen sweep per material **in the project** costs 178 µs on the device, which is 0.71 ms here and 3.7 ms for a game with twenty materials. **#826 is removed, not deferred.** Cutting a froxel's light list by COUNT is incompatible with a cluster grid being continuous, and that is a property of the idea rather than of any implementation of it: see the entry below. The remaining queue is the contact march's cap (#839) and #731. The budget is unchanged, still unmet, and now measured against the SETTLED clock rather than the boosted one — 40.7 ms, not 27.8.
+Last updated 2026-09-03 — 🎉 **the rebuild loop, in six PRs, and the finding was that the engine already held most of it.** `subsecond` is refuted for this project on three independent grounds — it cannot change a struct, it only patches the crate holding `main.rs`, and it needs Dioxus' CLI and linker — and `dexterous_developer` was archived in February. What every serious implementation converges on instead, this engine had already built for another reason: `DynamicTypeRegistry` keyed by NAME, `DynamicComponents` holding instances as `ReflectValue`, and an `unload_project_plugins` **with zero callers**. Measured before trusting: a 792 MB project library unmaps completely and reopens clean, and the swap is **38 ms**. 🔴 **Then play testing refuted half of it**: in remote mode the wire's schema correctly shadows the reloaded local registry, so the in-process swap is invisible to the author — seeing a new field genuinely requires the project's process to run new code, and there is no way around the compile. What was actually costing the loop was the two things beside it: a rebuild **lost the world** (fixed, #1055 — held on disk and put back, still dirty) and it takes **15.5 s**, nearly all of it linking a 645 MB binary with the default linker. — ⚠️ **#815 landed, and the interesting half is that half of it was already done.** The asset browser has refused Delete on the engine's tree since it drew one: `writable` is `false` for that root and both context menus gate on it. The *handler* asked nothing — `delete_asset` called `remove_file` and `delete_folder` called `remove_dir_all` on whatever path arrived. **Enforcement lived in the drawing code, which is the layer that can only refuse the clicks it happens to draw.** Twenty lines above them `workspace_for` already told a project path from an engine one, under a comment reading *"Engine assets are read-only"* — a promise no code kept. The guard now sits in front of both removals and asks the project first, because an editor built from a project resolves its engine root to that same project and engine-first would turn every asset in it undeletable. — 🎉 **#94 landed: the character controller, and it took eight rounds of play testing to become one.** Every fix in it was found by *playing* and then measured by reverting: a jump that rose 0.145 m of a 1.27 m arc, a landing that dipped 0.000 m, a character still doing 1 m/s a second after the stick was released, a body leaning 28.6° into a wall it was shoving, a climb that lost the ground on 172 frames out of 180, a 65° slope walked up from y=1.0 to y=20.0, and a wall run that never saw the wall it was running along on 60 frames out of 60. **None of that was visible in a test until someone played it, and none of it was ambiguous once it was.** The through-line is one idea: **one pass senses, many mechanics read** — `sense::under` and `sense::beside` cast, `Grounded` and `Touching` carry the answer, and `Walk`/`Sprint`/`Jump`/`WallJump`/`WallSlide`/`WallRun` decide. Two systems each casting their own ground ray is how `apply_movement` and `apply_jump` came to be wrong in the *same* way, both reading "grounded" in mid-air, because rapier casts rays solid and a downward one from a body's own centre finds that body at zero distance. **Next is #815** — an engine asset can be deleted and it breaks every project on the machine, not just the open one. — 🔴 **the standing queue was mostly already done**: of the five issues in the 2026-08-30 order, three closed by reading the tree, and two of those had been fixed with nobody recording it. Verify against the code before scheduling. **Next is #719** — a scene naming an unknown component type loads silently, which already cost a shipped build every `Spin` pivot. — 🔴 **#1009 landed: the lamps cast again.** Four fixed-size caps deleted them in silence — a dispatch past 65 535 workgroups, a 16 384 pair list, a per-view clear over per-frame counts, and a 256-caster moved list that voided the page cache every frame. Each failed as a resident, correctly keyed, EMPTY page, which reads as lit. The distant tier is derived from `page_level` rather than tuned. **Next is the OneXFly measurement** — 5.36 ms on a 9070 XT decides nothing. — 🔴 **the bright patch is fixed: it was Olsson's receiver bound, and the debug view had no colour for it.** A page drawn *without one caster* paints green, the same as a bad bias, so four correct eliminations pointed nowhere before the bound was tried. #1022 landed and is worth its claim — `geometry walk 245` against `pair tests 452 432`. **Next is #1009**, the distant-light tier: 32 point lights exhaust the pool (`slice used 1024/1024`, `free 0`) because a lamp is either a full chain or nothing, and Unreal's middle tier — one page per distant light, round-robin at one update a frame — is what is missing. — 🔴 **there is no render distance in this engine.** `perspective_infinite_reverse_rh` never receives `PerspectiveCamera::far`, and no `draw_distance`/`cull_distance` exists anywhere in the tree, so every instance in a scene is in frustum forever — free at 190 m, the whole frame at 1410 m. Two silent limits cost a day each (#996 buffer sizes, #997 the 65 535 dispatch ceiling) and `dense.scene` opened; what it showed is in the order below. 🔴 **a frame cap is a PERFORMANCE setting on this part: the same work costs 3.9 ms of GPU capped at 72 fps and 13.2 ms uncapped, because capped the GPU idles 68 % of the time and holds ~1210 MHz instead of throttling to ~850.** `gpu_busy_percent` reads 32 % and the scopes agree. **The budget is met with the preset below** — 13.88 ms frame, and at 8 W capped only **28 % of it is used**. The lever was the upscaler, not the shading: `upscale: 3` (FSR 3.1) cost 11.355 ms of a 23.36 ms frame and `upscale: 2` (SGSR 2) costs 2.062. 🔴 **The ~11 ms shading floor #885 was built to decompose no longer exists** — the whole shading pass is 3.272 ms today — and the instrument built for it measured something else instead: a full-screen sweep per material **in the project** costs 178 µs on the device, which is 0.71 ms here and 3.7 ms for a game with twenty materials. **#826 is removed, not deferred.** Cutting a froxel's light list by COUNT is incompatible with a cluster grid being continuous, and that is a property of the idea rather than of any implementation of it: see the entry below. The remaining queue is the contact march's cap (#839) and #731. The budget is unchanged, still unmet, and now measured against the SETTLED clock rather than the boosted one — 40.7 ms, not 27.8.
 
 ---
 
@@ -208,6 +208,69 @@ recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
 
 ---
+
+## 🎯 2026-09-03 — the rebuild loop, and what the tree already had
+
+Six PRs, driven entirely by using the editor. Every one of them started
+as a sentence about something feeling wrong.
+
+| | |
+|---|---|
+| #1050 | the rebuild notice fired only when the *generated file* changed, so a field, a body or a default left it dark |
+| #1051 | measurement: does dropping a library actually unmap it |
+| #1052 | reload the project's code without reopening — `unload` + `load`, which had never run in sequence |
+| #1053 | a new input action reached neither the `AssetDatabase` nor the running project |
+| #1054 | Code Sync and Rebuild drew the **same glyph**, and the one that rebuilds had no label |
+| #1055 | a rebuild lost every unsaved edit and reopened the project's own scene |
+| #1056 | the requirement list was incomplete — udev and a C compiler — and the editor can now install it |
+
+### 🔴 The spike said no, and the tree said "already built"
+
+`subsecond` cannot change a struct — *"if layout or alignment change and
+new functions are called referencing an old version of the struct, the
+program will crash"* — and adding a field to a component is the single
+most common edit. It also only patches the crate holding `main.rs`,
+while a project reaches this engine as a `dylib`. `dexterous_developer`
+was **archived 2026-02-08**.
+
+Everything serious converges on the same shape: the host owns the state,
+the library owns none, and state crosses as **data keyed by name**.
+
+That was already here. `DynamicTypeRegistry` is name-keyed and says so
+in its own docs; `DynamicComponents` holds instances as `ReflectValue`;
+`remove_source` is documented *"called when a plugin is unloaded"*; and
+`unload_project_plugins` existed with **zero callers**. The audit found
+exactly one thing in the editor pointing into the `.so` — the `Library`
+handle itself.
+
+### What play testing then refuted
+
+The reload works, in 38 ms, and **the author never sees it**. In remote
+mode `queries/mod.rs` takes the type list from the wire and adds only
+what the wire did not report — and that is *correct*: showing a field
+the running project lacks would send edits it cannot accept.
+
+**Seeing a new field requires the project's process to run new code,
+which requires a compile. There is no way around it.** Rebuild & Run is
+not slow because it is badly built; it is what is actually needed.
+
+### So the loop's real costs were the two beside it
+
+- **It lost the world.** `disconnect` then `start`, and nothing between
+  them. Now held on disk and put back — re-pointed at its own file and
+  left **dirty**, because it holds edits that file does not.
+- **15.5 s**, and the compile is not where it goes: the binary is
+  **645 MB** and there is no linker configured. `mold` is next, and the
+  editor now offers to install it.
+
+### Method notes worth keeping
+
+- **Three times a claim in an issue was stale.** #733 said
+  *"`PluginLoader` has no unload"*; it has one. Verify the tree.
+- A test that goes red on every version bump teaches people to ignore
+  red. The two that load a real `.so` now skip with a printed reason.
+- The requirement list is decided by `cargo tree -i <crate>-sys`, never
+  by a table — see [`REQUIREMENTS.md`](REQUIREMENTS.md).
 
 ## 🎯 2026-09-03 — a rule that only the menu knew, #815
 
