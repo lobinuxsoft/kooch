@@ -296,7 +296,14 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         _ => world_history(resources, &undo_stack),
     };
 
+    // Per frame, not once: it includes whether a scene is dirty, and the
+    // whole point is that the button goes away the moment it would cost
+    // somebody their work.
+    let install_blocked = resources
+        .get::<crate::preflight::Report>()
+        .and_then(|report| crate::install::refusal(resources, report));
     let toolbar = ToolbarInfo {
+        install_blocked,
         can_undo,
         can_redo,
         undo_desc,

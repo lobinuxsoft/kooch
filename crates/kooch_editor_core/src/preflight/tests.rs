@@ -1,4 +1,4 @@
-use super::{ALSA, Installer, Probes, RUST, VULKAN_HEADERS, missing_from};
+use super::{ALSA, C_COMPILER, Installer, Probes, RUST, UDEV, VULKAN_HEADERS, missing_from};
 
 /// 🔴 The case this project's own distribution hits: YaguareteOS reports
 /// `ID=yaguarete` and only names Fedora in `ID_LIKE`. An `ID`-only match
@@ -100,6 +100,9 @@ fn a_ready_machine_reports_nothing() {
             cargo: true,
             alsa: true,
             vulkan_headers: true,
+            udev: true,
+            c_compiler: true,
+            mold: true,
         })
         .is_empty()
     );
@@ -114,8 +117,11 @@ fn rust_is_reported_first() {
         cargo: false,
         alsa: false,
         vulkan_headers: false,
+        udev: false,
+        c_compiler: false,
+        mold: false,
     });
-    assert_eq!(missing, vec![RUST, ALSA, VULKAN_HEADERS]);
+    assert_eq!(missing, vec![RUST, ALSA, UDEV, C_COMPILER, VULKAN_HEADERS]);
 }
 
 /// 🔴 The header, not the loader. `pkg-config --exists vulkan` answers
@@ -131,7 +137,11 @@ fn the_probe_looks_for_the_header_itself() {
 use super::Report;
 
 fn report(missing: Vec<super::Requirement>, installer: Installer) -> Report {
-    Report { missing, installer }
+    Report {
+        missing,
+        wanted: Vec::new(),
+        installer,
+    }
 }
 
 /// The whole point of the dialog: one block, not a list of things to go

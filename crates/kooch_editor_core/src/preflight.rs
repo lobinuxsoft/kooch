@@ -135,7 +135,7 @@ impl Installer {
     /// `None` for [`RUST`] everywhere: rustup is not a distribution
     /// package and installing it through one is how a machine ends up
     /// with a toolchain it cannot update.
-    fn package(self, requirement: Requirement) -> Option<&'static str> {
+    pub(crate) fn package(self, requirement: Requirement) -> Option<&'static str> {
         match (self, requirement.name) {
             (Self::RpmOstree | Self::Dnf, "ALSA development files") => Some("alsa-lib-devel"),
             (Self::Apt, "ALSA development files") => Some("libasound2-dev"),
@@ -144,6 +144,16 @@ impl Installer {
                 Some("vulkan-headers")
             }
             (Self::Apt, "Vulkan headers") => Some("libvulkan-dev"),
+            // udev lives in systemd's development package on Fedora and
+            // Arch, and in one of its own on Debian.
+            (Self::RpmOstree | Self::Dnf, "udev development files") => Some("systemd-devel"),
+            (Self::Apt, "udev development files") => Some("libudev-dev"),
+            (Self::Pacman, "udev development files") => Some("systemd-libs"),
+            (Self::RpmOstree | Self::Dnf, "A C compiler") => Some("gcc"),
+            (Self::Apt, "A C compiler") => Some("build-essential"),
+            (Self::Pacman, "A C compiler") => Some("base-devel"),
+            (Self::RpmOstree | Self::Dnf | Self::Pacman, "mold (faster linker)") => Some("mold"),
+            (Self::Apt, "mold (faster linker)") => Some("mold"),
             _ => None,
         }
     }
@@ -200,6 +210,48 @@ impl Installer {
     }
 }
 
+/// The udev development files, which `libudev-sys` links.
+///
+/// 🔴 Found by auditing the dependency tree, not a wiki: `libudev-sys`
+/// is pulled by `gilrs-core`, which is how this engine sees a gamepad.
+/// Without it the build fails — and this engine's character controller
+/// is steered with a stick, so it is not an optional corner.
+pub const UDEV: Requirement = Requirement {
+    name: "udev development files",
+    why: "gamepads are read through libudev, which `gilrs` links against",
+    hint: "",
+};
+
+/// A C compiler, for the crates that build C rather than bind to it.
+///
+/// `metis-sys` and `zstd-sys` compile their own sources, so a machine
+/// with no `cc` fails partway through a build that looked like it was
+/// working.
+///
+/// ⚠️ Probed on Linux only. On Windows the compiler is MSVC, found
+/// through `vswhere` rather than on `PATH`, and answering that question
+/// wrongly would refuse builds that work — which is the failure this
+/// module exists to avoid.
+pub const C_COMPILER: Requirement = Requirement {
+    name: "A C compiler",
+    why: "some dependencies build C sources rather than link a library",
+    hint: "",
+};
+
+/// A faster linker. **Not required** — the build works without it.
+///
+/// 🔴 Listed anyway, and only in the optional half, for the reason this
+/// whole check exists: on an image-based system every package found out
+/// about later costs another reboot. One command, pasted once.
+///
+/// Measured on this project: a one-line change relinks a 645 MB binary,
+/// and that link is where the 15 s goes — not the compile.
+pub const MOLD: Requirement = Requirement {
+    name: "mold (faster linker)",
+    why: "a rebuild spends most of its time linking, and mold cuts that several-fold",
+    hint: "",
+};
+
 /// What the probes found, separated from the decision so a test can
 /// state a machine rather than be run on one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,6 +259,12 @@ pub struct Probes {
     pub cargo: bool,
     pub alsa: bool,
     pub vulkan_headers: bool,
+    pub udev: bool,
+    /// `true` off Linux, where the question does not apply and a wrong
+    /// answer would refuse a build that works.
+    pub c_compiler: bool,
+    /// Not required. Absent means slower, never broken.
+    pub mold: bool,
 }
 
 impl Probes {
@@ -220,6 +278,12 @@ impl Probes {
             cargo: ran("cargo", &["--version"]),
             alsa: ran("pkg-config", &["--exists", "alsa"]),
             vulkan_headers: vulkan_header().is_file(),
+            // The same query `libudev-sys`'s build script makes.
+            udev: !cfg!(target_os = "linux") || ran("pkg-config", &["--exists", "libudev"]),
+            // The same binary the `cc` crate runs. Not a guess about a
+            // toolchain — the toolchain itself, answering.
+            c_compiler: !cfg!(target_os = "linux") || ran("cc", &["--version"]),
+            mold: ran("mold", &["--version"]),
         }
     }
 }
@@ -254,16 +318,39 @@ pub fn missing_from(probes: Probes) -> Vec<Requirement> {
     // project — and it is here anyway. The whole point of this check is
     // ONE command, pasted once: on an image-based system, finding out
     // about a package later costs another reboot.
+    if !probes.udev {
+        missing.push(UDEV);
+    }
+    if !probes.c_compiler {
+        missing.push(C_COMPILER);
+    }
     if !probes.vulkan_headers {
         missing.push(VULKAN_HEADERS);
     }
     missing
 }
 
+/// What would help and is not required.
+///
+/// Kept apart from [`missing_from`] on purpose. A list that mixes "you
+/// cannot build without this" with "this would be faster" is one people
+/// read diagonally — and reading it diagonally is how three of the four
+/// packages in the story above got installed for nothing.
+pub fn wanted_from(probes: Probes) -> Vec<Requirement> {
+    let mut wanted = Vec::new();
+    if !probes.mold && cfg!(target_os = "linux") {
+        wanted.push(MOLD);
+    }
+    wanted
+}
+
 /// What the check found on this machine, as the editor shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
     pub missing: Vec<Requirement>,
+    /// Not required, and offered in the same command so the one reboot
+    /// covers them. See [`wanted_from`].
+    pub wanted: Vec<Requirement>,
     pub installer: Installer,
 }
 
@@ -272,8 +359,10 @@ impl Report {
     /// cannot change while the editor runs, since installing any of it
     /// ends in a reboot.
     pub fn detect() -> Self {
+        let probes = Probes::detect();
         Self {
-            missing: missing_from(Probes::detect()),
+            missing: missing_from(probes),
+            wanted: wanted_from(probes),
             installer: Installer::detect(),
         }
     }
@@ -282,6 +371,24 @@ impl Report {
     /// there is no problem is one people learn to dismiss unread.
     pub fn is_ready(&self) -> bool {
         self.missing.is_empty()
+    }
+
+    /// Whether the window has anything to say at all — a machine that
+    /// can build but would build faster still has one thing to offer.
+    pub fn is_quiet(&self) -> bool {
+        self.missing.is_empty() && self.wanted.is_empty()
+    }
+
+    /// Everything to install, required first.
+    fn all(&self) -> Vec<Requirement> {
+        let mut all = self.missing.clone();
+        all.extend(self.wanted.iter().copied());
+        all
+    }
+
+    /// Whether this machine's package step ends in a restart.
+    pub fn reboots(&self) -> bool {
+        self.installer == Installer::RpmOstree
     }
 
     /// One block that fixes everything missing, ready to paste.
@@ -299,10 +406,32 @@ impl Report {
                 _ => RUSTUP_UNIX.to_owned(),
             });
         }
-        if let Some(packages) = self.installer.command(&self.missing) {
+        if let Some(packages) = self.installer.command(&self.all()) {
             steps.push(packages);
         }
         (!steps.is_empty()).then(|| steps.join("\n"))
+    }
+
+    /// The package step alone, without the `rustup` line or the reboot.
+    ///
+    /// What [`crate::install`] hands to the privileged helper: rustup is
+    /// a per-user install that must **not** run as root, and the restart
+    /// is issued separately so it can be refused when the editor holds
+    /// unsaved work.
+    pub fn packages(&self) -> Option<String> {
+        let all = self.all();
+        let packages: Vec<&str> = all
+            .iter()
+            .filter_map(|req| self.installer.package(*req))
+            .collect();
+        (!packages.is_empty()).then(|| packages.join(" "))
+    }
+
+    /// Whether [`RUST`] is missing, which the editor cannot install for
+    /// you: rustup installs into the invoking user's home, and running
+    /// it through a privileged helper would put a toolchain in root's.
+    pub fn needs_rust(&self) -> bool {
+        self.missing.contains(&RUST)
     }
 }
 

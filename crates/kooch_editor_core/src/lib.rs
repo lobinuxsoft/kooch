@@ -41,6 +41,7 @@ pub use panels::profiler::keep_all_frames;
 pub mod carry;
 pub mod code_reload;
 pub mod dlss_sdk;
+pub mod install;
 pub mod moved_pump;
 pub mod perf;
 mod picking;
