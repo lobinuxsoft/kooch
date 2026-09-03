@@ -1525,3 +1525,72 @@ fn a_run_banks_the_body() {
         "should have tipped towards the wall at +X: {standing}",
     );
 }
+
+/// Measurement: the whole shape of a jump, in seconds and metres.
+///
+/// Reported as *"el salto parece que flota en el aire"*, which is a
+/// feeling until it is a number. Prints time to the apex, the apex, the
+/// fall, and the total — because "floaty" is about **time**, not height,
+/// and the two are set by different knobs.
+///
+/// Run with `--ignored --nocapture`.
+#[test]
+#[ignore = "measurement"]
+fn jump_profile() {
+    let mut resources = world();
+    let hero = on_the_floor(&mut resources);
+    let resting = position(&resources, hero).y;
+    // The harness never advances `Time`, so the step is the physics
+    // fallback the systems actually used — `FALLBACK_DT` in
+    // `kooch_physics::plugin::systems`.
+    let dt = 1.0 / 60.0f32;
+
+    let body = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<kooch_physics::plugin::SolverBody>())
+        .and_then(|s| s.get(hero))
+        .copied()
+        .expect("no body");
+    let speed = 5.0f32;
+    if let Some(world) = resources.get_mut::<PhysicsWorld>() {
+        let mass = world.mass(body).unwrap_or(1.0);
+        world.apply_impulse(body, Vec3::Y * speed * mass);
+    }
+
+    let mut highest = resting;
+    let mut apex_at = 0u32;
+    let mut landed_at = None;
+    for frame in 1..=240u32 {
+        simulate(&mut resources, 1);
+        let y = position(&resources, hero).y;
+        if y > highest {
+            highest = y;
+            apex_at = frame;
+        }
+        // Back within a centimetre of where it started, on the way down.
+        if landed_at.is_none() && frame > apex_at && (y - resting).abs() < 0.01 {
+            landed_at = Some(frame);
+        }
+    }
+
+    let rise = apex_at as f32 * dt;
+    let land = landed_at.unwrap_or(240) as f32 * dt;
+    println!("launch      {speed:.2} m/s");
+    println!("apex        {:.3} m", highest - resting);
+    println!("rise        {rise:.3} s");
+    println!("fall        {:.3} s", land - rise);
+    println!("airborne    {land:.3} s");
+    println!();
+    // 🔴 The comparison that names the cause. A parabola is symmetric:
+    // falling back from the apex under the same gravity takes the time
+    // it took to rise. Anything beyond that is something holding the
+    // character up on the way down.
+    let free = (2.0 * (highest - resting) / 9.81).sqrt();
+    println!("free fall from that apex would be {free:.3} s");
+    println!(
+        "the descent takes {:.3} s more than gravity asks for",
+        (land - rise) - free
+    );
+    println!();
+    println!("For reference: a platformer jump is usually 0.4-0.7 s in total.");
+}
