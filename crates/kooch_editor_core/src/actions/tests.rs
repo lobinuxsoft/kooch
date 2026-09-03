@@ -14,7 +14,7 @@ fn saving_needs_a_live_world() {
 fn the_ways_out_of_a_stuck_build_are_not_blocked() {
     for (name, action) in [
         ("CancelLaunch", EditorAction::CancelLaunch),
-        ("RebuildRemote", EditorAction::RebuildRemote),
+        ("RebuildAndRun", EditorAction::RebuildAndRun),
         ("CloseProject", EditorAction::CloseProject),
     ] {
         assert!(

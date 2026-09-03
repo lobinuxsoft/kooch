@@ -12,7 +12,7 @@ use kooch_core::resource::Resources;
 use crate::project_state::ProjectState;
 use crate::remote_session::{RemoteSession, RemoteState};
 
-pub(super) fn handle_rebuild_remote(resources: &mut Resources) {
+pub(super) fn handle_rebuild_and_run(resources: &mut Resources) {
     disconnect_remote(resources);
     start_remote_session(resources);
 }
