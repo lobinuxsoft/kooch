@@ -24,6 +24,9 @@ was found by using the editor, never by reading the code.
 - `Query` — an entire archetype-matching query system — is used by tests
   and one file.
 - `RenderGraph` — 497 lines — is instantiated by nobody.
+- `CollisionStarted` was emitted, resolved to entities and registered all
+  along, and was not in the prelude — so a level could not have a goal, a
+  checkpoint or a death plane. All three are one sensor (#1065).
 - `unload_project_plugins` had **zero callers**, so the editor could load a
   project's code and never swap it — reopening the project was the only way
   to see a component change (#733).
