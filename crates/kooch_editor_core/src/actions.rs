@@ -982,6 +982,12 @@ pub(crate) fn apply_actions(
     if !reloads.is_empty() {
         queued.splice(0..0, reloads);
     }
+    // Ahead of everything: a world held across a rebuild has to be back
+    // before anything else acts on the scene it is supposed to be in.
+    let resumed = crate::carry::resume(resources);
+    if !resumed.is_empty() {
+        queued.splice(0..0, resumed);
+    }
     if !queued.is_empty() {
         // 🔴 `debug`, not `info`. A live prefab drains every frame, so at
         // `info` this printed sixty identical lines a second and buried

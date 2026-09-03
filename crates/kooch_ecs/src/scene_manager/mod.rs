@@ -276,6 +276,24 @@ impl SceneManager {
         }
     }
 
+    /// Re-points an open scene at the file it should be written back to.
+    ///
+    /// For a scene that was loaded from somewhere other than its home —
+    /// the editor holds the live world in a temporary file while the
+    /// project restarts, then puts it back. Without this the scene would
+    /// be adopted under the temporary path and a save would write there.
+    ///
+    /// Returns `false` when the scene is not open.
+    pub fn adopt_path(&mut self, id: Guid, path: Option<PathBuf>) -> bool {
+        match self.scenes.iter_mut().find(|scene| scene.id == id) {
+            Some(scene) => {
+                scene.path = path;
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn mark_clean(&mut self) {
         if let Some(scene) = self.active_mut() {
             scene.dirty = false;

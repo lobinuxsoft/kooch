@@ -13,6 +13,15 @@ use crate::project_state::ProjectState;
 use crate::remote_session::{RemoteSession, RemoteState};
 
 pub(super) fn handle_rebuild_and_run(resources: &mut Resources) {
+    // 🔴 Before the teardown, and that is the whole point. The world
+    // belongs to the project's process; killing it drops every edit made
+    // since the last save and reopens whichever scene the project starts
+    // with. `carry` writes the live world out and puts it back once the
+    // new process answers — see [`crate::carry`].
+    let held = crate::carry::capture(resources);
+    if held > 0 {
+        tracing::info!(scenes = held, "holding the world across the rebuild");
+    }
     disconnect_remote(resources);
     start_remote_session(resources);
 }
