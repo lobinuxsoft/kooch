@@ -5,12 +5,13 @@ use glam::Vec3;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 
-/// The direction a character should turn to face, in world space.
+/// Where gameplay is steering a character, in world space.
 ///
-/// Written by gameplay, read by
+/// Written by gameplay **every frame**, read by
 /// [`CharacterPlugin`](crate::CharacterPlugin), which turns the body
-/// towards it about the local up at
-/// [`turn_speed`](crate::CharacterController::turn_speed).
+/// towards it at
+/// [`turn_speed`](crate::CharacterController::turn_speed) and walks at
+/// [`Walk::max_speed`](crate::Walk::max_speed) times its length.
 ///
 /// # Why this is not read off the velocity
 ///
@@ -19,16 +20,22 @@ use kooch_ecs::component::Component;
 /// twitches while standing still on a ramp. Steering is intent, and
 /// intent is an input.
 ///
-/// # Zero means keep looking
+/// # Zero is a released stick, not a missing one
 ///
-/// A character that let go of the stick would otherwise snap back to
-/// whatever direction zero happens to name. The last direction stands
-/// until a new one is written.
+/// The length is the throttle, so zero has to mean **stop**, and a
+/// system that skips writing it leaves the throttle wherever it was —
+/// a character walking on its own for ever, which is exactly what
+/// happened.
+///
+/// The heading is kept without keeping the throttle: with nothing to
+/// steer by, the turn falls back to the way the body is already
+/// looking, so releasing the stick stops the character where it stands
+/// rather than snapping it to face whatever direction zero names.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Reflect)]
 #[reflect(category = "Physics")]
 pub struct Facing {
-    /// Any length; only the direction is read, flattened against the
-    /// local up.
+    /// Direction and throttle in one: flattened against the local up,
+    /// and its length clamped to `1` before it scales the top speed.
     pub direction: Vec3,
 }
 

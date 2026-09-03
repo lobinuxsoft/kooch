@@ -695,3 +695,26 @@ fn it_holds_its_top_speed() {
         steps.max_speed,
     );
 }
+
+/// Nobody steering is nobody moving. The spring and the lean both act
+/// along the local up, and a stationary character that drifts means one
+/// of them is leaking sideways.
+#[test]
+fn a_standing_character_does_not_drift() {
+    let mut resources = world();
+    let hero = on_the_floor(&mut resources);
+    insert(&mut resources, hero, Walk::default());
+
+    insert(
+        &mut resources,
+        hero,
+        Facing {
+            direction: Vec3::ZERO,
+        },
+    );
+    let start = position(&resources, hero);
+    simulate(&mut resources, 240);
+    let drift = position(&resources, hero) - start;
+    let across = Vec3::new(drift.x, 0.0, drift.z).length();
+    assert!(across < 0.1, "it drifted {across} m");
+}
