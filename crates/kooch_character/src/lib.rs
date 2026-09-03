@@ -44,6 +44,7 @@ pub mod plugin;
 pub mod sprint;
 pub mod touching;
 pub mod walk;
+pub mod wall_run;
 pub mod wall_slide;
 
 pub use controller::CharacterController;
@@ -54,4 +55,5 @@ pub use plugin::{CharacterComponentsPlugin, CharacterPlugin};
 pub use sprint::Sprint;
 pub use touching::Touching;
 pub use walk::Walk;
+pub use wall_run::WallRun;
 pub use wall_slide::WallSlide;

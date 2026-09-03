@@ -11,13 +11,15 @@ use kooch_core::time::Time;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::transform::Transform;
-use kooch_gravity::gravity_up;
+use kooch_gravity::{gravity_at, gravity_up};
 use kooch_physics::plugin::{PhysicsWorld, SolverBody};
 
 use crate::grounded::Grounded;
 use crate::jump::{Jump, WallJump};
 use crate::plugin::leap::{self, Leap, Tallies};
+use crate::plugin::run::{self, Run, Runs};
 use crate::touching::Touching;
+use crate::wall_run::WallRun;
 use crate::wall_slide::WallSlide;
 
 /// One character's worth, read before the world is borrowed.
@@ -30,7 +32,11 @@ struct Asked {
     jump: Option<Jump>,
     off: Option<WallJump>,
     slide: Option<WallSlide>,
+    run: Option<WallRun>,
     steering: Vec3,
+    /// How hard the field pulls here, which a run holds off a fraction
+    /// of.
+    weight: f32,
 }
 
 impl Asked {
@@ -55,6 +61,7 @@ pub fn cling_and_leap(resources: &mut Resources) {
         return;
     };
     let mut tallies = resources.remove::<Tallies>().unwrap_or_default();
+    let mut runs = resources.remove::<Runs>().unwrap_or_default();
     let mut spent = Vec::new();
     for one in &asked {
         let mut tally = tallies.of(one.entity);
@@ -62,8 +69,24 @@ pub fn cling_and_leap(resources: &mut Resources) {
         // the wall is still right there, and holding on would cancel
         // the jump that was just made.
         let clearing = tally.since_wall.is_some_and(|since| since < leap::CLEARING);
+        // Off the wall, or back on the ground: the next wall is a fresh
+        // question. Without this a refusal follows the character to
+        // every wall it ever touches again.
+        if one.standing || one.wall.is_none() {
+            runs.landed(one.entity);
+        }
+        // A run first: a character that is running along a wall is not
+        // sliding down it, and applying both is one asking to fall and
+        // one asking not to.
+        let running = match (one.run, one.wall, clearing) {
+            (Some(spec), Some(normal), false) if !one.standing => {
+                sprint_along(&mut world, &mut runs, one, &spec, normal, dt)
+            }
+            _ => false,
+        };
         if let Some(slide) = one.slide
             && !clearing
+            && !running
         {
             cling(&mut world, one, &slide, dt);
         }
@@ -83,6 +106,7 @@ pub fn cling_and_leap(resources: &mut Resources) {
     }
     resources.insert(world);
     resources.insert(tallies);
+    resources.insert(runs);
 
     // Cleared here rather than by gameplay: whoever set it cannot know
     // whether it was honoured, buffered or refused, and a flag left set
@@ -98,6 +122,41 @@ pub fn cling_and_leap(resources: &mut Resources) {
             jump.wanted = false;
         }
     }
+}
+
+/// Carries the character along the wall while the clock allows, and
+/// reports whether it did.
+fn sprint_along(
+    world: &mut PhysicsWorld,
+    runs: &mut Runs,
+    one: &Asked,
+    spec: &WallRun,
+    normal: Vec3,
+    dt: f32,
+) -> bool {
+    let Some(velocity) = world.linear_velocity(one.body) else {
+        return false;
+    };
+    let speed = run::along(velocity, normal, one.up).length();
+    let carried = run::carry(runs.state(one.entity), speed, spec, dt);
+    runs.set(one.entity, carried);
+    let Run::Going(_) = carried else {
+        return false;
+    };
+
+    let mut held = velocity;
+    // The bounce off the wall, dropped, and held on in its place — the
+    // same argument as the slide's `stick`.
+    let out = held.dot(normal);
+    if out > 0.0 {
+        held -= normal * out;
+    }
+    held -= normal * spec.stick.max(0.0) * dt;
+    // Gravity held off, not cancelled: the sag is what tells a player
+    // the run is ending before it ends.
+    held += one.up * one.weight * spec.hold.clamp(0.0, 1.0) * dt;
+    world.set_linear_velocity(one.body, held);
+    true
 }
 
 /// Holds the character on the wall, and its fall to the slide speed.
@@ -147,10 +206,14 @@ fn launch(world: &mut PhysicsWorld, one: &Asked, leap: Leap) {
     };
     let launched = match leap {
         Leap::Ground(up) => velocity - one.up * velocity.dot(one.up) + up,
-        // A wall jump replaces the horizontal too: it is a push away
-        // from something, and keeping the run *into* the wall would
-        // cancel most of it.
-        Leap::Wall(away) => away,
+        // The speed *along* the wall is kept and the speed *into* it is
+        // not. Keeping everything would spend most of the push undoing
+        // the run at the wall; keeping nothing throws away the run
+        // along it, which on a wall run is the whole point.
+        Leap::Wall(away) => match one.wall {
+            Some(normal) => run::along(velocity, normal, one.up) + away,
+            None => away,
+        },
     };
     world.set_linear_velocity(one.body, launched);
 }
@@ -171,6 +234,7 @@ fn plan(resources: &Resources) -> Vec<Asked> {
     let jumps = registry.get_cpu::<Jump>();
     let offs = registry.get_cpu::<WallJump>();
     let slides = registry.get_cpu::<WallSlide>();
+    let running = registry.get_cpu::<WallRun>();
     let facings = registry.get_cpu::<crate::facing::Facing>();
 
     type Read = (
@@ -182,6 +246,7 @@ fn plan(resources: &Resources) -> Vec<Asked> {
         Option<Jump>,
         Option<WallJump>,
         Option<WallSlide>,
+        Option<WallRun>,
         Vec3,
     );
     let asked: Vec<Read> = grounded
@@ -192,7 +257,8 @@ fn plan(resources: &Resources) -> Vec<Asked> {
             // Nothing to do for a character with neither. Either alone
             // is enough: a wall to slide down is a mechanic without a
             // jump, and a jump is one without a wall.
-            (jump.is_some() || slide.is_some()).then_some(())?;
+            let run = running.and_then(|running| running.get(entity)).copied();
+            (jump.is_some() || slide.is_some() || run.is_some()).then_some(())?;
             Some((
                 entity,
                 *bodies.get(entity)?,
@@ -205,6 +271,7 @@ fn plan(resources: &Resources) -> Vec<Asked> {
                 jump,
                 offs.and_then(|offs| offs.get(entity)).copied(),
                 slide,
+                run,
                 facings
                     .and_then(|facings| facings.get(entity))
                     .map(|facing| facing.direction)
@@ -216,7 +283,7 @@ fn plan(resources: &Resources) -> Vec<Asked> {
     asked
         .into_iter()
         .map(
-            |(entity, body, position, standing, wall, jump, off, slide, steering)| Asked {
+            |(entity, body, position, standing, wall, jump, off, slide, run, steering)| Asked {
                 entity,
                 body,
                 up: gravity_up(resources, position),
@@ -225,7 +292,9 @@ fn plan(resources: &Resources) -> Vec<Asked> {
                 jump,
                 off,
                 slide,
+                run,
                 steering,
+                weight: gravity_at(resources, position).length(),
             },
         )
         .collect()

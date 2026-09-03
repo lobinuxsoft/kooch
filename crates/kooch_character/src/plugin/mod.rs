@@ -3,6 +3,7 @@
 pub mod cling;
 mod hold;
 pub mod leap;
+pub mod run;
 pub mod sense;
 pub mod turn;
 pub mod walk;
@@ -21,6 +22,7 @@ use crate::jump::{Jump, WallJump};
 use crate::sprint::Sprint;
 use crate::touching::Touching;
 use crate::walk::Walk;
+use crate::wall_run::WallRun;
 use crate::wall_slide::WallSlide;
 
 pub use cling::cling_and_leap;
@@ -45,6 +47,7 @@ impl Plugin for CharacterComponentsPlugin {
                 registry.register_cpu_reflected::<Jump>();
                 registry.register_cpu_reflected::<Sprint>();
                 registry.register_cpu_reflected::<WallJump>();
+                registry.register_cpu_reflected::<WallRun>();
                 registry.register_cpu_reflected::<WallSlide>();
                 registry.register_cpu_reflected::<Touching>();
                 registry.register_cpu_reflected::<Walk>();

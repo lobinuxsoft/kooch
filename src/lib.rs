@@ -198,7 +198,7 @@ pub mod prelude {
     #[cfg(feature = "character")]
     pub use kooch_character::{
         CharacterController, CharacterPlugin, Facing, Grounded, Sprint, Touching, Walk, WallJump,
-        WallSlide,
+        WallRun, WallSlide,
     };
     // Not `Jump`: a project that already has one of its own — and
     // `roll-a-ball` does, for a ball that is not a character — would

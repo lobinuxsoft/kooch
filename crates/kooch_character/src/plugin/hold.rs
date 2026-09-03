@@ -14,6 +14,7 @@ use kooch_physics::plugin::{PhysicsWorld, SolverBody};
 use crate::controller::CharacterController;
 use crate::facing::Facing;
 use crate::grounded::Grounded;
+use crate::plugin::run::{self, Runs};
 use crate::plugin::sense::{self, Footing};
 use crate::plugin::{turn, walk};
 use crate::sprint::Sprint;
@@ -39,6 +40,15 @@ struct Planned {
     walk: Option<Walk>,
     /// Whether it is running, and by how much.
     sprint: Sprint,
+    /// Whether this character is interested in walls at all.
+    walls: bool,
+    /// How far to bank while running a wall, and which way, or `None`
+    /// for a character that is not on one.
+    ///
+    /// Read from the run the *previous* step decided on, because the run
+    /// is decided after this pass. A frame of lag on a lean nobody can
+    /// see is cheaper than a second pass to remove it.
+    bank: Option<(Vec3, f32)>,
 }
 
 /// Rising faster than this and the spring lets go, in m/s.
@@ -112,6 +122,9 @@ fn plan(resources: &Resources) -> Vec<Planned> {
     let facings = registry.get_cpu::<Facing>();
     let walks = registry.get_cpu::<Walk>();
     let sprints = registry.get_cpu::<Sprint>();
+    let touched = registry.get_cpu::<Touching>();
+    let runs = resources.get::<Runs>();
+    let running = registry.get_cpu::<crate::wall_run::WallRun>();
 
     // Read first, then ask the field: `gravity_up` walks the same
     // storages this is holding.
@@ -124,6 +137,8 @@ fn plan(resources: &Resources) -> Vec<Planned> {
         Vec3,
         Option<Walk>,
         Sprint,
+        bool,
+        Option<(Vec3, f32)>,
     );
     let standing: Vec<Read> = controllers
         .iter()
@@ -148,6 +163,12 @@ fn plan(resources: &Resources) -> Vec<Planned> {
                         wanted: false,
                         ..Default::default()
                     }),
+                touched.is_some_and(|touched| touched.get(entity).is_some()),
+                runs.and_then(|runs| runs.of(entity))
+                    .and(running.and_then(|running| running.get(entity)))
+                    .zip(touched.and_then(|touched| touched.get(entity)))
+                    .filter(|(_, touched)| touched.wall)
+                    .map(|(spec, touched)| (touched.normal, spec.bank)),
             ))
         })
         .collect();
@@ -155,7 +176,7 @@ fn plan(resources: &Resources) -> Vec<Planned> {
     standing
         .into_iter()
         .map(
-            |(entity, body, controller, position, rotation, facing, walk, sprint)| {
+            |(entity, body, controller, position, rotation, facing, walk, sprint, walls, bank)| {
                 let pull = gravity_at(resources, position);
                 Planned {
                     entity,
@@ -170,6 +191,8 @@ fn plan(resources: &Resources) -> Vec<Planned> {
                     facing,
                     walk,
                     sprint,
+                    walls,
+                    bank,
                 }
             },
         )
@@ -200,7 +223,15 @@ fn hold_one(
         true => plan.facing,
         false => velocity,
     };
-    let touching = match sense::ahead(world, controller, plan.position, along, plan.up, filter) {
+    // Ahead and to both sides, and only for a character that authored a
+    // `Touching` to receive it. Looking only where it is going never
+    // finds the wall it is running *along*, which is the one thing a
+    // wall run is about.
+    let found = plan
+        .walls
+        .then(|| sense::beside(world, controller, plan.position, along, plan.up, filter))
+        .flatten();
+    let touching = match found {
         Some((normal, distance)) => Touching {
             wall: true,
             normal,
@@ -358,6 +389,12 @@ fn turn_one(world: &mut PhysicsWorld, plan: &Planned, gained: Vec3, dt: f32) {
     // the body swings as the surface changes and a slope the character
     // is only crossing tips it sideways.
     let up = turn::leaned(plan.up, gained, plan.weight, lean);
+    // Banked towards the wall while running one. Upright, a character
+    // running along a wall reads as one hovering beside it.
+    let up = match plan.bank {
+        Some((normal, bank)) => run::banked(up, normal, bank),
+        None => up,
+    };
     let wanted = turn::wanted(up, plan.facing, plan.rotation);
     let turned = turn::towards(plan.rotation, wanted, plan.controller.turn_speed, dt);
     if turned.abs_diff_eq(plan.rotation, 1e-6) {

@@ -108,12 +108,17 @@ fn ledge(
     }
 }
 
-/// Sweeps ahead for a wall.
+/// Sweeps for the nearest wall ahead or to either side.
 ///
-/// `along` is where the character is steering, not where it is moving: a
-/// body pressed against a wall has almost no velocity into it, which is
-/// exactly when a wall slide needs to know the wall is there.
-pub fn ahead(
+/// Three sweeps, and the sides are not optional. A probe that only looks
+/// where the character is going never finds the wall it is running
+/// *along* — which is the one thing a wall run is about, and it meant a
+/// character steering parallel to a wall never saw it at all.
+///
+/// `along` is where the character is steering rather than where it is
+/// moving: a body pressed against a wall has almost no velocity into it,
+/// which is exactly when a wall slide needs to know the wall is there.
+pub fn beside(
     world: &PhysicsWorld,
     controller: &CharacterController,
     position: Vec3,
@@ -122,7 +127,24 @@ pub fn ahead(
     filter: QueryFilter,
 ) -> Option<(Vec3, f32)> {
     let flat = along - up * along.dot(up);
-    let direction = flat.try_normalize()?;
+    let forward = flat.try_normalize()?;
+    let side = forward.cross(up);
+    [forward, side, -side]
+        .into_iter()
+        .filter_map(|direction| ahead(world, controller, position, direction, up, filter))
+        .min_by(|(_, near), (_, far)| near.total_cmp(far))
+}
+
+/// One sweep, in one direction.
+pub fn ahead(
+    world: &PhysicsWorld,
+    controller: &CharacterController,
+    position: Vec3,
+    along: Vec3,
+    up: Vec3,
+    filter: QueryFilter,
+) -> Option<(Vec3, f32)> {
+    let direction = along.try_normalize()?;
     let probe = CollisionShape::Sphere {
         radius: controller
             .probe_radius
