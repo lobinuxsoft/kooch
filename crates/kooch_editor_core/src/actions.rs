@@ -546,9 +546,6 @@ pub(crate) enum EditorAction {
     /// Install what `preflight` found missing, and restart if this
     /// machine's package manager needs it. See [`crate::install`].
     InstallRequirements,
-    /// The author saw the resync notice. Clears it; the rebuild is
-    /// theirs to run.
-    AcknowledgeScriptSync,
 }
 
 /// The kind of file created by [`EditorAction::CreateFile`]. The Rust
@@ -654,7 +651,7 @@ impl EditorAction {
             | Self::Stop
             | Self::RegisterScripts
             | Self::InstallRequirements
-            | Self::AcknowledgeScriptSync => true,
+            => true,
 
             // Session and project lifecycle: these are how a user gets
             // *out* of a stuck build, so they must keep working.
@@ -806,7 +803,6 @@ impl EditorAction {
             // lifecycle. None of them is the running world.
             | Self::RegisterScripts
             | Self::InstallRequirements
-            | Self::AcknowledgeScriptSync
             | Self::BuildProject(_)
             | Self::CancelBuild
             | Self::OpenProject(_)
