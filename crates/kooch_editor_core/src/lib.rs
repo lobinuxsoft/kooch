@@ -38,6 +38,7 @@ pub(crate) mod panels;
 /// against a long capture discarding its own scope names.
 #[cfg(feature = "profiling")]
 pub use panels::profiler::keep_all_frames;
+pub mod carry;
 pub mod code_reload;
 pub mod dlss_sdk;
 pub mod moved_pump;

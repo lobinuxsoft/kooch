@@ -62,7 +62,7 @@ pub(super) fn save_scene_as(
 /// Named rather than implied: with several scenes open, the one somebody
 /// right-clicked is routinely not the active one, and `save_as` writes
 /// whichever that is.
-pub(super) fn save_open_scene_as(
+pub(crate) fn save_open_scene_as(
     resources: &mut Resources,
     id: kooch_core::Guid,
     path: PathBuf,
