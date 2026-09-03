@@ -1,0 +1,113 @@
+//! [`CharacterController`] — the numbers the floating capsule is tuned by.
+
+use kooch_ecs::Reflect;
+use kooch_ecs::component::Component;
+
+/// A body held above the ground by a spring instead of resting on it.
+///
+/// Attach beside a `PhysicsBody` (dynamic) and a `Collider`. The collider
+/// is the character's shape; this only describes how it is held up.
+///
+/// # Default
+///
+/// Tuned for a capsule about two metres tall floating a quarter of a
+/// metre, which is a person who can walk up a kerb without noticing.
+#[derive(Debug, Clone, Copy, PartialEq, Reflect)]
+#[reflect(category = "Physics")]
+pub struct CharacterController {
+    /// How high the body's **origin** rides above the ground, in metres.
+    ///
+    /// The one number that decides how a character feels, and the one
+    /// nothing else in the editor draws.
+    ///
+    /// # It must clear the collider
+    ///
+    /// Measured from the origin, not from the capsule's feet, because
+    /// the controller does not know where its feet are — the collider
+    /// could be any shape, offset any way. So this has to exceed the
+    /// collider's own reach below the origin, or the spring is asking
+    /// for a height the geometry cannot occupy and the capsule simply
+    /// rests on the floor instead of floating.
+    ///
+    /// For a capsule of radius `r` and half-height `h`, that reach is
+    /// `r + h`. The gizmo draws both, so a value that cannot be reached
+    /// is visible rather than something to work out.
+    ///
+    /// The clearance it buys is also the step height: a step shorter
+    /// than the gap is climbed by the spring alone, with no code that
+    /// knows what a step is.
+    pub ride_height: f32,
+    /// How far below the body to look for ground, in metres.
+    ///
+    /// Must exceed `ride_height`, or the probe ends before the rest
+    /// position and the character can never find the floor it is
+    /// standing on. Past `ride_height` the extra is how far it can drop
+    /// before it counts as falling.
+    pub probe: f32,
+    /// Radius of the sphere that does the looking.
+    ///
+    /// Wants to be near the character's own radius. A sphere much
+    /// smaller behaves like the ray this is not, and finds the gap
+    /// between two floor tiles.
+    pub probe_radius: f32,
+    /// How hard the spring pulls the body back to `ride_height`, as an
+    /// acceleration per metre of error.
+    pub stiffness: f32,
+    /// How strongly the spring resists vertical speed.
+    ///
+    /// Too little and the character bounces on landing; too much and it
+    /// sinks into a step instead of rising over it. Critical damping is
+    /// near `2·sqrt(stiffness)`, which is the value to start from.
+    pub damping: f32,
+    /// How hard the body is turned back upright.
+    ///
+    /// In solver units rather than an acceleration: correcting a
+    /// rotation needs the inertia tensor and the backend does not expose
+    /// one, so this is tuned by feel. The gizmo draws which way it is
+    /// pulling.
+    pub upright_stiffness: f32,
+    /// How strongly the upright spring resists spin.
+    pub upright_damping: f32,
+    /// Steepest ground that still counts as standing, in degrees.
+    ///
+    /// Above it the surface is a wall: the sweep still finds it, the
+    /// height spring still pushes off it, and [`Grounded::standing`]
+    /// stays false — so a character can slide down a cliff without the
+    /// jump believing it is on the floor.
+    ///
+    /// [`Grounded::standing`]: crate::Grounded::standing
+    pub max_slope: f32,
+}
+
+impl Default for CharacterController {
+    fn default() -> Self {
+        Self {
+            // A capsule of radius 0.4 and half-height 0.5 reaches 0.9
+            // below its origin, so this floats it by 0.2.
+            ride_height: 1.1,
+            probe: 1.8,
+            probe_radius: 0.35,
+            stiffness: 90.0,
+            damping: 18.0,
+            upright_stiffness: 12.0,
+            upright_damping: 3.0,
+            max_slope: 50.0,
+        }
+    }
+}
+
+impl Component for CharacterController {}
+
+impl CharacterController {
+    /// Whether a surface with this normal can be stood on, given which
+    /// way is up here.
+    pub fn stands_on(&self, normal: glam::Vec3, up: glam::Vec3) -> bool {
+        let Some(normal) = normal.try_normalize() else {
+            return false;
+        };
+        normal.dot(up) >= self.max_slope.to_radians().cos()
+    }
+}
+
+#[cfg(test)]
+mod tests;
