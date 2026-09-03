@@ -414,3 +414,51 @@ fn zero_gravity_does_not_spin_it() {
     );
     assert!(!grounded(&resources, hero).standing);
 }
+
+/// Acceptance: it stays part of the world. A kinematic controller moves
+/// *through* the scene; this one pushes and is pushed.
+#[test]
+fn it_pushes_a_crate_and_is_pushed_back() {
+    let mut resources = world();
+    Playing::set(&mut resources, true);
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        GlobalGravity::default(),
+    );
+    floor(
+        &mut resources,
+        Vec3::new(0.0, -1.0, 0.0),
+        Vec3::new(30.0, 0.5, 30.0),
+    );
+
+    let hero = character(&mut resources, Vec3::new(0.0, 0.5, 0.0));
+    let crate_entity = body_at(&mut resources, Vec3::new(1.2, 0.5, 0.0));
+
+    // Let both settle before anything is pushed, so the movement below
+    // is the only thing that could have moved the crate.
+    simulate(&mut resources, 180);
+    let crate_start = position(&resources, crate_entity).x;
+
+    // Walking pace, straight at it.
+    for _ in 0..120 {
+        let body = resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<kooch_physics::plugin::SolverBody>())
+            .and_then(|s| s.get(hero))
+            .copied();
+        if let Some(body) = body
+            && let Some(world) = resources.get_mut::<kooch_physics::plugin::PhysicsWorld>()
+        {
+            world.apply_impulse(body, Vec3::X * 0.15);
+        }
+        simulate(&mut resources, 1);
+    }
+
+    let moved = position(&resources, crate_entity).x - crate_start;
+    assert!(moved > 0.3, "the crate should have been shoved: {moved}");
+    assert!(
+        grounded(&resources, hero).standing,
+        "and the character should still be on the floor",
+    );
+}

@@ -112,6 +112,7 @@ impl Plugin for EditorPlugin {
         // Components only: the editor authors gravity, the project's
         // process applies it.
         app.add_plugin(kooch_gravity::GravityComponentsPlugin);
+        app.add_plugin(kooch_character::CharacterComponentsPlugin);
         // Same split again: the editor authors camera behaviour and never
         // runs it. A vcam driving a camera here would fight the editor's
         // own, which owns the viewport.

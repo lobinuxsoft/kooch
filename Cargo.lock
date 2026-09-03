@@ -2483,6 +2483,7 @@ dependencies = [
  "exmex",
  "glam 0.33.2",
  "kooch_camera",
+ "kooch_character",
  "kooch_core",
  "kooch_ecs",
  "kooch_gizmos",

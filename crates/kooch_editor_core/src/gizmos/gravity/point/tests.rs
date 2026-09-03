@@ -1,5 +1,5 @@
 use super::*;
-use crate::gizmos::gravity::harness::{draw, reach};
+use crate::gizmos::harness::{draw, reach};
 use glam::Mat4;
 
 /// The cutoff is the outer sphere, so the gizmo has to reach it.
