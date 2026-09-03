@@ -16,6 +16,7 @@ use crate::walk::Walk;
 #[derive(Default)]
 pub struct WalkGoals {
     goals: HashMap<Entity, Vec3>,
+    seen: HashMap<Entity, Vec3>,
 }
 
 impl WalkGoals {
@@ -44,9 +45,25 @@ impl WalkGoals {
         self.goals.insert(entity, velocity);
     }
 
+    /// The acceleration a character actually got, from the velocity it
+    /// actually has.
+    ///
+    /// Not the force applied: a body shoving a wall is given the full
+    /// `max_force` and goes nowhere, and a lean drawn from that tips the
+    /// character over at 29 degrees and leaves it there. A lean is a
+    /// response to changing speed, so it has to be measured from speed.
+    pub fn gained(&mut self, entity: Entity, velocity: Vec3, dt: f32) -> Vec3 {
+        let last = self.seen.insert(entity, velocity).unwrap_or(velocity);
+        match dt > 0.0 {
+            true => (velocity - last) / dt,
+            false => Vec3::ZERO,
+        }
+    }
+
     /// Drops a character that no longer exists.
     pub fn forget(&mut self, entity: Entity) {
         self.goals.remove(&entity);
+        self.seen.remove(&entity);
     }
 
     /// How many characters are being tracked.

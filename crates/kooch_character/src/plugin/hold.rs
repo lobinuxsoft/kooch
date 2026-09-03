@@ -178,15 +178,6 @@ fn hold_one(
         .map(|under| under.footing.stands())
         .unwrap_or(false);
 
-    // Stood on the surface, not on the field. A ramp is something to
-    // stand *on*, and a character that walks up one bolt upright reads
-    // as a sprite. Only when it counts as ground: aligning to a step's
-    // riser or to a wall would lay the character on its side.
-    let stand = match (standing, under.as_ref()) {
-        (true, Some(under)) => under.normal.try_normalize().unwrap_or(plan.up),
-        _ => plan.up,
-    };
-
     // Where it is steering, or where it is going when nothing is asked:
     // a body pressed against a wall has almost no velocity into it,
     // which is exactly when a wall slide needs to know the wall is
@@ -205,9 +196,13 @@ fn hold_one(
         None => Touching::default(),
     };
 
-    // Before the turn, because the lean is drawn from it.
-    let pushed = walk_one(world, goals, plan, standing, dt);
-    turn_one(world, plan, stand, pushed, dt);
+    let across = velocity - plan.up * velocity.dot(plan.up);
+    // Measured before the walk pushes, so it is the speed the last step
+    // actually produced rather than the force this one is about to ask
+    // for. A body shoving a wall is given everything and goes nowhere.
+    let gained = goals.gained(plan.entity, across, dt);
+    walk_one(world, goals, plan, standing, dt);
+    turn_one(world, plan, gained, dt);
 
     let Some(under) = under else {
         return (Grounded::default(), touching);
@@ -282,20 +277,16 @@ fn hold_one(
     )
 }
 
-/// Chases the goal velocity, and reports the acceleration it used.
-///
-/// The report is what the lean is drawn from: a body tilts into what is
-/// actually being applied to it, not into what was asked for and
-/// clipped.
+/// Chases the goal velocity.
 fn walk_one(
     world: &mut PhysicsWorld,
     goals: &mut walk::WalkGoals,
     plan: &Planned,
     standing: bool,
     dt: f32,
-) -> Vec3 {
+) {
     let Some(steps) = plan.walk else {
-        return Vec3::ZERO;
+        return;
     };
     let velocity = world.linear_velocity(plan.body).unwrap_or(Vec3::ZERO);
     let across = velocity - plan.up * velocity.dot(plan.up);
@@ -318,7 +309,6 @@ fn walk_one(
     if let Some(mass) = world.mass(plan.body) {
         world.apply_impulse(plan.body, pushed * mass * dt);
     }
-    pushed
 }
 
 /// Stands the body on the local up, facing where it is steered.
@@ -328,9 +318,13 @@ fn walk_one(
 /// straight back out of the pose. See
 /// [`turn_speed`](CharacterController::turn_speed) for why a character's
 /// orientation is authored.
-fn turn_one(world: &mut PhysicsWorld, plan: &Planned, stand: Vec3, pushed: Vec3, dt: f32) {
+fn turn_one(world: &mut PhysicsWorld, plan: &Planned, gained: Vec3, dt: f32) {
     let lean = plan.walk.map(|steps| steps.lean).unwrap_or(0.0);
-    let up = turn::leaned(stand, pushed, plan.weight, lean);
+    // Upright against the field, not against the ground. Standing
+    // perpendicular to every ramp reads worse than standing straight:
+    // the body swings as the surface changes and a slope the character
+    // is only crossing tips it sideways.
+    let up = turn::leaned(plan.up, gained, plan.weight, lean);
     let wanted = turn::wanted(up, plan.facing, plan.rotation);
     let turned = turn::towards(plan.rotation, wanted, plan.controller.turn_speed, dt);
     if turned.abs_diff_eq(plan.rotation, 1e-6) {

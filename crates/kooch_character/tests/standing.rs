@@ -754,12 +754,12 @@ fn a_jump_keeps_its_momentum() {
     );
 }
 
-/// Acceptance: it stands on the ramp, not on the field.
+/// It stays upright against the field, on a ramp as anywhere else.
 ///
-/// A character that walks up a slope bolt upright reads as a sprite
-/// being slid along it.
+/// Standing perpendicular to every surface swings the body as the
+/// ground changes and tips it sideways on a slope it is only crossing.
 #[test]
-fn it_stands_on_a_ramp() {
+fn a_ramp_does_not_tip_it() {
     let mut resources = world();
     Playing::set(&mut resources, true);
     source_at(
@@ -783,14 +783,9 @@ fn it_stands_on_a_ramp() {
         .and_then(|s| s.get(hero))
         .map(|t| t.rotation * Vec3::Y)
         .expect("no transform");
-    let surface = grounded(&resources, hero).normal.normalize();
     assert!(
-        standing.dot(surface) > 0.98,
-        "should stand on the ramp: body up {standing}, surface {surface}",
-    );
-    assert!(
-        standing.y < 0.995,
-        "and that is not straight up: {standing}"
+        standing.y > 0.999,
+        "should stand straight up on a ramp: {standing}",
     );
 }
 
@@ -918,5 +913,70 @@ fn a_wall_is_reported() {
         found.normal.x < -0.9,
         "and it faces back at the character: {}",
         found.normal,
+    );
+}
+
+#[test]
+#[ignore = "measurement, not an assertion"]
+fn slide_profile() {
+    for degrees in [30f32, 45.0, 49.0, 51.0, 60.0, 65.0, 75.0] {
+        let mut resources = world();
+        Playing::set(&mut resources, true);
+        source_at(
+            &mut resources,
+            Transform::from_position(Vec3::ZERO),
+            GlobalGravity::default(),
+        );
+        slab(
+            &mut resources,
+            Vec3::new(0.0, -1.0, 0.0),
+            Vec3::new(20.0, 0.5, 12.0),
+            glam::Quat::from_rotation_z(degrees.to_radians()),
+        );
+        let hero = character(&mut resources, Vec3::new(0.0, 8.0, 0.0));
+        insert(&mut resources, hero, Walk::default());
+        simulate(&mut resources, 90);
+        let settled = position(&resources, hero);
+        simulate(&mut resources, 120);
+        let after = position(&resources, hero);
+        let fell = settled.y - after.y;
+        let along = (after - settled).length();
+        println!(
+            "{degrees:>4.0} deg  standing {:<5}  fell {fell:>7.3}  moved {along:>7.3}  ({:.2} m/s)",
+            grounded(&resources, hero).standing,
+            along / 2.0,
+        );
+    }
+}
+
+/// Acceptance: shoving a wall does not tip the character over.
+///
+/// The lean used to be drawn from the force applied. A body pressed
+/// against a wall is given the whole `max_force` and goes nowhere, so it
+/// leaned `atan(max_force / g) * lean` — 29 degrees — and stayed there
+/// as long as the stick was held.
+#[test]
+fn a_wall_does_not_tip_it() {
+    let mut resources = world();
+    let hero = on_the_floor(&mut resources);
+    insert(&mut resources, hero, Walk::default());
+    floor(
+        &mut resources,
+        Vec3::new(3.0, 2.0, 0.0),
+        Vec3::new(2.0, 3.0, 6.0),
+    );
+
+    insert(&mut resources, hero, Facing { direction: Vec3::X });
+    simulate(&mut resources, 240);
+
+    let standing = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<Transform>())
+        .and_then(|s| s.get(hero))
+        .map(|t| t.rotation * Vec3::Y)
+        .expect("no transform");
+    assert!(
+        standing.y > 0.99,
+        "should be upright against the wall: {standing}",
     );
 }
