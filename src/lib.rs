@@ -197,8 +197,14 @@ pub mod prelude {
     // writes it.
     #[cfg(feature = "character")]
     pub use kooch_character::{
-        CharacterController, CharacterPlugin, Facing, Grounded, Touching, Walk,
+        CharacterController, CharacterPlugin, Facing, Grounded, Sprint, Touching, Walk, WallJump,
+        WallSlide,
     };
+    // Not `Jump`: a project that already has one of its own — and
+    // `roll-a-ball` does, for a ball that is not a character — would
+    // find the two names colliding on the same `use`.
+    #[cfg(feature = "character")]
+    pub use kooch_character::jump::Jump as CharacterJump;
 
     // The mode constants come along: without them `VirtualCamera` cannot
     // be configured from code at all, and `UP_GRAVITY` is what makes a

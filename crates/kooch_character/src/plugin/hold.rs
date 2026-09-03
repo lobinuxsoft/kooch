@@ -16,6 +16,7 @@ use crate::facing::Facing;
 use crate::grounded::Grounded;
 use crate::plugin::sense::{self, Footing};
 use crate::plugin::{turn, walk};
+use crate::sprint::Sprint;
 use crate::touching::Touching;
 use crate::walk::Walk;
 
@@ -36,6 +37,8 @@ struct Planned {
     facing: Vec3,
     /// How this character walks, or `None` for one that is only held up.
     walk: Option<Walk>,
+    /// Whether it is running, and by how much.
+    sprint: Sprint,
 }
 
 /// Rising faster than this and the spring lets go, in m/s.
@@ -108,6 +111,7 @@ fn plan(resources: &Resources) -> Vec<Planned> {
     };
     let facings = registry.get_cpu::<Facing>();
     let walks = registry.get_cpu::<Walk>();
+    let sprints = registry.get_cpu::<Sprint>();
 
     // Read first, then ask the field: `gravity_up` walks the same
     // storages this is holding.
@@ -119,6 +123,7 @@ fn plan(resources: &Resources) -> Vec<Planned> {
         Quat,
         Vec3,
         Option<Walk>,
+        Sprint,
     );
     let standing: Vec<Read> = controllers
         .iter()
@@ -136,6 +141,13 @@ fn plan(resources: &Resources) -> Vec<Planned> {
                     .map(|facing| facing.direction)
                     .unwrap_or(Vec3::ZERO),
                 walks.and_then(|walks| walks.get(entity)).copied(),
+                sprints
+                    .and_then(|sprints| sprints.get(entity))
+                    .copied()
+                    .unwrap_or(Sprint {
+                        wanted: false,
+                        ..Default::default()
+                    }),
             ))
         })
         .collect();
@@ -143,7 +155,7 @@ fn plan(resources: &Resources) -> Vec<Planned> {
     standing
         .into_iter()
         .map(
-            |(entity, body, controller, position, rotation, facing, walk)| {
+            |(entity, body, controller, position, rotation, facing, walk, sprint)| {
                 let pull = gravity_at(resources, position);
                 Planned {
                     entity,
@@ -157,6 +169,7 @@ fn plan(resources: &Resources) -> Vec<Planned> {
                     weight: pull.length(),
                     facing,
                     walk,
+                    sprint,
                 }
             },
         )
@@ -201,7 +214,14 @@ fn hold_one(
     // actually produced rather than the force this one is about to ask
     // for. A body shoving a wall is given everything and goes nowhere.
     let gained = goals.gained(plan.entity, across, dt);
-    walk_one(world, goals, plan, standing, dt);
+    walk_one(
+        world,
+        goals,
+        plan,
+        standing,
+        touching.wall.then_some(touching.normal),
+        dt,
+    );
     turn_one(world, plan, gained, dt);
 
     let Some(under) = under else {
@@ -283,11 +303,17 @@ fn walk_one(
     goals: &mut walk::WalkGoals,
     plan: &Planned,
     standing: bool,
+    wall: Option<Vec3>,
     dt: f32,
 ) {
-    let Some(steps) = plan.walk else {
+    let Some(mut steps) = plan.walk else {
         return;
     };
+    // A sprint is walking with two numbers scaled, so it is applied here
+    // rather than by a system of its own — see `Sprint`.
+    let (speed, eagerness) = plan.sprint.scale();
+    steps.max_speed *= speed;
+    steps.acceleration *= eagerness;
     let velocity = world.linear_velocity(plan.body).unwrap_or(Vec3::ZERO);
     let across = velocity - plan.up * velocity.dot(plan.up);
 
@@ -302,7 +328,14 @@ fn walk_one(
         // rather than spending a goal from before the jump.
         false => {
             goals.hold(plan.entity, across);
-            walk::drift(plan.facing, across, plan.up, &steps, dt)
+            let push = walk::drift(plan.facing, across, plan.up, &steps, dt);
+            // Never into a wall. Shoving one in mid-air buys nothing
+            // except the contact friction that comes with it, and that
+            // alone holds a character against a wall at 0.8 m/s^2 of
+            // fall — sticking to every surface it touches, with no
+            // mechanic asking for it. Sliding down a wall is
+            // `WallSlide`'s to decide, deliberately.
+            walk::alongside(push, wall)
         }
     };
 

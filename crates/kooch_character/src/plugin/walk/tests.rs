@@ -110,3 +110,26 @@ fn a_standing_jump_can_steer() {
     let pushed = drift(Vec3::X, Vec3::ZERO, Vec3::Y, &walk, 1.0 / 60.0);
     assert!(pushed.x > 0.0, "{pushed}");
 }
+
+/// Shoving a wall in mid-air buys nothing but the contact friction that
+/// comes with it — which alone held a character up at 0.8 m/s^2 of
+/// fall, sticking to every surface it touched.
+#[test]
+fn it_does_not_push_into_a_wall() {
+    let stopped = alongside(Vec3::X * 18.0, Some(Vec3::NEG_X));
+    assert!(stopped.length() < 1e-5, "{stopped}");
+}
+
+/// Along it is untouched: that is how a character rounds a corner.
+#[test]
+fn along_a_wall_is_untouched() {
+    let sliding = alongside(Vec3::Z * 18.0, Some(Vec3::NEG_X));
+    assert_eq!(sliding, Vec3::Z * 18.0);
+}
+
+/// And a push away from it is not a push into it.
+#[test]
+fn away_from_a_wall_is_untouched() {
+    let leaving = alongside(Vec3::NEG_X * 18.0, Some(Vec3::NEG_X));
+    assert_eq!(leaving, Vec3::NEG_X * 18.0);
+}

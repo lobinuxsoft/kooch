@@ -1,6 +1,8 @@
 //! Holding the capsule up, and publishing what it is standing on.
 
+pub mod cling;
 mod hold;
+pub mod leap;
 pub mod sense;
 pub mod turn;
 pub mod walk;
@@ -15,9 +17,13 @@ use kooch_ecs::component::ComponentRegistry;
 use crate::controller::CharacterController;
 use crate::facing::Facing;
 use crate::grounded::Grounded;
+use crate::jump::{Jump, WallJump};
+use crate::sprint::Sprint;
 use crate::touching::Touching;
 use crate::walk::Walk;
+use crate::wall_slide::WallSlide;
 
+pub use cling::cling_and_leap;
 pub use hold::hold_characters;
 
 /// The components without the system, for a host that authors characters
@@ -36,6 +42,10 @@ impl Plugin for CharacterComponentsPlugin {
                 registry.register_cpu_reflected::<CharacterController>();
                 registry.register_cpu_reflected::<Facing>();
                 registry.register_cpu_reflected::<Grounded>();
+                registry.register_cpu_reflected::<Jump>();
+                registry.register_cpu_reflected::<Sprint>();
+                registry.register_cpu_reflected::<WallJump>();
+                registry.register_cpu_reflected::<WallSlide>();
                 registry.register_cpu_reflected::<Touching>();
                 registry.register_cpu_reflected::<Walk>();
             }
@@ -61,6 +71,10 @@ impl Plugin for CharacterPlugin {
         // the spring fights gravity, and fighting last step's gravity is
         // a character that sinks whenever the field changes.
         app.add_system(Stage::Physics, run_if_playing(hold_characters));
+        // After it, and for the whole reason the sense pass exists: a
+        // wall slide and a jump read what `hold_characters` found this
+        // step rather than probing for it again.
+        app.add_system(Stage::Physics, run_if_playing(cling::cling_and_leap));
     }
 
     fn name(&self) -> &str {

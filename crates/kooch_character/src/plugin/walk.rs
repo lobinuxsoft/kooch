@@ -142,5 +142,21 @@ pub fn drift(steering: Vec3, velocity: Vec3, up: Vec3, walk: &Walk, dt: f32) -> 
     (after.normalize_or_zero() * ceiling - velocity) / dt
 }
 
+/// A push with the part heading into a wall taken out.
+///
+/// `normal` points from the surface back at the character, so a push
+/// into it is the negative part. Only that part goes: steering *along*
+/// a wall is how a character rounds a corner.
+pub fn alongside(push: Vec3, wall: Option<Vec3>) -> Vec3 {
+    let Some(normal) = wall.and_then(|normal| normal.try_normalize()) else {
+        return push;
+    };
+    let into = push.dot(normal);
+    match into < 0.0 {
+        true => push - normal * into,
+        false => push,
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -131,6 +131,10 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     // either a wall nobody found or a normal pointing somewhere
     // unexpected, and those look identical in the Inspector.
     registry.register::<kooch_character::Touching, touching::TouchingVisualizer>();
+    // The mechanics have no gizmo of their own on purpose: a sprint, a
+    // jump and a wall slide draw nothing that is not already the
+    // sense marks they read. What they do is visible in `Grounded` and
+    // `Touching`, which is the argument for one sense pass restated.
     resources.insert(registry);
 
     if resources.get::<HandleSet>().is_none() {

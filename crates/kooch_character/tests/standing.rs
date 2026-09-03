@@ -7,8 +7,10 @@
 
 use glam::Vec3;
 
-use kooch_character::plugin::hold_characters;
-use kooch_character::{CharacterController, Facing, Grounded, Touching, Walk};
+use kooch_character::plugin::{cling_and_leap, hold_characters};
+use kooch_character::{
+    CharacterController, Facing, Grounded, Jump, Sprint, Touching, Walk, WallJump, WallSlide,
+};
 use kooch_core::resource::Resources;
 use kooch_core::run_state::Playing;
 use kooch_core::time::Time;
@@ -48,7 +50,11 @@ fn world() -> Resources {
     registry.register_cpu_reflected::<CharacterController>();
     registry.register_cpu_reflected::<Facing>();
     registry.register_cpu_reflected::<Grounded>();
+    registry.register_cpu_reflected::<Jump>();
+    registry.register_cpu_reflected::<Sprint>();
     registry.register_cpu_reflected::<Touching>();
+    registry.register_cpu_reflected::<WallJump>();
+    registry.register_cpu_reflected::<WallSlide>();
     registry.register_cpu_reflected::<Walk>();
     r
 }
@@ -120,6 +126,7 @@ fn simulate(resources: &mut Resources, steps: u32) {
         if Playing::is_playing(resources) {
             plugin::apply_gravity_sources(resources);
             hold_characters(resources);
+            cling_and_leap(resources);
             physics_step_system(resources);
             physics_writeback_system(resources);
         }
@@ -979,4 +986,221 @@ fn a_wall_does_not_tip_it() {
         standing.y > 0.99,
         "should be upright against the wall: {standing}",
     );
+}
+
+/// A tall wall with its face at `x`, and a character beside it.
+fn against_a_wall(resources: &mut Resources) -> Entity {
+    Playing::set(resources, true);
+    source_at(
+        resources,
+        Transform::from_position(Vec3::ZERO),
+        GlobalGravity::default(),
+    );
+    // Far enough down that two seconds of falling never reaches it — a
+    // character that lands mid-test measures the floor, not the wall.
+    floor(
+        resources,
+        Vec3::new(0.0, -200.0, 0.0),
+        Vec3::new(40.0, 0.5, 40.0),
+    );
+    // Face at x = 1, tall enough to fall down all of.
+    floor(
+        resources,
+        Vec3::new(3.0, -60.0, 0.0),
+        Vec3::new(2.0, 80.0, 6.0),
+    );
+
+    let hero = character(resources, Vec3::new(0.2, 0.0, 0.0));
+    insert(resources, hero, Walk::default());
+    insert(resources, hero, Touching::default());
+    insert(resources, hero, Facing { direction: Vec3::X });
+    hero
+}
+
+fn falling(resources: &Resources, hero: Entity) -> f32 {
+    let body = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<kooch_physics::plugin::SolverBody>())
+        .and_then(|s| s.get(hero))
+        .copied()
+        .expect("no body");
+    resources
+        .get::<PhysicsWorld>()
+        .and_then(|world| world.linear_velocity(body))
+        .map(|velocity| velocity.y)
+        .unwrap_or(0.0)
+}
+
+/// Acceptance: a wall is somewhere to stop, not somewhere to fall past.
+#[test]
+fn a_wall_slows_the_fall() {
+    let mut resources = world();
+    let hero = against_a_wall(&mut resources);
+    simulate(&mut resources, 120);
+    let free = falling(&resources, hero);
+
+    let mut clinging = world();
+    let held = against_a_wall(&mut clinging);
+    insert(&mut clinging, held, WallSlide::default());
+    simulate(&mut clinging, 120);
+    let slowed = falling(&clinging, held);
+
+    assert!(free < -8.0, "should be falling freely: {free}");
+    assert!(
+        slowed > -2.5,
+        "should be held to the slide speed: {slowed} against {free}",
+    );
+}
+
+/// And only while it is being held on to. A character running past a
+/// wall must not be slowed by brushing it.
+#[test]
+fn a_wall_beside_it_does_not_grip() {
+    let mut resources = world();
+    let hero = against_a_wall(&mut resources);
+    insert(&mut resources, hero, WallSlide::default());
+    // Steered along the wall rather than into it.
+    insert(&mut resources, hero, Facing { direction: Vec3::Z });
+    simulate(&mut resources, 120);
+    assert!(
+        falling(&resources, hero) < -5.0,
+        "should have fallen past it: {}",
+        falling(&resources, hero),
+    );
+}
+
+/// Acceptance: it pushes off the wall, away and up.
+#[test]
+fn it_jumps_off_a_wall() {
+    let mut resources = world();
+    let hero = against_a_wall(&mut resources);
+    insert(&mut resources, hero, WallSlide::default());
+    insert(&mut resources, hero, WallJump::default());
+    insert(
+        &mut resources,
+        hero,
+        Jump {
+            air_jumps: 0,
+            ..Default::default()
+        },
+    );
+    simulate(&mut resources, 60);
+
+    let before = position(&resources, hero);
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+        && let Some(storage) = registry.get_cpu_mut::<Jump>()
+        && let Some(jump) = storage.get_mut(hero)
+    {
+        jump.wanted = true;
+    }
+    simulate(&mut resources, 30);
+    let after = position(&resources, hero);
+
+    assert!(
+        after.x < before.x - 1.0,
+        "should have been pushed away from the wall: {} to {}",
+        before.x,
+        after.x,
+    );
+}
+
+/// Acceptance: the second jump, which is what `air_jumps` is for.
+#[test]
+fn it_jumps_again_in_the_air() {
+    let mut resources = world();
+    let hero = on_the_floor(&mut resources);
+    insert(&mut resources, hero, Walk::default());
+    insert(
+        &mut resources,
+        hero,
+        Jump {
+            air_jumps: 1,
+            coyote: 0.0,
+            ..Default::default()
+        },
+    );
+
+    let press = |resources: &mut Resources| {
+        if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+            && let Some(storage) = registry.get_cpu_mut::<Jump>()
+            && let Some(jump) = storage.get_mut(hero)
+        {
+            jump.wanted = true;
+        }
+    };
+
+    let ground = position(&resources, hero).y;
+    press(&mut resources);
+    simulate(&mut resources, 40);
+    let single = position(&resources, hero).y;
+
+    press(&mut resources);
+    let mut highest = single;
+    for _ in 0..60 {
+        simulate(&mut resources, 1);
+        highest = highest.max(position(&resources, hero).y);
+    }
+    assert!(
+        highest > single + 0.5,
+        "the second jump should have gone higher: {ground} -> {single} -> {highest}",
+    );
+}
+
+/// Acceptance: running is faster than walking, and it is the same
+/// mechanism — the top speed the goal is built from.
+#[test]
+fn a_sprint_is_faster() {
+    let mut resources = world();
+    let hero = on_the_floor(&mut resources);
+    insert(&mut resources, hero, Walk::default());
+    let walking = walked(&mut resources, hero, Vec3::X, 240);
+
+    insert(
+        &mut resources,
+        hero,
+        Sprint {
+            wanted: true,
+            ..Default::default()
+        },
+    );
+    let running = walked(&mut resources, hero, Vec3::X, 240);
+
+    assert!(
+        running > walking * 1.5,
+        "running {running} should beat walking {walking}",
+    );
+}
+
+#[test]
+#[ignore = "measurement, not an assertion"]
+fn wall_trace() {
+    let mut resources = world();
+    let hero = against_a_wall(&mut resources);
+    if std::env::var("KOOCH_LOOSE").is_ok() {
+        insert(
+            &mut resources,
+            hero,
+            Facing {
+                direction: Vec3::ZERO,
+            },
+        );
+    }
+    for step in 0..7 {
+        simulate(&mut resources, 20);
+        let found = resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<Touching>())
+            .and_then(|s| s.get(hero))
+            .copied()
+            .unwrap_or_default();
+        println!(
+            "{:>3}  pos {:>8.3?}  vy {:>7.3}  wall {} {:.2}  standing {}",
+            step * 20,
+            position(&resources, hero),
+            falling(&resources, hero),
+            found.wall,
+            found.distance,
+            grounded(&resources, hero).standing,
+        );
+    }
 }
