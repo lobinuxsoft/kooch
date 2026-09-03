@@ -8,7 +8,7 @@
 use glam::Vec3;
 
 use kooch_character::plugin::hold_characters;
-use kooch_character::{CharacterController, Facing, Grounded};
+use kooch_character::{CharacterController, Facing, Grounded, Walk};
 use kooch_core::resource::Resources;
 use kooch_core::run_state::Playing;
 use kooch_core::time::Time;
@@ -48,6 +48,7 @@ fn world() -> Resources {
     registry.register_cpu_reflected::<CharacterController>();
     registry.register_cpu_reflected::<Facing>();
     registry.register_cpu_reflected::<Grounded>();
+    registry.register_cpu_reflected::<Walk>();
     r
 }
 
@@ -638,5 +639,58 @@ fn it_dips_when_it_lands() {
     assert!(
         settled - lowest > 0.08,
         "should have dipped and recovered: bottomed at {lowest}, settled at {settled}",
+    );
+}
+
+/// Steers a character for `steps` frames and returns its ground speed.
+fn walked(resources: &mut Resources, hero: Entity, steered: Vec3, steps: u32) -> f32 {
+    insert(resources, hero, Facing { direction: steered });
+    simulate(resources, steps);
+    let velocity = resources
+        .get::<PhysicsWorld>()
+        .and_then(|world| {
+            let body = resources
+                .get::<ComponentRegistry>()
+                .and_then(|r| r.get_cpu::<kooch_physics::plugin::SolverBody>())
+                .and_then(|s| s.get(hero))
+                .copied()?;
+            world.linear_velocity(body)
+        })
+        .unwrap_or(Vec3::ZERO);
+    Vec3::new(velocity.x, 0.0, velocity.z).length()
+}
+
+/// Acceptance: it stops when you let go.
+///
+/// A floating capsule never touches the floor, so it has no friction at
+/// all. Pushing in a direction and stopping at top speed leaves nothing
+/// to slow it down — the character coasts for ever. Asking for a
+/// velocity makes stopping the same term as starting.
+#[test]
+fn it_stops_when_you_let_go() {
+    let mut resources = world();
+    let hero = on_the_floor(&mut resources);
+    insert(&mut resources, hero, Walk::default());
+
+    let cruising = walked(&mut resources, hero, Vec3::X, 180);
+    assert!(cruising > 4.0, "should be walking: {cruising}");
+
+    let stopped = walked(&mut resources, hero, Vec3::ZERO, 60);
+    assert!(stopped < 0.3, "should have stopped: {stopped} m/s");
+}
+
+/// And the top speed is the goal's, not a clamp applied afterwards.
+#[test]
+fn it_holds_its_top_speed() {
+    let mut resources = world();
+    let hero = on_the_floor(&mut resources);
+    let steps = Walk::default();
+    insert(&mut resources, hero, steps);
+
+    let reached = walked(&mut resources, hero, Vec3::X, 240);
+    assert!(
+        (reached - steps.max_speed).abs() < 0.4,
+        "wanted {}, reached {reached}",
+        steps.max_speed,
     );
 }

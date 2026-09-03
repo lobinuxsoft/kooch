@@ -44,6 +44,7 @@ mod parent_space;
 mod virtual_camera;
 mod visibility;
 mod visualizers;
+mod walk;
 
 use std::any::TypeId;
 
@@ -121,6 +122,10 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     // arrows that disagree; one that turns the wrong way is two that
     // agree about the wrong thing.
     registry.register::<kooch_character::Facing, facing::FacingVisualizer>();
+    // And what it decided to do about it. A character that will not stop
+    // and one that is merely slow look the same standing still; the
+    // difference is whether the goal went to zero.
+    registry.register::<kooch_character::Walk, walk::WalkVisualizer>();
     resources.insert(registry);
 
     if resources.get::<HandleSet>().is_none() {

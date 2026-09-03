@@ -1,5 +1,5 @@
-//! The spring, the sweep and the torque — one step of holding a
-//! character up.
+//! The sweep, the walk, the turn and the spring — one step of a
+//! character, in the order they depend on each other.
 
 use glam::{Quat, Vec3};
 
@@ -15,7 +15,8 @@ use kooch_physics::plugin::{PhysicsWorld, SolverBody};
 use crate::controller::CharacterController;
 use crate::facing::Facing;
 use crate::grounded::Grounded;
-use crate::plugin::turn;
+use crate::plugin::{turn, walk};
+use crate::walk::Walk;
 
 /// One character's worth of work, read before the world is borrowed.
 struct Planned {
@@ -30,7 +31,10 @@ struct Planned {
     /// against before it holds anything else.
     weight: f32,
     /// Where gameplay is steering, or [`Vec3::ZERO`] for "keep looking".
+    /// Its length is the throttle.
     facing: Vec3,
+    /// How this character walks, or `None` for one that is only held up.
+    walk: Option<Walk>,
 }
 
 /// Rising faster than this and the spring lets go, in m/s.
@@ -59,11 +63,13 @@ pub fn hold_characters(resources: &mut Resources) {
     let Some(mut world) = resources.remove::<PhysicsWorld>() else {
         return;
     };
+    let mut goals = resources.remove::<walk::WalkGoals>().unwrap_or_default();
     let found: Vec<(Entity, Grounded)> = planned
         .iter()
-        .map(|plan| (plan.entity, hold_one(&mut world, plan, dt)))
+        .map(|plan| (plan.entity, hold_one(&mut world, &mut goals, plan, dt)))
         .collect();
     resources.insert(world);
+    resources.insert(goals);
 
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return;
@@ -89,10 +95,20 @@ fn plan(resources: &Resources) -> Vec<Planned> {
         return Vec::new();
     };
     let facings = registry.get_cpu::<Facing>();
+    let walks = registry.get_cpu::<Walk>();
 
     // Read first, then ask the field: `gravity_up` walks the same
     // storages this is holding.
-    let standing: Vec<(Entity, SolverBody, CharacterController, Vec3, Quat, Vec3)> = controllers
+    type Read = (
+        Entity,
+        SolverBody,
+        CharacterController,
+        Vec3,
+        Quat,
+        Vec3,
+        Option<Walk>,
+    );
+    let standing: Vec<Read> = controllers
         .iter()
         .filter_map(|(&entity, controller)| {
             let body = *bodies.get(entity)?;
@@ -107,35 +123,42 @@ fn plan(resources: &Resources) -> Vec<Planned> {
                     .and_then(|facings| facings.get(entity))
                     .map(|facing| facing.direction)
                     .unwrap_or(Vec3::ZERO),
+                walks.and_then(|walks| walks.get(entity)).copied(),
             ))
         })
         .collect();
 
     standing
         .into_iter()
-        .map(|(entity, body, controller, position, rotation, facing)| {
-            let pull = gravity_at(resources, position);
-            Planned {
-                entity,
-                body,
-                controller,
-                position,
-                rotation,
-                // World up where nothing reaches, which is what the
-                // solver is doing there too — not a fallback.
-                up: (-pull).try_normalize().unwrap_or(Vec3::Y),
-                weight: pull.length(),
-                facing,
-            }
-        })
+        .map(
+            |(entity, body, controller, position, rotation, facing, walk)| {
+                let pull = gravity_at(resources, position);
+                Planned {
+                    entity,
+                    body,
+                    controller,
+                    position,
+                    rotation,
+                    // World up where nothing reaches, which is what the
+                    // solver is doing there too — not a fallback.
+                    up: (-pull).try_normalize().unwrap_or(Vec3::Y),
+                    weight: pull.length(),
+                    facing,
+                    walk,
+                }
+            },
+        )
         .collect()
 }
 
 /// The whole mechanism, for one body.
-fn hold_one(world: &mut PhysicsWorld, plan: &Planned, dt: f32) -> Grounded {
+fn hold_one(
+    world: &mut PhysicsWorld,
+    goals: &mut walk::WalkGoals,
+    plan: &Planned,
+    dt: f32,
+) -> Grounded {
     let controller = &plan.controller;
-    turn_one(world, plan, dt);
-
     let probe = CollisionShape::Sphere {
         radius: controller
             .probe_radius
@@ -150,10 +173,18 @@ fn hold_one(world: &mut PhysicsWorld, plan: &Planned, dt: f32) -> Grounded {
         controller.probe.max(0.0),
         filter,
     );
+    let standing = hit
+        .map(|hit| controller.stands_on(hit.normal, plan.up))
+        .unwrap_or(false);
+
+    // Before the turn, because the lean is drawn from it.
+    let pushed = walk_one(world, goals, plan, standing, dt);
+    turn_one(world, plan, pushed, dt);
 
     let Some(hit) = hit else {
         return Grounded::default();
     };
+    let gap = (plan.position - hit.point).dot(plan.up);
 
     let speed = world
         .linear_velocity(plan.body)
@@ -167,21 +198,19 @@ fn hold_one(world: &mut PhysicsWorld, plan: &Planned, dt: f32) -> Grounded {
         return Grounded {
             standing: false,
             normal: hit.normal,
-            distance: (plan.position - hit.point).dot(plan.up),
+            distance: gap,
         };
     }
-
-    // Measured to the contact point rather than from the sweep's own
-    // distance: on a slope the sphere stops early and `t` understates
-    // the gap, which would make the spring shove the character off
-    // every ramp it walked onto.
-    let gap = (plan.position - hit.point).dot(plan.up);
-    let standing = controller.stands_on(hit.normal, plan.up);
 
     // The spring pulls both ways. Only pushing would let the character
     // sail off the top of every bump instead of following the ground
     // down the far side, which is the whole reason this is a spring and
     // not a floor.
+    //
+    // Measured to the contact point rather than from the sweep's own
+    // distance: on a slope the sphere stops early and `t` understates
+    // the gap, which would make the spring shove the character off
+    // every ramp it walked onto.
     let error = controller.ride_height - gap;
     // Gravity is cancelled before the spring is asked for anything.
     // Without it the spring has to *lean* to hold the body up — it
@@ -200,6 +229,38 @@ fn hold_one(world: &mut PhysicsWorld, plan: &Planned, dt: f32) -> Grounded {
     }
 }
 
+/// Chases the goal velocity, and reports the acceleration it used.
+///
+/// The report is what the lean is drawn from: a body tilts into what is
+/// actually being applied to it, not into what was asked for and
+/// clipped.
+fn walk_one(
+    world: &mut PhysicsWorld,
+    goals: &mut walk::WalkGoals,
+    plan: &Planned,
+    standing: bool,
+    dt: f32,
+) -> Vec3 {
+    let Some(steps) = plan.walk else {
+        return Vec3::ZERO;
+    };
+    let wanted = walk::goal(plan.facing, plan.up, &steps);
+    let goal = goals.chase(plan.entity, wanted, steps.acceleration, dt);
+
+    let velocity = world.linear_velocity(plan.body).unwrap_or(Vec3::ZERO);
+    let across = velocity - plan.up * velocity.dot(plan.up);
+    let control = match standing {
+        true => 1.0,
+        false => steps.air_control.clamp(0.0, 1.0),
+    };
+    let pushed = walk::needed(goal, across, steps.max_force, dt) * control;
+
+    if let Some(mass) = world.mass(plan.body) {
+        world.apply_impulse(plan.body, pushed * mass * dt);
+    }
+    pushed
+}
+
 /// Stands the body on the local up, facing where it is steered.
 ///
 /// Set rather than torqued, and the angular velocity zeroed with it: the
@@ -207,8 +268,10 @@ fn hold_one(world: &mut PhysicsWorld, plan: &Planned, dt: f32) -> Grounded {
 /// straight back out of the pose. See
 /// [`turn_speed`](CharacterController::turn_speed) for why a character's
 /// orientation is authored.
-fn turn_one(world: &mut PhysicsWorld, plan: &Planned, dt: f32) {
-    let wanted = turn::wanted(plan.up, plan.facing, plan.rotation);
+fn turn_one(world: &mut PhysicsWorld, plan: &Planned, pushed: Vec3, dt: f32) {
+    let lean = plan.walk.map(|steps| steps.lean).unwrap_or(0.0);
+    let up = turn::leaned(plan.up, pushed, plan.weight, lean);
+    let wanted = turn::wanted(up, plan.facing, plan.rotation);
     let turned = turn::towards(plan.rotation, wanted, plan.controller.turn_speed, dt);
     if turned.abs_diff_eq(plan.rotation, 1e-6) {
         return;

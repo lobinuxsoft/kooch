@@ -58,3 +58,35 @@ fn a_long_step_cannot_overshoot() {
     let turned = towards(Quat::IDENTITY, target, 10.0, 1.0);
     assert!(turned.abs_diff_eq(target, 1e-5), "{turned} vs {target}");
 }
+
+/// A body pushed forward tips forward. Without this the character walks
+/// like a chess piece being slid.
+#[test]
+fn it_leans_into_a_push() {
+    let leaning = leaned(Vec3::Y, Vec3::X * 9.81, 9.81, 1.0);
+    assert!(leaning.x > 0.7, "should tip towards +X: {leaning}");
+    // atan(1) is 45 degrees, taken in full.
+    assert!((leaning.x - leaning.y).abs() < 1e-4, "{leaning}");
+}
+
+/// And braking tips it back, which is the same term with a sign.
+#[test]
+fn braking_tips_it_back() {
+    assert!(leaned(Vec3::Y, Vec3::NEG_X * 9.81, 9.81, 1.0).x < -0.7);
+}
+
+/// The fraction is a fraction: half the lean is half the angle.
+#[test]
+fn a_partial_lean_is_partial() {
+    let full = leaned(Vec3::Y, Vec3::X * 9.81, 9.81, 1.0);
+    let half = leaned(Vec3::Y, Vec3::X * 9.81, 9.81, 0.5);
+    assert!(half.x > 0.0 && half.x < full.x, "{half} vs {full}");
+}
+
+/// Weightless is upright. `atan` of a divide by zero is a right angle,
+/// which is a character lying flat in orbit.
+#[test]
+fn no_gravity_stands_straight() {
+    assert_eq!(leaned(Vec3::Y, Vec3::X * 20.0, 0.0, 1.0), Vec3::Y);
+    assert_eq!(leaned(Vec3::Y, Vec3::ZERO, 9.81, 1.0), Vec3::Y);
+}

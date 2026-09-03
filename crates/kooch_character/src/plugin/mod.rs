@@ -2,6 +2,7 @@
 
 mod hold;
 pub mod turn;
+pub mod walk;
 
 use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
@@ -13,6 +14,7 @@ use kooch_ecs::component::ComponentRegistry;
 use crate::controller::CharacterController;
 use crate::facing::Facing;
 use crate::grounded::Grounded;
+use crate::walk::Walk;
 
 pub use hold::hold_characters;
 
@@ -32,6 +34,7 @@ impl Plugin for CharacterComponentsPlugin {
                 registry.register_cpu_reflected::<CharacterController>();
                 registry.register_cpu_reflected::<Facing>();
                 registry.register_cpu_reflected::<Grounded>();
+                registry.register_cpu_reflected::<Walk>();
             }
         });
     }
