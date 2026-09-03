@@ -50,7 +50,7 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
             let report = resources.get::<crate::preflight::Report>().cloned();
             match report {
                 Some(report) => {
-                    if let Err(refusal) = crate::install::run(resources, &report) {
+                    if let Err(refusal) = crate::install::start(resources, &report) {
                         tracing::warn!("{refusal}");
                     }
                 }

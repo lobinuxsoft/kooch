@@ -600,9 +600,10 @@ pub(crate) fn draw_preflight_window(
     ctx: &egui::Context,
     report: &crate::preflight::Report,
     blocked: Option<&crate::install::Refusal>,
+    installing: Option<&crate::install::Progress>,
     actions: &mut Vec<EditorAction>,
 ) {
-    if report.is_quiet() {
+    if report.is_quiet() && installing.is_none() {
         return;
     }
     let id = egui::Id::new("kooch_preflight_window_open");
@@ -661,7 +662,10 @@ pub(crate) fn draw_preflight_window(
                 Some(command) => {
                     ui.separator();
                     ui.add_space(4.0);
-                    draw_install_button(ui, report, blocked, actions);
+                    match installing {
+                        Some(installing) => draw_install_progress(ui, installing),
+                        None => draw_install_button(ui, report, blocked, actions),
+                    }
                     ui.add_space(6.0);
                     ui.label("Or paste this whole block yourself:");
                     ui.code(&command);
@@ -683,6 +687,31 @@ pub(crate) fn draw_preflight_window(
         });
 
     ctx.data_mut(|d| d.insert_temp(id, open));
+}
+
+/// What the installer is saying, while it says it.
+///
+/// 🔴 The output, not a spinner. `rpm-ostree` reports which layer it is
+/// writing and how far along it is, and that is the only thing that
+/// distinguishes "working" from "stuck" on a step that takes minutes.
+fn draw_install_progress(ui: &mut egui::Ui, installing: &crate::install::Progress) {
+    ui.label(egui::RichText::new(installing.status).strong());
+    ui.add_space(4.0);
+    egui::ScrollArea::vertical()
+        .max_height(180.0)
+        // Pinned to the bottom: the interesting line is the last one.
+        .stick_to_bottom(true)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for line in &installing.lines {
+                ui.label(egui::RichText::new(line).monospace().weak());
+            }
+        });
+    if installing.running {
+        // The only place in this window that asks for one, and only
+        // while there is something moving to show.
+        ui.ctx().request_repaint();
+    }
 }
 
 /// The install control, and the sentence that says what it will do.
