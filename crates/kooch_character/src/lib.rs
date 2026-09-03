@@ -4,8 +4,8 @@
 //!
 //! The capsule **does not touch the floor**. A sphere is swept downward
 //! to measure the gap, and a damped spring holds the body at a rest
-//! height above whatever it finds. A second, angular spring keeps it
-//! upright against the local up.
+//! height above whatever it finds. Its orientation is turned to stand on
+//! the local up and face where it is being steered.
 //!
 //! Everything a character needs falls out of that instead of being
 //! special-cased:
@@ -37,9 +37,11 @@
 //! too.
 
 pub mod controller;
+pub mod facing;
 pub mod grounded;
 pub mod plugin;
 
 pub use controller::CharacterController;
+pub use facing::Facing;
 pub use grounded::Grounded;
 pub use plugin::{CharacterComponentsPlugin, CharacterPlugin};

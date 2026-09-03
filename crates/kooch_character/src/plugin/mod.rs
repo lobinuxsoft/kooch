@@ -1,6 +1,7 @@
 //! Holding the capsule up, and publishing what it is standing on.
 
 mod hold;
+pub mod turn;
 
 use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
@@ -10,6 +11,7 @@ use kooch_core::stage::Stage;
 use kooch_ecs::component::ComponentRegistry;
 
 use crate::controller::CharacterController;
+use crate::facing::Facing;
 use crate::grounded::Grounded;
 
 pub use hold::hold_characters;
@@ -28,6 +30,7 @@ impl Plugin for CharacterComponentsPlugin {
         app.add_system(Stage::Startup, |resources: &mut Resources| {
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                 registry.register_cpu_reflected::<CharacterController>();
+                registry.register_cpu_reflected::<Facing>();
                 registry.register_cpu_reflected::<Grounded>();
             }
         });

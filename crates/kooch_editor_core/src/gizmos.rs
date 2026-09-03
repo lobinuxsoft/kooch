@@ -31,6 +31,7 @@
 mod center_of_mass;
 mod character;
 mod collider;
+mod facing;
 mod gravity;
 mod grounded;
 #[cfg(test)]
@@ -116,6 +117,10 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     // view: a gap that does not match the ride height is visible rather
     // than deduced.
     registry.register::<kooch_character::Grounded, grounded::GroundedVisualizer>();
+    // And what it was asked to do. A character that will not turn is two
+    // arrows that disagree; one that turns the wrong way is two that
+    // agree about the wrong thing.
+    registry.register::<kooch_character::Facing, facing::FacingVisualizer>();
     resources.insert(registry);
 
     if resources.get::<HandleSet>().is_none() {

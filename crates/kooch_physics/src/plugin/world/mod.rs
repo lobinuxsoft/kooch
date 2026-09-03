@@ -443,6 +443,37 @@ impl PhysicsWorld {
         self.backend_mut().set_linear_velocity(handle, velocity);
     }
 
+    /// Turns a body outright, leaving it where it is.
+    ///
+    /// For an orientation that is authored rather than simulated — a
+    /// character faces where the player is steering, and no torque can
+    /// promise that without the inertia tensor the backend does not
+    /// expose. Pair it with
+    /// [`set_angular_velocity`](Self::set_angular_velocity): the solver
+    /// keeps whatever spin it had and will turn the body back out of the
+    /// pose on the very next step.
+    pub fn set_rotation(&mut self, body: SolverBody, rotation: Quat) {
+        let Some(handle) = self.handle(body.slot()) else {
+            return;
+        };
+        let Some((position, _)) = self.backend().get_transform(handle) else {
+            return;
+        };
+        self.backend_mut().set_transform(handle, position, rotation);
+    }
+
+    /// Sets how fast a body spins, in rad/s.
+    ///
+    /// The angular twin of
+    /// [`set_linear_velocity`](Self::set_linear_velocity), and the same
+    /// warning applies.
+    pub fn set_angular_velocity(&mut self, body: SolverBody, velocity: Vec3) {
+        let Some(handle) = self.handle(body.slot()) else {
+            return;
+        };
+        self.backend_mut().set_angular_velocity(handle, velocity);
+    }
+
     /// How fast a body is spinning, in rad/s.
     pub fn angular_velocity(&self, body: SolverBody) -> Option<Vec3> {
         self.backend().angular_velocity(self.handle(body.slot())?)

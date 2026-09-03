@@ -192,9 +192,11 @@ pub mod prelude {
     // `Grounded` comes along because everything downstream of a
     // controller reads it — jumping, animation, footstep audio — and a
     // component nobody can name is one everybody re-derives with a
-    // raycast of their own.
+    // raycast of their own. `Facing` is the other half of that seam: the
+    // controller cannot know where gameplay is steering, so gameplay
+    // writes it.
     #[cfg(feature = "character")]
-    pub use kooch_character::{CharacterController, CharacterPlugin, Grounded};
+    pub use kooch_character::{CharacterController, CharacterPlugin, Facing, Grounded};
 
     // The mode constants come along: without them `VirtualCamera` cannot
     // be configured from code at all, and `UP_GRAVITY` is what makes a

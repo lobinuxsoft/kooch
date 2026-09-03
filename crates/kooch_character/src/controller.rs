@@ -59,15 +59,19 @@ pub struct CharacterController {
     /// sinks into a step instead of rising over it. Critical damping is
     /// near `2·sqrt(stiffness)`, which is the value to start from.
     pub damping: f32,
-    /// How hard the body is turned back upright.
+    /// How quickly the body turns to stand on the local up and face
+    /// where it is steered, in turns per second towards the target.
     ///
-    /// In solver units rather than an acceleration: correcting a
-    /// rotation needs the inertia tensor and the backend does not expose
-    /// one, so this is tuned by feel. The gizmo draws which way it is
-    /// pulling.
-    pub upright_stiffness: f32,
-    /// How strongly the upright spring resists spin.
-    pub upright_damping: f32,
+    /// The orientation is set rather than torqued. Correcting a rotation
+    /// with a torque needs the inertia tensor, which the backend does
+    /// not expose, so an angular spring here could only ever be tuned by
+    /// feel — and it was, badly: a value that settled on flat ground
+    /// wallowed on a planet. A character's orientation is authored, not
+    /// simulated.
+    ///
+    /// The cost is that it no longer spins when something hits it. For a
+    /// character that is the point.
+    pub turn_speed: f32,
     /// Steepest ground that still counts as standing, in degrees.
     ///
     /// Above it the surface is a wall: the sweep still finds it, the
@@ -89,8 +93,7 @@ impl Default for CharacterController {
             probe_radius: 0.35,
             stiffness: 90.0,
             damping: 18.0,
-            upright_stiffness: 12.0,
-            upright_damping: 3.0,
+            turn_speed: 10.0,
             max_slope: 50.0,
         }
     }

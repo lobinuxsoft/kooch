@@ -13,7 +13,9 @@ use kooch_physics::backend::{CollisionShape, ShapeAt};
 use kooch_physics::plugin::{PhysicsWorld, SolverBody};
 
 use crate::controller::CharacterController;
+use crate::facing::Facing;
 use crate::grounded::Grounded;
+use crate::plugin::turn;
 
 /// One character's worth of work, read before the world is borrowed.
 struct Planned {
@@ -27,7 +29,18 @@ struct Planned {
     /// How hard the field is pulling, which the spring has to hold
     /// against before it holds anything else.
     weight: f32,
+    /// Where gameplay is steering, or [`Vec3::ZERO`] for "keep looking".
+    facing: Vec3,
 }
+
+/// Rising faster than this and the spring lets go, in m/s.
+///
+/// Without it a jump is fought by its own damping the frame after it
+/// starts — at 18 damping a 5 m/s launch is met with 90 m/s² of "come
+/// back", and the character never leaves the floor. Above the threshold
+/// the body is simply in the air, and gravity is the only thing acting
+/// on it.
+const RISING: f32 = 0.5;
 
 /// Sweeps for ground, holds the body at its ride height, keeps it
 /// upright, and writes [`Grounded`].
@@ -75,10 +88,11 @@ fn plan(resources: &Resources) -> Vec<Planned> {
     ) else {
         return Vec::new();
     };
+    let facings = registry.get_cpu::<Facing>();
 
     // Read first, then ask the field: `gravity_up` walks the same
     // storages this is holding.
-    let standing: Vec<(Entity, SolverBody, CharacterController, Vec3, Quat)> = controllers
+    let standing: Vec<(Entity, SolverBody, CharacterController, Vec3, Quat, Vec3)> = controllers
         .iter()
         .filter_map(|(&entity, controller)| {
             let body = *bodies.get(entity)?;
@@ -89,13 +103,17 @@ fn plan(resources: &Resources) -> Vec<Planned> {
                 *controller,
                 transform.position,
                 transform.rotation,
+                facings
+                    .and_then(|facings| facings.get(entity))
+                    .map(|facing| facing.direction)
+                    .unwrap_or(Vec3::ZERO),
             ))
         })
         .collect();
 
     standing
         .into_iter()
-        .map(|(entity, body, controller, position, rotation)| {
+        .map(|(entity, body, controller, position, rotation, facing)| {
             let pull = gravity_at(resources, position);
             Planned {
                 entity,
@@ -107,6 +125,7 @@ fn plan(resources: &Resources) -> Vec<Planned> {
                 // solver is doing there too — not a fallback.
                 up: (-pull).try_normalize().unwrap_or(Vec3::Y),
                 weight: pull.length(),
+                facing,
             }
         })
         .collect()
@@ -115,6 +134,8 @@ fn plan(resources: &Resources) -> Vec<Planned> {
 /// The whole mechanism, for one body.
 fn hold_one(world: &mut PhysicsWorld, plan: &Planned, dt: f32) -> Grounded {
     let controller = &plan.controller;
+    turn_one(world, plan, dt);
+
     let probe = CollisionShape::Sphere {
         radius: controller
             .probe_radius
@@ -130,11 +151,26 @@ fn hold_one(world: &mut PhysicsWorld, plan: &Planned, dt: f32) -> Grounded {
         filter,
     );
 
-    upright(world, plan, dt);
-
     let Some(hit) = hit else {
         return Grounded::default();
     };
+
+    let speed = world
+        .linear_velocity(plan.body)
+        .map(|velocity| velocity.dot(plan.up))
+        .unwrap_or(0.0);
+    // Leaving the ground under its own power. The spring would spend the
+    // next frames pulling it straight back down, which is a jump that
+    // never happens — see `RISING`. Ground is still reported as *found*
+    // and not stood on, so a second jump has nothing to push off.
+    if speed > RISING {
+        return Grounded {
+            standing: false,
+            normal: hit.normal,
+            distance: (plan.position - hit.point).dot(plan.up),
+        };
+    }
+
     // Measured to the contact point rather than from the sweep's own
     // distance: on a slope the sphere stops early and `t` understates
     // the gap, which would make the spring shove the character off
@@ -147,10 +183,6 @@ fn hold_one(world: &mut PhysicsWorld, plan: &Planned, dt: f32) -> Grounded {
     // down the far side, which is the whole reason this is a spring and
     // not a floor.
     let error = controller.ride_height - gap;
-    let speed = world
-        .linear_velocity(plan.body)
-        .map(|velocity| velocity.dot(plan.up))
-        .unwrap_or(0.0);
     // Gravity is cancelled before the spring is asked for anything.
     // Without it the spring has to *lean* to hold the body up — it
     // settles wherever `error · stiffness` happens to equal `g`, so the
@@ -168,34 +200,19 @@ fn hold_one(world: &mut PhysicsWorld, plan: &Planned, dt: f32) -> Grounded {
     }
 }
 
-/// Turns the body back towards the local up.
+/// Stands the body on the local up, facing where it is steered.
 ///
-/// A torque rather than a written rotation: a character knocked over has
-/// to *recover*, which is a correction that composes with whatever hit
-/// it. Setting the rotation would teleport it upright through the hit.
-fn upright(world: &mut PhysicsWorld, plan: &Planned, dt: f32) {
-    let controller = &plan.controller;
-    let facing = plan.rotation * Vec3::Y;
-    let axis = facing.cross(plan.up);
-    // Already upright, or exactly inverted. Inverted has no shortest arc
-    // — every perpendicular axis turns it the same distance — so it is
-    // nudged along one rather than left balanced on its head forever.
-    let lean = match axis.try_normalize() {
-        Some(axis) => axis * facing.angle_between(plan.up),
-        None if facing.dot(plan.up) < 0.0 => {
-            plan.up.any_orthonormal_vector() * std::f32::consts::PI
-        }
-        None => Vec3::ZERO,
-    };
-
-    // Only the tilt is damped, not the spin about up: damping that too
-    // would fight the character turning to face where it is going, and
-    // read as controls made of treacle.
-    let spin = world.angular_velocity(plan.body).unwrap_or(Vec3::ZERO);
-    let tilting = spin - plan.up * spin.dot(plan.up);
-
-    let torque = lean * controller.upright_stiffness - tilting * controller.upright_damping;
-    if torque.length_squared() > 1e-12 {
-        world.apply_torque_impulse(plan.body, torque * dt);
+/// Set rather than torqued, and the angular velocity zeroed with it: the
+/// solver would otherwise keep whatever spin it had and turn the body
+/// straight back out of the pose. See
+/// [`turn_speed`](CharacterController::turn_speed) for why a character's
+/// orientation is authored.
+fn turn_one(world: &mut PhysicsWorld, plan: &Planned, dt: f32) {
+    let wanted = turn::wanted(plan.up, plan.facing, plan.rotation);
+    let turned = turn::towards(plan.rotation, wanted, plan.controller.turn_speed, dt);
+    if turned.abs_diff_eq(plan.rotation, 1e-6) {
+        return;
     }
+    world.set_rotation(plan.body, turned);
+    world.set_angular_velocity(plan.body, Vec3::ZERO);
 }

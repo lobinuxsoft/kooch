@@ -8,7 +8,7 @@
 use glam::Vec3;
 
 use kooch_character::plugin::hold_characters;
-use kooch_character::{CharacterController, Grounded};
+use kooch_character::{CharacterController, Facing, Grounded};
 use kooch_core::resource::Resources;
 use kooch_core::run_state::Playing;
 use kooch_core::time::Time;
@@ -46,6 +46,7 @@ fn world() -> Resources {
     registry.register_cpu_reflected::<GlobalGravity>();
     registry.register_cpu_reflected::<PointGravity>();
     registry.register_cpu_reflected::<CharacterController>();
+    registry.register_cpu_reflected::<Facing>();
     registry.register_cpu_reflected::<Grounded>();
     r
 }
@@ -529,5 +530,82 @@ fn a_tall_step_is_not() {
     assert!(
         rose < 0.2,
         "should have been stopped by a 1 m wall, rose {rose}"
+    );
+}
+
+/// A flat world with a character standing on it, settled.
+fn on_the_floor(resources: &mut Resources) -> Entity {
+    Playing::set(resources, true);
+    source_at(
+        resources,
+        Transform::from_position(Vec3::ZERO),
+        GlobalGravity::default(),
+    );
+    floor(
+        resources,
+        Vec3::new(0.0, -1.0, 0.0),
+        Vec3::new(20.0, 0.5, 20.0),
+    );
+    let hero = character(resources, Vec3::new(0.0, 0.5, 0.0));
+    simulate(resources, 180);
+    hero
+}
+
+/// Acceptance: it points where it is steered. Without a `Facing` the
+/// controller only ever stood the body up, and a character that walks
+/// sideways for ever is what that looks like.
+#[test]
+fn it_faces_where_it_walks() {
+    let mut resources = world();
+    let hero = on_the_floor(&mut resources);
+
+    let steered = Vec3::new(1.0, 0.0, 1.0).normalize();
+    insert(&mut resources, hero, Facing { direction: steered });
+    simulate(&mut resources, 120);
+
+    let looking = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<Transform>())
+        .and_then(|s| s.get(hero))
+        .map(|t| t.rotation * Vec3::NEG_Z)
+        .expect("no transform");
+    assert!(
+        looking.dot(steered) > 0.99,
+        "should look along {steered}, looked along {looking}",
+    );
+}
+
+/// Acceptance: a jump leaves the floor. The spring's own damping fights
+/// the launch the frame after it starts — 18 damping against 5 m/s is
+/// 90 m/s² of "come back" — so without letting go while rising, the
+/// character never gets off the ground.
+#[test]
+fn a_jump_leaves_the_ground() {
+    let mut resources = world();
+    let hero = on_the_floor(&mut resources);
+    let resting = position(&resources, hero).y;
+
+    let body = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<kooch_physics::plugin::SolverBody>())
+        .and_then(|s| s.get(hero))
+        .copied()
+        .expect("no body");
+    if let Some(world) = resources.get_mut::<PhysicsWorld>() {
+        let mass = world.mass(body).unwrap_or(1.0);
+        world.apply_impulse(body, Vec3::Y * 5.0 * mass);
+    }
+
+    let mut highest = resting;
+    for _ in 0..120 {
+        simulate(&mut resources, 1);
+        highest = highest.max(position(&resources, hero).y);
+    }
+    // 5 m/s against 9.81 is 1.27 m of arc. Anything under half of that
+    // is the spring winning.
+    assert!(
+        highest - resting > 0.6,
+        "jumped {} m from {resting}",
+        highest - resting,
     );
 }
