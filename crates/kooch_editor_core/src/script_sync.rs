@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use kooch_core::resource::Resources;
 
-use crate::actions::{SyncOutcome, register_scripts};
+use crate::actions::register_scripts;
 use crate::project_state::ProjectState;
 
 /// How often the fingerprint is taken. Fast enough that saving in
@@ -46,9 +46,12 @@ pub enum SyncState {
     /// happened since the project was last built.
     #[default]
     Current,
-    /// The file was rewritten, so the project's compiled code is now
-    /// behind its source. Cleared by a rebuild, or by the author
-    /// acknowledging it.
+    /// `src/` moved, so the project's compiled code is now behind its
+    /// source. Cleared by the author acknowledging it after a rebuild.
+    ///
+    /// Not "the generated file was rewritten" — see the note in
+    /// [`sync_scripts_system`]. Most edits leave that file identical and
+    /// the build behind all the same.
     ///
     /// 🔴 This is the state worth showing, and it is NOT "the file is
     /// stale" — the file is fixed by then. What is stale is the build:
@@ -159,9 +162,18 @@ pub fn sync_scripts_system(resources: &mut Resources) {
         return;
     }
 
-    if register_scripts(resources) == SyncOutcome::Regenerated
-        && let Some(sync) = resources.get_mut::<ScriptSync>()
-    {
+    // 🔴 The outcome is deliberately not consulted. `registrations.rs`
+    // lists TYPES, so adding a field to a component, fixing a system's
+    // body or changing a default rewrites nothing — and every one of
+    // them leaves the dylib the editor reads from behind the source on
+    // screen. Keyed on the generated file, the notice fired for exactly
+    // the subset of edits that add or remove a type, and stayed dark for
+    // the ones an author makes all day.
+    //
+    // `src/` moving is the evidence, and it is the same evidence cargo
+    // rebuilds on.
+    register_scripts(resources);
+    if let Some(sync) = resources.get_mut::<ScriptSync>() {
         sync.state = SyncState::NeedsRebuild;
     }
 }

@@ -255,8 +255,8 @@ pub(crate) fn draw_menu_bar(
 /// the centring above and the button below cannot disagree about it.
 const SYNC_WIDTH: f32 = 120.0;
 
-/// The code-sync control: quiet while the generated registrations match
-/// the project's build, pulsing once they do not.
+/// The code-sync control: quiet while the project's build matches its
+/// source, pulsing once `src/` has moved past it.
 ///
 /// 🔴 It does NOT mean "`registrations.rs` is stale". The poll rewrote
 /// that file already — announcing it would announce something handled.
@@ -265,6 +265,10 @@ const SYNC_WIDTH: f32 = 120.0;
 /// generated file and in no binary anywhere. That gap is invisible, it
 /// produces no error, and the symptom is "I pressed Play and my system
 /// did not run".
+///
+/// 🔴 And it is NOT keyed on that file changing. Adding a field, fixing a
+/// body or changing a default rewrites nothing there and leaves the build
+/// just as far behind — which is most of what an author does.
 ///
 /// ⚠️ The pulse asks for a repaint per frame, which in an immediate-mode
 /// UI is a real and permanent cost — so it runs ONLY while behind. In
@@ -278,7 +282,9 @@ fn draw_script_sync(ui: &mut egui::Ui, behind: bool, actions: &mut Vec<EditorAct
             )
             .on_hover_text(
                 "Rescans `src/` and rewrites the generated registrations. Runs on \
-                 its own when a source file changes; this forces it.",
+                 its own when a source file changes; this forces it.\n\nIt does not \
+                 compile: a new field or a changed body reaches the editor through a \
+                 rebuild, not through this.",
             )
             .clicked()
         {
@@ -301,10 +307,10 @@ fn draw_script_sync(ui: &mut egui::Ui, behind: bool, actions: &mut Vec<EditorAct
             .min_size(egui::vec2(SYNC_WIDTH, 0.0)),
         )
         .on_hover_text(
-            "The generated registrations changed, so the project's compiled code is \
-             behind its source — a component or system added since the last build \
-             exists in the file and in no binary. Rebuild the project, then click \
-             this to clear the notice.",
+            "A source file changed since the last build, so the project's compiled \
+             code is behind what you are editing — the editor reads components, \
+             fields and defaults out of the compiled dylib. Rebuild the project, \
+             then click this to clear the notice.",
         )
         .clicked();
     // Only while it pulses. See the header.
