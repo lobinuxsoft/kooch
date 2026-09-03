@@ -22,6 +22,13 @@ pub struct Tally {
     pub asked: Option<f32>,
     /// Air jumps spent since the last time it stood on something.
     pub spent: u32,
+    /// Seconds since it pushed off a wall, or `None` for never.
+    ///
+    /// A wall slide holds the character on, and the frame after a wall
+    /// jump the wall is still right there — so the hold would cancel the
+    /// jump it just made. This is how long it is left alone to get
+    /// clear.
+    pub since_wall: Option<f32>,
 }
 
 /// Every character's jump state, carried between steps.
@@ -44,6 +51,13 @@ impl Tallies {
     }
 }
 
+/// How long after pushing off a wall the slide leaves the character
+/// alone, in seconds.
+///
+/// Long enough to clear the wall's own reach, short enough that a
+/// deliberate return to it still catches.
+pub const CLEARING: f32 = 0.25;
+
 /// What a jump turns into, if anything.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Leap {
@@ -64,6 +78,9 @@ pub fn spend(
     up: Vec3,
     dt: f32,
 ) -> Option<Leap> {
+    if let Some(since) = tally.since_wall.as_mut() {
+        *since += dt;
+    }
     tally.ungrounded = match standing {
         true => 0.0,
         false => tally.ungrounded + dt,
@@ -93,6 +110,7 @@ pub fn spend(
         && let Some(away) = (normal - up * normal.dot(up)).try_normalize()
     {
         tally.asked = None;
+        tally.since_wall = Some(0.0);
         if off.refills {
             tally.spent = 0;
         }

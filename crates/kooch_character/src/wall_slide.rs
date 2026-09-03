@@ -27,6 +27,19 @@ pub struct WallSlide {
     /// Without this a character sails past every wall at slide speed,
     /// including the ones it is only running alongside.
     pub grip: f32,
+    /// How hard it is held against the wall while gripping, in m/s².
+    ///
+    /// Arriving at speed, the solver pushes the capsule back out of the
+    /// wall — and with the air push deliberately not aimed into it,
+    /// nothing brings it back. The character bounces off and drifts
+    /// away mid-slide.
+    ///
+    /// This is that push, made explicit and authorable, rather than the
+    /// contact friction it used to get by accident. Speed *away* from
+    /// the wall is dropped outright while gripping: a bounce is the
+    /// wall's answer to arriving, not something the character asked
+    /// for.
+    pub stick: f32,
 }
 
 impl Default for WallSlide {
@@ -34,6 +47,7 @@ impl Default for WallSlide {
         Self {
             max_fall: 2.0,
             grip: 0.3,
+            stick: 12.0,
         }
     }
 }

@@ -33,6 +33,13 @@ struct Asked {
     steering: Vec3,
 }
 
+impl Asked {
+    /// The wall's normal, or `fallback` where there is no wall.
+    fn normal_or(&self, fallback: Vec3) -> Vec3 {
+        self.wall.unwrap_or(fallback)
+    }
+}
+
 /// Caps the fall on a wall, then spends whatever jump was asked for.
 pub fn cling_and_leap(resources: &mut Resources) {
     let asked = plan(resources);
@@ -50,19 +57,29 @@ pub fn cling_and_leap(resources: &mut Resources) {
     let mut tallies = resources.remove::<Tallies>().unwrap_or_default();
     let mut spent = Vec::new();
     for one in &asked {
-        if let Some(slide) = one.slide {
-            cling(&mut world, one, &slide);
+        let mut tally = tallies.of(one.entity);
+        // Not while it is getting clear of a wall it just pushed off:
+        // the wall is still right there, and holding on would cancel
+        // the jump that was just made.
+        let clearing = tally.since_wall.is_some_and(|since| since < leap::CLEARING);
+        if let Some(slide) = one.slide
+            && !clearing
+        {
+            cling(&mut world, one, &slide, dt);
         }
         if let Some(jump) = one.jump {
-            let mut tally = tallies.of(one.entity);
             let wall = one.off.as_ref().zip(one.wall);
             let leap = leap::spend(&mut tally, &jump, wall, one.standing, one.up, dt);
-            tallies.set(one.entity, tally);
             if let Some(leap) = leap {
                 launch(&mut world, one, leap);
             }
             spent.push(one.entity);
+        } else if let Some(since) = tally.since_wall.as_mut() {
+            // Advanced even without a jump, or a character with a slide
+            // and no wall jump would carry a timer that never moves.
+            *since += dt;
         }
+        tallies.set(one.entity, tally);
     }
     resources.insert(world);
     resources.insert(tallies);
@@ -83,8 +100,8 @@ pub fn cling_and_leap(resources: &mut Resources) {
     }
 }
 
-/// Holds the fall to the slide speed, while the wall is being held on to.
-fn cling(world: &mut PhysicsWorld, one: &Asked, slide: &WallSlide) {
+/// Holds the character on the wall, and its fall to the slide speed.
+fn cling(world: &mut PhysicsWorld, one: &Asked, slide: &WallSlide, dt: f32) {
     let (false, Some(normal)) = (one.standing, one.wall) else {
         return;
     };
@@ -97,13 +114,25 @@ fn cling(world: &mut PhysicsWorld, one: &Asked, slide: &WallSlide) {
     let Some(velocity) = world.linear_velocity(one.body) else {
         return;
     };
-    let falling = velocity.dot(one.up);
-    if falling >= -slide.max_fall.max(0.0) {
-        return;
+    let mut held = velocity;
+
+    // The bounce, dropped. Arriving at speed the solver pushes the
+    // capsule back out, and with the air push deliberately not aimed
+    // into the wall there is nothing to bring it back: the character
+    // rebounds and drifts off mid-slide.
+    let out = held.dot(one.normal_or(Vec3::ZERO));
+    if out > 0.0 {
+        held -= one.normal_or(Vec3::ZERO) * out;
     }
-    // Only the part along up is replaced. Clamping the whole vector
-    // would take the character's run at the wall away with it.
-    let held = velocity - one.up * falling - one.up * slide.max_fall.max(0.0);
+    // And held on, which the contact friction used to do by accident.
+    held -= one.normal_or(Vec3::ZERO) * slide.stick.max(0.0) * dt;
+
+    // Only the part along up is capped. Clamping the whole vector would
+    // take the character's run along the wall away with it.
+    let falling = held.dot(one.up);
+    if falling < -slide.max_fall.max(0.0) {
+        held = held - one.up * falling - one.up * slide.max_fall.max(0.0);
+    }
     world.set_linear_velocity(one.body, held);
 }
 

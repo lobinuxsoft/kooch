@@ -1204,3 +1204,48 @@ fn wall_trace() {
         );
     }
 }
+
+/// Acceptance: it stays on the wall after arriving at speed.
+///
+/// The solver pushes the capsule back out of whatever it hits, and with
+/// the air push deliberately not aimed into the wall there is nothing to
+/// bring it back — the character bounced off and drifted away mid-slide.
+#[test]
+fn a_wall_holds_it() {
+    let mut resources = world();
+    let hero = against_a_wall(&mut resources);
+    insert(&mut resources, hero, WallSlide::default());
+    // One step so the solver has a body to throw.
+    simulate(&mut resources, 1);
+    // Thrown at the wall rather than settled against it.
+    let body = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<kooch_physics::plugin::SolverBody>())
+        .and_then(|s| s.get(hero))
+        .copied()
+        .expect("no body");
+    if let Some(world) = resources.get_mut::<PhysicsWorld>() {
+        world.set_linear_velocity(body, Vec3::X * 9.0);
+    }
+
+    simulate(&mut resources, 30);
+    let arrived = position(&resources, hero).x;
+    simulate(&mut resources, 120);
+    let later = position(&resources, hero).x;
+
+    assert!(
+        arrived > 0.4,
+        "should have reached the wall at x = 1: {arrived}",
+    );
+    assert!(
+        later > arrived - 0.1,
+        "should still be on it: {arrived} drifted to {later}",
+    );
+    let found = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<Touching>())
+        .and_then(|s| s.get(hero))
+        .copied()
+        .expect("no Touching");
+    assert!(found.wall, "and still sees it");
+}
