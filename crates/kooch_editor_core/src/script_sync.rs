@@ -47,7 +47,11 @@ pub enum SyncState {
     #[default]
     Current,
     /// `src/` moved, so the project's compiled code is now behind its
-    /// source. Cleared by the author acknowledging it after a rebuild.
+    /// source. Drawn as a pulse on **Rebuild & Run**, which is the button
+    /// that fixes it, and cleared by the reload that a finished rebuild
+    /// triggers — see [`crate::code_reload`]. Nothing to dismiss by hand:
+    /// a warning cleared by clicking it is one people clear without
+    /// reading.
     ///
     /// Not "the generated file was rewritten" — see the note in
     /// [`sync_scripts_system`]. Most edits leave that file identical and

@@ -182,7 +182,7 @@ pub(crate) fn draw_menu_bar(
             // wrong again the next time one is added.
             let button_width = 70.0;
             let spacing = ui.spacing().item_spacing.x;
-            let widths = [button_width, button_width, SYNC_WIDTH];
+            let widths = [button_width, button_width];
             let total_buttons: f32 =
                 widths.iter().sum::<f32>() + spacing * (widths.len() - 1) as f32;
             // 🔴 Centred in the BAR, not in what is left of it. The
@@ -219,7 +219,6 @@ pub(crate) fn draw_menu_bar(
             {
                 actions.push(EditorAction::Stop);
             }
-            draw_script_sync(ui, scripts_behind, actions);
 
             // Right-aligned, and in a right-to-left layout the first
             // thing drawn is the furthest right — so the version sits at
@@ -244,80 +243,11 @@ pub(crate) fn draw_menu_bar(
                 // silent editor reads as a hang.
                 if let Some(remote) = remote {
                     ui.separator();
-                    draw_remote_status(ui, remote, remote_stale, actions);
+                    draw_remote_status(ui, remote, remote_stale, scripts_behind, actions);
                 }
             });
         });
     });
-}
-
-/// What the code-sync control occupies, in both of its states. Shared so
-/// the centring above and the button below cannot disagree about it.
-const SYNC_WIDTH: f32 = 120.0;
-
-/// The code-sync control: quiet while the project's build matches its
-/// source, pulsing once `src/` has moved past it.
-///
-/// 🔴 It does NOT mean "`registrations.rs` is stale". The poll rewrote
-/// that file already — announcing it would announce something handled.
-/// What is behind is the BUILD: the editor lists a project's components
-/// out of its compiled dylib, so a system added ten seconds ago is in the
-/// generated file and in no binary anywhere. That gap is invisible, it
-/// produces no error, and the symptom is "I pressed Play and my system
-/// did not run".
-///
-/// 🔴 And it is NOT keyed on that file changing. Adding a field, fixing a
-/// body or changing a default rewrites nothing there and leaves the build
-/// just as far behind — which is most of what an author does.
-///
-/// ⚠️ The pulse asks for a repaint per frame, which in an immediate-mode
-/// UI is a real and permanent cost — so it runs ONLY while behind. In
-/// the ordinary state the widget is static and asks for nothing.
-fn draw_script_sync(ui: &mut egui::Ui, behind: bool, actions: &mut Vec<EditorAction>) {
-    if !behind {
-        if ui
-            .add(
-                egui::Button::new(format!("{} Code Sync", icons::ARROWS_CLOCKWISE))
-                    .min_size(egui::vec2(SYNC_WIDTH, 0.0)),
-            )
-            .on_hover_text(
-                "Rescans `src/` and rewrites the generated registrations. Runs on \
-                 its own when a source file changes; this forces it.\n\nIt does not \
-                 compile: a new field or a changed body reaches the editor through a \
-                 rebuild, not through this.",
-            )
-            .clicked()
-        {
-            actions.push(EditorAction::RegisterScripts);
-        }
-        return;
-    }
-
-    // A triangle wave rather than a sine: the eye catches a hard edge,
-    // and a sine spends most of its time near the middle where the
-    // difference from the resting colour is smallest.
-    let phase = (ui.input(|i| i.time) * 1.6).fract() as f32;
-    let lit = 1.0 - (phase * 2.0 - 1.0).abs();
-    let colour = egui::Color32::from_rgb(150 + (105.0 * lit) as u8, 110 + (80.0 * lit) as u8, 40);
-    let clicked = ui
-        .add(
-            egui::Button::new(
-                egui::RichText::new(format!("{} Code Sync", icons::ARROWS_CLOCKWISE)).color(colour),
-            )
-            .min_size(egui::vec2(SYNC_WIDTH, 0.0)),
-        )
-        .on_hover_text(
-            "A source file changed since the last build, so the project's compiled \
-             code is behind what you are editing — the editor reads components, \
-             fields and defaults out of the compiled dylib. Rebuild the project, \
-             then click this to clear the notice.",
-        )
-        .clicked();
-    // Only while it pulses. See the header.
-    ui.ctx().request_repaint();
-    if clicked {
-        actions.push(EditorAction::AcknowledgeScriptSync);
-    }
 }
 
 /// Draws the remote session indicator and its rebuild control.
@@ -330,6 +260,10 @@ fn draw_remote_status(
     ui: &mut egui::Ui,
     remote: ConnectionState,
     stale: Option<&str>,
+    // `true` when `src/` moved since the last build, so the project is
+    // running code the author has already changed. Drawn here because
+    // this is the button that fixes it.
+    behind: bool,
     actions: &mut Vec<EditorAction>,
 ) {
     let stale_hover;
@@ -354,26 +288,62 @@ fn draw_remote_status(
     if ui
         .add_enabled(
             remote != ConnectionState::Connecting,
-            // 🔴 Labelled, and not with the sync glyph. This drew
-            // `ARROWS_CLOCKWISE` with no text, directly beside a Code
-            // Sync that draws the same glyph WITH text — two buttons
-            // that look like the same button, doing unrelated jobs. One
-            // rewrites a generated file; this one recompiles the project
-            // and restarts it.
-            egui::Button::new(format!("{} Rebuild & Run", icons::PACKAGE)),
+            // 🔴 The only button that does this now. Code Sync stood
+            // beside it rewriting a generated file and compiling
+            // nothing, which read as the button for seeing a code
+            // change and was not — so it is gone, and the regeneration
+            // it forced still happens on its own from the source poll.
+            egui::Button::new(rebuild_label(ui, behind)),
         )
-        .on_hover_text(
-            "Recompiles the project and restarts it. This is what picks up a \
-             changed system body, and the way back from a project that exited.\n\n\
-             Not Code Sync, which only rewrites the generated registrations and \
-             compiles nothing.",
-        )
+        .on_hover_text(match behind {
+            true => {
+                "A source file changed since the last build, so the project is \
+                 running code you have already edited. The editor reads components, \
+                 fields and defaults out of the compiled binary, so this is what \
+                 shows them.\n\nYour scene and selection survive it."
+            }
+            false => {
+                "Recompiles the project and restarts it. This is what picks up a \
+                 changed component or system.\n\nYour scene and selection survive it."
+            }
+        })
         .clicked()
     {
         actions.push(EditorAction::RebuildAndRun);
     }
     ui.label(egui::RichText::new(format!("{icon} {text}")).color(color))
         .on_hover_text(hover);
+}
+
+/// The rebuild button's face, pulsing while the build is behind.
+///
+/// # Why it pulses rather than just changing colour
+///
+/// A static colour is read once and then stops being seen. Movement is
+/// what the eye catches on a bar the author is not looking at — and
+/// "your project is running code you already changed" is worth catching,
+/// because nothing else in the editor says so.
+///
+/// A triangle wave rather than a sine: the eye catches a hard edge, and
+/// a sine spends most of its time near the middle, where the difference
+/// from the resting colour is smallest.
+///
+/// ⚠️ The repaint request is what makes an immediate-mode UI redraw every
+/// frame, which is a real and permanent cost — so it is asked for ONLY
+/// while behind. At rest this widget asks for nothing.
+fn rebuild_label(ui: &egui::Ui, behind: bool) -> egui::RichText {
+    let text = format!("{} Rebuild & Run", icons::PACKAGE);
+    if !behind {
+        return egui::RichText::new(text);
+    }
+    let phase = (ui.input(|i| i.time) * 1.6).fract() as f32;
+    let lit = 1.0 - (phase * 2.0 - 1.0).abs();
+    // Orange, and swinging further than the old amber did. Not red:
+    // red is how this editor says something is broken, and a build that
+    // is merely behind is not.
+    let colour = egui::Color32::from_rgb(255, 120 + (110.0 * lit) as u8, 30);
+    ui.ctx().request_repaint();
+    egui::RichText::new(text).color(colour).strong()
 }
 
 /// How each handshake state reads, before staleness is taken into account.

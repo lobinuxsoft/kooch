@@ -72,11 +72,6 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
                 );
             }
         }
-        EditorAction::AcknowledgeScriptSync => {
-            if let Some(sync) = resources.get_mut::<crate::script_sync::ScriptSync>() {
-                sync.acknowledge();
-            }
-        }
         EditorAction::BuildProject(preset) => start_build(resources, *preset),
         EditorAction::CancelBuild => {
             if let Some(state) = resources.get_mut::<crate::build::BuildState>()
