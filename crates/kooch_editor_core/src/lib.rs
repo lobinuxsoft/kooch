@@ -38,6 +38,7 @@ pub(crate) mod panels;
 /// against a long capture discarding its own scope names.
 #[cfg(feature = "profiling")]
 pub use panels::profiler::keep_all_frames;
+pub mod code_reload;
 pub mod dlss_sdk;
 pub mod moved_pump;
 pub mod perf;
@@ -134,6 +135,7 @@ impl Plugin for EditorPlugin {
         // Idle until someone presses Build (#758).
         app.insert_resource(build::BuildState::default());
         app.insert_resource(script_sync::ScriptSync::default());
+        app.insert_resource(code_reload::CodeReload::default());
         app.insert_resource(input_focus::InputFocus::default());
         // Remote mode starts inert: no session means the editor drives
         // its own ECS exactly as before. "Open Remote" fills it in.
@@ -202,6 +204,10 @@ impl Plugin for EditorPlugin {
         // A system written in an external editor used to reach no
         // registration and no log line — it simply never ran.
         app.add_system(Stage::PreUpdate, script_sync::sync_scripts_system);
+        // 🔴 After it, and that ordering is the point: the source poll
+        // says the build fell behind, this says it caught up. Reloading
+        // first would clear a notice the same frame that raised it.
+        app.add_system(Stage::PreUpdate, code_reload::reload_code_system);
         // Remote mode: advance the handshake and pull the project's
         // world into the local mirror. PreUpdate so the panels and the
         // viewport see a snapshot that is at most one frame stale.
