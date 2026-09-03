@@ -1,10 +1,19 @@
-use super::*;
-use glam::Mat4;
+//! Reading back what a visualizer drew.
+//!
+//! Shared by every gizmo family rather than living inside one: a
+//! visualizer's whole output is line segments, and every test here asks
+//! the same three questions of them.
+
+use glam::{Mat4, Vec3};
+
+use kooch_gizmos::Gizmos;
+
+use super::gravity::ARROW;
 use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_gizmos::{GizmoBatch, MeshBatch, Visualizer};
 
 /// Every segment drawn, as `(start, end)` in world space.
-pub(super) fn draw<C, V>(visualizer: &V, component: &C, matrix: Mat4) -> Vec<(Vec3, Vec3)>
+pub(crate) fn draw<C, V>(visualizer: &V, component: &C, matrix: Mat4) -> Vec<(Vec3, Vec3)>
 where
     V: Visualizer<C>,
     C: kooch_ecs::component::Component,
@@ -18,7 +27,7 @@ where
 
 /// The furthest any drawn point gets from the origin — how far the
 /// gizmo claims the field reaches.
-pub(super) fn reach(segments: &[(Vec3, Vec3)]) -> f32 {
+pub(crate) fn reach(segments: &[(Vec3, Vec3)]) -> f32 {
     segments
         .iter()
         .flat_map(|(a, b)| [a.length(), b.length()])
@@ -27,7 +36,7 @@ pub(super) fn reach(segments: &[(Vec3, Vec3)]) -> f32 {
 
 /// The direction the longest segments run in, which for an arrow shaft
 /// is the direction of the field.
-pub(super) fn shaft(segments: &[(Vec3, Vec3)]) -> Vec3 {
+pub(crate) fn shaft(segments: &[(Vec3, Vec3)]) -> Vec3 {
     segments
         .iter()
         .max_by(|x, y| (x.1 - x.0).length().total_cmp(&(y.1 - y.0).length()))
@@ -37,7 +46,7 @@ pub(super) fn shaft(segments: &[(Vec3, Vec3)]) -> Vec3 {
 
 /// Only the arrow shafts, as unit directions — the heads are short
 /// segments at the tip and would drown the signal.
-pub(super) fn shafts(segments: &[(Vec3, Vec3)]) -> Vec<Vec3> {
+pub(crate) fn shafts(segments: &[(Vec3, Vec3)]) -> Vec<Vec3> {
     segments
         .iter()
         .filter(|(a, b)| ((*b - *a).length() - ARROW).abs() < 1e-3)

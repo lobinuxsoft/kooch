@@ -1,5 +1,5 @@
 use super::*;
-use crate::gizmos::gravity::harness::{draw, shaft};
+use crate::gizmos::harness::{draw, shaft};
 use glam::{Mat4, Quat};
 
 #[test]

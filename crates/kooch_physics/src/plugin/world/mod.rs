@@ -20,6 +20,8 @@
 //! price of the trait — and the trait is what lets a GPU solver replace
 //! Rapier later without touching a single authored scene.
 
+mod queries;
+
 use glam::{Quat, Vec3};
 
 use kooch_ecs::component::Component;
@@ -441,6 +443,37 @@ impl PhysicsWorld {
         self.backend_mut().set_linear_velocity(handle, velocity);
     }
 
+    /// Turns a body outright, leaving it where it is.
+    ///
+    /// For an orientation that is authored rather than simulated — a
+    /// character faces where the player is steering, and no torque can
+    /// promise that without the inertia tensor the backend does not
+    /// expose. Pair it with
+    /// [`set_angular_velocity`](Self::set_angular_velocity): the solver
+    /// keeps whatever spin it had and will turn the body back out of the
+    /// pose on the very next step.
+    pub fn set_rotation(&mut self, body: SolverBody, rotation: Quat) {
+        let Some(handle) = self.handle(body.slot()) else {
+            return;
+        };
+        let Some((position, _)) = self.backend().get_transform(handle) else {
+            return;
+        };
+        self.backend_mut().set_transform(handle, position, rotation);
+    }
+
+    /// Sets how fast a body spins, in rad/s.
+    ///
+    /// The angular twin of
+    /// [`set_linear_velocity`](Self::set_linear_velocity), and the same
+    /// warning applies.
+    pub fn set_angular_velocity(&mut self, body: SolverBody, velocity: Vec3) {
+        let Some(handle) = self.handle(body.slot()) else {
+            return;
+        };
+        self.backend_mut().set_angular_velocity(handle, velocity);
+    }
+
     /// How fast a body is spinning, in rad/s.
     pub fn angular_velocity(&self, body: SolverBody) -> Option<Vec3> {
         self.backend().angular_velocity(self.handle(body.slot())?)
@@ -455,84 +488,19 @@ impl PhysicsWorld {
         self.backend().get_transform(self.handle(body.slot())?)
     }
 
+    /// This body's mass, for turning an acceleration into an impulse.
+    ///
+    /// A spring is written as an acceleration — that is the unit its
+    /// stiffness is tuned in — and the solver takes momentum, so
+    /// somebody has to multiply. Without this every caller reaches for
+    /// the backend to do it.
+    pub fn mass(&self, body: SolverBody) -> Option<f32> {
+        self.backend().mass(self.handle(body.slot())?)
+    }
+
     /// Whether the solver has parked this body.
     pub fn is_sleeping(&self, body: SolverBody) -> Option<bool> {
         self.backend().is_sleeping(self.handle(body.slot())?)
-    }
-
-    /// First thing a ray meets, or `None` for empty space.
-    ///
-    /// `direction` need not be normalised; `max_distance` is measured in
-    /// its lengths. Not tied to a body — it is here so that asking the
-    /// world a question does not require finding the backend first.
-    pub fn raycast(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<RayHit> {
-        self.raycast_where(origin, direction, max_distance, QueryFilter::ALL)
-    }
-
-    /// The same, seeing only what a filter allows.
-    ///
-    /// A body probing its own surroundings wants
-    /// [`QueryFilter::excluding`] itself: a downward ray from a
-    /// character's centre finds the character first, every time.
-    pub fn raycast_where(
-        &self,
-        origin: Vec3,
-        direction: Vec3,
-        max_distance: f32,
-        filter: QueryFilter,
-    ) -> Option<RayHit> {
-        self.backend()
-            .query_ray(origin, direction, max_distance, filter)
-    }
-
-    /// Every hit along a ray, unordered, for something that pierces.
-    pub fn raycast_all(
-        &self,
-        origin: Vec3,
-        direction: Vec3,
-        max_distance: f32,
-        filter: QueryFilter,
-        out: &mut dyn FnMut(RayHit) -> bool,
-    ) {
-        self.backend()
-            .query_ray_all(origin, direction, max_distance, filter, out);
-    }
-
-    /// Sweeps a shape and returns the first thing it meets.
-    ///
-    /// What a character controller tests a move with: a ray is a line of
-    /// zero width and will slip between two crates a body cannot fit
-    /// through.
-    pub fn sweep(
-        &self,
-        shape: ShapeAt<'_>,
-        direction: Vec3,
-        max_distance: f32,
-        filter: QueryFilter,
-    ) -> Option<ShapeHit> {
-        self.backend()
-            .query_sweep(shape, direction, max_distance, filter)
-    }
-
-    /// Nearest point on the nearest body, and whether `point` is inside
-    /// it.
-    pub fn project_point(
-        &self,
-        point: Vec3,
-        max_distance: f32,
-        filter: QueryFilter,
-    ) -> Option<PointHit> {
-        self.backend().query_point(point, max_distance, filter)
-    }
-
-    /// Every body a shape overlaps where it stands, moving nothing.
-    pub fn overlaps(
-        &self,
-        shape: ShapeAt<'_>,
-        filter: QueryFilter,
-        out: &mut dyn FnMut(BodyHandle) -> bool,
-    ) {
-        self.backend().query_overlaps(shape, filter, out);
     }
 }
 

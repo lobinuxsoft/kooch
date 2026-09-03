@@ -42,7 +42,7 @@ const EDGE: Vec3 = Vec3::new(0.36, 0.26, 0.60);
 
 /// Long enough to read as a direction at a glance, short enough that a
 /// handful of them do not fill the viewport.
-const ARROW: f32 = 1.5;
+pub(super) const ARROW: f32 = 1.5;
 
 /// Draws an arrow of [`ARROW`] length from `base` along `direction`.
 ///
@@ -55,6 +55,3 @@ fn arrow(gizmos: &mut Gizmos<'_>, base: Vec3, direction: Vec3, color: Vec3) {
     let (a, b) = direction.any_orthonormal_pair();
     gizmos.arrow(base, base + direction * ARROW, a, b, color);
 }
-
-#[cfg(test)]
-mod harness;

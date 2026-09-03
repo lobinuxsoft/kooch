@@ -243,6 +243,32 @@ impl CollisionShape {
         )
     }
 
+    /// How far this shape extends below its own origin, along local Y.
+    ///
+    /// `None` for the shapes that have no answer without their point
+    /// cloud, and for the unbounded ones. A character controller is what
+    /// asks: its ride height is measured from the origin and has to clear
+    /// this, or the spring asks for a height the geometry cannot occupy.
+    pub fn reach(&self) -> Option<f32> {
+        match self {
+            Self::Sphere { radius } => Some(*radius),
+            Self::Cuboid { half_extents } => Some(half_extents.y),
+            Self::Capsule {
+                radius,
+                half_height,
+            } => Some(radius + half_height),
+            Self::Cylinder { half_height, .. } | Self::Cone { half_height, .. } => {
+                Some(*half_height)
+            }
+            Self::RoundCylinder {
+                half_height,
+                border_radius,
+                ..
+            } => Some(half_height + border_radius),
+            _ => None,
+        }
+    }
+
     /// This shape at a `Transform` scale.
     ///
     /// Rapier's shapes take no scale — they are built from dimensions —

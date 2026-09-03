@@ -30,6 +30,7 @@ kooch_physics = { workspace = true, features = ["debug-render"] }
 # components to mirror and the gizmos to draw a field that has no mesh.
 kooch_camera.workspace = true
 kooch_gravity.workspace = true
+kooch_character.workspace = true
 kooch_window.workspace = true
 kooch_world.workspace = true
 kooch_remote.workspace = true

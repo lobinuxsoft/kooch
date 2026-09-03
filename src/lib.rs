@@ -15,6 +15,7 @@
 //! | `lighting` | Lighting system             | —            |
 //! | `physics`  | Physics simulation          | —            |
 //! | `gravity`  | Gravity system              | —            |
+//! | `character`| Floating-capsule controller | `gravity`    |
 //! | `camera`   | Authorable camera rigs      | —            |
 //! | `world`    | World management            | —            |
 //! | `editor`   | Editor UI                   | —            |
@@ -64,6 +65,9 @@ pub use kooch_editor_core;
 pub use kooch_gizmos;
 #[cfg(feature = "gravity")]
 pub use kooch_gravity;
+
+#[cfg(feature = "character")]
+pub use kooch_character;
 #[cfg(feature = "input")]
 pub use kooch_input;
 #[cfg(feature = "lighting")]
@@ -184,6 +188,23 @@ pub mod prelude {
         AreaGravity, BoxGravity, GlobalGravity, GravityPlugin, GravityPriority, PlaneGravity,
         PointGravity, gravity_at, gravity_dominant, gravity_up,
     };
+
+    // `Grounded` comes along because everything downstream of a
+    // controller reads it — jumping, animation, footstep audio — and a
+    // component nobody can name is one everybody re-derives with a
+    // raycast of their own. `Facing` is the other half of that seam: the
+    // controller cannot know where gameplay is steering, so gameplay
+    // writes it.
+    #[cfg(feature = "character")]
+    pub use kooch_character::{
+        CharacterController, CharacterPlugin, Facing, Grounded, Sprint, Touching, Walk, WallJump,
+        WallRun, WallSlide,
+    };
+    // Not `Jump`: a project that already has one of its own — and
+    // `roll-a-ball` does, for a ball that is not a character — would
+    // find the two names colliding on the same `use`.
+    #[cfg(feature = "character")]
+    pub use kooch_character::jump::Jump as CharacterJump;
 
     // The mode constants come along: without them `VirtualCamera` cannot
     // be configured from code at all, and `UP_GRAVITY` is what makes a
@@ -348,6 +369,12 @@ impl kooch_core::plugin::PluginGroup for RemoteHostPlugins {
         #[cfg(all(feature = "physics", feature = "gravity"))]
         let builder = builder.add(kooch_gravity::GravityPlugin);
 
+        // After gravity, always: the spring cancels *this* step's pull,
+        // and cancelling last step's is a character that sinks whenever
+        // the field changes under it.
+        #[cfg(feature = "character")]
+        let builder = builder.add(kooch_character::CharacterPlugin);
+
         // Camera rigs run here for the same reason physics does: the host
         // is what simulates, and the editor draws the pose it produced.
         #[cfg(feature = "camera")]
@@ -384,6 +411,12 @@ impl kooch_core::plugin::PluginGroup for DefaultPlugins {
         #[cfg(all(feature = "physics", feature = "gravity"))]
         let builder = builder.add(kooch_gravity::GravityPlugin);
 
+        // After gravity, always: the spring cancels *this* step's pull,
+        // and cancelling last step's is a character that sinks whenever
+        // the field changes under it.
+        #[cfg(feature = "character")]
+        let builder = builder.add(kooch_character::CharacterPlugin);
+
         #[cfg(feature = "window")]
         let builder = builder.add(kooch_window::WindowPlugin::default());
 
@@ -413,6 +446,12 @@ impl kooch_core::plugin::PluginGroup for DefaultPlugins {
         // scene holds a source, so adding it changes nothing on its own.
         #[cfg(all(feature = "physics", feature = "gravity"))]
         let builder = builder.add(kooch_gravity::GravityPlugin);
+
+        // After gravity, always: the spring cancels *this* step's pull,
+        // and cancelling last step's is a character that sinks whenever
+        // the field changes under it.
+        #[cfg(feature = "character")]
+        let builder = builder.add(kooch_character::CharacterPlugin);
 
         // A camera that follows something is not an optional idea for a
         // 3D game, and the crate is inert until a rig is authored.

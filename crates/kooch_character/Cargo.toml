@@ -1,0 +1,23 @@
+[package]
+name = "kooch_character"
+description = "Character controller — a floating capsule held up by a spring"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kooch_core.workspace = true
+kooch_ecs.workspace = true
+# The capsule sweeps for its ground and is held up by impulses.
+kooch_physics.workspace = true
+# "Down" is whatever the field says it is, and the controller has to
+# agree with the solver about it.
+kooch_gravity.workspace = true
+glam.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+kooch_ecs.workspace = true
+kooch_core.workspace = true

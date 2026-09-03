@@ -29,16 +29,23 @@
 //! origin, and multi-entity dragging needs pivot semantics of its own.
 
 mod center_of_mass;
+mod character;
 mod collider;
+mod facing;
 mod gravity;
+mod grounded;
+#[cfg(test)]
+pub(crate) mod harness;
 mod physics_debug;
 
 pub(crate) use physics_debug::PhysicsDebugOverlay;
 mod lights;
 mod parent_space;
+mod touching;
 mod virtual_camera;
 mod visibility;
 mod visualizers;
+mod walk;
 
 use std::any::TypeId;
 
@@ -104,6 +111,30 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     registry.register::<kooch_gravity::AreaGravity, gravity::AreaGravityVisualizer>();
     registry.register::<kooch_gravity::BoxGravity, gravity::BoxGravityVisualizer>();
     registry.register::<kooch_gravity::PlaneGravity, gravity::PlaneGravityVisualizer>();
+
+    // A controller has no surface of its own: the ride height is a gap
+    // that is supposed to be empty and the probe leaves no trace.
+    registry.register::<kooch_character::CharacterController, character::CharacterVisualizer>();
+    // What it was asking for, and what it found. The pair is the debug
+    // view: a gap that does not match the ride height is visible rather
+    // than deduced.
+    registry.register::<kooch_character::Grounded, grounded::GroundedVisualizer>();
+    // And what it was asked to do. A character that will not turn is two
+    // arrows that disagree; one that turns the wrong way is two that
+    // agree about the wrong thing.
+    registry.register::<kooch_character::Facing, facing::FacingVisualizer>();
+    // And what it decided to do about it. A character that will not stop
+    // and one that is merely slow look the same standing still; the
+    // difference is whether the goal went to zero.
+    registry.register::<kooch_character::Walk, walk::WalkVisualizer>();
+    // The wall, drawn like the ground: a slide that refuses to start is
+    // either a wall nobody found or a normal pointing somewhere
+    // unexpected, and those look identical in the Inspector.
+    registry.register::<kooch_character::Touching, touching::TouchingVisualizer>();
+    // The mechanics have no gizmo of their own on purpose: a sprint, a
+    // jump and a wall slide draw nothing that is not already the
+    // sense marks they read. What they do is visible in `Grounded` and
+    // `Touching`, which is the argument for one sense pass restated.
     resources.insert(registry);
 
     if resources.get::<HandleSet>().is_none() {

@@ -38,6 +38,7 @@
 use glam::{Mat3, Vec3};
 
 use kooch_core::resource::Resources;
+use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_gizmos::{Gizmos, Visualizer};
 use kooch_physics::backend::{ColliderMeshCache, CollisionShape, ConvexPart};
@@ -61,6 +62,7 @@ impl Visualizer<Collider> for ColliderVisualizer {
         &self,
         collider: &Collider,
         transform: &GlobalTransform,
+        _entity: Entity,
         resources: &Resources,
         gizmos: &mut Gizmos<'_>,
     ) {

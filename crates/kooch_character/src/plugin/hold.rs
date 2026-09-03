@@ -1,0 +1,405 @@
+//! The sweep, the walk, the turn and the spring — one step of a
+//! character, in the order they depend on each other.
+
+use glam::{Quat, Vec3};
+
+use kooch_core::resource::Resources;
+use kooch_core::time::Time;
+use kooch_ecs::component::ComponentRegistry;
+use kooch_ecs::entity::Entity;
+use kooch_ecs::transform::Transform;
+use kooch_gravity::gravity_at;
+use kooch_physics::plugin::{PhysicsWorld, SolverBody};
+
+use crate::controller::CharacterController;
+use crate::facing::Facing;
+use crate::grounded::Grounded;
+use crate::plugin::run::{self, Runs};
+use crate::plugin::sense::{self, Footing};
+use crate::plugin::{turn, walk};
+use crate::sprint::Sprint;
+use crate::touching::Touching;
+use crate::walk::Walk;
+
+/// One character's worth of work, read before the world is borrowed.
+struct Planned {
+    entity: Entity,
+    body: SolverBody,
+    controller: CharacterController,
+    position: Vec3,
+    rotation: Quat,
+    /// Which way is up *here* — the same answer the solver is using.
+    up: Vec3,
+    /// How hard the field is pulling, which the spring has to hold
+    /// against before it holds anything else.
+    weight: f32,
+    /// Where gameplay is steering, or [`Vec3::ZERO`] for "keep looking".
+    /// Its length is the throttle.
+    facing: Vec3,
+    /// How this character walks, or `None` for one that is only held up.
+    walk: Option<Walk>,
+    /// Whether it is running, and by how much.
+    sprint: Sprint,
+    /// Whether this character is interested in walls at all.
+    walls: bool,
+    /// How far to bank while running a wall, and which way, or `None`
+    /// for a character that is not on one.
+    ///
+    /// Read from the run the *previous* step decided on, because the run
+    /// is decided after this pass. A frame of lag on a lean nobody can
+    /// see is cheaper than a second pass to remove it.
+    bank: Option<(Vec3, f32)>,
+}
+
+/// Rising faster than this and the spring lets go, in m/s.
+///
+/// Without it a jump is fought by its own damping the frame after it
+/// starts — at 18 damping a 5 m/s launch is met with 90 m/s² of "come
+/// back", and the character never leaves the floor. Above the threshold
+/// the body is simply in the air, and gravity is the only thing acting
+/// on it.
+const RISING: f32 = 0.5;
+
+/// Sweeps for ground, holds the body at its ride height, keeps it
+/// upright, and writes [`Grounded`].
+pub fn hold_characters(resources: &mut Resources) {
+    let planned = plan(resources);
+    if planned.is_empty() {
+        return;
+    }
+    let dt = resources
+        .get::<Time>()
+        .map(|time| time.fixed_delta_secs())
+        .unwrap_or(1.0 / 60.0);
+
+    // Taken out rather than borrowed: writing `Grounded` afterwards needs
+    // the registry mutably, and the sweep needs the world.
+    let Some(mut world) = resources.remove::<PhysicsWorld>() else {
+        return;
+    };
+    let mut goals = resources.remove::<walk::WalkGoals>().unwrap_or_default();
+    let found: Vec<(Entity, Grounded, Touching)> = planned
+        .iter()
+        .map(|plan| {
+            let (grounded, touching) = hold_one(&mut world, &mut goals, plan, dt);
+            (plan.entity, grounded, touching)
+        })
+        .collect();
+    resources.insert(world);
+    resources.insert(goals);
+
+    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
+        return;
+    };
+    if let Some(storage) = registry.get_cpu_mut::<Grounded>() {
+        for (entity, grounded, _) in &found {
+            storage.insert(*entity, *grounded);
+        }
+    }
+    // Only where one is authored: a character that has no use for walls
+    // should not grow the component by being simulated.
+    if let Some(storage) = registry.get_cpu_mut::<Touching>() {
+        for (entity, _, touching) in &found {
+            if storage.get(*entity).is_some() {
+                storage.insert(*entity, *touching);
+            }
+        }
+    }
+}
+
+/// Every character, with the up that applies where it stands.
+fn plan(resources: &Resources) -> Vec<Planned> {
+    let Some(registry) = resources.get::<ComponentRegistry>() else {
+        return Vec::new();
+    };
+    let (Some(controllers), Some(bodies), Some(transforms)) = (
+        registry.get_cpu::<CharacterController>(),
+        registry.get_cpu::<SolverBody>(),
+        registry.get_cpu::<Transform>(),
+    ) else {
+        return Vec::new();
+    };
+    let facings = registry.get_cpu::<Facing>();
+    let walks = registry.get_cpu::<Walk>();
+    let sprints = registry.get_cpu::<Sprint>();
+    let touched = registry.get_cpu::<Touching>();
+    let runs = resources.get::<Runs>();
+    let running = registry.get_cpu::<crate::wall_run::WallRun>();
+
+    // Read first, then ask the field: `gravity_up` walks the same
+    // storages this is holding.
+    type Read = (
+        Entity,
+        SolverBody,
+        CharacterController,
+        Vec3,
+        Quat,
+        Vec3,
+        Option<Walk>,
+        Sprint,
+        bool,
+        Option<(Vec3, f32)>,
+    );
+    let standing: Vec<Read> = controllers
+        .iter()
+        .filter_map(|(&entity, controller)| {
+            let body = *bodies.get(entity)?;
+            let transform = transforms.get(entity)?;
+            Some((
+                entity,
+                body,
+                *controller,
+                transform.position,
+                transform.rotation,
+                facings
+                    .and_then(|facings| facings.get(entity))
+                    .map(|facing| facing.direction)
+                    .unwrap_or(Vec3::ZERO),
+                walks.and_then(|walks| walks.get(entity)).copied(),
+                sprints
+                    .and_then(|sprints| sprints.get(entity))
+                    .copied()
+                    .unwrap_or(Sprint {
+                        wanted: false,
+                        ..Default::default()
+                    }),
+                touched.is_some_and(|touched| touched.get(entity).is_some()),
+                runs.and_then(|runs| runs.of(entity))
+                    .and(running.and_then(|running| running.get(entity)))
+                    .zip(touched.and_then(|touched| touched.get(entity)))
+                    .filter(|(_, touched)| touched.wall)
+                    .map(|(spec, touched)| (touched.normal, spec.bank)),
+            ))
+        })
+        .collect();
+
+    standing
+        .into_iter()
+        .map(
+            |(entity, body, controller, position, rotation, facing, walk, sprint, walls, bank)| {
+                let pull = gravity_at(resources, position);
+                Planned {
+                    entity,
+                    body,
+                    controller,
+                    position,
+                    rotation,
+                    // World up where nothing reaches, which is what the
+                    // solver is doing there too — not a fallback.
+                    up: (-pull).try_normalize().unwrap_or(Vec3::Y),
+                    weight: pull.length(),
+                    facing,
+                    walk,
+                    sprint,
+                    walls,
+                    bank,
+                }
+            },
+        )
+        .collect()
+}
+
+/// The whole mechanism, for one body.
+fn hold_one(
+    world: &mut PhysicsWorld,
+    goals: &mut walk::WalkGoals,
+    plan: &Planned,
+    dt: f32,
+) -> (Grounded, Touching) {
+    let controller = &plan.controller;
+    let filter = world.without(plan.body);
+    let under = sense::under(world, controller, plan.position, plan.up, filter);
+    let standing = under
+        .as_ref()
+        .map(|under| under.footing.stands())
+        .unwrap_or(false);
+
+    // Where it is steering, or where it is going when nothing is asked:
+    // a body pressed against a wall has almost no velocity into it,
+    // which is exactly when a wall slide needs to know the wall is
+    // there.
+    let velocity = world.linear_velocity(plan.body).unwrap_or(Vec3::ZERO);
+    let along = match plan.facing.length_squared() > 1e-6 {
+        true => plan.facing,
+        false => velocity,
+    };
+    // Ahead and to both sides, and only for a character that authored a
+    // `Touching` to receive it. Looking only where it is going never
+    // finds the wall it is running *along*, which is the one thing a
+    // wall run is about.
+    let found = plan
+        .walls
+        .then(|| sense::beside(world, controller, plan.position, along, plan.up, filter))
+        .flatten();
+    let touching = match found {
+        Some((normal, distance)) => Touching {
+            wall: true,
+            normal,
+            distance,
+        },
+        None => Touching::default(),
+    };
+
+    let across = velocity - plan.up * velocity.dot(plan.up);
+    // Measured before the walk pushes, so it is the speed the last step
+    // actually produced rather than the force this one is about to ask
+    // for. A body shoving a wall is given everything and goes nowhere.
+    let gained = goals.gained(plan.entity, across, dt);
+    walk_one(
+        world,
+        goals,
+        plan,
+        standing,
+        touching.wall.then_some(touching.normal),
+        dt,
+    );
+    turn_one(world, plan, gained, dt);
+
+    let Some(under) = under else {
+        return (Grounded::default(), touching);
+    };
+    let gap = (plan.position - under.point).dot(plan.up);
+
+    // Too steep to walk, with nothing to arrive at. Holding the body up
+    // here is a character that climbs a cliff: the spring cancels
+    // gravity, so a slope it has already refused to walk carries it to
+    // the top. Reported so an animation can see it, and left to gravity
+    // so it slides back down.
+    if !under.footing.holds() {
+        return (
+            Grounded {
+                standing: false,
+                normal: under.normal,
+                distance: gap,
+            },
+            touching,
+        );
+    }
+
+    let velocity = world.linear_velocity(plan.body).unwrap_or(Vec3::ZERO);
+    // Measured along the surface, not along the field. Walking up a ramp
+    // is motion *across* the ground and reads as zero here, where
+    // against the field it reads as most of the walking speed — which
+    // is why a character on a slope could not jump: it looked like it
+    // was already leaving.
+    let leaving = velocity.dot(under.normal.normalize_or(plan.up));
+    // Leaving the ground under its own power. The spring would spend the
+    // next frames pulling it straight back down, which is a jump that
+    // never happens — see `RISING`.
+    if leaving > RISING {
+        return (
+            Grounded {
+                standing: false,
+                normal: under.normal,
+                distance: gap,
+            },
+            touching,
+        );
+    }
+    let speed = velocity.dot(plan.up);
+
+    // The spring pulls both ways. Only pushing would let the character
+    // sail off the top of every bump instead of following the ground
+    // down the far side, which is the whole reason this is a spring and
+    // not a floor.
+    //
+    // Measured to the contact point rather than from the sweep's own
+    // distance: on a slope the sphere stops early and `t` understates
+    // the gap, which would make the spring shove the character off
+    // every ramp it walked onto.
+    let error = controller.ride_height - gap;
+    // Gravity is cancelled before the spring is asked for anything.
+    // Without it the spring has to *lean* to hold the body up — it
+    // settles wherever `error · stiffness` happens to equal `g`, so the
+    // rest height is never the height in the Inspector, and it changes
+    // with every planet the character walks onto.
+    let acceleration = plan.weight + error * controller.stiffness - speed * controller.damping;
+    if let Some(mass) = world.mass(plan.body) {
+        world.apply_impulse(plan.body, plan.up * acceleration * mass * dt);
+    }
+
+    (
+        Grounded {
+            standing,
+            normal: under.normal,
+            distance: gap,
+        },
+        touching,
+    )
+}
+
+/// Chases the goal velocity.
+fn walk_one(
+    world: &mut PhysicsWorld,
+    goals: &mut walk::WalkGoals,
+    plan: &Planned,
+    standing: bool,
+    wall: Option<Vec3>,
+    dt: f32,
+) {
+    let Some(mut steps) = plan.walk else {
+        return;
+    };
+    // A sprint is walking with two numbers scaled, so it is applied here
+    // rather than by a system of its own — see `Sprint`.
+    let (speed, eagerness) = plan.sprint.scale();
+    steps.max_speed *= speed;
+    steps.acceleration *= eagerness;
+    let velocity = world.linear_velocity(plan.body).unwrap_or(Vec3::ZERO);
+    let across = velocity - plan.up * velocity.dot(plan.up);
+
+    let pushed = match standing {
+        true => {
+            let wanted = walk::goal(plan.facing, plan.up, &steps);
+            let goal = goals.chase(plan.entity, wanted, steps.acceleration, dt);
+            walk::needed(goal, across, steps.max_force, dt)
+        }
+        // Nothing to push against, so nothing to brake with. The goal is
+        // held at the real velocity so the landing frame chases reality
+        // rather than spending a goal from before the jump.
+        false => {
+            goals.hold(plan.entity, across);
+            let push = walk::drift(plan.facing, across, plan.up, &steps, dt);
+            // Never into a wall. Shoving one in mid-air buys nothing
+            // except the contact friction that comes with it, and that
+            // alone holds a character against a wall at 0.8 m/s^2 of
+            // fall — sticking to every surface it touches, with no
+            // mechanic asking for it. Sliding down a wall is
+            // `WallSlide`'s to decide, deliberately.
+            walk::alongside(push, wall)
+        }
+    };
+
+    if let Some(mass) = world.mass(plan.body) {
+        world.apply_impulse(plan.body, pushed * mass * dt);
+    }
+}
+
+/// Stands the body on the local up, facing where it is steered.
+///
+/// Set rather than torqued, and the angular velocity zeroed with it: the
+/// solver would otherwise keep whatever spin it had and turn the body
+/// straight back out of the pose. See
+/// [`turn_speed`](CharacterController::turn_speed) for why a character's
+/// orientation is authored.
+fn turn_one(world: &mut PhysicsWorld, plan: &Planned, gained: Vec3, dt: f32) {
+    let lean = plan.walk.map(|steps| steps.lean).unwrap_or(0.0);
+    // Upright against the field, not against the ground. Standing
+    // perpendicular to every ramp reads worse than standing straight:
+    // the body swings as the surface changes and a slope the character
+    // is only crossing tips it sideways.
+    let up = turn::leaned(plan.up, gained, plan.weight, lean);
+    // Banked towards the wall while running one. Upright, a character
+    // running along a wall reads as one hovering beside it.
+    let up = match plan.bank {
+        Some((normal, bank)) => run::banked(up, normal, bank),
+        None => up,
+    };
+    let wanted = turn::wanted(up, plan.facing, plan.rotation);
+    let turned = turn::towards(plan.rotation, wanted, plan.controller.turn_speed, dt);
+    if turned.abs_diff_eq(plan.rotation, 1e-6) {
+        return;
+    }
+    world.set_rotation(plan.body, turned);
+    world.set_angular_velocity(plan.body, Vec3::ZERO);
+}
