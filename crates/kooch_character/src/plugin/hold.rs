@@ -177,9 +177,18 @@ fn hold_one(
         .map(|hit| controller.stands_on(hit.normal, plan.up))
         .unwrap_or(false);
 
+    // Stood on the surface, not on the field. A ramp is something to
+    // stand *on*, and a character that walks up one bolt upright reads
+    // as a sprite. Only when it counts as ground: aligning to a wall the
+    // spring is merely pushing off would lay the character on its side.
+    let stand = match (standing, hit) {
+        (true, Some(hit)) => hit.normal.try_normalize().unwrap_or(plan.up),
+        _ => plan.up,
+    };
+
     // Before the turn, because the lean is drawn from it.
     let pushed = walk_one(world, goals, plan, standing, dt);
-    turn_one(world, plan, pushed, dt);
+    turn_one(world, plan, stand, pushed, dt);
 
     let Some(hit) = hit else {
         return Grounded::default();
@@ -244,16 +253,23 @@ fn walk_one(
     let Some(steps) = plan.walk else {
         return Vec3::ZERO;
     };
-    let wanted = walk::goal(plan.facing, plan.up, &steps);
-    let goal = goals.chase(plan.entity, wanted, steps.acceleration, dt);
-
     let velocity = world.linear_velocity(plan.body).unwrap_or(Vec3::ZERO);
     let across = velocity - plan.up * velocity.dot(plan.up);
-    let control = match standing {
-        true => 1.0,
-        false => steps.air_control.clamp(0.0, 1.0),
+
+    let pushed = match standing {
+        true => {
+            let wanted = walk::goal(plan.facing, plan.up, &steps);
+            let goal = goals.chase(plan.entity, wanted, steps.acceleration, dt);
+            walk::needed(goal, across, steps.max_force, dt)
+        }
+        // Nothing to push against, so nothing to brake with. The goal is
+        // held at the real velocity so the landing frame chases reality
+        // rather than spending a goal from before the jump.
+        false => {
+            goals.hold(plan.entity, across);
+            walk::drift(plan.facing, across, plan.up, &steps, dt)
+        }
     };
-    let pushed = walk::needed(goal, across, steps.max_force, dt) * control;
 
     if let Some(mass) = world.mass(plan.body) {
         world.apply_impulse(plan.body, pushed * mass * dt);
@@ -268,9 +284,9 @@ fn walk_one(
 /// straight back out of the pose. See
 /// [`turn_speed`](CharacterController::turn_speed) for why a character's
 /// orientation is authored.
-fn turn_one(world: &mut PhysicsWorld, plan: &Planned, pushed: Vec3, dt: f32) {
+fn turn_one(world: &mut PhysicsWorld, plan: &Planned, stand: Vec3, pushed: Vec3, dt: f32) {
     let lean = plan.walk.map(|steps| steps.lean).unwrap_or(0.0);
-    let up = turn::leaned(plan.up, pushed, plan.weight, lean);
+    let up = turn::leaned(stand, pushed, plan.weight, lean);
     let wanted = turn::wanted(up, plan.facing, plan.rotation);
     let turned = turn::towards(plan.rotation, wanted, plan.controller.turn_speed, dt);
     if turned.abs_diff_eq(plan.rotation, 1e-6) {

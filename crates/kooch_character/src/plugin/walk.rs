@@ -35,6 +35,15 @@ impl WalkGoals {
         self.goals.get(&entity).copied()
     }
 
+    /// Puts a character's goal where its velocity already is.
+    ///
+    /// What a body in the air does every step, so it lands chasing
+    /// reality: a goal left over from before the jump would be spent on
+    /// the landing frame as a shove in whatever direction it had.
+    pub fn hold(&mut self, entity: Entity, velocity: Vec3) {
+        self.goals.insert(entity, velocity);
+    }
+
     /// Drops a character that no longer exists.
     pub fn forget(&mut self, entity: Entity) {
         self.goals.remove(&entity);
@@ -86,6 +95,34 @@ pub fn goal(steering: Vec3, up: Vec3, walk: &Walk) -> Vec3 {
     let flat = steering - up * steering.dot(up);
     let throttle = flat.length().min(1.0);
     flat.normalize_or_zero() * walk.max_speed * throttle
+}
+
+/// Steering in the air, where there is nothing to push against.
+///
+/// The goal-velocity chase is wrong here and reads as it: it brakes
+/// towards zero, so letting go of the stick mid-jump stops the
+/// character dead in the air. Momentum is what a jump *is*.
+///
+/// So the air only ever adds, in the direction being asked for, and
+/// never past the speed the body arrived with — steerable, and unable
+/// to turn into thrust.
+pub fn drift(steering: Vec3, velocity: Vec3, up: Vec3, walk: &Walk, dt: f32) -> Vec3 {
+    let flat = steering - up * steering.dot(up);
+    let Some(direction) = flat.try_normalize() else {
+        return Vec3::ZERO;
+    };
+    let control = walk.air_control.clamp(0.0, 1.0);
+    let push = direction * walk.acceleration * control * flat.length().min(1.0);
+
+    // Whatever it came in with, or the walking speed if that is more —
+    // otherwise air control could not correct a jump taken standing
+    // still.
+    let ceiling = velocity.length().max(walk.max_speed);
+    let after = velocity + push * dt;
+    if after.length() <= ceiling || dt <= 0.0 {
+        return push;
+    }
+    (after.normalize_or_zero() * ceiling - velocity) / dt
 }
 
 #[cfg(test)]

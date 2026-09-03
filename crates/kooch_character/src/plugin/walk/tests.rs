@@ -72,3 +72,41 @@ fn a_goal_is_flattened() {
     let uphill = goal(Vec3::new(0.6, 0.8, 0.0), Vec3::Y, &walk);
     assert!(uphill.y.abs() < 1e-5, "{uphill}");
 }
+
+/// The bug this exists for: letting go mid-jump must not stop the
+/// character in the air. Momentum is what a jump is.
+#[test]
+fn no_steering_keeps_momentum() {
+    let walk = Walk::default();
+    let coasting = drift(Vec3::ZERO, Vec3::X * 6.0, Vec3::Y, &walk, 1.0 / 60.0);
+    assert_eq!(coasting, Vec3::ZERO);
+}
+
+/// It still steers, at its fraction of the walking acceleration.
+#[test]
+fn the_air_still_steers() {
+    let walk = Walk::default();
+    let across = drift(Vec3::Z, Vec3::X * 3.0, Vec3::Y, &walk, 1.0 / 60.0);
+    let wanted = walk.acceleration * walk.air_control;
+    assert!((across.z - wanted).abs() < 1e-3, "{across}");
+}
+
+/// And it cannot become thrust: a body already at speed is not pushed
+/// past what it arrived with.
+#[test]
+fn the_air_is_not_thrust() {
+    let walk = Walk::default();
+    let dt = 1.0 / 60.0;
+    let fast = Vec3::X * 20.0;
+    let pushed = drift(Vec3::X, fast, Vec3::Y, &walk, dt);
+    assert!((fast + pushed * dt).length() <= 20.0 + 1e-3, "{pushed}");
+}
+
+/// A jump taken standing still can still be steered, or air control
+/// would only work for someone already moving.
+#[test]
+fn a_standing_jump_can_steer() {
+    let walk = Walk::default();
+    let pushed = drift(Vec3::X, Vec3::ZERO, Vec3::Y, &walk, 1.0 / 60.0);
+    assert!(pushed.x > 0.0, "{pushed}");
+}

@@ -718,3 +718,77 @@ fn a_standing_character_does_not_drift() {
     let across = Vec3::new(drift.x, 0.0, drift.z).length();
     assert!(across < 0.1, "it drifted {across} m");
 }
+
+/// Acceptance: letting go mid-jump keeps the momentum.
+///
+/// The goal-velocity chase brakes towards zero, so on the ground
+/// releasing the stick stops the character — which is the point. In the
+/// air it stopped it dead in mid-flight, which is not a jump.
+#[test]
+fn a_jump_keeps_its_momentum() {
+    let mut resources = world();
+    let hero = on_the_floor(&mut resources);
+    insert(&mut resources, hero, Walk::default());
+
+    let running = walked(&mut resources, hero, Vec3::X, 180);
+    assert!(running > 4.0, "should be walking: {running}");
+
+    let body = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<kooch_physics::plugin::SolverBody>())
+        .and_then(|s| s.get(hero))
+        .copied()
+        .expect("no body");
+    if let Some(world) = resources.get_mut::<PhysicsWorld>() {
+        let mass = world.mass(body).unwrap_or(1.0);
+        world.apply_impulse(body, Vec3::Y * 6.0 * mass);
+    }
+
+    // Off the ground, and the stick released at the top of the arc.
+    simulate(&mut resources, 20);
+    let coasting = walked(&mut resources, hero, Vec3::ZERO, 25);
+    assert!(
+        coasting > running * 0.8,
+        "it stopped in mid-air: {running} became {coasting}",
+    );
+}
+
+/// Acceptance: it stands on the ramp, not on the field.
+///
+/// A character that walks up a slope bolt upright reads as a sprite
+/// being slid along it.
+#[test]
+fn it_stands_on_a_ramp() {
+    let mut resources = world();
+    Playing::set(&mut resources, true);
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        GlobalGravity::default(),
+    );
+    let tilt = 25f32.to_radians();
+    slab(
+        &mut resources,
+        Vec3::new(0.0, -1.0, 0.0),
+        Vec3::new(12.0, 0.5, 12.0),
+        glam::Quat::from_rotation_z(tilt),
+    );
+    let hero = character(&mut resources, Vec3::new(0.0, 2.0, 0.0));
+    simulate(&mut resources, 300);
+
+    let standing = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<Transform>())
+        .and_then(|s| s.get(hero))
+        .map(|t| t.rotation * Vec3::Y)
+        .expect("no transform");
+    let surface = grounded(&resources, hero).normal.normalize();
+    assert!(
+        standing.dot(surface) > 0.98,
+        "should stand on the ramp: body up {standing}, surface {surface}",
+    );
+    assert!(
+        standing.y < 0.995,
+        "and that is not straight up: {standing}"
+    );
+}
