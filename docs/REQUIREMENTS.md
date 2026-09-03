@@ -54,7 +54,38 @@ cross-compiled build stops being possible.
 
 | | Why | All Linux |
 |---|---|---|
-| **mold** | a rebuild spends most of its time linking, not compiling | `mold` |
+| **mold** | halves the link, but only beside split debug info — see below | `mold` |
+
+### Measured, because the guess was wrong
+
+One-line change to a project, warm cache, rebuilding its authoring
+binary:
+
+| | |
+|---|---|
+| as it was | **14.6 s** |
+| `mold` alone | 12.5 s |
+| split debug info alone | 11.7 s |
+| **both** | **5.9 s** |
+
+🔴 **Neither is worth much alone** — 14 % and 20 % — **and together they
+are 2.5x.** They interact: a fast linker is not fast while it is still
+copying 600 MB of DWARF into the output, and not copying it does not help
+while the linker itself is the slow part. The binary drops from 635 MB
+to 302 MB, which is the same fact seen from the other side.
+
+The editor applies both to every project build it drives:
+`CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=unpacked` always, since it needs
+nothing installed, and `-C link-arg=-fuse-ld=mold` when mold is there.
+
+⚠️ **The first build after they change is a full one** — both are part
+of cargo's fingerprint, so every dependency rebuilds once. Measured at
+85-92 s here. Every build after it is the fast one.
+
+They are set on the command rather than in a committed
+`.cargo/config.toml`, because that file would force `mold` on every
+machine and mold is optional — a machine without it would stop building
+entirely.
 
 Listed for the reason the whole check exists: on an image-based system,
 a package found out about later costs **another reboot**. One command,
