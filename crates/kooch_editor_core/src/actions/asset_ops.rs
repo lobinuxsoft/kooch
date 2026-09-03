@@ -13,6 +13,7 @@ use kooch_core::resource::Resources;
 use kooch_render::material::Material;
 
 mod main_scene;
+mod owner;
 
 pub(crate) use main_scene::main_scene_path;
 use main_scene::set_main_scene;
@@ -478,6 +479,9 @@ fn duplicate_identity(resources: &mut Resources, source: &Path, dest: &Path) {
 }
 
 fn delete_asset(resources: &mut Resources, path: &Path) {
+    if owner::refuses(resources, path) {
+        return;
+    }
     if let Err(e) = std::fs::remove_file(path) {
         tracing::error!(path = %path.display(), error = %e, "delete failed");
         return;
@@ -495,6 +499,11 @@ fn delete_asset(resources: &mut Resources, path: &Path) {
 }
 
 fn delete_folder(resources: &mut Resources, path: &Path) {
+    // Before `remove_dir_all`, which is the call that makes a mistake
+    // here unrecoverable.
+    if owner::refuses(resources, path) {
+        return;
+    }
     if let Err(e) = std::fs::remove_dir_all(path) {
         tracing::error!(path = %path.display(), error = %e, "folder delete failed");
         return;
@@ -658,6 +667,9 @@ mod tests;
 
 #[cfg(test)]
 mod duplicate_tests;
+
+#[cfg(test)]
+mod delete_tests;
 
 #[cfg(test)]
 mod settings_tests;
