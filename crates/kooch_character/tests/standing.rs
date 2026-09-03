@@ -222,10 +222,11 @@ fn a_character_floats_at_its_ride_height() {
     assert!(state.normal.y > 0.9, "flat floor: {}", state.normal);
 }
 
-/// It settles instead of oscillating. An under-damped spring passes the
-/// height check on the frame it happens to be crossing.
+/// It settles instead of oscillating. The landing dips on purpose —
+/// see `it_dips_when_it_lands` — and a spring damped too lightly to
+/// come to rest passes the height check on the frame it crosses.
 #[test]
-fn it_lands_without_bouncing() {
+fn a_landing_settles() {
     let mut resources = world();
     Playing::set(&mut resources, true);
     source_at(
