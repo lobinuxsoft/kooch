@@ -180,6 +180,20 @@ pub mod prelude {
         ShapeAt, ShapeHit, SolverBody,
     };
 
+    // 🔴 A goal, a checkpoint and a death plane are the same thing — a
+    // sensor that says you touched it — and none could be written from a
+    // project, because the type to listen for could not be named here.
+    // The events were emitted, resolved to entities and registered all
+    // along; `Collider::sensor` even names the use case in its own doc.
+    //
+    // Read with `Events<CollisionStarted>`, which arrives from
+    // `kooch_core::prelude`. ⚠️ Frame-delayed by construction: `Events`
+    // is double-buffered, so what is sent in one frame is read in the
+    // next. That is deliberate — it stops a listener depending on system
+    // order — and it is one frame, not a bug to hunt.
+    #[cfg(feature = "physics")]
+    pub use kooch_physics::plugin::{CollisionStarted, CollisionStopped, ContactForce, JointBroke};
+
     // `gravity_at` answers "which way is down here", and is the only
     // honest way to ask it: a controller that works it out differently
     // from the solver ends up disagreeing about where the floor is.
@@ -632,3 +646,6 @@ mod boot_scene_tests;
 
 #[cfg(test)]
 mod engine_assets_tests;
+
+#[cfg(all(test, feature = "physics"))]
+mod goal_tests;
