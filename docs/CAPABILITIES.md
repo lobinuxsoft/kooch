@@ -141,7 +141,9 @@ them, the remote protocol mirrored them — and no render crate read one.
 | Collider gizmo | `kooch_editor_core/gizmos/collider.rs` | connected | Every analytic shape at its effective size, plus hulls and convex pieces outlined from the cache the solver reads. A triangle mesh draws nothing on purpose: it *is* the render mesh. |
 | Scene queries | `backend/query.rs`, `rapier_backend/backend/queries.rs` | connected | Shape cast, point projection, overlap test, multi-hit ray, all filtered. A ray is a line of zero width: it slips between two crates a body could not fit through and misses the thin wall a fast projectile would hit. Sweeping the shape that is actually moving is the honest question. |
 | `QueryFilter` | `backend/query.rs` | connected | Excludes a body, narrows by group, skips sensors. Filtering in the pipeline rather than the caller: a character's ground probe finds *itself* first, and discarding the nearest hit still misses the second collider on the same body. |
-| `Visualizer::draw_with` | `kooch_gizmos/visualizer.rs` | connected | The overload that gets `Resources`, for an outline whose geometry lives outside its component. Defaults to `draw`, so nothing else changed. |
+| `Visualizer::draw_with` | `kooch_gizmos/visualizer.rs` | connected | The overload that gets the entity **and** `Resources`, for an outline whose geometry lives outside its component. It had no entity at first, so a gizmo could not read the component beside it — and `CharacterController::ride_height` documented a trap the gizmo was supposed to draw and could not. Defaults to `draw`. |
+| `CollisionShape::reach` | `backend/shape.rs` | connected | How far a shape hangs below its own origin. `None` for a point cloud and for the unbounded ones, because drawing a reach of zero would say "any ride height clears this". |
+| `PhysicsWorld::set_rotation` | `plugin/world/mod.rs` | connected | Turns a body and leaves it where it is, for an orientation that is authored rather than simulated. Pair it with `set_angular_velocity` or the solver turns the body straight back out of the pose. |
 
 ## Gravity — `kooch_gravity`
 
@@ -155,9 +157,34 @@ them, the remote protocol mirrored them — and no render crate read one.
 | `PlaneGravity` | `sources/plane.rs` | connected | A floor: bounded along its normal, unbounded across it, and one-sided. What an area with enormous half-extents was pretending to be. |
 | `GravityPriority` | `sources/priority.rs` | connected | The zone that overrules rather than joins. Suppresses lower levels in proportion to its own reach, so crossing the boundary is a fade and not a snap. |
 | `gravity_at` / `gravity_up` | `plugin/mod.rs` | connected | The summed field, and which way is up in it. `gravity_up` is what the camera's `UP_GRAVITY` asks. |
-| `gravity_dominant` | `plugin/mod.rs` | **invisible** | Up according to the strongest single source, for orientation rather than force. Exported and in the prelude; nothing calls it until the character controller (#94) does. |
+| `gravity_dominant` | `plugin/mod.rs` | **still invisible** | Up according to the strongest single source, for orientation rather than force. This row used to say "nothing calls it until the character controller (#94) does" — #94 landed and reached for `gravity_at` instead, because a character standing where two fields overlap should stand in their *sum*, not in whichever happens to be winning. Still exported, still uncalled. |
 | Impulse, not force | `plugin/apply.rs` | connected | Rapier's forces persist until `reset_forces`, so gravity as a force would compound. `mass × acceleration × dt` is equivalent over the step and composes with gameplay. Sleeping bodies are skipped unless the field itself changed, which is the whole reason a settled scene stays cheap. |
 | GPU buffer of sources | — | **not built** | No consumer. The solver is rapier and rapier is CPU, so a buffer on the GPU would have to be read back to be used. It arrives with whatever needs to ask which way is down *on* the GPU. |
+
+## Character — `kooch_character`
+
+One pass senses; every mechanic reads it. Two systems each casting their
+own ground ray is how `apply_movement` and `apply_jump` came to be wrong
+in the *same* way, both reading "grounded" in mid-air — rapier casts rays
+solid, so a downward one from a body's own centre finds that body at zero
+distance. Casting belongs to the sense pass; deciding belongs to the
+mechanics.
+
+| Capability | Where | Status | Notes |
+|---|---|---|---|
+| `sense::under` | `plugin/sense.rs` | connected | Sweeps a sphere down and says whether it found `Ground`, a `Step` or a `Wall`. A step's riser and a wall give the *same* contact normal, so it drops a second probe just past the contact and looks for a ledge within `step_height`. Refusing by the normal alone turned a climbed 0.6 m step into `rose 0.048`. |
+| `sense::beside` | `plugin/sense.rs` | connected | Ahead **and to both sides**, and only for a character that authored a `Touching`. A probe aimed where the character is going never finds the wall it is running *along* — 60 frames out of 60 with no wall. |
+| `Grounded` | `grounded.rs` | connected | What is underneath, written once a step. |
+| `Touching` | `touching.rs` | connected | The same for walls. Written only where the component is authored, so a character with no use for walls does not pay three sweeps. |
+| `CharacterController` | `controller.rs` | connected | The spring: `ride_height` from the **origin**, so it has to clear the collider's own reach. `damping` is the feel dial — at critical the landing dips 0.000 m, and a third of critical dips 0.27 and recovers. |
+| `Walk` | `walk.rs` | connected | A goal velocity, not a push. A floating capsule never touches the floor so it has **no friction at all**; asking for a velocity makes stopping the same term as starting. In the air it only ever *adds*, and never into a wall — shoving one bought nothing but the contact friction that glued the character to it at 0.8 m/s² of fall. |
+| `Facing` | `facing.rs` | connected | Where gameplay is steering, written **every frame**. Its length is the throttle, so a system that skips writing zero leaves the character walking on its own for ever. The name is wrong for what it does and is worth changing. |
+| `Sprint` | `sprint.rs` | connected, **no system** | It applies no force — it scales two numbers `Walk` already has. A mechanic that adds a term gets a system; one that scales an existing term is a modifier. |
+| `Jump` / `WallJump` | `jump.rs`, `plugin/leap.rs` | connected | A launch *speed*: `speed² / 2g` is a height a designer can aim at, where an impulse over mass is not. Air jumps, coyote time and an input buffer, because nobody presses the button on the frame they meant to. Coyote time costs the ground jump, or walking off a ledge would be worth more than standing still. |
+| `WallSlide` | `wall_slide.rs` | connected | Caps the fall rather than applying a friction, so the slide speed does not depend on how far the character had already fallen. `stick` is the hold that used to come free from contact friction. |
+| `WallRun` | `wall_run.rs`, `plugin/run.rs` | connected | The other answer to a wall, and a different move rather than a setting of the slide. Needs speed **along** the wall on arrival — asked once, because asking every frame let a character arrive at walking pace and steer itself up to running speed against the wall. |
+| `CharacterVisualizer` etc. | `kooch_editor_core/gizmos/` | connected | The ride height, the probe, the slope cone, the measured contact, both headings, the goal velocity beside the real one, and the wall. Every one of these numbers is invisible until something falls through the floor. |
+| Kinematic alternative | — | **not built** | #94 offered it and the floating capsule answered every case that came up. It arrives when something needs a body the solver does not argue with. |
 
 ## Camera — `kooch_camera`
 
