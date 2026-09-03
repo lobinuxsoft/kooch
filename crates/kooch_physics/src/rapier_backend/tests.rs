@@ -341,3 +341,43 @@ fn removing_a_body_takes_its_attached_shapes() {
         "no shape outlived its body",
     );
 }
+
+/// A torque spins a body without moving its centre — which is the whole
+/// difference from an impulse, and what makes a ball roll instead of
+/// skid.
+#[test]
+fn a_torque_spins_without_pushing() {
+    let mut backend = RapierBackend::new();
+    backend.set_gravity(Vec3::ZERO);
+    let body = backend.add_body(BodyDesc::dynamic(
+        CollisionShape::Sphere { radius: 0.5 },
+        1.0,
+    ));
+
+    backend.apply_torque_impulse(body, Vec3::Y * 2.0, true);
+    backend.step(1.0 / 60.0);
+
+    let spin = backend.angular_velocity(body).expect("live body");
+    assert!(spin.y > 0.1, "it should be turning: {spin}");
+    let drift = backend.linear_velocity(body).expect("live body");
+    assert!(drift.length() < 1e-4, "and not moving: {drift}");
+}
+
+/// The two compose rather than replacing each other: a jump while
+/// rolling has to keep the roll.
+#[test]
+fn a_torque_and_an_impulse_compose() {
+    let mut backend = RapierBackend::new();
+    backend.set_gravity(Vec3::ZERO);
+    let body = backend.add_body(BodyDesc::dynamic(
+        CollisionShape::Sphere { radius: 0.5 },
+        1.0,
+    ));
+
+    backend.apply_torque_impulse(body, Vec3::Y * 2.0, true);
+    backend.apply_impulse(body, Vec3::Y * 3.0, true);
+    backend.step(1.0 / 60.0);
+
+    assert!(backend.angular_velocity(body).expect("live").y > 0.1);
+    assert!(backend.linear_velocity(body).expect("live").y > 0.1);
+}

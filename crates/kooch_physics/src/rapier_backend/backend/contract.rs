@@ -368,6 +368,16 @@ impl PhysicsBackend for RapierBackend {
         body.apply_impulse(impulse, wake);
     }
 
+    fn apply_torque_impulse(&mut self, handle: BodyHandle, torque: Vec3, wake: bool) {
+        let Some(&rb_handle) = self.handles.get(handle) else {
+            return;
+        };
+        let Some(body) = self.bodies.get_mut(rb_handle) else {
+            return;
+        };
+        body.apply_torque_impulse(torque, wake);
+    }
+
     fn is_sleeping(&self, handle: BodyHandle) -> Option<bool> {
         let rb_handle = *self.handles.get(handle)?;
         Some(self.bodies.get(rb_handle)?.is_sleeping())
