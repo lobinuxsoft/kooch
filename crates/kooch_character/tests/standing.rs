@@ -792,3 +792,40 @@ fn it_stands_on_a_ramp() {
         "and that is not straight up: {standing}"
     );
 }
+
+/// Acceptance: walking up a ramp is not leaving the ground.
+///
+/// The rise test used to read the speed along the field, where climbing
+/// a 25 degree ramp at 6 m/s reads as 2.5 — five times the threshold.
+/// The character looked like it was already jumping, so the spring let
+/// go and `standing` went false: you could not jump on a slope.
+#[test]
+fn a_climb_is_still_standing() {
+    let mut resources = world();
+    Playing::set(&mut resources, true);
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        GlobalGravity::default(),
+    );
+    slab(
+        &mut resources,
+        Vec3::new(0.0, -1.0, 0.0),
+        Vec3::new(16.0, 0.5, 12.0),
+        glam::Quat::from_rotation_z(25f32.to_radians()),
+    );
+    let hero = character(&mut resources, Vec3::new(-4.0, 4.0, 0.0));
+    insert(&mut resources, hero, Walk::default());
+    simulate(&mut resources, 240);
+
+    // Uphill, at walking pace, for long enough that a frame is not luck.
+    let mut refused = 0;
+    insert(&mut resources, hero, Facing { direction: Vec3::X });
+    for _ in 0..180 {
+        simulate(&mut resources, 1);
+        if !grounded(&resources, hero).standing {
+            refused += 1;
+        }
+    }
+    assert!(refused < 10, "lost the ground {refused} frames out of 180");
+}

@@ -195,21 +195,24 @@ fn hold_one(
     };
     let gap = (plan.position - hit.point).dot(plan.up);
 
-    let speed = world
-        .linear_velocity(plan.body)
-        .map(|velocity| velocity.dot(plan.up))
-        .unwrap_or(0.0);
+    let velocity = world.linear_velocity(plan.body).unwrap_or(Vec3::ZERO);
+    // Measured along the surface, not along the field. Walking up a ramp
+    // is motion *across* the ground and reads as zero here, where
+    // against the field it reads as most of the walking speed — which
+    // is why a character on a slope could not jump: it looked like it
+    // was already leaving.
+    let leaving = velocity.dot(hit.normal.normalize_or(plan.up));
     // Leaving the ground under its own power. The spring would spend the
     // next frames pulling it straight back down, which is a jump that
-    // never happens — see `RISING`. Ground is still reported as *found*
-    // and not stood on, so a second jump has nothing to push off.
-    if speed > RISING {
+    // never happens — see `RISING`.
+    if leaving > RISING {
         return Grounded {
             standing: false,
             normal: hit.normal,
             distance: gap,
         };
     }
+    let speed = velocity.dot(plan.up);
 
     // The spring pulls both ways. Only pushing would let the character
     // sail off the top of every bump instead of following the ground

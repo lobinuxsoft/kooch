@@ -80,12 +80,14 @@ pub struct CharacterController {
     pub turn_speed: f32,
     /// Steepest ground that still counts as standing, in degrees.
     ///
-    /// Above it the surface is a wall: the sweep still finds it, the
-    /// height spring still pushes off it, and [`Grounded::standing`]
-    /// stays false — so a character can slide down a cliff without the
-    /// jump believing it is on the floor.
+    /// Above it the surface is a wall. The sweep still finds it and
+    /// [`Grounded`] still reports its normal, so an animation can see
+    /// it — but the spring does not hold the body up against it. It
+    /// would have to cancel gravity to do so, and a slope the controller
+    /// has already refused to walk would carry the character to the top
+    /// of it.
     ///
-    /// [`Grounded::standing`]: crate::Grounded::standing
+    /// [`Grounded`]: crate::Grounded
     pub max_slope: f32,
 }
 
