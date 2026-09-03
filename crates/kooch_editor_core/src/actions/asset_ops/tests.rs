@@ -73,3 +73,96 @@ fn the_scaffold_lists_every_stage() {
         );
     }
 }
+
+// ---- a created asset has to reach the database ----------------------
+
+use kooch_core::asset_database::AssetDatabase;
+use kooch_core::resource::Resources;
+
+use super::create_file;
+use crate::actions::NewFileKind;
+use crate::systems::LastScannedProject;
+
+fn scratch(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("kooch_create_{name}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create dir");
+    dir
+}
+
+/// Resources shaped like a project mid-session: a database with things
+/// in it, and a scan that has already run.
+fn mid_session() -> Resources {
+    let mut resources = Resources::new();
+    resources.insert(AssetDatabase::default());
+    resources.insert(LastScannedProject {
+        root: Some(std::path::PathBuf::from("/proj")),
+    });
+    resources
+}
+
+/// 🔴 Writing the file is not the job. The pickers read `AssetDatabase`,
+/// which lives in memory, and `save_action` already wrote the `.meta` —
+/// so the identity is on disk and nothing in the editor knows it exists.
+///
+/// Reported as *"si creo un nuevo input action no lo reconoce como para
+/// agregarlo"*. Every other asset kind goes through `write_asset`, which
+/// registers and announces; this one saved and returned.
+#[test]
+fn a_new_input_action_is_registered() {
+    let dir = scratch("input_action");
+    let mut resources = mid_session();
+
+    create_file(&mut resources, &dir, "Sprint", NewFileKind::InputAction);
+
+    let database = resources.get::<AssetDatabase>().expect("database");
+    assert!(
+        database
+            .path_iter()
+            .any(|(p, _)| p.extension().is_some_and(|e| e == "inputaction")),
+        "the action was written to disk with an identity beside it, and nothing \
+         registered it — no field can reference it until the project is reopened",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 🔴 And the running project has to be told, which is the same call.
+///
+/// Reported separately as *"el rebuild sólo actualiza el código, no los
+/// assets nuevos para que los reconozca el código"* — one cause, two
+/// symptoms: `asset_saved` both registers here and announces there.
+#[test]
+fn a_new_input_action_asks_for_a_rescan() {
+    let dir = scratch("input_action_rescan");
+    let mut resources = mid_session();
+
+    create_file(&mut resources, &dir, "Sprint", NewFileKind::InputAction);
+
+    assert_eq!(
+        resources
+            .get::<LastScannedProject>()
+            .and_then(|l| l.root.clone()),
+        None,
+        "the scan was never asked to run again, so the eager import never sees \
+         the file either",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The kind beside it, which has always asked. A guard so the fix does
+/// not regress the path it was copied from.
+#[test]
+fn a_new_build_preset_asks_too() {
+    let dir = scratch("build_preset");
+    let mut resources = mid_session();
+
+    create_file(&mut resources, &dir, "Linux", NewFileKind::BuildPreset);
+
+    assert_eq!(
+        resources
+            .get::<LastScannedProject>()
+            .and_then(|l| l.root.clone()),
+        None,
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
