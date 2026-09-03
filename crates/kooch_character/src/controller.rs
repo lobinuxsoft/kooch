@@ -55,9 +55,15 @@ pub struct CharacterController {
     pub stiffness: f32,
     /// How strongly the spring resists vertical speed.
     ///
-    /// Too little and the character bounces on landing; too much and it
-    /// sinks into a step instead of rising over it. Critical damping is
-    /// near `2·sqrt(stiffness)`, which is the value to start from.
+    /// This is the feel dial. Critical damping is `2·sqrt(stiffness)`;
+    /// the fraction of it you choose is what a landing looks like. At
+    /// the full value the character arrives dead, with no dip and no
+    /// recovery — correct, and it reads as a body with no weight. Around
+    /// a third of it dips once and comes back up, which is the landing
+    /// people mean when they say a character has weight.
+    ///
+    /// Too little and it never settles; too much and it sinks into a
+    /// step instead of rising over it.
     pub damping: f32,
     /// How quickly the body turns to stand on the local up and face
     /// where it is steered, in turns per second towards the target.
@@ -92,7 +98,9 @@ impl Default for CharacterController {
             probe: 1.8,
             probe_radius: 0.35,
             stiffness: 90.0,
-            damping: 18.0,
+            // A third of critical (`2·sqrt(90)` is 19), so a landing
+            // dips and recovers instead of arriving dead.
+            damping: 7.0,
             turn_speed: 10.0,
             max_slope: 50.0,
         }

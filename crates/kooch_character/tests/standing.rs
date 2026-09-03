@@ -609,3 +609,34 @@ fn a_jump_leaves_the_ground() {
         highest - resting,
     );
 }
+
+/// A landing that dips and comes back. At critical damping the body
+/// arrives dead — bottomed and settled agree to seven decimals — which
+/// is correct and reads as a character with no weight.
+#[test]
+fn it_dips_when_it_lands() {
+    let mut resources = world();
+    Playing::set(&mut resources, true);
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        GlobalGravity::default(),
+    );
+    floor(
+        &mut resources,
+        Vec3::new(0.0, -1.0, 0.0),
+        Vec3::new(20.0, 0.5, 20.0),
+    );
+    let hero = character(&mut resources, Vec3::new(0.0, 5.0, 0.0));
+
+    let mut lowest = f32::MAX;
+    for _ in 0..240 {
+        simulate(&mut resources, 1);
+        lowest = lowest.min(position(&resources, hero).y);
+    }
+    let settled = position(&resources, hero).y;
+    assert!(
+        settled - lowest > 0.08,
+        "should have dipped and recovered: bottomed at {lowest}, settled at {settled}",
+    );
+}
