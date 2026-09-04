@@ -160,6 +160,17 @@ fn unanswered(resources: &Resources) -> Vec<Wanted> {
             continue;
         }
         let Some(guid) = collider.mesh else { continue };
+        // 🔴 Only what this can actually read. `load_mesh` parses glTF
+        // whatever the GUID turns out to be, so a collider pointing at a
+        // block's own `.block` was read as a mesh, failed, and `fail`
+        // is permanent — `answered` counts it as an answer, so the body
+        // never collided even once the real cache entry arrived.
+        //
+        // A GUID whose type is known and is not a mesh belongs to
+        // whoever publishes its `ColliderMeshCache` entry directly.
+        if !reads_as_mesh(resources, guid) {
+            continue;
+        }
         let hull = collider.shape == SHAPE_CONVEX_HULL;
         if cache.answered(guid) && !(hull && cache.awaits_hull(guid)) {
             continue;
@@ -176,6 +187,22 @@ fn unanswered(resources: &Resources) -> Vec<Wanted> {
     // rebuild on. Sorted, two runs agree.
     wanted.sort_unstable_by_key(|want| want.guid.as_uuid().as_u128());
     wanted
+}
+
+/// Whether this GUID names a file the glTF path can read.
+///
+/// An unregistered or untyped GUID answers `true`: the type lands on the
+/// entry the first time something loads it, and refusing before that
+/// would stop a mesh from ever being read.
+fn reads_as_mesh(resources: &Resources, guid: Guid) -> bool {
+    let Some(type_name) = resources
+        .get::<kooch_core::asset_database::AssetDatabase>()
+        .and_then(|db| db.entry(guid).and_then(|entry| entry.type_name.clone()))
+    else {
+        return true;
+    };
+    type_name == std::any::type_name::<kooch_render::mesh::Mesh>()
+        || type_name == std::any::type_name::<kooch_render::meshlet::MeshletMesh>()
 }
 
 /// The mesh behind a GUID, or `None` when it will not resolve.
