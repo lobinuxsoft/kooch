@@ -480,6 +480,7 @@ fn label_of(action: &EditorAction) -> String {
     match action {
         EditorAction::Spawn { .. } => "Spawn Entity".to_owned(),
         EditorAction::SpawnMesh { .. } => "Spawn Mesh Entity".to_owned(),
+        EditorAction::SpawnBlock { .. } => "Spawn Block".to_owned(),
         EditorAction::Despawn(_) => "Despawn Entity".to_owned(),
         EditorAction::Duplicate(_) => "Duplicate Entity".to_owned(),
         EditorAction::PasteEntities { .. } => "Paste".to_owned(),

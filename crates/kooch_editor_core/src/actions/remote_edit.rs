@@ -50,6 +50,18 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
         return true;
     }
 
+    // And a block, for the same reason twice over: it writes an asset
+    // and resolves its GUID, both of which need a mutable world.
+    //
+    // 🔴 Without this it fell through `classify` to `apply_non_ecs_action`,
+    // which does not know it either — so the menu entry did nothing at
+    // all, in silence. Exactly the failure `spawn_mesh` above was
+    // written to fix.
+    if let EditorAction::SpawnBlock { .. } = action {
+        spawn_block(resources);
+        return true;
+    }
+
     // Non-ECS actions stay on the local path even in remote mode: closing
     // the project, toggling power profiles all act on the editor, not the
     // remote world.
@@ -156,6 +168,7 @@ fn selects_what_it_makes(action: &EditorAction) -> bool {
             | EditorAction::PasteEntities { .. }
             | EditorAction::Spawn { .. }
             | EditorAction::SpawnMesh { .. }
+            | EditorAction::SpawnBlock { .. }
             | EditorAction::InstantiatePrefab { .. }
     )
 }
@@ -235,6 +248,81 @@ fn spawn_mesh(resources: &mut Resources, path: &std::path::Path, name: &str) {
     // Set here rather than through `created`: this arm never reaches
     // `send`, because resolving the asset needs a mutable world and an
     // `Edit` has to be sendable from an immutable one.
+    if let Some(state) = resources.get_mut::<RemoteState>() {
+        state.pending_selection = vec![entity];
+    }
+}
+
+/// Builds a block on the project's side.
+///
+/// Same shape as [`spawn_mesh`]: the editor writes the asset and
+/// resolves its GUID locally — both processes read the same filesystem —
+/// then assembles the entity out of calls the protocol already has.
+///
+/// Only `Block.source` is written. `MeshRenderer.mesh` and
+/// `Collider.mesh` are `sync_blocks`'s answer on the project's side, and
+/// sending them from here would be a second place deciding what a block
+/// draws.
+fn spawn_block(resources: &mut Resources) {
+    const TARGET: &str = "kooch_editor_core::remote_edit::spawn_block";
+
+    let Some((path, guid)) = crate::actions::asset_ops::new_block_asset(resources) else {
+        return;
+    };
+
+    let Some(state) = resources.get::<RemoteState>() else {
+        return;
+    };
+    let Some(session) = state.session.as_ref() else {
+        return;
+    };
+    let client = session.client();
+
+    let entity = match client.spawn(Some("Block"), None, None) {
+        Ok(entity) => entity,
+        Err(e) => {
+            tracing::warn!(target: TARGET, error = %e, "remote spawn failed");
+            return;
+        }
+    };
+
+    // Remote `spawn` creates only `Name`, so every one of these is needed.
+    let block_ty = std::any::type_name::<kooch_blockmesh::Block>();
+    let types = [
+        std::any::type_name::<kooch_ecs::transform::Transform>(),
+        block_ty,
+        std::any::type_name::<kooch_ecs::mesh_renderer::MeshRenderer>(),
+        std::any::type_name::<kooch_physics::components::Collider>(),
+    ];
+    for ty in types {
+        if let Err(e) = client.add_component(entity, ty) {
+            // 🔴 The likeliest cause is a project built without the
+            // `blockmesh` feature: the component exists in this editor
+            // and not over there, and "add_component failed" on its own
+            // sends you looking at the wire.
+            tracing::warn!(
+                target: TARGET, component = ty, error = %e,
+                "add_component failed — a project that does not enable \
+                 kooch/blockmesh has no Block type to add",
+            );
+            return;
+        }
+    }
+
+    let value = kooch_ecs::reflect::ReflectValue::AssetRef {
+        guid: Some(guid),
+        asset_type: std::any::type_name::<kooch_blockmesh::BlockMesh>().to_owned(),
+    };
+    if let Err(e) = client.set_field(entity, block_ty, "source", value) {
+        tracing::warn!(target: TARGET, error = %e, "could not write the block source");
+        return;
+    }
+
+    tracing::info!(
+        target: TARGET, path = %path.display(), %guid,
+        "spawned a block on the project",
+    );
+
     if let Some(state) = resources.get_mut::<RemoteState>() {
         state.pending_selection = vec![entity];
     }
