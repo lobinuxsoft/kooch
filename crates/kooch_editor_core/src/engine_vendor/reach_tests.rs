@@ -273,7 +273,10 @@ fn ungated_modules(text: &str) -> Vec<String> {
             }
             continue;
         }
-        if line == "#[cfg(test)]" {
+        // The same predicate the copy uses, not a second one: they had
+        // drifted, and `#[cfg(all(test, feature = "physics"))]` fell
+        // into the gap — copied as a test, read here as production.
+        if super::copy::gates_on_test(line) {
             gated = true;
             continue;
         }

@@ -114,6 +114,13 @@ pub(super) fn spawn_entries(
                 ui.close();
             }
         });
+        // Its own entry rather than a row under "3D Object": those are
+        // baked `.glb` files that cannot be edited, and this is the one
+        // shape the editor can still change afterwards (#946).
+        if ui.button(format!("{} Block", icons::CUBE)).clicked() {
+            actions.push(EditorAction::SpawnBlock { into });
+            ui.close();
+        }
         if ui.button("Sky").clicked() {
             actions.push(EditorAction::Spawn {
                 into,

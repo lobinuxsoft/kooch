@@ -6,6 +6,11 @@ use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext
 
 use crate::BlockMesh;
 
+/// What a block mesh file is called. Doubled up like `Material`'s, so a
+/// `.ron` in an asset folder says which of several RON types it is
+/// before anything opens it.
+pub const BLOCK_MESH_EXTENSION: &str = "blockmesh.ron";
+
 /// Reads `BlockMesh` assets from RON, the same authoring format
 /// `Material` uses — a level's geometry is diffable text, and a corner
 /// that moved shows up as a line that changed.
@@ -41,3 +46,7 @@ impl fmt::Display for BlockMeshParseError {
 }
 
 impl std::error::Error for BlockMeshParseError {}
+
+// Declared beside the type, so any binary linking this crate gets both
+// the loader and `Assets<BlockMesh>` without listing it anywhere.
+kooch_core::register_asset!(BlockMesh, BlockMeshLoader);

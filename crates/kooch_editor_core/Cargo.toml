@@ -19,6 +19,8 @@ puffin_http = { workspace = true, optional = true }
 kooch_core = { workspace = true, features = ["dynamic"] }
 kooch_ecs = { workspace = true, features = ["dynamic"] }
 kooch_render.workspace = true
+# The block tool's authoring mesh (#946) — authored here, drawn here.
+kooch_blockmesh.workspace = true
 kooch_lighting.workspace = true
 kooch_gizmos.workspace = true
 kooch_gizmos_handles.workspace = true

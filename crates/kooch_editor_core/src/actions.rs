@@ -1,6 +1,6 @@
 //! Editor actions collected during UI, applied after render.
 
-mod asset_ops;
+pub(crate) mod asset_ops;
 mod codegen;
 mod dispatch;
 pub(crate) mod entity_state;
@@ -96,6 +96,16 @@ pub(crate) enum EditorAction {
     SpawnMesh {
         path: PathBuf,
         name: String,
+    },
+    /// Spawn a block: writes a fresh `.blockmesh.ron` holding a cube
+    /// into the project's assets and spawns an entity pointing at it.
+    ///
+    /// One action rather than "create the asset, then spawn from it",
+    /// because a block is authored per entity — the shape and the thing
+    /// standing in the level are the same decision, and splitting them
+    /// makes the common case three steps.
+    SpawnBlock {
+        into: SpawnTarget,
     },
     Despawn(Entity),
     /// Clones an existing entity's full component set (including
@@ -562,6 +572,11 @@ pub(crate) enum NewFileKind {
     /// **Several per project**, unlike settings — "Windows release" and
     /// "Linux debug" are two presets, not one with a switch.
     BuildPreset,
+    /// One editable block shape — a cube until somebody drags it (#946).
+    ///
+    /// **Several per project**, and normally one per block: two entities
+    /// sharing a source share a shape, so editing either moves both.
+    BlockMesh,
     /// How the project looks: exposure, ambient, shadows (#744).
     ///
     /// **One per project.** The menu hides this once the project has
@@ -624,6 +639,7 @@ impl EditorAction {
             // Everything that reads or writes the world, or persists it.
             | Self::Spawn { .. }
             | Self::SpawnMesh { .. }
+            | Self::SpawnBlock { .. }
             | Self::Despawn(_)
             | Self::Duplicate(_)
             // Both read or write entities, so both wait for a world to
@@ -758,6 +774,7 @@ impl EditorAction {
             // Structure and content of the world.
             Self::Spawn { .. }
             | Self::SpawnMesh { .. }
+            | Self::SpawnBlock { .. }
             | Self::Despawn(_)
             | Self::Duplicate(_)
             | Self::PasteEntities { .. }

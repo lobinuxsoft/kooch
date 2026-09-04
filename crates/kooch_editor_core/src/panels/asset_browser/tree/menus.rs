@@ -115,6 +115,17 @@ pub(super) fn folder_menu(
         start(CreateKind::File(NewFileKind::InputAction));
         ui.close();
     }
+    // A shape on its own, for a block meant to be shared. The usual way
+    // in is the World panel's Spawn menu, which makes the asset and the
+    // entity together — a block is normally authored per entity.
+    if entry(
+        ui,
+        format!("{} New Block Mesh", icons::CUBE),
+        FolderRole::Assets,
+    ) {
+        start(CreateKind::File(NewFileKind::BlockMesh));
+        ui.close();
+    }
     // Several per project, unlike settings: "Windows release" and
     // "Linux debug" are two presets rather than one with a switch, which
     // is the whole reason Godot's export presets are a list.
