@@ -8,6 +8,7 @@ members = [
     "crates/kooch_input",
     "crates/kooch_lighting",
     "crates/kooch_render",
+    "crates/kooch_blockmesh",
     "crates/kooch_gizmos",
     "crates/kooch_gizmos_handles",
     "crates/kooch_physics",
@@ -169,6 +170,7 @@ kooch_window = { path = "crates/kooch_window" }
 kooch_input = { path = "crates/kooch_input" }
 kooch_lighting = { path = "crates/kooch_lighting" }
 kooch_render = { path = "crates/kooch_render" }
+kooch_blockmesh = { path = "crates/kooch_blockmesh" }
 kooch_gizmos = { path = "crates/kooch_gizmos" }
 kooch_gizmos_handles = { path = "crates/kooch_gizmos_handles" }
 kooch_physics = { path = "crates/kooch_physics" }

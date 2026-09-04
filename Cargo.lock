@@ -2343,7 +2343,7 @@ dependencies = [
 
 [[package]]
 name = "kooch"
-version = "0.34.0"
+version = "0.38.5"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",
@@ -2380,6 +2380,17 @@ dependencies = [
  "kooch_core",
  "slotmap",
  "tracing",
+]
+
+[[package]]
+name = "kooch_blockmesh"
+version = "0.38.5"
+dependencies = [
+ "glam 0.33.2",
+ "kooch_core",
+ "kooch_render",
+ "ron",
+ "serde",
 ]
 
 [[package]]
