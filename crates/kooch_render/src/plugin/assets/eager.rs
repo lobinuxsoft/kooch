@@ -63,12 +63,11 @@ pub fn eager_import_with(resources: &mut Resources, root: &Path) {
                     counts.image += 1;
                 }
             }
-            "ron" => {
-                // PR5 invariant: every `.ron` under `assets/` is a
-                // Material. When other RON-authored asset types
-                // arrive, this branch grows a discriminator that
-                // peeks the nominal struct tag at the head of the
-                // file before dispatching to the matching loader.
+            crate::material::MATERIAL_EXTENSION => {
+                // The discriminator this branch used to want turned out
+                // to be the file name: every RON-authored type carries
+                // its own extension, so the match already knows which
+                // loader it is without peeking at the bytes.
                 if let Err(e) = server.load::<Material>(path, resources) {
                     tracing::warn!(
                         target: "kooch_render::plugin::assets",
@@ -135,7 +134,7 @@ fn walk_collect(dir: &Path, out: &mut Vec<PathBuf>) {
             || lower.ends_with(".png")
             || lower.ends_with(".jpg")
             || lower.ends_with(".jpeg")
-            || lower.ends_with(".ron");
+            || lower.ends_with(&format!(".{}", crate::material::MATERIAL_EXTENSION));
         if typed {
             out.push(path);
         }

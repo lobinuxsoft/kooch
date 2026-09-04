@@ -382,7 +382,13 @@ fn create_folder(parent: &Path, name: &str) {
 }
 
 fn create_material(resources: &mut Resources, folder: &Path, name: &str) {
-    let file = unique_target(folder, OsStr::new(&format!("{name}.ron")));
+    let file = unique_target(
+        folder,
+        OsStr::new(&format!(
+            "{name}.{}",
+            kooch_render::material::MATERIAL_EXTENSION
+        )),
+    );
     let text =
         match ron::ser::to_string_pretty(&Material::default(), ron::ser::PrettyConfig::default()) {
             Ok(t) => t,

@@ -166,7 +166,7 @@ pub(super) fn asset_filter_for(
     } else if n.contains("shader") {
         Some(("Shader", &["wgsl"]))
     } else if n.contains("material") {
-        Some(("Material", &["ron"]))
+        Some(("Material", &[kooch_render::material::MATERIAL_EXTENSION]))
     } else if n.ends_with("_path") || n.ends_with("_file") {
         Some(("File", &[]))
     } else {

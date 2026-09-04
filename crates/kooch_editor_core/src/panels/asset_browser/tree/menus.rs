@@ -280,7 +280,7 @@ pub(super) fn leaf_menu(
         ui.separator();
         if ui.button("Rename").clicked() {
             // Edit the name before the first extension; the suffix
-            // (`.ron`, `.rs`, `.kooch_material.ron`, …) is re-attached on
+            // (`.material`, `.rs`, `.block`, …) is re-attached on
             // commit.
             let stem = leaf.name.split('.').next().unwrap_or(&leaf.name).to_owned();
             *rename = Some(RenameState {

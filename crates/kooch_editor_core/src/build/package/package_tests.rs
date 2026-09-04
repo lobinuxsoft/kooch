@@ -930,7 +930,7 @@ fn a_chain_inside_the_engine_resolves() {
 /// The counterpart of [`OPAQUE_FORMATS`]: between the two, every format
 /// this engine loads is accounted for.
 const TEXT_FORMATS: [&str; 7] = [
-    "ron",
+    "material",
     "scene",
     "prefab",
     "rendersettings",
@@ -938,7 +938,7 @@ const TEXT_FORMATS: [&str; 7] = [
     // Ships rather than being authoring-only: a block generates its
     // mesh from this file at load, so a game that carries the component
     // and not the source draws nothing. It leaves once baking does.
-    "blockmesh",
+    "block",
     "inputaction",
 ];
 
@@ -959,25 +959,7 @@ const TEXT_FORMATS: [&str; 7] = [
 /// the format moves to [`TEXT_FORMATS`] and the packager follows it.
 #[test]
 fn every_asset_format_is_classified() {
-    use kooch_core::asset_loader::AssetServer;
-
-    let mut server = AssetServer::new();
-    // The four the asset plugin registers by hand, plus everything
-    // declared with `register_asset!`.
-    server.register_loader::<kooch_render::mesh::Mesh, _>(kooch_render::mesh::GltfMeshLoader);
-    server.register_loader::<kooch_render::meshlet::MeshletMesh, _>(
-        kooch_render::meshlet::MeshletMeshLoader,
-    );
-    server.register_loader::<kooch_render::texture::Image, _>(
-        kooch_render::texture::ImageLoader::srgb(),
-    );
-    server.register_loader::<kooch_render::material::Material, _>(
-        kooch_render::material::MaterialLoader,
-    );
-    kooch_ecs::scene::prefab::register_loader(&mut server);
-    for registration in kooch_core::asset_registry::registered_asset_types() {
-        (registration.register_loader)(&mut server);
-    }
+    let server = every_loader();
 
     let mut unclassified: Vec<String> = Vec::new();
     for (extension, type_name) in server.known_extensions() {
@@ -1106,4 +1088,69 @@ fn a_declared_asset_brings_what_it_references() {
         "the declared material shipped without the texture it names, so a declaration \
          would have to list every asset underneath it by hand",
     );
+}
+
+/// 🔴 One extension, one type.
+///
+/// The scan resolves a loader with a `find` over the registered
+/// extensions, so two loaders claiming the same one means whichever was
+/// registered first silently wins. That is what typed a block written
+/// as `.ron` as a material — the inspector drew it with a base colour
+/// and nothing could load it as what it was.
+///
+/// Naming a format after its syntax is how it happens, so the fix is
+/// the rule: a format is named after the thing.
+#[test]
+fn no_two_loaders_claim_one_extension() {
+    use std::collections::HashMap;
+
+    let server = every_loader();
+    let mut owners: HashMap<String, Vec<String>> = HashMap::new();
+    for (extension, type_name) in server.known_extensions() {
+        owners
+            .entry(extension.to_ascii_lowercase())
+            .or_default()
+            .push(type_name.to_owned());
+    }
+
+    // `glb` and `gltf` are the documented exception: `Mesh` and
+    // `MeshletMesh` are two views of ONE file, chosen by the type the
+    // caller asks for, and the scan wanting the meshlet is the right
+    // answer. Two loaders reading DIFFERENT files is the bug.
+    const TWO_VIEWS_OF_ONE_FILE: [&str; 2] = ["glb", "gltf"];
+
+    let shared: Vec<String> = owners
+        .iter()
+        .filter(|(extension, _)| !TWO_VIEWS_OF_ONE_FILE.contains(&extension.as_str()))
+        .filter(|(_, types)| types.len() > 1)
+        .map(|(extension, types)| format!("{extension} -> {}", types.join(", ")))
+        .collect();
+    assert!(
+        shared.is_empty(),
+        "these extensions are claimed by more than one loader, so the \
+         scan types a file by whichever registered first:\n  {}",
+        shared.join("\n  "),
+    );
+}
+
+/// Everything a packaged game can be asked to load: the four the asset
+/// plugin registers by hand, plus every type declared with
+/// `register_asset!`.
+fn every_loader() -> kooch_core::asset_loader::AssetServer {
+    let mut server = kooch_core::asset_loader::AssetServer::new();
+    server.register_loader::<kooch_render::mesh::Mesh, _>(kooch_render::mesh::GltfMeshLoader);
+    server.register_loader::<kooch_render::meshlet::MeshletMesh, _>(
+        kooch_render::meshlet::MeshletMeshLoader,
+    );
+    server.register_loader::<kooch_render::texture::Image, _>(
+        kooch_render::texture::ImageLoader::srgb(),
+    );
+    server.register_loader::<kooch_render::material::Material, _>(
+        kooch_render::material::MaterialLoader,
+    );
+    kooch_ecs::scene::prefab::register_loader(&mut server);
+    for registration in kooch_core::asset_registry::registered_asset_types() {
+        (registration.register_loader)(&mut server);
+    }
+    server
 }

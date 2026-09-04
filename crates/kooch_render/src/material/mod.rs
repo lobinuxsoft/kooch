@@ -20,7 +20,7 @@ mod asset;
 mod pipeline;
 mod texture_pool;
 
-pub use asset::{Material, MaterialLoader, MaterialParseError};
+pub use asset::{MATERIAL_EXTENSION, Material, MaterialLoader, MaterialParseError};
 pub use pipeline::{
     DEFAULT_CAPACITY as MATERIAL_POOL_DEFAULT_CAPACITY, FALLBACK_MATERIAL_ID, MATERIAL_TYPE_NAME,
     MaterialPipeline, TextureReimports,

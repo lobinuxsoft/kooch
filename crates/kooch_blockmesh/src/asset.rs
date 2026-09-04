@@ -14,7 +14,7 @@ use crate::BlockMesh;
 /// inspector drew it with a base colour, and nothing could load it as
 /// what it is. `.inputaction` and `.buildpreset` are RON inside for the
 /// same reason and named after the thing, not the syntax.
-pub const BLOCK_MESH_EXTENSION: &str = "blockmesh";
+pub const BLOCK_MESH_EXTENSION: &str = "block";
 
 /// Reads `BlockMesh` assets from RON, the same authoring format
 /// `Material` uses — a level's geometry is diffable text, and a corner
