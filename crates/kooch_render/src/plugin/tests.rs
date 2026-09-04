@@ -89,3 +89,22 @@ mod present_precedence {
         assert!(wanted_vsync(false, Some(true)));
     }
 }
+
+/// 🔴 A generated mesh reaches the GPU only through this store, and its
+/// absence reads exactly like "nothing to upload".
+///
+/// Both sides used `remove::<GeneratedMeshes>()` and answered `None`
+/// forever, because nobody inserted it: every block built its mesh and
+/// dropped it, and the entity was invisible with no error anywhere.
+#[test]
+fn build_inserts_the_generated_mesh_store() {
+    use crate::meshlet::GeneratedMeshes;
+
+    let mut app = kooch_core::app::App::new();
+    kooch_core::plugin::Plugin::build(&super::RenderPlugin, &mut app);
+
+    assert!(
+        app.resources().get::<GeneratedMeshes>().is_some(),
+        "a mesh built at runtime has nowhere to go",
+    );
+}
