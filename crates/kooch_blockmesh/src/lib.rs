@@ -28,8 +28,15 @@
 //!   coincide to *be* one corner.
 
 mod asset;
+mod block;
 mod block_mesh;
+mod collider;
 mod generate;
+mod plugin;
+mod sync;
 
 pub use asset::{BlockMeshLoader, BlockMeshParseError};
+pub use block::Block;
 pub use block_mesh::BlockMesh;
+pub use plugin::BlockPlugin;
+pub use sync::{BuiltBlocks, sync_blocks};
