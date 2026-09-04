@@ -66,14 +66,14 @@ pub use kooch_gizmos;
 #[cfg(feature = "gravity")]
 pub use kooch_gravity;
 
+#[cfg(feature = "blockmesh")]
+pub use kooch_blockmesh::{Block, BlockMesh, BlockPlugin, BuiltBlocks};
 #[cfg(feature = "character")]
 pub use kooch_character;
 #[cfg(feature = "input")]
 pub use kooch_input;
 #[cfg(feature = "lighting")]
 pub use kooch_lighting;
-#[cfg(feature = "blockmesh")]
-pub use kooch_blockmesh::{Block, BlockMesh, BlockPlugin, BuiltBlocks};
 #[cfg(feature = "physics")]
 pub use kooch_physics;
 #[cfg(feature = "remote")]
@@ -187,7 +187,6 @@ pub mod prelude {
     // the same reason: the only way to say "this shape changed".
     #[cfg(feature = "blockmesh")]
     pub use kooch_blockmesh::{Block, BlockMesh, BlockPlugin, BuiltBlocks};
-
 
     // 🔴 A goal, a checkpoint and a death plane are the same thing — a
     // sensor that says you touched it — and none could be written from a

@@ -110,6 +110,13 @@ impl MeshletRenderStage {
             .iter()
             .copied()
             .filter(|guid| self.pipeline.lookup(*guid).is_none())
+            // 🔴 Only GUIDs a mesh loader can read. A generated mesh is
+            // named by the GUID of the file it was generated FROM — a
+            // block's `.block` — and asking the server for it produces
+            // "loader does not support extension", once per such GUID,
+            // for a file that was never going to be a mesh. What draws
+            // it is the drain above.
+            .filter(|guid| reads_as_mesh(resources, *guid))
             .collect();
         if !referenced.is_empty() {
             tracing::debug!(
@@ -201,4 +208,20 @@ impl MeshletRenderStage {
             );
         }
     }
+}
+
+/// Whether this GUID names a file a mesh loader can read.
+///
+/// Unregistered or untyped answers `true`: the type lands on the entry
+/// the first time something loads it, so refusing earlier would stop a
+/// mesh from ever being read.
+fn reads_as_mesh(resources: &Resources, guid: Guid) -> bool {
+    let Some(type_name) = resources
+        .get::<kooch_core::asset_database::AssetDatabase>()
+        .and_then(|db| db.entry(guid).and_then(|entry| entry.type_name.clone()))
+    else {
+        return true;
+    };
+    type_name == std::any::type_name::<crate::mesh::Mesh>()
+        || type_name == std::any::type_name::<MeshletMesh>()
 }

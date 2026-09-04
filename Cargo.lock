@@ -2343,7 +2343,7 @@ dependencies = [
 
 [[package]]
 name = "kooch"
-version = "0.41.2"
+version = "0.41.3"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",

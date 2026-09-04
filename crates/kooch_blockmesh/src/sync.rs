@@ -109,14 +109,24 @@ fn build_one(resources: &mut Resources, guid: Guid) {
                     %guid, faces = block_mesh.face_count(), waiting,
                     "built a block's mesh and published it for upload",
                 ),
-                // 🔴 The store is what carries a generated mesh to the
-                // GPU. Without it the mesh is built and dropped, and the
-                // block is invisible with nothing failing.
-                None => tracing::warn!(
-                    target: "kooch_blockmesh::sync",
-                    %guid,
-                    "no GeneratedMeshes resource, so the mesh has nowhere to go",
-                ),
+                // 🔴 Only a fault where something draws. The remote
+                // host simulates and renders nothing, so it has no
+                // renderer and no store — a warning there is an alarm
+                // about a correct absence, which is how alarms get
+                // ignored. With a GPU present the store is missing, and
+                // the mesh is built and dropped in silence.
+                None => match resources.get::<kooch_core::gpu::GpuContext>().is_some() {
+                    true => tracing::warn!(
+                        target: "kooch_blockmesh::sync",
+                        %guid,
+                        "no GeneratedMeshes resource, so the mesh has nowhere to go",
+                    ),
+                    false => tracing::debug!(
+                        target: "kooch_blockmesh::sync",
+                        %guid,
+                        "nothing draws here, so the block's mesh is not uploaded",
+                    ),
+                },
             }
         }
         // A block mid-drag can be degenerate — zero extent, a face

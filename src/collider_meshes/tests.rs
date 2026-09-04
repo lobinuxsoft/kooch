@@ -144,3 +144,57 @@ fn an_idle_frame_keeps_the_cache() {
     fill_collider_meshes(&mut resources);
     assert!(resources.get::<ColliderMeshCache>().is_some());
 }
+
+/// 🔴 A block publishes its own collider; this walk must not try to read
+/// its `.block` as glTF.
+///
+/// It did, the parse failed, and `fail` is permanent — `answered` counts
+/// a failure as an answer — so the body never collided even after the
+/// real entry landed a frame later.
+#[test]
+fn a_non_mesh_guid_is_not_asked_for() {
+    use kooch_core::asset_database::{AssetDatabase, AssetEntry};
+
+    let mut resources = world();
+    let guid = Guid::new_v4();
+    let mut database = AssetDatabase::new();
+    database.register(
+        guid,
+        AssetEntry {
+            path: std::path::PathBuf::from("assets/blocks/Wall.block"),
+            mtime: std::time::SystemTime::UNIX_EPOCH,
+            type_name: Some("kooch_blockmesh::block_mesh::BlockMesh".to_owned()),
+        },
+    );
+    resources.insert(database);
+
+    with_collider(
+        &mut resources,
+        Collider {
+            shape: SHAPE_CONVEX_HULL,
+            mesh: Some(guid),
+            ..Default::default()
+        },
+    );
+
+    assert!(guids(&resources).is_empty(), "a block is not glTF");
+}
+
+/// An untyped GUID is still asked for: the type lands on the entry the
+/// first time something loads it, so refusing earlier would stop a mesh
+/// from ever being read.
+#[test]
+fn an_untyped_guid_is_still_asked_for() {
+    let mut resources = world();
+    let guid = Guid::new_v4();
+    with_collider(
+        &mut resources,
+        Collider {
+            shape: SHAPE_CONVEX_HULL,
+            mesh: Some(guid),
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(guids(&resources), vec![guid]);
+}
