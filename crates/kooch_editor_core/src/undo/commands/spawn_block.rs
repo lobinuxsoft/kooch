@@ -13,7 +13,7 @@
 use std::any::TypeId;
 use std::path::PathBuf;
 
-use kooch_blockmesh::{BLOCK_MESH_EXTENSION, Block, BlockMesh};
+use kooch_blockmesh::Block;
 use kooch_core::Guid;
 use kooch_core::resource::Resources;
 use kooch_ecs::allocator::EntityAllocator;
@@ -25,10 +25,6 @@ use kooch_ecs::reflect::ReflectValue;
 use kooch_physics::components::Collider;
 
 use crate::undo::EditorCommand;
-
-/// Half-extent of a new block: a one-metre cube, which is a step and a
-/// half for the character and reads as a unit against the snap grid.
-const NEW_BLOCK_HALF: f32 = 0.5;
 
 pub(crate) struct SpawnBlockCommand {
     into: crate::actions::SpawnTarget,
@@ -58,37 +54,10 @@ impl SpawnBlockCommand {
         if let Some(guid) = self.source {
             return Some(guid);
         }
-
-        let folder = project_blocks_dir(resources)?;
-        if let Err(error) = std::fs::create_dir_all(&folder) {
-            tracing::error!(
-                target: "kooch_editor_core::undo::spawn_block",
-                folder = %folder.display(), %error,
-                "cannot create the blocks folder",
-            );
-            return None;
-        }
-
-        let file = crate::actions::asset_ops::unique_target(
-            &folder,
-            std::ffi::OsStr::new(&format!("Block.{BLOCK_MESH_EXTENSION}")),
-        );
-        let cube = BlockMesh::cuboid(glam::Vec3::splat(NEW_BLOCK_HALF));
-        let text = match ron::ser::to_string_pretty(&cube, ron::ser::PrettyConfig::default()) {
-            Ok(text) => text,
-            Err(error) => {
-                tracing::error!(
-                    target: "kooch_editor_core::undo::spawn_block",
-                    %error, "cannot serialise a cube",
-                );
-                return None;
-            }
-        };
-
-        self.source =
-            crate::actions::asset_ops::write_asset_guid(resources, &file, &text, "block mesh");
+        let (file, guid) = crate::actions::asset_ops::new_block_asset(resources)?;
         self.path = Some(file);
-        self.source
+        self.source = Some(guid);
+        Some(guid)
     }
 
     fn spawn_fresh_entity(&self, resources: &mut Resources) -> Entity {
@@ -167,13 +136,6 @@ impl SpawnBlockCommand {
             super::place::adopt(resources, entity, scene);
         }
     }
-}
-
-/// Where a project keeps its blocks.
-fn project_blocks_dir(resources: &Resources) -> Option<PathBuf> {
-    let state = resources.get::<crate::project_state::ProjectState>()?;
-    let project = state.active_project.as_ref()?;
-    Some(project.root_path.join("assets").join("blocks"))
 }
 
 /// The reflected type ids behind a list of short component names.

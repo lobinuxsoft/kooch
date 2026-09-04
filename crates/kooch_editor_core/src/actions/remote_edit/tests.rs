@@ -1009,3 +1009,49 @@ fn saving_one_scene_names_it() {
         "Save As lost the scene, or wrote over the existing file without asking",
     );
 }
+
+/// A world edit that `classify` refuses must be routed before it, or it
+/// falls through to `apply_non_ecs_action` — which does not know it
+/// either — and the menu entry does nothing, in silence.
+///
+/// That is exactly what happened to `SpawnBlock`. This names the two
+/// that are handled specially; a third arriving without a route breaks
+/// the count and points here rather than at the wire.
+#[test]
+fn every_unclassified_world_edit_is_routed() {
+    use crate::actions::{EditorAction, SpawnTarget};
+
+    let mut resources = kooch_core::resource::Resources::new();
+    let unroutable: Vec<&str> = [
+        (
+            "SpawnMesh",
+            EditorAction::SpawnMesh {
+                path: std::path::PathBuf::from("meshes/primitives/cube.glb"),
+                name: "Cube".to_owned(),
+            },
+        ),
+        (
+            "SpawnBlock",
+            EditorAction::SpawnBlock {
+                into: SpawnTarget::Active,
+            },
+        ),
+    ]
+    .into_iter()
+    .filter(|(_, action)| {
+        assert!(
+            action.is_a_world_edit(),
+            "the premise: these are world edits"
+        );
+        super::classify(action, &mut resources).is_none()
+    })
+    .map(|(name, _)| name)
+    .collect();
+
+    assert_eq!(
+        unroutable,
+        ["SpawnMesh", "SpawnBlock"],
+        "these two are refused by `classify` and must therefore be \
+         handled in `dispatch` before it — check that they still are",
+    );
+}

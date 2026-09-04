@@ -430,6 +430,46 @@ fn write_asset(resources: &mut Resources, file: &Path, text: &str, what: &str) {
 /// itself by some other route — an input action goes through
 /// `save_action` — still has to come back through here. Same lesson as
 /// #759, which fixed render settings and left the path beside it.
+/// Writes a fresh cube into the project's blocks folder and answers
+/// with where it went and what it is called.
+///
+/// One implementation for both spawn paths. The local command and the
+/// remote one were about to write this twice, and two places that decide
+/// what a new block *is* drift — the same failure the vendor's
+/// `#[cfg(test)]` predicate had.
+pub(crate) fn new_block_asset(resources: &mut Resources) -> Option<(PathBuf, kooch_core::Guid)> {
+    let folder = resources
+        .get::<crate::project_state::ProjectState>()?
+        .active_project
+        .as_ref()?
+        .root_path
+        .join("assets")
+        .join("blocks");
+    if let Err(error) = std::fs::create_dir_all(&folder) {
+        tracing::error!(folder = %folder.display(), %error, "cannot create the blocks folder");
+        return None;
+    }
+
+    let file = unique_target(
+        &folder,
+        OsStr::new(&format!("Block.{}", kooch_blockmesh::BLOCK_MESH_EXTENSION)),
+    );
+    // A cube, because a block tool that starts from nothing has nothing
+    // to drag. One metre: a step and a half for the character, and a
+    // unit against the snap grid.
+    let cube = kooch_blockmesh::BlockMesh::cuboid(glam::Vec3::splat(0.5));
+    let text = match ron::ser::to_string_pretty(&cube, ron::ser::PrettyConfig::default()) {
+        Ok(text) => text,
+        Err(error) => {
+            tracing::error!(%error, "cannot serialise a cube");
+            return None;
+        }
+    };
+
+    let guid = write_asset_guid(resources, &file, &text, "block mesh")?;
+    Some((file, guid))
+}
+
 /// Writes an asset, mints its identity, and answers with the GUID.
 ///
 /// 🔴 The identity is minted here rather than left to the rescan. A

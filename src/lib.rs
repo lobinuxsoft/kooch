@@ -387,6 +387,13 @@ impl kooch_core::plugin::PluginGroup for RemoteHostPlugins {
         #[cfg(all(feature = "physics", feature = "render"))]
         let builder = builder.add(crate::collider_meshes::ColliderMeshPlugin);
 
+        // Blocks the editor authored (#946). Added here rather than left
+        // to each project's own list: the editor spawns one over the
+        // wire, and a project that has the feature but forgot the line
+        // gets "add_component failed" with nothing naming the cause.
+        #[cfg(feature = "blockmesh")]
+        let builder = builder.add(kooch_blockmesh::BlockPlugin);
+
         // Gravity that points somewhere other than down. Inert until a
         // scene holds a source, so adding it changes nothing on its own.
         #[cfg(all(feature = "physics", feature = "gravity"))]
@@ -464,6 +471,13 @@ impl kooch_core::plugin::PluginGroup for DefaultPlugins {
         // added from the facade rather than from either crate.
         #[cfg(all(feature = "physics", feature = "render"))]
         let builder = builder.add(crate::collider_meshes::ColliderMeshPlugin);
+
+        // Blocks the editor authored (#946). Added here rather than left
+        // to each project's own list: the editor spawns one over the
+        // wire, and a project that has the feature but forgot the line
+        // gets "add_component failed" with nothing naming the cause.
+        #[cfg(feature = "blockmesh")]
+        let builder = builder.add(kooch_blockmesh::BlockPlugin);
 
         // Gravity that points somewhere other than down. Inert until a
         // scene holds a source, so adding it changes nothing on its own.
