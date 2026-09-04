@@ -1,0 +1,18 @@
+[package]
+name = "kooch_blockmesh"
+description = "Authoring mesh for kooch's in-editor block tool — editable topology beside the render mesh."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kooch_core.workspace = true
+# The render mesh this authoring mesh generates. `Mesh` is the type the
+# meshlet builder already eats, so generation ends where the renderer
+# starts.
+kooch_render.workspace = true
+glam.workspace = true
+serde.workspace = true
+ron.workspace = true
