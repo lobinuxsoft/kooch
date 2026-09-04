@@ -93,9 +93,30 @@ fn build_one(resources: &mut Resources, guid: Guid) {
 
     match build_default_meshlets(&block_mesh.to_mesh()) {
         Ok(meshlets) => {
-            if let Some(mut generated) = resources.remove::<GeneratedMeshes>() {
+            // Said once per build, not per frame. Two processes run this
+            // — the editor draws its mirror and the project owns the
+            // world — and a silence that only breaks on failure cannot
+            // tell you which of them built the mesh you are not seeing.
+            let published = resources.remove::<GeneratedMeshes>().map(|mut generated| {
                 generated.insert(guid, meshlets);
+                let waiting = generated.len();
                 resources.insert(generated);
+                waiting
+            });
+            match published {
+                Some(waiting) => tracing::info!(
+                    target: "kooch_blockmesh::sync",
+                    %guid, faces = block_mesh.face_count(), waiting,
+                    "built a block's mesh and published it for upload",
+                ),
+                // 🔴 The store is what carries a generated mesh to the
+                // GPU. Without it the mesh is built and dropped, and the
+                // block is invisible with nothing failing.
+                None => tracing::warn!(
+                    target: "kooch_blockmesh::sync",
+                    %guid,
+                    "no GeneratedMeshes resource, so the mesh has nowhere to go",
+                ),
             }
         }
         // A block mid-drag can be degenerate — zero extent, a face
@@ -108,9 +129,19 @@ fn build_one(resources: &mut Resources, guid: Guid) {
         ),
     }
 
-    if let Some(mut meshes) = resources.remove::<ColliderMeshCache>() {
-        meshes.insert(guid, block_mesh.to_collider());
-        resources.insert(meshes);
+    match resources.remove::<ColliderMeshCache>() {
+        Some(mut meshes) => {
+            // Replaces whatever was there, including a `Failed` left by
+            // a consumer that reached the GUID first and tried to parse
+            // the `.block` as a mesh. That failure is otherwise
+            // permanent — `answered` counts it as an answer.
+            meshes.insert(guid, block_mesh.to_collider());
+            resources.insert(meshes);
+        }
+        None => tracing::debug!(
+            target: "kooch_blockmesh::sync",
+            %guid, "no ColliderMeshCache, so this block will not collide",
+        ),
     }
 
     if let Some(mut built) = resources.remove::<BuiltBlocks>() {

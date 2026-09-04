@@ -48,6 +48,14 @@ pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
+        // 🔴 Inserted here, not by whoever generates a mesh: the store
+        // belongs to this crate and the drain is in this crate's meshlet
+        // sync. Leaving it to a generator meant nobody inserted it at
+        // all, and `remove::<GeneratedMeshes>()` answering `None` reads
+        // exactly like "nothing to upload" — every generated mesh was
+        // built and dropped, and the block that used it was invisible
+        // with nothing failing.
+        app.insert_resource(crate::meshlet::GeneratedMeshes::new());
         app.add_system(Stage::Startup, init_renderers);
         // Before the frame, and in `Render` rather than `Update`: the
         // resource it reads is written by `apply_render_settings_system`

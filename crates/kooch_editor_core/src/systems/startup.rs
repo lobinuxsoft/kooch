@@ -137,6 +137,12 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     resources.insert(MeshBatch::default());
     resources.insert(viewport);
     resources.insert(game_view);
+    // Beside the stage, because the stage's own asset sync is what
+    // drains it. The editor builds its stage by hand rather than through
+    // `RenderPlugin`, so the resource that plugin inserts never reaches
+    // here — and a generated mesh with nowhere to go is a block that
+    // does not draw, with nothing failing.
+    resources.insert(kooch_render::meshlet::GeneratedMeshes::new());
     resources.insert(meshlet_stage);
     resources.insert(meshlet_blit);
     resources.insert(vram_tracker);
