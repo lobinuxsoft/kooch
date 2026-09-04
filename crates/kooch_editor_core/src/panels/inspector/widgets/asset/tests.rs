@@ -19,9 +19,13 @@ fn excludes_legacy_and_licensed_audio() {
 }
 
 #[test]
-fn material_uses_ron_only() {
+fn a_material_picks_material_files() {
+    // Named after the thing, not the syntax — `ron` is a format several
+    // asset types are written in, and filtering on it offered blocks
+    // and build presets as materials.
     let (_, exts) = asset_filter_for("material").expect("material recognised");
-    assert_eq!(exts, &["ron"]);
+    assert_eq!(exts, &[kooch_render::material::MATERIAL_EXTENSION]);
+    assert!(!exts.contains(&"ron"));
 }
 
 #[test]

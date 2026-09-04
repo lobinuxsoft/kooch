@@ -1,9 +1,13 @@
+use super::MATERIAL_EXTENSION;
 use super::*;
 use std::path::Path;
 
 #[test]
-fn extension_is_ron() {
-    assert_eq!(MaterialLoader.extensions(), &["ron"]);
+fn the_extension_names_the_type() {
+    // RON is the format, and several asset types are written in it —
+    // claiming `ron` meant the scan typed the first one it found.
+    assert_eq!(MaterialLoader.extensions(), &[MATERIAL_EXTENSION]);
+    assert!(!MaterialLoader.extensions().contains(&"ron"));
 }
 
 #[test]

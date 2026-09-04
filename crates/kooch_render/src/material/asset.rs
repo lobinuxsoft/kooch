@@ -1,6 +1,6 @@
 //! `Material` — CPU-side PBR asset stored in `Assets<Material>`.
 //!
-//! Authored as RON (`*.kooch_material.ron`); the inspector exposes it
+//! Authored as RON in a `*.material` file; the inspector exposes it
 //! as a typed asset reference on `MeshRenderer.material`. Convertible
 //! to [`MaterialParams`](super::MaterialParams) for GPU upload — the
 //! runtime sync system mirrors the asset storage into the
@@ -21,6 +21,15 @@ use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext
 use serde::{Deserialize, Serialize};
 
 use super::MaterialParams;
+
+/// What a material file is called.
+///
+/// 🔴 Named after the thing, not the syntax. RON is the format, and
+/// leaving the extension as `ron` meant the first RON asset type to
+/// arrive after it collided: the scan resolves a loader by extension
+/// with a `find`, so a block written as `.ron` was typed as a material.
+/// One extension, one type.
+pub const MATERIAL_EXTENSION: &str = "material";
 
 /// CPU-side PBR material. The fields match Unity's "Standard
 /// (Specular setup)" minus textures — enough to colour-modulate the
@@ -170,7 +179,7 @@ pub struct MaterialLoader;
 
 impl AssetLoader<Material> for MaterialLoader {
     fn extensions(&self) -> &[&'static str] {
-        &["ron"]
+        &[MATERIAL_EXTENSION]
     }
 
     fn load(&self, bytes: &[u8], _ctx: &mut LoadContext<'_>) -> AssetResult<Material> {

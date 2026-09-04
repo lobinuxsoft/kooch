@@ -6,7 +6,7 @@
 //! `ProjectState.active_project` path against
 //! [`LastScannedProject`]; if it differs, scans
 //! `<project>/assets/` into the database and triggers the typed
-//! eager-import pass so newly-found `.glb` / `.kooch_material.ron`
+//! eager-import pass so newly-found `.glb` / `.material`
 //! / `.png` files appear in the inspector picker tagged
 //! `[project]` at the next frame.
 //!

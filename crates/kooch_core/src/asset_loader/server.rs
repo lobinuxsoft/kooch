@@ -153,7 +153,8 @@ impl AssetServer {
         // Match the file name's lowercased basename against every
         // suffix the loader claims. Single-segment extensions
         // (`"glb"`, `"png"`) match `Path::extension`; compound
-        // extensions (`"kooch_material.ron"`) match the trailing
+        // extensions (`"tar.gz"`-shaped, which no format uses today
+        // — a type is named by one segment) match the trailing
         // segment of the file name. Both cases compare as a
         // suffix of the lowercased name with a `.` separator
         // prepended, so `"glb"` does not accidentally match
