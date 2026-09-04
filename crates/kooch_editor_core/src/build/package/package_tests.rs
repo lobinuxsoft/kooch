@@ -929,12 +929,16 @@ fn a_chain_inside_the_engine_resolves() {
 ///
 /// The counterpart of [`OPAQUE_FORMATS`]: between the two, every format
 /// this engine loads is accounted for.
-const TEXT_FORMATS: [&str; 6] = [
+const TEXT_FORMATS: [&str; 7] = [
     "ron",
     "scene",
     "prefab",
     "rendersettings",
     "buildpreset",
+    // Ships rather than being authoring-only: a block generates its
+    // mesh from this file at load, so a game that carries the component
+    // and not the source draws nothing. It leaves once baking does.
+    "blockmesh",
     "inputaction",
 ];
 
