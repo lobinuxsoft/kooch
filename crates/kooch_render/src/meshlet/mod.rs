@@ -38,6 +38,7 @@ mod debug;
 pub(crate) mod deferred;
 mod dispatcher;
 mod drawer;
+mod generated;
 mod gpu_meshlet;
 mod gpu_timers;
 mod loader;
@@ -71,6 +72,7 @@ pub use dispatcher::{
     DrawIndirectArgs, HiZTestParams, MeshletCull, MeshletCullPipelines, chunks_for,
 };
 pub use drawer::MeshletDrawer;
+pub use generated::GeneratedMeshes;
 pub use gpu_meshlet::{
     GpuMeshletMesh, binding, meshlet_bind_group, meshlet_bind_group_layout, pool_meshlet_bind_group,
 };

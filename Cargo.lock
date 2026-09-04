@@ -2343,11 +2343,12 @@ dependencies = [
 
 [[package]]
 name = "kooch"
-version = "0.38.5"
+version = "0.39.0"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",
  "kooch_audio",
+ "kooch_blockmesh",
  "kooch_camera",
  "kooch_character",
  "kooch_core",
@@ -2388,9 +2389,13 @@ version = "0.39.0"
 dependencies = [
  "glam 0.33.2",
  "kooch_core",
+ "kooch_ecs",
+ "kooch_ecs_macros",
+ "kooch_physics",
  "kooch_render",
  "ron",
  "serde",
+ "tracing",
 ]
 
 [[package]]

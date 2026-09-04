@@ -13,6 +13,12 @@ kooch_core.workspace = true
 # meshlet builder already eats, so generation ends where the renderer
 # starts.
 kooch_render.workspace = true
+kooch_ecs.workspace = true
+# A block that nothing collides with is scenery, not a level. The
+# collider comes from the same positions the renderer draws.
+kooch_physics.workspace = true
+kooch_ecs_macros.workspace = true
+tracing.workspace = true
 glam.workspace = true
 serde.workspace = true
 ron.workspace = true

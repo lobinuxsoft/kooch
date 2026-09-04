@@ -208,6 +208,7 @@ kooch_gravity = { workspace = true, optional = true }
 kooch_character = { workspace = true, optional = true }
 kooch_world = { workspace = true, optional = true }
 kooch_remote = { workspace = true, optional = true }
+kooch_blockmesh = { workspace = true, optional = true }
 kooch_editor_core = { workspace = true, optional = true }
 kooch_plugin_api = { workspace = true, optional = true }
 
@@ -254,6 +255,9 @@ world = ["dep:kooch_world"]
 # standalone editor can drive it. Pulled in by projects that run in
 # `--remote` mode; independent of the embedded `editor`.
 remote = ["dep:kooch_remote"]
+# The in-editor block tool's authoring mesh (#946). Pulls physics
+# because a block nothing collides with is scenery, not a level.
+blockmesh = ["dep:kooch_blockmesh", "render", "physics"]
 editor = ["dep:kooch_editor_core"]
 # NVIDIA DLSS (#536). A GAME turns this on; the engine never defaults to
 # it. Requires `DLSS_SDK` and `VULKAN_SDK` at build time and moves the

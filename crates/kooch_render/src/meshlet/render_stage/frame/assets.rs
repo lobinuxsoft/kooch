@@ -94,6 +94,17 @@ impl MeshletRenderStage {
             );
         }
 
+        // Meshes built this frame reach the pool before anything is
+        // looked up on disk, so a generated GUID never counts as pending
+        // and never sends the AssetServer after a file that does not
+        // exist.
+        if let Some(mut generated) = resources.remove::<crate::meshlet::GeneratedMeshes>() {
+            for (guid, mesh) in generated.drain() {
+                self.ensure_gpu_mesh(device, guid, &mesh);
+            }
+            resources.insert(generated);
+        }
+
         let referenced = self.pipeline.collect_referenced_guids(resources);
         let pending: Vec<Guid> = referenced
             .iter()

@@ -72,6 +72,8 @@ pub use kooch_character;
 pub use kooch_input;
 #[cfg(feature = "lighting")]
 pub use kooch_lighting;
+#[cfg(feature = "blockmesh")]
+pub use kooch_blockmesh::{Block, BlockMesh, BlockPlugin, BuiltBlocks};
 #[cfg(feature = "physics")]
 pub use kooch_physics;
 #[cfg(feature = "remote")]
@@ -179,6 +181,13 @@ pub mod prelude {
         Collider, Joint, PhysicsBody, PhysicsPlugin, PhysicsWorld, PointHit, QueryFilter, RayHit,
         ShapeAt, ShapeHit, SolverBody,
     };
+    // A level built in the editor is a scene of these, and a game that
+    // wants to read one — a door that is a block, a platform that moves
+    // — has to be able to name the component. `BuiltBlocks` is here for
+    // the same reason: the only way to say "this shape changed".
+    #[cfg(feature = "blockmesh")]
+    pub use kooch_blockmesh::{Block, BlockMesh, BlockPlugin, BuiltBlocks};
+
 
     // 🔴 A goal, a checkpoint and a death plane are the same thing — a
     // sensor that says you touched it — and none could be written from a
