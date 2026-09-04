@@ -155,13 +155,13 @@ fn cfg_test_modules(dir: &Path) -> Vec<String> {
     names
 }
 
-/// Module names one source file declares under `#[cfg(test)]`.
+/// Module names one source file declares under a `test` cfg.
 fn cfg_test_mods_in(text: &str) -> Vec<String> {
     let mut names = Vec::new();
     let mut gated = false;
     for line in text.lines() {
         let line = line.trim();
-        if line == "#[cfg(test)]" {
+        if gates_on_test(line) {
             gated = true;
             continue;
         }
@@ -177,6 +177,27 @@ fn cfg_test_mods_in(text: &str) -> Vec<String> {
     names
 }
 
+/// Whether an attribute compiles its item only for tests.
+///
+/// `#[cfg(test)]` is the common form, and matching only that is what
+/// let `#[cfg(all(test, feature = "physics"))]` through: the module was
+/// read as production code, so the vendored engine declared a file that
+/// never travelled and a project built against it failed to compile.
+pub(super) fn gates_on_test(line: &str) -> bool {
+    let Some(inner) = line
+        .strip_prefix("#[cfg(")
+        .and_then(|rest| rest.strip_suffix(")]"))
+    else {
+        return false;
+    };
+    // `all(test, …)` only. `any(test, …)` still compiles without tests,
+    // and `not(test)` is the opposite claim.
+    match inner.strip_prefix("all(").and_then(|r| r.strip_suffix(')')) {
+        Some(list) => list.split(',').any(|term| term.trim() == "test"),
+        None => inner == "test",
+    }
+}
+
 /// The name in `mod X;` / `pub(crate) mod X;`, if the line is one.
 fn declared_module(line: &str) -> Option<String> {
     let rest = line
@@ -187,3 +208,6 @@ fn declared_module(line: &str) -> Option<String> {
         .strip_suffix(';')
         .map(str::to_owned)
 }
+
+#[cfg(test)]
+mod gate_tests;

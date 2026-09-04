@@ -166,3 +166,41 @@ fn a_new_build_preset_asks_too() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A block tool that starts from nothing has nothing to drag, so the
+/// asset is born as a cube rather than an empty mesh.
+#[test]
+fn a_new_block_is_a_cube() {
+    let dir = scratch("block_mesh");
+    let mut resources = mid_session();
+
+    create_file(&mut resources, &dir, "Wall", NewFileKind::BlockMesh);
+
+    let file = dir.join(format!("Wall.{}", kooch_blockmesh::BLOCK_MESH_EXTENSION));
+    let text = std::fs::read_to_string(&file).expect("the block was written");
+    let block: kooch_blockmesh::BlockMesh = ron::from_str(&text).expect("it parses back");
+    assert_eq!(block.face_count(), 6);
+    assert_eq!(block.positions().len(), 8);
+}
+
+/// Written through the same register-and-announce path every other asset
+/// takes — a block nothing registered cannot be pointed at by `Block`.
+#[test]
+fn a_new_block_is_registered() {
+    let dir = scratch("block_registered");
+    let mut resources = mid_session();
+
+    create_file(&mut resources, &dir, "Wall", NewFileKind::BlockMesh);
+
+    let database = resources.get::<AssetDatabase>().expect("database");
+    assert!(
+        database.path_iter().any(|(p, _)| p
+            .to_string_lossy()
+            .ends_with(kooch_blockmesh::BLOCK_MESH_EXTENSION)),
+        "the block was written and nothing registered it; database holds: {:?}",
+        database
+            .path_iter()
+            .map(|(p, _)| p.display().to_string())
+            .collect::<Vec<_>>(),
+    );
+}

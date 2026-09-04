@@ -123,6 +123,26 @@ fn create_file(resources: &mut Resources, folder: &Path, name: &str, kind: NewFi
             }
             return;
         }
+        NewFileKind::BlockMesh => {
+            // A cube, because a block tool that starts from nothing has
+            // nothing to drag. One metre: a step and a half for the
+            // character, and a unit against the snap grid.
+            let file = unique_target(
+                folder,
+                OsStr::new(&format!("{name}.{}", kooch_blockmesh::BLOCK_MESH_EXTENSION)),
+            );
+            let cube = kooch_blockmesh::BlockMesh::cuboid(glam::Vec3::splat(0.5));
+            match ron::ser::to_string_pretty(&cube, ron::ser::PrettyConfig::default()) {
+                // Through the identity-minting path rather than a plain
+                // write: a block nothing registered cannot be named by
+                // `Block.source`.
+                Ok(text) => {
+                    write_asset_guid(resources, &file, &text, "block mesh");
+                }
+                Err(e) => tracing::error!(error = %e, "failed to serialise block mesh"),
+            }
+            return;
+        }
         NewFileKind::BuildPreset => {
             let file = unique_target(
                 folder,
@@ -410,6 +430,49 @@ fn write_asset(resources: &mut Resources, file: &Path, text: &str, what: &str) {
 /// itself by some other route — an input action goes through
 /// `save_action` — still has to come back through here. Same lesson as
 /// #759, which fixed render settings and left the path beside it.
+/// Writes an asset, mints its identity, and answers with the GUID.
+///
+/// 🔴 The identity is minted here rather than left to the rescan. A
+/// rescan is a request the caller cannot wait for, and a component that
+/// must point at this file needs the GUID on this frame — without it a
+/// spawned block carries an empty `source` and draws nothing.
+pub(crate) fn write_asset_guid(
+    resources: &mut Resources,
+    file: &Path,
+    text: &str,
+    what: &str,
+) -> Option<kooch_core::Guid> {
+    use kooch_core::asset_database::{AssetDatabase, AssetEntry};
+    use kooch_core::asset_meta::{AssetMeta, write_meta};
+
+    if let Err(e) = std::fs::write(file, text) {
+        tracing::error!(file = %file.display(), error = %e, "failed to write {what}");
+        return None;
+    }
+
+    let meta = AssetMeta::new();
+    if let Err(e) = write_meta(file, &meta) {
+        tracing::error!(file = %file.display(), error = %e, "failed to write {what} identity");
+        return None;
+    }
+    if let Some(database) = resources.get_mut::<AssetDatabase>() {
+        let mtime = std::fs::metadata(file)
+            .and_then(|meta| meta.modified())
+            .unwrap_or_else(|_| std::time::SystemTime::now());
+        database.register(
+            meta.guid,
+            AssetEntry {
+                path: file.to_path_buf(),
+                mtime,
+                type_name: None,
+            },
+        );
+    }
+
+    asset_created(resources, file, what);
+    Some(meta.guid)
+}
+
 fn asset_created(resources: &mut Resources, file: &Path, what: &str) {
     tracing::info!(file = %file.display(), "{what} created");
     force_rescan(resources);
@@ -584,7 +647,7 @@ pub(super) fn force_rescan(resources: &mut Resources) {
 
 /// Returns a non-colliding path in `dir` for `name`, appending `_1`,
 /// `_2`, … before the extension if the file already exists.
-pub(super) fn unique_target(dir: &Path, name: &OsStr) -> PathBuf {
+pub(crate) fn unique_target(dir: &Path, name: &OsStr) -> PathBuf {
     let candidate = dir.join(name);
     if !candidate.exists() {
         return candidate;

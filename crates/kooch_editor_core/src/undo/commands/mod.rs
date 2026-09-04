@@ -11,6 +11,7 @@ mod paste;
 mod place;
 mod set_field;
 mod spawn;
+mod spawn_block;
 mod spawn_mesh;
 mod transform_edit;
 
@@ -24,5 +25,6 @@ pub(crate) use move_to_scene::MoveToSceneCommand;
 pub(crate) use paste::PasteCommand;
 pub(crate) use set_field::SetFieldCommand;
 pub(crate) use spawn::SpawnCommand;
+pub(crate) use spawn_block::SpawnBlockCommand;
 pub(crate) use spawn_mesh::SpawnMeshCommand;
 pub(crate) use transform_edit::TransformEditCommand;

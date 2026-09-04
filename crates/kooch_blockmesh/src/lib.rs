@@ -35,7 +35,7 @@ mod generate;
 mod plugin;
 mod sync;
 
-pub use asset::{BlockMeshLoader, BlockMeshParseError};
+pub use asset::{BLOCK_MESH_EXTENSION, BlockMeshLoader, BlockMeshParseError};
 pub use block::Block;
 pub use block_mesh::BlockMesh;
 pub use plugin::BlockPlugin;

@@ -8,8 +8,8 @@ use kooch_ecs::component::{ComponentId, ComponentNames, ComponentRegistry};
 use crate::undo::{
     AddComponentCommand, AddDynamicComponentCommand, DespawnCommand, DuplicateCommand,
     EditorCommand, MoveToSceneCommand, PasteCommand, RemoveComponentCommand,
-    RemoveDynamicComponentCommand, SetDynamicFieldCommand, SetFieldCommand, SpawnCommand,
-    SpawnMeshCommand, TransformEditCommand,
+    RemoveDynamicComponentCommand, SetDynamicFieldCommand, SetFieldCommand, SpawnBlockCommand,
+    SpawnCommand, SpawnMeshCommand, TransformEditCommand,
 };
 
 use super::EditorAction;
@@ -50,6 +50,7 @@ pub(super) fn action_to_command(
             name.clone(),
             *into,
         ))),
+        EditorAction::SpawnBlock { into } => Some(Box::new(SpawnBlockCommand::new(*into))),
         EditorAction::SpawnMesh { path, name } => {
             Some(Box::new(SpawnMeshCommand::new(path.clone(), name.clone())))
         }
