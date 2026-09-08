@@ -28,6 +28,7 @@
 //! Transform *handles* remain single-selection: `HandleSet` positions one
 //! origin, and multi-entity dragging needs pivot semantics of its own.
 
+mod block;
 mod center_of_mass;
 mod character;
 mod collider;
@@ -96,6 +97,10 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     registry.register::<kooch_ecs::spot_light::SpotLight, lights::SpotLightVisualizer>();
     // A collider is authored as numbers and is otherwise invisible; the
     // outline is the only way to see whether the shape wraps the model.
+    // Which faces of a block are selected. Nothing else draws them:
+    // the mesh renders as one surface, and a selected face is a
+    // decision the author made that the geometry cannot show.
+    registry.register::<kooch_blockmesh::Block, block::BlockVisualizer>();
     registry.register::<kooch_physics::components::Collider, collider::ColliderVisualizer>();
     // Where the author put the centre of mass. Only the authored one —
     // the solver's own is in the project's process, which is #634.

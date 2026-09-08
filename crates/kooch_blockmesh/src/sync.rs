@@ -1,6 +1,6 @@
 //! Keeping a block's render mesh and collider in step with its source.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use kooch_core::Guid;
 use kooch_core::asset_loader::AssetServer;
@@ -20,7 +20,13 @@ use crate::BlockMesh;
 /// block that nobody touched this frame is every block on most frames.
 #[derive(Debug, Default)]
 pub struct BuiltBlocks {
-    built: HashSet<Guid>,
+    /// The handle each built source resolved to.
+    ///
+    /// A handle rather than a bare "yes": picking, drawing and editing
+    /// all need the mesh, they all hold `&Resources` and cannot load,
+    /// and re-resolving a GUID per frame to answer the same question is
+    /// the lookup this already did once.
+    built: HashMap<Guid, kooch_core::assets::Handle<BlockMesh>>,
 }
 
 impl BuiltBlocks {
@@ -37,7 +43,17 @@ impl BuiltBlocks {
     }
 
     pub fn is_built(&self, guid: Guid) -> bool {
-        self.built.contains(&guid)
+        self.built.contains_key(&guid)
+    }
+
+    /// The handle a built source resolved to.
+    ///
+    /// What picking, drawing and editing all need: they hold
+    /// `&Resources` and cannot load, and re-resolving a GUID per frame
+    /// to answer a question this already answered is the lookup the
+    /// handle exists to skip.
+    pub fn handle(&self, guid: Guid) -> Option<kooch_core::assets::Handle<BlockMesh>> {
+        self.built.get(&guid).copied()
     }
 }
 
@@ -87,7 +103,7 @@ fn block_sources(resources: &Resources) -> Vec<(kooch_ecs::Entity, Guid)> {
 
 /// Loads one source and publishes both of its outputs.
 fn build_one(resources: &mut Resources, guid: Guid) {
-    let Some(block_mesh) = load_source(resources, guid) else {
+    let Some((handle, block_mesh)) = load_source(resources, guid) else {
         return;
     };
 
@@ -155,13 +171,15 @@ fn build_one(resources: &mut Resources, guid: Guid) {
     }
 
     if let Some(mut built) = resources.remove::<BuiltBlocks>() {
-        built.built.insert(guid);
+        built.built.insert(guid, handle);
         resources.insert(built);
     }
 }
 
 /// Reads a `BlockMesh` out of asset storage, loading it if needed.
-fn load_source(resources: &mut Resources, guid: Guid) -> Option<BlockMesh> {
+type Loaded = (kooch_core::assets::Handle<BlockMesh>, BlockMesh);
+
+fn load_source(resources: &mut Resources, guid: Guid) -> Option<Loaded> {
     let mut server = resources.remove::<AssetServer>()?;
     let loaded = server.load_by_guid::<BlockMesh>(guid, resources);
     resources.insert(server);
@@ -177,7 +195,8 @@ fn load_source(resources: &mut Resources, guid: Guid) -> Option<BlockMesh> {
             return None;
         }
     };
-    resources.get::<Assets<BlockMesh>>()?.get(handle).cloned()
+    let mesh = resources.get::<Assets<BlockMesh>>()?.get(handle).cloned()?;
+    Some((handle, mesh))
 }
 
 /// Points each block's renderer and collider at its source's GUID.

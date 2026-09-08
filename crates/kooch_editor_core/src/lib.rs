@@ -17,6 +17,7 @@
 //! ```
 
 pub(crate) mod actions;
+pub(crate) mod block_edit;
 pub mod bootstrap;
 pub mod build;
 pub(crate) mod cargo_args;
@@ -137,6 +138,10 @@ impl Plugin for EditorPlugin {
         app.insert_resource(kooch_core::frame_pacing::FrameRequest::new(
             kooch_core::frame_pacing::FramePace::Wait,
         ));
+        // Selecting a face is a decision that outlives the frame that
+        // made it, so it lives beside the entity selection rather than
+        // in whatever system happened to notice the click.
+        app.insert_resource(block_edit::BlockSelection::default());
         app.insert_resource(PlayState::new());
         // Idle until someone presses Build (#758).
         app.insert_resource(build::BuildState::default());

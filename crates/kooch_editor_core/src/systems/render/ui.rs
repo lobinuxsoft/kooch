@@ -232,6 +232,16 @@ pub(super) fn run_editor_ui(
                 selected.contains(&info.entity)
                     && info.components.iter().any(|c| c.short_name == "Transform")
             });
+            // Face mode has something to act on only when exactly one
+            // block is selected — the faces it holds are indices into
+            // one mesh.
+            let editing_a_block = match selected.as_slice() {
+                [entity] => data.entities.iter().any(|info| {
+                    info.entity == *entity
+                        && info.components.iter().any(|c| c.short_name == "Block")
+                }),
+                _ => false,
+            };
             // Opening an asset has to show it. A panel that loaded the
             // map behind a tab nobody switched to is indistinguishable
             // from one that did nothing.
@@ -287,6 +297,8 @@ pub(super) fn run_editor_ui(
                 snap_settings: &mut overlay.snap_settings,
                 handle_mode,
                 selection_has_transform,
+                editing_a_block,
+                element_mode: &mut overlay.element_mode,
                 asset_catalog,
                 selected_asset: &mut selected_asset,
                 asset_detail,

@@ -77,6 +77,11 @@ pub(crate) struct EditorTabViewer<'a> {
     /// `true` when at least one currently-selected entity carries a
     /// `Transform` — gates the viewport's Local/World toggle.
     pub(crate) selection_has_transform: bool,
+    /// Whether a click selects an entity or a face.
+    pub(crate) element_mode: &'a mut crate::block_edit::ElementMode,
+    /// Whether the selection is a single block — the only case where
+    /// face mode has anything to act on.
+    pub(crate) editing_a_block: bool,
     /// Which gizmo groups draw. Threaded through so the Gizmos dropdown
     /// can mutate it from the viewport toolbar.
     pub(crate) gizmo_visibility: &'a mut crate::gizmos::GizmoVisibility,
@@ -289,6 +294,8 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.physics_debug,
                 self.actions,
                 self.editor_camera_rotation,
+                self.element_mode,
+                self.editing_a_block,
             ),
             EditorTab::Console => {
                 crate::panels::console::draw_console(ui, focused, self.log_buffer, self.console)
