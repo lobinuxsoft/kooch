@@ -1,6 +1,6 @@
 //! Selecting parts of a block, rather than the whole entity.
 
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use kooch_blockmesh::{Block, BlockMesh, BuiltBlocks};
 use kooch_core::assets::Assets;
 use kooch_core::resource::Resources;
@@ -148,6 +148,187 @@ pub(crate) fn face_under(
     // comparable with the world-space one it came from.
     let direction = to_local.transform_vector3(ray.direction);
     kooch_blockmesh::face_at(&mesh, origin, direction).map(|hit| hit.face)
+}
+
+/// Where a handle for the current face selection belongs, in world
+/// space.
+///
+/// The selection's centre, not the entity's origin: a handle at the
+/// origin while the face you grabbed is a metre away reads as a gizmo
+/// for the wrong thing, and the drag axes would be right for an object
+/// nobody is moving.
+pub(crate) fn selection_origin(resources: &Resources, entity: Entity) -> Option<Vec3> {
+    let selection = resources.get::<BlockSelection>()?;
+    if selection.entity != Some(entity) || selection.is_empty() {
+        return None;
+    }
+    let mesh = mesh_of(resources, entity)?;
+    let centre = mesh.centre_of(&selection.faces)?;
+    let to_world = resources
+        .get::<ComponentRegistry>()?
+        .get_cpu::<GlobalTransform>()?
+        .get(entity)?
+        .matrix;
+    Some(to_world.transform_point3(centre))
+}
+
+/// The world-space box the current face selection occupies.
+///
+/// What F frames in face mode. The selection, not the block: pressing
+/// F after clicking one face of a wall should show you that face, and
+/// framing the whole wall is what F already did from object mode.
+pub(crate) fn selection_bounds(resources: &Resources, entity: Entity) -> Option<(Vec3, Vec3)> {
+    let selection = resources.get::<BlockSelection>()?;
+    if selection.entity != Some(entity) || selection.is_empty() {
+        return None;
+    }
+    let mesh = mesh_of(resources, entity)?;
+    let corners = mesh.corners_of(&selection.faces);
+    if corners.is_empty() {
+        return None;
+    }
+    let to_world = resources
+        .get::<ComponentRegistry>()?
+        .get_cpu::<GlobalTransform>()?
+        .get(entity)?
+        .matrix;
+
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for corner in corners {
+        let world = to_world.transform_point3(mesh.positions()[corner as usize]);
+        min = min.min(world);
+        max = max.max(world);
+    }
+    Some((min, max))
+}
+
+/// Moves the selected faces by a world-space delta.
+///
+/// Answers whether anything moved, so the caller knows to leave the
+/// entity's own `Transform` alone.
+///
+/// The mesh is edited in the asset itself rather than in a copy: a
+/// block's shape IS the asset, and every entity naming that source is
+/// the same shape by definition.
+pub(crate) fn edit_selection(
+    resources: &mut Resources,
+    entity: Entity,
+    delta: kooch_gizmos_handles::TransformDelta,
+) -> bool {
+    let Some(source) = source_of(resources, entity) else {
+        return false;
+    };
+    let faces = match resources.get::<BlockSelection>() {
+        Some(selection) if selection.entity == Some(entity) && !selection.is_empty() => {
+            selection.faces.clone()
+        }
+        _ => return false,
+    };
+
+    // World to local. A translation is a direction, so it loses the
+    // matrix's translation; a rotation is expressed in the entity's own
+    // basis; a scale factor is already unitless and passes through.
+    let Some(to_local) = resources
+        .get::<ComponentRegistry>()
+        .and_then(|registry| registry.get_cpu::<GlobalTransform>()?.get(entity))
+        .map(|transform| transform.matrix.inverse())
+        .filter(glam::Mat4::is_finite)
+    else {
+        return false;
+    };
+
+    let Some(handle) = resources
+        .get::<BuiltBlocks>()
+        .and_then(|built| built.handle(source))
+    else {
+        return false;
+    };
+    let Some(mesh) = resources
+        .get_mut::<Assets<BlockMesh>>()
+        .and_then(|assets| assets.get_mut(handle))
+    else {
+        return false;
+    };
+
+    let corners = mesh.corners_of(&faces);
+    // 🔴 The pivot is the SELECTION's centre, not the entity's origin.
+    // Turning a face about a point it does not contain swings it away
+    // rather than turning it.
+    let Some(pivot) = mesh.centre_of(&faces) else {
+        return false;
+    };
+    match delta {
+        kooch_gizmos_handles::TransformDelta::Translation(by) => {
+            mesh.move_corners(&corners, to_local.transform_vector3(by));
+        }
+        kooch_gizmos_handles::TransformDelta::Rotation(by) => {
+            let basis = glam::Quat::from_mat4(&to_local).normalize();
+            mesh.turn_corners(&corners, pivot, basis * by * basis.inverse());
+        }
+        kooch_gizmos_handles::TransformDelta::Scale(by) => {
+            mesh.scale_corners(&corners, pivot, by);
+        }
+    }
+
+    // The render mesh and the collider are generated from this, and
+    // both are cached under the source's GUID. Forgetting is what makes
+    // the next frame rebuild them; without it the block keeps the shape
+    // it had when it was first built.
+    if let Some(mut built) = resources.get_mut::<BuiltBlocks>() {
+        built.forget(source);
+    }
+    true
+}
+
+/// Writes the edited shape back to its `.block` file.
+///
+/// The asset is the shape: an edit that lives only in `Assets` is one
+/// the next load throws away. Called on release rather than per frame —
+/// a drag is one edit, and rewriting the file each frame is a rescan of
+/// the project each frame.
+pub(crate) fn save_selection(resources: &mut Resources, entity: Entity) {
+    let Some(source) = source_of(resources, entity) else {
+        return;
+    };
+    let Some(mesh) = mesh_of(resources, entity) else {
+        return;
+    };
+    let Some(path) = resources
+        .get::<kooch_core::asset_database::AssetDatabase>()
+        .and_then(|database| database.entry(source).map(|entry| entry.path.clone()))
+    else {
+        return;
+    };
+
+    match ron::ser::to_string_pretty(&mesh, ron::ser::PrettyConfig::default()) {
+        Ok(text) => match std::fs::write(&path, text) {
+            Ok(()) => {
+                tracing::debug!(
+                    target: "kooch_editor_core::block_edit",
+                    path = %path.display(), "block written",
+                );
+                crate::actions::handlers::asset_saved(resources, &path);
+            }
+            Err(error) => tracing::error!(
+                target: "kooch_editor_core::block_edit",
+                path = %path.display(), %error, "could not write the block",
+            ),
+        },
+        Err(error) => tracing::error!(
+            target: "kooch_editor_core::block_edit",
+            %error, "could not serialise the block",
+        ),
+    }
+}
+
+/// The source a block names.
+fn source_of(resources: &Resources, entity: Entity) -> Option<kooch_core::Guid> {
+    resources
+        .get::<ComponentRegistry>()?
+        .get_cpu::<Block>()?
+        .get(entity)?
+        .source
 }
 
 /// The block mesh an entity is built from, if it has one and it is

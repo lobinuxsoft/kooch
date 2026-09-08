@@ -46,6 +46,25 @@ impl MeshletRenderStage {
         }
     }
 
+    /// Registers `mesh` under `guid`, replacing whatever was there, and
+    /// marks the pool for a rebuild.
+    ///
+    /// For meshes that are edited rather than loaded. See
+    /// [`MeshletPipeline::replace_mesh`] for what it leaks and why.
+    pub fn replace_gpu_mesh(&mut self, guid: Guid, mesh: &MeshletMesh) {
+        let bytes_before = self.pipeline.pool().byte_size();
+        self.pipeline.replace_mesh(guid, mesh);
+        // Unconditionally: the pool's contents changed even when its
+        // count did not, and the GPU mirror is what draws.
+        self.pool_dirty = true;
+        // The growth, not the total — the pool only ever appends, so
+        // the difference is what this call actually cost.
+        if let Some(tracker) = &self.vram_tracker {
+            let bytes_after = self.pipeline.pool().byte_size();
+            tracker.add(bytes_after.saturating_sub(bytes_before));
+        }
+    }
+
     /// Number of distinct meshlet meshes currently registered in the
     /// pool. The GPU mirror tracks the same count once it has been
     /// rebuilt at the next render call.
@@ -100,7 +119,12 @@ impl MeshletRenderStage {
         // exist.
         if let Some(mut generated) = resources.remove::<crate::meshlet::GeneratedMeshes>() {
             for (guid, mesh) in generated.drain() {
-                self.ensure_gpu_mesh(device, guid, &mesh);
+                // 🔴 Replace, not ensure. A generated mesh is published
+                // again every time it CHANGES, and `ensure` answers with
+                // the handle it cached the first time — the block kept
+                // the shape it was born with while its file and its
+                // collider both moved.
+                self.replace_gpu_mesh(guid, &mesh);
             }
             resources.insert(generated);
         }

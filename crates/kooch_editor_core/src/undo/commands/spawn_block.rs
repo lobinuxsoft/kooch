@@ -138,6 +138,23 @@ impl SpawnBlockCommand {
     }
 }
 
+/// The engine's own prototype grid, if it is registered.
+///
+/// Looked up by path rather than hard-coded as a GUID: a GUID lives in
+/// a sidecar that a fresh checkout regenerates, and a block spawning
+/// with a reference to a material from somebody else's machine is worse
+/// than one spawning white.
+fn prototype_material(resources: &Resources) -> Option<kooch_core::Guid> {
+    const PROTOTYPE: &str = "materials/prototype/orange/orange_texture_01.material";
+
+    let resolved = resources
+        .get::<kooch_core::asset_loader::AssetServer>()?
+        .resolve_path(std::path::Path::new(PROTOTYPE));
+    resources
+        .get::<kooch_core::asset_database::AssetDatabase>()?
+        .guid_for(&resolved)
+}
+
 /// The reflected type ids behind a list of short component names.
 fn named_types(resources: &Resources, wanted: &[&str]) -> Vec<TypeId> {
     let Some(registry) = resources.get::<ComponentRegistry>() else {

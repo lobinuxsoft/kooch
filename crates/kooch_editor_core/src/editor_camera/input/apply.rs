@@ -36,7 +36,7 @@ use super::ViewportInputDelta;
 pub fn apply_viewport_input(
     delta: ViewportInputDelta,
     resources: &mut Resources,
-    selection_world_position: Option<Vec3>,
+    focus_target: Option<crate::editor_camera::framing::FocusTarget>,
 ) {
     if delta.is_idle() {
         return;
@@ -127,9 +127,14 @@ pub fn apply_viewport_input(
 
     // --- Focus on selection (F) -------------------------------------------
     if delta.focus_pressed
-        && let Some(target) = selection_world_position
+        && let Some(target) = focus_target
     {
-        controller.focus_point = target;
+        controller.focus_point = target.point;
+        // Centring alone left a block a hundred metres away in the
+        // middle of the screen. The distance is what makes F *frame*
+        // rather than merely aim.
+        controller.distance =
+            crate::editor_camera::framing::distance_for(target.radius, camera_fov(resources));
     }
 
     // --- Recompute position from the (possibly updated) state -------------
@@ -170,4 +175,15 @@ fn write_transform(resources: &mut Resources, entity: Entity, position: Vec3, ro
         t.position = position;
         t.rotation = rotation;
     }
+}
+
+/// The active camera's vertical field of view, in radians.
+///
+/// Read rather than assumed: a project that authored a 90° camera
+/// frames from closer than one that authored 50°, and a constant here
+/// would put the same block at a different size than it renders.
+fn camera_fov(resources: &Resources) -> f32 {
+    crate::gizmos::active_camera(resources)
+        .map(|(camera, _)| camera.fov.to_radians())
+        .unwrap_or(std::f32::consts::FRAC_PI_3)
 }

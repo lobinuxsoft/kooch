@@ -309,7 +309,11 @@ pub(crate) fn apply_handle_input(
         }
     };
 
-    let target_origin = match entity_world_position(resources, target) {
+    // A face selection puts the handle on the face, not on the entity.
+    // A gizmo at the origin while the thing you grabbed is a metre away
+    // reads as a gizmo for something else.
+    let editing_faces = crate::block_edit::selection_origin(resources, target);
+    let target_origin = match editing_faces.or_else(|| entity_world_position(resources, target)) {
         Some(p) => p,
         None => return false,
     };
@@ -361,6 +365,15 @@ pub(crate) fn apply_handle_input(
         // the user had not grabbed. See #612.
         let to_parent_space = parent_space::parent_world_to_local(resources, target);
 
+        // 🔴 The delta moves the SELECTED FACES, and the entity's own
+        // transform is left alone. Applying both would move the block
+        // and reshape it by the same amount in one drag.
+        if editing_faces.is_some()
+            && crate::block_edit::edit_selection(resources, target, delta_out)
+        {
+            return true;
+        }
+
         let mut mutated = false;
         if let Some(registry) = resources.get_mut::<ComponentRegistry>()
             && let Some(storage) = registry.get_cpu_mut::<Transform>()
@@ -401,6 +414,16 @@ pub(crate) fn apply_handle_input(
         if mutated {
             transform_propagation_system(resources);
         }
+    }
+
+    // Drag end while editing faces: write the shape back. The asset IS
+    // the shape, and an edit that lives only in `Assets` is one the next
+    // load throws away.
+    //
+    // On release rather than per frame: a drag is one edit, and a file
+    // rewritten sixty times a second is sixty rescans of the project.
+    if was_dragging && !dragging && editing_faces.is_some() {
+        crate::block_edit::save_selection(resources, target);
     }
 
     // Drag end: emit one TransformEdit action with before/after.
