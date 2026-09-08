@@ -2,6 +2,15 @@ use kooch_core::Guid;
 use kooch_core::resource::Resources;
 
 use super::{BuiltBlocks, sync_blocks};
+use kooch_core::assets::Assets;
+
+use crate::BlockMesh;
+
+/// A handle to nothing in particular — these tests are about which
+/// GUIDs are remembered, not what they resolve to.
+fn any_handle() -> kooch_core::assets::Handle<BlockMesh> {
+    Assets::<BlockMesh>::new().insert(BlockMesh::default())
+}
 
 #[test]
 fn nothing_is_built_at_first() {
@@ -12,7 +21,7 @@ fn nothing_is_built_at_first() {
 fn forgetting_asks_for_a_rebuild() {
     let guid = Guid::new_v4();
     let mut built = BuiltBlocks::default();
-    built.built.insert(guid);
+    built.built.insert(guid, any_handle());
     assert!(built.is_built(guid));
     built.forget(guid);
     assert!(!built.is_built(guid));
@@ -22,8 +31,8 @@ fn forgetting_asks_for_a_rebuild() {
 fn forget_all_clears_every_source() {
     let (first, second) = (Guid::new_v4(), Guid::new_v4());
     let mut built = BuiltBlocks::default();
-    built.built.insert(first);
-    built.built.insert(second);
+    built.built.insert(first, any_handle());
+    built.built.insert(second, any_handle());
     built.forget_all();
     assert!(!built.is_built(first));
     assert!(!built.is_built(second));

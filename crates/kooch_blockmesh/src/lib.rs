@@ -33,6 +33,7 @@ mod block;
 mod block_mesh;
 mod collider;
 mod generate;
+mod pick;
 mod plugin;
 mod sync;
 
@@ -40,5 +41,6 @@ pub use adjacency::{Adjacency, NO_FACE};
 pub use asset::{BLOCK_MESH_EXTENSION, BlockMeshLoader, BlockMeshParseError};
 pub use block::Block;
 pub use block_mesh::BlockMesh;
+pub use pick::{Hit, face_at};
 pub use plugin::BlockPlugin;
 pub use sync::{BuiltBlocks, sync_blocks};

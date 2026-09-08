@@ -868,6 +868,27 @@ fn apply_viewport_click(
         return;
     };
 
+    // 🔴 Element mode first, and it never falls through to entity
+    // picking. A click that missed the face is a click on empty space
+    // beside the block you are editing — selecting whatever entity is
+    // behind it would throw the block out of the inspector mid-edit.
+    if element_mode(resources) == crate::block_edit::ElementMode::Face
+        && let [entity] = overlay.selected_entities.as_slice()
+    {
+        let entity = *entity;
+        let face = crate::block_edit::face_under(resources, entity, cursor, delta.viewport_size);
+        if let Some(mut selection) = resources.remove::<crate::block_edit::BlockSelection>() {
+            match (face, delta.ctrl_held) {
+                (Some(face), true) => selection.toggle(entity, face),
+                (Some(face), false) => selection.only(entity, face),
+                (None, false) => selection.clear(),
+                (None, true) => {}
+            }
+            resources.insert(selection);
+        }
+        return;
+    }
+
     let hit = crate::picking::entity_at(resources, cursor, delta.viewport_size);
     match (hit, delta.ctrl_held) {
         // Ctrl adds and removes, the same chord the World panel uses, so
@@ -960,4 +981,12 @@ fn seal_histories(resources: &mut Resources) {
     if let Some(histories) = resources.get_mut::<crate::history::documents::DocumentHistories>() {
         histories.seal();
     }
+}
+
+/// How clicks in the viewport are being read.
+fn element_mode(resources: &Resources) -> crate::block_edit::ElementMode {
+    resources
+        .get::<crate::state::EditorOverlay>()
+        .map(|overlay| overlay.element_mode)
+        .unwrap_or_default()
 }

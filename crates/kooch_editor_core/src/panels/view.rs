@@ -41,6 +41,8 @@ pub(crate) fn draw_view_content(
     physics_debug: &mut kooch_physics::backend::DebugCategories,
     actions: &mut Vec<crate::actions::EditorAction>,
     camera_rotation: Option<glam::Quat>,
+    element_mode: &mut crate::block_edit::ElementMode,
+    editing_a_block: bool,
 ) {
     let available = ui.available_size();
     let pixels_per_point = ui.ctx().pixels_per_point();
@@ -194,6 +196,26 @@ pub(crate) fn draw_view_content(
                 .on_hover_text("Rotate snap step (degrees, hold Ctrl while dragging)");
 
                 ui.separator();
+
+                // 🔴 Only where it can do something. Offering "Face" with
+                // no block selected is a switch that silently changes
+                // what a click means and then changes nothing else — the
+                // author flips it, clicks, and the entity selection is
+                // gone for a reason the toolbar never showed.
+                if editing_a_block {
+                    for mode in [
+                        crate::block_edit::ElementMode::Object,
+                        crate::block_edit::ElementMode::Face,
+                    ] {
+                        if ui
+                            .selectable_label(*element_mode == mode, mode.label())
+                            .clicked()
+                        {
+                            *element_mode = mode;
+                        }
+                    }
+                    ui.separator();
+                }
 
                 // Gizmo visibility. Marked when something is hidden, so a
                 // missing outline is traceable to a choice rather than

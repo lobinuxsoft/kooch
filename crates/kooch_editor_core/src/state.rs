@@ -246,6 +246,9 @@ pub struct EditorOverlay {
     /// The Inspector's cursor over component sections.
     pub(crate) inspector_nav: crate::panels::inspector::InspectorNav,
     pub(crate) selected_entities: Vec<Entity>,
+    /// Whether a click selects an entity or a face of the selected
+    /// block. A second axis beside the handle's mode, not a value of it.
+    pub(crate) element_mode: crate::block_edit::ElementMode,
     /// Entities whose gizmos draw whether or not they are selected.
     ///
     /// # Why per entity and not per component type
