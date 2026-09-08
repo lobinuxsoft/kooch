@@ -141,6 +141,14 @@ impl ShapeSpec {
                 vertices: mesh.vertices.clone(),
                 indices: non_empty(&mesh.indices)?.to_vec(),
             },
+            // Triangles the entity generated for itself. The same
+            // shape a trimesh builds — what differs is where the
+            // geometry came from, and that was already decided by the
+            // time this runs.
+            SHAPE_OWN_MESH => CollisionShape::TriMesh {
+                vertices: mesh.vertices.clone(),
+                indices: non_empty(&mesh.indices)?.to_vec(),
+            },
             SHAPE_TRIMESH => CollisionShape::TriMesh {
                 vertices: mesh.vertices.clone(),
                 indices: non_empty(&mesh.indices)?.to_vec(),
