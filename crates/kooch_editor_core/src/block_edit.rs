@@ -84,6 +84,30 @@ impl BlockSelection {
     }
 }
 
+/// Applies a click in face mode.
+///
+/// Pulled out of the click handler because that one reads a camera, a
+/// component registry and a transform, and the decision it makes is
+/// four lines that none of those affect. The version living inside it
+/// went unreached for a whole session — the handler asked `Resources`
+/// for an overlay the caller was already holding by reference — and
+/// nothing could have caught that, but this can catch the rest.
+pub(crate) fn apply_click(
+    selection: &mut BlockSelection,
+    entity: Entity,
+    face: Option<u32>,
+    ctrl_held: bool,
+) {
+    match (face, ctrl_held) {
+        (Some(face), true) => selection.toggle(entity, face),
+        (Some(face), false) => selection.only(entity, face),
+        // Clicking empty space clears, the way it does for entities.
+        (None, false) => selection.clear(),
+        // Ctrl+click on nothing is a miss, not "deselect everything".
+        (None, true) => {}
+    }
+}
+
 /// The face of `entity`'s block under the cursor.
 ///
 /// The ray is built in world space and then pushed into the mesh's own

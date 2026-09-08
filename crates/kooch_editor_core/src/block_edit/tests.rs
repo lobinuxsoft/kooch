@@ -63,3 +63,36 @@ fn clearing_empties_both_halves() {
     assert!(selection.is_empty());
     assert_eq!(selection.entity, None);
 }
+
+#[test]
+fn a_click_on_a_face_selects_it() {
+    let mut selection = BlockSelection::default();
+    super::apply_click(&mut selection, entity(1), Some(2), false);
+    assert_eq!(selection.faces, vec![2]);
+}
+
+#[test]
+fn a_ctrl_click_adds_to_the_selection() {
+    let mut selection = BlockSelection::default();
+    super::apply_click(&mut selection, entity(1), Some(2), false);
+    super::apply_click(&mut selection, entity(1), Some(4), true);
+    assert_eq!(selection.faces, vec![2, 4]);
+}
+
+#[test]
+fn a_click_on_nothing_clears() {
+    let mut selection = BlockSelection::default();
+    super::apply_click(&mut selection, entity(1), Some(2), false);
+    super::apply_click(&mut selection, entity(1), None, false);
+    assert!(selection.is_empty());
+}
+
+#[test]
+fn a_ctrl_click_on_nothing_keeps_it() {
+    // A miss, not "deselect everything" — the same rule entity picking
+    // follows, so building a selection does not depend on aim.
+    let mut selection = BlockSelection::default();
+    super::apply_click(&mut selection, entity(1), Some(2), false);
+    super::apply_click(&mut selection, entity(1), None, true);
+    assert_eq!(selection.faces, vec![2]);
+}
