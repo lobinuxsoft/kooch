@@ -180,7 +180,11 @@ pub(crate) fn selection_origin(resources: &Resources, entity: Entity) -> Option<
 /// The mesh is edited in the asset itself rather than in a copy: a
 /// block's shape IS the asset, and every entity naming that source is
 /// the same shape by definition.
-pub(crate) fn drag_selection(resources: &mut Resources, entity: Entity, by: Vec3) -> bool {
+pub(crate) fn edit_selection(
+    resources: &mut Resources,
+    entity: Entity,
+    delta: kooch_gizmos_handles::TransformDelta,
+) -> bool {
     let Some(source) = source_of(resources, entity) else {
         return false;
     };
@@ -191,7 +195,9 @@ pub(crate) fn drag_selection(resources: &mut Resources, entity: Entity, by: Vec3
         _ => return false,
     };
 
-    // World to local, without the translation: a delta is a direction.
+    // World to local. A translation is a direction, so it loses the
+    // matrix's translation; a rotation is expressed in the entity's own
+    // basis; a scale factor is already unitless and passes through.
     let Some(to_local) = resources
         .get::<ComponentRegistry>()
         .and_then(|registry| registry.get_cpu::<GlobalTransform>()?.get(entity))
@@ -200,7 +206,6 @@ pub(crate) fn drag_selection(resources: &mut Resources, entity: Entity, by: Vec3
     else {
         return false;
     };
-    let local = to_local.transform_vector3(by);
 
     let Some(handle) = resources
         .get::<BuiltBlocks>()
@@ -216,7 +221,24 @@ pub(crate) fn drag_selection(resources: &mut Resources, entity: Entity, by: Vec3
     };
 
     let corners = mesh.corners_of(&faces);
-    mesh.move_corners(&corners, local);
+    // 🔴 The pivot is the SELECTION's centre, not the entity's origin.
+    // Turning a face about a point it does not contain swings it away
+    // rather than turning it.
+    let Some(pivot) = mesh.centre_of(&faces) else {
+        return false;
+    };
+    match delta {
+        kooch_gizmos_handles::TransformDelta::Translation(by) => {
+            mesh.move_corners(&corners, to_local.transform_vector3(by));
+        }
+        kooch_gizmos_handles::TransformDelta::Rotation(by) => {
+            let basis = glam::Quat::from_mat4(&to_local).normalize();
+            mesh.turn_corners(&corners, pivot, basis * by * basis.inverse());
+        }
+        kooch_gizmos_handles::TransformDelta::Scale(by) => {
+            mesh.scale_corners(&corners, pivot, by);
+        }
+    }
 
     // The render mesh and the collider are generated from this, and
     // both are cached under the source's GUID. Forgetting is what makes

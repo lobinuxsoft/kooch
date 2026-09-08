@@ -213,3 +213,83 @@ fn nothing_selected_has_no_centre() {
 fn an_unknown_face_contributes_nothing() {
     assert!(unit_cube().corners_of(&[99]).is_empty());
 }
+
+#[test]
+fn turning_a_face_keeps_its_centre() {
+    // 🔴 About the selection's own centre, so the face TURNS. About the
+    // mesh origin it would swing away — a translation nobody asked for.
+    let mut cube = unit_cube();
+    let front = facing(&cube, Vec3::Z);
+    let corners = cube.corners_of(&[front]);
+    let pivot = cube.centre_of(&[front]).unwrap();
+
+    cube.turn_corners(&corners, pivot, glam::Quat::from_rotation_z(0.5));
+
+    let after = cube.centre_of(&[front]).unwrap();
+    assert!((after - pivot).length() < 1e-5, "the face moved: {after}");
+}
+
+#[test]
+fn turning_leaves_the_other_corners() {
+    let mut cube = unit_cube();
+    let front = facing(&cube, Vec3::Z);
+    let back = facing(&cube, -Vec3::Z);
+    let before: Vec<Vec3> = cube
+        .corners_of(&[back])
+        .iter()
+        .map(|c| cube.positions()[*c as usize])
+        .collect();
+
+    let corners = cube.corners_of(&[front]);
+    let pivot = cube.centre_of(&[front]).unwrap();
+    cube.turn_corners(&corners, pivot, glam::Quat::from_rotation_z(0.5));
+
+    let after: Vec<Vec3> = cube
+        .corners_of(&[back])
+        .iter()
+        .map(|c| cube.positions()[*c as usize])
+        .collect();
+    assert_eq!(before, after);
+}
+
+#[test]
+fn scaling_a_face_keeps_its_centre() {
+    let mut cube = unit_cube();
+    let front = facing(&cube, Vec3::Z);
+    let corners = cube.corners_of(&[front]);
+    let pivot = cube.centre_of(&[front]).unwrap();
+
+    cube.scale_corners(&corners, pivot, Vec3::splat(2.0));
+
+    let after = cube.centre_of(&[front]).unwrap();
+    assert!((after - pivot).length() < 1e-5);
+}
+
+#[test]
+fn scaling_a_face_widens_it() {
+    let mut cube = unit_cube();
+    let front = facing(&cube, Vec3::Z);
+    let corners = cube.corners_of(&[front]);
+    let pivot = cube.centre_of(&[front]).unwrap();
+    let before = cube.positions()[corners[0] as usize];
+
+    cube.scale_corners(&corners, pivot, Vec3::new(2.0, 2.0, 1.0));
+
+    let after = cube.positions()[corners[0] as usize];
+    assert!((after - pivot).length() > (before - pivot).length());
+}
+
+#[test]
+fn a_face_cannot_be_scaled_to_nothing() {
+    // Collapsed onto the pivot, every later scale multiplies zero, and
+    // the face can never be recovered by dragging back.
+    let mut cube = unit_cube();
+    let front = facing(&cube, Vec3::Z);
+    let corners = cube.corners_of(&[front]);
+    let pivot = cube.centre_of(&[front]).unwrap();
+
+    cube.scale_corners(&corners, pivot, Vec3::ZERO);
+
+    let corner = cube.positions()[corners[0] as usize];
+    assert!((corner - pivot).length() > 0.0, "the face collapsed");
+}

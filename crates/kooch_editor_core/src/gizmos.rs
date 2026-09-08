@@ -369,8 +369,7 @@ pub(crate) fn apply_handle_input(
         // transform is left alone. Applying both would move the block
         // and reshape it by the same amount in one drag.
         if editing_faces.is_some()
-            && let TransformDelta::Translation(v) = delta_out
-            && crate::block_edit::drag_selection(resources, target, v)
+            && crate::block_edit::edit_selection(resources, target, delta_out)
         {
             return true;
         }

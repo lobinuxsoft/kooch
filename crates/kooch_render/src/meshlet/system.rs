@@ -80,6 +80,24 @@ impl MeshletPipeline {
         mesh_handle
     }
 
+    /// Registers `mesh` under `guid`, replacing whatever was there.
+    ///
+    /// What [`Self::register_mesh`] cannot do: it answers with the
+    /// cached handle, which is right for an asset loaded once from a
+    /// file and wrong for a mesh that is being edited — a block dragged
+    /// in the editor kept the shape it had when it was first published,
+    /// forever, while the file and the collider both changed.
+    ///
+    /// ⚠️ The pool is append-only, so the previous copy is **leaked**
+    /// until the next full rebuild. A cube is one meshlet, so a drag
+    /// costs a meshlet a frame; a level of them would not be free. The
+    /// free list that fixes it is #1087.
+    pub fn replace_mesh(&mut self, guid: Guid, mesh: &MeshletMesh) -> MeshHandle {
+        let mesh_handle = self.pool.register(mesh);
+        self.registry.insert(guid, mesh_handle);
+        mesh_handle
+    }
+
     /// Walks the ECS query and returns every distinct `Guid`
     /// referenced by a visible `MeshRenderer`. Useful as the input to
     /// "ensure all referenced meshes are GPU-resident" — duplicates

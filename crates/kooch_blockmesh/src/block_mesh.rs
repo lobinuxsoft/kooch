@@ -1,6 +1,6 @@
 //! The authoring mesh: shared positions plus faces that index them.
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 /// An editable polygon mesh. Faces are convex and wound counter-clockwise
@@ -206,6 +206,34 @@ impl BlockMesh {
             .map(|corner| self.positions[*corner as usize])
             .sum();
         Some(total / corners.len() as f32)
+    }
+
+    /// Turns the given corners around `pivot`, in the mesh's own space.
+    ///
+    /// The pivot is the selection's own centre rather than the mesh
+    /// origin: rotating a face about a point it does not contain swings
+    /// it away instead of turning it, which is a translation nobody
+    /// asked for.
+    pub fn turn_corners(&mut self, corners: &[u32], pivot: Vec3, by: Quat) {
+        for corner in corners {
+            if let Some(position) = self.positions.get_mut(*corner as usize) {
+                *position = pivot + by * (*position - pivot);
+            }
+        }
+    }
+
+    /// Scales the given corners about `pivot`, per axis.
+    ///
+    /// Clamped away from zero: a corner scaled to nothing collapses onto
+    /// the pivot, and every later scale multiplies zero by something,
+    /// so the face can never be recovered by dragging back.
+    pub fn scale_corners(&mut self, corners: &[u32], pivot: Vec3, by: Vec3) {
+        let by = by.max(Vec3::splat(0.001));
+        for corner in corners {
+            if let Some(position) = self.positions.get_mut(*corner as usize) {
+                *position = pivot + (*position - pivot) * by;
+            }
+        }
     }
 
     /// Triangulates every face as a fan, indexing the shared positions.

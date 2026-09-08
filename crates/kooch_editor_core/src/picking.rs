@@ -105,6 +105,14 @@ fn visible_meshes(resources: &Resources) -> Vec<(Entity, Guid, Mat4)> {
 /// already loaded, so this is a cache hit, and a mesh that is *not* loaded
 /// has no bounds to test against anyway.
 fn local_bounds(resources: &mut Resources, mesh: Guid) -> Option<Aabb> {
+    // 🔴 A generated mesh first, because it has no file to load. A
+    // block's renderer names the GUID of the `.block` it was generated
+    // from, and asking the server for that produced nothing — so a
+    // block was never a candidate and could not be clicked at all.
+    if let Some(bounds) = block_bounds(resources, mesh) {
+        return Some(bounds);
+    }
+
     let mut server = resources.remove::<kooch_core::asset_loader::AssetServer>()?;
     let handle = server.load_by_guid::<MeshletMesh>(mesh, resources).ok();
     resources.insert(server);
@@ -116,6 +124,30 @@ fn local_bounds(resources: &mut Resources, mesh: Guid) -> Option<Aabb> {
     // `kooch_core`'s carries the tested slab intersection. Converting is
     // cheaper than a third copy of the same six lines of ray maths.
     Some(Aabb::new(aabb.min, aabb.max))
+}
+
+/// The bounds of a block's authoring mesh, if this GUID names one.
+///
+/// Read from the mesh the editor already holds rather than from disk:
+/// the file lags a drag by one release, and a block picked against its
+/// saved shape is one you cannot click where you can see it.
+fn block_bounds(resources: &Resources, mesh: Guid) -> Option<Aabb> {
+    let handle = resources
+        .get::<kooch_blockmesh::BuiltBlocks>()?
+        .handle(mesh)?;
+    let assets = resources.get::<kooch_core::assets::Assets<kooch_blockmesh::BlockMesh>>()?;
+    let positions = assets.get(handle)?.positions();
+    if positions.is_empty() {
+        return None;
+    }
+
+    let mut min = positions[0];
+    let mut max = positions[0];
+    for position in positions {
+        min = min.min(*position);
+        max = max.max(*position);
+    }
+    Some(Aabb::new(min, max))
 }
 
 /// Distance along the world ray at which it enters `aabb`, or `None`.
