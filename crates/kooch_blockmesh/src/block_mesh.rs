@@ -157,6 +157,57 @@ impl BlockMesh {
         Some(normal.normalize_or(Vec3::Y))
     }
 
+    /// Every corner the given faces use, each once.
+    ///
+    /// 🔴 Once is the whole point. A cube's corner belongs to three
+    /// faces, and moving a selection by adding the delta per face would
+    /// move a shared corner three times — the block tears along exactly
+    /// the seams the shared positions exist to prevent.
+    pub fn corners_of(&self, faces: &[u32]) -> Vec<u32> {
+        let mut corners: Vec<u32> = Vec::new();
+        for face in faces {
+            let Some(face) = self.face(*face as usize) else {
+                continue;
+            };
+            for corner in face {
+                if !corners.contains(corner) {
+                    corners.push(*corner);
+                }
+            }
+        }
+        corners
+    }
+
+    /// Moves the given corners by `delta`, in the mesh's own space.
+    ///
+    /// Every face using a moved corner follows, which is what makes
+    /// dragging one face of a cube reshape the four beside it and leave
+    /// the opposite one where it was.
+    pub fn move_corners(&mut self, corners: &[u32], delta: Vec3) {
+        for corner in corners {
+            if let Some(position) = self.positions.get_mut(*corner as usize) {
+                *position += delta;
+            }
+        }
+    }
+
+    /// The average of the given faces' corners, in the mesh's own space.
+    ///
+    /// Where a handle for that selection belongs. Averaging corners
+    /// rather than face centres so two selected faces sharing an edge
+    /// do not weight it twice.
+    pub fn centre_of(&self, faces: &[u32]) -> Option<Vec3> {
+        let corners = self.corners_of(faces);
+        if corners.is_empty() {
+            return None;
+        }
+        let total: Vec3 = corners
+            .iter()
+            .map(|corner| self.positions[*corner as usize])
+            .sum();
+        Some(total / corners.len() as f32)
+    }
+
     /// Triangulates every face as a fan, indexing the shared positions.
     ///
     /// Welded on purpose: this feeds the collider, and a physics trimesh

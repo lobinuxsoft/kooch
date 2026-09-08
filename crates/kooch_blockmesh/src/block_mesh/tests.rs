@@ -123,3 +123,93 @@ fn a_block_does_not_claim_ron() {
     assert_eq!(extensions, &[crate::BLOCK_MESH_EXTENSION]);
     assert!(!extensions.contains(&"ron"), "ron belongs to Material");
 }
+
+/// The face whose outward normal points along `axis`.
+fn facing(mesh: &BlockMesh, axis: Vec3) -> u32 {
+    (0..mesh.face_count())
+        .find(|face| mesh.face_normal(*face).unwrap().dot(axis) > 0.99)
+        .expect("a cube faces every axis") as u32
+}
+
+#[test]
+fn a_face_names_four_corners() {
+    assert_eq!(unit_cube().corners_of(&[0]).len(), 4);
+}
+
+#[test]
+fn two_faces_share_their_edge() {
+    // Adjacent faces on a cube: 4 + 4 corners, two of them the same.
+    let cube = unit_cube();
+    let faces = [facing(&cube, Vec3::Z), facing(&cube, Vec3::X)];
+    assert_eq!(cube.corners_of(&faces).len(), 6);
+}
+
+#[test]
+fn every_face_covers_every_corner() {
+    let cube = unit_cube();
+    let all: Vec<u32> = (0..cube.face_count() as u32).collect();
+    assert_eq!(cube.corners_of(&all).len(), 8);
+}
+
+#[test]
+fn dragging_a_face_leaves_the_opposite_one() {
+    // 🔴 The test the whole authoring mesh exists for. Moving +Z by one
+    // metre must move its four corners and NOT the four behind them.
+    let mut cube = unit_cube();
+    let front = facing(&cube, Vec3::Z);
+    let back = facing(&cube, -Vec3::Z);
+    let before: Vec<Vec3> = cube
+        .corners_of(&[back])
+        .iter()
+        .map(|corner| cube.positions()[*corner as usize])
+        .collect();
+
+    let moved = cube.corners_of(&[front]);
+    cube.move_corners(&moved, Vec3::Z);
+
+    let after: Vec<Vec3> = cube
+        .corners_of(&[back])
+        .iter()
+        .map(|corner| cube.positions()[*corner as usize])
+        .collect();
+    assert_eq!(before, after, "the opposite face moved");
+    assert!((cube.face_normal(front as usize).unwrap().z - 1.0).abs() < 1e-5);
+}
+
+#[test]
+fn a_shared_corner_moves_once() {
+    // Two adjacent faces selected together: the corners on their shared
+    // edge must travel one metre, not two.
+    let mut cube = unit_cube();
+    let faces = [facing(&cube, Vec3::Z), facing(&cube, Vec3::X)];
+    let corners = cube.corners_of(&faces);
+    let before = cube.positions().to_vec();
+
+    cube.move_corners(&corners, Vec3::Y);
+
+    for corner in &corners {
+        let moved = cube.positions()[*corner as usize] - before[*corner as usize];
+        assert!((moved - Vec3::Y).length() < 1e-5, "moved {moved}");
+    }
+}
+
+#[test]
+fn the_centre_of_a_face_is_its_middle() {
+    let cube = unit_cube();
+    let front = facing(&cube, Vec3::Z);
+    let centre = cube.centre_of(&[front]).unwrap();
+    assert!(
+        (centre - Vec3::new(0.0, 0.0, 0.5)).length() < 1e-5,
+        "{centre}"
+    );
+}
+
+#[test]
+fn nothing_selected_has_no_centre() {
+    assert!(unit_cube().centre_of(&[]).is_none());
+}
+
+#[test]
+fn an_unknown_face_contributes_nothing() {
+    assert!(unit_cube().corners_of(&[99]).is_empty());
+}
