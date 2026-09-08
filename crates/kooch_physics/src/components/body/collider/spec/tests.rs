@@ -1,3 +1,7 @@
+/// Any entity — these tests are about the shape, not about who owns it.
+fn any_entity() -> kooch_ecs::Entity {
+    kooch_ecs::Entity::new(0, 0)
+}
 use super::*;
 
 use crate::components::Collider;
@@ -22,7 +26,7 @@ fn shaped(shape: u32, mesh: Option<Guid>) -> ShapeSpec {
         mesh,
         ..Default::default()
     }
-    .shape_spec(None)
+    .shape_spec(any_entity(), None)
 }
 
 #[test]
@@ -55,7 +59,7 @@ fn a_cached_mesh_becomes_geometry() {
         mesh: Some(guid),
         ..Default::default()
     };
-    let spec = collider.shape_spec(Some(&cache));
+    let spec = collider.shape_spec(any_entity(), Some(&cache));
     assert!(!spec.awaits_mesh(Some(&cache)));
     assert_eq!(
         spec.resolve(Some(&cache)),
@@ -76,8 +80,8 @@ fn the_epoch_reaches_the_spec() {
         mesh: Some(guid),
         ..Default::default()
     };
-    let before = collider.shape_spec(None);
-    let after = collider.shape_spec(Some(&cached(guid)));
+    let before = collider.shape_spec(any_entity(), None);
+    let after = collider.shape_spec(any_entity(), Some(&cached(guid)));
     assert_ne!(before, after, "the arrival has to retire the old body");
 }
 

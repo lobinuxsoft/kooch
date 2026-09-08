@@ -14,13 +14,14 @@ pub use groups::{
     COMBINE_AVERAGE, COMBINE_CHOICES, COMBINE_CLAMPED_SUM, COMBINE_MAX, COMBINE_MIN,
     COMBINE_MULTIPLY, GROUP_BITS,
 };
+use shapes::is_own_mesh;
 pub use shapes::{
     BORDER_RADIUS_WHEN, ENDPOINTS_WHEN, HALF_EXTENTS_WHEN, HALF_HEIGHT_WHEN, MESH_DERIVED,
     MESH_WHEN, NORMAL_WHEN, POINT_C_WHEN, RADIUS_WHEN, SHAPE_CAPSULE, SHAPE_CHOICES, SHAPE_CONE,
     SHAPE_CONVEX_DECOMPOSITION, SHAPE_CONVEX_HULL, SHAPE_CUBOID, SHAPE_CYLINDER, SHAPE_HALF_SPACE,
-    SHAPE_POLYLINE, SHAPE_ROUND_CYLINDER, SHAPE_SEGMENT, SHAPE_SPHERE, SHAPE_TRIANGLE,
-    SHAPE_TRIMESH, SHAPE_VOXELIZED_MESH, SHAPE_VOXELS, VOXEL_SIZE_WHEN, VOXEL_SOLID_WHEN,
-    is_mesh_derived,
+    SHAPE_OWN_MESH, SHAPE_POLYLINE, SHAPE_ROUND_CYLINDER, SHAPE_SEGMENT, SHAPE_SPHERE,
+    SHAPE_TRIANGLE, SHAPE_TRIMESH, SHAPE_VOXELIZED_MESH, SHAPE_VOXELS, VOXEL_SIZE_WHEN,
+    VOXEL_SOLID_WHEN, is_mesh_derived,
 };
 pub use spec::ShapeSpec;
 
@@ -264,7 +265,15 @@ impl Collider {
     /// changed" without resolving a mesh or hashing a point cloud.
     /// `meshes` supplies the epoch that makes a mesh *arriving* count as
     /// a change; `None` reads as "nothing has answered yet".
-    pub fn shape_spec(&self, meshes: Option<&ColliderMeshCache>) -> ShapeSpec {
+    /// The spec for this collider on `entity`.
+    ///
+    /// Takes the entity because a generated mesh is addressed by the one
+    /// that owns it — see [`MeshKey`](crate::backend::MeshKey).
+    pub fn shape_spec(
+        &self,
+        entity: kooch_ecs::entity::Entity,
+        meshes: Option<&ColliderMeshCache>,
+    ) -> ShapeSpec {
         ShapeSpec {
             shape: self.shape,
             radius: self.radius,
@@ -277,17 +286,33 @@ impl Collider {
             point_c: self.point_c,
             voxel_size: self.voxel_size,
             voxel_solid: self.voxel_solid,
-            mesh: self.mesh,
-            mesh_epoch: match (self.mesh, meshes) {
-                (Some(guid), Some(cache)) => cache.epoch(guid),
+            mesh: self.mesh_key(entity),
+            mesh_epoch: match (self.mesh_key(entity), meshes) {
+                (Some(key), Some(cache)) => cache.epoch(key),
                 _ => 0,
             },
         }
     }
 
+    /// How this collider's geometry is addressed.
+    ///
+    /// An own-mesh shape ignores the `mesh` field entirely: its
+    /// geometry belongs to the entity, and reading a GUID there would
+    /// send a walk after a file that does not exist.
+    fn mesh_key(&self, entity: kooch_ecs::entity::Entity) -> Option<crate::backend::MeshKey> {
+        match is_own_mesh(self.shape) {
+            true => Some(crate::backend::MeshKey::Owned(entity)),
+            false => self.mesh.map(crate::backend::MeshKey::Asset),
+        }
+    }
+
     /// The geometry the backend takes, or `None` while a mesh-derived
     /// shape is still waiting for its mesh.
-    pub fn collision_shape(&self, meshes: Option<&ColliderMeshCache>) -> Option<CollisionShape> {
-        self.shape_spec(meshes).resolve(meshes)
+    pub fn collision_shape(
+        &self,
+        entity: kooch_ecs::entity::Entity,
+        meshes: Option<&ColliderMeshCache>,
+    ) -> Option<CollisionShape> {
+        self.shape_spec(entity, meshes).resolve(meshes)
     }
 }

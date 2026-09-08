@@ -104,7 +104,13 @@ fn changing_the_authored_shape_rebuilds_the_body() {
     assert_ne!(before, after, "the solver kept the old shape");
     assert_eq!(
         resources.get::<PhysicsWorld>().unwrap().spec(slot).unwrap(),
-        BodySpec::new(&PhysicsBody::default(), &edited, Vec3::ONE, None)
+        BodySpec::new(
+            &PhysicsBody::default(),
+            &edited,
+            kooch_ecs::Entity::new(0, 0),
+            Vec3::ONE,
+            None,
+        )
     );
 }
 

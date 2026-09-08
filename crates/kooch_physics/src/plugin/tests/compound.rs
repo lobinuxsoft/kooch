@@ -1,5 +1,9 @@
 //! Compound colliders — a body gathering shapes from its descendants (#612).
 
+/// Any entity — these tests are about the shape, not about who owns it.
+fn any_entity() -> kooch_ecs::Entity {
+    kooch_ecs::Entity::new(0, 0)
+}
 use glam::{Quat, Vec3};
 
 use kooch_ecs::component::ComponentRegistry;
@@ -220,7 +224,7 @@ fn a_grandchild_reaches_the_body_above_it() {
 #[test]
 fn moving_a_child_changes_the_digest() {
     let a = [crate::plugin::compound::Attachment {
-        spec: crate::components::Collider::default().shape_spec(None),
+        spec: crate::components::Collider::default().shape_spec(any_entity(), None),
         scale: Vec3::ONE,
         offset: Vec3::ZERO,
         rotation: Quat::IDENTITY,
@@ -240,7 +244,7 @@ fn moving_a_child_changes_the_digest() {
 #[test]
 fn resizing_a_child_changes_the_digest() {
     let base = [crate::plugin::compound::Attachment {
-        spec: crate::components::Collider::default().shape_spec(None),
+        spec: crate::components::Collider::default().shape_spec(any_entity(), None),
         scale: Vec3::ONE,
         offset: Vec3::ZERO,
         rotation: Quat::IDENTITY,

@@ -5,6 +5,10 @@
 //! what an author needs is that the thing lands where it looks like it
 //! should, and the manifold is rapier's business.
 
+/// Any entity — these tests are about the shape, not about who owns it.
+fn any_entity() -> kooch_ecs::Entity {
+    kooch_ecs::Entity::new(0, 0)
+}
 use super::*;
 
 use crate::backend::{ColliderMesh, ColliderMeshCache};
@@ -258,8 +262,8 @@ fn every_shape_round_trips_through_a_scene() {
         };
         let restored = round_trip(&collider);
         assert_eq!(
-            restored.shape_spec(None),
-            collider.shape_spec(None),
+            restored.shape_spec(any_entity(), None),
+            collider.shape_spec(any_entity(), None),
             "shape {shape} lost geometry across a save",
         );
     }
@@ -289,7 +293,9 @@ fn every_offered_shape_resolves() {
             ..Default::default()
         };
         assert!(
-            collider.collision_shape(Some(&cache)).is_some(),
+            collider
+                .collision_shape(any_entity(), Some(&cache))
+                .is_some(),
             "{} resolves to nothing",
             choice.label,
         );

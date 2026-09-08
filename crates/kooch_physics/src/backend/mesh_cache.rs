@@ -20,6 +20,8 @@ use std::collections::HashMap;
 use glam::Vec3;
 use kooch_core::Guid;
 
+use super::MeshKey;
+
 use super::shape::ConvexPart;
 
 /// A mesh, as physics sees it — with whatever reductions of it have
@@ -86,7 +88,7 @@ enum Entry {
 /// Mesh data for colliders, keyed by asset GUID.
 #[derive(Debug, Default)]
 pub struct ColliderMeshCache {
-    entries: HashMap<Guid, (u64, Entry)>,
+    entries: HashMap<MeshKey, (u64, Entry)>,
     /// Monotonic, never reset. What a body's spec carries so that a mesh
     /// arriving *after* the body was authored rebuilds it — the spec
     /// compares unequal the moment this moves.
@@ -99,7 +101,8 @@ impl ColliderMeshCache {
     }
 
     /// Publishes a mesh, replacing whatever was there.
-    pub fn insert(&mut self, guid: Guid, mesh: ColliderMesh) {
+    pub fn insert(&mut self, key: impl Into<MeshKey>, mesh: ColliderMesh) {
+        let guid = key.into();
         self.next_epoch += 1;
         self.entries
             .insert(guid, (self.next_epoch, Entry::Ready(mesh)));
@@ -109,7 +112,8 @@ impl ColliderMeshCache {
     ///
     /// Bumps the epoch like any other answer, so a body built from the
     /// full cloud is retired and rebuilt from the small one.
-    pub fn insert_hull(&mut self, guid: Guid, hull: ConvexPart) {
+    pub fn insert_hull(&mut self, key: impl Into<MeshKey>, hull: ConvexPart) {
+        let guid = key.into();
         let Some((epoch, Entry::Ready(mesh))) = self.entries.get_mut(&guid) else {
             return;
         };
@@ -119,7 +123,8 @@ impl ColliderMeshCache {
     }
 
     /// `true` when this GUID has a mesh whose hull has not been reduced.
-    pub fn awaits_hull(&self, guid: Guid) -> bool {
+    pub fn awaits_hull(&self, key: impl Into<MeshKey>) -> bool {
+        let guid = key.into();
         matches!(self.entries.get(&guid), Some((_, Entry::Ready(mesh))) if mesh.hull.is_empty())
     }
 
@@ -128,7 +133,8 @@ impl ColliderMeshCache {
     /// Idempotent by design: the filler runs every frame and must not
     /// bump the epoch — and so rebuild every body — for a failure that
     /// has not changed.
-    pub fn fail(&mut self, guid: Guid) {
+    pub fn fail(&mut self, key: impl Into<MeshKey>) {
+        let guid = key.into();
         if matches!(self.entries.get(&guid), Some((_, Entry::Failed))) {
             return;
         }
@@ -137,7 +143,8 @@ impl ColliderMeshCache {
     }
 
     /// The mesh, or `None` while it is missing or broken.
-    pub fn get(&self, guid: Guid) -> Option<&ColliderMesh> {
+    pub fn get(&self, key: impl Into<MeshKey>) -> Option<&ColliderMesh> {
+        let guid = key.into();
         match self.entries.get(&guid) {
             Some((_, Entry::Ready(mesh))) => Some(mesh),
             _ => None,
@@ -149,7 +156,8 @@ impl ColliderMeshCache {
     /// `0` for a GUID nobody has answered for yet, which is what makes an
     /// unresolved collider distinguishable from a resolved one in a
     /// [`ShapeSpec`](crate::components::ShapeSpec).
-    pub fn epoch(&self, guid: Guid) -> u64 {
+    pub fn epoch(&self, key: impl Into<MeshKey>) -> u64 {
+        let guid = key.into();
         self.entries
             .get(&guid)
             .map(|(epoch, _)| *epoch)
@@ -157,7 +165,8 @@ impl ColliderMeshCache {
     }
 
     /// `true` once something has answered for this GUID, either way.
-    pub fn answered(&self, guid: Guid) -> bool {
+    pub fn answered(&self, key: impl Into<MeshKey>) -> bool {
+        let guid = key.into();
         self.entries.contains_key(&guid)
     }
 
