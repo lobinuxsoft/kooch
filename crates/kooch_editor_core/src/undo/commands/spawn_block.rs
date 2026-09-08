@@ -110,6 +110,29 @@ impl SpawnBlockCommand {
             );
         }
 
+        // Static, because a wall that falls over is not a level. The
+        // author can make it dynamic; nothing can make a body that was
+        // never authored.
+        if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+            && let Some(storage) = registry.get_cpu_mut::<kooch_physics::components::PhysicsBody>()
+            && let Some(body) = storage.get_mut(entity)
+        {
+            body.kind = kooch_physics::components::KIND_STATIC;
+        }
+
+        // A prototype grid rather than the white default. The UVs
+        // `to_mesh` generates are one repeat per world unit, so a
+        // textured block SHOWS its size and shows a dragged face
+        // changing it — on flat white, a wall pulled two metres and a
+        // wall pulled four look identical.
+        if let Some(guid) = prototype_material(resources)
+            && let Some(registry) = resources.get_mut::<ComponentRegistry>()
+            && let Some(storage) = registry.get_cpu_mut::<MeshRenderer>()
+            && let Some(renderer) = storage.get_mut(entity)
+        {
+            renderer.material = Some(guid);
+        }
+
         // Only the source is written. The renderer's mesh and the
         // collider's are `sync_blocks`'s answer, and writing them here
         // would be a second place that decides what a block draws.

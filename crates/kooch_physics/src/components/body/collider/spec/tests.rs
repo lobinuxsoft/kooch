@@ -126,3 +126,50 @@ fn an_unknown_shape_falls_back() {
         Some(CollisionShape::Sphere { .. })
     ));
 }
+
+/// 🔴 Every shape that ASKS for a mesh has to be able to build one.
+///
+/// `SHAPE_OWN_MESH` was added to `MESH_DERIVED` — so the walk fetched
+/// its geometry — and never added to `from_mesh`, which falls through
+/// to `_ => None`. The mesh arrived and was dropped on the last line,
+/// and the block drew without colliding.
+#[test]
+fn every_mesh_derived_shape_builds_something() {
+    use crate::backend::{ColliderMesh, ColliderMeshCache};
+    use crate::components::MESH_DERIVED;
+
+    let entity = any_entity();
+    let guid = kooch_core::Guid::new_v4();
+    let tetrahedron = ColliderMesh {
+        vertices: vec![Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::Z],
+        indices: vec![[0, 1, 2], [0, 2, 3], [0, 3, 1], [1, 3, 2]],
+        ..Default::default()
+    };
+
+    // Under both keys: an own-mesh shape reads the entity's, the rest
+    // read the asset's, and this test is about what each BUILDS.
+    let mut cache = ColliderMeshCache::new();
+    cache.insert(entity, tetrahedron.clone());
+    cache.insert(guid, tetrahedron);
+
+    let unbuilt: Vec<u32> = MESH_DERIVED
+        .iter()
+        .copied()
+        .filter(|shape| {
+            let collider = Collider {
+                shape: *shape,
+                mesh: Some(guid),
+                ..Default::default()
+            };
+            collider
+                .shape_spec(entity, Some(&cache))
+                .resolve(Some(&cache))
+                .is_none()
+        })
+        .collect();
+
+    assert!(
+        unbuilt.is_empty(),
+        "these shapes fetch a mesh and then build nothing from it: {unbuilt:?}",
+    );
+}
