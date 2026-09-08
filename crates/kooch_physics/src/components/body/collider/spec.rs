@@ -32,7 +32,12 @@ pub struct ShapeSpec {
     pub point_c: Vec3,
     pub voxel_size: f32,
     pub voxel_solid: bool,
-    pub mesh: Option<Guid>,
+    /// Where the geometry comes from — an asset, or this entity itself.
+    ///
+    /// 🔴 Not a bare `Guid`. A generated mesh has no file, and naming
+    /// one in a field that means "a mesh on disk" is what had two
+    /// separate walks feeding a `.block` to a glTF parser.
+    pub mesh: Option<crate::backend::MeshKey>,
     /// What [`ColliderMeshCache::epoch`] said when this spec was read.
     pub mesh_epoch: u64,
 }

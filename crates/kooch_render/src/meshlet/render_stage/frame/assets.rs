@@ -134,12 +134,12 @@ impl MeshletRenderStage {
             .iter()
             .copied()
             .filter(|guid| self.pipeline.lookup(*guid).is_none())
-            // 🔴 Only GUIDs a mesh loader can read. A generated mesh is
-            // named by the GUID of the file it was generated FROM — a
-            // block's `.block` — and asking the server for it produces
-            // "loader does not support extension", once per such GUID,
-            // for a file that was never going to be a mesh. What draws
-            // it is the drain above.
+            // ⚠️ The unfinished half of #1091. A block's renderer still
+            // names the GUID of the file its mesh was generated FROM,
+            // so on the frame before the drain publishes, this would ask
+            // the server for a `.block`. The collider no longer needs a
+            // guard like this — it is addressed by entity now — and this
+            // one goes when the renderer follows.
             .filter(|guid| reads_as_mesh(resources, *guid))
             .collect();
         if !referenced.is_empty() {

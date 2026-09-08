@@ -128,16 +128,18 @@ impl BodySpec {
     pub fn new(
         body: &PhysicsBody,
         collider: &Collider,
+        entity: kooch_ecs::entity::Entity,
         scale: Vec3,
         meshes: Option<&ColliderMeshCache>,
     ) -> Self {
-        Self::with_attachments(body, collider, scale, 0, meshes)
+        Self::with_attachments(body, collider, entity, scale, 0, meshes)
     }
 
     /// Same, for a body that inherits shapes from its descendants.
     pub fn with_attachments(
         body: &PhysicsBody,
         collider: &Collider,
+        entity: kooch_ecs::entity::Entity,
         scale: Vec3,
         attachments: u64,
         meshes: Option<&ColliderMeshCache>,
@@ -146,7 +148,7 @@ impl BodySpec {
             attachments,
             kind: body.kind,
             mass: body.mass,
-            shape: collider.shape_spec(meshes),
+            shape: collider.shape_spec(entity, meshes),
             center: collider.center,
             material: collider.material(),
             interaction: collider.interaction(),
@@ -552,8 +554,9 @@ impl PhysicsWorld {
 /// outline shows a shape the solver is not using.
 pub(super) fn scaled_shape(
     collider: &Collider,
+    entity: kooch_ecs::entity::Entity,
     scale: Vec3,
     meshes: Option<&ColliderMeshCache>,
 ) -> Option<CollisionShape> {
-    Some(collider.collision_shape(meshes)?.scaled(scale))
+    Some(collider.collision_shape(entity, meshes)?.scaled(scale))
 }

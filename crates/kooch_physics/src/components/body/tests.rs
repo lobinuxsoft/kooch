@@ -1,5 +1,9 @@
 //! Tests for [`PhysicsBody`](super::PhysicsBody) and [`Collider`](super::Collider).
 
+/// Any entity — these tests are about the shape, not about who owns it.
+fn any_entity() -> kooch_ecs::Entity {
+    kooch_ecs::Entity::new(0, 0)
+}
 use super::*;
 use glam::Vec3;
 
@@ -11,7 +15,7 @@ fn defaults_are_a_one_kilo_dynamic_unit_sphere() {
     assert_eq!(body.body_kind(), BodyKind::Dynamic);
     assert_eq!(body.mass, 1.0);
     assert_eq!(
-        Collider::default().collision_shape(None),
+        Collider::default().collision_shape(any_entity(), None),
         Some(CollisionShape::Sphere { radius: 0.5 })
     );
 }
@@ -30,7 +34,7 @@ fn unknown_discriminants_fall_back_instead_of_failing() {
         ..Default::default()
     };
     assert!(matches!(
-        collider.collision_shape(None),
+        collider.collision_shape(any_entity(), None),
         Some(CollisionShape::Sphere { .. })
     ));
 }
@@ -44,7 +48,9 @@ fn degenerate_dimensions_are_clamped() {
         half_extents: Vec3::ZERO,
         ..Default::default()
     };
-    let Some(CollisionShape::Cuboid { half_extents }) = collider.collision_shape(None) else {
+    let Some(CollisionShape::Cuboid { half_extents }) =
+        collider.collision_shape(any_entity(), None)
+    else {
         panic!("expected a cuboid");
     };
     assert!(half_extents.min_element() > 0.0);
@@ -64,14 +70,14 @@ fn switching_shape_keeps_the_other_parameters() {
     };
     collider.shape = SHAPE_CUBOID;
     assert_eq!(
-        collider.collision_shape(None),
+        collider.collision_shape(any_entity(), None),
         Some(CollisionShape::Cuboid {
             half_extents: Vec3::splat(2.0)
         })
     );
     collider.shape = SHAPE_CAPSULE;
     assert_eq!(
-        collider.collision_shape(None),
+        collider.collision_shape(any_entity(), None),
         Some(CollisionShape::Capsule {
             radius: 0.25,
             half_height: 1.0

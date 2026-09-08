@@ -121,6 +121,7 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
                     let spec = BodySpec::with_attachments(
                         body,
                         &collider,
+                        entity,
                         transform.scale,
                         super::compound::digest(&attachments),
                         meshes,

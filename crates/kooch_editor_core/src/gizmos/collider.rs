@@ -62,7 +62,7 @@ impl Visualizer<Collider> for ColliderVisualizer {
         &self,
         collider: &Collider,
         transform: &GlobalTransform,
-        _entity: Entity,
+        entity: Entity,
         resources: &Resources,
         gizmos: &mut Gizmos<'_>,
     ) {
@@ -71,6 +71,7 @@ impl Visualizer<Collider> for ColliderVisualizer {
             let centre = translation + rotation * (collider.center * scale.abs());
             draw_mesh_shape(
                 collider,
+                entity,
                 resources,
                 Mat3::from_quat(rotation),
                 centre,
@@ -153,6 +154,7 @@ impl Visualizer<Collider> for ColliderVisualizer {
 /// would.
 fn draw_mesh_shape(
     collider: &Collider,
+    entity: Entity,
     resources: &Resources,
     basis: Mat3,
     translation: Vec3,
@@ -160,7 +162,7 @@ fn draw_mesh_shape(
     gizmos: &mut Gizmos<'_>,
 ) {
     let meshes = resources.get::<ColliderMeshCache>();
-    let Some(shape) = collider.shape_spec(meshes).resolve(meshes) else {
+    let Some(shape) = collider.shape_spec(entity, meshes).resolve(meshes) else {
         // The mesh has not arrived. The body has not been built either,
         // so an outline would be the only thing in the scene claiming
         // there is a collider here.

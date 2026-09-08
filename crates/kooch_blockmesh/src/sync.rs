@@ -8,7 +8,7 @@ use kooch_core::assets::Assets;
 use kooch_core::resource::Resources;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_physics::ColliderMeshCache;
-use kooch_physics::components::SHAPE_TRIMESH;
+use kooch_physics::components::SHAPE_OWN_MESH;
 use kooch_render::meshlet::{GeneratedMeshes, build_default_meshlets};
 
 use crate::Block;
@@ -103,6 +103,7 @@ pub fn sync_blocks(resources: &mut Resources) {
         build_one(resources, guid);
     }
     point_at_sources(resources, &sources);
+    publish_colliders(resources, &sources);
 }
 
 /// Every block that names a source, paired with it.
@@ -176,21 +177,6 @@ fn build_one(resources: &mut Resources, guid: Guid) {
         ),
     }
 
-    match resources.remove::<ColliderMeshCache>() {
-        Some(mut meshes) => {
-            // Replaces whatever was there, including a `Failed` left by
-            // a consumer that reached the GUID first and tried to parse
-            // the `.block` as a mesh. That failure is otherwise
-            // permanent — `answered` counts it as an answer.
-            meshes.insert(guid, block_mesh.to_collider());
-            resources.insert(meshes);
-        }
-        None => tracing::debug!(
-            target: "kooch_blockmesh::sync",
-            %guid, "no ColliderMeshCache, so this block will not collide",
-        ),
-    }
-
     if let Some(mut built) = resources.remove::<BuiltBlocks>() {
         built.built.insert(
             guid,
@@ -241,13 +227,52 @@ fn point_at_sources(resources: &mut Resources, sources: &[(kooch_ecs::Entity, Gu
     }
 
     if let Some(storage) = registry.get_cpu_mut::<kooch_physics::components::Collider>() {
-        for (entity, guid) in sources {
+        for (entity, _) in sources {
             if let Some(collider) = storage.get_mut(*entity) {
-                collider.shape = SHAPE_TRIMESH;
-                collider.mesh = Some(*guid);
+                // 🔴 Addressed by the entity, and `mesh` deliberately
+                // left alone. Naming a `.block` in a field that means "a
+                // mesh on disk" is what had two separate walks feeding
+                // that file to a glTF parser.
+                collider.shape = SHAPE_OWN_MESH;
             }
         }
     }
+}
+
+/// Hands each block's triangles to physics, keyed by the entity that
+/// owns them.
+///
+/// 🔴 Per entity, not per source. Two blocks built from one `.block`
+/// are two shapes the moment either is scaled, and one cache entry
+/// between them is right only by luck.
+fn publish_colliders(resources: &mut Resources, sources: &[(kooch_ecs::Entity, Guid)]) {
+    let shapes: Vec<(kooch_ecs::Entity, kooch_physics::ColliderMesh)> = {
+        let Some(assets) = resources.get::<Assets<BlockMesh>>() else {
+            return;
+        };
+        let Some(built) = resources.get::<BuiltBlocks>() else {
+            return;
+        };
+        sources
+            .iter()
+            .filter_map(|(entity, source)| {
+                let mesh = assets.get(built.handle(*source)?)?;
+                Some((*entity, mesh.to_collider()))
+            })
+            .collect()
+    };
+
+    let Some(mut meshes) = resources.remove::<ColliderMeshCache>() else {
+        tracing::debug!(
+            target: "kooch_blockmesh::sync",
+            "no ColliderMeshCache, so these blocks will not collide",
+        );
+        return;
+    };
+    for (entity, collider) in shapes {
+        meshes.insert(entity, collider);
+    }
+    resources.insert(meshes);
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ mod interaction;
 mod joint;
 mod material;
 mod mesh_cache;
+mod mesh_key;
 mod query;
 mod shape;
 
@@ -22,6 +23,7 @@ pub use interaction::{ColliderInteraction, InteractionMask};
 pub use joint::{BrokenJoint, JointDesc, JointHandle, JointKind, JointMotor, MotorModel};
 pub use material::{CombineRule, Damping, SurfaceMaterial};
 pub use mesh_cache::{ColliderMesh, ColliderMeshCache};
+pub use mesh_key::MeshKey;
 pub use query::{PointHit, QueryFilter, ShapeAt, ShapeHit};
 pub use shape::{CollisionShape, ConvexPart, MIN_EXTENT};
 

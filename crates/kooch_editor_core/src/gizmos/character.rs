@@ -84,7 +84,7 @@ fn reach(entity: Entity, transform: &GlobalTransform, resources: &Resources) -> 
     let meshes = resources.get::<ColliderMeshCache>();
     let scale = transform.matrix.to_scale_rotation_translation().0;
     collider
-        .shape_spec(meshes)
+        .shape_spec(entity, meshes)
         .resolve(meshes)?
         .scaled(scale)
         .reach()

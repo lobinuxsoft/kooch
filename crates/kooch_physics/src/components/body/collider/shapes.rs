@@ -44,6 +44,12 @@ pub const SHAPE_POLYLINE: u32 = 12;
 pub const SHAPE_VOXELS: u32 = 13;
 /// The source mesh, voxelised at build time.
 pub const SHAPE_VOXELIZED_MESH: u32 = 14;
+/// Triangles this entity generated for itself, with no file behind them.
+///
+/// What a block uses. The `mesh` field is not read: the geometry is
+/// addressed by the entity that owns it, because it belongs to that one
+/// entity and changes while somebody drags it.
+pub const SHAPE_OWN_MESH: u32 = 15;
 
 /// Labels for the `shape` dropdown in the Inspector.
 ///
@@ -121,6 +127,7 @@ pub static SHAPE_CHOICES: &[FieldChoice] = &[
 /// stale, and the two disagreeing means a field the author cannot see
 /// deciding what the solver collides against.
 pub const MESH_DERIVED: &[u32] = &[
+    SHAPE_OWN_MESH,
     SHAPE_CONVEX_HULL,
     SHAPE_CONVEX_DECOMPOSITION,
     SHAPE_TRIMESH,
@@ -211,7 +218,17 @@ pub static VOXEL_SOLID_WHEN: FieldCondition = FieldCondition {
     values: &[SHAPE_VOXELIZED_MESH as i64],
 };
 
-/// Whether this discriminant needs a mesh asset behind it.
+/// Whether this discriminant needs geometry from outside physics.
 pub fn is_mesh_derived(shape: u32) -> bool {
     MESH_DERIVED.contains(&shape)
+}
+
+/// Whether this discriminant reads its geometry from the entity rather
+/// than from an asset.
+///
+/// 🔴 The `mesh` GUID is not consulted for these. Pointing that field
+/// at a generated mesh is what had two separate walks feeding a
+/// `.block` to a glTF parser.
+pub fn is_own_mesh(shape: u32) -> bool {
+    shape == SHAPE_OWN_MESH
 }

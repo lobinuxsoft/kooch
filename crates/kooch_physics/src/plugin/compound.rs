@@ -113,7 +113,7 @@ pub(super) fn attachments_for(resources: &Resources, root: Entity) -> Vec<Attach
                 // No cache here on purpose: the epoch belongs in the
                 // digest, and this walk runs for every body every frame.
                 // The resolve that needs it happens once, at attach.
-                spec: collider.shape_spec(None),
+                spec: collider.shape_spec(entity, None),
                 scale,
                 offset: translation + collider.center,
                 rotation,
