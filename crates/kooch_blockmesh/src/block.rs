@@ -31,3 +31,41 @@ pub struct Block {
 }
 
 impl Component for Block {}
+
+/// Every component a block needs, by type id and by name.
+///
+/// 🔴 One list, two spawn paths. A block is created locally by an undo
+/// command and remotely over the wire, and the two had already drifted
+/// twice: the wire shipped without `PhysicsBody`, so physics never saw
+/// the block at all, and the local one set a field on a component it
+/// had forgotten to add. Neither failed — an absent component reads as
+/// a default, and a write to one is a `None` nobody looks at.
+///
+/// Pairs rather than one or the other because the local path addresses
+/// components by [`TypeId`] and the wire addresses them by name, and
+/// keeping two lists in step by hand is what this replaces.
+///
+/// `Name` is not here: the wire's `spawn` call creates it, and the
+/// local path resolves it through the registry with `Transform`.
+pub fn block_components() -> [(std::any::TypeId, &'static str); 4] {
+    [
+        (
+            std::any::TypeId::of::<Block>(),
+            std::any::type_name::<Block>(),
+        ),
+        (
+            std::any::TypeId::of::<kooch_ecs::mesh_renderer::MeshRenderer>(),
+            std::any::type_name::<kooch_ecs::mesh_renderer::MeshRenderer>(),
+        ),
+        (
+            std::any::TypeId::of::<kooch_physics::components::Collider>(),
+            std::any::type_name::<kooch_physics::components::Collider>(),
+        ),
+        // Physics walks bodies, not colliders. Without one a block has
+        // a shape nothing ever asks for.
+        (
+            std::any::TypeId::of::<kooch_physics::components::PhysicsBody>(),
+            std::any::type_name::<kooch_physics::components::PhysicsBody>(),
+        ),
+    ]
+}

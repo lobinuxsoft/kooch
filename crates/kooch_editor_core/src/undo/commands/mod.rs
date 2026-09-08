@@ -25,6 +25,6 @@ pub(crate) use move_to_scene::MoveToSceneCommand;
 pub(crate) use paste::PasteCommand;
 pub(crate) use set_field::SetFieldCommand;
 pub(crate) use spawn::SpawnCommand;
-pub(crate) use spawn_block::SpawnBlockCommand;
+pub(crate) use spawn_block::{SpawnBlockCommand, prototype_material};
 pub(crate) use spawn_mesh::SpawnMeshCommand;
 pub(crate) use transform_edit::TransformEditCommand;

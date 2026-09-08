@@ -83,9 +83,7 @@ impl SpawnBlockCommand {
         self.entity = Some(entity);
 
         let mut types = named_types(resources, &["Name", "Transform"]);
-        types.push(TypeId::of::<Block>());
-        types.push(TypeId::of::<MeshRenderer>());
-        types.push(TypeId::of::<Collider>());
+        types.extend(kooch_blockmesh::block_components().map(|(type_id, _)| type_id));
 
         for type_id in &types {
             let inserted = resources
@@ -167,7 +165,7 @@ impl SpawnBlockCommand {
 /// a sidecar that a fresh checkout regenerates, and a block spawning
 /// with a reference to a material from somebody else's machine is worse
 /// than one spawning white.
-fn prototype_material(resources: &Resources) -> Option<kooch_core::Guid> {
+pub(crate) fn prototype_material(resources: &Resources) -> Option<kooch_core::Guid> {
     const PROTOTYPE: &str = "materials/prototype/orange/orange_texture_01.material";
 
     let resolved = resources
