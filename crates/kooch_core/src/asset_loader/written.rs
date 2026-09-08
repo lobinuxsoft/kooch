@@ -67,6 +67,14 @@ pub fn asset_written(path: &Path, resources: &mut Resources) -> Written {
     // from the *next* save onwards.
     if let Ok(meta) = asset_meta::read_meta(path) {
         written.guid = Some(meta.guid);
+        // Bumped here rather than by each caller: a consumer that
+        // derives something from this asset — a block's generated mesh,
+        // its collider — has no other way to notice, because a reload
+        // overwrites the value under the existing handle on purpose.
+        if let Some(mut reloaded) = resources.remove::<super::ReloadedAssets>() {
+            reloaded.bump(meta.guid);
+            resources.insert(reloaded);
+        }
         let mtime = std::fs::metadata(path)
             .and_then(|m| m.modified())
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);

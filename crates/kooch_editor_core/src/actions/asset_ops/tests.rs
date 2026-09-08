@@ -185,6 +185,33 @@ fn a_new_block_is_a_cube() {
 
 /// Written through the same register-and-announce path every other asset
 /// takes — a block nothing registered cannot be pointed at by `Block`.
+/// 🔴 Typed on the frame it is written, not once something loads it.
+/// An untyped entry looks like a mesh nobody has read yet, and the
+/// collider walk fed the `.block` to a glTF parser — a failure it then
+/// cached forever.
+#[test]
+fn a_new_block_knows_its_type() {
+    let dir = scratch("block_typed");
+    let mut resources = mid_session();
+
+    create_file(&mut resources, &dir, "Wall", NewFileKind::BlockMesh);
+
+    let database = resources.get::<AssetDatabase>().expect("database");
+    let (_, guid) = database
+        .path_iter()
+        .find(|(p, _)| {
+            p.to_string_lossy()
+                .ends_with(kooch_blockmesh::BLOCK_MESH_EXTENSION)
+        })
+        .expect("the block was registered");
+    assert_eq!(
+        database
+            .entry(guid)
+            .and_then(|entry| entry.type_name.clone()),
+        Some(std::any::type_name::<kooch_blockmesh::BlockMesh>().to_owned()),
+    );
+}
+
 #[test]
 fn a_new_block_is_registered() {
     let dir = scratch("block_registered");

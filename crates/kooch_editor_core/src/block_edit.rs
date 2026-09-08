@@ -281,6 +281,18 @@ pub(crate) fn edit_selection(
     true
 }
 
+/// Tells every consumer of this source that its bytes moved.
+///
+/// The project derives its own render mesh and collider from the same
+/// file, and a reload overwrites the value under the existing handle —
+/// so without this its collider stays the shape the block was born
+/// with, however far this side moved it.
+fn announce_change(resources: &mut Resources, source: kooch_core::Guid) {
+    if let Some(mut reloaded) = resources.get_mut::<kooch_core::asset_loader::ReloadedAssets>() {
+        reloaded.bump(source);
+    }
+}
+
 /// Writes the edited shape back to its `.block` file.
 ///
 /// The asset is the shape: an edit that lives only in `Assets` is one
@@ -308,6 +320,7 @@ pub(crate) fn save_selection(resources: &mut Resources, entity: Entity) {
                     target: "kooch_editor_core::block_edit",
                     path = %path.display(), "block written",
                 );
+                announce_change(resources, source);
                 crate::actions::handlers::asset_saved(resources, &path);
             }
             Err(error) => tracing::error!(

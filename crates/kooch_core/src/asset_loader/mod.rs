@@ -43,6 +43,7 @@
 mod error;
 mod pack_scan;
 mod packs;
+mod reloaded;
 mod server;
 mod trait_def;
 mod written;
@@ -63,6 +64,7 @@ pub use error::{AssetError, AssetResult};
 pub use kooch_pack::{PackKey, SHARES_ENV, SplitKey, key_from_shares, shares_for_build};
 pub use pack_scan::{PackScan, scan_packs};
 pub use packs::read_game_file;
+pub use reloaded::ReloadedAssets;
 pub use server::AssetServer;
 pub use trait_def::{AssetLoader, LoadContext};
 pub use written::{Written, asset_written};

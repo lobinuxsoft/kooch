@@ -137,7 +137,13 @@ fn create_file(resources: &mut Resources, folder: &Path, name: &str, kind: NewFi
                 // write: a block nothing registered cannot be named by
                 // `Block.source`.
                 Ok(text) => {
-                    write_asset_guid(resources, &file, &text, "block mesh");
+                    write_asset_guid(
+                        resources,
+                        &file,
+                        &text,
+                        "block mesh",
+                        std::any::type_name::<kooch_blockmesh::BlockMesh>(),
+                    );
                 }
                 Err(e) => tracing::error!(error = %e, "failed to serialise block mesh"),
             }
@@ -472,7 +478,13 @@ pub(crate) fn new_block_asset(resources: &mut Resources) -> Option<(PathBuf, koo
         }
     };
 
-    let guid = write_asset_guid(resources, &file, &text, "block mesh")?;
+    let guid = write_asset_guid(
+        resources,
+        &file,
+        &text,
+        "block mesh",
+        std::any::type_name::<kooch_blockmesh::BlockMesh>(),
+    )?;
     Some((file, guid))
 }
 
@@ -487,6 +499,7 @@ pub(crate) fn write_asset_guid(
     file: &Path,
     text: &str,
     what: &str,
+    asset_type: &str,
 ) -> Option<kooch_core::Guid> {
     use kooch_core::asset_database::{AssetDatabase, AssetEntry};
     use kooch_core::asset_meta::{AssetMeta, write_meta};
@@ -496,7 +509,17 @@ pub(crate) fn write_asset_guid(
         return None;
     }
 
-    let meta = AssetMeta::new();
+    // 🔴 Typed here, not left to whatever loads it first. An untyped
+    // entry looks exactly like a mesh nobody has read yet, so the
+    // collider walk fed a `.block` to the glTF parser — and a failed
+    // collider mesh is cached FOREVER, so the body never collided even
+    // once the real entry arrived a frame later.
+    //
+    // It also makes a new asset appear in the inspector's picker, which
+    // filters the catalogue by type: a freshly created material was
+    // invisible in the dropdown until something loaded it.
+    let mut meta = AssetMeta::new();
+    meta.asset_type = Some(asset_type.to_owned());
     if let Err(e) = write_meta(file, &meta) {
         tracing::error!(file = %file.display(), error = %e, "failed to write {what} identity");
         return None;
@@ -510,7 +533,7 @@ pub(crate) fn write_asset_guid(
             AssetEntry {
                 path: file.to_path_buf(),
                 mtime,
-                type_name: None,
+                type_name: Some(asset_type.to_owned()),
             },
         );
     }

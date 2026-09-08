@@ -182,6 +182,13 @@ impl Plugin for AssetPlugin {
     }
 
     fn build(&self, app: &mut App) {
+        // 🔴 Inserted beside the server, because `asset_written` is what
+        // bumps it and every consumer of a derived asset reads it. It
+        // had three readers and no writer once already — an absent
+        // resource reads exactly like "nothing has changed", so a block
+        // built once and never rebuilt while its file moved.
+        app.insert_resource(kooch_core::asset_loader::ReloadedAssets::new());
+
         let mut server = AssetServer::new().with_asset_root(self.primary_root().to_path_buf());
         server.register_loader::<Mesh, _>(GltfMeshLoader);
         server.register_loader::<MeshletMesh, _>(MeshletMeshLoader);
