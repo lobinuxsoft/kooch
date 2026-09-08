@@ -26,7 +26,19 @@ pub struct BuiltBlocks {
     /// all need the mesh, they all hold `&Resources` and cannot load,
     /// and re-resolving a GUID per frame to answer the same question is
     /// the lookup this already did once.
-    built: HashMap<Guid, kooch_core::assets::Handle<BlockMesh>>,
+    built: HashMap<Guid, Built>,
+}
+
+/// What a source resolved to, and the revision it was resolved at.
+#[derive(Debug, Clone, Copy)]
+struct Built {
+    handle: kooch_core::assets::Handle<BlockMesh>,
+    /// 🔴 A reload overwrites the value under the SAME handle, so the
+    /// handle alone cannot say the shape changed. Without this the
+    /// project built a block once and never again — its collider stayed
+    /// the shape the block was born with, however far the editor moved
+    /// it.
+    revision: u64,
 }
 
 impl BuiltBlocks {
@@ -42,8 +54,11 @@ impl BuiltBlocks {
         self.built.clear();
     }
 
-    pub fn is_built(&self, guid: Guid) -> bool {
-        self.built.contains_key(&guid)
+    /// Whether this source was built from the bytes it currently has.
+    pub fn is_built(&self, guid: Guid, revision: u64) -> bool {
+        self.built
+            .get(&guid)
+            .is_some_and(|built| built.revision == revision)
     }
 
     /// The handle a built source resolved to.
@@ -53,7 +68,7 @@ impl BuiltBlocks {
     /// to answer a question this already answered is the lookup the
     /// handle exists to skip.
     pub fn handle(&self, guid: Guid) -> Option<kooch_core::assets::Handle<BlockMesh>> {
-        self.built.get(&guid).copied()
+        self.built.get(&guid).map(|built| built.handle)
     }
 }
 
@@ -77,7 +92,10 @@ pub fn sync_blocks(resources: &mut Resources) {
             .iter()
             .map(|(_, guid)| *guid)
             .filter(|guid| seen.insert(*guid))
-            .filter(|guid| built.is_none_or(|built| !built.is_built(*guid)))
+            .filter(|guid| {
+                let revision = revision_of(resources, *guid);
+                built.is_none_or(|built| !built.is_built(*guid, revision))
+            })
             .collect()
     };
 
@@ -103,6 +121,9 @@ fn block_sources(resources: &Resources) -> Vec<(kooch_ecs::Entity, Guid)> {
 
 /// Loads one source and publishes both of its outputs.
 fn build_one(resources: &mut Resources, guid: Guid) {
+    // Read BEFORE the load, so a write that lands mid-build is not
+    // recorded as already built.
+    let written = revision_of(resources, guid);
     let Some((handle, block_mesh)) = load_source(resources, guid) else {
         return;
     };
@@ -171,7 +192,13 @@ fn build_one(resources: &mut Resources, guid: Guid) {
     }
 
     if let Some(mut built) = resources.remove::<BuiltBlocks>() {
-        built.built.insert(guid, handle);
+        built.built.insert(
+            guid,
+            Built {
+                handle,
+                revision: written,
+            },
+        );
         resources.insert(built);
     }
 }
@@ -225,3 +252,11 @@ fn point_at_sources(resources: &mut Resources, sources: &[(kooch_ecs::Entity, Gu
 
 #[cfg(test)]
 mod tests;
+
+/// How many times this source's file has been written.
+fn revision_of(resources: &Resources, guid: Guid) -> u64 {
+    resources
+        .get::<kooch_core::asset_loader::ReloadedAssets>()
+        .map(|reloaded| reloaded.revision(guid))
+        .unwrap_or_default()
+}

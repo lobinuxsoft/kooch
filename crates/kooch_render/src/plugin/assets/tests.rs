@@ -106,3 +106,20 @@ fn missing_root_directory_does_not_panic() {
     let db = app.resources().get::<AssetDatabase>().unwrap();
     assert_eq!(db.len(), 0);
 }
+
+/// 🔴 Three readers and no writer is how a derived asset stops
+/// following its source: an absent resource reads exactly like
+/// "nothing has changed".
+#[test]
+fn build_inserts_the_reload_counter() {
+    let dir = TempDir::new("reload_counter");
+    let mut app = App::new();
+    AssetPlugin::new().with_root(&dir.path).build(&mut app);
+
+    assert!(
+        app.resources()
+            .get::<kooch_core::asset_loader::ReloadedAssets>()
+            .is_some(),
+        "nothing can tell that an asset was rewritten",
+    );
+}
