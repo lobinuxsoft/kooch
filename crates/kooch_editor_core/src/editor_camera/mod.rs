@@ -14,6 +14,7 @@
 
 pub mod controller;
 pub mod fly;
+pub(crate) mod framing;
 pub mod input;
 pub mod markers;
 pub mod orbit;

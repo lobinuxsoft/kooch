@@ -126,6 +126,48 @@ fn local_bounds(resources: &mut Resources, mesh: Guid) -> Option<Aabb> {
     Some(Aabb::new(aabb.min, aabb.max))
 }
 
+/// The world-space box `entity`'s visual mesh occupies.
+///
+/// What F frames onto. Answers `None` for an entity with no mesh — a
+/// spawn point has a place but no size, and inventing one would frame
+/// a box nobody can see.
+pub(crate) fn entity_bounds(resources: &mut Resources, entity: Entity) -> Option<(Vec3, Vec3)> {
+    let (mesh, to_world) = visible_meshes(resources)
+        .into_iter()
+        .find(|(candidate, _, _)| *candidate == entity)
+        .map(|(_, mesh, to_world)| (mesh, to_world))?;
+    let aabb = local_bounds(resources, mesh)?;
+
+    // Every corner through the transform, not the two extremes: a
+    // rotated box's min and max are not its rotated min and max, and
+    // framing from those two alone clips the corners that stick out.
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for index in 0..8u32 {
+        let corner = Vec3::new(
+            if index & 1 == 0 {
+                aabb.min.x
+            } else {
+                aabb.max.x
+            },
+            if index & 2 == 0 {
+                aabb.min.y
+            } else {
+                aabb.max.y
+            },
+            if index & 4 == 0 {
+                aabb.min.z
+            } else {
+                aabb.max.z
+            },
+        );
+        let world = to_world.transform_point3(corner);
+        min = min.min(world);
+        max = max.max(world);
+    }
+    Some((min, max))
+}
+
 /// The bounds of a block's authoring mesh, if this GUID names one.
 ///
 /// Read from the mesh the editor already holds rather than from disk:

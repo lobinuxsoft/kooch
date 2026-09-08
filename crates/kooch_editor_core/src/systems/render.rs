@@ -641,12 +641,12 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             // would select whatever is behind the arrow the user grabbed.
             apply_viewport_click(delta, resources, &mut overlay);
 
-            let selection_world = overlay
+            let focus_target = overlay
                 .selected_entities
                 .first()
                 .copied()
-                .and_then(|e| entity_world_position(resources, e));
-            apply_viewport_input(delta, resources, selection_world);
+                .and_then(|entity| focus_target(resources, entity));
+            apply_viewport_input(delta, resources, focus_target);
         }
     }
 
@@ -976,4 +976,32 @@ fn seal_histories(resources: &mut Resources) {
     if let Some(histories) = resources.get_mut::<crate::history::documents::DocumentHistories>() {
         histories.seal();
     }
+}
+
+/// What F should frame for this entity.
+///
+/// A face selection wins: pressing F after clicking one face of a wall
+/// should show you that face, and framing the whole wall is what F
+/// already does from object mode.
+///
+/// Falling back to the entity's own bounds, and to its position alone
+/// when it has no mesh — a spawn point has a place but no size.
+fn focus_target(
+    resources: &mut Resources,
+    entity: kooch_ecs::entity::Entity,
+) -> Option<crate::editor_camera::framing::FocusTarget> {
+    use crate::editor_camera::framing::{FocusTarget, radius_around};
+
+    if let Some((min, max)) = crate::block_edit::selection_bounds(resources, entity) {
+        let point = (min + max) * 0.5;
+        return Some(FocusTarget {
+            point,
+            radius: Some(radius_around(point, min, max)),
+        });
+    }
+
+    let point = entity_world_position(resources, entity)?;
+    let radius = crate::picking::entity_bounds(resources, entity)
+        .map(|(min, max)| radius_around(point, min, max));
+    Some(FocusTarget { point, radius })
 }

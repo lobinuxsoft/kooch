@@ -172,6 +172,37 @@ pub(crate) fn selection_origin(resources: &Resources, entity: Entity) -> Option<
     Some(to_world.transform_point3(centre))
 }
 
+/// The world-space box the current face selection occupies.
+///
+/// What F frames in face mode. The selection, not the block: pressing
+/// F after clicking one face of a wall should show you that face, and
+/// framing the whole wall is what F already did from object mode.
+pub(crate) fn selection_bounds(resources: &Resources, entity: Entity) -> Option<(Vec3, Vec3)> {
+    let selection = resources.get::<BlockSelection>()?;
+    if selection.entity != Some(entity) || selection.is_empty() {
+        return None;
+    }
+    let mesh = mesh_of(resources, entity)?;
+    let corners = mesh.corners_of(&selection.faces);
+    if corners.is_empty() {
+        return None;
+    }
+    let to_world = resources
+        .get::<ComponentRegistry>()?
+        .get_cpu::<GlobalTransform>()?
+        .get(entity)?
+        .matrix;
+
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for corner in corners {
+        let world = to_world.transform_point3(mesh.positions()[corner as usize]);
+        min = min.min(world);
+        max = max.max(world);
+    }
+    Some((min, max))
+}
+
 /// Moves the selected faces by a world-space delta.
 ///
 /// Answers whether anything moved, so the caller knows to leave the
