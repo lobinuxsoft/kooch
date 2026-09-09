@@ -43,6 +43,6 @@ pub use asset::{BLOCK_MESH_EXTENSION, BlockMeshLoader, BlockMeshParseError};
 pub use block::{Block, block_components};
 pub use block_mesh::BlockMesh;
 pub use extrude::Extruded;
-pub use pick::{Hit, face_at};
+pub use pick::{Hit, Screen, edge_at, face_at, vertex_at};
 pub use plugin::BlockPlugin;
 pub use sync::{BuiltBlocks, sync_blocks};
