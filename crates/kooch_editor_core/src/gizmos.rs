@@ -280,7 +280,7 @@ pub(crate) fn apply_handle_input(
     rotation_mode: RotationDisplayMode,
     snap: SnapSettings,
     drag_start: &mut Option<(Entity, Transform)>,
-    shape_start: &mut Option<Vec<glam::Vec3>>,
+    shape_start: &mut Option<kooch_blockmesh::BlockMesh>,
     actions: &mut Vec<EditorAction>,
     element_mode: crate::block_edit::ElementMode,
 ) -> bool {
@@ -368,7 +368,7 @@ pub(crate) fn apply_handle_input(
         // a history with sixty steps for one gesture is a history you
         // scroll through rather than use.
         if editing_faces.is_some()
-            && let Some(corners) = crate::block_edit::corners_of(resources, target)
+            && let Some(corners) = crate::block_edit::shape_of(resources, target)
         {
             *shape_start = Some(corners);
         }
@@ -450,15 +450,15 @@ pub(crate) fn apply_handle_input(
         // Compared rather than assumed: clicking a handle without
         // moving it is a click, not an edit, and a history full of
         // no-ops is what makes undo untrustworthy.
-        if let Some(after) = crate::block_edit::corners_of(resources, target)
+        if let Some(after) = crate::block_edit::shape_of(resources, target)
             && let Some(source) = crate::block_edit::source_of(resources, target)
             && after != before
         {
             actions.push(EditorAction::BlockEdit {
                 entity: target,
                 source,
-                before,
-                after,
+                before: Box::new(before),
+                after: Box::new(after),
             });
         }
     }

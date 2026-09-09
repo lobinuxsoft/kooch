@@ -24,16 +24,16 @@ pub struct BlockMesh {
     /// unit of editing: dragging a vertex moves one entry here and every
     /// face using it follows.
     #[serde(default)]
-    positions: Vec<Vec3>,
+    pub(crate) positions: Vec<Vec3>,
     /// Every face's corners, concatenated. Each entry indexes
     /// `positions`.
     #[serde(default)]
-    face_corners: Vec<u32>,
+    pub(crate) face_corners: Vec<u32>,
     /// Where each face begins in `face_corners`, with a trailing
     /// sentinel equal to its length. Length is `face_count() + 1`, and
     /// an empty mesh stores it empty rather than `[0]`.
     #[serde(default)]
-    face_starts: Vec<u32>,
+    pub(crate) face_starts: Vec<u32>,
 }
 
 /// The eight corners of a cuboid, indexed so bit 0 is +X, bit 1 is +Y

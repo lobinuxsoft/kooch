@@ -633,6 +633,28 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             .is_some_and(|state| state.playing),
     );
 
+    // E with faces selected: pull them out. Before the handle, because
+    // the same key asks for the rotate mode and only one of the two can
+    // be what was meant.
+    if let Some(delta) = viewport_input
+        && delta.extrude_pressed
+        && overlay.element_mode == crate::block_edit::ElementMode::Face
+        && let [entity] = overlay.selected_entities.as_slice()
+    {
+        let entity = *entity;
+        let step = overlay.snap_settings.translate;
+        if let Some((before, after)) = crate::block_edit::extrude_selection(resources, entity, step)
+            && let Some(source) = crate::block_edit::source_of(resources, entity)
+        {
+            actions.push(EditorAction::BlockEdit {
+                entity,
+                source,
+                before: Box::new(before),
+                after: Box::new(after),
+            });
+        }
+    }
+
     if let Some(delta) = viewport_input {
         let selected_snapshot: Vec<_> = overlay.selected_entities.iter().copied().collect();
         let rotation_mode = overlay.rotation_display_mode;

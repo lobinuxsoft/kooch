@@ -104,7 +104,7 @@ pub(crate) enum Inverse {
     /// and Ctrl+Z has to reach it.
     BlockShape {
         source: kooch_core::Guid,
-        corners: Vec<glam::Vec3>,
+        shape: Box<kooch_blockmesh::BlockMesh>,
     },
     /// Several edits that have to travel together, applied in order.
     ///
@@ -659,17 +659,17 @@ impl Inverse {
             // Writes the file both processes read. The opposite is what
             // the corners were before this put them back, so a redo has
             // something to return to.
-            Inverse::BlockShape { source, corners } => {
-                let opposite = crate::block_edit::corners_for(resources, source)
+            Inverse::BlockShape { source, shape } => {
+                let opposite = crate::block_edit::shape_for(resources, source)
                     .ok_or_else(|| "the block is not loaded".to_owned())?;
-                if !crate::block_edit::set_corners(resources, source, &corners) {
-                    return Err("the block changed shape since this edit".to_owned());
+                if !crate::block_edit::set_shape(resources, source, &shape) {
+                    return Err("the block is not loaded".to_owned());
                 }
                 crate::block_edit::announce(resources, source);
                 crate::block_edit::save_source(resources, source);
                 Ok(Inverse::BlockShape {
                     source,
-                    corners: opposite,
+                    shape: Box::new(opposite),
                 })
             }
             Inverse::SetField {

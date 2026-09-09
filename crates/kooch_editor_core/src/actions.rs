@@ -107,17 +107,21 @@ pub(crate) enum EditorAction {
     SpawnBlock {
         into: SpawnTarget,
     },
-    /// One block's shape, before and after a drag.
+    /// One block's shape, before and after an edit.
     ///
-    /// Carries the positions rather than the delta: a rotate and a
-    /// scale are not invertible by negating what the handle reported,
-    /// and a drag that snapped is not the drag the mouse described.
-    /// The corners are the truth, and a block has eight of them.
+    /// The whole mesh, not a delta and not just the positions. A rotate
+    /// and a scale are not invertible by negating what the handle
+    /// reported, a drag that snapped is not the drag the mouse
+    /// described, and an **extrude changes the topology** — there are
+    /// faces afterwards that had no before.
+    ///
+    /// A block is eight corners and six faces. A level of them is still
+    /// a rounding error beside one mesh in the pool.
     BlockEdit {
         entity: Entity,
         source: kooch_core::Guid,
-        before: Vec<glam::Vec3>,
-        after: Vec<glam::Vec3>,
+        before: Box<kooch_blockmesh::BlockMesh>,
+        after: Box<kooch_blockmesh::BlockMesh>,
     },
     Despawn(Entity),
     /// Clones an existing entity's full component set (including
