@@ -249,6 +249,9 @@ pub struct EditorOverlay {
     /// Whether a click selects an entity or a face of the selected
     /// block. A second axis beside the handle's mode, not a value of it.
     pub(crate) element_mode: crate::block_edit::ElementMode,
+    /// A block's corners as they were when a face drag began, so the
+    /// history gets one entry for the gesture rather than one a frame.
+    pub(crate) shape_drag_start: Option<Vec<glam::Vec3>>,
     /// Entities whose gizmos draw whether or not they are selected.
     ///
     /// # Why per entity and not per component type

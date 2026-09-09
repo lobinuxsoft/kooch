@@ -633,7 +633,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             rotation_mode,
             snap,
             &mut overlay.gizmo_drag_start,
+            &mut overlay.shape_drag_start,
             &mut actions,
+            overlay.element_mode,
         );
         if !handle_active {
             // Clicking picks only when a gizmo did not take the click:

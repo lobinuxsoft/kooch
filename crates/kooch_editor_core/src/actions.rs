@@ -107,6 +107,18 @@ pub(crate) enum EditorAction {
     SpawnBlock {
         into: SpawnTarget,
     },
+    /// One block's shape, before and after a drag.
+    ///
+    /// Carries the positions rather than the delta: a rotate and a
+    /// scale are not invertible by negating what the handle reported,
+    /// and a drag that snapped is not the drag the mouse described.
+    /// The corners are the truth, and a block has eight of them.
+    BlockEdit {
+        entity: Entity,
+        source: kooch_core::Guid,
+        before: Vec<glam::Vec3>,
+        after: Vec<glam::Vec3>,
+    },
     Despawn(Entity),
     /// Clones an existing entity's full component set (including
     /// reflected field values) into a new entity. The source stays
@@ -640,6 +652,7 @@ impl EditorAction {
             | Self::Spawn { .. }
             | Self::SpawnMesh { .. }
             | Self::SpawnBlock { .. }
+            | Self::BlockEdit { .. }
             | Self::Despawn(_)
             | Self::Duplicate(_)
             // Both read or write entities, so both wait for a world to
@@ -775,6 +788,7 @@ impl EditorAction {
             Self::Spawn { .. }
             | Self::SpawnMesh { .. }
             | Self::SpawnBlock { .. }
+            | Self::BlockEdit { .. }
             | Self::Despawn(_)
             | Self::Duplicate(_)
             | Self::PasteEntities { .. }

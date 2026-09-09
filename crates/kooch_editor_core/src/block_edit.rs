@@ -287,7 +287,7 @@ pub(crate) fn edit_selection(
 /// file, and a reload overwrites the value under the existing handle —
 /// so without this its collider stays the shape the block was born
 /// with, however far this side moved it.
-fn announce_change(resources: &mut Resources, source: kooch_core::Guid) {
+pub(crate) fn announce(resources: &mut Resources, source: kooch_core::Guid) {
     if let Some(mut reloaded) = resources.get_mut::<kooch_core::asset_loader::ReloadedAssets>() {
         reloaded.bump(source);
     }
@@ -299,7 +299,7 @@ fn announce_change(resources: &mut Resources, source: kooch_core::Guid) {
 /// the next load throws away. Called on release rather than per frame —
 /// a drag is one edit, and rewriting the file each frame is a rescan of
 /// the project each frame.
-pub(crate) fn save_selection(resources: &mut Resources, entity: Entity) {
+pub(crate) fn save(resources: &mut Resources, entity: Entity) {
     let Some(source) = source_of(resources, entity) else {
         return;
     };
@@ -320,7 +320,7 @@ pub(crate) fn save_selection(resources: &mut Resources, entity: Entity) {
                     target: "kooch_editor_core::block_edit",
                     path = %path.display(), "block written",
                 );
-                announce_change(resources, source);
+                announce(resources, source);
                 crate::actions::handlers::asset_saved(resources, &path);
             }
             Err(error) => tracing::error!(
@@ -335,8 +335,49 @@ pub(crate) fn save_selection(resources: &mut Resources, entity: Entity) {
     }
 }
 
+/// Every corner of the block `entity` is built from.
+///
+/// What a drag snapshots, so an undo has something to put back.
+pub(crate) fn corners_of(resources: &Resources, entity: Entity) -> Option<Vec<Vec3>> {
+    Some(mesh_of(resources, entity)?.positions().to_vec())
+}
+
+/// Puts a whole set of corners back, answering whether it landed.
+///
+/// Refuses a count that does not match rather than writing what fits:
+/// an undo whose snapshot is one corner short would silently reshape
+/// the block into something nobody authored.
+pub(crate) fn set_corners(
+    resources: &mut Resources,
+    source: kooch_core::Guid,
+    corners: &[Vec3],
+) -> bool {
+    let Some(handle) = resources
+        .get::<BuiltBlocks>()
+        .and_then(|built| built.handle(source))
+    else {
+        return false;
+    };
+    let Some(mesh) = resources
+        .get_mut::<Assets<BlockMesh>>()
+        .and_then(|assets| assets.get_mut(handle))
+    else {
+        return false;
+    };
+    if mesh.positions().len() != corners.len() {
+        tracing::warn!(
+            target: "kooch_editor_core::block_edit",
+            held = corners.len(), now = mesh.positions().len(),
+            "the block gained or lost corners since this edit; not undoing it",
+        );
+        return false;
+    }
+    mesh.set_positions(corners);
+    true
+}
+
 /// The source a block names.
-fn source_of(resources: &Resources, entity: Entity) -> Option<kooch_core::Guid> {
+pub(crate) fn source_of(resources: &Resources, entity: Entity) -> Option<kooch_core::Guid> {
     resources
         .get::<ComponentRegistry>()?
         .get_cpu::<Block>()?

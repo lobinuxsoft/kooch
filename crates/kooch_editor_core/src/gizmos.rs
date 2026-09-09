@@ -280,7 +280,9 @@ pub(crate) fn apply_handle_input(
     rotation_mode: RotationDisplayMode,
     snap: SnapSettings,
     drag_start: &mut Option<(Entity, Transform)>,
+    shape_start: &mut Option<Vec<glam::Vec3>>,
     actions: &mut Vec<EditorAction>,
+    element_mode: crate::block_edit::ElementMode,
 ) -> bool {
     // Apply W / E / R mode request even when nothing is selected.
     if let Some(req) = delta.mode_request
@@ -312,7 +314,16 @@ pub(crate) fn apply_handle_input(
     // A face selection puts the handle on the face, not on the entity.
     // A gizmo at the origin while the thing you grabbed is a metre away
     // reads as a gizmo for something else.
-    let editing_faces = crate::block_edit::selection_origin(resources, target);
+    // 🔴 Gated on the MODE, not on whether a selection exists. Leaving
+    // it selected while switching to Object is how an author checks
+    // what they just built — and without this the handle went on
+    // reshaping the block after they had asked to move it instead.
+    let editing_faces = match element_mode {
+        crate::block_edit::ElementMode::Face => {
+            crate::block_edit::selection_origin(resources, target)
+        }
+        crate::block_edit::ElementMode::Object => None,
+    };
     let target_origin = match editing_faces.or_else(|| entity_world_position(resources, target)) {
         Some(p) => p,
         None => return false,
@@ -351,6 +362,15 @@ pub(crate) fn apply_handle_input(
     if !was_dragging && dragging {
         if let Some(t) = read_transform(resources, target) {
             *drag_start = Some((target, t));
+        }
+        // The shape as it was, before the first frame of the drag moves
+        // it. One entry per drag, the same rule the transform follows —
+        // a history with sixty steps for one gesture is a history you
+        // scroll through rather than use.
+        if editing_faces.is_some()
+            && let Some(corners) = crate::block_edit::corners_of(resources, target)
+        {
+            *shape_start = Some(corners);
         }
     }
 
@@ -422,8 +442,25 @@ pub(crate) fn apply_handle_input(
     //
     // On release rather than per frame: a drag is one edit, and a file
     // rewritten sixty times a second is sixty rescans of the project.
-    if was_dragging && !dragging && editing_faces.is_some() {
-        crate::block_edit::save_selection(resources, target);
+    if was_dragging
+        && !dragging
+        && let Some(before) = shape_start.take()
+    {
+        crate::block_edit::save(resources, target);
+        // Compared rather than assumed: clicking a handle without
+        // moving it is a click, not an edit, and a history full of
+        // no-ops is what makes undo untrustworthy.
+        if let Some(after) = crate::block_edit::corners_of(resources, target)
+            && let Some(source) = crate::block_edit::source_of(resources, target)
+            && after != before
+        {
+            actions.push(EditorAction::BlockEdit {
+                entity: target,
+                source,
+                before,
+                after,
+            });
+        }
     }
 
     // Drag end: emit one TransformEdit action with before/after.
