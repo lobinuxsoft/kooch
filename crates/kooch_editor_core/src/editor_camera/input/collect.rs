@@ -87,10 +87,11 @@ pub fn collect_viewport_input(
     // --- F key → focus on selection --------------------------------------
     if keys_here {
         delta.focus_pressed = ui.input(|i| i.key_pressed(egui::Key::F));
-        // 🔴 E is also the rotate handle's letter. It means extrude only
-        // with faces selected, which is the one time the rotate mode is
-        // not what an author reaching for E wants.
-        delta.extrude_pressed = ui.input(|i| i.key_pressed(egui::Key::E));
+        // 🔴 Shift+E, because plain E is the rotate handle and asking
+        // one key to mean two things made every extrude also switch
+        // mode. Shift is what Blender and ProBuilder both put in front
+        // of a variant of a letter that is already taken.
+        delta.extrude_pressed = ui.input(|i| i.key_pressed(egui::Key::E) && i.modifiers.shift);
     }
 
     // --- W / E / R → handle mode switch ----------------------------------

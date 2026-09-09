@@ -42,6 +42,13 @@ impl ElementMode {
 pub(crate) struct BlockSelection {
     pub(crate) entity: Option<Entity>,
     pub(crate) faces: Vec<u32>,
+    /// What is being edited, mirrored here from the overlay.
+    ///
+    /// 🔴 The gizmo that draws the block reads `Resources`, and the
+    /// overlay is taken OUT of `Resources` for the whole frame that
+    /// draws it. Anything the drawing needs has to live somewhere the
+    /// drawing can reach — this is the resource it already reads.
+    pub(crate) mode: ElementMode,
 }
 
 impl BlockSelection {
@@ -128,13 +135,18 @@ pub(crate) fn drop_selection_unless_editing(
     mode: ElementMode,
     playing: bool,
 ) {
-    if mode == ElementMode::Face && !playing {
-        return;
-    }
-    if let Some(mut selection) = resources.get_mut::<BlockSelection>()
-        && !selection.is_empty()
-    {
-        selection.clear();
+    let editing = mode == ElementMode::Face && !playing;
+    if let Some(mut selection) = resources.get_mut::<BlockSelection>() {
+        // Mirrored every frame, whether or not anything is selected:
+        // the wireframe has to appear the moment the mode changes, not
+        // once something is clicked.
+        selection.mode = match editing {
+            true => mode,
+            false => ElementMode::Object,
+        };
+        if !editing && !selection.is_empty() {
+            selection.clear();
+        }
     }
 }
 
