@@ -293,3 +293,27 @@ fn a_face_cannot_be_scaled_to_nothing() {
     let corner = cube.positions()[corners[0] as usize];
     assert!((corner - pivot).length() > 0.0, "the face collapsed");
 }
+
+#[test]
+fn positions_go_back_whole() {
+    // What an undo puts back.
+    let mut cube = unit_cube();
+    let before = cube.positions().to_vec();
+    let front = facing(&cube, Vec3::Z);
+    let corners = cube.corners_of(&[front]);
+    cube.move_corners(&corners, Vec3::Z * 3.0);
+
+    assert!(cube.set_positions(&before));
+    assert_eq!(cube.positions(), before.as_slice());
+}
+
+#[test]
+fn a_short_set_is_refused() {
+    // 🔴 The faces index these. A set one corner short would leave them
+    // pointing past the end, and writing what fits would reshape the
+    // block into something nobody authored.
+    let mut cube = unit_cube();
+    let before = cube.positions().to_vec();
+    assert!(!cube.set_positions(&before[..7]));
+    assert_eq!(cube.positions(), before.as_slice());
+}

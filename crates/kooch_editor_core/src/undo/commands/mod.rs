@@ -2,6 +2,7 @@
 //! kind of edit operation. The parent `undo` module re-exports them
 //! all so callers see a flat namespace.
 
+mod block_edit;
 mod component;
 mod despawn;
 mod duplicate;
@@ -15,6 +16,7 @@ mod spawn_block;
 mod spawn_mesh;
 mod transform_edit;
 
+pub(crate) use block_edit::BlockEditCommand;
 pub(crate) use component::{AddComponentCommand, RemoveComponentCommand};
 pub(crate) use despawn::DespawnCommand;
 pub(crate) use duplicate::DuplicateCommand;

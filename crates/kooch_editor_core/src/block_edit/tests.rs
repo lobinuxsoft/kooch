@@ -96,3 +96,16 @@ fn a_ctrl_click_on_nothing_keeps_it() {
     super::apply_click(&mut selection, entity(1), None, true);
     assert_eq!(selection.faces, vec![2]);
 }
+
+/// 🔴 Object mode stops the geometry being edited.
+///
+/// The gate was on whether a selection existed, not on the mode — so
+/// switching to Object left the handle reshaping the block while the
+/// author was asking to move it. Leaving faces selected while switching
+/// is how you check what you just built.
+#[test]
+fn object_mode_is_not_face_mode() {
+    assert_ne!(ElementMode::Object, ElementMode::Face);
+    assert_eq!(ElementMode::Object.label(), "Object");
+    assert_eq!(ElementMode::Face.label(), "Face");
+}

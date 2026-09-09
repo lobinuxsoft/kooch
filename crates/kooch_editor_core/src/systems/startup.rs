@@ -102,6 +102,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
 
     let overlay = EditorOverlay {
         element_mode: crate::block_edit::ElementMode::default(),
+        shape_drag_start: None,
         focused_tab: None,
         asset_nav: Default::default(),
         inspector_nav: Default::default(),
