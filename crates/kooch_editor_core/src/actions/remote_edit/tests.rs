@@ -1036,6 +1036,15 @@ fn every_unclassified_world_edit_is_routed() {
                 into: SpawnTarget::Active,
             },
         ),
+        (
+            "BlockEdit",
+            EditorAction::BlockEdit {
+                entity: kooch_ecs::Entity::new(0, 0),
+                source: kooch_core::Guid::new_v4(),
+                before: Vec::new(),
+                after: Vec::new(),
+            },
+        ),
     ]
     .into_iter()
     .filter(|(_, action)| {
@@ -1050,7 +1059,7 @@ fn every_unclassified_world_edit_is_routed() {
 
     assert_eq!(
         unroutable,
-        ["SpawnMesh", "SpawnBlock"],
+        ["SpawnMesh", "SpawnBlock", "BlockEdit"],
         "these two are refused by `classify` and must therefore be \
          handled in `dispatch` before it — check that they still are",
     );

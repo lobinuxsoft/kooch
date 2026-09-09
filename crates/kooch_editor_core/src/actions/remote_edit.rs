@@ -57,6 +57,22 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     // which does not know it either — so the menu entry did nothing at
     // all, in silence. Exactly the failure `spawn_mesh` above was
     // written to fix.
+    // A block's shape is an asset both processes read, not a wire edit:
+    // the drag already applied it and wrote the file. All that is left
+    // is putting it in the history, which in remote mode is the only
+    // one Ctrl+Z reaches.
+    if let EditorAction::BlockEdit { source, before, .. } = action {
+        crate::actions::remote_undo::record_step(
+            resources,
+            "Edit Block",
+            crate::actions::remote_undo::Inverse::BlockShape {
+                source: *source,
+                corners: before.clone(),
+            },
+        );
+        return true;
+    }
+
     if let EditorAction::SpawnBlock { .. } = action {
         spawn_block(resources);
         return true;
@@ -66,6 +82,16 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     // the project, toggling power profiles all act on the editor, not the
     // remote world.
     let Some(edit) = classify(action, resources) else {
+        // 🔴 A world edit that reaches here is a bug, not a local
+        // action. It falls through to `apply_non_ecs_action`, which
+        // does not know it either, and the gesture does nothing at all
+        // — which is how SpawnBlock and BlockEdit each shipped broken.
+        if action.is_a_world_edit() {
+            tracing::error!(
+                target: "kooch_editor_core::remote_edit",
+                "this edits the world and has no route over the wire; it will be dropped",
+            );
+        }
         return false;
     };
 

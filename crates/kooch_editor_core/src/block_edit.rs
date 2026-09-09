@@ -313,15 +313,19 @@ pub(crate) fn save(resources: &mut Resources, entity: Entity) {
         return;
     };
 
-    match ron::ser::to_string_pretty(&mesh, ron::ser::PrettyConfig::default()) {
-        Ok(text) => match std::fs::write(&path, text) {
+    write_block(resources, &path, &mesh);
+}
+
+/// Serialises a block to its file and tells the database it moved.
+fn write_block(resources: &mut Resources, path: &std::path::Path, mesh: &BlockMesh) {
+    match ron::ser::to_string_pretty(mesh, ron::ser::PrettyConfig::default()) {
+        Ok(text) => match std::fs::write(path, text) {
             Ok(()) => {
                 tracing::debug!(
                     target: "kooch_editor_core::block_edit",
                     path = %path.display(), "block written",
                 );
-                announce(resources, source);
-                crate::actions::handlers::asset_saved(resources, &path);
+                crate::actions::handlers::asset_saved(resources, path);
             }
             Err(error) => tracing::error!(
                 target: "kooch_editor_core::block_edit",
@@ -340,6 +344,41 @@ pub(crate) fn save(resources: &mut Resources, entity: Entity) {
 /// What a drag snapshots, so an undo has something to put back.
 pub(crate) fn corners_of(resources: &Resources, entity: Entity) -> Option<Vec<Vec3>> {
     Some(mesh_of(resources, entity)?.positions().to_vec())
+}
+
+/// Every corner of the block behind `source`.
+///
+/// By source rather than by entity: an undo names the shape, and the
+/// entity that made the edit may not even be selected any more.
+pub(crate) fn corners_for(resources: &Resources, source: kooch_core::Guid) -> Option<Vec<Vec3>> {
+    let handle = resources.get::<BuiltBlocks>()?.handle(source)?;
+    Some(
+        resources
+            .get::<Assets<BlockMesh>>()?
+            .get(handle)?
+            .positions()
+            .to_vec(),
+    )
+}
+
+/// Writes a block's shape to its own file, found by GUID.
+///
+/// The by-source twin of [`save`], for an undo that has a shape and no
+/// entity to ask.
+pub(crate) fn save_source(resources: &mut Resources, source: kooch_core::Guid) {
+    let Some(mesh) = corners_for(resources, source)
+        .and_then(|_| resources.get::<BuiltBlocks>()?.handle(source))
+        .and_then(|handle| Some(resources.get::<Assets<BlockMesh>>()?.get(handle)?.clone()))
+    else {
+        return;
+    };
+    let Some(path) = resources
+        .get::<kooch_core::asset_database::AssetDatabase>()
+        .and_then(|database| database.entry(source).map(|entry| entry.path.clone()))
+    else {
+        return;
+    };
+    write_block(resources, &path, &mesh);
 }
 
 /// Puts a whole set of corners back, answering whether it landed.
