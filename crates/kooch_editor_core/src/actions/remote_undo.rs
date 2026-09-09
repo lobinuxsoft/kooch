@@ -95,6 +95,17 @@ pub(crate) enum Inverse {
     /// project's despawn took (`kooch_remote::handlers`, "Despawns an
     /// entity **and everything under it**").
     Recreate(Vec<Reborn>),
+    /// A block's corners, as they were.
+    ///
+    /// 🔴 Not a wire edit. A block's shape lives in its `.block` file,
+    /// which both processes read — so undoing one writes the file and
+    /// lets the project pick it up, rather than sending anything. It is
+    /// in this history because in remote mode this is the ONLY history,
+    /// and Ctrl+Z has to reach it.
+    BlockShape {
+        source: kooch_core::Guid,
+        corners: Vec<glam::Vec3>,
+    },
     /// Several edits that have to travel together, applied in order.
     ///
     /// A gizmo drag is one action and one entry; a multi-selection
@@ -425,6 +436,22 @@ pub(crate) fn capture_before(
 ///
 /// Called after the send, so a creation can be undone by despawning what
 /// it actually created rather than what it was asked to create.
+/// Records one step whose edit has already been applied.
+///
+/// For an edit that is not a wire call — a block's shape lives in a
+/// file both processes read, so the drag that made it is also the thing
+/// that applied it.
+pub(crate) fn record_step(resources: &mut Resources, label: &str, inverse: Inverse) {
+    if let Some(mut history) = resources.remove::<RemoteHistory>() {
+        history.record(Step {
+            label: label.to_owned(),
+            inverse,
+            key: None,
+        });
+        resources.insert(history);
+    }
+}
+
 pub(crate) fn record(
     resources: &mut Resources,
     action: &EditorAction,
@@ -626,9 +653,25 @@ impl Inverse {
         self,
         client: &RemoteClient,
         mirror: &RemoteMirror,
-        resources: &Resources,
+        resources: &mut Resources,
     ) -> Result<Inverse, String> {
         match self {
+            // Writes the file both processes read. The opposite is what
+            // the corners were before this put them back, so a redo has
+            // something to return to.
+            Inverse::BlockShape { source, corners } => {
+                let opposite = crate::block_edit::corners_for(resources, source)
+                    .ok_or_else(|| "the block is not loaded".to_owned())?;
+                if !crate::block_edit::set_corners(resources, source, &corners) {
+                    return Err("the block changed shape since this edit".to_owned());
+                }
+                crate::block_edit::announce(resources, source);
+                crate::block_edit::save_source(resources, source);
+                Ok(Inverse::BlockShape {
+                    source,
+                    corners: opposite,
+                })
+            }
             Inverse::SetField {
                 entity,
                 component,
