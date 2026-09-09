@@ -158,3 +158,38 @@ fn dropping_twice_is_quiet() {
     super::drop_selection_unless_editing(&mut resources, ElementMode::Object, false);
     assert!(!held(&resources));
 }
+
+#[test]
+fn face_mode_reaches_the_drawing() {
+    // 🔴 The gizmo reads Resources, and the overlay is taken OUT of
+    // Resources for the frame that draws it. The mode has to be
+    // mirrored somewhere the drawing can see, or the wireframe never
+    // appears however the toolbar looks.
+    let mut resources = with_selection();
+    super::drop_selection_unless_editing(&mut resources, ElementMode::Face, false);
+    assert_eq!(
+        resources.get::<BlockSelection>().map(|s| s.mode),
+        Some(ElementMode::Face),
+    );
+}
+
+#[test]
+fn object_mode_reaches_it_too() {
+    let mut resources = with_selection();
+    super::drop_selection_unless_editing(&mut resources, ElementMode::Object, false);
+    assert_eq!(
+        resources.get::<BlockSelection>().map(|s| s.mode),
+        Some(ElementMode::Object),
+    );
+}
+
+#[test]
+fn play_reads_as_object_to_the_drawing() {
+    // Nothing is editable during Play, so nothing should look editable.
+    let mut resources = with_selection();
+    super::drop_selection_unless_editing(&mut resources, ElementMode::Face, true);
+    assert_eq!(
+        resources.get::<BlockSelection>().map(|s| s.mode),
+        Some(ElementMode::Object),
+    );
+}
