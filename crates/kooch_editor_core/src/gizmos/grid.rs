@@ -51,6 +51,7 @@ pub(crate) fn grid_planes(resources: &Resources) -> Vec<GridPlane> {
         cell: CELL,
         counting: COUNTING,
         axes: true,
+        scales: true,
     }];
 
     if let Some(origin) = resources
@@ -69,6 +70,11 @@ pub(crate) fn grid_planes(resources: &Resources) -> Vec<GridPlane> {
             // The axes belong to the world, and drawing a second set at
             // an arbitrary height says the origin moved.
             axes: false,
+            // 🔴 Fixed on purpose. This grid is the ruler the drag moves
+            // by, so every cell has to BE the snap step — one that
+            // coarsened as you pulled the camera back would be showing
+            // a distance the handle cannot land on.
+            scales: false,
         });
     }
     planes

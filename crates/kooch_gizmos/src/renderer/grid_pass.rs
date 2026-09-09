@@ -43,6 +43,9 @@ pub struct GridPlane {
     pub counting: Vec3,
     /// Whether the world axes cross it.
     pub axes: bool,
+    /// Whether the cell size follows the camera. Off for a guide, whose
+    /// whole job is to show the scale a drag moves in.
+    pub scales: bool,
 }
 
 /// Draws one horizontal plane of grid, per pixel.
@@ -157,9 +160,16 @@ impl GridPass {
         camera: Vec3,
         plane: GridPlane,
     ) {
-        // From the camera's distance to the plane, so the cells stay
-        // about one size on screen however far out you zoom.
-        let level = GridLevel::at(camera.y - plane.height, plane.step);
+        // A scaling grid keeps its cells about one size on screen at
+        // every zoom; a fixed one keeps them the size of the step, and
+        // fades over a hundred of those rather than a horizon.
+        let (level, fade_distance) = match plane.scales {
+            true => {
+                let level = GridLevel::at(camera.y - plane.height, plane.step);
+                (level, level.large_step() * 100.0)
+            }
+            false => (GridLevel::fixed(plane.step), plane.step * 100.0),
+        };
         queue.write_buffer(
             &self.buffer,
             0,
@@ -175,10 +185,7 @@ impl GridPass {
                 axis_x_color: [0.78, 0.24, 0.28],
                 plane_y: plane.height,
                 axis_z_color: [0.24, 0.42, 0.80],
-                // Reaches as far as a hundred of the coarse cells, so
-                // the fade scales with the level rather than ending at a
-                // fixed metre count nobody chose.
-                fade_distance: level.large_step() * 100.0,
+                fade_distance,
                 flags: [
                     match plane.axes {
                         true => 1.0,

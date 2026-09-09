@@ -53,6 +53,17 @@ impl GridLevel {
         }
     }
 
+    /// A level pinned to `step`, whatever the camera is doing.
+    ///
+    /// What a guide grid wants: its job is to show the scale a drag
+    /// moves in, and a scale that changes as you zoom shows nothing.
+    pub fn fixed(step: f32) -> Self {
+        Self {
+            small_step: step.max(f32::EPSILON),
+            blend: 0.0,
+        }
+    }
+
     /// The coarser level, which the fine one fades into.
     pub fn large_step(self) -> f32 {
         self.small_step * STEPS

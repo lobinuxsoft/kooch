@@ -75,3 +75,16 @@ fn a_smaller_unit_scales_with_it() {
     let centimetres = GridLevel::at(0.05, 0.005);
     assert!((metres.blend - centimetres.blend).abs() < 1e-4);
 }
+
+#[test]
+fn a_fixed_level_ignores_distance() {
+    // The guide draws the step a drag moves by. Pulling the camera back
+    // must not coarsen it into a distance no handle can land on.
+    let near = GridLevel::fixed(0.5);
+    let far = GridLevel::fixed(0.5);
+    assert_eq!(near.small_step, 0.5);
+    assert_eq!(near.blend, 0.0);
+    assert_eq!(near, far);
+    // And it is NOT what the scaling one would give from up high.
+    assert_ne!(GridLevel::at(500.0, 0.5).small_step, near.small_step);
+}
