@@ -25,9 +25,12 @@ struct GridUniforms {
     plane_y: f32,
     axis_z_color: [f32; 3],
     fade_distance: f32,
-    draw_axes: f32,
-    _pad: [f32; 3],
+    flags: [f32; 4],
 }
+
+// The whole reason `flags` is a vec4: a uniform's size has to agree
+// with the shader's, and WGSL rounds a struct up to 16.
+const _: () = assert!(size_of::<GridUniforms>() == 224);
 
 /// How a grid should look and where it lives.
 #[derive(Debug, Clone, Copy)]
@@ -77,7 +80,9 @@ impl GridPass {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: None,
+                    // Declared so a layout that drifts from the shader's
+                    // fails once, at startup, instead of every draw.
+                    min_binding_size: wgpu::BufferSize::new(size_of::<GridUniforms>() as u64),
                 },
                 count: None,
             }],
@@ -174,11 +179,15 @@ impl GridPass {
                 // the fade scales with the level rather than ending at a
                 // fixed metre count nobody chose.
                 fade_distance: level.large_step() * 100.0,
-                draw_axes: match plane.axes {
-                    true => 1.0,
-                    false => 0.0,
-                },
-                _pad: [0.0; 3],
+                flags: [
+                    match plane.axes {
+                        true => 1.0,
+                        false => 0.0,
+                    },
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
             }),
         );
 

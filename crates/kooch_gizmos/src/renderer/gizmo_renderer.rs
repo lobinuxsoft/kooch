@@ -29,8 +29,8 @@ pub struct GizmoRenderer {
     /// Two passes rather than one with a loop: each writes its own
     /// uniforms, and a second write into a buffer the first draw has
     /// not consumed would show the second grid twice.
-    world_grid: super::GridPass,
-    guide_grid: super::GridPass,
+    world_grid: GridPass,
+    guide_grid: GridPass,
 }
 
 impl GizmoRenderer {
@@ -144,8 +144,8 @@ impl GizmoRenderer {
             bind_group,
             vertex_buffer,
             vertex_capacity: INITIAL_VERTEX_CAPACITY,
-            world_grid: super::GridPass::new(device, format, VIEWPORT_DEPTH_FORMAT, pipeline_cache),
-            guide_grid: super::GridPass::new(device, format, VIEWPORT_DEPTH_FORMAT, pipeline_cache),
+            world_grid: GridPass::new(device, format, VIEWPORT_DEPTH_FORMAT, pipeline_cache),
+            guide_grid: GridPass::new(device, format, VIEWPORT_DEPTH_FORMAT, pipeline_cache),
         }
     }
 

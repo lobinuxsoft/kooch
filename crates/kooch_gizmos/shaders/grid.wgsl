@@ -44,9 +44,12 @@ struct GridUniforms {
     axis_z_color: vec3<f32>,
     // Where the fade reaches nothing, from the camera's own position.
     fade_distance: f32,
-    // 1 when the world axes should be drawn, 0 for a guide.
-    draw_axes: f32,
-    _pad: vec3<f32>,
+    // x: 1 when the world axes should be drawn, 0 for a guide.
+    //
+    // A vec4 and not a scalar plus padding: WGSL aligns a trailing vec3
+    // to 16 and Rust's [f32; 3] to 4, so the two structs disagree on
+    // their own size and every draw fails validation.
+    flags: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> grid: GridUniforms;
@@ -133,7 +136,7 @@ fn fs_main(in: Fragment) -> Shaded {
 
     // The axes over the cells crossing them, and only where a world
     // grid asked for them.
-    if (grid.draw_axes > 0.5) {
+    if (grid.flags.x > 0.5) {
         let axis = abs(world.xz) / fwidth(world.xz);
         if (axis.y < 1.0) {
             color = grid.axis_x_color;
