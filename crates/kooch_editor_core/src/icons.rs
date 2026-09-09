@@ -125,3 +125,13 @@ pub const ROCKET: &str = "\u{e3fc}";
 
 /// Terminal icon — used for output console.
 pub const TERMINAL: &str = "\u{e47e}";
+
+/// Dots-nine — vertex selection mode. Codepoint from `egui-phosphor`'s
+/// `regular.rs`, glyph confirmed present in the embedded `Phosphor.ttf`.
+pub const DOTS_NINE: &str = "\u{e1fc}";
+
+/// Line-segment — edge selection mode.
+pub const LINE_SEGMENT: &str = "\u{e6d2}";
+
+/// Polygon — face selection mode.
+pub const POLYGON: &str = "\u{e6d0}";

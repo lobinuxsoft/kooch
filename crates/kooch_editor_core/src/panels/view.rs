@@ -203,12 +203,15 @@ pub(crate) fn draw_view_content(
                 // author flips it, clicks, and the entity selection is
                 // gone for a reason the toolbar never showed.
                 if editing_a_block {
-                    for mode in [
-                        crate::block_edit::ElementMode::Object,
-                        crate::block_edit::ElementMode::Face,
-                    ] {
+                    // Icons, not labels: four words is a sentence you
+                    // re-read on every switch, and this is the row an
+                    // author touches most. The name stays in the
+                    // tooltip, which is where a glyph nobody recognises
+                    // yet gets explained.
+                    for mode in crate::block_edit::ElementMode::ALL {
                         if ui
-                            .selectable_label(*element_mode == mode, mode.label())
+                            .selectable_label(*element_mode == mode, mode.icon())
+                            .on_hover_text(mode.label())
                             .clicked()
                         {
                             *element_mode = mode;

@@ -622,7 +622,13 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             || delta.zoom_lines != 0.0
     });
 
-    // Before anything can drag: a face selection outlives neither a
+    if let Some(delta) = viewport_input
+        && let Some(mode) = delta.element_request
+    {
+        overlay.element_mode = mode;
+    }
+
+    // Before anything can drag: an element selection outlives neither a
     // switch to Object nor Play, and leaving it painted while the handle
     // is gated is a gizmo that looks grabbable and records nothing.
     crate::block_edit::drop_selection_unless_editing(
@@ -911,13 +917,19 @@ fn apply_viewport_click(
     // picking. A click that missed the face is a click on empty space
     // beside the block you are editing — selecting whatever entity is
     // behind it would throw the block out of the inspector mid-edit.
-    if overlay.element_mode == crate::block_edit::ElementMode::Face
+    if overlay.element_mode.edits_elements()
         && let [entity] = overlay.selected_entities.as_slice()
     {
         let entity = *entity;
-        let face = crate::block_edit::face_under(resources, entity, cursor, delta.viewport_size);
+        let element = crate::block_edit::element_under(
+            resources,
+            entity,
+            cursor,
+            delta.viewport_size,
+            overlay.element_mode,
+        );
         if let Some(mut selection) = resources.remove::<crate::block_edit::BlockSelection>() {
-            crate::block_edit::apply_click(&mut selection, entity, face, delta.ctrl_held);
+            crate::block_edit::apply_click(&mut selection, entity, element, delta.ctrl_held);
             resources.insert(selection);
         }
         return;

@@ -20,7 +20,11 @@ pub(crate) enum ElementMode {
     /// other kind of entity wants.
     #[default]
     Object,
-    /// Clicks select faces of the selected block.
+    /// Clicks select single corners.
+    Vertex,
+    /// Clicks select edges, moving the two corners at their ends.
+    Edge,
+    /// Clicks select faces.
     Face,
 }
 
@@ -28,12 +32,34 @@ impl ElementMode {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Object => "Object",
+            Self::Vertex => "Vertex",
+            Self::Edge => "Edge",
             Self::Face => "Face",
         }
     }
+
+    /// The glyph for the toolbar. Icons over words because these four
+    /// are a row you switch between constantly, and four labels is a
+    /// sentence you have to read every time.
+    pub(crate) fn icon(self) -> &'static str {
+        match self {
+            Self::Object => crate::icons::CUBE,
+            Self::Vertex => crate::icons::DOTS_NINE,
+            Self::Edge => crate::icons::LINE_SEGMENT,
+            Self::Face => crate::icons::POLYGON,
+        }
+    }
+
+    /// Every mode, in the order the toolbar shows them.
+    pub(crate) const ALL: [Self; 4] = [Self::Object, Self::Vertex, Self::Edge, Self::Face];
+
+    /// Whether clicks select parts of a block rather than entities.
+    pub(crate) fn edits_elements(self) -> bool {
+        self != Self::Object
+    }
 }
 
-/// Which faces of which block are selected.
+/// Which parts of which block are selected.
 ///
 /// One entity at a time. Editing elements across several blocks is a
 /// different feature and mostly a different UI — the handle would have
@@ -41,7 +67,13 @@ impl ElementMode {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct BlockSelection {
     pub(crate) entity: Option<Entity>,
-    pub(crate) faces: Vec<u32>,
+    /// Indices into whatever `mode` names: faces of the mesh, edges of
+    /// its `Adjacency`, or corners.
+    ///
+    /// 🔴 Which is why switching mode clears them. A face index and an
+    /// edge index are both `u32` and neither is the other; keeping them
+    /// across a switch selects unrelated geometry, silently.
+    pub(crate) elements: Vec<u32>,
     /// What is being edited, mirrored here from the overlay.
     ///
     /// 🔴 The gizmo that draws the block reads `Resources`, and the
@@ -52,42 +84,90 @@ pub(crate) struct BlockSelection {
 }
 
 impl BlockSelection {
-    /// Replaces the selection with one face.
-    pub(crate) fn only(&mut self, entity: Entity, face: u32) {
+    /// Replaces the selection with one element.
+    pub(crate) fn only(&mut self, entity: Entity, element: u32) {
         self.entity = Some(entity);
-        self.faces.clear();
-        self.faces.push(face);
+        self.elements.clear();
+        self.elements.push(element);
     }
 
-    /// Adds a face, or removes it when it was already selected.
+    /// Adds an element, or removes it when it was already selected.
     ///
-    /// Switching entity clears rather than merges: the faces held are
-    /// indices into one mesh, and keeping another block's would address
-    /// faces that do not exist.
-    pub(crate) fn toggle(&mut self, entity: Entity, face: u32) {
+    /// Switching entity clears rather than merges: the indices held
+    /// address one mesh, and keeping another block's would name
+    /// geometry that does not exist.
+    pub(crate) fn toggle(&mut self, entity: Entity, element: u32) {
         if self.entity != Some(entity) {
-            self.only(entity, face);
+            self.only(entity, element);
             return;
         }
-        match self.faces.iter().position(|held| *held == face) {
+        match self.elements.iter().position(|held| *held == element) {
             Some(at) => {
-                self.faces.remove(at);
+                self.elements.remove(at);
             }
-            None => self.faces.push(face),
+            None => self.elements.push(element),
         }
     }
 
     pub(crate) fn clear(&mut self) {
         self.entity = None;
-        self.faces.clear();
+        self.elements.clear();
     }
 
-    pub(crate) fn holds(&self, entity: Entity, face: u32) -> bool {
-        self.entity == Some(entity) && self.faces.contains(&face)
+    pub(crate) fn holds(&self, entity: Entity, element: u32) -> bool {
+        self.entity == Some(entity) && self.elements.contains(&element)
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.faces.is_empty()
+        self.elements.is_empty()
+    }
+
+    /// The elements selected on `entity`, or nothing.
+    fn of(&self, entity: Entity) -> Option<Vec<u32>> {
+        match self.entity == Some(entity) && !self.is_empty() {
+            true => Some(self.elements.clone()),
+            false => None,
+        }
+    }
+}
+
+/// The corners a selection moves, each once.
+///
+/// 🔴 Where the three modes stop being three things. A face is its
+/// corners, an edge is two of them, a vertex is one — and every edit
+/// below this point works on a corner list, so vertex and edge editing
+/// need no new transform code at all.
+///
+/// Deduplicated, because a corner shared by two selected faces that
+/// moved twice is the tear the shared positions exist to prevent.
+pub(crate) fn corners_of(mesh: &BlockMesh, mode: ElementMode, elements: &[u32]) -> Vec<u32> {
+    match mode {
+        ElementMode::Face => mesh.corners_of(elements),
+        ElementMode::Vertex => {
+            let mut corners: Vec<u32> = Vec::new();
+            for corner in elements {
+                if (*corner as usize) < mesh.positions().len() && !corners.contains(corner) {
+                    corners.push(*corner);
+                }
+            }
+            corners
+        }
+        ElementMode::Edge => {
+            let adjacency = kooch_blockmesh::Adjacency::of(mesh);
+            let mut corners: Vec<u32> = Vec::new();
+            for edge in elements {
+                let Some(ends) = adjacency.edge_corners(*edge) else {
+                    continue;
+                };
+                for corner in ends {
+                    if !corners.contains(&corner) {
+                        corners.push(corner);
+                    }
+                }
+            }
+            corners
+        }
+        ElementMode::Object => Vec::new(),
     }
 }
 
@@ -135,42 +215,46 @@ pub(crate) fn drop_selection_unless_editing(
     mode: ElementMode,
     playing: bool,
 ) {
-    let editing = mode == ElementMode::Face && !playing;
+    let editing = mode.edits_elements() && !playing;
+    let wanted = match editing {
+        true => mode,
+        false => ElementMode::Object,
+    };
     if let Some(mut selection) = resources.get_mut::<BlockSelection>() {
+        // 🔴 A switch between element modes clears too, not just a
+        // switch to Object. Face 3 and edge 3 are both `3`; carrying
+        // them across would leave unrelated geometry lit and draggable.
+        if selection.mode != wanted && !selection.is_empty() {
+            selection.clear();
+        }
         // Mirrored every frame, whether or not anything is selected:
         // the wireframe has to appear the moment the mode changes, not
         // once something is clicked.
-        selection.mode = match editing {
-            true => mode,
-            false => ElementMode::Object,
-        };
-        if !editing && !selection.is_empty() {
-            selection.clear();
-        }
+        selection.mode = wanted;
     }
 }
 
-/// The face of `entity`'s block under the cursor.
+/// How near the cursor an edge or a corner counts as clicked.
 ///
-/// The ray is built in world space and then pushed into the mesh's own
-/// space by the inverse of the entity's transform — one inversion,
-/// rather than transforming every corner of every face on every mouse
-/// move.
-pub(crate) fn face_under(
+/// Twelve physical pixels. A corner has no area and an edge no width,
+/// so without a radius neither is ever hit; too wide and a corner steals
+/// every click meant for the edge running out of it.
+const REACH: f32 = 12.0;
+
+/// The element of `entity`'s block under the cursor.
+///
+/// Faces are found with a ray in the mesh's own space — one inverse of
+/// the entity's transform, rather than transforming every corner on
+/// every mouse move. Vertices and edges are found in screen space,
+/// because "close enough" for something with no area is a count of
+/// pixels.
+pub(crate) fn element_under(
     resources: &Resources,
     entity: Entity,
     cursor: Vec2,
     viewport_size: Vec2,
+    mode: ElementMode,
 ) -> Option<u32> {
-    let (camera, camera_transform) = crate::gizmos::active_camera(resources)?;
-    let ray = kooch_render::projection::viewport_cursor_to_ray(
-        cursor,
-        viewport_size,
-        camera_transform.matrix,
-        camera.fov.to_radians(),
-        camera.near,
-    )?;
-
     let mesh = mesh_of(resources, entity)?;
     let to_world = resources
         .get::<ComponentRegistry>()?
@@ -184,12 +268,56 @@ pub(crate) fn face_under(
         return None;
     }
 
-    let origin = to_local.transform_point3(ray.origin);
-    // A direction is transformed without the translation, and left
-    // unnormalised on purpose: a scaled block's `t` then stays
-    // comparable with the world-space one it came from.
-    let direction = to_local.transform_vector3(ray.direction);
-    kooch_blockmesh::face_at(&mesh, origin, direction).map(|hit| hit.face)
+    match mode {
+        ElementMode::Face => {
+            let (camera, camera_transform) = crate::gizmos::active_camera(resources)?;
+            let ray = kooch_render::projection::viewport_cursor_to_ray(
+                cursor,
+                viewport_size,
+                camera_transform.matrix,
+                camera.fov.to_radians(),
+                camera.near,
+            )?;
+            let origin = to_local.transform_point3(ray.origin);
+            // A direction is transformed without the translation, and
+            // left unnormalised on purpose: a scaled block's `t` then
+            // stays comparable with the world-space one it came from.
+            let direction = to_local.transform_vector3(ray.direction);
+            kooch_blockmesh::face_at(&mesh, origin, direction).map(|hit| hit.element)
+        }
+        ElementMode::Vertex => {
+            let screen = screen_of(resources, to_world, viewport_size)?;
+            kooch_blockmesh::vertex_at(&mesh, screen, cursor, REACH).map(|hit| hit.element)
+        }
+        ElementMode::Edge => {
+            let screen = screen_of(resources, to_world, viewport_size)?;
+            let adjacency = kooch_blockmesh::Adjacency::of(&mesh);
+            kooch_blockmesh::edge_at(&mesh, &adjacency, screen, cursor, REACH)
+                .map(|hit| hit.element)
+        }
+        ElementMode::Object => None,
+    }
+}
+
+/// Mesh space straight to viewport pixels, for the picks that need it.
+fn screen_of(
+    resources: &Resources,
+    to_world: glam::Mat4,
+    viewport_size: Vec2,
+) -> Option<kooch_blockmesh::Screen> {
+    let (camera, camera_transform) = crate::gizmos::active_camera(resources)?;
+    if viewport_size.x < 1.0 || viewport_size.y < 1.0 {
+        return None;
+    }
+    let projection = kooch_render::projection::perspective_infinite_rh_reverse_z(
+        camera.fov.to_radians(),
+        (viewport_size.x / viewport_size.y).max(0.001),
+        camera.near.max(0.001),
+    );
+    Some(kooch_blockmesh::Screen {
+        clip: projection * camera_transform.matrix.inverse() * to_world,
+        size: viewport_size,
+    })
 }
 
 /// Where a handle for the current face selection belongs, in world
@@ -201,11 +329,9 @@ pub(crate) fn face_under(
 /// nobody is moving.
 pub(crate) fn selection_origin(resources: &Resources, entity: Entity) -> Option<Vec3> {
     let selection = resources.get::<BlockSelection>()?;
-    if selection.entity != Some(entity) || selection.is_empty() {
-        return None;
-    }
+    let elements = selection.of(entity)?;
     let mesh = mesh_of(resources, entity)?;
-    let centre = mesh.centre_of(&selection.faces)?;
+    let centre = mesh.centre(&corners_of(&mesh, selection.mode, &elements))?;
     let to_world = resources
         .get::<ComponentRegistry>()?
         .get_cpu::<GlobalTransform>()?
@@ -221,11 +347,9 @@ pub(crate) fn selection_origin(resources: &Resources, entity: Entity) -> Option<
 /// framing the whole wall is what F already did from object mode.
 pub(crate) fn selection_bounds(resources: &Resources, entity: Entity) -> Option<(Vec3, Vec3)> {
     let selection = resources.get::<BlockSelection>()?;
-    if selection.entity != Some(entity) || selection.is_empty() {
-        return None;
-    }
+    let elements = selection.of(entity)?;
     let mesh = mesh_of(resources, entity)?;
-    let corners = mesh.corners_of(&selection.faces);
+    let corners = corners_of(&mesh, selection.mode, &elements);
     if corners.is_empty() {
         return None;
     }
@@ -261,11 +385,11 @@ pub(crate) fn edit_selection(
     let Some(source) = source_of(resources, entity) else {
         return false;
     };
-    let faces = match resources.get::<BlockSelection>() {
-        Some(selection) if selection.entity == Some(entity) && !selection.is_empty() => {
-            selection.faces.clone()
-        }
-        _ => return false,
+    let Some((mode, elements)) = resources
+        .get::<BlockSelection>()
+        .and_then(|selection| Some((selection.mode, selection.of(entity)?)))
+    else {
+        return false;
     };
 
     // World to local. A translation is a direction, so it loses the
@@ -293,11 +417,11 @@ pub(crate) fn edit_selection(
         return false;
     };
 
-    let corners = mesh.corners_of(&faces);
+    let corners = corners_of(mesh, mode, &elements);
     // 🔴 The pivot is the SELECTION's centre, not the entity's origin.
     // Turning a face about a point it does not contain swings it away
     // rather than turning it.
-    let Some(pivot) = mesh.centre_of(&faces) else {
+    let Some(pivot) = mesh.centre(&corners) else {
         return false;
     };
     match delta {
@@ -396,12 +520,13 @@ pub(crate) fn extrude_selection(
     distance: f32,
 ) -> Option<(BlockMesh, BlockMesh)> {
     let source = source_of(resources, entity)?;
-    let faces = match resources.get::<BlockSelection>() {
-        Some(selection) if selection.entity == Some(entity) && !selection.is_empty() => {
-            selection.faces.clone()
-        }
-        _ => return None,
-    };
+    // Face-only, and it stays that way. Extruding an edge or a vertex
+    // is a different operation with a different result, not this one
+    // applied to fewer corners.
+    let faces = resources
+        .get::<BlockSelection>()
+        .filter(|selection| selection.mode == ElementMode::Face)
+        .and_then(|selection| selection.of(entity))?;
 
     let before = shape_for(resources, source)?;
     let mut after = before.clone();
@@ -412,7 +537,7 @@ pub(crate) fn extrude_selection(
         return None;
     }
     if let Some(mut selection) = resources.get_mut::<BlockSelection>() {
-        selection.faces = extruded.faces;
+        selection.elements = extruded.faces;
     }
     announce(resources, source);
     save(resources, entity);
