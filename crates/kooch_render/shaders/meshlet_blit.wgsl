@@ -13,6 +13,9 @@ struct VsOut {
 
 @group(0) @binding(0) var src_color: texture_2d<f32>;
 @group(0) @binding(1) var src_sampler: sampler;
+@group(0) @binding(2) var src_depth: texture_depth_2d;
+// Nearest: a depth between two surfaces is a value neither of them has.
+@group(0) @binding(3) var depth_sampler: sampler;
 
 @vertex
 fn vs_blit(@builtin(vertex_index) vertex_index: u32) -> VsOut {
@@ -30,7 +33,18 @@ fn vs_blit(@builtin(vertex_index) vertex_index: u32) -> VsOut {
     return out;
 }
 
+struct Blitted {
+    @location(0) color: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
+}
+
 @fragment
-fn fs_blit(input: VsOut) -> @location(0) vec4<f32> {
-    return textureSample(src_color, src_sampler, input.uv);
+fn fs_blit(input: VsOut) -> Blitted {
+    var out: Blitted;
+    out.color = textureSample(src_color, src_sampler, input.uv);
+    // The stage's depth carried over with its colour. Anything drawn
+    // into the destination afterwards — grid, gizmos, transparents —
+    // tests against real geometry rather than an empty buffer.
+    out.depth = textureSampleLevel(src_depth, depth_sampler, input.uv, 0);
+    return out;
 }

@@ -134,7 +134,9 @@ pub(crate) fn render_viewport(
             gpu.device(),
             &mut encoder,
             meshlet.stage.color_view(),
+            meshlet.stage.depth_sample_view(),
             target.view(),
+            target.depth_view(),
         );
     }
 
@@ -150,6 +152,7 @@ pub(crate) fn render_viewport(
             resources,
             gizmo_batch,
             target.size(),
+            &crate::gizmos::grid_planes(resources),
         );
     }
 

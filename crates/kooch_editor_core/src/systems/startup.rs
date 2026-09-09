@@ -84,7 +84,11 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     // update path reads from the same shared counter.
     let vram_tracker = std::sync::Arc::new(kooch_render::EngineVramTracker::new());
     meshlet_stage.set_vram_tracker(vram_tracker.clone());
-    let meshlet_blit = MeshletBlit::new(gpu.device(), gpu.format());
+    let meshlet_blit = MeshletBlit::new(
+        gpu.device(),
+        gpu.format(),
+        kooch_render::VIEWPORT_DEPTH_FORMAT,
+    );
     // #785 — per-pass GPU timings for the editor. Built here, while the
     // `gpu` borrow is alive, and inserted below with the rest.
     let gpu_scopes = kooch_core::gpu::GpuScopes::new(gpu.device(), gpu.queue());

@@ -184,7 +184,7 @@ fn init_renderers(resources: &mut Resources) {
     // A no-op on adapters without `TIMESTAMP_QUERY`.
     meshlet_stage.enable_gpu_timers(gpu.device(), gpu.queue(), gpu.adapter());
 
-    let meshlet_blit = MeshletBlit::new(gpu.device(), gpu.format());
+    let meshlet_blit = MeshletBlit::new(gpu.device(), gpu.format(), VIEWPORT_DEPTH_FORMAT);
     // #785 — per-pass GPU timings. `None` in a build without the
     // `gpu-profiler` feature, and the render code below asks for the
     // resource the same way either way.
@@ -420,7 +420,9 @@ fn render_passes(
             gpu.device(),
             &mut encoder,
             meshlet_stage.color_view(),
+            meshlet_stage.depth_sample_view(),
             &view,
+            depth_view,
         );
         if let (Some(scopes), Some(query)) = (scopes, blit_query) {
             scopes.end(&mut encoder, query);

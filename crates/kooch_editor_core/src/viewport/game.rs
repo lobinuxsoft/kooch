@@ -148,8 +148,16 @@ pub(crate) fn render_game_view(
     // over the sky.
     if stats.instances_uploaded > 0
         && let Some(color) = stage.view_color_view(game.view_id)
+        && let Some(depth) = stage.view_depth_sample(game.view_id)
     {
-        blit.blit(gpu.device(), &mut encoder, color, game.target.view());
+        blit.blit(
+            gpu.device(),
+            &mut encoder,
+            color,
+            depth,
+            game.target.view(),
+            game.target.depth_view(),
+        );
     }
 
     gpu.queue().submit(Some(encoder.finish()));

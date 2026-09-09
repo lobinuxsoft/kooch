@@ -117,6 +117,11 @@ impl HandleSet {
     }
 
     /// Returns `true` if a drag is in progress.
+    /// Where the handles are, in world space.
+    pub fn origin(&self) -> Vec3 {
+        self.frame.origin
+    }
+
     pub fn is_dragging(&self) -> bool {
         matches!(self.state, SetState::Drag { .. })
     }

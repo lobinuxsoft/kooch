@@ -514,6 +514,15 @@ impl MeshletRenderStage {
         &self.views[self.primary].vbuf_texture
     }
 
+    /// The stage's depth, as something a shader can read.
+    ///
+    /// The blit needs it: the stage renders into its own attachments and
+    /// only its colour reaches the viewport, so without this the depth
+    /// buffer every later pass tests against is the one the sky cleared.
+    pub fn depth_sample_view(&self) -> &wgpu::TextureView {
+        &self.views[self.primary].depth_sample_view
+    }
+
     pub fn depth_texture(&self) -> &wgpu::Texture {
         &self.views[self.primary].depth_texture
     }
@@ -586,6 +595,11 @@ impl MeshletRenderStage {
     /// Colour target of `id`, or `None` if the handle is stale.
     pub fn view_color_view(&self, id: ViewId) -> Option<&wgpu::TextureView> {
         self.views.get(id).map(|v| &v.color_view)
+    }
+
+    /// Sampleable depth of `id`, or `None` if the handle is stale.
+    pub fn view_depth_sample(&self, id: ViewId) -> Option<&wgpu::TextureView> {
+        self.views.get(id).map(|v| &v.depth_sample_view)
     }
 
     /// Colour TEXTURE of `id`, or `None` if the handle is stale.

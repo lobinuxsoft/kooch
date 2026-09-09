@@ -34,6 +34,7 @@ mod character;
 mod collider;
 mod facing;
 mod gravity;
+mod grid;
 mod grounded;
 #[cfg(test)]
 pub(crate) mod harness;
@@ -69,6 +70,7 @@ use crate::actions::EditorAction;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta};
 use crate::state::{EditorOverlay, RotationDisplayMode};
 
+pub(crate) use grid::grid_planes;
 pub(crate) use visibility::{
     GizmoGroup, GizmoVisibility, draw_gizmo_menu, groups_from_resources, load_visibility_system,
     save_visibility_system,

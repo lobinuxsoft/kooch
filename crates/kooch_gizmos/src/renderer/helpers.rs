@@ -59,6 +59,25 @@ pub(super) fn push_quad(seg: &LineSegment, vertices: &mut Vec<GizmoVertex>) {
     vertices.push(c);
 }
 
+/// Where the active camera is, in world space.
+///
+/// The grid shader needs it twice: to fade from where you are standing,
+/// and to know which way it is looking at the plane.
+pub(super) fn camera_world_position(resources: &Resources) -> Option<glam::Vec3> {
+    let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
+    let mut best: Option<(i32, Mat4)> = None;
+    query.for_each(|(cam, gt)| {
+        if !cam.active {
+            return;
+        }
+        if best.is_none_or(|(priority, _)| cam.priority > priority) {
+            best = Some((cam.priority, gt.matrix));
+        }
+    });
+    drop(query);
+    best.map(|(_, world)| world.to_scale_rotation_translation().2)
+}
+
 pub(super) fn active_camera_view_proj(resources: &Resources, aspect: f32) -> Option<Mat4> {
     let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
     let mut best: Option<(i32, PerspectiveCamera, Mat4)> = None;
