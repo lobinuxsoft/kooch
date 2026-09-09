@@ -59,6 +59,9 @@ pub struct ViewportInputDelta {
     pub fly_active: bool,
     /// `true` when the user pressed `F` this frame to focus the selection.
     pub focus_pressed: bool,
+    /// E with faces selected: pull them out along their averaged
+    /// normal. The letter ProBuilder and Blender both use.
+    pub extrude_pressed: bool,
     /// `Some(mode)` when the user pressed W / E / R this frame inside
     /// the viewport. Forwarded to `HandleSet::set_mode`.
     pub mode_request: Option<HandleModeRequest>,
@@ -110,6 +113,7 @@ impl ViewportInputDelta {
             && self.fly_pitch == 0.0
             && !self.fly_keys.any()
             && !self.focus_pressed
+            && !self.extrude_pressed
             && self.snap_orientation.is_none()
     }
 }

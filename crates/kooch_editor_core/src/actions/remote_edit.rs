@@ -67,7 +67,7 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
             "Edit Block",
             crate::actions::remote_undo::Inverse::BlockShape {
                 source: *source,
-                corners: before.clone(),
+                shape: before.clone(),
             },
         );
         return true;

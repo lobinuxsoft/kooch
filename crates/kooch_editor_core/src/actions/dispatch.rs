@@ -59,8 +59,8 @@ pub(super) fn action_to_command(
         } => Some(Box::new(BlockEditCommand::new(
             *entity,
             *source,
-            before.clone(),
-            after.clone(),
+            (**before).clone(),
+            (**after).clone(),
         ))),
         EditorAction::SpawnMesh { path, name } => {
             Some(Box::new(SpawnMeshCommand::new(path.clone(), name.clone())))

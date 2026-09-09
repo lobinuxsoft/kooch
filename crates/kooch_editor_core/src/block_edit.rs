@@ -369,26 +369,58 @@ fn write_block(resources: &mut Resources, path: &std::path::Path, mesh: &BlockMe
     }
 }
 
+/// Extrudes the selected faces and answers the edit for the history.
+///
+/// The direction is the selection's averaged normal — see
+/// [`BlockMesh::extrude_direction`] for why it is not per face — and
+/// the distance is one snap step, so a wall comes out at a size the
+/// grid agrees with rather than at whatever the mouse was doing.
+///
+/// The selection follows the extruded faces, so pressing it again
+/// continues the wall rather than starting one beside it.
+pub(crate) fn extrude_selection(
+    resources: &mut Resources,
+    entity: Entity,
+    distance: f32,
+) -> Option<(BlockMesh, BlockMesh)> {
+    let source = source_of(resources, entity)?;
+    let faces = match resources.get::<BlockSelection>() {
+        Some(selection) if selection.entity == Some(entity) && !selection.is_empty() => {
+            selection.faces.clone()
+        }
+        _ => return None,
+    };
+
+    let before = shape_for(resources, source)?;
+    let mut after = before.clone();
+    let by = after.extrude_direction(&faces, distance)?;
+    let extruded = after.extrude(&faces, by)?;
+
+    if !set_shape(resources, source, &after) {
+        return None;
+    }
+    if let Some(mut selection) = resources.get_mut::<BlockSelection>() {
+        selection.faces = extruded.faces;
+    }
+    announce(resources, source);
+    save(resources, entity);
+    Some((before, after))
+}
+
 /// Every corner of the block `entity` is built from.
 ///
 /// What a drag snapshots, so an undo has something to put back.
-pub(crate) fn corners_of(resources: &Resources, entity: Entity) -> Option<Vec<Vec3>> {
-    Some(mesh_of(resources, entity)?.positions().to_vec())
+pub(crate) fn shape_of(resources: &Resources, entity: Entity) -> Option<BlockMesh> {
+    mesh_of(resources, entity)
 }
 
 /// Every corner of the block behind `source`.
 ///
 /// By source rather than by entity: an undo names the shape, and the
 /// entity that made the edit may not even be selected any more.
-pub(crate) fn corners_for(resources: &Resources, source: kooch_core::Guid) -> Option<Vec<Vec3>> {
+pub(crate) fn shape_for(resources: &Resources, source: kooch_core::Guid) -> Option<BlockMesh> {
     let handle = resources.get::<BuiltBlocks>()?.handle(source)?;
-    Some(
-        resources
-            .get::<Assets<BlockMesh>>()?
-            .get(handle)?
-            .positions()
-            .to_vec(),
-    )
+    resources.get::<Assets<BlockMesh>>()?.get(handle).cloned()
 }
 
 /// Writes a block's shape to its own file, found by GUID.
@@ -396,10 +428,7 @@ pub(crate) fn corners_for(resources: &Resources, source: kooch_core::Guid) -> Op
 /// The by-source twin of [`save`], for an undo that has a shape and no
 /// entity to ask.
 pub(crate) fn save_source(resources: &mut Resources, source: kooch_core::Guid) {
-    let Some(mesh) = corners_for(resources, source)
-        .and_then(|_| resources.get::<BuiltBlocks>()?.handle(source))
-        .and_then(|handle| Some(resources.get::<Assets<BlockMesh>>()?.get(handle)?.clone()))
-    else {
+    let Some(mesh) = shape_for(resources, source) else {
         return;
     };
     let Some(path) = resources
@@ -411,15 +440,15 @@ pub(crate) fn save_source(resources: &mut Resources, source: kooch_core::Guid) {
     write_block(resources, &path, &mesh);
 }
 
-/// Puts a whole set of corners back, answering whether it landed.
+/// Replaces a block's whole shape, answering whether it landed.
 ///
-/// Refuses a count that does not match rather than writing what fits:
-/// an undo whose snapshot is one corner short would silently reshape
-/// the block into something nobody authored.
-pub(crate) fn set_corners(
+/// The whole mesh because an extrude changes the topology: there are
+/// faces after it that had no before, and putting positions back would
+/// leave those faces indexing corners that are no longer there.
+pub(crate) fn set_shape(
     resources: &mut Resources,
     source: kooch_core::Guid,
-    corners: &[Vec3],
+    shape: &BlockMesh,
 ) -> bool {
     let Some(handle) = resources
         .get::<BuiltBlocks>()
@@ -433,15 +462,7 @@ pub(crate) fn set_corners(
     else {
         return false;
     };
-    if mesh.positions().len() != corners.len() {
-        tracing::warn!(
-            target: "kooch_editor_core::block_edit",
-            held = corners.len(), now = mesh.positions().len(),
-            "the block gained or lost corners since this edit; not undoing it",
-        );
-        return false;
-    }
-    mesh.set_positions(corners);
+    *mesh = shape.clone();
     true
 }
 
