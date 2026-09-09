@@ -1055,3 +1055,57 @@ fn every_unclassified_world_edit_is_routed() {
          handled in `dispatch` before it — check that they still are",
     );
 }
+
+/// 🔴 A block spawns two ways — locally and over the wire — and the
+/// two lists had already drifted twice.
+///
+/// The wire shipped without `PhysicsBody`, so physics never saw the
+/// block at all; the local path set a field on a component it had
+/// forgotten to add. Neither failed: an absent component reads as a
+/// default, and a write to one is a `None` nobody looks at.
+///
+/// Both paths read `block_components` now, so this asserts the property
+/// that makes that worth doing — the id and the name in each pair name
+/// the same type. A pair that disagreed would add one component by id
+/// and a different one by name, which is the drift wearing a disguise.
+#[test]
+fn a_blocks_components_agree_by_id_and_name() {
+    for (type_id, name) in kooch_blockmesh::block_components() {
+        let by_name: Option<std::any::TypeId> = [
+            (
+                std::any::type_name::<kooch_blockmesh::Block>(),
+                std::any::TypeId::of::<kooch_blockmesh::Block>(),
+            ),
+            (
+                std::any::type_name::<kooch_ecs::mesh_renderer::MeshRenderer>(),
+                std::any::TypeId::of::<kooch_ecs::mesh_renderer::MeshRenderer>(),
+            ),
+            (
+                std::any::type_name::<kooch_physics::components::Collider>(),
+                std::any::TypeId::of::<kooch_physics::components::Collider>(),
+            ),
+            (
+                std::any::type_name::<kooch_physics::components::PhysicsBody>(),
+                std::any::TypeId::of::<kooch_physics::components::PhysicsBody>(),
+            ),
+        ]
+        .into_iter()
+        .find(|(candidate, _)| *candidate == name)
+        .map(|(_, id)| id);
+
+        assert_eq!(by_name, Some(type_id), "{name} is paired with another type");
+    }
+}
+
+/// A block collides, so its list carries what physics actually walks.
+#[test]
+fn a_block_is_a_body() {
+    let names: Vec<&str> = kooch_blockmesh::block_components()
+        .iter()
+        .map(|(_, name)| *name)
+        .collect();
+    assert!(
+        names.contains(&std::any::type_name::<kooch_physics::components::PhysicsBody>()),
+        "physics walks bodies, not colliders: {names:?}",
+    );
+}
