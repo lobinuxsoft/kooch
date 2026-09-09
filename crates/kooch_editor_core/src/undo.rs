@@ -21,7 +21,7 @@ pub(crate) use commands::{
     AddComponentCommand, AddDynamicComponentCommand, BlockEditCommand, DespawnCommand,
     DuplicateCommand, MoveToSceneCommand, PasteCommand, RemoveComponentCommand,
     RemoveDynamicComponentCommand, SetDynamicFieldCommand, SetFieldCommand, SpawnBlockCommand,
-    SpawnCommand, SpawnMeshCommand, TransformEditCommand,
+    SpawnCommand, SpawnMeshCommand, TransformEditCommand, prototype_material,
 };
 
 /// A snapshot of all reflected field values for a single component on an entity.

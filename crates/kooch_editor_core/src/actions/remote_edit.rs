@@ -265,6 +265,7 @@ fn spawn_mesh(resources: &mut Resources, path: &std::path::Path, name: &str) {
 /// draws.
 fn spawn_block(resources: &mut Resources) {
     const TARGET: &str = "kooch_editor_core::remote_edit::spawn_block";
+    use crate::undo::prototype_material;
 
     let Some((path, guid)) = crate::actions::asset_ops::new_block_asset(resources) else {
         return;
@@ -288,12 +289,12 @@ fn spawn_block(resources: &mut Resources) {
 
     // Remote `spawn` creates only `Name`, so every one of these is needed.
     let block_ty = std::any::type_name::<kooch_blockmesh::Block>();
-    let types = [
-        std::any::type_name::<kooch_ecs::transform::Transform>(),
-        block_ty,
-        std::any::type_name::<kooch_ecs::mesh_renderer::MeshRenderer>(),
-        std::any::type_name::<kooch_physics::components::Collider>(),
-    ];
+    let body_ty = std::any::type_name::<kooch_physics::components::PhysicsBody>();
+    // Remote `spawn` creates only `Name`, so `Transform` is added here
+    // and the rest come from the one list both spawn paths share.
+    let transform_ty = std::any::type_name::<kooch_ecs::transform::Transform>();
+    let block_components = kooch_blockmesh::block_components();
+    let types = std::iter::once(transform_ty).chain(block_components.map(|(_, name)| name));
     for ty in types {
         if let Err(e) = client.add_component(entity, ty) {
             // 🔴 The likeliest cause is a project built without the
@@ -316,6 +317,32 @@ fn spawn_block(resources: &mut Resources) {
     if let Err(e) = client.set_field(entity, block_ty, "source", value) {
         tracing::warn!(target: TARGET, error = %e, "could not write the block source");
         return;
+    }
+
+    // The engine's prototype grid, so the block shows its size. Its
+    // UVs are one repeat per world unit, and on flat white a wall
+    // pulled two metres and one pulled four look identical.
+    if let Some(material) = prototype_material(resources) {
+        let renderer_ty = std::any::type_name::<kooch_ecs::mesh_renderer::MeshRenderer>();
+        let value = kooch_ecs::reflect::ReflectValue::AssetRef {
+            guid: Some(material),
+            asset_type: std::any::type_name::<kooch_render::material::Material>().to_owned(),
+        };
+        if let Err(e) = client.set_field(entity, renderer_ty, "material", value) {
+            tracing::warn!(target: TARGET, error = %e, "could not give the block a material");
+        }
+    }
+
+    // Static, because a wall that falls over is not a level. Set over
+    // the wire like any other field: the project owns the world, and
+    // `kind` is a plain reflected u32.
+    if let Err(e) = client.set_field(
+        entity,
+        body_ty,
+        "kind",
+        kooch_ecs::reflect::ReflectValue::U32(kooch_physics::components::KIND_STATIC),
+    ) {
+        tracing::warn!(target: TARGET, error = %e, "could not make the block static");
     }
 
     tracing::info!(
