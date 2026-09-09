@@ -108,6 +108,36 @@ pub(crate) fn apply_click(
     }
 }
 
+/// Drops the face selection when nothing should be editing faces.
+///
+/// 🔴 Clearing, not gating. Gating the handle left the highlight
+/// painted and the gizmo grabbable, and a drag that reaches neither the
+/// history nor the file is worse than one that does nothing — it looks
+/// like it worked.
+///
+/// Two ways to stop: switching to Object, and pressing Play. The second
+/// matters more, because the world Play restores is not the one the
+/// selection's face indices were read from.
+///
+/// Reconciled every frame rather than hooked to each transition: there
+/// are several ways to reach both — a toolbar, a chord, the project
+/// stopping on its own — and catching them one at a time is how one
+/// stays live.
+pub(crate) fn drop_selection_unless_editing(
+    resources: &mut Resources,
+    mode: ElementMode,
+    playing: bool,
+) {
+    if mode == ElementMode::Face && !playing {
+        return;
+    }
+    if let Some(mut selection) = resources.get_mut::<BlockSelection>()
+        && !selection.is_empty()
+    {
+        selection.clear();
+    }
+}
+
 /// The face of `entity`'s block under the cursor.
 ///
 /// The ray is built in world space and then pushed into the mesh's own

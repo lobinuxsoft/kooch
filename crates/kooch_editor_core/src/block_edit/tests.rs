@@ -109,3 +109,52 @@ fn object_mode_is_not_face_mode() {
     assert_eq!(ElementMode::Object.label(), "Object");
     assert_eq!(ElementMode::Face.label(), "Face");
 }
+
+/// Builds resources holding one face selection.
+fn with_selection() -> kooch_core::resource::Resources {
+    let mut resources = kooch_core::resource::Resources::new();
+    let mut selection = BlockSelection::default();
+    selection.only(entity(1), 3);
+    resources.insert(selection);
+    resources
+}
+
+fn held(resources: &kooch_core::resource::Resources) -> bool {
+    !resources
+        .get::<BlockSelection>()
+        .map(|s| s.is_empty())
+        .unwrap_or(true)
+}
+
+#[test]
+fn face_mode_keeps_the_selection() {
+    let mut resources = with_selection();
+    super::drop_selection_unless_editing(&mut resources, ElementMode::Face, false);
+    assert!(held(&resources));
+}
+
+#[test]
+fn object_mode_drops_the_selection() {
+    // 🔴 Cleared, not merely gated. A painted highlight over a grabbable
+    // gizmo that records nothing looks like it worked.
+    let mut resources = with_selection();
+    super::drop_selection_unless_editing(&mut resources, ElementMode::Object, false);
+    assert!(!held(&resources));
+}
+
+#[test]
+fn play_drops_the_selection() {
+    // The world Play restores is not the one these face indices were
+    // read from.
+    let mut resources = with_selection();
+    super::drop_selection_unless_editing(&mut resources, ElementMode::Face, true);
+    assert!(!held(&resources));
+}
+
+#[test]
+fn dropping_twice_is_quiet() {
+    let mut resources = with_selection();
+    super::drop_selection_unless_editing(&mut resources, ElementMode::Object, false);
+    super::drop_selection_unless_editing(&mut resources, ElementMode::Object, false);
+    assert!(!held(&resources));
+}
