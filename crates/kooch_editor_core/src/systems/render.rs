@@ -739,7 +739,11 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                     gpu.device(),
                     kooch_render::meshlet::MeshletRenderStageConfig::default(),
                 );
-                placeholder_blit = MeshletBlit::new(gpu.device(), gpu.format());
+                placeholder_blit = MeshletBlit::new(
+                    gpu.device(),
+                    gpu.format(),
+                    kooch_render::VIEWPORT_DEPTH_FORMAT,
+                );
                 MeshletPathInputs {
                     stage: &mut placeholder_stage,
                     blit: &placeholder_blit,

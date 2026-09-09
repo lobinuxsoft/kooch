@@ -24,6 +24,7 @@ pub struct MeshletBlit {
     pipeline: wgpu::RenderPipeline,
     bgl: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    depth_sampler: wgpu::Sampler,
     target_format: wgpu::TextureFormat,
 }
 
@@ -32,7 +33,11 @@ impl MeshletBlit {
     /// `target_format`. The source view is sampled as
     /// [`DEFERRED_COLOR_FORMAT`] (`Rgba8Unorm`); wgpu's swizzle handles
     /// the channel reorder when targeting `Bgra8Unorm`.
-    pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        target_format: wgpu::TextureFormat,
+        depth_format: wgpu::TextureFormat,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("meshlet_blit_shader"),
             source: wgpu::ShaderSource::Wgsl(SHADER_SOURCE.into()),
@@ -55,6 +60,22 @@ impl MeshletBlit {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
             ],
@@ -102,10 +123,26 @@ impl MeshletBlit {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
-            depth_stencil: None,
+            // The composite is also where the scene's depth arrives.
+            // `Always`, because the stage already resolved visibility;
+            // this pass is copying its answer, not re-deciding it.
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: depth_format,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
             cache: None,
+        });
+
+        let depth_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("meshlet_blit_depth_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            ..Default::default()
         });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -123,6 +160,7 @@ impl MeshletBlit {
             pipeline,
             bgl,
             sampler,
+            depth_sampler,
             target_format,
         }
     }
@@ -139,7 +177,9 @@ impl MeshletBlit {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         source: &wgpu::TextureView,
+        source_depth: &wgpu::TextureView,
         destination: &wgpu::TextureView,
+        destination_depth: &wgpu::TextureView,
     ) {
         debug_assert_eq!(
             DEFERRED_COLOR_FORMAT,
@@ -159,6 +199,14 @@ impl MeshletBlit {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(source_depth),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&self.depth_sampler),
+                },
             ],
         });
 
@@ -173,7 +221,14 @@ impl MeshletBlit {
                     store: wgpu::StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: destination_depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,

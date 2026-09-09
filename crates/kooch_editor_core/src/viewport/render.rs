@@ -134,7 +134,9 @@ pub(crate) fn render_viewport(
             gpu.device(),
             &mut encoder,
             meshlet.stage.color_view(),
+            meshlet.stage.depth_sample_view(),
             target.view(),
+            target.depth_view(),
         );
     }
 
