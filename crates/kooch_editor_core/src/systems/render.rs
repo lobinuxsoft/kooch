@@ -622,6 +622,17 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             || delta.zoom_lines != 0.0
     });
 
+    // Before anything can drag: a face selection outlives neither a
+    // switch to Object nor Play, and leaving it painted while the handle
+    // is gated is a gizmo that looks grabbable and records nothing.
+    crate::block_edit::drop_selection_unless_editing(
+        resources,
+        overlay.element_mode,
+        resources
+            .get::<crate::remote_session::RemoteState>()
+            .is_some_and(|state| state.playing),
+    );
+
     if let Some(delta) = viewport_input {
         let selected_snapshot: Vec<_> = overlay.selected_entities.iter().copied().collect();
         let rotation_mode = overlay.rotation_display_mode;
