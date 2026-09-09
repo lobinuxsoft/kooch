@@ -34,6 +34,7 @@ mod character;
 mod collider;
 mod facing;
 mod gravity;
+mod grid;
 mod grounded;
 #[cfg(test)]
 pub(crate) mod harness;
@@ -188,6 +189,11 @@ fn build_gizmo_batch(resources: &mut Resources) {
     // what, which bodies went to sleep — are asked precisely when nothing
     // is selected.
     physics_debug::draw(resources, &mut line_batch);
+
+    // Same reasoning: where the world IS is asked precisely when nothing
+    // is selected, so this cannot sit behind the selection gate either.
+    grid::draw_world(resources, &mut line_batch);
+    grid::draw_guide(resources, &mut line_batch);
 
     if selected.is_empty() && also_drawn.is_empty() {
         resources.insert(line_batch);

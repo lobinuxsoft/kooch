@@ -49,6 +49,13 @@ pub struct GizmoVisibility {
     /// was set.
     #[serde(default = "enabled")]
     pub enabled: bool,
+    /// The world grid on the ground plane.
+    ///
+    /// Here rather than in a settings file of its own: this is already
+    /// the one place that answers "what draws", and a second would
+    /// drift from it.
+    #[serde(default = "enabled")]
+    pub grid: bool,
     /// Categories the user turned off, by their reflected name
     /// (`"Physics"`, `"Rendering"`, …).
     #[serde(default)]
@@ -72,6 +79,7 @@ impl GizmoVisibility {
     pub fn new() -> Self {
         Self {
             enabled: true,
+            grid: true,
             hidden_categories: HashSet::new(),
             hidden_components: HashSet::new(),
         }

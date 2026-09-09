@@ -30,6 +30,12 @@ pub(crate) fn draw_gizmo_menu(
             visibility.show_all();
         }
     });
+
+    // Above the groups, because it is not one: the groups hide what a
+    // COMPONENT draws, and the grid belongs to no entity.
+    ui.checkbox(&mut visibility.grid, "Grid")
+        .on_hover_text("The ground grid, and the guide while a handle is dragged");
+    ui.separator();
     ui.separator();
 
     // Greyed out rather than hidden while the master switch is off: the
