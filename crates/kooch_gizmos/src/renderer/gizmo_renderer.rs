@@ -8,8 +8,9 @@ use kooch_render::VIEWPORT_DEPTH_FORMAT;
 use crate::SHADER_SOURCE;
 
 use super::batch::GizmoBatch;
-use super::helpers::{active_camera_view_proj, push_quad};
+use super::helpers::{active_camera_view_proj, camera_world_position, push_quad};
 use super::types::{CameraUniforms, GizmoVertex, INITIAL_VERTEX_CAPACITY};
+use super::{GridPass, GridPlane};
 
 // ---------------------------------------------------------------------------
 // GizmoRenderer
@@ -23,6 +24,13 @@ pub struct GizmoRenderer {
     bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
     vertex_capacity: u64,
+    /// The ground grid, and the guide while a handle is dragged.
+    ///
+    /// Two passes rather than one with a loop: each writes its own
+    /// uniforms, and a second write into a buffer the first draw has
+    /// not consumed would show the second grid twice.
+    world_grid: super::GridPass,
+    guide_grid: super::GridPass,
 }
 
 impl GizmoRenderer {
@@ -136,6 +144,8 @@ impl GizmoRenderer {
             bind_group,
             vertex_buffer,
             vertex_capacity: INITIAL_VERTEX_CAPACITY,
+            world_grid: super::GridPass::new(device, format, VIEWPORT_DEPTH_FORMAT, pipeline_cache),
+            guide_grid: super::GridPass::new(device, format, VIEWPORT_DEPTH_FORMAT, pipeline_cache),
         }
     }
 
@@ -156,8 +166,12 @@ impl GizmoRenderer {
         resources: &Resources,
         batch: &GizmoBatch,
         viewport_size: (u32, u32),
+        grids: &[GridPlane],
     ) {
-        if batch.lines.is_empty() {
+        // 🔴 Not `batch.lines.is_empty()`. The grid draws in this pass
+        // and belongs to no entity, so leaving on an empty batch is a
+        // viewport with nothing selected and no ground.
+        if batch.lines.is_empty() && grids.is_empty() {
             return;
         }
         if viewport_size.0 == 0 || viewport_size.1 == 0 {
@@ -224,6 +238,19 @@ impl GizmoRenderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
+        // Grids first: they are the only thing here that reads depth,
+        // and the lines drawn after are meant to sit over them.
+        let camera = camera_world_position(resources).unwrap_or(glam::Vec3::ZERO);
+        for (plane, grid) in grids
+            .iter()
+            .zip([&self.world_grid, &self.guide_grid].into_iter())
+        {
+            grid.draw(queue, &mut pass, view_proj, camera, *plane);
+        }
+
+        if vertices.is_empty() {
+            return;
+        }
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));

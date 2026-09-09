@@ -150,6 +150,7 @@ pub(crate) fn render_viewport(
             resources,
             gizmo_batch,
             target.size(),
+            &crate::gizmos::grid_planes(resources),
         );
     }
 

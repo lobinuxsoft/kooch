@@ -70,6 +70,7 @@ use crate::actions::EditorAction;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta};
 use crate::state::{EditorOverlay, RotationDisplayMode};
 
+pub(crate) use grid::grid_planes;
 pub(crate) use visibility::{
     GizmoGroup, GizmoVisibility, draw_gizmo_menu, groups_from_resources, load_visibility_system,
     save_visibility_system,
@@ -189,11 +190,6 @@ fn build_gizmo_batch(resources: &mut Resources) {
     // what, which bodies went to sleep — are asked precisely when nothing
     // is selected.
     physics_debug::draw(resources, &mut line_batch);
-
-    // Same reasoning: where the world IS is asked precisely when nothing
-    // is selected, so this cannot sit behind the selection gate either.
-    grid::draw_world(resources, &mut line_batch);
-    grid::draw_guide(resources, &mut line_batch);
 
     if selected.is_empty() && also_drawn.is_empty() {
         resources.insert(line_batch);
