@@ -18,6 +18,9 @@ const WIRE: Vec3 = Vec3::new(0.25, 0.45, 1.0);
 /// A corner marker, sized in world units. Small enough not to hide the
 /// face it sits on, big enough to aim at.
 const CORNER: f32 = 0.03;
+/// A selected edge, in physical pixels. Screen-space width, so a chosen
+/// edge stays visible from across the level.
+const EDGE_WIDTH: f32 = 4.0;
 
 #[derive(Default)]
 pub(crate) struct BlockVisualizer;
@@ -67,26 +70,60 @@ impl Visualizer<Block> for BlockVisualizer {
             return;
         }
 
-        for face in &selection.faces {
-            let Some(corners) = mesh.face(*face as usize) else {
-                continue;
-            };
-            // Drawn in world space: the gizmo batch has no per-entity
-            // transform, and a face painted in local space would sit at
-            // the origin for every block that is not there.
-            let world: Vec<Vec3> = corners.iter().map(|corner| to_world(*corner)).collect();
+        match selection.mode {
+            crate::block_edit::ElementMode::Vertex => {
+                for corner in &selection.elements {
+                    if (*corner as usize) < mesh.positions().len() {
+                        // Bigger than the unselected marker, so which one
+                        // you grabbed reads without hunting for a hue
+                        // change on a three-pixel cube.
+                        gizmos.filled_aabb(
+                            to_world(*corner),
+                            Vec3::splat(CORNER * 2.0),
+                            OUTLINE.extend(1.0),
+                        );
+                    }
+                }
+            }
+            crate::block_edit::ElementMode::Edge => {
+                for edge in &selection.elements {
+                    if let Some([a, b]) = adjacency.edge_corners(*edge) {
+                        gizmos.line_thick(to_world(a), to_world(b), OUTLINE, EDGE_WIDTH);
+                    }
+                }
+            }
+            crate::block_edit::ElementMode::Face => {
+                for face in &selection.elements {
+                    let Some(corners) = mesh.face(*face as usize) else {
+                        continue;
+                    };
+                    // Drawn in world space: the gizmo batch has no
+                    // per-entity transform, and a face painted in local
+                    // space would sit at the origin for every block that
+                    // is not there.
+                    let world: Vec<Vec3> = corners.iter().map(|corner| to_world(*corner)).collect();
 
-            // A fan, because the face is convex and `filled_quad` is the
-            // widest primitive the batch has.
-            for step in 1..world.len() - 1 {
-                gizmos.filled_quad(world[0], world[step], world[step + 1], world[0], SELECTED);
+                    // A fan, because the face is convex and `filled_quad`
+                    // is the widest primitive the batch has.
+                    for step in 1..world.len() - 1 {
+                        gizmos.filled_quad(
+                            world[0],
+                            world[step],
+                            world[step + 1],
+                            world[0],
+                            SELECTED,
+                        );
+                    }
+                    // The outline is what makes a face read as *one* face
+                    // rather than as a bright patch — two coplanar
+                    // neighbours selected together are otherwise
+                    // indistinguishable from one.
+                    for step in 0..world.len() {
+                        gizmos.line(world[step], world[(step + 1) % world.len()], OUTLINE);
+                    }
+                }
             }
-            // The outline is what makes a face read as *one* face rather
-            // than as a bright patch — two coplanar neighbours selected
-            // together are otherwise indistinguishable from one.
-            for step in 0..world.len() {
-                gizmos.line(world[step], world[(step + 1) % world.len()], OUTLINE);
-            }
+            crate::block_edit::ElementMode::Object => {}
         }
     }
 

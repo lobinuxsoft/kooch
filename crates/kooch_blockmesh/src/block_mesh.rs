@@ -197,13 +197,21 @@ impl BlockMesh {
     /// rather than face centres so two selected faces sharing an edge
     /// do not weight it twice.
     pub fn centre_of(&self, faces: &[u32]) -> Option<Vec3> {
-        let corners = self.corners_of(faces);
+        self.centre(&self.corners_of(faces))
+    }
+
+    /// The average of the given corners, in the mesh's own space.
+    ///
+    /// The primitive under [`Self::centre_of`]. A vertex or edge
+    /// selection reaches the same handle through here, since by then
+    /// every kind of selection is a list of corners.
+    pub fn centre(&self, corners: &[u32]) -> Option<Vec3> {
         if corners.is_empty() {
             return None;
         }
         let total: Vec3 = corners
             .iter()
-            .map(|corner| self.positions[*corner as usize])
+            .filter_map(|corner| self.positions.get(*corner as usize))
             .sum();
         Some(total / corners.len() as f32)
     }

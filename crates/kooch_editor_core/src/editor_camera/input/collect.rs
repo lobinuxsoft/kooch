@@ -112,6 +112,26 @@ pub fn collect_viewport_input(
         });
     }
 
+    // --- 1 / 2 / 3 / 4 → what a click selects inside a block --------------
+    //
+    // Numbered in the order the toolbar shows them, not Blender's
+    // 1/2/3, because the row of icons is on screen and the key that
+    // disagrees with what you are looking at is the one you mistype.
+    if keys_here && !modifiers.any() && !delta.fly_active {
+        delta.element_request = ui.input(|i| {
+            crate::block_edit::ElementMode::ALL
+                .iter()
+                .zip([
+                    egui::Key::Num1,
+                    egui::Key::Num2,
+                    egui::Key::Num3,
+                    egui::Key::Num4,
+                ])
+                .find(|(_, key)| i.key_pressed(*key))
+                .map(|(mode, _)| *mode)
+        });
+    }
+
     // --- Cursor + LMB state for gizmo handles -----------------------------
     let pixels_per_point = ui.ctx().pixels_per_point();
     let rect = response.rect;

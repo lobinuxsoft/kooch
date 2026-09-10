@@ -320,13 +320,11 @@ pub(crate) fn apply_handle_input(
     // it selected while switching to Object is how an author checks
     // what they just built — and without this the handle went on
     // reshaping the block after they had asked to move it instead.
-    let editing_faces = match element_mode {
-        crate::block_edit::ElementMode::Face => {
-            crate::block_edit::selection_origin(resources, target)
-        }
-        crate::block_edit::ElementMode::Object => None,
+    let editing = match element_mode.edits_elements() {
+        true => crate::block_edit::selection_origin(resources, target),
+        false => None,
     };
-    let target_origin = match editing_faces.or_else(|| entity_world_position(resources, target)) {
+    let target_origin = match editing.or_else(|| entity_world_position(resources, target)) {
         Some(p) => p,
         None => return false,
     };
@@ -369,7 +367,7 @@ pub(crate) fn apply_handle_input(
         // it. One entry per drag, the same rule the transform follows —
         // a history with sixty steps for one gesture is a history you
         // scroll through rather than use.
-        if editing_faces.is_some()
+        if editing.is_some()
             && let Some(corners) = crate::block_edit::shape_of(resources, target)
         {
             *shape_start = Some(corners);
@@ -390,9 +388,7 @@ pub(crate) fn apply_handle_input(
         // 🔴 The delta moves the SELECTED FACES, and the entity's own
         // transform is left alone. Applying both would move the block
         // and reshape it by the same amount in one drag.
-        if editing_faces.is_some()
-            && crate::block_edit::edit_selection(resources, target, delta_out)
-        {
+        if editing.is_some() && crate::block_edit::edit_selection(resources, target, delta_out) {
             return true;
         }
 

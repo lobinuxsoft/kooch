@@ -2,12 +2,30 @@ use kooch_core::resource::Resources;
 
 use super::{CarriedWorld, Phase, capture, is_held, resume};
 
+/// Serialises the tests that touch the holding directory.
+///
+/// 🔴 `holding()` is ONE path per machine, on purpose: the world it
+/// holds has to survive the process that wrote it. So `capture` clears
+/// it and `resume` deletes it, and two tests doing that at once is one
+/// wiping the other's files between its write and its assert. Nothing
+/// here is worth a per-test directory — that would stop testing the
+/// path the editor actually uses.
+static ALONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The guard, with a poisoned lock treated as held rather than fatal:
+/// one failing test must not turn the rest into a second failure that
+/// hides it.
+fn alone() -> std::sync::MutexGuard<'static, ()> {
+    ALONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// 🔴 A fresh `SceneManager` already holds one untitled scene, and that
 /// is exactly the one worth carrying: it has no file to be read back
 /// from, so a rebuild that dropped it would lose everything in it with
 /// nothing on disk to recover from.
 #[test]
 fn an_untitled_scene_is_held() {
+    let _alone = alone();
     let mut resources = Resources::new();
     resources.insert(kooch_ecs::SceneManager::new());
 
@@ -74,6 +92,7 @@ fn a_held_file_is_recognised() {
 /// did not write it.
 #[test]
 fn a_restored_scene_keeps_its_file_and_stays_dirty() {
+    let _alone = alone();
     let mut manager = kooch_ecs::SceneManager::new();
     let id = manager.active_id().expect("a scene");
     let mut resources = Resources::new();

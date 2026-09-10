@@ -65,6 +65,9 @@ pub struct ViewportInputDelta {
     /// `Some(mode)` when the user pressed W / E / R this frame inside
     /// the viewport. Forwarded to `HandleSet::set_mode`.
     pub mode_request: Option<HandleModeRequest>,
+    /// `Some(mode)` when the user pressed 1 / 2 / 3 / 4 this frame,
+    /// switching what a click in a block selects.
+    pub(crate) element_request: Option<crate::block_edit::ElementMode>,
     /// Cursor position relative to the viewport's top-left corner, in
     /// physical pixels. `None` when the cursor is outside the viewport.
     /// Consumed by the gizmo handle system to construct picking rays.
