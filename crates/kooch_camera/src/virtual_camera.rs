@@ -114,8 +114,8 @@ pub static THIRD_PERSON_WHEN: FieldCondition = FieldCondition {
 /// floor, not a knob: damping is asymptotic and would otherwise write forever.
 pub const SETTLE_EPSILON: f32 = 1e-4;
 
-/// Camera behaviour on a **virtual camera** — its own entity with a framing and a [`Transform`],
-/// copied onto the rendering camera by the Host.
+/// Camera behaviour on a **virtual camera** — its own entity with a framing and a
+/// [`Transform`](kooch_ecs::transform::Transform), copied onto the rendering camera by the Host.
 /// Defaults to a third-person look-at with no target, so a fresh one moves nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Camera")]
@@ -242,7 +242,7 @@ impl VirtualCamera {
     }
 
     /// The same, given the yaw origin to measure from — carried per vcam by the Host, since it
-    /// cannot come from `up` alone (see [`seed_reference`]).
+    /// cannot come from `up` alone (see `seed_reference`).
     pub fn desired_with(
         &self,
         target_pos: Vec3,
@@ -347,7 +347,7 @@ pub(crate) fn seed_reference(up: Vec3) -> Vec3 {
 }
 
 /// Carries a yaw origin to a new up along the shortest arc, so it has no pole to cross — what
-/// [`seed_reference`] cannot do.
+/// `seed_reference` cannot do.
 pub fn transported(reference: Vec3, from_up: Vec3, to_up: Vec3) -> Vec3 {
     let (from_up, to_up) = (normalised_up(from_up), normalised_up(to_up));
     let axis = from_up.cross(to_up);
