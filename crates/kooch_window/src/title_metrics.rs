@@ -1,11 +1,5 @@
-//! Frame metrics in the window title.
-//!
-//! The only place a game can currently put text. `egui` belongs to the
-//! editor and runtime UI is #96, so an on-screen overlay does not exist
-//! to write into — while the title bar is one call away and is exactly
-//! what every wgpu and winit example uses for this.
-//!
-//! Off unless `KOOCH_FRAME_METRICS` asks for `title` or `both`.
+//! Frame metrics in the window title — the only text a game can show until runtime UI (#96). Off
+//! unless `KOOCH_FRAME_METRICS` asks for `title` or `both`.
 
 use std::time::{Duration, Instant};
 
@@ -15,11 +9,8 @@ use kooch_core::resource::Resources;
 use crate::WindowConfig;
 use crate::handle::WindowHandle;
 
-/// How often the title is rewritten.
-///
-/// Four times a second: fast enough to watch a number move, slow enough
-/// that the text is readable and that the compositor is not asked to
-/// redraw the decoration every frame.
+/// How often the title is rewritten: four times a second, readable without redrawing the decoration
+/// every frame.
 const REFRESH: Duration = Duration::from_millis(250);
 
 /// When the title was last rewritten. A resource rather than a `static`
@@ -42,11 +33,8 @@ impl TitleMetricsState {
     }
 }
 
-/// Appends the frame numbers to the configured window title.
-///
-/// The base title comes from [`WindowConfig`], never from the current
-/// title: reading back what was written would append to the appended text
-/// and grow the bar until it scrolled off the screen.
+/// Appends the frame numbers to the configured title from [`WindowConfig`], never the current one,
+/// which would keep appending to itself.
 pub fn title_metrics_system(resources: &mut Resources) {
     let Some(metrics) = resources.get::<FrameMetrics>() else {
         return;

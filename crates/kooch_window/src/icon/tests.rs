@@ -3,10 +3,8 @@ use super::*;
 /// The size `kooch-64.png` is rendered at.
 const ICON_SIZE: u32 = 64;
 
-/// A teardrop on transparency: corners empty, middle not. Catches a
-/// decode that "succeeds" into garbage, which a length check alone
-/// would pass — and catches someone replacing the file with a
-/// square logo that fills the whole tile.
+/// A mark on transparency — corners empty, middle not — so a garbage decode or a full-tile logo
+/// fails, not just a length check.
 #[test]
 fn the_embedded_icon_is_a_mark_on_transparency() {
     let image = image::load_from_memory_with_format(ICON_PNG, image::ImageFormat::Png)

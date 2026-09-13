@@ -1,11 +1,8 @@
 use kooch_core::resource::Resources;
 use kooch_core::window_mode::WindowMode;
 
-/// 🔴 Absent means "no opinion" and the system must not invent one.
-/// A game with no settings asset, and a test that made its own window,
-/// keep the window they have — the rule the whole quality bundle is
-/// built on. A default inserted here would take the display on the
-/// first frame of every such game.
+/// 🔴 Absent means no opinion: a default inserted here would take the display on the first frame of
+/// every game without settings.
 #[test]
 fn no_mode_means_no_change() {
     let mut resources = Resources::new();
@@ -13,10 +10,8 @@ fn no_mode_means_no_change() {
     assert!(resources.get::<WindowMode>().is_none());
 }
 
-/// The enumeration needs a window, and without one it must leave the
-/// resource absent rather than publish an empty list — a game's options
-/// menu reading "no resolutions" is worse than one that has not been
-/// told yet.
+/// Without a window the resource stays absent — an empty list would tell an options menu there are
+/// no resolutions.
 #[test]
 fn no_window_publishes_nothing() {
     let mut resources = Resources::new();
@@ -28,11 +23,8 @@ fn no_window_publishes_nothing() {
     );
 }
 
-/// 🔴 The editor adds this plugin AND the asset plugin that publishes a
-/// project's `.rendersettings`, so a project whose `window_mode` is
-/// fullscreen would take the editor full screen. Registered or not,
-/// rather than registered and skipped: there is nothing per-frame to
-/// decide.
+/// 🔴 The editor loads a project's `.rendersettings` too, so a fullscreen `window_mode` would take
+/// the editor full screen.
 #[test]
 fn a_tool_window_never_registers_it() {
     use kooch_core::app::App;
