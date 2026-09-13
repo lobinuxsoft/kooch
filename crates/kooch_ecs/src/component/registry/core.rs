@@ -365,7 +365,6 @@ impl ComponentRegistry {
         unsafe { accessor.write_field(target, field, value) }
     }
 
-    #[cfg(test)]
     /// Sets a field on a component wherever its value actually lives.
     ///
     /// The write side of [`Self::reflect_fields_at`], and it has to follow
@@ -412,6 +411,15 @@ impl ComponentRegistry {
     /// Returns the editor category for a reflected component type, if any.
     pub fn reflect_category(&self, type_id: &TypeId) -> Option<&'static str> {
         self.reflector(type_id).and_then(|r| r.category())
+    }
+
+    /// Returns all `TypeId`s that have a registered reflector.
+    pub fn reflected_type_ids(&self) -> Vec<TypeId> {
+        self.slots
+            .iter()
+            .filter(|slot| slot.reflector.is_some())
+            .map(|slot| slot.type_id)
+            .collect()
     }
 
     /// Looks up a `TypeId` by its full type name string.

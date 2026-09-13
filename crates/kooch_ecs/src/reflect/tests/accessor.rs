@@ -1,5 +1,5 @@
-use super::common::Health;
-use crate::reflect::{ReflectAccessor, ReflectValue, TypedReflectAccessor};
+use super::common::{Health, Position};
+use crate::reflect::{Reflect, ReflectAccessor, ReflectError, ReflectValue, TypedReflectAccessor};
 
 // -- TypedReflectAccessor tests ------------------------------------------
 
@@ -70,4 +70,13 @@ fn accessor_set_field_on_cpu_storage() {
     unsafe { accessor.write_field(value, "hp", ReflectValue::U32(75)) }.unwrap();
 
     assert_eq!(storage.get(e).unwrap().hp, 75);
+}
+
+#[test]
+fn accessor_default_value() {
+    let accessor = TypedReflectAccessor::<Health>::new_cpu();
+    let boxed = accessor.default_value();
+    let health = boxed.downcast::<Health>().unwrap();
+    assert_eq!(health.hp, 100);
+    assert_eq!(health.max_hp, 100);
 }

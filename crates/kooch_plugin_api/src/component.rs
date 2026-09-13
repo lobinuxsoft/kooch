@@ -116,6 +116,12 @@ impl FieldSchema {
             doc: String::new(),
         }
     }
+
+    /// Attaches the field's doc comment, shown as an Inspector tooltip.
+    pub fn with_doc(mut self, doc: impl Into<String>) -> Self {
+        self.doc = doc.into();
+        self
+    }
 }
 
 /// A component type a plugin declares to the engine.

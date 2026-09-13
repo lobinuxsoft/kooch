@@ -133,7 +133,6 @@ impl EntityRef {
         Self::Persistent { scene: None, id }
     }
 
-    #[cfg(test)]
     /// A reference to an entity in another scene.
     pub const fn in_scene(scene: Guid, id: EntityGuid) -> Self {
         Self::Persistent {

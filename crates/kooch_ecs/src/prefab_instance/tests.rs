@@ -53,6 +53,15 @@ fn reverting_drops_only_the_field_named() {
     );
 }
 
+#[test]
+fn reverting_everything_leaves_nothing() {
+    let mut instance = PrefabInstance::default();
+    instance.mark(address(0, "T", "position"), None);
+    instance.mark(address(1, "U", "health"), None);
+    instance.revert_all();
+    assert!(instance.addresses().is_empty());
+}
+
 /// Two instances in the same state must produce the same bytes, or
 /// re-saving a scene shows a diff where nothing changed.
 #[test]

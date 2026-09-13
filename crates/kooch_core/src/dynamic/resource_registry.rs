@@ -34,7 +34,6 @@ impl ResourceRegistry {
         self.map.insert(name.to_owned(), TypeId::of::<T>());
     }
 
-    #[cfg(test)]
     /// Looks up the `TypeId` for a registered name.
     pub fn get_type_id(&self, name: &str) -> Option<TypeId> {
         self.map.get(name).copied()

@@ -134,6 +134,12 @@ impl DynamicComponents {
         self.retain(|e| e != entity);
     }
 
+    /// Drops entries whose entity fails `keep`. Used to prune entities
+    /// that were despawned without going through the editor.
+    pub fn retain_entities(&mut self, keep: impl Fn(Entity) -> bool) {
+        self.retain(|e| keep(e));
+    }
+
     /// Removes every entry, keeping interned names allocated.
     pub fn clear(&mut self) {
         self.entities.clear();
