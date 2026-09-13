@@ -88,6 +88,7 @@ impl BlockMesh {
         }
     }
 
+    #[cfg(test)]
     /// Builds a mesh from shared positions and faces given as corner
     /// index lists.
     ///
@@ -242,19 +243,6 @@ impl BlockMesh {
                 *position = pivot + (*position - pivot) * by;
             }
         }
-    }
-
-    /// Replaces every corner position, keeping the faces as they are.
-    ///
-    /// What an undo puts back. Refuses a different count rather than
-    /// writing what fits — the faces index these, and a short set would
-    /// leave them pointing past the end.
-    pub fn set_positions(&mut self, positions: &[Vec3]) -> bool {
-        if positions.len() != self.positions.len() {
-            return false;
-        }
-        self.positions.copy_from_slice(positions);
-        true
     }
 
     /// Triangulates every face as a fan, indexing the shared positions.

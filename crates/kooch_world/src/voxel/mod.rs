@@ -97,6 +97,7 @@ pub use sampler::{ANALYTIC_SPHERE_WGSL, AnalyticSphereSampler, SdfSampler};
 /// shader source.
 pub const SPARSE_FREELIST_WGSL: &str = include_str!("../../shaders/sparse_freelist.wgsl");
 
+#[cfg(test)]
 /// Size in bytes of the `SparseCounters` struct (mirrors the WGSL
 /// layout in `sparse_freelist.wgsl`). Four `u32`s: `free_top`,
 /// `alloc_failed_count`, two padding slots.
@@ -156,12 +157,9 @@ pub const MAX_SUBGRIDS_PER_ATLAS: u32 = ATLAS_TILES_X * ATLAS_TILES_Y * ATLAS_TI
 /// Total number of root cells in one `SparseGrid` (`ROOT_DIM³`).
 pub const ROOT_CELLS: u32 = ROOT_DIM * ROOT_DIM * ROOT_DIM;
 
+#[cfg(test)]
 /// Voxels per allocated subgrid's data interior (`SUBGRID_DIM³`).
 pub const SUBGRID_VOXELS: u32 = SUBGRID_DIM * SUBGRID_DIM * SUBGRID_DIM;
-
-/// Total voxels per allocated subgrid tile in the atlas, including
-/// the 1-voxel skirt per face (`SUBGRID_TILE_DIM³ = 4913`).
-pub const SUBGRID_TILE_VOXELS: u32 = SUBGRID_TILE_DIM * SUBGRID_TILE_DIM * SUBGRID_TILE_DIM;
 
 /// Default subgrid pool capacity per chunk. See module-level
 /// `# Capacity` for the sizing rationale.
@@ -201,6 +199,7 @@ pub(crate) mod test_device {
     // Acquire once per test binary and clone handles for every call.
     static SHARED: OnceLock<Option<(wgpu::Device, wgpu::Queue)>> = OnceLock::new();
 
+    #[cfg(test)]
     /// Acquire a wgpu device + queue for unit tests. Returns `None`
     /// when no GPU is available so the test can skip itself rather
     /// than fail (CI without a display falls into this path).

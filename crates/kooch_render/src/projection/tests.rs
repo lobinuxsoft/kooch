@@ -33,16 +33,6 @@ fn near_is_one_and_infinity_only_approaches_zero() {
     assert!(ndc(1.0e9) < 1.0e-6);
 }
 
-/// The shader reads `near` back out of the matrix. If this element
-/// ever stops being it, every depth linearisation downstream is
-/// scaled by a number nobody chose.
-#[test]
-fn near_is_recoverable_from_the_matrix() {
-    let near = 0.37;
-    let proj = super::perspective_infinite_rh_reverse_z(75.0_f32.to_radians(), 1.5, near);
-    assert!((super::near_from_infinite_projection(proj) - near).abs() < 1e-6);
-}
-
 use super::*;
 use glam::{Vec3, Vec4Swizzles};
 

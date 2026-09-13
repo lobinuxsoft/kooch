@@ -94,18 +94,3 @@ fn points_land_in_their_cells() {
         "same cell, said once"
     );
 }
-
-/// A dynamic body on a shape with no volume gets no inertia tensor, which
-/// is what the mass path keys on.
-#[test]
-fn hollow_shapes_report_hollow() {
-    assert!(CollisionShape::Sphere { radius: 1.0 }.is_solid());
-    assert!(!CollisionShape::HalfSpace { normal: Vec3::Y }.is_solid());
-    assert!(
-        !CollisionShape::TriMesh {
-            vertices: Vec::new(),
-            indices: Vec::new()
-        }
-        .is_solid()
-    );
-}

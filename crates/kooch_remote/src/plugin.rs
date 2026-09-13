@@ -31,13 +31,6 @@ impl RemotePlugin {
     pub fn new() -> Self {
         Self { name: None }
     }
-
-    /// The plugin on a specific socket name.
-    pub fn on_socket(name: impl Into<String>) -> Self {
-        Self {
-            name: Some(name.into()),
-        }
-    }
 }
 
 impl Default for RemotePlugin {

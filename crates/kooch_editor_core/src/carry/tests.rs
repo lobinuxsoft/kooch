@@ -1,6 +1,6 @@
 use kooch_core::resource::Resources;
 
-use super::{CarriedWorld, Phase, capture, is_held, resume};
+use super::{CarriedWorld, Phase, capture, resume};
 
 /// Serialises the tests that touch the holding directory.
 ///
@@ -16,7 +16,9 @@ static ALONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// one failing test must not turn the rest into a second failure that
 /// hides it.
 fn alone() -> std::sync::MutexGuard<'static, ()> {
-    ALONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    ALONE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// 🔴 A fresh `SceneManager` already holds one untitled scene, and that
@@ -70,17 +72,6 @@ fn a_disconnected_project_waits() {
         resources.get::<CarriedWorld>().is_some(),
         "the carry was dropped while the project was still starting",
     );
-}
-
-/// The holding files are the editor's own, not the project's. Anything
-/// that treats a path as a project asset has to be able to tell.
-#[test]
-fn a_held_file_is_recognised() {
-    let dir = std::env::temp_dir().join("kooch_carried_world");
-    assert!(is_held(&dir.join("abc.scene")));
-    assert!(!is_held(std::path::Path::new(
-        "/proj/assets/scenes/level.scene"
-    )));
 }
 
 /// 🔴 The claim the whole module rests on: what comes back is pointed at

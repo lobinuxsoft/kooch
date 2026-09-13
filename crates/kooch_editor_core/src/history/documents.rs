@@ -105,11 +105,6 @@ impl DocumentHistories {
             .last()
             .map(|snapshot| snapshot.label.as_str())
     }
-
-    /// Drops a document's history, for when the document itself is gone.
-    pub fn forget(&mut self, document: &Document) {
-        self.histories.remove(document);
-    }
 }
 
 /// Files the document's current state before an edit changes it.

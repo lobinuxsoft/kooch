@@ -78,12 +78,6 @@ impl PhysicsPlugin {
         self
     }
 
-    /// Sets the number of solver iterations per step.
-    pub fn with_solver_iterations(mut self, iterations: usize) -> Self {
-        self.solver_iterations = iterations;
-        self
-    }
-
     /// Builds the configured backend.
     fn backend(&self) -> RapierBackend {
         let mut backend = RapierBackend::new();

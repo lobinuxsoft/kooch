@@ -145,6 +145,7 @@ impl PhysicalCamera {
         }
     }
 
+    #[cfg(test)]
     /// Indoors under artificial light: f/1.0, 1/125 s, ISO 100 —
     /// EV100 ≈ 7. The same settings Bevy's lighting example uses.
     ///

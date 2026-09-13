@@ -32,7 +32,6 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use super::dispatcher::MeshletCull;
-use super::gpu_meshlet::GpuMeshletMesh;
 
 const MESHLET_SHADER_SOURCE: &str = include_str!("../../shaders/meshlet_main.wgsl");
 
@@ -53,7 +52,6 @@ struct ModelUbo {
 /// model UBOs, which the caller updates via [`Self::render`].
 pub struct MeshletDrawer {
     pipeline: wgpu::RenderPipeline,
-    camera_bgl: wgpu::BindGroupLayout,
     visible_bgl: wgpu::BindGroupLayout,
     camera_buffer: wgpu::Buffer,
     model_buffer: wgpu::Buffer,
@@ -188,24 +186,11 @@ impl MeshletDrawer {
 
         Self {
             pipeline,
-            camera_bgl,
             visible_bgl,
             camera_buffer,
             model_buffer,
             camera_bg,
         }
-    }
-
-    /// Bind group layout for `group(2)` — visible_meshlets storage
-    /// buffer. Reusable in case future passes need to query the same
-    /// list (e.g. material-pass deferred shading).
-    pub fn visible_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.visible_bgl
-    }
-
-    /// Bind group layout for `group(0)` — camera + model UBO.
-    pub fn camera_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.camera_bgl
     }
 
     /// Records one indirect-draw render pass into `encoder`. Pulls
@@ -287,19 +272,6 @@ impl MeshletDrawer {
         pass.set_bind_group(1, meshlet_bg, &[]);
         pass.set_bind_group(2, &visible_bg, &[]);
         pass.draw_indirect(cull.indirect_args_buffer(), 0);
-    }
-
-    /// Convenience: a `set_bind_group(1, ...)` handle built from a
-    /// `GpuMeshletMesh` using the meshlet pool layout cached on the
-    /// dispatcher. Useful for callers that want to render a single
-    /// mesh per frame without managing bind groups themselves.
-    pub fn build_meshlet_bind_group(
-        &self,
-        device: &wgpu::Device,
-        meshlet_bgl: &wgpu::BindGroupLayout,
-        mesh: &GpuMeshletMesh,
-    ) -> wgpu::BindGroup {
-        super::gpu_meshlet::meshlet_bind_group(device, meshlet_bgl, mesh)
     }
 }
 

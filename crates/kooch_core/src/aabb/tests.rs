@@ -14,13 +14,6 @@ fn center_and_extents() {
 }
 
 #[test]
-fn from_centre_round_trip() {
-    let b = Aabb::from_centre(Vec3::new(5.0, 0.0, -3.0), Vec3::splat(2.0));
-    assert!((b.center() - Vec3::new(5.0, 0.0, -3.0)).length() < EPS);
-    assert!((b.extents() - Vec3::splat(2.0)).length() < EPS);
-}
-
-#[test]
 fn distance_squared_inside_is_zero() {
     let b = unit_box();
     assert!(b.distance_squared(Vec3::splat(0.5)) < EPS);
@@ -32,43 +25,6 @@ fn distance_squared_outside_corner() {
     // Closest point on the box is (0,0,0); distance² = 9 + 16 + 0 = 25.
     let d2 = b.distance_squared(Vec3::new(-3.0, -4.0, 0.0));
     assert!((d2 - 25.0).abs() < EPS);
-}
-
-#[test]
-fn intersects_sphere_inside() {
-    let b = unit_box();
-    assert!(b.intersects_sphere(Vec3::splat(0.5), 0.0));
-}
-
-#[test]
-fn intersects_sphere_grazing() {
-    let b = unit_box();
-    // Sphere centred at (-1, 0, 0) with radius 1 just touches min.x = 0.
-    assert!(b.intersects_sphere(Vec3::new(-1.0, 0.5, 0.5), 1.0));
-    // Same centre, radius 0.999 → no hit.
-    assert!(!b.intersects_sphere(Vec3::new(-1.0, 0.5, 0.5), 0.999));
-}
-
-#[test]
-fn intersects_aabb_overlap_and_disjoint() {
-    let a = Aabb::new(Vec3::ZERO, Vec3::splat(1.0));
-    let b_overlap = Aabb::new(Vec3::splat(0.5), Vec3::splat(1.5));
-    let b_disjoint = Aabb::new(Vec3::splat(2.0), Vec3::splat(3.0));
-    let b_touching = Aabb::new(Vec3::splat(1.0), Vec3::splat(2.0));
-    assert!(a.intersects_aabb(&b_overlap));
-    assert!(!a.intersects_aabb(&b_disjoint));
-    // Boundary inclusive.
-    assert!(a.intersects_aabb(&b_touching));
-}
-
-#[test]
-fn contains_point_boundary_inclusive() {
-    let b = unit_box();
-    assert!(b.contains_point(Vec3::ZERO));
-    assert!(b.contains_point(Vec3::splat(1.0)));
-    assert!(b.contains_point(Vec3::splat(0.5)));
-    assert!(!b.contains_point(Vec3::splat(-0.001)));
-    assert!(!b.contains_point(Vec3::splat(1.001)));
 }
 
 #[test]

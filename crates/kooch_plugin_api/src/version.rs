@@ -66,6 +66,7 @@ impl BuildStamp {
         }
     }
 
+    #[cfg(test)]
     /// Whether a plugin carrying this stamp may be loaded here.
     pub const fn is_compatible_with_current(&self) -> bool {
         let current = Self::current();

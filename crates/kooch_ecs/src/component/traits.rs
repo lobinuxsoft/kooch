@@ -23,9 +23,6 @@ pub(crate) trait AnyStorage: Send + Sync + 'static {
     /// Returns `self` as `&mut dyn Any` for downcasting.
     fn as_any_mut(&mut self) -> &mut dyn Any;
 
-    /// Returns `true` if this storage has a component for `entity`.
-    fn contains_entity(&self, entity: Entity) -> bool;
-
     /// Returns an immutable raw pointer to the component data for `entity`.
     ///
     /// Returns `None` if the entity does not have this component.

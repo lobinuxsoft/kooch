@@ -108,11 +108,6 @@ impl ViewCamera {
         )
     }
 
-    /// `near`, as a shader recovers it from [`Self::projection`].
-    pub fn projection_near(&self) -> f32 {
-        self.near
-    }
-
     /// A **bounded** reverse-Z projection, cut short at `far`.
     ///
     /// The one job that still wants a far plane: a cascade is fitted to

@@ -25,7 +25,7 @@
 //! it clean would be the editor claiming the author's work was written
 //! out when a rebuild is exactly when it was not.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use kooch_core::Guid;
 use kooch_core::resource::Resources;
@@ -183,12 +183,6 @@ fn finish(resources: &mut Resources) {
         scenes = restored,
         "the world came back across the rebuild, still unsaved",
     );
-}
-
-/// Whether a path is one of the holding files, for anything that should
-/// not treat it as a project asset.
-pub fn is_held(path: &Path) -> bool {
-    path.starts_with(holding())
 }
 
 #[cfg(test)]

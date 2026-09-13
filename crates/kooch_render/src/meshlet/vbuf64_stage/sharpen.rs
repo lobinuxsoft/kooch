@@ -151,12 +151,6 @@ impl Sharpen {
         &self.ldr_view
     }
 
-    /// The sharpened image, for a test to read back.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn input_texture(&self) -> &wgpu::Texture {
-        &self.ldr
-    }
-
     /// Sharpens [`Self::input_view`] onto `target`.
     ///
     /// `percent` is the author's amount and is never zero here — a zero

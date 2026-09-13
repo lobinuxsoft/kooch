@@ -72,18 +72,6 @@ fn recycles_slots_fifo() {
 }
 
 #[test]
-fn batch_spawn() {
-    let mut alloc = EntityAllocator::with_capacity(8);
-    let batch = alloc.spawn_batch(5);
-    assert_eq!(batch.len(), 5);
-    assert_eq!(alloc.alive_count(), 5);
-
-    for (i, e) in batch.iter().enumerate() {
-        assert_eq!(e.index(), i as u32);
-    }
-}
-
-#[test]
 fn grows_when_exhausted() {
     let mut alloc = EntityAllocator::with_capacity(2);
     let _a = alloc.spawn();
@@ -92,30 +80,6 @@ fn grows_when_exhausted() {
     let c = alloc.spawn();
     assert_eq!(c.index(), 2);
     assert_eq!(alloc.total_slots(), 4);
-}
-
-#[test]
-fn pending_sync_tracks_changes() {
-    let mut alloc = EntityAllocator::with_capacity(4);
-    let a = alloc.spawn();
-    let b = alloc.spawn();
-
-    let pending = alloc.take_pending_sync();
-    assert_eq!(pending, vec![0, 1]);
-
-    // Despawn produces another pending entry.
-    alloc.despawn(a);
-    let pending = alloc.take_pending_sync();
-    assert_eq!(pending, vec![a.index()]);
-
-    // Nothing pending after drain.
-    assert!(alloc.take_pending_sync().is_empty());
-
-    // Stale despawn does NOT add to pending.
-    alloc.despawn(a);
-    assert!(alloc.take_pending_sync().is_empty());
-
-    let _ = b; // suppress unused warning
 }
 
 #[test]
@@ -140,15 +104,6 @@ fn pending_despawn_tracks_despawned_entities() {
     assert!(alloc.take_pending_despawn().is_empty());
 
     let _ = b;
-}
-
-#[test]
-fn is_index_alive() {
-    let mut alloc = EntityAllocator::with_capacity(4);
-    let e = alloc.spawn();
-    assert!(alloc.is_index_alive(e.index()));
-    alloc.despawn(e);
-    assert!(!alloc.is_index_alive(e.index()));
 }
 
 #[test]

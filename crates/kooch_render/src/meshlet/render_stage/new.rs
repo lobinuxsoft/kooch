@@ -1,16 +1,15 @@
 use std::sync::Arc;
 
 use super::super::DEFAULT_MAX_TRIANGLES;
-use super::super::deferred::{DEFERRED_COLOR_FORMAT, MeshletDeferredShader};
+use super::super::deferred::MeshletDeferredShader;
 use super::super::dispatcher::{MeshletCull, MeshletCullPipelines};
 use super::super::gpu_meshlet::meshlet_bind_group_layout;
 use super::super::gpu_timers::MeshletGpuTimers;
 use super::super::scene::MeshletScene;
 use super::super::system::MeshletPipeline;
-use super::super::vbuf64_stage::Vbuf64Stage;
-use super::super::vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
+use super::super::vis_buffer::MeshletVisRasterizer;
 use super::config::MeshletRenderStageConfig;
-use super::helpers::{create_2d_attachment, depth_sample_view, render_target_byte_estimate};
+use super::helpers::render_target_byte_estimate;
 use super::stage::MeshletRenderStage;
 use super::stage::ViewId;
 use crate::hi_z::HiZ;
@@ -144,12 +143,6 @@ impl MeshletRenderStage {
         std::mem::swap(&mut view.hiz_prev, &mut view.hiz_curr);
     }
 
-    /// Read-only access to the pyramid pass A samples this frame.
-    /// `None` until the SPD orchestrator (#486) allocates them.
-    pub fn hi_z_prev(&self) -> Option<&HiZ> {
-        self.views[self.primary].hiz_prev.as_ref()
-    }
-
     /// Read-only access to the pyramid pass B samples (= the one
     /// rebuilt from this frame's depth between cull A and cull B).
     /// `None` until the SPD orchestrator (#486) allocates them.
@@ -211,15 +204,6 @@ impl MeshletRenderStage {
         self.gpu_timers.last_frame_ms()
     }
 
-    /// The shadow atlas this stage drew into, if it has one.
-    ///
-    /// For tests and for a future debug view (#743): the atlas answers
-    /// "did the pass record this occluder" directly, where the shaded
-    /// frame answers it through the whole sampling path.
-    pub fn shadow_atlas_texture(&self) -> Option<&wgpu::Texture> {
-        self.shadows.as_ref().map(|s| s.atlas_texture())
-    }
-
     /// The point-light cube array, for the same reason as the atlas
     /// above: a test that reads the map answers "is the occluder in
     /// there" without going through the sampling path, the filter, the
@@ -230,10 +214,6 @@ impl MeshletRenderStage {
 
     pub fn pipeline(&self) -> &MeshletPipeline {
         &self.pipeline
-    }
-
-    pub fn pipeline_mut(&mut self) -> &mut MeshletPipeline {
-        &mut self.pipeline
     }
 
     /// Read-only access to the cull dispatcher. Mainly here so
@@ -563,33 +543,9 @@ impl MeshletRenderStage {
         ))
     }
 
-    /// Drops a view and its attachments.
-    ///
-    /// Refuses to drop the primary — a stage with no view cannot
-    /// render, and every single-view accessor would have to start
-    /// returning `Option`. Returns whether anything was removed, so a
-    /// double close is a `false` rather than a panic.
-    pub fn destroy_view(&mut self, id: ViewId) -> bool {
-        if id == self.primary {
-            tracing::warn!(
-                target: "kooch_render::meshlet::render",
-                "refusing to destroy the primary view",
-            );
-            return false;
-        }
-        self.views.remove(id).is_some()
-    }
-
     /// Number of live views, primary included.
     pub fn view_count(&self) -> usize {
         self.views.len()
-    }
-
-    /// Whether `id` still addresses a live view. A generational key, so
-    /// this stays false once the view is destroyed rather than
-    /// silently resolving to whichever view took its slot.
-    pub fn has_view(&self, id: ViewId) -> bool {
-        self.views.contains_key(id)
     }
 
     /// Colour target of `id`, or `None` if the handle is stale.

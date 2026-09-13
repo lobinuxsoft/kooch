@@ -51,7 +51,6 @@ pub(super) struct ModelUbo {
 pub struct MeshletVisRasterizer {
     pub(super) pipeline: wgpu::RenderPipeline,
     pub(super) pipeline_scene: wgpu::RenderPipeline,
-    pub(super) camera_bgl: wgpu::BindGroupLayout,
     pub(super) visible_bgl: wgpu::BindGroupLayout,
     pub(super) instances_bgl: wgpu::BindGroupLayout,
     pub(super) camera_buffer: wgpu::Buffer,
@@ -162,27 +161,12 @@ impl MeshletVisRasterizer {
         Self {
             pipeline,
             pipeline_scene,
-            camera_bgl,
             visible_bgl,
             instances_bgl,
             camera_buffer,
             model_buffer,
             camera_bg,
         }
-    }
-
-    pub fn camera_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.camera_bgl
-    }
-
-    pub fn visible_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.visible_bgl
-    }
-
-    /// Bind-group layout for the scene path's `group(3)` — a single
-    /// read-only storage buffer of `MeshInstance` records.
-    pub fn instances_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.instances_bgl
     }
 
     /// Records one indirect-draw render pass that writes the

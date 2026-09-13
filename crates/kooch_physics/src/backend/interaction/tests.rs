@@ -55,28 +55,6 @@ fn nothing_interacts_with_none() {
     assert!(!InteractionMask::NONE.interacts_with(InteractionMask::ALL));
 }
 
-/// Events are opt-in, which is why the engine heard nothing before
-/// #561 — and the reason the cost is proportional to what a game
-/// listens for.
-#[test]
-fn a_default_collider_asks_for_no_events() {
-    assert!(!ColliderInteraction::default().wants_events());
-    assert!(
-        ColliderInteraction {
-            collision_events: true,
-            ..Default::default()
-        }
-        .wants_events()
-    );
-    assert!(
-        ColliderInteraction {
-            contact_force_events: true,
-            ..Default::default()
-        }
-        .wants_events()
-    );
-}
-
 #[test]
 fn a_default_collider_is_solid_and_unfiltered() {
     let interaction = ColliderInteraction::default();

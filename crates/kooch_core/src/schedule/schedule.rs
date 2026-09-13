@@ -222,35 +222,12 @@ impl Schedule {
         );
     }
 
-    /// Returns `true` if any systems are registered for the stage.
-    pub fn has_systems(&self, stage: Stage) -> bool {
-        self.stages
-            .get(&stage)
-            .map_or(false, |systems| !systems.is_empty())
-    }
-
-    /// Returns the number of systems registered for a stage.
-    pub fn system_count(&self, stage: Stage) -> usize {
-        self.stages.get(&stage).map_or(0, |systems| systems.len())
-    }
-
-    /// Returns the number of CPU systems in a stage.
-    pub fn cpu_system_count(&self, stage: Stage) -> usize {
-        self.stages
-            .get(&stage)
-            .map_or(0, |systems| systems.iter().filter(|s| !s.is_gpu()).count())
-    }
-
+    #[cfg(test)]
     /// Returns the number of GPU systems in a stage.
     pub fn gpu_system_count(&self, stage: Stage) -> usize {
         self.stages
             .get(&stage)
             .map_or(0, |systems| systems.iter().filter(|s| s.is_gpu()).count())
-    }
-
-    /// Returns the total number of systems across all stages.
-    pub fn total_system_count(&self) -> usize {
-        self.stages.values().map(|v| v.len()).sum()
     }
 
     /// Returns the names of all systems in a stage, in execution order.
@@ -328,16 +305,6 @@ impl Schedule {
             .filter(|system| system.key().name == candidate.name)
             .count() as u32;
         SystemKey { nth, ..candidate }
-    }
-
-    /// Returns `true` if startup has already completed.
-    pub fn is_startup_complete(&self) -> bool {
-        self.startup_complete
-    }
-
-    /// Resets startup flag (useful for testing).
-    pub fn reset_startup(&mut self) {
-        self.startup_complete = false;
     }
 }
 

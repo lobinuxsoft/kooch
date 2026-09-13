@@ -1,7 +1,7 @@
 use super::error::{AssetError, AssetResult};
 use crate::assets::{Asset, Assets, Handle};
 use crate::resource::Resources;
-use std::any::{Any, TypeId, type_name};
+use std::any::{Any, type_name};
 use std::marker::PhantomData;
 use std::path::Path;
 
@@ -87,7 +87,6 @@ pub(crate) trait UntypedLoader: Send + Sync {
         ctx: &mut LoadContext<'_>,
     ) -> AssetResult<Box<dyn Any + Send + Sync>>;
     fn asset_type_name(&self) -> &'static str;
-    fn asset_type_id(&self) -> TypeId;
 
     /// Parses `bytes` and writes the result **over the slot `key` already
     /// points at**, rather than storing it somewhere new.
@@ -147,10 +146,6 @@ where
 
     fn asset_type_name(&self) -> &'static str {
         type_name::<T>()
-    }
-
-    fn asset_type_id(&self) -> TypeId {
-        TypeId::of::<T>()
     }
 
     fn reload_into(

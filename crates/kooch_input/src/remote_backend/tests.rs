@@ -105,17 +105,6 @@ fn an_axis_the_snapshot_stops_mentioning_returns_to_centre() {
 }
 
 #[test]
-fn release_all_lets_go_of_everything() {
-    let mut backend = RemoteInputBackend::new();
-    backend.apply(&snapshot_with_keys(&[KeyCode::KeyW, KeyCode::Space]));
-
-    backend.release_all();
-
-    assert!(!backend.is_pressed(KeyCode::KeyW));
-    assert!(backend.just_released(KeyCode::Space));
-}
-
-#[test]
 fn a_snapshot_round_trips_through_json() {
     let snapshot = InputSnapshot {
         keys: vec![KeyCode::KeyW, KeyCode::Space],

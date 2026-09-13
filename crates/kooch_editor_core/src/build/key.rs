@@ -83,6 +83,7 @@ pub fn project_key(project_root: &Path) -> Result<PackKey, std::io::Error> {
     Ok(key)
 }
 
+#[cfg(test)]
 /// Whether this project already has a key on disk.
 pub fn has_key(project_root: &Path) -> bool {
     key_path(project_root).is_file()

@@ -27,8 +27,6 @@ use winit::window::Icon;
 /// 64 beats upscaling from 32.
 const ICON_PNG: &[u8] = include_bytes!("../icon/kooch-64.png");
 
-const ICON_SIZE: u32 = 64;
-
 /// Decodes the embedded icon.
 ///
 /// Returns `None` rather than panicking. A window with no icon is a

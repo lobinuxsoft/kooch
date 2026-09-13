@@ -51,26 +51,6 @@ impl Commands {
         }
     }
 
-    /// Spawns multiple entities in a batch, calling `init` for each to
-    /// provide its components via an [`EntityBuilder`].
-    ///
-    /// Returns the allocated entity IDs.
-    pub fn spawn_batch(
-        &mut self,
-        resources: &mut Resources,
-        count: usize,
-        mut init: impl FnMut(usize, EntityBuilder<'_>),
-    ) -> Vec<crate::entity::Entity> {
-        let mut entities = Vec::with_capacity(count);
-        for i in 0..count {
-            let builder = self.spawn(resources);
-            let entity = builder.entity;
-            entities.push(entity);
-            init(i, builder);
-        }
-        entities
-    }
-
     /// Returns a builder for modifying an existing entity.
     ///
     /// Component insertions and removals are deferred until

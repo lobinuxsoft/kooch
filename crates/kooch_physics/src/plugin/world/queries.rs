@@ -55,19 +55,6 @@ impl PhysicsWorld {
             .query_ray(origin, direction, max_distance, filter)
     }
 
-    /// Every hit along a ray, unordered, for something that pierces.
-    pub fn raycast_all(
-        &self,
-        origin: Vec3,
-        direction: Vec3,
-        max_distance: f32,
-        filter: QueryFilter,
-        out: &mut dyn FnMut(RayHit) -> bool,
-    ) {
-        self.backend()
-            .query_ray_all(origin, direction, max_distance, filter, out);
-    }
-
     /// Sweeps a shape and returns the first thing it meets.
     ///
     /// What a character controller tests a move with: a ray is a line of

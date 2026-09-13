@@ -178,6 +178,7 @@ impl Adjacency {
         self.crowded == 0
     }
 
+    #[cfg(test)]
     /// Whether every edge has two faces — the mesh encloses a volume.
     ///
     /// What a collider wants to hear. An open mesh still renders and

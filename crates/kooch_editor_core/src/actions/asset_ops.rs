@@ -842,52 +842,6 @@ mod delete_tests;
 #[cfg(test)]
 mod settings_tests;
 
-/// The map a new `.inputmap` starts with.
-///
-/// Not empty. Move and jump, on keyboard and pad, are what every game
-/// binds first — and a file that already shows a composite, its parts and
-/// two devices on one action teaches the shape better than a blank list
-/// plus documentation would.
-fn starter_input_map(name: &str) -> kooch_input::actions::ActionMap {
-    use kooch_input::actions::{
-        Action, ActionMap, Binding, Composite, ControlPath, ControlType, DEFAULT_DEADZONE_MAX,
-        DEFAULT_DEADZONE_MIN, PartName, Processor, VectorMode,
-    };
-    use kooch_input::ids::{GamepadAxis, GamepadButton, KeyCode};
-
-    ActionMap::new(name)
-        .add(
-            Action::new("move", ControlType::Vector2)
-                .bind_all([
-                    Binding::composite(Composite::Vector2 {
-                        mode: VectorMode::DigitalNormalized,
-                    }),
-                    Binding::part(PartName::Up, ControlPath::Key(KeyCode::KeyW)),
-                    Binding::part(PartName::Down, ControlPath::Key(KeyCode::KeyS)),
-                    Binding::part(PartName::Left, ControlPath::Key(KeyCode::KeyA)),
-                    Binding::part(PartName::Right, ControlPath::Key(KeyCode::KeyD)),
-                ])
-                .bind_all([
-                    // Radial, not per-axis: a per-axis deadzone leaves a
-                    // square hole a diagonal push slips through.
-                    Binding::composite(Composite::Vector2 {
-                        mode: VectorMode::Analog,
-                    })
-                    .with(Processor::StickDeadzone {
-                        min: DEFAULT_DEADZONE_MIN,
-                        max: DEFAULT_DEADZONE_MAX,
-                    }),
-                    Binding::part(PartName::Up, ControlPath::Axis(GamepadAxis::LeftStickY)),
-                    Binding::part(PartName::Right, ControlPath::Axis(GamepadAxis::LeftStickX)),
-                ]),
-        )
-        .add(
-            Action::new("jump", ControlType::Button)
-                .bind(Binding::to(ControlPath::Key(KeyCode::Space)))
-                .bind(Binding::to(ControlPath::Button(GamepadButton::South))),
-        )
-}
-
 /// Reads an `.inputmap` and hands it to the panel.
 ///
 /// Read here rather than through the asset server on purpose: the panel
@@ -986,7 +940,7 @@ fn undoable_step(
     use crate::panels::input_map::InputMapAction as Edit;
 
     match edit {
-        Edit::Save | Edit::Select(_) | Edit::BeginRebind(_) | Edit::CancelRebind => None,
+        Edit::Save | Edit::Select(_) => None,
         // Typed and dragged: these arrive per keystroke and per frame, so
         // they carry a key and collapse into one step.
         Edit::RenameAction { action, .. } => {
@@ -1207,7 +1161,7 @@ fn edit_input_map(resources: &mut Resources, edit: &crate::panels::input_map::In
         },
         // Rebind prompts are panel state, not document edits, and Save
         // is routed before it gets here.
-        Edit::BeginRebind(_) | Edit::CancelRebind | Edit::Save => false,
+        Edit::Save => false,
     };
 
     if changed {

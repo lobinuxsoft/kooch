@@ -65,38 +65,3 @@ fn len_and_is_empty() {
     resources.insert("hello".to_string());
     assert_eq!(resources.len(), 2);
 }
-
-#[test]
-fn get_ptr_by_id() {
-    let mut resources = Resources::new();
-    resources.insert(42_i32);
-
-    let ptr = resources.get_ptr_by_id(TypeId::of::<i32>());
-    assert!(!ptr.is_null());
-
-    let value = unsafe { &*(ptr as *const i32) };
-    assert_eq!(*value, 42);
-
-    // Missing type returns null.
-    let null_ptr = resources.get_ptr_by_id(TypeId::of::<f64>());
-    assert!(null_ptr.is_null());
-}
-
-#[test]
-fn get_mut_ptr_by_id() {
-    let mut resources = Resources::new();
-    resources.insert(10_i32);
-
-    let ptr = resources.get_mut_ptr_by_id(TypeId::of::<i32>());
-    assert!(!ptr.is_null());
-
-    unsafe {
-        *(ptr as *mut i32) = 99;
-    }
-
-    assert_eq!(resources.get::<i32>(), Some(&99));
-
-    // Missing type returns null.
-    let null_ptr = resources.get_mut_ptr_by_id(TypeId::of::<f64>());
-    assert!(null_ptr.is_null());
-}

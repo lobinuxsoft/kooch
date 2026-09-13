@@ -177,6 +177,7 @@ impl MeshletMesh {
         self.meshlets.iter().map(|m| m.triangle_count).sum::<u32>()
     }
 
+    #[cfg(test)]
     /// The full-detail surface, as a plain vertex and index buffer.
     ///
     /// LOD 0 only. The meshlet array holds the whole simplification DAG,

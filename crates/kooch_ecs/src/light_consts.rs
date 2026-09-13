@@ -30,34 +30,11 @@
 
 /// Illuminance, in lux. What a **directional light** (a sun) measures.
 pub mod lux {
-    /// A moonless, overcast night sky — starlight alone.
-    pub const MOONLESS_NIGHT: f32 = 0.0001;
-    /// A full moon on a clear night.
-    pub const FULL_MOON_NIGHT: f32 = 0.05;
-    /// The dark limit of civil twilight, clear sky.
-    pub const CIVIL_TWILIGHT: f32 = 3.4;
-    /// Family living room lighting.
-    pub const LIVING_ROOM: f32 = 50.0;
-    /// An office building's hallway.
-    pub const HALLWAY: f32 = 80.0;
-    /// A very dark overcast day.
-    pub const DARK_OVERCAST_DAY: f32 = 100.0;
-    /// An office.
-    pub const OFFICE: f32 = 320.0;
-    /// Sunrise or sunset on a clear day.
-    pub const CLEAR_SUNRISE: f32 = 400.0;
-    /// An overcast day; also typical TV studio lighting.
-    pub const OVERCAST_DAY: f32 = 1_000.0;
     /// Ambient daylight, not direct sun. **The `DirectionalLight`
     /// default**, here and in Bevy.
     pub const AMBIENT_DAYLIGHT: f32 = 10_000.0;
-    /// Full daylight, not direct sun.
-    pub const FULL_DAYLIGHT: f32 = 20_000.0;
     /// Direct sunlight.
     pub const DIRECT_SUNLIGHT: f32 = 100_000.0;
-    /// Raw sunlight, unfiltered by an atmosphere. What a light outside a
-    /// planet's air actually delivers.
-    pub const RAW_SUNLIGHT: f32 = 130_000.0;
 }
 
 /// Luminous flux, in lumens. What a **point or spot light** emits in
@@ -68,16 +45,8 @@ pub mod lux {
 /// module docs. [`ROOM_LIGHT_NO_GI`] is the one calibrated for this
 /// renderer rather than for reality.
 pub mod lumens {
-    /// A candle.
-    pub const CANDLE: f32 = 12.0;
     /// A 9 W LED bulb — a normal household lamp.
     pub const LED_BULB_9W: f32 = 800.0;
-    /// A 100 W incandescent bulb.
-    pub const INCANDESCENT_100W: f32 = 1_600.0;
-    /// A bright shop or garage fixture.
-    pub const SHOP_LIGHT: f32 = 5_000.0;
-    /// A car headlight on high beam.
-    pub const CAR_HEADLIGHT: f32 = 20_000.0;
     /// 🔴 **Not a real bulb.** What a room light has to emit to read as a
     /// room light with direct lighting only — roughly forty times a real
     /// 9 W LED, standing in for the bounces this renderer does not
@@ -87,6 +56,7 @@ pub mod lumens {
     /// [`LED_BULB_9W`] the day #450 lands; that is the point of naming it
     /// after the compromise instead of after a fixture.
     pub const ROOM_LIGHT_NO_GI: f32 = 32_000.0;
+    #[cfg(test)]
     /// A stadium floodlight.
     pub const FLOODLIGHT: f32 = 200_000.0;
     /// A very large cinema light. Bevy's `PointLight` default, listed

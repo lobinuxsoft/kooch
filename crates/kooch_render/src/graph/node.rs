@@ -39,17 +39,7 @@ pub struct RenderContext<'a> {
     pub frame: Option<&'a FrameInfo<'a>>,
 }
 
-impl<'a> RenderContext<'a> {
-    /// Convenience constructor for compute-only / test contexts: sets
-    /// `frame` to `None`.
-    pub fn compute_only(device: &'a wgpu::Device, queue: &'a wgpu::Queue) -> Self {
-        Self {
-            device,
-            queue,
-            frame: None,
-        }
-    }
-}
+impl<'a> RenderContext<'a> {}
 
 /// Single unit of GPU work scheduled by the [`crate::graph::RenderGraph`].
 ///

@@ -463,14 +463,6 @@ impl PagePool {
         self.entries
     }
 
-    /// What the table costs: [`PAGE_CELL`] words per virtual page. The
-    /// number that used to make a flat table impossible — 108 MiB over
-    /// the full chain — and that the floored local stride brought to a
-    /// few MiB. See `page_table.wgsl`.
-    pub fn table_bytes(&self) -> u64 {
-        self.entries as u64 * PAGE_CELL as u64 * 4
-    }
-
     /// Resizes if the pool changed, and reports whether it did.
     pub fn resize(&mut self, device: &wgpu::Device, config: PoolConfig) -> bool {
         if config == self.config {

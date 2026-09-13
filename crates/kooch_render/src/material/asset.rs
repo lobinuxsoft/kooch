@@ -104,12 +104,14 @@ impl Material {
         self
     }
 
+    #[cfg(test)]
     /// Attaches a tangent-space normal map by asset [`Guid`].
     pub fn with_normal(mut self, guid: Guid) -> Self {
         self.normal = Some(guid);
         self
     }
 
+    #[cfg(test)]
     /// Attaches a packed metal-roughness map by asset [`Guid`].
     pub fn with_metal_roughness(mut self, guid: Guid) -> Self {
         self.metal_roughness = Some(guid);

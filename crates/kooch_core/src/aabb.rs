@@ -30,14 +30,6 @@ impl Aabb {
         Self { min, max }
     }
 
-    /// Build from a centre + half-extents.
-    pub fn from_centre(centre: Vec3, half: Vec3) -> Self {
-        Self {
-            min: centre - half,
-            max: centre + half,
-        }
-    }
-
     pub fn center(&self) -> Vec3 {
         (self.min + self.max) * 0.5
     }
@@ -58,31 +50,6 @@ impl Aabb {
     pub fn distance_squared(&self, point: Vec3) -> f32 {
         let clamped = point.clamp(self.min, self.max);
         (point - clamped).length_squared()
-    }
-
-    /// Returns `true` when this AABB intersects a sphere `(centre, radius)`.
-    pub fn intersects_sphere(&self, centre: Vec3, radius: f32) -> bool {
-        self.distance_squared(centre) <= radius * radius
-    }
-
-    /// Returns `true` when this AABB intersects another AABB.
-    pub fn intersects_aabb(&self, other: &Self) -> bool {
-        self.min.x <= other.max.x
-            && self.max.x >= other.min.x
-            && self.min.y <= other.max.y
-            && self.max.y >= other.min.y
-            && self.min.z <= other.max.z
-            && self.max.z >= other.min.z
-    }
-
-    /// Returns `true` when `point` is inside (boundary inclusive).
-    pub fn contains_point(&self, point: Vec3) -> bool {
-        point.x >= self.min.x
-            && point.x <= self.max.x
-            && point.y >= self.min.y
-            && point.y <= self.max.y
-            && point.z >= self.min.z
-            && point.z <= self.max.z
     }
 
     /// Slab-test ray intersection. Returns `Some((t_near, t_far))` when

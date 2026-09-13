@@ -62,18 +62,6 @@ impl QueryFilter {
             ..Self::ALL
         }
     }
-
-    /// Narrowed to a group mask.
-    pub fn in_groups(mut self, groups: InteractionMask) -> Self {
-        self.groups = groups;
-        self
-    }
-
-    /// Including sensors, for a query that is *looking* for triggers.
-    pub fn with_sensors(mut self) -> Self {
-        self.skip_sensors = false;
-        self
-    }
 }
 
 /// Where a swept shape first met something.

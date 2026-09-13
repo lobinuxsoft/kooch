@@ -1,5 +1,8 @@
 use super::*;
 
+/// The size `kooch-64.png` is rendered at.
+const ICON_SIZE: u32 = 64;
+
 /// A teardrop on transparency: corners empty, middle not. Catches a
 /// decode that "succeeds" into garbage, which a length check alone
 /// would pass — and catches someone replacing the file with a

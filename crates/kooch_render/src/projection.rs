@@ -92,17 +92,6 @@ pub fn perspective_infinite_rh_reverse_z(fovy: f32, aspect: f32, near: f32) -> M
     Mat4::perspective_infinite_reverse_rh(fovy, aspect, near)
 }
 
-/// The `near` a shader can recover from the projection matrix alone,
-/// which is all a depth linearisation needs once the far plane is gone.
-///
-/// Bevy reads exactly this element and calls it
-/// `perspective_camera_near()` (`view_transformations.wgsl:166`); the
-/// name here says where it comes from, because on any other projection
-/// the element means something else.
-pub fn near_from_infinite_projection(proj: Mat4) -> f32 {
-    proj.to_cols_array_2d()[3][2]
-}
-
 /// A world-space ray: where a screen pixel points once it leaves the
 /// camera.
 ///

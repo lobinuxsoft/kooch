@@ -166,11 +166,6 @@ impl ShadowAtlas {
         &self.culls[cascade.min(CASCADE_COUNT - 1)]
     }
 
-    pub fn cull_mut(&mut self, cascade: usize) -> &mut MeshletCull {
-        let index = cascade.min(CASCADE_COUNT - 1);
-        &mut self.culls[index]
-    }
-
     /// Grows every cascade's survivor lists to fit the scene.
     ///
     /// All four, unconditionally: a cascade that culls nothing this

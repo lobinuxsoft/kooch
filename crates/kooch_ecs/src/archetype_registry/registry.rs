@@ -56,6 +56,7 @@ impl ArchetypeRegistry {
         &self.tables
     }
 
+    #[cfg(test)]
     /// The tables, mutably.
     #[inline]
     pub fn tables_mut(&mut self) -> &mut Tables {

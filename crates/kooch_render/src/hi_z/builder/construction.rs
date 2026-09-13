@@ -274,10 +274,6 @@ impl HiZ {
         &self.full_view
     }
 
-    pub fn mip_view(&self, mip: u32) -> &wgpu::TextureView {
-        &self.mip_views[mip as usize]
-    }
-
     pub fn mip_count(&self) -> u32 {
         self.mip_count
     }
@@ -293,21 +289,5 @@ impl HiZ {
             total += (w as u64) * (h as u64) * 4;
         }
         total
-    }
-
-    pub fn pyramid_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("hi_z_pyramid_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            }],
-        })
     }
 }

@@ -176,6 +176,7 @@ fn inti_debug_view(
 }
 ";
 
+#[cfg(test)]
 /// What `inti_shade` calls for contact shadows (#735), when the composer
 /// has nothing to march.
 ///

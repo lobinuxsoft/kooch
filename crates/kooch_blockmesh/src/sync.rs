@@ -49,11 +49,6 @@ impl BuiltBlocks {
         self.built.remove(&guid);
     }
 
-    /// Marks every source as needing regeneration.
-    pub fn forget_all(&mut self) {
-        self.built.clear();
-    }
-
     /// Whether this source was built from the bytes it currently has.
     pub fn is_built(&self, guid: Guid, revision: u64) -> bool {
         self.built

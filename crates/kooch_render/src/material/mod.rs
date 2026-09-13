@@ -82,13 +82,6 @@ impl MaterialParams {
         self
     }
 
-    /// Assigns the resolved pool indices for the three texture channels.
-    /// Pass [`NO_TEXTURE`] for any channel without a map.
-    pub fn with_texture_indices(mut self, albedo: u32, normal: u32, metal_roughness: u32) -> Self {
-        self.texture_indices = [albedo, normal, metal_roughness, 0];
-        self
-    }
-
     pub fn base_color(&self) -> [f32; 4] {
         self.base_color
     }
@@ -105,14 +98,17 @@ impl MaterialParams {
         self.metallic_roughness_emissive_pad[2]
     }
 
+    #[cfg(test)]
     pub fn albedo_index(&self) -> u32 {
         self.texture_indices[0]
     }
 
+    #[cfg(test)]
     pub fn normal_index(&self) -> u32 {
         self.texture_indices[1]
     }
 
+    #[cfg(test)]
     pub fn metal_roughness_index(&self) -> u32 {
         self.texture_indices[2]
     }

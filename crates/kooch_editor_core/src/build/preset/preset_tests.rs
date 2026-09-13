@@ -88,19 +88,6 @@ fn a_preset_lists_the_platforms_it_builds() {
     assert!(neither.targets().is_empty());
 }
 
-/// Each platform lands in its own folder under the preset's output.
-#[test]
-fn a_platform_lands_under_the_output_dir() {
-    let preset = BuildPreset {
-        output_dir: "dist".to_owned(),
-        ..Default::default()
-    };
-    assert_eq!(
-        preset.platform_dir(Platform::Windows),
-        std::path::Path::new("dist/windows"),
-    );
-}
-
 /// 🔴 A floor is a glibc version, and Windows has none.
 ///
 /// One preset can build both, and `cargo zigbuild` rejects

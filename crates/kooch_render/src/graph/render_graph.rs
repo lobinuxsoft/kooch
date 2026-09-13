@@ -74,19 +74,6 @@ impl RenderGraph {
         id
     }
 
-    /// Removes a node + every dependency edge that referenced it. Stale
-    /// `NodeId`s are silently ignored.
-    pub fn remove_node(&mut self, id: NodeId) {
-        if self.nodes.remove(id).is_none() {
-            return;
-        }
-        self.insertion.retain(|n| *n != id);
-        self.dependencies.remove(&id);
-        for deps in self.dependencies.values_mut() {
-            deps.retain(|n| *n != id);
-        }
-    }
-
     /// Declares "`consumer` depends on `producer`" — producer runs
     /// first. Returns [`GraphError::UnknownNode`] if either id is stale.
     /// Duplicate connections are deduped silently.
@@ -99,10 +86,6 @@ impl RenderGraph {
             deps.push(producer);
         }
         Ok(())
-    }
-
-    pub fn node_count(&self) -> usize {
-        self.nodes.len()
     }
 
     pub fn contains(&self, id: NodeId) -> bool {
