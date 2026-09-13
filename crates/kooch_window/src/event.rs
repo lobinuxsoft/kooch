@@ -1,7 +1,5 @@
-//! Window events emitted by the windowing system.
-//!
-//! These events are sent through the engine's double-buffered event system
-//! and become readable on the next frame.
+//! Window events, delivered through the engine's double-buffered event system: readable the frame
+//! after they are sent.
 
 /// Emitted when the window is resized.
 ///
@@ -14,10 +12,8 @@ pub struct WindowResized {
     pub height: u32,
 }
 
-/// Emitted when the user requests the window to close (X button, Alt+F4, etc.).
-///
-/// Systems can listen for this event to perform cleanup before shutdown.
-/// By default, [`WindowPlugin`](crate::WindowPlugin) also sends [`AppExit`](kooch_core::event::AppExit)
-/// when this event fires.
+/// Emitted when the user asks to close the window (X button, Alt+F4).
+/// [`WindowPlugin`](crate::WindowPlugin) also sends [`AppExit`](kooch_core::event::AppExit) when it
+/// fires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowCloseRequested;

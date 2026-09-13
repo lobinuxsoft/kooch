@@ -1,17 +1,10 @@
-//! Window handle resource for sharing the winit window.
-//!
-//! [`WindowHandle`] wraps an `Arc<Window>` so downstream systems (wgpu, input)
-//! can access the window without ownership concerns.
+//! Shared handle to the winit window, so wgpu and input can reach it without owning it.
 
 use std::sync::Arc;
 
 use winit::window::Window;
 
-/// A clonable handle to the winit window.
-///
-/// Inserted as a resource after the window is created in `resumed()`.
-/// Systems that need the window (e.g., wgpu surface creation) can read this
-/// from resources.
+/// A clonable handle to the winit window, inserted as a resource once `resumed()` creates it.
 ///
 /// # Example
 /// ```ignore

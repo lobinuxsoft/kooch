@@ -1,9 +1,5 @@
-//! Applying [`WindowMode`] to the live window, and reporting what the
-//! platform can do.
-//!
-//! The value is authored in `.rendersettings` and published as a
-//! resource by `kooch_render`; this is the half that touches winit.
-//! Neither crate knows the other — the vocabulary is `kooch_core`'s.
+//! Applies [`WindowMode`] to the live window and reports what the platform can do; `kooch_render`
+//! publishes the value, and neither crate knows the other.
 
 use kooch_core::resource::Resources;
 use kooch_core::window_mode::{DisplayModes, Resolution, WindowMode, best_mode, effective};
@@ -11,18 +7,8 @@ use winit::window::{Fullscreen, Window};
 
 use crate::handle::WindowHandle;
 
-/// Whether this platform can honour [`WindowMode::Exclusive`].
-///
-/// 🔴 Asked of the window rather than of `cfg!(target_os)`. The same
-/// Linux binary runs under Wayland and under X11, and only one of them
-/// changes display modes — a compile-time answer would be wrong on
-/// whichever machine it was not built for.
-///
-/// ⚠️ Asked through `xdg_toplevel()`, which is the only Wayland-vs-X11
-/// question winit's `Window` answers: its own documentation is *"or
-/// `None` if the window is X11 window"*. There is an `is_wayland` in
-/// this module of winit and it is on the event loop, which is not
-/// reachable from a system.
+/// Whether this platform can honour [`WindowMode::Exclusive`], asked of the window: one Linux
+/// binary runs under Wayland and X11, and only X11 changes display modes.
 fn exclusive_supported(window: &Window) -> bool {
     #[cfg(all(
         unix,
@@ -42,12 +28,8 @@ fn exclusive_supported(window: &Window) -> bool {
     }
 }
 
-/// Every mode the window's current monitor reports, deduplicated and
-/// sorted largest first.
-///
-/// Deduplicated because a monitor lists one entry per refresh rate and a
-/// resolution dropdown wants one entry per size; the refresh a size can
-/// reach is [`best_mode`]'s problem, not the list's.
+/// Every mode the current monitor reports, one per size and largest first; the refresh for a size
+/// is [`best_mode`]'s job.
 fn monitor_modes(window: &Window) -> Vec<Resolution> {
     let Some(monitor) = window.current_monitor() else {
         return Vec::new();
@@ -69,16 +51,8 @@ fn monitor_modes(window: &Window) -> Vec<Resolution> {
     modes
 }
 
-/// Publishes [`DisplayModes`] once the window exists.
-///
-/// 🔴 A game's options menu is built from this and not from a constant:
-/// the list belongs to the **player's** monitor, and `exclusive` is
-/// false under Wayland, where a resolution dropdown would change
-/// nothing.
-///
-/// Refreshed only while the resource is absent — the modes of a monitor
-/// do not change while a game runs, and enumerating them is a round trip
-/// to the compositor.
+/// Publishes [`DisplayModes`] once the window exists — the player's monitor, not a constant, and
+/// not exclusive under Wayland. Only while absent: a monitor's modes do not change mid-game.
 pub(crate) fn publish_display_modes_system(resources: &mut Resources) {
     if resources.get::<DisplayModes>().is_some() {
         return;
@@ -99,24 +73,9 @@ pub(crate) fn publish_display_modes_system(resources: &mut Resources) {
     resources.insert(modes);
 }
 
-/// Puts [`WindowMode`] and [`Resolution`] on the window, if they are not
-/// already there.
-///
-/// 🔴 Absent means "no opinion", the same rule the quality settings
-/// follow: a game with no settings asset, and a test that made its own
-/// window, keep the window they have. This system creates no default.
-///
-/// 🔴 Guarded on what the window currently is rather than applied every
-/// frame. `set_fullscreen` on Wayland is a round trip to the compositor
-/// that ends in a configure event and a surface resize; issuing it sixty
-/// times a second would keep the swapchain being rebuilt for a value
-/// that never changed. The exclusive request is degraded by
-/// [`effective`] before the comparison for the same reason — an
-/// un-degraded one never matches and would be retried forever.
-///
-/// Runs in `Stage::Last`, after `apply_render_settings_system` has
-/// published the resources in `Update`, so a change lands on the frame
-/// it is made rather than the one after.
+/// Puts [`WindowMode`] and [`Resolution`] on the window when they differ from what it has. 🔴 Absent
+/// means no opinion; comparing first avoids a compositor round trip every frame.
+/// Runs in `Stage::Last`, after the settings are published, so a change lands the same frame.
 pub(crate) fn apply_window_mode_system(resources: &mut Resources) {
     let Some(asked) = resources.get::<WindowMode>().copied() else {
         return;
@@ -175,12 +134,8 @@ pub(crate) fn apply_window_mode_system(resources: &mut Resources) {
     }
 }
 
-/// The `Fullscreen` an exclusive request turns into.
-///
-/// Falls back to borderless when the monitor has nothing of the asked
-/// size — [`best_mode`] refuses to substitute a nearby resolution, and
-/// the honest outcome is a full screen at the wrong size rather than a
-/// window.
+/// The `Fullscreen` an exclusive request turns into: borderless when the monitor lacks the exact
+/// size, since [`best_mode`] never substitutes one.
 fn exclusive_target(
     window: &Window,
     available: &[Resolution],

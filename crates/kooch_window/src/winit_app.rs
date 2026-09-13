@@ -1,17 +1,6 @@
-//! Internal winit application handler.
-//!
-//! Implements `ApplicationHandler` to bridge winit's event loop with the
-//! engine's game loop. Frame ticks happen on `RedrawRequested`, synchronized
-//! with the compositor (critical for Wayland).
-//!
-//! # Why the loop is allowed to stop
-//!
-//! It used to ask for the next redraw at the end of every frame, no matter
-//! what, so the loop fed itself forever and an idle process still pinned a
-//! core (#656). Now each frame states what the next one needs through
-//! [`FrameRequest`], and this handler turns that into a `ControlFlow`. An
-//! app that never inserts the resource keeps spinning — which is right for
-//! a game, and wrong for an editor showing a still image.
+//! Winit handler bridging the event loop and the engine, ticking on `RedrawRequested`.
+//! Each frame's [`FrameRequest`] decides the next `ControlFlow`, so an idle editor stops spinning a
+//! core (#656); without it the loop keeps polling.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -78,10 +67,8 @@ impl WinitApp {
         }
     }
 
-    /// Turns this frame's [`FrameRequest`] into the next `ControlFlow`.
-    ///
-    /// A missing resource means the app never opted into idling, so it
-    /// keeps the pre-#656 behaviour: poll and redraw, always.
+    /// Turns this frame's [`FrameRequest`] into the next `ControlFlow`; without the resource the
+    /// app polls and redraws always.
     fn schedule_next_frame(&mut self, event_loop: &ActiveEventLoop) {
         let mut pace = self
             .app
@@ -90,11 +77,8 @@ impl WinitApp {
             .map(FrameRequest::take)
             .unwrap_or(FramePace::Continuous);
 
-        // A wake that landed *during* the frame we just ran would
-        // otherwise be slept straight through: the requester did its
-        // store while we were busy, and we are only now deciding to
-        // stop. Clearing the flag here — after the frame, before the
-        // sleep — is what closes that window.
+        // Cleared after the frame and before the sleep, so a wake that landed mid-frame is not
+        // slept through.
         if self.waker.as_ref().is_some_and(FrameWaker::take_pending) {
             pace = FramePace::Continuous;
         }
@@ -147,12 +131,8 @@ impl WinitApp {
         self.app.schedule.run_post_physics(&mut self.app.resources);
     }
 
-    /// Swaps double buffers for all registered event types.
-    ///
-    /// It used to name three of them under this same comment, which meant
-    /// every event any plugin added was written and never became readable —
-    /// in the editor as much as anywhere, since this is the runner a
-    /// windowed app uses. Asking beats remembering.
+    /// Swaps double buffers for every registered event type — asked, not listed, since a hand-kept
+    /// list left new events forever unreadable.
     fn update_events(&mut self) {
         kooch_core::event::update_all_events(&mut self.app.resources);
     }
@@ -193,13 +173,8 @@ impl ApplicationHandler<WakeUp> for WinitApp {
             .get::<WindowConfig>()
             .expect("WindowConfig resource not found");
 
-        // 🔴 Only the ENVIRONMENT override is applied here, not the
-        // project's setting. The settings asset needs the asset server,
-        // which needs the GPU, which needs this window — so the asset's
-        // mode cannot exist yet and lands a few frames later through
-        // `mode::apply_window_mode_system`. The variable can be read
-        // before anything, and a measurement run asking for fullscreen
-        // should not spend its first frames in a window.
+        // 🔴 Only the environment override: the settings asset needs the GPU, which needs this
+        // window, so its mode lands a few frames later via `mode::apply_window_mode_system`.
         let mode = kooch_core::window_mode::mode_override();
         let attrs = WindowAttributes::default()
             .with_title(&config.title)
@@ -231,10 +206,8 @@ impl ApplicationHandler<WakeUp> for WinitApp {
         let size = window.inner_size();
         match GpuContext::new(Arc::clone(&window), size.width, size.height) {
             Ok(gpu) => {
-                // #536 — the DLSS handles as their own resource. The
-                // render systems remove `GpuContext` for the length of a
-                // frame, so a pass that reached for the adapter through
-                // it mid-frame would find nothing.
+                // #536 — DLSS handles as their own resource, since render systems remove
+                // `GpuContext` for a frame.
                 self.app.resources.insert(gpu.dlss_runtime());
                 self.app.resources.insert(gpu);
             }
@@ -307,16 +280,8 @@ impl ApplicationHandler<WakeUp> for WinitApp {
                 self.schedule_next_frame(event_loop);
             }
 
-            // An input the UI has not drawn yet. While the loop is idle
-            // this is also the *only* thing that will produce a frame, so
-            // it asks for one rather than assuming the next is on its way.
-            //
-            // By list rather than by catch-all, because two of the events
-            // winit sends most often change nothing that is drawn, and
-            // asking for a frame on each of them cost more than every
-            // real input put together — measured over five seconds of
-            // ordinary mouse movement: 966 `AxisMotion` and 212 `Moved`
-            // against 486 `CursorMoved`.
+            // An input the UI has not drawn yet, and while idle the only frame source. Listed, not
+            // caught all: 966 `AxisMotion` and 212 `Moved` per 5 s drew nothing.
             other if wants_a_frame(&other) => {
                 self.last_waker_event = window_event_name(&other);
                 self.request_redraw();
@@ -327,10 +292,7 @@ impl ApplicationHandler<WakeUp> for WinitApp {
     }
 }
 
-/// A stable name for a window event, for the pacing log.
-///
-/// `Debug` would print the payload, and a cursor position changing every
-/// line is the opposite of what this is read for.
+/// A stable name for a window event in the pacing log; `Debug` would print a changing payload.
 fn window_event_name(event: &WindowEvent) -> &'static str {
     match event {
         WindowEvent::CursorMoved { .. } => "CursorMoved",
@@ -362,22 +324,9 @@ fn window_event_name(event: &WindowEvent) -> &'static str {
     }
 }
 
-/// Whether an event changes something the next frame would draw.
-///
-/// The two exclusions are the point:
-///
-/// - **`AxisMotion`** duplicates `CursorMoved`. winit reports the raw
-///   device axes *as well as* the resulting cursor position, at roughly
-///   twice the rate, and egui reads the cursor. Redrawing for both draws
-///   the same frame twice.
-/// - **`Moved`** is the window changing position on the desktop. Not one
-///   pixel of its contents differs, and a compositor emits it for every
-///   step of a drag.
-///
-/// Everything unmatched is excluded too. A new winit event is far more
-/// likely to be bookkeeping than something the UI must react to, and the
-/// failure mode of a miss is one late repaint — against a catch-all,
-/// whose failure mode is the loop never sleeping again.
+/// Whether an event changes the next frame: not `AxisMotion` (a duplicate of `CursorMoved`), not
+/// `Moved` (no pixel changes).
+/// Unknown events excluded — a miss costs one late repaint.
 fn wants_a_frame(event: &WindowEvent) -> bool {
     matches!(
         event,
