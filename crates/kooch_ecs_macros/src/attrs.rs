@@ -4,11 +4,8 @@
 use proc_macro::TokenStream;
 use syn::{DeriveInput, Lit, Meta, MetaNameValue};
 
-/// Parses `#[reflect(inspector = "hidden"|"read_only"|"editable")]` from struct attributes.
-///
-/// Returns `Ok(Some(ident))` with the variant name (`Hidden`, `ReadOnly`, `Editable`)
-/// if the attribute is present, `Ok(None)` to use the trait default, or
-/// `Err(compile_error)` for invalid values.
+/// Parses the struct's `#[reflect(inspector = ...)]` (hidden, read_only, editable):
+/// `Ok(Some(variant))`, `Ok(None)` for the default, or a compile error.
 pub(crate) fn parse_inspector_attr(
     input: &DeriveInput,
 ) -> Result<Option<proc_macro2::Ident>, TokenStream> {
@@ -55,20 +52,14 @@ pub(crate) fn parse_inspector_attr(
     Ok(None)
 }
 
-/// Parses `#[reflect(asset = "TypeName")]` on a field. The annotated
-/// field must be an `Option<kooch_core::Guid>` and is exposed to the
-/// inspector as a typed asset reference (renderered as a dropdown
-/// picker filtered by `TypeName`).
+/// Parses `#[reflect(asset = ...)]` on an `Option<kooch_core::Guid>` field: a typed asset
+/// reference, picked from a dropdown filtered by that type.
 pub(crate) fn parse_field_asset_type(field: &syn::Field) -> Result<Option<String>, TokenStream> {
     parse_field_string(field, "asset")
 }
 
-/// Parses `#[reflect(requires = "ComponentName")]` on an entity-reference
-/// field: the short name of a component the target has to carry.
-///
-/// The inspector filters its picker by it and refuses a drop that does not
-/// satisfy it. A `Joint` body without a `PhysicsBody` is not a body, and a
-/// reference accepted but inert is indistinguishable from a broken one.
+/// Parses `#[reflect(requires = ...)]` on an entity-reference field: the component its target must
+/// carry, used to filter and refuse picks.
 pub(crate) fn parse_field_requires(field: &syn::Field) -> Result<Option<String>, TokenStream> {
     parse_field_string(field, "requires")
 }
@@ -101,10 +92,8 @@ fn parse_field_string(field: &syn::Field, key: &str) -> Result<Option<String>, T
     Ok(None)
 }
 
-/// Parses `#[reflect(skip)]` on a field. Returns `true` when present,
-/// `false` otherwise. Skipped fields are omitted from the FieldMeta
-/// list and from the get/set match arms — opaque handle fields use
-/// this to stay out of the editor inspector.
+/// Parses `#[reflect(skip)]`: the field is left out of `FieldMeta` and get/set, for opaque handles
+/// the Inspector cannot show.
 pub(crate) fn parse_field_skip(field: &syn::Field) -> Result<bool, TokenStream> {
     for attr in &field.attrs {
         if !attr.path().is_ident("reflect") {
@@ -127,11 +116,8 @@ pub(crate) fn parse_field_skip(field: &syn::Field) -> Result<bool, TokenStream> 
     Ok(false)
 }
 
-/// Parses `#[reflect(choices = PATH)]` from a field's attributes.
-///
-/// Returns `Ok(Some(expr))` with the path/identifier pointing to a
-/// `&'static [::kooch_ecs::reflect::FieldChoice]` constant when present,
-/// `Ok(None)` when absent, or `Err(compile_error)` on a parse failure.
+/// Parses `#[reflect(choices = PATH)]`, a `&'static [FieldChoice]` constant: `Ok(Some(path))`,
+/// `Ok(None)`, or a compile error.
 pub(crate) fn parse_field_choices(field: &syn::Field) -> Result<Option<syn::Expr>, TokenStream> {
     for attr in &field.attrs {
         if !attr.path().is_ident("reflect") {
@@ -154,11 +140,8 @@ pub(crate) fn parse_field_choices(field: &syn::Field) -> Result<Option<syn::Expr
     Ok(None)
 }
 
-/// Parses `#[reflect(bits = PATH)]` from a field's attributes.
-///
-/// Returns `Ok(Some(expr))` with the path pointing to a
-/// `&'static [::kooch_ecs::reflect::FieldChoice]` constant naming each bit,
-/// `Ok(None)` when absent, or `Err(compile_error)` on a parse failure.
+/// Parses `#[reflect(bits = PATH)]`, a `&'static [FieldChoice]` naming each bit: `Ok(Some(path))`,
+/// `Ok(None)`, or a compile error.
 pub(crate) fn parse_field_bits(field: &syn::Field) -> Result<Option<syn::Expr>, TokenStream> {
     for attr in &field.attrs {
         if !attr.path().is_ident("reflect") {
@@ -181,11 +164,8 @@ pub(crate) fn parse_field_bits(field: &syn::Field) -> Result<Option<syn::Expr>, 
     Ok(None)
 }
 
-/// Parses `#[reflect(shown_when = PATH)]` from a field's attributes.
-///
-/// Returns `Ok(Some(expr))` with the path/identifier pointing to a
-/// `::kooch_ecs::reflect::FieldCondition` constant when present,
-/// `Ok(None)` when absent, or `Err(compile_error)` on a parse failure.
+/// Parses `#[reflect(shown_when = PATH)]`, a `FieldCondition` constant: `Ok(Some(path))`,
+/// `Ok(None)`, or a compile error.
 pub(crate) fn parse_field_shown_when(field: &syn::Field) -> Result<Option<syn::Expr>, TokenStream> {
     for attr in &field.attrs {
         if !attr.path().is_ident("reflect") {
@@ -208,12 +188,8 @@ pub(crate) fn parse_field_shown_when(field: &syn::Field) -> Result<Option<syn::E
     Ok(None)
 }
 
-/// Parses `#[reflect(range = PATH)]` from a field's attributes.
-///
-/// Returns `Ok(Some(expr))` with the path pointing to a
-/// `::kooch_ecs::reflect::FieldRange` constant when present. Same shape
-/// as `shown_when` deliberately: a constant rather than a literal
-/// triple, so the bounds have a name and one place to change.
+/// Parses `#[reflect(range = PATH)]`, a `FieldRange` constant — named, like `shown_when`, so the
+/// bounds have one place to change.
 pub(crate) fn parse_field_range(field: &syn::Field) -> Result<Option<syn::Expr>, TokenStream> {
     for attr in &field.attrs {
         if !attr.path().is_ident("reflect") {
@@ -236,13 +212,8 @@ pub(crate) fn parse_field_range(field: &syn::Field) -> Result<Option<syn::Expr>,
     Ok(None)
 }
 
-/// Parses `#[reflect(group = "...")]` from a field's attributes.
-///
-/// The heading the Inspector draws the field under. Consecutive fields
-/// sharing a group form one section — see [`FieldMeta::group`] for why
-/// this is a label rather than a nested struct.
-///
-/// [`FieldMeta::group`]: ::kooch_ecs::reflect::FieldMeta::group
+/// Parses `#[reflect(group = ...)]`: the Inspector heading the field is drawn under; consecutive
+/// fields sharing one form a section.
 pub(crate) fn parse_field_group(field: &syn::Field) -> Result<Option<String>, TokenStream> {
     for attr in &field.attrs {
         if !attr.path().is_ident("reflect") {
@@ -270,11 +241,8 @@ pub(crate) fn parse_field_group(field: &syn::Field) -> Result<Option<String>, To
     Ok(None)
 }
 
-/// Parses `#[reflect(category = "...")]` from struct attributes.
-///
-/// Returns `Ok(Some(string))` with the category name if the attribute is
-/// present, `Ok(None)` to use the trait default, or `Err(compile_error)`
-/// if the value is not a string literal.
+/// Parses the struct's `#[reflect(category = ...)]`: `Ok(Some(name))`, `Ok(None)` for the default,
+/// or a compile error for a non-string.
 pub(crate) fn parse_category_attr(input: &DeriveInput) -> Result<Option<String>, TokenStream> {
     for attr in &input.attrs {
         if !attr.path().is_ident("reflect") {
@@ -302,20 +270,8 @@ pub(crate) fn parse_category_attr(input: &DeriveInput) -> Result<Option<String>,
     Ok(None)
 }
 
-/// Collects a field's doc comment into a single string for the
-/// Inspector tooltip (#737).
-///
-/// Doc comments desugar to `#[doc = "..."]` attributes before a proc
-/// macro ever sees them, so this is a plain attribute walk — there is
-/// nothing to ask the compiler for.
-///
-/// Rust puts a leading space after `///`, which would indent every line
-/// of the tooltip, so it is stripped. Everything else is left alone:
-/// markdown, links and code fences render as text, which is worse than
-/// rendered markdown and much better than no explanation at all.
-///
-/// Returns `""` for a field with no doc comment. The Inspector shows no
-/// tooltip rather than an empty box.
+/// Collects a field's `#[doc]` attributes into its Inspector tooltip (#737), stripping the leading
+/// space Rust adds; empty when there is none.
 pub(crate) fn parse_field_doc(field: &syn::Field) -> String {
     let mut lines: Vec<String> = Vec::new();
     for attr in &field.attrs {

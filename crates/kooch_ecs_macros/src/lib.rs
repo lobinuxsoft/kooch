@@ -1,32 +1,6 @@
-//! Derive macros for `kooch_ecs`.
-//!
-//! Provides `#[derive(Reflect)]` to auto-generate the [`Reflect`] trait
-//! implementation for component structs.
-//!
-//! # Supported field types
-//!
-//! `f32`, `f64`, `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64`,
-//! `bool`, `String`, `Vec2`, `Vec3`, `Vec4`, `Quat`, `Mat4`,
-//! `Option<EntityRef>`, `Entity` and `Option<Entity>`.
-//!
-//! # Pointing at an entity
-//!
-//! Three field shapes reflect as [`FieldKind::EntityRef`], and which one a
-//! component wants is a real choice:
-//!
-//! - `Option<EntityRef>` — what an authorable reference should be. It
-//!   stores the reference itself, so a target whose scene is not resident
-//!   survives as `Persistent` until it can be resolved.
-//! - `Entity` / `Option<Entity>` — a handle the engine resolves itself.
-//!   Reflects as `EntityRef::Live` and refuses to store anything else,
-//!   because there is nowhere to put an unresolved reference.
-//!
-//! Bare `EntityRef` is rejected: a reference field has to be able to say
-//! it points at nothing.
-//!
-//! # Requirements
-//!
-//! The struct must implement [`Default`] (used for `reflect_default()`).
+//! `#[derive(Reflect)]` and `#[system]` for `kooch_ecs`; the struct must implement [`Default`].
+//! Entity fields: `Option<EntityRef>` for authored links, which keeps an unresolved `Persistent`;
+//! `Entity`/`Option<Entity>` for handles the engine resolves.
 //!
 //! # Example
 //!
@@ -58,11 +32,6 @@ use crate::type_mapping::type_mapping;
 use crate::unit_struct::unit_struct_impl;
 use crate::util::{is_entity, is_entity_ref, option_inner};
 
-/// Derives the `Reflect` trait for a named-field struct.
-///
-/// Generates `reflect_fields`, `reflect_get`, `reflect_set`, and
-/// `reflect_default` based on the struct's fields. Each field type
-/// must map to a known `FieldKind` / `ReflectValue` variant.
 /// Declares which frame stage a system binds into, and how.
 ///
 /// ```ignore
@@ -71,22 +40,15 @@ use crate::util::{is_entity, is_entity_ref, option_inner};
 /// #[system(PostUpdate, always)] // PostUpdate, runs while editing too
 /// ```
 ///
-/// 🔴 **Expands to the function unchanged.** It is read by the editor's
-/// codegen, which scans `src/` and writes `registrations.rs`; before
-/// this, that scan bound every system it found to `Stage::Update` with
-/// `run_if_playing` because there was nothing to read. Deleting the
-/// attribute therefore never breaks a build — the system returns to the
-/// default binding.
-///
-/// It still validates: a mistyped stage is a compile error naming the
-/// fourteen, rather than a system that quietly stays in `Update`.
-///
-/// See `system_attr` for why `always` has to be a word.
+/// 🔴 Expands to the function unchanged: the editor's codegen reads it when writing
+/// `registrations.rs`, and a mistyped stage is a compile error.
 #[proc_macro_attribute]
 pub fn system(args: TokenStream, item: TokenStream) -> TokenStream {
     crate::system_attr::system_impl(args, item)
 }
 
+/// Derives `Reflect` for a named-field struct: `reflect_fields`, `reflect_get`, `reflect_set` and
+/// `reflect_default`, each field mapping to a known `FieldKind`.
 #[proc_macro_derive(Reflect, attributes(reflect))]
 pub fn derive_reflect(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -135,24 +97,16 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
         let field_name = field.ident.as_ref().unwrap();
         let field_name_str = field_name.to_string();
         let ty = &field.ty;
-        // #737 — the field's own doc comment becomes its Inspector
-        // tooltip. Harvested once here and used by every FieldMeta
-        // branch below, so a field cannot gain a tooltip on one code
-        // path and lose it on another.
+        // #737 — the field's doc comment becomes its tooltip, harvested once so every `FieldMeta`
+        // branch below agrees.
         let field_doc = parse_field_doc(field);
-        // #830 — the Inspector heading this field is drawn under.
-        // Harvested beside the doc comment for the same reason: every
-        // FieldMeta branch below needs it, and a field must not gain a
-        // heading on one code path and lose it on another.
+        // #830 — the Inspector heading, harvested beside the doc comment for the same reason.
         let field_group = match parse_field_group(field) {
             Ok(group) => group.unwrap_or_default(),
             Err(e) => return e,
         };
 
-        // `#[reflect(skip)]` opts the field out of the inspector +
-        // get/set paths entirely. Used for handle-style fields that
-        // hold opaque keys (Option<DefaultKey>, etc.) which the
-        // editor inspector has no representation for.
+        // `#[reflect(skip)]` leaves opaque handle fields out of the Inspector and get/set.
         let skip = match parse_field_skip(field) {
             Ok(skip) => skip,
             Err(e) => return e,
@@ -161,10 +115,8 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             continue;
         }
 
-        // `#[reflect(asset = "TypeName")]` annotates an
-        // `Option<Guid>` field as a typed asset reference. The
-        // inspector picks it up via FieldKind::AssetRef and renders
-        // a dropdown filtered by `TypeName`.
+        // `#[reflect(asset = ...)]` makes an `Option<Guid>` a typed asset reference
+        // (`FieldKind::AssetRef`).
         let asset_type = match parse_field_asset_type(field) {
             Ok(opt) => opt,
             Err(e) => return e,
@@ -208,18 +160,9 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             continue;
         }
 
-        // `Option<EntityRef>` is the shape a component reaches for when it
-        // points at an entity the author picks.
-        //
-        // It stores what reflection carries, so the value assigned by code,
-        // by the inspector's picker and by a drag from the World panel is
-        // one and the same thing. An `Entity` field cannot do that: it has
-        // no room for a `Persistent` reference, so a load whose target is
-        // not resident yet loses the link instead of keeping it until the
-        // scene holding it opens.
-        //
-        // Bare `EntityRef` is deliberately unsupported — "points at
-        // nothing" has to be representable, and `Option` already says it.
+        // `Option<EntityRef>` is what an authored reference should be: code, the picker and a drag
+        // store the same value, and an unresolved `Persistent` survives. Bare `EntityRef` cannot
+        // point at nothing.
         if is_entity_ref(ty) {
             return syn::Error::new_spanned(
                 ty,
@@ -260,12 +203,8 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 #field_name_str => Some(::kooch_ecs::reflect::ReflectValue::EntityRef(self.#field_name)),
             });
 
-            // Both reference states are accepted, unlike an `Entity` field.
-            // A `Persistent` one arrives when the load pass could not
-            // resolve it — the target's scene is not open, which under
-            // world-cell streaming is ordinary. Storing it keeps the link
-            // alive to be resolved later and saved back unchanged; the
-            // `Entity` shape had to reject it because it cannot hold one.
+            // Both reference states are accepted: a `Persistent` one means the target's scene is
+            // not open — ordinary under world-cell streaming — and is kept to resolve later.
             set_arms.push(quote! {
                 #field_name_str => match value {
                     ::kooch_ecs::reflect::ReflectValue::EntityRef(reference) => {
@@ -282,14 +221,8 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             continue;
         }
 
-        // `Entity` / `Option<Entity>` become entity references.
-        //
-        // A live component holds `EntityRef::Live`, always. `reflect_set`
-        // rejects an unresolved reference rather than storing a
-        // placeholder: the scene load path resolves references in its
-        // remapping pass and only then writes them back, so a `Persistent`
-        // arriving here means that pass was skipped. Accepting it would
-        // put an entity handle that points nowhere into a live component.
+        // `Entity`/`Option<Entity>` hold `EntityRef::Live` only: the scene load resolves references
+        // first, so a `Persistent` here means that pass was skipped.
         let optional_entity = option_inner(ty).is_some_and(is_entity);
         if optional_entity || is_entity(ty) {
             let type_name_str = if optional_entity {

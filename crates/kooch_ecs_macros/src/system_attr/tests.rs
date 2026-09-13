@@ -1,12 +1,7 @@
 use super::STAGES;
 
-/// The stage list matches the engine's, name for name and in order.
-///
-/// 🔴 A proc-macro crate cannot depend on `kooch_core`, so this list
-/// is a copy — and a copy that drifts is a new stage nobody can bind
-/// to, reported as "not a stage" while it plainly is one. Reading the
-/// enum's source is ugly and it is the only thing that actually
-/// catches the drift.
+/// The stage list matches the engine's, name for name and in order. 🔴 It is a copy, and a drifted
+/// copy reports a real stage as not a stage.
 #[test]
 fn the_stages_match_the_engine() {
     let source = include_str!("../../../kooch_core/src/stage.rs");
