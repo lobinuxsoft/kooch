@@ -158,10 +158,8 @@ impl MeshGizmoRenderer {
         }
     }
 
-    /// Renders all queued mesh draws. No-ops on empty batch or no
-    /// active camera. Coalesces every `MeshDraw` into a single
-    /// vertex/index buffer + draw call (gizmos are tiny so per-draw
-    /// dispatch cost would dominate).
+    /// Renders all queued mesh draws in one draw call; gizmos are too small for per-draw dispatch
+    /// to pay.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,

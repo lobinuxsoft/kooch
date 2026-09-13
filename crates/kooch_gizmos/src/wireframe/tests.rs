@@ -11,10 +11,8 @@ fn circle_points(radius: f32) -> usize {
     lines.lines.len()
 }
 
-/// A bigger circle gets more segments. A fixed count is the wrong knob:
-/// it over-tessellates a small collider and still looks polygonal on a
-/// large light sphere, because how round a circle looks depends on its
-/// radius.
+/// A bigger circle gets more segments: roundness depends on radius, so a fixed count is the wrong
+/// knob.
 #[test]
 fn segment_count_grows_with_radius() {
     assert!(

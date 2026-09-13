@@ -24,11 +24,8 @@ pub struct GizmoRenderer {
     bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
     vertex_capacity: u64,
-    /// The ground grid, and the guide while a handle is dragged.
-    ///
-    /// Two passes rather than one with a loop: each writes its own
-    /// uniforms, and a second write into a buffer the first draw has
-    /// not consumed would show the second grid twice.
+    /// The ground grid and the drag guide, as two passes: each writes its own uniforms before its
+    /// draw.
     world_grid: GridPass,
     guide_grid: GridPass,
 }
@@ -149,12 +146,8 @@ impl GizmoRenderer {
         }
     }
 
-    /// Renders all queued segments. No-ops when the batch is empty or
-    /// no active `PerspectiveCamera + GlobalTransform` is found.
-    ///
-    /// `viewport_size` is the physical-pixel size of the render target.
-    /// The vertex shader uses it to convert per-line `thickness` (also
-    /// in physical pixels) to NDC offsets.
+    /// Renders queued segments and grids; a no-op with nothing to draw or no active camera.
+    /// `viewport_size` is in physical pixels, like `thickness`.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,

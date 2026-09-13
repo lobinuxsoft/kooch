@@ -6,10 +6,8 @@ use wgpu::util::DeviceExt;
 
 use crate::grid::{GridLevel, STEPS};
 
-/// What the grid shader reads. Mirrors `GridUniforms` in `grid.wgsl`.
-///
-/// `#[repr(C)]` with explicit padding: a `vec3` in WGSL is 16-byte
-/// aligned, so every one is followed by the scalar that shares its slot.
+/// What the grid shader reads; mirrors `GridUniforms` in `grid.wgsl`. `#[repr(C)]`, each vec3
+/// followed by the scalar sharing its slot.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 struct GridUniforms {
@@ -128,11 +126,8 @@ impl GridPass {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,
-                // 🔴 Tested, unlike every other gizmo. A handle draws over
-                // whatever is in front of it because you have to be able
-                // to grab one behind a wall; a grid doing that is a
-                // lattice painted on the camera.
-                //
+                // 🔴 Depth-tested, unlike the handles: a handle must be grabbable behind a wall, a
+                // grid drawn that way is painted on the camera.
                 // `Greater` because this engine is reversed-Z.
                 depth_write_enabled: Some(false),
                 depth_compare: Some(wgpu::CompareFunction::Greater),

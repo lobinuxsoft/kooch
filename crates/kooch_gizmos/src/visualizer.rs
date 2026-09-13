@@ -1,10 +1,5 @@
-//! [`Visualizer<C>`] trait + [`VisualizerRegistry`] resource.
-//!
-//! Pattern: same as [`ComponentRegistry`](kooch_ecs::component::ComponentRegistry)
-//! — register a function per component type, dispatch at runtime via
-//! `TypeId`. Visualizers are pure draw-the-component-as-gizmos hooks,
-//! invoked once per (entity, component) pair the editor decides to
-//! visualize.
+//! [`Visualizer<C>`] and [`VisualizerRegistry`]: a draw hook per component type, dispatched by
+//! `TypeId` like the component registry.
 //!
 //! # Example
 //!
@@ -43,17 +38,9 @@ pub trait Visualizer<C: Component>: Send + Sync + 'static {
     /// world-space [`GlobalTransform`].
     fn draw(&self, component: &C, transform: &GlobalTransform, gizmos: &mut Gizmos<'_>);
 
-    /// Same, for a visualizer whose outline lives outside its component.
-    ///
-    /// Most do not need this: a `Collider`'s sphere is the radius on the
-    /// component, and a camera's frustum is its own numbers. Two cases
-    /// are not — a mesh-derived collider, whose shape is a point cloud
-    /// in a cache, and a character controller, whose ride height is only
-    /// wrong relative to the `Collider` beside it. Both draw either
-    /// nothing or a lie without `entity` and `resources`.
-    ///
-    /// Defaults to [`draw`](Self::draw), so a visualizer that has
-    /// everything it needs implements one method and ignores this one.
+    /// Same, for a visualizer whose outline lives outside its component — a mesh-derived collider's
+    /// cached points, or a controller's ride height beside its `Collider`.
+    /// Defaults to [`draw`](Self::draw).
     fn draw_with(
         &self,
         component: &C,

@@ -2,12 +2,8 @@ use glam::Vec3;
 
 use super::types::{DEFAULT_LINE_THICKNESS, LineSegment};
 
-/// Per-frame collection of line segments queued for the gizmo pass.
-///
-/// Lines are rasterized as **screen-space quads** (sub-phase 3a of
-/// #278): each segment becomes a 4-vertex quad whose perpendicular
-/// offset is `thickness` physical pixels. Works around `wgpu`'s
-/// fixed 1-pixel `LineList` width limitation.
+/// Per-frame line segments for the gizmo pass, each drawn as a screen-space quad `thickness` pixels
+/// wide.
 #[derive(Debug, Default)]
 pub struct GizmoBatch {
     pub lines: Vec<LineSegment>,
@@ -86,10 +82,8 @@ impl GizmoBatch {
         self.arrow(origin, origin + Vec3::Z * length, Vec3::X, Vec3::Y, BLUE);
     }
 
-    /// Pushes a single arrow: shaft + 4 arrowhead segments forming a
-    /// "+"-shaped 3D head at `tip`. `perp_a` and `perp_b` are the two
-    /// unit-length axes perpendicular to the arrow direction (orient
-    /// the arrowhead).
+    /// Pushes an arrow: a shaft and a plus-shaped head at `tip`, oriented by the unit axes `perp_a`
+    /// and `perp_b`.
     pub fn arrow(&mut self, base: Vec3, tip: Vec3, perp_a: Vec3, perp_b: Vec3, color: Vec3) {
         let dir = (tip - base).normalize_or_zero();
         let length = (tip - base).length();

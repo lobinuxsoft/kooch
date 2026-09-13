@@ -1,20 +1,5 @@
-// Mesh gizmo shader — unlit alpha-blended triangles with shader-side
-// edge highlighting.
-//
-// Per-vertex `edge_uv` lets the fragment shader detect proximity to a
-// face perimeter: distance to closest of the four UV edges (u=0, u=1,
-// v=0, v=1) is computed in screen space using `fwidth`, then a smooth
-// step gives a crisp constant-pixel-width outline. Outline pixels keep
-// the vertex color but force alpha to 1.0; interior pixels keep the
-// vertex alpha so fills stay translucent.
-//
-// Geometry that wants no edges (e.g., the future filled cube) passes
-// `edge_uv = (0.5, 0.5)` for every vertex so the fragment is always
-// interior.
-//
-// Pipeline draws with `PrimitiveTopology::TriangleList`, depth-test
-// `Always`, depth-write disabled — same always-on-top behavior as the
-// line pipeline.
+// Mesh gizmo shader: unlit alpha-blended triangles outlined at constant pixel width via `edge_uv` —
+// `(0.5, 0.5)` means no outline. Depth `Always`, no depth write.
 
 struct CameraUniforms {
     view_proj: mat4x4<f32>,

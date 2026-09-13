@@ -1,11 +1,4 @@
-//! Gizmo renderer: queues line segments and renders them as
-//! screen-space quads.
-//!
-//! Submodules:
-//! - [`types`] — public [`LineSegment`] + private GPU types.
-//! - [`batch`] — public [`GizmoBatch`] queue API.
-//! - [`gizmo_renderer`] — public [`GizmoRenderer`] pipeline.
-//! - [`helpers`] — internal vertex emission + camera resolution.
+//! Gizmo line renderer: queues segments and draws them as screen-space quads.
 
 mod batch;
 mod gizmo_renderer;

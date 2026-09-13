@@ -1,25 +1,11 @@
 //! Which grid level to draw, and how far through the crossfade it is.
 
-/// How many fine cells make one counting cell.
-///
-/// Ten, because a decimal lattice is what a person counts in. Godot
-/// exposes it; nothing here has ever wanted another value.
+/// How many fine cells make one counting cell. Ten, because a person counts in decimals.
 pub const STEPS: f32 = 10.0;
 
-/// The level of grid a camera at this distance should see.
-///
-/// # The whole point is the fractional part
-///
-/// A grid with one fixed step is either invisible from far away or a
-/// sheet of moiré from close up. Choosing a level by
-/// `log(distance) / log(steps)` keeps the cells roughly one size on
-/// screen at every zoom — and the **fraction** left over is how far the
-/// next level has taken over, so the change is a crossfade rather than
-/// a pop.
-///
-/// Adapted from Godot's `_init_grid` (MIT), which does the same and
-/// then applies the fraction per line on the CPU because its grid is
-/// geometry.
+/// The grid level a camera at this distance should see.
+/// `log(distance) / log(steps)` keeps cells about one size on screen; its fraction is how far the
+/// next level has crossfaded in (after Godot, MIT).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GridLevel {
     /// The finer of the two levels being blended, in world units.
@@ -29,11 +15,8 @@ pub struct GridLevel {
 }
 
 impl GridLevel {
-    /// The level for a camera `distance` from the plane, snapped so the
-    /// finest it ever shows is `step`.
-    ///
-    /// `step` is the value the handles snap to, so the grid can never
-    /// draw a cell finer than one an author can actually land on.
+    /// The level for a camera `distance` from the plane, never finer than `step` — the value
+    /// handles snap to.
     pub fn at(distance: f32, step: f32) -> Self {
         if step <= 0.0 || !distance.is_finite() {
             return Self {
@@ -53,10 +36,7 @@ impl GridLevel {
         }
     }
 
-    /// A level pinned to `step`, whatever the camera is doing.
-    ///
-    /// What a guide grid wants: its job is to show the scale a drag
-    /// moves in, and a scale that changes as you zoom shows nothing.
+    /// A level pinned to `step` whatever the camera does: a guide shows the scale a drag moves in.
     pub fn fixed(step: f32) -> Self {
         Self {
             small_step: step.max(f32::EPSILON),

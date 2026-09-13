@@ -1,16 +1,6 @@
-// Gizmo line shader — quad-line rendering with screen-space thickness.
-//
-// Each line segment is rasterized as a 4-vertex quad (2 triangles).
-// Per-vertex inputs carry the line's two endpoints, the vertex's side
-// (+1/-1), and the thickness in physical pixels. The vertex shader
-// projects both endpoints to clip space, computes the line direction
-// in pixel space, and offsets the vertex perpendicular to the line by
-// `thickness` pixels.
-//
-// Algorithm reference: Bevy `bevy_gizmos`'s `lines.wgsl` and the
-// general "expand quad in screen space" technique used by every modern
-// editor for thick line rendering on top of `wgpu` / Vulkan / DX12
-// (which lack arbitrary line width).
+// Gizmo line shader: each segment is a screen-space quad offset `thickness` physical pixels from
+// the line.
+// wgpu has no line width, so thick lines are expanded here — the technique `bevy_gizmos` uses.
 
 struct CameraUniforms {
     view_proj: mat4x4<f32>,

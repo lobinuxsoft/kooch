@@ -4,15 +4,8 @@
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat3, Vec2, Vec3, Vec4};
 
-/// Single mesh vertex — position + RGBA color + edge UV.
-///
-/// `edge_uv` is a per-vertex 2D coordinate the fragment shader uses to
-/// detect proximity to a face edge (u or v near 0 or 1). When near an
-/// edge the fragment overrides alpha to 1.0 so the geometry shows a
-/// crisp outline integrated with the fill — no separate line pass.
-///
-/// Geometry that doesn't want edge highlighting passes `edge_uv =
-/// (0.5, 0.5)` so the fragment is always interior.
+/// Single mesh vertex: position, RGBA colour and edge UV. Near an edge (u or v at 0 or 1) the
+/// shader draws an opaque outline; `(0.5, 0.5)` means none.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Debug)]
 pub struct MeshVertex {
@@ -39,21 +32,15 @@ impl MeshVertex {
     }
 }
 
-/// One mesh draw queued for the gizmo mesh pass.
-///
-/// Vertices are world-space (no model matrix). Triangles are wound
-/// CCW (no culling either way — the pipeline disables culling).
+/// One mesh draw queued for the gizmo mesh pass, in world space and wound CCW; the pipeline does
+/// not cull.
 #[derive(Debug, Clone, Default)]
 pub struct MeshDraw {
     pub vertices: Vec<MeshVertex>,
     pub indices: Vec<u32>,
 }
 
-/// Per-frame collection of mesh draws.
-///
-/// Stored as a `Resources` entry next to [`crate::GizmoBatch`].
-/// Editor populates it through [`crate::Gizmos`] each frame; renderer
-/// drains it during the mesh pass.
+/// Per-frame mesh draws, filled through [`crate::Gizmos`] and drained by the mesh pass.
 #[derive(Debug, Default)]
 pub struct MeshBatch {
     pub draws: Vec<MeshDraw>,
@@ -64,10 +51,8 @@ impl MeshBatch {
         self.draws.clear();
     }
 
-    /// Pushes a filled quad from four corners (CCW order). Color is
-    /// RGBA — alpha controls transparency. Per-corner `edge_uv` is set
-    /// so the shader renders a crisp 1-alpha outline at the perimeter
-    /// of the quad without a separate line pass.
+    /// Pushes a filled quad from four CCW corners; its edge UVs give it an opaque outline without a
+    /// line pass.
     pub fn filled_quad(&mut self, p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, color: Vec4) {
         self.draws.push(MeshDraw {
             vertices: vec![
@@ -80,11 +65,8 @@ impl MeshBatch {
         });
     }
 
-    /// Pushes a filled axis-aligned box centered at `center` with the
-    /// given half-extents. Each of the 6 faces has its own 4 vertices
-    /// carrying corner-aligned edge UVs (0,0)..(1,1) so the shader
-    /// renders each face's perimeter with alpha 1.0 — the cube reads
-    /// as a wireframe with translucent fill, no separate line pass.
+    /// Pushes a filled axis-aligned box centred at `center`. Each face carries its own edge UVs, so
+    /// it reads as a wireframe with translucent fill.
     pub fn filled_aabb(&mut self, center: Vec3, half_extents: Vec3, color: Vec4) {
         let h = half_extents;
         let c = center;
@@ -231,10 +213,8 @@ impl MeshBatch {
         self.draws.push(MeshDraw { vertices, indices });
     }
 
-    /// Pushes a filled torus around `axis` (unit vector through
-    /// `center`) with the given major and minor radii. 32 segments
-    /// around the major direction × 8 around the minor. Solid fill
-    /// (no shader edges) so it reads as a smooth ring.
+    /// Pushes a filled torus around `axis` through `center`, 32 × 8 segments, solid with no
+    /// outline.
     pub fn filled_torus(
         &mut self,
         center: Vec3,
@@ -286,11 +266,8 @@ impl MeshBatch {
         self.draws.push(MeshDraw { vertices, indices });
     }
 
-    /// Pushes a filled 3D arrow from `base` to `tip`: an octagonal
-    /// cylinder shaft + an octagonal cone head. Color is RGBA. No
-    /// edge UVs (vertices use the neutral 0.5,0.5) so the shader
-    /// renders the geometry as a solid fill — arrows want solid look,
-    /// not wireframe.
+    /// Pushes a solid 3D arrow from `base` to `tip`: an octagonal shaft and cone head, with no
+    /// outline.
     pub fn filled_arrow(&mut self, base: Vec3, tip: Vec3, color: Vec4) {
         let length_vec = tip - base;
         let length = length_vec.length();

@@ -1,15 +1,6 @@
-//! 3D mesh gizmo path — alpha-blended triangle primitives for filled
-//! gizmo visuals (translucent plane handles, future rotate tori, custom
-//! 3D shapes).
-//!
-//! Parallel to the line gizmo path (sibling crate-level module). Lines
-//! use [`crate::GizmoBatch`] + [`crate::GizmoRenderer`] with the
-//! quad-line rendering technique; meshes use [`MeshBatch`] +
-//! [`MeshGizmoRenderer`] with a vanilla `TriangleList` pipeline.
-//!
-//! Both render passes are dispatched by the editor in sequence
-//! (lines → meshes), depth-test `Always` and depth-write off, so all
-//! gizmos sit visibly on top of world geometry.
+//! Mesh gizmos: alpha-blended triangles for filled visuals — plane handles, rotate tori, boxes.
+//! Drawn after the line pass with depth test `Always` and no depth write, so they sit on top of the
+//! scene.
 
 mod batch;
 mod renderer;
