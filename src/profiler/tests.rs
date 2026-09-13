@@ -6,19 +6,11 @@ use kooch_core::runner::run_for_frames;
 
 use super::ProfilingPlugin;
 
-/// Taken by every test in this file.
-///
-/// 🔴 puffin's profiler is a process-wide singleton and so is
-/// `set_scopes_on`, so two of these running at once would each see the
-/// other's frames — and cargo's test harness is threaded. The suite is
-/// tiny; serialising it costs nothing and a flaky profiler test teaches
-/// people to ignore it.
+/// Serialises this file: puffin's profiler and `set_scopes_on` are process-wide, and the harness is
+/// threaded.
 static PUFFIN: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Counts the frames puffin actually publishes while an app runs.
-///
-/// Binds a port nothing will connect to: the boundary is what is under
-/// test here, not the transport.
+/// Counts frames puffin publishes; the port is never connected, since the boundary is under test.
 fn published_frames(frames_to_run: u32) -> usize {
     let count = Arc::new(AtomicUsize::new(0));
     let sink_count = Arc::clone(&count);
@@ -36,13 +28,8 @@ fn published_frames(frames_to_run: u32) -> usize {
     count.load(Ordering::SeqCst)
 }
 
-/// One frame in, one frame out.
-///
-/// Fails when the boundary system is missing (puffin grows a single
-/// unbounded frame and publishes nothing) and fails again if a second
-/// boundary is ever added anywhere in a frame, which is how a flamegraph
-/// silently becomes a graph of half-frames. Both directions verified by
-/// breaking them.
+/// One frame in, one out: fails without a boundary and with a second one. Both directions verified
+/// by breaking them.
 #[test]
 fn a_frame_publishes_once() {
     let _guard = PUFFIN
@@ -51,16 +38,9 @@ fn a_frame_publishes_once() {
     assert_eq!(published_frames(4), 4);
 }
 
-/// The whole wire, without the editor: a game serves, a viewer connects,
-/// and what arrives carries **names**.
-///
-/// The names are the point. A frame whose scopes read `scope#ScopeId(67)`
-/// looks like a successful capture and is worth nothing, and the reason
-/// it works here is entirely inside `puffin_http`: the server keeps its
-/// own `ScopeCollection` and re-sends all of it to each client that
-/// arrives. Nothing in this crate arranges that, which is exactly why it
-/// is worth a test — an upgrade that changed it would otherwise be found
-/// by squinting at a flamegraph.
+/// The whole wire: a game serves, a viewer connects, and scopes arrive with **names** —
+/// `puffin_http` re-sends its collection per client, and an upgrade changing that would otherwise
+/// go unseen.
 #[test]
 fn a_viewer_receives_named_frames() {
     let _guard = PUFFIN
@@ -72,12 +52,8 @@ fn a_viewer_receives_named_frames() {
     // here fails this test rather than reporting a false pass.
     const ADDR: &str = "127.0.0.1:18585";
 
-    // 🔴 Run a frame's scopes BEFORE the server exists, deliberately.
-    // `scope_delta` is a delta: a server that appears after a scope was
-    // first registered never sees its name, and the viewer draws
-    // `scope#ScopeId(67)`. Without this the test would only exercise
-    // that path when another test happened to run first, which is how it
-    // was found.
+    // 🔴 Scopes run before the server exists on purpose, or the late-server path is tested only by
+    // test order.
     puffin::set_scopes_on(true);
     let mut warmup = App::new();
     warmup.schedule.run_frame_stages(&mut warmup.resources);

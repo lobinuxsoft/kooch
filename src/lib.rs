@@ -1,39 +1,10 @@
-//! Kooch — GPU-driven game engine.
-//!
-//! Facade crate that re-exports all engine modules.
-//! Use Cargo features to control which modules are compiled.
-//!
-//! # Features
-//!
-//! | Feature    | Description                | Dependencies |
-//! |------------|----------------------------|--------------|
-//! | `window`   | Windowing via winit         | —            |
-//! | `render`   | Full game render pipeline   | `window`     |
-//! | `input`    | Gamepad/keyboard input      | `window`     |
-//! | `audio`    | Audio playback via kira     | —            |
-//! | `sdf`      | Signed distance fields      | —            |
-//! | `lighting` | Lighting system             | —            |
-//! | `physics`  | Physics simulation          | —            |
-//! | `gravity`  | Gravity system              | —            |
-//! | `character`| Floating-capsule controller | `gravity`    |
-//! | `camera`   | Authorable camera rigs      | —            |
-//! | `world`    | World management            | —            |
-//! | `editor`   | Editor UI                   | —            |
-//!
-//! Default features: `window`, `render`.
+//! Kóoch, the GPU-driven game engine: this facade re-exports the engine crates behind Cargo
+//! features (see `[features]` in `Cargo.toml`). Default: `window`, `render`, `gizmos`, `world`,
+//! `input`.
 
-/// The engine's licence, verbatim.
-///
-/// 🔴 **Compiled into every binary that links the engine**, which is
-/// what makes it non-optional: a game links Kóoch as an `rlib`, so this
-/// string is inside the shipped executable whether or not anyone
-/// remembered to copy a file next to it. Removing it means not using
-/// the engine.
-///
-/// The engine's source is protected by this licence rather than by
-/// being hidden — Rust has no stable ABI, so a project compiles the
-/// engine from source (see #754). Unreal distributes their C++ the same
-/// way, on the same basis.
+/// The engine's licence, verbatim. 🔴 Compiled into every binary that links the engine as an `rlib`,
+/// so shipping without it means not using the engine; the source is protected by licence, not
+/// hiding (#754).
 pub const LICENSE: &str = include_str!("../LICENSE.md");
 
 // Named `profiler` and not `profiling` on purpose: a module of that name
@@ -115,33 +86,22 @@ pub use scene_bootstrap::SceneBootstrapPlugin;
 pub mod prelude {
     pub use kooch_core::prelude::*;
 
-    // The maths types every component is made of. Re-exported rather than
-    // left to the project, because the lock holds five versions of glam
-    // (0.29 through 0.33, pulled in by rapier, egui and others) and a
-    // project adding its own dependency can silently pick a different one
-    // than the engine it is talking to (#657).
+    // The maths types of every component, re-exported: the lock holds glam 0.29–0.33, and a project
+    // adding its own can pick a different one (#657).
     pub use glam;
     pub use glam::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
 
-    // Logging, for the same reason as glam: a game that wants to say
-    // something to the editor's Console had to add a `tracing` dependency
-    // of its own and match the engine's version. It is the engine's
-    // console — the crate that owns it should hand over the way to write
-    // to it.
+    // Logging, for the same reason: a game writing to the editor's Console should not match the
+    // engine's `tracing` version itself.
     pub use tracing;
     pub use tracing::{debug, error, info, warn};
 
-    // The type of every asset reference. A component that points at a
-    // mesh, a prefab or an action has a `Guid` field, so a game names it
-    // the first time it writes one — and had to reach for
-    // `kooch::kooch_core::Guid` to do it.
+    // The type of every asset reference, named the first time a component points at a mesh or
+    // prefab.
     pub use kooch_core::Guid;
 
-    // What a game touches on day one. These were reachable all along at
-    // `kooch::kooch_ecs::…`, which is to say: only if you already knew
-    // they existed. See `docs/CAPABILITIES.md` — the prelude is the
-    // discovery surface, and anything missing from it reads, from
-    // outside, exactly like a feature that was never built.
+    // What a game touches on day one. The prelude is the discovery surface
+    // (`docs/CAPABILITIES.md`): missing from it reads like never built.
     pub use kooch_ecs::{
         Children, Commands, Component, ComponentId, ComponentRegistry, ComponentStorage, EcsPlugin,
         Entity, EntityAllocator, GlobalTransform, MeshRenderer, Name, OrthographicCamera, Parent,
@@ -181,24 +141,14 @@ pub mod prelude {
         Collider, Joint, PhysicsBody, PhysicsPlugin, PhysicsWorld, PointHit, QueryFilter, RayHit,
         ShapeAt, ShapeHit, SolverBody,
     };
-    // A level built in the editor is a scene of these, and a game that
-    // wants to read one — a door that is a block, a platform that moves
-    // — has to be able to name the component. `BuiltBlocks` is here for
-    // the same reason: the only way to say "this shape changed".
+    // Editor-built level pieces, nameable so a game can read them; `BuiltBlocks` says a shape
+    // changed.
     #[cfg(feature = "blockmesh")]
     pub use kooch_blockmesh::{Block, BlockMesh, BlockPlugin, BuiltBlocks};
 
-    // 🔴 A goal, a checkpoint and a death plane are the same thing — a
-    // sensor that says you touched it — and none could be written from a
-    // project, because the type to listen for could not be named here.
-    // The events were emitted, resolved to entities and registered all
-    // along; `Collider::sensor` even names the use case in its own doc.
-    //
-    // Read with `Events<CollisionStarted>`, which arrives from
-    // `kooch_core::prelude`. ⚠️ Frame-delayed by construction: `Events`
-    // is double-buffered, so what is sent in one frame is read in the
-    // next. That is deliberate — it stops a listener depending on system
-    // order — and it is one frame, not a bug to hunt.
+    // 🔴 Goals, checkpoints and death planes are sensors, and the event type could not be named
+    // here. Read with `Events<CollisionStarted>`; ⚠️ one frame late by design, since `Events` is
+    // double-buffered.
     #[cfg(feature = "physics")]
     pub use kooch_physics::plugin::{CollisionStarted, CollisionStopped, ContactForce, JointBroke};
 
@@ -211,12 +161,8 @@ pub mod prelude {
         PointGravity, gravity_at, gravity_dominant, gravity_up,
     };
 
-    // `Grounded` comes along because everything downstream of a
-    // controller reads it — jumping, animation, footstep audio — and a
-    // component nobody can name is one everybody re-derives with a
-    // raycast of their own. `Facing` is the other half of that seam: the
-    // controller cannot know where gameplay is steering, so gameplay
-    // writes it.
+    // `Grounded` because jumping, animation and footsteps all read it; `Facing` because gameplay
+    // steers and the controller cannot know where.
     #[cfg(feature = "character")]
     pub use kooch_character::{
         CharacterController, CharacterPlugin, Facing, Grounded, Sprint, Touching, Walk, WallJump,
@@ -302,11 +248,8 @@ fn default_asset_plugin() -> kooch_render::plugin::AssetPlugin {
     let engine_root = std::env::var_os("KOOCH_ENGINE_ROOT").map(PathBuf::from);
     let project_root = std::env::var_os("KOOCH_PROJECT_ROOT").map(PathBuf::from);
 
-    // 🔴 A shipped game's assets live in a pack, so `<exe>/assets` is
-    // the right root even though no such directory exists — the
-    // `.exists()` filter below would reject it and fall through to the
-    // working directory, which for a double-clicked game is the user's
-    // home. Same failure the boot scene had.
+    // 🔴 A shipped game's assets are in a pack, so `<exe>/assets` is right though no such directory
+    // exists — `.exists()` would fall back to the cwd, the user's home.
     let shipped = crate::shipped::shipped_pack();
     let beside_exe = std::env::current_exe()
         .ok()
@@ -321,18 +264,13 @@ fn default_asset_plugin() -> kooch_render::plugin::AssetPlugin {
         })
         .unwrap_or_else(|| PathBuf::from("assets"));
 
-    // No loader list here on purpose. Every asset type declares itself
-    // beside its own definition with `kooch_core::register_asset!`, and
-    // `AssetPlugin` installs whatever is linked in. A list in the facade
-    // meant the editor kept a second copy of it, and the two drifted.
+    // No loader list: each asset type registers itself with `kooch_core::register_asset!`, so the
+    // editor keeps no drifting second copy.
     let mut plugin = kooch_render::plugin::AssetPlugin::new().with_root(primary);
     if let Some((pack, key)) = shipped {
         tracing::info!(target: "kooch::shipped", path = %pack.display(), "reading assets from the shipped pack");
-        // 🔴 Mounted over the game folder, not over `assets/`. The pack
-        // holds `assets/…` *and* `scenes/…`, because a scene is the
-        // structure of the whole game and shipping it in plain RON beside
-        // an encrypted pack protects the textures and publishes the
-        // design. One mount covers both.
+        // 🔴 Mounted over the game folder: the pack holds `assets/` and `scenes/`, since a plain-RON
+        // scene beside an encrypted pack would publish the design.
         let root = pack.parent().map(Path::to_path_buf).unwrap_or_default();
         plugin = plugin.with_pack_over(root, pack, key);
     }
@@ -345,21 +283,9 @@ fn default_asset_plugin() -> kooch_render::plugin::AssetPlugin {
     plugin
 }
 
-/// Plugin set for a project running as a **remote authoring host**
-/// (`cargo run -- --remote`).
-///
-/// Everything [`DefaultPlugins`] has minus the window and the renderer:
-/// the project owns the ECS and answers the editor over HTTP, while the
-/// editor draws the world in its own viewport. Opening a second window
-/// here would show the same scene twice and steal focus from the editor
-/// — the project is a headless host, not a game.
-///
-/// It does carry the asset plugin, in headless form. Asset *identity* is
-/// not a rendering concern: a prefab instance in a scene is a reference
-/// now, so loading a scene means resolving a guid. Without it the host
-/// spawned `missing prefab [...]` for prefabs that were sitting right
-/// there. Eager import stays off — decoding every texture for a process
-/// that never draws is work with no result.
+/// Plugins for a **remote authoring host** (`cargo run -- --remote`): [`DefaultPlugins`] minus
+/// window and renderer, answering the editor over a local socket. A headless asset plugin resolves
+/// prefab guids; eager import stays off.
 pub struct RemoteHostPlugins;
 
 impl kooch_core::plugin::PluginGroup for RemoteHostPlugins {
@@ -368,11 +294,8 @@ impl kooch_core::plugin::PluginGroup for RemoteHostPlugins {
             .add(kooch_core::plugin::CorePlugin)
             .add(kooch_ecs::EcsPlugin);
 
-        // 🔴 Gated the way `DefaultPlugins` already gates its own call.
-        // `AssetPlugin` lives in `kooch_render`, so a build without that
-        // feature has no asset plugin to add rather than a different one
-        // — and the group is what a headless host builds, which is
-        // exactly the configuration that drops `render` (#686).
+        // 🔴 Gated like `DefaultPlugins`: `AssetPlugin` lives in `kooch_render`, and a headless host
+        // is exactly what drops `render` (#686).
         #[cfg(feature = "render")]
         let builder = builder.add(default_asset_plugin().headless());
 
@@ -386,10 +309,8 @@ impl kooch_core::plugin::PluginGroup for RemoteHostPlugins {
         #[cfg(all(feature = "physics", feature = "render"))]
         let builder = builder.add(crate::collider_meshes::ColliderMeshPlugin);
 
-        // Blocks the editor authored (#946). Added here rather than left
-        // to each project's own list: the editor spawns one over the
-        // wire, and a project that has the feature but forgot the line
-        // gets "add_component failed" with nothing naming the cause.
+        // Editor-authored blocks (#946), added here: the editor spawns them over the wire, and a
+        // forgotten line reads only "add_component failed".
         #[cfg(feature = "blockmesh")]
         let builder = builder.add(kooch_blockmesh::BlockPlugin);
 
@@ -430,10 +351,8 @@ impl kooch_core::plugin::PluginGroup for DefaultPlugins {
             .add(kooch_core::plugin::CorePlugin)
             .add(kooch_ecs::EcsPlugin);
 
-        // First, so the socket is already listening while the asset
-        // loaders do the slowest work of the run — and so the author of
-        // the game never edits a line to be able to profile it. Absent
-        // from a build that did not ask for the feature.
+        // First, so the socket listens while loaders do the slowest work, and nobody edits a game
+        // to profile it. Absent without the feature.
         #[cfg(feature = "profiling")]
         let builder = builder.add(crate::profiler::ProfilingPlugin::default());
 
@@ -471,10 +390,8 @@ impl kooch_core::plugin::PluginGroup for DefaultPlugins {
         #[cfg(all(feature = "physics", feature = "render"))]
         let builder = builder.add(crate::collider_meshes::ColliderMeshPlugin);
 
-        // Blocks the editor authored (#946). Added here rather than left
-        // to each project's own list: the editor spawns one over the
-        // wire, and a project that has the feature but forgot the line
-        // gets "add_component failed" with nothing naming the cause.
+        // Editor-authored blocks (#946), added here: the editor spawns them over the wire, and a
+        // forgotten line reads only "add_component failed".
         #[cfg(feature = "blockmesh")]
         let builder = builder.add(kooch_blockmesh::BlockPlugin);
 
@@ -502,20 +419,9 @@ impl kooch_core::plugin::PluginGroup for DefaultPlugins {
     }
 }
 
-/// Lets the editor ask the host for the solver's own account of itself.
-///
-/// # Why this lives in the facade
-///
-/// `kooch_remote` knows about entities and components and deliberately not
-/// about physics; `kooch_physics` knows about bodies and deliberately not
-/// about wires. Neither should learn the other. This crate already depends
-/// on both, so it is the one place they can meet — the extension registry
-/// exists exactly so this can be a plugin rather than a dependency.
-///
-/// Serves `physics.debug_lines`: takes the categories to draw and returns
-/// world-space segments. The editor's overlay reads `PhysicsWorld` when it
-/// has one and asks over the wire when it does not, which in the editor is
-/// always (#634).
+/// Serves `physics.debug_lines` so the editor can ask the host for the solver's own state (#634).
+/// Here because `kooch_remote` knows no physics and `kooch_physics` no wires; the extension
+/// registry makes it a plugin.
 #[cfg(all(feature = "physics", feature = "remote"))]
 pub struct PhysicsRemotePlugin;
 
@@ -569,26 +475,9 @@ impl kooch_core::plugin::Plugin for PhysicsRemotePlugin {
     }
 }
 
-/// Lets the editor hand this host the input it captured.
-///
-/// # Why the host cannot read input itself
-///
-/// `RemoteHostPlugins` has no window, on purpose: the editor draws this
-/// world in its own viewport. But keyboard and mouse arrive as window
-/// events, so a headless host is a process no key can reach. Pressing
-/// Play in the editor and then a key did nothing at all (#710).
-///
-/// So the editor captures from its window and posts snapshots here, and
-/// `RemoteInputBackend` turns them back into the same
-/// `Box<dyn InputBackend>` a shipped game reads. Project code is
-/// identical either way; only who fills the buffer differs.
-///
-/// # Why this lives in the facade
-///
-/// Same reason as [`PhysicsRemotePlugin`]: `kooch_remote` knows about
-/// entities and deliberately not about input, and `kooch_input` knows
-/// about devices and deliberately not about the protocol. They meet
-/// here, in the crate that already depends on both.
+/// Receives the input the editor captured: a windowless host gets no key events, so Play plus a key
+/// did nothing (#710). `RemoteInputBackend` feeds the same `InputBackend` a game reads; here for
+/// the same reason as [`PhysicsRemotePlugin`].
 #[cfg(all(feature = "input", feature = "remote"))]
 pub struct InputRemotePlugin;
 
@@ -618,10 +507,8 @@ impl kooch_core::plugin::Plugin for InputRemotePlugin {
                         let backend = resources
                             .get_mut::<Box<dyn kooch_input::InputBackend>>()
                             .ok_or_else(|| "this host has no input backend".to_owned())?;
-                        // Through the trait rather than a downcast: a
-                        // backend reading real devices takes the default
-                        // and ignores it, so this is safe to call on
-                        // whichever one the host happens to hold.
+                        // Through the trait, not a downcast: a real-device backend ignores
+                        // snapshots by default.
                         backend.apply_snapshot(&snapshot);
                         Ok(kooch_remote::serde_json::Value::Null)
                     }),
@@ -635,12 +522,8 @@ impl kooch_core::plugin::Plugin for InputRemotePlugin {
     }
 }
 
-/// Reads the five switches out of the request payload.
-///
-/// A missing switch is off rather than an error: a client asking for
-/// contacts alone should not have to spell out the four it does not want,
-/// and a newer editor asking for a category this host has never heard of
-/// should get the rest instead of a failure.
+/// Reads the five switches; a missing one is off, so clients name only what they want and newer
+/// editors degrade gracefully.
 #[cfg(all(feature = "physics", feature = "remote"))]
 fn debug_categories_from(
     payload: &kooch_remote::serde_json::Value,

@@ -1,7 +1,5 @@
-/// 🔴 A game links the engine as an `rlib`, so this string is inside
-/// every shipped executable. That is what makes the licence
-/// mandatory in a release build without anyone having to remember
-/// to ship a file next to it.
+/// 🔴 Linked as an `rlib`, the licence string is inside every shipped executable — mandatory without
+/// anyone copying a file.
 #[test]
 fn every_binary_that_links_the_engine_carries_the_licence() {
     assert!(super::LICENSE.contains("All Rights Reserved"));

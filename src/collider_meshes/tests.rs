@@ -145,12 +145,8 @@ fn an_idle_frame_keeps_the_cache() {
     assert!(resources.get::<ColliderMeshCache>().is_some());
 }
 
-/// 🔴 A block publishes its own collider; this walk must not try to read
-/// its `.block` as glTF.
-///
-/// It did, the parse failed, and `fail` is permanent — `answered` counts
-/// a failure as an answer — so the body never collided even after the
-/// real entry landed a frame later.
+/// 🔴 A block publishes its own collider; reading its `.block` as glTF failed permanently and the
+/// body never collided.
 #[test]
 fn a_non_mesh_guid_is_not_asked_for() {
     use kooch_core::asset_database::{AssetDatabase, AssetEntry};
