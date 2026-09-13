@@ -1,56 +1,21 @@
-//! What a camera follows, said by the thing being followed.
-//!
-//! A [`VirtualCamera`](crate::VirtualCamera) used to name its target with
-//! an `EntityRef`. That is the wrong shape, and the bug it produced
-//! (#712) was only the symptom: the reference pointed at an identity
-//! nothing persisted, so authoring "follow the ball" in the editor and
-//! reloading the scene gave a camera following nothing.
-//!
-//! # Why a tag is the right shape rather than a workaround
-//!
-//! **If more than one entity carries the tag, that is a group.**
-//! Framing several subjects at once is a thing cameras have to do, and
-//! with a reference it needs a second mechanism: Cinemachine has a
-//! separate `CinemachineTargetGroup` object, phantom-camera has its own
-//! group node. With a tag, "follow one" is the degenerate case of "frame
-//! several" and there is one code path.
-//!
-//! Everything else falls out of a query being a query:
-//!
-//! | | Reference | Tag |
-//! |---|---|---|
-//! | Survives reload | needs persisted identity | nothing to persist |
-//! | Target comes from a prefab | broken (#712) | a query does not care |
-//! | Target spawns later | resolved to nothing, silently | found next frame |
-//! | Player dies and respawns | dangling | the tag travels along |
-//!
-//! A query cannot dangle.
+//! What a camera follows, said by the thing being followed: a tag, not a reference.
+//! A query survives reload, prefabs and respawns and cannot dangle (#712); several tagged entities
+//! are simply a group, so one code path frames one subject or many.
 
 use glam::Vec3;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 
-/// Marks this entity as something a camera follows.
-///
-/// Attach it to the player, the boss, the cart — whatever the framing is
-/// about. A [`VirtualCamera`](crate::VirtualCamera) follows the tagged
-/// entities whose `group` matches its own.
+/// Marks this entity as something a camera follows; a [`VirtualCamera`](crate::VirtualCamera)
+/// follows the tagged entities in its `group`.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Camera")]
 pub struct CameraTarget {
-    /// Which framing this entity belongs to.
-    ///
-    /// A number rather than a reference to a group object, because the
-    /// whole point is not to hold references. Group `0` is the default
-    /// and is what a scene with one camera and one subject uses without
-    /// thinking about it.
+    /// Which framing this entity belongs to — a number, not a reference. Group `0` is the default
+    /// for a scene with one subject.
     pub group: u32,
-    /// How much this member pulls, when several share a group.
-    ///
-    /// Relative, not absolute: two members at `1.0` and one at `2.0`
-    /// frame the same as `0.5`/`0.5`/`1.0`. A member at `0.0`
-    /// contributes nothing and is the way to keep a subject tagged while
-    /// temporarily ignoring it.
+    /// How much this member pulls within its group, relative to the others. `0.0` keeps a subject
+    /// tagged but ignored.
     pub weight: f32,
 }
 
@@ -65,15 +30,8 @@ impl Default for CameraTarget {
     }
 }
 
-/// The point a group of targets asks a camera to look at.
-///
-/// The weighted mean of their positions. With one member this is exactly
-/// that member's position, which is what keeps the single-target case
-/// byte-identical to the old `target` behaviour.
-///
-/// Returns `None` when the group is empty or every weight is zero —
-/// "nothing to follow", which leaves the camera where it is rather than
-/// snapping it to the origin.
+/// The weighted mean of a group's positions — exactly one member's position when alone. `None` when
+/// the group is empty or every weight is zero, leaving the camera in place.
 pub fn weighted_centre(members: &[(Vec3, f32)]) -> Option<Vec3> {
     let total: f32 = members.iter().map(|(_, weight)| weight.max(0.0)).sum();
     if total <= 0.0 {
