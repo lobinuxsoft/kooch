@@ -19,13 +19,8 @@ use crate::virtual_camera::{
     transported,
 };
 
-/// Which way is up for a virtual camera, resolved from its `up_mode`.
-///
-/// A rolling body is why this is not simply the target's rotation: a
-/// character controller aligns itself to gravity and its up is the
-/// answer, but a ball rolling by friction spins freely and its up points
-/// wherever the last bounce left it. Asking the field is the only source
-/// that is right for both.
+/// Which way is up for a virtual camera, from its `up_mode`. Not the target's rotation: a rolling
+/// ball's up points wherever the last bounce left it.
 fn up_for(
     vcam: &VirtualCamera,
     resources: &Resources,
@@ -39,32 +34,22 @@ fn up_for(
     }
 }
 
-/// Up is away from the gravity acting where the target is.
-///
-/// Delegates rather than recomputing: a camera that decides "up"
-/// differently from the controller under it produces a horizon that
-/// disagrees with the floor, and nothing in either file looks wrong.
+/// Up is away from the gravity at the target — delegated, so the camera's horizon agrees with the
+/// controller's floor.
 #[cfg(feature = "gravity")]
 fn gravity_up(resources: &Resources, target_pos: Vec3) -> Vec3 {
     kooch_gravity::gravity_up(resources, target_pos)
 }
 
-/// Without `kooch_gravity` there is no field to ask, so the mode is
-/// world up. Authoring it still round-trips, which matters: a scene
-/// saved by the editor must not lose the setting when opened by a build
-/// that happens to omit the feature.
+/// Without `kooch_gravity` there is no field, so up is world up; the setting still round-trips so a
+/// scene keeps it.
 #[cfg(not(feature = "gravity"))]
 fn gravity_up(_resources: &Resources, _target_pos: Vec3) -> Vec3 {
     Vec3::Y
 }
 
-/// The component without the system, for a host that authors camera
-/// behaviour but does not run it.
-///
-/// The editor is that host: gameplay lives in the project's process, so
-/// this side needs the fields to exist as data — to mirror, inspect and
-/// draw — and must never move a camera with them. It has its own camera
-/// and a vcam fighting it for the viewport would be unusable.
+/// The component without the system, for the editor: it mirrors and inspects vcams but must never
+/// let one fight its own viewport camera.
 pub struct CameraComponentsPlugin;
 
 impl Plugin for CameraComponentsPlugin {
@@ -88,18 +73,8 @@ pub struct CameraPlugin;
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugin(CameraComponentsPlugin);
-        // `PostPhysics`, and the stage matters more than it looks.
-        //
-        // The renderer reads the camera's `GlobalTransform`, and
-        // `EcsPlugin` propagates transforms in `PostUpdate` — registered
-        // before any plugin of ours, so a vcam writing in `PostUpdate`
-        // would land after propagation and show up a frame late. In the
-        // fixed stages the solver has already moved the target and
-        // propagation is still ahead, so the pose is current in the same
-        // frame that produced it.
-        //
-        // It also means `dt` is the fixed step, which is what makes the
-        // damping deterministic instead of frame-rate dependent.
+        // `PostPhysics`: after the solver moves the target, before transforms propagate, so the
+        // pose shows the same frame. `dt` is the fixed step, which keeps damping deterministic.
         app.insert_resource(CameraBlend::default());
         app.insert_resource(HorizonFrames::default());
         app.add_system(Stage::PostPhysics, run_if_playing(drive_virtual_cameras));
@@ -110,18 +85,8 @@ impl Plugin for CameraPlugin {
     }
 }
 
-/// The yaw origin each vcam is measuring from, carried between frames.
-///
-/// # Why the Host holds this and not the vcam
-///
-/// It is not authored and it is not a setting — it is where the camera
-/// happened to be pointing, which is state the same shape as
-/// [`CameraBlend`]. Putting it on the component would serialise it into
-/// every scene and show it in the Inspector as a vector nobody should
-/// edit.
-///
-/// Rebuilt each frame from the vcams actually seen, so one that is
-/// deleted or goes inert leaves nothing behind.
+/// The yaw origin each vcam measures from, carried between frames. Runtime state, not authored, so
+/// it lives on the Host; rebuilt from the vcams seen each frame.
 #[derive(Debug, Clone, Default)]
 pub struct HorizonFrames {
     /// Per vcam: the up it last used, and the reference it carried.
@@ -129,11 +94,8 @@ pub struct HorizonFrames {
 }
 
 impl HorizonFrames {
-    /// This vcam's yaw origin on a new up, carried from the last one.
-    ///
-    /// A vcam with no history is seeded from a world axis, which is
-    /// discontinuous — see `seed_reference`. That only matters between
-    /// frames, and a first frame has none.
+    /// This vcam's yaw origin on a new up, carried from the last; a first frame seeds it from a
+    /// world axis (see `seed_reference`).
     fn carry(&self, entity: Entity, up: Vec3) -> Vec3 {
         match self.frames.get(&entity) {
             Some((last_up, reference)) => transported(*reference, *last_up, up),
@@ -142,13 +104,8 @@ impl HorizonFrames {
     }
 }
 
-/// What the Host remembers between frames to blend one handover.
-///
-/// Only the pose it is coming *from* and how far along it is. The pose
-/// it is going to is recomputed every frame, because the winning vcam
-/// keeps following its target while the blend runs — freezing the
-/// destination would make the camera arrive where the target used to
-/// be.
+/// What the Host remembers to blend one handover: the pose it comes from and its progress. The
+/// destination is recomputed each frame because the winner keeps following.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CameraBlend {
     /// The vcam currently driving, if any.
@@ -167,13 +124,8 @@ impl CameraBlend {
         self.duration > 0.0 && self.elapsed < self.duration
     }
 
-    /// Begins a handover from wherever the camera is right now.
-    ///
-    /// From the *camera's* pose, not the outgoing vcam's. Mid-blend the
-    /// two are different, and starting from the vcam would snap back to
-    /// a pose nobody has seen since the last handover — which is exactly
-    /// the interruption case upstream needs a `tween_interrupted` signal
-    /// to handle. Reading the visible pose handles it by construction.
+    /// Begins a handover from the camera's visible pose, not the outgoing vcam's, so interrupting a
+    /// blend never snaps back.
     fn begin(&mut self, winner: Entity, from: (Vec3, glam::Quat), duration: f32) {
         self.active = Some(winner);
         self.from_pos = from.0;
@@ -183,13 +135,8 @@ impl CameraBlend {
     }
 }
 
-/// Advances every live virtual camera, then hands the winner's pose to the camera.
-///
-/// Two steps, in the order phantom-camera's Host uses them: each virtual
-/// camera works out where *it* wants to be, and then one of them is
-/// elected and copied onto the camera that actually renders. Keeping the
-/// vcam poses separate is what makes blending (#671 phase 3) a matter of
-/// interpolating between two of them.
+/// Advances every live virtual camera, then hands the winner's pose to the camera. Keeping vcam
+/// poses separate is what lets a blend interpolate between two.
 pub fn drive_virtual_cameras(resources: &mut Resources) {
     let (plan, horizons) = plan_vcam_poses(resources);
     resources.insert(horizons);
@@ -222,10 +169,8 @@ pub fn drive_virtual_cameras(resources: &mut Resources) {
             (target_pos, target_rot)
         }
     } else {
-        // A different vcam won. Start from where the camera is now — and
-        // on the very first frame there is nowhere to come from, so a
-        // scene opens on its camera instead of flying in from wherever
-        // the entity happened to be placed.
+        // A different vcam won: start from where the camera is now. On the first frame there is
+        // nothing to come from, so the scene opens on its camera.
         let from = camera_pose(resources, camera).unwrap_or((target_pos, target_rot));
         let duration = if blend.active.is_none() {
             0.0
@@ -273,10 +218,8 @@ fn camera_pose(resources: &Resources, camera: Entity) -> Option<(Vec3, glam::Qua
 #[cfg(test)]
 mod blend_tests;
 
-/// Slerp along the shorter arc.
-///
-/// `q` and `-q` are the same rotation, so without flipping one to match
-/// the other a 1° handover can be interpolated as 359° of roll.
+/// Slerp along the shorter arc: `q` and `-q` are one rotation, and without matching them a 1°
+/// handover can roll 359°.
 fn short_slerp(from: glam::Quat, to: glam::Quat, t: f32) -> glam::Quat {
     let to = if from.dot(to) < 0.0 { -to } else { to };
     from.slerp(to, t).normalize()
@@ -295,17 +238,8 @@ struct Pose {
     blend_ease: u32,
 }
 
-/// Where a group's members are, and which way the framing calls up.
-///
-/// The position is their weighted centre; with one member that is
-/// exactly its position, which keeps the single-subject case identical
-/// to what the old `target` reference produced.
-///
-/// The rotation is the **heaviest** member's, not a blend. Averaging
-/// quaternions across a group has no meaning a player would recognise —
-/// two characters facing each other would produce a camera up-vector
-/// pointing sideways. One subject owns the orientation, and it is the
-/// one the framing is most about.
+/// A group's weighted centre, and the heaviest member's rotation. Averaging quaternions across
+/// members has no meaning — two characters facing each other would tilt the camera sideways.
 fn target_pose(
     targets: Option<&kooch_ecs::component::ComponentStorage<CameraTarget>>,
     group: u32,
@@ -383,12 +317,8 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames) {
             continue;
         }
 
-        // A vcam on an entity that also renders, and is not rendering,
-        // does nothing unless it asked to. Straight from
-        // phantom-camera's `InactiveUpdateMode`, and the same lesson as
-        // #656: work nobody sees is work not worth doing. A plain vcam
-        // has no `PerspectiveCamera` at all and is always a candidate —
-        // being unelected is what makes it cheap, not being invisible.
+        // A vcam on an entity that renders but is not rendering does nothing unless it asked to
+        // (phantom-camera's `InactiveUpdateMode`, #656). A plain vcam is always a candidate.
         if vcam.inactive_update != INACTIVE_ALWAYS
             && let Some(cam) = cameras.and_then(|s| s.get(entity))
             && !cam.active
@@ -396,10 +326,8 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames) {
             continue;
         }
 
-        // Nothing carries this vcam's tag, or everything that does has
-        // zero weight: leave it where it is rather than snapping it to
-        // the origin. A group that fills up next frame is picked up next
-        // frame, with no resolving step in between.
+        // Nothing carries this vcam's tag, or every weight is zero: leave it in place rather than
+        // snapping to the origin.
         let Some((target_pos, target_rot)) = target_pose(targets, vcam.group, &pose_of) else {
             continue;
         };
@@ -440,24 +368,16 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames) {
     (plan, horizons)
 }
 
-/// The virtual camera that drives the render camera this frame: highest priority, ties
-/// broken on the lower entity index.
-///
-/// The tie-break is not cosmetic. Component storage has no iteration
-/// order worth relying on, so "whichever came last" — which is what
-/// upstream can afford inside an ordered scene tree — would hand the
-/// camera to a different vcam on different frames and read as jitter.
+/// The virtual camera driving the render camera: highest priority, ties to the lower entity index.
+/// Stable on purpose — storage order is not, and an unstable winner reads as jitter.
 fn elect(plan: &[Pose]) -> Option<(Entity, &Pose)> {
     plan.iter()
         .min_by_key(|pose| (-pose.priority, pose.entity.index()))
         .map(|pose| (pose.entity, pose))
 }
 
-/// The camera the elected vcam should drive: the highest-priority active
-/// one, which is the same rule the renderer uses to pick what it draws.
-///
-/// A vcam that is itself a camera drives itself, which is how a scene
-/// with one camera and one vcam on it keeps working.
+/// The camera the elected vcam drives: the highest-priority active one, the renderer's own rule. A
+/// vcam that is itself a camera drives itself.
 fn rendering_camera(resources: &Resources, winner: Entity) -> Option<Entity> {
     let registry = resources.get::<ComponentRegistry>()?;
     let Some(cameras) = registry.get_cpu::<PerspectiveCamera>() else {

@@ -8,12 +8,9 @@ fn vcam(follow: u32) -> VirtualCamera {
     }
 }
 
-/// A vcam cannot know whether anything carries its group — that is a
-/// query over the world. So "nothing to follow" is enforced where the
-/// pose is planned, and `plugin::nothing_tagged_means_nothing_to_follow`
-/// is the test that guarantees it.
-///
-/// What `is_inert` still answers is the part a vcam knows alone.
+/// A vcam cannot know whether its group has members;
+/// `plugin::nothing_tagged_means_nothing_to_follow` covers that. `is_inert` answers only what a
+/// vcam knows alone.
 #[test]
 fn a_rig_with_both_modes_off_is_inert() {
     let mut r = VirtualCamera {
@@ -192,10 +189,8 @@ fn a_zero_time_constant_is_rigid_on_that_axis_only() {
     assert!(got.y < 10.0 && got.y > 0.0, "y should be easing: {}", got.y);
 }
 
-/// The test this file did not have, and the reason a mirrored basis
-/// shipped: every rotation assertion here checked `is_finite()`, and
-/// a reflection is perfectly finite. What a look-at owes you is that
-/// the camera's forward axis actually points at the thing.
+/// A look-at's forward axis must point at the target — `is_finite()` alone let a mirrored basis
+/// ship.
 #[test]
 fn look_at_points_the_camera_at_the_target() {
     let mut r = vcam(FOLLOW_NONE);
@@ -474,13 +469,8 @@ fn looking_straight_down_stays_finite() {
     assert!(rot.is_finite(), "straight down produced {rot:?}");
 }
 
-/// The regression this whole mechanism exists for.
-///
-/// A yaw origin derived from `up` alone collapses where the world axis
-/// it projects lines up with `up`, and the fallback axis is ninety
-/// degrees away — so a target rolling over that one spot swung the
-/// camera ninety degrees in and ninety back out. Carried instead, the
-/// arm sweeps.
+/// A yaw origin derived from `up` swung the camera ninety degrees in and out at one spot on every
+/// planet; carried, the arm sweeps.
 #[test]
 fn rolling_over_the_pole_does_not_flip() {
     let vcam = VirtualCamera {

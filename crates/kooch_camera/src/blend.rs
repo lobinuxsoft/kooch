@@ -1,12 +1,5 @@
-//! Easing for the transition between two virtual cameras.
-//!
-//! Ported from the curve set phantom-camera exposes, which is Godot's
-//! `Tween` vocabulary — familiar to anyone who has authored a transition
-//! before. Godot hands its addon eleven curve types for free because
-//! `Tween` implements them; here each one is code, so the set stops at
-//! the five that get used. `Elastic`, `Bounce` and `Back` are missing on
-//! purpose: overshoot on a gameplay camera reads as a mistake, and
-//! adding one later changes no shape.
+//! Easing for transitions between virtual cameras: the five `Tween` curves that get used, ported
+//! from phantom-camera. No overshoot curves — overshoot on a gameplay camera reads as a mistake.
 
 use kooch_ecs::reflect::FieldChoice;
 
@@ -68,15 +61,8 @@ pub static BLEND_EASE_CHOICES: &[FieldChoice] = &[
     },
 ];
 
-/// Maps linear progress to eased progress.
-///
-/// `t` is clamped, so a caller that overshoots its duration gets the end
-/// of the curve rather than an extrapolation past the destination.
-///
-/// Every curve is expressed as its ease-in form and the other two are
-/// derived by mirroring, which is how the identities `out(t) = 1 -
-/// in(1-t)` hold exactly. Writing three variants per curve by hand is
-/// how one of them ends up subtly different from its siblings.
+/// Maps linear progress to eased progress; `t` is clamped so an overshoot ends on the curve. Each
+/// curve is written as ease-in and the others mirror it, so `out(t) = 1 - in(1 - t)` holds exactly.
 pub fn eased(t: f32, curve: u32, ease: u32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     match ease {
