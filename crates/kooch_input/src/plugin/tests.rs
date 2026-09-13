@@ -12,12 +12,8 @@ enum Call {
     Poll,
 }
 
-/// A backend that records its frame cycle and nothing else.
-///
-/// The order is the whole point: clearing after the frame's events
-/// are applied wipes them, and that is the bug this pins. A test
-/// against real state would pass either way as long as the backend
-/// happened to be empty.
+/// A backend recording its frame cycle only: the order is what this pins, and real state would pass
+/// while empty.
 #[derive(Default)]
 struct RecordingBackend {
     calls: Arc<Mutex<Vec<Call>>>,
@@ -78,10 +74,8 @@ impl InputBackend for RecordingBackend {
     }
 }
 
-/// A window event whose kind the collector accepts, built without a
-/// window: `Destroyed` carries nothing and is trivially constructible.
-/// The collector's filter rejects it, so tests that need the *queue*
-/// populated push straight into `PendingWindowEvents`.
+/// A window event the collector's filter rejects (`Destroyed`), so tests that need a populated
+/// queue push to `PendingWindowEvents` directly.
 fn a_window_event() -> WindowEvent {
     WindowEvent::Destroyed
 }

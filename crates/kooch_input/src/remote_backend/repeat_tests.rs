@@ -1,22 +1,5 @@
-//! How many times one press is seen, at every ratio of send to tick.
-//!
-//! # The instrument, before the fix
-//!
-//! Reported as *"en Play un salto se dispara varias veces: una pulsación
-//! se procesa dos o tres veces"* (#766), and **correct in the shipped
-//! game** — which puts it on the editor → host path and nowhere else.
-//!
-//! This repo has three recorded cases of naming the cause by reading the
-//! code and being wrong all three times. So this counts instead. The two
-//! processes do not tick together and nothing synchronises them, so the
-//! question is what one press looks like at each ratio:
-//!
-//! - **host faster than the editor** (the documented case, and #691 caps
-//!   the editor near 20 FPS while the host runs free)
-//! - **editor faster than the host**, which is what the issue guessed
-//!
-//! Each test names what it counted, so a failure says which of the two
-//! it was rather than "input is broken".
+//! How many times one press is seen at every send-to-tick ratio (#766), counted rather than guessed
+//! — for host-faster and editor-faster alike.
 
 use super::*;
 
@@ -53,13 +36,8 @@ fn tick(backend: &mut RemoteInputBackend, ticks: usize) -> Vec<Frame> {
         .collect()
 }
 
-/// 🔴 The documented case: the host ticks faster than the editor sends,
-/// so one snapshot spans several host frames.
-///
-/// `just_pressed` is deliberately kept alive across them — that is the
-/// #711 fix, and dropping it would lose the press entirely. So a
-/// consumer reading the EDGE sees the same press on every frame until
-/// the next snapshot supersedes it.
+/// 🔴 Host faster than the editor: one snapshot spans several frames, and `just_pressed` is kept
+/// across them (#711), so the edge repeats until superseded.
 #[test]
 fn one_snapshot_three_ticks() {
     let mut backend = RemoteInputBackend::new();
@@ -95,10 +73,7 @@ fn three_snapshots_one_tick() {
     );
 }
 
-/// 🔴 The one that matters: a key **held** across several snapshots must
-/// produce exactly one press, however many snapshots describe it.
-///
-/// This is the shape of the report — the finger never left the key.
+/// 🔴 A key held across several snapshots produces exactly one press — the shape of the report.
 #[test]
 fn a_held_key_presses_once() {
     let mut backend = RemoteInputBackend::new();

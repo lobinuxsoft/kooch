@@ -81,12 +81,7 @@ fn a_3d_action_still_reads_as_2d() {
     assert_eq!(value.vector.z, 1.0);
 }
 
-/// 🔴 An action's processors run **once, on the value that won** —
-/// not on each binding, which is how Unity ends up applying a stick's
-/// deadzone twice.
-///
-/// Two bindings, one processor: whichever answers, the scale is
-/// applied exactly once.
+/// 🔴 An action's processors run once, on the winning value — two bindings, one scale.
 #[test]
 fn an_actions_processors_run_once_on_the_final_value() {
     use crate::actions::processor::Processor;

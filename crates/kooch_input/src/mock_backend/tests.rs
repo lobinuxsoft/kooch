@@ -91,14 +91,7 @@ fn gamepad_axes_clamp_to_range() {
     assert_eq!(backend.axis_value(id, GamepadAxis::LeftStickX), -1.0);
 }
 
-/// A held button must read as pressed once, not every frame.
-///
-/// Without this the keyboard and the gamepad disagree: `just_pressed`
-/// existed for keys and not for buttons, so gameplay wanting "on
-/// press" had to settle for "while held" on a pad. Written into a
-/// per-frame jump intent that is an impulse every frame the button is
-/// down — the jump that feels right on a keyboard fires the player
-/// off the map on a controller (#57).
+/// A held button reads as pressed once, not every frame — keys had this and pads did not (#57).
 #[test]
 fn a_held_button_reads_as_just_pressed_only_once() {
     let pad = GamepadId(0);

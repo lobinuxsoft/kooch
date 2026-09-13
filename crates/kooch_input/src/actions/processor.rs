@@ -1,52 +1,20 @@
-//! [`Processor`] — what happens to a value between the device and the
-//! action.
-//!
-//! # One place, not three
-//!
-//! Unity lets processors sit on the control's layout, on the action, and
-//! on the binding, and applies all three in sequence. A stick therefore
-//! arrives with the layout's deadzone already applied, and a binding that
-//! adds its own gets two — which is a known source of "my stick feels
-//! wrong" and something their own source questions in a `////REVIEW` on
-//! line 7 of `InputBinding.cs`.
-//!
-//! Here a processor lives on the binding and nowhere else. The device
-//! hands over a raw value; everything that shapes it is visible in one
-//! list, in order.
-//!
-//! # Typed, not a string
-//!
-//! Unity stores `"axisDeadzone(min=0.1,max=0.95);invert"` as text. That
-//! is convenient for an editor and unkind to everyone else: a misspelt
-//! processor is not an error, it is a processor that silently does not
-//! exist. The dropdown in the panel offers the same list either way.
-//!
-//! The formulas below are ported from
-//! `com.unity.inputsystem@1.20/InputSystem/Runtime/Controls/Processors/`,
-//! because "what feels right on a stick" is tuning that took a decade and
-//! is not worth re-deriving.
+//! [`Processor`] — what happens to a value between device and action, on the binding only and as a
+//! typed enum, so a misspelt processor cannot silently vanish.
+//! Formulas ported from Unity's Input System.
 
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
-/// The default a deadzone uses when its bounds are left unset.
-///
-/// Unity's global defaults. `min` cuts the slop a stick reports at rest;
-/// `max` is where it should already count as fully pushed, since a worn
-/// stick rarely reaches 1.0 in the corners.
+/// Default deadzone bounds, Unity's: `min` cuts resting slop, `max` counts a worn stick as fully
+/// pushed.
 pub const DEFAULT_DEADZONE_MIN: f32 = 0.125;
 pub const DEFAULT_DEADZONE_MAX: f32 = 0.925;
 
 /// One step of shaping between a control and an action's value.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Processor {
-    /// Deadzone on a single axis, applied per component.
-    ///
-    /// ⚠️ On a stick this is the wrong one and the mistake is invisible
-    /// until you draw it: cutting each axis independently leaves a
-    /// **square** hole, so a stick pushed diagonally registers while the
-    /// same push along an axis does not. Use [`Processor::StickDeadzone`]
-    /// for anything two-dimensional (#57).
+    /// Deadzone on a single axis, per component. ⚠️ On a stick it leaves a square hole — use
+    /// [`Processor::StickDeadzone`] for anything 2D (#57).
     AxisDeadzone { min: f32, max: f32 },
     /// Deadzone on a vector's **magnitude**, which leaves a round hole.
     StickDeadzone { min: f32, max: f32 },
@@ -58,14 +26,8 @@ pub enum Processor {
     InvertVector2 { x: bool, y: bool },
     /// Rescales `[min, max]` onto `[0, 1]`, with `zero` mapping to 0.
     Normalize { min: f32, max: f32, zero: f32 },
-    /// Caps a vector's length at 1 **without stretching shorter ones**.
-    ///
-    /// The one a keyboard needs: pressing two directions must not travel
-    /// 1.41× faster than one, and a half-held stick must stay half. Unity
-    /// gets the same effect inside its 2D composite rather than as a
-    /// processor, by multiplying diagonals by `0.707107` — which is exact
-    /// only because its inputs are 0 or ±1 there. As a processor it has
-    /// to handle any length, so it is the honest form.
+    /// Caps a vector's length at 1 without stretching shorter ones, so two keys are not 1.41×
+    /// faster and a half stick stays half.
     NormalizeVector2,
     /// Multiplies by a constant — sensitivity.
     Scale { factor: f32 },
@@ -117,12 +79,8 @@ impl Processor {
         }
     }
 
-    /// Whether this does anything to a value of `control_type`.
-    ///
-    /// The 2D processors are skipped by [`apply`](Self::apply), so on a
-    /// button or an axis they are a row that shapes nothing. Unity
-    /// filters its own menu by the expected value type for the same
-    /// reason: offering one is offering a setting that reads as broken.
+    /// Whether this does anything to a value of `control_type`; 2D processors on a button shape
+    /// nothing, so the menu hides them.
     pub const fn applies_to(self, control_type: super::action::ControlType) -> bool {
         use super::action::ControlType;
         match self {
@@ -173,12 +131,8 @@ impl Processor {
         }
     }
 
-    /// The same, in three dimensions.
-    ///
-    /// The 2D processors act on `xy` and leave `z` alone rather than
-    /// refusing to run: a stick deadzone applied to a 3D composite is
-    /// about the stick, and zeroing the third axis because the processor
-    /// predates it would make the binding read as broken.
+    /// The same in three dimensions: 2D processors act on `xy` and leave `z` alone rather than
+    /// zeroing it.
     pub fn apply_vec3(self, value: glam::Vec3) -> glam::Vec3 {
         match self {
             Processor::StickDeadzone { .. }
@@ -200,12 +154,8 @@ impl Processor {
     }
 }
 
-/// Ported from Unity's `AxisDeadzoneProcessor`.
-///
-/// Below `min` is nothing; above `max` is already full; between them the
-/// range is stretched so the value leaves the deadzone at 0 rather than
-/// jumping to `min`. That last part is what stops the visible step when
-/// a stick crosses the threshold.
+/// Unity's `AxisDeadzoneProcessor`: nothing below `min`, full above `max`, stretched between so the
+/// value leaves the deadzone at 0 without a step.
 fn axis_deadzone(value: f32, min: f32, max: f32) -> f32 {
     let magnitude = value.abs();
     if magnitude < min {
@@ -217,10 +167,8 @@ fn axis_deadzone(value: f32, min: f32, max: f32) -> f32 {
     value.signum() * ((magnitude - min) / (max - min))
 }
 
-/// Ported from Unity's `StickDeadzoneProcessor`.
-///
-/// The same curve applied to the vector's **length**, with the direction
-/// preserved — which is what makes the hole round instead of square.
+/// Unity's `StickDeadzoneProcessor`: the same curve on the vector's length, direction kept, so the
+/// hole is round.
 fn stick_deadzone(value: Vec2, min: f32, max: f32) -> Vec2 {
     let magnitude = value.length();
     if magnitude == 0.0 {

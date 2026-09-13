@@ -1,10 +1,5 @@
-//! [`Binding`] — one control feeding an action, and how several of them
-//! combine.
-//!
-//! # The flat list
-//!
-//! An action's bindings are a `Vec`, and a composite is a **head entry
-//! followed by its parts**:
+//! [`Binding`] — one control feeding an action. An action's bindings are a flat `Vec`, and a
+//! composite is a head entry followed by its parts:
 //!
 //! ```text
 //! [ Whole(Space)                  ← jump, plain binding
@@ -18,15 +13,8 @@
 //!   … ]
 //! ```
 //!
-//! Unity's `.inputactions` does exactly this, with two booleans
-//! (`isComposite`, `isPartOfComposite`) where this has one enum. It reads
-//! like an odd choice until you notice it is also the right one for us: a
-//! contiguous array, no tree, no boxed nodes, and the editor's list *is*
-//! the data.
-//!
-//! Two booleans allow a state that means nothing (both true); an enum
-//! does not, which is the same argument that kept `PhysicsBody` a single
-//! component with a `kind` instead of three components.
+//! Unity's `.inputactions` shape, with one enum where it has two booleans: a contiguous array whose
+//! editor list *is* the data.
 
 use serde::{Deserialize, Serialize};
 
@@ -57,11 +45,8 @@ pub enum PartName {
 }
 
 impl PartName {
-    /// The parts a composite expects, in the order an editor lists them.
-    ///
-    /// Drives both the "add composite" flow, which creates one unbound
-    /// part per name, and the panel, which shows what a composite is
-    /// still missing.
+    /// The parts a composite expects, in editor order — for the add-composite flow and showing what
+    /// is still unbound.
     pub const fn of(composite: Composite) -> &'static [Self] {
         match composite {
             Composite::Axis1D { .. } => &[Self::Positive, Self::Negative],
@@ -86,11 +71,8 @@ pub enum Composite {
     /// Two buttons into one axis: [`PartName::Positive`] and
     /// [`PartName::Negative`].
     Axis1D {
-        /// What happens when both sides are held. Unity calls this
-        /// `whichSideWins`, and the default — neither — is the one that
-        /// makes a keyboard behave: press left and right together and you
-        /// stand still, rather than drifting whichever way the code
-        /// happened to check first.
+        /// What happens when both sides are held — Unity's `whichSideWins`; the default, neither,
+        /// makes left+right stand still.
         both_held: BothHeld,
     },
     /// Four buttons, or two axes, into a vector.
@@ -99,12 +81,8 @@ pub enum Composite {
     /// `Vector3Composite` — the shape a flying or free-floating
     /// controller wants, where up and down are inputs rather than gravity.
     Vector3 { mode: VectorMode },
-    /// A control gated by a held button: [`PartName::Value`] passes
-    /// through only while [`PartName::Modifier`] is down.
-    ///
-    /// This is `Ctrl+S`. Without it every shortcut has to be spelled out
-    /// in gameplay code, which is exactly the branching an action map
-    /// exists to delete.
+    /// A control gated by a held button: [`PartName::Value`] passes only while
+    /// [`PartName::Modifier`] is down — `Ctrl+S` without gameplay branching.
     OneModifier,
     /// The same, gated by two — `Ctrl+Shift+S`.
     TwoModifiers,
@@ -126,12 +104,8 @@ impl Composite {
         Self::TwoModifiers,
     ];
 
-    /// What this produces, so an editor can offer only the composites
-    /// that fit the action being edited.
-    ///
-    /// Unity filters its "Add Composite" menu the same way, and the
-    /// reason is that the alternative — a Vector2 composite under a
-    /// Button action — is a binding that silently reads as nothing.
+    /// What this produces, so an editor offers only composites that fit the action — a mismatched
+    /// one reads as nothing.
     pub const fn control_type(self) -> super::action::ControlType {
         use super::action::ControlType;
         match self {
@@ -167,11 +141,8 @@ pub enum BothHeld {
     Negative,
 }
 
-/// How a vector composite reads its parts. Shared by 2D and 3D, as
-/// Unity's two separate `Mode` enums are the same three cases.
-///
-/// The variant names are serialised, not this type name, so renaming it
-/// from `Vector2Mode` does not invalidate any `.inputmap` on disk.
+/// How a vector composite reads its parts, shared by 2D and 3D. Variant names are serialised, not
+/// this type's, so renaming it broke no file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum VectorMode {
     /// Parts are buttons, and the result is capped at length 1 — so a
@@ -251,12 +222,8 @@ impl Binding {
     }
 }
 
-/// Walks a flat binding list as the groups it encodes.
-///
-/// Yields each whole binding on its own, and each composite together with
-/// the parts that follow it. Parts before any head are skipped: that is a
-/// malformed list, and dropping them is better than attributing them to a
-/// composite the author did not write.
+/// Walks a flat binding list as the groups it encodes; parts before any head are malformed and
+/// skipped.
 pub fn groups(bindings: &[Binding]) -> Vec<Group<'_>> {
     let mut out: Vec<Group<'_>> = Vec::new();
     let mut index = 0;
@@ -289,14 +256,8 @@ pub fn groups(bindings: &[Binding]) -> Vec<Group<'_>> {
     out
 }
 
-/// Which entries belong with the one at `index` — itself, plus the parts
-/// underneath when it is a composite head.
-///
-/// The same walk [`groups`] does, exposed so that removing a composite
-/// and evaluating one cannot disagree about where it ends. They did:
-/// deleting a head left its parts behind, and since `groups` skips a part
-/// with no head above it, they became rows that were saved to the file
-/// and read by nothing.
+/// Which entries belong with the one at `index`: itself plus its parts — the same walk as
+/// [`groups`], so removing and evaluating a composite agree on where it ends.
 pub fn group_range(bindings: &[Binding], index: usize) -> std::ops::Range<usize> {
     if index >= bindings.len() {
         return index..index;

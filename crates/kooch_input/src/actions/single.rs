@@ -1,33 +1,6 @@
-//! An action on its own: `.inputaction` as an asset, and the component
-//! that reads one.
-//!
-//! # Why without a map
-//!
-//! A map groups actions that turn on and off **together**. That is worth
-//! having, and it is not what a mechanic wants: jumping and moving are
-//! two capabilities of an entity, enabled and disabled for their own
-//! reasons, and the code that reads one should not have to name it inside
-//! a shared list.
-//!
-//! Naming is the concrete cost. With a map, gameplay writes
-//! `map.resolve("jump")` — the action's *name* becomes the contract, so
-//! renaming it in the panel silently stops the control, and every
-//! consumer spells the string out. As an asset, the action is referenced
-//! by guid from a field in the Inspector, exactly like a mesh: no string,
-//! and renaming the file changes nothing.
-//!
-//! Unity supports the same thing and calls them singleton actions —
-//! *"actions can stand on their own and do not necessarily need to belong
-//! to a map"*. It wraps each in a hidden map of one, because its
-//! evaluator requires a map. Ours never did: [`evaluate`] takes an
-//! action.
-//!
-//! # What is kept
-//!
-//! Everything an action *is*: composites, parts, processors, several
-//! devices at once. This changes where an action lives and how it is
-//! referenced, not what it can express — the same `Action` type is
-//! serialised, so a `.inputaction` is one entry of a `.inputmap`.
+//! A single action as a `.inputaction` asset and the component that reads one — referenced by guid
+//! like a mesh, so renaming never breaks a control.
+//! Same `Action` type as a `.inputmap` entry.
 
 use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
 use kooch_ecs::Reflect;
@@ -66,12 +39,8 @@ pub fn to_ron(action: &Action) -> Result<String, ron::Error> {
     ron::ser::to_string_pretty(action, ron::ser::PrettyConfig::default())
 }
 
-/// Writes `action` to `path` and gives it an asset identity.
-///
-/// The identity is the point, and the lesson is the same one `prefab` and
-/// `.inputmap` both record: the database registers a file only when a
-/// `.meta` sits beside it and never invents one, so an action written
-/// without this is a file nothing can reference.
+/// Writes `action` to `path` with its `.meta`, since the database never invents one and an action
+/// without it cannot be referenced.
 pub fn save(action: &Action, path: &std::path::Path) -> Result<kooch_core::Guid, String> {
     let text = to_ron(action).map_err(|e| e.to_string())?;
     std::fs::write(path, text).map_err(|e| e.to_string())?;
@@ -80,14 +49,8 @@ pub fn save(action: &Action, path: &std::path::Path) -> Result<kooch_core::Guid,
     Ok(meta.guid)
 }
 
-/// One action an entity reads, and whether it is listening.
-///
-/// Put one per mechanic: a `move` on the player, a `jump` beside it, a
-/// different `move` on an enemy. Each is enabled on its own, which is
-/// what a map cannot do — a map is all or nothing.
-///
-/// The value is written by [`read_input_actions`] once per frame and read
-/// by gameplay in the same frame.
+/// One action an entity reads, enabled on its own — one per mechanic. Written by
+/// `read_input_actions` and read by gameplay in the same frame.
 #[derive(Debug, Clone, Default, PartialEq, Reflect)]
 #[reflect(category = "Input")]
 pub struct InputAction {
@@ -103,10 +66,7 @@ pub struct InputAction {
     /// and a scene that stored it would load with a jump half-pressed.
     #[reflect(skip)]
     pub value: ActionValue,
-    /// Last frame's `pressed`, so edges are derived rather than
-    /// remembered. Same reason as [`ActionState`](super::state::ActionState):
-    /// a dropped frame self-corrects, where a queued event would leave
-    /// the action stuck down.
+    /// Last frame's `pressed`, so edges are derived and a dropped frame self-corrects.
     #[reflect(skip)]
     pub was_pressed: bool,
 }
@@ -173,14 +133,8 @@ impl InputAction {
 #[cfg(test)]
 mod tests;
 
-/// Every `.inputaction` this frame's components asked for, by guid.
-///
-/// Exists because a component can only appear **once per entity**, so a
-/// mechanic that reads two actions cannot hold two [`InputAction`]s — it
-/// holds two guids in a component of its own. Loading them is the part
-/// that needs the asset server, which is awkward from a game system and
-/// identical for everyone, so the engine keeps the result here and a game
-/// just looks up what it points at:
+/// Every `.inputaction` loaded for this frame, by guid — how a game component holding several
+/// action guids turns one into a value:
 ///
 /// ```ignore
 /// let loaded = resources.get::<LoadedActions>()?;
@@ -189,12 +143,8 @@ mod tests;
 #[derive(Debug, Default)]
 pub struct LoadedActions {
     by_guid: Vec<(kooch_core::Guid, Action)>,
-    /// When each was last read off disk, so an edit is noticed.
-    ///
-    /// Without this a `.inputaction` is read once per process: saving a
-    /// rebind in the panel changed nothing until the game was restarted,
-    /// and the only way to see an edit was to relaunch — which reads as
-    /// "assets need a recompile" when nothing needs compiling at all.
+    /// When each was last read off disk, so an edit to a `.inputaction` is picked up without
+    /// restarting.
     read_at: Vec<(kooch_core::Guid, std::time::SystemTime)>,
 }
 
@@ -257,14 +207,8 @@ fn report_once(registered: usize, already_loaded: usize) {
     }
 }
 
-/// Loads every `.inputaction` the project has into [`LoadedActions`].
-///
-/// All of them rather than the ones currently referenced, because a
-/// component the engine does not know about — a game's own `PlayerInput`
-/// holding two guids — is exactly the case this exists for, and the
-/// engine cannot ask it what it wants. A project has a handful of
-/// actions, and each is loaded once: `load_by_guid` returns the handle it
-/// already has.
+/// Loads every `.inputaction` the project has, since game-defined components holding guids cannot
+/// be asked what they need; each loads once.
 pub fn load_input_actions(resources: &mut kooch_core::resource::Resources) {
     use kooch_core::assets::Assets;
 
@@ -281,10 +225,7 @@ pub fn load_input_actions(resources: &mut kooch_core::resource::Resources) {
             .entries_of_type(std::any::type_name::<Action>())
             .map(|(guid, entry)| {
                 let path = entry.path.clone();
-                // The file's own mtime rather than the entry's: the entry
-                // records when the scan saw it, and the running game does
-                // not rescan — so an edit made while it plays would never
-                // show up.
+                // The file's own mtime, not the scan entry's: a running game never rescans.
                 let on_disk = entry
                     .path
                     .metadata()
@@ -350,14 +291,8 @@ pub fn load_input_actions(resources: &mut kooch_core::resource::Resources) {
     resources.insert(cache);
 }
 
-/// Reads every enabled [`InputAction`] against the backend, once a frame.
-///
-/// Runs in `Stage::Input`, after the backend is pumped and before
-/// anything in `Update`, so a gameplay system sees this frame's value.
-///
-/// A disabled action keeps its last value rather than being zeroed, and
-/// every reader already treats it as silent. Zeroing would make
-/// re-enabling report a release nobody performed.
+/// Reads every enabled [`InputAction`] in `Stage::Input`, so gameplay sees this frame. A disabled
+/// action keeps its last value rather than faking a release.
 pub fn read_input_actions(resources: &mut kooch_core::resource::Resources) {
     use kooch_ecs::Query;
 

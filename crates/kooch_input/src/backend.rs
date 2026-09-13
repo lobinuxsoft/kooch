@@ -1,26 +1,14 @@
-//! [`InputBackend`] trait + shared types.
-//!
-//! Backends (`WinitGilrsBackend`, `MockInputBackend`, future SDL2 / Steam
-//! Input) implement the trait. Game code calls trait methods via
-//! `Box<dyn InputBackend>` stored as a [`Resource`](kooch_core::resource::Resources).
-//!
-//! The identifiers live in [`crate::ids`] and belong to this engine. They
-//! used to be re-exports of winit's and gilrs' own, under a note saying
-//! wrappers were deferred until a non-winit backend shipped. Three things
-//! came due at once — a remote host cannot construct a `gilrs::GamepadId`,
-//! a binding has to survive being written to a file, and Steam Input is
-//! that non-winit backend. See the module docs there.
+//! [`InputBackend`] and shared types — winit+gilrs, remote and mock backends implement it.
+//! Identifiers are the engine's own ([`crate::ids`]), since a remote host, saved bindings and Steam
+//! Input all need them.
 
 use glam::Vec2;
 use std::collections::HashSet;
 
 pub use crate::ids::{GamepadAxis, GamepadButton, GamepadId, KeyCode, MouseButton};
 
-/// Per-frame input event surfaced by [`InputBackend::poll`].
-///
-/// Game code typically reads cumulative state (`is_pressed`, etc.) rather
-/// than processing this event stream — events exist for systems that need
-/// edge detection (UI focus, char input, gesture recognizers).
+/// Per-frame input event from [`InputBackend::poll`], for systems needing edges; gameplay usually
+/// reads the cumulative state.
 #[derive(Debug, Clone, Copy)]
 pub enum InputEvent {
     KeyPressed(KeyCode),
@@ -48,14 +36,8 @@ pub enum InputEvent {
     },
 }
 
-/// Engine input interface.
-///
-/// Backends maintain internal state (currently-pressed keys, mouse pos,
-/// etc.) and expose it via the read-only methods. Mutating frame state
-/// happens inside [`poll`](Self::poll) and event-feeding methods specific
-/// to each backend (e.g. `WinitGilrsBackend::feed_window_event`).
-///
-/// # Frame lifecycle
+/// Engine input interface: backends keep the held state, updated in [`poll`](Self::poll) and by fed
+/// events, and expose it read-only.
 ///
 /// ```text
 /// per frame, in this order:
@@ -65,48 +47,20 @@ pub enum InputEvent {
 ///   4. game systems read is_pressed / just_pressed / mouse_delta / …
 /// ```
 ///
-/// [`InputPlugin`](crate::InputPlugin) runs 1–3 in `Stage::Input`, so a
-/// gameplay system in `Stage::Update` sees this frame's input.
-///
-/// # Why clearing has its own call
-///
-/// `just_pressed` is true for exactly one frame, which only works if the
-/// clear happens *before* the frame's events are applied and never
-/// after. It used to live at the top of `poll`, where it deleted the
-/// presses winit had already delivered — a key pressed between two
-/// frames was recorded and then wiped before any system could read it,
-/// so `just_pressed` was permanently false. Nothing caught it because
-/// nothing called any of this.
+/// [`InputPlugin`](crate::InputPlugin) runs 1–3 in `Stage::Input`. Clearing is its own call because
+/// it must precede the frame's events — inside `poll` it wiped presses already delivered.
 pub trait InputBackend: Send + Sync + 'static {
     /// Forgets the previous frame's `just_pressed` / `just_released`
     /// edges and mouse delta. Call once per frame, before feeding this
     /// frame's events.
     fn begin_frame(&mut self);
 
-    /// Pushes one window event into the backend.
-    ///
-    /// On the trait rather than on the concrete backend because the
-    /// engine holds a `Box<dyn InputBackend>` and the window runner has
-    /// no idea which one it is. Backends fed entirely by their own
-    /// device sources — a Steam Input backend, a replay backend — take
-    /// the default and ignore it.
-    ///
-    /// Typed as winit's event rather than `&dyn Any` because this crate
-    /// re-exports winit's `KeyCode` and `MouseButton` already: hiding
-    /// the one type it takes behind a downcast buys no independence and
-    /// costs a runtime failure mode.
+    /// Pushes one window event into the backend — on the trait because the engine holds a `dyn`;
+    /// device-fed backends ignore it. Typed as winit's event, not `&dyn Any`.
     fn feed_window_event(&mut self, _event: &winit::event::WindowEvent) {}
 
-    /// Replaces the held state with one captured elsewhere.
-    ///
-    /// The counterpart of [`feed_window_event`](Self::feed_window_event)
-    /// for a backend fed over a wire rather than by devices. On the trait
-    /// for the same reason: the engine holds a `Box<dyn InputBackend>`
-    /// and the caller has no idea which one it is.
-    ///
-    /// Backends that read real devices take the default and ignore it —
-    /// being told what is held by someone else would fight what they can
-    /// see themselves.
+    /// Replaces the held state with one captured elsewhere — the wire counterpart of
+    /// [`feed_window_event`](Self::feed_window_event); device backends ignore it.
     fn apply_snapshot(&mut self, _snapshot: &crate::remote_backend::InputSnapshot) {}
 
     /// Drains pending events from device sources the backend polls
@@ -132,14 +86,8 @@ pub trait InputBackend: Send + Sync + 'static {
     // ─── gamepad ─────────────────────────────────────────────────────
     fn gamepads(&self) -> Vec<GamepadId>;
     fn is_button_pressed(&self, gamepad: GamepadId, button: GamepadButton) -> bool;
-    /// `true` only on the frame the button went down.
-    ///
-    /// The keyboard has had this since the beginning and the gamepad had
-    /// not, so anything wanting "on press" — a jump, a menu confirm —
-    /// had to settle for "while held" on a pad. Written into a per-frame
-    /// intent that means an impulse *every* frame the button is down:
-    /// the jump that works on the keyboard fires the player off the map
-    /// on a controller (#57).
+    /// `true` only on the frame the button went down — without it a pad jump fired every held frame
+    /// (#57).
     fn just_button_pressed(&self, gamepad: GamepadId, button: GamepadButton) -> bool;
     /// `true` only on the frame the button came back up.
     fn just_button_released(&self, gamepad: GamepadId, button: GamepadButton) -> bool;

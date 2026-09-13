@@ -33,12 +33,8 @@ fn the_action_type_registers_itself() {
     );
 }
 
-/// 🔴 The cache is what a game's own component reads through.
-///
-/// A component appears once per entity, so a mechanic needing two
-/// actions holds two guids in a component of its own — and then it
-/// has no way to turn a guid into a value. This is that way, and it
-/// takes no map, no `InputAction` and no asset server.
+/// 🔴 The cache is how a game's own component turns a guid into a value, with no map or asset
+/// server.
 #[test]
 fn a_guid_can_be_evaluated_without_a_component() {
     use crate::mock_backend::MockInputBackend;
@@ -84,13 +80,8 @@ fn reloading_an_action_replaces_it() {
     assert_eq!(loaded.get(guid).map(|a| a.name.as_str()), Some("renamed"));
 }
 
-/// 🔴 An action edited on disk is picked up without a restart.
-///
-/// Reported from use: saving a rebind in the panel changed nothing
-/// until the remote process was killed and relaunched, which reads as
-/// "assets need a recompile" when nothing needs compiling. The cache
-/// skipped any guid it already held, so a file was read once per
-/// process and never again.
+/// 🔴 An action edited on disk is picked up without a restart — the cache used to read each file
+/// once per process.
 #[test]
 fn a_newer_file_is_considered_stale() {
     let guid = kooch_core::Guid::new_v4();

@@ -1,35 +1,14 @@
-//! Wiring actions into a frame.
-//!
-//! # Where it sits
-//!
-//! Loading runs in `Stage::PreUpdate` and reading in `Stage::Input`,
-//! right after the backend has been pumped and before anything in
-//! `Update`. A gameplay system therefore reads the action as of *this*
-//! frame, not last one.
-//!
-//! # No active map
-//!
-//! There was one, and it was a global: a component named which
-//! `.inputmap` the whole session played under, gameplay looked an action
-//! up **by name** inside it, and every consumer spelled that name out —
-//! so renaming an action in the panel silently stopped the control.
-//!
-//! An action is an asset now. A component points at one by guid, picked
-//! in the Inspector like a mesh, and each is enabled on its own — which a
-//! map could not do, being all or nothing. Nothing here is global, and
-//! nothing names an action.
+//! Wiring actions into a frame: loaded in `Stage::PreUpdate`, read in `Stage::Input` after the
+//! backend is pumped, so `Update` sees this frame.
+//! No global map: actions are assets referenced by guid.
 
 use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
 use kooch_core::resource::Resources;
 use kooch_core::stage::Stage;
 
-/// Declares the input components without running any input.
-///
-/// The editor needs them to exist as data — to inspect them, to offer the
-/// asset picker, to mirror them — while gameplay lives in the project's
-/// process. Same split `CameraComponentsPlugin` makes, and for the same
-/// reason: a host that authors is not a host that plays.
+/// Declares the input components without running input — for the editor, which inspects and mirrors
+/// them while gameplay runs in the project.
 pub struct InputComponentsPlugin;
 
 impl Plugin for InputComponentsPlugin {
@@ -46,10 +25,8 @@ impl Plugin for InputComponentsPlugin {
     }
 }
 
-/// Loads the project's actions and reads them once per frame.
-///
-/// Add it after [`InputPlugin`](crate::InputPlugin): this reads what that
-/// one pumps, and plugin order is system order within a stage.
+/// Loads the project's actions and reads them once per frame; add it after
+/// [`InputPlugin`](crate::InputPlugin), whose output it reads.
 #[derive(Default)]
 pub struct ActionsPlugin;
 

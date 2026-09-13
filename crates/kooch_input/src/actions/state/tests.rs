@@ -110,12 +110,8 @@ fn the_most_actuated_binding_wins_rather_than_summing() {
     );
 }
 
-/// Two bindings of equal strength: the earlier one wins.
-///
-/// Arbitrary, but it has to be *decided* rather than left to
-/// iteration order — a keyboard and a stick both at full push is the
-/// common case, not a corner one, and a coin toss there reads as the
-/// input flickering.
+/// Two bindings of equal strength: the earlier wins — decided, since a keyboard and a stick both at
+/// full push is common.
 #[test]
 fn a_tie_goes_to_the_binding_listed_first() {
     let map = map();
