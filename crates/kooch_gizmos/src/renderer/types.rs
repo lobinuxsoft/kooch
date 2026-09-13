@@ -18,13 +18,8 @@ pub struct LineSegment {
 // GPU types — vertex format + camera uniforms
 // ---------------------------------------------------------------------------
 
-/// Quad-line vertex. Each line emits 6 vertices (two triangles).
-///
-/// `position` is this vertex's 3D world endpoint; `other_position` is
-/// the line's other endpoint (used by the vertex shader to compute the
-/// perpendicular direction). `side` is `+1` or `-1` indicating which
-/// side of the line this vertex sits on. `thickness` is in physical
-/// pixels and controls the perpendicular offset magnitude.
+/// Quad-line vertex, six per line. `other_position` is the far endpoint for the perpendicular;
+/// `side` is ±1; `thickness` is in physical pixels.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(super) struct GizmoVertex {
@@ -35,11 +30,8 @@ pub(super) struct GizmoVertex {
     pub(super) thickness: f32,
 }
 
-/// Matches `CameraUniforms` in `gizmo_main.wgsl`.
-///
-/// `view_proj` projects world points to clip space; `viewport_size`
-/// (physical pixels) lets the shader convert pixel-thickness into
-/// NDC offsets.
+/// Matches `CameraUniforms` in `gizmo_main.wgsl`; `viewport_size` turns pixel thickness into NDC
+/// offsets.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Default)]
 pub(super) struct CameraUniforms {

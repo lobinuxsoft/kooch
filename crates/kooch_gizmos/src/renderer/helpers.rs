@@ -14,13 +14,8 @@ pub(super) fn push_quad(seg: &LineSegment, vertices: &mut Vec<GizmoVertex>) {
     let color = seg.color.to_array();
     let thickness = seg.thickness;
 
-    // The four logical corners of the quad in screen space:
-    //   A = p1 + perp           B = p1 - perp
-    //   C = p2 + perp           D = p2 - perp
-    //
-    // The shader computes `perp` from `(other_position - position)`. At
-    // p2 that direction is reversed, so to keep C / D on the same world
-    // sides as A / B we flip the `side` sign at p2.
+    // Quad corners: A/B = p1 ± perp, C/D = p2 ± perp. The shader derives `perp` from the other
+    // endpoint, which reverses at p2, so `side` flips there.
     let a = GizmoVertex {
         position: p1,
         color,
@@ -59,10 +54,7 @@ pub(super) fn push_quad(seg: &LineSegment, vertices: &mut Vec<GizmoVertex>) {
     vertices.push(c);
 }
 
-/// Where the active camera is, in world space.
-///
-/// The grid shader needs it twice: to fade from where you are standing,
-/// and to know which way it is looking at the plane.
+/// Where the active camera is, in world space — the grid fades from it and angles against it.
 pub(super) fn camera_world_position(resources: &Resources) -> Option<glam::Vec3> {
     let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
     let mut best: Option<(i32, Mat4)> = None;

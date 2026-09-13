@@ -1,54 +1,23 @@
 //! Wireframe outlines for the curved shapes a collider can be.
-//!
-//! # Why wireframe and not a translucent mesh
-//!
-//! A collider usually sits *inside* the visual mesh it belongs to, so a
-//! solid representation is hidden exactly when you need to look at it.
-//! Unity, Unreal and Godot all draw an outline instead: you see the
-//! capsule around the character, not a green blob where the character
-//! used to be.
-//!
-//! # Basis, not axis flags
-//!
-//! Every function takes a `Mat3` basis so the outline follows the
-//! entity's rotation, the same way [`Gizmos::filled_obb`] already does.
-//! Drawing a rotated body's collider axis-aligned would be worse than
-//! drawing nothing: it would look like the collider had not rotated.
-//!
-//! [`Gizmos::filled_obb`]: crate::Gizmos::filled_obb
+//! Outlines, not solid meshes: a collider usually sits inside its visual mesh. Each takes a `Mat3`
+//! basis so the outline turns with the entity.
 
 use glam::{Mat3, Vec3};
 
 use crate::Gizmos;
 
-/// Target chord error for a circle, in world units.
-///
-/// A fixed segment count is the wrong knob: it over-tessellates a collider
-/// of radius 0.5 and still looks polygonal on a light sphere of radius 10,
-/// because how round a circle *looks* depends on its radius. Holding the
-/// error constant and deriving the count from the radius fixes both ends.
+/// Target chord error for a circle, in world units. Constant error, not a fixed segment count, so
+/// small and large circles both look round.
 const CHORD_ERROR: f32 = 0.01;
 
-/// Fewest segments any circle is drawn with.
-///
-/// The error target alone would give a tiny circle about a dozen segments,
-/// which reads as a polygon even though the deviation is small in absolute
-/// terms. A floor costs nothing on shapes that small.
+/// Fewest segments any circle is drawn with, so tiny circles do not read as polygons.
 pub const MIN_CIRCLE_SEGMENTS: u32 = 32;
 
-/// Most segments any circle is drawn with.
-///
-/// A planet-scale radius would otherwise ask for thousands, and a
-/// selection of a dozen bodies would flood the line batch for shapes
-/// nobody is inspecting that closely.
+/// Most segments any circle is drawn with, so planet-scale radii do not flood the line batch.
 pub const MAX_CIRCLE_SEGMENTS: u32 = 96;
 
-/// Segments for a circle of `radius`, holding the chord error constant.
-///
-/// The sagitta of one segment is `r * (1 - cos(π/n))`, which for useful `n`
-/// is about `r * π² / (2n²)`. Solving for `n` gives `π * sqrt(r / 2e)` —
-/// so the count grows with the square root of the radius, not linearly.
-/// Doubling a light's range costs about 40% more segments, not 100%.
+/// Segments for a circle of `radius` at constant chord error: `n ≈ π·sqrt(r / 2e)`, so the count
+/// grows with the square root of the radius.
 pub fn segments_for(radius: f32) -> u32 {
     let radius = radius.abs().max(f32::EPSILON);
     let ideal = std::f32::consts::PI * (radius / (2.0 * CHORD_ERROR)).sqrt();
@@ -56,11 +25,7 @@ pub fn segments_for(radius: f32) -> u32 {
 }
 
 impl Gizmos<'_> {
-    /// The twelve edges of an oriented box.
-    ///
-    /// [`Gizmos::aabb`] draws an axis-aligned one; a collider on a rotated
-    /// entity needs its box to turn with it, and
-    /// [`Gizmos::filled_obb`] draws a solid one you cannot see through.
+    /// The twelve edges of an oriented box, turning with a rotated entity.
     pub fn wire_obb(&mut self, centre: Vec3, basis: Mat3, half_extents: Vec3, color: Vec3) {
         let (x, y, z) = (
             basis.x_axis * half_extents.x,
@@ -86,11 +51,8 @@ impl Gizmos<'_> {
         }
     }
 
-    /// One circle of `radius` in the plane spanned by `u` and `v`.
-    ///
-    /// The building block for every rounded outline below: a sphere is
-    /// three of these, a capsule two half-circles plus two, a cylinder
-    /// two plus its silhouette.
+    /// One circle of `radius` in the plane spanned by `u` and `v` — the building block of every
+    /// rounded outline.
     pub fn wire_circle(&mut self, centre: Vec3, u: Vec3, v: Vec3, radius: f32, color: Vec3) {
         self.wire_arc(centre, u, v, radius, 0.0, std::f32::consts::TAU, color);
     }
@@ -125,11 +87,8 @@ impl Gizmos<'_> {
         }
     }
 
-    /// Sphere outline: three great circles, one per basis plane.
-    ///
-    /// Three rather than a full latitude/longitude grid — that is the
-    /// representation every engine settled on, because it reads as a
-    /// sphere from any angle without obscuring what is behind it.
+    /// Sphere outline: three great circles, which read as a sphere from any angle without hiding
+    /// what is behind.
     pub fn wire_sphere(&mut self, centre: Vec3, basis: Mat3, radius: f32, color: Vec3) {
         let (x, y, z) = (basis.x_axis, basis.y_axis, basis.z_axis);
         self.wire_circle(centre, x, y, radius, color);
@@ -137,11 +96,8 @@ impl Gizmos<'_> {
         self.wire_circle(centre, z, x, radius, color);
     }
 
-    /// Capsule outline along the basis' Y axis.
-    ///
-    /// `half_height` excludes the caps, matching both `CollisionShape` and
-    /// rapier's `capsule_y`, so total height is
-    /// `2 * (half_height + radius)`.
+    /// Capsule outline along the basis' Y axis. `half_height` excludes the caps, as in
+    /// `CollisionShape` and rapier's `capsule_y`.
     pub fn wire_capsule(
         &mut self,
         centre: Vec3,
@@ -211,14 +167,8 @@ impl Gizmos<'_> {
         }
     }
 
-    /// Half-space outline: a bounded grid patch on the plane through
-    /// `origin` with the given `normal`, plus an arrow along it.
-    ///
-    /// An infinite plane cannot be drawn, so it is suggested: the patch
-    /// says where the surface is and the arrow says which side is solid.
-    /// Without the arrow a half-space is indistinguishable from a
-    /// double-sided plane, and which side is solid is the only thing
-    /// about it that matters.
+    /// Half-space outline: a bounded grid patch on the plane plus an arrow along `normal`, since
+    /// which side is solid is what matters.
     pub fn wire_halfspace(&mut self, origin: Vec3, normal: Vec3, extent: f32, color: Vec3) {
         let normal = normal.normalize_or(Vec3::Y);
         let u = normal.any_orthonormal_vector();
@@ -240,11 +190,8 @@ impl Gizmos<'_> {
         self.line(origin, origin + normal * extent * 0.5, color);
     }
 
-    /// Every edge of a triangle soup, for the mesh-derived colliders.
-    ///
-    /// Deduplicates shared edges: a closed trimesh shares each edge
-    /// between two triangles, so drawing them per-triangle doubles the
-    /// line count for an identical picture.
+    /// Every edge of a triangle soup, deduplicated — a closed trimesh shares each edge between two
+    /// triangles.
     pub fn wire_triangles(&mut self, vertices: &[Vec3], indices: &[[u32; 3]], color: Vec3) {
         let mut seen = std::collections::HashSet::with_capacity(indices.len() * 3);
         for tri in indices {

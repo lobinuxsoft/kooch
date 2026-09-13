@@ -1,9 +1,5 @@
-//! [`Gizmos`] — borrow-checked accessor over the line and mesh batches.
-//!
-//! User-facing API for visualizers and any system that wants to draw
-//! gizmo geometry. Wraps `&mut GizmoBatch` (lines) and `&mut MeshBatch`
-//! (filled triangles) so the underlying storage stays opaque to
-//! callers — future render-path changes don't ripple through user code.
+//! [`Gizmos`] — borrow-checked accessor over the line and mesh batches, keeping their storage
+//! opaque to callers.
 
 use glam::{Mat3, Vec3, Vec4};
 
@@ -87,10 +83,8 @@ impl<'a> Gizmos<'a> {
             .filled_obb(center, basis, half_extents, color);
     }
 
-    /// Pushes a filled 3D arrow from `base` to `tip` — an octagonal
-    /// cylinder shaft topped with an octagonal cone head. Unlike the
-    /// line-based [`Self::arrow`], this is a solid mesh — used by the
-    /// translate handle.
+    /// Pushes a filled 3D arrow from `base` to `tip` — a solid octagonal shaft and cone, used by
+    /// the translate handle.
     pub fn filled_arrow(&mut self, base: Vec3, tip: Vec3, color: Vec4) {
         self.mesh_batch.filled_arrow(base, tip, color);
     }

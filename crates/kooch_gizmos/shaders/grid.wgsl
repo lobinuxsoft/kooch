@@ -1,30 +1,6 @@
-// Infinite ground grid — a fullscreen pass that intersects the view ray
-// with a horizontal plane, per pixel.
-//
-// No geometry. A grid of line segments ends somewhere, and it can only
-// fade per line: one near the centre stays bright all the way to its
-// far end. Deriving the lattice from each pixel's world position fades
-// where it should and never runs out.
-//
-// # Adapted from Godot's 3D editor grid (MIT)
-//
-// `editor/scene/3d/node_3d_editor_plugin.cpp`. Three things it does
-// that a naive grid does not, and all three are why its grid reads well
-// at every zoom:
-//
-// 1. **A level chosen from camera distance**, `log(distance) / log(steps)`.
-//    The fractional part is a CROSSFADE: the fine lines fade out exactly
-//    as the coarse ones become the new fine ones, so zooming never pops
-//    and never lands on a step nobody can see.
-// 2. **An angle fade.** Looking along the plane, a grid smears into a
-//    solid sheet at the horizon. Fading by the view's angle to the
-//    normal is what removes it.
-// 3. **A distance fade from the CAMERA**, not from the world origin — the
-//    grid is a reference to what is under you, and one that fades from a
-//    fixed point is gone the moment you walk away from it.
-//
-// Godot computes 1 per line on the CPU because its grid is geometry.
-// Doing it per pixel needs no line list at all.
+// Infinite ground grid, per pixel: no geometry, so it fades where it should and never ends.
+// Adapted from Godot's editor grid (MIT): a level from `log(distance)` whose fraction crossfades,
+// plus angle and camera-distance fades.
 
 struct GridUniforms {
     inverse_view_proj: mat4x4<f32>,
@@ -45,10 +21,7 @@ struct GridUniforms {
     // Where the fade reaches nothing, from the camera's own position.
     fade_distance: f32,
     // x: 1 when the world axes should be drawn, 0 for a guide.
-    //
-    // A vec4 and not a scalar plus padding: WGSL aligns a trailing vec3
-    // to 16 and Rust's [f32; 3] to 4, so the two structs disagree on
-    // their own size and every draw fails validation.
+    // A vec4, not a scalar plus padding: WGSL aligns a trailing vec3 to 16, Rust's [f32; 3] to 4.
     flags: vec4<f32>,
 }
 
@@ -84,11 +57,8 @@ fn vs_main(@builtin(vertex_index) index: u32) -> Fragment {
     return out;
 }
 
-/// How much of a line covers this pixel, for a coordinate in cells.
-///
-/// `fwidth` is the change across one pixel, so the line keeps a constant
-/// screen-space width however far away it is. Without it a distant cell
-/// either disappears or aliases into a sheet of moiré.
+/// How much of a line covers this pixel, for a coordinate in cells. `fwidth` keeps lines a constant
+/// screen width at any distance.
 fn coverage(cell: vec2<f32>) -> f32 {
     let derivative = fwidth(cell);
     let to_line = abs(fract(cell - 0.5) - 0.5) / derivative;
@@ -110,10 +80,8 @@ fn fs_main(in: Fragment) -> Shaded {
     }
     let world = in.near + direction * t;
 
-    // 🔴 The crossfade. `fine` is the level being left behind and is
-    // scaled OUT by `blend`; `coarse` is the one taking over. At blend
-    // 1 the coarse lines are exactly where the fine ones will be at the
-    // start of the next level, so the transition has no seam.
+    // 🔴 The crossfade: `fine` fades out by `blend` while `coarse` takes over, landing exactly on
+    // the next level's fine lines.
     let fine = coverage(world.xz / grid.small_step) * (1.0 - grid.blend);
     let coarse = coverage(world.xz / (grid.small_step * grid.steps));
     var line = max(fine, coarse);
