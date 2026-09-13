@@ -1,8 +1,4 @@
-//! Resources-side input application: runs **outside** the egui closure
-//! and turns a captured [`ViewportInputDelta`] into mutations on the
-//! editor camera entity's `Transform` plus the
-//! [`EditorCameraController`] resource, then propagates `GlobalTransform`
-//! so the renderer sees the new pose this same frame.
+//! Resources-side input application.
 
 use std::any::TypeId;
 
@@ -25,14 +21,6 @@ use crate::editor_camera::pan_zoom::{apply_zoom, pan_delta};
 use super::ViewportInputDelta;
 
 /// Applies a captured input delta to the editor camera entity.
-///
-/// Mutates the controller's focus point / distance, the camera
-/// `Transform`, and triggers a hierarchy propagation so the renderer
-/// reads the updated `GlobalTransform` on this same frame.
-///
-/// `selection_world_position` is the world-space position used to
-/// re-centre the camera when the user pressed `F`. `None` means "no
-/// selection" — focus-on-selection is a no-op in that case.
 pub fn apply_viewport_input(
     delta: ViewportInputDelta,
     resources: &mut Resources,
@@ -63,10 +51,9 @@ pub fn apply_viewport_input(
         return;
     };
 
-    // --- Axis-gizmo snap ---------------------------------------------------
-    // Before the orbit so a click and a stray drag in the same frame
-    // resolve to the clicked view. Focus point and distance survive;
-    // only the orientation jumps, which is what the gizmo promises.
+    // --- Axis-gizmo snap --------------------------------------------------- Before the orbit so a
+    // click and a stray drag in the same frame resolve to the clicked view. Focus point and
+    // distance survive; only the orientation jumps, which is what the gizmo promises.
     if let Some(snap) = delta.snap_orientation {
         rotation = snap;
     }
@@ -98,12 +85,6 @@ pub fn apply_viewport_input(
     }
 
     // --- Fly-mode look + WASD/QE ------------------------------------------
-    //
-    // FPS look pivots around the *camera*, not around `focus_point`.
-    // `fly_look_pivot_camera` rotates and re-anchors `focus_point` so
-    // the derived camera position stays fixed under pure rotation.
-    // WASD/QE then translates camera and focus together so the in-front
-    // pivot moves with the camera.
     if delta.fly_active {
         if delta.fly_yaw != 0.0 || delta.fly_pitch != 0.0 {
             let position_before =
@@ -178,10 +159,6 @@ fn write_transform(resources: &mut Resources, entity: Entity, position: Vec3, ro
 }
 
 /// The active camera's vertical field of view, in radians.
-///
-/// Read rather than assumed: a project that authored a 90° camera
-/// frames from closer than one that authored 50°, and a constant here
-/// would put the same block at a different size than it renders.
 fn camera_fov(resources: &Resources) -> f32 {
     crate::gizmos::active_camera(resources)
         .map(|(camera, _)| camera.fov.to_radians())

@@ -1,11 +1,4 @@
 //! What the controller actually found, beside what it was asking for.
-//!
-//! [`CharacterVisualizer`](super::character::CharacterVisualizer) draws
-//! the numbers in the Inspector: where the body *should* ride, how far it
-//! *may* look. This draws the answer the sweep came back with. Together
-//! they are the debug view — a gap that does not match the ride height,
-//! or a normal that is not the ramp you are standing on, is visible
-//! rather than deduced.
 
 use glam::Vec3;
 

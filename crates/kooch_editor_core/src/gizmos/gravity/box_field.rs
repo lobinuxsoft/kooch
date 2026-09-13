@@ -41,10 +41,9 @@ impl Visualizer<BoxGravity> for BoxGravityVisualizer {
             gizmos.wire_obb(origin, basis, inner, EDGE);
         }
 
-        // How far the pull reaches, measured from the surface. An inflated
-        // box overstates the corners slightly — the true iso-surface is
-        // rounded there — but it answers "does this planet reach that
-        // platform", which is the question being asked.
+        // How far the pull reaches, measured from the surface. An inflated box overstates the
+        // corners slightly — the true iso-surface is rounded there — but it answers "does this
+        // planet reach that platform", which is the question being asked.
         if field.range > 0.0 {
             let reach = half + Vec3::splat(field.range + field.falloff.max(0.0));
             gizmos.wire_obb(origin, basis, reach, EDGE);

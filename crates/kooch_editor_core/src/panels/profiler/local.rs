@@ -1,43 +1,16 @@
 //! The profiler reading **this process** — the editor's own frame.
-//!
-//! Adopted, not written: the flamegraph, the timeline, the frame history,
-//! the scope statistics and the play/pause control all come from
-//! `puffin_egui`, pinned to the same egui this editor draws with. What is
-//! here is the part no crate supplies — a capture that survives the
-//! session, and the recording controls.
-//!
-//! ⚠️ This measures the editor, on this machine. The frame the graphics
-//! roadmap is judged against belongs to a game on the handheld, and that
-//! one arrives through [`super::remote`].
 
 use egui::Ui;
 
 /// Our own `GlobalProfilerUi`, kept alive for the whole session.
-///
-/// 🔴 `puffin_egui::profiler_ui` uses a private static of its own, so
-/// nothing outside can reach the frames it is showing — and
-/// `GlobalFrameView::default()` does NOT hand back the global view: it
-/// **creates a new empty one**, registers a sink, and de-registers it on
-/// drop. Building one per frame to service the buttons meant Clear
-/// emptied a view nobody was looking at and Save wrote a four-byte file
-/// containing the header and no frames.
-///
-/// Owning the `GlobalProfilerUi` fixes both at once: the panel draws
-/// from it and the buttons act on `global_frame_view()`, which is the
-/// same view by construction rather than by coincidence.
 static PROFILER_UI: std::sync::OnceLock<std::sync::Mutex<puffin_egui::GlobalProfilerUi>> =
     std::sync::OnceLock::new();
 
 /// Draws the flamegraph for this process.
 pub(super) fn draw(ui: &mut Ui) {
-    // 🔴 Nothing is switched on here. Recording starts only when
-    // the Record button is pressed, and puffin's own default for
-    // `are_scopes_on` is already `false`, so an editor that never
-    // opens this panel — or opens it and leaves it stopped — pays
-    // about 1 ns per scope and nothing else.
-    //
-    // The earlier version turned recording on merely by drawing the
-    // panel, which made "stop profiling" mean "close the tab".
+    // 🔴 Nothing is switched on here. Recording starts only when the Record button is pressed, and
+    // puffin's own default for `are_scopes_on` is already `false`, so an editor that never opens
+    // this panel — or opens it and leaves it stopped — pays about 1 ns per scope and nothing else.
     let mut profiler_ui = PROFILER_UI
         .get_or_init(Default::default)
         .lock()
@@ -47,34 +20,11 @@ pub(super) fn draw(ui: &mut Ui) {
     ui.separator();
 
     // 🔴 The panel is not part of the frame it is reporting on.
-    //
-    // Drawing this flamegraph is by far the most expensive thing in
-    // the editor's frame — the first capture showed `ProfilerUi::ui`
-    // at 10.97 ms of a 15.98 ms frame, with hundreds of text-layout
-    // scopes under it. Left recorded, the profiler becomes the
-    // biggest entry in its own measurement and every real cost is
-    // squeezed against it.
-    //
-    // Scopes are switched off for the duration and restored after,
-    // so what is recorded is the engine, not the instrument. The
-    // enclosing `editor ui` scope still includes this time — the
-    // frame really did take that long — but nothing inside it is
-    // itemised.
     let was_on = puffin::are_scopes_on();
     puffin::set_scopes_on(false);
     if was_on {
-        // 🔴 No flamegraph while recording, and this is the fix for
-        // the observer costing more than the thing observed.
-        //
-        // Drawing it is the single most expensive thing in the
-        // editor's frame — measured at 10.97 ms of a 15.98 ms frame,
-        // hundreds of text-layout scopes deep. While a measurement
-        // is running that cost lands inside the frames being
-        // measured, so the numbers describe an editor that is busy
-        // drawing a picture of itself.
-        //
-        // Recording and reading are different moments anyway: you
-        // record, you do the thing, you stop, and THEN you look.
+        // 🔴 No flamegraph while recording, and this is the fix for the observer costing more than
+        // the thing observed.
         recording_summary(ui, profiler_ui.global_frame_view());
     } else {
         profiler_ui.ui(ui);
@@ -83,22 +33,14 @@ pub(super) fn draw(ui: &mut Ui) {
 }
 
 /// Clearing the history, and taking a capture off the machine.
-///
-/// The recording grows for as long as the panel is open, so "clear" is
-/// not a convenience: it is how a measurement starts from a known
-/// moment. Reproducing a spike means clearing, doing the thing, and
-/// pausing — and without a clear the interesting frames arrive buried
-/// under every frame since the tab was opened.
 fn capture_controls(ui: &mut Ui, profiler_ui: &puffin_egui::GlobalProfilerUi) {
     let frame_view = profiler_ui.global_frame_view();
     let recording = puffin::are_scopes_on();
 
     ui.horizontal(|ui| {
-        // 🔴 This is NOT `puffin_egui`'s ▶/⏸ below, and the difference
-        // is the whole reason it exists. That one freezes the VIEW on a
-        // frame while the scopes keep being recorded behind it. This one
-        // stops the recording: with it off, every `profiling::scope!` in
-        // the engine costs an atomic load and returns.
+        // 🔴 This is NOT `puffin_egui`'s ▶/⏸ below, and the difference is the whole reason it
+        // exists. That one freezes the VIEW on a frame while the scopes keep being recorded behind
+        // it.
         let (label, hover) = if recording {
             (
                 "⏹ Stop",
@@ -117,18 +59,9 @@ fn capture_controls(ui: &mut Ui, profiler_ui: &puffin_egui::GlobalProfilerUi) {
                 // Ask again in a couple of frames' time — see
                 // `SNAPSHOT_COUNTDOWN`.
                 super::SNAPSHOT_COUNTDOWN.store(120, std::sync::atomic::Ordering::Relaxed);
-                // 🔴 Every time recording starts, not only after a
-                // clear. A `FrameView` resolves the scope ids inside a
-                // frame through a collection it builds as frames arrive,
-                // and anything that replaces the view — Clear, Load —
-                // starts that collection empty. Asking for the snapshot
-                // here covers all of those paths at once, instead of
-                // each one having to remember.
-                //
-                // The symptom of getting this wrong is subtle and only
-                // shows up later: the panel and the saved `.puffin` list
-                // `scope#ScopeId(67)` where a name should be, and the
-                // capture is useless without ever looking broken.
+                // 🔴 Every time recording starts, not only after a clear. A `FrameView` resolves the
+                // scope ids inside a frame through a collection it builds as frames arrive, and
+                // anything that replaces the view — Clear, Load — starts that collection empty.
                 puffin::GlobalProfiler::lock().emit_scope_snapshot();
             }
         }
@@ -139,21 +72,14 @@ fn capture_controls(ui: &mut Ui, profiler_ui: &puffin_egui::GlobalProfilerUi) {
             .on_hover_text("Drops every recorded frame. Recording continues.")
             .clicked()
         {
-            // 🔴 Replaced rather than cleared, because puffin has no
-            // "clear everything": `FrameView::clear_slowest` drops only
-            // the frames it kept for being slow, which is the opposite
-            // of what a measurement needs — the slow frames are the
-            // interesting ones. Assigning a fresh view is the whole
-            // history gone, which is what the button says.
+            // 🔴 Replaced rather than cleared, because puffin has no "clear everything":
+            // `FrameView::clear_slowest` drops only the frames it kept for being slow, which is the
+            // opposite of what a measurement needs — the slow frames are the interesting ones.
             *frame_view.lock() = puffin::FrameView::default();
 
-            // 🔴 And a fresh view has no scope COLLECTION, which is what
-            // turns the scope ids inside a frame back into names. Frames
-            // kept arriving after a clear and the panel drew nothing at
-            // all, because there was no way left to say what any of them
-            // were. `GlobalFrameView::default` calls this for exactly
-            // this reason when it builds a view; replacing the view by
-            // hand has to do the same.
+            // 🔴 And a fresh view has no scope COLLECTION, which is what turns the scope ids inside
+            // a frame back into names. Frames kept arriving after a clear and the panel drew
+            // nothing at all, because there was no way left to say what any of them were.
             puffin::GlobalProfiler::lock().emit_scope_snapshot();
         }
 
@@ -240,10 +166,6 @@ fn recording_summary(ui: &mut Ui, frame_view: &puffin::GlobalFrameView) {
 }
 
 /// Reads the newest `.puffin` in the captures folder.
-///
-/// The panel can show it directly, so a capture is readable without
-/// installing `puffin_viewer` — which is a second application to have,
-/// and the reason the first saved file looked unopenable.
 fn load_latest_capture() -> std::io::Result<Option<puffin::FrameView>> {
     let dir = captures_dir();
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -274,13 +196,7 @@ fn load_latest_capture() -> std::io::Result<Option<puffin::FrameView>> {
     Ok(Some(view))
 }
 
-/// Where captures go: beside the editor's own configuration rather than
-/// inside the project.
-///
-/// A capture is a measurement of a session on a machine, not an asset of
-/// the game — dropping `.puffin` files into a project would put them in
-/// the asset browser, in version control, and eventually in a shipped
-/// pack.
+/// Where captures go: beside the editor's own configuration rather than inside the project.
 fn captures_dir() -> std::path::PathBuf {
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(std::path::PathBuf::from)
@@ -292,19 +208,11 @@ fn captures_dir() -> std::path::PathBuf {
 }
 
 /// Writes the current history and returns where it landed.
-///
-/// The name carries the frame count rather than a timestamp: `new Date`
-/// is not available to every build path here, and "which capture had the
-/// spike" is answered by size far more often than by clock time.
 fn save_capture(frame_view: &puffin::GlobalFrameView) -> std::io::Result<std::path::PathBuf> {
     save_view(&frame_view.lock())
 }
 
 /// Writes any view, whichever process produced it.
-///
-/// The remote panel holds a `FrameView` directly rather than a global
-/// one, and a capture of a game is the capture that matters — so the
-/// naming, the folder and the format are shared rather than copied.
 pub(super) fn save_view(view: &puffin::FrameView) -> std::io::Result<std::path::PathBuf> {
     let dir = captures_dir();
     std::fs::create_dir_all(&dir)?;
@@ -318,10 +226,6 @@ pub(super) fn save_view(view: &puffin::FrameView) -> std::io::Result<std::path::
 }
 
 /// Opens the captures folder in the system's file manager.
-///
-/// ⚠️ Deliberately not a dependency. This is one command per platform
-/// and the editor already shells out this way for the configured IDE;
-/// a crate for it would be a supply-chain surface for twelve lines.
 fn open_captures_dir() -> std::io::Result<()> {
     let dir = captures_dir();
     std::fs::create_dir_all(&dir)?;

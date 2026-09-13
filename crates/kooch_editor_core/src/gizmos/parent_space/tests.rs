@@ -1,8 +1,7 @@
 use super::*;
 
-/// A parent yawed 90° about Y has its local +X pointing along world
-/// −Z, so world +X reads as local +Z from inside it. Dragging the
-/// world-X handle on a child must move it along that, or the entity
+/// A parent yawed 90° about Y has its local +X pointing along world −Z, so world +X reads as local
+/// +Z from inside it. Dragging the world-X handle on a child must move it along that, or the entity
 /// slides down an axis the user did not grab.
 #[test]
 fn a_translation_follows_the_parents_rotation() {
@@ -31,10 +30,9 @@ fn a_translation_divides_by_the_parents_scale() {
     );
 }
 
-/// The parent's position must not leak into a translation delta — it
-/// is a direction, not a point. This is what `transform_vector3`
-/// buys over `transform_point3`, and getting it wrong offsets every
-/// drag by the parent's position.
+/// The parent's position must not leak into a translation delta — it is a direction, not a point.
+/// This is what `transform_vector3` buys over `transform_point3`, and getting it wrong offsets
+/// every drag by the parent's position.
 #[test]
 fn a_translation_ignores_where_the_parent_is() {
     let far_away = Mat4::from_translation(Vec3::new(100.0, -50.0, 7.0));

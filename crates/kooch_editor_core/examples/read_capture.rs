@@ -1,37 +1,4 @@
 //! Reads a `.puffin` capture and prints where the time went (#785).
-//!
-//! The panel answers this interactively; this answers it in a terminal,
-//! which is what a capture from the handheld will need — and what makes
-//! "the profiler slows the editor down" a measurement rather than an
-//! impression.
-//!
-//! Two views, for the two questions:
-//!
-//! - **The tree** — who is inside whom, averaged over every frame in the
-//!   capture. This is the one to read first: a flat number cannot say
-//!   whether 40 ms of sky is inside the frame or beside it.
-//! - **The flat ranking** — every scope by total cost, wherever it ran.
-//!   Useful for a scope that appears in several places at once.
-//!
-//! ⚠️ The panel's Table view is the flat one, and it opens sorted by
-//! call count. That is why a capture of a 70 ms frame looks like it is
-//! made of `BindGroup::drop`: 56 calls of 0.1 µs sort above one pass of
-//! 40 ms. Sort by total self time, or read the Flamegraph — the panel's
-//! own tree.
-//!
-//! `--split` answers the question the averages cannot: **what is
-//! different about the slow frames?** A capture where the camera moves
-//! is two populations, and a mean over both describes neither. It also
-//! prints the frame against the GPU work that produced it — the ratio
-//! between them is what separates "the GPU is the wall" from "something
-//! is making us wait for it twice" (#814).
-//!
-//! `--over-time` answers a different question with the same capture:
-//! **is it getting worse as it runs?** `--split` sorts by cost and so
-//! cannot see order, and a drift and a scattered stall are different
-//! bugs — one accumulates, the other recurs.
-//!
-//! cargo run -p kooch_editor_core --features profiling --example read_capture -- <file.puffin> [--slowest] [--split] [--over-time]
 
 use std::collections::HashMap;
 
@@ -95,10 +62,9 @@ fn main() -> anyhow::Result<()> {
         durations.push(unpacked.duration_ns() as f64 / 1e6);
         for (thread, stream_info) in unpacked.thread_streams.iter() {
             let stream = &stream_info.stream;
-            // A thread of its own in the tree: the `GPU` rows are not
-            // nested under the CPU scope that recorded them, and
-            // printing them as if they were would be a lie about which
-            // one contains which.
+            // A thread of its own in the tree: the `GPU` rows are not nested under the CPU scope
+            // that recorded them, and printing them as if they were would be a lie about which one
+            // contains which.
             let root = roots.entry(thread.name.clone()).or_default();
             let Ok(scopes) = puffin::Reader::from_start(stream).read_top_scopes() else {
                 continue;
@@ -121,11 +87,9 @@ fn main() -> anyhow::Result<()> {
 
     let frame_count = frames.len().max(1) as f64;
 
-    // 🔴 A capture can be unreadable without being invalid, and every
-    // number below is still correct when it is — which is the trap. The
-    // names are what makes them mean something, and a file that lost
-    // them prints `scope#ScopeId(81)` in a well-formed table that
-    // invites being read anyway. Say it once, loudly, at the top.
+    // 🔴 A capture can be unreadable without being invalid, and every number below is still correct
+    // when it is — which is the trap. The names are what makes them mean something, and a file that
+    // lost them prints `scope#ScopeId(81)` in a well-formed table that invites being read anyway.
     let nameless = totals
         .keys()
         .filter(|name| name.starts_with("scope#ScopeId("))
@@ -193,10 +157,6 @@ struct Sample {
 }
 
 /// Reduces every frame in the capture to a [`Sample`], in capture order.
-///
-/// Kept separate from the views that consume it because `--split` sorts
-/// what it is given: a view that needs chronological order cannot be
-/// handed the same vector afterwards.
 fn samples(
     view: &puffin::FrameView,
     frames: &[std::sync::Arc<puffin::FrameData>],
@@ -229,18 +189,6 @@ fn samples(
 }
 
 /// Walks the capture in order and reports whether it is getting slower.
-///
-/// # A drift and a distribution look identical to every other view here
-///
-/// `--split` sorts the frames by cost, which answers "what is different
-/// about the slow ones" and destroys "when did they happen". Those are
-/// different findings with the same evidence: frames that are slow
-/// *scattered* point at a per-frame hazard, and frames that are slow
-/// *at the end* point at something accumulating — a buffer that only
-/// grows, a list never freed, a cache that never evicts.
-///
-/// A profiler that cannot tell those apart sends the reader looking for
-/// the wrong kind of bug, so this is a view and not a footnote.
 fn over_time(samples: &[Sample]) {
     const BUCKETS: usize = 10;
     if samples.len() < BUCKETS * 2 {
@@ -274,9 +222,8 @@ fn over_time(samples: &[Sample]) {
         last = frame;
     }
 
-    // A median per bucket already rejects one-off stalls, so a change
-    // between the ends is a change in the typical frame. 10 % is the
-    // line: below it this is run-to-run noise on a power-limited
+    // A median per bucket already rejects one-off stalls, so a change between the ends is a change
+    // in the typical frame. 10 % is the line: below it this is run-to-run noise on a power-limited
     // handheld, above it the capture did not measure one steady state.
     let change = (last - first) / first * 100.0;
     if change.abs() >= 10.0 {
@@ -292,26 +239,12 @@ fn over_time(samples: &[Sample]) {
 }
 
 /// Compares the fastest quarter of frames against the slowest.
-///
-/// # Why a split and not an average
-///
-/// A capture taken while the camera moves holds two populations, and a
-/// mean over both describes neither. The interesting number is not what
-/// a frame costs — it is what grows when the frame gets slow, which is a
-/// subtraction the eye cannot do across two trees.
 fn split(
     view: &puffin::FrameView,
     frames: &[std::sync::Arc<puffin::FrameData>],
 ) -> anyhow::Result<()> {
     let mut samples = samples(view, frames)?;
-    // 🔴 Before any per-frame comparison, ask whether the two series are
-    // even aligned. `GpuScopes` keeps three frames in flight and puffin
-    // files a GPU result under the frame that *reported* it, not the one
-    // that ran it — so a capture with variable frame times can pair a
-    // slow frame with an earlier frame's GPU work and invent a gap that
-    // is pure bookkeeping. This is checked, not assumed, because a
-    // conclusion drawn from a misaligned pairing looks exactly like a
-    // conclusion drawn from a real one.
+    // 🔴 Before any per-frame comparison, ask whether the two series are even aligned.
     report_lag(&samples);
 
     samples.sort_by(|a, b| a.ms.total_cmp(&b.ms));
@@ -351,10 +284,9 @@ fn split(
         println!("{row}");
     }
 
-    // 🔴 The ratio is the finding, not the frame time. A frame that
-    // costs what its GPU work costs is GPU-bound and honest; one that
-    // costs twice it is waiting for the GPU twice, which is a swapchain
-    // problem wearing a shading problem's clothes (#814).
+    // 🔴 The ratio is the finding, not the frame time. A frame that costs what its GPU work costs is
+    // GPU-bound and honest; one that costs twice it is waiting for the GPU twice, which is a
+    // swapchain problem wearing a shading problem's clothes (#814).
     println!("\n── frame against the GPU work that produced it ──");
     println!(
         "{:>9} {:>9} {:>10}   decile",
@@ -375,13 +307,7 @@ fn split(
     Ok(())
 }
 
-/// Prints how well GPU work predicts frame time at each offset, in
-/// capture order.
-///
-/// The offset with the strongest correlation is how many frames late the
-/// GPU results are filed. At 0 the two series are aligned and a
-/// per-frame ratio means what it says; at anything else the ratio is
-/// comparing a frame against another frame's GPU work.
+/// Prints how well GPU work predicts frame time at each offset, in capture order.
 fn report_lag(samples: &[Sample]) {
     let correlate = |lag: usize| -> f64 {
         if samples.len() <= lag + 2 {
@@ -420,17 +346,7 @@ fn report_lag(samples: &[Sample]) {
         .filter(|r| r.is_finite())
         .unwrap_or(0.0);
 
-    // 🔴 An argmax over five numbers always returns one, whether or not
-    // any of them means anything. This printed "the GPU results are
-    // filed 2 frame(s) late" off r = 0.010 against a field of -0.050 to
-    // 0.010 — five values indistinguishable from zero — and a reader
-    // acting on it would go looking for a bookkeeping offset that does
-    // not exist.
-    //
-    // So a lag is only claimed when the correlation is strong enough to
-    // be a relationship at all, AND clearly beats the un-lagged pairing
-    // the ratio below actually uses. Both thresholds are judgement
-    // calls; being explicit about them is the point.
+    // 🔴 An argmax over five numbers always returns one, whether or not any of them means anything.
     const REAL: f64 = 0.3;
     const BETTER: f64 = 0.1;
     match best {
@@ -497,10 +413,6 @@ fn absorb(
 }
 
 /// Prints a node's children, heaviest first.
-///
-/// Anything under 1 % of a frame is folded into one line: a tree with
-/// four hundred rows of 0.001 ms is the same problem as the flat table
-/// sorted by call count.
 fn print_children(node: &Node, frames: f64, depth: usize) {
     let mut children: Vec<_> = node.children.values().zip(node.children.keys()).collect();
     children.sort_by_key(|(child, _)| -child.total_ns);

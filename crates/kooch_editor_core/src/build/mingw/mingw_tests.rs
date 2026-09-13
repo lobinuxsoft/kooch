@@ -14,10 +14,6 @@ fn only_a_windows_build_carries_the_runtime() {
 }
 
 /// 🔴 All three, or the executable does not start.
-///
-/// `libstdc++-6.dll` is the one the linker asks for, and it in turn
-/// needs `libgcc_s_seh-1.dll` and `libwinpthread-1.dll`. Shipping only
-/// the first produces the same Windows dialog one file later.
 #[test]
 fn a_windows_build_carries_the_whole_chain() {
     let Some(_) = runtime_dir() else {

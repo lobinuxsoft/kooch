@@ -1,12 +1,4 @@
 //! Adding a `Joint` through the remote protocol.
-//!
-//! Reported symptom: after adding a Joint to an entity, the component
-//! does not appear on it, the world stops updating, and the session has
-//! to be reconnected. A joint with no bodies is *supposed* to warn and do
-//! nothing — that part is by design. Nothing was supposed to stop.
-//!
-//! These tests take the same route the editor does: a real server, a real
-//! `AddComponent`, and a real `list_entities` afterwards.
 
 use kooch_core::resource::Resources;
 use kooch_ecs::allocator::EntityAllocator;
@@ -167,15 +159,6 @@ fn a_joints_fields_survive_the_round_trip() {
 }
 
 /// Every field of a `Joint` survives the protocol's format.
-///
-/// Asked directly, field by field, so a failure names the one that did it.
-/// The server used to answer `{}` when this failed, and the cause reached
-/// nobody: the client then failed decoding `{}`, a different error in a
-/// different process, naming nothing.
-///
-/// A round trip rather than an eyeball over the text — `null` is a
-/// perfectly good encoding of a reference to nothing, and the question is
-/// whether the value comes back, not what it looks like on the way.
 #[test]
 fn every_joint_field_survives_the_wire() {
     use kooch_ecs::reflect::{Reflect, ReflectValue};

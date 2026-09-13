@@ -1,29 +1,10 @@
-//! 🔴 The safety net [`COPY`](super::COPY) has needed since it was
-//! written, and that two comments claimed already existed.
-//!
-//! `COPY` is an allowlist, so its failure mode is omitting something the
-//! build needs — and that costs a full compile to find, with an error
-//! naming a missing file and nothing about vendoring. `templates/` was
-//! missed exactly that way.
-//!
-//! Anything the engine `include_str!`s or `include_bytes!`s is compiled
-//! *into* it, so a vendored copy missing one does not build at all. That
-//! is a property of the source, readable from the source, and this reads
-//! it — rather than trusting a list somebody maintains by hand.
+//! 🔴 The safety net [`COPY`](super::COPY) has needed since it was written, and that two comments
+//! claimed already existed.
 
 use super::*;
 
-/// Every path reached by `include_str!` / `include_bytes!`, resolved
-/// against the file that names it, relative to the engine root.
-///
-/// 🔴 Scans **what the vendor walk visits**, not the repo. Two reasons,
-/// and the first cost a red test to learn: this file talks about
-/// `include_str!` in order to look for it, so a scan over the repo finds
-/// its own source. And test files do not travel, so a macro in one is not
-/// a file the copy needs.
-///
-/// Only literal paths: a macro fed a `concat!` is not something a scan
-/// can resolve, and there are none.
+/// Every path reached by `include_str!` / `include_bytes!`, resolved against the file that names
+/// it, relative to the engine root.
 fn included_paths(repo: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     super::copy::walk_engine(repo, &mut |rel, abs| {
@@ -42,10 +23,6 @@ fn included_paths(repo: &Path) -> Vec<PathBuf> {
 }
 
 /// The literal path in each `include_str!("…")` / `include_bytes!("…")`.
-///
-/// Commented-out occurrences are skipped: the engine explains this very
-/// mechanism in prose, and a doc comment quoting `include_str!` is not a
-/// file anything compiles in.
 fn includes_in(text: &str) -> impl Iterator<Item = &str> {
     text.match_indices("include_").filter_map(move |(at, _)| {
         if in_a_comment(text, at) {
@@ -73,12 +50,6 @@ fn in_a_comment(text: &str, at: usize) -> bool {
 }
 
 /// `a/b/../c` → `a/c`.
-///
-/// `Path::components` does not resolve `..` — it keeps it — and every
-/// one of these paths climbs out of its own directory.
-///
-/// `None` for a path that climbs past the engine root, which cannot be
-/// vendored and is not this test's business to report.
 fn normalise(path: &Path) -> Option<PathBuf> {
     let mut out = PathBuf::new();
     for part in path.components() {
@@ -93,11 +64,8 @@ fn normalise(path: &Path) -> Option<PathBuf> {
     Some(out)
 }
 
-/// The test the doc comments have been promising. Vendors the real
-/// engine and asserts every compiled-in file arrived.
-///
-/// A fixture would prove the allowlist matches the fixture. This reads
-/// what the engine actually reaches for.
+/// The test the doc comments have been promising. Vendors the real engine and asserts every
+/// compiled-in file arrived.
 #[test]
 fn vendored_includes_all_resolve() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -247,22 +215,15 @@ fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 /// Module names declared *without* a `#[cfg(test)]` in front of them.
-///
-/// ⚠️ Skips raw-string bodies. The editor generates a project's `lib.rs`
-/// from a `r##"…"##` literal that contains `pub mod registrations;` —
-/// real Rust, and not a module *this* crate declares. The first run of
-/// this test reported it, which is the difference between a scanner and
-/// a compiler.
 fn ungated_modules(text: &str) -> Vec<String> {
     let mut names = Vec::new();
     let mut gated = false;
     let mut in_raw = false;
     for line in text.lines() {
         let line = line.trim();
-        // Good enough for this repo's literals, which open and close on
-        // their own lines. A parser would be the alternative, and the
-        // failure mode of getting it wrong here is a noisy test, not a
-        // shipped bug.
+        // Good enough for this repo's literals, which open and close on their own lines. A parser
+        // would be the alternative, and the failure mode of getting it wrong here is a noisy test,
+        // not a shipped bug.
         if line.contains("r#\"") || line.contains("r##\"") {
             in_raw = true;
             continue;

@@ -1,13 +1,4 @@
 //! Fly-mode movement for the editor camera.
-//!
-//! Fly mode is engaged while the user holds RMB inside the viewport.
-//! Mouse movement reuses [`apply_yaw_pitch`](super::orbit::apply_yaw_pitch)
-//! for look; this module owns only the WASD/QE translation logic.
-//!
-//! Convention chosen: **W/A/S/D move along the camera's local axes**;
-//! **Q/E move along world `±Y`** (deliberately *not* camera-up). Tying
-//! vertical motion to world up keeps the FPS feel stable when the
-//! camera is pitched, matching Unity / Unreal level-editor cameras.
 
 use glam::{Quat, Vec3};
 
@@ -29,12 +20,9 @@ impl FlyKeys {
     }
 }
 
-/// World-space displacement to apply to the orbit `focus_point` for a
-/// fly-mode tick. Returns `Vec3::ZERO` if no keys are pressed (so
-/// callers can early-return without recomputing transforms).
-///
-/// `dt_seconds` is the frame delta in seconds; `fly_speed` is the
-/// controller's configured base speed in world-units per second.
+/// World-space displacement to apply to the orbit `focus_point` for a fly-mode tick. Returns
+/// `Vec3::ZERO` if no keys are pressed (so callers can early-return without recomputing
+/// transforms).
 pub fn fly_velocity(keys: FlyKeys, orientation: Quat, fly_speed: f32, dt_seconds: f32) -> Vec3 {
     if !keys.any() || dt_seconds <= 0.0 || fly_speed <= 0.0 {
         return Vec3::ZERO;

@@ -1,22 +1,4 @@
 //! Bringing an existing project to a game-first shape (#558).
-//!
-//! Projects scaffolded before this build the editor by default: `main.rs`
-//! matches on `--game` and falls through to `run_editor_with`, and the
-//! manifest asks for `kooch`'s `editor` and `remote` features
-//! unconditionally. A release binary of one of those opens the **editor**
-//! when double-clicked, and carries the whole authoring surface whether
-//! or not anything can reach it.
-//!
-//! The editor owns the scaffold's shape — it wrote it — so it migrates on
-//! open, the way [`migrate_to_library`](super::migrate_to_library) does.
-//!
-//! # What this will not do
-//!
-//! **Rewrite a `main.rs` somebody edited.** The mode dispatcher was
-//! generated, but the arms are a place to put code, and a migration that
-//! silently deleted a line of gameplay would be worse than one that did
-//! nothing. A `main.rs` that no longer matches what the editor generated
-//! is left alone with a warning naming the two files.
 
 use std::path::Path;
 
@@ -38,9 +20,6 @@ editor = [
 "#;
 
 /// Splits authoring out of a project's game build.
-///
-/// Each step is skipped when already applied, so this is a no-op on a
-/// project created after #558 and on one already migrated.
 pub(crate) fn split_authoring(project_root: &Path, crate_name: &str) {
     let crate_name = sanitize_crate_name(crate_name);
     let manifest_path = project_root.join("Cargo.toml");
@@ -80,17 +59,6 @@ pub(crate) fn split_authoring(project_root: &Path, crate_name: &str) {
 }
 
 /// Moves a project's `scenes/` under `assets/` (#758).
-///
-/// 🔴 Everything a game needs at runtime lives in one tree now, so
-/// packaging walks one place and "where does this go" has one answer.
-/// A project made before this keeps its scenes where the editor no
-/// longer looks — and the self-healing default-scene path would write a
-/// fresh empty one over the gap, which reads as a project that lost its
-/// work.
-///
-/// Moved rather than copied, and only when the destination is free: two
-/// copies of a scene is worse than one in the wrong place, because the
-/// editor would edit one and the build would ship the other.
 fn migrate_scenes(project_root: &Path) {
     let (from, to) = (
         project_root.join("scenes"),
@@ -187,10 +155,9 @@ fn migrate_main(project_root: &Path, crate_name: &str) {
     }
 
     if main != old_scaffold(crate_name) {
-        // 🔴 Not touched, and said loudly. The build still works — the
-        // authoring binary is what the editor runs now — but this file
-        // still opens the editor, so a release of it is not shippable
-        // and nothing else would ever mention that.
+        // 🔴 Not touched, and said loudly. The build still works — the authoring binary is what the
+        // editor runs now — but this file still opens the editor, so a release of it is not
+        // shippable and nothing else would ever mention that.
         tracing::warn!(
             file = %path.display(),
             "src/main.rs was edited, so it was left as it is — it still starts the \
@@ -228,10 +195,6 @@ fn migrate_lib(project_root: &Path) {
 }
 
 /// The `main.rs` the editor generated before #558.
-///
-/// Kept verbatim so a project can be recognised as untouched. It is dead
-/// weight the day no project predates the split, and until then it is the
-/// difference between migrating and overwriting someone's work.
 fn old_scaffold(crate_name: &str) -> String {
     OLD_MAIN.replace("PROJECT_CRATE", crate_name)
 }
@@ -244,14 +207,9 @@ const OLD_MAIN: &str = r##"use kooch::prelude::*;
 use PROJECT_CRATE::registrations;
 
 fn main() {
-    // `cargo run`            → the editor, with your components (authoring).
-    // `cargo run -- --game`  → the game (what the editor's Play button runs).
-    // `cargo run -- --remote`→ headless authoring host: your components +
-    //                          the remote server, driven by the standalone
-    //                          editor over a local socket. Gameplay starts
-    //                          paused; the
-    //                          editor's Play button starts it without a
-    //                          rebuild, in the editor's own viewport.
+    // `cargo run` → the editor, with your components (authoring). `cargo run -- --game` → the game
+    // (what the editor's Play button runs). `cargo run -- --remote`→ headless authoring host: your
+    // components + the remote server, driven by the standalone editor over a local socket.
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--game") {
         // Game runtime: components + gameplay systems.
@@ -260,11 +218,9 @@ fn main() {
         app.add_plugin(registrations::ProjectRegistrations { run_systems: true });
         app.run();
     } else if args.iter().any(|a| a == "--remote") {
-        // Remote authoring host: components register (so the editor's
-        // Inspector sees them) and systems register paused — the editor
-        // toggles `Playing` over the wire to run them in place.
-        // Headless on purpose: the editor draws this world in its own
-        // viewport, so a window here would show the same scene twice.
+        // Remote authoring host: components register (so the editor's Inspector sees them) and
+        // systems register paused — the editor toggles `Playing` over the wire to run them in
+        // place.
         let mut app = App::new();
         app.add_plugins(RemoteHostPlugins);
         app.add_plugin(registrations::ProjectRegistrations { run_systems: false });

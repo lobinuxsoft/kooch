@@ -115,10 +115,8 @@ fn first_call_populates_ram_eventually() {
 
 #[test]
 fn second_call_inside_refresh_interval_is_a_noop() {
-    // Two calls back-to-back: only the first should hit the OS.
-    // We can't observe the syscall count directly, but we CAN
-    // observe that `last_refresh` doesn't move on the second
-    // call.
+    // Two calls back-to-back: only the first should hit the OS. We can't observe the syscall count
+    // directly, but we CAN observe that `last_refresh` doesn't move on the second call.
     let mut resources = Resources::default();
     resources.insert(EditorPerfStats::default());
     resources.insert(super::super::HudVisibility {
@@ -143,12 +141,9 @@ fn second_call_inside_refresh_interval_is_a_noop() {
 
 #[test]
 fn first_sample_does_not_overwrite_cpu_percent() {
-    // sysinfo's first refresh always reports cpu_usage = 0.0
-    // because there's no prior sample to delta against. If the
-    // HUD reads this value it will display a stuck "0.0 %"
-    // until enough idle time passes for a second refresh — the
-    // user reported exactly this. Verify the first refresh does
-    // not overwrite an existing non-zero value.
+    // sysinfo's first refresh always reports cpu_usage = 0.0 because there's no prior sample to
+    // delta against. If the HUD reads this value it will display a stuck "0.0 %" until enough idle
+    // time passes for a second refresh — the user reported exactly this.
     let mut resources = Resources::default();
     let mut seeded_stats = EditorPerfStats::default();
     seeded_stats.cpu_percent = 42.0; // simulate prior reading

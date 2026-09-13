@@ -1,21 +1,4 @@
 //! Reconstructs a remote project's scene into a local ECS.
-//!
-//! The editor renders remote state by mirroring it: each
-//! [`EntitySnapshot`] pulled over the wire becomes a real local entity,
-//! its engine components (`Transform`, `MeshRenderer`, …) inserted so the
-//! viewport can draw them, and its project components — which this binary
-//! has no Rust type for — parked in [`DynamicComponents`] so the
-//! Inspector can still show them.
-//!
-//! Unlike [`sync_scene_to_ecs`](kooch_ecs::scene::sync_scene_to_ecs), the
-//! mirror is keyed by [`EntityId`], not by name: a remote scene routinely
-//! has several identically-named entities (five `Mesh`es), and resolving
-//! parents by name would attach them wrongly. [`RemoteMirror`] keeps a
-//! remote→local id map so hierarchy is reconstructed exactly.
-//!
-//! Mirrored entities carry the [`MirrorEntity`] marker so a re-sync
-//! despawns the previous mirror without touching editor-owned entities
-//! (camera, gizmos).
 
 use std::collections::{HashMap, HashSet};
 
@@ -37,9 +20,6 @@ pub struct MirrorEntity;
 impl Component for MirrorEntity {}
 
 /// Owns the local mirror of a remote scene across refreshes.
-///
-/// Holds the remote→local id map from the last [`Self::apply`], so
-/// selection and hierarchy stay addressable by remote [`EntityId`].
 #[derive(Default)]
 pub struct RemoteMirror {
     /// Remote entity id → the local entity standing in for it.
@@ -47,20 +27,11 @@ pub struct RemoteMirror {
     /// The inverse: local entity → remote id, so an edit made against a
     /// mirrored entity can be addressed back to the server.
     remote_map: HashMap<Entity, EntityId>,
-    /// Component type names applied to each mirrored entity last time.
-    /// The diff needs it to notice a component the project has since
-    /// removed — the local ECS cannot be asked, since parked components
-    /// live outside the archetype.
+    /// Component type names applied to each mirrored entity last time. The diff needs it to notice
+    /// a component the project has since removed — the local ECS cannot be asked, since parked
+    /// components live outside the archetype.
     components: HashMap<Entity, Vec<String>>,
     /// The scenes the last snapshot said its entities belonged to.
-    ///
-    /// 🔴 The mirror is a DIFF and that is load-bearing for selection,
-    /// so nothing here ever announces "a new world" on its own: a scene
-    /// swap on the project's side arrives as a batch of despawns and a
-    /// batch of spawns, indistinguishable one entity at a time from a
-    /// game destroying things. The set of scenes is what tells them
-    /// apart, and it is the same question `SceneManager::epoch` answers
-    /// for a local session.
     scenes: HashSet<kooch_core::Guid>,
 }
 
@@ -82,9 +53,6 @@ impl RemoteMirror {
     }
 
     /// Despawns every mirrored entity and forgets the id maps.
-    ///
-    /// Called when the session ends: the mirror's entities are ephemeral,
-    /// so the ordinary project-close sweep leaves them behind.
     pub fn clear(&mut self, resources: &mut Resources) {
         self.retain_only(&[], resources);
         self.id_map.clear();
@@ -96,27 +64,6 @@ impl RemoteMirror {
     }
 
     /// Updates the local mirror to match `snapshot`.
-    ///
-    /// A **diff**, not a rebuild: an entity whose remote id was already
-    /// mirrored keeps its local [`Entity`] and has its fields written in
-    /// place. That stability is load-bearing — selection, the Inspector's
-    /// open headers and the gizmo all address entities by handle, so
-    /// respawning the world every refresh would drop the user's selection
-    /// twice a second, and once per frame while the project is playing.
-    /// Writes only the transforms the project reported moved (#1012).
-    ///
-    /// The play-mode counterpart to [`Self::apply`], and the reason the
-    /// editor goes read-only under Play: everything `apply` does beyond
-    /// this — reflecting every field of every component, retiring
-    /// components, rebuilding the hierarchy, diffing the scene set —
-    /// exists so a field can be typed into. Nothing can be typed into
-    /// while the project is playing, so none of it is carried.
-    ///
-    /// 🔴 Structure is NOT handled here, and must not be. An id with no
-    /// mapping is skipped rather than spawned: the host answers `full`
-    /// when its entity set changes, and the caller pulls a whole
-    /// snapshot on that frame. Spawning from a transform would produce
-    /// an entity with a position and no mesh.
     pub fn apply_moved(
         &mut self,
         moved: &[kooch_remote::protocol::MovedTransform],
@@ -149,10 +96,9 @@ impl RemoteMirror {
             }
         }
 
-        // Second pass: sync each entity's components. Separate from the
-        // pass above because a component can point at another entity, and
-        // translating that reference needs the whole map — an entity later
-        // in the snapshot than the one referring to it is ordinary.
+        // Second pass: sync each entity's components. Separate from the pass above because a
+        // component can point at another entity, and translating that reference needs the whole map
+        // — an entity later in the snapshot than the one referring to it is ordinary.
         {
             profiling::scope!("mirror: components");
             for snap in snapshot {
@@ -163,15 +109,8 @@ impl RemoteMirror {
             }
         }
 
-        // Third pass: the two things that travel beside the components
-        // rather than as components — the parent and the scene.
-        //
-        // The parent travels as its own snapshot field rather than as a
-        // component, so it needs its own sync — `sync_components` above
-        // never sees it and cannot retire it. Both directions matter: an
-        // entity the project reports with no parent has to *lose* its local
-        // `Parent`, or unparenting is invisible in the mirror while
-        // parenting works, which is exactly how it read.
+        // Third pass: the two things that travel beside the components rather than as components —
+        // the parent and the scene.
         profiling::scope!("mirror: hierarchy");
         for snap in snapshot {
             let Some(&child) = self.id_map.get(&snap.id) else {
@@ -250,19 +189,6 @@ impl RemoteMirror {
     }
 
     /// Rewrites the entity references in `fields` to name mirror entities.
-    ///
-    /// The project's handles mean nothing here: index 4 in the project is
-    /// not index 4 in the editor. Left untranslated, a joint's Body A
-    /// would read as whichever mirror entity happened to land on that
-    /// index — or as missing, which is what it looked like.
-    ///
-    /// A reference the map does not know is passed through rather than
-    /// blanked: the target is an entity the snapshot does not carry (an
-    /// ephemeral one), and the Inspector saying "missing" is truer than it
-    /// saying "none".
-    ///
-    /// Allocates only for a component that actually holds a reference —
-    /// the common case borrows nothing and copies the slice as it is.
     fn localise_refs(
         &self,
         fields: &[(String, kooch_ecs::reflect::ReflectValue)],
@@ -311,10 +237,6 @@ impl RemoteMirror {
 }
 
 /// Inserts a component named `type_name` on `entity`, setting `fields`.
-///
-/// A type this binary knows is inserted as a real reflected component (so
-/// it participates in rendering and queries); an unknown one is parked in
-/// [`DynamicComponents`] so the Inspector can still display it.
 fn insert_component(
     resources: &mut Resources,
     entity: Entity,
@@ -374,19 +296,7 @@ fn remove_component(resources: &mut Resources, entity: Entity, type_name: &str) 
     }
 }
 
-/// Records which scene a mirrored entity belongs to, or that it belongs
-/// to none.
-///
-/// 🔴 Membership arrives in `EntitySnapshot::scene`, never among the
-/// components: the host skips `SceneMember` when it builds a snapshot so
-/// the fact is on the wire once. Without this the World panel groups a
-/// mirrored world into an empty scene and a pile of orphans, which is
-/// what it did: every entity under "Unsaved" while the open scene
-/// reported zero.
-///
-/// Registered reflected — a generic world rebuild has to be able to carry
-/// it — but hidden from the Inspector, since it is derived rather than
-/// authored.
+/// Records which scene a mirrored entity belongs to, or that it belongs to none.
 fn set_scene(resources: &mut Resources, entity: Entity, scene: Option<kooch_core::Guid>) {
     let current = resources
         .get::<ComponentRegistry>()
@@ -435,13 +345,6 @@ fn set_parent(resources: &mut Resources, child: Entity, parent: Entity) {
 }
 
 /// Drops `child`'s `Parent`, making it a root.
-///
-/// Deliberately *not* `kooch_ecs::hierarchy::reparent`: that rewrites the
-/// child's local transform to preserve its world pose, which is right when a
-/// person drags something in the editor and wrong here. The mirror is
-/// copying a world the project already resolved — the project sends the
-/// local transform it wants, and rewriting it on this side would fight the
-/// snapshot every refresh.
 fn clear_parent(resources: &mut Resources, child: Entity) {
     let had_parent = resources
         .get::<ComponentRegistry>()
@@ -477,12 +380,7 @@ fn type_id<T: 'static>() -> std::any::TypeId {
     std::any::TypeId::of::<T>()
 }
 
-/// Writes one entity's local transform, decomposed the way the component
-/// stores it.
-///
-/// `GlobalTransform` is left alone: the propagation stage derives it
-/// from this and the hierarchy, and writing both would make the two
-/// disagree on any frame the parent moved and the child did not.
+/// Writes one entity's local transform, decomposed the way the component stores it.
 fn write_transform(resources: &mut Resources, entity: Entity, matrix: glam::Mat4) {
     let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
         return;

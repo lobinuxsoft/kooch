@@ -10,10 +10,6 @@ fn a_platform_knows_its_triple_and_extension() {
 }
 
 /// A floor must not follow a build onto Windows.
-///
-/// `cargo zigbuild` spells a floor by appending it to the triple, and
-/// `x86_64-pc-windows-gnu.2.28` is not a target — the build would fail
-/// on an argument nobody typed.
 #[test]
 fn only_linux_takes_a_glibc_floor() {
     assert!(Platform::Linux.takes_glibc_floor());

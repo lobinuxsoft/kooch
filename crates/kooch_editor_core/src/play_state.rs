@@ -1,9 +1,4 @@
 //! Play/Stop mode — child game process management.
-//!
-//! [`PlayState`] manages the lifecycle of a separate game process that
-//! the editor launches for testing. The game reads a serialized
-//! `.scene` file; when stopped, the process is killed and the
-//! editor state remains untouched.
 
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -15,29 +10,12 @@ use std::sync::{Arc, Mutex};
 // ---------------------------------------------------------------------------
 
 /// Manages the child game process lifecycle.
-///
-/// Stored as a resource in [`Resources`](kooch_core::resource::Resources).
-/// The editor inserts this automatically via [`EditorPlugin`](crate::EditorPlugin).
 pub struct PlayState {
     child: Option<Child>,
     output: Arc<Mutex<Vec<String>>>,
 }
 
 /// Splits a launch line into environment pairs.
-///
-/// Whitespace-separated `KEY=VALUE`, split at the FIRST `=` so a value
-/// may contain one — `RUST_LOG=kooch_render=debug` is a real thing
-/// somebody types.
-///
-/// 🔴 A token that does not parse is dropped **with a warning**, never
-/// in silence. Silently ignoring a misspelling looks exactly like the
-/// feature not existing, and this one is typed in a text field minutes
-/// before a measurement run.
-///
-/// No quoting, deliberately. A value with a space in it would need a
-/// shell's rules, and the variables this exists for — every `KOOCH_*`
-/// knob in the engine — are single words. Pretending to support quotes
-/// and getting them subtly wrong is worse than not offering them.
 pub fn parse_launch_env(raw: &str) -> Vec<(String, String)> {
     raw.split_whitespace()
         .filter_map(|token| match token.split_once('=') {
@@ -54,24 +32,6 @@ pub fn parse_launch_env(raw: &str) -> Vec<(String, String)> {
 }
 
 /// The environment a launched game gets, in the order it is applied.
-///
-/// Later entries overwrite earlier ones, which is what `Command::env`
-/// does — so the ORDER of this list is the policy:
-///
-/// 1. **The author's launch line**, first, so everything below can beat
-///    it.
-/// 2. **`KOOCH_ENGINE_ROOT` and `KOOCH_PROJECT_ROOT`**, which the editor
-///    knows and a text field does not.
-/// 3. **`RUST_LOG`**, and only as a default: a launch line that names it
-///    keeps what it asked for, and so does an editor started with one.
-/// 4. 🔴 **`KOOCH_LOG_FORMAT=json`, unconditionally.** The Console
-///    parses the game's output; handed anything else every line arrives
-///    as one opaque string that has lost the level and target it filters
-///    on. A launch option that could replace this would look exactly
-///    like the Console breaking.
-///
-/// `inherited_logs` is whether this process already has `RUST_LOG`, read
-/// by the caller so the rule itself stays testable.
 fn game_env(
     launch_env: &[(String, String)],
     engine_root: Option<&Path>,
@@ -111,17 +71,6 @@ impl PlayState {
     }
 
     /// Launches the game process via `cargo run --manifest-path <project>`.
-    ///
-    /// Cargo handles the build (incremental, cached) and runs the resulting
-    /// binary with `--scene <abs-path>`. The play binary picks up the scene
-    /// through `kooch::SceneBootstrapPlugin`.
-    ///
-    /// `engine_root` is forwarded as `KOOCH_ENGINE_ROOT` so the spawned
-    /// binary's `DefaultPlugins::AssetPlugin` can resolve engine-shipped
-    /// assets (Suzanne, sample materials) even though its CWD points at
-    /// the project. Without it the asset database scans `<project>/assets`
-    /// only, every engine GUID fails `load_by_guid`, and the game window
-    /// renders a clear sky with no meshes.
     pub fn launch(
         &mut self,
         manifest_path: &Path,
@@ -142,10 +91,9 @@ impl PlayState {
             .arg("--manifest-path")
             .arg(manifest_path)
             .arg("--")
-            // No mode flag any more: the project's default binary IS the
-            // game (#558). Play therefore runs the same artefact a player
-            // would, which is the point — it used to run a build that also
-            // contained the editor and merely declined to open it.
+            // No mode flag any more: the project's default binary IS the game (#558). Play
+            // therefore runs the same artefact a player would, which is the point — it used to run
+            // a build that also contained the editor and merely declined to open it.
             .arg("--scene")
             .arg(scene_path)
             .stdout(Stdio::piped())
@@ -200,9 +148,6 @@ impl PlayState {
     }
 
     /// Checks if the child process has exited.
-    ///
-    /// Returns `true` if the process exited since the last check,
-    /// in which case `is_playing()` will now return `false`.
     pub fn poll(&mut self) -> bool {
         let Some(child) = self.child.as_mut() else {
             return false;

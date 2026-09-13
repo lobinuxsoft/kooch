@@ -1,19 +1,9 @@
-//! Editor camera controller state — the *navigation* state of the editor
-//! camera, distinct from the camera entity's `Transform`.
-//!
-//! The `Transform` answers "where is the camera and where does it look".
-//! This controller answers "what is the orbit pivot, how far is the
-//! camera from it, and how sensitive are the controls". Orbit, pan, zoom
-//! and fly each mutate `Transform` *and* this controller in lockstep so
-//! state stays consistent across mode switches.
+//! Editor camera controller state — the *navigation* state of the editor camera, distinct from the
+//! camera entity's `Transform`.
 
 use glam::Vec3;
 
 /// Persistent state of the editor camera controller.
-///
-/// Kept as a `Resource`, not on the camera entity, because it represents
-/// **editor input intent** (which can outlive any specific camera entity
-/// or be retargeted at one) rather than transform data.
 #[derive(Debug, Clone)]
 pub struct EditorCameraController {
     /// World-space point the camera orbits around. Moves with the camera
@@ -43,11 +33,9 @@ pub struct EditorCameraController {
 }
 
 impl Default for EditorCameraController {
-    /// Defaults tuned for a Unity/Godot-familiar feel:
-    /// - 0.005 rad/px ≈ 0.29°/px orbit
-    /// - 0.0015 × distance pan factor — at distance 10 that's ~1.5%/px
-    /// - 1.1× zoom per scroll tick
-    /// - 5 units/sec fly base speed
+    /// Defaults tuned for a Unity/Godot-familiar feel: - 0.005 rad/px ≈ 0.29°/px orbit - 0.0015 ×
+    /// distance pan factor — at distance 10 that's ~1.5%/px - 1.1× zoom per scroll tick - 5
+    /// units/sec fly base speed
     fn default() -> Self {
         Self {
             focus_point: Vec3::ZERO,

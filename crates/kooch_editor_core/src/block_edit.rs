@@ -9,11 +9,6 @@ use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 
 /// What a click in the viewport is aiming at.
-///
-/// A second axis beside `HandleMode`, not a fourth value of it: you
-/// translate *a face*, so "face" and "translate" are answers to
-/// different questions and a single enum would have to spell out every
-/// pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum ElementMode {
     /// Clicks select entities, and the handles move them. What every
@@ -60,26 +55,12 @@ impl ElementMode {
 }
 
 /// Which parts of which block are selected.
-///
-/// One entity at a time. Editing elements across several blocks is a
-/// different feature and mostly a different UI — the handle would have
-/// to straddle two transforms.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct BlockSelection {
     pub(crate) entity: Option<Entity>,
-    /// Indices into whatever `mode` names: faces of the mesh, edges of
-    /// its `Adjacency`, or corners.
-    ///
-    /// 🔴 Which is why switching mode clears them. A face index and an
-    /// edge index are both `u32` and neither is the other; keeping them
-    /// across a switch selects unrelated geometry, silently.
+    /// Indices into whatever `mode` names: faces of the mesh, edges of its `Adjacency`, or corners.
     pub(crate) elements: Vec<u32>,
     /// What is being edited, mirrored here from the overlay.
-    ///
-    /// 🔴 The gizmo that draws the block reads `Resources`, and the
-    /// overlay is taken OUT of `Resources` for the whole frame that
-    /// draws it. Anything the drawing needs has to live somewhere the
-    /// drawing can reach — this is the resource it already reads.
     pub(crate) mode: ElementMode,
 }
 
@@ -92,10 +73,6 @@ impl BlockSelection {
     }
 
     /// Adds an element, or removes it when it was already selected.
-    ///
-    /// Switching entity clears rather than merges: the indices held
-    /// address one mesh, and keeping another block's would name
-    /// geometry that does not exist.
     pub(crate) fn toggle(&mut self, entity: Entity, element: u32) {
         if self.entity != Some(entity) {
             self.only(entity, element);
@@ -132,14 +109,6 @@ impl BlockSelection {
 }
 
 /// The corners a selection moves, each once.
-///
-/// 🔴 Where the three modes stop being three things. A face is its
-/// corners, an edge is two of them, a vertex is one — and every edit
-/// below this point works on a corner list, so vertex and edge editing
-/// need no new transform code at all.
-///
-/// Deduplicated, because a corner shared by two selected faces that
-/// moved twice is the tear the shared positions exist to prevent.
 pub(crate) fn corners_of(mesh: &BlockMesh, mode: ElementMode, elements: &[u32]) -> Vec<u32> {
     match mode {
         ElementMode::Face => mesh.corners_of(elements),
@@ -172,13 +141,6 @@ pub(crate) fn corners_of(mesh: &BlockMesh, mode: ElementMode, elements: &[u32]) 
 }
 
 /// Applies a click in face mode.
-///
-/// Pulled out of the click handler because that one reads a camera, a
-/// component registry and a transform, and the decision it makes is
-/// four lines that none of those affect. The version living inside it
-/// went unreached for a whole session — the handler asked `Resources`
-/// for an overlay the caller was already holding by reference — and
-/// nothing could have caught that, but this can catch the rest.
 pub(crate) fn apply_click(
     selection: &mut BlockSelection,
     entity: Entity,
@@ -196,20 +158,6 @@ pub(crate) fn apply_click(
 }
 
 /// Drops the face selection when nothing should be editing faces.
-///
-/// 🔴 Clearing, not gating. Gating the handle left the highlight
-/// painted and the gizmo grabbable, and a drag that reaches neither the
-/// history nor the file is worse than one that does nothing — it looks
-/// like it worked.
-///
-/// Two ways to stop: switching to Object, and pressing Play. The second
-/// matters more, because the world Play restores is not the one the
-/// selection's face indices were read from.
-///
-/// Reconciled every frame rather than hooked to each transition: there
-/// are several ways to reach both — a toolbar, a chord, the project
-/// stopping on its own — and catching them one at a time is how one
-/// stays live.
 pub(crate) fn drop_selection_unless_editing(
     resources: &mut Resources,
     mode: ElementMode,
@@ -235,19 +183,9 @@ pub(crate) fn drop_selection_unless_editing(
 }
 
 /// How near the cursor an edge or a corner counts as clicked.
-///
-/// Twelve physical pixels. A corner has no area and an edge no width,
-/// so without a radius neither is ever hit; too wide and a corner steals
-/// every click meant for the edge running out of it.
 const REACH: f32 = 12.0;
 
 /// The element of `entity`'s block under the cursor.
-///
-/// Faces are found with a ray in the mesh's own space — one inverse of
-/// the entity's transform, rather than transforming every corner on
-/// every mouse move. Vertices and edges are found in screen space,
-/// because "close enough" for something with no area is a count of
-/// pixels.
 pub(crate) fn element_under(
     resources: &Resources,
     entity: Entity,
@@ -320,13 +258,7 @@ fn screen_of(
     })
 }
 
-/// Where a handle for the current face selection belongs, in world
-/// space.
-///
-/// The selection's centre, not the entity's origin: a handle at the
-/// origin while the face you grabbed is a metre away reads as a gizmo
-/// for the wrong thing, and the drag axes would be right for an object
-/// nobody is moving.
+/// Where a handle for the current face selection belongs, in world space.
 pub(crate) fn selection_origin(resources: &Resources, entity: Entity) -> Option<Vec3> {
     let selection = resources.get::<BlockSelection>()?;
     let elements = selection.of(entity)?;
@@ -341,10 +273,6 @@ pub(crate) fn selection_origin(resources: &Resources, entity: Entity) -> Option<
 }
 
 /// The world-space box the current face selection occupies.
-///
-/// What F frames in face mode. The selection, not the block: pressing
-/// F after clicking one face of a wall should show you that face, and
-/// framing the whole wall is what F already did from object mode.
 pub(crate) fn selection_bounds(resources: &Resources, entity: Entity) -> Option<(Vec3, Vec3)> {
     let selection = resources.get::<BlockSelection>()?;
     let elements = selection.of(entity)?;
@@ -370,13 +298,6 @@ pub(crate) fn selection_bounds(resources: &Resources, entity: Entity) -> Option<
 }
 
 /// Moves the selected faces by a world-space delta.
-///
-/// Answers whether anything moved, so the caller knows to leave the
-/// entity's own `Transform` alone.
-///
-/// The mesh is edited in the asset itself rather than in a copy: a
-/// block's shape IS the asset, and every entity naming that source is
-/// the same shape by definition.
 pub(crate) fn edit_selection(
     resources: &mut Resources,
     entity: Entity,
@@ -437,10 +358,9 @@ pub(crate) fn edit_selection(
         }
     }
 
-    // The render mesh and the collider are generated from this, and
-    // both are cached under the source's GUID. Forgetting is what makes
-    // the next frame rebuild them; without it the block keeps the shape
-    // it had when it was first built.
+    // The render mesh and the collider are generated from this, and both are cached under the
+    // source's GUID. Forgetting is what makes the next frame rebuild them; without it the block
+    // keeps the shape it had when it was first built.
     if let Some(mut built) = resources.get_mut::<BuiltBlocks>() {
         built.forget(source);
     }
@@ -448,11 +368,6 @@ pub(crate) fn edit_selection(
 }
 
 /// Tells every consumer of this source that its bytes moved.
-///
-/// The project derives its own render mesh and collider from the same
-/// file, and a reload overwrites the value under the existing handle —
-/// so without this its collider stays the shape the block was born
-/// with, however far this side moved it.
 pub(crate) fn announce(resources: &mut Resources, source: kooch_core::Guid) {
     if let Some(mut reloaded) = resources.get_mut::<kooch_core::asset_loader::ReloadedAssets>() {
         reloaded.bump(source);
@@ -460,11 +375,6 @@ pub(crate) fn announce(resources: &mut Resources, source: kooch_core::Guid) {
 }
 
 /// Writes the edited shape back to its `.block` file.
-///
-/// The asset is the shape: an edit that lives only in `Assets` is one
-/// the next load throws away. Called on release rather than per frame —
-/// a drag is one edit, and rewriting the file each frame is a rescan of
-/// the project each frame.
 pub(crate) fn save(resources: &mut Resources, entity: Entity) {
     let Some(source) = source_of(resources, entity) else {
         return;
@@ -506,14 +416,6 @@ fn write_block(resources: &mut Resources, path: &std::path::Path, mesh: &BlockMe
 }
 
 /// Extrudes the selected faces and answers the edit for the history.
-///
-/// The direction is the selection's averaged normal — see
-/// [`BlockMesh::extrude_direction`] for why it is not per face — and
-/// the distance is one snap step, so a wall comes out at a size the
-/// grid agrees with rather than at whatever the mouse was doing.
-///
-/// The selection follows the extruded faces, so pressing it again
-/// continues the wall rather than starting one beside it.
 pub(crate) fn extrude_selection(
     resources: &mut Resources,
     entity: Entity,
@@ -552,18 +454,12 @@ pub(crate) fn shape_of(resources: &Resources, entity: Entity) -> Option<BlockMes
 }
 
 /// Every corner of the block behind `source`.
-///
-/// By source rather than by entity: an undo names the shape, and the
-/// entity that made the edit may not even be selected any more.
 pub(crate) fn shape_for(resources: &Resources, source: kooch_core::Guid) -> Option<BlockMesh> {
     let handle = resources.get::<BuiltBlocks>()?.handle(source)?;
     resources.get::<Assets<BlockMesh>>()?.get(handle).cloned()
 }
 
 /// Writes a block's shape to its own file, found by GUID.
-///
-/// The by-source twin of [`save`], for an undo that has a shape and no
-/// entity to ask.
 pub(crate) fn save_source(resources: &mut Resources, source: kooch_core::Guid) {
     let Some(mesh) = shape_for(resources, source) else {
         return;
@@ -578,10 +474,6 @@ pub(crate) fn save_source(resources: &mut Resources, source: kooch_core::Guid) {
 }
 
 /// Replaces a block's whole shape, answering whether it landed.
-///
-/// The whole mesh because an extrude changes the topology: there are
-/// faces after it that had no before, and putting positions back would
-/// leave those faces indexing corners that are no longer there.
 pub(crate) fn set_shape(
     resources: &mut Resources,
     source: kooch_core::Guid,

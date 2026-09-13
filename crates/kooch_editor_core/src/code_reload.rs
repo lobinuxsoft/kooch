@@ -1,27 +1,4 @@
 //! Bringing a rebuilt project into the editor without reopening it.
-//!
-//! # The loop this closes
-//!
-//! The editor lists a project's components out of its compiled `dylib`.
-//! That library was loaded once, when the project opened, and never
-//! again — so a component gaining a field meant closing the project and
-//! opening it back up, scene and camera and selection included.
-//!
-//! Both halves of the swap already existed. `unload_project_plugins`
-//! had **no callers at all**; `load_project_plugin` had one, on open.
-//! This runs them in sequence when the library on disk moves.
-//!
-//! # Why a poll, and the same poll as the scripts
-//!
-//! For the same reason [`crate::script_sync`] polls: these projects live
-//! on an NTFS volume through FUSE, where inotify silently drops events.
-//! A watcher there is a mechanism that appears to work and misses
-//! changes — worse than none, because it is trusted.
-//!
-//! A `stat` of one file is cheaper than the source walk beside it, and
-//! this deliberately watches the **artefact** rather than the source: a
-//! save means the build is behind, and only a finished build means there
-//! is something new to load.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -40,10 +17,6 @@ pub struct CodeReload {
     /// When the library may be stat'd again.
     next_poll: Option<Instant>,
     /// Modification time and size of the library last seen.
-    ///
-    /// Size as well as mtime: a rebuild that lands in the same
-    /// millisecond is unlikely, and a rebuild that produces the same
-    /// size with different bytes is not worth missing.
     stamp: Option<(Duration, u64)>,
 }
 
@@ -91,26 +64,23 @@ pub fn reload_code_system(resources: &mut Resources) {
     let Some(reload) = resources.get_mut::<CodeReload>() else {
         return;
     };
-    // 🔴 A first sighting is recorded and acted on, never. The library
-    // that was loaded when the project opened is the one on disk, and
-    // swapping it for itself on the first frame would be work with a
-    // report attached.
+    // 🔴 A first sighting is recorded and acted on, never. The library that was loaded when the
+    // project opened is the one on disk, and swapping it for itself on the first frame would be
+    // work with a report attached.
     let known = reload.stamp.replace(taken);
     if known.is_none_or(|last| last == taken) {
         return;
     }
 
-    // A build writes the library incrementally, so a poll can land on a
-    // half-written one. That fails to open, the types from before are
-    // kept, and the next poll a second later finds the finished file —
-    // self-correcting, and quieter than trying to detect it.
+    // A build writes the library incrementally, so a poll can land on a half-written one. That
+    // fails to open, the types from before are kept, and the next poll a second later finds the
+    // finished file — self-correcting, and quieter than trying to detect it.
     crate::project_plugin::reload_project_plugins(resources, &root, &crate_name);
     tracing::info!(library = %library.display(), "reloaded the project's code");
 
-    // 🔴 A successful swap is exactly what makes the build no longer
-    // behind, so the notice clears itself. Before this, clearing it was
-    // the author's job — and a warning you dismiss by hand is one you
-    // learn to dismiss without reading.
+    // 🔴 A successful swap is exactly what makes the build no longer behind, so the notice clears
+    // itself. Before this, clearing it was the author's job — and a warning you dismiss by hand is
+    // one you learn to dismiss without reading.
     if let Some(sync) = resources.get_mut::<crate::script_sync::ScriptSync>() {
         sync.acknowledge();
     }

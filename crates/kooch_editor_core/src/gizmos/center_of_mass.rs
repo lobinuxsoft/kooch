@@ -1,21 +1,4 @@
 //! [`CenterOfMassVisualizer`] — draws the centre of mass an author placed.
-//!
-//! # What this shows, and what it does not
-//!
-//! The **authored** centre of mass: `PhysicsBody.center_of_mass`, when
-//! `center_of_mass_enabled` is on. That is a component, so it mirrors from
-//! a remote project like any other and can be drawn here.
-//!
-//! It is *not* where the solver ended up putting it. Those agree whenever
-//! the override is on — the backend copies the authored point into the
-//! body's mass properties — and the interesting case is the other one: a
-//! compound body with the override **off**, whose centre of mass the solver
-//! computes from the shapes and which surprised the author of #618. That
-//! number lives in the solver, and the solver is in the project's process,
-//! so drawing it needs the overlay to cross the wire (#634).
-//!
-//! So this answers "where did I put it", and #634 answers "where is it".
-//! Both are worth having and only one of them is a component.
 
 use glam::Vec3;
 

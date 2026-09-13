@@ -1,8 +1,5 @@
-//! [`TransformEditCommand`] — captures the before/after `Transform` of
-//! a single entity for one viewport gizmo drag (translate / rotate /
-//! scale). One command per drag, not per frame: pushing a command on
-//! every `TransformDelta` would flood the undo stack with ~60 entries
-//! per second of dragging.
+//! [`TransformEditCommand`] — captures the before/after `Transform` of a single entity for one
+//! viewport gizmo drag (translate / rotate / scale).
 
 use kooch_core::resource::Resources;
 use kooch_ecs::component::ComponentRegistry;

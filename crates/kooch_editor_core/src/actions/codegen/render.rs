@@ -1,23 +1,4 @@
 //! Renders the text of the project's `src/registrations.rs`.
-//!
-//! The generated file mirrors the project's own `src/` layout as a module
-//! tree, so a script in `src/components/movement.rs` is reachable as
-//! `crate::registrations::components::movement`. Scripts are compiled
-//! only through this file — `main.rs` imports the module from the project
-//! library rather than declaring it — so that path is the one and only
-//! way one script names another.
-//!
-//! # Why `#[path]` is written the way it is
-//!
-//! Rust resolves a `#[path]` on an inline module against the directory of
-//! the file it appears in, and the attribute *replaces* the directory
-//! rather than adding to it. So from `src/registrations.rs`, the
-//! container for `src/components/` is `#[path = "components"]` — not
-//! `"../components"`, and not the `registrations/components` the
-//! reference's rules for non-`mod.rs` files would suggest. Children then
-//! resolve against their container, so each leaf only names its own file.
-//!
-//! This was established by compiling it, not by reading the reference.
 
 use std::collections::BTreeSet;
 
@@ -25,13 +6,7 @@ use super::SourceFile;
 
 /// Renders the whole of `registrations.rs`.
 pub(super) fn render_registrations(files: &[SourceFile]) -> String {
-    // Every `use` and every binding below is emitted only when something
-    // reads it. The file used to open with
-    // `#![allow(unused_imports, unused_variables, dead_code)]`, and because
-    // project scripts are mounted inside this module with `#[path]`, that
-    // inner attribute turned those three lints off across the user's
-    // entire project — permanently, and invisibly. Being warning-free on
-    // its own terms is what lets it go.
+    // Every `use` and every binding below is emitted only when something reads it.
     let has_components = files.iter().any(|f| !f.components.is_empty());
 
     let mut s = String::new();
@@ -107,11 +82,9 @@ pub(super) fn render_registrations(files: &[SourceFile]) -> String {
     s.push_str("/// Describes project components to an editor that loads this library.\n");
     s.push_str("///\n");
     s.push_str("/// Called from `lib.rs` when the editor loads the project's dylib.\n");
-    // 🔴 Behind the `editor` feature, like the export in `lib.rs`. It
-    // names `kooch::kooch_plugin_api` and `component::plugin_bridge`,
-    // both of which live behind `dynamic` — which a game build does not
-    // enable (#558). Gating `lib.rs` and not this meant a game build
-    // failed to compile on a file the editor itself had written.
+    // 🔴 Behind the `editor` feature, like the export in `lib.rs`. It names
+    // `kooch::kooch_plugin_api` and `component::plugin_bridge`, both of which live behind `dynamic`
+    // — which a game build does not enable (#558).
     s.push_str("#[cfg(feature = \"editor\")]\n");
     s.push_str("pub fn declare_components(engine: &mut dyn kooch::kooch_plugin_api::Engine) {\n");
     if !has_components {
@@ -135,11 +108,6 @@ pub(super) fn render_registrations(files: &[SourceFile]) -> String {
 }
 
 /// Emits the module declarations, nesting them to match `src/`.
-///
-/// `files` arrives sorted by path, so every directory's entries are
-/// contiguous: walking the list and comparing each file's directories
-/// with the ones currently open is enough to know where a `mod` block
-/// opens and closes. No tree is built.
 fn render_modules(files: &[SourceFile]) -> String {
     let mut s = String::new();
     let mut open: Vec<&str> = Vec::new();
@@ -167,10 +135,6 @@ fn render_modules(files: &[SourceFile]) -> String {
 
         let pad = indent(open.len());
         // Public throughout, so `main.rs` can reach a project's own code.
-        // Private modules made the scripts visible only to the generated
-        // file itself, which meant a game could not, for instance, hand
-        // its action map to a plugin at startup — the code was there and
-        // unreachable from the one place that assembles the app.
         let vis = "pub mod";
         s.push_str(&format!("{pad}#[path = \"{}\"]\n", f.file_name()));
         s.push_str(&format!("{pad}{vis} {};\n", sanitize(f.stem())));
@@ -187,10 +151,6 @@ fn indent(depth: usize) -> String {
 }
 
 /// Turns one path segment into a usable module identifier.
-///
-/// The `#[path]` attribute keeps the real name, so this only has to
-/// produce something Rust will accept: a directory called `type` or
-/// `move` is perfectly legal on disk and illegal as a bare `mod`.
 pub(super) fn sanitize(segment: &str) -> String {
     // `crate`, `self`, `super` and `Self` cannot be raw identifiers, so
     // they get a suffix instead. Everything else that clashes is spelled
@@ -225,13 +185,7 @@ pub(super) fn module_path(rel: &str) -> String {
     stem.split('/').map(sanitize).collect::<Vec<_>>().join("::")
 }
 
-/// Names claimed by both a file and a directory, e.g. `src/components.rs`
-/// beside `src/components/`.
-///
-/// Rust has no way to spell that: the two would be the same `mod`. It is
-/// reported rather than silently resolved — the generated file will not
-/// compile, and an error in the Console beats a project that stops
-/// building for reasons nothing explains.
+/// Names claimed by both a file and a directory, e.g. `src/components.rs` beside `src/components/`.
 pub(super) fn colliding_names(files: &[SourceFile]) -> Vec<String> {
     let mut dirs: BTreeSet<String> = BTreeSet::new();
     let mut leaves: BTreeSet<String> = BTreeSet::new();

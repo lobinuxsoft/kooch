@@ -1,11 +1,6 @@
-/// 🔴 `install_own_engine` reads the root that `set_engine_root`
-/// resolves, and systems in a stage run in the order they were added.
-/// Swap the two lines and the editor silently installs nothing — which
-/// is the bug this pair exists to fix, back again and just as invisible.
-///
-/// Pinned against the source because there is no editor to boot in a
-/// test, the same reason `plugin/tests.rs` pins the frame loop's order
-/// that way.
+/// 🔴 `install_own_engine` reads the root that `set_engine_root` resolves, and systems in a stage
+/// run in the order they were added. Swap the two lines and the editor silently installs nothing —
+/// which is the bug this pair exists to fix, back again and just as invisible.
 #[test]
 fn the_root_is_resolved_first() {
     let source = include_str!("../bootstrap.rs");

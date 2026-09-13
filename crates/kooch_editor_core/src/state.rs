@@ -25,9 +25,6 @@ pub(crate) type SharedWinitState = Arc<Mutex<egui_winit::State>>;
 // ---------------------------------------------------------------------------
 
 /// Identifiers for each dockable editor tab.
-///
-/// `Serialize`/`Deserialize` enable persisting the dock layout between
-/// editor sessions via [`crate::layout`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub(crate) enum EditorTab {
     World,
@@ -44,19 +41,9 @@ pub(crate) enum EditorTab {
     /// Making a shipped game out of the project (#758).
     Build,
     /// Where the frame actually goes (#785).
-    ///
-    /// 🔴 The variant exists whether or not the `profiling` feature is
-    /// compiled in, and the panel says so when it is not. A variant
-    /// behind `#[cfg]` would make the serialised dock layout mean
-    /// different things in two builds of the same editor — open the
-    /// layout in the other one and deserialisation fails on a tab that
-    /// does not exist, taking the user's whole arrangement with it.
     Profiler,
-    /// The performance metrics as a REAL dock tab (#942-class ask from
-    /// the user): the overlay sidebar drew translucent over the game
-    /// view and could not be read. Sections pin out into floating
-    /// windows from here; the overlay stays available behind its
-    /// chevron but defaults hidden.
+    /// The performance metrics as a REAL dock tab (#942-class ask from the user): the overlay
+    /// sidebar drew translucent over the game view and could not be read.
     Performance,
     /// What runs each frame, and what is switched off (#982).
     Systems,
@@ -73,39 +60,21 @@ pub(crate) enum OpenInputKind {
     SingleAction,
 }
 
-/// The parsed map rather than a guid: the panel edits it, and going back
-/// to the asset server for every frame's draw would mean the edited copy
-/// and the loaded one are two values of the same thing — the shape behind
-/// every prefab bug in #611.
+/// The parsed map rather than a guid: the panel edits it, and going back to the asset server for
+/// every frame's draw would mean the edited copy and the loaded one are two values of the same
+/// thing — the shape behind every prefab bug in #611.
 #[derive(Debug, Clone)]
 pub(crate) struct OpenInputMap {
     pub path: std::path::PathBuf,
     /// What is being edited.
-    ///
-    /// A standalone action is held as a **map of one**, so the panel
-    /// draws bindings, composites and processors with the same code
-    /// either way. Unity does exactly this internally for its singleton
-    /// actions: *"we do create a map for them that contains just the
-    /// singleton action"*. Only the save path and the map-level controls
-    /// differ, which is what `kind` selects.
     pub kind: OpenInputKind,
     pub map: kooch_input::actions::ActionMap,
     /// Set when the panel should be brought to the front. Cleared by the
     /// dock once it has done so.
     pub focus_requested: bool,
     /// What the properties pane is editing.
-    ///
-    /// With the document rather than in the panel, so adding an action
-    /// can select it — Unity goes further and puts the new one straight
-    /// into rename, which is the difference between "there is a new
-    /// action somewhere" and "here it is, name it".
     pub selected: Option<crate::panels::input_map::Selection>,
     /// Whether this diverges from what is on disk.
-    ///
-    /// Edits land here and nowhere else until saved — the same contract a
-    /// prefab has (`DirtyPrefabs`). An editor that wrote the file on every
-    /// keystroke would make undo mean "read the file back", and a crash
-    /// mid-edit would leave a half-written binding on disk.
     pub dirty: bool,
 }
 
@@ -132,14 +101,8 @@ impl EditorTab {
         match self {
             Self::World => format!("{} World", crate::icons::GLOBE),
             Self::Systems => format!("{} Systems", crate::icons::LIST_BULLETS),
-            // "Edit View" / "Game View", the user's naming: both are
-            // real views of the same world, one through the authoring
-            // camera and one through the gameplay camera. NOT "World
-            // View" — the entity-hierarchy panel is already called
-            // World, and two near-homonym tabs cost more than they
-            // say. The VARIANTS stay `View`/`Game`: they are the names
-            // serialized into saved dock layouts, and renaming a
-            // serialized name breaks data silently.
+            // "Edit View" / "Game View", the user's naming: both are real views of the same world,
+            // one through the authoring camera and one through the gameplay camera.
             Self::View => format!("{} Edit View", crate::icons::EYE),
             Self::Game => format!("{} Game View", crate::icons::GAME_CONTROLLER),
             Self::Inspector => format!("{} Inspector", crate::icons::SLIDERS),
@@ -161,19 +124,7 @@ impl std::fmt::Display for EditorTab {
     }
 }
 
-/// Creates the default 3-panel dock layout: World | View + Game |
-/// Inspector + Performance.
-/// The performance metrics are a dock tab beside the Inspector; the
-/// in-viewport overlay still exists behind its chevron for whoever
-/// wants numbers over the picture, but defaults hidden — drawn over
-/// the game it could not be read.
-///
-/// Game sits as a *sibling tab* of View rather than a split: the two
-/// answer the same question from different cameras, so the common
-/// gesture is flipping between them, not watching both. Unity, Unreal
-/// and Godot all default this way, and anyone who wants them side by
-/// side drags the tab out. View is listed first, so it is the one
-/// showing when the editor opens.
+/// Creates the default 3-panel dock layout: World | View + Game | Inspector + Performance.
 pub(crate) fn default_dock_state() -> DockState<EditorTab> {
     let mut state = DockState::new(vec![EditorTab::View, EditorTab::Game]);
 
@@ -200,12 +151,6 @@ pub(crate) fn dock_has_tab(dock_state: &DockState<EditorTab>, tab: &EditorTab) -
 // ---------------------------------------------------------------------------
 
 /// Display mode for `Transform.rotation` in the Inspector panel.
-///
-/// `Local` (the default) shows the rotation stored in the Transform
-/// directly, i.e. relative to the entity's parent. `World` shows the
-/// world-space rotation computed by the hierarchy propagation, and
-/// converts user edits back to local on write. The Transform storage
-/// itself never changes representation — only the display does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub(crate) enum RotationDisplayMode {
     #[default]
@@ -214,10 +159,6 @@ pub(crate) enum RotationDisplayMode {
 }
 
 /// Cache key for the editor's per-field Euler rotation state.
-///
-/// Scoped by `(Entity, component TypeId, field name, display mode)` so
-/// different Quat fields — or the same field under different display
-/// modes — do not collide.
 pub(crate) type EulerCacheKey = (
     Entity,
     kooch_ecs::component::ComponentId,
@@ -226,19 +167,12 @@ pub(crate) type EulerCacheKey = (
 );
 
 /// Editor overlay state, stored as a resource.
-///
-/// Holds the egui context, winit integration state, wgpu renderer,
-/// dock layout, and UI state (entity selection).
 pub struct EditorOverlay {
     pub(crate) ctx: egui::Context,
     pub(crate) winit_state: SharedWinitState,
     pub(crate) renderer: egui_wgpu::Renderer,
     pub(crate) dock_state: DockState<EditorTab>,
     /// Which panel the keyboard belongs to.
-    ///
-    /// Session state rather than persisted: on a fresh start nothing is
-    /// focused, so no panel answers the arrows until the user has said
-    /// which one they mean (#661).
     pub(crate) focused_tab: Option<EditorTab>,
     /// The Asset Browser's keyboard cursor, and the rows the renderer drew
     /// last frame for it to walk.
@@ -253,28 +187,12 @@ pub struct EditorOverlay {
     /// history gets one entry for the gesture rather than one a frame.
     pub(crate) shape_drag_start: Option<kooch_blockmesh::BlockMesh>,
     /// Entities whose gizmos draw whether or not they are selected.
-    ///
-    /// # Why per entity and not per component type
-    ///
-    /// Switching a whole kind on answers "show me every gravity field",
-    /// which is a real question but a different one. "Keep an eye on
-    /// *this* camera while I work on it" is the common one, and doing it
-    /// by type floods the viewport with every other camera to answer it.
-    ///
-    /// # Why the session and not a file
-    ///
-    /// A pin is a working gesture, not a property of the level, so it has
-    /// no business in a scene that someone else opens. Persisting it
-    /// per user would need a stable identity across restarts, and
-    /// `PersistentId` counts from zero in every project — the same guid
-    /// means a different entity in the next one.
     pub(crate) pinned_gizmos: std::collections::HashSet<Entity>,
     /// Anchor index for Shift+Click range selection in the World panel.
     pub(crate) last_clicked_index: Option<usize>,
-    /// Per-field Euler angle cache (radians, XYZ convention) for Quat
-    /// rotation fields. Kept to avoid a `Quat → Euler → Quat` round-trip
-    /// every frame, which introduces gimbal lock when crossing ±90° on
-    /// any axis. See issue #202.
+    /// Per-field Euler angle cache (radians, XYZ convention) for Quat rotation fields. Kept to
+    /// avoid a `Quat → Euler → Quat` round-trip every frame, which introduces gimbal lock when
+    /// crossing ±90° on any axis. See issue #202.
     pub(crate) rotation_euler_cache: HashMap<EulerCacheKey, Vec3>,
     /// Display mode for `Transform.rotation` in the Inspector. Toggled
     /// via a button in the Inspector header. Persists for the session.
@@ -282,15 +200,13 @@ pub struct EditorOverlay {
     /// User-tunable snap step sizes for the gizmo handles. Edited from
     /// the viewport toolbar.
     pub(crate) snap_settings: SnapSettings,
-    /// Snapshot of the entity's `Transform` at the moment a viewport
-    /// gizmo drag started. `Some` while a drag is in progress, `None`
-    /// otherwise. Used to emit a single `TransformEdit` undo entry per
-    /// drag (instead of one per frame) when the user releases.
+    /// Snapshot of the entity's `Transform` at the moment a viewport gizmo drag started. `Some`
+    /// while a drag is in progress, `None` otherwise. Used to emit a single `TransformEdit` undo
+    /// entry per drag (instead of one per frame) when the user releases.
     pub(crate) gizmo_drag_start: Option<(Entity, Transform)>,
-    /// Asset selected in the Asset Browser panel, by `Guid`. Drives the
-    /// Inspector's asset view. Held on the overlay (not egui temp state)
-    /// so the render system can resolve the asset's data snapshot before
-    /// the egui frame runs.
+    /// Asset selected in the Asset Browser panel, by `Guid`. Drives the Inspector's asset view.
+    /// Held on the overlay (not egui temp state) so the render system can resolve the asset's data
+    /// snapshot before the egui frame runs.
     pub(crate) selected_asset: Option<kooch_core::Guid>,
     /// Which build preset the Build panel has selected (#758).
     pub(crate) build_selection: Option<kooch_core::Guid>,
@@ -323,19 +239,6 @@ impl RawEventHandler for EguiEventHandler {
 // ---------------------------------------------------------------------------
 
 /// A component's reflected field values, or why they are not here.
-///
-/// Reading them costs a `String` and a `Vec` per field, per component,
-/// per entity — 5.26 of the frame's 5.45 ms of gather on a 610-entity
-/// scene (#691), for values only the Inspector reads, of the one entity
-/// it shows. So they are read for the selection and skipped for
-/// everything else.
-///
-/// Three states rather than an `Option`, because "not read" and "this
-/// type has no reflection" are different facts and only one of them
-/// means the component cannot be edited. Collapsed into `None` they
-/// would be indistinguishable, and a panel that read the fields of an
-/// unselected entity would quietly render it as unreflectable — no
-/// error, no log, just a component that looks like it lost its schema.
 pub(crate) enum ReflectedFields {
     /// Read from the component.
     Values(Vec<(String, ReflectValue)>),
@@ -348,9 +251,6 @@ pub(crate) enum ReflectedFields {
 
 impl ReflectedFields {
     /// The values, if they were read.
-    ///
-    /// Deliberately not `Option<&Vec>` by `From`: a caller that wants to
-    /// treat "absent" as one case has to say so at the call site.
     pub(crate) fn values(&self) -> Option<&Vec<(String, ReflectValue)>> {
         match self {
             Self::Values(values) => Some(values),
@@ -374,11 +274,6 @@ pub(crate) struct ComponentDisplayInfo {
     /// Portable identity, carried by any action this component emits.
     pub(crate) component: ComponentId,
     /// The type's name without its module path.
-    ///
-    /// Borrowed for anything the registry knows: `component_name` hands
-    /// back a `&'static str` and owning a copy of it cost 2440 `String`
-    /// allocations per frame on a 610-entity scene (#666). Owned only for
-    /// a parked component, whose name arrived over the wire.
     pub(crate) short_name: std::borrow::Cow<'static, str>,
     pub(crate) fields: ReflectedFields,
     /// Static field metadata parallel to `fields`. Used to pick widget
@@ -389,20 +284,12 @@ pub(crate) struct ComponentDisplayInfo {
 }
 
 /// One open scene, as the World panel needs to show it.
-///
-/// A snapshot rather than a borrow of `SceneManager`: the UI pass runs
-/// while `Resources` is borrowed elsewhere, which is the same reason
-/// [`EntityDisplayInfo`] exists.
 #[derive(Debug, Clone)]
 pub(crate) struct SceneDisplayInfo {
     pub(crate) id: kooch_core::Guid,
     /// File stem, or "Untitled" for a scene never saved.
     pub(crate) name: String,
     /// Where it came from, or `None` for one never saved.
-    ///
-    /// Carried beside the name so "Save" can write to the file the scene
-    /// came from without asking, and fall back to asking when there is no
-    /// file yet. The stem alone cannot say where it lives.
     pub(crate) path: Option<std::path::PathBuf>,
     pub(crate) dirty: bool,
     pub(crate) active: bool,
@@ -410,9 +297,6 @@ pub(crate) struct SceneDisplayInfo {
 
 pub(crate) struct EntityDisplayInfo {
     /// Whether this entity belongs to a prefab instance.
-    ///
-    /// Gathered rather than looked up in the panel: the World panel draws
-    /// with `&mut Ui` and the components live in a world.
     pub(crate) is_prefab_instance: bool,
     pub(crate) entity: Entity,
     pub(crate) components: Vec<ComponentDisplayInfo>,
@@ -429,9 +313,8 @@ pub(crate) struct EntityDisplayInfo {
     /// to no scene — an editor helper, or something spawned but not yet
     /// saved into any file.
     pub(crate) scene: Option<kooch_core::Guid>,
-    /// Parent's world-space rotation from `GlobalTransform`, if the
-    /// entity has a parent and that parent has a `GlobalTransform`.
-    /// Used to convert World-space edits back to the local rotation
+    /// Parent's world-space rotation from `GlobalTransform`, if the entity has a parent and that
+    /// parent has a `GlobalTransform`. Used to convert World-space edits back to the local rotation
     /// stored on the entity's own Transform.
     pub(crate) parent_global_rotation: Option<glam::Quat>,
 }

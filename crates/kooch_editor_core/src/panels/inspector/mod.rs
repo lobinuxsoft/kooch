@@ -1,11 +1,4 @@
 //! Inspector panel — component details for selected entities.
-//!
-//! Split across submodules to keep each file under the project's
-//! "no monolíticos" guideline:
-//! - [`multi`]: rendering when multiple entities are selected (merged view).
-//! - [`single`]: rendering when a single entity is selected (full per-component).
-//! - [`rotation`]: gimbal-safe Quat editing with display-mode toggle (#202, #205).
-//! - [`widgets`]: per-`ReflectValue` editor widgets and choice dropdowns.
 
 mod asset_view;
 mod mass_from_colliders;
@@ -263,31 +256,12 @@ fn draw_inspector_body(
     };
 
     // Named, not automatic.
-    //
-    // An unsalted `ScrollArea` takes its id from the parent's widget
-    // counter, and what precedes this one is not a fixed number of widgets:
-    // the physics warnings are zero or more, and "Add Component" is there
-    // only while something is left to add. Both change as the selection
-    // moves, which renamed the scroll area — and with it its bar — while it
-    // stayed exactly where it was. That is the Inspector half of #641.
     egui::ScrollArea::vertical()
         .id_salt("inspector_components")
         .show(ui, |ui| {
             for comp in &visible_components {
                 let is_read_only = comp.visibility == InspectorVisibility::ReadOnly;
                 // Keyed on the component, *not* on the entity holding it.
-                //
-                // With the entity's index in the id, every widget under the
-                // header was renamed the moment the selection moved — and two
-                // entities carrying the same components lay out identically,
-                // so the ids changed while nothing moved on screen. That is
-                // #641: egui reports it as a widget whose id is unstable,
-                // because from the outside that is exactly what it looks like.
-                //
-                // Dropping the entity also fixes what it cost: whether
-                // `Transform` was expanded now survives clicking to the next
-                // entity, which is what any inspector is expected to do and
-                // what this one did not.
                 let id = ui.make_persistent_id(format!("comp_{:?}", comp.component));
                 nav.rows.push(comp.component);
                 let mut section = egui::collapsing_header::CollapsingState::load_with_default_open(
@@ -305,10 +279,9 @@ fn draw_inspector_body(
                 section
                     .show_header(ui, |ui| {
                         let title = format!("{} {}", icons::PUZZLE_PIECE, &comp.short_name);
-                        // Sensed for clicks so the header can carry a
-                        // context menu. `ui.strong` returns a hover-only
-                        // response, and `context_menu` on one never fires —
-                        // it attaches and silently does nothing.
+                        // Sensed for clicks so the header can carry a context menu. `ui.strong`
+                        // returns a hover-only response, and `context_menu` on one never fires — it
+                        // attaches and silently does nothing.
                         let label = |ui: &mut egui::Ui, text: egui::RichText| {
                             ui.add(egui::Label::new(text).sense(egui::Sense::click()))
                         };
@@ -343,15 +316,9 @@ fn draw_inspector_body(
                         if comp.short_name == "PhysicsBody" && !is_read_only {
                             draw_calculate_mass(ui, entity, comp.component, entities, actions);
                         }
-                        // Only on an instance, and only for a component
-                        // that came from the prefab. Reverting is what
-                        // makes an override safe to have — without it an
+                        // Only on an instance, and only for a component that came from the prefab.
+                        // Reverting is what makes an override safe to have — without it an
                         // accidental drag pins that field forever.
-                        //
-                        // On the header rather than as a button, because
-                        // it is a rare action beside two frequent ones and
-                        // a third button in the row is a third thing to
-                        // read past every time.
                         if info.is_prefab_instance {
                             title.context_menu(|ui| {
                                 if ui
@@ -406,12 +373,8 @@ fn draw_inspector_body(
                                 }
                             }
                         } else if comp.fields.is_reflectable() {
-                            // Reflectable, but its values were not read
-                            // for this entity — the Inspector is showing
-                            // something the gather did not count as
-                            // selected. That is a bug in this editor, and
-                            // it says so rather than blaming the
-                            // component for a schema it does have.
+                            // Reflectable, but its values were not read for this entity — the
+                            // Inspector is showing something the gather did not count as selected.
                             ui.weak("(values not gathered — please report)");
                         } else {
                             ui.weak("(no reflection)");
@@ -422,17 +385,6 @@ fn draw_inspector_body(
 }
 
 /// Draws any physics warnings that apply to `entity`.
-///
-/// The **Calculate mass** button on a `PhysicsBody` header.
-///
-/// Writes `density × collider volume` into `mass`, once. It emits an
-/// ordinary `SetField`, which means it is undoable like any other edit and
-/// works unchanged against a remote project — the volume is computed from
-/// the display snapshot, so no new message crosses the wire.
-///
-/// Disabled rather than hidden when there is nothing to measure: a button
-/// that is not there reads as a feature that does not exist, while a greyed
-/// one with a reason on hover says what to do next.
 fn draw_calculate_mass(
     ui: &mut egui::Ui,
     entity: Entity,

@@ -98,11 +98,6 @@ fn a_ctrl_click_on_nothing_keeps_it() {
 }
 
 /// 🔴 Object mode stops the geometry being edited.
-///
-/// The gate was on whether a selection existed, not on the mode — so
-/// switching to Object left the handle reshaping the block while the
-/// author was asking to move it. Leaving faces selected while switching
-/// is how you check what you just built.
 #[test]
 fn object_mode_is_not_face_mode() {
     assert_ne!(ElementMode::Object, ElementMode::Face);
@@ -111,10 +106,6 @@ fn object_mode_is_not_face_mode() {
 }
 
 /// Resources holding one element selected in `mode`.
-///
-/// The mode is part of the fixture, not a default: nothing can be
-/// selected before the mode that reads the index is on, so a selection
-/// carrying `Object` is a state the editor cannot reach.
 fn with_selection(mode: ElementMode) -> kooch_core::resource::Resources {
     let mut resources = kooch_core::resource::Resources::new();
     let mut selection = BlockSelection {
@@ -178,9 +169,8 @@ fn dropping_twice_is_quiet() {
 
 #[test]
 fn face_mode_reaches_the_drawing() {
-    // 🔴 The gizmo reads Resources, and the overlay is taken OUT of
-    // Resources for the frame that draws it. The mode has to be
-    // mirrored somewhere the drawing can see, or the wireframe never
+    // 🔴 The gizmo reads Resources, and the overlay is taken OUT of Resources for the frame that
+    // draws it. The mode has to be mirrored somewhere the drawing can see, or the wireframe never
     // appears however the toolbar looks.
     let mut resources = with_selection(ElementMode::Face);
     super::drop_selection_unless_editing(&mut resources, ElementMode::Face, false);
@@ -247,10 +237,9 @@ fn a_missing_corner_is_dropped() {
 
 #[test]
 fn a_shared_corner_is_listed_once() {
-    // 🔴 The whole point of the authoring mesh. A cube's corner belongs
-    // to three faces, and a list that named it three times would move it
-    // three times and tear the block along the seams the shared
-    // positions exist to prevent.
+    // 🔴 The whole point of the authoring mesh. A cube's corner belongs to three faces, and a list
+    // that named it three times would move it three times and tear the block along the seams the
+    // shared positions exist to prevent.
     let mesh = cube();
     let every_face: Vec<u32> = (0..mesh.face_count() as u32).collect();
     let corners = super::corners_of(&mesh, ElementMode::Face, &every_face);

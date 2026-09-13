@@ -1,18 +1,4 @@
 //! Bridges egui input from the View panel to the editor camera.
-//!
-//! Two halves:
-//!
-//! 1. [`collect_viewport_input`] (in [`collect`]) runs **inside** the
-//!    egui closure with the View panel's `Response` and `Ui`. It
-//!    snapshots drag deltas, scroll, modifier state, fly-mode keys and
-//!    the focus-on-selection keystroke into a [`ViewportInputDelta`].
-//!
-//! 2. [`apply_viewport_input`] (in [`apply`]) runs **outside** the egui
-//!    closure with `&mut Resources`. It turns the snapshot into
-//!    mutations on the editor camera entity's `Transform` and the
-//!    [`crate::editor_camera::controller::EditorCameraController`]
-//!    resource, then propagates `GlobalTransform` so the renderer sees
-//!    the new pose this same frame.
 
 mod apply;
 mod collect;
@@ -34,11 +20,8 @@ pub enum HandleModeRequest {
     Scale,
 }
 
-/// Snapshot of one frame of viewport-relevant input, captured during
-/// the egui pass and consumed afterwards by [`apply_viewport_input`].
-///
-/// Fields are pre-translated to controller semantics (yaw radians, pan
-/// pixels, zoom lines) so the apply step holds no egui types.
+/// Snapshot of one frame of viewport-relevant input, captured during the egui pass and consumed
+/// afterwards by [`apply_viewport_input`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ViewportInputDelta {
     /// Orbit yaw delta in radians (already multiplied by sensitivity).
@@ -80,13 +63,7 @@ pub struct ViewportInputDelta {
     pub lmb_pressed: bool,
     /// `true` when the primary (left) mouse button is currently held.
     pub lmb_held: bool,
-    /// `true` when the viewport received a *click* — pressed and released
-    /// without dragging.
-    ///
-    /// Distinct from `lmb_pressed`, which fires on the way down and cannot
-    /// tell a selection click from the start of an orbit. egui already
-    /// draws that line, so this is its answer rather than a second
-    /// reimplementation of drag detection.
+    /// `true` when the viewport received a *click* — pressed and released without dragging.
     pub lmb_clicked: bool,
     /// Keyboard modifier state at this frame. Threaded through to the
     /// gizmo handle system for snap modifiers (Ctrl on translate,
@@ -101,11 +78,8 @@ pub struct ViewportInputDelta {
 }
 
 impl ViewportInputDelta {
-    /// Returns whether the snapshot would actually change the camera.
-    /// Used to skip the entire apply path on idle frames. The
-    /// `mode_request` field is intentionally NOT included here — it
-    /// targets the gizmo handle set, not the camera, and is consumed
-    /// by `apply_handle_input` independently.
+    /// Returns whether the snapshot would actually change the camera. Used to skip the entire apply
+    /// path on idle frames.
     pub fn is_idle(self) -> bool {
         self.orbit_yaw == 0.0
             && self.orbit_pitch == 0.0

@@ -1,7 +1,6 @@
-//! Entity row rendering for the World panel: indented label, drag/drop
-//! source + target, click selection (with Shift / Ctrl modifiers), and
-//! the right-click context menu for despawn / add-component / remove-
-//! component.
+//! Entity row rendering for the World panel: indented label, drag/drop source + target, click
+//! selection (with Shift / Ctrl modifiers), and the right-click context menu for despawn /
+//! add-component / remove- component.
 
 use std::collections::HashSet;
 
@@ -16,10 +15,6 @@ use crate::state::{EntityDisplayInfo, ReflectedTypeInfo};
 use crate::widgets::SelectableRow;
 
 /// Height of one row in the hierarchy, in points.
-///
-/// Re-exported from [`crate::widgets`], where the reasoning lives: the
-/// virtualized list reserves this before drawing anything, so it has to
-/// be the same number the row occupies.
 pub(super) use crate::widgets::row_height;
 
 /// Walks up from `entity` through the parent chain looking for `ancestor`.
@@ -47,30 +42,14 @@ pub(super) fn is_descendant(
     }
 }
 
-/// Renders a single entity row. Mutates `selected` and `last_clicked_index`
-/// on click; pushes [`EditorAction`]s for context-menu operations and drag/drop.
-/// How many levels of indent a row at `depth` sits at.
-///
-/// 🔴 One more than its depth in the hierarchy, because every entity is
-/// inside a scene and the scene has a row of its own. Drawn at its own
-/// depth, a root entity started at the same column as the scene header
-/// above it — so a scene with four roots read as five scenes, and the one
-/// thing the tree was built to say went missing.
-///
-/// A single function rather than a `+ 1` at each site: the label's indent
-/// and the triangle's position are two readings of the same number, and
-/// they were already off by one from each other once.
+/// Renders a single entity row. Mutates `selected` and `last_clicked_index` on click; pushes
+/// [`EditorAction`]s for context-menu operations and drag/drop. How many levels of indent a row at
+/// `depth` sits at.
 pub(super) fn indent_levels(depth: usize) -> usize {
     depth + 1
 }
 
-/// Where this row's disclosure triangle goes, or `None` when the row is
-/// too narrow to hold one.
-///
-/// Measured from the label's own indentation rather than from a spacing
-/// constant, because the indent is TEXT — `"  "` per level — so its
-/// width is the font's, and a triangle placed by an assumed pixel step
-/// drifts away from the label it belongs to as the tree gets deeper.
+/// Where this row's disclosure triangle goes, or `None` when the row is too narrow to hold one.
 fn twisty_rect(ui: &egui::Ui, resp: &egui::Response, depth: usize) -> Option<egui::Rect> {
     let icon_width = ui.spacing().icon_width;
     let font = egui::TextStyle::Button.resolve(ui.style());
@@ -112,10 +91,9 @@ pub(super) fn draw_entity_row(
     let is_selected = selected.contains(&info.entity);
 
     let indent_str = "  ".repeat(indent_levels(info.depth));
-    // Two more spaces for the disclosure triangle, on every row and not
-    // only the ones that have one: without them a leaf's text sits two
-    // characters left of its siblings' and the column reads as ragged
-    // depth that is not there.
+    // Two more spaces for the disclosure triangle, on every row and not only the ones that have
+    // one: without them a leaf's text sits two characters left of its siblings' and the column
+    // reads as ragged depth that is not there.
     let indented_label = format!("{indent_str}  {label}");
 
     // Check if this entity is the one being dragged.
@@ -130,12 +108,8 @@ pub(super) fn draw_entity_row(
         .dimmed(being_dragged)
         .show(ui);
 
-    // 🔴 The triangle is painted onto the row and hit-tested out of the
-    // row's own response, rather than being a widget of its own. One
-    // response was already the rule here — "two widgets would let the
-    // drag overlay steal the click that selects the row" — and a second
-    // sensing widget inside a row that is also a drag source is exactly
-    // that bug with a new name.
+    // 🔴 The triangle is painted onto the row and hit-tested out of the row's own response, rather
+    // than being a widget of its own.
     if let Some(open) = subtree
         && let Some(twisty) = twisty_rect(ui, &resp, info.depth)
     {
@@ -228,12 +202,8 @@ fn handle_drop_targets(
     actions: &mut Vec<EditorAction>,
     being_dragged: bool,
 ) {
-    // Drop target: guard each `release_payload` call by a prior
-    // `hover_payload::<T>` check of the same type. `release_payload`
-    // internally calls `take` *before* checking the type, so a
-    // mismatched-type release silently drops the payload for any
-    // subsequent check — meaning unguarded order-dependent checks
-    // for multiple payload types on the same response are broken.
+    // Drop target: guard each `release_payload` call by a prior `hover_payload::<T>` check of the
+    // same type.
     if !being_dragged && let Some(dragged) = resp.dnd_hover_payload::<Entity>() {
         let d = *dragged;
         if d != info.entity && !is_descendant(info.entity, d, entities) {
@@ -247,11 +217,7 @@ fn handle_drop_targets(
                         egui::Color32::from_rgba_unmultiplied(60, 130, 230, 40),
                     );
                 }
-                // Between two rows: become a sibling, at that spot. Drawn
-                // as a bar in the gap rather than by making the rows move
-                // apart — `ScrollArea::show_rows` places every row from
-                // one height, so a row that grew mid-drag would put every
-                // row below it in the wrong place.
+                // Between two rows: become a sibling, at that spot.
                 DropIntent::Before | DropIntent::After => {
                     let y = match intent {
                         DropIntent::Before => resp.rect.top(),
@@ -272,11 +238,9 @@ fn handle_drop_targets(
                 let r = *released;
                 if r != info.entity && !is_descendant(info.entity, r, entities) {
                     if intent != DropIntent::Into {
-                        // 🔴 Its siblings, not its children. Dropping in
-                        // the gap between two rows means "beside them" —
-                        // which is also the only gesture that can take an
-                        // entity *out* of a parent, since every row's
-                        // middle already means "into".
+                        // 🔴 Its siblings, not its children. Dropping in the gap between two rows
+                        // means "beside them" — which is also the only gesture that can take an
+                        // entity *out* of a parent, since every row's middle already means "into".
                         actions.push(EditorAction::MoveEntity {
                             entity: r,
                             new_parent: info.parent,
@@ -294,18 +258,9 @@ fn handle_drop_targets(
                         entity: r,
                         new_parent: Some(info.entity),
                     });
-                    // 🔴 Open the new parent and everything above it,
-                    // right up to the root. Dropping onto a collapsed
-                    // entity otherwise makes the dragged one *vanish*:
-                    // the reparent works, and its row is inside a subtree
-                    // that is not listed. Nothing says where it went, and
-                    // the obvious reading is that the drag deleted it.
-                    //
-                    // Done here rather than after the action lands
-                    // because the chain to open is the one above the drop
-                    // target, which is known now — and the reparent has
-                    // not happened yet, so asking the hierarchy would
-                    // still describe the old one.
+                    // 🔴 Open the new parent and everything above it, right up to the root. Dropping
+                    // onto a collapsed entity otherwise makes the dragged one *vanish*: the
+                    // reparent works, and its row is inside a subtree that is not listed.
                     reveal_chain(ui, info.entity, entities);
                 }
             }
@@ -329,16 +284,6 @@ fn handle_drop_targets(
 }
 
 /// The rows a Shift+Click spans, as display indices.
-///
-/// 🔴 Measured inside what the panel is SHOWING, never inside the
-/// display list. A range between two visible rows used to take every
-/// index between them, so under a filter picking the first and last
-/// match selected all two thousand entities lying between — and with a
-/// collapsed parent it quietly selected its hidden children too.
-///
-/// `None` when either end is not on screen: a range needs two ends, and
-/// an anchor that has since been filtered out is not one. The caller
-/// treats that as a plain click rather than guessing a span.
 pub(super) fn listed_range(listed: &[usize], anchor: usize, idx: usize) -> Option<&[usize]> {
     let from = listed.iter().position(|&i| i == anchor)?;
     let here = listed.iter().position(|&i| i == idx)?;
@@ -406,11 +351,9 @@ fn handle_context_menu(
     actions: &mut Vec<EditorAction>,
 ) {
     resp.context_menu(|ui| {
-        // 🔴 Without this the menu takes egui's default and every label
-        // wraps — "Duplicate" one character per line. It was always too
-        // narrow; adding entries that say their chord is what made it
-        // impossible to miss. Same idiom as the View and Game panels'
-        // menus.
+        // 🔴 Without this the menu takes egui's default and every label wraps — "Duplicate" one
+        // character per line. It was always too narrow; adding entries that say their chord is what
+        // made it impossible to miss. Same idiom as the View and Game panels' menus.
         ui.set_min_width(240.0);
 
         // Ensure the right-clicked entity is selected.
@@ -419,13 +362,8 @@ fn handle_context_menu(
             selected.push(info.entity);
         }
 
-        // Pinning is what makes a gizmo answerable without keeping the
-        // entity selected — you pin the camera you are aiming, then go
-        // move the thing it follows.
-        //
-        // Applied to the whole selection, because pinning six colliders
-        // one at a time to compare them is the case you would want it
-        // for.
+        // Pinning is what makes a gizmo answerable without keeping the entity selected — you pin
+        // the camera you are aiming, then go move the thing it follows.
         let all_pinned = selected.iter().all(|e| pinned.contains(e));
         let pin_label = match (all_pinned, selected.len()) {
             (true, 1) => format!("{} Unpin gizmos", icons::EYE),
@@ -449,12 +387,9 @@ fn handle_context_menu(
         }
         ui.separator();
 
-        // The clipboard three, read out of the same table the keyboard
-        // reads. They live here rather than on a toolbar because the
-        // pointer is what names the selection and the place — and two
+        // The clipboard three, read out of the same table the keyboard reads. They live here rather
+        // than on a toolbar because the pointer is what names the selection and the place — and two
         // lists of the same commands is one list that drifts.
-        //
-        // Each says its chord: a menu is where a shortcut is learned.
         for chord in [
             crate::shortcuts::EditChord::Duplicate,
             crate::shortcuts::EditChord::Copy,
@@ -477,10 +412,9 @@ fn handle_context_menu(
                 .on_hover_text(chord.tooltip())
                 .clicked()
             {
-                // 🔴 Paste is rebuilt with THIS entity's scene rather
-                // than taken from the table. A menu opened on a row
-                // names a place; the chord that fills the table has no
-                // pointer and so names the active scene.
+                // 🔴 Paste is rebuilt with THIS entity's scene rather than taken from the table. A
+                // menu opened on a row names a place; the chord that fills the table has no pointer
+                // and so names the active scene.
                 match (chord, info.scene) {
                     (crate::shortcuts::EditChord::Paste, Some(scene)) => {
                         actions.push(EditorAction::PasteEntities {
@@ -498,15 +432,8 @@ fn handle_context_menu(
         }
         ui.separator();
 
-        // Two destinations, because they are two different intents and
-        // guessing between them is how an entity ends up somewhere the
-        // user has to go find it.
-        //
-        // 🔴 Both name a scene without saying one. "Child" takes the
-        // parent's scene, and "in this scene" takes this entity's — so
-        // neither can put something in the active scene when the entity
-        // right-clicked is in another, which is what every spawn did
-        // before there was anywhere else to say.
+        // Two destinations, because they are two different intents and guessing between them is how
+        // an entity ends up somewhere the user has to go find it.
         ui.menu_button("New Child", |ui| {
             super::spawn_entries(
                 ui,
@@ -537,10 +464,9 @@ fn handle_context_menu(
             ui.close();
         }
 
-        // Only on an instance. Reverting is the operation that makes an
-        // override safe to have: without it an accidental gizmo drag
-        // detaches that transform from the prefab forever, and the only
-        // way back is deleting the instance and placing a new one.
+        // Only on an instance. Reverting is the operation that makes an override safe to have:
+        // without it an accidental gizmo drag detaches that transform from the prefab forever, and
+        // the only way back is deleting the instance and placing a new one.
         if selected.len() == 1 && info.is_prefab_instance {
             let entity = selected[0];
             if ui
@@ -556,10 +482,9 @@ fn handle_context_menu(
             }
         }
 
-        // One entity only. A prefab is one tree with one root — see
-        // `SceneDocument::root_index` — so N selected entities are either N
-        // prefabs or one thing that is not a tree, and neither is what this
-        // menu item means.
+        // One entity only. A prefab is one tree with one root — see `SceneDocument::root_index` —
+        // so N selected entities are either N prefabs or one thing that is not a tree, and neither
+        // is what this menu item means.
         if selected.len() == 1 {
             let entity = selected[0];
             // The same glyph the asset tree shows for a prefab file, since
@@ -658,12 +583,7 @@ fn handle_context_menu(
     });
 }
 
-/// Opens `entity` and every ancestor of it, so a child dropped onto it
-/// has a row.
-///
-/// Walks up rather than down: what has to be listed is the chain from
-/// the drop target to its root, and each collapsed link in it hides
-/// everything below.
+/// Opens `entity` and every ancestor of it, so a child dropped onto it has a row.
 pub(super) fn reveal_chain(ui: &egui::Ui, entity: Entity, entities: &[EntityDisplayInfo]) {
     let mut at = Some(entity);
     while let Some(current) = at {
@@ -687,10 +607,6 @@ enum DropIntent {
 }
 
 /// Splits a row into an insert band, a parent band, and an insert band.
-///
-/// A quarter each end. Smaller and the gap is a target nobody can hit;
-/// larger and "make this a child", which is the commoner gesture, starts
-/// missing.
 fn drop_intent(ui: &egui::Ui, resp: &egui::Response) -> DropIntent {
     let Some(pointer) = ui.ctx().pointer_interact_pos() else {
         return DropIntent::Into;
@@ -714,9 +630,6 @@ fn sibling_indent(ui: &egui::Ui, depth: usize) -> f32 {
 }
 
 /// The row after `info` among its own siblings, or `None` if it is last.
-///
-/// Read out of the display list, which is already in the order the panel
-/// shows — the same order `place` measures "before that one" against.
 fn next_sibling(info: &EntityDisplayInfo, entities: &[EntityDisplayInfo]) -> Option<Entity> {
     let mut siblings = entities.iter().filter(|e| e.parent == info.parent);
     siblings.find(|e| e.entity == info.entity)?;
@@ -724,10 +637,6 @@ fn next_sibling(info: &EntityDisplayInfo, entities: &[EntityDisplayInfo]) -> Opt
 }
 
 /// Where a row's root-level spawn goes, and what to call it.
-///
-/// An entity in no scene still has a root. Answering `None` with nothing
-/// left `New Child` as the only spawn a row offered, so a world with no
-/// scene open could only ever nest (#1033).
 pub(super) fn root_target(
     scene: Option<kooch_core::Guid>,
 ) -> (&'static str, crate::actions::SpawnTarget) {

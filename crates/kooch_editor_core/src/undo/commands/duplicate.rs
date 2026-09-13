@@ -1,15 +1,5 @@
-//! [`DuplicateCommand`] — clones a source entity's component set into
-//! a fresh entity, preserving every reflected field value.
-//!
-//! The destination entity gets a brand-new [`Entity`] handle (no slot
-//! revival like Spawn). Component types are read from the source's
-//! archetype; per-component field values are snapshotted via the
-//! reflect registry and re-applied on the new entity. Non-reflected
-//! components are added with their default value (the same as
-//! `SpawnCommand` does for extras).
-//!
-//! Undo despawns the duplicated entity. Redo re-runs the duplication
-//! against a freshly-allocated handle.
+//! [`DuplicateCommand`] — clones a source entity's component set into a fresh entity, preserving
+//! every reflected field value.
 
 use std::any::TypeId;
 use std::collections::BTreeSet;
@@ -84,10 +74,9 @@ impl DuplicateCommand {
         };
         self.duplicate = Some(entity);
 
-        // Add each component type. insert_default_reflected covers
-        // reflected types; non-reflected types are silently skipped
-        // (matches SpawnCommand's contract). Archetype is advanced
-        // after each successful insertion.
+        // Add each component type. insert_default_reflected covers reflected types; non-reflected
+        // types are silently skipped (matches SpawnCommand's contract). Archetype is advanced after
+        // each successful insertion.
         for type_id in &self.component_types {
             let inserted = resources
                 .get_mut::<ComponentRegistry>()

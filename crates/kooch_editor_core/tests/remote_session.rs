@@ -51,18 +51,13 @@ fn seeded_ecs() -> Resources {
 }
 
 /// A socket name unique to this test.
-///
-/// Tests run in parallel in one process, so a shared name would have them
-/// binding over each other — the local-socket equivalent of the port
-/// scan this replaced, but solved instead of retried.
 fn test_socket_name() -> String {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     static N: AtomicU32 = AtomicU32::new(0);
-    // The counter alone is not enough: it is per-module, so two test
-    // modules in one binary both start at zero and collide on the same
-    // name. The clock disambiguates without the modules having to know
-    // about each other.
+    // The counter alone is not enough: it is per-module, so two test modules in one binary both
+    // start at zero and collide on the same name. The clock disambiguates without the modules
+    // having to know about each other.
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.subsec_nanos());

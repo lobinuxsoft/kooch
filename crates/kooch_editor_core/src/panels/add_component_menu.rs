@@ -1,8 +1,4 @@
 //! Shared helper for the "Add Component" menu.
-//!
-//! Groups reflected component types by their `category` attribute:
-//! uncategorized entries render at the top level, and each category
-//! gets its own submenu.
 
 use kooch_ecs::component::ComponentId;
 use std::collections::BTreeMap;
@@ -10,11 +6,6 @@ use std::collections::BTreeMap;
 use crate::state::ReflectedTypeInfo;
 
 /// Draws a categorized list of reflected component types inside `ui`.
-///
-/// Each selectable entry invokes `on_select` with the chosen
-/// [`ComponentId`]. Uncategorized types (those without
-/// `#[reflect(category = "...")]`) render as flat entries before the
-/// category submenus.
 pub(crate) fn draw_categorized(
     ui: &mut egui::Ui,
     available: &[&ReflectedTypeInfo],
@@ -29,14 +20,7 @@ pub(crate) fn draw_categorized(
         }
     }
 
-    // Each entry keyed on the component it adds, not on where it landed
-    // in the list.
-    //
-    // `available` is what the entity does *not* already carry, so the list
-    // changes with the selection: an entry taking an automatic id — handed
-    // out by order of creation — is renamed by every component added or
-    // removed above it, while the menu stays open in the same place. Same
-    // rect, new id, which is what egui reports (#641).
+    // Each entry keyed on the component it adds, not on where it landed in the list.
     for type_info in &uncategorized {
         let clicked = ui
             .push_id(type_info.component, |ui| {

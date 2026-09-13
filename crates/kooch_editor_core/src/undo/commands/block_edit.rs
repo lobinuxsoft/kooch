@@ -7,19 +7,7 @@ use kooch_ecs::entity::Entity;
 
 use crate::undo::EditorCommand;
 
-/// Restores a block's shape to what it was before an edit, or to what
-/// it became.
-///
-/// # Why the whole mesh
-///
-/// A rotate and a scale are not invertible by negating what the handle
-/// reported, a drag that snapped is not the drag the mouse described,
-/// and an **extrude changes the topology** — there are faces afterwards
-/// that had no before, so putting positions back would leave them
-/// indexing corners that are gone.
-///
-/// A block is eight corners and six faces. A level of them is still a
-/// rounding error beside one mesh in the pool.
+/// Restores a block's shape to what it was before an edit, or to what it became.
 pub(crate) struct BlockEditCommand {
     entity: Entity,
     source: Guid,

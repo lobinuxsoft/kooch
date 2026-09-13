@@ -1,10 +1,4 @@
 //! Handlers for non-ECS [`EditorAction`] variants.
-//!
-//! Split by the part of the editor each one moves — assets, scenes,
-//! play, the project, the remote session, settings — with the dispatcher
-//! here. `remote` is deliberately its own file: it is the half that goes
-//! away when the remote protocol is demolished, and keeping it separate
-//! makes that a deletion rather than a surgery.
 
 mod assets;
 mod collider;
@@ -30,10 +24,9 @@ pub(crate) use prefab::{
     asset_saved, entity_name, prefab_path, prefab_saved, project_root as prefab_root,
 };
 
-/// Dispatches a non-ECS, non-undo action to the appropriate handler.
-/// ECS actions (`Spawn`, `Despawn`, `SetField`, `AddComponent`,
-/// `RemoveComponent`) plus `Undo` / `Redo` are handled by the caller —
-/// this function is a no-op for them.
+/// Dispatches a non-ECS, non-undo action to the appropriate handler. ECS actions (`Spawn`,
+/// `Despawn`, `SetField`, `AddComponent`, `RemoveComponent`) plus `Undo` / `Redo` are handled by
+/// the caller — this function is a no-op for them.
 pub(super) fn apply_non_ecs_action(
     action: &EditorAction,
     resources: &mut Resources,
@@ -177,15 +170,6 @@ pub(super) fn apply_non_ecs_action(
 }
 
 /// Fills the clipboard from the selection.
-///
-/// The one handler that is the same in both modes: reading an entity is
-/// reading the local ECS whether that ECS is the world or a mirror of
-/// one, and nothing is sent anywhere. `Copy` is the only edit-menu
-/// command that never touches the project.
-///
-/// An empty selection leaves the clipboard alone rather than clearing it.
-/// Ctrl+C with nothing selected is a miss, and a miss should not cost the
-/// user what they copied a minute ago.
 fn handle_copy(resources: &mut Resources, entities: &[kooch_ecs::entity::Entity]) {
     if entities.is_empty() {
         return;

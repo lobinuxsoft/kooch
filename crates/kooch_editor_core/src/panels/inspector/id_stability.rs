@@ -1,21 +1,4 @@
 //! Does the Inspector hand the same widget the same id every frame?
-//!
-//! egui checks this itself and complains — `Widget rect … changed id
-//! between passes` — but only at runtime, in debug, into a log nobody
-//! reads until there are three hundred of them (#641).
-//!
-//! The complaint is not cosmetic. egui addresses interaction state by id:
-//! what is focused, what is being dragged, which text you had selected.
-//! A widget whose id changes has none of that carried over, so a drag ends
-//! itself and a text cursor jumps home.
-//!
-//! # What this catches
-//!
-//! egui compares the previous pass to the current one. With a single pass
-//! per frame — the ordinary case — that is **frame against frame**. So the
-//! test draws the same unchanging data several times and asks egui whether
-//! anything moved. Nothing about the data changes between the frames, so
-//! any complaint is the Inspector's own doing.
 
 use crate::state::ReflectedFields;
 use kooch_ecs::component::ComponentId;
@@ -160,15 +143,6 @@ fn a_second_selection_is_stable_too() {
 }
 
 /// Selecting a different entity: the reported case, at last.
-///
-/// The Inspector keys each component's collapsing state on the selected
-/// entity's *index*, so moving the selection renames every widget under it
-/// while the layout stays exactly where it was — two entities with the
-/// same components lay out identically. A stable parent with children
-/// whose ids came from the data, which is the shape egui warns about.
-///
-/// The earlier version of this test varied the entity's *generation* and
-/// found nothing, because the id is built from `index()` alone.
 #[test]
 fn moving_the_selection_keeps_the_widget_ids() {
     install_logger();
@@ -179,13 +153,8 @@ fn moving_the_selection_keeps_the_widget_ids() {
     let mut euler_cache = std::collections::HashMap::new();
     let mut mode = RotationDisplayMode::Local;
 
-    // Two entities carrying the same components, so the layout is identical
-    // and only the selection moves.
-    //
-    // The fields are the point. An earlier version of this test gave the
-    // components none, so the field grid — whose id carried the entity's
-    // index, and under which every widget takes an automatic id — was never
-    // drawn at all. The test passed against the bug it was written for.
+    // Two entities carrying the same components, so the layout is identical and only the selection
+    // moves.
     let body = || {
         component(
             "PhysicsBody",

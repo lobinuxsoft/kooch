@@ -11,10 +11,6 @@ fn fake_engine(root: &Path) {
 }
 
 /// 🔴 The whole of #754, as one assertion.
-///
-/// The manifest must not carry a path that exists only on the
-/// machine that generated it, and the engine must **not** be copied
-/// into the project — one per machine, shared by every project.
 #[test]
 fn a_generated_project_points_at_the_shared_engine_and_contains_none() {
     let _env = crate::engine_vendor::ENGINE_HOME_LOCK
@@ -103,18 +99,7 @@ fn opening_a_project_repoints_a_stale_engine_path() {
     assert!(!point_manifest_at_engine(&project, &here).expect("second pass"));
 }
 
-/// 🔴 Two files record which engine a project uses, and moving it has to
-/// write both.
-///
-/// `Cargo.toml` carries the **path** — that is what cargo compiles
-/// against, and `point_manifest_at_engine` rewrites it. `project.kooch`
-/// carries `engine_version`, and that is what `ProjectState::open` hands
-/// to `engine_vendor::status`.
-///
-/// Updating only the first leaves a project pointing at 0.2.0 on disk
-/// while still calling itself 0.1.0, so the engine prompt returns on
-/// every open no matter how many times Install is pressed — the bug this
-/// test exists for. Nothing fails; it just never stops asking.
+/// 🔴 Two files record which engine a project uses, and moving it has to write both.
 #[test]
 fn moving_a_project_takes_two_writes() {
     let tmp = std::env::temp_dir().join("kooch_project_two_records");
@@ -154,12 +139,6 @@ fn moving_a_project_takes_two_writes() {
 }
 
 /// Moving a project writes both records, and opens nothing.
-///
-/// The launcher's whole reason for existing (#800): settle the engine
-/// version while the project is closed, so its first compile is already
-/// against the right one. `move_project_to_engine` is the single place
-/// that writes both files, which is what stops them drifting apart the
-/// way #801 did.
 #[test]
 fn moving_a_project_writes_both_records() {
     let tmp = std::env::temp_dir().join("kooch_move_to_engine");

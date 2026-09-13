@@ -18,10 +18,9 @@ fn the_entity_panels_hear_them() {
     }
 }
 
-/// 🔴 Duplicate, copy and paste act on the entity selection, so they
-/// stay in the panels that show entities. Ctrl+D in the Assets panel is
-/// about a file and Ctrl+C in the Console is about a log line — both
-/// already mean something there.
+/// 🔴 Duplicate, copy and paste act on the entity selection, so they stay in the panels that show
+/// entities. Ctrl+D in the Assets panel is about a file and Ctrl+C in the Console is about a log
+/// line — both already mean something there.
 #[test]
 fn other_panels_lose_the_clipboard() {
     let world = Document::World;

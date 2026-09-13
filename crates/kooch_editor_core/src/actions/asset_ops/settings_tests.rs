@@ -1,9 +1,6 @@
-//! #759 — `.rendersettings` is creatable from the Asset Browser.
-//!
-//! The capability existed (#744 made it a reflected asset the Inspector
-//! edits) and nothing led to it: the only way to get one was to write the
-//! file by hand, and someone who did not know it existed could not find
-//! out from the editor.
+//! The capability existed (#744 made it a reflected asset the Inspector edits) and nothing led to
+//! it: the only way to get one was to write the file by hand, and someone who did not know it
+//! existed could not find out from the editor.
 
 use std::path::Path;
 

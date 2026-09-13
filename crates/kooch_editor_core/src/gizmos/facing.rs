@@ -1,10 +1,4 @@
 //! Where gameplay is steering, beside where the body actually looks.
-//!
-//! The two are never the same for long — the body turns at
-//! [`turn_speed`](kooch_character::CharacterController::turn_speed) and
-//! the steering moves with the camera — so the useful thing to see is
-//! the gap between them. A character that will not turn draws one arrow
-//! that moves and one that does not.
 
 use glam::Vec3;
 

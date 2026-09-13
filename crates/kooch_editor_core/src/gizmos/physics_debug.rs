@@ -1,29 +1,4 @@
 //! The solver's own account of itself, drawn in the viewport.
-//!
-//! # Not a second collider outline
-//!
-//! [`ColliderVisualizer`](super::collider::ColliderVisualizer) already
-//! draws colliders, from the ECS components, and it is the right tool for
-//! "does this shape wrap my model". This is the other question.
-//!
-//! Drawing the components is the same arithmetic the sync layer does,
-//! performed twice. If the body was never built, or was built from a spec
-//! that has since gone stale, the component gizmo draws the shape that
-//! *ought* to exist and cannot say a word about the one that does. **When
-//! the two disagree, the disagreement is the bug** — so `collider_shapes`
-//! is off by default here, and switching it on is an act of comparison,
-//! not a second opinion.
-//!
-//! The categories that have no component equivalent at all are the reason
-//! this exists: contacts, centres of mass, joint anchors, broad-phase
-//! bounds, and which bodies the solver has stopped simulating.
-//!
-//! # Cost
-//!
-//! The walk is CPU work every frame, proportional to shape count times
-//! tessellation. Nothing is on by default and nothing is asked for when
-//! everything is off — the backend is not even called, so an unused
-//! overlay costs one boolean check.
 
 use kooch_core::resource::Resources;
 use kooch_gizmos::GizmoBatch;
@@ -31,11 +6,6 @@ use kooch_physics::backend::{DebugCategories, DebugLine};
 use kooch_physics::plugin::PhysicsWorld;
 
 /// Which parts of the solver the viewport is currently drawing.
-///
-/// Editor state, deliberately not a component: it describes the tool, not
-/// the scene, so it must not reach a scene file. Absent from `Resources`
-/// reads as everything off, which is what a host that never inserted one
-/// should get.
 #[derive(Debug, Default)]
 pub(crate) struct PhysicsDebugOverlay {
     pub(crate) categories: DebugCategories,
@@ -60,16 +30,6 @@ impl PhysicsDebugOverlay {
 }
 
 /// Appends the solver's description of the world to the line batch.
-///
-/// # Where the solver is
-///
-/// Usually not here. The editor registers physics components without a
-/// solver, and a mirrored project's solver runs in its own process, so
-/// asking the local `PhysicsWorld` finds nothing in either editor mode —
-/// which is what made this overlay draw a blank until #634.
-///
-/// So: ask the host when mirroring one, and the local world otherwise. The
-/// local branch is what an embedded host uses, and what the tests exercise.
 pub(super) fn draw(resources: &mut Resources, batch: &mut GizmoBatch) {
     let Some(mut overlay) = resources.remove::<PhysicsDebugOverlay>() else {
         return;
@@ -94,12 +54,6 @@ pub(super) fn draw(resources: &mut Resources, batch: &mut GizmoBatch) {
 }
 
 /// Asks the mirrored project for its solver's segments.
-///
-/// Returns `false` when there is no session to ask, so the caller falls
-/// back to a local world. A session that *is* connected and fails still
-/// returns `true`: the answer is "the host has no physics", and falling
-/// back to a local world that mirrors nothing would draw a different
-/// world's state, which is worse than drawing none.
 fn collect_remote(
     resources: &Resources,
     categories: DebugCategories,
@@ -139,10 +93,6 @@ fn collect_remote(
 }
 
 /// The segments out of an extension's reply.
-///
-/// Silently skips anything malformed rather than failing the frame: a
-/// newer host sending a shape this build does not understand should cost
-/// the lines it sent, not the overlay.
 fn parse_lines(result: &kooch_remote::serde_json::Value) -> Vec<DebugLine> {
     let Some(lines) = result.get("lines").and_then(|v| v.as_array()) else {
         return Vec::new();

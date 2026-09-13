@@ -15,13 +15,6 @@ fn snake_case_from_various_inputs() {
 }
 
 /// What the scaffolds write is what the scanner reads.
-///
-/// 🔴 The two live apart — `templates/*.rs.tmpl` and
-/// `codegen::detect` — and neither mentions the other. A comment added
-/// to a template, or a tightened rule in the scan, silently produces a
-/// file the editor wrote and then cannot see: the component never
-/// registers, the system never runs, and there is no error anywhere
-/// because both halves did exactly what they say.
 #[test]
 fn the_scaffolds_are_what_the_scan_detects() {
     let component = super::COMPONENT_TMPL
@@ -48,10 +41,6 @@ fn the_scaffolds_are_what_the_scan_detects() {
 }
 
 /// The system scaffold names every stage the engine has.
-///
-/// 🔴 A scaffold is where an author learns what their options are, and a
-/// list that is missing one is a stage nobody discovers. `Stage::ALL` is
-/// the source of truth; this reads it rather than repeating it.
 #[test]
 fn the_scaffold_lists_every_stage() {
     let stages = include_str!("../../../../../crates/kooch_core/src/stage.rs");
@@ -101,13 +90,9 @@ fn mid_session() -> Resources {
     resources
 }
 
-/// 🔴 Writing the file is not the job. The pickers read `AssetDatabase`,
-/// which lives in memory, and `save_action` already wrote the `.meta` —
-/// so the identity is on disk and nothing in the editor knows it exists.
-///
-/// Reported as *"si creo un nuevo input action no lo reconoce como para
-/// agregarlo"*. Every other asset kind goes through `write_asset`, which
-/// registers and announces; this one saved and returned.
+/// 🔴 Writing the file is not the job. The pickers read `AssetDatabase`, which lives in memory, and
+/// `save_action` already wrote the `.meta` — so the identity is on disk and nothing in the editor
+/// knows it exists.
 #[test]
 fn a_new_input_action_is_registered() {
     let dir = scratch("input_action");
@@ -127,10 +112,6 @@ fn a_new_input_action_is_registered() {
 }
 
 /// 🔴 And the running project has to be told, which is the same call.
-///
-/// Reported separately as *"el rebuild sólo actualiza el código, no los
-/// assets nuevos para que los reconozca el código"* — one cause, two
-/// symptoms: `asset_saved` both registers here and announces there.
 #[test]
 fn a_new_input_action_asks_for_a_rescan() {
     let dir = scratch("input_action_rescan");
@@ -183,12 +164,9 @@ fn a_new_block_is_a_cube() {
     assert_eq!(block.positions().len(), 8);
 }
 
-/// Written through the same register-and-announce path every other asset
-/// takes — a block nothing registered cannot be pointed at by `Block`.
-/// 🔴 Typed on the frame it is written, not once something loads it.
-/// An untyped entry looks like a mesh nobody has read yet, and the
-/// collider walk fed the `.block` to a glTF parser — a failure it then
-/// cached forever.
+/// Written through the same register-and-announce path every other asset takes — a block nothing
+/// registered cannot be pointed at by `Block`. 🔴 Typed on the frame it is written, not once
+/// something loads it.
 #[test]
 fn a_new_block_knows_its_type() {
     let dir = scratch("block_typed");

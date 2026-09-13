@@ -1,13 +1,4 @@
 //! Test code for `assets`, in its own file.
-//!
-//! # 🔴 A sibling file, not an inline `mod`
-//!
-//! The engine vendors its own source into every project, and the
-//! walk that copies it skips test code by FILE — it can drop
-//! `x_tests.rs` and it cannot reach inside a module written in
-//! line. An inline block therefore ships to every game that ever
-//! builds against this engine, which is what
-//! `the_vendored_engine_contains_no_test_code` is there to catch.
 
 use super::needs_write;
 

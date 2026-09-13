@@ -69,11 +69,6 @@ fn every_mode_asks_for_release() {
 }
 
 /// 🔴 Every build names its target, the host's included.
-///
-/// Passing one sometimes and not others means the packager has to guess
-/// afterwards whether cargo wrote to `target/release` or
-/// `target/<triple>/release`. It also has to be there for a glibc floor,
-/// which zigbuild has nothing to attach to without it.
 #[test]
 fn every_build_names_its_target() {
     for platform in Platform::ALL {
@@ -135,10 +130,9 @@ fn a_linux_build_carries_no_cflags() {
     );
 }
 
-/// 🔴 Through the environment, never the project's `Cargo.toml`: that
-/// manifest is written once, when the project is created, so a
-/// `[profile.release]` in the template would reach new projects and skip
-/// every existing one without saying so.
+/// 🔴 Through the environment, never the project's `Cargo.toml`: that manifest is written once, when
+/// the project is created, so a `[profile.release]` in the template would reach new projects and
+/// skip every existing one without saying so.
 #[test]
 fn a_build_is_optimised_all_the_way() {
     let command = cargo_command(
@@ -205,10 +199,9 @@ fn the_built_binary_is_where_cargo_puts_it() {
     );
 }
 
-/// ⚠️ The floor rides on the `--target` **argument**, not on the folder
-/// cargo creates. Looking for the binary under
-/// `target/x86_64-unknown-linux-gnu.2.28/` finds nothing, which reads as
-/// "cargo succeeded and built nothing".
+/// ⚠️ The floor rides on the `--target` **argument**, not on the folder cargo creates. Looking for
+/// the binary under `target/x86_64-unknown-linux-gnu.2.28/` finds nothing, which reads as "cargo
+/// succeeded and built nothing".
 #[test]
 fn a_floor_does_not_move_the_binary() {
     let preset = BuildPreset {
@@ -237,14 +230,7 @@ fn a_glibc_floor_goes_through_zigbuild() {
     assert_eq!(args[at + 1], "x86_64-unknown-linux-gnu.2.28");
 }
 
-/// 🔴 One preset, two platforms, and the floor must reach exactly one of
-/// them.
-///
-/// `cargo zigbuild` spells a floor by appending it to the triple, and
-/// `x86_64-pc-windows-gnu.2.28` is not a target — so a floor that
-/// followed the build onto Windows would fail it on an argument nobody
-/// typed. Windows also drops back to plain `cargo build`: there is
-/// nothing for zigbuild to do.
+/// 🔴 One preset, two platforms, and the floor must reach exactly one of them.
 #[test]
 fn a_floor_reaches_linux_and_not_windows() {
     let preset = BuildPreset {
@@ -315,11 +301,9 @@ fn a_missing_target_is_refused_with_the_fix() {
         // The target is installed and so is everything else it needs.
         return;
     };
-    // ⚠️ The same check answers for more than one thing — a missing
-    // target and a missing mingw both come back here — so the assertion
-    // is on the branch this test is about, not on whatever came first.
-    // Asserting unconditionally made this fail the day the mingw check
-    // landed, on a machine where the target was installed all along.
+    // ⚠️ The same check answers for more than one thing — a missing target and a missing mingw both
+    // come back here — so the assertion is on the branch this test is about, not on whatever came
+    // first.
     if !problem.contains("is not installed") {
         return;
     }
@@ -340,10 +324,6 @@ fn the_host_platform_needs_no_target_check() {
 }
 
 /// 🔴 A preset with nothing ticked builds nothing, and must say so.
-///
-/// The tempting reading is "no platform means the host" — which would
-/// make an unticked box behave exactly like a ticked one, and there
-/// would be no way to express "not this one".
 #[test]
 fn a_preset_with_no_platform_names_none() {
     let preset = BuildPreset {
@@ -354,11 +334,9 @@ fn a_preset_with_no_platform_names_none() {
     assert!(preset.targets().is_empty());
 }
 
-/// 🔴 The migration leaves an edited `main.rs` alone and warns when the
-/// project opens — a hundred lines above the error, in a different panel,
-/// at a different time. Someone pressing Build sees a compiler error
-/// naming `kooch_editor_core`, which they never wrote. So the failure
-/// says it too, where it is being read.
+/// 🔴 The migration leaves an edited `main.rs` alone and warns when the project opens — a hundred
+/// lines above the error, in a different panel, at a different time. Someone pressing Build sees a
+/// compiler error naming `kooch_editor_core`, which they never wrote.
 #[test]
 fn a_failed_build_explains_an_unmigrated_main() {
     let dir = std::env::temp_dir().join("kooch_unmigrated");
@@ -392,13 +370,7 @@ fn a_migrated_main_is_not_blamed() {
     assert!(unmigrated_main(std::path::Path::new("/nonexistent")).is_none());
 }
 
-/// 🔴 A Linux-only preset must never be refused over a Windows
-/// toolchain.
-///
-/// This is the half that can be tested on any machine, and it is the
-/// half that would ruin somebody's day: a check that asked for mingw
-/// unconditionally would stop every Linux build on every machine that
-/// never intends to ship for Windows.
+/// 🔴 A Linux-only preset must never be refused over a Windows toolchain.
 #[test]
 fn a_linux_preset_is_never_asked_for_mingw() {
     let Some(host) = Platform::host() else {
@@ -415,14 +387,7 @@ fn a_linux_preset_is_never_asked_for_mingw() {
     );
 }
 
-/// And when the tools are genuinely absent, the refusal says which one
-/// and how to install it.
-///
-/// 🔴 `g++`, not just `gcc`. Measured: this machine had `mingw64-gcc`
-/// and no `mingw64-gcc-c++`, and the build died inside `meshopt`'s build
-/// script — meshoptimizer is C++ — well after cargo had accepted the
-/// target. A check that only looked for a mingw `gcc` would have said
-/// yes and let it through.
+/// And when the tools are genuinely absent, the refusal says which one and how to install it.
 #[test]
 fn a_missing_mingw_names_the_tool_and_the_package() {
     let Some(problem) = missing_mingw() else {

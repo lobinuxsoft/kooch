@@ -62,11 +62,8 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) game_request: &'a mut Option<(u32, u32)>,
     /// Whether the last frame found a gameplay camera to render.
     pub(crate) game_has_camera: bool,
-    /// Set while drawing when Game is the focused tab. Drives whether
-    /// the project receives input — a key pressed with the World panel
-    /// selected is an editor shortcut, not a jump.
-    /// This frame's input owner, resolved once (see [`crate::input_focus`])
-    /// and read by every consumer instead of each re-deriving it.
+    /// Set while drawing when Game is the focused tab. Drives whether the project receives input —
+    /// a key pressed with the World panel selected is an editor shortcut, not a jump.
     pub(crate) input_owner: &'a mut crate::input_focus::InputOwner,
     pub(crate) viewport_input: &'a mut Option<ViewportInputDelta>,
     pub(crate) editor_camera_controller: &'a EditorCameraController,
@@ -164,18 +161,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
         tab.to_string().into()
     }
 
-    /// Lights the focused panel's own border, rather than drawing a line
-    /// inside its contents.
-    ///
-    /// The first attempt painted a stroke on the body rect from in here,
-    /// and it landed a few pixels inside the border egui_dock had already
-    /// drawn — so instead of the panel standing out there were two lines,
-    /// one of them crooked. This hands egui_dock a brighter stroke and
-    /// lets it draw in the place it was going to draw anyway, which is the
-    /// only way the alignment is right by construction.
-    ///
-    /// The tab's title is lit too: it is the part a user's eye is already
-    /// using to tell panels apart.
+    /// Lights the focused panel's own border, rather than drawing a line inside its contents.
     fn tab_style_override(
         &self,
         tab: &Self::Tab,
@@ -202,13 +188,6 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         // One place decides focus for every panel, including View.
-        //
-        // Any pointer press inside the body counts, left or right. That is
-        // deliberate: right-drag already means "fly the camera", so
-        // requiring a left click would make the viewport the one panel you
-        // cannot focus with the gesture you actually use — and starting the
-        // drag inside is what keeps focus from being lost mid-flight
-        // (#661).
         let body = ui.available_rect_before_wrap();
         let pressed_here = ui.input(|i| {
             i.pointer.any_pressed()
@@ -220,23 +199,14 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             *self.focused_tab = Some(*tab);
         }
         let focused = *self.focused_tab == Some(*tab);
-        // Resolved here because this is where panel focus is known, and
-        // resolved once: consumers ask `belongs_to`, they do not rebuild
-        // the rule.
-        // `text_edit_focused`, NOT `egui_wants_keyboard_input`: the
-        // latter is `memory.focused().is_some()` despite its name, so any
-        // focused button would silently take the keyboard from the View.
+        // Resolved here because this is where panel focus is known, and resolved once: consumers
+        // ask `belongs_to`, they do not rebuild the rule.
         *self.input_owner =
             crate::input_focus::resolve(*self.focused_tab, ui.ctx().text_edit_focused());
 
-        // A cursor left lit on a panel that no longer owns the keyboard is
-        // a highlight that means nothing: it says "the arrows go here" when
-        // they do not. Clearing it on focus loss is the whole fix.
-        //
-        // Only the *keyboard* cursors. The World panel's entity selection
-        // is not one of these — you pick an entity there and then edit it
-        // in the Inspector, so clearing that would break the one workflow
-        // the editor is for.
+        // A cursor left lit on a panel that no longer owns the keyboard is a highlight that means
+        // nothing: it says "the arrows go here" when they do not. Clearing it on focus loss is the
+        // whole fix.
         if !focused {
             match tab {
                 EditorTab::AssetBrowser => self.asset_nav.cursor = None,

@@ -20,12 +20,6 @@ fn write(dir: &std::path::Path, name: &str, body: &str) {
 }
 
 /// A deleted file moves the fingerprint even though no mtime grew.
-///
-/// 🔴 This is why the count is there. Removing the newest file leaves an
-/// older maximum behind, so mtime alone reports "nothing has happened
-/// since" while a system just stopped existing — and the registration
-/// for it would keep naming a module that is gone, which does not run,
-/// it fails to compile.
 #[test]
 fn a_deleted_file_moves_the_fingerprint() {
     let dir = src_dir("deleted");
@@ -44,10 +38,6 @@ fn a_deleted_file_moves_the_fingerprint() {
 }
 
 /// Writing the generated file does not itself look like a change.
-///
-/// Without the exclusion every regeneration would move the fingerprint,
-/// scheduling a scan that reads every file in the project to conclude
-/// nothing needs doing — on a FUSE mount, after every save.
 #[test]
 fn the_generated_file_is_not_a_change() {
     let dir = src_dir("generated");
@@ -126,13 +116,8 @@ fn project(name: &str) -> (std::path::PathBuf, Resources) {
     (root, resources)
 }
 
-/// 🔴 The one that motivated the change: a field is not in the generated
-/// file, and the editor reads fields out of the compiled dylib.
-///
-/// Reported as *"modifiqué el script y le di a Code Sync y no hizo
-/// nada"*. It did exactly what it was told; the notice was keyed on the
-/// generated file changing, so the edits that change no type — a field,
-/// a body, a default — left it dark while the build went stale.
+/// 🔴 The one that motivated the change: a field is not in the generated file, and the editor reads
+/// fields out of the compiled dylib.
 #[test]
 fn an_edit_that_regenerates_nothing_still_asks() {
     let (root, mut resources) = project("field_edit");

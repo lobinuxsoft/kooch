@@ -1,25 +1,4 @@
 //! Computing a body's mass from the volume of its collision shapes.
-//!
-//! The simulation takes `PhysicsBody.mass` literally — shapes carry no mass
-//! (#618). That is deterministic, and it gives up the one thing deriving
-//! mass from volume was good for: a bigger rock being heavier without
-//! anyone typing a number.
-//!
-//! This buys it back as an authoring action rather than a rule. The button
-//! multiplies the author's density by the volume of the shapes that belong
-//! to this body and *writes* the answer into `mass`, once. Afterwards the
-//! number is the author's: resizing a collider does not silently change
-//! what the body weighs, which is exactly what a continuously-derived mass
-//! would do.
-//!
-//! # Which shapes belong to this body
-//!
-//! The same ones the solver will weld into it: this entity's own collider,
-//! plus every descendant's, **stopping at any descendant that carries its
-//! own `PhysicsBody`**. That one is an independent body, and the shapes
-//! beneath it are its, not ours. `kooch_physics::plugin::compound` applies
-//! the identical rule when it builds the compound — if these two ever
-//! disagree, the button reports a mass for a body the solver never builds.
 
 use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::ReflectValue;
@@ -67,11 +46,6 @@ fn component<'a>(info: &'a EntityDisplayInfo, name: &str) -> Option<&'a Componen
 }
 
 /// The entity's world-space scale, or ones when it has no transform yet.
-///
-/// World scale rather than local, because that is what the solver builds
-/// the shape at: a body folds its own `Transform.scale` into its shape,
-/// and a child's contribution is composed through the hierarchy, which
-/// leaves each shape sized by its own world scale either way.
 fn world_scale(info: &EntityDisplayInfo) -> glam::Vec3 {
     component(info, "GlobalTransform")
         .and_then(|global| {
@@ -90,12 +64,6 @@ fn world_scale(info: &EntityDisplayInfo) -> glam::Vec3 {
 }
 
 /// Volume of one collider in cubic metres, scale folded in.
-///
-/// The scale rules match `kooch_physics`'s: a box scales per axis exactly, a
-/// sphere takes the largest axis, and a capsule takes the larger
-/// horizontal for its radius and the vertical for its height. A volume
-/// computed from unscaled dimensions would disagree with the shape the
-/// solver actually builds, which is worse than no button.
 fn collider_volume(collider: &ComponentDisplayInfo, scale: glam::Vec3) -> f32 {
     use std::f32::consts::PI;
 
@@ -129,10 +97,6 @@ fn collider_volume(collider: &ComponentDisplayInfo, scale: glam::Vec3) -> f32 {
 }
 
 /// Total volume of the shapes that will be welded into `entity`'s body.
-///
-/// `None` when there are none — which is what greys the button out. An
-/// author who has added a `PhysicsBody` and no `Collider` yet should be told
-/// what is missing, not handed a mass of zero.
 pub(super) fn collider_volume_for(entity: Entity, entities: &[EntityDisplayInfo]) -> Option<f32> {
     let find = |target: Entity| entities.iter().find(|e| e.entity == target);
     let root = find(entity)?;

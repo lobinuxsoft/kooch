@@ -1,15 +1,4 @@
 //! Which severities the Console is showing.
-//!
-//! # Why a set and not a threshold
-//!
-//! "At least this severe" cannot express the thing anyone actually wants
-//! when a panel is drowning: *hide the warnings, keep everything else*.
-//! A threshold at `info` drags every warning along with it, and a
-//! threshold at `error` throws away the line being looked for.
-//!
-//! That came up with #641, where three hundred repeats of one egui warning
-//! buried every other line in the log. With a threshold there was no way
-//! to read past them.
 
 use tracing::Level;
 
@@ -23,18 +12,11 @@ pub(crate) const ALL: [Level; 5] = [
 ];
 
 /// The set of severities the Console shows, one bit each.
-///
-/// A `u8` rather than five `bool`s so it compares and copies as one value
-/// — the filtered view is rebuilt by comparing the settings it was built
-/// from, and a set that is one number makes that comparison exact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LevelSet(u8);
 
 impl LevelSet {
     /// Errors, warnings and info: what the old `INFO` threshold showed.
-    ///
-    /// Debug and trace stay off because the engine is genuinely noisy at
-    /// those levels — a hundred asset lines before the one that matters.
     pub(crate) const DEFAULT: Self = Self(0b0000_0111);
 
     /// The bit for one level.

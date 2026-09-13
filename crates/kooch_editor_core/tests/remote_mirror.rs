@@ -208,13 +208,6 @@ fn reapply_drops_components_the_project_removed() {
 }
 
 /// Unparenting on the project has to reach the mirror.
-///
-/// The parent travels as its own snapshot field rather than as a component,
-/// so `sync_components` never sees it and cannot retire it. The pass that
-/// wires parents used to skip entities whose snapshot reported no parent,
-/// which meant *parenting* was applied and *unparenting* was ignored — the
-/// hierarchy stayed nested in the editor while the project had already
-/// flattened it. Asymmetric, and it read as "unparent does not work".
 #[test]
 fn a_vanished_parent_is_cleared_from_the_mirror() {
     let mut resources = ecs();
@@ -282,13 +275,8 @@ fn a_changed_parent_is_followed() {
     );
 }
 
-/// A component pointing at another entity has to point at the *mirror's*
-/// entity, not at the project's handle.
-///
-/// The two processes number their entities independently, so index 9 over
-/// there is not index 9 here. Untranslated, a joint's Body A read as
-/// whichever mirror entity happened to land on that index — or as
-/// missing, which is how it looked.
+/// A component pointing at another entity has to point at the *mirror's* entity, not at the
+/// project's handle.
 #[test]
 fn an_entity_reference_is_translated_into_the_mirror() {
     use kooch_ecs::reflect::EntityRef;
@@ -402,13 +390,6 @@ fn a_reference_to_a_later_entity_is_translated_too() {
 }
 
 /// Scene membership survives the wire.
-///
-/// 🔴 `SceneMember` is derived on load and never written to a scene file,
-/// and the host keeps it out of the component list, so it travels beside
-/// the components the way `parent` does. Without it every mirrored entity belongs to nothing, and since
-/// **Open Project always opens remote**, that is every entity the editor
-/// normally shows: the World panel grouped a whole project into an empty
-/// scene and a pile of orphans, and no error said why.
 #[test]
 fn a_mirrored_entity_keeps_its_scene() {
     let mut r = ecs();
@@ -435,12 +416,7 @@ fn a_mirrored_entity_keeps_its_scene() {
     assert_eq!(member, Some(scene), "the scene did not reach the mirror");
 }
 
-/// An entity the project reports as belonging to no scene LOSES its
-/// membership locally.
-///
-/// Both directions, for the same reason the parent needs both: an entity
-/// that leaves a scene would otherwise keep the old membership forever,
-/// and it would keep being listed under a scene it is no longer in.
+/// An entity the project reports as belonging to no scene LOSES its membership locally.
 #[test]
 fn a_mirrored_entity_can_leave_its_scene() {
     let mut r = ecs();

@@ -1,24 +1,4 @@
 //! Recording what the user changed on a prefab instance.
-//!
-//! # Why anything is recorded at all
-//!
-//! When a prefab changes, its instances have to follow — *except* where
-//! the user deliberately made one different. Knowing which is which needs
-//! a record of what they touched.
-//!
-//! Diffing the instance against the prefab instead looks simpler and is
-//! wrong: it cannot tell "the user changed this" from "the prefab has
-//! changed since", so the moment the prefab moves the diff starts lying.
-//! It also leaves nothing to revert *to* — there is no way to distinguish
-//! "the user reverted this field" from "the prefab drifted until they
-//! happened to match".
-//!
-//! # Where it happens
-//!
-//! Before the local/remote split, so an edit is recorded once regardless
-//! of which path applies it. Every field edit already arrives as one of
-//! two actions — `SetField`, and `TransformEdit` from a gizmo drag — which
-//! is what makes this cheap.
 
 use kooch_core::resource::Resources;
 use kooch_ecs::component::{ComponentNames, ComponentRegistry};
@@ -29,10 +9,6 @@ use kooch_ecs::reflect::ReflectValue;
 use super::EditorAction;
 
 /// Component types whose edits are bookkeeping rather than authored state.
-///
-/// Marking an override on the component that *stores* overrides would
-/// record its own write, and `PrefabMember` is the mapping propagation
-/// reads — a user "overriding" either is not a thing.
 fn is_bookkeeping(type_name: &str) -> bool {
     matches!(
         type_name.rsplit("::").next().unwrap_or(type_name),
@@ -40,13 +16,7 @@ fn is_bookkeeping(type_name: &str) -> bool {
     )
 }
 
-/// Records the overrides implied by `actions`, and returns the edits that
-/// persist them.
-///
-/// The returned actions are ordinary `SetField`s on the instance root's
-/// `PrefabInstance`, so they travel to the project the same way any other
-/// edit does. That matters in remote mode: the override set is saved with
-/// the scene, and the scene belongs to the project.
+/// Records the overrides implied by `actions`, and returns the edits that persist them.
 pub(super) fn record(resources: &Resources, actions: &[&EditorAction]) -> Vec<EditorAction> {
     let mut marked: Vec<(Entity, OverrideAddress, Option<ReflectValue>)> = Vec::new();
     for action in actions.iter().copied() {
@@ -72,11 +42,7 @@ pub(super) fn record(resources: &Resources, actions: &[&EditorAction]) -> Vec<Ed
                     Some(value.clone()),
                 );
             }
-            // A drag replaces the whole transform, but the user only moved
-            // one thing. Comparing before and after keeps a translate from
-            // claiming the rotation was overridden too — which would pin a
-            // field to its current value and quietly stop the prefab from
-            // ever reaching it again.
+            // A drag replaces the whole transform, but the user only moved one thing.
             EditorAction::TransformEdit {
                 entity,
                 before,
@@ -113,12 +79,9 @@ pub(super) fn record(resources: &Resources, actions: &[&EditorAction]) -> Vec<Ed
                     }
                 }
             }
-            // Adding or removing a component on an instance is a decision
-            // about its *presence*, and propagation has to respect it both
-            // ways: it must not delete what the user added, and must not
-            // restore what they took off. Without this, removing a
-            // component from an instance lasted exactly until the next
-            // time the prefab was saved.
+            // Adding or removing a component on an instance is a decision about its *presence*, and
+            // propagation has to respect it both ways: it must not delete what the user added, and
+            // must not restore what they took off.
             EditorAction::AddComponent { entity, component }
             | EditorAction::RemoveComponent { entity, component } => {
                 let Some(type_name) = component_name(resources, *component) else {
@@ -127,11 +90,9 @@ pub(super) fn record(resources: &Resources, actions: &[&EditorAction]) -> Vec<Ed
                 if is_bookkeeping(&type_name) {
                     continue;
                 }
-                // Presence carries no value — it is a decision about
-                // whether the component belongs, not about what it holds.
-                // A component the user *added* also gets a record per
-                // field below, so its values survive a scene that no
-                // longer writes the entity out.
+                // Presence carries no value — it is a decision about whether the component belongs,
+                // not about what it holds. A component the user *added* also gets a record per
+                // field below, so its values survive a scene that no longer writes the entity out.
                 push(
                     resources,
                     &mut marked,
@@ -196,11 +157,7 @@ fn default_fields(resources: &Resources, type_name: &str) -> Option<Vec<(String,
     registry.reflect_default_fields(&type_id)
 }
 
-/// Folds the new marks into each instance's existing set and emits the
-/// edits that write them back.
-///
-/// Grouped by instance so a drag that touched two entities of one prefab
-/// produces one write rather than two that overwrite each other.
+/// Folds the new marks into each instance's existing set and emits the edits that write them back.
 fn persist(
     resources: &Resources,
     marked: Vec<(Entity, OverrideAddress, Option<ReflectValue>)>,

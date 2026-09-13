@@ -1,6 +1,5 @@
-//! Built-in [`Visualizer`] implementations for the editor's overlay
-//! gizmos: cameras (perspective + orthographic) and directional
-//! lights. Registered by
+//! Built-in [`Visualizer`] implementations for the editor's overlay gizmos: cameras (perspective +
+//! orthographic) and directional lights. Registered by
 //! [`super::register_builtin_visualizers_system`].
 
 use glam::Vec3;
@@ -12,10 +11,9 @@ use kooch_gizmos::{Gizmos, Visualizer};
 const FRUSTUM_COLOR: Vec3 = Vec3::new(0.4, 0.8, 1.0);
 const ORTHO_COLOR: Vec3 = Vec3::new(0.6, 0.85, 1.0);
 
-/// Aspect ratio used to draw camera frustums. The viewport's actual
-/// aspect is not exposed to visualizers in v1 — a fixed 16:9 keeps the
-/// frustum shape readable. Future work: read the live aspect from the
-/// editor's `ViewportTarget`.
+/// Aspect ratio used to draw camera frustums. The viewport's actual aspect is not exposed to
+/// visualizers in v1 — a fixed 16:9 keeps the frustum shape readable. Future work: read the live
+/// aspect from the editor's `ViewportTarget`.
 const FRUSTUM_ASPECT: f32 = 16.0 / 9.0;
 
 /// Built-in visualizer for `PerspectiveCamera`: pyramid frustum from

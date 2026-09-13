@@ -38,13 +38,6 @@ use std::process::Command;
 use super::platform::Platform;
 
 /// The DLLs a mingw-linked Windows build cannot start without.
-///
-/// A fixed list rather than one read back out of the executable's import
-/// table: parsing `objdump` output to decide what to ship is a second
-/// thing that can go wrong quietly, and this set is a property of the
-/// toolchain rather than of any one game. A build that needs something
-/// else fails loudly on Windows, which is the same place it would have
-/// failed anyway.
 const RUNTIME: [&str; 3] = [
     "libstdc++-6.dll",
     "libgcc_s_seh-1.dll",
@@ -52,13 +45,6 @@ const RUNTIME: [&str; 3] = [
 ];
 
 /// Copies the mingw runtime beside a Windows executable.
-///
-/// Returns what it wrote, so the build log can say it — a file that
-/// appears without being mentioned is a file the author deletes.
-///
-/// 🔴 A missing DLL is an error, not a warning. Carrying on would produce
-/// a folder that looks complete and holds a game that cannot start, and
-/// whoever finds that out is holding a handheld rather than a compiler.
 pub fn ship(platform: Platform, dir: &Path) -> Result<Vec<PathBuf>, String> {
     if platform != Platform::Windows {
         return Ok(Vec::new());
@@ -96,16 +82,6 @@ pub fn ship(platform: Platform, dir: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 /// Where this machine's mingw keeps its DLLs.
-///
-/// Asked of the toolchain rather than hardcoded per distribution:
-/// Fedora puts them under a sysroot, Debian and Arch elsewhere, and a
-/// list of guesses would go stale silently on whichever one nobody
-/// tested.
-///
-/// ⚠️ `-print-file-name` is the obvious call and the wrong one — it
-/// searches the *library* path, where the `.dll.a` import stubs live,
-/// not the `bin` directory holding the DLLs themselves. It answers with
-/// the name it was given, which reads like success.
 fn runtime_dir() -> Option<PathBuf> {
     let sysroot = Command::new("x86_64-w64-mingw32-gcc")
         .arg("-print-sysroot")
@@ -126,10 +102,6 @@ fn runtime_dir() -> Option<PathBuf> {
 }
 
 /// Drops the debug symbols from a copied DLL.
-///
-/// Best effort: a build that ships a 29.7 MB library is worse than one
-/// that ships a 2.5 MB one and better than one that ships none, so a
-/// missing `strip` is not a reason to fail.
 fn strip(dll: &Path) {
     let _ = Command::new("x86_64-w64-mingw32-strip")
         .arg("--strip-unneeded")

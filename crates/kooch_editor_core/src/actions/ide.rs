@@ -1,25 +1,4 @@
 //! Finding the IDE this machine actually has.
-//!
-//! # Why looking for `code` on the PATH is not enough
-//!
-//! It is a traditional-distro assumption. On an immutable system —
-//! Bazzite, Silverblue, anything atomic — and with Flatpak, Homebrew or
-//! an AppImage, the editor is installed **without its binary on the
-//! PATH** of a process launched from a desktop icon. VSCodium installed
-//! by Homebrew lives at `/home/linuxbrew/.linuxbrew/bin/codium`, which
-//! is on an interactive shell's PATH and not necessarily on ours.
-//!
-//! The system already knows the answer, because that is what makes
-//! double-clicking a `.rs` file work: `xdg-mime` names a `.desktop`
-//! file, and that file spells out the full command. So we ask it.
-//!
-//! # Why not just call `xdg-open`
-//!
-//! It was the fallback, and it is worse than nothing: `xdg-open <file>`
-//! opens the file with no workspace, and `xdg-open <folder>` opens the
-//! **file manager**, because that is what a directory's default handler
-//! is. Both look like something happened, which is why the failure went
-//! unnoticed — the IDE really did open, just without the project.
 
 use std::path::{Path, PathBuf};
 
@@ -31,14 +10,7 @@ pub(crate) struct IdeCommand {
 }
 
 impl IdeCommand {
-    /// Parses a whitespace-separated command, e.g.
-    /// `flatpak run com.vscodium.codium`.
-    ///
-    /// Quotes are stripped from every token. A `.desktop` file may quote
-    /// its `Exec`, and someone configuring this by hand copies the path
-    /// from exactly there — quotes included. Keeping them means asking
-    /// the OS for a program whose name begins with `\"`, which fails with
-    /// nothing to suggest why.
+    /// Parses a whitespace-separated command, e.g. `flatpak run com.vscodium.codium`.
     pub(crate) fn parse(command: &str) -> Option<Self> {
         let mut parts = command
             .split_whitespace()
@@ -51,12 +23,7 @@ impl IdeCommand {
         })
     }
 
-    /// Whether this is a VS Code derivative, which is what decides if
-    /// `-g <file>` means anything.
-    ///
-    /// By program name rather than by trying and seeing: an editor that
-    /// does not know the flag treats it as a filename and silently
-    /// creates a file called `-g`.
+    /// Whether this is a VS Code derivative, which is what decides if `-g <file>` means anything.
     pub(crate) fn understands_goto(&self) -> bool {
         let name = Path::new(&self.program)
             .file_name()
@@ -75,9 +42,6 @@ impl IdeCommand {
 }
 
 /// The IDE the desktop environment would use for a source file.
-///
-/// `text/x-rust` first because that is what the user is most likely to
-/// have set deliberately, then `text/plain` as the general answer.
 pub(crate) fn from_desktop_defaults() -> Option<IdeCommand> {
     for mime in ["text/x-rust", "text/rust", "text/plain"] {
         let Some(entry) = default_desktop_entry(mime) else {
@@ -136,10 +100,6 @@ fn desktop_search_paths() -> Vec<PathBuf> {
 }
 
 /// The `Exec` of the `[Desktop Entry]` section, with field codes removed.
-///
-/// Only that section: a file may also carry `[Desktop Action …]` blocks
-/// — "New Empty Window" and friends — whose `Exec` would open something
-/// other than what double-clicking does.
 fn parse_exec(contents: &str) -> Option<IdeCommand> {
     let mut in_entry = false;
     for line in contents.lines() {
@@ -154,14 +114,8 @@ fn parse_exec(contents: &str) -> Option<IdeCommand> {
         let Some(exec) = line.strip_prefix("Exec=") else {
             continue;
         };
-        // `%F`, `%U`, `%f`, `%u`, `%i`, `%c`, `%k` are placeholders the
-        // launcher substitutes. We supply our own paths, so they go.
-        //
-        // Quotes are stripped because the spec allows them and real
-        // entries use them: Antigravity ships
-        // `Exec="/home/…/antigravity-ide" %F`, and keeping the quotes
-        // means asking the OS to run a program whose name starts with
-        // one.
+        // `%F`, `%U`, `%f`, `%u`, `%i`, `%c`, `%k` are placeholders the launcher substitutes. We
+        // supply our own paths, so they go.
         let cleaned: Vec<String> = exec
             .split_whitespace()
             .filter(|part| !(part.len() == 2 && part.starts_with('%')))

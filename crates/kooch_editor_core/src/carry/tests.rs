@@ -3,13 +3,6 @@ use kooch_core::resource::Resources;
 use super::{CarriedWorld, Phase, capture, resume};
 
 /// Serialises the tests that touch the holding directory.
-///
-/// 🔴 `holding()` is ONE path per machine, on purpose: the world it
-/// holds has to survive the process that wrote it. So `capture` clears
-/// it and `resume` deletes it, and two tests doing that at once is one
-/// wiping the other's files between its write and its assert. Nothing
-/// here is worth a per-test directory — that would stop testing the
-/// path the editor actually uses.
 static ALONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// The guard, with a poisoned lock treated as held rather than fatal:
@@ -21,10 +14,9 @@ fn alone() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// 🔴 A fresh `SceneManager` already holds one untitled scene, and that
-/// is exactly the one worth carrying: it has no file to be read back
-/// from, so a rebuild that dropped it would lose everything in it with
-/// nothing on disk to recover from.
+/// 🔴 A fresh `SceneManager` already holds one untitled scene, and that is exactly the one worth
+/// carrying: it has no file to be read back from, so a rebuild that dropped it would lose
+/// everything in it with nothing on disk to recover from.
 #[test]
 fn an_untitled_scene_is_held() {
     let _alone = alone();
@@ -74,13 +66,8 @@ fn a_disconnected_project_waits() {
     );
 }
 
-/// 🔴 The claim the whole module rests on: what comes back is pointed at
-/// the file it belongs to, and is still **unsaved**.
-///
-/// Adopted under its holding file, a later save would write the author's
-/// scene into a temporary directory and delete it. Marked clean, the
-/// editor would claim the work was written out by the one action that
-/// did not write it.
+/// 🔴 The claim the whole module rests on: what comes back is pointed at the file it belongs to, and
+/// is still **unsaved**.
 #[test]
 fn a_restored_scene_keeps_its_file_and_stays_dirty() {
     let _alone = alone();

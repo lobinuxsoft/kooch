@@ -6,16 +6,8 @@ use kooch_ecs::reflect::ReflectValue;
 use super::asset::AssetCatalogEntry;
 use crate::drag_drop::DraggedAsset;
 
-/// Renders the typed asset-reference picker for a `ReflectValue::AssetRef`
-/// field. Returns `Some(new_value)` when the user picks a different
-/// asset (or clears the field), otherwise `None`.
-///
-/// Layout follows the Unity inspector's object-field convention:
-/// - Selected state shows the current asset's basename + source tag,
-///   or `(None)` / `(missing: <guid>)` when unresolvable.
-/// - Dropdown opens a search field at the top, then the filtered
-///   list. Each row shows `display_name [source]` with the full
-///   path on hover.
+/// Renders the typed asset-reference picker for a `ReflectValue::AssetRef` field. Returns
+/// `Some(new_value)` when the user picks a different asset (or clears the field), otherwise `None`.
 pub(crate) fn draw_asset_picker(
     ui: &mut egui::Ui,
     current: Option<Guid>,
@@ -110,13 +102,8 @@ pub(crate) fn draw_asset_picker(
                 ui.weak("(no match)");
             }
         });
-    // Drop target: an asset dragged out of the Asset Browser. Only this
-    // slot's own type is accepted, so a mesh dragged over a material
-    // field neither highlights nor assigns.
-    //
-    // `dnd_release_payload` takes the payload *before* checking the type,
-    // so it stays guarded behind the matching `dnd_hover_payload` — see
-    // the ordering note in `panels/world/entity_row.rs`.
+    // Drop target: an asset dragged out of the Asset Browser. Only this slot's own type is
+    // accepted, so a mesh dragged over a material field neither highlights nor assigns.
     let slot = combo_response.response;
     if let Some(hovered) = slot.dnd_hover_payload::<DraggedAsset>()
         && hovered.type_name == asset_type

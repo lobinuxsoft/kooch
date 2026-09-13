@@ -1,28 +1,4 @@
 //! The editing chords, and who gets to hear them.
-//!
-//! # One table, three readers
-//!
-//! A chord is written down once — its key, its label, the words on its
-//! tooltip — and the keyboard, the Edit menu and the World panel's
-//! toolbar all read that. The alternative is what the editor had: the
-//! handler checked `Key::Z` in one file and the menu wrote the string
-//! `"Undo  Ctrl+Z"` in another, which are two claims that a user finds
-//! out have diverged by pressing the key.
-//!
-//! # Who hears them
-//!
-//! **The World panel and the View, and nobody else.** These edit the
-//! entity you have selected, so they belong to the panels that show
-//! entities — pressing Ctrl+D with the Console focused should not
-//! duplicate something off-screen, and Ctrl+C in the Assets panel is
-//! about a file.
-//!
-//! 🔴 This is a reversal for undo, which was global on purpose and said
-//! so: *"Document shortcuts stay global — Ctrl+Z, Ctrl+S, Play are about
-//! the project, not about a panel."* True of Ctrl+S, and it stays global.
-//! Not true of Ctrl+Z once the same chord means "undo my typing" inside
-//! every text field in the Inspector: the reason to gate it is the same
-//! reason `handle_keyboard` gates Ctrl+A.
 
 use kooch_ecs::entity::Entity;
 
@@ -62,10 +38,6 @@ impl EditChord {
     }
 
     /// The chord as a person writes it, shown beside every trigger.
-    ///
-    /// Spelled `Ctrl` on every platform because the modifier read is
-    /// `command`, which is Ctrl on Linux and Windows and ⌘ on macOS —
-    /// and the editor does not run on macOS.
     pub fn chord(self) -> &'static str {
         match self {
             EditChord::Undo => "Ctrl+Z",
@@ -118,18 +90,6 @@ impl EditChord {
 }
 
 /// Whether a chord is live this frame, and why it might not be.
-///
-/// 🔴 The two halves of the rule are not the same rule, which is the
-/// whole of #813:
-///
-/// - **Undo and redo** follow the *document*. Any panel that edits
-///   something has them — the Inspector on a prefab, the Input Map on
-///   its map — and each reaches its own history.
-/// - **Duplicate, copy and paste** act on the entity selection, so they
-///   belong to the two panels that show entities. Ctrl+D over an input
-///   map has nothing to duplicate.
-///
-/// Typing takes all of them, whichever panel is focused.
 pub(crate) fn allowed(
     chord: EditChord,
     focused_tab: Option<EditorTab>,
@@ -146,11 +106,6 @@ pub(crate) fn allowed(
 }
 
 /// What the editor should do about a chord, given what is selected.
-///
-/// An empty result means the chord had nothing to act on — Ctrl+D with
-/// no selection — and is the reason this returns a list rather than one
-/// action: duplicating three entities is three actions, and the dispatch
-/// layer batches them back into one undo step.
 pub(crate) fn actions_for(
     chord: EditChord,
     selected: &[Entity],
@@ -175,10 +130,9 @@ pub(crate) fn actions_for(
             true => Vec::new(),
             false => vec![EditorAction::CopyEntities(selected.to_vec())],
         },
-        // The active scene, because a chord has no pointer and so names
-        // no place. Every gesture that DOES name one — a right click on
-        // a scene header, on the panel's empty space — builds its own
-        // action with that target instead of coming through here.
+        // The active scene, because a chord has no pointer and so names no place. Every gesture
+        // that DOES name one — a right click on a scene header, on the panel's empty space — builds
+        // its own action with that target instead of coming through here.
         EditChord::Paste => vec![EditorAction::PasteEntities {
             into: crate::actions::SpawnTarget::Active,
         }],
@@ -186,9 +140,6 @@ pub(crate) fn actions_for(
 }
 
 /// Reads this frame's keyboard and queues whatever it asked for.
-///
-/// Called after the dock has drawn, so `focused_tab` is this frame's
-/// answer rather than last frame's.
 pub(crate) fn gather(
     ui: &egui::Ui,
     focused_tab: Option<EditorTab>,

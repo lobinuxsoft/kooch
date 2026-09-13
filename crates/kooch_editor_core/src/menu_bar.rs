@@ -7,27 +7,17 @@ use crate::icons;
 use crate::remote_session::ConnectionState;
 use crate::state::{ALL_TABS, EditorTab, dock_has_tab};
 
-/// What the Edit menu needs beyond the undo stack: what a chord would
-/// act on.
-///
-/// A struct rather than two more positional arguments on a function that
-/// already takes eleven.
+/// What the Edit menu needs beyond the undo stack: what a chord would act on.
 pub(crate) struct EditMenu<'a> {
     pub selected: &'a [kooch_ecs::entity::Entity],
     pub clipboard_has_entities: bool,
-    /// What a Ctrl+Z would reach, or `None` over a panel that edits
-    /// nothing. Named in the entry so the menu says *which* history —
-    /// "Undo Set intensity (this prefab)" is the difference between
+    /// What a Ctrl+Z would reach, or `None` over a panel that edits nothing. Named in the entry so
+    /// the menu says *which* history — "Undo Set intensity (this prefab)" is the difference between
     /// trusting the chord and testing it.
     pub document: Option<&'a crate::history::Document>,
 }
 
 /// Draws the Edit menu: every chord, whether it can run, and why.
-///
-/// Entries are **disabled, not hidden**, when they have nothing to act
-/// on. A menu that reorders itself according to the selection is a menu
-/// where the entry you are reaching for is somewhere else, and a greyed
-/// Paste is how a user learns the clipboard is empty.
 fn draw_edit_menu(
     ui: &mut egui::Ui,
     actions: &mut Vec<EditorAction>,
@@ -91,11 +81,7 @@ pub(crate) fn draw_menu_bar(
     _ide_command: Option<&str>,
     edit: EditMenu<'_>,
 ) {
-    // 🔴 The chords are read after the dock draws, in `run_editor_ui`,
-    // not here. They are gated on which panel has focus, and the menu bar
-    // draws before the dock has said which one that is — reading them
-    // here meant reading last frame's answer, and made "the shortcut
-    // works if you press it twice" a real behaviour.
+    // 🔴 The chords are read after the dock draws, in `run_editor_ui`, not here.
 
     // `Panel::top` in egui 0.35: `SidePanel` and `TopBottomPanel` were
     // unified into one `Panel` type (egui #5659).
@@ -110,13 +96,8 @@ pub(crate) fn draw_menu_bar(
                     actions.push(EditorAction::OpenScene { path: None });
                     ui.close();
                 }
-                // Disabled while driving a project: the world here is a
-                // mirror of the project's, and an additive load would
-                // spawn entities that exist only on this side. They would
-                // be invisible in the game and every edit to them would be
-                // dropped for not being in the mirror. Loading a second
-                // scene into the project needs the project to do it — see
-                // the issue linked from the tooltip.
+                // Disabled while driving a project: the world here is a mirror of the project's,
+                // and an additive load would spawn entities that exist only on this side.
                 let mirroring = remote == Some(ConnectionState::Connected);
                 let additive = ui
                     .add_enabled(!mirroring, egui::Button::new("Open Scene Additive..."))
@@ -164,34 +145,20 @@ pub(crate) fn draw_menu_bar(
                     }
                 }
             });
-            // A button, not a menu with a form in it. An egui menu closes
-            // on any click it does not consume, so a text field inside one
-            // shuts the menu the moment it is clicked — which made the IDE
-            // path impossible to type. A menu picks an action; a form
-            // belongs in a window.
+            // A button, not a menu with a form in it. An egui menu closes on any click it does not
+            // consume, so a text field inside one shuts the menu the moment it is clicked — which
+            // made the IDE path impossible to type.
             if ui.button("Settings").clicked() {
                 ui.data_mut(|d| d.insert_temp(settings_open_id(ui.ctx()), true));
             }
 
             // Centre the transport controls in the remaining space.
-            //
-            // 🔴 Counted, not hardcoded to two. It was `button_width * 2`
-            // when Play and Stop were the only ones here, so adding a
-            // third pushed the whole group off centre by half a button —
-            // visible immediately, and the kind of arithmetic that goes
-            // wrong again the next time one is added.
             let button_width = 70.0;
             let spacing = ui.spacing().item_spacing.x;
             let widths = [button_width, button_width];
             let total_buttons: f32 =
                 widths.iter().sum::<f32>() + spacing * (widths.len() - 1) as f32;
-            // 🔴 Centred in the BAR, not in what is left of it. The
-            // offset used to come from `available_width()`, which is
-            // measured after the File/Edit/Window/Settings menus have
-            // taken their share — so the group was centred in the
-            // remainder and sat a couple of hundred pixels right of the
-            // window's middle. Widening the group made that visible and
-            // did not cause it.
+            // 🔴 Centred in the BAR, not in what is left of it.
             let bar = ui.max_rect();
             let spent = ui.cursor().left() - bar.left();
             let offset = (bar.width() - total_buttons) * 0.5 - spent;
@@ -224,12 +191,7 @@ pub(crate) fn draw_menu_bar(
             // thing drawn is the furthest right — so the version sits at
             // the corner and the remote status stays beside it.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // 🔴 Which editor is this. The engine a project builds
-                // against is vendored per version, so "same version,
-                // different source" is a warning an author cannot act on
-                // without knowing what version they are running — and it
-                // is the warning that hid a stale engine for a whole
-                // session.
+                // 🔴 Which editor is this.
                 ui.label(
                     egui::RichText::new(crate::engine_vendor::editor_engine_version())
                         .weak()
@@ -251,11 +213,6 @@ pub(crate) fn draw_menu_bar(
 }
 
 /// Draws the remote session indicator and its rebuild control.
-///
-/// `stale` is why the snapshot stopped tracking the project. It overrides
-/// the connected look: the socket being up says nothing about whether what
-/// is on screen still matches the world, and a mirror that quietly stopped
-/// updating is indistinguishable from a world where nothing is moving.
 fn draw_remote_status(
     ui: &mut egui::Ui,
     remote: ConnectionState,
@@ -288,11 +245,7 @@ fn draw_remote_status(
     if ui
         .add_enabled(
             remote != ConnectionState::Connecting,
-            // 🔴 The only button that does this now. Code Sync stood
-            // beside it rewriting a generated file and compiling
-            // nothing, which read as the button for seeing a code
-            // change and was not — so it is gone, and the regeneration
-            // it forced still happens on its own from the source poll.
+            // 🔴 The only button that does this now.
             egui::Button::new(rebuild_label(ui, behind)),
         )
         .on_hover_text(match behind {
@@ -316,21 +269,6 @@ fn draw_remote_status(
 }
 
 /// The rebuild button's face, pulsing while the build is behind.
-///
-/// # Why it pulses rather than just changing colour
-///
-/// A static colour is read once and then stops being seen. Movement is
-/// what the eye catches on a bar the author is not looking at — and
-/// "your project is running code you already changed" is worth catching,
-/// because nothing else in the editor says so.
-///
-/// A triangle wave rather than a sine: the eye catches a hard edge, and
-/// a sine spends most of its time near the middle, where the difference
-/// from the resting colour is smallest.
-///
-/// ⚠️ The repaint request is what makes an immediate-mode UI redraw every
-/// frame, which is a real and permanent cost — so it is asked for ONLY
-/// while behind. At rest this widget asks for nothing.
 fn rebuild_label(ui: &egui::Ui, behind: bool) -> egui::RichText {
     let text = format!("{} Rebuild & Run", icons::PACKAGE);
     if !behind {
@@ -372,21 +310,7 @@ fn remote_status_look(
     }
 }
 
-/// The engines this machine has, which of them is in use, and a way to
-/// get rid of the rest.
-///
-/// # Why this is visible at all
-///
-/// A project builds against `~/.local/share/kooch/<version>/engine` and
-/// nothing in the editor ever said so. The only way to find out which
-/// engine a project was compiling against was to read a log line at the
-/// moment it was replaced, or to look at the directory's timestamp — and
-/// "which engine is this" is the first question when a build behaves
-/// differently than it did yesterday.
-///
-/// ⚠️ New versions are not created from here. The version is the engine's
-/// own `major.minor.patch`, so a new one appears when the editor that
-/// ships it does; this lists what arrived and lets the old ones go.
+/// The engines this machine has, which of them is in use, and a way to get rid of the rest.
 fn draw_installed_engines(
     ui: &mut egui::Ui,
     project_engine: Option<&str>,
@@ -416,10 +340,9 @@ fn draw_installed_engines(
                 ui.weak("(this project)");
             }
 
-            // 🔴 Neither of those two may be removed. The editor's is
-            // what the next project to open is pointed at, and the
-            // project's is what it builds against — deleting either
-            // leaves a manifest naming a directory that is not there.
+            // 🔴 Neither of those two may be removed. The editor's is what the next project to open
+            // is pointed at, and the project's is what it builds against — deleting either leaves a
+            // manifest naming a directory that is not there.
             if !is_editors && !in_use && ui.button("Remove").clicked() {
                 actions.push(EditorAction::RemoveEngine(engine.version.clone()));
             }
@@ -429,17 +352,7 @@ fn draw_installed_engines(
     }
 }
 
-/// The DLSS SDK: whether this machine has it, and the one button that
-/// fetches it.
-///
-/// 🔴 The tick box is not a formality. NVIDIA's licence is accepted **by
-/// use**, so the moment the editor puts the SDK on disk somebody has
-/// accepted it — and it has to be the person here, having been shown
-/// where the terms are. A download button that worked on the first click
-/// would be accepting a licence on their behalf.
-///
-/// ⚠️ It installs the SDK; it does not enable DLSS. Nothing in this
-/// engine calls it yet.
+/// The DLSS SDK: whether this machine has it, and the one button that fetches it.
 fn draw_dlss_sdk(ui: &mut egui::Ui, install: &mut crate::dlss_sdk::SdkInstall) {
     use crate::dlss_sdk::{LICENSE, SdkState, VERSION};
 
@@ -493,15 +406,6 @@ fn draw_dlss_sdk(ui: &mut egui::Ui, install: &mut crate::dlss_sdk::SdkInstall) {
 }
 
 /// The open project's launch environment, for the Play button.
-///
-/// Play spawns `cargo run` and the child inherits this process's
-/// environment, so until this field existed the only way to hand a game
-/// a `KOOCH_*` variable was to relaunch the editor with it set. Every
-/// measurement this engine can make is one of those variables.
-///
-/// Applied on Apply rather than on every keystroke: a half-typed
-/// `KOOCH_SHADING_PA` saved to disk is a line somebody later reads as
-/// the setting they made.
 fn draw_launch_env(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
@@ -557,15 +461,6 @@ fn draw_launch_env(
 }
 
 /// What this machine is missing before a project can build.
-///
-/// 🔴 Shown on every launch while something is missing, and never
-/// otherwise. The check runs once at startup because installing any of
-/// it ends in a reboot, so the answer cannot change underneath.
-///
-/// 🔴 It **can** install, and that ends in a restart — see
-/// [`crate::install`]. The command is shown either way, because the
-/// button is unavailable exactly when it matters most: with unsaved
-/// scenes open, where a restart would take the author's work with it.
 pub(crate) fn draw_preflight_window(
     ctx: &egui::Context,
     report: &crate::preflight::Report,
@@ -612,10 +507,9 @@ pub(crate) fn draw_preflight_window(
                 ui.add_space(4.0);
             }
 
-            // 🔴 The optional half is listed apart and last. Mixing
-            // "you cannot build without this" with "this would be
-            // faster" is how a list gets read diagonally — which is
-            // exactly how three packages once got installed for nothing.
+            // 🔴 The optional half is listed apart and last. Mixing "you cannot build without this"
+            // with "this would be faster" is how a list gets read diagonally — which is exactly how
+            // three packages once got installed for nothing.
             if !report.wanted.is_empty() {
                 ui.separator();
                 ui.add_space(4.0);
@@ -660,10 +554,6 @@ pub(crate) fn draw_preflight_window(
 }
 
 /// What the installer is saying, while it says it.
-///
-/// 🔴 The output, not a spinner. `rpm-ostree` reports which layer it is
-/// writing and how far along it is, and that is the only thing that
-/// distinguishes "working" from "stuck" on a step that takes minutes.
 fn draw_install_progress(ui: &mut egui::Ui, installing: &crate::install::Progress) {
     ui.label(egui::RichText::new(installing.status).strong());
     ui.add_space(4.0);
@@ -685,11 +575,6 @@ fn draw_install_progress(ui: &mut egui::Ui, installing: &crate::install::Progres
 }
 
 /// The install control, and the sentence that says what it will do.
-///
-/// 🔴 Disabled with the reason showing rather than hidden. "Why is there
-/// no button" is a worse question than "why can I not press this one",
-/// and the answer — unsaved work — is one the author can act on in five
-/// seconds.
 fn draw_install_button(
     ui: &mut egui::Ui,
     report: &crate::preflight::Report,
@@ -743,16 +628,8 @@ fn settings_open_id(ctx: &egui::Context) -> egui::Id {
     egui::Id::new("kooch_settings_window_open")
 }
 
-/// The Settings window: editor preferences, and the two things about
-/// the open project that belong beside them.
-///
-/// A window rather than a menu, because a menu closes on any click it
-/// does not consume and a text field inside one cannot be typed into.
-/// It is also movable and resizable, which a path worth pasting needs.
-///
-/// ⚠️ It used to say "not per-project", and that stopped being true
-/// before the launch environment arrived: the engine list below already
-/// takes the open project's version and offers to move it.
+/// The Settings window: editor preferences, and the two things about the open project that belong
+/// beside them.
 pub(crate) fn draw_settings_window(
     ctx: &egui::Context,
     actions: &mut Vec<EditorAction>,

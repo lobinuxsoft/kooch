@@ -37,10 +37,6 @@ fn an_action_can_be_renamed() {
 }
 
 /// 🔴 Adding a composite creates its parts too.
-///
-/// A bare head is a composite that reads as nothing with no clue
-/// which parts are missing — the state the panel could not even
-/// produce before, since there was no way to add one at all.
 #[test]
 fn a_composite_arrives_with_one_part_per_name() {
     use kooch_input::actions::{Composite, PartName, Role, VectorMode};
@@ -161,13 +157,7 @@ fn a_bindings_processors_can_be_edited() {
     assert_eq!(processors(&r, at).len(), 1);
 }
 
-/// 🔴 A composite head carries processors, and the panel has to
-/// offer them.
-///
-/// `read_action` applies the head's processors to the composite's
-/// assembled value — which is where a stick deadzone belongs, on the
-/// vector rather than per axis. The shipped starter map already has
-/// one there, so it was visible, evaluated, and uneditable.
+/// 🔴 A composite head carries processors, and the panel has to offer them.
 #[test]
 fn a_composite_head_takes_processors_too() {
     use kooch_input::actions::{Composite, Processor, Role, VectorMode};
@@ -321,10 +311,6 @@ fn processors(r: &Resources, at: BindingAddress) -> Vec<kooch_input::actions::Pr
 }
 
 /// 🔴 Deleting a composite deletes its parts.
-///
-/// Reported from the panel: the head went and the parts stayed. They
-/// are invisible once orphaned — `groups` skips a part with no head
-/// above it — so they survived in the file and were read by nothing.
 #[test]
 fn removing_a_composite_takes_its_parts_with_it() {
     use kooch_input::actions::{Composite, Role, VectorMode};
@@ -400,11 +386,6 @@ fn removing_one_part_leaves_the_composite() {
 }
 
 /// 🔴 A `.inputaction` opens, edits and saves as itself.
-///
-/// It is held as a map of one so the panel needs no second code
-/// path — Unity does the same internally for singleton actions — but
-/// the file has to keep its shape. Saving a map where an action
-/// belongs would produce a file nothing can load.
 #[test]
 fn a_standalone_action_round_trips_through_the_panel() {
     use kooch_input::actions::{Composite, VectorMode};

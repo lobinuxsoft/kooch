@@ -89,10 +89,6 @@ fn a_preset_lists_the_platforms_it_builds() {
 }
 
 /// 🔴 A floor is a glibc version, and Windows has none.
-///
-/// One preset can build both, and `cargo zigbuild` rejects
-/// `x86_64-pc-windows-gnu.2.28` — so the floor must reach the Linux half
-/// only.
 #[test]
 fn a_floor_reaches_linux_alone() {
     let preset = BuildPreset {
@@ -194,12 +190,9 @@ fn an_older_preset_still_loads() {
     assert!(!sparse.is_profiling());
 }
 
-/// 🔴 The migration that matters. `mode` defaults to Release, so a
-/// preset written before the dropdown — the one saying `profiling: true`
-/// — would otherwise load as Release and build a game with no
-/// instrumentation in it. Nothing would fail: the build succeeds, the
-/// panel offers to connect, and the connection times out against a game
-/// that never opened the port.
+/// 🔴 The migration that matters. `mode` defaults to Release, so a preset written before the
+/// dropdown — the one saying `profiling: true` — would otherwise load as Release and build a game
+/// with no instrumentation in it.
 #[test]
 fn a_preset_keeps_its_profiler() {
     let legacy = "(release: true, profiling: true, runnable: false, min_glibc: \"2.28\")";
@@ -223,10 +216,9 @@ fn a_shipping_preset_stays_shipping() {
     assert!(!load("(runnable: true)").is_profiling());
 }
 
-/// There is no debug mode any more, so the presets that used it have to
-/// land somewhere. They land on Profiling — a debug build was something
-/// you ran and looked at — and the loader says so rather than quietly
-/// building the other thing.
+/// There is no debug mode any more, so the presets that used it have to land somewhere. They land
+/// on Profiling — a debug build was something you ran and looked at — and the loader says so rather
+/// than quietly building the other thing.
 #[test]
 fn a_debug_preset_becomes_profiling() {
     assert!(load("(release: false)").is_profiling());
@@ -240,14 +232,8 @@ fn load(text: &str) -> BuildPreset {
         .expect("a preset the editor wrote has to load")
 }
 
-/// 🔴 The migration that matters now: a preset written before the
-/// toggles carries its platform only in `target_triple`, a field the
-/// struct no longer has.
-///
-/// Serde drops unknown fields without a word, so without reading it back
-/// deliberately every existing preset would open with nothing ticked,
-/// build nothing, and have that emptiness written over it on the first
-/// save.
+/// 🔴 The migration that matters now: a preset written before the toggles carries its platform only
+/// in `target_triple`, a field the struct no longer has.
 #[test]
 fn an_old_presets_triple_becomes_a_toggle() {
     let windows: BuildPreset = load(r#"(target_triple: "x86_64-pc-windows-gnu")"#);

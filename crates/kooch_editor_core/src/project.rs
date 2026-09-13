@@ -1,7 +1,4 @@
 //! Project manifest and file system operations.
-//!
-//! Handles `project.kooch` manifests, project directory creation,
-//! and persistent editor configuration (recent projects).
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -11,11 +8,8 @@ use std::path::{Path, PathBuf};
 use kooch_ecs::reflect::ReflectValue;
 use kooch_ecs::scene::{ComponentDescription, EntityDescription, SceneDocument};
 
-// The names live in `kooch_core` because the runtime's scene bootstrap needs
-// them too, and it cannot depend on the editor to learn them. They were
-// duplicated in both, which is how a rename changed one copy and left the
-// runtime looking for a file the editor no longer wrote — see
-// `kooch_core::scene_paths`.
+// The names live in `kooch_core` because the runtime's scene bootstrap needs them too, and it
+// cannot depend on the editor to learn them.
 pub use kooch_core::scene_paths::{
     DEFAULT_SCENE_REL_PATH, PREFAB_EXTENSION, PROJECT_MANIFEST_FILE, SCENE_EXTENSION,
 };
@@ -33,17 +27,6 @@ pub struct ProjectManifest {
     pub main_scene: Option<String>,
     pub window: WindowSettings,
     /// Assets that ship even though no scene or prefab names them.
-    ///
-    /// 🔴 The packager ships what the game can REACH: scenes, prefabs,
-    /// and everything those reference. A guid built in Rust — loaded by
-    /// path at runtime, chosen from a table, assembled from a string —
-    /// is not reachable by reading files, so it does not ship and the
-    /// game misses it in silence.
-    ///
-    /// Every engine answers this with a declaration: Unity has
-    /// `Resources/`, Godot has export filters. This is ours, and it is a
-    /// list rather than a folder because the assets in question usually
-    /// live in the ENGINE's tree, where a project cannot put a folder.
     #[serde(default)]
     pub build: BuildIncludes,
 }
@@ -130,34 +113,10 @@ pub struct EditorConfig {
     /// `<workspace> -g <file>` is appended. `None` = auto-detect.
     #[serde(default)]
     pub ide_command: Option<String>,
-    /// Last address the Profiler panel connected to, e.g.
-    /// `192.168.0.36:8585`.
-    ///
-    /// Remembered because it is a handheld's address on a home network:
-    /// typed once, needed every session, and wrong in a way that looks
-    /// like the profiler being broken.
+    /// Last address the Profiler panel connected to, e.g. `192.168.0.36:8585`.
     #[serde(default)]
     pub profiler_addr: Option<String>,
-    /// Extra environment the Play button launches a project's game with,
-    /// per project.
-    ///
-    /// Every knob this engine can be measured with is a `KOOCH_*`
-    /// variable, because the frame they exist for is a game launched
-    /// outside the editor. Play launches a game **from** the editor, and
-    /// until this existed the only way to hand one a variable was to
-    /// relaunch the editor with it set — the child inherits the parent's
-    /// environment and nothing else.
-    ///
-    /// 🔴 Here rather than in `project.kooch` on purpose. A launch
-    /// option is a measurement, and a measurement committed to a
-    /// repository is a wrong configuration every collaborator then
-    /// inherits — the same argument that keeps `KOOCH_SHADING_PAD` out
-    /// of `.rendersettings`. The config directory cannot be committed by
-    /// accident.
-    ///
-    /// Per project rather than one global string, because "it silently
-    /// applied to the other project too" is exactly how a capture ends
-    /// up measuring something nobody asked for.
+    /// Extra environment the Play button launches a project's game with, per project.
     #[serde(default)]
     pub launch_env: Vec<ProjectLaunchEnv>,
 }
@@ -167,10 +126,6 @@ pub struct EditorConfig {
 pub struct ProjectLaunchEnv {
     pub path: PathBuf,
     /// Whitespace-separated `KEY=VALUE`, as typed.
-    ///
-    /// Stored as the raw line rather than parsed pairs so the field
-    /// shows back exactly what was written — including the part that did
-    /// not parse, which is the part somebody needs to see to fix it.
     pub value: String,
 }
 
@@ -260,21 +215,9 @@ impl EditorConfig {
 // ---------------------------------------------------------------------------
 
 /// Standard project subdirectories.
-///
-/// `scripts/` used to be here, from when a script meant a `.rhai` file on
-/// disk. A script is a Rust component or system in `src/` now: codegen
-/// scans `src/` and the Asset Browser's "Register scripts" reads Rust.
-/// The scripting crate that loaded those files is gone. So the directory
-/// was created, never read, and suggested a place to put code the engine
-/// would never look at.
-// `assets/scenes` rather than a top-level `scenes`: everything a game
-// needs at runtime is one tree (#758).
 const PROJECT_DIRS: &[&str] = &["assets/scenes", "assets", "src"];
 
 /// Sanitizes a project name into a valid Rust crate name.
-///
-/// Lowercases, replaces spaces/hyphens with underscores, strips
-/// non-alphanumeric/underscore characters.
 pub fn sanitize_crate_name(name: &str) -> String {
     name.to_lowercase()
         .replace([' ', '-'], "_")
@@ -284,18 +227,6 @@ pub fn sanitize_crate_name(name: &str) -> String {
 }
 
 /// Generates a `Cargo.toml` for a project crate.
-///
-/// `engine_path` is what goes in the `path` dependency. Normally it is
-/// the relative [`engine_vendor::VENDOR_DIR`] — the engine copied into
-/// the project — which is what makes the manifest identical on every
-/// machine (#754). Developing the engine itself passes an absolute path
-/// to the live clone instead; see [`create_project`].
-/// [`generate_cargo_toml`] for tests that assert on the shape of the
-/// manifest the editor writes.
-///
-/// Exists so the pieces the editor later *depends on* — the feature
-/// names, the authoring binary — are checked against the real generator
-/// rather than a copy of it in a test.
 #[cfg(test)]
 pub(crate) fn generate_cargo_toml_for_test(name: &str, engine_path: &str) -> String {
     generate_cargo_toml(name, engine_path)
@@ -369,26 +300,6 @@ kooch_ecs = {{ path = "{engine_path}/crates/kooch_ecs" }}
 }
 
 /// Rewrites the manifest's engine dependency to point at `engine_dir`.
-///
-/// The path is absolute and `$HOME` differs per user, so a project that
-/// moved between machines names a directory that is not there. That
-/// line belongs to the editor — it owns the directory it names — so it
-/// is corrected on open rather than left for cargo to fail on.
-///
-/// A no-op when it already matches, so opening a project does not
-/// Moves a project onto an engine, **without opening or compiling it**.
-///
-/// 🔴 Two files record which engine a project uses, and writing one
-/// without the other is what made the engine prompt return for ever
-/// (#801): `Cargo.toml` carries the path cargo builds against, and
-/// `project.kooch` carries `engine_version`, which is what decides
-/// whether the prompt appears at all. They are written here together so
-/// there is one place that can get it wrong.
-///
-/// Nothing is loaded and no build is started — which is the point.
-/// Opening a project compiles its plugin first and discovers the version
-/// mismatch second, throwing that compile away; settled here, the first
-/// compile is already against the right engine (#800).
 pub fn move_project_to_engine(
     project_root: &Path,
     engine_dir: &Path,
@@ -404,10 +315,6 @@ pub fn move_project_to_engine(
 }
 
 /// The engine version a project records, without opening it.
-///
-/// `None` when there is no readable manifest — a directory that was
-/// deleted or was never a project. The launcher shows those as missing
-/// rather than guessing a version for them.
 pub fn project_engine_version(project_root: &Path) -> Option<String> {
     ProjectManifest::load(project_root)
         .ok()
@@ -459,32 +366,19 @@ fn rewrite_path_value(line: &str, value: &str) -> Option<String> {
 }
 
 /// Generates `src/lib.rs` — the project as a library the editor loads.
-///
-/// This is what lets the standalone editor know a project's component
-/// types without compiling them: it loads the `dylib` this produces and
-/// asks it to declare them. The binary links the same code as an `rlib`,
-/// so the game is unaffected.
-///
-/// Editor-managed, like `registrations.rs`: regenerated when missing,
-/// and its contents must stay in step with
-/// [`crate::actions::codegen::render_registrations`].
 pub(crate) fn generate_lib_rs(name: &str) -> String {
     let crate_name = sanitize_crate_name(name);
     format!(
         r##"//! AUTO-GENERATED by the Kóoch editor — do not edit by hand.
-//!
-//! Your project, as a library the editor can load. The `dylib` this
-//! produces is what lets the standalone editor list your components
-//! without compiling them.
+//! Your project, as a library the editor can load. The `dylib` this produces is what lets the
+//! standalone editor list your components without compiling them.
 
 // Editor-managed module: declares your components + systems.
 pub mod registrations;
 
-// Everything below exists so the standalone editor can list your
-// components without compiling them, and it is compiled out of a game
-// build along with the rest of the authoring surface (#558) — a game
-// loads no plugins, and `kooch::kooch_plugin_api` is not in its
-// dependency graph to name.
+// Everything below exists so the standalone editor can list your components without compiling them,
+// and it is compiled out of a game build along with the rest of the authoring surface (#558) — a
+// game loads no plugins, and `kooch::kooch_plugin_api` is not in its dependency graph to name.
 #[cfg(feature = "editor")]
 mod plugin {{
     use super::registrations;
@@ -513,19 +407,12 @@ pub use plugin::ProjectPlugin;
 }
 
 /// Generates a scaffold `src/main.rs` for a project crate.
-///
-/// Wires the editor-owned `registrations` module (see
-/// [`INITIAL_REGISTRATIONS`]), which declares + registers the project's
-/// components and systems. The editor regenerates that module — and this
-/// `main.rs` if it goes missing — so the wiring here must stay in sync
-/// with `crate::actions::codegen`.
 pub(crate) fn generate_main_rs(name: &str) -> String {
     let crate_name = sanitize_crate_name(name);
     r##"//! Your game.
-//!
-//! No flags and no modes: this is what a player runs, and it is the whole
-//! of what a shipped build contains. Authoring lives in `src/editor.rs`,
-//! behind the `editor` feature, so this binary cannot link it (#558).
+//! No flags and no modes: this is what a player runs, and it is the whole of what a shipped build
+//! contains. Authoring lives in `src/editor.rs`, behind the `editor` feature, so this binary cannot
+//! link it (#558).
 
 use kooch::prelude::*;
 
@@ -544,18 +431,7 @@ fn main() {
     .replace("PROJECT_CRATE", &crate_name)
 }
 
-/// Generates `src/editor.rs` — authoring, in a target a game build does
-/// not produce.
-///
-/// Split out of `main.rs` for #558. The old scaffold made the editor the
-/// fall-through case of an argument match, so a shipped binary opened by
-/// double-click started the *editor*; and the manifest asked for the
-/// editor feature unconditionally, so the artefact carried the whole
-/// authoring UI whether or not it could be reached.
-///
-/// A `cfg` would have expressed the intent. A separate target with
-/// `required-features` enforces it: the game's build does not have
-/// `kooch_editor_core` in its dependency graph at all.
+/// Generates `src/editor.rs` — authoring, in a target a game build does not produce.
 pub(crate) fn generate_editor_rs(name: &str) -> String {
     let crate_name = sanitize_crate_name(name);
     r##"//! Authoring: the editor, and the host the standalone editor drives.
@@ -568,13 +444,9 @@ use kooch::prelude::*;
 use PROJECT_CRATE::registrations;
 
 fn main() {
-    // `cargo run --features editor --bin PROJECT_CRATE_editor`
-    //     → the editor, with your components.
-    // `… -- --remote`
-    //     → headless authoring host: your components + the remote server,
-    //       driven by the standalone editor over a local socket. Gameplay
-    //       starts paused; the editor's Play button starts it without a
-    //       rebuild, in the editor's own viewport.
+    // `cargo run --features editor --bin PROJECT_CRATE_editor` → the editor, with your components.
+    // `… -- --remote` → headless authoring host: your components + the remote server, driven by the
+    // standalone editor over a local socket.
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--remote") {
         // Headless on purpose: the editor draws this world in its own
@@ -596,32 +468,13 @@ fn main() {
     .replace("PROJECT_CRATE", &crate_name)
 }
 
-/// Contents of a fresh, empty `src/registrations.rs` — valid on its own
-/// so a new project compiles before any component/system exists. The
-/// editor overwrites it with real registrations via
+/// Contents of a fresh, empty `src/registrations.rs` — valid on its own so a new project compiles
+/// before any component/system exists. The editor overwrites it with real registrations via
 /// `crate::actions::codegen`.
 
 /// Creates a new project directory with the standard structure and manifest.
-///
-/// `parent_dir` is the parent folder; a subdirectory named `name` will be
-/// created inside it. `engine_root` is the path to the kooch repo
-/// root, used to generate `Cargo.toml` dependency paths.
 
 /// What a new project tells git to leave alone.
-///
-/// `target/` is the whole point: a debug build of a project that links
-/// this engine is gigabytes, and a repository that commits it is a
-/// repository nobody can clone.
-///
-/// Two things are deliberately *not* here, because ignoring them breaks a
-/// fresh clone:
-///
-/// - **`Cargo.lock`** — this crate builds a binary, and for a binary the
-///   lock file is the record of what actually compiled. Libraries omit
-///   it; games want the exact versions back.
-/// - **`src/registrations.rs`** — editor-managed, but the build needs it:
-///   `lib.rs` declares the module, so a clone without it does not compile
-///   until the editor happens to regenerate it.
 const PROJECT_GITIGNORE: &str = "\
 # Rust build output. Gigabytes, and every byte of it regenerable.
 /target
@@ -658,21 +511,7 @@ pub fn create_project(
     manifest.main_scene = Some(DEFAULT_SCENE_REL_PATH.to_owned());
     manifest.save(&project_root)?;
 
-    // 🔴 The engine goes INSIDE the project (#754). Before this the
-    // manifest carried an absolute path to whatever clone created the
-    // project, so the project did not build on a second machine — and a
-    // compiled editor, which has no clone next to it at all, could not
-    // produce a buildable project.
-    //
-    // Developing the engine is the exception and has to stay working:
-    // when the editor is running out of the engine's own source tree,
-    // copying it would freeze the project against a snapshot and break
-    // the daily loop of changing engine and game together. There the
-    // manifest keeps pointing at the live clone.
-    // 🔴 The engine is materialised ONCE per version on this machine and
-    // shared by every project (#754) — not copied in here. Developing
-    // the engine is the exception: the manifest points at the live clone
-    // so a change to the engine reaches the game without a re-copy.
+    // 🔴 The engine goes INSIDE the project (#754).
     let engine_path = if crate::engine_vendor::running_from_engine_build(engine_root) {
         engine_root.display().to_string()
     } else {
@@ -715,20 +554,8 @@ pub fn create_project(
 }
 
 /// Ensures `scenes/default.scene` exists under `project_root`.
-///
-/// If the file is missing, writes a minimal starter scene with one Camera
-/// entity (Transform + PerspectiveCamera + Name) and one Sky entity
-/// (SkyRenderer + Name). All component fields are left empty so
-/// `sync_scene_to_ecs` materializes them via `Reflect::reflect_default()`,
-/// which means the starter tracks default changes without churn.
-///
-/// Returns the absolute path to the scene file.
 pub fn ensure_default_scene(project_root: &Path) -> Result<PathBuf, ProjectError> {
-    // 🔴 Derived from the scene's own path, not spelled again. This said
-    // `scenes` while the path below said `assets/scenes/default.scene`,
-    // so it created one directory and wrote into another that did not
-    // exist — "failed to ensure default scene: No such file or
-    // directory", on every open, from a project that was fine.
+    // 🔴 Derived from the scene's own path, not spelled again.
     let path = project_root.join(DEFAULT_SCENE_REL_PATH);
     if let Some(scenes_dir) = path.parent() {
         fs::create_dir_all(scenes_dir).map_err(ProjectError::Io)?;

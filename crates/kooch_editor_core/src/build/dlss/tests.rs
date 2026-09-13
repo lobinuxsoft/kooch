@@ -15,10 +15,9 @@ fn only_the_exact_feature_counts() {
     assert!(!wanted(&preset_with("audio")));
 }
 
-/// 🔴 `dlss` on its own is a feature of the GAME's crate, and cargo
-/// refuses a build that names one the project never declared. The
-/// namespaced spelling is what a preset should carry — and the bare one
-/// is what everybody types, so both are honoured here.
+/// 🔴 `dlss` on its own is a feature of the GAME's crate, and cargo refuses a build that names one
+/// the project never declared. The namespaced spelling is what a preset should carry — and the bare
+/// one is what everybody types, so both are honoured here.
 #[test]
 fn the_bare_spelling_is_honoured_too() {
     assert!(wanted(&preset_with("dlss")));

@@ -1,17 +1,4 @@
 //! View panel — viewport image + handle-mode toolbar overlay.
-//!
-//! The toolbar at the top-left of the panel hosts:
-//!
-//! 1. **Move / Rotate / Scale** mode buttons (always visible). Tinted
-//!    when the corresponding `HandleMode` is active. Tooltip shows the
-//!    keyboard shortcut.
-//! 2. **Local / World** rotation-display toggle (only when at least
-//!    one selected entity has a `Transform` component). Affects the
-//!    inspector rotation display AND the gizmo handles' basis.
-//!
-//! Toolbar clicks write to `viewport_input.mode_request` so the
-//! existing W / E / R keyboard pipeline applies the change with no
-//! extra wiring.
 
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta, collect_viewport_input};
@@ -59,22 +46,16 @@ pub(crate) fn draw_view_content(
 
     let panel_origin = ui.cursor().min;
 
-    // Allocate the interactive viewport image first (it captures camera
-    // input). The toolbar is drawn on top using a child UI placed at
-    // the top-left corner of the panel rect so its clicks do not fall
-    // through to the viewport drag layer.
+    // Allocate the interactive viewport image first (it captures camera input). The toolbar is
+    // drawn on top using a child UI placed at the top-left corner of the panel rect so its clicks
+    // do not fall through to the viewport drag layer.
     let response =
         ui.add(egui::Image::new((texture_id, available)).sense(egui::Sense::click_and_drag()));
     let mut delta = collect_viewport_input(&response, ui, controller, focused);
 
-    // A prefab dropped here lands under the cursor. What is passed on is the
-    // cursor, not a world position: unprojecting needs the camera's
-    // orientation, which lives on the camera entity and not in anything this
-    // panel is handed. See `viewport_pick`.
-    //
-    // Guarded behind `dnd_hover_payload` because `dnd_release_payload` takes
-    // the payload before checking its type; see the ordering note in
-    // `panels/world/entity_row.rs`.
+    // A prefab dropped here lands under the cursor. What is passed on is the cursor, not a world
+    // position: unprojecting needs the camera's orientation, which lives on the camera entity and
+    // not in anything this panel is handed. See `viewport_pick`.
     if response
         .dnd_hover_payload::<crate::drag_drop::DraggedAsset>()
         .is_some_and(|a| a.type_name == crate::drag_drop::PREFAB_TYPE_NAME)
@@ -103,12 +84,8 @@ pub(crate) fn draw_view_content(
         }
     }
 
-    // Horizontal toolbar at the top edge of the viewport. Hosts only
-    // gizmo controls (mode + basis + snap), shown when a Transform is
-    // actually selected. Without a selection there is nothing to put
-    // here — debug + perf knobs all live in the right sidebar — so we
-    // skip the entire Frame to avoid leaving an empty padded
-    // rectangle floating in the viewport's top-left.
+    // Horizontal toolbar at the top edge of the viewport. Hosts only gizmo controls (mode + basis +
+    // snap), shown when a Transform is actually selected.
     if selection_has_transform {
         let toolbar_rect = egui::Rect::from_min_size(
             panel_origin + TOOLBAR_OFFSET,
@@ -172,10 +149,9 @@ pub(crate) fn draw_view_content(
 
                 ui.separator();
 
-                // Snap step values. Reuse the move / rotate glyphs as
-                // prefixes so users associate each spinner with the
-                // matching gizmo mode without spending toolbar width on
-                // text labels.
+                // Snap step values. Reuse the move / rotate glyphs as prefixes so users associate
+                // each spinner with the matching gizmo mode without spending toolbar width on text
+                // labels.
                 ui.add(
                     crate::numeric::drag(&mut snap_settings.translate)
                         .speed(0.01)
@@ -197,17 +173,11 @@ pub(crate) fn draw_view_content(
 
                 ui.separator();
 
-                // 🔴 Only where it can do something. Offering "Face" with
-                // no block selected is a switch that silently changes
-                // what a click means and then changes nothing else — the
-                // author flips it, clicks, and the entity selection is
-                // gone for a reason the toolbar never showed.
+                // 🔴 Only where it can do something.
                 if editing_a_block {
-                    // Icons, not labels: four words is a sentence you
-                    // re-read on every switch, and this is the row an
-                    // author touches most. The name stays in the
-                    // tooltip, which is where a glyph nobody recognises
-                    // yet gets explained.
+                    // Icons, not labels: four words is a sentence you re-read on every switch, and
+                    // this is the row an author touches most. The name stays in the tooltip, which
+                    // is where a glyph nobody recognises yet gets explained.
                     for mode in crate::block_edit::ElementMode::ALL {
                         if ui
                             .selectable_label(*element_mode == mode, mode.icon())
@@ -220,10 +190,9 @@ pub(crate) fn draw_view_content(
                     ui.separator();
                 }
 
-                // Gizmo visibility. Marked when something is hidden, so a
-                // missing outline is traceable to a choice rather than
-                // looking like a broken gizmo — which is the failure this
-                // menu exists to prevent.
+                // Gizmo visibility. Marked when something is hidden, so a missing outline is
+                // traceable to a choice rather than looking like a broken gizmo — which is the
+                // failure this menu exists to prevent.
                 let filtered = gizmo_visibility.has_exceptions();
                 let label = if filtered {
                     format!("{} Gizmos*", icons::EYE)
@@ -241,9 +210,8 @@ pub(crate) fn draw_view_content(
                     "Choose which gizmos draw"
                 });
 
-                // The solver's own account of itself, separate from the
-                // Gizmos menu on purpose: those draw components, this
-                // draws what the physics world actually holds, and the
+                // The solver's own account of itself, separate from the Gizmos menu on purpose:
+                // those draw components, this draws what the physics world actually holds, and the
                 // whole value is in being able to compare the two.
                 let active = physics_debug.any();
                 let label = if active {
@@ -276,12 +244,8 @@ pub(crate) fn draw_view_content(
     *input = Some(delta);
 }
 
-/// The orientation gizmo in the viewport's top-right: six balls on the
-/// world axes, projected through the camera's rotation, back ones drawn
-/// first. Clicking one snaps the camera to look FROM that axis — the
-/// click travels as `snap_orientation` in the input delta, applied by
-/// the same step that applies orbits, so the panel stays free of
-/// camera math the way the rest of its input already is.
+/// The orientation gizmo in the viewport's top-right: six balls on the world axes, projected
+/// through the camera's rotation, back ones drawn first.
 fn axis_gizmo(
     ui: &mut egui::Ui,
     origin: egui::Pos2,
@@ -369,10 +333,9 @@ fn axis_gizmo(
     }
 }
 
-/// The orientation that looks FROM `axis * sign` toward the focus
-/// point. Up stays world +Y except on the Y axis itself, where the
-/// horizon is gone and -Z stands in — the same convention Godot's top
-/// and bottom views use, so muscle memory transfers.
+/// The orientation that looks FROM `axis * sign` toward the focus point. Up stays world +Y except
+/// on the Y axis itself, where the horizon is gone and -Z stands in — the same convention Godot's
+/// top and bottom views use, so muscle memory transfers.
 fn snap_view(axis: glam::Vec3, sign: f32) -> glam::Quat {
     let back = axis * sign;
     let up = if axis.y.abs() > 0.5 {
@@ -385,9 +348,8 @@ fn snap_view(axis: glam::Vec3, sign: f32) -> glam::Quat {
     glam::Quat::from_mat3(&glam::Mat3::from_cols(right, true_up, back))
 }
 
-/// Width of the perf sidebar overlay anchored to the right edge of
-/// the viewport. 260 px fits the widest "n/a (TIMESTAMP_QUERY
-/// unavailable)" GPU-frame-time row without wrapping while leaving
+/// Width of the perf sidebar overlay anchored to the right edge of the viewport. 260 px fits the
+/// widest "n/a (TIMESTAMP_QUERY unavailable)" GPU-frame-time row without wrapping while leaving
 /// room to read the actual viewport.
 
 /// Renders one toolbar button. Highlights when `active`. Returns
@@ -412,10 +374,6 @@ fn mode_button(ui: &mut egui::Ui, icon: &str, tooltip: &str, active: bool) -> bo
 }
 
 /// The physics overlay's per-category switches.
-///
-/// Each line says what the category answers rather than what it draws. An
-/// author reaching for this menu has a question ("why is it not
-/// colliding"), not a shopping list.
 fn draw_physics_debug_menu(
     ui: &mut egui::Ui,
     categories: &mut kooch_physics::backend::DebugCategories,

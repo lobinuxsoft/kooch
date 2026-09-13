@@ -1,26 +1,4 @@
 //! Baking a collision mesh out of a render mesh.
-//!
-//! # Why this is a file and not a cache
-//!
-//! Both halves of the answer are measured, in debug, on the engine's own
-//! meshes. A convex hull is 33 ms and its result is cached at runtime, so
-//! baking one saves little on its own. A convex *decomposition* is 1.35 s
-//! for Suzanne and 2.58 s for a 76k dragon, every time the body is
-//! rebuilt — a scale drag re-runs it. That is not something to cache; it
-//! is something to compute once and keep.
-//!
-//! The file buys two more things a cache cannot: an artist can open it
-//! and see what the solver will actually collide against, and it can be
-//! simplified below the exact hull, which nothing at runtime is allowed
-//! to do on its own.
-//!
-//! # The derived asset knows where it came from
-//!
-//! A baked collider is the classic silent-staleness trap: change the
-//! source, and the hull keeps its own GUID, nothing fails, and the prop
-//! collides with the shape it had last week. So the sidecar records the
-//! source GUID and a hash of the source bytes. Whoever displays it can
-//! say "this is behind"; nothing has to guess.
 
 use std::path::{Path, PathBuf};
 
@@ -52,11 +30,6 @@ const KEY_SOURCE: &str = "source_guid";
 const KEY_HASH: &str = "source_hash";
 
 /// Builds a collision mesh beside the project's assets.
-///
-/// `max_faces` caps each convex piece; zero means the exact hull, which
-/// is what qhull already reduces to and is correct if dearer. For
-/// [`BakeKind::Mesh`] a budget is the entire operation, so zero is a
-/// refusal rather than a copy.
 pub(super) fn handle_bake_collider(
     resources: &mut Resources,
     source: Guid,
@@ -164,11 +137,6 @@ pub(super) fn handle_bake_collider(
 }
 
 /// The mesh's own triangles, decimated to a budget.
-///
-/// Reports how far the surface moved, in mesh units. That number is the
-/// one thing that makes this bake reviewable: a floor that drifted down
-/// by a centimetre is a floor a character sinks into, and nothing else
-/// would say so.
 fn decimate(mesh: &Mesh, max_faces: u32, source: Guid) -> Mesh {
     let (smaller, error) = simplify(mesh, SimplifyTarget::Triangles(max_faces));
     tracing::info!(
@@ -182,10 +150,6 @@ fn decimate(mesh: &Mesh, max_faces: u32, source: Guid) -> Mesh {
 }
 
 /// The convex hull of a point cloud, as a mesh, optionally decimated.
-///
-/// Simplified *then re-hulled*: `meshopt` collapses edges and has no
-/// reason to keep the result convex, and a collider that is nearly convex
-/// is a collider with a dent the solver will find.
 fn hull_mesh(points: &[glam::Vec3], max_faces: u32) -> Option<Mesh> {
     let (hull, triangles) = hull_of(points)?;
     let mesh = Mesh::from_triangles(&hull, &triangles);
@@ -204,10 +168,6 @@ fn hull_mesh(points: &[glam::Vec3], max_faces: u32) -> Option<Mesh> {
 }
 
 /// `<project>/assets/collision`.
-///
-/// The project, never the engine: the engine's assets are read-only, and
-/// its own meshes get their colliders baked into the engine the way the
-/// primitives are.
 fn project_collision_dir(resources: &Resources) -> Option<PathBuf> {
     let state = resources.get::<ProjectState>()?;
     let root = state.active_project.as_ref()?.root_path.clone();
@@ -251,9 +211,6 @@ fn write_sidecar(out: &Path, source: Guid, kind: &str, hash: u64) {
 }
 
 /// A cheap fingerprint of the source bytes.
-///
-/// Not cryptographic and does not need to be: the question is "did this
-/// file change", and an adversary editing your meshes has already won.
 fn hash_of(bytes: &[u8]) -> u64 {
     use std::hash::{Hash, Hasher};
 
