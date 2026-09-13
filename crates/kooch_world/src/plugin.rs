@@ -1,13 +1,6 @@
-//! [`WorldStreamingPlugin`] — wires the chunk streaming subsystem into
-//! an `App`. Registers the [`ChunkManager`] + [`LodRingConfig`]
-//! resources and adds the activation + processing system to the
-//! schedule.
-//!
-//! Consumers (editor / game) are expected to attach
-//! [`StreamingFocus`] to whichever entities should drive streaming —
-//! typically the active camera, plus any AI / event entity that
-//! gameplay declares as a focus. The plugin does NOT auto-attach to a
-//! camera so it stays composable with custom focus strategies.
+//! [`WorldStreamingPlugin`]: registers [`ChunkManager`] and [`LodRingConfig`] and schedules
+//! activation. It attaches no [`StreamingFocus`]; the game or editor chooses which entities drive
+//! streaming.
 
 use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
@@ -20,10 +13,8 @@ use crate::focus_cache::FocusCacheState;
 use crate::lod::LodRingConfig;
 use crate::manager::ChunkManager;
 
-/// Per-frame load budget. Caps how many chunks transition Unloaded →
-/// Loaded in a single activation tick. Picked low for the warmup —
-/// the synchronous loader has zero cost, but bounded budget is the
-/// pattern future async loading will keep.
+/// Chunks loaded per activation tick; the synchronous loader costs nothing, but the bound is the
+/// pattern async loading keeps.
 pub const DEFAULT_MAX_LOADS_PER_FRAME: usize = 8;
 
 /// Per-frame unload budget. Eviction listeners (e.g. #309 Edit Baker
@@ -40,23 +31,14 @@ impl Plugin for WorldStreamingPlugin {
         app.insert_resource(LodRingConfig::default());
         app.insert_resource(FocusCacheState::default());
 
-        // Register the StreamingFocus component on the ECS registry.
-        // Use `register_cpu_reflected` (NOT plain `register_cpu`) so the
-        // editor's drag-and-drop / inspector / spawn flows can construct
-        // a default instance via the Reflect accessor — without the
-        // reflector, `insert_default_reflected` silently no-ops.
+        // `register_cpu_reflected`, or the editor's inspector and spawn flows cannot build a
+        // default and `insert_default_reflected` silently does nothing.
         if let Some(registry) = app.resources_mut().get_mut::<ComponentRegistry>() {
             registry.register_cpu_reflected::<StreamingFocus>();
         }
 
-        // Re-enabled in #115 PR-2: the activation system is now cache-
-        // gated by `FocusCacheState`. When no `StreamingFocus` has
-        // crossed a chunk boundary on any LOD since the last tick, the
-        // system early-returns without enumerating the grid — kills
-        // the regression caught in PR #315 (41 M pending entries in
-        // 30 s of editor runtime). Activation is distance-based; the
-        // LBVH that was going to accelerate it went with the raymarcher
-        // it was built for, and physics broadphase is rapier's job now.
+        // Cache-gated by `FocusCacheState`: with no boundary crossed the system returns without
+        // enumerating the grid — 41 M pending entries in 30 s before (#315).
         app.add_system(kooch_core::stage::Stage::PreUpdate, world_streaming_system);
     }
 
@@ -65,12 +47,8 @@ impl Plugin for WorldStreamingPlugin {
     }
 }
 
-/// Per-frame system: pull `ChunkManager` + `FocusCacheState` out,
-/// read `LodRingConfig`, run the cached activation pass + drain the
-/// queues with the per-frame budget, put the resources back. The
-/// remove/insert dance is needed because `activation_system` reads
-/// `&Resources` for the focus query while we mutate the manager and
-/// the cache.
+/// Lifts `ChunkManager` and `FocusCacheState` out of `Resources`, because activation reads
+/// `&Resources` for the focus query while mutating both.
 pub fn world_streaming_system(resources: &mut Resources) {
     let Some(mut manager) = resources.remove::<ChunkManager>() else {
         return;

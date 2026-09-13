@@ -1,18 +1,7 @@
 use super::{DOWNSAMPLE_WGSL, DOWNSAMPLE_WORKGROUP_SIZE};
 
-/// The workgroup size is written in three places and none of them fails
-/// to compile when they disagree.
-///
-/// The host constant sizes the dispatch, the shader's `const` is the
-/// stride of the grid-stride loop at `sparse_downsample.wgsl:154`, and
-/// `@workgroup_size` is how many threads actually run. Divergence
-/// between the last two makes the loop step by a different amount than
-/// there are threads, so the pass reads some voxels twice and skips
-/// others — a cascade that is quietly wrong rather than a build that
-/// stops.
-///
-/// `POPULATE_WORKGROUP_SIZE` has had this test since it was written;
-/// this is the same one for its twin.
+/// Host constant, shader `const` and `@workgroup_size` must agree, and nothing fails to compile
+/// when they don't: a mismatched stride reads some voxels twice and skips others.
 #[test]
 fn downsample_workgroup_size_agrees() {
     assert!(

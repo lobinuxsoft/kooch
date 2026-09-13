@@ -243,10 +243,8 @@ fn closest_chunk_gets_lowest_priority() {
     // After a single activation pass, the closest chunk to the
     // focus must be at the top of the load queue.
     let mut m = ChunkManager::new(1024);
-    // Focus at (210, 30, 30) — solidly inside chunk (3, 0, 0) at
-    // LOD 0 (chunk covers [192, 256) × [0, 64) × [0, 64)). Picked
-    // off the integer boundaries so neighbouring chunks aren't
-    // tied for closest.
+    // (210, 30, 30) sits inside chunk (3, 0, 0) at LOD 0, off the boundaries so no neighbour ties
+    // for closest.
     activate_chunks(
         &[(DVec3::new(210.0, 30.0, 30.0), 0)],
         &mut m,

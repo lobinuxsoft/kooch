@@ -15,12 +15,8 @@ use crate::manager::ChunkManager;
 
 use super::helpers::{chunk_priority, chunks_within_sphere};
 
-/// Pure activation step.
-///
-/// `focuses[i] = (universe_position, priority)`. Walks the LOD ring
-/// table, collects every chunk inside any focus's per-LOD radius, and
-/// queues loads for new ones / unloads for chunks that fell out of
-/// every focus.
+/// Pure activation step over `(universe_position, priority)` focuses: queues loads for chunks newly
+/// in range and unloads for those no focus covers.
 pub fn activate_chunks(
     focuses: &[(DVec3, u8)],
     manager: &mut ChunkManager,
@@ -52,17 +48,8 @@ pub fn activate_chunks(
     }
 }
 
-/// Cached activation step. Same semantics as [`activate_chunks`] but
-/// **skips entirely** when no focus has crossed a chunk boundary on
-/// any LOD since the last call.
-///
-/// `focuses[i] = (entity, universe_position, priority)`. The cache is
-/// updated in place each tick; stale entities (no longer in the focus
-/// list) are purged automatically.
-///
-/// This is the normal entry point used by the schedule. The
-/// uncached [`activate_chunks`] stays available as a pure helper for
-/// tests / one-shot tooling.
+/// [`activate_chunks`], skipped entirely when no focus crossed a chunk boundary on any LOD; purges
+/// focuses that disappeared. The schedule's entry point.
 pub fn activate_chunks_cached(
     focuses: &[(Entity, DVec3, u8)],
     cache: &mut FocusCacheState,

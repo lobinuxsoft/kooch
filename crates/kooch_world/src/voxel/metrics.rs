@@ -1,25 +1,6 @@
-//! Telemetry sink — `MetricsPass` aggregates per-LOD freelist state +
-//! cumulative alloc/free counters into one 24 B buffer at the tail of
-//! the cascade. The host reads it asynchronously via [`Metrics::read`].
-//!
-//! # Not a hot-loop pass
-//!
-//! Although [`MetricsPass::record`] composes into the canonical
-//! orchestrator (it's the 8th pass after the b18f4aa fix-up), the
-//! readback is **opt-in async** — production paths keep the lookup hot
-//! loop at zero CPU readback. Call [`Metrics::read`] at telemetry
-//! cadence (per-second / on-demand), never per-frame from the render
-//! thread.
-//!
-//! # VRAM accounting
-//!
-//! `vram_bytes` is computed host-side from [`LOD_LEVELS`] — the atlas
-//! geometry is constexpr, so a GPU pass to count it would be wasted
-//! work. The shader writes the runtime-varying fields (active counts +
-//! cumulative pops/pushes); the host fills `vram_bytes` from the
-//! constexpr table at [`Metrics::read`] time.
-//!
-//! [`LOD_LEVELS`]: super::LOD_LEVELS
+//! `MetricsPass` gathers freelist state and totals into 24 B. [`Metrics::read`] blocks: telemetry
+//! cadence, never per frame. `vram_bytes` comes from the constant
+//! [`LOD_LEVELS`](super::LOD_LEVELS).
 
 use bytemuck::{Pod, Zeroable};
 
@@ -31,11 +12,7 @@ pub const METRICS_WGSL: &str = include_str!("../../shaders/sparse_metrics.wgsl")
 /// Bytes per `R16Float` texel — the only pool format today.
 const POOL_TEXEL_BYTES: u64 = 2;
 
-/// Aggregated runtime metrics for one [`SparseGrid`]. `active_subgrids`
-/// is per-LOD; the cumulative counters are grid-wide totals across
-/// LODs (the metrics pass sums them).
-///
-/// `vram_bytes` is host-derived from the constexpr atlas table — see
+/// Per-LOD active subgrids plus grid-wide totals; `vram_bytes` comes from
 /// [`Metrics::vram_bytes_from_lod_table`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Metrics {
@@ -80,14 +57,8 @@ impl Metrics {
         total
     }
 
-    /// Synchronous readback for tests + CLI tools. Submits a copy from
-    /// `grid.metrics_buffer()` into a fresh MAP_READ staging buffer,
-    /// blocks on the device poll, parses the bytes into [`Metrics`].
-    ///
-    /// **Caller invariant:** [`MetricsPass::record`] must have run
-    /// earlier in a previously-submitted command buffer (or in the
-    /// same submission queued before this call). Otherwise the read
-    /// returns whatever was last written (zeroes for a fresh grid).
+    /// Blocking readback for tests and tools. [`MetricsPass::record`] must have been submitted
+    /// first, or it returns stale values (zeros on a fresh grid).
     pub fn read(grid: &SparseGrid, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let staging = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("kooch_world::voxel::metrics::readback_staging"),
@@ -131,7 +102,7 @@ impl Metrics {
 }
 
 /// Compiled metrics compute pipeline. Reused across cascade
-/// runs — bind groups are rebuilt per [`record`] call so the pass is
+/// runs — bind groups are rebuilt per [`Self::record`] call so the pass is
 /// grid-agnostic.
 pub struct MetricsPass {
     pipeline: wgpu::ComputePipeline,

@@ -1,10 +1,5 @@
-//! Shared probe-pipeline harness for the lookup GPU tests. Encodes
-//! the full LOD cascade (`chunk_lod → classify[0..3] →
-//! populate_finalize[0..3] → populate[0..3] → downsample[0..2]`) plus
-//! a probe compute that calls `sparse_sdf_lookup` once per thread,
-//! reads back results + canonical root_indices the per-test
-//! assertions need. Lives in `@group(0)` so the lookup-default
-//! `@group(2)` does not collide.
+//! Runs the whole cascade plus a probe compute calling `sparse_sdf_lookup` per thread, in
+//! `@group(0)` so the lookup's default `@group(2)` does not collide.
 
 use crate::voxel::{
     AnalyticSphereSampler, CASCADE_COUNT, ClassifyPass, DEFAULT_MARGIN, DownsamplePass, LOD_COUNT,
@@ -26,12 +21,8 @@ pub(super) fn test_bounds() -> Aabb {
     Aabb::new(TEST_BOUNDS_MIN, TEST_BOUNDS_MAX)
 }
 
-/// Probe pipeline harness — splices `lookup_wgsl(default layout)`
-/// ahead of a tiny compute that calls `sparse_sdf_lookup` once per
-/// thread, writing into a results buffer the host reads back.
-///
-/// The harness pins `target_voxel_size` to `cell_size_base` (LOD 0
-/// pitch) by default — most tests want max-detail lookups.
+/// Probe compute after `lookup_wgsl`, one lookup per thread; `target_voxel_size` defaults to LOD 0
+/// pitch for max detail.
 pub(super) const PROBE_HARNESS_WGSL: &str = r#"
 struct ProbeUniform {
     count: u32,
@@ -299,10 +290,8 @@ pub(super) fn run_lookup_probes_with_target(
         label: Some("test::probe::encoder"),
     });
 
-    // Skip chunk_lod — the synthetic all-ones mask written above gives
-    // every LOD activity in the lookup. The cascade producer runs at
-    // LOD 0 only (`base_lod = 0` invariant); the downsample chain
-    // fills LODs 1..3 via the box-filter cascade.
+    // No chunk_lod: the all-ones mask above activates every LOD; classify runs at LOD 0 and
+    // downsample fills the rest.
     classify.record(
         device,
         queue,

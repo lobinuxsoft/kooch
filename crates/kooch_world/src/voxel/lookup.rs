@@ -1,49 +1,13 @@
-//! Reusable sparse SDF lookup — a pure WGSL function consumers
-//! splice into their own pipelines (raymarcher, Edit Baker #309,
-//! debug visualisers).
-//!
-//! The shader source ([`LOOKUP_BODY_WGSL`]) deliberately does not
-//! declare `@group/@binding` attributes — those slots are caller
-//! responsibility. The Rust helper [`lookup_wgsl`] returns a finished
-//! shader fragment with the seven required globals attached at the
-//! requested binding layout.
-//!
-//! # Default layout — `(group = 2, root = 0, pools = [1, 2, 3, 4], sampler = 5, mask = 6, uniform = 7)`
-//!
-//! Tied to the contract recommended for the Edit Baker pipeline
-//! (#309). `@group(0)` is reserved for the producer's own writeable
-//! resources and `@group(1)` for samplers; the lookup globals live in
-//! `@group(2)` as a self-contained read-only view of one chunk's
-//! sparse SDF cascade. Consumers with conflicting groups override at
-//! the [`lookup_wgsl`] call site.
-//!
-//! # S7 — LOD-aware lookup
-//!
-//! `sparse_sdf_lookup(world_pos, target_voxel_size) -> f32` selects
-//! the *coarsest acceptable* LOD whose voxel pitch is `≤
-//! target_voxel_size`, then samples that LOD's atlas via HW
-//! trilinear. Edit Baker pins `target_voxel_size = cell_size_base`
-//! (LOD 0 voxel pitch) for max detail; raymarchers pass pixel size at
-//! the sampled distance.
-//!
-//! # Canonical root_indices
-//!
-//! Although the [`SparseGrid`] stores 4 per-LOD `root_indices`
-//! buffers, the lookup binds *one* of them — by convention
-//! `grid.root_indices_buffer(0)`. Post-cascade the four buffers all
-//! hold the same value at every cell (the downsample stages copy
-//! LOD 0's `subgrid_idx` forward), so a single binding suffices and
-//! avoids 4× the binding pressure on the consumer pipeline layout.
+//! SDF lookup consumers splice in: [`LOOKUP_BODY_WGSL`] declares no bindings, [`lookup_wgsl`]
+//! attaches them (default `@group(2)`). Binds only LOD 0's `root_indices`, which matches every LOD.
 
 use bytemuck::{Pod, Zeroable};
 use kooch_core::Aabb;
 
 use super::{ATLAS_TILES_X, ATLAS_TILES_Y, ATLAS_TILES_Z, LOD_LEVELS, ROOT_DIM, SparseGrid};
 
-/// WGSL source — body only. Declares `LookupUniform`,
-/// `sparse_sdf_far_value`, and `sparse_sdf_lookup`, but not the
-/// globals they read; [`lookup_wgsl`] prepends the `var<...>` decls
-/// with the caller's binding slots.
+/// Body only: declares `LookupUniform` and the functions but not the globals, which [`lookup_wgsl`]
+/// prepends.
 pub const LOOKUP_BODY_WGSL: &str = include_str!("../../shaders/sparse_lookup_body.wgsl");
 
 /// Default `@group` for the lookup globals. See module docs.
@@ -66,18 +30,9 @@ pub const LOOKUP_DEFAULT_MASK_BINDING: u32 = 6;
 /// Default `@binding` for `lookup_uniform`.
 pub const LOOKUP_DEFAULT_UNIFORM_BINDING: u32 = 7;
 
-/// Build a complete WGSL fragment exposing `sparse_sdf_lookup`,
-/// concatenated with the binding declarations the caller's pipeline
-/// layout specifies. Splice into the consumer's shader source ahead
-/// of any function that calls `sparse_sdf_lookup`.
-///
-/// The fragment also prepends `LOOKUP_ROOT_DIM` and
-/// `LOOKUP_ATLAS_TILES_{X,Y,Z}` as compile-time constants reflecting
-/// the host's [`ROOT_DIM`], [`ATLAS_TILES_X`], [`ATLAS_TILES_Y`], and
-/// [`ATLAS_TILES_Z`] — so consumers do not have to track which
-/// `large-root-grid` variant they were built against. The
-/// `lookup_wgsl(..)` signature is the stable contract; the chunk
-/// geometry follows the feature flag invisibly.
+/// A complete fragment exposing `sparse_sdf_lookup` with the caller's binding slots, plus
+/// [`ROOT_DIM`] and [`ATLAS_TILES_X`]/[`ATLAS_TILES_Y`]/[`ATLAS_TILES_Z`] as constants, so
+/// consumers do not track `large-root-grid`.
 pub fn lookup_wgsl(
     group: u32,
     root_binding: u32,
@@ -115,12 +70,8 @@ struct LookupUniformHost {
     cell_size_base: [f32; 4],
 }
 
-/// Minimal binding-side companion to [`lookup_wgsl`]. Owns the
-/// uniform buffer, exposes the layout entries the caller's pipeline
-/// layout needs, and produces the bind-group entries pointing at
-/// the canonical `(grid.root_indices_buffer(0),
-/// grid.subgrid_pool_view(0..3), grid.subgrid_pool_sampler(),
-/// grid.chunk_lod_mask_buffer(), self.uniform)`.
+/// Binding companion to [`lookup_wgsl`]: owns the uniform and builds the layout and bind-group
+/// entries over LOD 0's `root_indices`, the four atlases, the sampler and the mask.
 pub struct LookupBindings {
     uniform_buffer: wgpu::Buffer,
 }
@@ -139,11 +90,8 @@ impl LookupBindings {
         Self { uniform_buffer }
     }
 
-    /// Stage the chunk bounds into the uniform buffer. `cell_size_base`
-    /// is derived from the bounds (LOD 0 voxel pitch = `extent /
-    /// (ROOT_DIM × SUBGRID_DIM)` — but for the purposes of
-    /// `lod_for_voxel_size` we only need cell pitch, not voxel pitch,
-    /// since the per-LOD factor multiplies cell pitch directly).
+    /// Stages the bounds; LOD choice needs only cell pitch, which the per-LOD factor multiplies
+    /// directly.
     pub fn write(&self, queue: &wgpu::Queue, bounds: Aabb) {
         let extent = bounds.max - bounds.min;
         let cell_size = extent / (super::ROOT_DIM as f32);

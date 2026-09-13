@@ -1,11 +1,4 @@
-//! Tests for [`crate::voxel::classify`] — kept in their own file so
-//! the impl module stays under the no-monolithic threshold. The GPU
-//! tests share helpers ([`run_classify`], [`cpu_classify`]) so each
-//! test stays focused on the assertion it makes.
-//!
-//! Every GPU test gates on [`test_device::try_acquire`] and skips
-//! cleanly when no adapter is available — CI without a display, or a
-//! sandbox without GPU passthrough, is expected.
+//! GPU tests skip through [`test_device::try_acquire`] when no adapter is available.
 
 use super::{CLASSIFY_WGSL, ClassifyPass, DEFAULT_MARGIN};
 use crate::voxel::{
@@ -119,10 +112,7 @@ fn classify_concat_parses_and_validates() {
 
 #[test]
 fn classify_wgsl_constants_match_host() {
-    // Defaults are the no-feature-flag values (`ROOT_DIM = 16`,
-    // `ROOT_CELLS = 4096`) — the WGSL declares them as `override`
-    // constants so each `ClassifyPass` pipeline can pin the
-    // host-visible values at compile time.
+    // The WGSL defaults are the no-feature values; each pipeline overrides them.
     assert!(
         CLASSIFY_WGSL.contains("override CLASSIFY_ROOT_DIM: u32 = 16u"),
         "CLASSIFY_ROOT_DIM must remain an override defaulting to 16u",

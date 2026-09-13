@@ -1,49 +1,6 @@
-// Sparse SDF lookup — pure WGSL body, S7 LOD-aware. Defines
-// `sparse_sdf_lookup(world_pos: vec3<f32>, target_voxel_size: f32) -> f32`
-// reading SEVEN global resources by FIXED NAMES:
-//
-//   lookup_root_indices       : storage<read>  array<u32>  (canonical, see below)
-//   lookup_subgrid_pool_lod0  : texture_3d<f32>            (LOD 0 atlas)
-//   lookup_subgrid_pool_lod1  : texture_3d<f32>            (LOD 1 atlas)
-//   lookup_subgrid_pool_lod2  : texture_3d<f32>            (LOD 2 atlas)
-//   lookup_subgrid_pool_lod3  : texture_3d<f32>            (LOD 3 atlas)
-//   lookup_pool_sampler       : sampler                    (Linear + ClampToEdge)
-//   lookup_chunk_lod_mask     : storage<read>  ChunkLodMask  (active LODs bitmask)
-//   lookup_uniform            : uniform        LookupUniform
-//
-// This file deliberately does NOT declare `@group/@binding` for those
-// globals. The Rust helper `crate::sparse::lookup_wgsl(group, root_b,
-// pool_bs[4], uniform_b, sampler_b, mask_b)` prepends the
-// `var<...>` declarations with the caller's chosen slots.
-//
-// # Canonical root_indices binding
-//
-// Each chunk owns four per-LOD `root_indices` buffers, but post-
-// cascade (after the full `chunk_lod → classify → populate →
-// downsample` chain has run) they all hold the same value at every
-// cell — the downsample stages copy LOD 0's `subgrid_idx` forward
-// across LODs. The lookup therefore binds *one* of them, by
-// convention `root_indices_buffer(0)`. Calling lookup before the
-// cascade has run is undefined.
-//
-// # LOD selection
-//
-// `target_voxel_size` is the world-space voxel pitch the consumer
-// would like — typically pixel-size at the sample's distance for a
-// raymarcher, or `LOD_VOXEL_SIZES[0]` for the Edit Baker (max
-// detail). The lookup picks the *coarsest acceptable* LOD: the
-// largest LOD index `i ≤ desired_lod` that's set in
-// `chunk_lod_mask`. Since bit 0 is always set (cascade invariant),
-// this always succeeds.
-//
-// # HW trilinear via per-LOD atlas
-//
-// Each LOD's atlas is sampled through `textureSampleLevel` with a
-// `Linear + ClampToEdge` sampler — the GPU's TMU does the 8-corner
-// trilinear blend in one instruction. The atlas tiles include a
-// 1-voxel skirt per face containing the neighbouring root cell's
-// corner sample, so subgrid seams reconstruct C0-continuous without
-// a cross-tile bind dance.
+// `sparse_sdf_lookup(world_pos, target_voxel_size)` over globals `lookup_wgsl` declares. Uses LOD
+// 0's `root_indices` for every LOD and the coarsest LOD in the mask fine enough; the tile skirt
+// keeps trilinear C0.
 
 struct LookupUniform {
     // `xyz` = chunk-local `bounds_min` (post-`ActiveOrigin`). `w`
@@ -51,10 +8,8 @@ struct LookupUniform {
     bounds_min: vec4<f32>,
     // `xyz` = chunk-local `bounds_max`. `w` reserved.
     bounds_max: vec4<f32>,
-    // `x` = base voxel pitch (cell_size at LOD 0). The
-    // `lod_for_voxel_size` helper compares
-    // `target_voxel_size / cell_size_base` against the per-LOD
-    // factors. `yzw` reserved.
+    // `x` = LOD 0 cell size, which `lod_for_voxel_size` scales by each LOD's factor. `yzw`
+    // reserved.
     cell_size_base: vec4<f32>,
 }
 
@@ -66,19 +21,11 @@ const LOOKUP_LOD_COUNT: u32 = 4u;
 const LOOKUP_EMPTY_ROOT_SENTINEL: u32 = 0xFFFFFFFFu;
 const LOOKUP_ALLOC_FAILED_SENTINEL: u32 = 0xFFFFFFFEu;
 
-// `LOOKUP_ROOT_DIM` and `LOOKUP_ATLAS_TILES_{X,Y,Z}` are prepended by
-// the host helper `crate::sparse::lookup_wgsl` so consumers do not
-// need to know the chunk-local sparse geometry to compile their
-// pipeline. The values mirror `crate::sparse::ROOT_DIM`,
-// `ATLAS_TILES_X`, `ATLAS_TILES_Y`, `ATLAS_TILES_Z` at the time the
-// fragment is built — switching the `large-root-grid` feature
-// reshapes the const values without touching this body.
+// `LOOKUP_ROOT_DIM` and `LOOKUP_ATLAS_TILES_*` are prepended by `lookup_wgsl`, so the
+// `large-root-grid` feature reshapes them without touching this body.
 
-// Per-LOD geometry tables. Mirror `crate::sparse::LOD_LEVELS` on the
-// host. Materialised as helper functions so the shader switches over
-// `lod_chosen` once per lookup, rather than indexing constexpr arrays
-// (WGSL has uneven support for runtime indexing of `const` arrays
-// across naga backends).
+// Functions rather than `const` arrays: runtime indexing of const arrays is unevenly supported
+// across naga backends.
 fn lookup_subgrid_dim(lod: u32) -> u32 {
     switch lod {
         case 0u: { return 16u; }
@@ -113,10 +60,8 @@ fn lookup_voxel_size_factor(lod: u32) -> f32 {
     }
 }
 
-// Resolve `target_voxel_size` to the LOD index whose voxel pitch
-// best matches it: the largest `i` such that
-// `factor[i] × cell_size_base ≤ target`. Returns LOD 0 when the
-// caller asks for finer detail than we have, LOD 3 when coarser.
+// The largest LOD with `factor × cell_size_base ≤ target`: LOD 0 when asking for finer than exists,
+// LOD 3 when coarser.
 fn lookup_lod_for_voxel_size(target_voxel_size: f32, cell_size_base: f32) -> u32 {
     var best: u32 = 0u;
     var i: u32 = 0u;
@@ -201,10 +146,8 @@ fn sparse_sdf_lookup(world_pos: vec3<f32>, target_voxel_size: f32) -> f32 {
         + cell.y * LOOKUP_ROOT_DIM
         + cell.z * LOOKUP_ROOT_DIM * LOOKUP_ROOT_DIM;
 
-    // Canonical root_indices: post-cascade, every per-LOD root_indices
-    // buffer holds the same `subgrid_idx` for the same cell, so we
-    // bind only one (LOD 0's by host convention) and reuse it across
-    // the chosen LOD.
+    // After the cascade every LOD's `root_indices` holds the same index, so LOD 0's serves them
+    // all.
     let subgrid_idx = lookup_root_indices[cell_idx];
     if (subgrid_idx == LOOKUP_EMPTY_ROOT_SENTINEL
         || subgrid_idx == LOOKUP_ALLOC_FAILED_SENTINEL) {
@@ -215,10 +158,8 @@ fn sparse_sdf_lookup(world_pos: vec3<f32>, target_voxel_size: f32) -> f32 {
     let subgrid_dim = lookup_subgrid_dim(lod_chosen);
     let subgrid_dim_f = f32(subgrid_dim);
     let local_voxel = (world_pos - cell_min) / cell_size * subgrid_dim_f;
-    // Clamp to `[0, subgrid_dim]` (skirt-inclusive). Without this, a
-    // sample at the cell's far face could pick up f32 rounding into
-    // `> subgrid_dim` and the sampler would read into the next atlas
-    // tile — atlas neighbours are not SDF neighbours.
+    // Clamped to the skirt, or f32 rounding at the far face reads the next atlas tile — which is
+    // not the neighbouring cell.
     let local_voxel_clamped = clamp(
         local_voxel,
         vec3<f32>(0.0),
@@ -226,10 +167,7 @@ fn sparse_sdf_lookup(world_pos: vec3<f32>, target_voxel_size: f32) -> f32 {
     );
 
     let tile_dim = lookup_tile_dim(lod_chosen);
-    // Standard 3D index decode: `subgrid_idx = x + y * X + z * X * Y`.
-    // With `LOOKUP_ATLAS_TILES_Y == 1u` (default) this collapses to
-    // the historical `(x, 0, z)` layout; with Y > 1 (large-root-grid)
-    // the Y axis carries the second slab of tiles.
+    // `subgrid_idx = x + y·X + z·X·Y`; `Y` is 1 unless `large-root-grid` adds a second slab.
     let tile_x = subgrid_idx % LOOKUP_ATLAS_TILES_X;
     let tile_y = (subgrid_idx / LOOKUP_ATLAS_TILES_X) % LOOKUP_ATLAS_TILES_Y;
     let tile_z = subgrid_idx / (LOOKUP_ATLAS_TILES_X * LOOKUP_ATLAS_TILES_Y);

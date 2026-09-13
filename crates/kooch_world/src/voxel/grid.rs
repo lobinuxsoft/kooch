@@ -1,49 +1,6 @@
-//! `SparseGrid` — chunk-local sparse SDF voxel storage with the
-//! 4-LOD cascade introduced in S7 of issue #136.
-//!
-//! Owns the GPU buffers + 3D texture atlases backing the two-level
-//! sparse layout, replicated per LOD. Mutating compute passes
-//! (chunk_lod / classify / populate / downsample) live in sibling
-//! modules and bind these resources; this module is the lifecycle
-//! root that all of them compose against.
-//!
-//! # Per-LOD cascade
-//!
-//! Every `SparseGrid` carries [`LOD_COUNT`] (= 4) parallel sets of
-//! resources — one per cascade level (see [`crate::voxel::lod`] for
-//! the geometry table). Each LOD has its own:
-//!
-//! - `root_indices_buffer[lod]` — `ROOT_CELLS × u32`, the root-cell →
-//!   subgrid_idx map at this LOD's atlas.
-//! - `subgrid_pool_texture[lod]` — `R16Float` 3D atlas sized per
-//!   [`LodConfig::atlas_dim_*`].
-//! - `free_list_buffer[lod]`, `counters_buffer[lod]` — atomic
-//!   freelist bookkeeping.
-//! - `needs_indices_buffer[lod]`, `needs_count_buffer[lod]` —
-//!   classify-pass compaction output, consumed by populate.
-//! - `populate_indirect_args_buffer[lod]` —
-//!   `[needs_count, 1, 1]` written by populate-finalize.
-//!
-//! Plus three resources shared across the cascade:
-//!
-//! - `subgrid_pool_sampler` — one `Linear + ClampToEdge` sampler.
-//! - `chunk_lod_mask_buffer` — `u32` bitmask written by `ChunkLodPass`,
-//!   bit `i` = "LOD `i` active for this chunk".
-//! - `downsample_indirect_args_buffer[cascade]` — `[wg_count, 1, 1]`
-//!   written by downsample-finalize for each cascade `(0→1, 1→2,
-//!   2→3)`. Three buffers, indexed by source LOD.
-//!
-//! [`LOD_COUNT`]: crate::voxel::LOD_COUNT
-//! [`LodConfig::atlas_dim_*`]: crate::voxel::LodConfig
-//!
-//! # Encoder ordering invariant
-//!
-//! Within a single submission, the canonical hot-loop order is
-//! `chunk_lod → classify[0..3] → populate_finalize[0..3] →
-//! populate[0..3] → downsample[0→1, 1→2, 2→3]` — 16 compute passes,
-//! one queue submission, zero CPU readback. wgpu's implicit
-//! storage-buffer + storage-texture barriers between consecutive
-//! compute passes provide the required happens-before edges.
+//! `SparseGrid`: per LOD, a root-cell → subgrid map, an `R16Float` atlas and freelist buffers. 8
+//! passes, one submission, no readback: chunk_lod, classify, finalize, populate (LOD 0), downsample
+//! ×3, metrics.
 
 mod buffers;
 
@@ -55,10 +12,7 @@ use super::{LOD_COUNT, LOD_LEVELS, free_list};
 /// (3 × `u32`).
 pub const DISPATCH_INDIRECT_ARGS_SIZE: u64 = 12;
 
-/// `r16float` is the canonical pool-atlas format. Mirrored here so
-/// consumers (populate's storage-write binding, lookup's sampled
-/// binding, downsample's textureLoad source + storage destination)
-/// match without each carrying its own copy.
+/// The atlas format, shared so populate, lookup and downsample cannot bind different copies.
 pub const POOL_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 
 /// Number of downsample cascades (`LOD_COUNT - 1`). One per
@@ -90,17 +44,9 @@ pub struct SparseGrid {
 }
 
 impl SparseGrid {
-    /// Allocate the per-LOD GPU resources for a fresh `SparseGrid`
-    /// covering `bounds` (chunk-local f32, post-`ActiveOrigin`) and
-    /// seed every LOD's freelist + counters so the cascade is
-    /// immediately ready for a `chunk_lod → classify → populate →
-    /// downsample` submission.
-    ///
-    /// `max_subgrids` is applied uniformly across all LODs (every LOD
-    /// has the same `MAX_SUBGRIDS_PER_ATLAS = 1024` capacity by
-    /// construction). Use [`crate::voxel::MAX_SUBGRIDS_DEFAULT`]
-    /// unless profiling motivates a smaller per-chunk override; values
-    /// above the atlas tile capacity panic.
+    /// Allocates every LOD's resources for `bounds` and seeds the freelists, ready for a cascade.
+    /// `max_subgrids` applies to all LODs — use [`crate::voxel::MAX_SUBGRIDS_DEFAULT`]; above the
+    /// tile capacity it panics.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -193,10 +139,8 @@ impl SparseGrid {
         &self.root_indices_buffers[lod_idx as usize]
     }
 
-    /// 3D atlas texture for `lod_idx` (`R16Float`). Sized per
-    /// `LOD_LEVELS[lod_idx]`; bound as a storage texture by populate
-    /// + downsample (write) and as a sampled texture by the lookup
-    /// helper (read).
+    /// `R16Float` atlas for `lod_idx`: a storage texture to populate and downsample, sampled by the
+    /// lookup.
     pub fn subgrid_pool_texture(&self, lod_idx: u32) -> &wgpu::Texture {
         &self.subgrid_pool_textures[lod_idx as usize]
     }
@@ -223,11 +167,8 @@ impl SparseGrid {
         &self.counters_buffers[lod_idx as usize]
     }
 
-    /// `ROOT_CELLS × u32` compaction buffer per LOD. Filled by the
-    /// classify pass at LOD `lod_idx` with the linear root-cell
-    /// indices the surface intersects at this LOD's resolution; the
-    /// populate pass at the same LOD consumes
-    /// `[0..needs_count[lod_idx]]` of it via indirect dispatch.
+    /// Linear root-cell indices classify found on the surface, consumed by populate as
+    /// `[0..needs_count[lod_idx]]`.
     pub fn needs_indices_buffer(&self, lod_idx: u32) -> &wgpu::Buffer {
         &self.needs_indices_buffers[lod_idx as usize]
     }
@@ -239,40 +180,25 @@ impl SparseGrid {
         &self.needs_count_buffers[lod_idx as usize]
     }
 
-    /// 12-byte `[x, y, z]` dispatch-indirect-args buffer per LOD,
-    /// written by the populate-finalize compute pass. Bound with
-    /// `BufferUsages::INDIRECT` so the populate pass can call
-    /// `dispatch_workgroups_indirect(&buf, 0)` directly.
+    /// `[x, y, z]` args from populate-finalize, `INDIRECT` so populate dispatches from it directly.
     pub fn populate_indirect_args_buffer(&self, lod_idx: u32) -> &wgpu::Buffer {
         &self.populate_indirect_args_buffers[lod_idx as usize]
     }
 
-    /// 12-byte `[x, y, z]` dispatch-indirect-args buffer per cascade
-    /// `(0→1, 1→2, 2→3)`. Indexed by the *source* LOD: cascade 0 maps
-    /// LOD 0 → LOD 1, cascade 1 maps LOD 1 → LOD 2, cascade 2 maps
-    /// LOD 2 → LOD 3.
+    /// `[x, y, z]` args per cascade, indexed by source LOD.
     pub fn downsample_indirect_args_buffer(&self, cascade_idx: u32) -> &wgpu::Buffer {
         &self.downsample_indirect_args_buffers[cascade_idx as usize]
     }
 
-    /// Per-chunk LOD bitmask, written by [`ChunkLodPass`]. Bit `i`
-    /// (LSB-first) means "LOD `i` is active for this chunk". Bit 0 is
-    /// always set — the cascade's downsample stages assume LOD 0 is
-    /// populated as the cascade source.
-    ///
-    /// [`ChunkLodPass`]: crate::voxel::ChunkLodPass
+    /// LOD bitmask from [`ChunkLodPass`](crate::voxel::ChunkLodPass); bit 0 is always set, since
+    /// downsample sources from LOD 0.
     pub fn chunk_lod_mask_buffer(&self) -> &wgpu::Buffer {
         &self.chunk_lod_mask_buffer
     }
 
-    /// 24-byte metrics buffer. Layout matches the WGSL `SparseMetrics`
-    /// struct in `sparse_metrics.wgsl`:
-    /// `[active_lod0..3, alloc_count_total, free_count_total]`. Written
-    /// by [`MetricsPass::record`] at the tail of the cascade and read
-    /// asynchronously by [`Metrics::read`].
-    ///
-    /// [`MetricsPass::record`]: crate::voxel::MetricsPass::record
-    /// [`Metrics::read`]: crate::voxel::Metrics::read
+    /// 24 B `SparseMetrics` — active per LOD, then alloc and free totals — written by
+    /// [`MetricsPass::record`](crate::voxel::MetricsPass::record) and read by
+    /// [`Metrics::read`](crate::voxel::Metrics::read).
     pub fn metrics_buffer(&self) -> &wgpu::Buffer {
         &self.metrics_buffer
     }

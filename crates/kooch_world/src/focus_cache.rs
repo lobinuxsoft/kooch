@@ -1,13 +1,6 @@
-//! [`FocusCacheState`] — tracks the chunk-index each [`StreamingFocus`]
-//! occupied at the last activation tick, per LOD level, so the
-//! activation system can skip recomputing the desired set when no
-//! focus has crossed a chunk boundary on any LOD.
-//!
-//! Without this cache the brute-force grid iteration runs on every
-//! frame even for a stationary camera, accumulating millions of
-//! redundant queue entries — the regression caught in PR #315 / #54.
-//!
-//! [`StreamingFocus`]: super::focus::StreamingFocus
+//! [`FocusCacheState`]: the chunk each [`StreamingFocus`](super::focus::StreamingFocus) occupied
+//! per LOD, so activation skips when nobody crossed a boundary — without it a still camera queued
+//! millions of entries (#315).
 
 use std::collections::{HashMap, HashSet};
 
@@ -21,30 +14,16 @@ use crate::chunk::BASE_CHUNK_SIZE_METERS;
 /// itself only consumes them.
 pub type FocusPosition = (Entity, DVec3);
 
-/// Per-focus, per-LOD record of "the chunk index this focus was in
-/// last time we ticked". Compared against the current position to
-/// detect crossings.
-///
-/// Stored as a flat `HashMap<Entity, Vec<IVec3>>`, indexed first by
-/// focus entity, then by LOD level (the vector parallels
-/// `LodRingConfig.rings`). `IVec3::splat(i32::MIN)` is the sentinel
-/// for "never observed" — treated as a full first-time enter.
+/// Last chunk per focus and LOD, the `Vec` parallel to `LodRingConfig.rings`;
+/// `IVec3::splat(i32::MIN)` means never observed.
 #[derive(Default, Debug, Clone)]
 pub struct FocusCacheState {
     last_chunks: HashMap<Entity, Vec<IVec3>>,
 }
 
 impl FocusCacheState {
-    /// Compute which `(entity, lod)` pairs have crossed at least one
-    /// chunk boundary since the last call. Returns the dirty pairs
-    /// **and** updates the cache in place to the new positions — a
-    /// caller treating the result as immutable doesn't risk drift
-    /// across frames.
-    ///
-    /// `focuses` is the live focus list this tick; entities missing
-    /// from the call are NOT purged here (use [`Self::purge_stale`]).
-    /// `lod_count` is the number of LOD rings the activation cares
-    /// about (typically `LodRingConfig::lod_count()`).
+    /// The `(entity, lod)` pairs that crossed a boundary, updating the cache in place so a caller
+    /// cannot drift. Missing focuses are not purged here — see [`Self::purge_stale`].
     pub fn dirty_pairs(&mut self, focuses: &[FocusPosition], lod_count: u8) -> Vec<DirtyFocusLod> {
         let mut dirty = Vec::new();
         for (entity, pos) in focuses {
@@ -92,10 +71,8 @@ impl FocusCacheState {
     }
 }
 
-/// One `(entity, lod)` pair that has changed chunk since the last
-/// activation. `previous == IVec3::splat(i32::MIN)` means this is the
-/// first time the cache sees this entity at this LOD — the activation
-/// system treats that as "all chunks in range are new enters".
+/// A pair that changed chunk; `previous == IVec3::splat(i32::MIN)` is a first sighting, where every
+/// chunk in range is new.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DirtyFocusLod {
     pub entity: Entity,

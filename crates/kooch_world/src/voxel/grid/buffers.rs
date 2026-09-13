@@ -1,16 +1,11 @@
-//! Per-LOD GPU buffer + texture allocation helpers for `SparseGrid`.
-//! Split out so `grid.rs` keeps the struct + accessor surface small —
-//! the buffer-creation boilerplate dominates length without
-//! contributing to the public API.
+//! Per-LOD buffer and texture allocation for `SparseGrid`.
 
 use crate::voxel::{LodConfig, ROOT_CELLS};
 
 use super::{DISPATCH_INDIRECT_ARGS_SIZE, POOL_TEXTURE_FORMAT};
 
-/// Build the per-LOD root-indices buffer, pre-initialised to
-/// `EMPTY_ROOT_SENTINEL` (`0xFFFFFFFF`). Same layout for every LOD —
-/// `ROOT_CELLS × u32` — so a fresh grid reads as fully empty across
-/// the cascade until classify + populate run.
+/// Root indices filled with `EMPTY_ROOT_SENTINEL`, so a fresh grid reads empty until classify and
+/// populate run.
 pub(super) fn make_root_indices_buffer(device: &wgpu::Device, lod_idx: u32) -> wgpu::Buffer {
     let label = format!("kooch_world::voxel::root_indices_lod{lod_idx}");
     let size = (ROOT_CELLS as u64) * 4;
@@ -23,10 +18,8 @@ pub(super) fn make_root_indices_buffer(device: &wgpu::Device, lod_idx: u32) -> w
         mapped_at_creation: true,
     });
     {
-        // 0xFFFFFFFF is byte-pattern 0xFF, so a flat byte fill is the
-        // correct initialiser for every u32. Mapped memory is
-        // write-combining in wgpu 29, so we copy from a small staging
-        // vector — `ROOT_CELLS × 4 = 16 KiB`, trivially cheap.
+        // `0xFFFFFFFF` is all `0xFF` bytes; mapped memory is write-combining in wgpu 29, so copy
+        // from a 16 KiB vector.
         let init = vec![0xFFu8; size as usize];
         buffer
             .slice(..)
@@ -199,12 +192,8 @@ pub(super) fn make_chunk_lod_mask_buffer(device: &wgpu::Device) -> wgpu::Buffer 
     })
 }
 
-/// 24-byte metrics buffer written by the metrics pass (S8). Layout:
-/// `[active_lod0, active_lod1, active_lod2, active_lod3,
-/// alloc_count_total, free_count_total]` (6 × u32). `STORAGE` for the
-/// shader write + `COPY_SRC` so the host can copy into a MAP_READ
-/// staging buffer (WebGPU forbids MAP_READ + STORAGE on the same
-/// buffer). Telemetry only — never read by the lookup hot path.
+/// 24 B metrics, `STORAGE | COPY_SRC`: WebGPU forbids `MAP_READ` with `STORAGE`, so reads go
+/// through staging.
 pub(super) fn make_metrics_buffer(device: &wgpu::Device) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("kooch_world::voxel::metrics"),

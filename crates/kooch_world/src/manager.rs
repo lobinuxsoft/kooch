@@ -1,17 +1,6 @@
-//! [`ChunkManager`] — central registry of in-memory chunks plus the
-//! load/unload pipeline.
-//!
-//! What this manager owns:
-//! - `active`: HashMap of every chunk currently tracked.
-//! - `load_queue`: priority queue (smallest distance² = highest priority).
-//! - `unload_queue`: FIFO of chunks scheduled for eviction.
-//! - `memory_budget_bytes`: cap; eviction is triggered when exceeded.
-//!
-//! The actual loading is **synchronous in this warmup**: `process_queues`
-//! moves a chunk from queue → `active` with `state = Loaded` in one
-//! step. When async loading lands (separate issue), the same API gains
-//! `Loading{progress}` / `Unloading` intermediate states without
-//! callsite changes.
+//! [`ChunkManager`]: in-memory chunks, a nearest-first load queue, an unload FIFO and a memory
+//! budget. Loading is synchronous; an async loader adds intermediate states without callsite
+//! changes.
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
@@ -60,17 +49,11 @@ pub struct ChunkManager {
     load_queue: BinaryHeap<LoadRequest>,
     unload_queue: Vec<ChunkId>,
     pub memory_budget_bytes: u64,
-    /// Bytes currently held by loaded chunks. Maintained externally —
-    /// callers tell the manager how much each load adds (heavy data
-    /// lives in #136 sparse storage / #115 BVH and the warmup keeps
-    /// this at zero).
+    /// Bytes held by loaded chunks, reported by callers; nothing loads heavy data yet, so it stays
+    /// zero.
     pub memory_used_bytes: u64,
-    /// Chunks that hit `process_queues`'s eviction path since the last
-    /// drain. Renderer reads + clears this list to mirror the pool
-    /// state. Decoupled from the load buffer so a chunk that loads and
-    /// unloads in the same frame produces both a load and an unload
-    /// event — the pool keeps its insert/remove invariants regardless
-    /// of frame rate.
+    /// Evictions since the last drain, for the renderer's pool. Separate from loads, so a chunk
+    /// loading and unloading in one frame yields both events.
     pending_unloads: Vec<ChunkId>,
 }
 

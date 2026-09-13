@@ -70,10 +70,8 @@ pub struct SparseLodPass {
 }
 
 impl SparseLodPass {
-    /// Build the orchestrator. `sampler_wgsl` and
-    /// `sampler_bgl_entries` are forwarded to both [`ClassifyPass::new`]
-    /// and [`PopulatePass::new`] — they share the same sampler
-    /// `@group(1)` layout.
+    /// `sampler_wgsl` and `sampler_bgl_entries` go to both [`ClassifyPass::new`] and
+    /// [`PopulatePass::new`], which share the `@group(1)` layout.
     pub fn new(
         device: &wgpu::Device,
         sampler_wgsl: &str,
@@ -93,9 +91,8 @@ impl SparseLodPass {
         }
     }
 
-    /// Record the full 7-pass cascade for `grid` into `encoder`.
-    /// Caller submits the encoder + handles synchronisation with
-    /// downstream lookup pipelines.
+    /// Records the 8-pass cascade for `grid`; submitting, and ordering against lookup pipelines, is
+    /// the caller's.
     pub fn record(
         &self,
         device: &wgpu::Device,
@@ -111,10 +108,8 @@ impl SparseLodPass {
         self.chunk_lod
             .record(device, queue, encoder, grid, active_origin, thresholds);
 
-        // Pass 2: classify at LOD 0 — every chunk has bit 0 set in
-        // the mask (cascade invariant), so this is the only producer
-        // run. LODs 1..3 inherit the marked cell set via the
-        // downsample chain.
+        // Pass 2: classify at LOD 0 only — bit 0 is always set, and LODs 1..3 inherit the marked
+        // set via downsample.
         self.classify
             .record(device, queue, encoder, grid, sampler_bg, 0, margin);
 
@@ -127,19 +122,15 @@ impl SparseLodPass {
         self.populate
             .record_populate(device, queue, encoder, grid, sampler_bg, 0);
 
-        // Passes 5..=7: downsample[0→1, 1→2, 2→3] — box-filter
-        // cascade fills LODs 1..3 from LOD 0's populated tiles. Each
-        // cascade reuses populate_indirect_args[lod_src] (already
-        // [needs_count_src, 1, 1]) — no extra finalize needed.
+        // Passes 5..=7: box-filter LODs 1..3 from LOD 0's tiles, reusing
+        // `populate_indirect_args[lod_src]`.
         for cascade_idx in 0..(CASCADE_COUNT as u32) {
             self.downsample
                 .record_cascade(device, encoder, grid, cascade_idx);
         }
 
-        // Pass 8: metrics — telemetry sink. Reads each LOD's freelist
-        // counters + cumulative alloc/free totals and writes the 24 B
-        // `SparseMetrics` struct. Lookup hot path never reads it; host
-        // pulls via `Metrics::read` at telemetry cadence (off-thread).
+        // Pass 8: metrics, telemetry only — the lookup never reads it; the host pulls via
+        // `Metrics::read` at telemetry cadence.
         self.metrics.record(device, encoder, grid);
     }
 

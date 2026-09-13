@@ -81,10 +81,8 @@ fn populate_main(
     @builtin(workgroup_id) wid: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
 ) {
-    // The host dispatches exactly `needs_count` workgroups, but indirect
-    // args are GPU-derived — guard against a stale dispatch reading
-    // beyond the compaction's filled prefix (defensive; with the
-    // populate-finalize pipeline today this branch is never taken).
+    // Defensive: indirect args are GPU-derived, so a stale dispatch could read past the
+    // compaction's filled prefix.
     if (wid.x >= populate_needs_count.value) {
         return;
     }
@@ -114,11 +112,7 @@ fn populate_main(
     let cell_min_world = bounds_min
         + vec3<f32>(f32(cx), f32(cy), f32(cz)) * cell_size;
 
-    // Atlas tile origin in texel coordinates. With
-    // `POPULATE_ATLAS_TILES_Y == 1u` (default) the Y component
-    // collapses to `0` and this matches the historical layout; with
-    // `Y > 1` (large-root-grid) the second slab of tiles lives at
-    // `tile_y == 1`.
+    // Tile origin in texels; `tile_y` is 0 unless `large-root-grid` adds a second slab.
     let tile_x = subgrid_idx % POPULATE_ATLAS_TILES_X;
     let tile_y = (subgrid_idx / POPULATE_ATLAS_TILES_X) % POPULATE_ATLAS_TILES_Y;
     let tile_z = subgrid_idx / (POPULATE_ATLAS_TILES_X * POPULATE_ATLAS_TILES_Y);
@@ -137,11 +131,8 @@ fn populate_main(
         let vz = i / (POPULATE_TILE_DIM * POPULATE_TILE_DIM);
         let vy = (i / POPULATE_TILE_DIM) % POPULATE_TILE_DIM;
         let vx = i % POPULATE_TILE_DIM;
-        // Voxel offset divides by SUBGRID_DIM, NOT TILE_DIM:
-        // the skirt voxel at vx == SUBGRID_DIM lives at
-        // cell_min + cell_size, i.e. the next cell's corner — exactly
-        // the sample needed for C0-continuous trilinear at the subgrid
-        // boundary.
+        // Divides by `SUBGRID_DIM`, not `TILE_DIM`: the skirt voxel lands on the next cell's
+        // corner, the sample C0-continuous trilinear needs.
         let voxel_offset = vec3<f32>(f32(vx), f32(vy), f32(vz)) * inv_subgrid_dim;
         let world_pos = cell_min_world + voxel_offset * cell_size;
         let texel = tile_origin + vec3<i32>(i32(vx), i32(vy), i32(vz));
@@ -153,11 +144,8 @@ fn populate_main(
         i = i + POPULATE_WORKGROUP_SIZE;
     }
 
-    // Make the tile writes visible before the root pointer publishes
-    // them. wgpu's inter-pass storage barrier covers cross-pass
-    // ordering; this barrier covers the in-pass happens-before edge
-    // between the cooperative voxel loop and thread 0's root_indices
-    // store.
+    // The in-pass happens-before edge: tile writes must be visible before thread 0 publishes the
+    // root pointer.
     workgroupBarrier();
     if (lid.x == 0u) {
         populate_root_indices[cell_idx] = subgrid_idx;

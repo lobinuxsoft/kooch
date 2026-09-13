@@ -1,9 +1,6 @@
 use super::*;
 
-/// AC4 of #136 / issue #347 — the `large-root-grid` build must
-/// actually deliver `32³ = 32768` root cells with the `(32, 2, 32)`
-/// atlas layout. Defended here so a stray edit cannot silently
-/// flip the feature back to the 16³ shape.
+/// `large-root-grid` must deliver 32³ root cells with the `(32, 2, 32)` atlas (#347).
 #[cfg(feature = "large-root-grid")]
 #[test]
 fn large_root_grid_constants() {
@@ -101,16 +98,8 @@ fn total_atlas_vram_under_100_mib_large_root_grid() {
             (lod.atlas_dim_x as u64) * (lod.atlas_dim_y as u64) * (lod.atlas_dim_z as u64) * 2
         })
         .sum();
-    // Bookkeeping per chunk:
-    //   4 × root_indices       = 4 × ROOT_CELLS × 4
-    //   4 × needs_indices      = 4 × ROOT_CELLS × 4
-    //   4 × free_list          = 4 × MAX_SUBGRIDS × 4
-    //   4 × counters           = 4 × 16
-    //   4 × needs_count        = 4 × 4
-    //   4 × populate_indirect  = 4 × 12
-    //   3 × downsample_indirect= 3 × 12
-    //   1 × chunk_lod_mask     = 4
-    //   1 × metrics            = 24
+    // Per chunk: 4 × (root_indices + needs_indices + free_list + counters + needs_count +
+    // populate_indirect), 3 × downsample_indirect, mask 4 B, metrics 24 B.
     let root_cells = u64::from(super::super::ROOT_CELLS);
     let max_subgrids = u64::from(super::super::MAX_SUBGRIDS_PER_ATLAS);
     let bookkeeping: u64 = 4 * root_cells * 4

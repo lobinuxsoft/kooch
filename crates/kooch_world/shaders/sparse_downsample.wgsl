@@ -84,10 +84,8 @@ fn downsample_main(
         return;
     }
 
-    // Standard 3D index decode. Both src and dst share `subgrid_idx`
-    // as the canonical atlas pointer (cascade invariant), so the
-    // (x, y, z) tile coordinates only differ by tile dim — never by
-    // tile-count, which is identical across LODs.
+    // Source and destination share `subgrid_idx` (cascade invariant), so tile coordinates differ by
+    // tile dim, never tile count.
     let src_tile_x = subgrid_idx % DOWNSAMPLE_SRC_ATLAS_TILES_X;
     let src_tile_y = (subgrid_idx / DOWNSAMPLE_SRC_ATLAS_TILES_X)
         % DOWNSAMPLE_SRC_ATLAS_TILES_Y;
@@ -120,11 +118,8 @@ fn downsample_main(
         let dvy = (i / DOWNSAMPLE_DST_TILE_DIM) % DOWNSAMPLE_DST_TILE_DIM;
         let dvx = i % DOWNSAMPLE_DST_TILE_DIM;
 
-        // 2³ box filter — read 8 source voxels at
-        // `(2 dvx + ji, 2 dvy + jj, 2 dvz + jk)` and average. Clamping
-        // to the source tile's skirt-inclusive bound keeps reads in
-        // the current atlas tile (atlas neighbours are not SDF
-        // neighbours).
+        // 2³ box filter, clamped to the source tile's skirt: atlas neighbours are not SDF
+        // neighbours.
         var sum: f32 = 0.0;
         for (var jk: u32 = 0u; jk < 2u; jk = jk + 1u) {
             for (var jj: u32 = 0u; jj < 2u; jj = jj + 1u) {

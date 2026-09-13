@@ -49,10 +49,8 @@ use super::{
 /// to WGSL `override` constants without a host-side cast.
 pub const LOD_COUNT: u32 = 4;
 
-/// Geometry parameters for one LOD. Every field is derived from the
-/// LOD index — kept materialised here so the host code, the shader
-/// override constants, and the test fixtures all read from one source
-/// of truth.
+/// Geometry for one LOD, all derived from its index but materialised so host, shader overrides and
+/// tests read one source.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LodConfig {
     /// Side length of the data interior (`subgrid_dim`³ samples per
@@ -61,10 +59,8 @@ pub struct LodConfig {
     /// Side length of the tile in the atlas, including the 1-voxel
     /// skirt per face (`subgrid_dim + 1`).
     pub tile_dim: u32,
-    /// Tile counts along each axis. Same `(ATLAS_TILES_X,
-    /// ATLAS_TILES_Y, ATLAS_TILES_Z)` triple at every LOD so the
-    /// freelist capacity is identical across LODs. Default
-    /// `(32, 1, 32)`; `(32, 2, 32)` with `large-root-grid`.
+    /// Tiles per axis, identical at every LOD so freelist capacity is too: `(32, 1, 32)`, or `(32,
+    /// 2, 32)` with `large-root-grid`.
     pub atlas_tiles_x: u32,
     pub atlas_tiles_y: u32,
     pub atlas_tiles_z: u32,
@@ -151,23 +147,12 @@ const LOD_3: LodConfig = LodConfig {
 /// `override` constants the host pins per pipeline.
 pub const LOD_LEVELS: [LodConfig; LOD_COUNT as usize] = [LOD_0, LOD_1, LOD_2, LOD_3];
 
-/// Voxel-size factors, materialised as a flat array for the lookup
-/// shader's `lod_for_voxel_size` helper. Mirrors `voxel_size_factor`
-/// across `LOD_LEVELS` — kept in sync by `lod_levels_consistent` in
-/// the test module.
+/// The factors of `LOD_LEVELS` flattened for the lookup shader; `lod_levels_consistent` keeps them
+/// in sync.
 pub const LOD_VOXEL_SIZE_FACTORS: [f32; LOD_COUNT as usize] = [1.0, 2.0, 4.0, 8.0];
 
-/// Resolve a target voxel size (in world units) to the LOD index whose
-/// voxel pitch best matches it.
-///
-/// Returns the largest LOD index whose `voxel_size_factor * cell_size_base`
-/// is `<= target_voxel_size`. Concretely: if `cell_size_base = 4.0`
-/// and `target = 6.0`, LOD 0 voxel = 4.0 (≤6, OK), LOD 1 voxel = 8.0
-/// (>6, too coarse) → returns LOD 0. With `target = 16.0`: LOD 0..=2
-/// all OK, LOD 3 voxel = 32 (too coarse) → returns LOD 2.
-///
-/// Edge case: `target_voxel_size < cell_size_base` (asking for finer
-/// detail than we have) returns LOD 0 — the finest LOD available.
+/// The largest LOD whose voxel pitch (`factor × cell_size_base`) is `<= target_voxel_size`; LOD 0
+/// when asking for finer than exists. With base 4: target 6 → LOD 0, target 16 → LOD 2.
 pub fn lod_for_voxel_size(target_voxel_size: f32, cell_size_base: f32) -> u32 {
     let mut best: u32 = 0;
     let mut i: u32 = 0;
