@@ -1,13 +1,6 @@
 use super::*;
 
-/// What a record means is decided by its field, not by whether a value
-/// came with it.
-///
-/// A removal is the record with no field. A *field* record that
-/// arrived without one — hand-edited, or written by a build from
-/// before values were carried — is one nothing can apply. Reading it
-/// as a removal deletes the component instead, which is how adding a
-/// component to a prefab could come back with it missing.
+/// What a record means is decided by its field, not by whether a value came with it.
 #[test]
 fn a_field_record_without_a_value_is_not_a_removal() {
     let mut instance = PrefabInstance::new(Guid::new_v4());

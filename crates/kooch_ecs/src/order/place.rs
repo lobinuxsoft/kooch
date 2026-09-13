@@ -1,8 +1,4 @@
 //! Moving an entity to a place among its siblings.
-//!
-//! The policy lives here rather than in the editor so both the local path
-//! and the remote host reach the same one. The editor says *where* — this
-//! parent, before that sibling — and the numbering is decided once.
 
 use kooch_core::resource::Resources;
 
@@ -13,16 +9,6 @@ use crate::hierarchy::{Parent, reparent};
 use super::Order;
 
 /// Moves `entity` under `parent`, immediately before `before`.
-///
-/// `parent: None` makes it a root of its scene; `before: None` puts it
-/// last. Returns `false` when the move is refused — moving an entity into
-/// its own subtree, which would detach that subtree from the world.
-///
-/// # Why the caller does not pass a number
-///
-/// "Before that one" is what a drag means, and a number is one answer to
-/// it. Letting the caller pick would put the renumbering rule in every
-/// caller, and they would disagree the first time a gap ran out.
 pub fn place(
     resources: &mut Resources,
     entity: Entity,
@@ -53,16 +39,6 @@ pub fn place(
 }
 
 /// Gives `siblings` order values, writing as few as it can.
-///
-/// The one at `moved` is the entity that just arrived; everything else is
-/// already in the order the user sees. One value is written when there is
-/// room between its new neighbours — which is what keeps moving one of
-/// thirty-six instances from showing up as thirty-six changed fields in
-/// the scene diff.
-///
-/// The whole group is renumbered when there is not: either nobody has
-/// been ordered yet (a scene authored before this existed), or repeated
-/// drops in one place have used the gap up.
 fn assign(resources: &mut Resources, siblings: &[Entity], moved: usize) {
     let values: Vec<Option<u32>> = siblings.iter().map(|&e| order_of(resources, e)).collect();
 
@@ -91,13 +67,6 @@ fn assign(resources: &mut Resources, siblings: &[Entity], moved: usize) {
 }
 
 /// The entities that share `entity`'s parent, in their current order.
-///
-/// 🔴 Found by scanning `Parent`, not by reading `Children`. `Children`
-/// is built when a scene loads and **`reparent` does not maintain it** —
-/// which is why the World panel builds the hierarchy from `Parent` too.
-/// Read from `Children`, a child moved at runtime is invisible to its own
-/// parent, and every sibling in the group ends up with the same order
-/// value.
 fn siblings_of(resources: &Resources, entity: Entity, parent: Option<Entity>) -> Vec<Entity> {
     use crate::archetype_registry::ArchetypeRegistry;
     use crate::scene_member::SceneMember;
@@ -171,9 +140,6 @@ fn set_order(resources: &mut Resources, entity: Entity, value: u32) {
 }
 
 /// Whether `candidate` is inside `root`'s subtree.
-///
-/// Walks up from `candidate`, which costs the depth of the tree rather
-/// than the size of the subtree.
 fn is_descendant(resources: &Resources, candidate: Entity, root: Entity) -> bool {
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return false;

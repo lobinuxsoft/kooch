@@ -1,24 +1,4 @@
-//! Reparent math — keeps an entity's world-space TRS invariant when
-//! its `Parent` component changes.
-//!
-//! Composes TRS directly (position / rotation / scale) rather than
-//! going through `Mat4 inverse + to_scale_rotation_translation`. The
-//! matrix path — which is what Bevy uses — is mathematically cleaner
-//! for single reparents under shear-free hierarchies but loses
-//! information every time `to_scale_rotation_translation` runs on a
-//! sheared matrix. Repeated reparenting through a parent with both
-//! rotation and non-uniform scale accumulates SVD drift in the
-//! child's TRS values visible in the inspector.
-//!
-//! TRS composition trades a different property: the rendered matrix
-//! (`parent.matrix * local.matrix`) may gain shear that the previous
-//! rendering did not have, so the shape can visually change on the
-//! first reparent. The shape change is deterministic, though, and
-//! returning the child to a shear-free parent restores the original
-//! shape exactly. The inspector TRS numbers stay idempotent across
-//! reparents, which is what matters for editor UX.
-//!
-//! See issue #214 for the full research write-up.
+//! Reparent math — keeps an entity's world-space TRS invariant when its `Parent` component changes.
 
 use std::any::TypeId;
 
@@ -48,11 +28,8 @@ pub(super) fn rewrite_local_transform_for_reparent(
         None => (Vec3::ZERO, Quat::IDENTITY, Vec3::ONE),
     };
 
-    // Inverse of `world = T + R · (S ⊙ local)`: subtract T, apply
-    // R⁻¹, then divide by S component-wise. Doing the scale division
-    // before the rotation corrupts position when the parent has both
-    // rotation and non-uniform scale (failure mode caught during
-    // manual testing with BoxRoot).
+    // Inverse of `world = T + R · (S ⊙ local)`: subtract T, apply R⁻¹, then divide by S
+    // component-wise.
     let parent_rot_inv = parent_wr.inverse();
     let inv_parent_scale = Vec3::new(
         safe_inv(parent_ws.x),
@@ -73,16 +50,8 @@ pub(super) fn rewrite_local_transform_for_reparent(
     }
 }
 
-/// Walks up the parent chain from `entity` to a root, composing TRS
-/// per component. Returns the world-space `(translation, rotation,
-/// scale)` or `None` if the entity has no `Transform`.
-///
-/// Intentionally avoids reading `GlobalTransform.matrix`. That matrix
-/// is the product of `Mat4` composition across the hierarchy and can
-/// carry shear when an ancestor has non-uniform scale composed with
-/// a rotated descendant. Reading TRS back from it requires SVD, and
-/// repeated reparents accumulate decomposition drift in the
-/// inspector. Walking TRS directly stays stable.
+/// Walks up the parent chain from `entity` to a root, composing TRS per component. Returns the
+/// world-space `(translation, rotation, scale)` or `None` if the entity has no `Transform`.
 fn compute_world_trs(resources: &Resources, entity: Entity) -> Option<(Vec3, Quat, Vec3)> {
     let registry = resources.get::<ComponentRegistry>()?;
     let transform_storage = registry.get_cpu::<Transform>()?;
@@ -121,17 +90,10 @@ fn safe_inv(v: f32) -> f32 {
 }
 
 /// Reparents `entity` under `new_parent`, or unparents it when `None`.
-///
-/// Lives here rather than in the editor because it is ECS mechanics —
-/// `Parent`/`Children` plus the archetype move plus preserving the child's
-/// world transform — and because the *server* has to be able to perform it.
-/// While it lived in `kooch_editor_core`, remote mode had no way to reparent
-/// at all, which is exactly why the action was never routed (#595).
 pub fn reparent(resources: &mut Resources, entity: Entity, new_parent: Option<Entity>) {
-    // Preserve the child's world-space transform across the reparent.
-    // Without this, parenting snaps the child to `parent * child_local`
-    // and unparenting snaps it back to `child_local` (as if it were a
-    // root all along).
+    // Preserve the child's world-space transform across the reparent. Without this, parenting snaps
+    // the child to `parent * child_local` and unparenting snaps it back to `child_local` (as if it
+    // were a root all along).
     rewrite_local_transform_for_reparent(resources, entity, new_parent);
 
     match new_parent {

@@ -1,11 +1,4 @@
 //! Component storage for the ECS.
-//!
-//! Provides CPU storage ([`ComponentStorage`]) managed through a central
-//! [`ComponentRegistry`].
-//!
-//! There is no GPU-backed storage: it existed, nothing ever used it, and it
-//! was removed in #603. Data reaches the GPU through the meshlet pipeline's
-//! own instance buffers, assembled from a CPU query — one route, not two.
 
 pub mod cpu_storage;
 pub mod dynamic_types;
@@ -29,9 +22,6 @@ use kooch_core::resource::Resources;
 use crate::allocator::EntityAllocator;
 
 /// Removes despawned entities from all component storages.
-///
-/// Runs in [`Stage::GpuSync`](kooch_core::stage::Stage::GpuSync) **before**
-/// the entity and component GPU sync systems.
 pub fn component_despawn_cleanup_system(resources: &mut Resources) {
     let despawned = resources
         .get_mut::<EntityAllocator>()

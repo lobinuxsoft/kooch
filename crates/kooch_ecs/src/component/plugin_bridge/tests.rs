@@ -68,11 +68,9 @@ impl kooch_plugin_api::Engine for Recorder {
     }
 }
 
-/// The bug a real drag-drop exposed: the editor listed a component
-/// under the codegen's spelling and then asked the running project to
-/// add it, which answered `UnknownComponent` because its registry had
-/// keyed the type by `type_name`. Declaring must produce exactly the
-/// name the registry uses, or the two halves disagree silently.
+/// The bug a real drag-drop exposed: the editor listed a component under the codegen's spelling and
+/// then asked the running project to add it, which answered `UnknownComponent` because its registry
+/// had keyed the type by `type_name`.
 #[test]
 fn a_declared_type_is_named_the_way_the_registry_names_it() {
     let mut recorder = Recorder::default();
@@ -138,13 +136,8 @@ fn a_collision_between_plugins_is_reported_as_name_taken() {
     );
 }
 
-/// A component the editor never compiled has to arrive with the
-/// values its author chose, not with the zeroes of its field kinds.
-///
-/// This is the whole point of `defaults`: a `GroundMovement` that
-/// accelerates at 0 toward a top speed of 0 is indistinguishable from
-/// a broken component, and that is what adding one to a prefab
-/// produced before this existed.
+/// A component the editor never compiled has to arrive with the values its author chose, not with
+/// the zeroes of its field kinds.
 #[test]
 fn a_declared_component_carries_the_values_its_default_chose() {
     // What a plugin sends: its own `Default`, serialised the way a
@@ -176,10 +169,9 @@ fn a_declared_component_carries_the_values_its_default_chose() {
     );
 }
 
-/// A plugin built before `defaults` existed sends an empty string,
-/// and a corrupt payload is not worth refusing a whole type over.
-/// Either way the component still registers — it just starts empty,
-/// which is exactly the old behaviour.
+/// A plugin built before `defaults` existed sends an empty string, and a corrupt payload is not
+/// worth refusing a whole type over. Either way the component still registers — it just starts
+/// empty, which is exactly the old behaviour.
 #[test]
 fn a_plugin_without_usable_defaults_still_registers() {
     for payload in ["", "not ron at all", "[(1, 2)]"] {

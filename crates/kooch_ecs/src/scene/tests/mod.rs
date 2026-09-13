@@ -133,10 +133,6 @@ pub(super) struct TestAssetHolder {
 impl Component for TestAssetHolder {}
 
 /// Moves `entity` into the archetype it belongs in after gaining `type_id`.
-///
-/// Component storage alone is not enough: an entity whose archetype does not
-/// list a component is invisible to every archetype-driven query, which
-/// includes `SceneDocument::from_ecs`.
 pub(super) fn add_to_archetype(
     resources: &mut Resources,
     entity: crate::entity::Entity,
@@ -158,9 +154,6 @@ pub(super) fn add_to_archetype(
 }
 
 /// Runs `emit` with a local log buffer installed, and returns what it said.
-///
-/// Local rather than global: these tests run beside every other one in the
-/// crate, and a global default can only be set once per process.
 pub(super) fn captured(emit: impl FnOnce()) -> Vec<kooch_core::log_console::LogEntry> {
     use tracing_subscriber::layer::SubscriberExt as _;
 

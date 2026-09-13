@@ -140,10 +140,9 @@ impl Spawnable {
     }
 }
 
-/// Adding a component somewhere no entity exists — a prefab document —
-/// needs the type's own default, not one synthesised per field kind. A
-/// component whose default sets a flag must arrive with it set, or the
-/// prefab silently disagrees with what spawning the same component gives.
+/// Adding a component somewhere no entity exists — a prefab document — needs the type's own
+/// default, not one synthesised per field kind. A component whose default sets a flag must arrive
+/// with it set, or the prefab silently disagrees with what spawning the same component gives.
 #[test]
 fn default_fields_come_from_the_type_not_from_zeroes() {
     use crate::reflect::{Reflect, ReflectValue};
@@ -224,10 +223,9 @@ fn registering_twice_is_idempotent() {
     assert_eq!(registry.registered_count(), 1);
 }
 
-/// 🔴 The invariant the whole port rests on: an id, once handed out, never
-/// moves. A query resolves it once and then indexes forever — if a later
-/// registration could shift it, every cached id would silently address
-/// another component's storage.
+/// 🔴 The invariant the whole port rests on: an id, once handed out, never moves. A query resolves
+/// it once and then indexes forever — if a later registration could shift it, every cached id would
+/// silently address another component's storage.
 #[test]
 fn an_id_outlives_later_registrations() {
     let mut registry = ComponentRegistry::new();
@@ -278,12 +276,8 @@ mod reflection {
     }
     impl Component for Shield {}
 
-    /// A registry with `Shield` reflected, and a one-column table holding
-    /// one entity's value — **and nothing in the map**.
-    ///
-    /// 🔴 The map is left empty on purpose. If the value were in both, a
-    /// pass would prove nothing: the old path would answer and look
-    /// identical. Only the column can answer here.
+    /// A registry with `Shield` reflected, and a one-column table holding one entity's value —
+    /// **and nothing in the map**.
     fn only_in_a_column(strength: u32) -> (ComponentRegistry, Table, TableRow) {
         let mut registry = ComponentRegistry::new();
         registry.register_cpu_reflected::<Shield>();

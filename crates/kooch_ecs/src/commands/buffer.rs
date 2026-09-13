@@ -12,9 +12,6 @@ use super::entity_builder::EntityBuilder;
 use super::entity_commands::EntityCommands;
 
 /// Deferred command buffer for safe ECS mutations.
-///
-/// Collected commands are applied atomically via [`apply`](Commands::apply)
-/// or the built-in [`commands_apply_system`](super::commands_apply_system).
 pub struct Commands {
     pub(super) queue: Vec<Command>,
 }
@@ -26,14 +23,6 @@ impl Commands {
     }
 
     /// Spawns a new entity and returns a builder for adding components.
-    ///
-    /// The entity ID is allocated **immediately** from [`EntityAllocator`]
-    /// and registered in the empty archetype. Component insertions are
-    /// deferred until [`apply`](Commands::apply).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `EntityAllocator` or `ArchetypeRegistry` is missing from resources.
     pub fn spawn(&mut self, resources: &mut Resources) -> EntityBuilder<'_> {
         let entity = resources
             .get_mut::<EntityAllocator>()
@@ -52,9 +41,6 @@ impl Commands {
     }
 
     /// Returns a builder for modifying an existing entity.
-    ///
-    /// Component insertions and removals are deferred until
-    /// [`apply`](Commands::apply).
     pub fn entity(&mut self, entity: crate::entity::Entity) -> EntityCommands<'_> {
         EntityCommands {
             entity,
@@ -65,22 +51,11 @@ impl Commands {
     }
 
     /// Queues an entity for despawn.
-    ///
-    /// The actual deallocation happens during [`apply`](Commands::apply).
-    /// Component cleanup is handled by the existing
-    /// `component_despawn_cleanup_system`.
     pub fn despawn(&mut self, entity: crate::entity::Entity) {
         self.queue.push(Command::Despawn(entity));
     }
 
     /// Applies all queued commands to the ECS.
-    ///
-    /// Removes `ComponentRegistry`, `ArchetypeRegistry`, and `EntityAllocator`
-    /// from resources temporarily, applies commands, then restores them.
-    ///
-    /// # Panics
-    ///
-    /// Panics if required resources are missing.
     pub fn apply(&mut self, resources: &mut Resources) {
         if self.queue.is_empty() {
             return;

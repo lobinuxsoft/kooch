@@ -1,29 +1,4 @@
 //! [`WorldSnapshot`] — capture and restore a world *with its identities*.
-//!
-//! Saving through [`SceneDocument`](crate::scene::SceneDocument) and
-//! loading it back is not a restore: the scene format keys entities by
-//! name, so a round-trip despawns everything and respawns it. Handles
-//! come back with different indices, different generations and a
-//! different order, and the allocator's generation counters keep
-//! climbing. Anything holding an [`Entity`] — a selection, a remote
-//! mirror, a `Parent`, a system's cached handle — is silently pointing
-//! at the wrong thing or at nothing.
-//!
-//! That is fine for loading a file authored elsewhere. It is wrong for
-//! *stop*: pressing stop should leave the world as it was before play,
-//! down to the identities, exactly as starting play never happened.
-//!
-//! [`WorldSnapshot`] therefore captures the [`EntityAllocator`] verbatim
-//! alongside per-entity component values keyed by the concrete
-//! [`Entity`], and restores both. Handles, generations, the free list
-//! and the entity order all come back unchanged.
-//!
-//! # What is not covered
-//!
-//! Components with no reflector are not captured — the same limitation
-//! the scene format has, since there is no generic way to copy an opaque
-//! type. State a system keeps *outside* the ECS (in its own resource) is
-//! likewise untouched: this snapshots the world, not the program.
 
 use std::any::TypeId;
 
@@ -117,11 +92,6 @@ impl WorldSnapshot {
     }
 
     /// Puts the captured world back.
-    ///
-    /// Clears whatever is there now, reinstates the allocator, then
-    /// rebuilds each entity against its original handle — so an
-    /// [`Entity`] taken before the capture still addresses the same
-    /// thing afterwards.
     pub fn restore(&self, resources: &mut Resources) {
         clear_world(resources);
 

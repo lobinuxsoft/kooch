@@ -1,7 +1,4 @@
 //! Entity references surviving a save/load round trip.
-//!
-//! This is the behaviour `parent_index` provided for `Parent` alone and
-//! that nothing else could have — see #607.
 
 use super::setup_resources;
 use crate::commands::Commands;
@@ -213,11 +210,6 @@ struct Pair {
 impl Component for Pair {}
 
 /// Two references in one component both survive, and stay distinct.
-///
-/// The single-reference case above is what `parent_index` used to cover.
-/// This is the case it never could, and the one #560's joints are built
-/// on: nothing in the save or load path is allowed to treat "the entity
-/// reference" as singular.
 #[test]
 fn two_references_in_one_component_both_survive() {
     let mut resources = setup_resources();

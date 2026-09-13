@@ -1,13 +1,5 @@
-//! Scene hierarchy — Parent/Children components, GlobalTransform, and
-//! systems for keeping them in sync.
-//!
-//! Provides a tree structure for entities. `Parent` marks an entity as a
-//! child of another, while `Children` maintains the list of children.
-//! `GlobalTransform` stores the world-space matrix computed from the
-//! hierarchy chain.
-//!
-//! The hierarchy sync system runs in [`Stage::PostUpdate`] and keeps
-//! `Parent` ↔ `Children` consistent, then propagates transforms top-down.
+//! Scene hierarchy — Parent/Children components, GlobalTransform, and systems for keeping them in
+//! sync.
 
 pub mod children;
 pub mod descendants;

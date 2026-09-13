@@ -11,19 +11,6 @@ fn plugin_registers_allocator_and_registry() {
 }
 
 /// `Spin` is registered by the engine, not by a feature.
-///
-/// # 🔴 What an unregistered component does is the whole point
-///
-/// It is DROPPED on load rather than refused. So a scene authored with
-/// orbiting lights, exported by a build that did not carry the
-/// component, opens with every pivot gone — lights that move in the
-/// editor and stand still in the game, no error and nothing in the log.
-/// That shipped.
-///
-/// The name asserted here is the SERIALISED one. `kooch_ecs::testing`
-/// keeps its misleading name precisely because scenes resolve components
-/// by this string; see that module for why renaming it is a data
-/// migration and not a refactor.
 #[test]
 fn a_spin_ships_unconditionally() {
     let mut app = App::new();

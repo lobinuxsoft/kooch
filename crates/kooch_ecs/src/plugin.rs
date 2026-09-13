@@ -32,13 +32,6 @@ use crate::spot_light::SpotLight;
 use crate::transform::Transform;
 
 /// Plugin that bootstraps the entity and component systems.
-///
-/// Inserts [`EntityAllocator`] and [`ComponentRegistry`], then registers
-/// the GPU sync systems in [`Stage::GpuSync`] in the correct order:
-///
-/// 1. `component_despawn_cleanup_system` — remove despawned entities from storages
-/// 2. `entity_gpu_sync_system` — sync alive mask to GPU
-/// 3. `component_gpu_sync_system` — upload dirty component data to GPU
 pub struct EcsPlugin;
 
 /// Registers built-in engine components (Transform, Name).
@@ -64,12 +57,7 @@ fn register_builtin_components(resources: &mut kooch_core::resource::Resources) 
         registry.register_cpu_reflected::<crate::prefab_instance::PrefabMember>();
         registry.register_cpu_reflected::<LodForceLevel>();
         registry.register_cpu_reflected::<PersistentId>();
-        // 🔴 Unconditional, and it used to be behind the `testing`
-        // feature. An unregistered component is DROPPED on load rather
-        // than refused, so a scene exported without this came back with
-        // its pivots gone — lights that orbit in the editor and stand
-        // still in the build, with nothing said. See `crate::testing`
-        // for why the module keeps that name.
+        // 🔴 Unconditional, and it used to be behind the `testing` feature.
         registry.register_cpu_reflected::<crate::testing::spin::Spin>();
     }
 }
@@ -90,18 +78,9 @@ impl Plugin for EcsPlugin {
         // Register built-in components before user startup systems.
         app.add_system(Stage::Startup, register_builtin_components);
 
-        // Order within a stage is insertion order — these MUST stay in this
-        // sequence.
-        // 1. Apply deferred commands (spawn/despawn/insert/remove).
-        // 2. Clean up despawned entities from component storages.
-        // Hierarchy sync and transform propagation run before GPU sync.
-        // 🔴 `Update`, and the stage is load-bearing. This writes a
-        // local `Transform`; whatever orbits reads its
-        // `GlobalTransform`, which `transform_propagation_system`
-        // resolves in `PostUpdate` below. Scheduled after that, every
-        // orbiting light would render one frame behind its pivot
-        // forever — shadows lagging the camera, with nothing on screen
-        // to say why.
+        // Order within a stage is insertion order — these MUST stay in this sequence. 1. Apply
+        // deferred commands (spawn/despawn/insert/remove). 2. Clean up despawned entities from
+        // component storages. Hierarchy sync and transform propagation run before GPU sync.
         app.add_system(Stage::Update, crate::testing::spin::spin_pivots);
         app.add_system(Stage::PostUpdate, hierarchy_sync_system);
         app.add_system(Stage::PostUpdate, transform_propagation_system);

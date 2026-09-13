@@ -1,8 +1,4 @@
 //! `WorldQuery` trait and fetch implementations.
-//!
-//! Defines how query parameters resolve to concrete component data.
-//! Each `WorldQuery` implementation knows which `TypeId`s it accesses,
-//! whether access is mutable, and how to fetch data for a single entity.
 
 use std::any::TypeId;
 
@@ -13,10 +9,6 @@ use crate::entity::Entity;
 use crate::storage::{Column, Table, TableRow};
 
 /// Where an entity's values live, when they live in a table.
-///
-/// `None` while the archetype's components are still in the per-type map
-/// — which, during the migration of #891, is most of them. Resolved once
-/// per archetype by the query rather than once per entity.
 pub type Row<'w> = Option<(&'w Table, TableRow)>;
 
 use super::access::AccessTracker;
@@ -40,14 +32,6 @@ pub struct ComponentAccess {
 }
 
 /// Defines how a query parameter fetches component data.
-///
-/// Implemented for `&T`, `&mut T`, `Entity`, `Option<&T>`, and tuples.
-///
-/// # Safety
-///
-/// Implementations that use raw pointers from `AnyStorage` must ensure the
-/// pointer is cast to the correct concrete type (matching the `TypeId` used
-/// during registration).
 pub trait WorldQuery {
     /// The item yielded per entity during iteration.
     type Item<'w>;
@@ -63,12 +47,6 @@ pub trait WorldQuery {
     fn required_type_ids() -> Vec<TypeId>;
 
     /// Initialises the fetch state from the component registry.
-    ///
-    /// Registers borrows in the access tracker.
-    ///
-    /// # Safety
-    ///
-    /// Caller must ensure no conflicting borrows exist on the same TypeIds.
     unsafe fn init_fetch<'w>(
         registry: &'w ComponentRegistry,
         tracker: &'w AccessTracker,
@@ -78,13 +56,6 @@ pub trait WorldQuery {
     fn release_fetch(tracker: &AccessTracker);
 
     /// Fetches the item for a single entity.
-    ///
-    /// Returns `None` if the entity doesn't have the required components.
-    ///
-    /// # Safety
-    ///
-    /// Caller must ensure the fetch was initialised and the entity has the
-    /// required components (verified at the archetype level).
     unsafe fn fetch<'w>(
         fetch: &Self::Fetch<'w>,
         entity: Entity,
@@ -178,10 +149,9 @@ impl<T: Send + Sync + 'static> WorldQuery for &T {
         entity: Entity,
         at: Row<'w>,
     ) -> Option<Self::Item<'w>> {
-        // The column first, for components whose values have moved there.
-        // 🔴 A value lives in exactly ONE place — moving it to a column
-        // takes it out of the map — so this is a lookup, not a preference:
-        // whichever holds it is where it is.
+        // The column first, for components whose values have moved there. 🔴 A value lives in
+        // exactly ONE place — moving it to a column takes it out of the map — so this is a lookup,
+        // not a preference: whichever holds it is where it is.
         if let Some((table, row)) = at
             && let Some(id) = fetch.id
             && let Some(column) = table.column(id)
@@ -205,10 +175,9 @@ impl<T: Send + Sync + 'static> WorldQuery for &T {
 
 /// Fetch state for mutable component access.
 pub struct WriteFetch<'w, T: 'static> {
-    /// 🔴 A raw pointer, not a `&'w mut`. `fetch` takes `&self`, so a
-    /// stored `&mut` would have to be reborrowed shared and cast back —
-    /// and Stacked Borrows forbids retagging a shared tag for writes. This
-    /// one carries the `UnsafeCell`'s provenance, which grants them.
+    /// 🔴 A raw pointer, not a `&'w mut`. `fetch` takes `&self`, so a stored `&mut` would have to be
+    /// reborrowed shared and cast back — and Stacked Borrows forbids retagging a shared tag for
+    /// writes. This one carries the `UnsafeCell`'s provenance, which grants them.
     storage: Option<*mut dyn AnyStorage>,
     _lifetime: std::marker::PhantomData<&'w ()>,
     /// Which column holds `T`, once its values have moved to one (#891).
@@ -256,33 +225,20 @@ impl<T: Send + Sync + 'static> WorldQuery for &mut T {
         entity: Entity,
         at: Row<'w>,
     ) -> Option<Self::Item<'w>> {
-        // 🔴 The write path has to follow the read path exactly. If `&T`
-        // read a column and `&mut T` did not, an entity whose values had
-        // moved would simply stop appearing in mutable queries — present
-        // to one half of the engine and absent to the other.
+        // 🔴 The write path has to follow the read path exactly. If `&T` read a column and `&mut T`
+        // did not, an entity whose values had moved would simply stop appearing in mutable queries
+        // — present to one half of the engine and absent to the other.
         if let Some((table, row)) = at
             && let Some(id) = fetch.id
             && let Some(column) = table.column(id)
         {
-            // SAFETY: the column was built for `T`, and the borrow
-            // tracker guarantees this query holds the only access to this
-            // component this frame.
-            //
-            // 🔴 Through the column's OWN pointer, never by casting the
-            // shared borrow to `*mut` — Miri rejects that retag, and it is
-            // right to: the shared tag does not grant writes.
+            // SAFETY: the column was built for `T`, and the borrow tracker guarantees this query
+            // holds the only access to this component this frame.
             return unsafe { column.value_ptr::<T>(row.index()).map(|p| &mut *p) };
         }
         let storage = fetch.storage?;
-        // SAFETY: `storage` is the pointer the registry handed out, whose
-        // provenance comes from its `UnsafeCell` and grants writes. Each
-        // entity maps to a unique slot, so different entities never alias,
-        // and the borrow tracker guarantees no other query holds this
-        // component this frame.
-        //
-        // 🔴 It used to reach the same place by casting a shared reborrow
-        // of a `&mut` back to `*mut`. Miri rejected the retag — a shared
-        // tag does not grant writes — on a test that had been passing.
+        // SAFETY: `storage` is the pointer the registry handed out, whose provenance comes from its
+        // `UnsafeCell` and grants writes.
         let ptr = unsafe { (*storage).get_mut_ptr(entity)? };
         Some(unsafe { &mut *(ptr as *mut T) })
     }
@@ -322,10 +278,9 @@ impl<Q: WorldQuery> WorldQuery for Option<Q> {
     }
 
     fn release_fetch(_tracker: &AccessTracker) {
-        // Release for Option is handled by the Query drop implementation,
-        // which checks whether the inner fetch was actually initialised.
-        // Calling Q::release_fetch here would be incorrect because we don't
-        // know if init_fetch returned Some or None.
+        // Release for Option is handled by the Query drop implementation, which checks whether the
+        // inner fetch was actually initialised. Calling Q::release_fetch here would be incorrect
+        // because we don't know if init_fetch returned Some or None.
     }
 
     unsafe fn fetch<'w>(

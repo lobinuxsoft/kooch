@@ -78,9 +78,6 @@ pub trait Reflect: Send + Sync + 'static {
     }
 
     /// Returns the editor category for grouping in the "Add Component" menu.
-    ///
-    /// `None` means uncategorized — the editor shows the type at the top
-    /// level of the menu.
     fn category() -> Option<&'static str>
     where
         Self: Sized,

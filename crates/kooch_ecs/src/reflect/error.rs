@@ -17,22 +17,10 @@ pub enum ReflectError {
     ComponentNotFound,
     /// The storage does not support mutable access (e.g. GPU from CPU).
     ReadOnly,
-    /// An entity reference reached a live component without being
-    /// resolved to a handle first.
-    ///
-    /// A scene file stores references as
-    /// [`EntityRef::Persistent`](super::EntityRef::Persistent); the load
-    /// path's remapping pass turns them into handles once the target
-    /// entities exist. Seeing one here means that pass did not run, and
-    /// storing it would leave a component pointing nowhere.
+    /// An entity reference reached a live component without being resolved to a handle first.
     UnresolvedEntityRef { field: String },
-    /// The value has the field's kind but not a form the field accepts —
-    /// a `String` field that stores a parsed type, given text that does
-    /// not parse.
-    ///
-    /// Distinct from [`Self::TypeMismatch`], which is about the kind:
-    /// reporting a bad GUID as "expected String, got String" would say
-    /// nothing about what is actually wrong.
+    /// The value has the field's kind but not a form the field accepts — a `String` field that
+    /// stores a parsed type, given text that does not parse.
     InvalidValue {
         field: String,
         expected: &'static str,

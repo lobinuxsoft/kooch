@@ -4,9 +4,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use super::Column;
 
 /// Counts its own drops, so a test can assert the column ran them.
-///
-/// Per-instance rather than a `static`: the harness runs tests in
-/// parallel and a shared counter would race.
 struct Tracked(Arc<AtomicUsize>);
 
 impl Drop for Tracked {
@@ -153,13 +150,6 @@ fn values_survive_growth() {
 }
 
 /// Every row of an over-aligned type lands on its own alignment.
-///
-/// ⚠️ This does **not** guard a padding step, and an earlier version of
-/// this comment said it did. Rust already guarantees `size_of` is a
-/// multiple of `align_of`, so there is no padding decision to get wrong
-/// — replacing the stride with `size_of` was tried and changed nothing.
-/// What it does guard is the row arithmetic: a stride off by one fails
-/// this and nine other tests with it.
 #[test]
 fn every_row_is_aligned() {
     let mut column = Column::of::<Wide>();

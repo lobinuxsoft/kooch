@@ -1,8 +1,4 @@
 //! Archetype definition for the ECS.
-//!
-//! An [`Archetype`] groups entities that share the exact same set of
-//! component types.  [`ArchetypeId`] uniquely identifies each combination
-//! using a deterministic hash of the sorted `TypeId` set.
 
 use std::any::TypeId;
 use std::collections::BTreeSet;
@@ -20,10 +16,6 @@ impl ArchetypeId {
     pub const EMPTY: Self = Self(0);
 
     /// Computes the archetype ID from a sorted set of component `TypeId`s.
-    ///
-    /// An empty set always returns [`ArchetypeId::EMPTY`].
-    /// `BTreeSet` guarantees deterministic iteration order, so the hash is
-    /// stable for the same component combination within a single run.
     pub fn from_components(components: &BTreeSet<TypeId>) -> Self {
         if components.is_empty() {
             return Self::EMPTY;
@@ -96,11 +88,6 @@ impl Archetype {
     }
 
     /// Reorders this archetype's entities to follow `rank`.
-    ///
-    /// Iteration order is observable — systems run over it, and a client
-    /// reading the world sees it — so restoring a snapshot has to put it
-    /// back, not just the entities themselves. Entities absent from
-    /// `rank` sort last, keeping their relative order.
     pub fn reorder_entities(&mut self, rank: &std::collections::HashMap<Entity, usize>) {
         self.entities
             .sort_by_key(|e| rank.get(e).copied().unwrap_or(usize::MAX));

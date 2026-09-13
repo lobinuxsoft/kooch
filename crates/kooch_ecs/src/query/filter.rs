@@ -1,7 +1,4 @@
 //! Query filters for archetype-level filtering.
-//!
-//! Filters determine which archetypes match a query based on component
-//! presence/absence without actually fetching the component data.
 
 use std::any::TypeId;
 use std::marker::PhantomData;

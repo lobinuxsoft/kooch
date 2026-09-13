@@ -33,10 +33,6 @@ pub struct Query<'w, Q: WorldQuery, F: QueryFilter = ()> {
     fetch: Q::Fetch<'w>,
     matched_archetypes: Vec<&'w Archetype>,
     /// The table serving each matched archetype, parallel to it.
-    ///
-    /// Resolved **once per archetype** here rather than once per entity in
-    /// the walk. `None` while that archetype's values still live in the
-    /// per-type map, which during the migration of #891 is most of them.
     matched_tables: Vec<Option<&'w Table>>,
     archetypes: &'w ArchetypeRegistry,
     tracker: &'w AccessTracker,
@@ -46,20 +42,6 @@ pub struct Query<'w, Q: WorldQuery, F: QueryFilter = ()> {
 
 impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
     /// Creates a new query from the given resources.
-    ///
-    /// `ComponentRegistry`, `ArchetypeRegistry` and [`AccessTracker`] must
-    /// all be present. [`EcsPlugin`](crate::EcsPlugin) inserts the three,
-    /// so any app built the normal way already has them; a bare
-    /// `Resources` assembled by hand in a test does not.
-    ///
-    /// This used to claim the tracker was "created automatically if not
-    /// present". It never was — the line below is an `expect`.
-    ///
-    /// # Panics
-    ///
-    /// - If `ComponentRegistry` or `ArchetypeRegistry` is missing.
-    /// - If a required component type is not registered.
-    /// - If there is a conflicting borrow (e.g. two mutable queries on the same type).
     pub fn new(resources: &'w Resources) -> Self {
         let registry = resources
             .get::<ComponentRegistry>()
@@ -126,9 +108,6 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
     }
 
     /// Fetches the component data for a single entity.
-    ///
-    /// Returns `None` if the entity doesn't have the required components
-    /// or if its archetype doesn't match the query filter.
     pub fn get(&self, entity: Entity) -> Option<Q::Item<'w>> {
         // Check the entity's archetype passes the filter.
         let arch_id = self.archetypes.entity_archetype(entity)?;
@@ -160,11 +139,6 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
     }
 
     /// Where `entity`'s values live in `table`, if they live in one.
-    ///
-    /// ⚠️ One map lookup per entity, and it is temporary: the archetype
-    /// will carry the row itself once the migration finishes, which is
-    /// what `ArchetypeEntity` is for in #891. Today it costs nothing
-    /// because `table` is `None` for every archetype.
     #[inline]
     fn at(&self, table: Option<&'w Table>, entity: Entity) -> crate::query::fetch::Row<'w> {
         let table = table?;
@@ -181,11 +155,9 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
         Some((table, self.archetypes.row_of(entity)?))
     }
 
-    /// Same as [`Self::for_each`] but the closure also receives the
-    /// matched [`Entity`]. Use when downstream code needs to cross-
-    /// reference the iterated row against another component lookup
-    /// (e.g. an optional override component checked via
-    /// [`Self::get`]).
+    /// Same as [`Self::for_each`] but the closure also receives the matched [`Entity`]. Use when
+    /// downstream code needs to cross- reference the iterated row against another component lookup
+    /// (e.g. an optional override component checked via [`Self::get`]).
     pub fn for_each_entity(&self, mut func: impl FnMut(Entity, Q::Item<'w>)) {
         for (archetype, table) in self.matched_archetypes.iter().zip(&self.matched_tables) {
             for &entity in archetype.entities() {

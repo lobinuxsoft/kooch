@@ -1,21 +1,4 @@
 //! Turning entity references between their live and saved forms.
-//!
-//! A component in memory holds [`EntityRef::Live`]; a file holds
-//! [`EntityRef::Persistent`]. This module owns both directions, so the
-//! conversion lives in one place instead of being re-derived per component
-//! the way `parent_index` was.
-//!
-//! # Why saving assigns identity
-//!
-//! [`PersistentId`] is opt-in — only entities something points at carry
-//! one. "Something points at it" is not known until a reference is
-//! written, so the save path discovers it: [`assign_ids_to_referenced`]
-//! walks every reflected field, finds the entities being referenced, and
-//! gives each one an id if it has none.
-//!
-//! That is why saving a scene mutates the world. The alternative is
-//! either an id on every entity in a galaxy, or asking authors to tick a
-//! box before a reference will survive a reload.
 
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
@@ -31,10 +14,6 @@ use crate::reflect::{EntityRef, FieldKind, ReflectValue};
 use crate::scene_member::SceneMember;
 
 /// Every entity referenced by a reflected field anywhere in the world.
-///
-/// Reads only components that declare an [`FieldKind::EntityRef`] field —
-/// the check is static metadata, so components without references cost
-/// nothing beyond the lookup.
 fn referenced_entities(resources: &Resources) -> HashSet<Entity> {
     let mut referenced = HashSet::new();
 
@@ -82,12 +61,6 @@ fn referenced_entities(resources: &Resources) -> HashSet<Entity> {
 }
 
 /// Gives a [`PersistentId`] to every entity something references.
-///
-/// Returns the resulting `Entity -> EntityGuid` map, which the save path
-/// then uses to resolve references without looking each one up again.
-///
-/// Entities that already carry an id keep it — reassigning would break
-/// every reference in every *other* scene that points here.
 pub(super) fn assign_ids_to_referenced(resources: &mut Resources) -> HashMap<Entity, EntityGuid> {
     let referenced = referenced_entities(resources);
     let mut ids = HashMap::with_capacity(referenced.len());
@@ -169,30 +142,13 @@ pub(super) struct DeferredRef {
 }
 
 /// Resolves every deferred reference against the entities that now exist.
-///
-/// This is the half that makes references generic. `parent_index` worked
-/// because `Parent` was special-cased in both directions; anything else
-/// holding an entity — a joint, a trigger's target, a camera's follow
-/// subject — had nowhere to be resolved. Here the field's *kind* decides,
-/// so a component the engine has never heard of resolves the same way.
-///
-/// A reference whose target is missing is left unset rather than failing
-/// the load. Under world-cell streaming that is the normal state for a
-/// reference into a cell that is not resident; failing here would make an
-/// ordinary streaming boundary look like a corrupt scene.
 pub(super) fn resolve_deferred(resources: &mut Resources, deferred: Vec<DeferredRef>) {
     if deferred.is_empty() {
         return;
     }
 
-    // Ids arrived as ordinary `PersistentId` components during the spawn
-    // pass, so the map is everything that ended up carrying one.
-    //
-    // Keyed by *scene and* id, never by id alone: ids are scene-local, so
-    // two open scenes both having an entity 1 is ordinary. A map keyed on
-    // the id would collapse them and hand every reference whichever one
-    // was inserted last — the same failure that made resolving parents by
-    // name unusable.
+    // Ids arrived as ordinary `PersistentId` components during the spawn pass, so the map is
+    // everything that ended up carrying one.
     let by_id: HashMap<(Guid, EntityGuid), Entity> = resources
         .get::<ComponentRegistry>()
         .map(|components| {
@@ -241,11 +197,8 @@ pub(super) fn resolve_deferred(resources: &mut Resources, deferred: Vec<Deferred
             continue;
         };
 
-        // A reference from disk names a **file**; the world is keyed by
-        // **instance**. When exactly one copy of that file is open, that
-        // is the one it means. When several are, nothing in the reference
-        // says which — the same case Unity closes by forbidding
-        // cross-scene references outright.
+        // A reference from disk names a **file**; the world is keyed by **instance**. When exactly
+        // one copy of that file is open, that is the one it means.
         let scene = match by_id.contains_key(&(scene, id)) {
             true => scene,
             false => match instances_of(resources, scene).as_slice() {
@@ -267,9 +220,8 @@ pub(super) fn resolve_deferred(resources: &mut Resources, deferred: Vec<Deferred
         let resolved = match by_id.get(&(scene, id)) {
             Some(&target) => ReflectValue::EntityRef(Some(EntityRef::live(target))),
             None => {
-                // Ordinary when the target's scene is not open — a
-                // cross-scene reference resolves once both are loaded, and
-                // under world cells (#566) a non-resident target is the
+                // Ordinary when the target's scene is not open — a cross-scene reference resolves
+                // once both are loaded, and under world cells (#566) a non-resident target is the
                 // normal case rather than a broken file.
                 tracing::debug!(
                     target: "kooch_ecs::scene",
@@ -299,14 +251,7 @@ pub(super) fn resolve_deferred(resources: &mut Resources, deferred: Vec<Deferred
     }
 }
 
-/// Rewrites a field value for storage, turning a live reference into a
-/// persistent one.
-///
-/// A reference whose target has no id resolves to `None` rather than
-/// failing the save: the target is an entity that was despawned, or an
-/// ephemeral one the scene deliberately excludes. Writing "points at
-/// nothing" is honest; keeping the handle would not survive the reload
-/// anyway, and refusing to save would lose the rest of the scene too.
+/// Rewrites a field value for storage, turning a live reference into a persistent one.
 pub(super) fn to_persistent(
     value: ReflectValue,
     ids: &HashMap<Entity, EntityGuid>,
@@ -334,10 +279,6 @@ pub(super) fn to_persistent(
 }
 
 /// The instance ids of every open copy of the file `source`.
-///
-/// Empty when there is no [`SceneManager`](crate::SceneManager) — a
-/// headless load with no open set, where a reference can only mean the
-/// scene it already names.
 fn instances_of(resources: &Resources, source: Guid) -> Vec<Guid> {
     resources
         .get::<crate::scene_manager::SceneManager>()

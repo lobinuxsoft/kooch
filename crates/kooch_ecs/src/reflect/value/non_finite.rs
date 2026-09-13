@@ -1,19 +1,4 @@
 //! Floats that JSON has no number for.
-//!
-//! JSON's grammar has no infinity and no NaN. `serde_json` does not refuse
-//! them — it writes `null`, which then fails to read back as a number. So
-//! a component holding one crossed the editor protocol, arrived as a type
-//! error on the far side, and the mirror stopped updating with nothing
-//! said about which field did it.
-//!
-//! Infinity is not exotic here: it is how a physics joint spells "no
-//! ceiling on this motor" and "this never breaks".
-//!
-//! A finite value keeps its ordinary number form, so nothing about the
-//! scene format changes for the values scenes actually contain. Only the
-//! three that have no number get spelled out as text — which RON could
-//! already write as `inf`, and reads back either way through the visitor
-//! below.
 
 use std::fmt;
 

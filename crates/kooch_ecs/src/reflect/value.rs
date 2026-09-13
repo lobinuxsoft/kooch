@@ -11,7 +11,7 @@ mod non_finite;
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ReflectValue {
     /// A single-precision float, infinities and NaN included — see
-    /// [`non_finite`] for why those need saying.
+    /// `non_finite` for why those need saying.
     #[serde(with = "non_finite::f32_repr")]
     F32(f32),
     #[serde(with = "non_finite::f64_repr")]
@@ -31,22 +31,14 @@ pub enum ReflectValue {
     Vec4(glam::Vec4),
     Quat(glam::Quat),
     Mat4(glam::Mat4),
-    /// Typed asset reference. `guid` is `None` when the field is
-    /// unassigned. `asset_type` is the static type name the field
-    /// expects (e.g. `"kooch_render::meshlet::MeshletMesh"`); the
-    /// inspector uses it to filter `AssetDatabase::entries_of_type`
-    /// when populating the picker.
+    /// Typed asset reference. `guid` is `None` when the field is unassigned. `asset_type` is the
+    /// static type name the field expects (e.g. `"kooch_render::meshlet::MeshletMesh"`); the
+    /// inspector uses it to filter `AssetDatabase::entries_of_type` when populating the picker.
     AssetRef {
         guid: Option<Guid>,
         asset_type: String,
     },
-    /// Reference to another entity. `None` when the field points at
-    /// nothing.
-    ///
-    /// A live component holds [`EntityRef::Live`]; a scene file holds
-    /// [`EntityRef::Persistent`]. The save path converts one way and the
-    /// load path's remapping pass converts back — see
-    /// [`EntityRef`](super::EntityRef).
+    /// Reference to another entity. `None` when the field points at nothing.
     EntityRef(Option<EntityRef>),
 }
 

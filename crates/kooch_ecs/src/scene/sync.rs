@@ -10,10 +10,6 @@ use super::entity_refs::{DeferredRef, resolve_deferred};
 use super::error::SceneError;
 
 /// Clears the live ECS and rebuilds it from a [`SceneDocument`].
-///
-/// Every non-ephemeral entity is despawned first, so this is "open this
-/// scene and only this scene". To add a scene beside the ones already
-/// open, use [`spawn_scene_into`].
 pub fn sync_scene_to_ecs(
     scene: &SceneDocument,
     resources: &mut Resources,
@@ -23,15 +19,6 @@ pub fn sync_scene_to_ecs(
 }
 
 /// Spawns a document's entities beside whatever is already loaded.
-///
-/// Each entity is tagged with [`SceneMember`] naming `scene.id`, which is
-/// what lets saving write only its own entities and unloading despawn only
-/// its own.
-///
-/// Entity references resolve at the end, once every entity in this
-/// document exists. A reference into a scene that is not open stays
-/// unresolved rather than failing — see
-/// [`resolve_deferred`](super::entity_refs::resolve_deferred).
 pub fn spawn_scene_into(
     scene: &SceneDocument,
     resources: &mut Resources,
@@ -40,15 +27,6 @@ pub fn spawn_scene_into(
 }
 
 /// Spawns a document's entities as the scene instance `instance`.
-///
-/// 🔴 The entities keep the ids the file gives them; only which *copy*
-/// they belong to differs. That is what lets the same file be open twice:
-/// `SceneMember` names the instance, so the `(scene, entity)` pair stays
-/// unique while the entity half is verbatim from disk.
-///
-/// Unity DOTS takes the same position — instances of a subscene are
-/// "exact copies of each other", told apart by the instance the load
-/// hands back rather than by anything inside them.
 pub fn spawn_scene_as(
     scene: &SceneDocument,
     resources: &mut Resources,
@@ -57,28 +35,7 @@ pub fn spawn_scene_as(
     spawn_returning_as(scene, resources, instance).map(|_| ())
 }
 
-/// Stamps out a copy of `prefab` inside the scene `into`, and hands back
-/// its root.
-///
-/// # Instancing is not opening
-///
-/// Opening a scene maps the file's entity ids one-to-one onto entities and
-/// can be saved back to the file. Instancing remaps them, and the result
-/// belongs to the scene that contains it. Only the first has a reason to
-/// refuse a second copy — which is why #609's "already open" rule must not
-/// reach here.
-///
-/// # What an instance keeps, and what it does not
-///
-/// The entities are baked into `into`: they carry no link back to the file
-/// they came from, so editing the prefab afterwards does not update them
-/// (#611 Phase B is where that link and its per-field overrides live). What
-/// this does give is the operation a game actually needs — spawn a bullet,
-/// a tree, an enemy — and none of it is thrown away by adding the link
-/// later.
-///
-/// Fails with [`SceneError::NotASingleRoot`] when the document is not one
-/// tree; see there for why a unit needs a single root.
+/// Stamps out a copy of `prefab` inside the scene `into`, and hands back its root.
 pub fn instantiate(
     prefab: &SceneDocument,
     resources: &mut Resources,
@@ -88,16 +45,7 @@ pub fn instantiate(
     Ok(root)
 }
 
-/// Instances `prefab` and hands back its root **and** every entity it
-/// spawned, in document order.
-///
-/// `members[i]` is the entity for `prefab.entities[i]`. The editor needs
-/// that correspondence in both directions: to record that the field a user
-/// just changed belongs to entity *i* of the prefab, and to find the live
-/// entity for entity *i* when the prefab changes and the value has to be
-/// pushed back. Recovering it afterwards would mean guessing — names are
-/// not unique and child order is not stable — so it is handed out by the
-/// only code that actually knows.
+/// Instances `prefab` and hands back its root **and** every entity it spawned, in document order.
 pub fn instantiate_members(
     prefab: &SceneDocument,
     resources: &mut Resources,
@@ -147,10 +95,9 @@ fn spawn_returning_as(
 ) -> Result<Vec<crate::entity::Entity>, SceneError> {
     use crate::hierarchy::Parent;
 
-    // Identity has to be a known type before the spawn pass, or the ids
-    // in the file get parked as an unknown component and every reference
-    // resolves to nothing. Registering here rather than relying on
-    // `EcsPlugin` keeps a hand-built `Resources` loading correctly.
+    // Identity has to be a known type before the spawn pass, or the ids in the file get parked as
+    // an unknown component and every reference resolves to nothing. Registering here rather than
+    // relying on `EcsPlugin` keeps a hand-built `Resources` loading correctly.
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<crate::persistent_id::PersistentId>();
     }
@@ -182,13 +129,9 @@ fn spawn_returning_as(
     let mut deferred: Vec<DeferredRef> = Vec::new();
 
     for entity_desc in &scene.entities {
-        // A description carrying `PrefabInstance` is a *reference*: the
-        // scene did not store this entity's components, the prefab has
-        // them. Building it means instancing the prefab and then applying
-        // what the user changed.
-        //
-        // The result stands in for the description, so a `Parent` pointing
-        // at this instance resolves to the root the prefab produced.
+        // A description carrying `PrefabInstance` is a *reference*: the scene did not store this
+        // entity's components, the prefab has them. Building it means instancing the prefab and
+        // then applying what the user changed.
         let entity = match instance_source(entity_desc) {
             Some(source) => rebuild_instance(entity_desc, source, resources, instance),
             None => {
@@ -206,12 +149,7 @@ fn spawn_returning_as(
         tag_with_scene(resources, entity, instance);
 
         for comp_desc in &entity_desc.components {
-            // Look up the TypeId by full type name. A name this binary
-            // has no type for is parked verbatim rather than failing the
-            // load: which components resolve depends on which binary
-            // opened the scene, and aborting here would despawn the
-            // world (step 1 already ran) and lose everything on the next
-            // save. See `DynamicComponents`.
+            // Look up the TypeId by full type name.
             let type_id = {
                 let components = resources.get::<ComponentRegistry>();
                 components.and_then(|c| c.type_id_by_name(&comp_desc.type_name))
@@ -276,11 +214,6 @@ fn spawn_returning_as(
     }
 
     // 3. Second pass: rebuild the hierarchy of *legacy* scenes only.
-    //
-    // A scene written since #607 carries `Parent` as an ordinary component
-    // whose entity reference the remapping pass below resolves, the same
-    // way it resolves any other component pointing at an entity. Older
-    // files put the link out of band, so they still need this.
     let parent_tid = std::any::TypeId::of::<Parent>();
     for (index, entity) in spawned_order.iter().enumerate() {
         let desc = &scene.entities[index];
@@ -329,36 +262,19 @@ fn spawn_returning_as(
     // Resolve entity references now that every entity exists.
     resolve_deferred(resources, deferred);
 
-    // `Parent` is the authoritative side and `Children` is derived from it
-    // by a system — which has not run yet. Anything reading the hierarchy
-    // between here and the next frame sees a tree with no branches:
-    // capturing a freshly instanced prefab gave back its root alone.
-    //
-    // Derived here so a spawn hands back a world that is already
-    // consistent, rather than one that becomes consistent shortly.
+    // `Parent` is the authoritative side and `Children` is derived from it by a system — which has
+    // not run yet. Anything reading the hierarchy between here and the next frame sees a tree with
+    // no branches: capturing a freshly instanced prefab gave back its root alone.
     rebuild_children(&spawned_order, resources);
 
     Ok(spawned_order)
 }
 
 /// Prefabs currently being instanced, innermost last.
-///
-/// A prefab that references itself — directly, or around a longer loop —
-/// instances forever and takes the process out with a stack overflow. The
-/// capture path refuses to write one, but that only covers files this
-/// build creates: a scene can arrive from a repository, from a hand edit,
-/// or from a build that had the bug. A cycle has to be survivable on the
-/// way *in*.
 #[derive(Default)]
 struct InstancingChain(Vec<kooch_core::Guid>);
 
 /// Where the next scene spawned came from.
-///
-/// The document's own `name` cannot serve: the editor writes "Untitled
-/// Scene" into every file it creates, so a complaint keyed on it names
-/// nothing. Set by whoever holds a path; a caller that has none — the
-/// remote client, a test — leaves it and gets the scene's id instead,
-/// which at least greps.
 struct LoadSource(String);
 
 /// Tells the next load which file it is reading.
@@ -367,10 +283,6 @@ pub fn loading_from(resources: &mut Resources, path: &std::path::Path) {
 }
 
 /// What this load has already complained about.
-///
-/// One unknown type spread over 600 entities is one problem, not 600 log
-/// lines. Scoped to a load rather than to the process, so that fixing the
-/// scene and reloading is distinguishable from never having warned.
 struct Reported {
     source: String,
     types: std::collections::HashSet<String>,
@@ -388,11 +300,6 @@ impl Reported {
 }
 
 /// Says a type did not resolve, once per type per load.
-///
-/// The component is parked and written back untouched, so nothing is lost
-/// on disk — but nothing runs it either, and that is what goes unnoticed:
-/// the rename to Kóoch moved every `type_name` and every scene loaded
-/// clean and wrong (#719).
 fn report_type(resources: &mut Resources, type_name: &str) {
     let Some(reported) = resources.get_mut::<Reported>() else {
         return;
@@ -411,12 +318,6 @@ fn report_type(resources: &mut Resources, type_name: &str) {
 }
 
 /// Says a stored value did not land, once per field per load.
-///
-/// A field the type no longer has is routine under the engine's
-/// break-and-fix policy, so it goes to `debug`; anything else is data that
-/// will not load and earns a warning. Neither fails the load:
-/// `sync_scene_to_ecs` despawns the world before spawning, so aborting
-/// here leaves nothing behind at all.
 fn report_field(
     resources: &mut Resources,
     type_name: &str,
@@ -477,16 +378,7 @@ fn instance_overrides(entity_desc: &super::document::EntityDescription) -> Strin
         .unwrap_or_default()
 }
 
-/// Instances `source` and applies the description's overrides, returning
-/// the instance root.
-///
-/// # When the prefab cannot be found
-///
-/// A placeholder entity is spawned, named `missing prefab [guid]`. The
-/// alternative — dropping it — loses the user's placement and their
-/// overrides with no way to notice, and this is a reference now: a broken
-/// one is something the scene should *show* rather than something it
-/// quietly loads without.
+/// Instances `source` and applies the description's overrides, returning the instance root.
 fn rebuild_instance(
     entity_desc: &super::document::EntityDescription,
     source: kooch_core::Guid,
@@ -512,10 +404,9 @@ fn rebuild_instance(
         chain.0.push(source);
     }
 
-    // Named, not guessed. `spawn_members` reads the active scene out of
-    // `SceneManager` — which the load lifted out of `Resources` to run,
-    // so it would answer with a fresh random `Guid` and put this
-    // instance's members in a scene nobody has open (#955).
+    // Named, not guessed. `spawn_members` reads the active scene out of `SceneManager` — which the
+    // load lifted out of `Resources` to run, so it would answer with a fresh random `Guid` and put
+    // this instance's members in a scene nobody has open (#955).
     let built = match super::prefab::spawn_members_into(source, resources, into) {
         Ok((root, members)) => {
             crate::prefab_instance::attach(resources, root, &members, source);
@@ -541,10 +432,6 @@ fn rebuild_instance(
 }
 
 /// An entity that says out loud what went wrong, instead of vanishing.
-///
-/// Dropping the instance loses the user's placement and their overrides
-/// with nothing to notice. A reference that cannot be followed is
-/// something the scene should show.
 fn spawn_placeholder(resources: &mut Resources, name: String) -> crate::entity::Entity {
     let entity = {
         let mut commands = resources
@@ -587,11 +474,7 @@ fn apply_overrides(encoded: &str, members: &[crate::entity::Entity], resources: 
         let Some(type_id) = type_id else {
             continue;
         };
-        // What a record *means* is decided by its field, not by whether a
-        // value came with it. A removal is the record with no field; a
-        // field record that arrived without a value — hand-edited, or
-        // written by an older build — is one this cannot apply, and
-        // treating it as a removal would delete the component instead.
+        // What a record *means* is decided by its field, not by whether a value came with it.
         let is_removal = entry.address.field == crate::prefab_instance::WHOLE_COMPONENT;
         match (is_removal, entry.value) {
             // A component the user took off this instance.
@@ -706,9 +589,6 @@ fn tag_with_scene(
 }
 
 /// Despawns only the entities belonging to `scene`.
-///
-/// "Remove the station" and "I walked away" have to be different
-/// operations (#566); this is the first of the two.
 pub fn despawn_scene(scene: kooch_core::Guid, resources: &mut Resources) {
     use crate::scene_member::SceneMember;
 
@@ -728,11 +608,6 @@ pub fn despawn_scene(scene: kooch_core::Guid, resources: &mut Resources) {
 }
 
 /// Despawns every alive entity in the ECS, except those marked ephemeral.
-///
-/// Entities whose archetype contains a marker registered in
-/// [`EphemeralComponents`](crate::ephemeral::EphemeralComponents) are
-/// preserved across scene loads. This keeps editor helper entities
-/// (cameras, gizmos) alive when the user opens a different scene.
 fn despawn_all(resources: &mut Resources) {
     use crate::ephemeral::EphemeralComponents;
 
@@ -759,9 +634,6 @@ fn despawn_all(resources: &mut Resources) {
 }
 
 /// Removes `entities` from every store that knows about them.
-///
-/// Shared by the whole-world and per-scene paths so they cannot drift into
-/// forgetting different stores.
 fn despawn_entities(resources: &mut Resources, entities: &[crate::entity::Entity]) {
     for &entity in entities {
         if let Some(alloc) = resources.get_mut::<EntityAllocator>() {

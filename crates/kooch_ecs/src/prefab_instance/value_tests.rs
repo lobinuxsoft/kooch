@@ -39,10 +39,9 @@ fn a_presence_record_carries_no_value() {
     assert_eq!(instance.value_of(&at(WHOLE_COMPONENT)), None);
 }
 
-/// The old separator was `;`, which a record could not contain while
-/// it was only an address. Now it ends in a serialised value, and a
-/// string field holding a semicolon would have split one record into
-/// two.
+/// The old separator was `;`, which a record could not contain while it was only an address. Now it
+/// ends in a serialised value, and a string field holding a semicolon would have split one record
+/// into two.
 #[test]
 fn a_value_containing_punctuation_does_not_split_the_record() {
     let mut instance = PrefabInstance::default();

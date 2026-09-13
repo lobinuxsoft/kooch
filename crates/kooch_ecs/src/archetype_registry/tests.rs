@@ -489,10 +489,9 @@ mod rows {
         assert_eq!(archetypes.row_of(entity(2)), Some(TableRow(1)));
     }
 
-    /// 🔴 The test this stage exists for. Moving entity 1 out pulls entity 3
-    /// into its row — and entity 3 asked for nothing, changed no components
-    /// and was never mentioned in the call. If nobody fixes its row it
-    /// reads another entity's values, silently.
+    /// 🔴 The test this stage exists for. Moving entity 1 out pulls entity 3 into its row — and
+    /// entity 3 asked for nothing, changed no components and was never mentioned in the call. If
+    /// nobody fixes its row it reads another entity's values, silently.
     #[test]
     fn a_move_fixes_the_entity_it_displaced() {
         let (components, health, speed) = components();
@@ -625,12 +624,9 @@ mod rows {
         assert_eq!(archetypes.row_of(entity(1)), Some(TableRow(0)));
     }
 
-    /// 🔴 The entity that MOVES has to learn its new row too — and every
-    /// other test here happens to move row 0 to row 0, where a stale row
-    /// is indistinguishable from a correct one. Verified by breaking it:
-    /// dropping the update fails this and nothing else.
-    ///
-    /// So the destination is filled first, and the mover lands at row 2.
+    /// 🔴 The entity that MOVES has to learn its new row too — and every other test here happens to
+    /// move row 0 to row 0, where a stale row is indistinguishable from a correct one. Verified by
+    /// breaking it: dropping the update fails this and nothing else.
     #[test]
     fn the_mover_learns_its_new_row() {
         let (components, health, speed) = components();

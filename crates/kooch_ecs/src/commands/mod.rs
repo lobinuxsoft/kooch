@@ -38,10 +38,6 @@ pub use entity_builder::EntityBuilder;
 pub use entity_commands::EntityCommands;
 
 /// System that applies all pending [`Commands`].
-///
-/// Should run in [`Stage::GpuSync`](kooch_core::stage::Stage::GpuSync) **before**
-/// the despawn cleanup system so that newly spawned entities get their
-/// components before GPU sync.
 pub fn commands_apply_system(resources: &mut Resources) {
     let mut commands = match resources.remove::<Commands>() {
         Some(c) => c,

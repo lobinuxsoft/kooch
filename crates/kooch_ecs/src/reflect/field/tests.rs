@@ -16,10 +16,9 @@ fn a_condition_is_met_only_by_its_listed_values() {
     assert!(!RADIUS_WHEN.is_met(Some(CUBOID)));
 }
 
-/// A condition naming a field the component does not have reads as
-/// met. A typo in an attribute should look like a mistake, not like a
-/// field that silently vanished — the field the author annotated is
-/// still the field they wanted to see.
+/// A condition naming a field the component does not have reads as met. A typo in an attribute
+/// should look like a mistake, not like a field that silently vanished — the field the author
+/// annotated is still the field they wanted to see.
 #[test]
 fn a_missing_discriminant_shows_the_field() {
     assert!(RADIUS_WHEN.is_met(None));

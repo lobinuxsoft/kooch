@@ -46,18 +46,9 @@ fn reflect_fields() {
     );
 }
 
-/// Regression: the `asset_type` string MUST match
-/// `std::any::type_name::<T>()` exactly, because the asset server
-/// uses that as the sidecar's `asset_type` value and the inspector
-/// picker filters by exact-match string. Re-exported paths
-/// (e.g. `kooch_render::meshlet::MeshletMesh` vs the canonical
-/// `kooch_render::meshlet::asset::MeshletMesh`) are NOT equivalent
-/// from the type-system's point of view.
-///
-/// We can't reach `MeshletMesh` from `kooch_ecs` (would create a
-/// dep cycle), but we can encode the canonical path the macro
-/// must emit and trust the assertion to fire if someone edits
-/// the attribute and breaks the contract.
+/// Regression: the `asset_type` string MUST match `std::any::type_name::<T>()` exactly, because the
+/// asset server uses that as the sidecar's `asset_type` value and the inspector picker filters by
+/// exact-match string. Re-exported paths (e.g.
 #[test]
 fn mesh_asset_type_matches_canonical_type_name() {
     let r = MeshRenderer::default();

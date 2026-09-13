@@ -1,15 +1,4 @@
 //! Marker registry for entities excluded from scene persistence.
-//!
-//! Entities whose archetype contains at least one type registered here are
-//! treated as *ephemeral*: they are skipped by [`SceneDocument::from_ecs`]
-//! during save and preserved by `despawn_all` during load. This lets editor
-//! crates spawn helper entities (cameras, gizmos, grids) into the live ECS
-//! without polluting the user's scene files or losing them on scene reload.
-//!
-//! Downstream crates register their marker `TypeId`s at startup, typically
-//! by inserting `TypeId::of::<MyMarker>()` into the resource.
-//!
-//! [`SceneDocument::from_ecs`]: crate::scene::SceneDocument::from_ecs
 
 use std::any::TypeId;
 use std::collections::HashSet;
@@ -59,9 +48,6 @@ impl EphemeralComponents {
     }
 
     /// Returns whether the given component set contains any ephemeral marker.
-    ///
-    /// Used by scene serialization to decide whether to skip an entire
-    /// archetype (all entities in the archetype share the same component set).
     pub fn intersects<'a, I>(&self, components: I) -> bool
     where
         I: IntoIterator<Item = &'a TypeId>,

@@ -1,20 +1,4 @@
 //! Core [`ComponentRegistry`] type and inherent impls.
-//!
-//! # Why one dense slot instead of a map per concern
-//!
-//! Storages, type names and reflectors used to be three `HashMap`s keyed
-//! by the same `TypeId`: three lookups where one is enough, and three
-//! chances for a type to be present in one and absent from another.
-//!
-//! 🔴 The reason it changed is not tidiness. A **column cannot be indexed
-//! by a `TypeId`** — it is a 128-bit hash, not an integer. Dense component
-//! columns are what #891 is for, and they need an integer handle that
-//! exists before the columns do.
-//!
-//! So the registry mints a [`StorageId`] on first registration and keeps
-//! one slot per id. The `TypeId` map survives for exactly one job: turning
-//! a Rust type into its id. That happens at registration and when a query
-//! is built — **never per entity**, which is the whole point.
 
 use std::any::TypeId;
 use std::cell::UnsafeCell;
@@ -33,10 +17,6 @@ use crate::storage::Column;
 use crate::storage::{Table, TableId, TableRow, Tables};
 
 /// Everything the registry knows about one registered component type.
-///
-/// One slot, not four parallel arrays: these four are written together at
-/// registration and read together afterwards, so splitting them would buy
-/// nothing and cost a way for them to disagree.
 pub(super) struct Slot {
     storage: UnsafeCell<Box<dyn AnyStorage>>,
     type_id: TypeId,
@@ -44,21 +24,10 @@ pub(super) struct Slot {
     /// `None` for a component registered without reflection.
     reflector: Option<Box<dyn ReflectAccessor>>,
     /// Builds an empty column for this component's type.
-    ///
-    /// A monomorphised function pointer, captured at registration: it is
-    /// the only place the concrete type is still in scope, and a table
-    /// built later has nothing but the id.
     new_column: fn() -> Column,
 }
 
 /// Central registry for all component storages.
-///
-/// Holds one [`ComponentStorage<T>`] per registered component type, in a
-/// dense slot addressed by [`StorageId`].
-///
-/// Uses [`UnsafeCell`] internally to allow the query system to borrow
-/// multiple storages simultaneously. Safety is enforced at the query
-/// level through runtime access tracking.
 pub struct ComponentRegistry {
     /// Indexed by [`StorageId`]. Append-only: a slot is never removed, so
     /// an id handed out stays valid for the life of the registry.
@@ -67,17 +36,6 @@ pub struct ComponentRegistry {
     /// construction — never inside a walk.
     pub(super) ids: HashMap<TypeId, StorageId>,
     /// Where component VALUES live, for the ones that have moved (#891).
-    ///
-    /// 🎯 Here and not on the archetype registry, and the split is the
-    /// point: an archetype is an **index** — who has which components —
-    /// while a table is **where the value is**. Reflection and queries both
-    /// already ask this registry for a component; with the tables here they
-    /// can resolve a location without reaching for a second registry, which
-    /// is what would otherwise have meant threading one through eighty call
-    /// sites in three crates.
-    ///
-    /// It is also how Bevy splits it: `Components`/`Storages` against
-    /// `Archetypes`.
     pub(super) tables: Tables,
     /// Which table row holds an entity's values, once they live in one.
     pub(super) entity_at: HashMap<Entity, (TableId, TableRow)>,
@@ -150,10 +108,6 @@ impl ComponentRegistry {
     }
 
     /// A fresh, empty column for the component `id` names.
-    ///
-    /// The registry is the only thing that still knows the concrete type
-    /// by the time a table needs a column, so it is the only thing that
-    /// can build one.
     pub fn new_column(&self, id: StorageId) -> Option<Column> {
         Some((self.slots.get(id.index())?.new_column)())
     }
@@ -164,10 +118,6 @@ impl ComponentRegistry {
     }
 
     /// Registers a CPU-only component type.
-    ///
-    /// Does nothing if the type is already registered, and returns the
-    /// existing id in that case — registration is idempotent and an id,
-    /// once handed out, never moves.
     pub fn register_cpu<T: Component>(&mut self) -> StorageId {
         let type_id = TypeId::of::<T>();
         if let Some(id) = self.ids.get(&type_id) {
@@ -233,9 +183,6 @@ impl ComponentRegistry {
     // -- Reflected registration -------------------------------------------------
 
     /// Registers a CPU-only component with reflection support.
-    ///
-    /// The component must implement both [`Component`] and [`Reflect`].
-    /// Keeps the existing reflector if the type already has one.
     pub fn register_cpu_reflected<T: Component + Reflect>(&mut self) {
         let id = self.register_cpu::<T>();
         let slot = &mut self.slots[id.index()];
@@ -262,17 +209,11 @@ impl ComponentRegistry {
     }
 
     /// The field values a freshly-constructed component would have.
-    ///
-    /// No entity involved: this is for building a component somewhere an
-    /// entity does not exist, such as adding one to a prefab document.
     pub fn reflect_default_fields(&self, type_id: &TypeId) -> Option<Vec<(String, ReflectValue)>> {
         Some(self.reflector(type_id)?.default_fields())
     }
 
     /// Reads all reflected field values for a component on an entity.
-    ///
-    /// Returns `None` if the component type has no reflector, no storage,
-    /// or the entity does not have the component.
     pub fn reflect_get_fields(
         &self,
         type_id: &TypeId,
@@ -282,16 +223,6 @@ impl ComponentRegistry {
     }
 
     /// Reads a component's fields from wherever its value actually lives.
-    ///
-    /// 🔴 The inspector, scene saving, undo, prefabs and the remote mirror
-    /// all reach components through here rather than through a query, so
-    /// this is the one place that has to know about both homes. A value
-    /// that moved to a column and was only readable by queries would show
-    /// as an empty component in the inspector and be lost by a save — with
-    /// nothing failing. See #891.
-    ///
-    /// `at` is `None` for a component still held in the per-type map,
-    /// which today is all of them.
     pub fn reflect_fields_at(
         &self,
         type_id: &TypeId,
@@ -325,11 +256,9 @@ impl ComponentRegistry {
         field: &str,
         value: ReflectValue,
     ) -> Result<(), ReflectError> {
-        // 🔴 The value's ADDRESS first, so every borrow it needed is
-        // released before the accessor is reached. Handing a `&Table` down
-        // while `&mut self` is live is an aliasing violation — and laundering
-        // it through a raw pointer only hides it from the compiler, not from
-        // Miri.
+        // 🔴 The value's ADDRESS first, so every borrow it needed is released before the accessor is
+        // reached. Handing a `&Table` down while `&mut self` is live is an aliasing violation — and
+        // laundering it through a raw pointer only hides it from the compiler, not from Miri.
         let slot = *self
             .ids
             .get(type_id)
@@ -366,10 +295,6 @@ impl ComponentRegistry {
     }
 
     /// Sets a field on a component wherever its value actually lives.
-    ///
-    /// The write side of [`Self::reflect_fields_at`], and it has to follow
-    /// the same rule: reading from one home and writing to the other would
-    /// let the inspector show a value it cannot change.
     pub fn reflect_write_at(
         &mut self,
         type_id: &TypeId,
@@ -450,9 +375,6 @@ impl ComponentRegistry {
     }
 
     /// Inserts a default reflected component for an entity.
-    ///
-    /// Returns `true` if the component was inserted successfully.
-    /// Returns `false` if the type has no reflector, no storage, or insert failed.
     pub fn insert_default_reflected(&mut self, type_id: &TypeId, entity: Entity) -> bool {
         let Some(slot) = self.slot(type_id) else {
             return false;
@@ -468,31 +390,12 @@ impl ComponentRegistry {
     // -- Type-erased storage access -------------------------------------------
 
     /// Returns an immutable reference to the type-erased storage for the given `TypeId`.
-    ///
-    /// # Safety
-    ///
-    /// Caller must ensure no mutable reference to the same `TypeId` storage
-    /// is active (i.e. no concurrent `storage_mut` call for the same type).
     pub(crate) unsafe fn storage(&self, type_id: &TypeId) -> Option<&dyn AnyStorage> {
         let slot = self.slot(type_id)?;
         Some(unsafe { &**slot.storage.get() })
     }
 
     /// A **raw pointer** to the type-erased storage, for writing.
-    ///
-    /// 🔴 A pointer and not a `&mut`, and the difference is soundness. A
-    /// `&mut` stored in a fetch and later reborrowed **shared** — which is
-    /// what `fetch(&self, …)` does — can only be cast back to `*mut` by
-    /// retagging a shared tag for writes. Stacked Borrows forbids that, and
-    /// Miri caught it doing exactly that on a test that had been passing.
-    ///
-    /// The pointer here comes straight from the `UnsafeCell`, so its
-    /// provenance grants writes for as long as the registry lives.
-    ///
-    /// # Safety
-    ///
-    /// Caller must ensure no other reference to the same storage is active.
-    /// The query system's borrow tracker is what does that upstream.
     pub(crate) unsafe fn storage_ptr(&self, type_id: &TypeId) -> Option<*mut dyn AnyStorage> {
         let slot = self.slot(type_id)?;
         Some(unsafe { &mut **slot.storage.get() as *mut dyn AnyStorage })
