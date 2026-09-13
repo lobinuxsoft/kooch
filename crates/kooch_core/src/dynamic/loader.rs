@@ -1,20 +1,4 @@
 //! Loading plugin libraries, and refusing the ones that would be unsound.
-//!
-//! [`PluginLoader`] opens `.so`/`.dll` files with `libloading`, checks the
-//! build stamp, constructs the plugin, and keeps the library alive.
-//!
-//! # Why the stamp is read first
-//!
-//! The constructor hands back a `Box<dyn KoochPlugin>` — a Rust trait
-//! object, whose vtable layout Rust does not guarantee across compiler
-//! versions. Calling it when the plugin was built by a different
-//! compiler is undefined behaviour, and it would look like a working
-//! load right up until a method call jumps somewhere else.
-//!
-//! So the stamp symbol is looked up and compared **before** the
-//! constructor is even resolved. It is a `#[repr(C)]` struct of two
-//! integers, which is decodable regardless of whether anything else
-//! would have been.
 
 use std::path::{Path, PathBuf};
 
@@ -28,9 +12,6 @@ use kooch_plugin_api::version::{BuildStamp, Incompatibility};
 type BuildStampFn = unsafe extern "C" fn() -> BuildStamp;
 
 /// Holds loaded libraries and keeps them alive.
-///
-/// A library must outlive every plugin that came out of it: dropping it
-/// unmaps the code the plugin's vtable points into.
 pub struct PluginLoader {
     loaded: Vec<LoadedPlugin>,
 }
@@ -47,20 +28,6 @@ impl PluginLoader {
     }
 
     /// Loads a plugin from the library at `path`.
-    ///
-    /// The build stamp is verified before the constructor is called; an
-    /// incompatible library is refused without executing any of its
-    /// Rust code.
-    ///
-    /// # Safety
-    ///
-    /// Opening a library runs its initialisers, which is arbitrary code.
-    /// Only load libraries you built.
-    ///
-    /// # Errors
-    ///
-    /// If the library cannot be opened, either symbol is missing, or the
-    /// stamp does not match this engine's.
     pub unsafe fn load(&mut self, path: &Path) -> Result<Box<dyn KoochPlugin>, PluginLoadError> {
         let library = unsafe {
             Library::new(path).map_err(|e| PluginLoadError::LibraryOpen {

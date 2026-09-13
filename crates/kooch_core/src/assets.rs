@@ -41,22 +41,11 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 
 /// Marker trait for types that can be stored as assets.
-///
-/// Implementing types must be `Send + Sync + 'static`. The blanket impl
-/// makes any qualifying type usable without manual opt-in.
 pub trait Asset: Send + Sync + 'static {}
 
 impl<T: Send + Sync + 'static> Asset for T {}
 
 /// Typed handle to an asset stored in [`Assets<T>`].
-///
-/// Cheap to copy: a `slotmap::DefaultKey` (16 bytes — index + generation)
-/// plus a zero-sized marker. Handles are *not* reference-counted; removing
-/// the asset from `Assets<T>` invalidates outstanding handles, which then
-/// return `None` on `get`.
-///
-/// `Handle<Mesh>` and `Handle<Texture>` are distinct types — passing one
-/// where the other is expected fails at compile time.
 pub struct Handle<T: Asset> {
     key: DefaultKey,
     _marker: PhantomData<fn() -> T>,
@@ -119,9 +108,6 @@ impl<T: Asset> fmt::Debug for Handle<T> {
 }
 
 /// Storage for assets of type `T`.
-///
-/// Inserted as a [`Resource`](crate::resource::Resources) — typically one
-/// instance per asset type. Loaders write here; render systems read.
 pub struct Assets<T: Asset> {
     storage: SlotMap<DefaultKey, T>,
 }
@@ -157,10 +143,9 @@ impl<T: Asset> Assets<T> {
         self.storage.get_mut(handle.key)
     }
 
-    /// Removes the asset and returns it. Returns `None` if the handle
-    /// is invalid. The freed slot is reused on a future `insert` with a
-    /// new generation; pre-existing copies of the old handle become
-    /// stale and return `None` from `get`.
+    /// Removes the asset and returns it. Returns `None` if the handle is invalid. The freed slot is
+    /// reused on a future `insert` with a new generation; pre-existing copies of the old handle
+    /// become stale and return `None` from `get`.
     pub fn remove(&mut self, handle: Handle<T>) -> Option<T> {
         self.storage.remove(handle.key)
     }

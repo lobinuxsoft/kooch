@@ -17,9 +17,6 @@
 use crate::resource::Resources;
 
 /// Whether gameplay systems should run this frame.
-///
-/// Absent from `Resources` is treated as **not playing** by
-/// [`run_if_playing`]: a world with no opinion is a world being edited.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Playing(pub bool);
 
@@ -41,10 +38,6 @@ impl Playing {
 }
 
 /// Wraps a system so it only runs while [`Playing`] is set.
-///
-/// The wrapped system is still registered with the schedule — it is
-/// skipped per frame, not omitted from the build — so toggling
-/// [`Playing`] starts and stops gameplay live.
 pub fn run_if_playing<F>(mut system: F) -> impl FnMut(&mut Resources) + Send + Sync + 'static
 where
     F: FnMut(&mut Resources) + Send + Sync + 'static,

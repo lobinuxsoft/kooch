@@ -41,9 +41,6 @@ use crate::resource::Resources;
 use crate::time::Time;
 
 /// How many frames the rolling average covers.
-///
-/// A second-ish at 60 Hz. Short enough to follow a scene getting heavier,
-/// long enough that one late frame does not swing the reading.
 const AVERAGE_WINDOW: usize = 60;
 
 /// How the numbers reach a person, from `KOOCH_FRAME_METRICS`.
@@ -95,11 +92,6 @@ impl MetricsReport {
 }
 
 /// What the last frame cost.
-///
-/// Written once per frame in [`Stage::Last`](crate::stage::Stage::Last),
-/// which is the one place both runners agree on — the windowed loop and
-/// the headless one each have their own tick, and a timer placed in either
-/// would measure only half the ways this engine runs.
 #[derive(Debug, Clone)]
 pub struct FrameMetrics {
     /// Wall-clock milliseconds between frame starts, waiting included.
@@ -107,16 +99,11 @@ pub struct FrameMetrics {
     /// Milliseconds of work in the frame, waiting excluded.
     pub cpu_frame_ms: f32,
     /// GPU milliseconds, when the renderer reports them.
-    ///
-    /// `None` on a host with no renderer, and on an adapter without
-    /// timestamp queries. Written by `kooch_render` rather than measured
-    /// here: it already runs the queries, and a second set would be a
-    /// second answer to the same question.
     pub gpu_frame_ms: Option<f32>,
     /// Frames per second from this frame alone. Jumpy on purpose — it is
     /// what catches a single stall.
     pub fps_instant: f32,
-    /// Frames per second over the last [`AVERAGE_WINDOW`] frames.
+    /// Frames per second over the last `AVERAGE_WINDOW` frames.
     pub fps_average: f32,
     /// How the numbers are being reported, resolved once at startup.
     pub report: MetricsReport,
@@ -159,24 +146,6 @@ impl FrameMetrics {
     }
 
     /// Takes this frame's numbers and publishes the *previous* frame's.
-    ///
-    /// # Why a frame late
-    ///
-    /// `wall` is `Time::delta`: the gap between this frame's start and the
-    /// one before it — which is the total duration of the **previous**
-    /// frame, waiting included. `work` is what this frame did, measured
-    /// before it waits.
-    ///
-    /// Reporting them together is comparing two different frames. It reads
-    /// fine while the frame rate is steady and produces nonsense the moment
-    /// it is not: a measured `394 fps — frame 2.53 ms, cpu 7.51 ms`, where
-    /// the work does not fit inside the frame it is claimed to belong to.
-    ///
-    /// So this holds each frame's work until the next frame's `wall`
-    /// arrives, and publishes the pair. The numbers are one frame old and
-    /// they describe the same frame, which is the trade worth making — a
-    /// stale number is a measurement, an inconsistent one is a bug that
-    /// looks like a measurement.
     pub fn record(&mut self, wall: Duration, work: Duration) {
         let Some(previous_work) = self.pending_work.replace(work) else {
             // The first frame has no predecessor to describe. Its `wall` is
@@ -209,9 +178,6 @@ impl FrameMetrics {
     }
 
     /// Whether a log line is due, and marks it sent if so.
-    ///
-    /// Takes `now` rather than reading the clock so the decision is
-    /// testable without sleeping.
     pub fn should_log(&mut self, now: Instant, every: Duration) -> bool {
         match self.last_report {
             Some(last) if now.duration_since(last) < every => false,

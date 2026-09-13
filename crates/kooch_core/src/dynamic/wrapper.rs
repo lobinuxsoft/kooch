@@ -13,11 +13,6 @@ use super::plugin_data::PluginData;
 use super::resource_registry::ResourceRegistry;
 
 /// Wraps a loaded plugin as an engine [`Plugin`].
-///
-/// `UnsafeCell` because [`Plugin::finish`] only offers `&self`, while
-/// driving the plugin's `build` needs `&mut`. `finish` is called
-/// sequentially from `App::finish_plugins`, so no other reference to the
-/// inner value exists while it is used.
 pub struct DynamicPlugin {
     inner: UnsafeCell<Option<Box<dyn KoochPlugin>>>,
 }
@@ -49,11 +44,8 @@ impl Plugin for DynamicPlugin {
     }
 
     fn finish(&self, app: &mut App) {
-        // Deliberately in `finish` rather than `build`: by now every
-        // static plugin has run, so the ECS bridges and Time exist.
-        //
-        // SAFETY: called sequentially from `App::finish_plugins`, with
-        // no other reference to `inner` alive.
+        // Deliberately in `finish` rather than `build`: by now every static plugin has run, so the
+        // ECS bridges and Time exist.
         let inner = unsafe { &mut *self.inner.get() };
 
         if let Some(plugin) = inner {

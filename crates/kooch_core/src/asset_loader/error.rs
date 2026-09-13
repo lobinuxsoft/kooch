@@ -22,7 +22,7 @@ pub enum AssetError {
     /// load completed. Caller forgot to insert it before driving a load.
     MissingAssetStorage(&'static str),
     /// `load_by_guid` was called for a [`Guid`] not registered in the
-    /// project's [`AssetDatabase`]. The asset either has no `.meta`
+    /// project's `AssetDatabase`. The asset either has no `.meta`
     /// sidecar yet or was never scanned/loaded.
     UnknownGuid(Guid),
     /// Domain error returned by the loader itself (parser failure, etc.).

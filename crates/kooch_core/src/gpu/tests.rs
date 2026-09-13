@@ -1,11 +1,8 @@
 use wgpu::{Instance, InstanceDescriptor, RequestAdapterOptions};
 
-// Display/Debug/Error::source impls for `GpuError` are exhaustive
-// match arms over wgpu-typed payloads, so their correctness is
-// proven by compilation. Synthetic-instance tests removed when wgpu
-// 29 made `RequestAdapterError` non-constructible from user code
-// (issue #218). The headless smoke test below still exercises the
-// happy path with a real adapter.
+// Display/Debug/Error::source impls for `GpuError` are exhaustive match arms over wgpu-typed
+// payloads, so their correctness is proven by compilation. Synthetic-instance tests removed when
+// wgpu 29 made `RequestAdapterError` non-constructible from user code (issue #218).
 
 #[test]
 #[ignore] // Requires GPU hardware.

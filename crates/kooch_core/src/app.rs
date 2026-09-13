@@ -1,7 +1,4 @@
 //! Application struct - the central orchestrator of the engine.
-//!
-//! The `App` struct provides a builder pattern for configuring plugins,
-//! resources, systems, and events, then running the game loop.
 
 use crate::event::{AppExit, Events};
 use crate::plugin::{Plugin, PluginGroup};
@@ -81,15 +78,10 @@ impl App {
     }
 
     /// Adds a plugin to the application.
-    ///
-    /// The plugin's `build` method is called immediately.
-    /// The `finish` method is called when `run()` is invoked.
     pub fn add_plugin<P: Plugin + 'static>(&mut self, plugin: P) -> &mut Self {
-        // Everything the plugin schedules happens inside `build`, so
-        // bracketing it attributes every system without a word at any
-        // `add_system` call site. Restored rather than reset: a plugin
-        // may add another, and the inner one must not swallow the
-        // outer one's attribution.
+        // Everything the plugin schedules happens inside `build`, so bracketing it attributes every
+        // system without a word at any `add_system` call site. Restored rather than reset: a plugin
+        // may add another, and the inner one must not swallow the outer one's attribution.
         let outer = self.schedule.attribute_to(plugin.source());
         plugin.build(self);
         self.schedule.attribute_to(outer);
@@ -132,26 +124,12 @@ impl App {
     }
 
     /// Adds a [`GpuSystem`] at the specified stage.
-    ///
-    /// GPU systems are lazily initialized when `GpuContext` first becomes
-    /// available. If no GPU is present, they are silently skipped.
     pub fn add_gpu_system(&mut self, stage: Stage, system: impl GpuSystem) -> &mut Self {
         self.schedule.add_gpu_system(stage, system);
         self
     }
 
     /// Registers an event type.
-    ///
-    /// Events must be registered before they can be sent or read. This is
-    /// also what makes them *delivered*: it records how to swap the type's
-    /// double buffers, which the runner does once a frame. Before that was
-    /// recorded, each runner swapped a hardcoded list and every other event
-    /// type was written and never became readable.
-    ///
-    /// Idempotent. `AppExit` is registered by both this type's constructor
-    /// and `CorePlugin`, and a second registration must neither reset the
-    /// buffer nor add a second swap — swapping twice in a frame discards
-    /// whatever was written between the two.
     pub fn add_event<E: Send + Sync + 'static>(&mut self) -> &mut Self {
         if !self.resources.contains::<Events<E>>() {
             self.resources.insert(Events::<E>::new());
@@ -167,9 +145,6 @@ impl App {
     }
 
     /// Sets a custom runner function.
-    ///
-    /// The runner takes ownership of the app and controls the game loop.
-    /// Use this to integrate with window event loops (e.g., winit).
     pub fn set_runner(&mut self, runner: Runner) -> &mut Self {
         self.runner = Some(runner);
         self
@@ -192,9 +167,6 @@ impl App {
     }
 
     /// Runs the application.
-    ///
-    /// This finishes all plugins and starts the game loop.
-    /// The method does not return until the application exits.
     pub fn run(mut self) {
         self.finish_plugins();
         // After every plugin, because that is when the schedule is
@@ -207,10 +179,6 @@ impl App {
     }
 
     /// Copies the schedule's description of itself into `Resources`.
-    ///
-    /// Called by [`Self::run`] once every plugin has been built. Call it
-    /// again after scheduling something later, or the catalog describes a
-    /// frame that has since grown.
     pub fn publish_systems(&mut self) -> &mut Self {
         let catalog = self.schedule.catalog();
         self.resources.insert(catalog);
@@ -218,20 +186,6 @@ impl App {
     }
 
     /// Loads a dynamic plugin from a shared library.
-    ///
-    /// The plugin is verified for ABI compatibility, instantiated, and
-    /// registered like any static plugin. The library is kept alive for
-    /// the lifetime of the application.
-    ///
-    /// # Safety
-    ///
-    /// Loading a shared library executes arbitrary code. Only load plugins
-    /// you trust.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PluginLoadError`](crate::dynamic::PluginLoadError) if the
-    /// library can't be loaded or the plugin is incompatible.
     #[cfg(feature = "dynamic")]
     pub unsafe fn load_plugin(
         &mut self,

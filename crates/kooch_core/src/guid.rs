@@ -1,16 +1,4 @@
 //! Asset GUID — 128-bit identity persisted in `<asset>.meta` sidecars.
-//!
-//! Mirrors Unity's asset GUID model: every imported asset gets a
-//! random `Guid::v4()` at first import, written to a TOML sidecar that
-//! lives alongside the source file. The sidecar is the source of
-//! truth — moving or renaming the source file is fine as long as the
-//! `.meta` follows it; the GUID stays stable, scene references keep
-//! resolving.
-//!
-//! `Guid` is a thin newtype around [`uuid::Uuid`] so we control the
-//! string representation (lowercase hex, no hyphens, matching Unity's
-//! editor-side format) and isolate downstream code from the `uuid`
-//! crate's API surface.
 
 use std::fmt;
 use std::str::FromStr;

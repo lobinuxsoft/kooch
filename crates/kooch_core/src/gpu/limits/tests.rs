@@ -1,13 +1,4 @@
 //! Test code for `limits`, in its own file.
-//!
-//! # 🔴 A sibling file, not an inline `mod`
-//!
-//! The engine vendors its own source into every project, and the
-//! walk that copies it skips test code by FILE — it can drop
-//! `x_tests.rs` and it cannot reach inside a module written in
-//! line. An inline block therefore ships to every game that ever
-//! builds against this engine, which is what
-//! `the_vendored_engine_contains_no_test_code` is there to catch.
 
 use super::*;
 
@@ -33,9 +24,8 @@ fn the_last_one_dimensional_count_is_exact() {
     assert_eq!(tiled_workgroups(threads + 1, 64).1, 2);
 }
 
-/// 2024 dragons × 4953 meshlets — the dense scene that found this.
-/// A 1-D dispatch asks for 156 639 groups and wgpu rejects the whole
-/// encoder; the fold has to cover the count without exceeding the
+/// 2024 dragons × 4953 meshlets — the dense scene that found this. A 1-D dispatch asks for 156 639
+/// groups and wgpu rejects the whole encoder; the fold has to cover the count without exceeding the
 /// ceiling in either dimension.
 #[test]
 fn the_dense_scene_fits_in_two_dimensions() {

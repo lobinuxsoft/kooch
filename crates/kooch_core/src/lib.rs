@@ -1,12 +1,12 @@
 //! kooch_core - Core functionality for Kooch
 //!
 //! Provides the foundation for the game engine:
-//! - [`App`] - Application struct with builder pattern
-//! - [`Plugin`] - Modular functionality system
-//! - [`Schedule`] - System organization by execution stage
-//! - [`Resources`] - Type-erased global state storage
-//! - [`Events`] - Double-buffered event system
-//! - [`Time`] - Frame timing with fixed timestep support
+//! - `App` - Application struct with builder pattern
+//! - `Plugin` - Modular functionality system
+//! - `Schedule` - System organization by execution stage
+//! - `Resources` - Type-erased global state storage
+//! - `Events` - Double-buffered event system
+//! - `Time` - Frame timing with fixed timestep support
 //!
 //! # Quick Start
 //! ```ignore
@@ -42,11 +42,9 @@
 //! * Physics stages run N times per frame to catch up to real time
 //! ```
 
-// Re-exported because `AssetMeta::import` and
-// `LoadContext::with_import` both carry a `toml::Table` in their public
-// signatures: a crate that writes an importer already depends on this
-// type, and making it add the dependency by hand is how two versions of
-// the same parser end up in one build.
+// Re-exported because `AssetMeta::import` and `LoadContext::with_import` both carry a `toml::Table`
+// in their public signatures: a crate that writes an importer already depends on this type, and
+// making it add the dependency by hand is how two versions of the same parser end up in one build.
 pub use toml;
 
 pub mod aabb;
@@ -76,13 +74,6 @@ pub mod runner;
 pub mod scene_paths;
 pub mod schedule;
 /// Whether this build carries a profiling scope per system.
-///
-/// 🔴 Exists to be asserted by the crates that select the feature. A
-/// profiling build whose scopes compiled out is not a build that fails —
-/// it is a build whose captures quietly look like the ones from before
-/// the scopes existed, with `PreUpdate` reporting one number and no
-/// children. That already happened once, between adding the scopes and
-/// noticing the editor never enabled them.
 pub const CPU_SCOPES: bool = cfg!(feature = "cpu-profiler");
 
 pub mod stage;
@@ -118,13 +109,7 @@ pub mod log_file;
 pub use log_console::{LogBuffer, LogEntry, strip_ansi};
 pub use log_file::{SharedLog, log_panics, open_log};
 
-/// Installs tracing with a console buffer beside stdout, and hands the
-/// buffer back.
-///
-/// For a host with a UI to show the log in. Everything written through
-/// `tracing` reaches both, so the panel and the terminal cannot disagree
-/// about what happened — including a spawned project's output, which the
-/// editor forwards through `tracing` already.
+/// Installs tracing with a console buffer beside stdout, and hands the buffer back.
 pub fn init_tracing_with_console() -> LogBuffer {
     use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
@@ -141,59 +126,25 @@ pub fn init_tracing_with_console() -> LogBuffer {
 }
 
 /// Whether stdout is a terminal, and therefore whether colour helps.
-///
-/// A program writing to a pipe should not emit escape sequences: whoever
-/// reads the other end has to strip them, and if they do not, the codes are
-/// rendered as glyphs. The editor's Console showed exactly that — the host
-/// colourised into a pipe and `\x1b[2m` arrived as boxes.
 fn ansi_wanted() -> bool {
     use std::io::IsTerminal;
     std::io::stdout().is_terminal()
 }
 
 /// Whether this process should log as JSON.
-///
-/// Set by whoever spawned it — the editor does, for a project it hosts.
-/// A pre-formatted line is one opaque string to whoever reads the pipe:
-/// the editor was wrapping the host's whole formatted line, timestamp and
-/// level and all, inside a line of its own, so the Console showed `INFO`
-/// twice and could not filter a project's warnings from its info because
-/// every forwarded line was, to the editor, an `info` from `render`.
-///
-/// An env var rather than "not a terminal", because someone doing
-/// `cargo run > log.txt` wants a log they can read, not JSON.
 fn json_wanted() -> bool {
     std::env::var("KOOCH_LOG_FORMAT").is_ok_and(|v| v.eq_ignore_ascii_case("json"))
 }
 
 /// Installs the default subscriber unless the host already installed one.
-///
-/// Called by [`CorePlugin`](crate::plugin::CorePlugin), so an app that
-/// never thought about logging still gets it. That is not a convenience:
-/// without a subscriber every `tracing` call in the engine is a no-op, so a
-/// host that forgot the line is one whose warnings, errors and events do
-/// not exist anywhere — and the way you find out is by not seeing them.
-///
-/// A generated project's `--game` and `--remote` binaries were exactly
-/// that. The remote host logged a joint breaking, a sensor being entered
-/// and its own play/stop transitions into nothing at all, and the editor's
-/// Console showed a project that never spoke.
-///
-/// `try_init` rather than `init`: a host that set up its own subscriber —
-/// the editor, with its console buffer — keeps it, and this is a no-op.
 pub fn init_tracing_if_needed() {
     use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    // 🔴 The file is what a shipped game can be debugged from (#964). It
-    // has no terminal — started from Steam, from a launcher, or by
-    // double-click — and under Proton its stdout is not forwarded at
-    // all, so without this a Windows build cannot say anything to
-    // anybody.
-    //
-    // Beside stdout rather than instead of it: someone running from a
-    // terminal keeps what they had.
+    // 🔴 The file is what a shipped game can be debugged from (#964). It has no terminal — started
+    // from Steam, from a launcher, or by double-click — and under Proton its stdout is not
+    // forwarded at all, so without this a Windows build cannot say anything to anybody.
     let file = log_file::open_log();
     if let Some((log, ref path)) = file {
         // Installed before the subscriber, so a panic during setup is

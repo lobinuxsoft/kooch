@@ -4,12 +4,6 @@ use crate::resource::Resources;
 use crate::system::{GpuSystem, System};
 
 /// A registered system, with the profiling scope that carries its name.
-///
-/// 🔴 The scope lives HERE rather than in the dispatch loop, and that is
-/// the whole design: `puffin` keys a scope by call site, so a scope
-/// opened inside the loop would name every system in the process after
-/// whichever one ran first. Keyed by the system instead, each row in the
-/// flamegraph is the system that earned it. See [`super::system_scope`].
 pub(super) struct AnySystem {
     kind: Kind,
     scope: SystemScope,
@@ -86,9 +80,6 @@ impl AnySystem {
     }
 
     /// Opens this system's scope around whatever the caller does next.
-    ///
-    /// For the GPU batch, which records several systems into one encoder
-    /// and cannot hand each one a `run` of its own.
     pub(super) fn scope(&mut self) -> Option<ScopeGuard> {
         match &self.kind {
             Kind::Cpu(s) => self.scope.enter(s.name()),

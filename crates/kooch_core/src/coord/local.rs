@@ -1,20 +1,10 @@
 //! Position relative to a celestial body (planet, moon, station).
-//!
-//! Once the engine has celestial bodies as ECS entities, every gameplay
-//! position is naturally expressed relative to one of them. f32 precision
-//! is sufficient within a single planet's bounds (R ≈ 6000 km gives
-//! ~1 cm at the antipode — more than enough for gameplay), so this is
-//! the level the rest of the engine consumes most of the time.
 
 use glam::Vec3;
 
 use crate::coord::UniverseCoord;
 
-/// Opaque reference to the celestial body that a [`LocalCoord`] is
-/// relative to. Stored as `u64` to avoid a circular dependency between
-/// `kooch_core` and `kooch_ecs`; `kooch_ecs` will provide `From<Entity>` /
-/// `Into<Entity>` conversions in its own coord-extension module so
-/// callsites can stay ergonomic.
+/// Opaque reference to the celestial body that a [`LocalCoord`] is relative to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct CelestialBodyRef(pub u64);
 
@@ -30,10 +20,6 @@ impl CelestialBodyRef {
 }
 
 /// Position relative to a celestial body, in meters.
-///
-/// Use [`Self::from_universe`] to project an absolute [`UniverseCoord`]
-/// into the local frame of a body, and [`Self::to_universe`] to recover
-/// the absolute position.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct LocalCoord {
     /// The body this position is relative to.
@@ -44,10 +30,9 @@ pub struct LocalCoord {
 }
 
 impl LocalCoord {
-    /// Project a `UniverseCoord` into the local frame of a body whose
-    /// origin sits at `body_origin`. The delta is computed in f64 and
-    /// cast to f32 — safe as long as `world` is within a body's bounds
-    /// (a few thousand km), which is the use case this type targets.
+    /// Project a `UniverseCoord` into the local frame of a body whose origin sits at `body_origin`.
+    /// The delta is computed in f64 and cast to f32 — safe as long as `world` is within a body's
+    /// bounds (a few thousand km), which is the use case this type targets.
     pub fn from_universe(
         world: UniverseCoord,
         body_origin: UniverseCoord,

@@ -1,8 +1,5 @@
-//! End-to-end: a scope opened on an encoder has to come back out as a
-//! puffin scope on the `GPU` thread. Every piece between those two
-//! points is a place a capture can go silently empty — the query set,
-//! the resolve, the buffer map, the clock shift — and none of them
-//! report anything when they fail.
+//! End-to-end: a scope opened on an encoder has to come back out as a puffin scope on the `GPU`
+//! thread.
 
 use std::sync::{Arc, Mutex};
 
@@ -119,12 +116,9 @@ fn a_scope_reaches_puffin() {
     );
 }
 
-/// A declared parent has to survive the trip through the bridge: a flat
-/// tree reports the shading pass and the pass containing it as siblings,
-/// and their times then read as additive when one is inside the other.
-///
-/// 🔴 This failed on the first run with `begin` for both scopes — being
-/// open is not what makes a scope a parent, `begin_child` is.
+/// A declared parent has to survive the trip through the bridge: a flat tree reports the shading
+/// pass and the pass containing it as siblings, and their times then read as additive when one is
+/// inside the other.
 #[test]
 fn nesting_survives_the_bridge() {
     let _guard = PUFFIN.lock().unwrap_or_else(|e| e.into_inner());
@@ -179,13 +173,7 @@ fn nesting_survives_the_bridge() {
     assert!(deepest >= 1, "the inner scope came back as a sibling");
 }
 
-/// 🔴 A nested scope is inside its parent's range, so adding both
-/// counts the same nanoseconds twice.
-///
-/// This exists because the flamegraph read `shadow pages 33.9 ms` on a
-/// frame the GPU finished in nine: `shadow pages` contains `page raster`
-/// which contains `page cull`, and a naive sum reports the deepest work
-/// once per level it is nested under.
+/// 🔴 A nested scope is inside its parent's range, so adding both counts the same nanoseconds twice.
 #[cfg(feature = "gpu-profiler")]
 #[test]
 fn nesting_is_not_counted_twice() {

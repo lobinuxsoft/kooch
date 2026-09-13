@@ -1,9 +1,4 @@
 //! Minimal example demonstrating kooch_core functionality.
-//!
-//! This example runs for 3 seconds, logging frame and fixed update counts
-//! every 60 frames (roughly every second at 60 FPS).
-//!
-//! Run with: `cargo run --example minimal`
 
 use std::time::Duration;
 
@@ -49,9 +44,6 @@ struct FrameCounter {
 }
 
 /// Custom test runner that simulates 180 frames at 60 FPS.
-///
-/// Instead of using real time, we advance by exactly 1/60 second each frame.
-/// This makes the test deterministic.
 fn test_runner(mut app: App) {
     // Run startup
     app.schedule.run_startup(&mut app.resources);

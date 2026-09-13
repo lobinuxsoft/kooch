@@ -29,10 +29,9 @@ fn no_timestamps_report_nothing() {
     assert!(clock_offset(&[]).is_none());
 }
 
-/// The whole point of the offset: a raw GPU timestamp lands an
-/// undefined distance from puffin's clock, and the viewer would draw a
-/// frame stretched across the gap. Verified by shifting a batch whose
-/// raw values sit ~317 years away from any wall clock.
+/// The whole point of the offset: a raw GPU timestamp lands an undefined distance from puffin's
+/// clock, and the viewer would draw a frame stretched across the gap. Verified by shifting a batch
+/// whose raw values sit ~317 years away from any wall clock.
 #[test]
 fn the_batch_ends_at_now() {
     let far_away = 1e10;

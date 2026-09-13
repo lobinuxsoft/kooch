@@ -11,24 +11,9 @@ use super::identity::{SystemInfo, SystemKey, SystemSource};
 use super::toggles::SystemToggles;
 
 /// A system function that operates on resources.
-///
-/// Legacy type alias kept for backward compatibility. Prefer using
-/// the [`System`] trait for new code.
 pub type SystemFn = Box<dyn FnMut(&mut Resources) + Send + Sync>;
 
-/// Runs the listed stages in order, each one inside a profiling scope
-/// carrying its own name.
-///
-/// 🔴 The scope has to be expanded per stage instead of written once
-/// inside [`Schedule::run_stage`]. `puffin` caches the `ScopeId` in a
-/// `static` belonging to the call site and registers it with the *first*
-/// name that site ever saw (`profile_scope_custom_if!`), so a single site
-/// serving all fourteen stages would report the entire frame under
-/// whichever one ran first. Every expansion below is a separate call
-/// site, and therefore a separate name.
-///
-/// Expands to the bare `run_stage` calls when no profiling backend is
-/// selected, which is every build that does not ask for one.
+/// Runs the listed stages in order, each one inside a profiling scope carrying its own name.
 macro_rules! run_staged {
     ($self:ident, $resources:ident, $($stage:ident),+ $(,)?) => {
         $({
@@ -39,23 +24,11 @@ macro_rules! run_staged {
 }
 
 /// Organizes systems by stage for ordered execution.
-///
-/// Systems are stored in a `BTreeMap` keyed by `Stage`, ensuring they
-/// execute in the correct stage order. Within a stage, systems run in
-/// the order they were added.
-///
-/// Consecutive GPU systems within a stage are batched into a single
-/// command encoder submission for efficiency.
 pub struct Schedule {
     stages: BTreeMap<Stage, Vec<AnySystem>>,
     /// Whether startup has already run.
     startup_complete: bool,
     /// Who the next system added belongs to.
-    ///
-    /// Set around a plugin's `build`, which is what lets every system be
-    /// attributed without a word at the call sites. The default is
-    /// `Project`: anything added straight onto the `App` outside a
-    /// plugin is the game's own `main`.
     attributing: SystemSource,
 }
 
@@ -108,9 +81,6 @@ impl Schedule {
     }
 
     /// Adds a [`GpuSystem`] at the specified stage.
-    ///
-    /// GPU systems are lazily initialized when `GpuContext` first becomes
-    /// available. Consecutive GPU systems are batched into one encoder.
     pub fn add_gpu_system(&mut self, stage: Stage, system: impl GpuSystem) {
         let key = self.mint_key(system.name());
         self.stages.entry(stage).or_default().push(AnySystem::gpu(
@@ -121,9 +91,6 @@ impl Schedule {
     }
 
     /// Runs all systems in the specified stage.
-    ///
-    /// CPU systems run inline. Consecutive GPU systems are batched into
-    /// a single command encoder and submitted together.
     pub fn run_stage(&mut self, stage: Stage, resources: &mut Resources) {
         let Some(systems) = self.stages.get_mut(&stage) else {
             return;
@@ -138,12 +105,9 @@ impl Schedule {
 
         let mut i = 0;
         while i < systems.len() {
-            // ⚠️ CPU only. Skipping a GPU system would take it out of the
-            // batch `run_gpu_batch` shares an encoder for, which changes
-            // how the frame is RECORDED and not just what runs. Moot
-            // today — nothing implements `GpuSystem` outside tests — and
-            // it belongs with #392, which is what will put real ones
-            // there.
+            // ⚠️ CPU only. Skipping a GPU system would take it out of the batch `run_gpu_batch`
+            // shares an encoder for, which changes how the frame is RECORDED and not just what
+            // runs.
             if any_off
                 && !systems[i].is_gpu()
                 && resources
@@ -183,11 +147,6 @@ impl Schedule {
     }
 
     /// Runs a whole frame's non-fixed stages, in order.
-    ///
-    /// First → Input → PreUpdate → Update → PostUpdate → GpuSync → Gpu →
-    /// PreRender → Render → PostRender → Last. For a frame that also
-    /// simulates, interleave [`run_fixed_stages`](Self::run_fixed_stages)
-    /// between the two halves instead of calling this.
     pub fn run_frame_stages(&mut self, resources: &mut Resources) {
         self.run_pre_physics(resources);
         self.run_post_physics(resources);
@@ -208,14 +167,6 @@ impl Schedule {
     }
 
     /// Runs the frame stages that follow the fixed timestep loop.
-    ///
-    /// PostUpdate → GpuSync → Gpu → PreRender → Render → PostRender → Last
-    ///
-    /// Transform propagation and the GPU upload live in `PostUpdate` and
-    /// `GpuSync`, so they run *after* the solver has written this frame's
-    /// poses — the same arrangement Unity, Unreal, Bevy and Godot use.
-    /// Running them before the fixed loop would render the previous
-    /// frame's simulation.
     pub fn run_post_physics(&mut self, resources: &mut Resources) {
         run_staged!(
             self, resources, PostUpdate, GpuSync, Gpu, PreRender, Render, PostRender, Last,
@@ -237,22 +188,13 @@ impl Schedule {
         })
     }
 
-    /// Attributes systems added from now on, returning the previous
-    /// setting so the caller can put it back.
-    ///
-    /// `App` wraps a plugin's `build` with this. Restoring rather than
-    /// resetting is what lets a plugin add another plugin without the
-    /// inner one swallowing the outer one's attribution.
+    /// Attributes systems added from now on, returning the previous setting so the caller can put
+    /// it back.
     pub fn attribute_to(&mut self, source: SystemSource) -> SystemSource {
         std::mem::replace(&mut self.attributing, source)
     }
 
     /// Every system, in the order a frame runs them.
-    ///
-    /// 🔴 Not `Stage::ALL`, and not the `BTreeMap`'s own order. Both are
-    /// declaration order, where `Physics` sits after `Gpu` — but a frame
-    /// runs the fixed stages between `Update` and `PostUpdate`. A list
-    /// built on either would put physics in a place it never runs.
     pub fn systems(&self) -> Vec<SystemInfo<'_>> {
         RUN_ORDER
             .iter()
@@ -270,10 +212,6 @@ impl Schedule {
     }
 
     /// The whole schedule, owned, for publishing into `Resources`.
-    ///
-    /// `systems()` borrows from the schedule, and the schedule lives on
-    /// the `App` rather than in `Resources` — so a panel, which is a
-    /// system, can only ever see a copy.
     pub fn catalog(&self) -> SystemCatalog {
         SystemCatalog::new(
             self.systems()
@@ -290,12 +228,6 @@ impl Schedule {
     }
 
     /// Builds the key for a system about to be added.
-    ///
-    /// `nth` counts the systems already scheduled under the same
-    /// canonical name. It stays 0 for anything with a name of its own,
-    /// and only climbs for anonymous closures — which share a
-    /// `type_name` with every other closure in their module, so without
-    /// this a toggle aimed at one would stop all of them.
     fn mint_key(&self, name: &str) -> SystemKey {
         let candidate = SystemKey::new(name);
         let nth = self
@@ -309,11 +241,6 @@ impl Schedule {
 }
 
 /// The stages a frame runs, in the order it runs them.
-///
-/// Mirrors `run_startup` + `run_pre_physics` + `run_fixed_stages` +
-/// `run_post_physics`. Kept here beside them so the two can be read
-/// together, and pinned by a test — a list that drifts from the macros
-/// describes a frame nobody runs.
 pub const RUN_ORDER: [Stage; 14] = [
     Stage::Startup,
     Stage::First,

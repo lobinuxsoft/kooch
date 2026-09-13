@@ -1,10 +1,9 @@
 /// Summary returned by [`super::AssetDatabase::scan_directory`].
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ScanReport {
-    /// Files that had no `.meta` and got one, because a registered
-    /// loader claims their extension. Zero on a project whose assets all
-    /// came through the editor; non-zero the first time a scan meets a
-    /// file someone wrote by hand.
+    /// Files that had no `.meta` and got one, because a registered loader claims their extension.
+    /// Zero on a project whose assets all came through the editor; non-zero the first time a scan
+    /// meets a file someone wrote by hand.
     pub adopted: usize,
     /// Number of `(guid, path)` pairs successfully registered.
     pub registered: usize,

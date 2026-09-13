@@ -1,8 +1,4 @@
 //! System traits for CPU and GPU compute systems.
-//!
-//! - [`System`] — CPU system that processes game logic in Rust.
-//! - [`GpuSystem`] — GPU compute system that dispatches work via compute shaders.
-//! - [`FunctionSystem`] — wraps a closure into a named [`System`].
 
 use crate::resource::Resources;
 
@@ -24,7 +20,7 @@ use crate::resource::Resources;
 /// }
 /// ```
 ///
-/// For simple one-off logic, prefer closures via [`App::add_system`]:
+/// For simple one-off logic, prefer closures via `App::add_system`:
 ///
 /// ```ignore
 /// app.add_system(Stage::Update, |resources| {
@@ -40,10 +36,6 @@ pub trait System: Send + Sync + 'static {
 }
 
 /// Wraps a closure into a named [`System`].
-///
-/// Created automatically when adding closures via
-/// [`Schedule::add_system`](crate::schedule::Schedule::add_system).
-/// The name is derived from the closure's type name.
 pub struct FunctionSystem<F> {
     func: F,
     name: &'static str,
@@ -128,10 +120,6 @@ pub trait GpuSystem: Send + Sync + 'static {
     fn init(&mut self, device: &wgpu::Device, queue: &wgpu::Queue);
 
     /// Per-frame preparation before dispatch.
-    ///
-    /// Update bind groups, write uniforms, and calculate workgroups.
-    /// `GpuContext` is NOT in `resources` during this call — use the
-    /// provided `device`/`queue`.
     fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, resources: &Resources);
 
     /// Record compute commands into the pass.

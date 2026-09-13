@@ -158,10 +158,9 @@ fn read_or_create_typed_backfills_existing_untyped_sidecar() {
 
 #[test]
 fn read_or_create_typed_preserves_existing_type_mismatch() {
-    // The function intentionally does NOT overwrite an existing
-    // type — it backfills only when the field is None. The
-    // caller can detect a mismatch by comparing the returned
-    // value to the type they passed.
+    // The function intentionally does NOT overwrite an existing type — it backfills only when the
+    // field is None. The caller can detect a mismatch by comparing the returned value to the type
+    // they passed.
     let dir = TempDir::new("typed_mismatch");
     let asset = dir.path.join("typed.glb");
     touch(&asset);

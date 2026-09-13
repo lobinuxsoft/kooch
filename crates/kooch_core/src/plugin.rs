@@ -1,7 +1,4 @@
 //! Plugin system for modular engine functionality.
-//!
-//! Plugins encapsulate related functionality (resources, systems, events)
-//! that can be added to an App in a self-contained way.
 
 use crate::app::App;
 
@@ -25,34 +22,14 @@ use crate::app::App;
 /// ```
 pub trait Plugin: Send + Sync {
     /// Which half of the build this plugin's systems belong to.
-    ///
-    /// Defaults to the engine, because the engine is what most plugins
-    /// are. A project's generated registrations say `Project`, and the
-    /// editor's codegen writes that line.
-    ///
-    /// 🔴 Declared, not sniffed from the crate name. A plugin is the only
-    /// thing that knows which side it is on.
     fn source(&self) -> crate::schedule::SystemSource {
         crate::schedule::SystemSource::Engine
     }
 
     /// Called when the plugin is added to the app.
-    ///
-    /// Use this phase for:
-    /// - Registering resources
-    /// - Adding systems
-    /// - Registering event types
-    /// - Adding other plugins
     fn build(&self, app: &mut App);
 
     /// Called after all plugins have been built.
-    ///
-    /// Use this phase for:
-    /// - Setting up functionality that depends on other plugins
-    /// - Overriding the app runner
-    /// - Final initialization
-    ///
-    /// Default implementation does nothing.
     fn finish(&self, _app: &mut App) {}
 
     /// Returns the plugin's name for debugging.
@@ -119,9 +96,6 @@ impl PluginGroupBuilder {
 }
 
 /// Minimal plugins for a headless application.
-///
-/// Includes only core functionality without windowing or rendering.
-/// Useful for tests, servers, or CLI tools.
 pub struct MinimalPlugins;
 
 impl PluginGroup for MinimalPlugins {
@@ -131,10 +105,6 @@ impl PluginGroup for MinimalPlugins {
 }
 
 /// Core plugin providing essential engine functionality.
-///
-/// Automatically included by `MinimalPlugins`. Provides:
-/// - Time resource
-/// - AppExit event
 pub struct CorePlugin;
 
 impl Plugin for CorePlugin {

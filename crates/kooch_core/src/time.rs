@@ -1,21 +1,8 @@
 //! Time management for the game loop.
-//!
-//! Implements "Fix Your Timestep" pattern with separate delta times for:
-//! - Variable-rate rendering (delta)
-//! - Fixed-rate physics (fixed_delta)
 
 use std::time::{Duration, Instant};
 
 /// Time resource containing frame timing information.
-///
-/// # Fixed Timestep
-/// Physics updates run at a fixed rate (default 60Hz) regardless of frame rate.
-/// The accumulator tracks how much "physics time" has built up, and the game
-/// loop runs physics updates until the accumulator is drained.
-///
-/// # Render Interpolation
-/// `render_alpha` provides the interpolation factor for smooth rendering
-/// between physics states: `render_alpha = accumulator / fixed_delta`
 #[derive(Debug, Clone)]
 pub struct Time {
     /// When the application started.
@@ -192,11 +179,6 @@ impl Time {
     }
 
     /// Interpolation factor for rendering between physics states.
-    ///
-    /// Use this to interpolate visual positions between the current
-    /// and previous physics states for smooth rendering.
-    ///
-    /// Value range: [0.0, 1.0)
     #[inline]
     pub fn render_alpha(&self) -> f32 {
         self.render_alpha
@@ -209,21 +191,12 @@ impl Time {
     }
 
     /// When [`update`](Self::update) last ran — the start of this frame.
-    ///
-    /// What a late-stage system needs to time the frame's *work*:
-    /// `time.frame_start().elapsed()` at `Stage::Last` excludes whatever
-    /// the loop then spends waiting, which [`delta`](Self::delta) does
-    /// not.
     #[inline]
     pub fn frame_start(&self) -> Instant {
         self.frame_start
     }
 
     /// How long until the next fixed step comes due.
-    ///
-    /// Zero when a step is already owed. A loop with nothing to draw has
-    /// no reason to wake before this: running faster only re-reads the
-    /// clock and finds no work (#656).
     pub fn until_next_fixed_step(&self) -> Duration {
         self.fixed_delta.saturating_sub(self.accumulator)
     }

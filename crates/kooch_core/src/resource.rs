@@ -1,8 +1,4 @@
 //! Type-erased resource storage for the game engine.
-//!
-//! Resources are globally accessible singletons stored by their [`TypeId`].
-//! Unlike ECS components, resources exist outside of entities and are used
-//! for global state like configuration, time, and system-wide services.
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -60,15 +56,7 @@ impl Resources {
             .and_then(|boxed| boxed.downcast_mut())
     }
 
-    /// Returns the resource of type `T`, inserting `default()` first if
-    /// it is not there yet.
-    ///
-    /// For resources several plugins *contribute to* rather than own —
-    /// a list of handlers, a registry. Whoever asks first creates it and
-    /// the rest add to the same one, with no ordering rule between them.
-    /// The alternative every call site would otherwise write is a
-    /// `contains` check followed by an `insert` and an `unwrap`, which
-    /// is the same thing with a panic in it.
+    /// Returns the resource of type `T`, inserting `default()` first if it is not there yet.
     pub fn get_or_default<T: Send + Sync + Default + 'static>(&mut self) -> &mut T {
         self.storage
             .entry(TypeId::of::<T>())

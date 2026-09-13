@@ -1,16 +1,8 @@
 //! Key-value byte storage for inter-plugin communication.
-//!
-//! Plugins can't share Rust types across the FFI boundary (different
-//! allocators, no shared `TypeId`). Instead, they exchange raw bytes
-//! keyed by string names through [`PluginData`].
 
 use std::collections::HashMap;
 
 /// Key-value store of raw bytes for plugin communication.
-///
-/// Stored as a resource in [`Resources`](crate::resource::Resources).
-/// Accessed through [`EngineApi::set_data`](kooch_plugin_api::EngineApi::set_data)
-/// and [`EngineApi::get_data`](kooch_plugin_api::EngineApi::get_data).
 pub struct PluginData {
     store: HashMap<String, Vec<u8>>,
 }

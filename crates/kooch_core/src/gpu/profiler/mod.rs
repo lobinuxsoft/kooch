@@ -50,21 +50,14 @@
 #[cfg(feature = "gpu-profiler")]
 mod puffin_bridge;
 
-// Two attributes rather than `cfg(all(test, feature = ...))`: the
-// vendor filter matches the literal `#[cfg(test)]` line to know which
-// module declarations point at files a shipped engine does not carry,
-// and an `all(...)` reads to it as a module whose file went missing.
-// Caught by `vendored_modules_all_resolve`.
+// Two attributes rather than `cfg(all(test, feature = ...))`: the vendor filter matches the literal
+// `#[cfg(test)]` line to know which module declarations point at files a shipped engine does not
+// carry, and an `all(...)` reads to it as a module whose file went missing.
 #[cfg(test)]
 #[cfg(feature = "gpu-profiler")]
 mod tests;
 
-/// The frame's GPU timings, or nothing at all when the engine was
-/// built without `gpu-profiler`.
-///
-/// Lives in `Resources`. Recording takes `&self` — a render pass that
-/// already holds `&Resources` can open a scope without asking for
-/// mutable access to the world.
+/// The frame's GPU timings, or nothing at all when the engine was built without `gpu-profiler`.
 #[cfg(feature = "gpu-profiler")]
 pub struct GpuScopes {
     profiler: wgpu_profiler::GpuProfiler,
@@ -79,9 +72,6 @@ pub struct GpuScopes {
 }
 
 /// Handle for one open GPU scope, closed by [`GpuScopes::end`].
-///
-/// `None` when the profiler declined the query (disabled, or the
-/// adapter lacks the feature). Call sites do not branch on it.
 #[cfg(feature = "gpu-profiler")]
 pub type GpuQuery = Option<wgpu_profiler::GpuProfilerQuery>;
 
@@ -92,10 +82,9 @@ pub type GpuQuery = ();
 
 #[cfg(feature = "gpu-profiler")]
 impl GpuScopes {
-    /// Builds the profiler against `device`. Returns `None` when
-    /// `wgpu-profiler` rejects the settings, which is the only failure
-    /// it has: a device without timestamp support is not an error, it
-    /// yields a profiler whose scopes measure nothing.
+    /// Builds the profiler against `device`. Returns `None` when `wgpu-profiler` rejects the
+    /// settings, which is the only failure it has: a device without timestamp support is not an
+    /// error, it yields a profiler whose scopes measure nothing.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Self> {
         let settings = wgpu_profiler::GpuProfilerSettings {
             enable_timer_queries: true,
@@ -120,18 +109,7 @@ impl GpuScopes {
         }
     }
 
-    /// What the GPU spent this frame, across EVERY scope — shadows
-    /// included.
-    ///
-    /// 🔴 Not the same number as `MeshletRenderStats::gpu_frame_ms`,
-    /// which times the main view's cull → raster → shade chain and
-    /// nothing else. On `dense.scene` that read 0.55 ms while the
-    /// shadow page passes took about nine, so the HUD's "GPU" row was
-    /// a third of the GPU and the largest cost in the frame had never
-    /// appeared on screen.
-    ///
-    /// `None` until the ring hands back a finished frame — two or three
-    /// after the first submit — and whenever the feature is off.
+    /// What the GPU spent this frame, across EVERY scope — shadows included.
     pub fn frame_ms(&self) -> Option<f32> {
         self.frame_ms
     }
@@ -143,13 +121,6 @@ impl GpuScopes {
     }
 
     /// Opens a scope nested inside `parent`.
-    ///
-    /// 🔴 **Nesting is by declared parent, not by call order.** An
-    /// open scope does not adopt the ones opened while it is open —
-    /// `begin_query` alone puts every scope at the root, and the
-    /// flamegraph then reads a pass and the pass containing it as
-    /// siblings whose times look additive. Caught by
-    /// `nesting_survives_the_bridge`, which failed exactly that way.
     #[must_use]
     pub fn begin_child(
         &self,
@@ -178,11 +149,8 @@ impl GpuScopes {
         self.profiler.resolve_queries(encoder);
     }
 
-    /// Closes the frame and reports whatever older frame has finished
-    /// to puffin. Call after the frame's last submit.
-    ///
-    /// Reports under a thread named `GPU`, so the panel shows the
-    /// passes as their own track next to the CPU threads.
+    /// Closes the frame and reports whatever older frame has finished to puffin. Call after the
+    /// frame's last submit.
     pub fn end_frame(&mut self, queue: &wgpu::Queue) {
         self.timestamp_period = queue.get_timestamp_period();
         if let Err(err) = self.profiler.end_frame() {
@@ -204,14 +172,6 @@ impl GpuScopes {
 }
 
 /// The frame's GPU span, in milliseconds, from a finished batch.
-///
-/// 🔴 Sums the TOP-LEVEL scopes only. A nested scope is already inside
-/// its parent's range, so adding it counts the same nanoseconds twice —
-/// which is how a frame of nine milliseconds reads as thirty.
-///
-/// A scope without a time is one the driver never resolved; skipped
-/// rather than counted as zero, since zero would drag an average down
-/// and read as the GPU getting faster.
 #[cfg(feature = "gpu-profiler")]
 pub(crate) fn gpu_span_ms(results: &[wgpu_profiler::GpuTimerQueryResult]) -> f32 {
     results

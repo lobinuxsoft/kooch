@@ -1,30 +1,4 @@
-//! Turns a finished `wgpu-profiler` frame into puffin scopes on a
-//! thread named `GPU`.
-//!
-//! Adapted from `wgpu_profiler::puffin` (MIT/Apache-2.0). It is copied
-//! rather than enabled because `wgpu-profiler`'s own `puffin` feature
-//! depends on puffin ^0.19.1 while this workspace patches puffin to
-//! 0.20 — turning that feature on either fails to resolve or produces a
-//! second `GlobalProfiler`, and scopes recorded into one are invisible
-//! to the other. The API used here (`register_user_scopes`,
-//! `report_user_scopes`, `StreamInfo`) is unchanged between the two.
-//!
-//! Two things differ from upstream, both deliberate:
-//!
-//! 1. 🔴 **The timestamps are shifted onto puffin's clock.** A GPU
-//!    timestamp's absolute value is undefined — `GpuTimerQueryResult`
-//!    says so in as many words — so reporting it raw puts the GPU track
-//!    an arbitrary distance from the CPU track and the viewer draws a
-//!    frame stretched across the gap, with both ends too small to read.
-//!    The batch is translated so it *ends now*. Durations and nesting
-//!    are exact; the position on the axis is not a claim that this pass
-//!    ran at that moment. It cannot be: the results belong to a frame a
-//!    few submits back, and wgpu exposes no calibrated timestamp to
-//!    correlate the two clocks with.
-//! 2. Upstream computes the batch's end as `range_ns.0.max(end)` — the
-//!    *start* accumulator — which leaves `range_ns.1` holding the last
-//!    scope's end rather than the largest. Fixed here; worth an issue
-//!    upstream.
+//! Turns a finished `wgpu-profiler` frame into puffin scopes on a thread named `GPU`.
 
 use puffin::{GlobalProfiler, NanoSecond, ScopeDetails, StreamInfo, ThreadInfo};
 use wgpu_profiler::GpuTimerQueryResult;

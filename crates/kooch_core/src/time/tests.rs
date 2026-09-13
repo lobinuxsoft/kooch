@@ -18,10 +18,9 @@ fn the_wait_for_the_next_fixed_step_shrinks_as_time_accumulates() {
         "expected part of a step, got {remaining:?}",
     );
 
-    // Advancing exactly one step runs one and leaves the *phase*
-    // intact — the accumulator keeps the remainder rather than being
-    // drained. A pacer that assumed a reset here would sleep a third
-    // of a step too long, every frame, and the sim would run slow.
+    // Advancing exactly one step runs one and leaves the *phase* intact — the accumulator keeps the
+    // remainder rather than being drained. A pacer that assumed a reset here would sleep a third of
+    // a step too long, every frame, and the sim would run slow.
     assert_eq!(time.advance(step), 1);
     assert_eq!(
         time.until_next_fixed_step(),

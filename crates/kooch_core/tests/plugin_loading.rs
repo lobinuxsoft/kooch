@@ -1,15 +1,4 @@
 //! Loads a real plugin library and checks what it does.
-//!
-//! Everything else about plugins is tested against fakes. This is the
-//! only test that opens an actual `.so`, so it is the only one that
-//! would catch a broken `export_plugin!`, a symbol name that drifted, or
-//! a build stamp that never matches.
-//!
-//! It needs `example_plugin` built as a dynamic library. Cargo does not
-//! build one crate because another's test wants it, so the test locates
-//! the artefact and **fails loudly** when it is missing rather than
-//! quietly passing — a skipped test here would hide exactly the
-//! integration it exists to prove.
 
 #![cfg(feature = "dynamic")]
 

@@ -169,11 +169,9 @@ fn entries_of_type_filters_correctly() {
 
 #[test]
 fn re_register_upgrades_type_name_from_none_to_some() {
-    // Mirrors the real flow: scan_directory registers an asset
-    // with `type_name = None` because the sidecar predates the
-    // field. Later, `AssetServer::load::<MeshletMesh>` re-
-    // registers the same `(path, guid)` pair with the freshly
-    // back-filled type. The entry must end up typed.
+    // Mirrors the real flow: scan_directory registers an asset with `type_name = None` because the
+    // sidecar predates the field. Later, `AssetServer::load::<MeshletMesh>` re- registers the same
+    // `(path, guid)` pair with the freshly back-filled type. The entry must end up typed.
     let mut db = AssetDatabase::new();
     let g = Guid::new_v4();
     let path = PathBuf::from("foo.glb");
@@ -285,13 +283,6 @@ fn remove_path_drops_both_mappings() {
 }
 
 /// 🔴 The circle this broke.
-///
-/// A file written by hand — by a script, by another tool, by an author
-/// with a text editor — used to be invisible to the editor forever: the
-/// browser lists what the database registered, the database registered
-/// what had a `.meta`, and the `.meta` appeared only when something
-/// loaded the file. Nothing broke that from outside, and `docs/MEMORY.md`
-/// recorded the symptom twice without it being fixed.
 #[test]
 fn a_hand_written_file_is_adopted_when_a_loader_claims_its_extension() {
     let dir = TempDir::new("adopt_known");

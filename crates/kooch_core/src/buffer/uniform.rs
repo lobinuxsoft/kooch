@@ -1,11 +1,4 @@
 //! Uniform buffer with automatic `encase` serialization.
-//!
-//! [`UniformBuffer<T>`] wraps a `wgpu::Buffer` sized for a single uniform
-//! value of type `T` (which must implement [`ShaderType`]). It handles
-//! encase serialization (std140 layout) automatically on [`write`](UniformBuffer::write).
-//!
-//! The internal scratch `Vec<u8>` is reused across frames to avoid
-//! re-allocating each write.
 
 use encase::{ShaderType, UniformBuffer as EncaseUniformBuffer};
 use wgpu::{Buffer, BufferDescriptor, BufferUsages, Device, Queue};
@@ -35,9 +28,6 @@ pub struct UniformBuffer<T: ShaderType> {
 
 impl<T: ShaderType + encase::internal::WriteInto> UniformBuffer<T> {
     /// Creates a uniform buffer sized to hold one instance of `T`.
-    ///
-    /// The size is determined by `T::METADATA.min_size()` which accounts
-    /// for std140 padding rules.
     pub fn new(device: &Device, label: &str) -> Self {
         let min_size = T::min_size();
         let size = min_size.get();

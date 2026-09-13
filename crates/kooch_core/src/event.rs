@@ -1,8 +1,4 @@
 //! Double-buffered event system for frame-delayed communication.
-//!
-//! Events written in frame N are readable in frame N+1. This prevents
-//! order-dependent bugs where a system might miss events from systems
-//! that run later in the same frame.
 
 use std::any::TypeId;
 use std::marker::PhantomData;
@@ -10,9 +6,6 @@ use std::marker::PhantomData;
 use crate::resource::Resources;
 
 /// Double-buffered storage for events of type `T`.
-///
-/// Events are written to a "write" buffer during a frame, then during
-/// the update phase, buffers are swapped so readers see last frame's events.
 pub struct Events<T> {
     /// Events from the previous frame (readable).
     read_buffer: Vec<T>,
@@ -96,20 +89,6 @@ impl<'a, T> EventReader<'a, T> {
 }
 
 /// Swaps every registered event type's buffers.
-///
-/// # Why this is not a hardcoded list
-///
-/// It used to be — twice. The default runner swapped `AppExit` and nothing
-/// else; the winit runner swapped three types under a comment claiming it
-/// handled "all registered event types". Every event any plugin added was
-/// invisible to both, so `send` wrote into a buffer that never became
-/// readable and `read` returned empty forever. Collision events (#561) were
-/// the first feature to notice, four months on.
-///
-/// So registration records how to swap, and a runner asks rather than
-/// remembering. A new event type is delivered because
-/// [`add_event`](crate::app::App::add_event) was called, not because
-/// someone also edited two runners.
 pub fn update_all_events(resources: &mut Resources) {
     // Lifted out and put back: each updater takes `&mut Resources`, so the
     // list cannot be borrowed from the same place while they run.
@@ -123,19 +102,9 @@ pub fn update_all_events(resources: &mut Resources) {
 }
 
 /// How to swap each registered event type, recorded at registration.
-///
-/// A plain function pointer per type: `add_event` is generic, so the
-/// compiler monomorphises one swap per event type and the list needs no
-/// type erasure of its own — which is what the deleted `EventRegistry`
-/// attempted and never managed. Its `update_all` downcast to a trait object
-/// that nothing implemented, and its own test said so in a comment.
 #[derive(Default)]
 pub struct EventUpdaters {
     /// Keyed by [`TypeId`] so a type registered twice is swapped once.
-    ///
-    /// Not hypothetical: `AppExit` is registered by both `App::new` and
-    /// `CorePlugin`, and swapping twice in a frame would discard whatever
-    /// was written between the two swaps.
     updaters: Vec<(TypeId, fn(&mut Resources))>,
 }
 

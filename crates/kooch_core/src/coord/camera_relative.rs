@@ -1,19 +1,10 @@
 //! Position relative to the active camera — what the GPU consumes.
-//!
-//! Cameras-relative coordinates are always near zero (within view
-//! distance + frustum), so f32 has full precision regardless of how
-//! far the camera has travelled in the universe. This is the
-//! coordinate frame uploaded to the shader every frame.
 
 use glam::Vec3;
 
 use crate::coord::UniverseCoord;
 
 /// Position relative to the active camera, in meters.
-///
-/// The shader pipeline consumes [`CameraRelativeCoord`] for vertex
-/// transforms, SDF primitive positions, sky direction, etc. — anything
-/// that the GPU evaluates in screen / clip space.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct CameraRelativeCoord {
     pub position: Vec3,
@@ -28,10 +19,9 @@ impl CameraRelativeCoord {
         Self { position }
     }
 
-    /// Project an absolute `UniverseCoord` into the camera frame. The
-    /// delta is computed in f64 (so positions millions of meters from
-    /// the world origin remain accurate) and cast to f32 only after the
-    /// subtraction — safe as long as `world` is within camera range.
+    /// Project an absolute `UniverseCoord` into the camera frame. The delta is computed in f64 (so
+    /// positions millions of meters from the world origin remain accurate) and cast to f32 only
+    /// after the subtraction — safe as long as `world` is within camera range.
     pub fn from_universe(world: UniverseCoord, camera: UniverseCoord) -> Self {
         let delta = camera.delta_to(&world);
         Self {

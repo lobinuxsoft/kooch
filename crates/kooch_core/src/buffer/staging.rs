@@ -1,25 +1,9 @@
 //! GPU-to-CPU readback via a staging buffer.
-//!
-//! Storage and vertex buffers cannot be mapped directly — data must first
-//! be copied into a `MAP_READ | COPY_DST` staging buffer, then mapped for
-//! CPU access.
-//!
-//! [`StagingBuffer`] encapsulates this pattern with a synchronous API
-//! (via `pollster::block_on`), matching the engine's synchronous convention.
 
 use bytemuck::Pod;
 use wgpu::{Buffer, BufferDescriptor, BufferUsages, CommandEncoder, Device, Queue};
 
 /// A staging buffer for synchronous GPU-to-CPU data readback.
-///
-/// # Workflow
-///
-/// 1. Record a copy command with [`copy_from`](Self::copy_from).
-/// 2. Submit the encoder to the queue.
-/// 3. Call [`read_back`](Self::read_back) to map, read, and unmap.
-///
-/// Or use the convenience [`read_buffer`](Self::read_buffer) for a one-shot
-/// copy-submit-read cycle.
 pub struct StagingBuffer {
     buffer: Buffer,
     size: u64,
@@ -48,12 +32,6 @@ impl StagingBuffer {
     }
 
     /// Maps the staging buffer, reads it as `&[T]`, and unmaps.
-    ///
-    /// This blocks synchronously via `pollster::block_on` + `device.poll(Wait)`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the map operation fails (e.g. device lost).
     pub fn read_back<T: Pod>(&self, device: &Device) -> Vec<T> {
         let slice = self.buffer.slice(..);
 

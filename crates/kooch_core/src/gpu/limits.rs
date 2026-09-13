@@ -5,113 +5,23 @@ use wgpu::Adapter;
 /// Clamped against adapter-reported limits so older GPUs fall back gracefully.
 pub(super) const TARGET_MAX_COMPUTE_INVOCATIONS_PER_WORKGROUP: u32 = 1024;
 pub(super) const TARGET_MAX_COMPUTE_WORKGROUP_STORAGE_SIZE: u32 = 32_768;
-/// Hi-Z SPD (#486) binds 12 storage texture slots in one bind
-/// group. wgpu's default `max_storage_textures_per_shader_stage` is
-/// 4, so the SPD pipeline-layout creation rejects without raising
-/// it. Most desktop GPUs (RX 9070 XT included) advertise ≥ 16.
+/// Hi-Z SPD (#486) binds 12 storage texture slots in one bind group. wgpu's default
+/// `max_storage_textures_per_shader_stage` is 4, so the SPD pipeline-layout creation rejects
+/// without raising it. Most desktop GPUs (RX 9070 XT included) advertise ≥ 16.
 pub(super) const TARGET_MAX_STORAGE_TEXTURES_PER_STAGE: u32 = 16;
-/// The atomic R64 visibility-buffer raster pipeline (#493) uses bind
-/// groups 0..4 (camera, meshlet pool, visible_meshlets, instances,
-/// vbuf64). #454 adds bind group 5 for the triangle-density
-/// accumulator + the uniform that gates the atomicAdd in production.
-/// wgpu's default `max_bind_groups` is 4 (group indices 0..3), so the
-/// BGL creation rejects without raising it. RDNA 2+ desktop /
-/// handheld + DX12 + Metal all advertise ≥ 8.
-///
-/// 🔴 **This budget is now fully spent.** The two-pass material shading
-/// pipeline (#440) uses groups 0..4 and #441 put Inti's lights on
-/// group 5 — six, exactly the target. There is no seventh group to
-/// hand out.
-///
-/// That is a constraint on the shadow work, not a number to raise on
-/// reflex: **shadow maps belong in Inti's group**, next to the lights
-/// that cast them, because a shadow map without its light is not a
-/// thing any shader wants. Raising the target to 8 would work on this
-/// hardware and quietly drop the baseline the engine claims to
-/// support — Vulkan only guarantees 4.
+/// The atomic R64 visibility-buffer raster pipeline (#493) uses bind groups 0..4 (camera.
 pub(super) const TARGET_MAX_BIND_GROUPS: u32 = 6;
-/// The scene-pool atomic cull pipeline already binds 8 storage
-/// buffers (params + visible IDs + count + 2 pool descriptors +
-/// instances + group_max_err + reject_reasons). #454.6 adds a 9th
-/// for per-stage cull survivor counts. wgpu's default
-/// `max_storage_buffers_per_shader_stage` is 8 — exactly at the
-/// existing budget — so any further cull-side instrumentation must
-/// raise it. Most desktop GPUs (RX 9070 XT included) advertise ≥
-/// 16; mobile baselines (Snapdragon X Elite / Adreno X1) typically
-/// expose 16 too.
+/// The scene-pool atomic cull pipeline already binds 8 storage buffers (params + visible IDs +
+/// count + 2 pool descriptors + instances + group_max_err + reject_reasons). #454.6 adds a 9th for
+/// per-stage cull survivor counts. wgpu's default `max_storage_buffers_per_shader_stage` is 8.
 pub(super) const TARGET_MAX_STORAGE_BUFFERS_PER_STAGE: u32 = 16;
 
-/// The largest a SINGLE buffer may be, and the largest a single storage
-/// BINDING may be. Both are wgpu's conservative defaults, restated here
-/// on purpose.
-///
-/// # 🔴 Declared rather than inherited
-///
-/// Every other limit in this file is named, clamped and warned about
-/// when an adapter grants less. These two used to fall through to
-/// `Limits::default()`, so the engine ran with 256 MiB / 128 MiB
-/// ceilings that nothing stated and nothing logged.
-///
-/// That is not academic. A buffer past either is **not an error at
-/// creation**: wgpu returns an INVALID buffer, and every submit
-/// afterwards fails validation with a message that names a label and
-/// no cause. A 2.4 GB lamp-cull arena looked, from the log, like a
-/// wall of identical lines with nothing to grep for.
-///
-/// # ⚠️ These are PER BUFFER, not a budget
-///
-/// Forty buffers of 200 MiB are fine; one of 300 MiB is not. Nothing
-/// here caps total VRAM.
-///
-/// # ⚠️ And they are kept at the FLOOR deliberately
-///
-/// An RX 9070 XT offers 2048 MiB for both — eight times this. Taking
-/// it would let a buffer through here that the OneXFly cannot hold,
-/// and the failure would surface on the handheld, over SSH, in a build
-/// nobody wants to make twice. The portable floor is the useful number;
-/// what was missing was saying so out loud.
-/// How many workgroups one `dispatch_workgroups` dimension may hold.
-///
-/// # 🔴 The ceiling is on the DISPATCH, not on the work
-///
-/// At 64 threads per group this dimension tops out at **4 194 240
-/// threads**. A cull that runs one thread per (instance × meshlet)
-/// reaches that at, say, 846 copies of a 4 953-meshlet dragon — an
-/// unremarkable open-world scene, not a stress test.
-///
-/// Past it the dispatch is **rejected outright**: the whole encoder
-/// fails validation and the frame draws nothing, once per frame,
-/// forever. A dense scene reported it as `[156639, 1, 1] must be less
-/// or equal to 65535` and nothing else — no hint that the count came
-/// from a cull, or which one.
-///
-/// # The fix is to fold, not to cap
-///
-/// [`tiled_workgroups`] spills the excess into a second dimension and
-/// the shader re-linearises it from `num_workgroups`. Clamping instead
-/// would silently stop culling past the 4.2 M-th meshlet, which is
-/// worse than crashing: the scene would render, missing geometry, and
-/// look like a bug in the LOD chain.
-///
-/// # ⚠️ Every backend guarantees exactly this and no more
-///
-/// 65 535 is the Vulkan / D3D12 / Metal floor and also what desktop
-/// adapters actually report — the RX 9070 XT included. Unlike the
-/// buffer sizes there is no headroom to leave on the table here.
+/// The largest a SINGLE buffer may be, and the largest a single storage BINDING may be. Both are
+/// wgpu's conservative defaults, restated here on purpose.
 pub const MAX_WORKGROUPS_PER_DIM: u32 = 65_535;
 
-/// Split `threads` into a 2-D workgroup count that no dimension
-/// overflows, given a 1-D `workgroup_size`.
-///
-/// Returns `(x, y)` for `dispatch_workgroups(x, y, 1)`. Below the
-/// ceiling `y` is 1 and the dispatch is the plain 1-D one; above it
-/// `x` saturates and `y` carries the rest, so the shader recovers its
-/// linear index as `gid.y * (num_workgroups.x * workgroup_size) +
-/// gid.x`.
-///
-/// The tiled form over-covers — the last row runs threads past
-/// `threads`. Every caller already guards on its own count, which is
-/// why this returns the shape and not the bound.
+/// Split `threads` into a 2-D workgroup count that no dimension overflows, given a 1-D
+/// `workgroup_size`.
 pub fn tiled_workgroups(threads: u32, workgroup_size: u32) -> (u32, u32) {
     debug_assert!(workgroup_size > 0, "a workgroup cannot be empty");
     let groups = threads.div_ceil(workgroup_size.max(1)).max(1);
@@ -190,12 +100,7 @@ pub(super) fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
         );
     }
     if workgroups_per_dim < MAX_WORKGROUPS_PER_DIM {
-        // 🔴 Not a graceful degradation. `tiled_workgroups` saturates a
-        // dimension at MAX_WORKGROUPS_PER_DIM, so an adapter below it
-        // rejects the very dispatch the tiling exists to make legal.
-        // 65 535 is the floor Vulkan, D3D12 and Metal all guarantee;
-        // reaching this branch means the assumption the tiling rests on
-        // is false on this machine, and it should be said that way.
+        // 🔴 Not a graceful degradation.
         tracing::warn!(
             requested = MAX_WORKGROUPS_PER_DIM,
             granted = workgroups_per_dim,
@@ -209,12 +114,8 @@ pub(super) fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
             "adapter clamped max_storage_buffer_binding_size; the page table, the mesh pool and the cull arenas all bind as storage"
         );
     }
-    // 🟢 The other direction, and it is information rather than a
-    // problem: an adapter that offers more than the floor is a machine
-    // this build will NOT use the headroom of, on purpose. Said once,
-    // at debug, so a capture taken here is read against the right
-    // ceiling — and so nobody concludes from a desktop that a buffer
-    // size is safe.
+    // 🟢 The other direction, and it is information rather than a problem: an adapter that offers
+    // more than the floor is a machine this build will NOT use the headroom of, on purpose.
     if adapter_limits.max_buffer_size > TARGET_MAX_BUFFER_SIZE {
         tracing::debug!(
             offered_mib = adapter_limits.max_buffer_size / (1 << 20),

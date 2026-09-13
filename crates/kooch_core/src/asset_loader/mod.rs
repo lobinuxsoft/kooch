@@ -37,7 +37,7 @@
 //! [`asset_written`] is what a save calls, and
 //! [`AssetServer::reload_path`] is what it uses. There is deliberately no
 //! file watcher: the editor writes these files, so it already knows when
-//! they change — see [`written`] for why polling would be both slower and
+//! they change — see `written` for why polling would be both slower and
 //! wrong here.
 
 mod error;
@@ -48,11 +48,7 @@ mod server;
 mod trait_def;
 mod written;
 
-// 🔴 Both gated, separately. `#[cfg(test)]` applies to the item that
-// follows it and nothing else, so inserting a module between the
-// attribute and `mod tests;` left the second one unconditional — it
-// compiled here, where the file exists, and broke the vendored engine,
-// where test files deliberately do not travel.
+// 🔴 Both gated, separately.
 #[cfg(test)]
 mod pack_tests;
 #[cfg(test)]

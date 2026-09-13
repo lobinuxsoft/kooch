@@ -65,12 +65,6 @@ fn a_zero_length_frame_reports_no_measurement_rather_than_infinity() {
 }
 
 /// The bug this alignment exists for, in the shape it was found in.
-///
-/// A game whose frame rate changes — someone turned the camera —
-/// reported `394 fps, frame 2.53 ms, cpu 7.51 ms`: work that does not
-/// fit inside the frame it is attributed to. The two numbers came from
-/// different frames, and while the rate was steady they agreed by
-/// coincidence.
 #[test]
 fn the_work_always_fits_inside_the_frame_it_is_reported_with() {
     let mut metrics = FrameMetrics::default();
