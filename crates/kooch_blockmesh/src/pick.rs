@@ -1,13 +1,6 @@
 //! Which part of a block the cursor is over.
-//!
-//! Faces are picked with a ray, vertices and edges in screen space. Not
-//! a style choice: a vertex has no area and an edge no width, so a ray
-//! misses both every time. What "close enough" means for them is a
-//! number of PIXELS, and pixels only exist after the projection.
-//!
-//! godot-ply (MIT) approximates it with a world-space radius that grows
-//! as `sqrt(distance) / 32`. That is a curve fitted to the projection
-//! rather than the projection, and it drifts with field of view.
+//! Faces are picked with a ray; vertices and edges in screen space, since a point or a line has no
+//! area for a ray to hit.
 
 use glam::{Mat4, Vec2, Vec3};
 
@@ -32,11 +25,8 @@ pub struct Screen {
 }
 
 impl Screen {
-    /// Where a local point lands, and its view depth.
-    ///
-    /// `None` behind the eye, where the perspective divide flips the
-    /// point to the opposite side of the screen and every distance
-    /// measured from it is a lie.
+    /// Where a local point lands in pixels, and its view depth. `None` behind the eye, where the
+    /// perspective divide mirrors the point across the screen.
     fn project(&self, point: Vec3) -> Option<(Vec2, f32)> {
         let clip = self.clip * point.extend(1.0);
         if clip.w <= 1e-6 {
@@ -51,13 +41,8 @@ impl Screen {
     }
 }
 
-/// Nearest to the cursor wins; a tie in pixels is broken by depth.
-///
-/// Both halves earn their place. Ranking by depth alone hands a click to
-/// whatever is closest to the eye even when you aimed at something
-/// twenty pixels away from it; ranking by pixels alone leaves a cube's
-/// front and back corners — which project to the SAME pixel — decided
-/// by iteration order.
+/// Nearest to the cursor wins; a tie in pixels is broken by depth. Depth alone steals clicks aimed
+/// elsewhere; pixels alone leave a cube's front and back corners to iteration order.
 const TIE: f32 = 1.0;
 
 fn closer(candidate: (f32, f32), best: (f32, f32)) -> bool {
@@ -92,12 +77,8 @@ pub fn vertex_at(mesh: &BlockMesh, screen: Screen, cursor: Vec2, radius: f32) ->
     })
 }
 
-/// The edge under the cursor, within `radius` pixels.
-///
-/// An edge with an endpoint behind the eye is skipped rather than
-/// clipped: the case needs a near-plane intersection to be right, and
-/// getting it subtly wrong picks an edge that is nowhere near the
-/// cursor. The vertices at its ends stay pickable.
+/// The edge under the cursor, within `radius` pixels. An edge with an endpoint behind the eye is
+/// skipped, not clipped; its vertices stay pickable.
 pub fn edge_at(
     mesh: &BlockMesh,
     adjacency: &Adjacency,
@@ -148,22 +129,9 @@ fn segment_at(point: Vec2, from: Vec2, to: Vec2) -> (f32, f32) {
     (point.distance(from + span * along), along)
 }
 
-/// The nearest face `origin + t * direction` strikes, in the mesh's own
-/// space.
-///
-/// Local, not world: the caller owns the entity's transform and can
-/// invert it once, rather than this transforming every corner of every
-/// face on every mouse move.
-///
-/// `direction` need not be normalised — `distance` comes back in
-/// whatever units it carries, so an unnormalised ray gives a `t` in
-/// units of its own length, which is what a caller comparing against
-/// another `t` on the same ray wants.
-///
-/// Faces are convex, so a fan covers each exactly. Nearest hit wins,
-/// including faces pointing away: a click inside an open mesh should
-/// select the wall you can see through the hole, and a block being
-/// edited is routinely seen from inside.
+/// The nearest face `origin + t * direction` strikes, in mesh space. `distance` is in units of
+/// `direction`, which need not be normalised.
+/// Back faces count: a block being edited is routinely seen from inside.
 pub fn face_at(mesh: &BlockMesh, origin: Vec3, direction: Vec3) -> Option<Hit> {
     let mut nearest: Option<Hit> = None;
 
@@ -190,12 +158,8 @@ pub fn face_at(mesh: &BlockMesh, origin: Vec3, direction: Vec3) -> Option<Hit> {
     nearest
 }
 
-/// Distance along the ray to a triangle, or `None` when it misses.
-///
-/// Möller–Trumbore, two-sided. The determinant's sign says which way the
-/// triangle faces and is deliberately not read: culling backfaces here
-/// would make a face unselectable from the side an author is standing on
-/// half the time.
+/// Distance along the ray to a triangle, or `None` on a miss. Möller–Trumbore, two-sided: culling
+/// back faces would hide faces from the author's own side.
 fn triangle_at(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
     const EDGE: f32 = 1e-7;
 

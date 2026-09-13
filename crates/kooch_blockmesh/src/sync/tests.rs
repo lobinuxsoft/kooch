@@ -47,10 +47,8 @@ fn a_bare_world_syncs_nothing() {
     sync_blocks(&mut resources);
 }
 
-/// 🔴 A reload overwrites the value under the SAME handle, so a source
-/// built at one revision is NOT built at the next. Without this the
-/// project built a block once and never again, and its collider stayed
-/// the shape the block was born with.
+/// 🔴 A reload overwrites the value under the same handle, so a source built at one revision is not
+/// built at the next.
 #[test]
 fn a_rewritten_source_is_not_built() {
     let guid = Guid::new_v4();

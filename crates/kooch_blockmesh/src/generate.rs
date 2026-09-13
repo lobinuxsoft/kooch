@@ -6,13 +6,9 @@ use kooch_render::mesh::{Mesh, MeshVertex};
 use crate::BlockMesh;
 
 impl BlockMesh {
-    /// Generates the render mesh: positions split per face, so every
-    /// face shades flat.
-    ///
-    /// Splitting is the point. Sharing a corner between faces would
-    /// average their normals and round the edges of a box, which is the
-    /// one thing a blockout must not do. The collider takes the welded
-    /// version from [`triangles`](Self::triangles) instead.
+    /// Generates the render mesh with positions split per face, so every face shades flat. Shared
+    /// corners would round a box's edges; the collider takes the welded
+    /// [`triangles`](Self::triangles).
     pub fn to_mesh(&self) -> Mesh {
         let mut vertices = Vec::with_capacity(self.face_corners_len());
         let mut indices = Vec::new();
@@ -49,12 +45,8 @@ impl BlockMesh {
     }
 }
 
-/// Projects a position onto the plane the normal faces most directly,
-/// one texture repeat per world unit.
-///
-/// World-space rather than per-face, so a wall scaled from 2 m to 8 m
-/// shows four repeats instead of the same four texels stretched — which
-/// is the whole reason a blockout is textured at all.
+/// Projects a position onto the plane its normal faces most, one repeat per world unit.
+/// World-space, so a wall stretched from 2 m to 8 m shows four repeats, not stretched texels.
 fn planar_uv(position: Vec3, normal: Vec3) -> Vec2 {
     let axis = normal.abs();
     if axis.x >= axis.y && axis.x >= axis.z {

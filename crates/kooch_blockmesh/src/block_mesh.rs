@@ -3,21 +3,9 @@
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
-/// An editable polygon mesh. Faces are convex and wound counter-clockwise
-/// seen from outside.
-///
-/// Faces are stored CSR-style: every face's corners are concatenated
-/// into `face_corners`, and `face_starts` holds where each one begins
-/// plus a trailing sentinel, so face `i` owns
-/// `face_corners[face_starts[i]..face_starts[i + 1]]`. One allocation
-/// for the whole mesh instead of one per face, and walking every corner
-/// of every face is a contiguous scan.
-///
-/// # These field names are serialised
-///
-/// They travel in the `.blockmesh.ron` file. Renaming one makes saved
-/// levels load a default in its place, silently — see the rename hazard
-/// in `code-standards`.
+/// An editable polygon mesh: convex faces wound counter-clockwise from outside, stored CSR-style so
+/// face `i` owns `face_corners[face_starts[i]..face_starts[i + 1]]`.
+/// 🔴 These field names are serialised in `.block` files; renaming one silently loads a default.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BlockMesh {
     /// Corner positions, shared between the faces that meet there. The
@@ -61,12 +49,8 @@ const CUBOID_FACES: [[u32; 4]; 6] = [
 ];
 
 impl BlockMesh {
-    /// An axis-aligned box centred on the origin, extending `half` along
-    /// each axis. The shape every blockout starts from.
-    ///
-    /// A negative or zero extent is honoured rather than rejected: the
-    /// box tool drags a corner past its opposite all the time, and a
-    /// degenerate box mid-drag is a normal frame, not an error.
+    /// An axis-aligned box centred on the origin, extending `half` along each axis. A zero or
+    /// negative extent is allowed: a corner dragged past its opposite is a normal frame.
     pub fn cuboid(half: Vec3) -> Self {
         let positions = CUBOID_CORNERS
             .iter()
@@ -89,13 +73,8 @@ impl BlockMesh {
     }
 
     #[cfg(test)]
-    /// Builds a mesh from shared positions and faces given as corner
-    /// index lists.
-    ///
-    /// Returns `None` when a face names a position that does not exist,
-    /// or has fewer than three corners: both make every later operation
-    /// index out of bounds, and rejecting at the door beats a panic
-    /// three calls deep.
+    /// Builds a mesh from shared positions and faces given as corner index lists. `None` when a
+    /// face names a missing position or has fewer than three corners.
     pub fn from_faces(positions: Vec<Vec3>, faces: &[Vec<u32>]) -> Option<Self> {
         let corners = positions.len() as u32;
         let mut face_corners = Vec::new();
@@ -140,13 +119,8 @@ impl BlockMesh {
         (0..self.face_count()).filter_map(|index| self.face(index))
     }
 
-    /// The outward normal of face `index`, or `None` when it does not
-    /// exist.
-    ///
-    /// Newell's method rather than one cross product, because a face
-    /// dragged out of plane still has a sensible average normal while a
-    /// single corner's cross product would swing with whichever corner
-    /// happened to be first.
+    /// The outward normal of face `index`, or `None` when it does not exist. Newell's method: a
+    /// face dragged out of plane keeps a stable normal where one cross product swings.
     pub fn face_normal(&self, index: usize) -> Option<Vec3> {
         let face = self.face(index)?;
         let mut normal = Vec3::ZERO;
@@ -159,11 +133,8 @@ impl BlockMesh {
     }
 
     /// Every corner the given faces use, each once.
-    ///
-    /// 🔴 Once is the whole point. A cube's corner belongs to three
-    /// faces, and moving a selection by adding the delta per face would
-    /// move a shared corner three times — the block tears along exactly
-    /// the seams the shared positions exist to prevent.
+    /// 🔴 Once: a shared corner moved per face would move three times and tear the block along its
+    /// seams.
     pub fn corners_of(&self, faces: &[u32]) -> Vec<u32> {
         let mut corners: Vec<u32> = Vec::new();
         for face in faces {
@@ -179,11 +150,8 @@ impl BlockMesh {
         corners
     }
 
-    /// Moves the given corners by `delta`, in the mesh's own space.
-    ///
-    /// Every face using a moved corner follows, which is what makes
-    /// dragging one face of a cube reshape the four beside it and leave
-    /// the opposite one where it was.
+    /// Moves the given corners by `delta`, in the mesh's own space. Faces sharing a moved corner
+    /// follow it.
     pub fn move_corners(&mut self, corners: &[u32], delta: Vec3) {
         for corner in corners {
             if let Some(position) = self.positions.get_mut(*corner as usize) {
@@ -192,20 +160,14 @@ impl BlockMesh {
         }
     }
 
-    /// The average of the given faces' corners, in the mesh's own space.
-    ///
-    /// Where a handle for that selection belongs. Averaging corners
-    /// rather than face centres so two selected faces sharing an edge
-    /// do not weight it twice.
+    /// The average of the given faces' corners, in the mesh's own space. Averages corners, not face
+    /// centres, so a shared edge is not weighted twice.
     pub fn centre_of(&self, faces: &[u32]) -> Option<Vec3> {
         self.centre(&self.corners_of(faces))
     }
 
-    /// The average of the given corners, in the mesh's own space.
-    ///
-    /// The primitive under [`Self::centre_of`]. A vertex or edge
-    /// selection reaches the same handle through here, since by then
-    /// every kind of selection is a list of corners.
+    /// The average of the given corners — the primitive under [`Self::centre_of`], shared by every
+    /// selection kind.
     pub fn centre(&self, corners: &[u32]) -> Option<Vec3> {
         if corners.is_empty() {
             return None;
@@ -217,12 +179,8 @@ impl BlockMesh {
         Some(total / corners.len() as f32)
     }
 
-    /// Turns the given corners around `pivot`, in the mesh's own space.
-    ///
-    /// The pivot is the selection's own centre rather than the mesh
-    /// origin: rotating a face about a point it does not contain swings
-    /// it away instead of turning it, which is a translation nobody
-    /// asked for.
+    /// Turns the given corners around `pivot`, in the mesh's own space. The pivot is the
+    /// selection's centre: turning about a point the face does not contain swings it away.
     pub fn turn_corners(&mut self, corners: &[u32], pivot: Vec3, by: Quat) {
         for corner in corners {
             if let Some(position) = self.positions.get_mut(*corner as usize) {
@@ -231,11 +189,8 @@ impl BlockMesh {
         }
     }
 
-    /// Scales the given corners about `pivot`, per axis.
-    ///
-    /// Clamped away from zero: a corner scaled to nothing collapses onto
-    /// the pivot, and every later scale multiplies zero by something,
-    /// so the face can never be recovered by dragging back.
+    /// Scales the given corners about `pivot`, per axis. Clamped away from zero, or a collapsed
+    /// corner could never be dragged back out.
     pub fn scale_corners(&mut self, corners: &[u32], pivot: Vec3, by: Vec3) {
         let by = by.max(Vec3::splat(0.001));
         for corner in corners {
@@ -245,14 +200,9 @@ impl BlockMesh {
         }
     }
 
-    /// Triangulates every face as a fan, indexing the shared positions.
-    ///
-    /// Welded on purpose: this feeds the collider, and a physics trimesh
-    /// wants corners that coincide to be one corner. Rendering takes the
-    /// split version from [`to_mesh`](Self::to_mesh) instead.
-    ///
-    /// A fan is correct because faces are convex, which every operator
-    /// here preserves.
+    /// Triangulates every face as a fan over the shared positions: welded for the collider, where
+    /// rendering takes the split [`to_mesh`](Self::to_mesh). A fan is exact because faces are
+    /// convex.
     pub fn triangles(&self) -> Vec<[u32; 3]> {
         let mut triangles = Vec::new();
         for face in self.faces() {

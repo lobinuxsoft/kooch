@@ -14,18 +14,12 @@ use kooch_render::meshlet::{GeneratedMeshes, build_default_meshlets};
 use crate::Block;
 use crate::BlockMesh;
 
-/// Which sources have already been turned into a mesh.
-///
-/// Generating is cheap for one box and not cheap for a level, and a
-/// block that nobody touched this frame is every block on most frames.
+/// Which sources have already been turned into a mesh, so untouched blocks are not regenerated
+/// every frame.
 #[derive(Debug, Default)]
 pub struct BuiltBlocks {
-    /// The handle each built source resolved to.
-    ///
-    /// A handle rather than a bare "yes": picking, drawing and editing
-    /// all need the mesh, they all hold `&Resources` and cannot load,
-    /// and re-resolving a GUID per frame to answer the same question is
-    /// the lookup this already did once.
+    /// The handle each built source resolved to, so readers holding `&Resources` never re-resolve a
+    /// GUID.
     built: HashMap<Guid, Built>,
 }
 
@@ -33,11 +27,8 @@ pub struct BuiltBlocks {
 #[derive(Debug, Clone, Copy)]
 struct Built {
     handle: kooch_core::assets::Handle<BlockMesh>,
-    /// 🔴 A reload overwrites the value under the SAME handle, so the
-    /// handle alone cannot say the shape changed. Without this the
-    /// project built a block once and never again — its collider stayed
-    /// the shape the block was born with, however far the editor moved
-    /// it.
+    /// 🔴 A reload overwrites the value under the same handle, so the handle alone cannot say the
+    /// shape changed.
     revision: u64,
 }
 
@@ -56,24 +47,14 @@ impl BuiltBlocks {
             .is_some_and(|built| built.revision == revision)
     }
 
-    /// The handle a built source resolved to.
-    ///
-    /// What picking, drawing and editing all need: they hold
-    /// `&Resources` and cannot load, and re-resolving a GUID per frame
-    /// to answer a question this already answered is the lookup the
-    /// handle exists to skip.
+    /// The handle a built source resolved to, for readers that hold `&Resources` and cannot load.
     pub fn handle(&self, guid: Guid) -> Option<kooch_core::assets::Handle<BlockMesh>> {
         self.built.get(&guid).map(|built| built.handle)
     }
 }
 
-/// Generates the render mesh and collider for every block whose source
-/// has not been built yet, and points the entity's `MeshRenderer` and
-/// `Collider` at them.
-///
-/// Both outputs go under the block mesh's own GUID: they are two views
-/// of one shape, and giving them separate identities would let them
-/// drift apart with nothing to notice.
+/// Generates the render mesh and collider for every block not built yet, and points the entity at
+/// them. Both use the block mesh's GUID, so two views of one shape cannot drift apart.
 pub fn sync_blocks(resources: &mut Resources) {
     let sources = block_sources(resources);
     if sources.is_empty() {
@@ -126,10 +107,8 @@ fn build_one(resources: &mut Resources, guid: Guid) {
 
     match build_default_meshlets(&block_mesh.to_mesh()) {
         Ok(meshlets) => {
-            // Said once per build, not per frame. Two processes run this
-            // — the editor draws its mirror and the project owns the
-            // world — and a silence that only breaks on failure cannot
-            // tell you which of them built the mesh you are not seeing.
+            // Once per build, not per frame. The editor and the project both run this, and the log
+            // says which one built the mesh.
             let published = resources.remove::<GeneratedMeshes>().map(|mut generated| {
                 generated.insert(guid, meshlets);
                 let waiting = generated.len();
@@ -142,12 +121,8 @@ fn build_one(resources: &mut Resources, guid: Guid) {
                     %guid, faces = block_mesh.face_count(), waiting,
                     "built a block's mesh and published it for upload",
                 ),
-                // 🔴 Only a fault where something draws. The remote
-                // host simulates and renders nothing, so it has no
-                // renderer and no store — a warning there is an alarm
-                // about a correct absence, which is how alarms get
-                // ignored. With a GPU present the store is missing, and
-                // the mesh is built and dropped in silence.
+                // 🔴 Only a fault where something draws: the headless remote host correctly has no
+                // store, and warning there is noise.
                 None => match resources.get::<kooch_core::gpu::GpuContext>().is_some() {
                     true => tracing::warn!(
                         target: "kooch_blockmesh::sync",
@@ -224,22 +199,16 @@ fn point_at_sources(resources: &mut Resources, sources: &[(kooch_ecs::Entity, Gu
     if let Some(storage) = registry.get_cpu_mut::<kooch_physics::components::Collider>() {
         for (entity, _) in sources {
             if let Some(collider) = storage.get_mut(*entity) {
-                // 🔴 Addressed by the entity, and `mesh` deliberately
-                // left alone. Naming a `.block` in a field that means "a
-                // mesh on disk" is what had two separate walks feeding
-                // that file to a glTF parser.
+                // 🔴 Addressed by entity, leaving `mesh` alone: a `.block` in a field that means a
+                // mesh file gets fed to the glTF parser.
                 collider.shape = SHAPE_OWN_MESH;
             }
         }
     }
 }
 
-/// Hands each block's triangles to physics, keyed by the entity that
-/// owns them.
-///
-/// 🔴 Per entity, not per source. Two blocks built from one `.block`
-/// are two shapes the moment either is scaled, and one cache entry
-/// between them is right only by luck.
+/// Hands each block's triangles to physics, keyed by the owning entity. 🔴 Per entity, not per
+/// source: two blocks from one `.block` differ once either is scaled.
 fn publish_colliders(resources: &mut Resources, sources: &[(kooch_ecs::Entity, Guid)]) {
     let shapes: Vec<(kooch_ecs::Entity, kooch_physics::ColliderMesh)> = {
         let Some(assets) = resources.get::<Assets<BlockMesh>>() else {

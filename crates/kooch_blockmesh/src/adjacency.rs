@@ -4,42 +4,13 @@ use std::collections::HashMap;
 
 use crate::BlockMesh;
 
-/// No face on this side of the edge.
-///
-/// A sentinel rather than `Option<u32>`: this is SoA, and a `u32` that
-/// packs beats an enum that pads.
+/// No face on this side of the edge. A sentinel, not `Option<u32>`: in SoA a `u32` packs where an
+/// enum pads.
 pub const NO_FACE: u32 = u32::MAX;
 
 /// The edges of a [`BlockMesh`] and the faces along each.
-///
-/// # Derived, never serialised
-///
-/// `BlockMesh` stores positions and the faces that index them, and
-/// nothing else. Everything here is implied by those, so writing it to
-/// the file would put a second copy of one truth in every saved level —
-/// and the two would disagree the first time an operator updated one and
-/// forgot the other.
-///
-/// The cost of rebuilding is one pass over the face-corners. The cost of
-/// being wrong is a level that loads with holes in it.
-///
-/// It also means this layout is free to change: no saved level depends
-/// on any of it.
-///
-/// # Why there are no "wings"
-///
-/// A winged-edge mesh stores, per edge, the next edge clockwise around
-/// each of its two faces — `godot-ply`'s `edge_edges`. It needs them
-/// because its faces are **implicit**: a face is one starting edge, so
-/// enumerating it means walking the wings.
-///
-/// `BlockMesh` stores its faces **explicitly**, as a contiguous run of
-/// corners. Enumerating one is a slice. So [`face_edges`] is aligned
-/// one-to-one with `BlockMesh::face_corners` — entry `j` is the edge
-/// leaving corner `j` within its own face — and the walk, the sides and
-/// the four wings per edge all disappear.
-///
-/// [`face_edges`]: Adjacency::face_edges
+/// Derived, never serialised: a stored copy disagrees with the faces at the first edit that forgets
+/// it. No winged edges — faces are explicit, so enumerating one is a slice, not a walk.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Adjacency {
     /// Two per edge: the corners it joins, lower index first, so both
@@ -62,12 +33,7 @@ pub struct Adjacency {
 }
 
 impl Adjacency {
-    /// Derives the adjacency of `mesh`.
-    ///
-    /// The map is build-time only and thrown away here — a corner pair
-    /// has to find the edge some earlier face already made for it, and
-    /// that lookup is not a hot path: this runs when an edit changes the
-    /// mesh, not per frame.
+    /// Derives the adjacency of `mesh`. Runs when an edit changes the mesh, not per frame.
     pub fn of(mesh: &BlockMesh) -> Self {
         let mut edges: HashMap<[u32; 2], u32> = HashMap::new();
         let mut edge_corners: Vec<u32> = Vec::new();
@@ -95,10 +61,8 @@ impl Adjacency {
                 });
                 face_edges.push(edge);
 
-                // First free side. A third claimant is non-manifold and
-                // is counted rather than overwriting one of the two —
-                // silently keeping the last pair is how a fan becomes a
-                // mesh that looks fine and extrudes wrong.
+                // First free side. A third claimant is counted as non-manifold, never written over
+                // one of the two.
                 let sides = &mut edge_faces[edge as usize * 2..edge as usize * 2 + 2];
                 match sides.iter().position(|slot| *slot == NO_FACE) {
                     Some(free) => sides[free] = face as u32,
@@ -169,21 +133,15 @@ impl Adjacency {
         self.faces_of(edge).count() == 1
     }
 
-    /// Whether no edge is claimed by a third face.
-    ///
-    /// A boundary edge is manifold: an open quad is a legitimate mesh.
-    /// What is not is three faces meeting along one edge, which has no
-    /// consistent normal and no boundary an operator can walk.
+    /// Whether no edge is claimed by a third face. An open boundary is still manifold; three faces
+    /// on one edge have no consistent normal.
     pub fn is_manifold(&self) -> bool {
         self.crowded == 0
     }
 
     #[cfg(test)]
-    /// Whether every edge has two faces — the mesh encloses a volume.
-    ///
-    /// What a collider wants to hear. An open mesh still renders and
-    /// still extrudes; a body built from one lets things through the
-    /// hole.
+    /// Whether every edge has two faces — the mesh encloses a volume. An open mesh renders and
+    /// extrudes, but a collider built from it leaks.
     pub fn is_closed(&self) -> bool {
         self.is_manifold() && (0..self.edge_count() as u32).all(|edge| !self.is_boundary(edge))
     }

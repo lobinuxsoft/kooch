@@ -111,10 +111,7 @@ fn ron_names_three_fields() {
     }
 }
 
-/// 🔴 Its own extension, never `ron`. `Material` claims `ron`, and two
-/// loaders on one extension had the asset scan type a block as a
-/// material — the inspector drew it with a base colour and nothing
-/// could load it as what it is.
+/// Its own extension, never `ron` — `Material` claims it (#1075).
 #[test]
 fn a_block_does_not_claim_ron() {
     use kooch_core::asset_loader::AssetLoader;
