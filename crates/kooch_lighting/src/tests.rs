@@ -10,11 +10,7 @@ fn substitution_leaves_no_placeholder_behind() {
     );
     assert!(src.contains("@group(5) @binding(0)"));
     assert!(src.contains("@group(5) @binding(1)"));
-    // The shadow bindings substitute too. The fourth is the one
-    // worth pinning: it was written off as impossible on a
-    // bind-group budget that is spent on *groups*, not on bindings
-    // inside one, and if it silently disappears the blocker search
-    // has nothing to sample and PCSS quietly becomes PCF again.
+    // Binding 4 is the one to pin: dropping it silently turns PCSS back into PCF.
     assert!(src.contains("@group(5) @binding(2)"));
     assert!(src.contains("@group(5) @binding(3)"));
     assert!(src.contains("@group(5) @binding(4)"));
@@ -28,11 +24,8 @@ fn the_template_is_not_valid_wgsl_on_its_own() {
     assert!(INTI_PBR_TEMPLATE.contains(GROUP_PLACEHOLDER));
 }
 
-/// The model calls `inti_contact_shadow` and never defines it, so
-/// alone it is half a shader. That is deliberate — see
-/// [`INTI_CONTACT_SHADOW_STUB`] — and this pins that the missing
-/// half is exactly the one named, rather than something else having
-/// gone missing.
+/// The model calls `inti_contact_shadow` without defining it on purpose
+/// ([`INTI_CONTACT_SHADOW_STUB`]); this pins that exactly that one is missing.
 #[test]
 fn the_model_needs_a_contact_shadow_implementation_concatenated() {
     assert!(inti_pbr_shader(0).contains("inti_contact_shadow("));
@@ -56,13 +49,8 @@ fn shading_model_parses_and_validates() {
         .expect("inti_pbr.wgsl should validate");
 }
 
-/// 🔴 The debug views had nothing validating them.
-///
-/// `inti_pbr.wgsl` is parsed above and `inti_debug.wgsl` was not, so a
-/// typo in a view compiled for the first time when somebody opened it in
-/// the editor — a shader panic on a dropdown selection, in a file whose
-/// whole purpose is to be reached rarely. This concatenates the two the
-/// way the editor's pipeline does and validates the result.
+/// 🔴 Validates the debug views concatenated as the editor does, or a typo panics on a dropdown
+/// selection.
 #[test]
 fn the_debug_views_parse_and_validate() {
     let module = naga::front::wgsl::parse_str(&format!(
@@ -81,12 +69,8 @@ fn the_debug_views_parse_and_validate() {
         .expect("inti_debug.wgsl should validate");
 }
 
-/// The stub and the real views must present the same call sites, or the
-/// production pipeline stops compiling the moment a view is added.
-///
-/// The names are derived from the stub rather than restated, so a
-/// function renamed in one file and not the other fails here instead of
-/// in whichever build happens to be compiled next.
+/// Stub and views expose the same call sites, names derived from the stub, or production stops
+/// compiling when a view is added.
 #[test]
 fn the_stub_matches_the_views_it_replaces() {
     let views = inti_debug_shader();
@@ -105,12 +89,8 @@ fn the_stub_matches_the_views_it_replaces() {
     assert!(found >= 2, "the stub should declare both call sites");
 }
 
-/// 🔴 Zero means "never skip", and it is the default. A project that
-/// never heard of #821 has to render exactly what it rendered before.
-///
-/// Reads the uniform rather than `SpecularFloor::default()`, which
-/// consults the environment — a test that asserted on that would fail
-/// for whoever happened to have the variable set while measuring.
+/// 🔴 Zero, never skip, is the default. Reads the uniform, not `SpecularFloor::default()`, which
+/// consults the environment.
 #[test]
 fn the_default_floor_keeps_every_specular() {
     assert_eq!(IntiFrame::default().specular_floor, 0.0);
@@ -196,10 +176,7 @@ fn the_nearer_of_two_equal_lamps_wins() {
     assert!(near > far);
 }
 
-/// Inside the sphere the light is all around the viewer, so walking
-/// closer to its centre cannot make its shadow cover more screen. Left
-/// unclamped, `range / distance` runs to infinity at the centre and one
-/// lamp owns every cube the moment the player stands in it.
+/// Inside the sphere a light cannot cover more screen; unclamped, one lamp would own every cube.
 #[test]
 fn being_inside_the_sphere_saturates() {
     let eye = glam::Vec3::ZERO;
@@ -222,11 +199,8 @@ fn a_lamp_on_the_camera_is_finite() {
 #[test]
 fn the_page_bindings_substitute() {
     let src = inti_pbr_shader(5);
-    // The virtual shadow map's three (#866). Worth pinning for the same
-    // reason the shadow bindings above are: they were added to a group
-    // already believed full, and a group index that failed to
-    // substitute is a runtime panic rather than a test failure.
-    // Binding 9 held the page hash's key array and is retired with it.
+    // The page bindings (#866), added to a group believed full; a failed substitution panics at
+    // runtime. Binding 9 retired with the hash.
     assert!(src.contains("@group(5) @binding(8)"));
     assert!(src.contains("@group(5) @binding(10)"));
     assert!(src.contains("@group(5) @binding(11)"));
@@ -239,11 +213,8 @@ fn the_page_bindings_substitute() {
 #[test]
 fn the_reader_shares_the_page_arithmetic() {
     let src = inti_pbr_shader(0);
-    // 🔴 The structural guarantee against the drift that matters. Four
-    // passes in another crate WRITE this table; this one reads it. A
-    // reader that reimplemented the id arithmetic would be free to
-    // disagree with the writer by one level, and the symptom is a
-    // shadow that disappears rather than one that looks wrong.
+    // 🔴 The reader must include the shared decoder rather than reimplement it, or a level off by
+    // one loses the shadow.
     assert!(src.contains("fn page_decode("));
     assert!(src.contains("fn sun_page_rect("));
     for helper in [
@@ -269,10 +240,7 @@ fn the_reader_shares_the_page_arithmetic() {
 #[test]
 fn the_atlas_is_never_hardware_filtered() {
     let src = inti_pbr_shader(0);
-    // A filter cannot cross a page border: the neighbouring texels
-    // belong to another clipmap level, so a sampler would blend a
-    // shadow with one from somewhere else. Taps are loads, clamped
-    // inside the page.
+    // Taps are loads clamped in the page: a sampler would blend another level's depth.
     assert!(src.contains("textureLoad(inti_page_atlas"));
     assert!(
         !src.contains("textureSample(inti_page_atlas"),
@@ -280,19 +248,8 @@ fn the_atlas_is_never_hardware_filtered() {
     );
 }
 
-/// The page age view says WHITE for a page with no content, and not for
-/// a page requested this frame.
-///
-/// 🔴 A grep, and it exists because the difference is invisible: the
-/// view read word 1 — the frame a page was last REQUESTED — and the
-/// marking rewrites that every frame it asks for a page. Everything on
-/// screen is asked for every frame, so the comparison was zero for
-/// every pixel and the view returned white before reaching its own hue
-/// or fade. It painted the whole screen, always, and looked like a view
-/// of something.
-///
-/// Word 3 is the content generation: zero means the page was claimed
-/// and never drawn into, which is a hole a shadow can actually have.
+/// The page age view paints white for no content (word 3), not for requested-this-frame (word 1),
+/// which is every visible page.
 #[test]
 fn the_age_view_paints_missing_content() {
     let source = crate::inti_debug_shader();

@@ -15,21 +15,9 @@ use crate::light_frame::LightFrame;
 /// authored room; growth is geometric from there.
 const INITIAL_CAPACITY: u32 = 16;
 
-/// Owns the two bindings `inti_pbr.wgsl` declares and keeps them sized
-/// to the scene.
-///
-/// # One buffer, several views
-///
-/// The light set does not depend on where the camera is, so it is
-/// shared across every view in a frame. `camera_position` does depend
-/// on it and rides in the frame UBO anyway — which is safe only
-/// because each view records **and submits** its own encoder:
-/// `write(A) → submit(A) → write(B) → submit(B)` is ordered on the
-/// queue, so B's camera cannot reach A's pass. The existing
-/// `MaterialTwoPass::camera_buffer` is shared on exactly this
-/// reasoning. If a future path ever records two views into one encoder,
-/// this buffer needs a dynamic offset per view, the same way the
-/// per-material screen UBO already does.
+/// Owns `inti_pbr.wgsl`'s two bindings, sized to the scene. Shared across views; the per-view
+/// `camera_position` is safe only because each view records and submits its own encoder — one
+/// encoder for two views needs a dynamic offset.
 pub struct GpuLights {
     frame_buffer: wgpu::Buffer,
     light_buffer: wgpu::Buffer,
@@ -39,32 +27,16 @@ pub struct GpuLights {
     shadow_sampler: wgpu::Sampler,
     /// Plain sampler on the same texture, for the blocker search.
     shadow_point_sampler: wgpu::Sampler,
-    /// 1×1 depth texture bound when there is no shadow atlas.
-    ///
-    /// A binding cannot be left empty, and a second pipeline for
-    /// "no shadows" would be a whole code path exercised only in the
-    /// case nobody looks at. Cleared to the far plane, so if the
-    /// `shadows_enabled` flag ever failed to stop the sampling, the
-    /// answer would be "fully lit" rather than "everything is dark".
+    /// 1×1 depth bound when there is no atlas — a binding cannot be empty. Cleared to far, so a
+    /// failed `shadows_enabled` gate reads lit.
     dummy_shadow: wgpu::TextureView,
-    /// The atlas currently bound, or `None` while the dummy is.
-    ///
-    /// Kept rather than derived because the bind group is rebuilt from
-    /// scratch whenever the light buffer grows, and rebuilding it
-    /// against the dummy would drop the atlas the moment a scene
-    /// crossed a capacity boundary — shadows disappearing when the
-    /// seventeenth light is placed, with nothing in the log.
+    /// The bound atlas, or `None` for the dummy — kept because the bind group rebuilds on
+    /// light-buffer growth and would otherwise drop shadows.
     shadow_atlas: Option<wgpu::TextureView>,
     /// 1×1×6 cube array bound when no point light casts, for the same
     /// reason `dummy_shadow` exists: a binding cannot be left empty.
     dummy_cubes: wgpu::TextureView,
-    /// The virtual shadow map's page table and atlas (#866), or the
-    /// dummies while no sun is paging.
-    ///
-    /// 🔴 Held rather than derived, exactly like `shadow_atlas`: the
-    /// bind group is rebuilt from scratch whenever the light buffer
-    /// grows, and rebuilding against the dummies would drop the atlas
-    /// the moment a scene crossed a capacity boundary.
+    /// The page table and atlas (#866), or dummies — held for the same reason as `shadow_atlas`.
     page_uniform: Option<wgpu::Buffer>,
     /// Where this view's slice of the raster uniform starts and how far
     /// it runs. The buffer holds one slice per camera, so the offset is
@@ -72,25 +44,19 @@ pub struct GpuLights {
     page_uniform_span: (u64, u64),
     page_slots: Option<wgpu::Buffer>,
     page_atlas: Option<wgpu::TextureView>,
-    /// Bound when nothing is paging. The uniform is zeroed, and its
-    /// `sun.w` is the flag the shader reads — so "no pages" reads as
-    /// "no sun casting through pages" rather than as a lookup into an
+    /// Bound when nothing pages: zeroed, so `sun.w` reads "no paging" rather than looking up an
     /// empty table.
     dummy_page_buffer: wgpu::Buffer,
     dummy_page_atlas: wgpu::TextureView,
     /// The cube array currently bound, or `None` while the dummy is.
     shadow_cubes: Option<wgpu::TextureView>,
-    /// The froxel grid (#780). Owned here rather than beside here: its
-    /// two buffers are bindings in this group, its input is this
-    /// struct's light buffer, and the two grow independently — one
-    /// owner is what keeps the bind group naming what is actually bound.
+    /// The froxel grid (#780), owned here: its buffers are bindings in this group and its input is
+    /// this light buffer.
     clusters: GpuClusters,
     capacity: u32,
     light_count: u32,
-    /// What the last [`Self::update`] uploaded, kept CPU-side: the
-    /// shadow-page rasteriser builds one cull per lamp and a cull needs
-    /// the light's position and range HERE, in buffer order — the slot
-    /// is the bucket.
+    /// What the last [`Self::update`] uploaded, CPU-side: the page rasteriser culls per lamp from
+    /// position and range, in buffer order.
     uploaded: Vec<GpuLight>,
 }
 
@@ -127,10 +93,7 @@ impl GpuLights {
                     },
                     count: None,
                 },
-                // The shadow atlas lives in Inti's group rather than one
-                // of its own: the bind-group budget is spent, and a
-                // shadow map without its light is not a thing any shader
-                // wants. See `TARGET_MAX_BIND_GROUPS`.
+                // The shadow atlas in Inti's group; see `TARGET_MAX_BIND_GROUPS`.
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
@@ -144,50 +107,24 @@ impl GpuLights {
                     },
                     count: None,
                 },
-                // A comparison sampler, so the depth test happens on the
-                // texture unit and each tap comes back bilinearly
-                // filtered. Sampling depth and comparing by hand would
-                // be sixteen manual comparisons per fragment and no
-                // filtering.
+                // Comparison sampler: the depth test runs on the texture unit, bilinear per tap.
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
-                // A second, non-comparison sampler on the same texture,
-                // for PCSS's blocker search — which needs the depth
-                // itself, where a comparison sampler only ever answers
-                // "nearer or not".
-                //
-                // 🔴 This was written off as impossible: "there is no
-                // bind group left". The exhausted budget is on *groups*,
-                // and this is a fourth binding inside a group that
-                // already exists. Bevy does exactly this
-                // (`directional_shadow_textures_linear_sampler`), which
-                // is what made the claim worth re-checking.
-                //
-                // Non-filtering because the sample type is `Depth`, and
-                // wgpu will not pair that with a filtering sampler. The
-                // search averages eight taps, so bilinear on each of
-                // them buys very little.
+                // Non-comparison sampler for PCSS's blocker search, which needs the depth. The
+                // budget is on groups, not bindings — Bevy does the same. Non-filtering, since wgpu
+                // forbids filtering with `Depth`.
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
                     visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
-                // The point lights' cube array (#778) — a fifth binding
-                // in this same group, not a seventh group.
-                //
-                // 🔴 The issue for this work opened by saying it had to
-                // decide "what a cube array plus two samplers
-                // displaces", because all six bind GROUPS are spent.
-                // Bindings are not groups, and the two samplers above
-                // are reused untouched: a `wgpu::Sampler` is not bound
-                // to a texture, so the comparison sampler that filters
-                // the cascades filters a cube face just as well. The
-                // whole cost is this one entry.
+                // The point lights' cube array (#778): a binding in this group, reusing both
+                // samplers — a sampler is not bound to a texture.
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
                     visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
@@ -200,10 +137,7 @@ impl GpuLights {
                     },
                     count: None,
                 },
-                // The froxel grid (#780): the per-cell records, then the
-                // shared index list they point into. Two more bindings
-                // in this group, on the same reasoning as the shadow
-                // maps above — groups are what ran out, not bindings.
+                // The froxel grid (#780): cell records, then the index list.
                 wgpu::BindGroupLayoutEntry {
                     binding: 6,
                     visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
@@ -224,17 +158,8 @@ impl GpuLights {
                     },
                     count: None,
                 },
-                // Virtual shadow maps (#866): the page table's uniform,
-                // its two arrays, and the physical atlas. Four more
-                // bindings in this group on the same reasoning as the
-                // cascades and the grid — groups are what ran out.
-                //
-                // 🔴 The atlas is `texture_depth_2d` and it is sampled
-                // with `textureLoad`, not with the comparison sampler
-                // above. A filter cannot cross a page border: the
-                // neighbouring texels belong to another clipmap level or
-                // another light, and hardware filtering has no way to be
-                // told where the page ends.
+                // Virtual shadow maps (#866): uniform, two arrays and the atlas. 🔴 The atlas is
+                // read with `textureLoad`: a filter cannot stop at a page border.
                 wgpu::BindGroupLayoutEntry {
                     binding: 8,
                     visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
@@ -358,12 +283,8 @@ impl GpuLights {
         }
     }
 
-    /// Points the shadow bindings at the real maps.
-    ///
-    /// Call once the atlas exists; until then the dummy is bound and
-    /// `shadows_enabled` is 0. Idempotent — the atlas is allocated once
-    /// and this runs per frame, so re-binding the same view has to cost
-    /// nothing.
+    /// Points the shadow bindings at the real maps. Idempotent, since it runs per frame on an atlas
+    /// allocated once.
     pub fn bind_shadow_maps(
         &mut self,
         device: &wgpu::Device,
@@ -380,25 +301,18 @@ impl GpuLights {
         self.rebuild_bind_group(device);
     }
 
-    /// Binds the virtual shadow map's table and atlas (#866).
-    ///
-    /// Idempotent, and a no-op while nothing changed: the bind group is
-    /// expensive to rebuild and this runs every frame.
+    /// Binds the page table and atlas (#866); a no-op while nothing changed, since this runs every
+    /// frame.
     pub fn bind_shadow_pages(&mut self, device: &wgpu::Device, pages: PageBinding<'_>) {
         let unchanged = self.page_atlas.as_ref().is_some_and(|v| v == pages.atlas)
             && self
                 .page_uniform
                 .as_ref()
                 .is_some_and(|b| b == pages.uniform)
-            // 🔴 The offset is part of the identity. Two cameras share
-            // one buffer and differ only here; comparing the handle
-            // alone would leave the second one reading the first one's
-            // slice, which is the whole bug this binding exists to fix.
+            // 🔴 The offset is identity: two cameras share one buffer and differ only here.
             && self.page_uniform_span == pages.uniform_span
-            // 🔴 The table buffer is REPLACED when the light count
-            // outgrows the address space, with the uniform and the
-            // atlas standing still — a bind group that kept the old
-            // one reads freed memory the frame after the growth.
+            // 🔴 The table buffer is replaced when lights outgrow the address space; a stale bind
+            // group reads freed memory.
             && self.page_slots.as_ref().is_some_and(|b| b == pages.slots);
         if unchanged {
             return;
@@ -410,11 +324,8 @@ impl GpuLights {
         self.rebuild_bind_group(device);
     }
 
-    /// Unbinds it, so a frame that stops paging stops sampling.
-    ///
-    /// 🔴 Not cosmetic: the atlas holds LAST frame's depths, and a
-    /// shading pass that kept sampling it would show a shadow frozen in
-    /// place — which is silent and gets blamed on everything else first.
+    /// Unbinds the pages. 🔴 The atlas holds last frame's depths, and sampling it shows a frozen
+    /// shadow.
     pub fn unbind_shadow_pages(&mut self, device: &wgpu::Device) {
         if self.page_atlas.is_none() {
             return;
@@ -426,10 +337,7 @@ impl GpuLights {
         self.rebuild_bind_group(device);
     }
 
-    /// Rebuilds the bind group against whatever shadow view is current.
-    ///
-    /// One place, so growth and atlas binding cannot disagree about
-    /// which texture is bound.
+    /// Rebuilds the bind group in one place, so growth and atlas binding agree on what is bound.
     fn rebuild_bind_group(&mut self, device: &wgpu::Device) {
         self.bind_group = create_bind_group(
             device,
@@ -457,11 +365,8 @@ impl GpuLights {
         );
     }
 
-    /// Records the four passes that build the froxel grid (#780).
-    ///
-    /// Call on the frame's encoder, **before** the pass that shades:
-    /// shading reads what these write. Nothing to record when
-    /// [`Self::update`] was handed a camera with no matrices.
+    /// Records the four grid passes (#780) before the shading pass that reads them; nothing when
+    /// [`Self::update`] had no camera matrices.
     pub fn record_clusters(&mut self, encoder: &mut wgpu::CommandEncoder) {
         self.clusters.record(encoder);
     }
@@ -494,16 +399,8 @@ impl GpuLights {
         &self.uploaded
     }
 
-    /// Walks the world, uploads the lights, and writes the per-frame
-    /// constants.
-    ///
-    /// Call **before** creating the frame's encoder: growing the
-    /// storage buffer replaces it, and a replaced buffer must not be
-    /// one a recorded pass already references.
-    ///
-    /// `shadows` is `None` when nothing casts — no sun, or the atlas
-    /// has not been built. The dummy atlas stays bound and the shader
-    /// skips the sampling entirely.
+    /// Walks the world, uploads lights and writes per-frame constants — before the encoder exists,
+    /// since growth replaces the buffer. `shadows` is `None` when nothing casts.
     pub fn update(
         &mut self,
         device: &wgpu::Device,
@@ -513,10 +410,8 @@ impl GpuLights {
         shadows: Option<FrameShadows>,
         light_frame: &mut LightFrame,
     ) {
-        // Point lights learn their cube slot here rather than during the
-        // walk: the ranking that produced the slots is in `shadows`, and
-        // recomputing it would be a second sort that has to agree with
-        // the first one forever. See `assign_point_slots`.
+        // Cube slots assigned here from `shadows`' ranking, not re-sorted; see
+        // `assign_point_slots`.
         if let Some(shadows) = shadows.as_ref() {
             crate::extract::assign_point_slots(
                 light_frame.lights_mut(),
@@ -525,10 +420,8 @@ impl GpuLights {
         }
         let lights = &light_frame.lights().lights;
         let count = lights.len() as u32;
-        // Logged on change, never per frame. "I placed a light and
-        // nothing happened" and "the light never reached the GPU" look
-        // identical from the chair, and this is the one line that
-        // separates them — at the cost of nothing in a steady scene.
+        // Logged on change only: separates "nothing happened" from "never reached the GPU" at no
+        // steady cost.
         if count != self.light_count {
             tracing::debug!(
                 target: "kooch_lighting::buffer",
@@ -645,10 +538,7 @@ impl GpuLights {
     }
 }
 
-/// Capacity is floored at one element even for an unlit scene: wgpu
-/// rejects a zero-sized storage binding, and a second pipeline for
-/// "no lights" would be a whole code path that only runs in the case
-/// nobody looks at.
+/// At least one element: wgpu rejects a zero-sized storage binding.
 fn create_light_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("inti_lights_storage"),
@@ -658,13 +548,8 @@ fn create_light_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
     })
 }
 
-/// A 1×1 depth texture for the frames with no atlas.
-/// The 1×1 cube array bound when nothing point-shaped casts.
-///
-/// Six layers, because a cube view of anything else is a validation
-/// failure — the same trap `create_dummy_shadow` documents for `D2` vs
-/// `D2Array`, one dimension further along. Cleared implicitly to zero,
-/// which under reversed-Z is the far plane and therefore "fully lit".
+/// 1×1 cube array when no point light casts: six layers, since a cube view of anything else fails
+/// validation. Zero is far under reversed-Z — lit.
 fn create_dummy_cubes(device: &wgpu::Device) -> wgpu::TextureView {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("inti_dummy_cubes"),
@@ -687,6 +572,7 @@ fn create_dummy_cubes(device: &wgpu::Device) -> wgpu::TextureView {
     })
 }
 
+/// A 1×1 depth texture for frames with no atlas.
 fn create_dummy_shadow(device: &wgpu::Device) -> wgpu::TextureView {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("inti_dummy_shadow"),
@@ -702,11 +588,8 @@ fn create_dummy_shadow(device: &wgpu::Device) -> wgpu::TextureView {
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     });
-    // 🔴 `D2Array` explicitly, not the default. A one-layer texture's
-    // default view is `D2`, and a `D2` view against a `D2Array` layout
-    // is a validation failure at bind-group creation — on every scene
-    // with no shadow-casting sun, which is the case nobody renders while
-    // developing shadows.
+    // 🔴 `D2Array` explicitly: a one-layer default view is `D2`, which fails against the layout in
+    // every sunless scene.
     texture.create_view(&wgpu::TextureViewDescriptor {
         label: Some("inti_dummy_shadow_view"),
         dimension: Some(wgpu::TextureViewDimension::D2Array),
@@ -715,23 +598,12 @@ fn create_dummy_shadow(device: &wgpu::Device) -> wgpu::TextureView {
 }
 
 #[allow(clippy::too_many_arguments)]
-/// What the shading model needs to read a virtual shadow page.
-///
-/// A struct rather than four more parameters, because they are only ever
-/// present or absent together: a table without an atlas indexes nothing
-/// and an atlas without a table cannot be addressed.
+/// What shading needs to read a page — together or not at all, so one struct.
 #[derive(Clone, Copy)]
 pub struct PageBinding<'a> {
     pub uniform: &'a wgpu::Buffer,
-    /// Where this camera's slice of `uniform` starts, and how long it
-    /// is. `(0, 0)` binds the whole buffer, which is what the dummy
-    /// wants.
-    ///
-    /// 🔴 One buffer with a slice per camera, not one write per frame.
-    /// `Queue::write_buffer` is not ordered against the encoder, so two
-    /// writes to the same range in one frame hand BOTH passes the second
-    /// value — the engine has already shipped that bug once (#853). A
-    /// camera writing its own range cannot be overwritten by the other.
+    /// This camera's slice of `uniform`, `(0, 0)` for the whole buffer. 🔴 One slice per camera: two
+    /// `write_buffer`s to one range in a frame hand both passes the second (#853).
     pub uniform_span: (u64, u64),
     pub slots: &'a wgpu::Buffer,
     pub atlas: &'a wgpu::TextureView,

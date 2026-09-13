@@ -1,23 +1,6 @@
-// The froxel grid's shared declarations (#780).
-//
-// Concatenated ahead of each clustering pass, which is how WGSL modules
-// share anything here — the same mechanism `inti_pbr_shader` uses.
-//
-// # The shape of the thing
-//
-// The view frustum is diced into a WxHxD grid of cells ("froxels"),
-// logarithmic along the view axis. Each cell holds the indices of the
-// lights that reach it. Shading then iterates the lights of ONE cell
-// instead of every light in the scene, which is the whole point: the
-// cost stops being pixels x lights.
-//
-// 🔴 The grid is not a light structure. The per-cell record below
-// reserves counts for reflection probes, irradiance volumes and decals
-// as well, none of which exist in the engine yet. Bevy's does the same,
-// and the warning in #780 is explicit: building this as "a list of
-// lights per cluster" produces half of it and the other half is a
-// rewrite. The five ranges cost five words per cell and nothing per
-// pixel — a shader that has no decals never walks that range.
+// Froxel grid declarations (#780), concatenated ahead of each pass: shading walks one cell's
+// lights, not pixels × lights. 🔴 Ranges for probes, volumes and decals are reserved now — five
+// words per cell — or adding them is a rewrite.
 
 // Values for `ZSlice.object_type`. Ordered: the per-cell lists are
 // stored in this order, so a range is a pair of offsets and never a
@@ -77,12 +60,8 @@ struct ZSlice {
     z_slice: u32,
 }
 
-// Per-cell offsets and counts, one per froxel.
-//
-// `offset` is where this cell's indices start in the shared index list;
-// the five counts are the lengths of the five type ranges, in the order
-// the constants above declare. Atomic because both rasterizer passes
-// write it from many fragments at once.
+// Per-froxel `offset` into the index list plus the five type counts, in constant order. Atomic:
+// both raster passes write from many fragments.
 struct ClusterCell {
     offset: atomic<u32>,
     point_count: atomic<u32>,
@@ -94,18 +73,9 @@ struct ClusterCell {
     _pad1: u32,
 }
 
-// The draw arguments the rasterizer is dispatched from, plus what the
-// CPU reads to size the buffers.
-//
-// The first four words are exactly `wgpu::util::DrawIndirectArgs`, at
-// offset zero, because that is what `draw_indirect` reads.
-//
-// 🔴 `wanted` counts every (object, slice) pair the grid found, past
-// capacity and all, while `instance_count` is that number clamped to
-// what the list can hold. Two words instead of one because they answer
-// different questions: the draw must not be told to read entries that
-// were never written, and the CPU must not be told the frame fit when it
-// did not. `cluster_finalize` is what turns one into the other.
+// Draw arguments (the first four words are `DrawIndirectArgs`, at offset zero) plus what the CPU
+// reads. 🔴 `wanted` counts past capacity and `instance_count` is clamped: the draw must not read
+// unwritten entries, and the CPU must learn the frame did not fit.
 struct ClusterDraw {
     vertex_count: u32,
     // Written by `cluster_finalize`, read by `draw_indirect`.
@@ -130,12 +100,8 @@ struct ClusterAabb {
     max: vec3<f32>,
 }
 
-// The slice a view-space depth falls in.
-//
-// `view_z` is negative in front of the camera, hence the negation before
-// the logarithm. Mirrored by `ClusterGrid::z_slice` in `grid.rs`, and by
-// `inti_cluster_index` in `inti_pbr.wgsl`: three copies of four
-// operations, because the alternative is a fragment reading a cell the
+// The slice a view-space depth falls in (`view_z` is negative ahead). Mirrored by
+// `ClusterGrid::z_slice` and `inti_cluster_index`; disagreeing means a fragment reads a cell the
 // grid never wrote.
 fn cluster_z_slice(z_factors: vec2<f32>, z_slices: u32, view_z: f32) -> u32 {
     let slice = log(-view_z) * z_factors.x - z_factors.y + 1.0;
@@ -158,13 +124,8 @@ fn cluster_of_ndc(view: ClusterView, ndc: vec3<f32>, view_z: f32) -> vec3<u32> {
     return clamp(vec3<u32>(xy, z), vec3<u32>(0u), view.dimensions.xyz - vec3<u32>(1u));
 }
 
-// A sphere's bounds in NDC, with the unprojected view-space z riding in
-// the third component.
-//
-// The four corners are projected at BOTH the near and the far end of the
-// sphere: under perspective the point at max z and min xy can land
-// further left on screen than the one at min z, so projecting one corner
-// pair would miss cells the sphere really covers.
+// A sphere's NDC bounds with its view z in the third component. Corners are projected at both
+// depths: under perspective the far corner can land further out on screen.
 fn cluster_sphere_ndc(
     view: ClusterView,
     position: vec3<f32>,
@@ -212,27 +173,15 @@ fn cluster_sphere_bounds(
     return ClusterAabb(vec3<f32>(min(a, b)), vec3<f32>(max(a, b)));
 }
 
-// The world-space bounding sphere of a light, as `vec4(centre, radius)`.
-//
-// Directional lights have neither, and are not clustered: they reach
-// every cell, so a grid says nothing about them. The shading loop keeps
-// walking them linearly, which is correct and costs one iteration.
+// A light's world bounding sphere. Directional lights reach every cell, so they are not clustered
+// and the shading loop walks them linearly.
 fn cluster_light_sphere(light: ClusterLight) -> vec4<f32> {
     return vec4<f32>(light.position, light.range);
 }
 
-// ---------------------------------------------------------------------
-// A froxel's geometry, shared.
-//
-// 🔴 One definition, taken as an argument rather than read off a global,
-// because two passes now need it: the rasterizer that assigns lights to
-// cells, and the page marking that walks OCCUPIED cells instead of
-// pixels (#952). The rasterizer's own comment already states the rule
-// for its count/populate pair — "there is no compiler keeping the two in
-// step, only the fact that they are literally the same source" — and a
-// third copy in the marking would be the same hazard with a longer fuse:
-// a cell whose bounds disagree between the two passes gets lights
-// assigned for one volume and pages marked for another.
+// A froxel's geometry, taken as an argument because the light rasterizer and the page marking
+// (#952) both need it — a cell whose bounds differ between them gets lights for one volume and
+// pages for another.
 
 // A pixel position on the near plane, in view space.
 fn view_at_screen(v: ClusterView, screen: vec2<f32>) -> vec4<f32> {
@@ -255,12 +204,8 @@ fn ray_at_depth(p: vec3<f32>, z: f32) -> vec3<f32> {
     return p * (z / p.z);
 }
 
-// The view-space bounds of one cell.
-//
-// The XY edges come from unprojecting the cell's screen rectangle at the
-// near plane and following those rays out to the slice's near and far
-// depths; the sides of a froxel are not axis-aligned, so the AABB of the
-// eight resulting corners is what a cheap intersection test can use.
+// A cell's view-space AABB: the screen rectangle unprojected and followed to the slice's depths,
+// since a froxel's sides are not axis-aligned.
 fn cluster_cell_bounds(v: ClusterView, cell: vec3<u32>) -> ClusterAabb {
     let near = v.z_factors.z;
     let far = v.z_factors.w;
@@ -272,10 +217,8 @@ fn cluster_cell_bounds(v: ClusterView, cell: vec3<u32>) -> ClusterAabb {
     let ray_min = view_at_screen(v, p_min).xyz;
     let ray_max = view_at_screen(v, p_max).xyz;
 
-    // The slice boundaries, from the same logarithmic distribution
-    // `cluster_z_slice` inverts. Slice 0 starts at the eye rather than
-    // at `near`, because that is where everything nearer than the first
-    // slice ends up.
+    // Slice boundaries from the distribution `cluster_z_slice` inverts; slice 0 starts at the eye,
+    // holding everything nearer.
     let ratio = far / near;
     let z = f32(cell.z);
     var slice_near = 0.0;

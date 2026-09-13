@@ -1,11 +1,5 @@
-//! The grid's arithmetic: dimensions from a viewport, and the
-//! logarithmic slice a depth falls in.
-//!
-//! 🔴 In their own file rather than an inline `mod tests`: the
-//! vendoriser strips test code by matching a literal `#[cfg(test)]` on
-//! its own line, and an inline module ships the tests into every
-//! project built against the engine. `the_vendored_engine_contains_no_test_code`
-//! is what catches it.
+//! Grid arithmetic. 🔴 Its own file: the vendoriser strips a literal `#[cfg(test)]` line, so an
+//! inline module would ship tests to projects.
 
 use super::*;
 
@@ -44,10 +38,8 @@ fn the_first_slice_holds_the_near_field() {
 #[test]
 fn slices_grow_with_distance() {
     let g = grid();
-    // The span of one slice at 10 m against the span at 100 m: a
-    // logarithmic distribution makes the far one much thicker. A
-    // linear split would make them equal, which is the bug this
-    // asserts against.
+    // A log distribution makes the 100 m slice much thicker than the 10 m one; a linear split would
+    // not.
     let near_span = span_of(&g, g.z_slice(-10.0));
     let far_span = span_of(&g, g.z_slice(-100.0));
     assert!(far_span > near_span * 4.0, "{far_span} vs {near_span}");
@@ -129,12 +121,8 @@ fn a_nearer_far_thins_the_slices() {
     );
 }
 
-/// 🔴 Slice 0 holds everything nearer than the grid starts, so its depth
-/// is that whole distance — not what the logarithmic mapping computes.
-///
-/// A grid starting at 20 m over a scene 10 m away puts every pixel of
-/// that scene in one cell, and the panel reported a 0.9 m froxel while
-/// the screen turned solid red. The tool has to say 20.
+/// 🔴 Slice 0's depth is the whole distance to the grid start, not the log mapping's answer — the
+/// panel must say 20.
 #[test]
 fn the_near_slice_holds_everything_before_it() {
     let g = ClusterGrid::new(

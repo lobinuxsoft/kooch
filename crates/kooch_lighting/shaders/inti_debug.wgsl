@@ -1,33 +1,9 @@
-// inti_debug.wgsl — the debug views, kept OUT of the production shader.
-//
-// CONCATENATED after `inti_pbr.wgsl`, and only when a debug mode is
-// active. Everything here reads bindings and helpers that file already
-// declared (`inti`, `inti_lights`, `inti_sample_light`,
-// `inti_pick_cascade`, `inti_sample_cascade`, `inti_shadow_coords`), so
-// it has no bindings of its own and needs no group substitution.
-//
-// # Why it is a separate file rather than three `if`s in the shading
-//   shader
-//
-// A branch nothing takes is still code the shader carries. Register
-// allocation is worst-case over the whole entry point, so a cascade
-// march and a screen-space raymarch sitting in an untaken branch still
-// raise the VGPR count, and VGPR count is what caps how many waves an
-// SM keeps in flight. Fewer waves is less latency hiding, and latency
-// hiding is the entire performance story of an integrated GPU on a
-// 10 W budget — the target this engine is held to.
-//
-// So the game's pipeline concatenates none of this, and cannot pay for
-// it. The editor compiles a second pipeline, lazily, the first time
-// somebody opens a debug view. `kooch_lighting::inti_debug_shader`
-// hands out this text; `INTI_DEBUG_STUB` is what the production build
-// gets in its place, and it exists so both pipelines compile against
-// the same call sites.
+// Debug views, concatenated after `inti_pbr.wgsl` only in a debug pipeline. An untaken branch still
+// raises VGPR count (worst-case register allocation), which caps a 10 W iGPU; production gets
+// `INTI_DEBUG_STUB`.
 
-// Discriminants of `MeshletDebugMode`, pinned to the Rust enum by a
-// test in `kooch_render`'s `debug.rs`. One copy, here, rather than one
-// per shading path: two copies is how a mode ends up meaning different
-// things on the R64 and R32 routes, which is a bug no compiler catches.
+// `MeshletDebugMode` discriminants, pinned by a test in `kooch_render`'s `debug.rs`; one copy so
+// R64 and R32 cannot mean different modes.
 const INTI_DEBUG_NORMALS: u32 = 11u;
 const INTI_DEBUG_SHADOW_CASCADES: u32 = 12u;
 const INTI_DEBUG_CONTACT_SHADOWS: u32 = 13u;
@@ -48,13 +24,8 @@ const INTI_DEBUG_LAMP_DEPTH: u32 = 30u;
 // Lowest discriminant handled here. Modes below it are resolved by the
 // shading path itself before the surface is even reconstructed.
 const INTI_DEBUG_FIRST: u32 = INTI_DEBUG_NORMALS;
-// 🔴 And the highest, which is NOT optional. The dispatch below used to
-// be an open-ended `>=`, so every discriminant added above this range
-// silently became "an Inti view Inti does not implement" — and the
-// fallthrough for those is BLACK. A mode resolved somewhere else
-// entirely (the texture mip level in the material shader, FSR's
-// intermediates in the upscaler) had its surface painted black before
-// the pass that was meant to answer for it ever ran.
+// 🔴 The upper bound is required: an open-ended `>=` claimed every newer mode and painted it black
+// before the pass owning it (mip level, FSR intermediates) ran.
 const INTI_DEBUG_LAST: u32 = INTI_DEBUG_POINT_CUBE;
 
 // Rec. 709 luma weights, applied to LINEAR radiance — which is what
@@ -62,23 +33,12 @@ const INTI_DEBUG_LAST: u32 = INTI_DEBUG_POINT_CUBE;
 // bright the pixel ended up".
 const INTI_LUMA: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 
-// The stand-in material the single-light view shades with: a plain
-// dielectric, mid-rough.
-//
-// Roughness is kept rather than zeroed because the width of a highlight
-// is information about the LIGHT — a small source and a broad one differ
-// there and nowhere else. Metallic is forced off because a metal takes
-// its F0 from its albedo, and the albedo is exactly what this view
-// removes; a metal shaded with white albedo is not that metal with the
-// colour turned off, it is a mirror.
+// The single-light view's material: dielectric, mid-rough. Roughness stays because highlight width
+// says something about the light; metallic goes because a metal with no albedo is a mirror.
 const INTI_DEBUG_ROUGHNESS: f32 = 0.5;
 
-// Bevy's cascade colours, and their derivation: hue swept around the
-// wheel by cascade index (`shadows.wgsl:265`). Ported rather than
-// picked so a capture from this engine and one from Bevy read the same.
-// `FRAC_PI_3` and `PI_2` are theirs too, from `bevy_render::maths`.
-// Bevy divides the hue by `MAX_CASCADES_PER_LIGHT + 1` so the last
-// cascade does not wrap onto the first one's colour.
+// Bevy's cascade hues (`shadows.wgsl:265`) and constants, so captures read the same; dividing by
+// count + 1 keeps the last cascade off the first one's colour.
 const FRAME_CASCADE_COUNT_PLUS_ONE: u32 = 5u;
 const INTI_FRAC_PI_3: f32 = 1.04719755;
 const INTI_PI_2: f32 = 6.28318531;
@@ -91,31 +51,9 @@ fn inti_hsv_to_rgb(hsv: vec3<f32>) -> vec3<f32> {
     return hsv.z - hsv.z * hsv.y * max(vec3<f32>(0.0), min(k, min(4.0 - k, vec3<f32>(1.0))));
 }
 
-/// What the shadow system sees at this point, as colour.
-///
-/// # Bevy's colour, and one thing on top
-///
-/// The hue is `cascade_debug_visualization`'s, computed the same way, so
-/// "which cascade covers this" reads identically to a Bevy capture.
-///
-/// What Bevy does not answer, and #476 needed twice, is **whether the
-/// map has an occluder over this point**: "the cascade does not reach
-/// here", "the occluder was culled out of the map" and "the sampling is
-/// wrong" are three different bugs that look like one missing shadow.
-/// So the hue is dimmed where this point is shadowed.
-///
-/// 🔴 Dimmed by `inti_sample_cascade` — **the same call the shading pass
-/// makes**, bias, filter and all. The previous version sampled the atlas
-/// raw and deliberately without bias, to show the acne the shading
-/// hides; what it actually showed was a screenful of moiré with the
-/// cascade boundaries drowned underneath. A debug view whose own noise
-/// hides its answer is not a debug view.
-///
-/// - magenta — no atlas: nothing casts
-/// - black — inside no cascade volume, so nothing can be in shadow
-/// - dark grey — past the last cascade
-/// - cascade hue, bright — lit
-/// - cascade hue, dim — shadowed, as the shading pass sees it
+/// Cascade hue as Bevy's, dimmed where `inti_sample_cascade` — the shading call — shadows (#476); a
+/// raw sample drowned it in moiré. Magenta no atlas · black no cascade · grey past the last ·
+/// bright lit · dim shadowed.
 fn inti_shadow_debug(world_position: vec3<f32>, n: vec3<f32>, view_depth: f32) -> vec3<f32> {
     if (inti.shadows_enabled == 0u) {
         return vec3<f32>(1.0, 0.0, 1.0);
@@ -154,18 +92,8 @@ fn inti_shadow_debug(world_position: vec3<f32>, n: vec3<f32>, view_depth: f32) -
     return colour * 0.65;
 }
 
-/// The contact-shadow march, as colour, for the first light that opted
-/// in (#735).
-///
-/// **One light, because the march is per light**: summing several would
-/// average away the thing being looked at. The first opted-in light is
-/// the sun in every scene that has one, which is the light whose
-/// contact shadow anybody is inspecting.
-///
-/// The colours are `inti_contact_shadow_debug`'s and the reasoning is
-/// there. Magenta here means *no light in the scene marches at all* —
-/// which is a different answer from "it marched and found nothing", and
-/// they look identical in a shaded frame.
+/// The contact-shadow march for the first opted-in light (#735) — one, since summing averages it
+/// away. Magenta means no light marches, unlike "marched and found nothing".
 fn inti_contact_shadow_debug_view(
     world_position: vec3<f32>,
     n: vec3<f32>,
@@ -190,38 +118,9 @@ fn inti_contact_shadow_debug_view(
     return vec3<f32>(1.0, 0.0, 1.0);
 }
 
-/// One light, alone, in grey, with whatever shadow it actually casts
-/// (#743).
-///
-/// # What is removed, and why each one
-///
-/// - **Every other light.** The question is *why is this dark*, and with
-///   two lights in the sum a surface lit by the wrong one still looks
-///   lit.
-/// - **The material's colour.** A dark albedo and no light reaching the
-///   surface produce the same pixel. Shading a neutral white dielectric
-///   makes the image a picture of the light instead of a picture of the
-///   paint. See `INTI_DEBUG_ROUGHNESS` for what is deliberately kept.
-/// - **Ambient.** It belongs to no light, and including it would mean a
-///   point in full shadow never renders black — which is precisely the
-///   reading this view exists to make unambiguous.
-///
-/// # What is kept
-///
-/// The shadow, by calling `inti_light_contribution` — the same function
-/// the shading pass sums per light, with its cascade sampling, its bias
-/// and its contact-shadow march. A debug view that recomputes the maths
-/// its own way can disagree with the frame, and then it is one more
-/// thing to debug rather than the thing that ends the argument.
-///
-/// ⚠️ Only a directional light casts a cascade shadow today, and contact
-/// shadows are opt-in and off by default on point and spot. So a punctual
-/// light usually renders here with no shadow at all — that is the truth
-/// about the engine, not a failure of the view, and the editor says so
-/// in words next to the selector rather than leaving it to be guessed.
-///
-/// Magenta means no light is selected, or the selected entity is not a
-/// light in this frame's buffer.
+/// One light in grey with its real shadow (#743), via `inti_light_contribution` so it matches the
+/// frame; other lights, albedo and ambient removed. Punctual lights often cast nothing — the editor
+/// says so. Magenta: none selected.
 fn inti_single_light_debug(
     world_position: vec3<f32>,
     n: vec3<f32>,
@@ -245,32 +144,9 @@ fn inti_single_light_debug(
 }
 
 
-/// A point light's cube map, answering for itself (#852).
-///
-/// # Why a shaded frame cannot answer this
-///
-/// "The shadow is not there" is four different faults wearing the same
-/// pixel: no lamp near this point casts at all, the point is past the
-/// lamp's reach so there is nothing to block, the cube says lit because
-/// the occluder never reached the map, or the cube says dark and the
-/// other lamps in the room fill it back in. Those have four different
-/// fixes and a lit frame shows one colour for all of them — which is how
-/// a whole session went into a defect that turned out to be two defects
-/// and one piece of arithmetic.
-///
-/// So this paints the cube's answer and NOTHING else. No BRDF, no
-/// cosine, no exposure, no ambient, no other light:
-///
-/// - **magenta** — no point light with a cube reaches this pixel
-/// - **blue**    — a lamp holds a cube but this point is past its
-///                 `range`, so the map is never consulted
-/// - **grey**    — the cube's own factor: black is fully occluded, white
-///                 is fully lit, and the ramp between them is the filter
-///
-/// Which lamp is the one selected in the World panel when that is a
-/// casting point light, and otherwise the FIRST one that casts — a
-/// choice that is the same for every pixel. See the loop for why it is
-/// not the strongest one per pixel.
+/// A point light's cube answering alone (#852), no BRDF or other lights, since four faults share
+/// one dark pixel. Magenta no casting lamp here · blue past its `range` · grey the cube's factor.
+/// The lamp is the selected casting point light, else the first — the same for every pixel.
 fn inti_point_shadow_debug(world_position: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     let chosen = inti_point_debug_light();
     if (chosen == 0xffffffffu) {
@@ -316,28 +192,9 @@ fn inti_point_debug_light() -> u32 {
     return 0xffffffffu;
 }
 
-/// The cube map itself, all six faces at once (#852).
-///
-/// The factor view above answers "is this point occluded". When the
-/// answer is wrong there are still two possibilities left — the map
-/// holds the wrong depth, or it holds nothing at all because the
-/// occluder never got rasterised into that face — and only opening the
-/// texture separates them.
-///
-/// The screen becomes a 3x2 grid, one cell per world axis in the order
-/// +X, -X, +Y, -Y, +Z, -Z. Which array layer answers is left to the
-/// hardware, exactly as it is during shading: the cell builds a world
-/// direction and samples with it, so what is on screen is what the
-/// shading model would have read looking that way. A face that renders
-/// blank here is a face the shading model also finds blank.
-///
-/// - **dark blue** — nothing recorded: reversed-Z clears to 0, which the
-///   comparison reads as "no occluder between here and infinity". This
-///   is the picture of an occluder that was culled out of the map.
-/// - **grey ramp** — distance to the recorded occluder over the lamp's
-///   `range`. Black is at the bulb, white is at the edge of its reach.
-/// - **magenta** — no point light casts, or the frame is not clustered
-///   (the screen size is derived from the froxel grid).
+/// All six cube faces as a 3×2 grid (+X −X +Y −Y +Z −Z), sampled by direction as shading does
+/// (#852). Dark blue nothing recorded (a culled occluder) · grey distance over `range` · magenta no
+/// caster or no grid.
 fn inti_point_cube_debug(frag_coord: vec2<f32>) -> vec3<f32> {
     let chosen = inti_point_debug_light();
     // The grid is the only thing in this uniform that knows how big the
@@ -392,21 +249,9 @@ fn inti_point_cube_debug(frag_coord: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(clamp(metres / max(light.range, 1e-4), 0.0, 1.0));
 }
 
-/// `true` when `mode` is one of the views this file draws.
-///
-// How many lights this pixel evaluates, as a heatmap (#817).
-//
-// 🔴 The count is read where it is PAID. `inti_clustered_lights` walks
-// exactly `point_count + spot_count` entries of this fragment's cell and
-// nothing else, so the same two fields that bound that loop are what
-// this view paints. A count assembled from anywhere else — the scene's
-// light total, the grid's capacity, a CPU-side estimate — would be a
-// second opinion about a number the shader already knows, and the two
-// would drift.
-//
-// Directional lights are added because the grid does not cluster them:
-// they reach every cell, are the light buffer's leading entries, and the
-// shading loop pays for all of them at every pixel.
+/// Lights this pixel evaluates, as a heatmap (#817). 🔴 Read from the two counts that bound
+/// `inti_clustered_lights`, where it is paid; directional lights are added since every pixel pays
+/// for them.
 fn inti_light_count_debug(world_position: vec3<f32>, frag_coord: vec2<f32>) -> vec3<f32> {
     var count = inti.directional_count;
     if (inti.clustered == 0u) {
@@ -424,23 +269,15 @@ fn inti_light_count_debug(world_position: vec3<f32>, frag_coord: vec2<f32>) -> v
         // answers and the whole view exists to separate them.
         return vec3<f32>(0.0);
     }
-    // The top of scale comes from the uniform, not from a constant: the
-    // value that separates a busy froxel from a quiet one in a
-    // hundred-light stress test washes a four-lamp room flat red. The
-    // editor owns it and prints what it is.
+    // Top of scale from the uniform: a hundred-light stress test's value washes a four-lamp room
+    // red. The editor owns and prints it.
     let hot = f32(max(inti.debug_lights_hot, 1u));
     let t = clamp(f32(count) / hot, 0.0, 1.0);
     return inti_count_heatmap(t);
 }
 
-// Blue → green → red, the same ramp `density_heatmap` paints in
-// `meshlet_debug_resolve.wgsl`.
-//
-// ⚠️ A second copy, on purpose: the two live in different crates and are
-// concatenated into different shaders, and a shared file would exist
-// only to hold four clamps. What must not drift is the *reading* — a
-// green pixel meaning the middle of the scale in one heatmap and
-// something else in another is how an artist learns to distrust both.
+// Blue → green → red, the ramp `density_heatmap` paints. A copy on purpose, across crates; what
+// must not drift is what a colour means.
 fn inti_count_heatmap(t: f32) -> vec3<f32> {
     let r = clamp(2.0 * t - 1.0, 0.0, 1.0);
     let g = clamp(1.0 - 2.0 * abs(t - 0.5), 0.0, 1.0);
@@ -448,70 +285,9 @@ fn inti_count_heatmap(t: f32) -> vec3<f32> {
     return vec3<f32>(r, g, b);
 }
 
-/// What the virtual shadow pages see at this point, as colour (#866).
-///
-/// # Three causes that look like one missing shadow
-///
-/// A hole in a paged shadow is one of three unrelated bugs, and a shaded
-/// frame cannot tell them apart:
-///
-/// - **red** — the walk reached the coarsest level without finding a
-///   resident page. Marking and sampling disagree about which page
-///   covers this point.
-/// - **yellow** — a page IS mapped here and holds the clear value, so
-///   nothing was ever rasterised into it. The cull or the expansion
-///   dropped the caster for that page.
-/// - **green** — a page with real depth, and the comparison says lit.
-///   If a caster is visibly overhead, the bias or the depth space is
-///   wrong.
-///
-/// **blue** is a point the pages really do shadow, and **magenta** means
-/// the paged path is not running at all — no sun, or the atlas is
-/// unbound and the cascades are answering instead.
-///
-/// Brightness is the clipmap level the answer came from, so the bands
-/// stay visible without drowning the classification.
-///
-/// 🔴 The comparison is the SHADING PASS'S, bias and 2x2 filter
-/// included. The first version of this view compared raw, and what it
-/// produced was a screenful of green-and-blue moiré with the answer
-/// drowned underneath — the identical mistake `inti_shadow_debug`
-/// already carries a paragraph about, made two files away from where it
-/// is written down. A view whose own noise hides its answer is not a
-/// view.
-///
-/// 🔴 The walk is repeated here rather than shared, the way
-/// `inti_shadow_debug` repeats `inti_pick_cascade`: the production
-/// function returns one scalar and this needs to know WHY it is that
-/// scalar. What is NOT repeated is the lookup, the basis or the page
-/// arithmetic — those are the shared functions, so a drift between the
-/// view and the thing it describes cannot come from them.
-/// Which page the reader lands on, how old it is, and which clipmap
-/// level it came from.
-///
-/// # 🔴 Built to make a FLICKER readable
-///
-/// A shadow that blinks while the camera moves is four different faults
-/// wearing the same coat, and the residency view cannot tell them apart
-/// because it answers a still frame. This one answers "what changed":
-///
-/// - **White** — the page was allocated THIS frame. A sweep of white
-///   moving with the camera is the allocator churning; if the flicker
-///   rides that sweep, the fault is in allocation.
-/// - **Hue** — the clipmap LEVEL the walk stopped at, cycling every six.
-///   A band of hue that jumps between two colours frame to frame is the
-///   reader crossing a level boundary, which changes the texel size and
-///   the rect underneath it. That is a fault in level selection, not in
-///   the pool.
-/// - **Brightness** — how many frames since the page was last requested,
-///   full at one and dim by sixteen. A page dimming while still on
-///   screen means marking stopped asking for it while the reader kept
-///   finding it.
-/// - **Black** — no page at any level. **Magenta** — the paged path is
-///   not running.
-///
-/// The three signals are independent on purpose: the useless version of
-/// this view is one colour ramp that every fault can produce.
+/// Page age (#866), to read a flicker: white no content · hue the clipmap level · brightness frames
+/// since allocation, dim by 16 · black no page · magenta paging off. Independent signals, not one
+/// ramp any fault fills.
 fn inti_page_age_debug(world_position: vec3<f32>) -> vec3<f32> {
     if (inti.shadows_enabled == 0u || inti_pages.sun.w <= 0.5) {
         return vec3<f32>(1.0, 0.0, 1.0);
@@ -543,39 +319,13 @@ fn inti_page_age_debug(world_position: vec3<f32>) -> vec3<f32> {
             continue;
         }
 
-        // 🔴 WHITE is "this page has no content", and it used to be
-        // "allocated this frame" — which painted the whole screen.
-        //
-        // Word 1 is the frame a page was last REQUESTED, and
-        // `page_refresh` rewrites it every frame the marking asks for
-        // the page. Everything visible is asked for every frame by
-        // definition, so `frame - age` was zero for every pixel and the
-        // view returned white before reaching the hue or the fade. The
-        // three independent signals its documentation promised were one
-        // signal, and it could not answer the question it was built
-        // for.
-        //
-        // Word 3 is the content generation, and zero means "never drawn
-        // into" — `page_stamp` writes it on a fresh claim and
-        // `cs_compact` replaces it when the page is listed for a draw.
-        // That is the distinction a hole in a shadow actually needs: a
-        // page can be resident, correctly addressed and hold whatever
-        // the slot's previous owner left in it.
-        //
+        // 🔴 White is a page with no content (word 3 is zero until drawn). It used to be "requested
+        // this frame", which is every visible page, so the whole screen went white.
         if inti_page_slots[page * PAGE_CELL + 3u] == 0u {
             return vec3<f32>(1.0);
         }
-        // Frames since the page was ALLOCATED — word 5, written only by
-        // `page_stamp`. Not word 1, which `page_refresh` rewrites every
-        // frame the marking asks for the page: that one is zero for
-        // everything on screen, by definition, and reading it here is
-        // what made this view useless.
-        //
-        // ⚠️ `since` is unsigned and saturates rather than going
-        // negative. Subtracting one from an unsigned zero does not give
-        // minus one, it gives four billion, and the fade below clamped
-        // every visible pixel to its floor — a constant wearing the
-        // costume of a signal.
+        // Frames since allocation — word 5, written only by `page_stamp` (word 1 is refreshed every
+        // frame). ⚠️ Unsigned, so the subtraction saturates instead of wrapping to four billion.
         let born = inti_page_slots[page * PAGE_CELL + 5u];
         let since = select(0u, inti_pages.views.w - born, inti_pages.views.w >= born);
 
@@ -588,10 +338,8 @@ fn inti_page_age_debug(world_position: vec3<f32>) -> vec3<f32> {
             case 4u: { hue = vec3<f32>(0.3, 0.6, 1.0); }
             default: { hue = vec3<f32>(0.75, 0.4, 1.0); }
         }
-        // Full the frame it was allocated, a fifth by sixteen. A sweep
-        // of bright travelling with the camera is the allocator
-        // churning, and a flicker that rides that sweep is an
-        // allocation fault.
+        // Full when allocated, a fifth by sixteen frames: a bright sweep with the camera is the
+        // allocator churning.
         let fade = clamp(1.0 - f32(since) / 16.0, 0.2, 1.0);
         return hue * fade;
     }
@@ -599,6 +347,9 @@ fn inti_page_age_debug(world_position: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(0.0);
 }
 
+/// Virtual page residency (#866): red no resident page at any level · yellow mapped but never drawn
+/// · green real depth that compares lit · blue shadowed · magenta paging off. The comparison is the
+/// shading pass's.
 fn inti_page_debug(world_position: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     // The same term the shading pass feeds the bias, so a surface at a
     // grazing angle is judged the way the frame judges it.
@@ -657,18 +408,11 @@ fn inti_page_debug(world_position: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(1.0, 0.0, 0.0);
 }
 
-/// 🔴 The production build concatenates `INTI_DEBUG_STUB` instead, where
-/// this returns a literal `false`. That is what deletes every view above
-/// from the game's shader: the call inlines to `if (false)`, and the
-/// branch — with its cascade sampling and its screen-space march — is
-/// folded away before register allocation ever sees it.
+/// `true` when `mode` is one of these views. 🔴 The production stub returns literal `false`, folding
+/// every view away before register allocation.
 fn inti_debug_is_view(mode: u32) -> bool {
-    // 🔴 The virtual-page view is named, not folded into the range.
-    // Stretching `INTI_DEBUG_LAST` up to 26 would swallow 18 through 25
-    // — the texture mip level and every FSR intermediate — and those are
-    // answered by other passes entirely. Claiming them here paints their
-    // surface BLACK before the pass that owns them ever runs, which is
-    // the exact failure the comment on `INTI_DEBUG_LAST` exists for.
+    // 🔴 The virtual-page view is named, not added to the range: stretching `INTI_DEBUG_LAST` to 26
+    // would swallow 18–25 and paint their surfaces black.
     return (mode >= INTI_DEBUG_FIRST && mode <= INTI_DEBUG_LAST)
         || mode == INTI_DEBUG_VIRTUAL_PAGES
         || mode == INTI_DEBUG_VIRTUAL_AGE
@@ -676,38 +420,17 @@ fn inti_debug_is_view(mode: u32) -> bool {
         || mode == INTI_DEBUG_LAMP_DEPTH;
 }
 
-/// One lamp's shadow pages, taken apart.
-///
-/// # 🔴 Why the lamp is FIXED and why there are two views
-///
-/// A lamp's page arithmetic carries six sign choices the sun's does not
-/// — one per cube face — and every one is invisible in the shaded
-/// image. Painting all hundred lamps at once averages exactly the signal
-/// being looked for, so this reads `debug_light` and answers about that
-/// one.
-///
-/// `faces` picks which question: the face and level a pixel READS
-/// (`true`), or what that page CONTAINED (`false`). A shadow that looks
-/// wrong is either reading the wrong page or reading the right page and
-/// comparing wrong, and no single view can separate those.
-///
-/// Deliberately a SECOND walk of the chain rather than a hook inside
-/// `inti_local_page_shadow`: a debug view that shares the reader's early
-/// returns cannot show what the reader skipped.
+/// One lamp's pages taken apart, for `debug_light` only — painting all lamps averages away six
+/// per-face sign choices. `faces`: which face and level a pixel reads, or what that page held.
+/// A second walk of the chain, since sharing the reader's early returns hides what it skipped.
 fn inti_lamp_page_debug(world_position: vec3<f32>, n: vec3<f32>, faces: bool) -> vec3<f32> {
-    // Pages BOUND is the gate — NOT `shadows_enabled`, which is the
-    // cascade-validity flag and is 0 in any scene without a sun. Gating
-    // on it blinded this view in exactly the scene it exists for: a
-    // lamp samples its pages whether or not a sun exists, so the view
-    // that inspects them must run there too.
+    // Gated on pages being bound, not `shadows_enabled` — that is the cascade flag, 0 in any scene
+    // without a sun.
     if (inti_pages.sun.w <= 0.5) {
         return vec3<f32>(1.0, 0.0, 1.0);
     }
-    // 🔴 ORANGE, not magenta. Three different reasons to show nothing
-    // wearing one colour is how a whole view reads as broken: "the
-    // paged path is off" and "you have not picked a lamp" have
-    // different fixes and the second one is a click. Select a point or
-    // spot light in the World panel.
+    // 🔴 Orange, not magenta: "paging is off" and "no lamp selected" have different fixes, and the
+    // second is a click.
     let light_index = inti.debug_light;
     if (light_index >= inti.light_count) {
         return vec3<f32>(1.0, 0.55, 0.1);
@@ -737,12 +460,8 @@ fn inti_lamp_page_debug(world_position: vec3<f32>, n: vec3<f32>, faces: bool) ->
     for (var level = local_level_floor(side0 * page_texels); level < levels; level = level + 1u) {
         let side = level_side_of(level, side0);
         let texel_world = 2.0 * max(distance, PAGE_NEAR) / f32(side * page_texels);
-        // 🔴 The FACE view reads the raw position and the OCCLUSION view
-        // reads the biased one, and the split is the point. A bias moves
-        // the sample across a face boundary near a seam, so a face view
-        // that applied it would draw seams that are an artefact of the
-        // bias rather than of the cube — and the whole reason to look at
-        // faces is to judge the cube's own arithmetic.
+        // 🔴 The face view reads the raw position and the occlusion view the biased one: the bias
+        // crosses face seams and would draw seams that are not the cube's.
         var sampled = world_position;
         if (!faces) {
             sampled = world_position

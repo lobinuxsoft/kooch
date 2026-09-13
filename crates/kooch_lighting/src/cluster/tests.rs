@@ -1,9 +1,5 @@
-//! What can be pinned without a device.
-//!
-//! The grid's arithmetic has its own tests next to it in `grid.rs`.
-//! These cover the two things that fail late and loudly otherwise: WGSL
-//! that does not compile, and a Rust struct that no longer matches the
-//! shader struct it mirrors.
+//! Device-free checks: WGSL compiles and Rust structs still match their shader mirrors. The grid's
+//! arithmetic is tested in `grid.rs`.
 
 use super::buffers::{ClusterDraw, ClusterViewUniform};
 use super::passes::{RASTER_TEMPLATE, shader_sources};

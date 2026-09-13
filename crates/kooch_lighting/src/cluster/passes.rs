@@ -67,10 +67,7 @@ impl ClusterPasses {
 
         let z_slice_module = module(device, "cluster_z_slice", Z_SLICE);
         let allocate_module = module(device, "cluster_allocate", ALLOCATE);
-        // Two modules from one source, the substitution deciding which
-        // half of the rasterizer compiles. A runtime flag would be one
-        // module and a branch per fragment; this is the mechanism
-        // `inti_pbr_shader` already uses for the same reason.
+        // Two modules from one source, substitution choosing the half: no per-fragment branch.
         let count_module = module(
             device,
             "cluster_raster_count",
@@ -188,12 +185,8 @@ impl ClusterPasses {
         })
     }
 
-    /// Records the whole build.
-    ///
-    /// `lights` is how many are in the buffer; zero skips everything
-    /// after the clear, which leaves every cell empty and every offset
-    /// at zero — an unlit scene, said in the only way the shading loop
-    /// can read.
+    /// Records the whole build; zero `lights` skips everything after the clear, leaving an unlit
+    /// grid.
     pub fn record(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -414,11 +407,8 @@ fn raster_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             uniform_entry(0, both),
             buffer_entry(1, both, true),
             buffer_entry(2, both, true),
-            // 🔴 Fragment only, and not because the vertex stage has no
-            // use for them: a writable storage buffer visible to a
-            // vertex shader needs `VERTEX_WRITABLE_STORAGE`, which the
-            // handheld target is not guaranteed to have. Everything that
-            // writes happens per cell, which is a fragment anyway.
+            // 🔴 Fragment only: vertex-writable storage needs `VERTEX_WRITABLE_STORAGE`, not
+            // guaranteed on the handheld.
             buffer_entry(3, fragment, false),
             buffer_entry(4, fragment, false),
             buffer_entry(5, fragment, false),
@@ -427,13 +417,7 @@ fn raster_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
 }
 
 #[cfg(test)]
-/// Every module the passes compile, as the shader compiler sees it:
-/// name, and the common declarations already concatenated.
-///
-/// Exposed so the tests can parse and validate all four without a
-/// device. A clustering bug that is a typo in WGSL would otherwise
-/// surface as a panic at pipeline creation, on the machine, in the
-/// frame — and only for whoever has a GPU that reaches that path.
+/// Every module as compiled, common declarations included, so tests validate them without a device.
 pub(super) fn shader_sources() -> Vec<(&'static str, String)> {
     vec![
         ("cluster_z_slice", format!("{COMMON}\n{Z_SLICE}")),

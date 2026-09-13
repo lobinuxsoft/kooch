@@ -1,17 +1,6 @@
-// Pass 3 of 4: where each cell's list of indices starts (#780).
-//
-// The index list is one buffer of tightly packed, variable-length runs —
-// one run per cell. Knowing where a cell's run begins means summing the
-// lengths of every cell before it, which is a prefix sum.
-//
-// Workgroups cap at 256 invocations and a grid has thousands of cells,
-// so it takes two dispatches: a [Hillis-Steele scan] within each block
-// of 256, then a sequential march across the blocks to carry the running
-// total. Same two-step Bevy uses, and for the same reason.
-//
-// [Hillis-Steele scan]: https://en.wikipedia.org/wiki/Prefix_sum
-//
-// Concatenated after `cluster_common.wgsl`.
+// Pass 3 of 4 (#780): where each cell's run of indices starts — a prefix sum, split into a
+// Hillis-Steele scan within each 256-invocation block and a march across blocks, as Bevy does.
+// After `cluster_common.wgsl`.
 
 @group(0) @binding(0) var<uniform> cluster_view: ClusterView;
 @group(0) @binding(2) var<storage, read_write> cluster_draw: ClusterDraw;
@@ -51,21 +40,17 @@ fn allocate_local_main(
         if (local >= stride) {
             term = block_offsets[local - stride];
         }
-        // 🔴 Both barriers are load-bearing. The first stops a thread
-        // from overwriting a slot another one has not read yet; the
-        // second stops a thread from reading a slot before its write
-        // lands. Dropping either produces a scan that is right on one
-        // driver and wrong on the next.
+        // 🔴 Both barriers are load-bearing: one stops overwriting a slot not yet read, the other
+        // reading one before its write lands. Without either the scan is right on one driver and
+        // wrong on the next.
         workgroupBarrier();
         block_offsets[local] = block_offsets[local] + term;
         workgroupBarrier();
     }
 
     if (global_id.x < block_end) {
-        // What this cell ended up holding, while a thread is already
-        // here and the count is final (#820). The populate pass has not
-        // run yet, so this is the counting pass's verdict — which is
-        // exactly the number the shading loop will walk.
+        // The cell's final count, taken while a thread is here (#820) — the counting pass's
+        // verdict, exactly what the shading loop walks.
         let total = cell_total(global_id.x);
         atomicMax(&cluster_draw.peak_cell, total);
         if (total > 0u) {
@@ -79,11 +64,8 @@ fn allocate_local_main(
     }
 }
 
-// Carries each block's running total into the blocks that follow.
-//
-// One workgroup, marching the blocks in order. Sequential by nature —
-// block `n`'s base is block `n-1`'s base plus its length — which is why
-// it is a second dispatch rather than more threads.
+// Carries each block's running total forward. Sequential by nature, so a second dispatch rather
+// than more threads.
 @compute @workgroup_size(256, 1, 1)
 fn allocate_global_main(@builtin(local_invocation_id) local_id: vec3<u32>) {
     let cell_count = cluster_view.dimensions.w;
