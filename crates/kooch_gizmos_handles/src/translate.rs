@@ -5,17 +5,8 @@ use kooch_gizmos::Gizmos;
 
 use crate::{Axis, DragInfo, Handle, HandleFrame, HandleMode, HandleState, Ray, TransformDelta};
 
-/// Axis-aligned translate handle. One per cardinal axis (X / Y / Z).
-///
-/// - **Visual:** an arrow from `origin` to `origin + axis * length`,
-///   with a 3D `+`-shaped arrowhead. Color brightens on hover and
-///   while dragging.
-/// - **Picking:** ray-vs-line-segment with a thickness threshold.
-///   Tight enough to differentiate axes when arrows overlap on screen.
-/// - **Drag math:** projects the cursor's world-space ray onto the
-///   axis line, computes the difference between this frame's and
-///   last frame's projection, returns the world-space delta along
-///   that axis.
+/// Axis translate handle: an arrow along its axis, picked by ray-to-segment distance, dragged as
+/// the change in the ray's projection onto the axis line.
 pub struct TranslateHandle {
     pub axis: Axis,
     pub length: f32,
@@ -65,10 +56,8 @@ impl Handle for TranslateHandle {
         let last_s = project_ray_to_axis(drag.last_ray, frame.origin, axis);
         let current_s = project_ray_to_axis(drag.current_ray, frame.origin, axis);
 
-        // Total dragged distance from the click anchor. Anchoring at
-        // `start_s` (instead of accumulating per-frame) lets the snap
-        // step toggle on / off mid-drag without rewinding more than
-        // one increment.
+        // Total distance from the click anchor, not a per-frame sum, so toggling snap mid-drag
+        // rewinds at most one step.
         let total_last = last_s - start_s;
         let total_now = current_s - start_s;
         let (total_last, total_now) = if drag.modifiers.ctrl {
@@ -97,10 +86,8 @@ fn bright(c: Vec3) -> Vec3 {
     c.lerp(Vec3::ONE, 0.4)
 }
 
-/// Projects a ray onto a line and returns the position `s` along the
-/// line where `(line.origin + s * line.dir)` is closest to the ray.
-///
-/// Skew-line closest-approach math.
+/// Projects a ray onto a line: the `s` where `line.origin + s * line.dir` comes closest to the ray
+/// (skew-line closest approach).
 fn project_ray_to_axis(ray: Ray, axis_origin: Vec3, axis_dir: Vec3) -> f32 {
     let u = ray.origin - axis_origin;
     let b = ray.direction.dot(axis_dir);
@@ -114,10 +101,8 @@ fn project_ray_to_axis(ray: Ray, axis_origin: Vec3, axis_dir: Vec3) -> f32 {
     (e_au - b * d_ru) / denom
 }
 
-/// Closest distance from `ray` to the line segment `[p1, p2]`. Returns
-/// `Some(t_along_ray)` when the closest distance is below `threshold`
-/// AND the closest point on the segment is within `[p1, p2]` AND the
-/// ray hit is in front of the ray origin.
+/// Ray distance to the segment `[p1, p2]`: `Some(t_along_ray)` when within `threshold`, inside the
+/// segment, and in front of the ray origin.
 fn ray_vs_segment(ray: Ray, p1: Vec3, p2: Vec3, threshold: f32) -> Option<f32> {
     let segment = p2 - p1;
     let length = segment.length();

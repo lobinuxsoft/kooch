@@ -1,27 +1,6 @@
-//! [`ScaleHandle`] — drag a small cube to scale the entity.
-//!
-//! Two flavors:
-//!
-//! - `axis = Some(Axis::X | Y | Z)` → axis-aligned scale handle. Cube
-//!   sits at `origin + frame.world_axis(axis) * length` (rotates with
-//!   the handle frame so Local mode tracks entity rotation).
-//! - `axis = None` → center cube at `origin`. Drag scales uniformly.
-//!
-//! The math respects the Local/World toggle:
-//!
-//! - **Local mode** (`frame.basis = entity rotation`): the user drags
-//!   along an entity-local axis. We multiply that local-axis scale
-//!   by the factor — straightforward.
-//! - **World mode** (`frame.basis = identity`): the user drags along a
-//!   world axis. We construct a world-space stretch matrix
-//!   `S_world = I + (f - 1) · outer(d, d)` along the dragged
-//!   direction `d`, then convert it to entity-local via
-//!   `S_local = R⁻¹ · S_world · R` (where `R = entity_world_rotation`).
-//!   The diagonal of `S_local` is the per-axis multiplicative factor.
-//!   This produces correct world-space stretching whenever the
-//!   entity rotation is axis-aligned; for arbitrary rotations it
-//!   approximates by discarding the off-diagonal shear (lossy but
-//!   matches the standard editor compromise).
+//! [`ScaleHandle`] — drag a cube on an axis, or the centre cube for uniform scale.
+//! World mode stretches along the world axis as `S_local = R⁻¹ · (I + (f - 1) · d dᵀ) · R`, keeping
+//! the diagonal: exact for axis-aligned rotations, discarding shear otherwise.
 
 use glam::{Mat3, Vec3, Vec4};
 use kooch_gizmos::Gizmos;
@@ -110,10 +89,8 @@ impl Handle for ScaleHandle {
         let direction = match self.axis {
             Some(axis) => frame.world_axis(axis),
             None => {
-                // Uniform scale doesn't have a single direction; use
-                // world X as a stable scalar reference. Returns the
-                // same factor regardless because the resulting matrix
-                // is `f * I`.
+                // Uniform scale has no single direction; world X is a stable reference, and the
+                // matrix is `f * I` either way.
                 Vec3::X
             }
         };
@@ -134,11 +111,8 @@ impl Handle for ScaleHandle {
         let outer = Mat3::from_cols(d * d.x, d * d.y, d * d.z);
         let s_world = Mat3::IDENTITY + outer * (factor - 1.0);
 
-        // Convert to entity-local: S_local = R⁻¹ * S_world * R.
-        // For Local mode this collapses to a diagonal `factor` on the
-        // dragged local axis (rotation cancels out). For World mode
-        // it produces the correct world-axis stretch in local space,
-        // approximated as a diagonal (off-diagonal shear discarded).
+        // To entity-local: `S_local = R⁻¹ * S_world * R` — a plain axis factor in Local mode, a
+        // diagonal approximation in World.
         let r = frame.entity_world_rotation;
         let s_local = r.transpose() * s_world * r;
         let local_factor = Vec3::new(s_local.x_axis.x, s_local.y_axis.y, s_local.z_axis.z);

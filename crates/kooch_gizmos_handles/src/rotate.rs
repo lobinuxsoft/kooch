@@ -6,16 +6,8 @@ use kooch_gizmos::Gizmos;
 
 use crate::{Axis, DragInfo, Handle, HandleFrame, HandleMode, HandleState, Ray, TransformDelta};
 
-/// Axis-aligned rotate handle. One per cardinal axis (X / Y / Z).
-///
-/// - **Visual:** filled torus in the plane perpendicular to the axis,
-///   coloured by the axis (X red / Y green / Z blue).
-/// - **Picking:** ray-vs-plane intersection check, then verify the
-///   hit point's distance from the entity origin is within the torus
-///   tube (`major_radius ± minor_radius`).
-/// - **Drag math:** project both rays onto the rotation plane, build
-///   vectors from origin to each hit point, compute the signed angle
-///   between them around the axis, return that as a quaternion.
+/// Axis rotate handle: a torus perpendicular to its axis, picked by a ray-plane hit within the
+/// tube, dragged as the signed angle between the two rays' plane hits.
 pub struct RotateHandle {
     pub axis: Axis,
     pub major_radius: f32,
