@@ -42,10 +42,6 @@ pub struct RenderContext<'a> {
 impl<'a> RenderContext<'a> {}
 
 /// Single unit of GPU work scheduled by the [`crate::graph::RenderGraph`].
-///
-/// Each node owns its pipelines / bind groups / per-pass resources.
-/// `execute` records draw / dispatch commands into the shared encoder
-/// — barriers between passes are managed by wgpu's encoder.
 pub trait RenderNode: Send + 'static {
     fn name(&self) -> &str;
     fn execute(&mut self, ctx: &RenderContext<'_>, encoder: &mut wgpu::CommandEncoder);

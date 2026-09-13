@@ -1,10 +1,4 @@
 //! The shadow pass as one object: place, cull, draw.
-//!
-//! The atlas and the rasteriser are always used together and neither is
-//! useful alone, so the render stage holds one field rather than two and
-//! the ordering between them stays in this file. It is also the only
-//! place that knows a shadow pass has to be recorded **before** the
-//! shading that samples it.
 
 use glam::Vec3;
 
@@ -38,11 +32,6 @@ pub struct PreparedShadows {
     /// each, so an empty list is worth having.
     pub points: Vec<PointShadowDraw>,
     /// Whether the cascade layers get filled.
-    ///
-    /// 🔴 NOT `frame.cascades_enabled`. That one says the sun's data in
-    /// the frame uniform is valid, and `shadows_enabled` — which
-    /// `inti_shadow` checks before it branches to the pages — rides on
-    /// it. Reusing it to skip the draw turned every shadow off.
     draw_cascades: bool,
     /// What goes in the frame UBO. Handed to
     /// [`kooch_lighting::GpuLights::update`].
@@ -88,11 +77,6 @@ impl ShadowPass {
     }
 
     /// The atlas texture itself, for reading back.
-    ///
-    /// Exists so a test can look at what the pass actually drew. "The
-    /// shadow is wrong" splits into "the map is wrong" and "the
-    /// sampling is wrong", and those have nothing in common but the
-    /// symptom.
     pub fn atlas_texture(&self) -> &wgpu::Texture {
         self.atlas.texture()
     }
@@ -113,9 +97,6 @@ impl ShadowPass {
     }
 
     /// Places this frame's cascades and sizes the culls for the scene.
-    ///
-    /// `max_distance` cuts the camera's frustum short before the
-    /// cascades are fitted to it — see [`ViewCamera::projection_to`].
     #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         &mut self,
@@ -201,11 +182,6 @@ impl ShadowPass {
     }
 
     /// Records the cull and depth passes for every cascade.
-    ///
-    /// Must be recorded into the frame's encoder **before** any pass
-    /// that samples the atlas. Nothing enforces that — an encoder is a
-    /// list and the ordering is the caller's, which is why the only
-    /// caller is the render stage's frame orchestrator.
     #[allow(clippy::too_many_arguments)]
     pub fn record(
         &self,
@@ -225,16 +201,7 @@ impl ShadowPass {
         max_meshlets_per_mesh: u32,
         lod_target: f32,
     ) {
-        // 🔴 Skipped outright when the cascades have no reader. The flag
-        // already existed and already reached the shading — `inti_shadow`
-        // returns before touching a cascade layer when the virtual pages
-        // are on — but nothing here consulted it, so four culls and four
-        // depth passes ran every frame to fill layers nobody sampled.
-        //
-        // The call below is the ONLY thing gated. The spots and the
-        // point cubes that follow share this atlas and this rasteriser
-        // and have no page raster yet, so the allocation stays and so do
-        // their draws.
+        // 🔴 Skipped outright when the cascades have no reader.
         if prepared.draw_cascades {
             self.rasterizer.render(
                 device,

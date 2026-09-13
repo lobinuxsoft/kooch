@@ -52,11 +52,9 @@ fn minimal_glb_round_trip() {
 
 #[test]
 fn scene_walk_concatenates_two_translated_triangles() {
-    // Two-node scene: each node holds a single-triangle mesh, the
-    // first translated +X by 10, the second translated -X by 10.
-    // Validates: scene walk picks both, transforms are applied to
-    // vertex positions, indices are rebased into the concatenated
-    // pool.
+    // Two-node scene: each node holds a single-triangle mesh, the first translated +X by 10, the
+    // second translated -X by 10. Validates: scene walk picks both, transforms are applied to
+    // vertex positions, indices are rebased into the concatenated pool.
     let glb = build_two_translated_triangles_glb();
     let mesh = parse_mesh_bytes(&glb).expect("multi-node load");
 

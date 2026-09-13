@@ -1,28 +1,4 @@
 //! Runtime capability probe for advanced meshlet debug modes (#454).
-//!
-//! Mirrors the [`Vbuf64Support`](crate::vbuf64::Vbuf64Support) shape:
-//! detect at engine startup, stash in [`Resources`](kooch_core::resource::Resources),
-//! query when deciding which debug modes the editor dropdown should
-//! surface to the user. Keeping the probe in a dedicated resource (vs.
-//! re-querying `Device::features()` per frame) costs one boolean of
-//! memory and saves every consumer from duplicating the feature-bit
-//! arithmetic.
-//!
-//! The advanced debug modes (`TriangleDensity`, `Overdraw`,
-//! `FrustumRejected`, `BackfaceRejected`, `HiZRejected`) each rely on
-//! `texture_storage_2d<r32uint, atomic>` to accumulate per-pixel
-//! counters or reject reasons. wgpu gates that on the
-//! [`Features::TEXTURE_ATOMIC`] flag; without it the modes have no
-//! production-quality fallback and stay hidden from the dropdown.
-//!
-//! `TEXTURE_ATOMIC` is broadly available across the supported
-//! baseline (RDNA 2 / Turing / Adreno X1 and newer). Pre-baseline
-//! adapters (Pascal, RDNA 1, Adreno 690 and older) still run the
-//! engine through the R32 vbuf path — they just lose access to the
-//! atomic-counter-based debug views.
-//!
-//! Future flags (Hi-Z scene path active, mesh-shader native, …) ride
-//! on the same resource so the editor only has to read one struct.
 
 use wgpu::{Device, Features};
 

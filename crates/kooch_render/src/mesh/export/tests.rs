@@ -14,10 +14,9 @@ fn round_trip(mesh: &Mesh, name: &str) -> Mesh {
     parse_mesh_bytes(&bytes).expect("the engine could not read back its own export")
 }
 
-/// The acceptance criterion: same counts, same bounds, back through the
-/// importer. Not a byte comparison — the JSON key order is serde's
-/// business, and asserting on it would break on a dependency bump while
-/// telling us nothing about whether the geometry survived.
+/// The acceptance criterion: same counts, same bounds, back through the importer. Not a byte
+/// comparison — the JSON key order is serde's business, and asserting on it would break on a
+/// dependency bump while telling us nothing about whether the geometry survived.
 #[test]
 fn every_primitive_round_trips_through_the_importer() {
     for (name, primitive) in Primitive::CANONICAL {
@@ -222,10 +221,9 @@ fn a_zero_target_still_leaves_geometry() {
     }
 }
 
-/// The seam a baked convex decomposition lives on: what the exporter
-/// writes, the importer has to read back as the same pieces. Merging
-/// them would give back the concave solid the decomposition exists to
-/// avoid, and nothing else in the engine would notice.
+/// The seam a baked convex decomposition lives on: what the exporter writes, the importer has to
+/// read back as the same pieces. Merging them would give back the concave solid the decomposition
+/// exists to avoid, and nothing else in the engine would notice.
 #[test]
 fn parts_survive_the_round_trip() {
     use crate::mesh::{parse_mesh_parts, to_glb_parts};

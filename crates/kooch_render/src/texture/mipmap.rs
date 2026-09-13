@@ -1,27 +1,4 @@
 //! Mip chains for material textures.
-//!
-//! The engine uploaded every texture with `mip_level_count: 1` from the
-//! first PR that had textures at all, with a comment saying the chain
-//! would land "when PBR materials need them". They needed them: a
-//! 1024-pixel grid on a floor in perspective samples a different texel
-//! every frame and boils, and `render_scale` below 100 makes it worse by
-//! exactly the ratio.
-//!
-//! # It is also the thing `MipBias` was blocked on
-//!
-//! A negative LOD bias is how a temporal upscaler gets back the high
-//! frequencies a reduced render resolution throws away (#481). A bias
-//! applied to a chain of one level selects level zero, which is what it
-//! already selected — so the setting could not have worked, and would
-//! have been debugged as an upscaler problem.
-//!
-//! # Why a pipeline cache rather than one pipeline
-//!
-//! The format has to match the texture being written: an `Rgba8UnormSrgb`
-//! attachment and an `Rgba8Unorm` one need different pipelines, and the
-//! whole point of doing this on the GPU is that the format carries the
-//! transfer function. Two entries in practice, keyed properly so a third
-//! costs nothing.
 
 use std::collections::HashMap;
 
@@ -31,21 +8,12 @@ const SHADER_SOURCE: &str = include_str!("../../shaders/mip_blit.wgsl");
 mod tests;
 
 /// How many levels a texture of `size` can hold, including level zero.
-///
-/// The chain stops at 1x1. `size` of zero cannot happen — wgpu rejects
-/// a zero-sized texture — but it is floored anyway rather than trusted,
-/// since the count feeds a texture descriptor.
 pub fn level_count(width: u32, height: u32) -> u32 {
     let largest = width.max(height).max(1);
     32 - largest.leading_zeros()
 }
 
 /// Builds mip chains by repeatedly halving with the hardware filter.
-///
-/// Owned by whoever owns the textures — [`MaterialTexturePool`](crate::material::MaterialTexturePool)
-/// — rather than constructed per upload: it caches a render pipeline per
-/// format, and building one of those per texture would make importing a
-/// folder of 78 textures pay for 78 pipeline compilations.
 pub struct Mipmapper {
     module: wgpu::ShaderModule,
     bgl: wgpu::BindGroupLayout,
@@ -89,10 +57,9 @@ impl Mipmapper {
             bind_group_layouts: &[Some(&bgl)],
             immediate_size: 0,
         });
-        // ClampToEdge, not Repeat: the source's edge texels have no
-        // neighbour on the far side, and wrapping would fold the
-        // opposite edge of the image into the border of every level.
-        // The material sampler tiles; this one reads.
+        // ClampToEdge, not Repeat: the source's edge texels have no neighbour on the far side, and
+        // wrapping would fold the opposite edge of the image into the border of every level. The
+        // material sampler tiles; this one reads.
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("mip_blit_sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -142,13 +109,6 @@ impl Mipmapper {
     }
 
     /// Fills levels 1.. of `texture` from level 0.
-    ///
-    /// Submits its own command buffer: the caller uploaded level zero
-    /// with `queue.write_texture`, which is ordered against the queue
-    /// rather than against an encoder, and a chain built in an encoder
-    /// the caller submits later would read a level that is not there
-    /// yet. One texture is one submission; this runs at import, not per
-    /// frame.
     pub fn generate(
         &mut self,
         device: &wgpu::Device,

@@ -74,10 +74,9 @@ fn the_tile_size_matches_the_shader() {
     );
 }
 
-/// 🔴 The compute path exists to shade with the tile's lights, not to be
-/// a second copy of the fragment path that quietly stopped doing it.
-/// Deleting the workgroup array would leave a shader that still compiles
-/// and still renders correctly through the fallback — and buys nothing.
+/// 🔴 The compute path exists to shade with the tile's lights, not to be a second copy of the
+/// fragment path that quietly stopped doing it. Deleting the workgroup array would leave a shader
+/// that still compiles and still renders correctly through the fallback — and buys nothing.
 #[test]
 fn the_compute_path_caches_the_tile_lights() {
     assert!(MATERIAL_PBR_COMPUTE_BODY.contains("var<workgroup> tile_lights"));
@@ -85,15 +84,6 @@ fn the_compute_path_caches_the_tile_lights() {
 }
 
 /// 🔴 The reason the variants exist (#743).
-///
-/// A branch nothing takes is still code the shader carries: register
-/// allocation is worst-case over the entry point, so a cascade sample
-/// and a screen-space march parked behind `if (debug_mode == …)` still
-/// cost occupancy — which is the whole of an integrated GPU's latency
-/// hiding, on a budget of 13.9 ms at 10 W.
-///
-/// If this fails, a debug view leaked back into the shader every shipped
-/// game runs, and nothing else will say so.
 #[test]
 fn the_game_shader_carries_no_debug_view() {
     let production = compose_material_shader(MATERIAL_PBR_DEFAULT_BODY, false);

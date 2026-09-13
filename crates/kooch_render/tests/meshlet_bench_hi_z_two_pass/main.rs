@@ -1,41 +1,4 @@
-//! Bench: Hi-Z 2-pass cull overhead vs single-pass scene-pool-atomic
-//! on the sphere fixture.
-//!
-//! Marked `#[ignore]` by default; run with:
-//!   cargo test -p kooch_render --test meshlet_bench_hi_z_two_pass -- --ignored
-//!
-//! Both paths render the same scene (one sphere instance) for N
-//! frames after a warm-up. The test reports the median frame time of
-//! each path and the observed 2-pass-over-single-pass ratio.
-//!
-//! Acceptance vs #445 spec: the issue targets ≤5% overhead on this
-//! bench. The current implementation lands closer to ~90% overhead
-//! on a single-instance scene because (a) pass B dispatches a
-//! worst-case `capacity / 64` workgroups even when `culled_count`
-//! is 0 (no indirect dispatch yet), (b) raster B redraws the union
-//! set with LoadOp::Load instead of just appending pass B's
-//! contribution via `first_instance` offset, and (c) Hi-Z build
-//! amortises poorly when there's only one instance. A scene-density
-//! delta where Hi-Z actually buys occlusion (a wall in front of a
-//! populated room) flips the sign — pass A drops most of the work
-//! pass B never sees. Tracking the optimisations as a follow-up.
-//!
-//! The hard assert in this bench uses a generous 2.25× budget to
-//! catch genuine regressions (e.g. a stray submit / poll insertion)
-//! without blocking the merge on the known unoptimised path. The
-//! eprintln line at the end is the meaningful report.
-//!
-//! What's measured per frame on each path:
-//!   single-pass:
-//!     - dispatch_scene_pool_atomic (cull)
-//!     - vbuf raster (clear)
-//!     - HiZ::build_from_depth (pyramid build)
-//!     - dispatch_cull_pass_b (cull B)
-//!     - vbuf raster (load, append)
-//!     - deferred shade
-//!
-//! Hi-Z 2-pass is the expensive path so any sample where the bench
-//! does NOT show overhead would point at a benchmark error.
+//! Bench: Hi-Z 2-pass cull overhead vs single-pass scene-pool-atomic on the sphere fixture.
 
 #[path = "../common/mod.rs"]
 mod common;

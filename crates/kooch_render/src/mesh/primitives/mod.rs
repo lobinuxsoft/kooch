@@ -1,26 +1,4 @@
-//! Procedurally generated meshes — the shapes a scene needs before an
-//! artist has made anything.
-//!
-//! Until now every mesh had to come from a `.glb`, so putting a floor
-//! under a falling rigid body meant opening Blender. These are the same
-//! six shapes every engine ships in its Add menu.
-//!
-//! # They are assets, not handles
-//!
-//! A primitive could be generated at startup and registered straight into
-//! the meshlet pool, never touching the asset pipeline. They go through
-//! it instead, as ordinary `.glb` files with committed GUIDs, because a
-//! primitive that is a real asset can be inspected, replaced by a
-//! hand-modelled version of the same name, and — the part that decides it
-//! — the [exporter](crate::mesh::export) this needs is the same exporter
-//! that turns a heavy mesh into a simplified collision mesh.
-//!
-//! # Conventions
-//!
-//! Right-handed, Y up, counter-clockwise front faces: glTF's rules, so a
-//! generated mesh and an imported one behave identically. Round shapes
-//! run along local Y, matching Rapier's `capsule_y` and what a character
-//! controller assumes.
+//! Procedurally generated meshes — the shapes a scene needs before an artist has made anything.
 
 mod builder;
 mod cone;
@@ -34,18 +12,9 @@ use super::Mesh;
 use builder::{MIN_RINGS, MIN_SECTORS};
 
 /// Smallest dimension any primitive is built with.
-///
-/// Clamped rather than rejected: a value being typed into the Inspector
-/// passes through zero on the way to the intended number, and a
-/// zero-sized mesh produces NaN normals that outlive the typo.
 pub const MIN_EXTENT: f32 = 1e-4;
 
 /// A parametric shape, resolved to a [`Mesh`] by [`Primitive::build`].
-///
-/// Deliberately not a `Reflect` component: this is a *recipe*, evaluated
-/// once at bake time into an asset. The scene references the resulting
-/// asset by GUID like any other mesh, so nothing re-generates geometry at
-/// load time.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Primitive {
     /// Axis-aligned box centred on the origin.
@@ -82,10 +51,6 @@ pub enum Primitive {
 
 impl Primitive {
     /// The canonical set baked into the engine's assets, in menu order.
-    ///
-    /// Unit-scaled so an artist can size them with the Transform gizmo
-    /// rather than re-baking: a 1×1×1 cube, a sphere of diameter 1, and a
-    /// capsule 2 units tall.
     pub const CANONICAL: [(&'static str, Primitive); 6] = [
         (
             "cube",

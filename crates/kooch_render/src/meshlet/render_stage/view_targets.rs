@@ -1,34 +1,4 @@
 //! Everything the meshlet path needs *once per view*.
-//!
-//! # Why this is its own thing
-//!
-//! [`MeshletRenderStage`](super::MeshletRenderStage) held these fields
-//! directly, which was correct while there was exactly one view. There is
-//! about to be more than one — a Game panel beside the editor's View
-//! (#592), and after that split-screen, minimaps, security cameras,
-//! portals — and the two halves of the stage scale differently:
-//!
-//! - The geometry pool is **global**. A hundred instances of a mesh are
-//!   one entry, and `measure_mesh_pool` puts the engine's whole current
-//!   asset set at 6.33 MiB. Duplicating it per view buys nothing.
-//! - These attachments are **per view**, unavoidably: two views have two
-//!   sizes and two framebuffers.
-//!
-//! Nanite draws the same line. A frame there is a *list of views* — every
-//! Virtual Shadow Map tile is one — rendered against a single geometry
-//! pool. What multiplies is the view.
-//!
-//! # The one that is not a texture
-//!
-//! `hiz_prev` / `hiz_curr` are occlusion state carried **between frames**,
-//! and that makes them per view in a way that is easy to miss: two views
-//! sharing one pyramid would test this frame's geometry against the other
-//! view's depth. Bevy has that bug today — over-culling with overlapping
-//! viewports from different cameras, `bevyengine/bevy#15182`.
-//!
-//! It cannot bite yet, because the pyramids are `None` until #486 turns
-//! the two-pass orchestrator on. Putting them here now is what stops it
-//! from biting then.
 
 use crate::hi_z::HiZ;
 use crate::meshlet::caps::MeshletDebugCaps;
@@ -52,10 +22,9 @@ pub(crate) struct MeshletView {
 
     pub(crate) depth_texture: wgpu::Texture,
     pub(crate) depth_view: wgpu::TextureView,
-    /// Depth-only view of the same depth texture, for `cs_copy_depth` in
-    /// the Hi-Z builder. Sampling requires `TextureAspect::DepthOnly`
-    /// while the render attachment uses `All`; one view for both roles
-    /// would fail wgpu validation in the worst case.
+    /// Depth-only view of the same depth texture, for `cs_copy_depth` in the Hi-Z builder. Sampling
+    /// requires `TextureAspect::DepthOnly` while the render attachment uses `All`; one view for
+    /// both roles would fail wgpu validation in the worst case.
     pub(crate) depth_sample_view: wgpu::TextureView,
 
     pub(crate) color_texture: wgpu::Texture,
@@ -71,26 +40,18 @@ pub(crate) struct MeshletView {
     /// carries its own depth target at this view's size.
     pub(crate) vbuf64_stage: Option<Vbuf64Stage>,
 
-    /// Twin Hi-Z pyramids for the 2-pass cull (#445). Pass A samples
-    /// `hiz_prev` (last frame's depth); pass B rebuilds `hiz_curr` from
-    /// pass A's raster and re-tests its rejects. The orchestrator swaps
-    /// them at end of frame.
-    ///
-    /// Lazy: `None` until #486's SPD-backed orchestrator switches them
-    /// on. The current single-pass path never samples them, so
-    /// allocating at construction would waste VRAM and surface wgpu
-    /// noise from the editor's per-frame placeholder stage.
+    /// Twin Hi-Z pyramids for the 2-pass cull (#445). Pass A samples `hiz_prev` (last frame's
+    /// depth); pass B rebuilds `hiz_curr` from pass A's raster and re-tests its rejects. The
+    /// orchestrator swaps them at end of frame.
     pub(crate) hiz_prev: Option<HiZ>,
     pub(crate) hiz_curr: Option<HiZ>,
-    /// `false` until `clear_to_far` has run on a freshly created
-    /// `hiz_prev`. Reset by [`MeshletView::resize`], since both
-    /// pyramids are recreated and need re-init before pass A samples a
-    /// "nothing occluded" pyramid.
+    /// `false` until `clear_to_far` has run on a freshly created `hiz_prev`. Reset by
+    /// [`MeshletView::resize`], since both pyramids are recreated and need re-init before pass A
+    /// samples a "nothing occluded" pyramid.
     pub(crate) hi_z_initialized: bool,
-    /// Pyramids retired by a resize that may still be in flight.
-    /// Triple-buffered to defer the drop until the GPU has stopped
-    /// using the views — Mesa radv invalidates bind groups dropped
-    /// while in flight.
+    /// Pyramids retired by a resize that may still be in flight. Triple-buffered to defer the drop
+    /// until the GPU has stopped using the views — Mesa radv invalidates bind groups dropped while
+    /// in flight.
     pub(crate) retired_pyramids: [Vec<HiZ>; 3],
 
     /// What the blit presents.
@@ -102,15 +63,6 @@ pub(crate) struct MeshletView {
 
 impl MeshletView {
     /// Allocates one view's attachments.
-    ///
-    /// 🔴 `size` is what reaches the window; `render_size` is what the
-    /// scene is rasterised at (#481 step 4). Everything that costs per
-    /// PIXEL — the visibility buffer, depth, the Hi-Z pyramids and every
-    /// target inside the R64 stage — is allocated at `render_size`.
-    /// Only `color_texture`, which the blit presents, stays at `size`.
-    ///
-    /// That is the whole performance argument: at 67 % of the width the
-    /// shading pass evaluates 44 % of the pixels.
     pub(crate) fn new(
         device: &wgpu::Device,
         size: (u32, u32),
@@ -192,10 +144,6 @@ impl MeshletView {
     }
 
     /// The density accumulator, when the device can run it.
-    ///
-    /// Split out because construction and resize have to make the same
-    /// decision, and a resize that forgot the caps gate would allocate a
-    /// texture on an adapter whose driver cannot atomically write it.
     fn create_density(
         device: &wgpu::Device,
         size: (u32, u32),
@@ -217,14 +165,6 @@ impl MeshletView {
     }
 
     /// Recreates the attachments at `new_size`.
-    ///
-    /// Returns the change in pyramid bytes, for the caller's VRAM
-    /// tracker: this type does not own the tracker, because the tracker
-    /// counts the whole engine and a view is one contributor to it.
-    ///
-    /// `retire_index` is the caller's frame slot — retired pyramids park
-    /// there rather than dropping inline, and the caller clears the slot
-    /// two frames later when the GPU is guaranteed to be done.
     pub(crate) fn resize(
         &mut self,
         device: &wgpu::Device,

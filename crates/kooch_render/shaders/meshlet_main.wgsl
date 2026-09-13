@@ -1,22 +1,4 @@
 // meshlet_main.wgsl — vertex-pull rasterizer for visible meshlets.
-//
-// Pairs with the compute culler (meshlet_cull.wgsl). One indirect
-// draw call rasterizes every meshlet that survived culling:
-//   instance_count = visible_count   (atomically appended by cull)
-//   vertex_count   = MAX_TRIANGLES*3 (set on MeshletCull construction)
-//
-// Per-vertex routing (no vertex buffer; everything is a storage fetch):
-//   instance_index → visible_meshlets[i]      → meshlet_id
-//   vertex_index   = triangle_idx*3 + corner  → triangle/corner pair
-//   triangle_idx ≥ desc.triangle_count        → clip-out (degenerate)
-//
-// Why pull-style: lets the rasterizer agree with the cull pass on
-// meshlet identity by index alone — no vertex buffer means no
-// per-meshlet `set_vertex_buffer` round-trip, which is what makes
-// Nanite-class single-draw-call rendering possible.
-//
-// Output is the same world-normal-as-color debug shading the standard
-// mesh pass uses. Materials / PBR arrive in PR-7 of #117.
 
 struct CameraUniforms {
     view_proj: mat4x4<f32>,

@@ -2,11 +2,9 @@ use super::*;
 
 #[test]
 fn descriptor_layout_is_repr_c_pod() {
-    // Fixed size lets the GPU upload assume a stride. History:
-    //   80 B (PR initial)
-    //   96 B (PR-5b: real cone_apex separate from bounding centre)
-    //  112 B (#465: group_index + children_group_index for the
-    //         2-pass group-atomic LOD descent).
+    // Fixed size lets the GPU upload assume a stride. History: 80 B (PR initial) 96 B (PR-5b: real
+    // cone_apex separate from bounding centre) 112 B (#465: group_index + children_group_index for
+    // the 2-pass group-atomic LOD descent).
     assert_eq!(MeshletDescriptor::SIZE, 112);
 }
 
@@ -44,9 +42,8 @@ fn root_meshlet_sentinel_distinct_from_real_index() {
 
 #[test]
 fn zeroed_descriptor_has_root_parent_via_construct() {
-    // Note: bytemuck::Zeroable initialises parent_meshlet_index to 0
-    // (a valid index), so callers MUST set the sentinel explicitly
-    // when constructing a root meshlet. This test documents that
+    // Note: bytemuck::Zeroable initialises parent_meshlet_index to 0 (a valid index), so callers
+    // MUST set the sentinel explicitly when constructing a root meshlet. This test documents that
     // contract.
     let d = MeshletDescriptor::zeroed();
     assert_eq!(d.parent_meshlet_index, 0);

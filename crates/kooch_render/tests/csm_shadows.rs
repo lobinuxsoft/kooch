@@ -1,19 +1,6 @@
-//! #476's acceptance: the sun casts.
-//!
-//! `cascades.rs`, `atlas.rs` and `raster.rs` each have unit tests, and
-//! every one of them passed while nothing in the engine constructed a
-//! `ShadowAtlas` — the scene rendered exactly as it had before the
-//! branch. These are the tests that fail when the pass is not wired in.
-//!
-//! The scene is a cube on a floor, lit by one sun at an angle. Every
-//! assertion below compares the **same pixel** across two renders that
-//! differ by one flag, rather than comparing two places in one image:
-//! two places differ for a dozen legitimate reasons (N·L, the cascade
-//! they land in, distance), and one flag differing is the property under
-//! test.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test csm_shadows
+//! `cascades.rs`, `atlas.rs` and `raster.rs` each have unit tests, and every one of them passed
+//! while nothing in the engine constructed a `ShadowAtlas` — the scene rendered exactly as it had
+//! before the branch. These are the tests that fail when the pass is not wired in.
 
 mod common;
 
@@ -63,9 +50,6 @@ fn rig() -> Option<Rig> {
 }
 
 /// The rig, with control over whether the floor receives shadows (#804).
-///
-/// `true` is the default every other test uses and the default of the
-/// component itself.
 fn rig_with_floor(floor_receives_shadows: bool) -> Option<Rig> {
     let (device, queue) = try_acquire_device()?;
 
@@ -173,11 +157,6 @@ fn render(rig: &mut Rig) -> Vec<u8> {
 }
 
 /// World point → pixel, through the same matrix the stage rendered with.
-///
-/// Computed rather than hard-coded: a hard-coded pixel keeps passing
-/// after someone moves the camera, and it passes by sampling the
-/// background, which is uniformly dark and therefore satisfies every
-/// "this is darker" assertion for the wrong reason.
 fn project(camera: &ViewCamera, world: Vec3) -> (u32, u32) {
     let clip = camera.view_proj(1.0) * world.extend(1.0);
     let ndc = clip.truncate() / clip.w;
@@ -201,9 +180,6 @@ fn luminance(pixels: &[u8], camera: &ViewCamera, world: Vec3) -> f32 {
 }
 
 /// 🔴 The assertion the whole issue exists to make true.
-///
-/// Everything on the branch was tested and correct before this passed,
-/// because nothing constructed the atlas.
 #[test]
 fn a_cube_over_a_floor_casts_a_shadow_on_it() {
     let Some(mut base) = rig() else {
@@ -235,10 +211,9 @@ fn a_cube_over_a_floor_casts_a_shadow_on_it() {
     );
 }
 
-/// The other half, and the one that catches an inverted comparison: a
-/// sampler set to `Less` instead of `Greater` darkens everything the sun
-/// *reaches* and lights what it does not, which the test above would
-/// happily pass.
+/// The other half, and the one that catches an inverted comparison: a sampler set to `Less` instead
+/// of `Greater` darkens everything the sun *reaches* and lights what it does not, which the test
+/// above would happily pass.
 #[test]
 fn the_floor_the_sun_reaches_is_unchanged_by_casting() {
     let Some(mut base) = rig() else {
@@ -337,10 +312,9 @@ fn edge_width(pixels: &[u8], camera: &ViewCamera, centre: Vec3) -> usize {
         .count()
 }
 
-/// 🔴 The penumbra term used to be multiplied by a magic 0.001 and lost
-/// every `max()` against the fixed search radius, so PCSS was a PCF with
-/// eight wasted taps. This is the test that says the estimate reaches
-/// the filter: a wider sun has to blur the edge more.
+/// 🔴 The penumbra term used to be multiplied by a magic 0.001 and lost every `max()` against the
+/// fixed search radius, so PCSS was a PCF with eight wasted taps. This is the test that says the
+/// estimate reaches the filter: a wider sun has to blur the edge more.
 #[test]
 fn a_wider_sun_softens_the_shadow_edge() {
     let Some(mut sharp) = rig() else {
@@ -380,16 +354,14 @@ fn a_wider_sun_softens_the_shadow_edge() {
     );
 }
 
-/// A sphere over the same floor. Its mesh clusters into several
-/// meshlets, where the cube is one — which is the difference that
-/// matters here: a per-meshlet cull bug is invisible on geometry that
+/// A sphere over the same floor. Its mesh clusters into several meshlets, where the cube is one —
+/// which is the difference that matters here: a per-meshlet cull bug is invisible on geometry that
 /// has only one.
 fn sphere_rig() -> Option<Rig> {
     let mut rig = rig()?;
-    // The LOD-chain builder, not the single-level one: the selector
-    // this exercises only decides anything when there is a chain to
-    // choose from, and `build_default_meshlets` produces meshlets that
-    // are all roots.
+    // The LOD-chain builder, not the single-level one: the selector this exercises only decides
+    // anything when there is a chain to choose from, and `build_default_meshlets` produces meshlets
+    // that are all roots.
     let sphere = build_meshlets_lod_chain(
         &build_sphere_mesh(96, 96),
         64,
@@ -419,13 +391,6 @@ fn sphere_rig() -> Option<Rig> {
 }
 
 /// 🔴 A shadow has to be solid, not perforated.
-///
-/// The shadow pass culls from the light, and the cull measures its
-/// backface cone test from a point. That point used to be the world
-/// origin — so whichever meshlets faced away from the origin, rather
-/// than away from the sun, wrote no depth and left holes. On a
-/// single-meshlet cube there is nothing to perforate; this samples
-/// across a sphere's shadow, where there is.
 #[test]
 fn the_shadow_of_a_many_meshlet_mesh_has_no_holes() {
     let Some(mut base) = sphere_rig() else {
@@ -468,13 +433,6 @@ fn the_shadow_of_a_many_meshlet_mesh_has_no_holes() {
 }
 
 /// 🔴 The caster is off screen, and its shadow is not.
-///
-/// The owner's own diagnosis: shadows break "when the object is not in
-/// view and at some distance". That is when any point standing in for a
-/// directional light's viewpoint is furthest from the geometry, so a
-/// cull that measures from one starts rejecting meshlets that face the
-/// sun — and the shadow comes out with bites in its edge. Nothing above
-/// catches it, because every other test here keeps the caster in frame.
 #[test]
 fn a_caster_outside_the_camera_frustum_still_casts_a_whole_shadow() {
     let Some(mut base) = sphere_rig() else {
@@ -511,15 +469,9 @@ fn a_caster_outside_the_camera_frustum_still_casts_a_whole_shadow() {
     );
 }
 
-/// 🔴 #804 — `receive_shadows` had been on the component since it was
-/// written and **nothing read it**. Unticking it in the Inspector
-/// changed nothing at all, which is worse than the feature being
-/// absent: the UI made a promise the renderer did not keep.
-///
-/// The floor here opts out while the sun and the caster stay exactly as
-/// the test above leaves them, so the only difference is the flag.
-///
-/// Verified failing before the bit was wired: the shadow was there.
+/// 🔴 #804 — `receive_shadows` had been on the component since it was written and **nothing read
+/// it**. Unticking it in the Inspector changed nothing at all, which is worse than the feature
+/// being absent: the UI made a promise the renderer did not keep.
 #[test]
 fn a_floor_that_receives_no_shadows_has_none() {
     let Some(mut receiving) = rig_with_floor(true) else {

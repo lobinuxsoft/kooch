@@ -75,9 +75,8 @@ pub(super) fn ingest_primitive(
         .map(|coords| coords.into_f32().collect())
         .unwrap_or_else(|| vec![[0.0, 0.0]; vertex_count]);
 
-    // Normals transform with the inverse-transpose of the upper 3×3
-    // (handles non-uniform scale correctly). Falls back to the
-    // identity slice if the matrix is singular — signals a degenerate
+    // Normals transform with the inverse-transpose of the upper 3×3 (handles non-uniform scale
+    // correctly). Falls back to the identity slice if the matrix is singular — signals a degenerate
     // node we still want to ingest rather than abort the whole load.
     let normal_xform = Mat3::from_mat4(world_xform).inverse().transpose();
 
@@ -131,16 +130,7 @@ pub(super) fn walk_parts(
     Ok(())
 }
 
-/// One primitive's positions and triangles, in the space `world_xform`
-/// puts them.
-///
-/// Goes through [`ingest_primitive`] rather than reading the accessor
-/// again, so a part is transformed by exactly the code the renderer
-/// uses. A second reader here would be a second thing to keep in step.
-///
-/// The triangles matter as much as the points for a baked collider: they
-/// are what says a piece is *already* a convex hull, which is what lets
-/// the solver skip hulling it again.
+/// One primitive's positions and triangles, in the space `world_xform` puts them.
 pub(super) fn primitive_geometry(
     primitive: &gltf::Primitive<'_>,
     world_xform: Mat4,

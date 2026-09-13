@@ -39,11 +39,6 @@ impl std::fmt::Display for GraphError {
 impl std::error::Error for GraphError {}
 
 /// Render graph storage + executor.
-///
-/// `add_node` accepts any `RenderNode` impl. `connect(producer, consumer)`
-/// declares "consumer depends on producer" — producer runs first.
-/// `execute` topo-sorts the DAG and invokes each node in order on the
-/// shared encoder.
 pub struct RenderGraph {
     nodes: slotmap::SlotMap<NodeId, GraphEntry>,
     /// `dependencies[node]` = nodes that must run before `node`.
@@ -92,9 +87,8 @@ impl RenderGraph {
         self.nodes.contains_key(id)
     }
 
-    /// Topologically sorts the graph (Kahn's algorithm). Stable: ties
-    /// broken by insertion order so the same graph always orders the
-    /// same way across runs — important for deterministic frame
+    /// Topologically sorts the graph (Kahn's algorithm). Stable: ties broken by insertion order so
+    /// the same graph always orders the same way across runs — important for deterministic frame
     /// captures + debugging.
     fn topological_order(&self) -> Result<Vec<NodeId>, GraphError> {
         // Compute in-degree: how many dependencies each node has.

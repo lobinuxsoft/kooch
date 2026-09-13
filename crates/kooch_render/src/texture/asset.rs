@@ -1,18 +1,8 @@
 //! `Image` — CPU-side texture asset.
-//!
-//! Holds decoded pixel data + dimensions + format hint. The
-//! [`ImageLoader`](super::ImageLoader) produces this; the
-//! [`Image::upload`] method turns it into a [`GpuTexture`](super::GpuTexture)
-//! when the renderer needs it.
-//!
-//! Splitting CPU `Image` from GPU [`GpuTexture`](super::GpuTexture) lets
-//! the same asset be inspected by tools, baked offline, or re-uploaded
-//! after edits without touching `wgpu` from the loader.
 
-/// Pixel format hint accompanying the raw bytes. Mirrors the subset of
-/// `wgpu::TextureFormat` we actually decode in PR-1. Compressed formats
-/// (BC7, ASTC, ETC2) and HDR (`Rgba16Float`, `Rgba32Float`) arrive with
-/// the KTX2 loader follow-up.
+/// Pixel format hint accompanying the raw bytes. Mirrors the subset of `wgpu::TextureFormat` we
+/// actually decode in PR-1. Compressed formats (BC7, ASTC, ETC2) and HDR (`Rgba16Float`,
+/// `Rgba32Float`) arrive with the KTX2 loader follow-up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFormat {
     /// 8-bit per channel sRGB (color textures: albedo, emissive).
@@ -38,13 +28,7 @@ impl ImageFormat {
     }
 }
 
-/// CPU-side image data: tightly packed RGBA8 pixel array + dimensions
-/// + format hint.
-///
-/// Always RGBA8 internally — [`super::ImageLoader`] expands greyscale,
-/// RGB, and RGBA inputs into RGBA8 so downstream code never branches on
-/// channel count. This matches what `wgpu` accepts as the default texture
-/// format and keeps the upload path branch-free.
+/// CPU-side image data: tightly packed RGBA8 pixel array + dimensions + format hint.
 #[derive(Debug, Clone)]
 pub struct Image {
     /// Raw bytes, row-major, no padding. Length = `width * height *
@@ -57,12 +41,6 @@ pub struct Image {
     /// Format hint used at upload time.
     pub format: ImageFormat,
     /// Whether the upload builds a mip chain (#481's prerequisite).
-    ///
-    /// An import setting rather than an engine constant: a UI atlas
-    /// sampled 1:1 gains nothing from a chain and a lookup table is
-    /// actively broken by one, while every surface seen in perspective
-    /// needs it. The `.meta` sidecar carries the author's answer; see
-    /// [`ImageImport`](super::ImageImport).
     pub mipmaps: bool,
 }
 

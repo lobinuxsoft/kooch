@@ -1,14 +1,4 @@
 //! The shading path keeps radiance the display cannot show (#732).
-//!
-//! Moving the tonemap into its own pass is invisible to every other test
-//! in this crate: `compute_shading_parity` compares the two shading
-//! paths **after** both reach the same `Rgba8Unorm` view, so it passes
-//! whether the intermediate is 16-bit float or 8-bit unorm. That is the
-//! regression this file exists for — the whole point of the change is
-//! the range between the two, and nothing else asserts it.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test hdr_shading
 
 mod common;
 
@@ -28,18 +18,6 @@ fn blown_out(pixels: &[u8]) -> Vec<usize> {
 }
 
 /// 🔴 What an 8-bit intermediate destroys, in one assertion.
-///
-/// The scene is exposed so far up that a large part of the floor clips
-/// to pure white. Those pixels are *identical* on screen — but the
-/// radiance behind them is not, and a float target still holds the
-/// difference. Bringing the exposure down has to bring that difference
-/// back.
-///
-/// With `HDR_COLOR_FORMAT` set back to `Rgba8Unorm` the shading would
-/// clamp radiance at 1.0 on the way into the texture, every one of those
-/// pixels would store the same value, and no exposure would ever
-/// separate them again. The picture at the default exposure would look
-/// the same, which is exactly why this needs its own test.
 #[test]
 fn detail_survives_above_what_the_display_can_show() {
     let Some(mut r) = rig(4, true) else {
@@ -86,11 +64,6 @@ fn detail_survives_above_what_the_display_can_show() {
 }
 
 /// The exposure reaches the pass that applies it.
-///
-/// It used to be read from the Inti uniform by the shading shader and is
-/// now written into the tonemap pass's own buffer. A default that was
-/// never overwritten, or a scalar plumbed but ignored, would leave every
-/// other test in this crate passing — they all render at one exposure.
 #[test]
 fn exposure_reaches_the_tonemap() {
     let Some(mut r) = rig(4, false) else {

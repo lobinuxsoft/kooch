@@ -1,15 +1,4 @@
 //! RCAS, the pass that ends the frame (#481, step 5).
-//!
-//! What this pass is for cannot be tested: whether the image looks
-//! right is judged on a screen, at 1280x720, by the person holding the
-//! device. What CAN be tested is everything that would make that
-//! judgement meaningless — a pass that is not wired in, an amount that
-//! arrives as zero, a lobe with the wrong sign (which blurs instead of
-//! sharpening), and the out-of-range `textureLoad` that already put a
-//! black border on SGSR 2's first run.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test rcas_sharpen
 
 mod common;
 
@@ -42,10 +31,6 @@ fn frame(percent: u32) -> Option<Vec<u8>> {
 }
 
 /// The mean absolute difference between horizontally adjacent pixels.
-///
-/// Sharpening is defined as raising local contrast, so this is the
-/// number the pass exists to move — not the mean brightness, which it
-/// is designed to leave alone.
 fn mean_gradient(image: &[u8]) -> f64 {
     let side = SIZE as usize;
     let mut sum = 0u64;
@@ -80,11 +65,6 @@ fn row_gradient(image: &[u8], y: usize) -> f64 {
 }
 
 /// 🔴 The pass raises local contrast, which is the only thing it claims.
-///
-/// Fails if the pass is not reached at all, if the amount arrives as
-/// zero, or if the lobe comes out positive — a positive lobe is a box
-/// blur wearing the name of a sharpener, and it would still produce a
-/// perfectly plausible image.
 #[test]
 fn sharpening_raises_local_contrast() {
     let _gpu = gpu_lock();
@@ -104,14 +84,6 @@ fn sharpening_raises_local_contrast() {
 }
 
 /// And the amount reaches the shader, at the amounts an author sets.
-///
-/// Asserted inside ONE rig, on consecutive frames, because two rigs do
-/// not produce bit-identical frames — so a comparison across them
-/// cannot tell "the setting did nothing" from "the scene rebuilt
-/// differently", and the assertion would be about the harness.
-///
-/// The first two frames establish that this rig repeats itself; only
-/// then does a third frame at a different amount mean anything.
 #[test]
 fn the_amount_reaches_the_shader() {
     let _gpu = gpu_lock();
@@ -128,12 +100,9 @@ fn the_amount_reaches_the_shader() {
         common::read_rgba8(&r.device, &r.queue, r.stage.color_texture())
     };
 
-    // ⚠️ Settled first, rather than trusting frame zero. The opening
-    // frames of a rig upload the meshlets and the material textures and
-    // come back black or half-drawn — which failed this file in a batch
-    // while passing on its own, twice. The claim under test is that the
-    // setting reaches the shader, not that frame zero is complete, so
-    // the rig is rendered until it repeats itself and only then read.
+    // ⚠️ Settled first, rather than trusting frame zero. The opening frames of a rig upload the
+    // meshlets and the material textures and come back black or half-drawn — which failed this file
+    // in a batch while passing on its own, twice.
     let mut first = shot(0, &mut r);
     let mut settled = false;
     for _ in 0..8 {
@@ -159,14 +128,6 @@ fn the_amount_reaches_the_shader() {
 }
 
 /// 🔴 The limiter limits: no pixel is moved far.
-///
-/// RCAS solves for a filter weight and then CAPS it at the value
-/// upstream measured as the edge of natural results. Remove the cap and
-/// the frame still looks like the frame — its mean brightness moves by
-/// 0.1 %, which is why the first version of this test measured that and
-/// could not fail. What actually breaks is the tail: a handful of
-/// pixels on the strongest edges overshoot into halos, and it is the
-/// worst pixel in the frame that says so, not the average one.
 #[test]
 fn the_limiter_limits() {
     let _gpu = gpu_lock();
@@ -199,24 +160,6 @@ fn the_limiter_limits() {
 }
 
 /// 🔴 The last row is sharpened like every other row.
-///
-/// `textureLoad` out of range returns ZERO in WGSL where `texelFetch`
-/// clamps in GLSL — the difference that rang a one-pixel black border
-/// into SGSR 2's first run. Here it does something quieter and harder
-/// to see: a zero neighbour makes `mn4` zero, which drives the solved
-/// lobe to exactly zero, so the outermost row is the one row in the
-/// frame that never gets sharpened. A soft line around the screen,
-/// blamed on the upscaler.
-///
-/// The row is the BOTTOM one because this scene's floor reaches it and
-/// the sky does not: a row with no contrast in it has nothing to
-/// sharpen either way, so it could not tell the two apart.
-///
-/// ⚠️ Measured as the row's own gradient rather than its brightness.
-/// The first version of this test compared the border's mean and could
-/// not fail: with the clamp removed the number did not move by a single
-/// digit in the third decimal, because a lobe of zero changes nothing
-/// at all — which is precisely the defect.
 #[test]
 fn the_last_row_is_sharpened_too() {
     let _gpu = gpu_lock();

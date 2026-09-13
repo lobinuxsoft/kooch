@@ -1,17 +1,5 @@
-//! `MaterialPipeline` — CPU-side coordinator that mirrors
-//! `Assets<Material>` into the GPU [`MaterialPool`].
-//!
-//! Pattern matches `MeshletPipeline`: a [`Guid`] → slot registry
-//! plus a per-frame sync function that resolves new GUIDs through
-//! the `AssetServer`, fetches the CPU asset, and writes the packed
-//! [`MaterialParams`] into a pre-allocated GPU storage buffer.
-//!
-//! The pool is created with a generous fixed capacity (`DEFAULT_CAPACITY`)
-//! at startup so the deferred shader can index it without rebinding.
-//! Slot 0 is reserved as the **default white-diffuse** so any
-//! `MeshInstance` that fails to resolve a material still renders
-//! with sensible colour — matches the legacy behaviour of the old
-//! per-render-call `material_id = 0`.
+//! `MaterialPipeline` — CPU-side coordinator that mirrors `Assets<Material>` into the GPU
+//! [`MaterialPool`].
 
 use std::collections::{HashMap, HashSet};
 
@@ -25,17 +13,6 @@ use super::{Material, MaterialParams, MaterialPool, MaterialTexturePool};
 use crate::texture::Image;
 
 /// Textures whose `.meta` changed and have to be uploaded again.
-///
-/// A resource rather than a method call because the editor is what
-/// edits an import and the pool lives inside the render stage, several
-/// borrows away. Whoever rewrites a sidecar puts the GUID here; the
-/// texture sync drains it on its next pass.
-///
-/// 🔴 It exists because a mip chain is **levels allocated at texture
-/// creation**. There is no API that adds one afterwards, so an import
-/// setting that only rewrote the file would show its effect the next
-/// time the project was opened — which reads as "the checkbox does
-/// nothing".
 #[derive(Debug, Default)]
 pub struct TextureReimports(pub std::collections::HashSet<Guid>);
 
@@ -47,15 +24,11 @@ impl TextureReimports {
 }
 
 /// Static type name [`AssetEntry`s carry] when their loader is
-/// [`MaterialLoader`](super::MaterialLoader). Keeps the picker's
-/// `#[reflect(asset = …)]` attribute and the pipeline's filter in
-/// lock-step: change one and the other fails the regression test
-/// pinned in `mesh_renderer::tests`.
+/// [`MaterialLoader`](super::MaterialLoader).
 pub const MATERIAL_TYPE_NAME: &str = "kooch_render::material::asset::Material";
 
-/// Default capacity of the GPU pool. The shader hard-codes a
-/// runtime-sized `array<MaterialParams>` so this is just the upper
-/// bound on registered materials per session — bumping it is a no-op
+/// Default capacity of the GPU pool. The shader hard-codes a runtime-sized `array<MaterialParams>`
+/// so this is just the upper bound on registered materials per session — bumping it is a no-op
 /// other than a slightly larger storage buffer at startup.
 pub const DEFAULT_CAPACITY: u32 = 256;
 
@@ -65,22 +38,15 @@ pub const DEFAULT_CAPACITY: u32 = 256;
 pub const FALLBACK_MATERIAL_ID: u32 = 0;
 
 /// Coordinates the GPU material pool with the CPU asset storage.
-///
-/// Owns the [`MaterialPool`] and a `Guid → slot` registry. Insert
-/// into `Resources` at startup; the meshlet sync system queries
-/// [`Self::lookup`] when assembling per-instance `material_id`s,
-/// and the per-frame [`Self::sync_from_resources`] keeps the pool
-/// in step with `Assets<Material>` as the user picks new materials.
 pub struct MaterialPipeline {
     pool: MaterialPool,
     /// GPU texture store + per-material bind group factory for the
     /// two-pass material shader. Populated during sync alongside `pool`.
     texture_pool: MaterialTexturePool,
     registry: HashMap<Guid, u32>,
-    /// Per-slot texture GUID triple `[albedo, normal, metal_roughness]`,
-    /// indexed by material slot (parallel to the GPU pool slots). Slot 0
-    /// is the fallback's all-`None`. The render path reads this to build
-    /// each material pass's bind group via [`MaterialTexturePool`].
+    /// Per-slot texture GUID triple `[albedo, normal, metal_roughness]`, indexed by material slot
+    /// (parallel to the GPU pool slots). Slot 0 is the fallback's all-`None`. The render path reads
+    /// this to build each material pass's bind group via [`MaterialTexturePool`].
     slot_textures: Vec<[Option<Guid>; 3]>,
     /// Index of the next free slot to hand out. Starts at 1 because
     /// slot 0 is the white-diffuse fallback.
@@ -89,10 +55,9 @@ pub struct MaterialPipeline {
 }
 
 impl MaterialPipeline {
-    /// Builds a fresh pipeline with `DEFAULT_CAPACITY` slots and the
-    /// fallback material pre-installed at slot 0. Uploads `capacity`
-    /// copies of the white-diffuse default to the GPU so reads from
-    /// any unused slot are well-defined.
+    /// Builds a fresh pipeline with `DEFAULT_CAPACITY` slots and the fallback material
+    /// pre-installed at slot 0. Uploads `capacity` copies of the white-diffuse default to the GPU
+    /// so reads from any unused slot are well-defined.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         Self::with_capacity(device, queue, DEFAULT_CAPACITY)
     }
@@ -121,24 +86,13 @@ impl MaterialPipeline {
         self.registry.len() as u32
     }
 
-    /// Sets how many samples the material sampler takes along the long
-    /// axis of a footprint, and reports whether it changed.
-    ///
-    /// Also applied from `sync_textures` on the project's setting; this
-    /// is the direct route for a test or a tool, which has the number
-    /// but not a populated `Assets<Material>` to drive a sync with.
+    /// Sets how many samples the material sampler takes along the long axis of a footprint, and
+    /// reports whether it changed.
     pub fn set_anisotropy(&mut self, device: &wgpu::Device, samples: u16) -> bool {
         self.texture_pool.set_anisotropy(device, samples)
     }
 
     /// Uploads a texture straight into the pool under `guid`.
-    ///
-    /// For tests and tools that have the pixels rather than a file on
-    /// disk: the normal path is `sync_textures`, which resolves a
-    /// material's GUIDs through the `AssetServer` and reads them off the
-    /// filesystem. A test that wanted a textured surface had to write a
-    /// PNG to a temp directory and stand up an asset database for it,
-    /// which is a lot of ceremony for four texels.
     pub fn register_texture(
         &mut self,
         device: &wgpu::Device,
@@ -181,11 +135,9 @@ impl MaterialPipeline {
         }
     }
 
-    /// Writes `material`'s packed params into the GPU pool and
-    /// records the assigned slot under `guid`. Idempotent: calling
-    /// twice with the same GUID returns the existing slot and
-    /// **upgrades the GPU contents** so live edits land without a
-    /// new slot allocation.
+    /// Writes `material`'s packed params into the GPU pool and records the assigned slot under
+    /// `guid`. Idempotent: calling twice with the same GUID returns the existing slot and
+    /// **upgrades the GPU contents** so live edits land without a new slot allocation.
     pub fn register(&mut self, queue: &wgpu::Queue, guid: Guid, material: &Material) -> u32 {
         let params = material.to_params();
         let refs = [material.albedo, material.normal, material.metal_roughness];
@@ -244,24 +196,16 @@ impl MaterialPipeline {
             .unwrap_or([None; 3])
     }
 
-    /// Range of shading slots (`0..next_slot`) the two-pass path issues a
-    /// per-material fragment pass for. Includes slot 0 (fallback white):
-    /// geometry with no picked material resolves to it, so it must shade
-    /// too — its branch-free fallback textures reproduce the plain look.
+    /// Range of shading slots (`0..next_slot`) the two-pass path issues a per-material fragment
+    /// pass for. Includes slot 0 (fallback white): geometry with no picked material resolves to it,
+    /// so it must shade too — its branch-free fallback textures reproduce the plain look.
     pub fn shading_slots(&self) -> std::ops::Range<u32> {
         0..self.next_slot
     }
 
-    /// Per-frame sync. Walks every [`Material`] entry the
-    /// [`AssetDatabase`] knows about, resolves each GUID through
-    /// the [`AssetServer`], and registers it. Idempotent — already-
-    /// registered GUIDs are re-uploaded so live RON edits land
-    /// without restarting the editor.
-    ///
-    /// Take/put pattern on `AssetServer` mirrors what
-    /// `MeshletRenderStage::sync_assets_to_gpu` does — necessary
-    /// because `load_by_guid` needs `&mut Resources` while we
-    /// already hold `&mut AssetServer`.
+    /// Per-frame sync. Walks every [`Material`] entry the [`AssetDatabase`] knows about, resolves
+    /// each GUID through the [`AssetServer`], and registers it. Idempotent — already- registered
+    /// GUIDs are re-uploaded so live RON edits land without restarting the editor.
     pub fn sync_from_resources(
         &mut self,
         device: &wgpu::Device,
@@ -293,11 +237,8 @@ impl MaterialPipeline {
             return;
         };
 
-        // Resolve every GUID through the server first (this populates
-        // Assets<Material> if not already loaded), then in a second
-        // pass read the assets and register them. Two passes because
-        // both the load and the read need `resources`, and we want
-        // to put the server back before we borrow `Assets<Material>`.
+        // Resolve every GUID through the server first (this populates Assets<Material> if not
+        // already loaded), then in a second pass read the assets and register them.
         let mut handles: Vec<(Guid, kooch_core::assets::Handle<Material>)> =
             Vec::with_capacity(pending.len());
         for guid in &pending {
@@ -344,16 +285,9 @@ impl MaterialPipeline {
         }
     }
 
-    /// Loads every not-yet-uploaded texture GUID referenced by
-    /// `snapshots` through the [`AssetServer`] and registers the decoded
-    /// [`Image`]s in the [`MaterialTexturePool`]. Deduplicates against
-    /// both the current snapshot set and textures already resident.
-    ///
-    /// KNOWN LIMITATION: the `AssetServer`'s `ImageLoader` is registered
-    /// sRGB for all images, so normal / metal-roughness maps decode in
-    /// the wrong color space. Correct handling needs a per-asset
-    /// color-space hint in the `.meta` sidecar — a follow-up; albedo
-    /// (the sRGB channel) is already correct.
+    /// Loads every not-yet-uploaded texture GUID referenced by `snapshots` through the
+    /// [`AssetServer`] and registers the decoded [`Image`]s in the [`MaterialTexturePool`].
+    /// Deduplicates against both the current snapshot set and textures already resident.
     fn sync_textures(
         &mut self,
         device: &wgpu::Device,
@@ -361,9 +295,8 @@ impl MaterialPipeline {
         snapshots: &[(Guid, Material)],
         resources: &mut Resources,
     ) {
-        // The sampler follows the project's setting. Here rather than in
-        // the render, which only has `&Resources` — and cheap: it
-        // rebuilds one sampler when the number changes and returns
+        // The sampler follows the project's setting. Here rather than in the render, which only has
+        // `&Resources` — and cheap: it rebuilds one sampler when the number changes and returns
         // immediately when it has not.
         if let Some(shading) = resources.get::<crate::quality::ShadingSettings>().copied()
             && self.texture_pool.set_anisotropy(device, shading.anisotropy)

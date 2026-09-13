@@ -1,10 +1,4 @@
 //! Fullscreen debug-visualization pass for the R64 path (#440).
-//!
-//! Replaces the compute deferred's debug branches with a fragment pass:
-//! reads the R64 vbuf + density accumulator and writes a colorized view
-//! (meshlet/instance id hashes, density/overdraw heatmaps, cull
-//! passthrough). Only the "colorize" modes route here; normal-look modes
-//! render through [`super::two_pass::MaterialTwoPass`].
 
 use bytemuck::bytes_of;
 
@@ -12,11 +6,8 @@ use crate::meshlet::dispatcher::MeshletCull;
 
 use super::{DEFERRED_COLOR_FORMAT, ScreenUbo, VBUF64_FORMAT};
 
-/// True for debug modes that fully replace shading with a colorized
-/// visualization (vs modes that keep the normal look and only change
-/// culling or add the reject overlay). Kept in lock-step with
-/// `MeshletDebugMode`: MeshletIds(1), InstanceIds(2), TriangleDensity(3),
-/// Overdraw(4), CullPassthrough(7).
+/// True for debug modes that fully replace shading with a colorized visualization (vs modes that
+/// keep the normal look and only change culling or add the reject overlay).
 pub(super) fn is_colorize_mode(debug_mode: u32) -> bool {
     matches!(debug_mode, 1 | 2 | 3 | 4 | 7)
 }

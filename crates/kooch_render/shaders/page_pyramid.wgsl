@@ -1,41 +1,8 @@
 // A hierarchical page pyramid over the sun's clipmap (#1022).
-//
-// # 🔴 What it is for
-//
-// Driving the shadow raster from the GEOMETRY means asking, per caster,
-// "does the rectangle this meshlet covers touch any page that is being
-// drawn?" — and a meshlet's rectangle covers up to 16384 cells at the
-// finest clipmap levels while a handful of pages are listed there. Answering that by walking the rectangle is why the scatter
-// shape was measured worse than pairing and why `page_compact.wgsl`
-// carries a note saying so.
-//
-// This is the structure that makes the question O(1) instead. At mip
-// `M` one texel stands for a `2^M x 2^M` block of pages and is non-zero
-// if ANY page in that block is being drawn this frame. A rectangle is
-// answered by picking the mip where it spans at most two texels per
-// axis and reading four of them.
-//
-// Mip 0 carries more than a bit: the page's index in the compacted
-// `page_list`, so a descent that reaches a texel can build the pair
-// from the same three words the paired shape reads.
-//
-// # Why a texture and not a buffer
-//
-// `page_expand.wgsl` already binds eight storage buffers, which is
-// `max_storage_buffers_per_shader_stage` on the downlevel defaults —
-// the reader that will consume this has no ninth slot. Textures are a
-// different budget. Unreal's equivalent is a texture for the same
-// reason, not a stylistic one.
 
 struct PyramidShape {
-    // x pages per side AT THE MIP BEING WRITTEN, y the clipmap's level
-    // count, z the first table entry this view's sun owns.
-    //
-    // `w` carries the mip index and nothing reads it: the source is
-    // bound as a view restricted to one mip, so a load inside it is
-    // always level 0. It stays because the vec4 is 16 bytes either way
-    // and because a reader that ever needs to name its own level should
-    // find it here rather than derive it from the side.
+    // x pages per side AT THE MIP BEING WRITTEN, y the clipmap's level count, z the first table
+    // entry this view's sun owns.
     shape: vec4<u32>,
 }
 
@@ -46,31 +13,8 @@ struct PyramidShape {
 @group(1) @binding(0) var<storage, read> table_slots: array<u32>;
 @group(1) @binding(1) var seed_dst: texture_storage_2d_array<r32uint, write>;
 
-/// Mip 0: one texel per page, holding `listing + 1` when the page is in
-/// THIS FRAME's compacted list and 0 when it is not.
-///
-/// # 🔴 Listed, not resident — and the difference is the whole cache
-///
-/// Residency says "this page has a physical slot", which most of the
-/// atlas has: pages whose content is still valid from an earlier frame
-/// are resident and must NOT be drawn again. Listing says "the
-/// compaction decided this page redraws now", which is the set the
-/// expansion is allowed to make pairs against. Seeding residency here
-/// would rasterise every cached page every frame and undo #477 in one
-/// texture.
-///
-/// Carrying the listing INDEX rather than a bit is what lets the
-/// inverted expansion finish the job: a descent that lands on a texel
-/// reads `page_list[listing]` and has the page id, its physical slot
-/// and its receiver bound — the same three words the paired shape
-/// takes from the same buffer, so the two shapes cannot drift.
-///
-/// `+ 1` because 0 has to mean "nothing here": the OR-reduction above
-/// only tells resident blocks from empty ones if empty is zero.
-///
-/// ⚠️ Runs AFTER `cs_compact`, which is what writes the third word. A
-/// build recorded before it describes the previous frame's listing —
-/// pairs against pages that are not being drawn.
+/// Mip 0: one texel per page, holding `listing + 1` when the page is in THIS FRAME's compacted list
+/// and 0 when it is not.
 @compute @workgroup_size(8, 8, 1)
 fn seed_pages(@builtin(global_invocation_id) gid: vec3<u32>) {
     let side = pyramid.shape.x;
@@ -94,26 +38,13 @@ fn seed_pages(@builtin(global_invocation_id) gid: vec3<u32>) {
 @group(1) @binding(1) var reduce_dst: texture_storage_2d_array<r32uint, write>;
 
 /// Mip `M` from mip `M-1`: the OR of the four texels below.
-///
-/// ⚠️ An ODD source side would drop its last row and column, and a
-/// dropped row is a listed page the pyramid denies — which turns into
-/// a caster nobody draws. The side is a power of two by construction
-/// (`virtual_size / page`), and the clamp below keeps that assumption
-/// from being silent if it ever stops holding.
 @compute @workgroup_size(8, 8, 1)
 fn reduce_mip(@builtin(global_invocation_id) gid: vec3<u32>) {
     let side = pyramid.shape.x;
     if gid.x >= side || gid.y >= side || gid.z >= pyramid.shape.y {
         return;
     }
-    // 🔴 Level 0, not `shape.w - 1`, and the difference is a trap that
-    // hides itself. The source is bound as a view RESTRICTED to one
-    // mip, so inside it that mip is level 0 — an absolute index happens
-    // to be right for the first reduction, where the source really is
-    // mip 0, and reads out of range for every one after it. The
-    // pyramid then holds a correct mip 1 and nothing above it, which
-    // reads as a caster whose rect is rejected the moment it is big
-    // enough to be answered high in the chain.
+    // 🔴 Level 0, not `shape.w - 1`, and the difference is a trap that hides itself.
     let last = i32(side * 2u) - 1;
     let at = vec2<i32>(vec2<u32>(gid.xy)) * 2;
     let layer = i32(gid.z);

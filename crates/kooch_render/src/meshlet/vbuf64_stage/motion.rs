@@ -1,20 +1,4 @@
 //! Where each pixel's surface was last frame (#481, #732 phase 1).
-//!
-//! The prerequisite every temporal technique shares. TAA needs it; so do
-//! FSR 2+, DLSS, XeSS and motion blur, which is why one pass unblocks
-//! four features rather than one.
-//!
-//! # Its own pass, at full resolution
-//!
-//! Shading runs at half rate (#825) and a temporal resolve wants a
-//! vector per pixel, not per 2x2 quad. This is the cheap half of the
-//! surface reconstruction — positions only, no normals, no tangents, no
-//! texture sampling — so paying for it at full resolution costs a
-//! fraction of what shading there would.
-//!
-//! It also runs whether or not the shading path is the compute one: the
-//! vector is a property of the geometry and the camera, not of how the
-//! pixel was lit.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -44,9 +28,8 @@ struct MotionUbo {
 pub(super) struct MotionVectors {
     pipeline: wgpu::RenderPipeline,
     bgl: wgpu::BindGroupLayout,
-    // 🔴 Its own group 0 rather than the shading pass's. That one also
-    // carries the colour target, the shaded-id target and the
-    // contact-shadow pair — bindings this shader never declares, and a
+    // 🔴 Its own group 0 rather than the shading pass's. That one also carries the colour target,
+    // the shaded-id target and the contact-shadow pair — bindings this shader never declares, and a
     // layout with entries the module does not use is rejected.
     frame_bgl: wgpu::BindGroupLayout,
     scene_bgl: wgpu::BindGroupLayout,
@@ -55,18 +38,8 @@ pub(super) struct MotionVectors {
     ubo: wgpu::Buffer,
     texture: wgpu::Texture,
     view: wgpu::TextureView,
-    /// Last frame's view-projection, kept per stage because each view
-    /// has its own camera. A shared one would describe the Game panel's
-    /// movement in the editor viewport's motion vectors.
-    ///
-    /// `None` on the first frame: there is no previous camera, so every
-    /// vector would be measured against a matrix of zeros.
-    ///
-    /// Behind a lock because the whole render chain is on `&self` — the
-    /// same reason the debug pipelines are behind a `OnceLock` — and the
-    /// stage lives in `Resources`, which requires `Sync`. A `Cell` is
-    /// not. Taken once per frame per view, so there is nothing to
-    /// contend for.
+    /// Last frame's view-projection, kept per stage because each view has its own camera. A shared
+    /// one would describe the Game panel's movement in the editor viewport's motion vectors.
     previous_view_proj: std::sync::Mutex<Option<glam::Mat4>>,
 }
 
@@ -229,11 +202,8 @@ impl MotionVectors {
         let (texture, view) = create_target(device, size);
         self.texture = texture;
         self.view = view;
-        // The history is a camera matrix, not a texture, so a resize does
-        // not invalidate it — but the vectors it produces are in UV
-        // space, and UV space just changed shape. One frame of zeros is
-        // cheaper than one frame of a temporal pass reprojecting from a
-        // different aspect ratio.
+        // The history is a camera matrix, not a texture, so a resize does not invalidate it — but
+        // the vectors it produces are in UV space, and UV space just changed shape.
         *self.previous_view_proj.lock().expect("motion history lock") = None;
     }
 
@@ -246,17 +216,6 @@ impl MotionVectors {
     }
 
     /// Records the pass and remembers `unjittered` for the next frame.
-    ///
-    /// ⚠️ The two matrices are not interchangeable and both are needed.
-    ///
-    /// - `jittered` is what the raster used, so it is what the
-    ///   barycentric reconstruction has to use: the pixel's NDC came
-    ///   from that projection, and asking a different one where the
-    ///   triangle is returns a point that is off by the jitter.
-    /// - `unjittered` is what the vector itself is measured against.
-    ///   Jitter reaching it would describe the jitter as scene motion
-    ///   and the resolve would cancel exactly the signal it exists to
-    ///   integrate — a temporal pass that runs, costs and does nothing.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn dispatch(
         &self,
@@ -272,10 +231,9 @@ impl MotionVectors {
         unjittered: glam::Mat4,
         size: (u32, u32),
     ) {
-        // 🔴 The first frame reprojects against itself, which is a vector
-        // of zero everywhere. The alternative is a matrix of zeros, whose
-        // `w` divide is a division by zero — NaNs into a texture a
-        // temporal pass will read for as long as its history survives.
+        // 🔴 The first frame reprojects against itself, which is a vector of zero everywhere. The
+        // alternative is a matrix of zeros, whose `w` divide is a division by zero — NaNs into a
+        // texture a temporal pass will read for as long as its history survives.
         let mut history = self.previous_view_proj.lock().expect("motion history lock");
         let previous = history.unwrap_or(unjittered);
         queue.write_buffer(
@@ -300,10 +258,9 @@ impl MotionVectors {
                 size: [size.0, size.1],
                 material_id: 0,
                 debug_mode: 0,
-                // Full rate, always: a temporal resolve wants a vector
-                // per pixel. `screen.shading_rate` only reaches the
-                // reconstruction through `frag_coord_to_ndc`, which this
-                // pass calls with real pixel centres.
+                // Full rate, always: a temporal resolve wants a vector per pixel.
+                // `screen.shading_rate` only reaches the reconstruction through
+                // `frag_coord_to_ndc`, which this pass calls with real pixel centres.
                 shading_rate: 1,
                 // No bias: this pass does not sample material textures.
                 mip_bias_scale: 1.0,

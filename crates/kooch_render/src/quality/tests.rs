@@ -1,13 +1,6 @@
 use super::*;
 
-/// 🔴 A technique that cannot reconstruct must not be handed a
-/// smaller frame.
-///
-/// `None` and `TAA` both resolve at render resolution, so a scale
-/// under 100 there is a smaller image blown up by the blit: softer,
-/// and the speed goes back out through the upscale it cannot do.
-/// That is the classic way this setting earns a bad name, and it is
-/// refused here rather than documented as a footgun.
+/// 🔴 A technique that cannot reconstruct must not be handed a smaller frame.
 #[test]
 fn only_an_upscaler_renders_smaller() {
     let out = (1920, 1080);
@@ -39,14 +32,8 @@ fn a_tiny_window_stays_renderable() {
     assert_eq!(UpscaleTechnique::Sgsr2.render_size((0, 0), 50), (1, 1));
 }
 
-/// 🔴 Sharpening is clamped at the same boundary the scale is gated
-/// at, and it is NOT gated on the technique.
-///
-/// The clamp matters because the amount multiplies a limiter that
-/// upstream measured as the edge of natural results: 500 % is five
-/// times past it, which is a halo around every edge in the frame,
-/// from one typo in a text file. And the absence of a gate is
-/// deliberate — a native frame is allowed to ask for a little.
+/// 🔴 Sharpening is clamped at the same boundary the scale is gated at, and it is NOT gated on the
+/// technique.
 #[test]
 fn sharpening_is_clamped_and_ungated() {
     assert_eq!(
@@ -73,13 +60,6 @@ fn native_scale_changes_nothing() {
 }
 
 /// 🔴 The fragment path is refused the scale, whatever the technique.
-///
-/// It tonemaps inline and shades straight into the window's image: no
-/// HDR target, no intermediate at render resolution, nothing to resolve
-/// a smaller frame from. Handed one anyway it mixes a render-sized depth
-/// buffer with a window-sized colour target in one pass and **wgpu
-/// discards the pass** — so the failure is not a soft image, it is no
-/// image. Reported from the editor at 1023x816 and 50 %.
 #[test]
 fn the_fragment_path_is_refused_the_scale() {
     assert_eq!(
@@ -105,10 +85,9 @@ mod presentation {
         assert!(!Presentation::resolve(false, None).vsync);
     }
 
-    /// 🔴 The variable wins, both ways. A measurement run that asked for
-    /// no vsync must get it out of a project that ships vsync on, and a
-    /// run that asked for vsync back must get it out of one that ships
-    /// it off — otherwise the A/B depends on which project is open.
+    /// 🔴 The variable wins, both ways. A measurement run that asked for no vsync must get it out of
+    /// a project that ships vsync on, and a run that asked for vsync back must get it out of one
+    /// that ships it off — otherwise the A/B depends on which project is open.
     #[test]
     fn the_variable_outranks_the_asset() {
         assert!(!Presentation::resolve(true, Some(false)).vsync);

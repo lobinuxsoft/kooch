@@ -28,28 +28,6 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 
 /// Per-frame culling parameters uploaded to the compute shader.
-///
-/// - `planes`: six pre-extracted world-space frustum planes packed
-///   as `(normal, distance)` — used by the legacy sphere test
-///   (`sphere_outside_frustum`) and the per-pass entries that
-///   haven't migrated to AABB cull yet.
-/// - `camera_position`: world-space camera position used by the
-///   backface cone test.
-/// - `lod_target_error_pixels` / `lod_error_to_pixel_factor`:
-///   continuous-LOD selector knobs (#442).
-/// - `debug_mode` / `debug_active`: editor-driven debug viz toggles
-///   (#451 / #454.4).
-/// - `view_proj`: clip-from-world matrix. Used by the AABB-vs-frustum
-///   test (`aabb_outside_frustum_local`) the R64 atomic path now
-///   shares with the Hi-Z 2-pass entry — both derive frustum planes
-///   from `view_proj * inst.transform` to test AABBs in local space
-///   without the world-envelope conservatism of an 8-corner box.
-///   Sphere-bounds + plane test left silhouette holes on close-up
-///   models at viewport edges (#488 documented this for the Hi-Z
-///   path; the R64 path inherits the fix here).
-///
-/// Layout is 208 bytes — multiple of 16 to keep std140-friendly
-/// alignment for the host-side `bytemuck::cast_slice` upload.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct CullParams {
@@ -59,56 +37,24 @@ pub struct CullParams {
     pub lod_target_error_pixels: f32,
     pub lod_error_to_pixel_factor: f32,
     /// Mirrors [`crate::meshlet::MeshletDebugMode`] discriminant.
-    /// Most values are inert in the cull pass (the deferred shader
-    /// is the consumer); but `OnlyLod0 = 8` and `OnlyRoots = 9`
-    /// override the LOD selector so the cull emits only meshlets at
-    /// a specific extreme of the chain — useful for visually
-    /// auditing each chain layer in isolation.
     pub debug_mode: u32,
-    /// `1` whenever the cull pass should record per-thread reject
-    /// reasons into `MeshletCull::reject_reasons` (#454.4). The
-    /// reject-overlay raster pass consumes those entries and paints
-    /// rejection bounding boxes over the shaded image. Production
-    /// rendering pays nothing — the cull-shader writes are gated to
-    /// a single uniform compare and the SSBO stays untouched.
+    /// `1` whenever the cull pass should record per-thread reject reasons into
+    /// `MeshletCull::reject_reasons` (#454.4). The reject-overlay raster pass consumes those
+    /// entries and paints rejection bounding boxes over the shaded image.
     pub debug_active: u32,
-    /// `1` when the view is orthographic, which changes the LOD test
-    /// rather than tuning it.
-    ///
-    /// 🔴 Under perspective, a simplification error shrinks on screen
-    /// with distance, so the selector divides by it. Under an
-    /// orthographic projection it does not shrink at all: the screen
-    /// error is the world error over the volume's world height, full
-    /// stop. Dividing by a distance there makes the test vary across a
-    /// shadow cascade for no physical reason, so neighbouring meshlets
-    /// in one LOD group land on opposite sides of the threshold and the
-    /// surface comes apart — which reads as "some meshlets do not cast".
-    ///
-    /// Bevy 0.19 branches on exactly this in `lod_error_is_imperceptible`
-    /// (`if projection[3][3] == 1.0`), and this engine had no such
-    /// branch because until shadows there was no orthographic view.
+    /// `1` when the view is orthographic, which changes the LOD test rather than tuning it.
     pub lod_orthographic: u32,
-    /// Projected radius, in pixels, under which an INSTANCE is
-    /// rejected before it ever becomes meshlets (#1002). `0` = off,
-    /// which is what ships.
-    ///
-    /// 🔴 Read only by `cs_cull_instances`, and that placement is the
-    /// point: rejecting an instance costs one thread where rejecting
-    /// its meshlets costs one each. The same
-    /// `lod_error_to_pixel_factor` projects it, so the threshold is in
-    /// the units the LOD target is already authored in.
+    /// Projected radius, in pixels, under which an INSTANCE is rejected before it ever becomes
+    /// meshlets (#1002). `0` = off, which is what ships.
     pub min_screen_pixels: f32,
     pub _pad_lod: [u32; 2],
     pub view_proj: [[f32; 4]; 4],
 }
 
 impl CullParams {
-    /// Builds with LOD selection effectively disabled — the pixel
-    /// factor is `0`, so every meshlet's projected error is `0`,
-    /// which (combined with the test `my_err <= threshold && parent_err > threshold`)
-    /// makes only root-level meshlets pass. Legacy single-LOD assets
-    /// have every meshlet at root, so behaviour stays identical.
-    /// Multi-LOD assets need [`Self::with_lod`].
+    /// Builds with LOD selection effectively disabled — the pixel factor is `0`, so every meshlet's
+    /// projected error is `0`, which (combined with the test `my_err <= threshold && parent_err >
+    /// threshold`) makes only root-level meshlets pass.
     pub fn new(view_projection: Mat4, camera_position: Vec3, meshlet_count: u32) -> Self {
         Self {
             planes: extract_frustum_planes(view_projection),
@@ -141,22 +87,16 @@ impl CullParams {
         self
     }
 
-    /// Toggles per-thread reject-reason recording on the
-    /// `cs_cull_scene_pool_atomic` entry (#454.4). The overlay raster
-    /// pass requires this to be `true`; everything else (including
-    /// the deferred-shader colour overrides) leaves it at `false` so
-    /// the cull hot path stays free of the SSBO write.
+    /// Toggles per-thread reject-reason recording on the `cs_cull_scene_pool_atomic` entry
+    /// (#454.4).
     pub fn with_debug_active(mut self, active: bool) -> Self {
         self.debug_active = active as u32;
         self
     }
 
-    /// Configures the continuous-LOD selector with a non-zero
-    /// projection factor. `proj_scale_y` is `1 / tan(fovy/2)`; get it
-    /// from [`projection_scale_y`], which recovers it from a combined
+    /// Configures the continuous-LOD selector with a non-zero projection factor. `proj_scale_y` is
+    /// `1 / tan(fovy/2)`; get it from [`projection_scale_y`], which recovers it from a combined
     /// view-projection without depending on where the camera is looking.
-    /// `viewport_height_pixels` is the destination framebuffer height in
-    /// physical pixels.
     pub fn with_lod(
         mut self,
         viewport_height_pixels: f32,
@@ -170,15 +110,6 @@ impl CullParams {
     }
 
     /// The LOD selector for an orthographic view — a shadow cascade.
-    ///
-    /// `world_height` is how much world the volume spans vertically, and
-    /// it is the whole of the relationship: an orthographic projection
-    /// magnifies everything equally, so a simplification error covers
-    /// `error / world_height` of the target no matter where it sits.
-    /// There is no distance term to include, which is why this is a
-    /// separate constructor rather than a different number fed to
-    /// [`Self::with_lod`] — the shape of the test changes, not its
-    /// tuning.
     pub fn with_orthographic_lod(
         mut self,
         world_height: f32,
@@ -192,35 +123,7 @@ impl CullParams {
     }
 }
 
-/// Recovers the projection's vertical scale from a combined
-/// view-projection matrix.
-///
-/// This is `1 / tan(fovy / 2)` for a perspective projection: how many
-/// half-heights of clip space a unit of view-space Y becomes. It belongs
-/// to the *projection*, so it must not change when the camera turns.
-///
-/// # Why the norm of a row and not one of its elements
-///
-/// The row of `view_projection` that produces `clip.y` is the projection's
-/// `f` times row 1 of the view's rotation. A rotation's row is a **unit**
-/// vector, so the row's length is exactly `f` no matter how the camera is
-/// oriented — while any single component of it is `f` times a direction
-/// cosine.
-///
-/// Reading one component was the bug: it happens to equal `f` when the
-/// camera's up is the world's up, and decays to **zero** at 90° of roll or
-/// looking straight up or down. A factor of zero disables the LOD selector
-/// entirely (see `meshlet_cull/common.wgsl`), which keeps only root
-/// meshlets — a sphere collapses to a blob and a cube to a spike. It
-/// degrades continuously, so a moderate tilt silently lowered detail
-/// everywhere rather than failing visibly.
-///
-/// Found by orbiting a `PointGravity`, not by any test: every previous
-/// measurement was taken with a level camera.
-///
-/// Works for orthographic too, where the row's length is `2 / height`.
-/// A view matrix carrying scale would fold that in — views are rotation
-/// plus translation, so that does not arise.
+/// Recovers the projection's vertical scale from a combined view-projection matrix.
 pub fn projection_scale_y(view_projection: Mat4) -> f32 {
     // Row 1's xyz, read out of glam's column-major storage. The
     // translation lives in `w` and is deliberately excluded: it shifts
@@ -233,20 +136,8 @@ pub fn projection_scale_y(view_projection: Mat4) -> f32 {
     .length()
 }
 
-/// CPU mirror of the WGSL backface cone test. Returns `true` when the
-/// meshlet is fully back-facing relative to the camera and can be
-/// skipped.
-///
-/// `cone_axis` follows meshopt's convention: it points along the
-/// meshlet's average front-face normal. The test forms the
-/// camera-to-apex vector and accepts the cull when its alignment with
-/// the axis exceeds `cone_cutoff` — that is the sign Bevy / UE5 / the
-/// meshoptimizer documentation use.
-///
-/// `cone_cutoff == 1.0` is the "no cull" sentinel that
-/// `meshopt::compute_meshlet_bounds` returns for degenerate /
-/// divergent normal sets — those meshlets must always survive cone
-/// cull.
+/// CPU mirror of the WGSL backface cone test. Returns `true` when the meshlet is fully back-facing
+/// relative to the camera and can be skipped.
 pub fn camera_in_backface_cone(
     cone_apex: Vec3,
     cone_axis: Vec3,
@@ -266,11 +157,6 @@ pub fn camera_in_backface_cone(
 }
 
 /// Extracts six frustum planes from a combined `view_projection` matrix.
-///
-/// Standard derivation: each plane is `row3 ± row_n` of the matrix.
-/// Returned normalised so distance comparisons are world-space metric.
-///
-/// Order: left, right, bottom, top, near, far.
 pub fn extract_frustum_planes(vp: Mat4) -> [[f32; 4]; 6] {
     let m = vp.to_cols_array_2d();
     // glam to_cols_array_2d returns column-major, so we read rows by index.
@@ -280,16 +166,8 @@ pub fn extract_frustum_planes(vp: Mat4) -> [[f32; 4]; 6] {
     let row2 = row(2);
     let row3 = row(3);
 
-    // D3D / wgpu / Vulkan [0, 1] depth — works for BOTH standard-Z
-    // (near→0, far→1) and reversed-Z (near→1, far→0). The two
-    // formulas are derived directly from the clip-space constraints
-    // `clip.z >= 0` (= row2) and `clip.w - clip.z >= 0` (= row3-row2);
-    // both stay valid regardless of which plane is which under the
-    // chosen depth orientation. The OpenGL formula `row3 + row2`
-    // (which #488 had inherited) only cuts at `ndc.z >= -1`, so
-    // points with `0 > ndc.z > -1` slipped through — invisible
-    // under standard-Z but exposed by reversed-Z where beyond-far
-    // points have negative ndc.z naturally.
+    // D3D / wgpu / Vulkan [0, 1] depth — works for BOTH standard-Z (near→0, far→1) and reversed-Z
+    // (near→1, far→0).
     let raw = [
         row3 + row0, // left
         row3 - row0, // right

@@ -64,12 +64,8 @@ impl MeshletRenderStage {
             DEFAULT_MAX_TRIANGLES as u32,
         ));
 
-        // Reject-reason overlay (#454.4). Same atomic gate as the
-        // density texture above — both ride the
-        // `MeshletDebugCaps::supports_texture_atomic` baseline split.
-        // Pre-baseline adapters get `None`; the dropdown filter keeps
-        // the user from selecting a mode that would dispatch into
-        // empty space.
+        // Reject-reason overlay (#454.4). Same atomic gate as the density texture above — both ride
+        // the `MeshletDebugCaps::supports_texture_atomic` baseline split.
         let reject_overlay = if debug_caps.supports_texture_atomic() {
             Some(super::super::reject_overlay::MeshletRejectOverlay::new(
                 device,
@@ -120,10 +116,9 @@ impl MeshletRenderStage {
             reject_overlay,
             stage_counters: super::super::stage_counters::MeshletStageCounters::new(device),
             instance_capacity,
-            // GPU timers default to disabled — tests don't pay for
-            // them, and the editor / game runtime opts in via
-            // [`Self::enable_gpu_timers`] at startup once the queue
-            // and adapter are available.
+            // GPU timers default to disabled — tests don't pay for them, and the editor / game
+            // runtime opts in via [`Self::enable_gpu_timers`] at startup once the queue and adapter
+            // are available.
             gpu_timers: MeshletGpuTimers::new_disabled_for_default(),
             frames_recorded: 0,
             vram_tracker: None,
@@ -132,11 +127,9 @@ impl MeshletRenderStage {
         }
     }
 
-    /// Swaps the current Hi-Z pyramid into the `prev` slot. The
-    /// SPD-backed orchestrator follow-up (#486) will call this at
-    /// end of frame so the next frame's pass A reads the pyramid
-    /// this frame just built. No-op when pyramids haven't been
-    /// allocated yet.
+    /// Swaps the current Hi-Z pyramid into the `prev` slot. The SPD-backed orchestrator follow-up
+    /// (#486) will call this at end of frame so the next frame's pass A reads the pyramid this
+    /// frame just built. No-op when pyramids haven't been allocated yet.
     #[allow(dead_code)]
     pub(super) fn swap_hi_z_pyramids(&mut self) {
         let view = &mut self.views[self.primary];
@@ -150,19 +143,13 @@ impl MeshletRenderStage {
         self.views[self.primary].hiz_curr.as_ref()
     }
 
-    /// Wires a shared engine VRAM tracker (#463.5). Called once at
-    /// startup from the editor / game runtime; subsequent buffer +
-    /// texture creations / pool registrations the stage controls
-    /// will bump the counter so the perf HUD can report a meaningful
-    /// engine footprint. Idempotent — replacing the tracker with a
-    /// different `Arc` is safe but discards the previous counter
-    /// state for THIS stage's contribution (use sparingly).
+    /// Wires a shared engine VRAM tracker (#463.5). Called once at startup from the editor / game
+    /// runtime; subsequent buffer + texture creations / pool registrations the stage controls will
+    /// bump the counter so the perf HUD can report a meaningful engine footprint.
     pub fn set_vram_tracker(&mut self, tracker: Arc<EngineVramTracker>) {
-        // Account for the persistent attachments we already created
-        // in `new()` — vbuf, depth, color. Hi-Z pyramids are lazy
-        // (`None` until the SPD orchestrator #486 turns them on);
-        // the pyramid allocation will bump the tracker on its own
-        // when it runs.
+        // Account for the persistent attachments we already created in `new()` — vbuf, depth,
+        // color. Hi-Z pyramids are lazy (`None` until the SPD orchestrator #486 turns them on); the
+        // pyramid allocation will bump the tracker on its own when it runs.
         let attachment_bytes = render_target_byte_estimate(self.views[self.primary].size);
         let pyramid_bytes = self.views[self.primary]
             .hiz_prev
@@ -178,22 +165,17 @@ impl MeshletRenderStage {
         self.vram_tracker = Some(tracker);
     }
 
-    /// Activates the GPU frame timer (#463.4). Call this once at
-    /// startup from the editor / game runtime, passing the engine's
-    /// [`GpuContext`](kooch_core::gpu::GpuContext) device + queue +
-    /// adapter. Adapters without `Features::TIMESTAMP_QUERY` get a
-    /// no-op instance — the call is always safe.
+    /// Activates the GPU frame timer (#463.4). Call this once at startup from the editor / game
+    /// runtime, passing the engine's [`GpuContext`](kooch_core::gpu::GpuContext) device + queue +
+    /// adapter.
     pub fn enable_gpu_timers(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         adapter: &wgpu::Adapter,
     ) {
-        // 3 stages per frame so the per-pass HUD (#252) can split
-        // the timer into cull / raster / post on the R64 path and
-        // pass A / Hi-Z build / pass B on the 2-pass path. The
-        // path-specific `render_path_*` functions write labels into
-        // `MeshletRenderStats::stage_timings`.
+        // 3 stages per frame so the per-pass HUD (#252) can split the timer into cull / raster /
+        // post on the R64 path and pass A / Hi-Z build / pass B on the 2-pass path.
         self.gpu_timers = MeshletGpuTimers::new_with_stages(device, queue, adapter, 3);
     }
 
@@ -204,10 +186,9 @@ impl MeshletRenderStage {
         self.gpu_timers.last_frame_ms()
     }
 
-    /// The point-light cube array, for the same reason as the atlas
-    /// above: a test that reads the map answers "is the occluder in
-    /// there" without going through the sampling path, the filter, the
-    /// bias and a surface shader — four places a picture can lie.
+    /// The point-light cube array, for the same reason as the atlas above: a test that reads the
+    /// map answers "is the occluder in there" without going through the sampling path, the filter,
+    /// the bias and a surface shader — four places a picture can lie.
     pub fn shadow_cubes_texture(&self) -> Option<&wgpu::Texture> {
         self.shadows.as_ref().map(|s| s.cubes_texture())
     }
@@ -216,10 +197,9 @@ impl MeshletRenderStage {
         &self.pipeline
     }
 
-    /// Read-only access to the cull dispatcher. Mainly here so
-    /// integration tests can read back `visible_count` /
-    /// `culled_count` to verify the Hi-Z 2-pass cull behaviour
-    /// (#445) frame-to-frame.
+    /// Read-only access to the cull dispatcher. Mainly here so integration tests can read back
+    /// `visible_count` / `culled_count` to verify the Hi-Z 2-pass cull behaviour (#445)
+    /// frame-to-frame.
     pub fn cull(&self) -> &MeshletCull {
         &self.views[self.primary].cull
     }
@@ -232,11 +212,8 @@ impl MeshletRenderStage {
         &self.views[self.primary].vbuf_view
     }
 
-    /// Per-pixel triangle-density accumulator (#454). `Some` only when
-    /// the construction-time `MeshletDebugCaps.supports_texture_atomic`
-    /// was true. Read by the deferred shader to colourise the
-    /// TriangleDensity / Overdraw heatmaps and by the reject-overlay
-    /// raster pass for the rejection-mode views.
+    /// Per-pixel triangle-density accumulator (#454). `Some` only when the construction-time
+    /// `MeshletDebugCaps.supports_texture_atomic` was true.
     pub fn triangle_density_view(&self) -> Option<&wgpu::TextureView> {
         self.views[self.primary].triangle_density_view.as_ref()
     }
@@ -273,15 +250,8 @@ impl MeshletRenderStage {
             .map(|stage| stage.resolved_texture())
     }
 
-    /// Switches temporal anti-aliasing on or off across every view
-    /// (#481), which is also what switches the sub-pixel jitter.
-    ///
-    /// 🔴 Returns how many views took it, for the same reason
-    /// [`Self::set_compute_shading`] does: zero means every view is on
-    /// the R32 fallback, where there is neither a motion vector nor a
-    /// history and this does nothing — and "did nothing" is
-    /// indistinguishable from "worked" in anything that only looks at
-    /// the image.
+    /// Switches temporal anti-aliasing on or off across every view (#481), which is also what
+    /// switches the sub-pixel jitter.
     pub fn set_temporal_aa(&mut self, on: bool) -> usize {
         let mut switched = 0;
         for (_, view) in self.views.iter_mut() {
@@ -321,10 +291,6 @@ impl MeshletRenderStage {
     }
 
     /// How much smaller than its panel each view renders, 1..=100.
-    ///
-    /// Takes effect on the next `resize_view`, which the editor calls
-    /// every frame with the panel's size — so a change lands within a
-    /// frame without a reallocation path of its own.
     pub fn set_render_scale(&mut self, scale: u32) {
         self.render_scale = scale.clamp(1, 100);
     }
@@ -338,56 +304,26 @@ impl MeshletRenderStage {
     }
 
     /// What a fragment coordinate is multiplied by to find its froxel.
-    ///
-    /// 🔴 Exposed because sizing this from the wrong resolution shipped
-    /// (#481 step 4). The grid's DIMENSIONS come from the aspect ratio
-    /// and a fixed cluster budget, so they do not move with the
-    /// resolution and cannot catch the mistake — this is the number that
-    /// does. Built from the window while the shading pass produces
-    /// fragment coordinates at render resolution, every pixel reads a
-    /// froxel at twice its address. The owner found it by eye; nothing
-    /// in the suite could have.
     pub fn cluster_tile_factors(&self) -> glam::Vec2 {
         self.lights.clusters().grid().tile_factors
     }
 
     /// What a view of `output` renders at, under the current technique.
     pub(super) fn render_size_for(&self, output: (u32, u32)) -> (u32, u32) {
-        // 🔴 The fragment path renders at the window's size whatever the
-        // settings say. It tonemaps inline into the image the window
-        // presents — no HDR target, nothing at render resolution — so a
-        // smaller frame there puts a render-sized depth buffer and a
-        // window-sized colour target into one pass, and **wgpu discards
-        // the pass**. The failure is not a soft picture, it is no
-        // picture. Reported from the editor at 1023x816 and 50 %.
-        //
-        // Applied HERE rather than in the setters, so the order the two
-        // arrive in cannot decide the outcome: a scale set before the
-        // compute path is switched on must not be lost, and one set
-        // after must not slip through.
+        // 🔴 The fragment path renders at the window's size whatever the settings say.
         if !self.compute_shading_active() {
             return output;
         }
-        // 🔴 DLSS picks its own, and the engine's arithmetic does not get
-        // a vote (#536). NGX's MINIMUM render resolution is its optimal
-        // — it will not reconstruct from fewer pixels than the mode asks
-        // for — so a percentage that rounds a pixel low is refused
-        // outright. A 943-row window halved is 471 by flooring and 472
-        // by NGX's rounding, and that one pixel used to disable the
-        // upscaler for the session and leave the frame in the corner of
-        // the window.
-        //
-        // `None` until the first context exists, and the fallback below
-        // is what creates it: the scale still decides which of NVIDIA's
-        // presets is asked for.
+        // 🔴 DLSS picks its own, and the engine's arithmetic does not get a vote (#536). NGX's
+        // MINIMUM render resolution is its optimal — it will not reconstruct from fewer pixels than
+        // the mode asks for — so a percentage that rounds a pixel low is refused outright.
         if self.upscale_technique == crate::quality::UpscaleTechnique::Dlss {
             if let Some(size) = self.dlss_render_size(output) {
                 return size;
             }
-            // Unusable: no vendor upscaler, so nothing will enlarge the
-            // frame and it has to be rendered at the output's own size.
-            // The resolve that runs instead is the engine's TAA, which
-            // antialiases and does not reconstruct.
+            // Unusable: no vendor upscaler, so nothing will enlarge the frame and it has to be
+            // rendered at the output's own size. The resolve that runs instead is the engine's TAA,
+            // which antialiases and does not reconstruct.
             if self.dlss_unusable() {
                 return output;
             }
@@ -405,10 +341,6 @@ impl MeshletRenderStage {
     }
 
     /// Whether every view that could run DLSS has given up on it.
-    ///
-    /// ⚠️ `any`, not `all`: one view that cannot reconstruct is one
-    /// window drawing into its own corner, and the answer that keeps a
-    /// picture on the screen is the conservative one.
     fn dlss_unusable(&self) -> bool {
         self.views.iter().any(|(_, view)| {
             view.vbuf64_stage
@@ -429,25 +361,8 @@ impl MeshletRenderStage {
         applied
     }
 
-    /// Switches every view between the fragment shading path and the
-    /// compute one (#824), overriding `KOOCH_COMPUTE_SHADING`.
-    ///
-    /// Both pipelines are already built, so this costs nothing to flip
-    /// and takes effect on the next frame. It exists because the two
-    /// paths have to be compared — a test rendering the same scene twice
-    /// cannot do it through a `OnceLock` that reads the environment once
-    /// per process, and neither can a live control.
-    ///
-    /// A view without the R64 stage (no 64-bit texture atomics) has no
-    /// compute shading path to switch to and is left alone.
-    ///
-    /// 🔴 Returns how many views it reached, and a caller that needs the
-    /// switch to have happened must check it. Zero means every view is
-    /// on the R32 fallback, where this setting does nothing at all —
-    /// which is indistinguishable from "the setting worked" in anything
-    /// that only looks at the rendered image. #824's parity tests passed
-    /// against a stage built with `Vbuf64Support::from_supported(false)`
-    /// until they started checking this.
+    /// Switches every view between the fragment shading path and the compute one (#824), overriding
+    /// `KOOCH_COMPUTE_SHADING`.
     pub fn set_compute_shading(&mut self, on: bool) -> usize {
         let mut switched = 0;
         for (_, view) in self.views.iter_mut() {
@@ -459,15 +374,7 @@ impl MeshletRenderStage {
         switched
     }
 
-    /// How many pixels share one shaded sample (#825), across every
-    /// view.
-    ///
-    /// 🔴 Returns how many views took it, for the same reason
-    /// [`Self::set_compute_shading`] does — and one more: a reduced rate
-    /// needs the compute shading path, so this returns zero both when a
-    /// view has no R64 stage and when it has one still on the fragment
-    /// path. Either way nothing changed, and only the return value says
-    /// so.
+    /// How many pixels share one shaded sample (#825), across every view.
     pub fn set_shading_rate(&mut self, rate: crate::meshlet::ShadingRate) -> usize {
         let mut switched = 0;
         for (_, view) in self.views.iter_mut() {
@@ -495,10 +402,6 @@ impl MeshletRenderStage {
     }
 
     /// The stage's depth, as something a shader can read.
-    ///
-    /// The blit needs it: the stage renders into its own attachments and
-    /// only its colour reaches the viewport, so without this the depth
-    /// buffer every later pass tests against is the one the sky cleared.
     pub fn depth_sample_view(&self) -> &wgpu::TextureView {
         &self.views[self.primary].depth_sample_view
     }
@@ -522,13 +425,6 @@ impl MeshletRenderStage {
     }
 
     /// Adds a view at `size` and returns its handle.
-    ///
-    /// Cheap relative to a second stage: the caller keeps sharing this
-    /// stage's mesh pool, scene instances and cull pipelines, and pays
-    /// only for the attachments and cull buffers the new camera needs.
-    /// That is the whole reason the split exists — `measure_mesh_pool`
-    /// puts the pool at 6.33 MiB for four assets, and duplicating it
-    /// per camera would buy nothing.
     pub fn create_view(&mut self, device: &wgpu::Device, size: (u32, u32)) -> ViewId {
         let render_size = self.render_size_for(size);
         self.views.insert(super::view_targets::MeshletView::new(
@@ -559,11 +455,6 @@ impl MeshletRenderStage {
     }
 
     /// Colour TEXTURE of `id`, or `None` if the handle is stale.
-    ///
-    /// The view above is what a blit binds; this is what a readback
-    /// copies from. Added because every shadow picture this repo takes
-    /// came from the primary view, so the Game panel — a second `ViewId`
-    /// on the same stage — was the one surface no test could look at.
     pub fn view_color_texture(&self, id: ViewId) -> Option<&wgpu::Texture> {
         self.views.get(id).map(|v| &v.color_texture)
     }

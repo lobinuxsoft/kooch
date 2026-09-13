@@ -1,17 +1,4 @@
 //! End-to-end integration: ECS → MeshletRenderStage → readback.
-//!
-//! Phase 1.E.3a closure test. Spawns 2 `MeshRenderer` entities with
-//! distinct `GlobalTransform`s, drives the stage manually (no plugin,
-//! no editor), reads back the deferred color texture and asserts:
-//!
-//! - the stage ingests both entities (`stats.instances_uploaded == 2`)
-//! - foreground pixels exist (some pixel is *not* the clear color)
-//! - foreground pixels appear in BOTH the left and right halves of the
-//!   target — a visual sanity check that the per-instance transforms
-//!   actually drive different screen positions
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test meshlet_render_stage
 
 mod common;
 
@@ -41,10 +28,9 @@ fn ecs_test_resources() -> Resources {
     r
 }
 
-/// Reads a 2-D color texture (Rgba8Unorm, single mip, single layer)
-/// back into a flat `Vec<u8>` of size `w * h * 4`. Pads `bytes_per_row`
-/// to wgpu's 256-byte alignment requirement and strips the padding on
-/// the CPU side so callers see a tightly packed buffer.
+/// Reads a 2-D color texture (Rgba8Unorm, single mip, single layer) back into a flat `Vec<u8>` of
+/// size `w * h * 4`. Pads `bytes_per_row` to wgpu's 256-byte alignment requirement and strips the
+/// padding on the CPU side so callers see a tightly packed buffer.
 fn read_rgba8_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -137,10 +123,9 @@ fn render_stage_drives_two_ecs_entities_to_visible_pixels() {
     }
     resources.insert(material_pipeline);
 
-    // Pool registration via the public ensure_gpu_mesh path — this is
-    // what production code does when AssetServer resolves the GUID.
-    // The first render call rebuilds the GpuGlobalMeshPool because
-    // pool_dirty is set.
+    // Pool registration via the public ensure_gpu_mesh path — this is what production code does
+    // when AssetServer resolves the GUID. The first render call rebuilds the GpuGlobalMeshPool
+    // because pool_dirty is set.
     let mesh_guid = Guid::new_v4();
     stage.ensure_gpu_mesh(&device, mesh_guid, &meshlet_mesh);
 

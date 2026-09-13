@@ -1,27 +1,13 @@
-// material_pbr_default.wgsl — default per-material shading body (#440),
-// lit by Inti (#441).
-//
-// CONCATENATED after visibility_buffer_resolve.wgsl and after
-// inti_pbr.wgsl (WGSL has no #include). The first provides
-// `resolve_vertex_output`, the `screen` / `camera` uniforms and the
-// geometry bindings on groups 0/1/3; the second provides the shading
-// model on group 5. This body adds the material storage (group 2) and
-// the per-material texture bind group (group 4).
-//
-// Pass 2 of the two-pass path: run once per registered material with
-// the material-depth target bound read-only and `CompareFunction::Equal`,
-// so only this material's pixels survive. `screen.material_id` selects
-// the MaterialParams slot for this pass.
+// material_pbr_default.wgsl — default per-material shading body (#440), lit by Inti (#441).
 
 struct MaterialParams {
     base_color: vec4<f32>,
     // x metallic, y roughness, z emissive, w pad.
     metallic_roughness_emissive_pad: vec4<f32>,
     texture_indices: vec4<u32>,
-    // xy tiling, zw offset. See `MaterialParams` in `material/mod.rs`:
-    // this struct is declared here and in two other shaders, and a test
-    // reads all three because a field added to two of them fails
-    // silently rather than at compile time.
+    // xy tiling, zw offset. See `MaterialParams` in `material/mod.rs`: this struct is declared here
+    // and in two other shaders, and a test reads all three because a field added to two of them
+    // fails silently rather than at compile time.
     uv_scale_offset: vec4<f32>,
 }
 
@@ -39,10 +25,9 @@ struct FsInput {
     @builtin(position) @invariant position: vec4<f32>,
 }
 
-// Fullscreen triangle cover. Emits this pass's material id as clip-space
-// depth (`screen.material_id / 65535`) so the fixed-function `Equal`
-// depth test against the material-depth target admits only this
-// material's pixels — the per-material cull, in hardware, with early-Z.
+// Fullscreen triangle cover. Emits this pass's material id as clip-space depth (`screen.material_id
+// / 65535`) so the fixed-function `Equal` depth test against the material-depth target admits only
+// this material's pixels — the per-material cull, in hardware, with early-Z.
 @vertex
 fn vs_fullscreen(@builtin(vertex_index) vertex_index: u32) -> FsInput {
     var out: FsInput;
@@ -58,19 +43,11 @@ fn fs_material(in: FsInput) -> @location(0) vec4<f32> {
     let surf = resolve_vertex_output(in.position);
     let mat = materials[screen.material_id];
 
-    // 🔴 The DERIVATIVES scale with the coordinate, and forgetting
-    // that is the trap. `textureSampleGrad` picks the mip from how
-    // fast the uv moves between pixels; tiling a texture twenty
-    // times makes it move twenty times faster, and handing the
-    // untiled derivatives selects a level about four steps too
-    // sharp. The result is the aliasing the mip chain exists to
-    // remove, on exactly the surfaces that asked for tiling.
+    // 🔴 The DERIVATIVES scale with the coordinate, and forgetting that is the trap.
     let uv = surf.uv * mat.uv_scale_offset.xy + mat.uv_scale_offset.zw;
-    // 🔴 The mip bias rides on the SAME multiply (#881). A bias is
-    // `lod += b`, and `lod` is `log2(footprint)`, so scaling the
-    // footprint by `exp2(b)` is the bias exactly — no `log2` per
-    // pixel and no sampler feature, which wgpu does not expose
-    // anyway.
+    // 🔴 The mip bias rides on the SAME multiply (#881). A bias is `lod += b`, and `lod` is
+    // `log2(footprint)`, so scaling the footprint by `exp2(b)` is the bias exactly — no `log2` per
+    // pixel and no sampler feature, which wgpu does not expose anyway.
     let derivative_scale = mat.uv_scale_offset.xy * screen.mip_bias_scale;
     let ddx_uv = surf.ddx_uv * derivative_scale;
     let ddy_uv = surf.ddy_uv * derivative_scale;
@@ -90,10 +67,9 @@ fn fs_material(in: FsInput) -> @location(0) vec4<f32> {
     let b = cross(n, t) * surf.world_tangent.w;
     let world_n = normalize(mat3x3<f32>(t, b, n) * n_ts);
 
-    // The debug views (#743), and the only place this path mentions
-    // them. In a production pipeline `inti_debug_is_view` is the stub's
-    // literal `false`, so this whole branch — and every view behind it —
-    // is gone before the shader is register-allocated.
+    // The debug views (#743), and the only place this path mentions them. In a production pipeline
+    // `inti_debug_is_view` is the stub's literal `false`, so this whole branch — and every view
+    // behind it — is gone before the shader is register-allocated.
     if (inti_debug_is_view(screen.debug_mode)) {
         return vec4<f32>(
             inti_debug_view(screen.debug_mode, surf.world_position, world_n, in.position.xy),

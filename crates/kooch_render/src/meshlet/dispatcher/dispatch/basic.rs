@@ -7,12 +7,8 @@ use super::super::pipelines::MeshletCullPipelines;
 use super::super::types::HiZTestParams;
 
 impl MeshletCull {
-    /// Dispatches the cull pass for `mesh` against `params`. Resets
-    /// `visible_count` to zero before dispatch so each frame starts
-    /// from a clean slate.
-    ///
-    /// The caller must keep `mesh` alive for the duration of the
-    /// encoder submission — bind groups borrow its descriptor buffer.
+    /// Dispatches the cull pass for `mesh` against `params`. Resets `visible_count` to zero before
+    /// dispatch so each frame starts from a clean slate.
     pub fn dispatch(
         &self,
         pipelines: &MeshletCullPipelines,

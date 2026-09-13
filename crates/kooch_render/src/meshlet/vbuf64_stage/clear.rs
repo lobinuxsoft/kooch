@@ -1,11 +1,5 @@
-//! Compute clear of the atomic R64 visibility buffer (#493), and of the
-//! HDR shading target beside it (#481).
-//!
-//! `wgpu::CommandEncoder::clear_texture` is not always available on the
-//! same adapters that expose `TEXTURE_INT64_ATOMIC`, so we own a tiny
-//! compute shader that writes 0u64 to every pixel. Cost is negligible
-//! against the cull / raster passes (8×8 workgroups, one atomicMax-free
-//! `textureStore` per pixel).
+//! Compute clear of the atomic R64 visibility buffer (#493), and of the HDR shading target beside
+//! it (#481).
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;

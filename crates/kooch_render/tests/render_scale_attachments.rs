@@ -49,14 +49,7 @@ fn render_at(size: (u32, u32), compute: bool) -> bool {
     true
 }
 
-/// 🔴 An odd-sized panel halves to a size the other attachments must
-/// follow.
-///
-/// 1023 renders at 511 and not at 511.5, so every target that is sized
-/// from the render resolution lands on 511 while anything still sized
-/// from the window stays at 1023. An even panel hides this: 1024 halves
-/// to 512 and a target that took the wrong size is merely twice as big,
-/// which wgpu accepts as long as the two attachments in one pass agree.
+/// 🔴 An odd-sized panel halves to a size the other attachments must follow.
 #[test]
 fn an_odd_panel_keeps_every_attachment_in_step() {
     let _gpu = gpu_lock();
@@ -85,17 +78,6 @@ fn an_even_panel_still_works() {
 }
 
 /// 🔴 The frame where the two settings disagree.
-///
-/// This is the one the editor actually hits, and the gate at the
-/// settings boundary does not catch it: the scale and the shading path
-/// arrive on different frames. `resize_view` allocates from the scale it
-/// can see; `render` applies the path it was given. In between there is
-/// a frame whose targets belong to one answer and whose shader belongs
-/// to the other — reported from a running editor **after** the boundary
-/// gate had shipped, which is how this test came to exist.
-///
-/// Reproduced by doing exactly that: allocate at a reduced size with the
-/// compute path on, then switch the path off without resizing.
 #[test]
 fn a_path_switch_between_frames_does_not_take_the_frame_down() {
     let _gpu = gpu_lock();

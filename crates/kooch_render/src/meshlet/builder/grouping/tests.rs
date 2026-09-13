@@ -28,11 +28,8 @@ fn synthetic_descriptor(vertex_offset: u32, vertex_count: u32) -> MeshletDescrip
 
 #[test]
 fn metis_groups_minimise_cross_partition_edges_on_chain_graph() {
-    // Synthetic chain graph: 8 meshlets where adjacent meshlets
-    // share exactly one vertex. The optimal 2-partition splits
-    // the chain in the middle, cutting exactly one edge.
-    //
-    // Pool layout: meshlet i covers global verts [i, i+1].
+    // Synthetic chain graph: 8 meshlets where adjacent meshlets share exactly one vertex. The
+    // optimal 2-partition splits the chain in the middle, cutting exactly one edge.
     let mut pool_meshlet_vertices: Vec<u32> = Vec::new();
     let mut prev_meshlets: Vec<MeshletDescriptor> = Vec::new();
     for i in 0..8u32 {

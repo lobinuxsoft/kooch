@@ -1,13 +1,4 @@
 //! Sanity: HiZ::build_from_depth against a real Depth32Float texture.
-//!
-//! Existing tests in hi_z_build.rs exercise build_from_r32 because
-//! Queue::write_texture cannot upload to depth formats. The 2-pass
-//! cull (#445) is the first production caller of build_from_depth,
-//! so this test pins the path end-to-end on the GPU before the
-//! orchestrator tries to use it.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test hi_z_build_from_depth
 
 mod common;
 

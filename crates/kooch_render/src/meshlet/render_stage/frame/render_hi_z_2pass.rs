@@ -1,11 +1,6 @@
-//! Legacy R32 + Hi-Z 2-pass orchestrator (#445 + #486 SPD + #488 AABB
-//! cull). Used by [`MeshletRenderStage::render`] when the device does
-//! not expose the atomic R64 vbuf feature bundle.
-//!
-//! 6 logical passes per frame: cull A, raster A, SPD pyramid build,
-//! cull B, raster B, deferred shade. Owns the encoder it receives,
-//! creates additional encoders for the SPD build + pass-B raster,
-//! issues all submits, and returns the per-frame [`MeshletRenderStats`].
+//! Legacy R32 + Hi-Z 2-pass orchestrator (#445 + #486 SPD + #488 AABB cull). Used by
+//! [`MeshletRenderStage::render`] when the device does not expose the atomic R64 vbuf feature
+//! bundle.
 
 use glam::{Mat4, Vec3};
 
@@ -18,9 +13,8 @@ use crate::meshlet::scene::SceneCullParams;
 use super::super::{MeshletRenderStage, MeshletRenderStats, ViewId};
 
 impl MeshletRenderStage {
-    /// Legacy R32 + Hi-Z 2-pass orchestrator. Stats report `draw_calls
-    /// = 6`. See [`Self::render`] for the dispatch decision and the
-    /// prelude that builds `cull_params` / `scene_params` /
+    /// Legacy R32 + Hi-Z 2-pass orchestrator. Stats report `draw_calls = 6`. See [`Self::render`]
+    /// for the dispatch decision and the prelude that builds `cull_params` / `scene_params` /
     /// `meshlet_bg` / `material_bg` / `timer_slot`.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn render_path_hi_z_two_pass(
@@ -41,21 +35,16 @@ impl MeshletRenderStage {
         instance_count: u32,
     ) -> MeshletRenderStats {
         profiling::scope!("path: R32 Hi-Z two-pass");
-        // Triple-buffer arena rotation (#445 PR #479 Mesa radv
-        // workaround): pick the slot 2 frames stale, clear it, and
-        // park this frame's bind groups there so they outlive GPU
-        // execution.
+        // Triple-buffer arena rotation (#445 PR #479 Mesa radv workaround): pick the slot 2 frames
+        // stale, clear it, and park this frame's bind groups there so they outlive GPU execution.
         self.frame_bind_groups_index = (self.frame_bind_groups_index + 1) % 3;
         let arena_idx = self.frame_bind_groups_index;
         self.frame_bind_groups[arena_idx].clear();
         self.views[view_id].retired_pyramids[arena_idx].clear();
 
         if self.views[view_id].hiz_prev.is_none() {
-            // 🔴 RENDER size: a Hi-Z pyramid is a mip chain of the DEPTH
-            // buffer, and the depth buffer shrinks with the scale (#481
-            // step 4). Built at the window's size it would describe a
-            // depth target that does not exist, and the occlusion cull
-            // would test against the wrong texels.
+            // 🔴 RENDER size: a Hi-Z pyramid is a mip chain of the DEPTH buffer, and the depth
+            // buffer shrinks with the scale (#481 step 4).
             let pyr = crate::hi_z::HiZ::new(
                 device,
                 self.views[view_id].render_size.0,
@@ -67,11 +56,8 @@ impl MeshletRenderStage {
             self.views[view_id].hiz_prev = Some(pyr);
         }
         if self.views[view_id].hiz_curr.is_none() {
-            // 🔴 RENDER size: a Hi-Z pyramid is a mip chain of the DEPTH
-            // buffer, and the depth buffer shrinks with the scale (#481
-            // step 4). Built at the window's size it would describe a
-            // depth target that does not exist, and the occlusion cull
-            // would test against the wrong texels.
+            // 🔴 RENDER size: a Hi-Z pyramid is a mip chain of the DEPTH buffer, and the depth
+            // buffer shrinks with the scale (#481 step 4).
             let pyr = crate::hi_z::HiZ::new(
                 device,
                 self.views[view_id].render_size.0,
@@ -83,12 +69,8 @@ impl MeshletRenderStage {
             self.views[view_id].hiz_curr = Some(pyr);
         }
 
-        // First-frame init under reversed-Z: hiz_prev needs to be
-        // seeded so pass A's first sample doesn't read undefined
-        // R32Float bytes. Clear depth to 0.0 (= far in reversed-Z)
-        // then SPD-build over it; the resulting pyramid says "every
-        // tile's farthest fragment is at the far plane", which is
-        // the conservative "nothing in front" baseline.
+        // First-frame init under reversed-Z: hiz_prev needs to be seeded so pass A's first sample
+        // doesn't read undefined R32Float bytes.
         if !self.views[view_id].hi_z_initialized {
             {
                 let mut clear_enc =
@@ -143,11 +125,9 @@ impl MeshletRenderStage {
         let hi_z_params =
             crate::meshlet::dispatcher::HiZTestParams::new(view_proj, hiz_w, hiz_h, mip_count);
 
-        // #785 — the same five names the R64 path reports, so a capture
-        // reads the same on an adapter that lands here. Each pair opens
-        // and closes on one encoder: this path uses four of them, and a
-        // debug group left open across a `finish()` is a validation
-        // error rather than a missing measurement.
+        // reads the same on an adapter that lands here. Each pair opens and closes on one encoder:
+        // this path uses four of them, and a debug group left open across a `finish()` is a
+        // validation error rather than a missing measurement.
         let scopes = resources.get::<kooch_core::gpu::GpuScopes>();
         let pass_a_query = scopes.map(|s| s.begin("cull + raster A", &mut encoder));
 
@@ -341,17 +321,8 @@ impl MeshletRenderStage {
             pool_meshlets_roots,
             gpu_frame_ms: self.gpu_timers.last_frame_ms(),
             draw_calls: meshlet_draw_calls,
-            // The Hi-Z 2-pass cull entry doesn't write
-            // `stage_counters[]` in #454.6 scope — wiring it is
-            // tracked alongside the SPD-backed orchestrator
-            // follow-up (#445). Surface the cached value so the
-            // editor stats overlay still shows the LATEST counts
-            // from any frame the R64 path also ran (which it
-            // doesn't on this branch — stays None on legacy R32).
-            // Only when this frame asked for them. The cache holds
-            // whatever the last debug-active frame read, and handing
-            // that to the HUD draws a number from an unknown moment as
-            // if it described the frame on screen (#703).
+            // The Hi-Z 2-pass cull entry doesn't write `stage_counters[]` in #454.6 scope — wiring
+            // it is tracked alongside the SPD-backed orchestrator follow-up (#445).
             cluster_occupancy: self.lights.clusters().occupancy(),
             page_marking: None,
             page_raster: None,

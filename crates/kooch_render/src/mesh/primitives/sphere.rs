@@ -1,9 +1,5 @@
-//! Sphere and capsule — the two shapes built from stacked rings of
-//! latitude, with normals that follow the surface rather than the facets.
-//!
-//! Both run along local Y, which is the axis Rapier's `capsule_y` uses
-//! and the axis a character controller assumes. A capsule generated
-//! along Z would need a rotation baked into every collider that uses it.
+//! Sphere and capsule — the two shapes built from stacked rings of latitude, with normals that
+//! follow the surface rather than the facets.
 
 use glam::{Vec2, Vec3};
 
@@ -12,11 +8,6 @@ use crate::mesh::Mesh;
 use super::builder::{MeshBuilder, ring};
 
 /// UV sphere centred on the origin.
-///
-/// `rings` counts the bands of latitude, `sectors` the columns of
-/// longitude. Poles are degenerate rings rather than single vertices: a
-/// shared pole vertex can carry only one UV, which pinches the texture
-/// into a point and makes every column meet at the same texel.
 pub(super) fn sphere(radius: f32, rings: u32, sectors: u32) -> Mesh {
     let radius = radius.max(super::MIN_EXTENT);
     let rings = rings.max(super::MIN_RINGS);
@@ -52,10 +43,9 @@ pub(super) fn capsule(radius: f32, half_height: f32, rings: u32, sectors: u32) -
     let sectors = sectors.max(super::MIN_SECTORS);
 
     let mut b = MeshBuilder::default();
-    // Latitude rows top to bottom: the upper hemisphere, then the lower.
-    // The last row of the top cap and the first of the bottom both sit at
-    // the equator with the same radius, offset to ±half_height — so the
-    // band between them *is* the cylindrical body, with no special case.
+    // Latitude rows top to bottom: the upper hemisphere, then the lower. The last row of the top
+    // cap and the first of the bottom both sit at the equator with the same radius, offset to
+    // ±half_height — so the band between them *is* the cylindrical body, with no special case.
     let rows: Vec<(f32, f32)> = [
         (half_height, 0.0, std::f32::consts::FRAC_PI_2),
         (
@@ -93,25 +83,16 @@ pub(super) fn capsule(radius: f32, half_height: f32, rings: u32, sectors: u32) -
     b.build()
 }
 
-/// Stitches a `rows + 1` by `sectors + 1` grid of already-pushed vertices
-/// into triangles, starting at vertex index `base`.
-///
-/// Degenerate quads at the poles — where one row has zero radius — emit
-/// as triangles with two coincident corners. `meshopt` drops them during
-/// meshlet build, and keeping the grid uniform here is worth more than
-/// special-casing two rows out of a hundred.
+/// Stitches a `rows + 1` by `sectors + 1` grid of already-pushed vertices into triangles, starting
+/// at vertex index `base`.
 pub(super) fn stitch_grid(b: &mut MeshBuilder, rows: u32, sectors: u32, base: u32) {
     let stride = sectors + 1;
     for row in 0..rows {
         for s in 0..sectors {
             let top = base + row * stride + s;
             let bottom = top + stride;
-            // Rows run from +Y down and sectors rotate +X towards +Z, so
-            // it is (top, top+1, bottom+1, bottom) that winds
-            // counter-clockwise seen from outside. Taking the columns in
-            // the other order faces every quad inward — which shows up
-            // only as an invisible mesh once backface culling is on,
-            // never as a warning.
+            // Rows run from +Y down and sectors rotate +X towards +Z, so it is (top, top+1,
+            // bottom+1, bottom) that winds counter-clockwise seen from outside.
             b.quad(top, top + 1, bottom + 1, bottom);
         }
     }

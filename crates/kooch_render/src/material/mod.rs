@@ -1,20 +1,4 @@
 //! PBR material parameters + GPU pool + typed [`Material`] asset.
-//!
-//! Three layers stack here:
-//! - [`MaterialParams`] — the 32-byte POD the GPU shader reads from
-//!   the `MaterialPool` storage buffer. Indexed by `material_id`.
-//! - [`Material`] — the CPU-side asset users author / pick from the
-//!   inspector. RON-serializable; survives in `Assets<Material>` and
-//!   is referenced by GUID from `MeshRenderer.material`.
-//! - [`MaterialPool`] — the GPU buffer. The runtime sync system keeps
-//!   it in lockstep with `Assets<Material>`; the deferred shader
-//!   reads `materials[inst.material_id].base_color` and modulates
-//!   the normal-debug shading by it.
-//!
-//! Texture arrays / true bindless sampling lands in the Phase 1 follow-
-//! up alongside #130 PBR shading, when wgpu's [`Features::
-//! TEXTURE_BINDING_ARRAY`] + non-uniform indexing become a hard
-//! requirement.
 
 mod asset;
 mod pipeline;
@@ -36,21 +20,6 @@ use wgpu::util::DeviceExt;
 pub const NO_TEXTURE: u32 = u32::MAX;
 
 /// PBR scalar parameters for a single material slot.
-///
-/// Layout (64 B, multiple of 16 for std140):
-/// - `base_color` (vec4): RGB albedo + alpha (linear-space).
-/// - `metallic_roughness_emissive_pad` (vec4): metallic, roughness,
-///   emissive intensity, _pad. Packed together so the struct stays
-///   16-byte aligned for the storage-buffer stride.
-/// - `texture_indices` (uvec4): albedo, normal, metal_roughness pool
-///   indices + _pad. [`NO_TEXTURE`] means "no map — use the scalar".
-/// - `uv_scale_offset` (vec4): `xy` tiling, `zw` offset.
-///
-/// 🔴 This struct is declared in Rust and in **three** WGSL files, and
-/// nothing checks that they agree except a test that reads them. A field
-/// added to two of the three does not fail to compile — every material
-/// after the mismatch reads the next one's bytes, which looks like the
-/// wrong material rather than like a layout bug.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct MaterialParams {
@@ -114,10 +83,9 @@ impl MaterialParams {
     }
 }
 
-/// GPU-resident pool of [`MaterialParams`]. Caller indexes into it via
-/// the material id baked into the per-meshlet rendering call (PR-7 keeps
-/// material assignment per-render call; per-meshlet assignment lands
-/// with bindless).
+/// GPU-resident pool of [`MaterialParams`]. Caller indexes into it via the material id baked into
+/// the per-meshlet rendering call (PR-7 keeps material assignment per-render call; per-meshlet
+/// assignment lands with bindless).
 pub struct MaterialPool {
     buffer: wgpu::Buffer,
     capacity: u32,

@@ -1,49 +1,13 @@
 //! The physical page pool and its table (#866).
-//!
-//! Marking answers *which pages does this frame need*. This answers
-//! *where does each of them live*, and the two run in the **same
-//! dispatch**: `mark_bit` already reports the thread that flipped a
-//! page's bit from 0 to 1, so claiming a physical slot there is one
-//! `atomicAdd` on a rare branch. No second pass, and nothing walks the
-//! virtual space.
-//!
-//! # What the table is, and why the flat answer is dead
-//!
-//! The arithmetic is in `page_table.wgsl` next to the code that depends
-//! on it, in full. The short version: 101 lights and a sun address
-//! **28 409 856** virtual pages. One bit each is 3.4 MiB and that is the
-//! mark bitmap; one `u32` each is **108 MiB — 42 % of the 256 MiB pool
-//! it would index**. So the table is sized to what is RESIDENT rather
-//! than to what is addressable: `2 x pages` entries of open addressing,
-//! **64 KiB** at Epic's 4096-page pool.
-//!
-//! # The pool is SLICED between the cameras
-//!
-//! One editor frame draws the same world twice. A clipmap is centred on
-//! ITS camera, so the two need different pages — and sharing one bump
-//! allocator means the camera that runs first can take every slot.
-//!
-//! So each camera owns [`PoolConfig::slice`] pages, and the atlas is an
-//! **array with a layer each**: a layer is an attachment a camera clears
-//! on its own, which is what lets one refill its pages while the other
-//! is still sampling last frame's. The budget does not multiply — a
-//! layer is `pages / views` rounded up to a square.
 
 use super::PageConfig;
 
-/// Words per table entry — the slot, its age, its place in the
-/// compacted page list, and the content stamp the cache runs on.
-/// Mirrors `PAGE_CELL` in `page_table.wgsl`, which is where the
-/// reason lives.
+/// Words per table entry — the slot, its age, its place in the compacted page list, and the content
+/// stamp the cache runs on. Mirrors `PAGE_CELL` in `page_table.wgsl`, which is where the reason
+/// lives.
 pub const PAGE_CELL: u32 = 6;
 
 /// `KOOCH_SHADOW_POOL_PAGES`, read once.
-///
-/// An environment variable and **not** a `.rendersettings` field, on
-/// purpose: #477 asks that nothing on the shadow side grow a public
-/// setting before the pool's shape is decided, and a knob that sizes an
-/// atlas nobody allocates yet would promise memory nothing spends. It
-/// becomes a setting when the raster does.
 pub fn pages_from_environment() -> u32 {
     static PAGES: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     *PAGES.get_or_init(|| {
@@ -56,40 +20,15 @@ pub fn pages_from_environment() -> u32 {
 }
 
 /// What the pool is sized to when nobody says otherwise.
-///
-/// 🔴 Half of Epic's 4096, and the reason is that the atlas is now
-/// REAL: 4096 pages at `Depth32Float` is 256 MiB, and this engine's
-/// existing fixed shadow allocations are 152 MiB. 2048 pages is **128
-/// MiB — less than what stands today for four casting lights**, which
-/// is the comparison that matters on a handheld with shared memory.
-///
-/// The measurement it has to hold: 1681 pages for a hundred and one
-/// lights at 400x400. `KOOCH_SHADOW_POOL_PAGES` raises it to Epic's
-/// figure, or past it.
 pub const DEFAULT_PAGES: u32 = 2048;
 
 /// What the pool may be sized to.
-///
-/// The floor is absurdly small on purpose: overflow is the one failure
-/// mode nobody recognises by sight — Epic's own shows up as
-/// checkerboard corruption — so a test has to be able to fill the pool
-/// deliberately. The ceiling is where Epic's tuning notes say the pool
-/// starts thrashing rather than helping.
 pub const PAGES_RANGE: (u32, u32) = (4, 8192);
 
 /// Views a single pool may be sliced between.
-///
-/// The editor draws two and a game draws one. The ceiling is a guard
-/// rather than a design: a slice thinner than a handful of pages is a
-/// view with no shadows at all, and a silent one.
 pub const VIEWS_RANGE: (u32, u32) = (1, 8);
 
 /// How the physical pool is laid out.
-///
-/// 🔴 `views` is part of the layout and not a detail of the caller. The
-/// atlas is one array texture with a layer per view, so the number of
-/// views decides the layer size — change it and the whole thing is a
-/// different texture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PoolConfig {
     /// Physical pages the budget asks for, across every view. Epic's
@@ -97,22 +36,7 @@ pub struct PoolConfig {
     pub pages: u32,
     /// Cameras sharing it.
     pub views: u32,
-    /// Pages a layer may hold across, from the device's texture limit
-    /// (#1016).
-    ///
-    /// 🔴 The atlas used to be ONE square layer per view, so the budget
-    /// and the texture width were the same knob: 6144 pages across the
-    /// editor's two views is 56x56 pages — 7168 texels — and the same
-    /// pool across the game's ONE view is 79x79, **10112, past the 8192
-    /// limit**. `create_texture` returned an error texture and the build
-    /// rendered nothing.
-    ///
-    /// With a cap the two come apart: the layer stops growing and the
-    /// LAYERS multiply instead, so the page budget is whatever was
-    /// asked for and the texture is whatever the device can hold.
-    ///
-    /// `u32::MAX` is "no device said otherwise", which is what every
-    /// test and every default gets.
+    /// Pages a layer may hold across, from the device's texture limit (#1016).
     pub row_cap: u32,
 }
 
@@ -129,28 +53,12 @@ impl Default for PoolConfig {
 
 impl PoolConfig {
     /// Cameras the pool is really sliced between — `views`, clamped.
-    ///
-    /// 🔴 Read this and never the field. The atlas clamps its layer
-    /// count and the mark bitmap sizes itself from the same number; two
-    /// readings of it that disagree put a camera on a layer the texture
 
     /// The same pool, told how wide a layer the device can hold.
-    ///
-    /// 🔴 It no longer shrinks the budget. The previous version clamped
-    /// `pages` until one square layer fit, which cost a third of the
-    /// page budget on a single-view build — 6144 asked, 4096 granted.
-    /// The cap belongs on the LAYER; the pages then spill into more of
-    /// them (#1016).
     pub fn fit_atlas(mut self, max_side: u32, page: u32) -> Self {
         let device = (max_side / page.max(1)).max(1);
-        // 🔴 An override that can only make the layer SMALLER, and it
-        // exists because the multi-layer path is otherwise unreachable
-        // where anyone can look at it. The pool is split between views,
-        // so the editor's two cameras get half each: even the maximum
-        // 8192 pages is 4096 a view, which is exactly one 64x64 layer.
-        // Only a single-view build ever crosses — and a build has no
-        // Shadow pages panel. A cap the tester can lower turns "trust
-        // the unit test" into "look at it".
+        // 🔴 An override that can only make the layer SMALLER, and it exists because the multi-layer
+        // path is otherwise unreachable where anyone can look at it.
         self.row_cap = row_cap_from_environment().unwrap_or(device).min(device);
         self
     }
@@ -171,11 +79,6 @@ impl PoolConfig {
     }
 
     /// Pages across one view's layer, in both axes.
-    ///
-    /// Square, because a long strip wastes the second dimension of
-    /// every texture limit there is: 8192 pages in a row is past
-    /// `max_texture_dimension_2d` the moment a page is more than 8
-    /// texels.
     pub fn per_row(&self) -> u32 {
         let (pages, views) = self.clamped();
         let square = ((pages.div_ceil(views)) as f64).sqrt().ceil().max(1.0) as u32;
@@ -190,10 +93,6 @@ impl PoolConfig {
     }
 
     /// Layers one view needs to hold its share of the budget (#1016).
-    ///
-    /// One until the cap bites. Past it the layer stops widening and
-    /// this grows instead, which is the whole point: 6144 pages across
-    /// one view is two layers of 4096, not one square of 10112.
     pub fn layers_per_view(&self) -> u32 {
         let (pages, views) = self.clamped();
         pages.div_ceil(views).div_ceil(self.slice().max(1)).max(1)
@@ -205,15 +104,7 @@ impl PoolConfig {
         self.slice() * self.layers_per_view()
     }
 
-    /// The atlas's array depth. NOT the view count — see
-    /// [`Self::views`].
-    ///
-    /// 🔴 These two were one number while a view owned exactly one
-    /// layer, and every reader picked whichever meaning it happened to
-    /// need. Split, because a reader that wants "how many cameras" and
-    /// one that wants "how deep is the texture" now get different
-    /// answers, and mixing them puts a camera on a layer the texture
-    /// does not have.
+    /// The atlas's array depth. NOT the view count — see [`Self::views`].
     pub fn layers(&self) -> u32 {
         self.clamped().1 * self.layers_per_view()
     }
@@ -223,23 +114,12 @@ impl PoolConfig {
         self.clamped().1
     }
 
-    /// Pages the pool really holds, which is a view's slots times the
-    /// views.
-    ///
-    /// 🔴 Not `pages`: a layer is square, so the budget is rounded UP to
-    /// the next square rather than trimmed to fit. Asking for 2048 across
-    /// one view buys 2116. The number the atlas costs is this one, and
-    /// it is the one reported.
+    /// Pages the pool really holds, which is a view's slots times the views.
     pub fn total(&self) -> u32 {
         self.slots() * self.clamped().1
     }
 
     /// Where a view's slice starts, in global slot numbers.
-    ///
-    /// Slots are global so that a table entry is self-describing: the
-    /// layer is `slot / slice` and the texel origin comes from the
-    /// remainder. Nothing that samples a page has to be told which view
-    /// filled it.
     pub fn base(&self, view: u32) -> u32 {
         view.min(self.clamped().1 - 1) * self.slots()
     }
@@ -251,40 +131,6 @@ impl PoolConfig {
 }
 
 /// How long a page outlives the frame that asked for it.
-///
-/// # 🔴 Zero is the DANGEROUS value, which is the opposite of the guess
-///
-/// The instinct is that keeping a page longer is the risky half — a
-/// resident page holds the depth of the last frame that drew it, so
-/// surely a short age is the safe default. It is exactly backwards here,
-/// and it took a measurement to see why.
-///
-/// The raster redraws every resident page every frame, so a page's
-/// CONTENT is never stale no matter how long it lives. What a short age
-/// costs is the page's ADDRESS: at zero, every page is evicted and
-/// re-taken each frame, its slot comes back off a free list in whatever
-/// order the GPU's threads got there, and the same page lands somewhere
-/// new. `a_resident_page_keeps_its_slot` measures it — page 450494
-/// moved from slot 2 to slot 1 with the camera and the sun standing
-/// still.
-///
-/// That matters because the shading reads the page TABLE to find a
-/// page's slot and then samples the ATLAS at it, and the two are filled
-/// by different passes. The two agree only while a page's slot holds. Before
-/// persistence they agreed by accident — the allocator was a bump from
-/// zero and handed the same page the same slot. A free list has no such
-/// order, and the symptom is what the user saw: artefacts that flash and
-/// vanish whenever the camera or the lights move.
-///
-/// So the default is long. A page nothing stops asking for is never
-/// freed, never moves, and the fused pass keeps its guarantee.
-/// `KOOCH_SHADOW_PAGE_AGE` moves it; zero is reachable and is what the
-/// eviction tests use, but it is not a setting to ship.
-///
-/// ⚠️ The thing this genuinely still waits on is the NEXT step, not this
-/// one: rasterising only the pages that changed. That needs something to
-/// mark the pages a moving caster passed through, and until it exists
-/// the raster's answer is to redraw them all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PoolLife {
     /// This frame's index, counting up for the process's lifetime.
@@ -315,26 +161,12 @@ impl PoolLife {
 }
 
 /// Frames a page survives unrequested when nobody says otherwise.
-///
-/// 🔴 The FALLBACK only, for a caller with no clock. The real horizon
-/// is [`DEFAULT_AGE_SECONDS`], converted per frame — see
-/// `page_age_frames`. A constant in frames means the cache remembers
-/// less the faster the renderer gets, which is precisely backwards.
 pub const DEFAULT_MAX_AGE: u32 = 60;
 
 /// How long a page survives unrequested, when nobody says otherwise.
-///
-/// One second. Long enough that a camera sweeping across a scene and
-/// back finds its pages still there; short enough that the pool is not
-/// holding a minute of somewhere else. This was always the intent — it
-/// just used to be written as "60", which stopped meaning a second the
-/// moment the frame stopped taking 16.7 ms.
 pub const DEFAULT_AGE_SECONDS: f32 = 1.0;
 
 /// `KOOCH_SHADOW_ROW_CAP`, read once — pages a layer may hold across.
-///
-/// Only ever narrows what the device allows, so it cannot be used to
-/// ask for a texture the driver would refuse.
 pub fn row_cap_from_environment() -> Option<u32> {
     static CAP: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
     *CAP.get_or_init(|| {
@@ -379,30 +211,7 @@ pub fn age_from_environment() -> u32 {
     })
 }
 
-/// The page table and the allocator's state, rebuilt when the pool is
-/// resized.
-///
-/// 🔴 Aged **one view at a time, by a pass** — `age_view` in
-/// `page_mark.wgsl` — and not by `clear_buffer`. The table is shared
-/// between the cameras and each of them marks, rasters and shades in
-/// turn: wiping the whole table at the top of a frame leaves whichever
-/// view marks second reading what the first one just erased. [`Self::clear`] remains for the one caller that
-/// really does own the whole table — a test, or a rebuild.
-///
-/// # 🔴 It PERSISTS, and that is what the third buffer is for
-///
-/// A page is not freed because a frame ended. It is freed because
-/// `max_age` frames passed with nothing asking for it — Epic's
-/// `MaxPageAgeSinceLastRequest` — so a shadow that does not change is
-/// rasterised once and then read for as long as the camera keeps
-/// wanting it. `ages` records when each entry was last requested and
-/// `alloc` holds the per-view free list the eviction pushes onto.
-///
-/// ⚠️ What that buys has a matching cost: a resident page's depth is as
-/// old as the last time it was drawn. Nothing here invalidates a page
-/// because a caster inside it MOVED, so with `max_age` above zero a
-/// moving object leaves its shadow behind. That is the next machine and
-/// [`PoolLife`] is the knob that keeps it off until it exists.
+/// The page table and the allocator's state, rebuilt when the pool is resized.
 pub struct PagePool {
     /// The FLAT page table: `PAGE_CELL` words per VIRTUAL page, indexed
     /// by the page id itself. See `page_table.wgsl` for the entry
@@ -414,22 +223,14 @@ pub struct PagePool {
     alloc: wgpu::Buffer,
     config: PoolConfig,
     /// Virtual pages the table holds entries for, across every view.
-    ///
-    /// 🔴 A function of the LIGHT COUNT, not of the pool: the table is
-    /// one entry per addressable page. [`Self::ensure_entries`] grows
-    /// it, and the marker owns the number because the marker owns the
-    /// address space.
     entries: u32,
 }
 
 impl PagePool {
     pub fn new(device: &wgpu::Device, config: PoolConfig) -> Self {
-        // 🔴 Said out loud because a BUILD has no Shadow pages panel,
-        // and the layer split only ever happens in a build: the pool is
-        // divided between views, so the editor's two cameras never
-        // cross a layer boundary. Without this line the one
-        // configuration that exercises the multi-layer path is also the
-        // one nobody can inspect.
+        // 🔴 Said out loud because a BUILD has no Shadow pages panel, and the layer split only ever
+        // happens in a build: the pool is divided between views, so the editor's two cameras never
+        // cross a layer boundary.
         tracing::info!(
             target: "kooch_render::shadow",
             pages = config.pages,
@@ -474,13 +275,8 @@ impl PagePool {
         true
     }
 
-    /// Grows the table to `entries` virtual pages, and reports whether
-    /// the buffers were replaced — in which case every entry is gone
-    /// and the caller flags a rebuild.
-    ///
-    /// 🔴 The allocator goes with the table. A free list that outlives
-    /// the table it was built for hands out slots two entries both
-    /// believe they own, and the second one wins silently.
+    /// Grows the table to `entries` virtual pages, and reports whether the buffers were replaced —
+    /// in which case every entry is gone and the caller flags a rebuild.
     pub fn ensure_entries(&mut self, device: &wgpu::Device, entries: u32) -> bool {
         if entries <= self.entries {
             return false;
@@ -503,16 +299,7 @@ impl PagePool {
         &self.alloc
     }
 
-    /// Empties the WHOLE table and resets the allocator, every view's
-    /// entries included.
-    ///
-    /// ⚠️ Only correct where there is exactly one view — a test — or
-    /// where the pool has just been rebuilt and no entry in it names a
-    /// slot that still exists. The per-frame reset is `age_view`.
-    ///
-    /// 🔴 `alloc` has to go with the table. A free list that outlives
-    /// the table it was built for hands out slots two entries both
-    /// believe they own, and the second one wins silently.
+    /// Empties the WHOLE table and resets the allocator, every view's entries included.
     pub fn clear(&self, encoder: &mut wgpu::CommandEncoder) {
         encoder.clear_buffer(&self.slots, 0, None);
         encoder.clear_buffer(&self.alloc, 0, None);
@@ -534,21 +321,9 @@ fn table_buffer(device: &wgpu::Device, label: &str, entries: u32) -> wgpu::Buffe
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PoolCounts {
     /// Pages that asked for a physical slot.
-    ///
-    /// 🔴 **Fewer than `MarkCounts::resident`, on purpose.** Marking a
-    /// local light's page is a measurement — this track exists to say
-    /// what a hundred casting lights would cost — but only the sun's
-    /// pages are rasterised, so only they claim. The difference is
-    /// exactly the pages the frame would need if the local raster
-    /// existed, which is the number the whole census was for.
     pub claims: u32,
-    /// Requests that found their page ALREADY RESIDENT, so nothing was
-    /// allocated and nothing has to be rasterised again.
-    ///
-    /// 🔴 The number persistence exists to produce. `claims` against
-    /// this is the whole reading: a frame where almost every request is
-    /// a reuse is a frame whose shadow atlas is mostly last frame's,
-    /// which is what makes a hundred casting lights affordable at all.
+    /// Requests that found their page ALREADY RESIDENT, so nothing was allocated and nothing has to
+    /// be rasterised again.
     pub reused: u32,
     /// Resident pages this view carried over — requested recently enough
     /// not to be evicted.
@@ -558,21 +333,16 @@ pub struct PoolCounts {
     /// Slots the free list could not hold, which is a double free.
     /// 🔴 Always zero, or the allocator is wrong.
     pub leaked: u32,
-    /// Claims past the end of the pool. Non-zero means pages went
-    /// unshadowed this frame; Epic's own overflow shows up as
-    /// checkerboard corruption, so the counter exists to name it before
-    /// anyone has to recognise it by sight.
+    /// Claims past the end of the pool. Non-zero means pages went unshadowed this frame; Epic's own
+    /// overflow shows up as checkerboard corruption, so the counter exists to name it before anyone
+    /// has to recognise it by sight.
     pub overflow: u32,
-    /// Marked pages the seating plan turned away: their rank was past
-    /// the cutoff the slice's budget reaches (#942). The honest number
-    /// for "the frame wanted more than the pool holds" — unlike a
-    /// first-come miss, a denial names WHAT was sacrificed: the finest
-    /// levels first, the sun never before the locals.
+    /// Marked pages the seating plan turned away: their rank was past the cutoff the slice's budget
+    /// reaches (#942).
     pub denied: u32,
-    /// Residents evicted by pressure rather than by age: the plan did
-    /// not fund their rank this frame, so their seat went to a higher
-    /// rank. Persistent churn here with a still camera means the
-    /// demand is oscillating around the cutoff.
+    /// Residents evicted by pressure rather than by age: the plan did not fund their rank this
+    /// frame, so their seat went to a higher rank. Persistent churn here with a still camera means
+    /// the demand is oscillating around the cutoff.
     pub preempted: u32,
     /// The rank the plan funded down to. `RANKS` (32) when everything
     /// fit; the sun's clipmap occupies ranks 0..17, the local chains
@@ -586,21 +356,12 @@ pub struct PoolCounts {
     /// have given up `LOCAL_BIAS_MAX` levels and the demand still does
     /// not fit — the shadow everyone sees degrades last.
     pub bias_sun: u32,
-    /// Slots the bump allocator has ever handed out, which never goes
-    /// down: a freed slot returns to the free list, not to the bump. Once
-    /// this reaches [`Self::capacity`] every allocation must come off the
-    /// free list, and a request that arrives with the list empty fails
-    /// even though slots are logically free.
+    /// Slots the bump allocator has ever handed out, which never goes down: a freed slot returns to
+    /// the free list, not to the bump.
     pub high: u32,
     /// Slots on this view's free list after the frame was seated.
     pub free: u32,
-    /// Pages the frame's screen asked for — the total `plan_view`
-    /// budgeted against.
-    ///
-    /// 🔴 What the plan does NOT count is the residents this frame did
-    /// not ask for. They hold slots, `preempt_view` is supposed to be
-    /// the valve for them, and `demand + free + preempted` against the
-    /// capacity is what says whether that valve closed the arithmetic.
+    /// Pages the frame's screen asked for — the total `plan_view` budgeted against.
     pub demand: u32,
     /// Slots taken off the free list this frame.
     pub popped: u32,
@@ -609,28 +370,15 @@ pub struct PoolCounts {
     /// Slots given back to the free list this frame.
     pub pushed: u32,
     /// Pops that found the list empty.
-    ///
-    /// 🔴 With free slots still in the ledger, this is contention and
-    /// not a full pool: the count and the array are two atomics with
-    /// nothing ordering them, so a popper that drives the count below
-    /// zero makes another popper read an underflow.
     pub empty: u32,
-    /// Physical pages THIS VIEW owns, so the two numbers above are
-    /// readable without knowing how the build was configured.
-    ///
-    /// 🔴 The slice, not the whole pool. A view cannot spend another
-    /// view's pages, so measuring it against the total would report a
-    /// budget half spent at the moment it ran out.
+    /// Physical pages THIS VIEW owns, so the two numbers above are readable without knowing how the
+    /// build was configured.
     pub capacity: u32,
 }
 
 impl PoolCounts {
-    /// Slots the pool is holding after this frame: what survived the
-    /// ageing, plus what was allocated on top of it.
-    ///
-    /// 🔴 NOT `claims`. Since the pool persists, `claims` is what was
-    /// NEW this frame — a number that falls to zero on a still camera
-    /// while the pool stays exactly as full as it was.
+    /// Slots the pool is holding after this frame: what survived the ageing, plus what was
+    /// allocated on top of it.
     pub fn allocated(&self) -> u32 {
         // `alive` is counted by the ageing, BEFORE the seat passes run;
         // what pressure then preempted is no longer held.
@@ -650,12 +398,7 @@ impl PoolCounts {
         self.claims + self.reused
     }
 
-    /// How much of this frame's work the pool answered from what it
-    /// already had, as a percentage.
-    ///
-    /// 🔴 The one number that says whether persistence is doing
-    /// anything. 100 % is a frame that rasterised no shadow at all
-    /// because every page it wanted was already drawn.
+    /// How much of this frame's work the pool answered from what it already had, as a percentage.
     pub fn hit_rate(&self) -> f32 {
         let requests = self.requests();
         if requests == 0 {
@@ -664,12 +407,8 @@ impl PoolCounts {
         self.reused as f32 / requests as f32 * 100.0
     }
 
-    /// Whether the allocator's ledger closes: every slot is either held
-    /// by a resident or sitting on the free list.
-    ///
-    /// Only meaningful once the bump has handed out the whole slice —
-    /// before that, the untouched tail is neither resident nor free and
-    /// the sum is short by design.
+    /// Whether the allocator's ledger closes: every slot is either held by a resident or sitting on
+    /// the free list.
     pub fn balanced(&self) -> bool {
         self.high < self.capacity || self.allocated() + self.free == self.capacity
     }

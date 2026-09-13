@@ -80,9 +80,8 @@ fn indirect_args_instance_count_matches_visible_meshlets_when_all_in_frustum() {
     let visible_count = read_u32(&device, &queue, cull.visible_count_buffer(), 0);
     let args = read_indirect_args(&device, &queue, cull.indirect_args_buffer());
 
-    // Backface cone cull may drop meshlets whose normals all face away
-    // from the camera (e.g. the +Z, +X, -X, +Y, -Y faces of a cube
-    // viewed from -Z). Frustum-only would have kept them; that's
+    // Backface cone cull may drop meshlets whose normals all face away from the camera (e.g. the
+    // +Z, +X, -X, +Y, -Y faces of a cube viewed from -Z). Frustum-only would have kept them; that's
     // exactly the win we want from PR-5b.
     assert!(
         visible_count >= 1 && visible_count <= gpu_mesh.meshlet_count,

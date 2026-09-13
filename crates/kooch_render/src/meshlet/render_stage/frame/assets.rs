@@ -1,12 +1,4 @@
 //! GPU mesh cache upkeep + ECS asset sync for [`MeshletRenderStage`].
-//!
-//! - [`Self::ensure_gpu_mesh`] registers a single [`MeshletMesh`] under
-//!   a GUID into the pool (idempotent).
-//! - [`Self::gpu_mesh_count`] reports the current registry size.
-//! - [`Self::sync_assets_to_gpu`] resolves every visible
-//!   `MeshRenderer.mesh` GUID through the [`AssetServer`] and uploads
-//!   any that aren't yet GPU-resident. Also runs the per-frame material
-//!   pool sync prior to cull dispatch.
 
 use kooch_core::Guid;
 use kooch_core::asset_loader::AssetServer;
@@ -18,15 +10,9 @@ use crate::meshlet::asset::MeshletMesh;
 use super::super::MeshletRenderStage;
 
 impl MeshletRenderStage {
-    /// Registers `mesh` under `guid` in the global mesh pool.
-    /// Idempotent — the underlying [`MeshletPipeline::register_mesh`]
-    /// caches by GUID, so a repeat call with the same GUID is a
-    /// no-op. Marks the pool dirty so the next
-    /// [`Self::render_with_assets`] rebuilds the GPU mirror.
-    ///
-    /// The `device` argument is kept on the signature for backward
-    /// compatibility — the actual upload is deferred to render time
-    /// because batched registrations only need one GPU upload.
+    /// Registers `mesh` under `guid` in the global mesh pool. Idempotent — the underlying
+    /// `MeshletPipeline::register_mesh` caches by GUID, so a repeat call with the same GUID is a
+    /// no-op.
     pub fn ensure_gpu_mesh(&mut self, _device: &wgpu::Device, guid: Guid, mesh: &MeshletMesh) {
         let before = self.pipeline.registered_count();
         let bytes_before = self.pipeline.pool().byte_size();
@@ -34,10 +20,8 @@ impl MeshletRenderStage {
         let after = self.pipeline.registered_count();
         if after > before {
             self.pool_dirty = true;
-            // #463.5 — credit the freshly-appended pool bytes to the
-            // engine VRAM tracker (when wired). Idempotent calls to
-            // register_mesh with the same GUID return the cached
-            // handle without growing the pool, so `bytes_after ==
+            // engine VRAM tracker (when wired). Idempotent calls to register_mesh with the same
+            // GUID return the cached handle without growing the pool, so `bytes_after ==
             // bytes_before` and the diff is zero.
             if let Some(tracker) = &self.vram_tracker {
                 let bytes_after = self.pipeline.pool().byte_size();
@@ -46,11 +30,8 @@ impl MeshletRenderStage {
         }
     }
 
-    /// Registers `mesh` under `guid`, replacing whatever was there, and
-    /// marks the pool for a rebuild.
-    ///
-    /// For meshes that are edited rather than loaded. See
-    /// [`MeshletPipeline::replace_mesh`] for what it leaks and why.
+    /// Registers `mesh` under `guid`, replacing whatever was there, and marks the pool for a
+    /// rebuild.
     pub fn replace_gpu_mesh(&mut self, guid: Guid, mesh: &MeshletMesh) {
         let bytes_before = self.pipeline.pool().byte_size();
         self.pipeline.replace_mesh(guid, mesh);
@@ -72,20 +53,8 @@ impl MeshletRenderStage {
         self.pipeline.registered_count()
     }
 
-    /// Resolves every visible `MeshRenderer.mesh` GUID through the
-    /// `AssetServer`, fetches the meshlet asset from
-    /// `Assets<MeshletMesh>`, and uploads any GUID that is not yet
-    /// GPU-resident.
-    ///
-    /// Idempotent: GUIDs already in the pool's registry are skipped
-    /// without touching the AssetServer or Assets storage. Per-frame
-    /// cost when steady-state is one ECS query + N registry lookups.
-    ///
-    /// Failure modes (logged, never panic):
-    /// - `AssetServer` resource missing → noop, log warn.
-    /// - GUID not registered in `AssetDatabase` → log warn, skip entity.
-    /// - Loader rejects the bytes → log warn, skip entity.
-    /// - `Assets<MeshletMesh>` missing or stale handle → log warn, skip.
+    /// Resolves every visible `MeshRenderer.mesh` GUID through the `AssetServer`, fetches the
+    /// meshlet asset from `Assets<MeshletMesh>`, and uploads any GUID that is not yet GPU-resident.
     pub fn sync_assets_to_gpu(
         &mut self,
         device: &wgpu::Device,
@@ -93,15 +62,8 @@ impl MeshletRenderStage {
         resources: &mut Resources,
     ) {
         // Material pool sync first: the meshlet scene system reads
-        // `MaterialPipeline.lookup_or_fallback` when assembling
-        // `MeshInstance.material_id`, so any newly-picked GUID has
-        // to be in the registry before the cull dispatch fires.
-        // `queue` is now an explicit parameter so the caller never
-        // has to leave `GpuContext` in `Resources` while we're here —
-        // the editor render system removes it for the whole frame, and
-        // the previous in-method `resources.remove::<GpuContext>()`
-        // returned `None` silently in that path, dropping every
-        // material picked through the inspector (bug #533).
+        // `MaterialPipeline.lookup_or_fallback` when assembling `MeshInstance.material_id`, so any
+        // newly-picked GUID has to be in the registry before the cull dispatch fires.
         if let Some(mut material_pipeline) = resources.remove::<crate::material::MaterialPipeline>()
         {
             material_pipeline.sync_from_resources(device, queue, resources);
@@ -113,17 +75,14 @@ impl MeshletRenderStage {
             );
         }
 
-        // Meshes built this frame reach the pool before anything is
-        // looked up on disk, so a generated GUID never counts as pending
-        // and never sends the AssetServer after a file that does not
-        // exist.
+        // Meshes built this frame reach the pool before anything is looked up on disk, so a
+        // generated GUID never counts as pending and never sends the AssetServer after a file that
+        // does not exist.
         if let Some(mut generated) = resources.remove::<crate::meshlet::GeneratedMeshes>() {
             for (guid, mesh) in generated.drain() {
-                // 🔴 Replace, not ensure. A generated mesh is published
-                // again every time it CHANGES, and `ensure` answers with
-                // the handle it cached the first time — the block kept
-                // the shape it was born with while its file and its
-                // collider both moved.
+                // 🔴 Replace, not ensure. A generated mesh is published again every time it CHANGES,
+                // and `ensure` answers with the handle it cached the first time — the block kept
+                // the shape it was born with while its file and its collider both moved.
                 self.replace_gpu_mesh(guid, &mesh);
             }
             resources.insert(generated);
@@ -134,12 +93,9 @@ impl MeshletRenderStage {
             .iter()
             .copied()
             .filter(|guid| self.pipeline.lookup(*guid).is_none())
-            // ⚠️ The unfinished half of #1091. A block's renderer still
-            // names the GUID of the file its mesh was generated FROM,
-            // so on the frame before the drain publishes, this would ask
-            // the server for a `.block`. The collider no longer needs a
-            // guard like this — it is addressed by entity now — and this
-            // one goes when the renderer follows.
+            // ⚠️ The unfinished half of #1091. A block's renderer still names the GUID of the file
+            // its mesh was generated FROM, so on the frame before the drain publishes, this would
+            // ask the server for a `.block`.
             .filter(|guid| reads_as_mesh(resources, *guid))
             .collect();
         if !referenced.is_empty() {
@@ -159,10 +115,9 @@ impl MeshletRenderStage {
             return;
         }
 
-        // 🔴 Every mesh in the scene failing is not N warnings, it is one
-        // broken run — and the actionable line was buried under a
-        // thousand correct ones. Said once, when the whole set is
-        // unresolved and none of it has been reported yet.
+        // 🔴 Every mesh in the scene failing is not N warnings, it is one broken run — and the
+        // actionable line was buried under a thousand correct ones. Said once, when the whole set
+        // is unresolved and none of it has been reported yet.
         let all_broken = pending.len() == referenced.len() && self.unresolved.is_empty();
         if all_broken && self.pipeline.registered_count() == 0 {
             tracing::error!(
@@ -175,10 +130,9 @@ impl MeshletRenderStage {
         }
 
         for guid in pending {
-            // Take the AssetServer out so we can pass `resources`
-            // (which holds `Assets<MeshletMesh>`) by &mut into the
-            // load call. Re-insert before any continue/return so we
-            // never leak the resource.
+            // Take the AssetServer out so we can pass `resources` (which holds
+            // `Assets<MeshletMesh>`) by &mut into the load call. Re-insert before any
+            // continue/return so we never leak the resource.
             let Some(mut server) = resources.remove::<AssetServer>() else {
                 tracing::warn!(
                     target: "kooch_render::meshlet::sync",
@@ -235,10 +189,6 @@ impl MeshletRenderStage {
 }
 
 /// Whether this GUID names a file a mesh loader can read.
-///
-/// Unregistered or untyped answers `true`: the type lands on the entry
-/// the first time something loads it, so refusing earlier would stop a
-/// mesh from ever being read.
 fn reads_as_mesh(resources: &Resources, guid: Guid) -> bool {
     let Some(type_name) = resources
         .get::<kooch_core::asset_database::AssetDatabase>()

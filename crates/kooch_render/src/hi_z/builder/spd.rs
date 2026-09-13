@@ -4,16 +4,8 @@ use super::super::{HI_Z_FORMAT, SPD_PYRAMID_SLOT_COUNT};
 use super::types::{HiZ, SpdConstants};
 
 impl HiZ {
-    /// Records the SPD pyramid build into `encoder`. `depth_view`
-    /// must reference a Depth32Float texture matching the dimensions
-    /// passed to [`Self::new`].
-    ///
-    /// The `arena` is required: the caller MUST keep the per-call
-    /// SPD bind group alive past `queue.submit`. wgpu does not
-    /// internally Arc-clone bind groups on `set_bind_group`, and
-    /// Mesa radv invalidates them if the local goes out of scope
-    /// before the GPU reaches the dispatch. See PR #479 for the
-    /// arena pattern this matches.
+    /// Records the SPD pyramid build into `encoder`. `depth_view` must reference a Depth32Float
+    /// texture matching the dimensions passed to [`Self::new`].
     pub fn build_from_depth(
         &self,
         device: &wgpu::Device,
@@ -32,11 +24,8 @@ impl HiZ {
             &self.spd_constants_buffer,
         );
 
-        // First dispatch: one workgroup per 64×64 virtual-source
-        // tile. Each workgroup writes 32×32 pixels to mip_1
-        // (= pyramid mip 0). `virtual_w/h` = source rounded up to
-        // next pow2 (with +1 to force strict round); pyramid mip 0
-        // size = virtual / 2, so workgroups = virtual / 64.
+        // First dispatch: one workgroup per 64×64 virtual-source tile. Each workgroup writes 32×32
+        // pixels to mip_1 (= pyramid mip 0).
         let wg_x = (self.virtual_w / 64).max(1);
         let wg_y = (self.virtual_h / 64).max(1);
         {

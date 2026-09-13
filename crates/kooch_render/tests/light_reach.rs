@@ -1,28 +1,4 @@
-//! #835's acceptance: a light out of reach costs nothing and changes
 //! nothing.
-//!
-//! `inti_light_contribution` returns before both BRDF layers, the shadow
-//! cube and the contact march when the light's irradiance at this
-//! fragment is zero. The saving is real — the froxel hands the shading
-//! loop every light whose sphere touches the cell's AABB, and roughly 26
-//! of the ~40 in the busiest cell reach no part of a given pixel (#820) —
-//! but a saving is only worth having if the image is untouched, and that
-//! is what this file pins.
-//!
-//! 🔴 **Clustering is off in every test here, on purpose.** With the grid
-//! on, a light that reaches nothing might also have been dropped by
-//! `cluster_raster.wgsl` before the shading loop ever saw it, and a test
-//! that cannot tell those two apart passes whether or not the early-out
-//! exists. Unclustered, the shader walks every light in the scene
-//! (`inti_pbr.wgsl` — `if (inti.clustered == 0u)`), so the cut under test
-//! is the only thing that can discard one.
-//!
-//! `a_reachable_light_changes_pixels` is not a nicety: without it, the
-//! first test would also pass if the light were inactive, mispositioned,
-//! or never uploaded. It is what proves the rig would have noticed.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test light_reach
 
 mod common;
 
@@ -169,13 +145,8 @@ fn difference(a: &[u8], b: &[u8]) -> (usize, u8) {
     (differing, worst)
 }
 
-/// The assertion the issue exists to make: adding a light that reaches
-/// nothing is not merely cheap, it is invisible.
-///
-/// Byte-for-byte rather than within a tolerance. The early-out returns
-/// the value the arithmetic below it would have reached — anything
-/// multiplied by an irradiance of exactly zero — so a single differing
-/// byte means the cut fired where the light still had something to give.
+/// The assertion the issue exists to make: adding a light that reaches nothing is not merely cheap,
+/// it is invisible.
 #[test]
 fn an_unreachable_light_changes_nothing() {
     let Some(without) = render(None) else {
@@ -211,14 +182,9 @@ fn a_reachable_light_changes_pixels() {
     );
 }
 
-/// `inti_distance_attenuation` windows with `saturate(1 - factor * factor)`,
-/// which is zero **at** the range and not merely near it. A light whose
-/// distance to the closest lit point equals its range therefore adds
-/// nothing anywhere, and the cut is allowed to take it.
-///
-/// Worth its own test because the alternative windows in circulation —
-/// an exponential falloff, or a `smoothstep` that eases out — are all
-/// asymptotic. Under any of them this cut would darken the scene.
+/// `inti_distance_attenuation` windows with `saturate(1 - factor * factor)`, which is zero **at**
+/// the range and not merely near it. A light whose distance to the closest lit point equals its
+/// range therefore adds nothing anywhere, and the cut is allowed to take it.
 #[test]
 fn range_is_an_exact_boundary() {
     let Some(without) = render(None) else {

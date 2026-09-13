@@ -1,20 +1,6 @@
-//! #441's acceptance: lights that light.
-//!
-//! The assertion this whole issue exists to make true is the first test
-//! below — **a scene with a light and a scene without one cannot render
-//! the same**. Before Inti they rendered identically, because the
-//! shading model was `normal × 0.5 + 0.5` and no render crate read a
-//! light at all.
-//!
-//! The rest pin the shape of the result rather than exact values: a
-//! sphere lit from the camera has to be bright where it faces the light
-//! and dark where it faces away. Pinning pixel values would break on
-//! every legitimate BRDF change; pinning the contrast breaks only when
-//! shading stops responding to lights, which is the failure that
-//! shipped for as long as this engine has existed.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test inti_lighting
+//! The assertion this whole issue exists to make true is the first test below — **a scene with a
+//! light and a scene without one cannot render the same**. Before Inti they rendered identically,
+//! because the shading model was `normal × 0.5 + 0.5` and no render crate read a light at all.
 
 mod common;
 
@@ -108,10 +94,6 @@ fn rig() -> Option<Rig> {
 }
 
 /// Adds a directional light pointing along `direction`.
-///
-/// The direction comes from the transform's -Z, never from a field —
-/// that is the scope correction #441 was rewritten around, so the test
-/// exercises it the same way an author would: by rotating the entity.
 fn add_directional(resources: &mut Resources, direction: Vec3, intensity: f32) -> Entity {
     add_coloured(resources, direction, intensity, Vec3::ONE)
 }
@@ -160,11 +142,8 @@ fn brightness(pixels: &[u8], cx: u32, cy: u32) -> f32 {
     common::luminance_at(pixels, SIZE, cx, cy, 3)
 }
 
-/// Distance from the centre to the sphere's silhouette, measured on the
-/// centre row rather than derived from the projection. Hard-coding a
-/// pixel offset makes a test that samples the background the day
-/// someone changes the camera, and a background sample passes every
-/// contrast assertion for the wrong reason.
+/// Distance from the centre to the sphere's silhouette, measured on the centre row rather than
+/// derived from the projection.
 fn silhouette_radius(pixels: &[u8]) -> u32 {
     let cy = SIZE / 2;
     let mut radius = 0;
@@ -202,17 +181,7 @@ fn a_scene_with_a_light_and_one_without_cannot_render_the_same() {
     );
 }
 
-/// #441's other acceptance criterion, near-verbatim: a sphere lit by
-/// one `DirectionalLight` has to be bright where it faces the light and
-/// dark where it faces away.
-///
-/// Measured across the light's axis rather than from the centre
-/// outwards. A radial profile looks like the obvious test and is a poor
-/// one: at the silhouette the surface still catches a strong grazing
-/// specular, and ACES compresses what is a 1.6× difference in radiance
-/// into 1.3× on screen. Pole against pole, the two samples differ by
-/// `N·L = +0.7` against `N·L = -0.7`, and the second one receives
-/// nothing at all.
+/// one `DirectionalLight` has to be bright where it faces the light and dark where it faces away.
 #[test]
 fn a_lit_sphere_is_bright_facing_the_light_and_dark_facing_away() {
     let Some(mut rig) = rig() else {
@@ -221,13 +190,6 @@ fn a_lit_sphere_is_bright_facing_the_light_and_dark_facing_away() {
     };
 
     // Pointing along -Z: away from the camera, into the sphere's face.
-    //
-    // Ambient off. It arrives from every direction by construction, so
-    // it contributes almost equally at the pole and at the edge — which
-    // is exactly the difference this test measures, and at the default
-    // intensity it is the same order of magnitude as the key light.
-    // Leaving it on would test the ambient term while claiming to test
-    // the directional one.
     rig.resources.insert(kooch_lighting::AmbientLight {
         intensity: 0.0,
         ..Default::default()
@@ -343,13 +305,8 @@ fn the_normals_debug_view_differs_from_lit_shading() {
     );
 }
 
-/// The single-light view (#743) is only a view of ONE light if a second
-/// one changes nothing about it.
-///
-/// Two suns from opposite poles, so the full frame lights both halves of
-/// the sphere and neither light alone does. If the view were summing
-/// both — or ignoring the selection and shading everything — the pole
-/// facing away from the selected light would not go dark.
+/// The single-light view (#743) is only a view of ONE light if a second one changes nothing about
+/// it.
 #[test]
 fn isolating_a_light_leaves_the_other_ones_half_dark() {
     let Some(mut rig) = rig() else {
@@ -395,12 +352,8 @@ fn isolating_a_light_leaves_the_other_ones_half_dark() {
     );
 }
 
-/// Greyscale is half the point: with the albedo gone, a coloured light
-/// must not put its colour back.
-///
-/// A green sun over a white sphere renders green in the lit frame and
-/// has to render grey here, or the view is answering "what colour is
-/// this" when the question was "how much light lands here".
+/// Greyscale is half the point: with the albedo gone, a coloured light must not put its colour
+/// back.
 #[test]
 fn the_isolated_light_renders_grey_whatever_colour_it_is() {
     let Some(mut rig) = rig() else {

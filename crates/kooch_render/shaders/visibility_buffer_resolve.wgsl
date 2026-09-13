@@ -1,26 +1,13 @@
-// visibility_buffer_resolve.wgsl — the R64 path's half of attribute
-// reconstruction (#440).
-//
-// Everything below the visibility-buffer read is shared with the R32
-// compute path and lives in `surface_reconstruct.wgsl`, which is
-// concatenated alongside this file. What stays here is what is
-// genuinely specific to this path: the 64-bit storage-texture binding,
-// the frame uniforms, and the `slot << 7` packing (the R32 path adds one
-// so that zero can mean background).
-//
-// WGSL has no #include, so this file is CONCATENATED in Rust ahead of
-// each material shader — see `compose_material_shader`.
+// visibility_buffer_resolve.wgsl — the R64 path's half of attribute reconstruction (#440).
 
 struct CameraUniforms {
     view_proj: mat4x4<f32>,
 }
 
 struct ScreenUniforms {
-    // Always the FULL resolution, on every path. #825 shades at a lower
-    // rate by dispatching fewer threads, not by lying about the screen:
-    // the froxel lookup and the contact-shadow dither are functions of
-    // the pixel coordinate, and both paths have to agree on what that
-    // coordinate is.
+    // Always the FULL resolution, on every path. #825 shades at a lower rate by dispatching fewer
+    // threads, not by lying about the screen: the froxel lookup and the contact-shadow dither are
+    // functions of the pixel coordinate, and both paths have to agree on what that coordinate is.
     size: vec2<u32>,
     material_id: u32,
     debug_mode: u32,

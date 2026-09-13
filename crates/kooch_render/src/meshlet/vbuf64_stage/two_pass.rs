@@ -1,19 +1,5 @@
-//! Two-pass material shading (#440) — the all-fragment replacement for
-//! the compute deferred on the R64 path.
-//!
-//! - **Pass 1** ([`Self::resolve_material_depth`]): a fullscreen fragment
-//!   pass reads the R64 vbuf and writes each covered pixel's `material_id`
-//!   into a `Depth16Unorm` target as `f32(id)/65535`.
-//! - **Pass 2** (one draw per registered slot): a fullscreen triangle
-//!   emits `slot/65535` as clip depth and `Equal`-depth-tests against the
-//!   material-depth target, so only that material's pixels shade. Each
-//!   pass binds the slot's own textures — no bindless array.
-//!
-//! Reuses the shared meshlet geometry bind group (widened to FRAGMENT
-//! visibility) for group 1; builds fragment-visible layouts for the vbuf/
-//! camera/screen (group 0), materials (group 2), and scene (group 3)
-//! bindings, and takes the per-material texture bind group (group 4) from
-//! the [`MaterialTexturePool`].
+//! Two-pass material shading (#440) — the all-fragment replacement for the compute deferred on the
+//! R64 path.
 
 use bytemuck::bytes_of;
 
@@ -33,10 +19,6 @@ use super::{CameraUbo, DEFERRED_COLOR_FORMAT, ScreenUbo, VBUF64_FORMAT};
 const MAX_SHADING_SLOTS: u32 = 256;
 
 /// Pass 2's pipeline, in one of its two variants.
-///
-/// `debug` decides whether the shader carries the debug views at all —
-/// not whether it takes a branch. The production variant is compiled
-/// from source that does not contain them (#743).
 fn build_shading_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
@@ -92,17 +74,6 @@ pub(super) struct MaterialTwoPass {
     resolve_bgl: wgpu::BindGroupLayout,
     shading_pipeline: wgpu::RenderPipeline,
     /// The same pipeline with the debug views concatenated in (#743).
-    ///
-    /// Built the first time somebody selects one, because a shipped game
-    /// never does: it neither compiles this nor carries a byte of it in
-    /// the pipeline it does run. The editor pays one compile, once, on
-    /// the frame the dropdown changes.
-    ///
-    /// A `OnceLock` rather than an `Option` so the whole render chain
-    /// stays on `&self`. Threading `&mut` up to the frame orchestrator
-    /// for a field written once, if ever, would be a large change to
-    /// call signatures in exchange for nothing; the steady-state cost
-    /// here is one atomic load per frame.
     shading_pipeline_debug: std::sync::OnceLock<wgpu::RenderPipeline>,
     /// Kept so the debug pipeline can be built later against the exact
     /// layout the production one uses.
@@ -197,10 +168,9 @@ impl MaterialTwoPass {
                     },
                     count: None,
                 },
-                // The scene depth, sampled. It is not an attachment
-                // during shading — that is the material-depth target —
-                // so it is free to be read, and the Hi-Z builder
-                // already reads the same view.
+                // The scene depth, sampled. It is not an attachment during shading — that is the
+                // material-depth target — so it is free to be read, and the Hi-Z builder already
+                // reads the same view.
                 wgpu::BindGroupLayoutEntry {
                     binding: MATERIAL_PASS_CONTACT_DEPTH_BINDING,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -320,11 +290,9 @@ impl MaterialTwoPass {
         }
     }
 
-    /// Runs pass 1 (material-depth resolve) then one pass 2 draw per
-    /// shading slot. Replaces `Vbuf64Deferred::shade_scene` for production
-    /// (`Off`) rendering on the R64 path.
-    /// The pipeline this frame draws with, compiling the debug variant
-    /// the first time one is asked for.
+    /// Runs pass 1 (material-depth resolve) then one pass 2 draw per shading slot. Replaces
+    /// `Vbuf64Deferred::shade_scene` for production (`Off`) rendering on the R64 path. The pipeline
+    /// this frame draws with, compiling the debug variant the first time one is asked for.
     fn pipeline_for(&self, device: &wgpu::Device, debug_mode: u32) -> &wgpu::RenderPipeline {
         if debug_mode == 0 {
             return &self.shading_pipeline;

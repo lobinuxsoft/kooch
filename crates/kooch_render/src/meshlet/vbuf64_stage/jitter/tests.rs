@@ -6,11 +6,6 @@ use glam::Vec4Swizzles;
 const COUNTS: [u32; 3] = [8, 18, 32];
 
 /// An offset outside the pixel is parallax, not anti-aliasing.
-///
-/// It would still look plausible — the image moves, the resolve blends,
-/// the result is soft — which is exactly why this is asserted rather
-/// than eyeballed. A sequence scaled by two produces a permanently
-/// blurred frame and nothing that says why.
 #[test]
 fn every_offset_stays_inside_one_pixel() {
     for phases in COUNTS {
@@ -24,17 +19,8 @@ fn every_offset_stays_inside_one_pixel() {
     }
 }
 
-/// The whole point of a low-discrepancy sequence: no two frames in a
-/// cycle sample the same place, and none of them sample the centre.
-///
-/// A sequence that repeats a point wastes the frame — the resolve
-/// integrates a sample it already has — and one that includes the exact
-/// centre wastes it twice over, because the unjittered image is the one
-/// every other sample is being averaged against.
-///
-/// 🔴 Asserted at every count, not just the base one. Halton stays
-/// injective however far it is taken, but a period that ever wraps to a
-/// term already used would degrade silently into a shorter sequence.
+/// The whole point of a low-discrepancy sequence: no two frames in a cycle sample the same place,
+/// and none of them sample the centre.
 #[test]
 fn a_cycle_visits_distinct_points() {
     for phases in COUNTS {
@@ -65,14 +51,7 @@ fn the_sequence_repeats_on_period() {
     }
 }
 
-/// 🔴 The count scales with the SQUARE of the ratio, because what the
-/// sequence covers is an area.
-///
-/// Scaling it linearly is the plausible-looking mistake: at 1.5× it
-/// would give 24 phases where the input pixels carry 2.25× less of the
-/// output, so the reconstruction is starved exactly where the upscaler
-/// is working hardest — and it reads as "FSR is soft", not as a jitter
-/// bug.
+/// 🔴 The count scales with the SQUARE of the ratio, because what the sequence covers is an area.
 #[test]
 fn phases_scale_with_the_area() {
     assert_eq!(phase_count(1280, 1280), JITTER_BASE_PHASES);
@@ -92,13 +71,7 @@ fn supersampling_keeps_the_base_count() {
     assert_eq!(phase_count(1920, 0), JITTER_BASE_PHASES);
 }
 
-/// 🔴 A degenerate width must not produce a sequence that never
-/// repeats.
-///
-/// Zero is reachable — a minimised window, a target queried a frame
-/// early — and unclamped it squares to tens of millions of phases. The
-/// image would go soft because the accumulation never closes a cycle,
-/// and nothing in a capture would say so.
+/// 🔴 A degenerate width must not produce a sequence that never repeats.
 #[test]
 fn a_zero_width_stays_bounded() {
     assert_eq!(phase_count(0, 1920), JITTER_MAX_PHASES);
@@ -106,12 +79,6 @@ fn a_zero_width_stays_bounded() {
 }
 
 /// 🔴 The assertion that catches the sign-and-scale family at once.
-///
-/// A point on the near plane, projected with and without jitter: the
-/// difference in NDC has to be the offset expressed in NDC units, which
-/// is the offset in pixels over half the viewport. Get the doubling
-/// wrong and the jitter is a quarter pixel (no anti-aliasing) or two
-/// (permanent blur), and both look like TAA being "not very good".
 #[test]
 fn the_shift_is_the_offset_in_ndc() {
     let size = (640u32, 400u32);
@@ -135,11 +102,9 @@ fn the_shift_is_the_offset_in_ndc() {
     }
 }
 
-/// The unjittered matrix has to come back untouched, because the motion
-/// vectors are computed from it. Jitter reaching them would describe
-/// itself as scene motion and the reprojection would cancel the exact
-/// signal the resolve accumulates — a TAA that runs, costs and does
-/// nothing.
+/// The unjittered matrix has to come back untouched, because the motion vectors are computed from
+/// it. Jitter reaching them would describe itself as scene motion and the reprojection would cancel
+/// the exact signal the resolve accumulates — a TAA that runs, costs and does nothing.
 #[test]
 fn the_unjittered_matrix_is_the_original() {
     let view_proj = Mat4::perspective_rh(1.0, 1.6, 0.1, 100.0);

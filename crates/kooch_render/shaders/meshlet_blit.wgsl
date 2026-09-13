@@ -1,10 +1,6 @@
-// meshlet_blit.wgsl — composes the meshlet stage's Rgba8Unorm color
-// texture onto an arbitrary RENDER_ATTACHMENT (typically the editor
-// ViewportTarget's Bgra8Unorm or the swapchain surface's color view).
-//
-// Triangle-strip cover: 3 vertices generate a full-screen triangle
-// without any vertex/index buffer. Sampling is bilinear so resizing
-// the source vs target stays visually clean.
+// meshlet_blit.wgsl — composes the meshlet stage's Rgba8Unorm color texture onto an arbitrary
+// RENDER_ATTACHMENT (typically the editor ViewportTarget's Bgra8Unorm or the swapchain surface's
+// color view).
 
 struct VsOut {
     @builtin(position) clip_position: vec4<f32>,
@@ -19,10 +15,7 @@ struct VsOut {
 
 @vertex
 fn vs_blit(@builtin(vertex_index) vertex_index: u32) -> VsOut {
-    // Big covering triangle:
-    //   v0 = (-1, -1)
-    //   v1 = ( 3, -1)
-    //   v2 = (-1,  3)
+    // Big covering triangle: v0 = (-1, -1) v1 = ( 3, -1) v2 = (-1, 3)
     let x = f32((vertex_index & 1u) << 2u) - 1.0;
     let y = f32((vertex_index & 2u) << 1u) - 1.0;
     var out: VsOut;

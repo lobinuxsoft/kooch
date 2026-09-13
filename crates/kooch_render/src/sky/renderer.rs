@@ -1,7 +1,4 @@
 //! Sky render pipeline — procedural gradient + volumetric clouds.
-//!
-//! Shares the raymarch pass's camera uniform layout (same bindings at
-//! group 0 binding 0) so ray direction reconstruction is identical.
 
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
@@ -231,19 +228,9 @@ impl SkyRenderPass {
         best.map(|(_, snap)| snap)
     }
 
-    /// Uploads the active camera + sky uniforms, then records the sky
-    /// render pass into `encoder`. Clears the color target and the depth
-    /// buffer — this is the FIRST pass of the frame when an active
-    /// SkyRenderer exists.
-    ///
-    /// Always records a pass — the caller decided there was a camera when
-    /// it built the [`ViewCamera`](crate::ViewCamera); the return value is
-    /// kept so existing call sites read unchanged.
-    // 🔴 Named for the cost, not the call. The sky ray-marches the
-    // atmosphere per pixel and #771 counted 8192 hashes per pixel in the
-    // worst case, on pixels the geometry then draws over. If this scope
-    // is ever the biggest entry in a frame, that issue is the answer and
-    // the number here is its evidence.
+    /// Uploads the active camera + sky uniforms, then records the sky render pass into `encoder`.
+    /// Clears the color target and the depth buffer — this is the FIRST pass of the frame when an
+    /// active SkyRenderer exists.
     #[profiling::function]
     pub fn render(
         &mut self,
@@ -289,14 +276,7 @@ impl SkyRenderPass {
         true
     }
 
-    /// Uploads the matrices of the camera **the caller is rendering
-    /// through**.
-    ///
-    /// It used to query the world for the highest-priority active camera,
-    /// which is the same question every view would have asked and got the
-    /// same answer to. With a second view on screen that meant orbiting
-    /// the editor camera swung the sky in the Game panel: the pass was
-    /// answering the world instead of its caller.
+    /// Uploads the matrices of the camera **the caller is rendering through**.
     fn update_camera(
         &mut self,
         queue: &wgpu::Queue,
@@ -308,10 +288,9 @@ impl SkyRenderPass {
         let projection = camera.projection(aspect);
         let translation = camera.position();
 
-        // Plumb ActiveOrigin: same pattern as raymarch + mesh. The sky
-        // is a backdrop infinity-cube — universe position only matters
-        // for future per-planet atmosphere lookups (#248), so we log
-        // at TRACE for now without changing the uniform layout.
+        // Plumb ActiveOrigin: same pattern as raymarch + mesh. The sky is a backdrop infinity-cube
+        // — universe position only matters for future per-planet atmosphere lookups (#248), so we
+        // log at TRACE for now without changing the uniform layout.
         if let Some(active_origin) = resources.get::<kooch_core::coord::ActiveOrigin>() {
             let universe_pos = active_origin.coord().translated(translation.as_dvec3());
             tracing::trace!(

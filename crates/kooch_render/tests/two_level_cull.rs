@@ -1,20 +1,5 @@
-//! GPU integration test: the two-level cull (#1002) draws the SAME
-//! meshlets the one-level rectangle did.
-//!
-//! 🔴 This exists because naga is not enough. The first version of the
-//! chunked path validated as a shader module and every unit test
-//! passed, and it still died on the first frame: the chunk list was
-//! bound as storage AND used as the source of a
-//! `dispatch_workgroups_indirect` in one compute pass, which wgpu
-//! refuses. Nothing short of running it on a device could see that.
-//!
-//! Asserts:
-//!   - the chunked path submits without a validation error
-//!   - its survivor set is IDENTICAL to the rectangle's, not merely
-//!     similar — a reshape that changes what is drawn is a bug even
-//!     when it is faster
-//!   - a screen-size threshold rejects a distant instance and leaves a
-//!     near one alone
+//! GPU integration test: the two-level cull (#1002) draws the SAME meshlets the one-level rectangle
+//! did.
 
 mod common;
 
@@ -220,16 +205,8 @@ fn the_reach_drops_the_far_instance() {
     );
 }
 
-/// 🔴 The test above builds its meshes with `build_default_meshlets`,
-/// which is SINGLE LOD: every meshlet is a root, and a root always
-/// passes the selector. So it never ran the LOD descent at all — the
-/// part of the cull the two-level split had to reproduce exactly, and
-/// the part that decides which of a mesh's several versions is drawn.
-///
-/// A chain, many instances, and distances spread far enough that the
-/// selector lands on different levels for different copies. If the two
-/// paths disagree here, the picture disagrees: a meshlet drawn at the
-/// wrong level overlaps the one that should have replaced it.
+/// 🔴 The test above builds its meshes with `build_default_meshlets`, which is SINGLE LOD: every
+/// meshlet is a root, and a root always passes the selector.
 #[test]
 fn both_culls_agree_down_the_lod_chain() {
     let Some((device, queue)) = try_acquire_device() else {
@@ -319,15 +296,9 @@ fn both_culls_agree_down_the_lod_chain() {
     );
 }
 
-/// 🔴 The instance-level frustum test is a rejection the one-level cull
-/// never made, and the tests above put everything comfortably in the
-/// middle of the screen — where a bounding sphere that is too small, or
-/// centred wrong, or unscaled, looks exactly like a correct one.
-///
-/// This is the case that tells them apart: instances straddling the
-/// frustum planes, where part of the mesh is on screen and its centre is
-/// not. Rejecting one of those loses a whole model, which is what
-/// "several models have no mesh" looks like from the outside.
+/// 🔴 The instance-level frustum test is a rejection the one-level cull never made, and the tests
+/// above put everything comfortably in the middle of the screen — where a bounding sphere that is
+/// too small, or centred wrong, or unscaled, looks exactly like a correct one.
 #[test]
 fn nothing_is_lost_at_the_frustum_edge() {
     let Some((device, queue)) = try_acquire_device() else {
@@ -374,10 +345,6 @@ fn nothing_is_lost_at_the_frustum_edge() {
 }
 
 /// A scaled instance's bounding sphere has to be scaled with it.
-///
-/// An unscaled radius is invisible at scale 1 — which is what every
-/// other fixture here uses — and drops the object the moment anyone
-/// enlarges it in the editor.
 #[test]
 fn a_scaled_instance_keeps_its_bounds() {
     let Some((device, queue)) = try_acquire_device() else {

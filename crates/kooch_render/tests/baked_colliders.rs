@@ -1,9 +1,4 @@
 //! The engine's committed collision meshes, checked as files.
-//!
-//! Same job as `baked_primitives`: the unit tests cover the export in
-//! memory, and these cover the part that only fails on someone else's
-//! machine — a file that was never committed, a sidecar whose GUID
-//! drifted, or a decomposition that came back as one merged blob.
 
 use std::path::{Path, PathBuf};
 
@@ -21,11 +16,7 @@ fn collision_dir() -> PathBuf {
     engine_root().join("assets/meshes/collision")
 }
 
-/// Every bake `examples/bake_colliders.rs` produces is on disk with a
-/// sidecar beside it.
-///
-/// A vendored engine copies `assets/meshes` whole, so a missing file here
-/// is a project whose collider silently never resolves.
+/// Every bake `examples/bake_colliders.rs` produces is on disk with a sidecar beside it.
 #[test]
 fn every_bake_is_committed() {
     for name in [
@@ -46,10 +37,6 @@ fn every_bake_is_committed() {
 }
 
 /// A hull is one convex piece, and a decomposition is several.
-///
-/// The assertion that catches the failure nothing else would: an exporter
-/// that merged the pieces would produce a file that loads, draws, and
-/// collides as the concave solid the decomposition exists to avoid.
 #[test]
 fn a_decomposition_stays_in_pieces() {
     let pieces = |name: &str| {
@@ -64,13 +51,8 @@ fn a_decomposition_stays_in_pieces() {
     assert!(pieces("dragon_parts").len() > 1, "the pieces were merged");
 }
 
-/// Each piece has to be something a solver can build a hull from, and it
-/// has to carry the faces that say it already is one.
-///
-/// Four points is a tetrahedron, the smallest thing that encloses a
-/// volume; anything less is a collider that cannot be hit. The faces are
-/// what let the backend skip hulling it again on every body build — a
-/// piece written without them still works and quietly costs that.
+/// Each piece has to be something a solver can build a hull from, and it has to carry the faces
+/// that say it already is one.
 #[test]
 fn every_piece_has_volume() {
     for name in [

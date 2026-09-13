@@ -1,9 +1,4 @@
 //! `MeshletMesh` CPU asset + per-meshlet descriptor.
-//!
-//! Mirrors the data layout the GPU compute culling shader will consume
-//! once Phase 1.D lands the upload + culling passes. Public layout is
-//! intentionally GPU-friendly (POD, fixed-size descriptors, Vec<u32>
-//! index lists) so future `bytemuck::cast_slice` upload is one-liner.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -17,20 +12,14 @@ pub const DEFAULT_MAX_VERTICES: usize = 64;
 /// of 4 ≤ 128 (`meshopt` requires `max_triangles` divisible by 4).
 pub const DEFAULT_MAX_TRIANGLES: usize = 124;
 
-/// Sentinel value for [`MeshletDescriptor::parent_meshlet_index`] —
-/// the meshlet has no parent (root of the LOD DAG, coarsest level).
-/// The runtime LOD selector treats this as the descent stopping
+/// Sentinel value for [`MeshletDescriptor::parent_meshlet_index`] — the meshlet has no parent (root
+/// of the LOD DAG, coarsest level). The runtime LOD selector treats this as the descent stopping
 /// point.
 pub const MESHLET_ROOT_PARENT: u32 = u32::MAX;
 
 /// Sentinel value for [`MeshletDescriptor::group_index`] /
-/// [`MeshletDescriptor::children_group_index`] — the meshlet does
-/// not belong to a group on this side. Used for:
-/// - `group_index = MESHLET_GROUP_NONE` ⇒ root meshlet, no parent
-///   group above (the descent test "above_too_coarse" passes
-///   trivially).
-/// - `children_group_index = MESHLET_GROUP_NONE` ⇒ LOD 0 meshlet,
-///   no children below (the "below_fine" test passes trivially).
+/// [`MeshletDescriptor::children_group_index`] — the meshlet does not belong to a group on this
+/// side.
 pub const MESHLET_GROUP_NONE: u32 = u32::MAX;
 
 /// Per-meshlet metadata. POD, repr(C), 112 bytes — packs into a
@@ -106,24 +95,14 @@ pub struct MeshletDescriptor {
     pub cone_apex: [f32; 3],
     pub cone_cutoff: f32,
     pub cone_axis: [f32; 3],
-    /// Id of the group this meshlet belongs to as a CHILD. Siblings
-    /// in the same group share this id. Used in the 2-pass cull
-    /// (#465): pass 1 atomicMaxes the meshlet's parent's pixel
-    /// error into `group_max_err[group_index]`; pass 2 reads the
-    /// same slot to decide whether the group's parents are too
-    /// coarse for this distance. [`MESHLET_GROUP_NONE`] for roots
-    /// (no group above).
+    /// Id of the group this meshlet belongs to as a CHILD. Siblings in the same group share this
+    /// id.
     pub group_index: u32,
-    /// Id of the group this meshlet belongs to as a PARENT. Sibling
-    /// parents emitted by the same group share this id. Pass 2 of
-    /// the 2-pass cull reads `group_max_err[children_group_index]`
-    /// to decide whether *this* meshlet's level is fine (versus
-    /// descending further into the children). [`MESHLET_GROUP_NONE`]
-    /// for LOD 0 meshlets (no group below).
+    /// Id of the group this meshlet belongs to as a PARENT. Sibling parents emitted by the same
+    /// group share this id.
     pub children_group_index: u32,
-    /// Chain depth: 0 = LOD 0 (full detail), 1 = parents from the
-    /// first per-group simplification, etc. Drives the LOD-stack
-    /// debug inspector (#467) and `MeshInstance.lod_force_level`
+    /// Chain depth: 0 = LOD 0 (full detail), 1 = parents from the first per-group simplification,
+    /// etc. Drives the LOD-stack debug inspector (#467) and `MeshInstance.lod_force_level`
     /// filtering in the cull shader.
     pub lod_level: u32,
     pub _pad4: u32,
@@ -138,10 +117,6 @@ impl MeshletDescriptor {
 }
 
 /// CPU-side meshlet representation.
-///
-/// Storage layout is the same as Bevy's `MeshletMesh` (and Nanite's
-/// "MeshletData" struct): one big vertex pool + flat index arrays
-/// referencing it + per-meshlet descriptors.
 #[derive(Debug, Clone)]
 pub struct MeshletMesh {
     /// Shared vertex pool. Each meshlet's `vertex_offset` slice contains
@@ -150,10 +125,9 @@ pub struct MeshletMesh {
     /// Per-meshlet vertex indices. `vertex_offset .. vertex_offset+vertex_count`
     /// of this array gives the meshlet's vertex set.
     pub meshlet_vertices: Vec<u32>,
-    /// Per-meshlet triangle data: 3 bytes per triangle (one byte per
-    /// corner index into the meshlet's vertex set, NOT into `vertices`).
-    /// `meshopt` packs them this way for compactness — the GPU shader
-    /// reconstructs full vertex indices via `meshlet_vertices[base + idx]`.
+    /// Per-meshlet triangle data: 3 bytes per triangle (one byte per corner index into the
+    /// meshlet's vertex set, NOT into `vertices`). `meshopt` packs them this way for compactness —
+    /// the GPU shader reconstructs full vertex indices via `meshlet_vertices[base + idx]`.
     pub meshlet_triangles: Vec<u8>,
     /// Per-meshlet metadata. Length = number of meshlets.
     pub meshlets: Vec<MeshletDescriptor>,
@@ -179,16 +153,6 @@ impl MeshletMesh {
 
     #[cfg(test)]
     /// The full-detail surface, as a plain vertex and index buffer.
-    ///
-    /// LOD 0 only. The meshlet array holds the whole simplification DAG,
-    /// so taking every meshlet would stack the same surface at four
-    /// levels of detail on top of itself — which as collision geometry is
-    /// four overlapping floors.
-    ///
-    /// The vertex pool is returned whole rather than compacted: the
-    /// coarser levels reuse the same positions, so the pool is close to
-    /// the LOD 0 vertex set already, and remapping would cost a pass and
-    /// a map to save a fraction of it.
     pub fn lod0_triangles(&self) -> (Vec<glam::Vec3>, Vec<[u32; 3]>) {
         let vertices = self
             .vertices

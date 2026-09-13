@@ -1,12 +1,5 @@
-//! A floor under a grid of point lights — the scene both shading-path
-//! test binaries render (#824, #825).
-//!
-//! Shared rather than copied because the thing under test in both files
-//! is *which path shaded these pixels*, and two scenes that drifted
-//! apart would let a difference hide in the scene instead of the path.
-//!
-//! It is deliberately a scene where the froxels hold several lights
-//! each: one light exercises the machinery and proves nothing about it.
+//! A floor under a grid of point lights — the scene both shading-path test binaries render (#824,
+//! #825).
 
 use glam::{Mat4, Vec3};
 use kooch_core::Guid;
@@ -30,15 +23,9 @@ use kooch_render::vbuf64::Vbuf64Support;
 
 use super::{build_cube_mesh, read_rgba8, try_acquire_device_r64};
 
-/// Deliberately not a multiple of the 16-pixel tile, and deliberately
-/// even — odd would additionally exercise the half-rate quad that hangs
-/// off the right edge, which is worth its own case rather than being
-/// mixed into every assertion.
-///
-/// The last column and row of workgroups run threads past the edge of
-/// the screen, which is the case a compute pass has and a fullscreen
-/// triangle does not — and those threads still have to reach every
-/// barrier their neighbours are waiting on.
+/// Deliberately not a multiple of the 16-pixel tile, and deliberately even — odd would additionally
+/// exercise the half-rate quad that hangs off the right edge, which is worth its own case rather
+/// than being mixed into every assertion.
 pub const SIZE: u32 = 200;
 
 pub struct Rig {
@@ -48,43 +35,16 @@ pub struct Rig {
     pub stage: MeshletRenderStage,
     pub camera: ViewCamera,
     /// The material every box in the scene renders with.
-    ///
-    /// Exposed so a test can REPLACE it — registering a second material
-    /// nobody references renders exactly the same scene, which is how a
-    /// texture test ends up measuring the untextured fallback and
-    /// believing it measured a mip level.
     pub material: Guid,
 }
 
-/// A floor, `lights x lights` point lights above it, and a camera
-/// looking down the length of it.
-///
-/// `wall` adds a second box standing on the floor. Its silhouette is
-/// where a tile spans many z-slices at once — the case the workgroup
-/// cache has a cap for, and the one half-rate shading has to
-/// reconstruct across.
+/// A floor, `lights x lights` point lights above it, and a camera looking down the length of it.
 pub fn rig(lights: u32, wall: bool) -> Option<Rig> {
     build(lights, wall, false)
 }
 
-/// The same scene plus **one blue shadow-casting light**, and the shadow
-/// atlas switched on so it is given a slot.
-///
-/// # Why it is as bright as its neighbours, and blue
-///
-/// The obvious way to test "a caster is never sampled" is to make it so
-/// dim that importance sampling would never choose it. That does not
-/// work, and the reason is worth writing down: **the weight and the
-/// contribution are the same quantity**. A light dim enough to reliably
-/// lose the race is dim enough to be invisible in the result — measured
-/// at a hundredth of its neighbours, its blue tint came out at 0.0002 of
-/// a channel and the test could not tell the rule from its absence.
-///
-/// So the discrimination is spatial instead. At one sample a tile picks
-/// one light of seventeen, so without the rule roughly fifteen blocks in
-/// sixteen would contain no blue at all — the caster's contribution
-/// would survive in the *average* and disappear from most of the
-/// *picture*. Counting blocks sees that; counting photons does not.
+/// The same scene plus **one blue shadow-casting light**, and the shadow atlas switched on so it is
+/// given a slot.
 pub fn rig_with_caster(lights: u32) -> Option<Rig> {
     build(lights, true, true)
 }
@@ -119,10 +79,9 @@ fn build(lights: u32, wall: bool, caster: bool) -> Option<Rig> {
     );
     resources.insert(materials);
 
-    // 🔴 `Vbuf64Support` defaults to *unsupported*, so a config built
-    // with `..Default::default()` puts the stage on the R32 fallback
-    // however capable the device is — and the callers would then compare
-    // the fragment path against itself. Detect from the device.
+    // 🔴 `Vbuf64Support` defaults to *unsupported*, so a config built with `..Default::default()`
+    // puts the stage on the R32 fallback however capable the device is — and the callers would then
+    // compare the fragment path against itself. Detect from the device.
     let mut stage = MeshletRenderStage::new(
         &device,
         MeshletRenderStageConfig {
@@ -227,19 +186,7 @@ pub fn render(rig: &mut Rig, compute: bool) -> Vec<u8> {
     render_at(rig, compute, ShadingRate::Full)
 }
 
-/// Renders one frame on the chosen path and rate, and reads the colour
-/// target back.
-///
-/// 🔴 Both switches report how many views they reached, and both are
-/// asserted. Zero means no view has the R64 stage, so neither argument
-/// changes anything and every assertion downstream would compare the
-/// fragment path with itself — passing, forever, with the compute
-/// shader deleted. That is not a hypothesis: it is what
-/// `compute_shading_parity` did until this assertion existed.
-///
-/// The order matters. `set_compute_shading(false)` drops the rate back
-/// to full, because the fragment path has no reduced rate, so the rate
-/// has to be set after the path and not before.
+/// Renders one frame on the chosen path and rate, and reads the colour target back.
 pub fn render_at(rig: &mut Rig, compute: bool, rate: ShadingRate) -> Vec<u8> {
     assert!(
         rig.stage.set_compute_shading(compute) > 0,

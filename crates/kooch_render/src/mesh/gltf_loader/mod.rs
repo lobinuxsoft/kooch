@@ -1,28 +1,4 @@
 //! glTF 2.0 / GLB loader implementing [`AssetLoader<Mesh>`].
-//!
-//! Parses bytes (the [`AssetServer`] reads them from disk) and emits
-//! a CPU-side [`Mesh`] suitable for upload + render. The source path
-//! travels in [`LoadContext::path`] so external buffer URIs can be
-//! resolved relative to the document — sidecar `.bin` files for
-//! glTF *Separate*, base64 payloads for *Embedded*.
-//!
-//! # Coverage
-//!
-//! - Walks the default scene's node tree top-down, composing per-node
-//!   transforms. Vertex positions are baked into world space (relative
-//!   to the document root). Skinning + animation are explicitly out of
-//!   scope and tracked under #453.
-//! - Concatenates every visited primitive's geometry into one [`Mesh`].
-//!   Per-primitive material associations are not preserved here; the
-//!   material pipeline (#440 / #443) will land its own per-primitive
-//!   path when bindless textures arrive.
-//! - Optional `import_scale` factor applied at the root before scene
-//!   transforms — lets the editor / artists normalise units without
-//!   touching the source asset. Persistence of the scale via `.meta`
-//!   files is the next PR (Plan B part 2).
-//! - External buffer URIs (sidecar / data:) resolved when the loader
-//!   has a base directory; rejected with hygiene failures for absolute
-//!   paths, `..` traversal, or non-`data:` schemes.
 
 use std::path::Path;
 
@@ -39,10 +15,9 @@ mod walk;
 #[cfg(test)]
 mod tests;
 
-/// Loader handling `*.glb` and `*.gltf`. GLB packages every buffer in
-/// the same file; `.gltf` documents may reference external buffers
-/// either as sidecar files (relative path) or inline `data:` URIs —
-/// both resolved through [`LoadContext::path`].
+/// Loader handling `*.glb` and `*.gltf`. GLB packages every buffer in the same file; `.gltf`
+/// documents may reference external buffers either as sidecar files (relative path) or inline
+/// `data:` URIs — both resolved through [`LoadContext::path`].
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GltfMeshLoader;
 
@@ -121,12 +96,8 @@ impl From<gltf::Error> for GltfMeshError {
     }
 }
 
-/// Parses a glTF / GLB byte slice into a [`Mesh`] using identity
-/// import-scale and no base directory. GLB documents work; `.gltf`
-/// documents that reference external buffers will fail because there
-/// is no directory to resolve them against — load via
-/// [`parse_mesh_bytes_full`] when sidecars or filesystem-relative
-/// paths matter.
+/// Parses a glTF / GLB byte slice into a [`Mesh`] using identity import-scale and no base
+/// directory.
 pub fn parse_mesh_bytes(bytes: &[u8]) -> Result<Mesh, GltfMeshError> {
     parse_mesh_bytes_full(bytes, 1.0, None)
 }
@@ -137,30 +108,9 @@ pub fn parse_mesh_bytes_with_scale(bytes: &[u8], import_scale: f32) -> Result<Me
     parse_mesh_bytes_full(bytes, import_scale, None)
 }
 
-/// Parses a glTF / GLB byte slice into a [`Mesh`]. The default scene's
-/// node hierarchy is walked top-down; every (mesh, primitive) reached
-/// is concatenated into one geometry pool with vertex positions baked
-/// into world space. `import_scale` multiplies positions before scene
-/// transforms apply — a single knob to convert mm-authored assets into
-/// metric world units without modifying the source `.glb`.
-///
-/// `base_dir` anchors external buffer URIs (sidecar `.bin` files).
-/// When `Some`, sidecar URIs resolve against it; when `None`, any
-/// non-GLB buffer reference fails with [`GltfMeshError::BufferUriUnresolvable`].
-///
-/// Documents without an explicit scene fall back to enumerating every
-/// mesh under the implicit identity transform — matches the gltf-rs
-/// crate's `default_scene` lookup convention.
-/// Every primitive's positions and triangles, kept apart, in scene space.
-///
-/// What [`parse_mesh_bytes_full`] flattens, this keeps separate — the one
-/// case that needs it is a baked convex decomposition, where each
-/// primitive *is* one convex piece and merging them would give back the
-/// concave solid the decomposition exists to avoid.
-///
-/// Positions and triangles only — a collider has no use for normals or
-/// UVs. The triangles are what say a baked piece is already a convex
-/// hull, so the solver does not have to hull it again.
+/// Parses a glTF / GLB byte slice into a [`Mesh`]. The default scene's node hierarchy is walked
+/// top-down; every (mesh, primitive) reached is concatenated into one geometry pool with vertex
+/// positions baked into world space.
 pub fn parse_mesh_parts(
     bytes: &[u8],
     base_dir: Option<&Path>,

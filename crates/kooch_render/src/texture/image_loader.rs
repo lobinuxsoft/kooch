@@ -1,12 +1,4 @@
 //! PNG / JPEG image loader implementing [`AssetLoader<Image>`].
-//!
-//! Wraps the `image` crate (PNG + JPEG features only in PR-1). Decoded
-//! input is normalized to RGBA8 — single-channel and RGB sources are
-//! expanded so downstream code never branches on channel count.
-//!
-//! Format hint defaults to `Rgba8UnormSrgb` (color textures). Callers
-//! that load *data* textures (normal maps, metal/rough, AO) build the
-//! loader with [`ImageLoader::linear`] so the hint becomes `Rgba8Unorm`.
 
 use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
 use serde::{Deserialize, Serialize};
@@ -43,10 +35,6 @@ impl Default for ImageImport {
 }
 
 /// Configurable PNG/JPEG loader.
-///
-/// Two construction paths cover the common case:
-/// - [`ImageLoader::srgb`] — color textures (albedo, emissive). Default.
-/// - [`ImageLoader::linear`] — data textures (normal, ORM, AO).
 #[derive(Debug, Clone, Copy)]
 pub struct ImageLoader {
     format: ImageFormat,

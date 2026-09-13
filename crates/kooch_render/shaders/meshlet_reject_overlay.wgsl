@@ -1,27 +1,4 @@
 // meshlet_reject_overlay.wgsl — reject-reason debug overlay (#454.4).
-//
-// Reads `reject_reasons[]` (written by cs_cull_scene_pool_atomic
-// when CullParams.debug_active != 0), and for every thread whose
-// reason matches the host-supplied `selected_reason` projects the
-// owning meshlet's world-space AABB to screen and rasterises a
-// 1-pixel wireframe rectangle on top of the deferred colour image.
-//
-// The overlay runs as a compute pass (not a render pass) so it can
-// write through the colour texture's existing storage_binding usage
-// — adding RENDER_ATTACHMENT to the deferred target just for this
-// debug pass is a needless API surface bump. The wireframe style
-// keeps the underlying scene visible inside each rejection box,
-// which is what makes the visualisation diagnostic in the first
-// place: an artist needs to see WHICH cluster's bounds disagree
-// with the scene's macro AABB after a mesh edit.
-//
-// Threading: one thread per cull thread (= instance_count ×
-// meshlets_per_mesh). The hot path does an SSBO load + uniform
-// compare + early return; threads whose reason matches walk the
-// 8-corner projection and write 2·(rect_w + rect_h) pixels along
-// the rectangle's perimeter. Per-thread cost is bounded by the
-// rectangle's screen footprint; frustum-rejected clusters are
-// typically near the viewport edge and project to small rectangles.
 
 struct OverlayParams {
     view_proj: mat4x4<f32>,
@@ -30,11 +7,9 @@ struct OverlayParams {
     line_thickness_px: u32,
 }
 
-// Mirror of `MeshletDescriptor` in `meshlet_cull/common.wgsl` —
-// kept in lock-step manually because WGSL has no #include and we
-// don't pre-process the shader source. If the cull-shader copy
-// gains or reorders fields, this struct MUST be updated or the
-// AABB read below will pick up garbage.
+// Mirror of `MeshletDescriptor` in `meshlet_cull/common.wgsl` — kept in lock-step manually because
+// WGSL has no #include and we don't pre-process the shader source. If the cull-shader copy gains or
+// reorders fields, this struct MUST be updated or the AABB read below will pick up garbage.
 struct PoolMeshletDescriptor {
     vertex_offset: u32,
     triangle_offset: u32,
@@ -105,20 +80,12 @@ struct SceneCullParams {
 @group(2) @binding(0) var<storage, read> instances: array<MeshInstance>;
 @group(2) @binding(1) var<uniform> scene_params: SceneCullParams;
 
-// Declared `read_write` to match the cull pipeline's debug_bgl
-// (the same handle this overlay reuses). The overlay only needs
-// LOAD access semantically, but WGSL/wgpu reject pipelines whose
-// shader access is a strict subset of the layout's access — the
-// two must agree exactly.
+// Declared `read_write` to match the cull pipeline's debug_bgl (the same handle this overlay
+// reuses). The overlay only needs LOAD access semantically, but WGSL/wgpu reject pipelines whose
+// shader access is a strict subset of the layout's access — the two must agree exactly.
 @group(3) @binding(0) var<storage, read_write> reject_reasons: array<u32>;
 
-// Reason → flat overlay colour. Mirrors the LUT planned for the
-// triangle-density / overdraw heatmaps so the artist can build a
-// single colour vocabulary across every advanced debug mode:
-//   2 = frustum   → bright yellow
-//   3 = backface  → bright blue
-//   4 = hi-z      → bright red
-//   5 = lod       → cyan (debug-only; #454.5 follow-up surfaces it)
+// Reason → flat overlay colour.
 fn reason_color(reason: u32) -> vec4<f32> {
     if (reason == 2u) {
         return vec4<f32>(1.0, 0.95, 0.1, 1.0);
@@ -135,9 +102,8 @@ fn reason_color(reason: u32) -> vec4<f32> {
     return vec4<f32>(1.0, 1.0, 1.0, 1.0);
 }
 
-// Projects a world-space corner to screen pixel coords. Returns
-// `false` when the corner sits at or behind the near plane — the
-// caller must drop the entire AABB in that case rather than emit a
+// Projects a world-space corner to screen pixel coords. Returns `false` when the corner sits at or
+// behind the near plane — the caller must drop the entire AABB in that case rather than emit a
 // rectangle from a partially flipped projection.
 fn project_world(world: vec3<f32>, out: ptr<function, vec2<f32>>) -> bool {
     let clip = params.view_proj * vec4<f32>(world, 1.0);
@@ -199,11 +165,8 @@ fn cs_reject_overlay(
     @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(num_workgroups) groups: vec3<u32>,
 ) {
-    // This overlay walks `reject_reasons[]`, one entry per cull
-    // thread, so it inherits the cull's dispatch shape exactly —
-    // including the 2-D fold past 65 535 workgroups. Duplicated from
-    // `meshlet_cull/common.wgsl` because this shader is compiled
-    // standalone; the two must move together.
+    // This overlay walks `reject_reasons[]`, one entry per cull thread, so it inherits the cull's
+    // dispatch shape exactly — including the 2-D fold past 65 535 workgroups.
     let thread_id = gid.y * (groups.x * 64u) + gid.x;
     let max_meshlets = scene_params.meshlets_per_mesh;
     let total_threads = scene_params.instance_count * max_meshlets;
@@ -225,12 +188,7 @@ fn cs_reject_overlay(
 
     let m = meshlets[mesh_desc.first_meshlet + meshlet_offset];
 
-    // Project all 8 AABB corners through the instance transform +
-    // view_proj. Drop the rectangle entirely if any corner falls
-    // behind the near plane — partial-clip reconstruction is not
-    // worth the shader-side complexity for a debug overlay; the
-    // missing visualisation just means the cluster crosses the
-    // camera, which is already obvious at a glance.
+    // Project all 8 AABB corners through the instance transform + view_proj.
     var corners: array<vec3<f32>, 8> = array<vec3<f32>, 8>(
         vec3<f32>(m.aabb_min.x, m.aabb_min.y, m.aabb_min.z),
         vec3<f32>(m.aabb_max.x, m.aabb_min.y, m.aabb_min.z),
@@ -256,9 +214,8 @@ fn cs_reject_overlay(
 
     let max_x = f32(params.screen_size.x);
     let max_y = f32(params.screen_size.y);
-    // Drop rectangles that fall entirely outside the viewport. The
-    // frustum cull may still mark a cluster rejected when its sphere
-    // bound poked into the half-space but its AABB sits fully
+    // Drop rectangles that fall entirely outside the viewport. The frustum cull may still mark a
+    // cluster rejected when its sphere bound poked into the half-space but its AABB sits fully
     // off-screen; nothing to paint in that case.
     if (max_px.x < 0.0 || max_px.y < 0.0 || min_px.x >= max_x || min_px.y >= max_y) {
         return;

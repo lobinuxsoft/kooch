@@ -1,17 +1,5 @@
-//! GPU acceptance: 3 instances of the same dense LOD-chain mesh placed
-//! at near / mid / far distances must pick distinct LOD bands.
-//!
-//! Validates the per-instance `group_max_err` slot decoding (#474).
-//! Before the fix, `cs_lod_compute_group_max_err` keyed the atomic by
-//! mesh-global `group_index`, so every instance of a mesh wrote into
-//! the same slot range; pass 2 then read the closest instance's
-//! verdict and every instance descended to LOD 0. With the fix each
-//! instance owns a disjoint slot range (`inst.group_base` prefix sum)
-//! and the selector picks LOD per instance independently — the far
-//! instance must emit strictly fewer meshlets than the near one.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test meshlet_multi_instance_lod
+//! GPU acceptance: 3 instances of the same dense LOD-chain mesh placed at near / mid / far
+//! distances must pick distinct LOD bands.
 
 mod common;
 
@@ -25,10 +13,9 @@ use kooch_render::meshlet::{
 };
 use std::collections::BTreeSet;
 
-/// Curved grid in world `[-scale, scale]²` with a sinusoidal Z field.
-/// Curvature is required so meshopt's simplifier produces a non-trivial
-/// LOD chain — a flat grid collapses to near-zero error in one step
-/// and the selector has nothing to pick between distances.
+/// Curved grid in world `[-scale, scale]²` with a sinusoidal Z field. Curvature is required so
+/// meshopt's simplifier produces a non-trivial LOD chain — a flat grid collapses to near-zero error
+/// in one step and the selector has nothing to pick between distances.
 fn make_curved_grid(subdivisions: usize, scale: f32) -> Mesh {
     let n = subdivisions + 1;
     let mut verts = Vec::with_capacity(n * n);
@@ -125,11 +112,8 @@ fn three_instances_pick_distinct_lod_bands() {
     let meshlets_per_mesh = pool.max_meshlets_per_mesh();
     let gpu_pool = pool.upload(&device);
 
-    // Three instances of the same mesh on -Z. Distances chosen so the
-    // selector has clear signal: 5 m, 80 m, 1500 m. CPU prefix-sum
-    // on group_base is the contract `MeshletPipeline::collect_scene_instances`
-    // upholds in production; replicated here so the test exercises
-    // the GPU path directly without standing up an ECS world.
+    // Three instances of the same mesh on -Z. Distances chosen so the selector has clear signal: 5
+    // m, 80 m, 1500 m.
     let mut instances: Vec<MeshInstance> = Vec::with_capacity(3);
     let positions = [-5.0_f32, -80.0, -1500.0];
     let mut running_base: u32 = 0;

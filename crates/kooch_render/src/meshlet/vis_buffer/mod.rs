@@ -1,23 +1,4 @@
 //! Visibility-buffer rasterizer.
-//!
-//! Drop-in alternative to [`super::MeshletDrawer`]: rasterizes visible
-//! meshlets to a R32Uint visibility-buffer target instead of a color
-//! attachment.
-//!
-//! # Two paths share the rasterizer
-//!
-//! - **Single-mesh** (`render`, vbuf shader's `vs_vbuf`/`fs_vbuf`): the
-//!   classic Phase 1.D path. `visible_meshlets[]` carries raw meshlet
-//!   ids and the fragment writes `((meshlet_id + 1) << 7) | tri_idx`.
-//! - **Scene-wide** (`render_scene`, `vs_vbuf_scene`/`fs_vbuf_scene`):
-//!   Phase 1.E path. `visible_meshlets[]` packs
-//!   `(instance_id << 16) | meshlet_idx`, the vertex shader fetches the
-//!   transform from `instances[]`, and the fragment writes
-//!   `((visible_slot + 1) << 7) | tri_idx` so the deferred shader can
-//!   recover both instance and meshlet via one indirection.
-//!
-//! Both paths share `meshlet_bgl` (group 1) — the same global pool
-//! lookups feed cull / vbuf / deferred.
 
 mod scene;
 
@@ -60,7 +41,7 @@ pub struct MeshletVisRasterizer {
 
 impl MeshletVisRasterizer {
     /// `meshlet_bgl` must come from
-    /// [`MeshletCull::meshlet_bind_group_layout`] so the vbuf and
+    /// `MeshletCull::meshlet_bind_group_layout` so the vbuf and
     /// forward paths share the storage-buffer slot numbering.
     pub fn new(
         device: &wgpu::Device,
@@ -169,9 +150,8 @@ impl MeshletVisRasterizer {
         }
     }
 
-    /// Records one indirect-draw render pass that writes the
-    /// visibility buffer. `vbuf_view` must reference an R32Uint texture
-    /// matching [`VISIBILITY_BUFFER_FORMAT`]. `clear_id` is the value
+    /// Records one indirect-draw render pass that writes the visibility buffer. `vbuf_view` must
+    /// reference an R32Uint texture matching [`VISIBILITY_BUFFER_FORMAT`]. `clear_id` is the value
     /// the pass clears the buffer to (use `0` for "background").
     #[allow(clippy::too_many_arguments)]
     pub fn render(

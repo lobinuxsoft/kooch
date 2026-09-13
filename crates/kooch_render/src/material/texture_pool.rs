@@ -1,29 +1,5 @@
-//! `MaterialTexturePool` — GPU-resident texture store keyed by asset
-//! [`Guid`], plus the per-material bind group the two-pass material
-//! shader consumes.
-//!
-//! # Why not a bindless array
-//!
-//! The meshlet material path follows Bevy's two-pass model: one fragment
-//! pass resolves each pixel's `material_id` into a depth target, then one
-//! pass **per registered material** shades the pixels that survive a
-//! hardware depth test. Each material pass binds *its own* three
-//! textures through a standard bind group — no `binding_array`, no
-//! non-uniform indexing (both fragile across drivers). This pool owns the
-//! uploaded [`GpuTexture`]s and hands out that per-material bind group.
-//!
-//! # Branch-free fallbacks
-//!
-//! A material may reference none of the three maps. Rather than branch in
-//! the shader, every slot always binds *something*: a 1×1 fallback whose
-//! sampled value is the identity for that channel's math —
-//! - albedo → white (`base_color * 1 = base_color`)
-//! - metal/roughness → white (`scalar * 1 = scalar`)
-//! - normal → flat `[128,128,255]` (decodes to `(0,0,1)`, the geometric
-//!   normal, i.e. no perturbation)
-//!
-//! so the shader samples unconditionally and the absent-texture case
-//! costs one texture fetch, never a divergent branch.
+//! `MaterialTexturePool` — GPU-resident texture store keyed by asset [`Guid`], plus the
+//! per-material bind group the two-pass material shader consumes.
 
 use std::collections::HashMap;
 
@@ -44,23 +20,9 @@ pub enum TextureSlot {
 }
 
 /// The hardware minimum, which means the feature is off.
-///
-/// 🔴 This is the setting that actually improves a floor, and it is not
-/// the mip bias. A surface at a grazing angle covers a footprint that is
-/// long and thin, and an isotropic filter has one number for it: it
-/// takes the LONG axis, picks the level that would not alias there, and
-/// blurs the short axis by the same amount. That is why a tiled floor
-/// goes soft towards the horizon while a wall facing the camera stays
-/// sharp — the level is right for one axis and wrong for the other.
-/// Anisotropic filtering takes several samples along the long axis
-/// instead of one coarse one.
 pub const NO_ANISOTROPY: u16 = 1;
 
 /// GPU texture registry + per-material bind group factory.
-///
-/// CPU-side coordination structure (populated at asset-load / sync time,
-/// queried when building material passes), so a `HashMap<Guid, _>` is the
-/// right tool — this never runs in a GPU hot loop.
 pub struct MaterialTexturePool {
     textures: HashMap<Guid, GpuTexture>,
     fallback_albedo: GpuTexture,
@@ -110,15 +72,8 @@ impl MaterialTexturePool {
         }
     }
 
-    /// Per-material bind group layout: albedo(0), normal(1),
-    /// metal_roughness(2) textures + sampler(3).
-    ///
-    /// Visible to compute as well as fragment (#824). The compute
-    /// shading pass samples the same three maps through
-    /// `textureSampleGrad`, which takes its gradients explicitly and is
-    /// therefore legal outside a fragment stage — the derivatives the
-    /// surface reconstruction computes analytically are what makes that
-    /// true here.
+    /// Per-material bind group layout: albedo(0), normal(1), metal_roughness(2) textures +
+    /// sampler(3).
     pub fn bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
         let texture_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
             binding,
@@ -146,12 +101,8 @@ impl MaterialTexturePool {
         })
     }
 
-    /// Replaces the sampler with one taking `samples` along the long
-    /// axis of a footprint, and reports whether anything changed.
-    ///
-    /// ⚠️ Every per-material bind group is rebuilt from this sampler
-    /// each frame, so there is nothing to invalidate — which is what
-    /// makes this a live setting rather than a restart.
+    /// Replaces the sampler with one taking `samples` along the long axis of a footprint, and
+    /// reports whether anything changed.
     pub fn set_anisotropy(&mut self, device: &wgpu::Device, samples: u16) -> bool {
         let samples = samples.max(NO_ANISOTROPY);
         if samples == self.anisotropy {
@@ -181,11 +132,6 @@ impl MaterialTexturePool {
     }
 
     /// Drops the texture for `guid`, so the next sync uploads it again.
-    ///
-    /// What a re-import is, from the pool's side. The bytes on disk did
-    /// not change — the answer about them did, and the answer lives in
-    /// the texture's descriptor: a chain is levels allocated at creation
-    /// and there is no way to add one to a texture that already exists.
     pub fn evict(&mut self, guid: Guid) -> bool {
         self.textures.remove(&guid).is_some()
     }
@@ -268,10 +214,6 @@ impl MaterialTexturePool {
 mod tests;
 
 /// The material sampler, at a given anisotropy.
-///
-/// ⚠️ `anisotropy_clamp` above 1 requires every filter mode to be
-/// linear — wgpu rejects the sampler otherwise. All three already are,
-/// and this function is where that stays true.
 fn create_sampler(device: &wgpu::Device, anisotropy: u16) -> wgpu::Sampler {
     device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("material_texture_sampler"),

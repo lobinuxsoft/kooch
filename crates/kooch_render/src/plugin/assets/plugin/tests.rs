@@ -19,14 +19,8 @@ fn empty_plugin() -> AssetPlugin {
     AssetPlugin::new().with_root(std::env::temp_dir().join("kooch_no_such_assets"))
 }
 
-/// 🔴 A contributed asset arrives with **both** halves: the loader
-/// that reads it and the `Assets<T>` that loader fills.
-///
-/// Splitting them is what broke a real run — `load_by_guid` requires
-/// the storage to exist rather than creating it, so an `.inputmap`
-/// with a registered loader failed every frame with `Assets<ActionMap>
-/// resource missing`. Registering a loader alone is no longer
-/// expressible, and this is what says so.
+/// 🔴 A contributed asset arrives with **both** halves: the loader that reads it and the `Assets<T>`
+/// that loader fills.
 #[test]
 fn a_contributed_asset_brings_its_loader_and_its_storage() {
     let mut app = App::new();

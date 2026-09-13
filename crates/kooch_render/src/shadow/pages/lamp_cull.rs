@@ -1,16 +1,4 @@
 //! One hierarchical cull for every lamp (#939).
-//!
-//! Olsson et al. 2014 (§3.4/§5.2) adapted to the meshlet pool: a
-//! light/instance pre-pass walks the hierarchy the scene already has,
-//! and the meshlet-domain passes run only over the pairs it emits.
-//! Every lamp shares four dispatches — there is no per-lamp cull
-//! object, no per-lamp bind group and no CPU loop, which is what
-//! retired the `MeshletCull`-per-lamp shape this replaced.
-//!
-//! The passes are view-independent (the frustum is the light's own
-//! range, the LOD is measured from its position), so the whole thing
-//! records ONCE per frame and every camera consumes the same
-//! survivors. See `lamp_cull.wgsl` for the shape of each pass.
 
 use crate::meshlet::GpuGlobalMeshPool;
 
@@ -20,11 +8,9 @@ use kooch_lighting::CLUSTER_COMMON;
 use kooch_lighting::PAGE_TABLE as TABLE;
 const LAMP: &str = include_str!("../../../shaders/lamp_cull.wgsl");
 
-/// Survivors one lamp may keep — its fixed slice of the shared arena.
-/// Fixed rather than prefix-summed so the cull is one pass with no
-/// scan; the count climbs past the cap on purpose so an overflowing
-/// lamp is a number in the panel, and every reader clamps. Mirrors
-/// `LAMP_SURVIVORS` in `page_table.wgsl`.
+/// Survivors one lamp may keep — its fixed slice of the shared arena. Fixed rather than
+/// prefix-summed so the cull is one pass with no scan; the count climbs past the cap on purpose so
+/// an overflowing lamp is a number in the panel, and every reader clamps.
 pub const LAMP_SURVIVORS: u32 = 4096;
 
 /// Light/instance pairs the pre-pass starts with. GROWN to the frame's
@@ -38,11 +24,6 @@ fn pair_bytes(pairs: u32) -> u64 {
 }
 
 /// The most pairs the list will ever be grown to, at eight bytes each.
-///
-/// 🔴 A ceiling, not a budget: past it the pre-pass drops pairs and the
-/// lamps that lose theirs cast nothing. It exists because the bound is a
-/// PRODUCT — lamps times instances — and a scene can make that product
-/// arbitrarily large. Hitting it is a warning, not a silence.
 const PAIR_CEILING: u32 = 1 << 22;
 
 #[repr(C)]
@@ -218,36 +199,7 @@ impl LampCull {
         &self.survivors
     }
 
-    /// Grows the group-error arena to the scene AND the frame's active
-    /// lights. Group slots are bounded by the cull thread count, the
-    /// same over-approximation `MeshletCull::ensure_group_capacity`
-    /// uses; rows are the lights the frame actually has, NOT
-    /// [`LAMP_CULLS`] — a 256-slot cap over an empty scene must not
-    /// cost 256 rows of arena.
-    /// Grows the pre-pass's pair list to the frame's own bound.
-    ///
-    /// # 🔴 A fixed cap here does not degrade, it deletes a light
-    ///
-    /// `cs_lamp_pairs` emits one pair per (lamp, instance) the lamp's
-    /// range sphere reaches, claiming its slot with an `atomicAdd`. Past
-    /// the cap the pair is counted into the header's second word and
-    /// DROPPED — and which pairs make the cut is whichever threads got
-    /// there first, which is not a property of the scene.
-    ///
-    /// A lamp that loses its pairs keeps its pages. They are marked,
-    /// they are resident, they are listed, its cull produces no
-    /// survivors, so they are cleared — and a cleared page is far depth
-    /// under reversed-Z, which every reader answers "nothing occludes".
-    /// The lamp casts nothing and every counter reads healthy.
-    ///
-    /// Measured on `dense.scene`: 64 lamps of range 90 over 2157
-    /// instances is tens of thousands of pairs against a cap of 16 384.
-    /// The `Lamp shadow pages` views named it exactly — no white in
-    /// `faces` (every page resident) and uniform green in `occlusion`
-    /// (every page empty).
-    ///
-    /// The bound is a product, so it is clamped; the clamp says so out
-    /// loud, because the failure it causes is invisible everywhere else.
+    /// Grows the group-error arena to the scene AND the frame's active lights.
     fn ensure_pairs(&mut self, device: &wgpu::Device, slots: u32, instances: u32) {
         let wanted = u64::from(slots.clamp(1, LAMP_CULLS)) * u64::from(instances.max(1));
         let capped = wanted > u64::from(PAIR_CEILING);
@@ -319,18 +271,9 @@ impl LampCull {
         group_capacity: u32,
         lod_target: f32,
     ) {
-        // 🔴 The scene's REAL group count, not `instances × meshlets`.
-        // This arena is indexed `[slot * capacity + group]` — one row a
-        // lamp — so the over-approximation the single-row main cull can
-        // afford is multiplied by up to `LAMP_CULLS` here. Measured on
-        // 2024 instances, 4700 meshlets and 64 lamps: 2.4 GB against
-        // 6.6 MB, and the first of those is past `max_buffer_size`, so
-        // wgpu hands back an INVALID buffer and every submit fails for
-        // the rest of the run.
-        //
-        // ⚠️ Falls back to the old over-approximation when the count is
-        // absent, because a zero here would size the arena to nothing
-        // and the reduction would write out of bounds.
+        // 🔴 The scene's REAL group count, not `instances × meshlets`. This arena is indexed `[slot
+        // * capacity + group]` — one row a lamp — so the over-approximation the single-row main
+        // cull can afford is multiplied by up to `LAMP_CULLS` here.
         let groups = if group_capacity > 0 {
             group_capacity
         } else {

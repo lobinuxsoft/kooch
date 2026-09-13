@@ -1,30 +1,4 @@
 // surface_reconstruct.wgsl — visibility-buffer → surface attributes.
-//
-// Given a decoded `(visible_slot, tri_idx)` and a pixel, rebuilds the
-// triangle and interpolates world position / normal / uv plus analytical
-// uv derivatives (for correct mip selection) through perspective-correct
-// barycentrics.
-//
-// WGSL has no #include, so this file is CONCATENATED in Rust ahead of
-// each consumer. It declares the geometry bindings on groups 1 and 3 —
-// identical across both shading paths — and expects the consumer to
-// declare `camera` (with `view_proj`) and `screen` (with `size`), which
-// both already do.
-//
-// # Why both paths share this
-//
-// The R64 two-pass path had barycentric reconstruction; the R32 compute
-// path averaged the triangle's three vertex normals and had no world
-// position at all. That was invisible while shading was `normal × 0.5 +
-// 0.5`, and stops being invisible the moment a point light needs to know
-// how far away the surface is: the fallback path would have lit the
-// centroid of every triangle. What differs between the paths is how the
-// visibility buffer is *read* — 32-bit texture vs 64-bit storage — so
-// that is the only part each one keeps.
-//
-// compute_partial_derivatives is a near-verbatim port of Bevy's
-// visibility_buffer_resolve.wgsl, itself derived from The-Forge's
-// Visibility-Buffer analytical derivative maths (vb_shading_utilities).
 
 struct MeshVertexStored {
     position: array<f32, 3>,
@@ -114,24 +88,8 @@ fn frag_coord_to_ndc(frag_coord: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
 }
 
-// Perspective-correct barycentrics + analytical screen-space derivatives.
-// Verbatim structure from Bevy/The-Forge; layout-agnostic.
-// 🔴 `two_over_screen_size`, and the name is the whole story. NDC spans
-// 2 units across `screen_size` pixels, so converting a derivative from
-// "per NDC unit" to "per pixel" multiplies by `2 / screen_size`. The
-// upstream this is ported from names the parameter exactly that —
-// The-Forge's `CalcFullBary(..., float2 two_over_windowsize)` — and
-// Bevy renamed it to `half_screen_size` and passes `viewport.zw / 2.0`,
-// which is its RECIPROCAL. We ported the name and the arithmetic with
-// it.
-//
-// It is not merely a scale. The value feeds `1 / (interp_inv_w +
-// ddx_sum)` below: at the right magnitude `ddx_sum` is negligible and
-// what comes out is the derivative; at 250000x it dominates the divide
-// and the expression collapses onto `-barycentrics`, which is a
-// position inside the triangle and has no relationship to the camera at
-// all. Measured before the fix: mip level 10 at two metres and level
-// 0.6 at forty.
+// Perspective-correct barycentrics + analytical screen-space derivatives. Verbatim structure from
+// Bevy/The-Forge; layout-agnostic. 🔴 `two_over_screen_size`, and the name is the whole story.
 fn compute_partial_derivatives(
     world_positions: array<vec4<f32>, 3>,
     ndc_uv: vec2<f32>,
@@ -230,13 +188,8 @@ fn global_vertex_id(desc: MeshletDescriptor, tri_idx: u32, corner: u32) -> u32 {
     return meshlet_vertices[desc.vertex_offset + local];
 }
 
-/// Full attribute reconstruction for an already-decoded visibility
-/// sample. `frag_coord` is in pixels.
-///
-/// Each path decodes `(visible_slot, tri_idx)` from its own visibility
-/// buffer — the R64 path packs `slot << 7`, the R32 path packs
-/// `(slot + 1) << 7` so zero can mean background — so the decode stays
-/// with the reader and everything downstream of it is shared.
+/// Full attribute reconstruction for an already-decoded visibility sample. `frag_coord` is in
+/// pixels.
 fn resolve_surface(visible_slot: u32, tri_idx: u32, frag_coord: vec2<f32>) -> VertexOutput {
     let packed_visible = visible_meshlets[visible_slot];
     let inst_id = packed_visible >> 16u;

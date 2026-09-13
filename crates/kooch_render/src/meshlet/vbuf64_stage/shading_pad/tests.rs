@@ -23,9 +23,8 @@ fn an_unset_pad_changes_nothing() {
 
 #[test]
 fn the_pad_appends_never_prepends() {
-    // The fragment path clears the colour target on the first slot of
-    // the range and loads on every one after it, so a pad slot that
-    // moved `start` would clear the frame and composite every real
+    // The fragment path clears the colour target on the first slot of the range and loads on every
+    // one after it, so a pad slot that moved `start` would clear the frame and composite every real
     // material over nothing.
     assert_eq!(extend_slots(0..4, 4, 256), 0..8);
     assert_eq!(extend_slots(2..4, 4, 256), 2..8);

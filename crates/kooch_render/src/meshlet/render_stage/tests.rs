@@ -17,11 +17,7 @@ fn stats_default_is_zero() {
 
 #[test]
 fn hi_z_byte_size_matches_summed_mips() {
-    // Pure-CPU verification of the pyramid-byte arithmetic that
-    // set_vram_tracker / resize rely on. R32Float = 4 bpp summed
-    // over the mip chain — for a square power-of-two pyramid this
-    // converges to base * 4/3 (geometric series factor 1/4).
-    // 64x64 → 7 mips, exact total = (4096+1024+256+64+16+4+1) * 4 = 21844.
+    // Pure-CPU verification of the pyramid-byte arithmetic that set_vram_tracker / resize rely on.
     let expected = (4096 + 1024 + 256 + 64 + 16 + 4 + 1) * 4u64;
     let mip_count = crate::hi_z::mip_count_for(64, 64);
     let mut total: u64 = 0;

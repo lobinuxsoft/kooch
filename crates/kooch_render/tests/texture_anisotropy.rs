@@ -1,17 +1,4 @@
 //! Anisotropic filtering, measured where it acts (#881).
-//!
-//! An ordinary filter has one level for a footprint that is long and
-//! thin: it takes the LONG axis, picks a level that would not alias
-//! there, and blurs the short axis by the same amount. That is why a
-//! tiled floor softens towards the horizon while a wall facing the
-//! camera stays sharp. Anisotropic filtering takes several samples along
-//! the long axis instead of one coarse one.
-//!
-//! So the test looks at a floor at a grazing angle and asks whether
-//! there is MORE DETAIL, which is the only thing the setting claims.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test texture_anisotropy
 
 mod common;
 
@@ -78,10 +65,9 @@ fn grazing_floor(samples: u16) -> Option<Vec<u8>> {
                 .with_albedo(texture)
                 .with_uv([8.0, 8.0], [0.0, 0.0]),
         );
-        // ⚠️ Directly, not through `ShadingSettings`: this rig registers
-        // its material by hand, so the texture sync that reads the
-        // project's settings has no snapshots to run on. The setting's
-        // journey from the asset is a separate claim, tested separately.
+        // ⚠️ Directly, not through `ShadingSettings`: this rig registers its material by hand, so
+        // the texture sync that reads the project's settings has no snapshots to run on. The
+        // setting's journey from the asset is a separate claim, tested separately.
         pipeline.set_anisotropy(&r.device, samples);
     }
     r.resources.insert(ShadingSettings {
@@ -103,11 +89,6 @@ fn grazing_floor(samples: u16) -> Option<Vec<u8>> {
 }
 
 /// 🔴 More samples along the long axis means more detail survives.
-///
-/// The claim, and the only one: at a grazing angle an isotropic filter
-/// blurs the short axis to whatever the long axis needed, and this is
-/// what stops it. If the two frames match, either the sampler was not
-/// rebuilt or the setting never reached it.
 #[test]
 fn anisotropy_keeps_detail_at_a_grazing_angle() {
     let _gpu = gpu_lock();

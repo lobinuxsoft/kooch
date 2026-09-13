@@ -1,24 +1,4 @@
 //! The motion-vector pass runs only when something reads it (#481).
-//!
-//! Measured on the OneXFly before this gate existed: **1.994 ms of a
-//! 20.5 ms GPU frame**, writing a full-resolution buffer with the
-//! temporal resolve off and therefore with no consumer at all —
-//! `taa.wgsl` is the only shader that binds it.
-//!
-//! # Why this is its own test binary
-//!
-//! The obvious test is "the `motion vectors` GPU scope is absent", and
-//! it is unsound in a shared binary. puffin's `scope_delta` is a delta:
-//! whichever test first causes a scope to register drains the name from
-//! the list, so a later test's `FrameView` never sees it and asserting
-//! absence would be asserting which test ran first. `gpu_scopes.rs` says
-//! so in as many words about its own assertions.
-//!
-//! So this reads **the texture** instead of the profiler. A freshly
-//! allocated wgpu texture is zeroed, so "no pass ever wrote here" is
-//! observable without a second frame to compare against — and the
-//! resolve-on half proves the readback and the pass both work, which is
-//! what stops the resolve-off half from passing vacuously.
 
 mod common;
 
@@ -63,13 +43,6 @@ fn motion_bytes(rig: &mut common::lit_scene::Rig, taa: bool, frames: u32) -> Vec
 }
 
 /// 🔴 Both halves in one test, in this order, and neither is optional.
-///
-/// Resolve **off** first: the texture has to still be zero, which is only
-/// true if the pass never ran. Resolve **on** second: it has to stop
-/// being zero, which is what proves the pass, the camera movement and the
-/// readback all work — without it, a gate that skipped the pass
-/// unconditionally would pass the first assertion and ship a renderer
-/// with no motion vectors at all.
 #[test]
 fn the_pass_waits_for_a_reader() {
     let Some(mut rig) = common::lit_scene::rig(2, true) else {

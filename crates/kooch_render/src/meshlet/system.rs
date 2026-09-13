@@ -1,25 +1,4 @@
 //! Scene-builder system: ECS query → MeshInstance buffer.
-//!
-//! Phase 1.E.2 wiring. Bridges `MeshRenderer` components (whose
-//! `mesh: Option<Guid>` field references a persistent asset GUID)
-//! onto the scene-wide cull pipeline by:
-//!
-//! 1. Maintaining a `Guid → MeshHandle` registry. The first time an
-//!    entity references a particular mesh, the caller invokes
-//!    [`MeshletPipeline::register_mesh`] which adds it to the
-//!    [`GlobalMeshPool`] and remembers the resulting pool index.
-//! 2. Each frame, [`MeshletPipeline::collect_scene_instances`] walks
-//!    `Query<&MeshRenderer, &GlobalTransform>` and emits a
-//!    `Vec<MeshInstance>` ready for upload to a [`MeshletScene`].
-//!
-//! GUID-based addressing (this PR) replaces the slotmap-key bridging
-//! that lived here previously; the new model matches Unity's GUID +
-//! AssetDatabase pattern. Resolving GUID → bytes (via `AssetServer +
-//! AssetDatabase + Assets<MeshletMesh>`) is the responsibility of the
-//! caller — typically a startup or asset-load system that calls
-//! [`MeshletPipeline::register_mesh`] once an asset is GPU-resident.
-//! Wiring that caller is PR3's job; this module only owns the
-//! registry + ECS walk.
 
 use std::collections::HashMap;
 
@@ -77,27 +56,15 @@ impl MeshletPipeline {
     }
 
     /// Registers `mesh` under `guid`, replacing whatever was there.
-    ///
-    /// What [`Self::register_mesh`] cannot do: it answers with the
-    /// cached handle, which is right for an asset loaded once from a
-    /// file and wrong for a mesh that is being edited — a block dragged
-    /// in the editor kept the shape it had when it was first published,
-    /// forever, while the file and the collider both changed.
-    ///
-    /// ⚠️ The pool is append-only, so the previous copy is **leaked**
-    /// until the next full rebuild. A cube is one meshlet, so a drag
-    /// costs a meshlet a frame; a level of them would not be free. The
-    /// free list that fixes it is #1087.
     pub fn replace_mesh(&mut self, guid: Guid, mesh: &MeshletMesh) -> MeshHandle {
         let mesh_handle = self.pool.register(mesh);
         self.registry.insert(guid, mesh_handle);
         mesh_handle
     }
 
-    /// Walks the ECS query and returns every distinct `Guid`
-    /// referenced by a visible `MeshRenderer`. Useful as the input to
-    /// "ensure all referenced meshes are GPU-resident" — duplicates
-    /// collapse, order is unspecified.
+    /// Walks the ECS query and returns every distinct `Guid` referenced by a visible
+    /// `MeshRenderer`. Useful as the input to "ensure all referenced meshes are GPU-resident" —
+    /// duplicates collapse, order is unspecified.
     pub fn collect_referenced_guids(&self, resources: &Resources) -> Vec<Guid> {
         use std::collections::HashSet;
         let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
@@ -113,59 +80,28 @@ impl MeshletPipeline {
         seen.into_iter().collect()
     }
 
-    /// Walks `Query<&MeshRenderer, &GlobalTransform>` from the ECS
-    /// world (`resources`) and returns the per-frame `MeshInstance`
-    /// slice the scene cull dispatch should consume.
-    ///
-    /// Filtering rules:
-    /// - `mesh` must be `Some(guid)` and the GUID must already be
-    ///   registered (call [`Self::register_mesh`] before the entity
-    ///   goes live; production paths can hook this off the asset-
-    ///   server load callback in PR3).
-    /// - `visible` must be `true`.
-    /// - GUIDs not in the registry are silently dropped — emitting a
-    ///   warning per skipped entity per frame would spam the log.
-    ///
-    /// `material_id` is resolved through the [`MaterialPipeline`]
-    /// resource if present; otherwise every instance falls back to
-    /// slot 0 (the white-diffuse default).
+    /// Walks `Query<&MeshRenderer, &GlobalTransform>` from the ECS world (`resources`) and returns
+    /// the per-frame `MeshInstance` slice the scene cull dispatch should consume.
     pub fn collect_scene_instances(&self, resources: &Resources) -> Vec<MeshInstance> {
         self.collect_scene_instances_with_entities(resources).0
     }
 
     /// The same walk, with the entity each instance came from (#481).
-    ///
-    /// 🔴 Motion vectors need last frame's transform for **this object**,
-    /// and the position in this vector is not an identity: the walk is an
-    /// ECS query, so an entity appearing, disappearing or changing
-    /// archetype renumbers everything after it. Keyed by index, a
-    /// reordering would hand each instance some other object's previous
-    /// matrix and produce motion vectors that are wrong without anything
-    /// failing.
-    ///
-    /// The entity is the identity. It costs one `Vec<Entity>` per frame
-    /// and it is the difference between a temporal pass that works and
-    /// one that smears whenever the scene changes.
     pub fn collect_scene_instances_with_entities(
         &self,
         resources: &Resources,
     ) -> (Vec<MeshInstance>, Vec<kooch_ecs::entity::Entity>) {
         let material_pipeline = resources.get::<crate::material::MaterialPipeline>();
-        // Side-channel lookup of optional LodForceLevel components.
-        // The MeshRenderer query is the primary walk; per-entity we
-        // do a separate point query for LodForceLevel so absence
-        // costs nothing (most entities don't carry the override).
+        // Side-channel lookup of optional LodForceLevel components. The MeshRenderer query is the
+        // primary walk; per-entity we do a separate point query for LodForceLevel so absence costs
+        // nothing (most entities don't carry the override).
         let lod_force_lookup = collect_lod_force_levels(resources);
         let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
         let mut out = Vec::new();
         let mut entities = Vec::new();
         let mesh_descriptors = &self.pool.mesh_descriptors;
-        // Per-instance prefix sum into `group_max_err`: each instance
-        // reserves `mesh_descriptors[mesh_id].group_count` consecutive
-        // slots starting at `running_base`. Without this, two
-        // instances of the same mesh share the same slot range and
-        // `atomicMax` collapses every instance's LOD to the closest
-        // one's verdict (#474).
+        // Per-instance prefix sum into `group_max_err`: each instance reserves
+        // `mesh_descriptors[mesh_id].group_count` consecutive slots starting at `running_base`.
         let mut running_base: u32 = 0;
         query.for_each_entity(|entity, (renderer, transform)| {
             if !renderer.visible {
@@ -189,10 +125,8 @@ impl MeshletPipeline {
                 instance.lod_force_level = LOD_FORCE_NONE;
             }
             instance.group_base = running_base;
-            // #804 — the component has carried `receive_shadows` since
-            // it was written and nothing ever read it: unticking it in
-            // the Inspector changed nothing at all. This is the bit that
-            // makes the checkbox mean something.
+            // it was written and nothing ever read it: unticking it in the Inspector changed
+            // nothing at all. This is the bit that makes the checkbox mean something.
             instance.flags = match renderer.receive_shadows {
                 true => crate::meshlet::scene::INSTANCE_RECEIVES_SHADOWS,
                 false => 0,
@@ -208,11 +142,8 @@ impl MeshletPipeline {
         (out, entities)
     }
 
-    /// Total `group_max_err` slots the scene needs given an already-
-    /// collected `MeshInstance` slice. Equivalent to walking each
-    /// instance and summing `mesh_descriptors[mesh_id].group_count`,
-    /// but reads it from the prefix sum already stamped on each
-    /// instance: `last.group_base + last.group_count`. O(1).
+    /// Total `group_max_err` slots the scene needs given an already- collected `MeshInstance`
+    /// slice.
     pub fn instance_group_capacity(&self, instances: &[MeshInstance]) -> u32 {
         let Some(last) = instances.last() else {
             return 0;
@@ -227,10 +158,9 @@ impl MeshletPipeline {
     }
 }
 
-/// Snapshot every entity that carries a [`LodForceLevel`] component
-/// into a hashmap so the scene-instance collector can stamp the
-/// override on the matching `MeshInstance`. Empty when no entity
-/// uses the LOD inspector.
+/// Snapshot every entity that carries a [`LodForceLevel`] component into a hashmap so the
+/// scene-instance collector can stamp the override on the matching `MeshInstance`. Empty when no
+/// entity uses the LOD inspector.
 fn collect_lod_force_levels(resources: &Resources) -> HashMap<Entity, u32> {
     let mut out = HashMap::new();
     let query = Query::<&LodForceLevel>::new(resources);

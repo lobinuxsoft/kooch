@@ -7,18 +7,7 @@ use super::super::MeshletCull;
 use super::super::pipelines::MeshletCullPipelines;
 
 impl MeshletCull {
-    /// Scene-wide cull against a SINGLE [`GpuMeshletMesh`]
-    /// (Phase 1.E.1). Drives `cs_cull_scene` directly without going
-    /// through the [`GpuGlobalMeshPool`]; production code uses
-    /// [`Self::dispatch_scene_pool`] instead, but tests retain this
-    /// path to validate the cull shader at low level without
-    /// constructing a pool. New callers should prefer the pool path.
-    ///
-    /// # Capacity
-    ///
-    /// `MeshletCull::capacity` must cover the worst-case sum of visible
-    /// meshlets (`instance_count * meshlets_per_mesh`). The dispatcher
-    /// debug-asserts this on entry.
+    /// Scene-wide cull against a SINGLE [`GpuMeshletMesh`] (Phase 1.E.1).
     #[allow(clippy::too_many_arguments)]
     pub fn dispatch_scene(
         &self,

@@ -1,52 +1,11 @@
 //! A hierarchical page pyramid over the sun's clipmap (#1022).
-//!
-//! # 🔴 The question this exists to answer in constant time
-//!
-//! Driving the shadow raster from the GEOMETRY — Unreal's arrangement,
-//! and the one that makes it impossible for the marking and the culls
-//! to disagree — means asking, per caster, *"does the rectangle this
-//! meshlet covers touch any resident page?"*. Walking the rectangle to
-//! find out is why the scatter shape lost: at the finest clipmap levels
-//! a one-metre meshlet's rect covers up to 16384 cells while twenty
-//! pages are resident there, and `page_compact.wgsl` carries the note
-//! that measured it.
-//!
-//! At mip `M` one texel of this pyramid stands for a `2^M x 2^M` block
-//! of pages and is non-zero if ANY page in it is being drawn. A
-//! rectangle is answered by picking the mip where it spans at most two
-//! texels per axis and reading four of them, whatever its size.
-//!
-//! # 🔴 LISTED, not resident
-//!
-//! Mip 0 carries `listing + 1` — the page's index in this frame's
-//! compacted `page_list` — and not a residency bit. Residency is what
-//! most of the atlas has: a cached page holds a physical slot and must
-//! NOT be drawn again. Seeding this on residency would rasterise the
-//! whole atlas every frame. Carrying the index rather than a bit is
-//! also what lets the descent build a pair from the same three words
-//! the paired shape reads, so the two cannot drift.
-//!
-//! # Why a texture
-//!
-//! `page_expand.wgsl` binds eight storage buffers, which is
-//! `max_storage_buffers_per_shader_stage` on the downlevel defaults, so
-//! the reader that will consume this has no ninth slot. Textures are a
-//! separate budget — the same reason Unreal's page flags live in one.
-//!
-//! # ⚠️ Built AFTER the compaction
-//!
-//! The third table word is what `cs_compact` writes when it lists a
-//! page, so a build recorded before it describes the previous frame —
-//! pairs against pages nothing is drawing. `record` splits the compute
-//! pass around this for exactly that reason.
 
 use super::PageConfig;
 use crate::shadow::pages::ClipmapConfig;
 
-/// The overlap query over this pyramid: no bindings of its own, so
-/// every caller passes the texture it already has. The expansion and
-/// the tests include the same text, which is the only arrangement in
-/// which a test of it says anything about the frame.
+/// The overlap query over this pyramid: no bindings of its own, so every caller passes the texture
+/// it already has. The expansion and the tests include the same text, which is the only arrangement
+/// in which a test of it says anything about the frame.
 pub const OVERLAP: &str = include_str!("../../../shaders/page_overlap.wgsl");
 
 /// The format is the smallest one every backend accepts as a storage
@@ -76,10 +35,6 @@ pub struct PagePyramid {
 
 impl PagePyramid {
     /// How many mips a `side x side` grid reduces to, counting mip 0.
-    ///
-    /// `side` is `virtual_size / page` and therefore a power of two, so
-    /// the chain ends on a single texel that stands for the whole level
-    /// — the texel a rect the size of the world would be answered by.
     pub fn mip_count(side: u32) -> u32 {
         side.max(1).ilog2() + 1
     }
@@ -238,15 +193,6 @@ impl PagePyramid {
     }
 
     /// Records mip 0 from the page table and every reduction above it.
-    ///
-    /// ⚠️ Must be recorded AFTER `cs_compact`: mip 0 reads the listing
-    /// word, and before the compaction that word belongs to the frame
-    /// before.
-    ///
-    /// `base` is the first table entry this view's sun owns — the
-    /// pyramid describes ONE view's clipmap, because two viewports over
-    /// one world are two clipmaps centred on two cameras and a shared
-    /// pyramid would answer with whichever marked last.
     pub fn build(
         &self,
         device: &wgpu::Device,
@@ -258,16 +204,6 @@ impl PagePyramid {
         let groups = |extent: u32| extent.div_ceil(GROUP).max(1);
 
         // 🔴 A uniform buffer PER MIP, and the mip is inside it.
-        //
-        // One buffer rewritten between passes would not work, and the
-        // way it fails is silent: `queue.write_buffer` is ordered
-        // against the QUEUE, not against the encoder, so every write
-        // would land before any pass ran and each reduction would read
-        // the last mip's shape. `reduce_mip` takes its source as
-        // `shape.w - 1`, so the whole chain above mip 1 would describe
-        // mip 0 and the pyramid would claim residency its level does
-        // not have — a caster drawn into a page nothing asked for, or
-        // worse, one skipped.
         let shape_for = |mip: u32, side: u32| {
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_pyramid_shape"),
@@ -315,11 +251,9 @@ impl PagePyramid {
             pass.dispatch_workgroups(groups(self.side), groups(self.side), self.levels);
         }
 
-        // ⚠️ The uniform is ONE buffer and the passes are recorded into
-        // one encoder, so a `write_buffer` per mip inside this loop
-        // would be overwritten before any of them ran — `queue.write_buffer`
-        // is ordered against the queue, not against the encoder. Each
-        // mip therefore gets its own buffer.
+        // ⚠️ The uniform is ONE buffer and the passes are recorded into one encoder, so a
+        // `write_buffer` per mip inside this loop would be overwritten before any of them ran —
+        // `queue.write_buffer` is ordered against the queue, not against the encoder.
         for mip in 1..self.mips.len() as u32 {
             let side = (self.side >> mip).max(1);
             let shape_group = shape_for(mip, side);

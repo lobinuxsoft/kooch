@@ -1,16 +1,4 @@
 //! Half-rate lighting back to full resolution (#825).
-//!
-//! One fullscreen fragment pass, run only when
-//! [`ShadingRate::needs_upsample`](super::ShadingRate::needs_upsample).
-//! It owns the two half-resolution targets the compute shading pass
-//! writes into — the colour and the per-sample surface id — because
-//! their size is a function of the rate and nothing else in the stage
-//! has a reason to know about it.
-//!
-//! The pass reads the **full-resolution** visibility buffer for coverage
-//! and identity, so the silhouette on screen is the raster's, not the
-//! lighting's. See the shader for why the guide is the vbuf and not
-//! depth.
 
 use bytemuck::{Pod, Zeroable, bytes_of};
 
@@ -19,9 +7,8 @@ use crate::meshlet::render_stage::create_2d_attachment;
 use super::{ShadingRate, VBUF64_FORMAT};
 use crate::meshlet::deferred::HDR_COLOR_FORMAT;
 
-/// Per-sample surface id written by the shading pass, as
-/// `visible_slot + 1`. `R32Uint` because `visible_slot` is a 25-bit
-/// field and no smaller integer format is guaranteed as a storage
+/// Per-sample surface id written by the shading pass, as `visible_slot + 1`. `R32Uint` because
+/// `visible_slot` is a 25-bit field and no smaller integer format is guaranteed as a storage
 /// texture.
 pub(super) const SHADED_ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 
@@ -44,14 +31,8 @@ pub(super) struct ShadingUpsample {
 }
 
 impl ShadingUpsample {
-    /// `size` is the full screen; the half-resolution targets are sized
-    /// from it for the largest rate that needs them.
-    ///
-    /// Allocated unconditionally, and at a cost worth stating: the pair
-    /// is 5 bytes per shaded sample, so 1.25 bytes per screen pixel —
-    /// 1.1 MB at 1280x720. Allocating it lazily would mean a stall on
-    /// the frame the player changes the quality setting, which is the
-    /// one frame they are looking at it (#830).
+    /// `size` is the full screen; the half-resolution targets are sized from it for the largest
+    /// rate that needs them.
     pub(super) fn new(device: &wgpu::Device, size: (u32, u32)) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shading_upsample_shader"),
@@ -177,12 +158,6 @@ impl ShadingUpsample {
     }
 
     /// Clears the id target to 0 — "this sample shaded nothing".
-    ///
-    /// Must run before the material dispatches, which write only the
-    /// samples they own. A stale colour would be invisible behind a
-    /// stale id; a stale *id* is what makes the upsample trust it. The
-    /// colour target is cleared by the shading pass along with every
-    /// other rate, so it is not this function's business.
     pub(super) fn clear_ids(&self, encoder: &mut wgpu::CommandEncoder) {
         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("shading_upsample_id_clear"),

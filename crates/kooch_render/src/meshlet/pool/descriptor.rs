@@ -16,15 +16,13 @@ pub struct MeshDescriptor {
     pub meshlet_vertex_offset: u32,
     /// Base byte offset into `meshlet_triangles`.
     pub meshlet_triangle_offset: u32,
-    /// Pool-global base id this mesh's group_index values were shifted
-    /// by at registration. The shader subtracts it to recover the
-    /// mesh-local group id when computing the per-instance slot in
-    /// `group_max_err` (#474). `0` for meshes with no LOD groups.
+    /// Pool-global base id this mesh's group_index values were shifted by at registration. The
+    /// shader subtracts it to recover the mesh-local group id when computing the per-instance slot
+    /// in `group_max_err` (#474). `0` for meshes with no LOD groups.
     pub group_base: u32,
-    /// Number of distinct group_ids this mesh contributes (`max_local +
-    /// 1`). Used by the CPU prefix-sum that lays out each instance's
-    /// reserved range in `group_max_err` (#474). `0` for meshes
-    /// without LOD groups.
+    /// Number of distinct group_ids this mesh contributes (`max_local + 1`). Used by the CPU
+    /// prefix-sum that lays out each instance's reserved range in `group_max_err` (#474). `0` for
+    /// meshes without LOD groups.
     pub group_count: u32,
     pub _pad0: u32,
 }

@@ -1,14 +1,6 @@
 use super::*;
 
 /// 🔴 The asset is the SOURCE of these values, not a mirror of them.
-///
-/// It used to be a mirror: `Default` read `AmbientLight::default()` and
-/// friends, so the two could not disagree. They can now, on purpose —
-/// the asset's defaults are the ones a project should open with, and a
-/// subsystem's own `Default` is a fallback for the fields nobody chose.
-/// What must stay true is that nothing OUTSIDE `settings.rs` reads those
-/// fallbacks, or a project with no file and a project with a fresh one
-/// would render differently.
 #[test]
 fn unchosen_fields_fall_back() {
     let settings = RenderSettings::default();
@@ -97,20 +89,7 @@ fn the_unit_of_each_number_is_stated() {
     assert!(doc("ambient_intensity").contains("LUX"));
 }
 
-/// 🔴 A `.rendersettings` written before #826 was removed must still
-/// load, and quietly.
-///
-/// This is the removal's only real hazard. Deleting a field from a
-/// serialized asset is not like deleting a function: the compiler cannot
-/// see the files already on disk, and every project that ever opened the
-/// Shading group has `light_samples` written into its own
-/// `project.rendersettings` — roll-a-ball's said `light_samples: 4` when
-/// this landed. If RON rejected the unknown key the asset would fail to
-/// load, and the project would come up with default exposure, default
-/// shadows and default everything with nothing naming the cause.
-///
-/// Goes through the real loader rather than `ron::from_str`, because the
-/// loader is what a project actually hits.
+/// 🔴 A `.rendersettings` written before #826 was removed must still load, and quietly.
 #[test]
 fn a_settings_file_with_the_removed_field_still_loads() {
     let loader = RenderSettingsLoader;
@@ -133,10 +112,9 @@ fn a_settings_file_with_the_removed_field_still_loads() {
     assert_eq!(parsed.aperture_f_stops, 2.8);
 }
 
-/// 🔴 The resolve is gated on the compute path, and the enum must not
-/// have quietly dropped that gate: the jitter would stay on with
-/// nothing to integrate it, which shimmers and reads as the technique
-/// being broken rather than inapplicable.
+/// 🔴 The resolve is gated on the compute path, and the enum must not have quietly dropped that
+/// gate: the jitter would stay on with nothing to integrate it, which shimmers and reads as the
+/// technique being broken rather than inapplicable.
 #[test]
 fn the_fragment_path_gets_no_technique() {
     let settings = "(upscale: 1, compute_shading: false)";
@@ -149,17 +127,6 @@ fn the_fragment_path_gets_no_technique() {
 }
 
 /// 🔴 A file written before `temporal_aa` was deleted must still load.
-///
-/// Same hazard the removal of `light_samples` had, and the same test:
-/// the compiler cannot see the files already on disk, and every project
-/// that ever opened the Temporal group has `temporal_aa` written into
-/// its own `project.rendersettings`. If RON rejected the unknown key the
-/// asset would fail to load and the project would render with engine
-/// defaults for EVERYTHING, not just for this one setting.
-///
-/// The value itself is gone on purpose — the owner's call, since the
-/// dropdown replaced it and no project outside this repo predates it.
-/// What must not happen is the file failing.
 #[test]
 fn a_file_naming_the_deleted_toggle_still_loads() {
     let parsed: RenderSettings =
@@ -173,19 +140,7 @@ fn a_file_naming_the_deleted_toggle_still_loads() {
     );
 }
 
-/// 🔴 `render_scale` must not be offered for a technique that ignores
-/// it.
-///
-/// It is already forced to 100 for `None` and `TAA`, so the control did
-/// nothing — and a control that silently does nothing is worse than an
-/// absent one, because it reads as "I tried the setting and it did not
-/// help". Reported by the owner, who set it under TAA and reasonably
-/// expected it to apply.
-///
-/// Pinned as the condition's VALUES rather than by rendering anything:
-/// the enum's numbers are serialised into user projects and are
-/// append-only, so a variant renumbered without updating this would
-/// show the control for the wrong technique.
+/// 🔴 `render_scale` must not be offered for a technique that ignores it.
 #[test]
 fn the_scale_is_offered_only_where_it_acts() {
     let shown: Vec<u32> = UPSCALES_WHEN.values.iter().map(|v| *v as u32).collect();
@@ -203,12 +158,6 @@ fn the_scale_is_offered_only_where_it_acts() {
 }
 
 /// The anisotropy in the asset reaches the settings the renderer reads.
-///
-/// ⚠️ Its own test because the GPU one cannot cover it: that rig
-/// registers its material by hand, so the texture sync — which is what
-/// carries this number from `ShadingSettings` to the sampler — has no
-/// snapshots to run on. Two claims, two tests: this one is "the file is
-/// read", the GPU one is "the sampler does something".
 #[test]
 fn the_anisotropy_travels_from_the_asset() {
     let ron = r#"(compute_shading: true, anisotropy: 8)"#;
@@ -220,10 +169,6 @@ fn the_anisotropy_travels_from_the_asset() {
 }
 
 /// 🔴 And a number hardware does not implement is clamped, not passed on.
-///
-/// `anisotropy_clamp` is a `u16` the sampler validates: zero is not a
-/// legal value and wgpu rejects the descriptor outright, which would
-/// take down every material in the project over one hand-edited line.
 #[test]
 fn an_impossible_anisotropy_is_clamped() {
     for (written, expected) in [(0u32, 1u16), (3, 3), (64, 16), (100_000, 16)] {
@@ -240,11 +185,8 @@ fn an_impossible_anisotropy_is_clamped() {
     }
 }
 
-/// 🔴 `apply` publishes the presentation, and the staleness check in
-/// `apply_render_settings_system` compares it. A settings file whose
-/// only edit was vsync has nothing else to change, so a resource left
-/// out of either place makes that edit do nothing at all — silently,
-/// which is the failure mode this whole asset exists to avoid.
+/// 🔴 `apply` publishes the presentation, and the staleness check in `apply_render_settings_system`
+/// compares it.
 #[test]
 fn apply_publishes_the_presentation() {
     let mut resources = kooch_core::resource::Resources::new();
@@ -257,22 +199,17 @@ fn apply_publishes_the_presentation() {
     );
 }
 
-/// 🔴 What a file written before this field existed silently becomes,
-/// which `settings.rs` argues about at length for `compute_shading`: a
-/// serde default is not a recommendation. Every `.rendersettings` on
-/// every disk predates `vsync`, so this default is what all of them
-/// mean — and an uncapped frame is not something a project opts into by
-/// upgrading the engine.
+/// 🔴 What a file written before this field existed silently becomes, which `settings.rs` argues
+/// about at length for `compute_shading`: a serde default is not a recommendation.
 #[test]
 fn a_missing_vsync_defaults() {
     let parsed: RenderSettings = ron::from_str("(sharpening: 0)").expect("partial file");
     assert_eq!(parsed.vsync, RenderSettings::default().vsync);
 }
 
-/// 🔴 What a file written before this field existed silently becomes.
-/// Every `.rendersettings` on every disk predates `window_mode`, and
-/// taking the display is not something a project opts into by upgrading
-/// the engine.
+/// 🔴 What a file written before this field existed silently becomes. Every `.rendersettings` on
+/// every disk predates `window_mode`, and taking the display is not something a project opts into
+/// by upgrading the engine.
 #[test]
 fn a_missing_mode_defaults() {
     let parsed: RenderSettings = ron::from_str("(sharpening: 0)").expect("partial file");
@@ -299,13 +236,9 @@ fn apply_publishes_the_window_mode() {
 
 #[test]
 fn virtual_shadows_reaches_the_published_settings() {
-    // 🔴 The regression this exists for shipped a whole feature inert.
-    // `virtual_shadows` was read at the call site off `RenderSettings`,
-    // which `apply` never inserts as a `Resources` value, so the lookup
-    // returned `None` in every build and the fallback turned the pages
-    // off. Two handheld captures — one with the pages on, one without —
-    // came back identical scope for scope, which is what a setting that
-    // reaches nothing looks like from the outside.
+    // 🔴 The regression this exists for shipped a whole feature inert. `virtual_shadows` was read at
+    // the call site off `RenderSettings`, which `apply` never inserts as a `Resources` value, so
+    // the lookup returned `None` in every build and the fallback turned the pages off.
     let settings = RenderSettings {
         virtual_shadows: true,
         shadow_density: 50,
@@ -345,11 +278,9 @@ fn shadow_min_pixels_reaches_the_settings() {
 
 #[test]
 fn the_lod_target_reaches_the_frame() {
-    // The same class one more time, and the one with the widest blast
-    // radius: this is the quality-against-cost lever of a meshlet
-    // renderer, and only the editor ever inserted the resource the
-    // frame reads. A shipped game found `None` and took 1.0 px forever,
-    // so a project could not choose its own geometry budget at all.
+    // The same class one more time, and the one with the widest blast radius: this is the
+    // quality-against-cost lever of a meshlet renderer, and only the editor ever inserted the
+    // resource the frame reads.
     let settings = RenderSettings {
         meshlet_lod_error: 4.0,
         ..Default::default()
@@ -361,10 +292,9 @@ fn the_lod_target_reaches_the_frame() {
         0.5,
         "the default has to be what the engine ran at before the setting existed",
     );
-    // Zero would mean no level is ever fine enough and the cull emits
-    // nothing, which is a black screen rather than a coarse one.
-    // A settings file is a text file, and the Inspector's range does
-    // not constrain what someone types into one.
+    // Zero would mean no level is ever fine enough and the cull emits nothing, which is a black
+    // screen rather than a coarse one. A settings file is a text file, and the Inspector's range
+    // does not constrain what someone types into one.
     let zero = RenderSettings {
         meshlet_lod_error: 0.0,
         ..Default::default()
@@ -379,10 +309,9 @@ fn the_lod_target_reaches_the_frame() {
 
 #[test]
 fn the_lod_range_reaches_the_inspector() {
-    // The declaration travels a long way — attribute, macro, `FieldMeta`
-    // — and every step of it is silent when it drops something: the
-    // Inspector simply draws the unbounded drag it drew before, and the
-    // bound that stops a zero reaching the cull is quietly not there.
+    // The declaration travels a long way — attribute, macro, `FieldMeta` — and every step of it is
+    // silent when it drops something: the Inspector simply draws the unbounded drag it drew before,
+    // and the bound that stops a zero reaching the cull is quietly not there.
     use kooch_ecs::reflect::Reflect;
     let meta = RenderSettings::default()
         .reflect_fields()
@@ -420,27 +349,17 @@ fn the_shadow_bias_reaches_the_settings() {
         default.shadow_bias_max, 0.5,
         "the cap is on by default now; the shadow track measured this pair",
     );
-    // ⚠️ OFF, and this one is worth reading twice. The slope term is
-    // the receiver's own depth GRADIENT (#1017) — the thing a scalar
-    // bias provably cannot do — so 0 ships that fix disabled behind a
-    // setting no project knows to turn on. It is 0 because the shadow
-    // track set it to 0 to eliminate the bias chain as a cause of the
-    // bright patch, found the cause elsewhere (Olsson's receiver bound,
-    // #940/#949), and the value stayed. Pinned so that raising it is a
-    // decision somebody makes rather than a drift.
+    // ⚠️ OFF, and this one is worth reading twice. The slope term is the receiver's own depth
+    // GRADIENT (#1017) — the thing a scalar bias provably cannot do — so 0 ships that fix disabled
+    // behind a setting no project knows to turn on.
     assert_eq!(default.shadow_bias_slope, 0.0);
 }
 
 #[test]
 fn the_frame_never_asks_for_render_settings() {
-    // The bug's CLASS, not its instance. `RenderSettings` is the
-    // author's asset; what a frame may read is the derived struct
-    // `apply` publishes. Asking for the asset compiles, runs, returns
-    // `None` forever, and takes whatever fallback the caller wrote —
-    // silently.
-    //
-    // Structural rather than behavioural on purpose: the behavioural
-    // test above only covers the one field somebody remembered.
+    // The bug's CLASS, not its instance. `RenderSettings` is the author's asset; what a frame may
+    // read is the derived struct `apply` publishes. Asking for the asset compiles, runs, returns
+    // `None` forever, and takes whatever fallback the caller wrote — silently.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut offenders = Vec::new();
     let mut stack = vec![root];

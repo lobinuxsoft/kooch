@@ -1,42 +1,4 @@
-//! #825's acceptance: the lighting runs at one sample per 2x2 quad and
 //! the *silhouette does not*.
-//!
-//! That split is the whole issue. "Render the game at a lower
-//! resolution" is a different, already-available thing (#481 / #536);
-//! this decouples the shading rate from the raster rate, so geometry,
-//! depth and the visibility buffer stay full resolution and only the
-//! light evaluation is coarse. If coverage moved by a single pixel the
-//! technique would be the one it is trying not to be, so coverage is
-//! asserted exactly and the colour is asserted with bounds.
-//!
-//! # Where the bounds come from
-//!
-//! 🔴 Measured, by breaking the shader on purpose and reading what
-//! happened — #824's tests passed twice with the compute path
-//! deliberately broken, and a threshold somebody felt was about right is
-//! exactly how that happens again. On this scene, in units of summed
-//! |ΔRGB| per pixel out of 765:
-//!
-//! | | floor mean | floor p99.9 | wall p99.9 |
-//! |---|---|---|---|
-//! | correct | 1.01 | 17 | 17 |
-//! | upsample offset shifted a quarter texel | 4.29 | 49 | 49 |
-//! | surface-id guide ignored (blend anything) | 1.01 | 17 | **141** |
-//!
-//! Two lessons are baked into the assertions below. The mean alone does
-//! not catch a broken guide — silhouette pixels are a rounding error in
-//! an average, and bleeding across one moved the wall's mean by 0.56.
-//! **A high percentile does**, because the damage is concentrated
-//! exactly where the guide was supposed to act. And the *floor* scene is
-//! the one that catches a geometric mistake, because there is nothing
-//! there for a misplaced sample to hide behind.
-//!
-//! The numbers are from radv on an RX 9070 XT. The margins are 2-3x, so
-//! another adapter's rounding has room; a failure here means the
-//! reconstruction is wrong, not that the driver is different.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test half_rate_shading
 
 mod common;
 
@@ -118,14 +80,8 @@ fn assert_coverage_is_identical(d: &Diff, width: u32, what: &str) {
     }
 }
 
-/// 🔴 The issue's central promise: a wall standing on the floor keeps
-/// its outline, and the pixels along it keep taking their light from the
-/// surface they belong to.
-///
-/// The percentile is the assertion that actually tests the surface-id
-/// guide. Without it a pixel on the wall's edge blends samples from the
-/// floor metres behind it — 141/765 on the pixels it touches, and 0.56
-/// on the average of the whole image.
+/// 🔴 The issue's central promise: a wall standing on the floor keeps its outline, and the pixels
+/// along it keep taking their light from the surface they belong to.
 #[test]
 fn the_silhouette_stays_full_resolution() {
     let Some(mut r) = rig(4, true) else {
@@ -146,14 +102,8 @@ fn the_silhouette_stays_full_resolution() {
     );
 }
 
-/// The other half of the bargain: the lighting inside that silhouette is
-/// an approximation, and on a smoothly lit floor it has to be a close
-/// one.
-///
-/// Bounded from both sides on purpose. Too far apart and the
-/// reconstruction is misaligned. **Identical** and the rate did nothing
-/// at all, which is the failure a "close enough" assertion on its own
-/// would sail straight past — and the failure #824's tests actually had.
+/// The other half of the bargain: the lighting inside that silhouette is an approximation, and on a
+/// smoothly lit floor it has to be a close one.
 #[test]
 fn half_rate_tracks_the_full_rate_image() {
     let Some(mut r) = rig(4, false) else {
@@ -180,10 +130,9 @@ fn half_rate_tracks_the_full_rate_image() {
     );
 }
 
-/// An odd screen has a rightmost quad with one real pixel in it, and a
-/// bottom one with one real row. `div_ceil` on the dispatch and the
-/// clamp in the upsample are what keep those from being dropped, and
-/// both are invisible at any even size.
+/// An odd screen has a rightmost quad with one real pixel in it, and a bottom one with one real
+/// row. `div_ceil` on the dispatch and the clamp in the upsample are what keep those from being
+/// dropped, and both are invisible at any even size.
 #[test]
 fn an_odd_screen_keeps_its_last_column() {
     let Some(mut r) = rig(4, false) else {
@@ -199,11 +148,7 @@ fn an_odd_screen_keeps_its_last_column() {
     assert_coverage_is_identical(&d, ODD, "199x199");
 }
 
-/// The fragment path shades inside its own raster, one invocation per
-/// covered pixel. There is no thread to remove, so the rate is refused
-/// rather than half-applied — and the refusal is what the caller reads,
-/// because a setting that silently did nothing looks exactly like a
-/// setting that bought nothing.
+/// The fragment path shades inside its own raster, one invocation per covered pixel.
 #[test]
 fn the_fragment_path_refuses_a_reduced_rate() {
     let Some(mut r) = rig(1, false) else {
@@ -218,9 +163,8 @@ fn the_fragment_path_refuses_a_reduced_rate() {
     );
     assert_eq!(r.stage.shading_rate(), ShadingRate::Full);
 
-    // Leaving the compute path must drop a rate that was already
-    // standing, and coming back must not resurrect it. A quality setting
-    // that reappears without being asked for is a bug the player
+    // Leaving the compute path must drop a rate that was already standing, and coming back must not
+    // resurrect it. A quality setting that reappears without being asked for is a bug the player
     // experiences as the game changing its own settings.
     assert!(r.stage.set_compute_shading(true) > 0);
     assert!(r.stage.set_shading_rate(ShadingRate::Half) > 0);

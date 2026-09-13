@@ -1,22 +1,6 @@
-//! #776's acceptance: a light with a size leaves a highlight with a size.
-//!
-//! Every assertion compares two renders that differ **only** in
-//! `PointLight::radius`, for the reason `csm_shadows.rs` states: two
-//! places in one image differ for a dozen legitimate reasons, two
-//! renders of the same place differ for one.
-//!
-//! 🔴 The two that matter are `radius_widens_the_highlight` and
-//! `radius_does_not_add_energy`. They are the pair: widening alone is
-//! achievable by simply making the light rougher, and that is the bug
-//! the normalization factor exists to prevent. A port that lands the
-//! representative point and forgets the energy term passes the first
-//! and fails the second.
-//!
-//! Cascades are off — there is no occluder here, and a shadow term
-//! would be a second reason for a pixel to be dark.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test point_radius
+//! Every assertion compares two renders that differ **only** in `PointLight::radius`, for the
+//! reason `csm_shadows.rs` states: two places in one image differ for a dozen legitimate reasons,
+//! two renders of the same place differ for one.
 
 mod common;
 
@@ -62,10 +46,6 @@ struct Rig {
 }
 
 /// A wide, smooth, near-metal floor lit by one point light.
-///
-/// Metallic and smooth on purpose: `radius` only ever moves the
-/// specular layer, so a rough dielectric floor would render the feature
-/// invisible and the test would pass by measuring nothing.
 fn rig(radius: f32) -> Option<Rig> {
     let (device, queue) = try_acquire_device()?;
 
@@ -211,10 +191,9 @@ fn radius_does_not_add_energy() {
     let (_, point_peak) = highlight(&point);
     let (_, sphere_peak) = highlight(&sphere);
 
-    // Spreading a fixed amount of light over more surface has to leave
-    // the brightest point no brighter. Without the `a / a_prime`
-    // normalization the widened lobe keeps its peak and the light reads
-    // as having been turned up.
+    // Spreading a fixed amount of light over more surface has to leave the brightest point no
+    // brighter. Without the `a / a_prime` normalization the widened lobe keeps its peak and the
+    // light reads as having been turned up.
     assert!(
         sphere_peak <= point_peak + 1e-3,
         "widening the light brightened its peak ({point_peak} → {sphere_peak}): \
@@ -230,12 +209,8 @@ fn radius_leaves_the_diffuse_alone() {
     };
     let sphere = render(BIG_RADIUS).expect("second device");
 
-    // A corner of the floor, far enough from the mirror direction that
-    // what reaches it is diffuse and ambient.
-    //
-    // ⚠️ Unlike the two above, this one also passes when the feature is
-    // absent — it is a guard against `radius` leaking into the diffuse
-    // layer, not evidence that anything was implemented.
+    // A corner of the floor, far enough from the mirror direction that what reaches it is diffuse
+    // and ambient.
     let (x, y) = (24, 24);
     let before = luminance_at(&point, SIZE, x, y, 3);
     let after = luminance_at(&sphere, SIZE, x, y, 3);

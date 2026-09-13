@@ -1,16 +1,4 @@
 //! Shared GPU integration test harness.
-//!
-//! Cargo treats `tests/common/mod.rs` as a non-test sibling: each
-//! integration test that pulls it in via `mod common;` recompiles the
-//! helpers without spawning extra runners. Owns:
-//!
-//! - [`try_acquire_device`] — best-effort wgpu device, returns `None`
-//!   when no adapter is available so CI without a GPU skips cleanly.
-//!   Adapter is acquired once per test binary via `OnceLock` to dodge
-//!   the Mesa radv `request_adapter` race documented in issue #334.
-//! - [`build_cube_mesh`] — small canonical mesh used by both the cull
-//!   integration and the render integration tests.
-//! - [`read_buffer_to_vec`] — generic readback helper.
 
 #![allow(dead_code)] // each test binary touches a different subset
 
@@ -52,16 +40,12 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
             let mut limits = wgpu::Limits::default();
             limits.max_storage_textures_per_shader_stage =
                 16.min(adapter.limits().max_storage_textures_per_shader_stage);
-            // #454.4 cull pipeline binds 5 groups (cull, pool, scene,
-            // group_err, debug); the production GpuContext clamps to
-            // 6 (TARGET_MAX_BIND_GROUPS in kooch_core). Mirror it here
-            // so the cull shader compiles against the test device.
+            // group_err, debug); the production GpuContext clamps to 6 (TARGET_MAX_BIND_GROUPS in
+            // kooch_core). Mirror it here so the cull shader compiles against the test device.
             limits.max_bind_groups = 6.min(adapter.limits().max_bind_groups);
-            // #454.6 cull pipeline binds 9 storage buffers
-            // (params + visible IDs + count + 2 pool descriptors +
-            // instances + group_max_err + reject_reasons +
-            // stage_counters). wgpu's default 8 fails shader-module
-            // creation. Mirror TARGET_MAX_STORAGE_BUFFERS_PER_STAGE.
+            // (params + visible IDs + count + 2 pool descriptors + instances + group_max_err +
+            // reject_reasons + stage_counters). wgpu's default 8 fails shader-module creation.
+            // Mirror TARGET_MAX_STORAGE_BUFFERS_PER_STAGE.
             limits.max_storage_buffers_per_shader_stage =
                 16.min(adapter.limits().max_storage_buffers_per_shader_stage);
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -77,22 +61,8 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         .clone()
 }
 
-/// Acquires a wgpu device carrying the 64-bit texture-atomic bundle, so
-/// the render stage builds its `Vbuf64Stage` and a frame takes the
-/// **R64 path** — the one the OneXFly runs.
-///
-/// 🔴 [`try_acquire_device`] requests `Features::empty()`, which means a
-/// test written against it silently exercises the R32 / Hi-Z fallback
-/// instead. That is not hypothetical: #795's first GPU-scope test passed
-/// with the R64 scopes deleted for exactly this reason, and #824's
-/// parity tests passed with the tile-light loop deliberately broken
-/// until this helper existed. Any test whose subject is the R64 path has
-/// to come through here.
-///
-/// Returns `None` when the adapter does not advertise the bundle (Metal
-/// has no `atomic_uint64`, older drivers lack it), so headless CI skips
-/// cleanly. Its own device rather than the shared one: the features
-/// differ, and a test that needs them must not be handed one without.
+/// Acquires a wgpu device carrying the 64-bit texture-atomic bundle, so the render stage builds its
+/// `Vbuf64Stage` and a frame takes the **R64 path** — the one the OneXFly runs.
 pub fn try_acquire_device_r64() -> Option<(wgpu::Device, wgpu::Queue)> {
     let required = kooch_core::gpu::all_required_features();
 
@@ -134,19 +104,8 @@ pub fn try_acquire_device_r64() -> Option<(wgpu::Device, wgpu::Queue)> {
     .ok()
 }
 
-/// Acquires a wgpu device with `Features::TIMESTAMP_QUERY` +
-/// `TIMESTAMP_QUERY_INSIDE_ENCODERS` so the mesh-frame bench (#335)
-/// can drive `MeshletGpuTimers` for per-pass timing. Returns `None`
-/// when either no adapter is available OR the adapter doesn't expose
-/// timestamp queries (Mesa llvmpipe, MoltenVK on some macOS releases,
-/// software fallbacks under WSL2). The bench is `#[ignore]`d by
-/// default so skipping cleanly here keeps CI green on those backends.
-///
-/// Does NOT share state with [`try_acquire_device`]; the bench is a
-/// dedicated test binary so the extra adapter request per run is
-/// fine. Mirrors that helper's limits (storage textures / bind
-/// groups / storage buffers) so the cull / vbuf / Hi-Z pipelines
-/// compile against this device.
+/// Acquires a wgpu device with `Features::TIMESTAMP_QUERY` + `TIMESTAMP_QUERY_INSIDE_ENCODERS` so
+/// the mesh-frame bench (#335) can drive `MeshletGpuTimers` for per-pass timing.
 pub fn try_acquire_device_with_timer() -> Option<(wgpu::Device, wgpu::Queue, wgpu::Adapter)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
@@ -187,10 +146,9 @@ pub fn try_acquire_device_with_timer() -> Option<(wgpu::Device, wgpu::Queue, wgp
     Some((device, queue, adapter))
 }
 
-/// Builds a UV-sphere with `lat_segments` × `lon_segments` quads. Used
-/// by the end-to-end bench to give meshopt enough geometry to produce
-/// 4+ meshlets — the cube produces ~2 meshlets, which is too small to
-/// stress-test the cull pipeline.
+/// Builds a UV-sphere with `lat_segments` × `lon_segments` quads. Used by the end-to-end bench to
+/// give meshopt enough geometry to produce 4+ meshlets — the cube produces ~2 meshlets, which is
+/// too small to stress-test the cull pipeline.
 pub fn build_sphere_mesh(lat_segments: u32, lon_segments: u32) -> Mesh {
     use std::f32::consts::PI;
 
@@ -230,10 +188,9 @@ pub fn build_sphere_mesh(lat_segments: u32, lon_segments: u32) -> Mesh {
     Mesh::from_arrays(vertices, indices)
 }
 
-/// Builds a 12-triangle cube mesh centred at the origin, edge length 1.
-/// `meshopt::build_meshlets` clusters this into a handful of meshlets
-/// — small enough to keep tests fast, large enough that frustum culling
-/// has something to flip.
+/// Builds a 12-triangle cube mesh centred at the origin, edge length 1. `meshopt::build_meshlets`
+/// clusters this into a handful of meshlets — small enough to keep tests fast, large enough that
+/// frustum culling has something to flip.
 pub fn build_cube_mesh() -> Mesh {
     let positions = [
         [-0.5, -0.5, -0.5],
@@ -254,15 +211,8 @@ pub fn build_cube_mesh() -> Mesh {
         [1.0, 0.0, 0.0],  // +X
     ];
 
-    // Six faces, four unique vertices each — duplicated so per-face
-    // normals are not blended. 24 vertices total.
-    //
-    // 🔴 Every corner order below is counter-clockwise **seen from
-    // outside**, which is what `front_face: Ccw` plus back-face culling
-    // needs. Three of these used to wind the other way (-Z, +Y and -X):
-    // the cull tests that were the only callers count meshlets and never
-    // noticed, and the first test to look at the pixels saw a cube with
-    // three missing faces and a floor whose top surface did not exist.
+    // Six faces, four unique vertices each — duplicated so per-face normals are not blended. 24
+    // vertices total.
     let face_indices: [[usize; 4]; 6] = [
         [3, 2, 1, 0], // -Z
         [4, 5, 6, 7], // +Z
@@ -278,15 +228,6 @@ pub fn build_cube_mesh() -> Mesh {
         let normal = face_normals[face_idx];
         let base = vertices.len() as u32;
         // 🔴 A uv per corner, and it used to be [0, 0] on all 24.
-        //
-        // Nothing rendered differently for it — every material in these
-        // tests sampled the 1x1 white fallback, where any coordinate
-        // reads the same texel. What it broke was the ability to MEASURE
-        // texture sampling at all: a mesh whose uvs are constant has uv
-        // derivatives of exactly zero, so mip selection reports level 0
-        // from every distance and a test looking at it concludes the
-        // selection is broken. That is a wrong conclusion this file
-        // handed out once already.
         for (corner, &c) in corners.iter().enumerate() {
             vertices.push(MeshVertex {
                 position: positions[c],
@@ -435,11 +376,6 @@ pub fn read_rgba8(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Te
 }
 
 /// sRGB electrical value → linear.
-///
-/// Comparisons belong in linear because that is where the shading
-/// happened. In 8-bit sRGB the transfer function plus ACES compress a
-/// genuine 2× difference in irradiance down to about 1.1× in the byte,
-/// which makes a working BRDF look like a broken one.
 pub fn srgb_to_linear(v: u8) -> f32 {
     let c = v as f32 / 255.0;
     if c <= 0.04045 {
@@ -449,11 +385,8 @@ pub fn srgb_to_linear(v: u8) -> f32 {
     }
 }
 
-/// Mean linear luminance over a `(2·half + 1)²` box centred on
-/// `(cx, cy)`, so one stray pixel on an edge cannot decide a test.
-///
-/// The box is clamped to the image, which matters at a silhouette: a
-/// sample that runs off the edge would otherwise index another row.
+/// Mean linear luminance over a `(2·half + 1)²` box centred on `(cx, cy)`, so one stray pixel on an
+/// edge cannot decide a test.
 pub fn luminance_at(pixels: &[u8], width: u32, cx: u32, cy: u32, half: u32) -> f32 {
     let height = pixels.len() as u32 / (width * 4);
     let mut total = 0.0;

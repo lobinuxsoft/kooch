@@ -1,19 +1,4 @@
 //! Visibility-buffer compute shading pass.
-//!
-//! Reads the packed value from a R32Uint visibility buffer (output by
-//! [`super::MeshletVisRasterizer`]), looks up the triangle's three
-//! vertex normals in the meshlet pool, averages them, and writes a
-//! normal-debug RGBA8 color modulated by the material's base colour.
-//!
-//! # Two paths share the shader
-//!
-//! - **Single-mesh** (`shade`, shader entry `cs_shade`): packed pixel
-//!   carries `meshlet_id+1`. Per-render-call `model` matrix +
-//!   `material_id` come from UBOs.
-//! - **Scene-wide** (`shade_scene`, shader entry `cs_shade_scene`):
-//!   packed pixel carries `visible_slot+1`. The shader resolves
-//!   `(instance_id, meshlet_idx)` via `visible_meshlets[]` and reads
-//!   per-instance transform / material_id from `instances[]`.
 
 mod scene;
 
@@ -26,33 +11,17 @@ use wgpu::util::DeviceExt;
 /// the two compute entry points.
 const DEFERRED_BODY: &str = include_str!("../../../shaders/meshlet_deferred.wgsl");
 
-/// Bind group Inti occupies here. Groups 0..3 are the shading bindings,
-/// the meshlet pool, the material storage and the scene buffers — 4 is
-/// the first free index. Differs from the two-pass path's group 5
-/// because that path also binds per-material textures; the WGSL is the
-/// same text with a different number substituted in.
+/// Bind group Inti occupies here. Groups 0..3 are the shading bindings, the meshlet pool, the
+/// material storage and the scene buffers — 4 is the first free index.
 pub const DEFERRED_INTI_GROUP: u32 = 4;
 
-/// Group-0 bindings the contact-shadow march takes on this path (#735).
-/// 0..4 are the camera, model and screen uniforms, the visibility buffer
-/// and the colour target; these are the next free. Group 0 because the
-/// depth buffer is per view, exactly as on the R64 path — the two paths
-/// differ in the *numbers*, and in nothing else.
+/// Group-0 bindings the contact-shadow march takes on this path (#735). 0..4 are the camera, model
+/// and screen uniforms, the visibility buffer and the colour target; these are the next free.
 pub const DEFERRED_CONTACT_UBO_BINDING: u32 = 5;
 pub const DEFERRED_CONTACT_DEPTH_BINDING: u32 = 6;
 
-/// The complete compute shader: shared barycentric reconstruction, the
-/// Inti shading model, then this path's entry points.
-///
-/// The reconstruction chunk is the same text the R64 fragment path
-/// composes. Before #441 this path averaged the triangle's three vertex
-/// normals and never computed a world position — fine for shading that
-/// only read the normal, wrong the moment a point light needs a
-/// distance. Sharing the chunk is what stops the fallback from quietly
-/// drifting away from the path everyone actually looks at.
-/// `debug` builds the editor's variant, which is the only one that
-/// contains the debug views at all — see
-/// [`kooch_lighting::INTI_DEBUG_STUB`] (#743).
+/// The complete compute shader: shared barycentric reconstruction, the Inti shading model, then
+/// this path's entry points.
 fn shader_source(debug: bool) -> String {
     [
         crate::meshlet::SURFACE_RECONSTRUCT_SHADER,
@@ -92,29 +61,7 @@ fn build_scene_pipeline(
 /// compare pixel-for-pixel.
 pub const DEFERRED_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-/// Where the compute path's shading lands **before** the tonemap
-/// (#732 phase 1).
-///
-/// # 🔴 Why the tonemap had to move out of the shading shader
-///
-/// Temporal anti-aliasing blends this frame with the last one, and a
-/// blend is only meaningful in a linear space: averaging two
-/// ACES-tonemapped 8-bit values is not the tonemap of their average.
-/// Bevy's TAA works around a display-referred input by applying a
-/// reversible tonemap inside the resolve, and it can do that because its
-/// input is HDR to begin with. Ours was `Rgba8Unorm` with ACES already
-/// baked in, so the history would have quantised at 1/255 per frame —
-/// exactly the precision a temporal accumulator exists to recover.
-///
-/// So the chain is now `shade → HDR → tonemap → LDR → blit`, and TAA
-/// lands between the first two. The extra pass is not scaffolding for
-/// that: it is where #254's auto exposure belongs regardless.
-///
-/// ⚠️ Sixteen bits per channel is twice the write bandwidth of the pass
-/// the device says is the bottleneck. At half rate the shading writes a
-/// quarter-resolution target, so the extra traffic is a quarter of what
-/// it looks like — but it is real and it is measured on the device
-/// rather than argued here.
+/// Where the compute path's shading lands **before** the tonemap (#732 phase 1).
 pub const HDR_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 #[repr(C)]
@@ -144,13 +91,6 @@ pub struct MeshletDeferredShader {
     pub(super) pipeline: wgpu::ComputePipeline,
     pub(super) pipeline_scene: wgpu::ComputePipeline,
     /// `pipeline_scene` with the debug views concatenated in (#743).
-    ///
-    /// Built on first use, which in a shipped game never comes: the game
-    /// neither compiles the views nor carries them in the pipeline it
-    /// does run.
-    ///
-    /// A `OnceLock` so the render chain stays on `&self` — see the R64
-    /// path's twin field for the reasoning.
     pub(super) pipeline_scene_debug: std::sync::OnceLock<wgpu::ComputePipeline>,
     /// Kept so the debug variant is built against the same layout.
     pub(super) pipeline_layout_scene: wgpu::PipelineLayout,
@@ -166,7 +106,7 @@ pub struct MeshletDeferredShader {
 
 impl MeshletDeferredShader {
     /// `meshlet_bgl` must come from
-    /// [`super::MeshletCull::meshlet_bind_group_layout`] so the meshlet
+    /// `super::MeshletCull::meshlet_bind_group_layout` so the meshlet
     /// pool layout is shared with the rasterizer.
     pub fn new(device: &wgpu::Device, meshlet_bgl: &wgpu::BindGroupLayout) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -316,11 +256,8 @@ impl MeshletDeferredShader {
         &self.scene_bgl
     }
 
-    /// Records the compute shading pass into `encoder`. `vbuf_view`
-    /// reads the visibility buffer; `color_view` is the
-    /// storage-texture write target. `material_bg` is built from a
-    /// [`crate::material::MaterialPool`]; `material_id` selects which
-    /// pool slot drives this render call.
+    /// Records the compute shading pass into `encoder`. `vbuf_view` reads the visibility buffer;
+    /// `color_view` is the storage-texture write target.
     #[allow(clippy::too_many_arguments)]
     pub fn shade(
         &self,

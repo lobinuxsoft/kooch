@@ -7,14 +7,9 @@ use glam::Vec3;
 use crate::mesh::{Aabb, MeshVertex};
 use crate::meshlet::asset::{MESHLET_GROUP_NONE, MESHLET_ROOT_PARENT, MeshletDescriptor};
 
-/// Runs `meshopt::build_meshlets` over `indices` and returns the
-/// per-meshlet descriptors plus the per-LOD `meshlet_vertices` and
-/// `meshlet_triangles` arrays. `lod_error` tags every descriptor with
-/// the simplify error that produced this LOD level (0.0 for LOD 0).
-///
-/// `parent_meshlet_index`, `group_index`, and `children_group_index`
-/// default to their sentinels — the chain build wires the real values
-/// when assembling the DAG.
+/// Runs `meshopt::build_meshlets` over `indices` and returns the per-meshlet descriptors plus the
+/// per-LOD `meshlet_vertices` and `meshlet_triangles` arrays. `lod_error` tags every descriptor
+/// with the simplify error that produced this LOD level (0.0 for LOD 0).
 pub(super) fn clusterize_lod(
     indices: &[u32],
     adapter: &meshopt::VertexDataAdapter<'_>,

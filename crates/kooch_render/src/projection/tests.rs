@@ -1,7 +1,6 @@
-/// The property the whole migration is for: with no far plane,
-/// `ndc.z` **is** `near / distance`, so a shader recovers metres
-/// with one divide and no uniform. Checked against the matrix
-/// rather than against the algebra that motivated it.
+/// The property the whole migration is for: with no far plane, `ndc.z` **is** `near / distance`, so
+/// a shader recovers metres with one divide and no uniform. Checked against the matrix rather than
+/// against the algebra that motivated it.
 #[test]
 fn infinite_reverse_z_makes_ndc_z_exactly_near_over_distance() {
     let near = 0.1;
@@ -64,11 +63,9 @@ fn far_plane_maps_to_zero() {
 
 #[test]
 fn midpoint_lies_between() {
-    // Reversed-Z spreads precision NON-uniformly in view space —
-    // points closer to the camera get more depth resolution. The
-    // mid-distance point lands somewhere between 0 and 1, NOT
-    // exactly 0.5, but ordering is preserved monotonically with
-    // distance.
+    // Reversed-Z spreads precision NON-uniformly in view space — points closer to the camera get
+    // more depth resolution. The mid-distance point lands somewhere between 0 and 1, NOT exactly
+    // 0.5, but ordering is preserved monotonically with distance.
     let proj = perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let z_close = project_point(proj, -1.0);
     let z_mid = project_point(proj, -50.0);

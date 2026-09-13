@@ -108,14 +108,7 @@ fn meshlet_offsets_are_rebased_into_pool_coordinates() {
 
 #[test]
 fn parent_meshlet_index_values_are_rebased_into_pool_meshlet_space() {
-    // Regression: `parent_meshlet_index` is a meshlet index into
-    // the SAME chain. When the pool concatenates a second mesh,
-    // its parents land inside the second mesh's slice — the
-    // values must be shifted by the first_meshlet offset so the
-    // 2-pass cull's pass 1 reads the correct parent's pixel
-    // error. Before the fix, mesh #2's parents silently
-    // referenced mesh #1's meshlets and the LOD selector
-    // behaved randomly per mesh.
+    // Regression: `parent_meshlet_index` is a meshlet index into the SAME chain.
     use crate::meshlet::asset::MESHLET_ROOT_PARENT;
     let mesh = build_default_meshlets(&cube_mesh()).expect("build");
     let mut pool = GlobalMeshPool::new();
@@ -146,12 +139,9 @@ fn parent_meshlet_index_values_are_rebased_into_pool_meshlet_space() {
 
 #[test]
 fn meshlet_vertices_values_are_rebased_into_pool_vertex_space() {
-    // Regression: the pool used to extend_from_slice(meshlet_vertices)
-    // verbatim, which left the second mesh's local indices pointing
-    // back at the first mesh's vertices in the concatenated pool.
-    // The shader's vertices[meshlet_vertices[..]] lookup then
-    // produced random geometry. The fix shifts each value by the
-    // mesh's vertex base offset on append.
+    // Regression: the pool used to extend_from_slice(meshlet_vertices) verbatim, which left the
+    // second mesh's local indices pointing back at the first mesh's vertices in the concatenated
+    // pool. The shader's vertices[meshlet_vertices[..]] lookup then produced random geometry.
     let mesh = build_default_meshlets(&cube_mesh()).expect("build");
     let mut pool = GlobalMeshPool::new();
     pool.register(&mesh);

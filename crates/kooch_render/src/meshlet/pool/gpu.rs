@@ -83,19 +83,17 @@ pub struct GpuGlobalMeshPool {
     pub vertices: wgpu::Buffer,
     pub meshlet_vertices: wgpu::Buffer,
     pub meshlet_triangles: wgpu::Buffer,
-    /// Per-mesh bounds sphere as `(center, radius)` vec4s, parallel to
-    /// `mesh_descriptors`. Not part of the shared 5-entry pool layout —
-    /// only the lamp cull (#939) binds it, in its own layout, so no
-    /// existing shader mirror moves.
+    /// Per-mesh bounds sphere as `(center, radius)` vec4s, parallel to `mesh_descriptors`. Not part
+    /// of the shared 5-entry pool layout — only the lamp cull (#939) binds it, in its own layout,
+    /// so no existing shader mirror moves.
     pub mesh_bounds: wgpu::Buffer,
     pub mesh_count: u32,
     pub max_meshlets_per_mesh: u32,
 }
 
 impl GpuGlobalMeshPool {
-    /// Bind-group layout: 5 storage buffers, all read-only, all
-    /// visible to compute + vertex stages so the same bind group can
-    /// drive cull + vbuf rasterization once the pool variant of those
+    /// Bind-group layout: 5 storage buffers, all read-only, all visible to compute + vertex stages
+    /// so the same bind group can drive cull + vbuf rasterization once the pool variant of those
     /// shaders lands.
     pub fn bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
         let read_only = wgpu::BindingType::Buffer {

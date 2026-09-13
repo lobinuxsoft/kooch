@@ -1,61 +1,13 @@
 
-// ---------------------------------------------------------------
-// #465 — group-atomic LOD descent (2-pass cull).
-//
-// Pass 1 (cs_lod_compute_group_max_err) computes, per group_id, the
-// maximum pixel-projected error among the parents of that group. The
-// "parents of group G" are the meshlets that the children in G point
-// at via parent_meshlet_index — but iterating children is more
-// convenient because each child knows its group_index and its
-// parent. So per child C, contribute pixel_err(C.parent) to
-// group_max_err[C.group_index] via atomicMax. Sibling children all
-// converge their group's slot to max(parent_err over all parents of
-// the group), which is what pass 2 needs.
-//
-// f32 → u32 bitcast for the atomic: pixel errors are non-negative,
-// so the IEEE-754 bit pattern preserves ordering for atomicMax. The
-// CPU-side group_max_err buffer is cleared to 0 (= 0.0 f32) each
-// frame.
-//
-// Pass 2 (cs_cull_scene_pool_atomic) selects atomically:
-//   above_too_coarse = (M.group_index == NONE) ? true
-//                       : group_max_err[M.group_index] > threshold
-//   below_fine       = (M.children_group_index == NONE) ? true
-//                       : group_max_err[M.children_group_index] <= threshold
-//   render M iff (above_too_coarse && below_fine && passes_frustum_cone)
-//
-// The atomicity invariant: every meshlet sharing a group_index
-// produces the SAME above_too_coarse decision (they read the same
-// slot). So sibling children either all descend together or all
-// stay together — no half-descended group → no torn coverage seam.
-// ---------------------------------------------------------------
+// Pass 1 (cs_lod_compute_group_max_err) computes, per group_id, the maximum pixel-projected error
+// among the parents of that group.
 
 @group(3) @binding(0) var<storage, read_write> group_max_err: array<atomic<u32>>;
 
-// #454.4 — per-thread reject-reason tag buffer. One u32 slot per cull
-// thread (= instance_count × meshlets_per_mesh, sized in lock-step
-// with visible_meshlets). Values:
-//   0 = thread skipped (out of bounds for instance's mesh meshlet
-//       count, or for total_threads).
-//   1 = passed every cull stage and was emitted into visible_meshlets.
-//   2 = rejected by frustum.
-//   3 = rejected by backface cone.
-//   4 = rejected by Hi-Z occlusion (pass A only — the Hi-Z 2-pass
-//       entry doesn't write reject_reasons in #454.4 scope; reserved
-//       for the follow-up that wires it).
-// All writes are gated to `params.debug_active != 0`. Production
-// rendering pays exactly one uniform compare per thread + zero
-// stores. The buffer is cleared by the dispatcher at frame start so
-// stale entries from the previous frame never bleed through.
+// thread (= instance_count × meshlets_per_mesh, sized in lock-step with visible_meshlets).
 @group(4) @binding(0) var<storage, read_write> reject_reasons: array<u32>;
 
-// #454.6 — per-stage cull survivor counters. AtomicAdded at each
-// stage tail when `params.debug_active != 0`. Slot layout:
-//   [0] = after_frustum   (passed frustum test)
-//   [1] = after_backface  (passed frustum + backface)
-//   [2] = after_hi_z      (only the Hi-Z 2-pass entry writes here;
-//         this entry leaves it 0 because it doesn't run an Hi-Z test)
-//   [3] = total_visible   (terminal — equals visible_count)
+// stage tail when `params.debug_active != 0`.
 @group(4) @binding(1) var<storage, read_write> stage_counters: array<atomic<u32>, 4>;
 
 const STAGE_AFTER_FRUSTUM: u32 = 0u;
@@ -73,19 +25,15 @@ const REJECT_REASON_SKIPPED: u32 = 0u;
 const REJECT_REASON_PASSED: u32 = 1u;
 const REJECT_REASON_FRUSTUM: u32 = 2u;
 const REJECT_REASON_BACKFACE: u32 = 3u;
-// LOD selector dropped the meshlet (above_too_coarse / below_fine
-// / debug-mode override). Same colour as "skipped" in the overlay
-// LUT today; surfaced separately so the debug HUD can split LOD
+// LOD selector dropped the meshlet (above_too_coarse / below_fine / debug-mode override). Same
+// colour as "skipped" in the overlay LUT today; surfaced separately so the debug HUD can split LOD
 // drops from genuinely out-of-range threads later.
 const REJECT_REASON_LOD: u32 = 5u;
-// #1002 — the two-level cull dropped the whole INSTANCE before it
-// became meshlets. Written at the instance's first rectangle slot, so
-// the overlay draws one box per rejected instance rather than one per
-// meshlet it never expanded.
+// became meshlets. Written at the instance's first rectangle slot, so the overlay draws one box per
+// rejected instance rather than one per meshlet it never expanded.
 const REJECT_REASON_INSTANCE: u32 = 6u;
-// Same pass, the other test: the instance projects to fewer pixels
-// than `params.min_screen_pixels`. Separate from the frustum reject
-// because "off screen" and "too small to matter" are different
+// Same pass, the other test: the instance projects to fewer pixels than `params.min_screen_pixels`.
+// Separate from the frustum reject because "off screen" and "too small to matter" are different
 // answers and only one of them is a setting.
 const REJECT_REASON_REACH: u32 = 7u;
 
@@ -95,17 +43,8 @@ fn record_reject(thread_id: u32, reason: u32) {
     }
 }
 
-// AABB-vs-frustum (positive-vertex test). Ports atomic_hi_z's
-// `aabb_outside_frustum_atomic` to the non-Hi-Z R64 path so both
-// entries reject identically. Sphere-bounds + plane-distance left
-// silhouette holes at viewport edges where projected AABBs
-// partially leave the frustum (#488 documented this fix for the
-// Hi-Z path; the R64 path inherits it here).
-//
-// Drops the far plane on purpose (5 planes: 4 lateral + ndc.z >= 0).
-// Meshlets straddling the near plane stay in — the rasterizer clips
-// them naturally, and rejecting at the cull would re-introduce the
-// same silhouette holes the AABB switch was meant to close.
+// AABB-vs-frustum (positive-vertex test). Ports atomic_hi_z's `aabb_outside_frustum_atomic` to the
+// non-Hi-Z R64 path so both entries reject identically.
 fn aabb_outside_frustum_local(
     world_from_local: mat4x4<f32>,
     aabb_min_local: vec3<f32>,
@@ -135,19 +74,6 @@ fn aabb_outside_frustum_local(
 
 fn lod_pixel_error_world_pool(lod_error: f32, world_center: vec3<f32>, world_scale: f32) -> f32 {
     // 🔴 Orthographic views do not shrink error with distance.
-    //
-    // Under perspective the same simplification error covers fewer
-    // pixels the further away it is, which is what the divide by `dist`
-    // encodes. An orthographic projection magnifies everything equally:
-    // the screen error is the world error over the volume's world
-    // height, and there is no distance in the relationship at all.
-    //
-    // Dividing by one anyway makes the test vary across a shadow
-    // cascade for no physical reason, so two neighbouring meshlets in
-    // the same LOD group fall on opposite sides of the threshold and
-    // the surface comes apart. It reads as "some meshlets do not cast a
-    // shadow", which is how it was reported. Bevy 0.19 branches on the
-    // same condition in `lod_error_is_imperceptible`.
     let world_error = lod_error * world_scale;
     if (params.lod_orthographic == 1u) {
         return world_error * params.lod_error_to_pixel_factor;
@@ -157,10 +83,9 @@ fn lod_pixel_error_world_pool(lod_error: f32, world_center: vec3<f32>, world_sca
     return world_error * params.lod_error_to_pixel_factor / dist;
 }
 
-// Pass 1's body, once the thread knows WHICH meshlet it owns. Split
-// out so the two-level cull (#1002) can reach the same reduction from
-// a chunk instead of from a rectangle index — the decision has to be
-// identical in both passes or a group descends half-way.
+// Pass 1's body, once the thread knows WHICH meshlet it owns. Split out so the two-level cull
+// (#1002) can reach the same reduction from a chunk instead of from a rectangle index — the
+// decision has to be identical in both passes or a group descends half-way.
 fn lod_group_max_err(instance_id: u32, meshlet_offset: u32) {
     let inst = instances[instance_id];
     let mesh_desc = pool_mesh_descriptors[inst.mesh_id];
@@ -192,12 +117,9 @@ fn lod_group_max_err(instance_id: u32, meshlet_offset: u32) {
 
     // bitcast preserves ordering for non-negative IEEE-754 floats.
     let parent_err_bits = bitcast<u32>(max(parent_err_px, 0.0));
-    // Per-instance slot: m.group_index was pool-shifted by
-    // mesh_desc.group_base at register(); subtract to recover the
-    // mesh-local id, then offset by inst.group_base so each instance
-    // owns a disjoint slot range. Without this every instance of the
-    // mesh atomicMaxes into the same slot and pass 2 collapses every
-    // instance's LOD to the closest one's verdict (#474).
+    // Per-instance slot: m.group_index was pool-shifted by mesh_desc.group_base at register();
+    // subtract to recover the mesh-local id, then offset by inst.group_base so each instance owns a
+    // disjoint slot range.
     let local_group = m.group_index - mesh_desc.group_base;
     let slot = inst.group_base + local_group;
     atomicMax(&group_max_err[slot], parent_err_bits);
@@ -217,11 +139,6 @@ fn cs_lod_compute_group_max_err(
 }
 
 // Pass 2's body, once the thread knows WHICH meshlet it owns.
-//
-// `thread_id` is the slot in `reject_reasons`, and it stays the
-// RECTANGLE index even when a chunk found the meshlet — the overlay
-// decodes it with `thread_id / meshlets_per_mesh` and keeping the
-// debug buffer in the old domain leaves it working untouched.
 fn cull_pool_atomic(thread_id: u32, instance_id: u32, meshlet_offset: u32) {
     let inst = instances[instance_id];
     let mesh_desc = pool_mesh_descriptors[inst.mesh_id];
@@ -233,11 +150,9 @@ fn cull_pool_atomic(thread_id: u32, instance_id: u32, meshlet_offset: u32) {
     let global_meshlet_idx = mesh_desc.first_meshlet + meshlet_offset;
     let m = pool_meshlets[global_meshlet_idx];
 
-    // Per-instance LOD level lock (#467). When the editor's LOD-
-    // stack inspector spawns ghost copies of an entity, each copy
-    // sets `lod_force_level >= 0` to render only its own slice of
-    // the chain. Short-circuits both the debug-mode overrides and
-    // the normal selector below.
+    // Per-instance LOD level lock (#467). When the editor's LOD- stack inspector spawns ghost
+    // copies of an entity, each copy sets `lod_force_level >= 0` to render only its own slice of
+    // the chain. Short-circuits both the debug-mode overrides and the normal selector below.
     if (inst.lod_force_level >= 0) {
         if (i32(m.lod_level) != inst.lod_force_level) {
             record_reject(thread_id, REJECT_REASON_LOD);

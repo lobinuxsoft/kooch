@@ -1,12 +1,4 @@
 //! Motion vectors say where a surface was, not where a pixel was (#481).
-//!
-//! Every temporal technique on the roadmap reads this one texture — TAA,
-//! FSR, DLSS, XeSS, motion blur — and all of them fail the same way when
-//! it is wrong: a smear that looks like a bug in the technique rather
-//! than in its input. So the assertions below are about the input.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test motion_vectors
 
 mod common;
 
@@ -62,16 +54,8 @@ fn half_to_f32(bits: u16) -> f32 {
 fn render(r: &mut common::lit_scene::Rig) -> Vec<(f32, f32)> {
     r.stage.set_compute_shading(true);
     r.stage.set_shading_rate(ShadingRate::Full);
-    // 🔴 The pass is GATED on there being a consumer (#868) — writing
-    // velocity nobody reads cost 1.994 ms of a 20.5 ms frame. Without
-    // this line the texture is never written, every assertion below
-    // reads zeros, and the failure reads as "the pass is broken" rather
-    // than "the pass did not run".
-    //
-    // ⚠️ This file was left behind when the gate landed: it asserts on a
-    // pass it did not switch on, so both of its moving-camera cases went
-    // red and stayed red. A gate has to be added to every test that
-    // depends on what it gates.
+    // 🔴 The pass is GATED on there being a consumer (#868) — writing velocity nobody reads cost
+    // 1.994 ms of a 20.5 ms frame.
     assert!(
         r.stage.set_temporal_aa(true) > 0,
         "no view took the temporal setting — the motion pass would not run at all",
@@ -90,17 +74,6 @@ fn peak(vectors: &[(f32, f32)]) -> f32 {
 }
 
 /// 🔴 Nothing moved, so nothing moved.
-///
-/// This is the assertion that catches the whole family of mistakes at
-/// once: a previous transform keyed by array position instead of by
-/// entity, a previous view-projection that was never stored, a jittered
-/// matrix where an unjittered one belongs. Every one of them produces a
-/// non-zero vector on a scene that did not move, and every one of them
-/// looks like ghosting three features later.
-///
-/// Two renders, because the first frame has no history and reprojects
-/// against itself — which is zero for a trivial reason rather than the
-/// real one.
 #[test]
 fn a_still_camera_produces_no_motion() {
     let Some(mut r) = rig(3, true) else {
@@ -157,23 +130,9 @@ fn a_moving_camera_produces_motion() {
     );
 }
 
-/// A vector points where the surface *came from*, and its sign is what a
-/// temporal resolve uses to walk backwards into the history. Getting it
-/// inverted still produces plausible-looking magnitudes, and then every
-/// temporal effect smears in the wrong direction.
-///
-/// # 🔴 The convention, derived rather than guessed
-///
-/// Bevy's resolve reads `history_uv = uv - motion_vector`
-/// (`taa.wesl:124`), and every upscaler that consumes this texture wants
-/// the same. Move the camera right and a static surface slides LEFT on
-/// screen, so its previous UV was to the **right** — larger. For
-/// `uv - motion` to land there, `motion.u` has to be **negative**.
-///
-/// This test was written asserting the opposite and the code was right:
-/// measured −0.2253. The sign is recorded here with its derivation
-/// precisely so the next person to find it surprising checks the
-/// convention instead of flipping the shader.
+/// A vector points where the surface *came from*, and its sign is what a temporal resolve uses to
+/// walk backwards into the history. Getting it inverted still produces plausible-looking
+/// magnitudes, and then every temporal effect smears in the wrong direction.
 #[test]
 fn the_vector_points_where_the_surface_came_from() {
     let Some(mut r) = rig(3, true) else {

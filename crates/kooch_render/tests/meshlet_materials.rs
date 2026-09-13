@@ -1,10 +1,4 @@
 //! GPU integration test: deferred shading modulates by material id.
-//!
-//! Renders the same cube + camera setup with two different material
-//! ids and asserts the resulting colors differ.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test meshlet_materials
 
 mod common;
 

@@ -1,17 +1,4 @@
 //! The pass between HDR radiance and the image (#732 phase 1).
-//!
-//! The compute shading path writes linear radiance into an
-//! [`HDR_COLOR_FORMAT`] texture and this resolves it onto the caller's
-//! `Rgba8Unorm` view. Temporal anti-aliasing lands between the two:
-//! blending this frame with the last is only meaningful before the
-//! curve, which is why the tonemap had to leave the shading shader at
-//! all.
-//!
-//! The fragment shading path is untouched and still tonemaps inline.
-//! That is not an oversight — it has no HDR target, will never carry a
-//! temporal history, and `compute_shading_parity` compares the two
-//! **after** both have reached the same `Rgba8Unorm` view, so the fork
-//! is invisible to it.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -24,11 +11,9 @@ const SHADER_SOURCE: &str = include_str!("../../../shaders/tonemap.wgsl");
 struct TonemapUbo {
     enabled: u32,
     exposure: f32,
-    /// Source-over-target pixel ratio. `1.0` when the source already
-    /// matches the target; the render-resolution ratio when a debug
-    /// view skipped the upscaler, so the region the renderer actually
-    /// wrote stretches to fill the view instead of sitting in a
-    /// corner at half size.
+    /// Source-over-target pixel ratio. `1.0` when the source already matches the target; the
+    /// render-resolution ratio when a debug view skipped the upscaler, so the region the renderer
+    /// actually wrote stretches to fill the view instead of sitting in a corner at half size.
     scale: [f32; 2],
 }
 
@@ -139,15 +124,6 @@ impl Tonemap {
     }
 
     /// Resolves `source` onto `target`.
-    ///
-    /// `source` is this stage's own HDR target most of the time and the
-    /// temporal resolve's output when TAA is on (#481) — the pass reads
-    /// whichever texture last held linear radiance, which is why it is a
-    /// parameter rather than the field beside it.
-    ///
-    /// `enabled` is false for the debug views, which produce
-    /// display-ready false colour: putting a legend through a filmic
-    /// curve turns a readable ramp into a washed-out one.
     pub(super) fn draw(
         &self,
         queue: &wgpu::Queue,

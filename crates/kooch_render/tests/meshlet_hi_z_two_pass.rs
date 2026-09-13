@@ -1,28 +1,4 @@
 //! GPU acceptance: Hi-Z 2-pass cull (#445).
-//!
-//! Validates the orchestrator-level behaviour MeshletRenderStage now
-//! exposes: pass A culls against the previous frame's pyramid, the
-//! depth from pass A's raster builds the current pyramid, and pass B
-//! re-tests the rejects against the fresh pyramid before raster B
-//! appends survivors.
-//!
-//! Two scenarios:
-//!  * `single_frame_first_render_does_not_crash_with_empty_prev_pyramid`
-//!    — first frame samples a freshly cleared `hiz_prev` (1.0 = far
-//!    everywhere). The conservative Hi-Z reject rule keeps every
-//!    meshlet, so `culled_count = 0` and visible holds the full set.
-//!  * `two_pass_visible_set_stays_stable_across_frames_in_static_scene` —
-//!    renders the same scene + camera N times in a row. The
-//!    rendered set (= visible_count after pass A + pass B) MUST
-//!    match across every frame; if Hi-Z 2-pass introduces
-//!    flicker via the swap or pass-B retest, this catches it.
-//!    Note: `culled_count` may oscillate between frames because
-//!    pass A can validly accept-or-defer the same meshlet on
-//!    different frames depending on which pyramid it sampled —
-//!    that's an internal-pipeline metric, not a correctness one.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test meshlet_hi_z_two_pass
 
 mod common;
 
@@ -140,11 +116,7 @@ fn single_frame_first_render_does_not_crash_with_empty_prev_pyramid() {
          pyramid build + cull B + raster B + deferred shade)."
     );
 
-    // First frame: hiz_prev is fresh / uninitialised. The conservative
-    // Hi-Z helper returns "not occluded" for samples past the pyramid
-    // (clip.w <= radius / NDC out of range / etc.) so on the very
-    // first frame every meshlet should fall through to visible_meshlets
-    // and culled_meshlets should stay at zero.
+    // First frame: hiz_prev is fresh / uninitialised.
     let visible = read_u32(&device, &queue, stage.cull().visible_count_buffer());
     let culled = read_u32(&device, &queue, stage.cull().culled_count_buffer());
     assert!(
@@ -181,11 +153,8 @@ fn two_pass_visible_set_stays_stable_across_frames_in_static_scene() {
     );
     stage.ensure_gpu_mesh(&device, cube_guid, &cube_meshlets);
 
-    // "Wall" instance: a large flat cube near the camera that covers
-    // the screen, plus several smaller cubes parked behind it. The
-    // wall's depth dominates the depth attachment after raster A, so
-    // by frame 2 hiz_prev is the wall and pass A's Hi-Z test against
-    // the back-row cubes' projected centres should reject.
+    // "Wall" instance: a large flat cube near the camera that covers the screen, plus several
+    // smaller cubes parked behind it.
     let mut resources = ecs_test_resources();
     install_material_pipeline(
         &mut resources,
@@ -226,25 +195,16 @@ fn two_pass_visible_set_stays_stable_across_frames_in_static_scene() {
     let camera =
         kooch_render::ViewCamera::looking_at(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -10.0));
 
-    // Render N frames of a static scene. The visible-meshlet set
-    // (= what the deferred shader ends up rendering) MUST stay
-    // identical across frames — Hi-Z 2-pass adds an internal
-    // ping-pong but the union of pass A + pass B should always
-    // equal the single-pass output for the same camera + scene.
+    // Render N frames of a static scene.
     let mut counts = Vec::with_capacity(4);
     for _ in 0..4 {
         let _ = stage.render_with_assets_primary(&device, &queue, &resources, &camera, 1.0);
         let visible = read_u32(&device, &queue, stage.cull().visible_count_buffer());
         counts.push(visible);
     }
-    // Frame 0 is the init transient: hiz_prev was just cleared to
-    // 0.0 (= far in reversed-Z), so pass A's conservative test
-    // `aabb.max.z <= tile_min` rejects nothing and visible_count
-    // covers the full instance set. From frame 1 onward hiz_prev
-    // carries real depth from the previous raster A and the cull
-    // settles into a stable subset (whatever pass A + pass B agree
-    // on — could be the full set on a sparse scene, or a strict
-    // subset when occluders are present).
+    // Frame 0 is the init transient: hiz_prev was just cleared to 0.0 (= far in reversed-Z), so
+    // pass A's conservative test `aabb.max.z <= tile_min` rejects nothing and visible_count covers
+    // the full instance set.
     assert!(
         counts[0] > 0,
         "first frame must produce visible meshlets, got 0 — orchestration broken"

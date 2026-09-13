@@ -32,16 +32,6 @@ fn new_packs_scalars_correctly() {
 }
 
 /// 🔴 The layout is declared four times and checked nowhere.
-///
-/// `MaterialParams` exists in Rust and in three WGSL files, all reading
-/// the same storage buffer. Adding a field to two of the three compiles
-/// perfectly: the shader that missed it reads every material at the
-/// wrong stride, so material 3 gets material 2's bytes and the picture
-/// shows the wrong material rather than anything that looks like a
-/// layout bug.
-///
-/// Compares the field NAMES in order, which is what a stride mismatch
-/// comes from, and the byte size against Rust's.
 #[test]
 fn every_shader_agrees_on_the_material_layout() {
     const SHADERS: [&str; 3] = [
@@ -99,10 +89,6 @@ fn the_uv_transform_packs_scale_then_offset() {
 }
 
 /// And a material that says nothing tiles exactly once.
-///
-/// The default has to be the identity: every `.ron` in every project
-/// written before this field existed elides it, and those materials must
-/// look the way they looked.
 #[test]
 fn the_default_transform_is_the_identity() {
     assert_eq!(
@@ -114,25 +100,6 @@ fn the_default_transform_is_the_identity() {
 }
 
 /// 🔴 Whatever tiles the coordinate must tile its derivatives too.
-///
-/// `textureSampleGrad` picks the mip from how fast the uv moves between
-/// neighbouring pixels. Tiling twenty times makes it move twenty times
-/// faster, so handing it the untiled derivatives selects a level about
-/// four steps too sharp — the aliasing the mip chain exists to remove,
-/// on exactly the surfaces that asked for tiling.
-///
-/// Both shaders build one `derivative_scale` and multiply both
-/// derivatives by it, so the test follows that: the factor has to carry
-/// the material's tiling AND the mip bias (#881), and both derivatives
-/// have to use it. A derivative left on the raw `surf.` value is the
-/// bug.
-///
-/// ⚠️ This reads the shader as TEXT, which is a weak test and is here
-/// anyway: nothing else in the suite fails when a multiply is dropped,
-/// and the way it gets dropped is a copy-paste that keeps the
-/// coordinate and forgets the lines under it. A GPU test that measured
-/// the chosen mip would be better — `texture_mip_selection` is now that
-/// test for the bias half.
 #[test]
 fn tiling_scales_the_derivatives_too() {
     for (name, source) in [

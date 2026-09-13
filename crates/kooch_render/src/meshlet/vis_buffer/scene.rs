@@ -1,8 +1,5 @@
-//! Scene-path render impl. Lives in its own file so the rasterizer
-//! struct stays under the 400-LoC ceiling. The shader entry points
-//! `vs_vbuf_scene` / `fs_vbuf_scene` are defined inside
-//! `shaders/meshlet_vbuf.wgsl`; this module only records the per-frame
-//! draw and builds the per-frame bind groups.
+//! Scene-path render impl. Lives in its own file so the rasterizer struct stays under the 400-LoC
+//! ceiling.
 
 use bytemuck::bytes_of;
 
@@ -12,21 +9,8 @@ use crate::meshlet::scene::MeshletScene;
 use super::{CameraUbo, MeshletVisRasterizer};
 
 impl MeshletVisRasterizer {
-    /// Scene-path render: rasterizes every visible (instance, meshlet)
-    /// pair the cull dispatch surfaced into the visibility buffer.
-    /// Per-instance transforms live inside `scene`'s instance buffer;
-    /// the vertex shader fetches them through the pre-decoded packed
-    /// values in `cull.visible_meshlets_buffer()`.
-    ///
-    /// `clear_id` is the visibility-buffer clear value (pass `0` for
-    /// "background"). The depth attachment is mandatory for the scene
-    /// path — multiple instances at different depths absolutely need
-    /// it.
-    ///
-    /// `clear` selects the load op for both attachments. Use `true`
-    /// for the first raster of a frame and `false` for any append
-    /// pass (e.g. Hi-Z 2-pass cull's pass B raster, #445) so prior
-    /// fragments survive.
+    /// Scene-path render: rasterizes every visible (instance, meshlet) pair the cull dispatch
+    /// surfaced into the visibility buffer.
     #[allow(clippy::too_many_arguments)]
     pub fn render_scene(
         &self,

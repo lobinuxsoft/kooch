@@ -1,7 +1,6 @@
-//! Multi-LOD chain integration tests. Builds a real chain via
-//! `build_meshlets_lod_chain` and asserts the structural invariants
-//! the runtime cull/draw path depends on (DAG acyclicity, group-id
-//! propagation, offset rebasing, etc.).
+//! Multi-LOD chain integration tests. Builds a real chain via `build_meshlets_lod_chain` and
+//! asserts the structural invariants the runtime cull/draw path depends on (DAG acyclicity,
+//! group-id propagation, offset rebasing, etc.).
 
 use std::collections::HashMap;
 
@@ -32,13 +31,9 @@ fn lod_chain_lod_zero_has_zero_error() {
 
 #[test]
 fn lod_chain_lod_zero_meshlets_appear_first() {
-    // Per-group simplify (Nanite-grouped DAG) gives every parent its
-    // own lod_error reported by meshopt for that group, so the global
-    // error sequence is no longer monotonic across the concatenated
-    // chain. The structural invariant that survives: every LOD 0
-    // meshlet (error == 0.0) lands before any LOD ≥ 1 meshlet
-    // (error > 0.0) because LOD 0 is appended in one global pass
-    // before the per-group loop runs.
+    // Per-group simplify (Nanite-grouped DAG) gives every parent its own lod_error reported by
+    // meshopt for that group, so the global error sequence is no longer monotonic across the
+    // concatenated chain.
     let mesh = make_grid_mesh(20);
     let chain = build_meshlets_lod_chain(
         &mesh,
@@ -114,24 +109,8 @@ fn lod_chain_offsets_stay_within_pool_bounds() {
 
 #[test]
 fn lod_chain_converges_on_dense_mesh() {
-    // #535 H3 regression: with the previous default of max_levels = 6,
-    // a 100×100 grid (~165 LOD-0 meshlets) terminated mid-chain with
-    // dozens of roots — the runtime cull never collapses to a single
-    // coarse cluster at extreme distance. Bumping to max_levels = 25
-    // and exposing the funnel via tracing is the structural fix; this
-    // test pins the convergence so future tuning regressions trip
-    // here instead of in the editor.
-    //
-    // Acceptance: a dense, simplifiable grid must collapse to ≤ 16
-    // roots. Combined fix: max_levels bump 6 → 25 + cell-boundary
-    // locks dropped past level 3 (#535 Karis trade-off). Planar
-    // grids have 4 unstitchable mesh-edge corners and METIS
-    // partitioning is non-deterministic across test-runner threads
-    // (isolation often hits 8, full-suite parallelism reaches 10);
-    // closed surfaces (the editor dragon) typically reach 1-3 roots
-    // after the same fix. The 16-root bound absorbs the partitioning
-    // variance while still flagging regressions — pre-fix counts
-    // were 150+ for the same mesh.
+    // a 100×100 grid (~165 LOD-0 meshlets) terminated mid-chain with dozens of roots — the runtime
+    // cull never collapses to a single coarse cluster at extreme distance.
     let mesh = make_grid_mesh(100);
     let single = build_default_meshlets(&mesh).expect("single");
     let lod_zero_count = single.meshlets.len();
@@ -168,11 +147,7 @@ fn lod_chain_converges_on_dense_mesh() {
 
 #[test]
 fn lod_chain_dag_at_least_one_root_exists() {
-    // Per-group DAG: the chain terminates when no group can simplify
-    // further. Every meshlet that did not get a parent assigned during
-    // the loop is left at MESHLET_ROOT_PARENT; the chain must end
-    // with at least one such terminal node so the runtime selector
-    // has somewhere to stop descending.
+    // Per-group DAG: the chain terminates when no group can simplify further.
     let mesh = make_grid_mesh(20);
     let chain = build_meshlets_lod_chain(
         &mesh,
@@ -226,11 +201,8 @@ fn lod_chain_dag_parents_point_into_chain_bounds() {
 
 #[test]
 fn lod_chain_dag_is_acyclic_via_descent_terminates() {
-    // Walk from each meshlet up to a root following parent links;
-    // assert termination within the chain length (guards against
-    // accidental cycles). The grouped DAG always appends parents
-    // strictly after their children in the chain, so length is a safe
-    // upper bound on the descent depth.
+    // Walk from each meshlet up to a root following parent links; assert termination within the
+    // chain length (guards against accidental cycles).
     let mesh = make_grid_mesh(20);
     let chain = build_meshlets_lod_chain(
         &mesh,
@@ -259,12 +231,8 @@ fn lod_chain_dag_is_acyclic_via_descent_terminates() {
 
 #[test]
 fn lod_chain_dag_group_ids_propagate_to_both_sides() {
-    // For every group emitted during chain construction, the group's
-    // children share `group_index = id` and the group's parents share
-    // `children_group_index = id`. Validates the 2-pass cull contract:
-    // every meshlet that points at a real parent_meshlet_index also
-    // has a real group_index, and vice versa for parent meshlets that
-    // own children below.
+    // For every group emitted during chain construction, the group's children share `group_index =
+    // id` and the group's parents share `children_group_index = id`.
     let mesh = make_grid_mesh(20);
     let chain = build_meshlets_lod_chain(
         &mesh,
@@ -331,18 +299,8 @@ fn lod_chain_dag_group_siblings_share_group_id() {
 
 #[test]
 fn lod_chain_dag_parent_lod_error_dominates_children() {
-    // #535 H1: the 2-pass selector's mutual exclusion between
-    // `above_too_coarse` and `below_fine` depends on lod_error being
-    // monotonically non-decreasing along every parent edge of the DAG.
-    // Without the monotone clamp in the builder, meshopt can report a
-    // smaller simplify error at a deeper level (because the input is
-    // already simplified and easier to collapse further) → parent has
-    // smaller pixel_err than child → BOTH pass the cut → the engine
-    // renders parent and child superimposed (the visual symptom the
-    // user reported as "no se apagan las de menor resolución").
-    //
-    // Pin the invariant: for every non-root meshlet C, its parent P
-    // satisfies P.lod_error >= C.lod_error.
+    // `above_too_coarse` and `below_fine` depends on lod_error being monotonically non-decreasing
+    // along every parent edge of the DAG.
     let mesh = make_grid_mesh(40);
     let chain = build_meshlets_lod_chain(
         &mesh,

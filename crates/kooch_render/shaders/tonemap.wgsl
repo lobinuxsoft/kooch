@@ -1,19 +1,9 @@
 // tonemap.wgsl — HDR radiance to a display-referred image (#732).
-//
-// The pass that exists because temporal anti-aliasing has to run on
-// linear radiance. See `HDR_COLOR_FORMAT` for why the tonemap could not
-// stay inside the shading shader once TAA was on the roadmap.
-//
-// `inti_tonemap` is CONCATENATED from Inti, not reimplemented here: the
-// fragment shading path still tonemaps inline, and two copies of an
-// operator that must agree to within one 255th is how a parity test
-// starts failing for a reason nobody can find.
 
 struct TonemapUniforms {
-    // 0 passes the colour through untouched. The debug views produce
-    // display-ready colour — a cluster index, a LOD level, a normal —
-    // and tonemapping a false-colour legend turns a readable ramp into
-    // a washed-out one.
+    // 0 passes the colour through untouched. The debug views produce display-ready colour — a
+    // cluster index, a LOD level, a normal — and tonemapping a false-colour legend turns a readable
+    // ramp into a washed-out one.
     enabled: u32,
     exposure: f32,
     // Source-over-target pixel ratio; 1 when they match, the render
@@ -42,11 +32,7 @@ fn vs_main(@builtin(vertex_index) index: u32) -> Varyings {
 
 @fragment
 fn fs_main(in: Varyings) -> @location(0) vec4<f32> {
-    // 🔴 `textureLoad` on the integer pixel, not a filtered sample. The
-    // source and destination are the same size and a linear tap would
-    // read two texels wherever the sampler's rounding disagrees with the
-    // rasteriser's, which shows up as a half-pixel blur that survives
-    // every later pass.
+    // 🔴 `textureLoad` on the integer pixel, not a filtered sample.
     let texel = vec2<i32>(in.position.xy * tonemap.scale);
     let hdr = textureLoad(hdr_tex, texel, 0);
     if (tonemap.enabled == 0u) {

@@ -1,20 +1,10 @@
 //! `Mesh` — CPU-side asset type loaded from glTF.
-//!
-//! A `Mesh` holds geometry data parsed from disk. It is the type
-//! `GltfMeshLoader` produces and the type [`Assets<Mesh>`] stores. The
-//! meshlet builder consumes it directly to produce GPU-resident
-//! `MeshletMesh` data — there is no separate raw-mesh GPU upload.
 
 use glam::Vec3;
 
 use super::vertex::{Aabb, MeshVertex};
 
 /// CPU-side mesh data: interleaved vertex array + 32-bit indices + AABB.
-///
-/// Layout matches [`MeshVertex`] for one-shot upload via
-/// `bytemuck::cast_slice`. Loaders are responsible for filling missing
-/// attributes (normals, uvs) with sensible defaults so the GPU layout stays
-/// consistent across assets.
 #[derive(Debug, Clone)]
 pub struct Mesh {
     /// Interleaved vertex stream (position + normal + uv).
@@ -27,11 +17,6 @@ pub struct Mesh {
 
 impl Mesh {
     /// A mesh from bare positions and triangles.
-    ///
-    /// What the engine's own generators produce: a convex hull, a
-    /// decomposed piece. Normals are accumulated from the faces so the
-    /// result is shaded rather than black when an artist opens it, and
-    /// UVs are zero because a collision proxy has nothing to map.
     pub fn from_triangles(positions: &[glam::Vec3], triangles: &[[u32; 3]]) -> Self {
         let mut normals = vec![glam::Vec3::ZERO; positions.len()];
         for tri in triangles {

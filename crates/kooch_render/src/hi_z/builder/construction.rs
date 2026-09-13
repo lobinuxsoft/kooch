@@ -7,28 +7,16 @@ use super::types::{HiZ, SpdConstants};
 use super::{SHADER_SOURCE, SPD_SHADER_SOURCE};
 
 impl HiZ {
-    /// Builds the pyramid resources for a depth attachment of size
-    /// `(source_width, source_height)`. The pyramid texture itself
-    /// is sized to `previous_power_of_two(source / 2)` because
-    /// SPD's first downsample step writes pyramid mip 0 from a
-    /// source 2× as wide; the rounding-down to prev-pow2 keeps the
-    /// 2×2 reductions aligned across all mips. The cull shader's
-    /// pixel-radius math reads `hi_z_size` from `HiZTestParams` and
-    /// already tolerates the divergence between viewport and
-    /// pyramid dimensions.
-    ///
-    /// Both source dimensions must be ≥ 2 so the pyramid has at
-    /// least one mip.
+    /// Builds the pyramid resources for a depth attachment of size `(source_width, source_height)`.
     pub fn new(device: &wgpu::Device, source_width: u32, source_height: u32) -> Self {
         assert!(
             source_width >= 2 && source_height >= 2,
             "Hi-Z requires source dims ≥ 2 (got {source_width}×{source_height})"
         );
 
-        // Match Bevy / SPD reference: virtual_view = next_power_of_two(source + 1),
-        // pyramid mip 0 size = virtual / 2. The +1 forces the round
-        // even when source is already a power of two so we don't lose
-        // precision in the top mip.
+        // Match Bevy / SPD reference: virtual_view = next_power_of_two(source + 1), pyramid mip 0
+        // size = virtual / 2. The +1 forces the round even when source is already a power of two so
+        // we don't lose precision in the top mip.
         let virtual_w = (source_width + 1).next_power_of_two();
         let virtual_h = (source_height + 1).next_power_of_two();
         let width = (virtual_w / 2).max(1);
@@ -158,17 +146,9 @@ impl HiZ {
                 cache: None,
             });
 
-        // mip_0 source binding is filled by `build_from_depth` per
-        // call (the depth view changes between callers / frames).
-        // Everything else is fixed for the lifetime of the HiZ
-        // struct, so the bind group is built once. A second SPD
-        // bind group with the depth view in slot 0 is built per
-        // call; the rest of the slots ride along through
-        // `with_mip_0_replaced`-style shadowing inside dispatch.
-        // For simplicity we recreate the whole bind group per
-        // build_from_depth (cheap — 14 slot references, no buffer
-        // uploads). The result is parked in the orchestrator's
-        // arena so it survives the queue.submit. See `build_from_depth`.
+        // mip_0 source binding is filled by `build_from_depth` per call (the depth view changes
+        // between callers / frames). Everything else is fixed for the lifetime of the HiZ struct,
+        // so the bind group is built once.
 
         // ── Legacy per-mip path (kept for tests) ───────────────────
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -251,11 +231,9 @@ impl HiZ {
         }
     }
 
-    /// Initialises the pyramid to "far" (1.0) by running SPD over a
-    /// freshly-cleared depth view. The caller must clear the depth
-    /// view to 1.0 in a separate submit before calling this — Mesa
-    /// radv won't tolerate a depth-write → depth-sample transition
-    /// inside a single encoder.
+    /// Initialises the pyramid to "far" (1.0) by running SPD over a freshly-cleared depth view. The
+    /// caller must clear the depth view to 1.0 in a separate submit before calling this — Mesa radv
+    /// won't tolerate a depth-write → depth-sample transition inside a single encoder.
     pub fn init_to_far(
         &self,
         device: &wgpu::Device,

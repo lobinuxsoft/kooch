@@ -1,37 +1,4 @@
 // shading_upsample.wgsl — half-rate lighting back to full resolution (#825).
-//
-// A fullscreen fragment pass. For every screen pixel it reads the
-// full-resolution visibility buffer, then blends the shaded samples
-// around it that came from the SAME surface.
-//
-// # Why the vbuf and not depth
-//
-// The textbook guide for a bilateral upsample is depth, because a
-// forward or deferred renderer has nothing better. This one does: the
-// vbuf already stores which meshlet won each pixel, so "same surface"
-// is an integer compare instead of a depth epsilon somebody has to tune
-// per scene. Two surfaces a millimetre apart at a grazing angle — the
-// case a depth threshold gets wrong in both directions — are simply
-// different slots here.
-//
-// The compare is per MESHLET, not per triangle: a smooth surface is
-// many triangles of one meshlet, and rejecting across triangle edges
-// would reintroduce the blockiness the blend exists to remove.
-//
-// # Rate
-//
-// This file reconstructs a 2x factor and only that — the `* 0.5` below
-// is the rate, written out. `ShadingRate` has no other value that needs
-// an upsample, and a quarter-rate one would not be this shader with a
-// different constant: one sample per 16 pixels cannot reconstruct a
-// silhouette by blending, it needs a different technique.
-//
-// # Coverage stays full resolution
-//
-// Alpha comes from the full-res vbuf, never from the shaded samples.
-// That is the whole point of the issue: the silhouette the blit
-// composites against the sky is the one the raster produced, at the
-// raster's resolution. Only the light inside it is coarse.
 
 struct UpsampleUniforms {
     // Full resolution.
@@ -71,14 +38,8 @@ fn fs_upsample(in: FsInput) -> @location(0) vec4<f32> {
     }
     let my_slot = u32(visibility) >> 7u;
 
-    // Sample centres sit a quarter of a shaded texel from the shaded
-    // grid's own centres, because the sample is a corner of its quad and
-    // not its middle. Working in "sample index" space instead of UV
-    // absorbs that: pixel p's continuous coordinate is
-    //   (p + 0.5) / 2 - 0.25  ==  p / 2
-    // so the two neighbours are always floor(p/2) and floor(p/2)+1, and
-    // the pixel's OWN quad — the one guaranteed to have been shaded — is
-    // always the first of them.
+    // Sample centres sit a quarter of a shaded texel from the shaded grid's own centres, because
+    // the sample is a corner of its quad and not its middle.
     let coord = vec2<f32>(pixel) * 0.5;
     let base = vec2<i32>(floor(coord));
     let frac = coord - floor(coord);
@@ -109,15 +70,9 @@ fn fs_upsample(in: FsInput) -> @location(0) vec4<f32> {
     if (weight > 0.0) {
         return vec4<f32>(sum / weight, 1.0);
     }
-    // Nothing in the neighbourhood came from this surface — a silhouette,
-    // or geometry thinner than a quad. Take the pixel's own quad, which
-    // the shading pass guarantees was shaded whenever this pixel is
-    // covered. Sharp and possibly from the wrong surface, which is the
-    // right way round: a wrong colour on an edge pixel is an artifact,
-    // a hole is a hole.
-    // `base` IS that quad: floor(p / 2) is the sample the pixel belongs
-    // to, which is why the derivation above lands on it as the first
-    // neighbour rather than by luck.
+    // Nothing in the neighbourhood came from this surface — a silhouette, or geometry thinner than
+    // a quad. Take the pixel's own quad, which the shading pass guarantees was shaded whenever this
+    // pixel is covered.
     let own = clamp(base, vec2<i32>(0), last);
     return vec4<f32>(textureLoad(shaded_color, own, 0).rgb, 1.0);
 }

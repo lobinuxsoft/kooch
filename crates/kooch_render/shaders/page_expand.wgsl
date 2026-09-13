@@ -1,23 +1,4 @@
-// page_expand.wgsl — which meshlet has to be drawn into which page
-// (#866).
-//
-// CONCATENATED after `page_table.wgsl`. One dispatch per clipmap level,
-// sized indirectly by `cs_expand_args`, because the two numbers it
-// multiplies — resident pages and surviving meshlets — only exist on the
-// GPU.
-//
-// # Why the pair list is the whole trick
-//
-// A shadow page is a 128-texel view of the world and a scene has
-// thousands of meshlets. Rasterising every meshlet into every page is
-// the cost virtual shadow maps exist to avoid; rasterising a meshlet
-// once, into the pages it actually touches, is what makes 1681 pages
-// affordable. This pass is where "actually touches" is decided, and it
-// is one sphere against one box.
-//
-// The pair carries the cull's own packed `(instance << 16 | meshlet)`,
-// so it is self-describing: the draw never learns which level produced
-// it, which is what lets every level share ONE `draw_indirect`.
+// page_expand.wgsl — which meshlet has to be drawn into which page (#866).
 
 struct MeshletDescriptor {
     vertex_offset: u32,
@@ -54,15 +35,8 @@ struct MeshInstance {
     _pad2: u32,
 }
 
-/// Which level this dispatch is expanding. A dynamic uniform offset,
-/// the way the cascade matrix already is.
-///
-/// 🔴 THREE separate `u32` and not a `vec3<u32>`. A `vec3<u32>` aligns
-/// to 16, so the padding would start at offset 16 and the struct would
-/// measure **32** bytes against the Rust mirror's 16 — which is exactly
-/// what it did. It compiles, it validates, and it fails at bind time
-/// with *"bound with size 16 where the shader expects 32"*, once per
-/// frame forever.
+/// Which level this dispatch is expanding. A dynamic uniform offset, the way the cascade matrix
+/// already is.
 struct ExpandLevel {
     level: u32,
     _pad0: u32,
@@ -78,16 +52,12 @@ struct ExpandLevel {
 @group(0) @binding(3) var<storage, read_write> pairs: array<vec4<u32>>;
 @group(0) @binding(4) var<storage, read> visible_counts: array<u32>;
 @group(0) @binding(5) var<uniform> expand: ExpandLevel;
-// 🔴 In group 0 and not a group of its own: `max_bind_groups` is FOUR
-// and the meshlet pool, the survivor list and the instances already own
-// the other three. This is also the eighth storage buffer the stage
-// binds, which is the whole downlevel budget — the next reader of this
-// pass has to displace something.
+// 🔴 In group 0 and not a group of its own: `max_bind_groups` is FOUR and the meshlet pool, the
+// survivor list and the instances already own the other three.
 @group(0) @binding(6) var<storage, read> lights: array<ClusterLight>;
-// The page pyramid, and a TEXTURE rather than the ninth storage buffer
-// the line above says does not exist. `page_pyramid.wgsl` builds it and
-// `page_overlap.wgsl` reads it; mip 0 holds `listing + 1`, so a descent
-// that reaches a texel has the pair without ever binding the table.
+// The page pyramid, and a TEXTURE rather than the ninth storage buffer the line above says does not
+// exist. `page_pyramid.wgsl` builds it and `page_overlap.wgsl` reads it; mip 0 holds `listing + 1`,
+// so a descent that reaches a texel has the pair without ever binding the table.
 @group(0) @binding(7) var page_pyramid: texture_2d_array<u32>;
 
 @group(1) @binding(0) var<storage, read> descriptors: array<MeshletDescriptor>;
@@ -104,28 +74,13 @@ fn transform_scale(m: mat4x4<f32>) -> f32 {
 }
 
 /// Nodes one descent may hold.
-///
-/// A 4-ary depth-first walk that pushes four children and pops one
-/// needs `3 * depth + 1`, and the four seeds at the entry mip add three
-/// more. Eight mips is a 128-page level, the widest side the clipmap
-/// builds, so 28 is the true bound; 32 is that with room. The guard at
-/// the push is for the day the page size changes, not for today —
-/// overflowing would DROP a caster, so it is counted rather than
-/// silent.
 const PAGE_STACK: u32 = 32u;
 
 fn pack_node(x: u32, y: u32, mip: u32) -> u32 {
     return (mip << 24u) | (x << 12u) | y;
 }
 
-/// One page of the sun's clipmap against one meshlet: the tests, then
-/// the pair.
-///
-/// 🔴 Shared by both shapes on purpose. The paired pass reaches a page
-/// from the compacted list and the inverted one reaches it from the
-/// geometry, but what makes a pair SURVIVE has to be the same text in
-/// both — a second copy free to drift is a picture that changes with a
-/// setting that was only supposed to change the cost.
+/// One page of the sun's clipmap against one meshlet: the tests, then the pair.
 fn sun_pair(
     entry: vec4<u32>,
     level: u32,
@@ -136,10 +91,9 @@ fn sun_pair(
     radius: f32,
     basis: mat3x3<f32>,
 ) {
-    // Sphere against the page's box, in the sun's own frame. The depth
-    // axis is the orthographic span rather than the page's width: a
-    // caster far above the page still writes into it, which is the
-    // whole point of a shadow.
+    // Sphere against the page's box, in the sun's own frame. The depth axis is the orthographic
+    // span rather than the page's width: a caster far above the page still writes into it, which is
+    // the whole point of a shadow.
     let rect = sun_page_rect(level, cell, raster.eye.xyz, basis, raster.world.x, raster.space.z);
     let plane = sun_plane(bounds, basis);
     let along = dot(bounds - raster.eye.xyz, basis[2])
@@ -151,17 +105,7 @@ fn sun_pair(
     if abs(along) > raster.world.y + radius {
         return;
     }
-    // 🔴 Olsson §4's receiver bound used to reject a caster here, and
-    // it is gone. It compared the caster against the furthest receiver
-    // the MARKING recorded for this page, and the marking records one
-    // level per receiver while the reader climbs to coarser ones — so a
-    // receiver that climbed met a bound written by other receivers and
-    // lost the caster it needed. The page then holds the ground and not
-    // the occluder, which reads as lit and paints green.
-    //
-    // It saved 7% of the sun's candidates. Making it correct costs the
-    // marking seventeen atomics per sample instead of one, which is
-    // more than it saved.
+    // 🔴 Olsson §4's receiver bound used to reject a caster here, and it is gone.
 
     let slot = atomicAdd(&page_counts[buckets + 2u], 1u);
     if slot >= raster.chain.y {
@@ -171,21 +115,7 @@ fn sun_pair(
     pairs[slot] = vec4<u32>(entry.x, entry.y, packed, 0u);
 }
 
-/// Walks the pyramid down to the listed pages under `rect`, and pairs
-/// the meshlet with each.
-///
-/// # 🔴 Why a descent and not a walk
-///
-/// The rectangle a meshlet covers is up to 16384 cells at the finest
-/// levels while twenty pages are listed there — walking it is the
-/// scatter shape `count_scatter` measures and the reason it lost. The
-/// descent visits a node only when the node says something below it is
-/// being drawn, so it costs the LISTED pages under the rectangle plus
-/// the depth of the chain, not the rectangle's area.
-///
-/// It starts at `overlap_mip`'s level rather than at the root: the four
-/// texels that already answer the rectangle are the four subtrees worth
-/// entering, so a small rectangle never pays for the levels above it.
+/// Walks the pyramid down to the listed pages under `rect`, and pairs the meshlet with each.
 fn expand_descend(
     rect: vec4<u32>,
     level: u32,
@@ -233,9 +163,8 @@ fn expand_descend(
             continue;
         }
         if here == 0u {
-            // The one place this shape pays what the other one pays:
-            // one page tested against one meshlet. Counted here rather
-            // than derived from `pages * meshlets`, which is the
+            // The one place this shape pays what the other one pays: one page tested against one
+            // meshlet. Counted here rather than derived from `pages * meshlets`, which is the
             // paired shape's product and says nothing about this one.
             atomicAdd(&page_counts[buckets * 3u + 7u], 1u);
             sun_pair(page_list[value - 1u], level, vec2<u32>(x, y), buckets, packed, bounds, radius, basis);
@@ -261,20 +190,6 @@ fn expand_descend(
 }
 
 /// The inverted expansion: from ONE meshlet to the pages it lands in.
-///
-/// # 🔴 The direction is the point
-///
-/// The paired shape decides its two halves apart — the marking makes a
-/// page resident because a RECEIVER asked for it, the cull produces
-/// survivors from the light's own view — and nothing checks that they
-/// agree. Unreal walk instances and ask whether the pages an instance
-/// covers are resident, which is one decision and therefore cannot
-/// disagree with itself. This is that arrangement.
-///
-/// ⚠️ The page window is TOROIDAL, so a rectangle in absolute page
-/// indices can wrap the grid's seam and become up to four rectangles in
-/// the table's own coordinates. Descending the unwrapped rectangle
-/// would read blocks that hold the far side of the world.
 fn expand_geometry(
     level: u32,
     buckets: u32,
@@ -352,16 +267,14 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     if pages == 0u || meshlets == 0u {
         return;
     }
-    // 🔴 The sun's buckets only, and the restriction is the pyramid's:
-    // it covers ONE clipmap. A lamp's page is a frustum from a point on
-    // one of six faces, which is a different grid and a different
-    // rectangle — see the two shapes below.
+    // 🔴 The sun's buckets only, and the restriction is the pyramid's: it covers ONE clipmap. A
+    // lamp's page is a frustum from a point on one of six faces, which is a different grid and a
+    // different rectangle — see the two shapes below.
     let inverted = raster.layer.w != 0u && level < raster.chain.x;
     if inverted {
-        // One thread per SURVIVOR, not per pair. `cs_expand_args` sizes
-        // the dispatch the same way, and the two have to agree: a
-        // dispatch still sized `pages * meshlets` would run the descent
-        // once per page and pair everything `pages` times over.
+        // One thread per SURVIVOR, not per pair. `cs_expand_args` sizes the dispatch the same way,
+        // and the two have to agree: a dispatch still sized `pages * meshlets` would run the
+        // descent once per page and pair everything `pages` times over.
         if gid.x >= meshlets {
             return;
         }
@@ -397,10 +310,9 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
         raster.pool.w,
     );
 
-    // 🔴 A lamp's page is a FRUSTUM from a point and the sun's is a
-    // slab. The same sphere test against a box is wrong at every
-    // distance except the one the box was built at, which is why the
-    // two branches here are two shapes rather than two constants.
+    // 🔴 A lamp's page is a FRUSTUM from a point and the sun's is a slab. The same sphere test
+    // against a box is wrong at every distance except the one the box was built at, which is why
+    // the two branches here are two shapes rather than two constants.
     if !id.is_sun {
         if id.light >= arrayLength(&lights) {
             return;
@@ -428,10 +340,9 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    // Page index zero, which is one thread per survivor and exactly the
-    // fan-out a scatter would run at. Placed BEFORE the pair's own
-    // rejections: the cost being counted is what the other shape would
-    // pay whether or not this pair survives.
+    // Page index zero, which is one thread per survivor and exactly the fan-out a scatter would run
+    // at. Placed BEFORE the pair's own rejections: the cost being counted is what the other shape
+    // would pay whether or not this pair survives.
     if gid.x < meshlets {
         count_scatter(level, buckets, bounds, radius);
     }
@@ -447,34 +358,7 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
 }
 
-/// What the OTHER shape of this pass would have cost, counted without
-/// running it.
-///
-/// # The two shapes
-///
-/// A meshlet has to reach the pages it overlaps, and there are exactly
-/// two ways to find them. The pass above PAIRS: every resident page
-/// against every survivor, one sphere-box test each, `pages ×
-/// meshlets` of them. The alternative SCATTERS: one thread per
-/// survivor walks the cells its own bounding sphere covers and looks
-/// each one up in the table, `sum over meshlets of cells` of them.
-///
-/// Neither wins everywhere, and that is the point. A page at level 0 is
-/// `base / side` wide — centimetres — so a metre-wide meshlet covers
-/// thousands of cells while only a handful of pages are resident:
-/// pairing wins by orders of magnitude. At level 12 a page is hundreds
-/// of metres wide, every meshlet lands in one cell, and pairing spends
-/// the whole level proving misses against pages the meshlet was never
-/// near.
-///
-/// 🔴 This counts the scatter's cells and does NOT scatter. The
-/// previous attempt at this shipped the scatter for every level at once
-/// on an unmeasured guess and cost two thirds of the frame rate. The
-/// number below is what decides the shape per level — and it is
-/// measured before anything is chosen, not after.
-///
-/// Free to run: it rides the threads that already exist for page index
-/// zero, so it adds arithmetic to `meshlets` threads and no dispatch.
+/// What the OTHER shape of this pass would have cost, counted without running it.
 fn count_scatter(level: u32, buckets: u32, bounds: vec3<f32>, radius: f32) {
     let side = raster.space.z;
     let basis = sun_basis(raster.sun.xyz);

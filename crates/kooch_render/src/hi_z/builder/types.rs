@@ -17,10 +17,9 @@ pub struct HiZ {
     pub(super) mip_views: Vec<wgpu::TextureView>,
     pub(super) full_view: wgpu::TextureView,
 
-    /// Virtual source dimensions used by SPD's `load_mip_0` to round
-    /// non-pow2 source sizes up. Equals `(source + 1).next_power_of_two()`
-    /// per Bevy's reference. Drives the first-dispatch workgroup
-    /// count: `virtual / 64`.
+    /// Virtual source dimensions used by SPD's `load_mip_0` to round non-pow2 source sizes up.
+    /// Equals `(source + 1).next_power_of_two()` per Bevy's reference. Drives the first-dispatch
+    /// workgroup count: `virtual / 64`.
     pub(super) virtual_w: u32,
     pub(super) virtual_h: u32,
 

@@ -1,11 +1,5 @@
-//! Multi-mesh acceptance: a scene with three distinct registered
-//! meshes renders in a single cull dispatch via `cs_cull_scene_pool`
-//! and produces foreground pixels for every instance.
-//!
-//! Validates the #446 + #457 migration end-to-end on the GPU.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test meshlet_pool_render
+//! Multi-mesh acceptance: a scene with three distinct registered meshes renders in a single cull
+//! dispatch via `cs_cull_scene_pool` and produces foreground pixels for every instance.
 
 mod common;
 
@@ -200,10 +194,9 @@ fn three_distinct_meshes_render_in_single_cull_dispatch() {
             if r == 0 && g == 0 && b == 0 {
                 continue;
             }
-            // Three horizontal bands proportional to where each
-            // entity's screen position lands. Approximate but
-            // sufficient: a single cull dispatch must emit visible
-            // meshlets across the whole horizontal extent.
+            // Three horizontal bands proportional to where each entity's screen position lands.
+            // Approximate but sufficient: a single cull dispatch must emit visible meshlets across
+            // the whole horizontal extent.
             let third = w / 3;
             if x < third {
                 left += 1;

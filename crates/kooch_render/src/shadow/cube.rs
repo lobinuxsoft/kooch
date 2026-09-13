@@ -1,23 +1,4 @@
-//! The point lights' cube array: six depth faces per casting light
-//! (#778).
-//!
-//! Separate from [`ShadowAtlas`](super::atlas::ShadowAtlas) rather than
-//! more layers on it, and the reason is size. The cascades render at
-//! 2048² because a cascade covers tens of metres of world; a cube face
-//! covers a lamp's own room and renders at 512². One texture cannot have
-//! two sizes, and sharing would mean six 2048² faces per light — 96 MiB
-//! each, against 6 MiB at the size they actually need.
-//!
-//! # Why six culls and not twenty-four
-//!
-//! Each face culls from its own 90° frustum, so each needs a survivor
-//! list, and a draw reading the list the next cull writes is what puts a
-//! barrier between them. Six lets one light's faces overlap on the GPU,
-//! which is where the parallelism is: the faces of a light are the six
-//! draws that could run at once. Lights then serialise against each
-//! other, which costs three barriers at `MAX_POINT_SHADOWS`, against
-//! eighteen more survivor arenas standing idle in the common case where
-//! no point light casts at all.
+//! The point lights' cube array: six depth faces per casting light (#778).
 
 use crate::meshlet::MeshletCull;
 
@@ -25,13 +6,6 @@ use super::atlas::SHADOW_DEPTH_FORMAT;
 use super::point::CUBE_FACES;
 
 /// Side of one cube face, in texels.
-///
-/// 🔴 512 and not Bevy's 1024, and it is a memory decision rather than a
-/// quality one. Six faces at `Depth32Float` is 6 MiB per light here and
-/// 24 MiB at 1024 — four casting lights would add 96 MiB to a shadow
-/// budget already at 128 MiB, on a handheld whose GPU memory is the
-/// system's. At 512 a face is ~1.5 cm per texel five metres from the
-/// lamp, which is finer than the contact shadows it sits beside.
 pub const DEFAULT_CUBE_SIZE: u32 = 512;
 
 /// The cube array, its per-face culls, and the views to render into.
@@ -75,18 +49,6 @@ impl PointShadowCubes {
             dimension: wgpu::TextureDimension::D2,
             format: SHADOW_DEPTH_FORMAT,
             // 🔴 `COPY_SRC` so a test can read the map itself.
-            //
-            // #853 was found by copying a face out and stretching its
-            // contrast: every other picture available went through the
-            // sampling path, the filter, the bias and a surface shader
-            // first, and one of those — a grid normalised by the light's
-            // `range` — turned a solid occluder into a crescent and sent
-            // the search after a defect that was not there.
-            //
-            // ⚠️ The cost is not measured. Some drivers drop depth
-            // compression on a texture that can be copied from; on the
-            // handheld's 13.9 ms that is worth a number before it is
-            // taken for granted.
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_SRC,
@@ -135,10 +97,6 @@ impl PointShadowCubes {
     }
 
     /// Which array layer light `slot`'s `face` renders into.
-    ///
-    /// Faces of one light are contiguous, which is what
-    /// `textureSampleCompareLevel` on a cube array requires: it takes
-    /// the light index and picks the face itself from the direction.
     pub fn layer(slot: usize, face: usize) -> u32 {
         (slot * CUBE_FACES + face) as u32
     }

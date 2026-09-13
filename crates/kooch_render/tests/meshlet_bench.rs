@@ -1,14 +1,5 @@
-//! End-to-end bench: cull → vbuf → deferred shade for a sphere mesh,
-//! measuring wall-clock frame time over N iterations.
-//!
-//! Marked `#[ignore]` by default; run with:
-//!   cargo test -p kooch_render --test meshlet_bench -- --ignored
-//!
-//! The test asserts the median frame time stays below a generous
-//! target (16 ms = 60 Hz). Real numbers on RX 9070 XT for the
-//! current pipeline + a 1024-triangle sphere are well under 1 ms;
-//! the loose bound catches catastrophic regressions without making
-//! the test driver-fragile on weaker hardware (Steam Deck APU).
+//! End-to-end bench: cull → vbuf → deferred shade for a sphere mesh, measuring wall-clock frame
+//! time over N iterations.
 
 mod common;
 
@@ -35,10 +26,9 @@ fn meshlet_bench_sphere_renders_under_target_frame_time() {
         return;
     };
 
-    // Sphere with 32×32 quads = 2048 triangles. meshopt clusters into
-    // ~16 meshlets (well below the cull dispatcher's 64-element wave),
-    // exercising the multi-meshlet code path without tipping into a
-    // long benchmark.
+    // Sphere with 32×32 quads = 2048 triangles. meshopt clusters into ~16 meshlets (well below the
+    // cull dispatcher's 64-element wave), exercising the multi-meshlet code path without tipping
+    // into a long benchmark.
     let mesh = build_sphere_mesh(32, 32);
     let meshlet_mesh = build_default_meshlets(&mesh).expect("build meshlets");
     let gpu_mesh = meshlet_mesh.upload(&device);
@@ -245,13 +235,8 @@ fn meshlet_bench_sphere_renders_under_target_frame_time() {
     );
 }
 
-// ---------------------------------------------------------------------
-// #335 — mesh-frame end-to-end bench at three meshlet-count scales.
-//
-// AC: drive the cull → vbuf → deferred path at N ∈ {1k, 10k, 65k}
-// meshlets in a 1280×720 offscreen viewport, capture per-pass GPU
-// time via TIMESTAMP_QUERY, and report the cull ratio.
-// ---------------------------------------------------------------------
+// AC: drive the cull → vbuf → deferred path at N ∈ {1k, 10k, 65k} meshlets in a 1280×720 offscreen
+// viewport, capture per-pass GPU time via TIMESTAMP_QUERY, and report the cull ratio.
 
 /// Three pass timestamps per frame in encoder order: cull, vbuf
 /// raster, deferred shade.
@@ -276,12 +261,8 @@ const BENCH_FRAME_COUNT: usize = 32;
 /// `MAX_TRIANGLES = 128` meshlet packing.
 const BENCH_TARGETS: &[u32] = &[1_024, 10_240, 65_536];
 
-/// Picks a `lat_segments` value so `build_sphere_mesh(lat, 2*lat)`
-/// yields roughly `target_meshlets` after `build_default_meshlets`.
-/// Empirical fit: meshopt packs the sphere at ~115 tris per meshlet
-/// with the default 128-triangle / 64-vertex budget, so a sphere of
-/// `lat × 2lat` quads (= 4·lat² triangles) emits ~`(4·lat²)/115`
-/// meshlets. Solve for lat: `lat ≈ sqrt(115·target/4)`.
+/// Picks a `lat_segments` value so `build_sphere_mesh(lat, 2*lat)` yields roughly `target_meshlets`
+/// after `build_default_meshlets`.
 fn pick_lat_segments_for_target(target_meshlets: u32) -> u32 {
     let lat = ((115.0 * target_meshlets as f64 / 4.0).sqrt()).round() as u32;
     lat.max(8)
@@ -408,10 +389,9 @@ fn meshlet_bench_scaling_per_pass_timings() {
                 &mut timers,
                 /* record_timing */ true,
             );
-            // Spin the ring until the most-recent slot drains its
-            // map_async callback. The bench blocks per-frame, so 1-2
-            // poll iterations are enough; cap at 10 to guard against
-            // a stuck driver thread without hanging the test.
+            // Spin the ring until the most-recent slot drains its map_async callback. The bench
+            // blocks per-frame, so 1-2 poll iterations are enough; cap at 10 to guard against a
+            // stuck driver thread without hanging the test.
             for _ in 0..10 {
                 timers.drain_ready();
                 if timers.last_frame_stage_timings().is_some() {
@@ -444,10 +424,9 @@ fn meshlet_bench_scaling_per_pass_timings() {
             cull_ratio * 100.0,
         );
 
-        // Loose sanity bound: even the 65k case on a Steam Deck APU
-        // is expected to stay under 100 ms median. A regression
-        // catastrophic enough to blow past that needs to fail this
-        // bench, not lurk under "still under 16 ms on my desktop".
+        // Loose sanity bound: even the 65k case on a Steam Deck APU is expected to stay under 100
+        // ms median. A regression catastrophic enough to blow past that needs to fail this bench,
+        // not lurk under "still under 16 ms on my desktop".
         assert!(
             median(&totals_ms) < 100.0,
             "target {target} meshlets: median total {:.2} ms > 100 ms catastrophic bound",

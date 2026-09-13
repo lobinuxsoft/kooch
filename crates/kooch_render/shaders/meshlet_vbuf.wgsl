@@ -1,26 +1,6 @@
-// meshlet_vbuf.wgsl — meshlet rasterizer for the visibility-buffer
-// path. Identical vertex routing to meshlet_main.wgsl, but the
-// fragment writes a packed integer into a single R32Uint target
+// meshlet_vbuf.wgsl — meshlet rasterizer for the visibility-buffer path. Identical vertex routing
+// to meshlet_main.wgsl, but the fragment writes a packed integer into a single R32Uint target
 // instead of a color.
-//
-// Two entry-point pairs share this file:
-//
-// (vs_vbuf, fs_vbuf) — single-mesh path (Phase 1.D):
-//   Packing:
-//     bit  0..7    triangle index inside the meshlet  (7 bits)
-//     bit  7..32   meshlet id + 1                     (25 bits)
-//   `visible_meshlets[i]` carries a raw meshlet id.
-//
-// (vs_vbuf_scene, fs_vbuf_scene) — scene-wide path (Phase 1.E):
-//   Packing:
-//     bit  0..7    triangle index inside the meshlet  (7 bits)
-//     bit  7..32   visible-slot index + 1             (25 bits)
-//   `visible_meshlets[i]` packs (instance_id<<16 | meshlet_idx); the
-//   vertex shader decodes it to fetch transform from `instances[]` and
-//   the fragment writes the *visible-slot index* so the deferred
-//   shader can recover both instance + meshlet via one indirection.
-//
-// Encoded value 0 always means "background".
 
 struct CameraUniforms {
     view_proj: mat4x4<f32>,
@@ -69,12 +49,8 @@ struct MeshletDescriptor {
 
 @group(2) @binding(0) var<storage, read> visible_meshlets: array<u32>;
 
-// Scene-path bind group — only bound for vs_vbuf_scene / fs_vbuf_scene.
-// Must mirror the cull-side struct (stride 96 B) so `instances[i]`
-// reads from the correct byte offset. The vbuf path doesn't consume
-// group_base / lod_force_level itself; the trailing fields are
-// padding-equivalent here but the layout has to stay byte-identical
-// (#474 grew this struct from 80 → 96 B).
+// Scene-path bind group — only bound for vs_vbuf_scene / fs_vbuf_scene. Must mirror the cull-side
+// struct (stride 96 B) so `instances[i]` reads from the correct byte offset.
 struct MeshInstance {
     transform: mat4x4<f32>,
     mesh_id: u32,

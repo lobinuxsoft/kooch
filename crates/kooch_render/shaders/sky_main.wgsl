@@ -1,17 +1,4 @@
 // sky_main.wgsl — procedural sky with volumetric clouds.
-//
-// Full-screen triangle. For each pixel:
-//   1. Reconstruct a world-space view ray direction (same math as raymarch).
-//   2. Compute a vertical gradient sky_color (horizon → zenith) from the
-//      ray's Y component.
-//   3. If `cloud_coverage > 0` and the ray intersects the cloud slab,
-//      ray-march the slab accumulating density (hash value noise + FBM)
-//      and single-scattering towards the sun (Henyey-Greenstein phase +
-//      a short light march).
-//   4. Composite: `final = mix(sky_color, cloud_color, cloud_alpha)`.
-//
-// Runs BEFORE the ray-march pass when a SkyRenderer entity is active.
-// Clears the target and writes `frag_depth = 1.0`.
 
 struct CameraUniforms {
     view: mat4x4<f32>,
@@ -206,13 +193,8 @@ fn phase_hg(cos_theta: f32, g: f32) -> f32 {
     return (1.0 - g2) / (4.0 * 3.14159265 * max(denom, 1e-4));
 }
 
-// Short light march toward the sun. Returns transmittance along the ray
-// to approximate how much sunlight reaches `p`.
-//
-// 3 steps × 10 world units = 30-unit reach — enough for self-shadowing in
-// cumulus-scale clouds without paying for rays that leave the slab
-// anyway. Reducing from 4→3 steps saves ~25% of the light-march cost
-// across every sample the primary march takes.
+// Short light march toward the sun. Returns transmittance along the ray to approximate how much
+// sunlight reaches `p`.
 fn light_transmittance(p: vec3<f32>, sun_dir: vec3<f32>, time_sec: f32) -> f32 {
     let light_steps = 3;
     let light_step_size = 10.0; // world units
@@ -248,11 +230,9 @@ fn fs_main(in: VertexOutput) -> FsOut {
         let slab = ray_slab(origin, dir);
         if (slab.hit) {
             let t_start = max(slab.t_enter, 0.0);
-            // Cap march length: 500 world units caps the cost of grazing
-            // rays (which would otherwise march through the whole slab at
-            // shallow angles) without visibly clipping cumulus at normal
-            // viewing ranges. Was 800 in MVP; dropping to 500 saves ~35%
-            // on horizon-direction pixels.
+            // Cap march length: 500 world units caps the cost of grazing rays (which would
+            // otherwise march through the whole slab at shallow angles) without visibly clipping
+            // cumulus at normal viewing ranges.
             let t_end   = min(slab.t_exit, t_start + 500.0);
             // 32 primary steps + hash jitter is the sweet spot for cumulus
             // at these bounds; going below 24 starts to show banding even
@@ -273,19 +253,17 @@ fn fs_main(in: VertexOutput) -> FsOut {
             let time_sec = sky.wind_time.w;
 
             for (var i = 0; i < step_count; i = i + 1) {
-                // Early-out: below 5% transmittance the remaining samples
-                // contribute <5% to final color; invisible to the eye.
-                // Was 1%; at 5% we skip an extra 1-2 samples in dense
+                // Early-out: below 5% transmittance the remaining samples contribute <5% to final
+                // color; invisible to the eye. Was 1%; at 5% we skip an extra 1-2 samples in dense
                 // clouds with no visible loss.
                 if (transmittance < 0.05) {
                     break;
                 }
                 let sample_pos = origin + dir * t_march;
                 let density = cloud_density(sample_pos, time_sec);
-                // Skip light march + composition for near-zero density.
-                // The 0.02 threshold is slightly below the perceptible
-                // smear seen at default coverage; raising it saves the
-                // expensive `light_transmittance` call on cloud edges.
+                // Skip light march + composition for near-zero density. The 0.02 threshold is
+                // slightly below the perceptible smear seen at default coverage; raising it saves
+                // the expensive `light_transmittance` call on cloud edges.
                 if (density > 0.02) {
                     let extinction = density * step_size;
                     let sample_transmit = exp(-extinction * 1.5);

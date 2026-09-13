@@ -48,9 +48,8 @@ fn pack_unpack_round_trips_reversed_z_extremes() {
 
 #[test]
 fn closer_reversed_z_depth_yields_larger_packed() {
-    // Reversed-Z: closer fragment has the *higher* depth value, so the
-    // packed u64 must be greater for the closer fragment. This is the
-    // load-bearing invariant for `textureAtomicMax` to act as
+    // Reversed-Z: closer fragment has the *higher* depth value, so the packed u64 must be greater
+    // for the closer fragment. This is the load-bearing invariant for `textureAtomicMax` to act as
     // winner-takes-all.
     let near = pack_visibility(0.95, 10, 0);
     let far = pack_visibility(0.20, 10, 0);
@@ -59,10 +58,9 @@ fn closer_reversed_z_depth_yields_larger_packed() {
 
 #[test]
 fn equal_depth_higher_cluster_id_wins_atomicmax() {
-    // Bevy's tie-break: at equal depth, the fragment with the larger
-    // packed_ids value wins under atomicMax. Document the behaviour so
-    // the integration test for coplanar meshlets asserts the right
-    // direction (larger cluster_id, not smaller).
+    // Bevy's tie-break: at equal depth, the fragment with the larger packed_ids value wins under
+    // atomicMax. Document the behaviour so the integration test for coplanar meshlets asserts the
+    // right direction (larger cluster_id, not smaller).
     let lhs = pack_visibility(0.5, 100, 0);
     let rhs = pack_visibility(0.5, 99, 0);
     assert!(lhs > rhs, "tie-break: larger cluster_id wins");
@@ -77,18 +75,7 @@ fn default_max_triangles_fits_tri_id_slot() {
     );
 }
 
-/// 🔴 The bundle is spelled out in exactly ONE place, and this walks the
-/// crate to keep it that way.
-///
-/// It was in seven: the engine, this gate, and five test files that each
-/// wrote the four flags again. Adding `SHADER_F16` meant remembering all
-/// seven, and forgetting one does not fail to compile — the device
-/// request comes back short, the test skips with "no adapter", and the
-/// reader concludes the machine lacks the hardware rather than the list
-/// lacking a line. That cost real time on #481.
-///
-/// Two mentions are allowed and both are assertions ABOUT the shared
-/// list, not copies of it: the one above, and `kooch_core`'s own.
+/// 🔴 The bundle is spelled out in exactly ONE place, and this walks the crate to keep it that way.
 #[test]
 fn the_feature_bundle_is_written_once() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

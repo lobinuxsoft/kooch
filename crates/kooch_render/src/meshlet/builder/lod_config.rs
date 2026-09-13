@@ -3,13 +3,9 @@
 /// Configuration for [`super::build_meshlets_lod_chain`].
 #[derive(Debug, Clone, Copy)]
 pub struct LodConfig {
-    /// Maximum number of LOD levels to attempt past LOD 0. The chain
-    /// stops early when `meshopt::simplify` cannot reduce the index
-    /// count further (typically when the topology is too constrained
-    /// to simplify any more). Default: 25 — Karis SIGGRAPH 2021 ran
-    /// Nanite to ~25 levels deep on dense meshes; the previous 6 was
-    /// chosen for grid-test pragmatism and capped real assets like
-    /// the test dragon (#535) far short of a single-cluster root.
+    /// Maximum number of LOD levels to attempt past LOD 0. The chain stops early when
+    /// `meshopt::simplify` cannot reduce the index count further (typically when the topology is
+    /// too constrained to simplify any more).
     pub max_levels: usize,
     /// Initial simplify error tolerance in mesh units. Doubles each
     /// level; balanced default: 0.01.

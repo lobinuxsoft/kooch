@@ -1,25 +1,4 @@
 // meshlet_vbuf64.wgsl — atomic R64 visibility-buffer rasterizer (#493).
-//
-// Mirrors Bevy's meshlet pipeline: instead of writing a packed u32 to a
-// color attachment, the fragment writes a packed u64 to a storage R64Uint
-// texture via `textureAtomicMax`. Combined with reversed-Z this turns the
-// visibility buffer into a winner-takes-all atomic — the closest fragment
-// wins per pixel deterministically, eliminating coplanar-meshlet z-fighting
-// that the legacy R32Uint color-attachment path exhibits.
-//
-// Pack layout (matches Rust `pack_visibility` in `vbuf64.rs`):
-//   bits [63:32] = bitcast<u32>(clip_position.z)   reversed-Z monotonic
-//   bits [31:7]  = visible_slot                    25 bits (no +1 sentinel;
-//                                                   we rely on depth_bits == 0
-//                                                   under reversed-Z meaning
-//                                                   "no fragment", same as
-//                                                   Bevy)
-//   bits [6:0]   = triangle_idx                    7 bits, ≤ 127
-//
-// Render pass setup:
-//   - color_attachments: empty (this fragment doesn't return)
-//   - depth_stencil: kept (early-Z elision still helps)
-//   - bind group 4 binding 0: texture_storage_2d<r64uint, atomic>
 
 struct CameraUniforms {
     view_proj: mat4x4<f32>,
@@ -79,26 +58,8 @@ struct MeshInstance {
 
 @group(4) @binding(0) var vbuf64: texture_storage_2d<r64uint, atomic>;
 
-// #454 — Per-pixel R32Uint atomic accumulator backing the
-// TriangleDensity and Overdraw heatmaps. Same texture, modal
-// semantics — the mode word in `.x` decides which metric the
-// fragment increments this frame:
-//
-//   0u — disabled (production rendering). Skip the atomicAdd
-//        entirely; the accumulator stays zero across the frame.
-//   1u — TriangleDensity. Every fragment increments by 1, so the
-//        final value is the number of cluster fragments that
-//        contributed to the pixel (winner or loser).
-//   2u — Overdraw. Only fragments that win the vbuf atomicMax
-//        increment, so the final value is the number of times
-//        the depth buffer was overwritten — the "wasted shading"
-//        signal Nanite-style references talk about.
-//
-// Branch is uniform across the wavefront (one UBO fetch +
-// predicted branch per fragment) so the cost on production paths
-// is amortised. Reused accumulator avoids paying a second R32Uint
-// texture's VRAM (~4 MB at 1280×720) for a metric that is never
-// viewed in parallel with TriangleDensity.
+// TriangleDensity and Overdraw heatmaps. Same texture, modal semantics — the mode word in `.x`
+// decides which metric the fragment increments this frame.
 @group(5) @binding(0) var density_accumulator: texture_storage_2d<r32uint, atomic>;
 @group(5) @binding(1) var<uniform> density_mode: vec4<u32>;
 
@@ -147,10 +108,9 @@ fn vs_vbuf64_scene(
     let pos = vec3<f32>(v.position[0], v.position[1], v.position[2]);
     let world_pos = inst.transform * vec4<f32>(pos, 1.0);
     out.clip_position = camera.view_proj * world_pos;
-    // visible_slot encodes (instance_id, meshlet_idx) via one
-    // indirection through visible_meshlets[] in the deferred shader,
-    // matching the R32 scene path. No +1 offset: we use depth_bits == 0
-    // (reversed-Z far plane) as the "no fragment" sentinel, like Bevy.
+    // visible_slot encodes (instance_id, meshlet_idx) via one indirection through
+    // visible_meshlets[] in the deferred shader, matching the R32 scene path. No +1 offset: we use
+    // depth_bits == 0 (reversed-Z far plane) as the "no fragment" sentinel, like Bevy.
     let visible_slot = instance_index;
     out.packed_id = (visible_slot << 7u) | (triangle_idx & 0x7Fu);
     return out;
@@ -162,15 +122,9 @@ fn fs_vbuf64_scene(input: VsOut) {
     let depth_bits = bitcast<u32>(input.clip_position.z);
     let visibility = (u64(depth_bits) << 32u) | u64(input.packed_id);
 
-    // WGSL's `textureAtomicMax` is statement-only (no return value,
-    // unlike `atomicMax` on a storage buffer), so for Overdraw we
-    // peek the current best with a non-atomic `textureLoad` before
-    // performing the atomic update. The peek is racy in the strict
-    // sense — another fragment can stomp the slot between the load
-    // and the atomicMax — but the consequence is only a per-pixel
-    // ±1 wobble in the heatmap, never a correctness issue for the
-    // vbuf64 itself. The atomicMax remains the single source of
-    // truth for shading; the heatmap is a calibration overlay.
+    // WGSL's `textureAtomicMax` is statement-only (no return value, unlike `atomicMax` on a storage
+    // buffer), so for Overdraw we peek the current best with a non-atomic `textureLoad` before
+    // performing the atomic update.
     let mode = density_mode.x;
     var pre = u64(0);
     if (mode == 2u) {
@@ -182,12 +136,9 @@ fn fs_vbuf64_scene(input: VsOut) {
         // TriangleDensity: every fragment contributes one count.
         textureAtomicAdd(density_accumulator, pixel, 1u);
     } else if (mode == 2u) {
-        // Overdraw: count only fragments that win the depth race —
-        // those rewrote the visibility buffer with a closer hit, so
-        // every previous shading contribution for that pixel is
-        // "wasted". A pixel with high overdraw count is one where
-        // the engine rasterized many cluster fragments only to
-        // throw all but the last one away.
+        // Overdraw: count only fragments that win the depth race — those rewrote the visibility
+        // buffer with a closer hit, so every previous shading contribution for that pixel is
+        // "wasted".
         if (visibility > pre) {
             textureAtomicAdd(density_accumulator, pixel, 1u);
         }

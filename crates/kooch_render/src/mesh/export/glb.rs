@@ -1,20 +1,4 @@
 //! [`to_glb`] — writes a [`Mesh`] out as a self-contained `.glb`.
-//!
-//! # Why this exists beyond baking primitives
-//!
-//! The engine could generate primitives straight into memory and never
-//! write a file. The export path earns its keep on the *other* job:
-//! turning a heavy visual mesh into a simplified collision mesh an artist
-//! can open, look at, adjust, and hand back as a collider source (#137).
-//! A collision mesh nobody can see is a collision mesh nobody trusts.
-//!
-//! # No new dependencies
-//!
-//! The `gltf` crate already vendors `gltf_json` as `gltf::json` (serde
-//! `Serialize`), and `gltf::binary::Glb` writes the container with its
-//! chunk framing and 4-byte padding. So the engine gains an exporter
-//! without gaining a dependency, and it round-trips through the very
-//! importer it has to stay compatible with.
 
 use std::borrow::Cow;
 use std::mem;
@@ -61,27 +45,11 @@ impl std::fmt::Display for ExportError {
 impl std::error::Error for ExportError {}
 
 /// Serialises `mesh` as a self-contained binary glTF.
-///
-/// One buffer, one mesh, one primitive: positions, normals, UVs and
-/// indices. `name` becomes the glTF mesh and node name, which is what an
-/// external viewer shows in its outliner.
-///
-/// The vertex stream goes out interleaved, exactly as [`MeshVertex`] is
-/// laid out in memory, with three accessors reading it at different byte
-/// offsets and a shared stride. That is glTF's intended layout for
-/// interleaved data, and it means the bytes are copied once rather than
-/// de-interleaved into three arrays.
 pub fn to_glb(mesh: &Mesh, name: &str) -> Result<Vec<u8>, ExportError> {
     to_glb_parts(&[(mesh, name)])
 }
 
 /// Serialises several meshes into one binary glTF, each its own node.
-///
-/// One buffer, one mesh and one node per part. What a baked convex
-/// decomposition needs: each piece has to stay a separate primitive,
-/// because merging them gives back the concave solid the decomposition
-/// exists to avoid — and because the importer reads one point set per
-/// primitive.
 pub fn to_glb_parts(parts: &[(&Mesh, &str)]) -> Result<Vec<u8>, ExportError> {
     if parts.is_empty() {
         return Err(ExportError::Empty);
@@ -143,10 +111,6 @@ struct Span {
 }
 
 /// Rejects meshes that would serialise into an invalid asset.
-///
-/// Checked here rather than left to the importer: an out-of-range index
-/// in a written file is a crash in whatever opens it next, and the
-/// generator that produced it is long out of the picture by then.
 fn validate(mesh: &Mesh) -> Result<(), ExportError> {
     if mesh.vertices.is_empty() || mesh.indices.is_empty() {
         return Err(ExportError::Empty);
