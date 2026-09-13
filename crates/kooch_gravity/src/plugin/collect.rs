@@ -43,14 +43,8 @@ pub(crate) enum Kind {
     },
 }
 
-/// The two halves of a transform a local-space field needs: the inverse to
-/// put a world point into the field's space, and the rotation to bring the
-/// resulting direction back out.
-///
-/// Both, because only converting the point is a bug that looks like the
-/// field working — the shape is tested in the right place and then pulls
-/// along an *unrotated* direction, so a rotated zone drops things straight
-/// down.
+/// What a local-space field needs from a transform: the inverse for the point and the rotation for
+/// the direction — converting only the point drops a rotated zone's things straight down.
 pub(crate) struct LocalSpace {
     pub to_local: Mat4,
     rotation: Quat,
@@ -83,12 +77,8 @@ impl Source {
         }
     }
 
-    /// How strongly this source claims a point, in 0..=1.
-    ///
-    /// Not the magnitude of its pull: a weak field that fully covers a room
-    /// still owns that room, and a strong one at the edge of its fade does
-    /// not. This is the shape's own reach, which is why it is what
-    /// [`GravityPriority`] suppresses with.
+    /// How strongly this source claims a point, 0..=1 — its shape's reach, not its pull, which is
+    /// what [`GravityPriority`] suppresses with.
     fn claim_at(&self, point: Vec3) -> f32 {
         match &self.kind {
             // No bounds to be outside of.
@@ -139,10 +129,7 @@ impl Field {
         self.evaluate(point).1
     }
 
-    /// The summed field and its strongest single contributor.
-    ///
-    /// Both at once because they walk the same sources through the same
-    /// suppression, and computing them apart is how the two come to
+    /// The summed field and its strongest single contributor, computed together so they cannot
     /// disagree about which source won.
     fn evaluate(&self, point: Vec3) -> (Vec3, Vec3) {
         let mut total = Vec3::ZERO;
@@ -191,10 +178,8 @@ pub(crate) fn collect_sources(resources: &Resources) -> Field {
     let transforms = registry.get_cpu::<Transform>();
     let priorities = registry.get_cpu::<GravityPriority>();
 
-    // A source without a `GlobalTransform` falls back to its `Transform`,
-    // and then to the origin: a global field does not care where it is, and
-    // refusing to work until the hierarchy has propagated would make a
-    // freshly spawned planet silently inert for a frame.
+    // No `GlobalTransform` falls back to `Transform`, then the origin, so a freshly spawned planet
+    // is not inert for a frame.
     let position_of = |entity: Entity| -> Vec3 {
         globals
             .and_then(|storage| storage.get(entity))
@@ -289,24 +274,8 @@ fn descending_levels(sources: &[Source]) -> Vec<i32> {
     levels
 }
 
-/// Splits a transform into what a local-space field needs.
-///
-/// # The scale is dropped, and that is the whole point
-///
-/// Rigid — rotation and translation only — so the field's own space is
-/// the world's, turned and moved. Every distance a source carries is
-/// then a distance in metres, and scaling its entity places the field
-/// without resizing it.
-///
-/// Keeping the scale made a `range` of 20 on an entity scaled to 8 pull
-/// from 160 m, which is not what the field says and not what the
-/// Inspector shows. It also made three sources scale while
-/// [`PointGravity`] did not, because a point has no shape for a scale to
-/// stretch — an exception with nothing behind it but how the arithmetic
-/// happened to fall out.
-///
-/// A gravity field is not geometry to eyeball. Resize a zone by editing
-/// its extents.
+/// Splits a transform into what a local-space field needs, dropping the scale: a field's distances
+/// are metres, so scaling its entity places it without resizing it.
 fn local_space(matrix: Mat4) -> LocalSpace {
     let (_, rotation, translation) = matrix.to_scale_rotation_translation();
     LocalSpace {

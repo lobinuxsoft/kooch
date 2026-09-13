@@ -18,50 +18,20 @@ use crate::sources::{
 
 pub use apply::{apply_gravity_sources, reconcile_world_gravity_for_test};
 
-/// The acceleration every source together applies at a world point.
-///
-/// Public because it is the honest way to ask "which way is down here" —
-/// a character controller aligning to a planet needs the same answer the
-/// solver gets, and recomputing it differently is how the two disagree.
+/// The acceleration every source together applies at a world point — the same answer the solver
+/// gets, for anything asking which way is down.
 pub fn gravity_at(resources: &Resources, point: Vec3) -> Vec3 {
     collect::collect_sources(resources).acceleration_at(point)
 }
 
-/// Which way is up at a world point: away from the pull acting there.
-///
-/// Every consumer of [`gravity_at`] needs this same three lines —
-/// normalise, negate, and decide what "no field" means — so it lives
-/// here rather than in each of them. It had been written twice already
-/// (the camera's `up_mode = Gravity` and a game's movement plane) and the
-/// two copies had drifted to different thresholds for "close enough to
-/// zero", which is the whole failure mode of a duplicated decision.
-///
-/// # Where there is no field
-///
-/// Returns world up. `gravity_at` gives a zero vector where nothing
-/// reaches, and normalising that is a `NaN` that spreads to a camera
-/// pose or an impulse and shows up somewhere else entirely. Free space
-/// has no better answer, and an arbitrary-but-stable one keeps controls
-/// predictable instead of undefined.
+/// Which way is up at a world point: away from the pull there, shared so every consumer agrees on
+/// what near-zero means. World up where no field reaches, instead of a `NaN`.
 pub fn gravity_up(resources: &Resources, point: Vec3) -> Vec3 {
     up_from(gravity_at(resources, point))
 }
 
-/// Which way is up according to the strongest single source, ignoring
-/// every weaker one.
-///
-/// [`gravity_up`] answers with the sum, and that is the right default: it
-/// is what the solver applies, so a body and a camera agree about down.
-/// Between two planets of similar pull the sum points at neither, which is
-/// physically correct and reads as a character standing at a slant in
-/// empty space.
-///
-/// This one snaps to whichever source is winning. It is for orientation —
-/// which way a character's feet point — and never for a force. Using it to
-/// move something would apply a pull the solver is not applying.
-///
-/// Suppression from [`GravityPriority`] is applied first, so a source
-/// overruled by a zone above it cannot be the dominant one.
+/// Which way is up according to the strongest source alone, after [`GravityPriority`] suppression.
+/// For orientation only, never a force — [`gravity_up`] is the sum the solver applies.
 pub fn gravity_dominant(resources: &Resources, point: Vec3) -> Vec3 {
     up_from(collect::collect_sources(resources).dominant_at(point))
 }
@@ -75,12 +45,8 @@ fn up_from(pull: Vec3) -> Vec3 {
     }
 }
 
-/// The components without the systems, for a host that authors gravity
-/// but does not simulate it.
-///
-/// The editor is that host: the solver lives in the project's process, so
-/// this side needs the fields to exist as data — to mirror, inspect and
-/// draw — and must never apply them.
+/// The components without the systems, for the editor: it mirrors and draws gravity but must never
+/// apply it.
 pub struct GravityComponentsPlugin;
 
 impl Plugin for GravityComponentsPlugin {
@@ -108,12 +74,8 @@ pub struct GravityPlugin;
 impl Plugin for GravityPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugin(GravityComponentsPlugin);
-        // In the fixed stage beside the solver, before it steps: the
-        // impulse is for this step, and applying it after would move the
-        // body a step late.
-        // Ungated: a source added while stopped has to take effect before
-        // the first step, or the first frame of Play uses the old world
-        // vector.
+        // Beside the solver, before it steps, so the impulse is for this step. Ungated, so a source
+        // added while stopped applies from the first step of Play.
         app.add_system(Stage::PreUpdate, apply::reconcile_world_gravity);
         app.add_system(Stage::Physics, run_if_playing(apply_gravity_sources));
     }

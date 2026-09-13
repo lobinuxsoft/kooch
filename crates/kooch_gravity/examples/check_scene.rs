@@ -1,7 +1,5 @@
-//! Reads a scene and reports which way it pulls at every dynamic body.
-//!
-//! Throwaway: a hand-written scene claims things about direction that
-//! nothing else checks until it is opened in the editor.
+//! Reads a scene and reports which way it pulls at every dynamic body — a check on hand-written
+//! scenes.
 
 use glam::Vec3;
 

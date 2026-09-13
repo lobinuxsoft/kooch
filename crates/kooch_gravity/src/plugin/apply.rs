@@ -9,23 +9,9 @@ use kooch_ecs::component::ComponentRegistry;
 
 use super::collect::{Kind, Source, collect_sources};
 
-/// Applies the summed field to every dynamic body.
-///
-/// # Why an impulse and not a force
-///
-/// Rapier's forces persist across steps until `reset_forces`, so applying
-/// gravity every step as a force would accumulate — the pull growing each
-/// second. Resetting instead would erase whatever the game applied.
-///
-/// An impulse of `mass × acceleration × dt` is instantaneous, exactly
-/// equivalent to that force over the step, and composes with gameplay
-/// rather than fighting it.
-///
-/// # And why the world's own gravity is switched off
-///
-/// A body reached by a source has its rapier gravity scale set to zero at
-/// build time, or the global vector would apply on top of the field and a
-/// planet would pull diagonally.
+/// Applies the summed field to every dynamic body as an impulse of `mass × acceleration × dt`: a
+/// persistent Rapier force would accumulate. Bodies a source reaches have Rapier's own gravity
+/// scale zeroed.
 pub fn apply_gravity_sources(resources: &mut Resources) {
     let field = collect_sources(resources);
     if field.is_empty() {
@@ -50,10 +36,8 @@ pub fn apply_gravity_sources(resources: &mut Resources) {
         return;
     };
 
-    // The per-body scale from phase A, read straight from storage rather
-    // than copied into a map first: rapier's own gravity is off while
-    // sources exist, so its `gravity_scale` would otherwise multiply
-    // nothing.
+    // The per-body scale, read straight from storage: Rapier's gravity is off while sources exist,
+    // so its `gravity_scale` would multiply nothing.
     let bodies = resources
         .get::<ComponentRegistry>()
         .and_then(|registry| registry.get_cpu::<kooch_physics::components::PhysicsBody>());
@@ -64,15 +48,8 @@ pub fn apply_gravity_sources(resources: &mut Resources) {
         .iter()
         .filter(|(_, _, spec, _)| spec.is_dynamic())
         .filter_map(|(_, entity, _, handle)| {
-            // Sleeping bodies are skipped, and this is the whole reason
-            // the scene stays cheap. Rapier excludes a sleeping body from
-            // the island solver — that is how a pile of settled crates
-            // costs nothing — and every impulse wakes what it touches. A
-            // field that pulled on all of them every step would keep the
-            // entire world simulating forever, which the world vector
-            // never did because rapier's own gravity wakes nothing.
-            // Skipped outright rather than given an impulse it would
-            // bank without being simulated.
+            // Sleeping bodies are skipped: every impulse wakes what it touches, and a field that
+            // pulled on them each step would keep the whole world simulating.
             if world.backend().is_sleeping(handle)? && !changed {
                 return None;
             }
@@ -89,10 +66,8 @@ pub fn apply_gravity_sources(resources: &mut Resources) {
         })
         .collect();
 
-    // `wake` only when the field itself changed. Every other step this
-    // must not rouse anything, or a resting body's sleep timer resets
-    // every step and it never settles — the check above would then never
-    // be true and nothing in the scene would ever sleep.
+    // `wake` only when the field changed, or a resting body's sleep timer resets every step and
+    // nothing ever settles.
     for (handle, impulse) in pulls {
         world.backend_mut().apply_impulse(handle, impulse, changed);
     }
@@ -104,11 +79,8 @@ pub fn apply_gravity_sources(resources: &mut Resources) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct GravityRevision(u64);
 
-/// A hash of every source's placement, level and settings.
-///
-/// Cheaper than comparing the sources themselves and enough for the one
-/// question being asked: did anything about the field change since last
-/// step. A collision costs one missed wake-up, not a wrong simulation.
+/// A hash of every source's placement, level and settings — enough to ask whether the field
+/// changed; a collision costs one missed wake-up.
 fn digest(sources: &[Source]) -> u64 {
     let mut hash = Fnv::new();
     for source in sources {
@@ -180,17 +152,8 @@ impl Fnv {
     }
 }
 
-/// Switches rapier's own gravity off while any source exists.
-///
-/// The two do not compose: a planet pulling towards its centre plus a
-/// world vector pulling down gives a diagonal, and the author placed one
-/// planet. So the moment a scene has a source, gravity comes from
-/// components — including the uniform kind, which is what
-/// [`GlobalGravity`](crate::GlobalGravity) is for.
-///
-/// A scene with no sources is untouched and keeps the world vector it
-/// always had, so adding this plugin changes nothing until something asks
-/// it to.
+/// Switches Rapier's own gravity off while any source exists — a world vector plus a planet pulls
+/// diagonally. With no sources the world vector is untouched.
 pub fn reconcile_world_gravity_for_test(resources: &mut Resources) {
     reconcile_world_gravity(resources);
 }

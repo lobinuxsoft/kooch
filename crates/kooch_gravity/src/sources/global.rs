@@ -5,15 +5,8 @@ use glam::Vec3;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 
-/// A uniform field with no source and no falloff.
-///
-/// What every scene has by default, expressed as a component so it can be
-/// authored, moved between scenes, and switched off — rather than living
-/// only in the plugin's configuration where a level cannot reach it.
-///
-/// # Default
-///
-/// Earth, downward.
+/// A uniform field with no source and no falloff — the default down, as a component a scene can
+/// author, move and switch off. Earth, downward.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Physics")]
 pub struct GlobalGravity {
