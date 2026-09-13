@@ -1,9 +1,5 @@
-//! Reading a pack.
-//!
-//! The index is decrypted once, at open; entry payloads are read on
-//! demand and seeked to directly. A game must never pay for the assets
-//! it did not ask for, which is the whole reason this has an index rather
-//! than being one compressed stream.
+//! Reading a pack: the index is decrypted at open, and payloads are read on demand by seeking, so a
+//! game pays only for what it asks for.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -16,11 +12,8 @@ use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use crate::write::HEADER_LEN;
 use crate::{Entry, FORMAT_VERSION, NONCE_LEN, PackError, PackKey};
 
-/// An open `.kpack`.
-///
-/// Holds the index in memory (a few dozen bytes per entry) and the file
-/// handle. Payloads are never cached here: what to keep resident is the
-/// asset system's decision, not the container's.
+/// An open `.kpack`: the index in memory and the file handle. Payloads are never cached — what
+/// stays resident is the asset system's call.
 pub struct Pack<R: Read + Seek> {
     source: R,
     cipher: Aes256Gcm,
@@ -48,10 +41,8 @@ impl<R: Read + Seek> Pack<R> {
         if version != FORMAT_VERSION {
             return Err(PackError::Version(version));
         }
-        // 🔴 Derived, not a magic string — so the file announces nothing
-        // to someone without the key. The cost is that a wrong key and
-        // a file that was never a pack are now the same error, which is
-        // precisely the distinction being removed.
+        // 🔴 Derived tag: the file announces nothing without the key, so a wrong key and a non-pack
+        // are the same error.
         if header[..8] != key.tag() {
             return Err(PackError::Corrupt);
         }
@@ -126,22 +117,16 @@ impl<R: Read + Seek> Pack<R> {
             }
             false => payload,
         };
-        // 🔴 A length that disagrees with the index means the pack and
-        // its index describe different things. GCM already proved nobody
-        // edited the bytes, so this is a packing bug, and it is worth
-        // catching here rather than in whatever loader gets the short
-        // buffer.
+        // 🔴 GCM already proved the bytes are untouched, so a length disagreeing with the index is a
+        // packing bug — caught here, not in a loader.
         if bytes.len() as u64 != entry.plain_len {
             return Err(PackError::Corrupt);
         }
         Ok(bytes)
     }
 
-    /// Reads every entry and checks it comes back whole.
-    ///
-    /// What the editor's "verify this build" runs. Returns the number of
-    /// entries checked, or the first that failed — GCM makes this an
-    /// exact answer rather than a heuristic.
+    /// Reads every entry and checks it comes back whole — the editor's build verification, exact
+    /// thanks to GCM.
     pub fn verify(&mut self) -> Result<usize, PackError> {
         let names: Vec<String> = self.entries.iter().map(|e| e.name.clone()).collect();
         for name in &names {
@@ -151,11 +136,8 @@ impl<R: Read + Seek> Pack<R> {
     }
 }
 
-/// Walks the decrypted index.
-///
-/// Every length is checked against what is left rather than trusted: the
-/// index is authenticated, so a mismatch here is a bug in the writer, and
-/// a panic in a shipped game is a worse way to report one.
+/// Walks the decrypted index, checking every length against what remains: a mismatch is a writer
+/// bug, and a panic in a shipped game reports it badly.
 fn parse_index(bytes: &[u8], count: usize) -> Result<Vec<Entry>, PackError> {
     let mut entries = Vec::with_capacity(count);
     let mut at = 0usize;

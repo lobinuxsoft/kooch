@@ -15,10 +15,8 @@ fn shares_round_trip_through_hex() {
     assert_eq!(SplitKey::parse(&hex).unwrap().assemble(), key);
 }
 
-/// 🔴 The property that makes this arithmetic rather than obfuscation:
-/// every share but the last is random and the last is the key XOR'd with
-/// them, so **no single share carries any information about the key**.
-/// It is a one-time pad, and that part is not a matter of effort.
+/// 🔴 No single share carries any information about the key — a one-time pad, which is arithmetic,
+/// not obfuscation.
 #[test]
 fn no_single_share_is_the_key() {
     let key = PackKey::generate();
