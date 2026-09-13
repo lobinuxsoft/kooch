@@ -1,13 +1,5 @@
-//! Captures the compiler identity into the build, for [`BuildStamp`].
-//!
-//! Passing a `Box<dyn Trait>` across a dynamic library boundary is only
-//! sound when both sides were built by the same compiler: Rust does not
-//! guarantee vtable layout between versions. Nothing checks that at run
-//! time unless we make it, so the exact `rustc -V -v` output is baked in
-//! and compared at load.
-//!
-//! No dependencies: this shells out to the compiler cargo already told
-//! us to use.
+//! Bakes the exact `rustc -V -v` into the build for [`BuildStamp`]: a `Box<dyn Trait>` across a
+//! dylib is sound only with one compiler, and nothing else checks it.
 
 use std::process::Command;
 
@@ -22,10 +14,8 @@ fn main() {
         .ok()
         .and_then(|out| String::from_utf8(out.stdout).ok())
         .unwrap_or_else(|| {
-            // Refusing to build would be worse than a stamp that only
-            // covers the API version: the loader still rejects
-            // mismatched API versions, and a missing compiler string is
-            // recorded as such rather than silently faked.
+            // Building anyway beats refusing: the loader still checks the API version, and a
+            // missing compiler string is recorded, not faked.
             println!("cargo:warning=could not read rustc version; plugin build stamp is weaker");
             "unknown-rustc".to_owned()
         });

@@ -1,34 +1,13 @@
-//! Proving a plugin was built against this engine, by this compiler.
-//!
-//! The plugin hands the host a `Box<dyn KoochPlugin>` — a Rust trait
-//! object, whose vtable layout Rust does not guarantee between compiler
-//! versions. Passing one across a library boundary is sound *only* when
-//! both sides were built by the same compiler against the same API.
-//!
-//! Nothing enforces that on its own, so [`BuildStamp`] records it and
-//! the loader compares before calling anything. A mismatch is a refusal
-//! with a message, which is the alternative to a jump through a vtable
-//! that means something else.
+//! Proving a plugin was built against this engine by this compiler: a trait object's vtable layout
+//! is only stable within one compiler, so [`BuildStamp`] is compared before anything is called.
 
-/// Current plugin API version.
-///
-/// Increment on any breaking change to [`Engine`](crate::Engine),
-/// [`KoochPlugin`](crate::KoochPlugin), or the schema types.
+/// Current plugin API version; increment on any breaking change to [`Engine`](crate::Engine),
+/// [`KoochPlugin`](crate::KoochPlugin) or the schema types.
 pub const API_VERSION: u32 = 5;
 
-/// The engine's version, which this crate shares through
-/// `version.workspace = true`.
-///
-/// 🔴 Separate from [`API_VERSION`] on purpose. That one is bumped by
-/// hand when the plugin *interface* changes; this one moves with every
-/// engine release, including the ones that change a component's fields
-/// without touching a single signature in this crate. A plugin built
-/// against those still links, still passes the API check, and hands over
-/// structures whose layout the host reads differently.
-///
-/// It matters more since the engine is vendored into projects (#754):
-/// the editor's engine and a project's copy are now two directories that
-/// can drift apart.
+/// The engine's version, shared through `version.workspace = true`. 🔴 Separate from
+/// [`API_VERSION`]: field layouts change with no signature change, and vendored engines drift
+/// (#754).
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The compiler that built this crate, as `rustc -V -v` reported it.
@@ -36,11 +15,8 @@ pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Captured by the build script; newlines flattened to `|`.
 pub const RUSTC_IDENT: &str = env!("KOOCH_RUSTC_IDENT");
 
-/// Identity of the API and compiler a binary was built with.
-///
-/// `#[repr(C)]` because it is returned across the boundary by the one
-/// symbol that is read *before* compatibility is known — it has to be
-/// decodable even when nothing else would be.
+/// Identity of the API and compiler a binary was built with — `#[repr(C)]`, since it is read before
+/// compatibility is known.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuildStamp {
@@ -48,11 +24,8 @@ pub struct BuildStamp {
     pub api_version: u32,
     /// Hash of [`RUSTC_IDENT`] at build time.
     pub rustc_hash: u64,
-    /// Hash of [`ENGINE_VERSION`] at build time.
-    ///
-    /// A hash and not the string for the same reason as `rustc_hash`:
-    /// this struct crosses the boundary *before* compatibility is known,
-    /// so it has to be fixed-size and `#[repr(C)]`.
+    /// Hash of [`ENGINE_VERSION`] at build time, fixed-size because this struct crosses the
+    /// boundary before compatibility is known.
     pub engine_hash: u64,
 }
 
@@ -75,12 +48,8 @@ impl BuildStamp {
             && self.engine_hash == current.engine_hash
     }
 
-    /// Why it is incompatible, or `None` if it is fine.
-    ///
-    /// Separated from the predicate so the loader can say which half
-    /// failed: a version mismatch means rebuild against this engine, a
-    /// compiler mismatch means rebuild with this toolchain. They look
-    /// identical from a boolean and have different fixes.
+    /// Why it is incompatible, or `None`: an API mismatch means rebuild against this engine, a
+    /// compiler mismatch means rebuild with this toolchain.
     pub fn incompatibility(&self) -> Option<Incompatibility> {
         let current = Self::current();
         if self.api_version != current.api_version {
@@ -146,11 +115,8 @@ impl std::fmt::Display for Incompatibility {
     }
 }
 
-/// FNV-1a over bytes, `const` so a stamp can be built at compile time.
-///
-/// A hash rather than the string itself keeps [`BuildStamp`] a fixed-size
-/// `#[repr(C)]` value, which matters because it crosses the boundary
-/// before compatibility has been established.
+/// FNV-1a over bytes, `const` so a stamp builds at compile time and stays a fixed-size `#[repr(C)]`
+/// value.
 const fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     let mut i = 0;

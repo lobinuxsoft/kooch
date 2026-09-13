@@ -1,10 +1,7 @@
 //! Shared types: schedule stages and entity handles.
 
-/// When a plugin's system runs, mirroring `kooch_core::Stage`.
-///
-/// Kept separate from `kooch_core::Stage` so a plugin does not link the
-/// engine core to say when it wants to run. The host maps between them
-/// in one place, and a parity test keeps the two in step.
+/// When a plugin's system runs, mirroring `kooch_core::Stage` so a plugin need not link the engine
+/// core; a parity test keeps them in step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Stage {
     /// One-time initialisation at startup.
@@ -38,11 +35,7 @@ pub enum Stage {
 }
 
 impl Stage {
-    /// Every stage, in schedule order.
-    ///
-    /// Lets the host prove it maps all of them; a stage added here
-    /// without a mapping fails the parity test rather than silently
-    /// running at the wrong time.
+    /// Every stage in schedule order, so the host's parity test fails on an unmapped stage.
     pub const ALL: &'static [Stage] = &[
         Stage::Startup,
         Stage::First,
@@ -61,9 +54,7 @@ impl Stage {
     ];
 }
 
-/// Packs an entity index and generation into one handle.
-///
-/// Layout: low 32 bits index, high 32 bits generation.
+/// Packs an entity index (low 32 bits) and generation (high 32 bits) into one handle.
 ///
 /// # Example
 /// ```
