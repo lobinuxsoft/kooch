@@ -1,17 +1,4 @@
 //! A spot light casts a shadow, on a real GPU (#777).
-//!
-//! Its own file rather than more of `csm_shadows.rs`: the scene needs no
-//! sun, and the two suites answer different questions. What they share
-//! is the shape — a cube over a floor, one light, and a camera that can
-//! see the ground beside the cube.
-//!
-//! # What the unit tests could not reach
-//!
-//! `shadow::spot` covers the frustum: the cone is covered, the basis
-//! survives a light pointing straight down, reversed-Z runs the right
-//! way. All of it passed while the first smoke showed a wedge instead of
-//! a sphere's shadow, because the fault was in the cull's LOD selector —
-//! two files downstream. Only rendering catches that.
 
 mod common;
 
@@ -165,10 +152,9 @@ fn project(camera: &ViewCamera, world: Vec3) -> (u32, u32) {
     (x as u32, y as u32)
 }
 
-/// Where the cube's shadow lands: its centre traced away from the light
-/// down to the floor. Computed, never hard-coded — a fixed pixel keeps
-/// passing after someone moves the camera, by sampling the background,
-/// which is dark enough to satisfy every "this is darker" assertion.
+/// Where the cube's shadow lands: its centre traced away from the light down to the floor.
+/// Computed, never hard-coded — a fixed pixel keeps passing after someone moves the camera, by
+/// sampling the background, which is dark enough to satisfy every "this is darker" assertion.
 fn shadow_centre() -> Vec3 {
     let direction = (CUBE_CENTRE - SPOT_POSITION).normalize();
     CUBE_CENTRE + direction * (CUBE_CENTRE.y / direction.y).abs()

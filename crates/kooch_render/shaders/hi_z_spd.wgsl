@@ -1,46 +1,4 @@
-// hi_z_spd.wgsl — Hi-Z depth pyramid via FidelityFX SPD (Single-Pass
-// Downsampler).
-//
-// Adapted from Bevy's `downsample_depth.wgsl`, which itself ports
-// AMD's FFX SPD v2.1
-// (https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/blob/d7531ae47d8b36a5d4025663e731a47a38be882f/sdk/include/FidelityFX/gpu/spd/ffx_spd.h#L528).
-//
-// Two key adaptations from Bevy:
-//
-// 1. **Reduction function is `max`, not `min`.** Bevy's Hi-Z is built
-//    for cluster occlusion where the conservative test is "sphere
-//    bound's CLOSEST depth >= tile's MIN depth" (i.e. nothing
-//    closer in the tile is rendered, so the sphere can't be
-//    occluded). Our cull shader is the inverse — see
-//    `meshlet_cull.wgsl::occluded_by_hi_z_atomic`: the test is
-//    `meshlet_centre_depth > tile_MAX_depth` (i.e. every fragment in
-//    the tile is in front of the meshlet, so the meshlet is
-//    occluded). Max-reduction keeps the FARTHEST depth per tile and
-//    that's what `occluded_by_hi_z_atomic` reads.
-//
-// 2. **No multisample / meshlet visibility variants.** We always
-//    sample a single-sample Depth32Float attachment via the source
-//    binding — the engine's depth attachment is single-sample
-//    (`crates/kooch_render/src/meshlet/render_stage/mod.rs` creates
-//    `meshlet_render_stage_depth` with `sample_count: 1`). Drop the
-//    Bevy `#ifdef MULTISAMPLE` / `#ifdef MESHLET*` paths.
-//
-// Two compute entries (matches Bevy's split — wgpu doesn't yet
-// expose globally coherent storage buffers needed for a true
-// single-pass dispatch):
-//
-//   * `cs_downsample_first` — one workgroup per 64×64 source tile,
-//     writes mips 1..6 from `mip_0` using workgroup memory.
-//   * `cs_downsample_second` — one workgroup total, writes mips
-//     7..12 from `mip_6` using workgroup memory.
-//
-// `mip_0` (the depth source) may be any size; `mip_1..mip_12` must
-// have side lengths rounded DOWN to the previous power of two so the
-// 2×2 reductions stay aligned. The cull shader's pixel-radius math
-// already tolerates the divergence between actual viewport size and
-// pyramid size (see `occluded_by_hi_z_atomic`).
-//
-// Refs: #486 (this port), #445 (the per-mip approach this replaces).
+// hi_z_spd.wgsl — Hi-Z depth pyramid via FidelityFX SPD (Single-Pass Downsampler).
 
 @group(0) @binding(0) var mip_0: texture_depth_2d;
 @group(0) @binding(1) var mip_1: texture_storage_2d<r32float, write>;
@@ -344,12 +302,8 @@ fn reduce_load_mip_6(tex: vec2u) -> f32 {
     ));
 }
 
-// Min-reduce under reversed-Z (#488): NDC depth 1 = near, 0 = far,
-// so the FARTHEST fragment has the SMALLEST depth value. The Hi-Z
-// conservative occlusion test on a reversed-Z pyramid is
-// `aabb.max.z <= tile_min` — meshlet's nearest depth (= max ndc.z
-// in reversed-Z) lies behind the tile's farthest fragment (= tile
-// min). `min` keeps the right value.
+// Min-reduce under reversed-Z (#488): NDC depth 1 = near, 0 = far, so the FARTHEST fragment has the
+// SMALLEST depth value.
 fn reduce_4(v: vec4f) -> f32 {
     return min(min(v.x, v.y), min(v.z, v.w));
 }

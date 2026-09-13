@@ -1,9 +1,8 @@
 use super::*;
 use glam::Vec4;
 
-/// The march recovers metres as `near / ndc.z`, and that identity is
-/// the entire reason the camera lost its far plane. Checked against
-/// the projection the camera actually builds, not against the
+/// The march recovers metres as `near / ndc.z`, and that identity is the entire reason the camera
+/// lost its far plane. Checked against the projection the camera actually builds, not against the
 /// algebra that motivated it.
 #[test]
 fn near_over_ndc_z_is_the_distance_under_the_engines_projection() {
@@ -25,10 +24,9 @@ fn near_over_ndc_z_is_the_distance_under_the_engines_projection() {
 
 #[test]
 fn the_uniform_matches_the_shader_struct() {
-    // ContactShadowView: mat4x4 (64) + near/length/thickness
-    // (64..76) + linear_steps (76..80) + frame (80..84) + three
-    // scalar pad words (84..96). Scalars rather than a vec2 on
-    // purpose — see the shader.
+    // ContactShadowView: mat4x4 (64) + near/length/thickness (64..76) + linear_steps (76..80) +
+    // frame (80..84) + three scalar pad words (84..96). Scalars rather than a vec2 on purpose — see
+    // the shader.
     assert_eq!(std::mem::size_of::<ContactShadowUbo>(), 96);
 }
 
@@ -51,10 +49,9 @@ fn unset_is_not_zero() {
     assert_eq!(parse_steps(Some("0")), Some(0));
 }
 
-/// 🔴 A typo must not read as an off switch. A measurement run that
-/// silently marched nothing would credit the saving to whatever else
-/// changed that day — the failure mode `KOOCH_SHADING_RATE` was written
-/// to avoid.
+/// 🔴 A typo must not read as an off switch. A measurement run that silently marched nothing would
+/// credit the saving to whatever else changed that day — the failure mode `KOOCH_SHADING_RATE` was
+/// written to avoid.
 #[test]
 fn a_typo_says_nothing() {
     for raw in ["off", "", "-4", "sixteen", "8.0"] {

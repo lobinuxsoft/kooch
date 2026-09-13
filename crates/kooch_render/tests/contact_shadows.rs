@@ -1,31 +1,10 @@
-//! #735's acceptance: an object standing on a floor is grounded to it.
-//!
-//! The cascades are **off** in every render below. That is the whole
-//! design of this file: with them on, a darker pixel beside the cube
-//! proves nothing, because the cascade would darken it too. With them
-//! off, the only thing in the engine that can darken the floor where the
-//! cube meets it is the screen-space march.
-//!
-//! Every assertion compares the **same pixel** across two renders that
-//! differ by one flag, for the reason `csm_shadows.rs` states: two
-//! places in one image differ for a dozen legitimate reasons.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test contact_shadows
+//! The cascades are **off** in every render below. That is the whole design of this file: with them
+//! on, a darker pixel beside the cube proves nothing, because the cascade would darken it too.
 
 mod common;
 
-/// 🔴 Serialises this binary's cases, and it closes a long-standing
-/// flake rather than adding caution.
-///
-/// `common` hands every case the SAME device — one per binary, by
-/// `OnceLock`, to dodge the radv `request_adapter` race of #334 — so
-/// seven cases at once means seven threads recording and submitting
-/// against one device. Under radv that segfaults the PROCESS instead of
-/// failing a case, intermittently, while passing every time under
-/// `--test-threads=1`. This file and `gpu_scopes` are the two that were
-/// known to "fail sometimes in `cargo test --workspace` and always pass
-/// in isolation"; that is what this was.
+/// 🔴 Serialises this binary's cases, and it closes a long-standing flake rather than adding
+/// caution.
 static GPU: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn gpu_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -73,15 +52,8 @@ const CONTACT_POINT: Vec3 = Vec3::new(0.6, 0.0, 0.0);
 /// luminance must not move.
 const OPEN_FLOOR: Vec3 = Vec3::new(-5.0, 0.0, 2.0);
 
-/// A device carrying the int64-atomic bundle the R64 path needs, or
-/// `None` where the adapter has none.
-///
-/// 🔴 `try_acquire_device` asks for `Features::empty()`, so the shared
-/// test device **cannot** take the R64 path — every render in this file
-/// would go through the R32 compute deferred and the fragment path
-/// would ship untested. Half of #476 went into two paths diverging with
-/// no compiler between them; this is the second device that stops it
-/// happening again here.
+/// A device carrying the int64-atomic bundle the R64 path needs, or `None` where the adapter has
+/// none.
 fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
@@ -364,11 +336,6 @@ fn zero_steps_in_the_settings_overrides_the_light() {
 }
 
 /// 🔴 The same property on the **other** shading path.
-///
-/// The R64 route shades in a fragment shader with its own group 0 and
-/// its own binding numbers; nothing but this test stands between the
-/// two paths shipping different behaviour, and the compiler is not
-/// going to notice.
 #[test]
 fn the_fragment_path_marches_too() {
     let _gpu = gpu_lock();
@@ -416,10 +383,9 @@ fn the_fragment_path_leaves_open_floor_alone() {
     );
 }
 
-/// The debug view has to be *wired*, not merely selectable — a mode that
-/// silently falls through to lit shading looks plausible and answers
-/// nothing. Open floor must read as "marched, found nothing" and the
-/// floor the cube stands on must not.
+/// The debug view has to be *wired*, not merely selectable — a mode that silently falls through to
+/// lit shading looks plausible and answers nothing. Open floor must read as "marched, found
+/// nothing" and the floor the cube stands on must not.
 #[test]
 fn the_debug_view_separates_a_hit_from_open_floor() {
     let _gpu = gpu_lock();
@@ -441,11 +407,9 @@ fn the_debug_view_separates_a_hit_from_open_floor() {
     let open = rgb(ox, oy);
     let contact = rgb(cx, cy);
 
-    // Deliberately NOT asserting which colour open floor takes. At this
-    // render size a 0.3 m ray is under two pixels long there, so the
-    // honest answer is blue — "nothing to march" — and a test that
-    // demanded grey would be pinning the author's guess rather than the
-    // view's answer. What has to hold is that the view answers at all.
+    // Deliberately NOT asserting which colour open floor takes. At this render size a 0.3 m ray is
+    // under two pixels long there, so the honest answer is blue — "nothing to march" — and a test
+    // that demanded grey would be pinning the author's guess rather than the view's answer.
     let magenta = [255, 0, 255];
     assert_ne!(
         open, magenta,
@@ -488,11 +452,6 @@ fn add_light(resources: &mut Resources, direction: Vec3, intensity: f32) {
 }
 
 /// Two lights, one march (#845).
-///
-/// 🔴 The assertion is on the DIM light's contact, not the bright one's.
-/// Both lights reach both points, so a march that ran for both darkens
-/// `SIDE_CONTACT`; a march that ran only for the strongest leaves it
-/// lit. Asserting on the bright light's contact would pass either way.
 #[test]
 fn only_the_strongest_light_marches() {
     let _gpu = gpu_lock();
@@ -523,10 +482,9 @@ fn only_the_strongest_light_marches() {
          marched or neither did",
     );
 
-    // The control: the strongest light's own contact is there in both.
-    // Without it this test passes just as well with the march removed
-    // entirely, which is the same shape of mistake #841's control exists
-    // to catch.
+    // The control: the strongest light's own contact is there in both. Without it this test passes
+    // just as well with the march removed entirely, which is the same shape of mistake #841's
+    // control exists to catch.
     let bright_one = luminance(&one_march, &camera, CONTACT_POINT);
     let bright_all = luminance(&every_march, &camera, CONTACT_POINT);
     assert!(

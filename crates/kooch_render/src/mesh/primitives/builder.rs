@@ -1,10 +1,4 @@
 //! [`MeshBuilder`] — the shared accumulator every primitive writes into.
-//!
-//! Keeps the winding and vertex-layout rules in one place instead of
-//! repeating them in six generators. glTF's conventions are the engine's:
-//! right-handed, Y up, counter-clockwise front faces. A primitive that
-//! gets that wrong is inside-out, and an inside-out mesh reads as a
-//! backface-culling bug rather than a generator bug.
 
 use glam::{Vec2, Vec3};
 
@@ -27,10 +21,6 @@ impl MeshBuilder {
     }
 
     /// Pushes a vertex and returns its index.
-    ///
-    /// `normal` is normalised here rather than at every call site — a
-    /// generator computing an analytic normal should not also have to
-    /// remember that the GPU expects unit length.
     pub(super) fn vertex(&mut self, position: Vec3, normal: Vec3, uv: Vec2) -> u32 {
         let index = self.vertices.len() as u32;
         self.vertices.push(MeshVertex {
@@ -65,11 +55,6 @@ impl MeshBuilder {
 }
 
 /// A ring of `sectors` positions on a circle of `radius` at height `y`.
-///
-/// Shared by the sphere, capsule, cylinder and cone. Returns
-/// `sectors + 1` entries: the seam is duplicated so the last vertex can
-/// carry `u = 1.0` instead of wrapping to `0.0`, which would smear the
-/// whole texture across the final column.
 pub(super) fn ring(radius: f32, y: f32, sectors: u32) -> Vec<Vec3> {
     (0..=sectors)
         .map(|s| {
@@ -80,11 +65,6 @@ pub(super) fn ring(radius: f32, y: f32, sectors: u32) -> Vec<Vec3> {
 }
 
 /// Minimum segment count for anything round.
-///
-/// Below three there is no surface — two sectors give a degenerate sliver
-/// with no volume, which a convex hull or an inertia tensor then divides
-/// by. Clamped rather than rejected: a value being typed into the
-/// Inspector passes through 0 and 1 on its way to the intended number.
 pub(super) const MIN_SECTORS: u32 = 3;
 
 /// Minimum ring count for shapes stacked along their axis.

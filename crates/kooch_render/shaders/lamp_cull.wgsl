@@ -1,54 +1,4 @@
 // lamp_cull.wgsl — one hierarchical cull for every lamp (#939).
-//
-// CONCATENATED after `cluster_common.wgsl` and `page_table.wgsl`.
-//
-// # Why lamps get their own machine
-//
-// A survivor list is a LOD picked for a VIEW. The sun's seventeen
-// lists are picked for orthographic boxes centred on the camera, and
-// lamps briefly borrowed them — a close lamp's casters fell outside
-// the fine levels' box and its shadow vanished, a coarse bucket handed
-// root meshlets. The first fix was the retired cube path's recipe run
-// literally: one `MeshletCull` per lamp, dispatched from the CPU,
-// capped at 32. Correct, and the wrong shape — cost `lamps × scene`
-// plus a CPU loop per view.
-//
-// This file is Olsson et al. 2014 §3.4/§5.2 adapted to the meshlet
-// pool: the scene already has the two hierarchy levels the paper
-// builds (instances over meshlets), so the cull queries them instead
-// of walking everything.
-//
-// | pass | domain | what it decides |
-// |---|---|---|
-// | `cs_lamp_pairs` | lights × instances | which instances a light's range reaches |
-// | `cs_lamp_args`  | 1 thread | sizes the meshlet-domain dispatches from the pair count |
-// | `cs_lamp_err`   | pairs × meshlets | parent pixel error per (lamp, group) — the #465 reduction, all lamps at once |
-// | `cs_lamp_cull`  | pairs × meshlets | group-coherent LOD cut + range + cone; survivors into the lamp's slice |
-//
-// # 🔴 One group-error arena for every lamp
-//
-// The group-coherent descent (#465) is why the module doc once said a
-// per-lamp cull "cannot simply be inlined": the reduction is per view.
-// It CAN be one dispatch — the arena is indexed
-// `[slot * group_capacity + group]`, so every lamp's reduction runs in
-// the same pass and sibling meshlets of one lamp still read the same
-// slot. The memory is the price: `LAMP_CULLS × group_capacity × 4 B`,
-// which is the stated ceiling on `LAMP_CULLS`.
-//
-// # 🔴 Fixed survivor slices, no scan
-//
-// The paper counts, prefix-sums and emits. A fixed `LAMP_SURVIVORS`
-// slice per lamp drops both extra passes and the double test: one
-// atomicAdd names the slot. The count is written uncapped so an
-// overflowing lamp is visible in the counters; every reader clamps.
-//
-// # View independence
-//
-// Nothing here reads a camera: the frustum is the light's own range
-// and the LOD is measured from the light's position. The whole set of
-// passes runs ONCE per frame and both editor views consume the same
-// survivors — where the sun's culls run per view because their boxes
-// follow the eye.
 
 struct LampMeshDescriptor {
     first_meshlet: u32,
@@ -126,10 +76,9 @@ struct LampCullUniform {
 @group(0) @binding(8) var<storage, read_write> lamp_group_err: array<atomic<u32>>;
 // `[slot * LAMP_SURVIVORS ..]`: the lamp's packed survivors.
 @group(0) @binding(9) var<storage, read_write> lamp_survivors: array<u32>;
-// The page raster's `visible_counts`, written at `[chain.x + slot]` —
-// the same words `cs_expand_args` sizes the expansion from, so a
-// lamp's survivors need no copy to be consumed. Uncapped; readers
-// clamp to `LAMP_SURVIVORS`.
+// The page raster's `visible_counts`, written at `[chain.x + slot]` — the same words
+// `cs_expand_args` sizes the expansion from, so a lamp's survivors need no copy to be consumed.
+// Uncapped; readers clamp to `LAMP_SURVIVORS`.
 @group(0) @binding(10) var<storage, read_write> lamp_counts: array<atomic<u32>>;
 
 const LAMP_GROUP: u32 = 64u;
@@ -197,34 +146,8 @@ fn cs_lamp_pairs(
 // D3D12 and Metal floor, and what desktop adapters actually report.
 const LAMP_DIM_LIMIT: u32 = 65535u;
 
-// The meshlet-domain dispatch size: pairs times the pool-wide meshlet
-// max, a number that only exists on the GPU once the pairs are counted.
-//
-// # 🔴 TWO dimensions, because one cannot hold it
-//
-// `lamp.scene.y` is `meshlets_per_mesh`, and that is the maximum over
-// the WHOLE scene rather than this mesh's own count — so the product is
-// `pairs * scene_max`, and it passes 65 535 workgroups long before a
-// scene is interesting. Measured on `dense.scene`: 2157 instances at a
-// scene max of 4563 meshlets, 64 lamps, so even the old cap of 16 384
-// pairs asks for 1.17 MILLION workgroups. Eighteen times the limit.
-//
-// An indirect dispatch past `maxComputeWorkGroupCount` is undefined, and
-// what it does here is nothing: the two heavy passes never ran, every
-// lamp bucket kept zero survivors, and every lamp page was stamped empty
-// and cleared. The reader then answers "nothing occludes" over a page
-// that is resident, correctly keyed and perfectly blank — no lamp in the
-// scene cast a shadow, with every counter reading healthy.
-//
-// The engine already has the shape for this: `tiled_workgroups` spills
-// the excess into `y` and the shader re-linearises from
-// `num_workgroups.x`. Its own comment says why clamping is not the
-// alternative — the scene renders with geometry missing and it reads as
-// a bug in the LOD chain. That is exactly what happened.
-//
-// ⚠️ This makes the dispatch legal, not small. `pairs * scene_max` is
-// still overwhelmingly empty threads, and the fix for that is the
-// chunking the camera's cull already has (`chunks_for`).
+// The meshlet-domain dispatch size: pairs times the pool-wide meshlet max, a number that only
+// exists on the GPU once the pairs are counted.
 @compute @workgroup_size(1, 1, 1)
 fn cs_lamp_args() {
     let pairs = min(atomicLoad(&lamp_pairs[0]), lamp.scene.w);
@@ -241,18 +164,13 @@ fn cs_lamp_args() {
 }
 
 // The linear thread index of a dispatch that may be two-dimensional.
-//
-// Mirrors `tiled_workgroups`: `x` saturates at the limit and `y` carries
-// the rest, so the row stride is the whole `x` extent in THREADS.
 fn lamp_thread(gid: vec3<u32>, groups: vec3<u32>) -> u32 {
     return gid.y * (groups.x * LAMP_GROUP) + gid.x;
 }
 
-// The #465 reduction, every lamp at once: per child, contribute the
-// PARENT's pixel error to the child's group slot, in this lamp's own
-// row of the arena. Siblings of one lamp converge one slot, so pass
-// two's descent decision is coherent per lamp — no torn seam, no hole
-// in a caster.
+// The #465 reduction, every lamp at once: per child, contribute the PARENT's pixel error to the
+// child's group slot, in this lamp's own row of the arena. Siblings of one lamp converge one slot,
+// so pass two's descent decision is coherent per lamp — no torn seam, no hole in a caster.
 @compute @workgroup_size(LAMP_GROUP, 1, 1)
 fn cs_lamp_err(
     @builtin(global_invocation_id) gid: vec3<u32>,

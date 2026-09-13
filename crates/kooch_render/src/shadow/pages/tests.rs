@@ -277,10 +277,9 @@ fn a_surface_nothing_reaches_residents_nothing() {
 
 #[test]
 fn a_lamp_strides_two_thousand_pages() {
-    /// The floored local stride is what makes the flat table
-    /// affordable: a full chain per lamp is 131 070 pages and the
-    /// chain from `local_floor` up is 2 046, rounded to a word
-    /// boundary. If this grows, the table below grows with it.
+    /// The floored local stride is what makes the flat table affordable: a full chain per lamp is
+    /// 131 070 pages and the chain from `local_floor` up is 2 046, rounded to a word boundary. If
+    /// this grows, the table below grows with it.
     let config = PageConfig::default();
     assert_eq!(config.local_face_pages(), 341);
     assert_eq!(super::mark::stride(config, ClipmapConfig::default()), 2048);
@@ -288,50 +287,22 @@ fn a_lamp_strides_two_thousand_pages() {
 
 #[test]
 fn the_flat_table_is_megabytes_not_108() {
-    // The number that used to force the hash: 101 lights and a sun
-    // over FULL chains address 28 409 856 pages — 108 MiB of `u32`,
-    // 42 % of the pool it would index. The floored local stride and
-    // the padded slot layout bring the same scene to a few MiB, which
-    // is what buys the reader its single indexed load. See
-    // `page_table.wgsl`.
+    // The number that used to force the hash: 101 lights and a sun over FULL chains address 28 409
+    // 856 pages — 108 MiB of `u32`, 42 % of the pool it would index.
     let config = PageConfig::default();
     let clipmap = ClipmapConfig::default();
     let slots = super::mark::padded_lights(101) + 1;
     let entries = super::mark::span(config, clipmap, slots);
     let bytes = entries * super::pool::PAGE_CELL as u64 * 4;
-    // SIX words an entry: the slot, the frame last requested, the
-    // listing, the content generation, the receivers' ask, and the
-    // frame the page was ALLOCATED.
-    //
-    // 🔴 That last one cost 2.1 MiB a view and it is worth naming why
-    // it was paid. The frame a page was requested is rewritten every
-    // frame the marking asks, so it can never say "this page is new" —
-    // and the page age debug view, built on it, painted every pixel of
-    // every frame white. An instrument that cannot fail visibly is
-    // worse than no instrument: it was reached for to diagnose a
-    // shadow and reported nothing, twice, before anyone read its
-    // arithmetic.
-    //
-    // 🔴 Still SIX. `PAGE_LOD` was added and cost nothing: it took the
-    // word Olsson's receiver bound used to own, and that bound is gone
-    // — its record covered one level per receiver while the reader
-    // climbs, so a receiver that climbed lost the caster it needed.
+    // SIX words an entry: the slot, the frame last requested, the listing, the content generation,
+    // the receivers' ask, and the frame the page was ALLOCATED.
     assert!(
         bytes < 14 * 1024 * 1024,
         "one view's table is {bytes} bytes"
     );
     let flat = 28_409_856u64 * 4;
-    // ⚠️ EIGHT, and it used to be ten. The sixth word moved this from
-    // 10.5x under the flat answer to 8.8x, so "an order of magnitude"
-    // has stopped being literally true. Written down rather than
-    // quietly rounded: the conclusion the comparison exists for — that
-    // the flat table is a fraction of what the full chain would cost —
-    // is unchanged, and the day it needs a seventh word this is the
-    // line that should be argued with.
-    //
-    // It nearly did. `PAGE_LOD` was going to be that word, until the
-    // receiver bound it replaced turned out to be the bug and freed
-    // one.
+    // ⚠️ EIGHT, and it used to be ten. The sixth word moved this from 10.5x under the flat answer
+    // to 8.8x, so "an order of magnitude" has stopped being literally true.
     assert!(
         bytes * 8 < flat,
         "{bytes} bytes has stopped being a fraction of the full-chain flat answer's {flat}"
@@ -360,19 +331,6 @@ fn the_atlas_is_square_enough() {
 }
 
 /// The cascades stop being rasterised when the pages replace them.
-///
-/// # 🔴 The flag existed and nobody asked it
-///
-/// `FrameShadows::cascades_enabled` already reached the shading, and
-/// `inti_shadow` already returned from the page branch without touching
-/// a cascade layer. What no code path consulted was whether to DRAW
-/// them: four culls and four depth passes ran every frame filling
-/// layers with no reader, for as long as the feature has existed.
-///
-/// A source check rather than a GPU one. The claim is "this call is
-/// gated", and answering it on a device would mean standing up a whole
-/// frame to observe an absence — which is the shape of assertion that
-/// passes for the wrong reason.
 #[test]
 fn the_cascades_are_not_drawn_for_a_paged_sun() {
     let pass = include_str!("../pass.rs");
@@ -402,13 +360,9 @@ fn the_cascades_are_not_drawn_for_a_paged_sun() {
         );
     }
 
-    // 🔴 And the gate is its OWN flag. `cascades_enabled` means the
-    // sun's data in the frame uniform is valid, and
-    // `IntiFrame::with_optional_shadows` turns `shadows_enabled` on
-    // when it is — a flag `inti_shadow` checks BEFORE it branches to
-    // the pages. Folding the raster's decision into it turned the whole
-    // sun off: fully lit everywhere, cascades and pages alike, which is
-    // exactly what shipped.
+    // 🔴 And the gate is its OWN flag. `cascades_enabled` means the sun's data in the frame uniform
+    // is valid, and `IntiFrame::with_optional_shadows` turns `shadows_enabled` on when it is — a
+    // flag `inti_shadow` checks BEFORE it branches to the pages.
     let frame = include_str!("../../meshlet/render_stage/frame/shadows.rs");
     assert!(
         frame.contains("let draw_cascades = cascades_enabled && !settings.virtual_pages;"),
@@ -422,14 +376,6 @@ fn the_cascades_are_not_drawn_for_a_paged_sun() {
 }
 
 /// The flag the raster's gate must not borrow.
-///
-/// 🔴 What shipped: gating the cascade draw on `cascades_enabled` and
-/// then computing that flag from `virtual_pages`. `with_optional_shadows`
-/// only calls `with_shadows` — the one place `shadows_enabled` is set —
-/// when it is true, and `inti_shadow` returns fully lit on
-/// `shadows_enabled` BEFORE it reaches the branch that picks pages over
-/// cascades. So turning the cascade DRAW off turned every shadow in the
-/// scene off, which is a whole-frame regression with no error anywhere.
 #[test]
 fn the_sampling_switch_is_not_the_drawing_switch() {
     let reader = include_str!("../../../../kooch_lighting/shaders/inti_pbr.wgsl");
@@ -453,22 +399,6 @@ fn the_sampling_switch_is_not_the_drawing_switch() {
 }
 
 /// A lamp's pages are READ, and read without a cube slot.
-///
-/// # 🔴 The half that made the other three invisible
-///
-/// The expansion tested lamp pages, the depth pass drew them, the pool
-/// claimed them — and `inti_point_shadow` sampled the cube atlas anyway.
-/// A pass that costs and shows nothing, with 7937 meshlet/page pairs a
-/// frame to prove it was running.
-///
-/// The second claim matters as much as the first: the cube path returns
-/// fully lit for any lamp past `MAX_POINT_SHADOWS`, which is 32 against
-/// a scene of a hundred. Gating the PAGE path on the same slot would
-/// carry that ceiling straight into the technique built to remove it.
-///
-/// A source check because the alternative is a GPU rig with a hundred
-/// lamps to observe the hundredth one — and what is being asserted is a
-/// branch, not a pixel.
 #[test]
 fn a_lamp_reads_its_pages_without_a_cube_slot() {
     let shading = include_str!("../../../../kooch_lighting/shaders/inti_pbr.wgsl");
@@ -499,12 +429,9 @@ fn a_lamp_reads_its_pages_without_a_cube_slot() {
         );
     }
 
-    // 🔴 And it biases like a LAMP. `INTI_POINT_DEPTH_BIAS` is four
-    // times `INTI_DEPTH_BIAS`, and the doc beside those constants says
-    // why and what borrowing the sun's looks like: a stair-stepped
-    // square printed on an empty floor under a lamp, the floor
-    // shadowing itself. That doc exists because it already happened
-    // once to the cube reader; the page reader shipped repeating it.
+    // 🔴 And it biases like a LAMP. `INTI_POINT_DEPTH_BIAS` is four times `INTI_DEPTH_BIAS`, and the
+    // doc beside those constants says why and what borrowing the sun's looks like: a stair-stepped
+    // square printed on an empty floor under a lamp, the floor shadowing itself.
     let reader = shading
         .find("fn inti_local_page_shadow(")
         .expect("the page reader is gone");
@@ -531,21 +458,7 @@ fn a_lamp_reads_its_pages_without_a_cube_slot() {
         "the page reader still reaches for a cascade's bias somewhere"
     );
 
-    // 🔴 And the reader agrees with the writer on depth, ALONG THE MAJOR
-    // AXIS. Two claims in one:
-    //
-    // The `w` is what makes a lamp's page a projection instead of a
-    // mapping. Dividing at the vertex and handing the rasteriser `w = 1`
-    // fills the triangle by straight lines between three
-    // separately-divided corners — correct at the corners, wrong
-    // everywhere else, and worst on the two big triangles a floor is
-    // made of. It reads as every shadow leaning the same way.
-    //
-    // And the depth has to be `PAGE_NEAR / major`, not `/ length`. Only
-    // the first is projective: `depth * w` is then the constant
-    // PAGE_NEAR, so the rasteriser's own divide reconstructs it exactly
-    // at every fragment. The radial form is off by the ratio between
-    // them — 1 straight ahead of the lamp, 1.73 at a face's corner.
+    // 🔴 And the reader agrees with the writer on depth, ALONG THE MAJOR AXIS. Two claims in one.
     let depth = include_str!("../../../shaders/page_depth.wgsl");
     assert!(
         depth.contains("page_clip_w("),
@@ -559,10 +472,6 @@ fn a_lamp_reads_its_pages_without_a_cube_slot() {
         "the depth pass stopped handing PAGE_NEAR in as depth-times-w"
     );
     // 🔴 And it no longer rejects a vertex for landing on another face.
-    // A triangle has three, and pushing one outside the clip volume
-    // while the other two project normally makes the clipper interpolate
-    // between them — a wedge of geometry along every seam, which reads
-    // as a straight bar of false occlusion across the lamp's pool.
     assert!(
         !depth.contains("if face.z <= 1e-4"),
         "the lamp draw is rejecting vertices by face again; a seam-straddling triangle \
@@ -578,11 +487,9 @@ fn a_lamp_reads_its_pages_without_a_cube_slot() {
     );
 }
 
-/// #971's hole, stated as an assertion: the sun leaving has to read as
-/// a loss even when the count does not fall, because a lamp arrived in
-/// the same frame. Nothing else in the page machine can tell — the
-/// sun's clipmap stamp hashes a *direction* and a departed sun is
-/// handed `Vec3::NEG_Y`, which is a perfectly ordinary sun.
+/// a loss even when the count does not fall, because a lamp arrived in the same frame. Nothing else
+/// in the page machine can tell — the sun's clipmap stamp hashes a *direction* and a departed sun
+/// is handed `Vec3::NEG_Y`, which is a perfectly ordinary sun.
 #[test]
 fn a_lost_sun_is_a_loss() {
     let before = Casters {

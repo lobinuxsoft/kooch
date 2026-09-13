@@ -73,11 +73,6 @@ fn linear_loader_keeps_pixels_but_marks_format() {
 }
 
 /// A texture with nothing to say gets the chain.
-///
-/// 🔴 This is the direction that matters. Every texture in every project
-/// that existed before the setting did has a `.meta` with no `[import]`
-/// table, and the whole point is that those come back with mip chains
-/// rather than staying broken until someone edits 78 files.
 #[test]
 fn silence_means_mipmaps() {
     let png = build_test_png();
@@ -105,10 +100,6 @@ fn the_meta_can_refuse_the_chain() {
 }
 
 /// A malformed table leaves the texture on screen.
-///
-/// A settings file must never be the reason an asset fails to load: a
-/// `.meta` written by a newer engine, or hand-edited with a typo, has to
-/// degrade to the defaults. The complaint belongs in the log.
 #[test]
 fn a_malformed_import_falls_back() {
     let png = build_test_png();

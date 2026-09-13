@@ -60,7 +60,7 @@ pub struct MeshletDrawer {
 
 impl MeshletDrawer {
     /// Builds the render pipeline. `meshlet_bgl` must come from
-    /// [`super::MeshletCull::meshlet_bind_group_layout`] so the cull
+    /// `super::MeshletCull::meshlet_bind_group_layout` so the cull
     /// and draw passes agree on storage-buffer slot numbering.
     pub fn new(
         device: &wgpu::Device,
@@ -193,13 +193,9 @@ impl MeshletDrawer {
         }
     }
 
-    /// Records one indirect-draw render pass into `encoder`. Pulls
-    /// surviving meshlets from `cull` (must already have been
-    /// dispatched in the same encoder before this call) and rasterizes
+    /// Records one indirect-draw render pass into `encoder`. Pulls surviving meshlets from `cull`
+    /// (must already have been dispatched in the same encoder before this call) and rasterizes
     /// `mesh` through the meshlet pipeline.
-    ///
-    /// `clear_color` controls the render-pass load op; pass `None` to
-    /// keep whatever the previous pass wrote.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,

@@ -1,10 +1,4 @@
-//! The baked primitives on disk, checked against the generator that
-//! produced them.
-//!
-//! The unit tests cover generation and export in memory. These cover the
-//! part that only fails on someone else's machine: a file that was never
-//! committed, a sidecar whose GUID drifted, or a menu entry pointing at a
-//! path that does not exist.
+//! The baked primitives on disk, checked against the generator that produced them.
 
 use std::path::{Path, PathBuf};
 
@@ -23,12 +17,8 @@ fn primitive_dir() -> PathBuf {
     engine_root().join("assets/meshes/primitives")
 }
 
-/// Every canonical primitive has a committed `.glb`, and it is the mesh
-/// the generator produces today.
-///
-/// This is the test that fails when someone edits a generator and forgets
-/// to re-bake — the editor would keep spawning the old geometry, with
-/// nothing to indicate the code and the asset had diverged.
+/// Every canonical primitive has a committed `.glb`, and it is the mesh the generator produces
+/// today.
 #[test]
 fn every_baked_primitive_matches_its_generator() {
     for (name, primitive) in Primitive::CANONICAL {
@@ -69,11 +59,6 @@ fn every_baked_primitive_matches_its_generator() {
 }
 
 /// Each primitive has a `.meta` with a GUID, and every GUID is distinct.
-///
-/// The sidecars are committed precisely so the GUIDs do not get minted
-/// per machine: a scene authored on one checkout has to load on another.
-/// Two primitives sharing a GUID would make one silently render as the
-/// other.
 #[test]
 fn every_primitive_has_a_distinct_committed_guid() {
     let mut guids: Vec<(String, String)> = Vec::new();
@@ -108,10 +93,6 @@ fn every_primitive_has_a_distinct_committed_guid() {
 }
 
 /// The paths the editor's spawn menu builds resolve to real files.
-///
-/// The menu constructs `meshes/primitives/{name}.glb` from the same
-/// `CANONICAL` list, so this is what catches a rename that updates the
-/// list but not the assets.
 #[test]
 fn the_spawn_menu_paths_resolve() {
     let assets = engine_root().join("assets");

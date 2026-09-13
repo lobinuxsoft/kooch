@@ -1,33 +1,4 @@
 //! Reject-reason debug overlay (#454.4).
-//!
-//! Compute pass that reads the per-thread `reject_reasons[]` written
-//! by `cs_cull_scene_pool_atomic` and rasterises a 1-pixel wireframe
-//! rectangle around every meshlet whose reject reason matches the
-//! host-supplied `selected_reason`. The overlay writes through the
-//! deferred shader's existing colour storage texture binding — no
-//! `RENDER_ATTACHMENT` usage bump or alpha-blend pass needed.
-//!
-//! # Bind-group reuse
-//!
-//! - `group(0)` is overlay-private: a small UBO with view_proj +
-//!   screen size + the selected reason + line thickness, plus the
-//!   colour storage-texture target.
-//! - `group(1) … group(3)` reuse the layouts already exposed by
-//!   [`MeshletCullPipelines`] so the overlay sees the same pool / scene /
-//!   reject-reason buffers the cull pass writes through. Avoids
-//!   duplicating BGLs and keeps the dispatcher the single source of
-//!   truth for those handles.
-//!
-//! # Activation
-//!
-//! Owned by [`MeshletRenderStage`] as `Option<MeshletRejectOverlay>`,
-//! `Some` only when `MeshletDebugCaps::supports_texture_atomic` is
-//! `true` — the same gate the triangle-density / overdraw heatmaps
-//! use, since both features ride the same baseline-vs-pre-baseline
-//! split. The orchestrator dispatches the overlay only when the
-//! current frame's `MeshletDebugMode` selects a reject-reason mode
-//! AND `cull_params.debug_active` was set so the SSBO actually
-//! carries this frame's reasons.
 
 use kooch_core::gpu::tiled_workgroups;
 
@@ -43,11 +14,8 @@ use super::scene::MeshletScene;
 
 const SHADER_SOURCE: &str = include_str!("../../shaders/meshlet_reject_overlay.wgsl");
 
-/// Reject-reason discriminant the cull shader writes per thread —
-/// matches the `REJECT_REASON_*` constants in
-/// `meshlet_cull/atomic.wgsl`. Re-exported as a stable enum so the
-/// render stage can map [`super::debug::MeshletDebugMode`] variants
-/// to the SSBO codes without touching shader literals.
+/// Reject-reason discriminant the cull shader writes per thread — matches the `REJECT_REASON_*`
+/// constants in `meshlet_cull/atomic.wgsl`.
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RejectReason {
@@ -68,10 +36,9 @@ struct OverlayParams {
     line_thickness_px: u32,
 }
 
-/// Owns the overlay's compute pipeline + its private UBO. The
-/// host-side bind groups are built per dispatch because the colour
-/// view + scene buffers + cull buffers can be swapped between
-/// frames (resize, scene-pool rebuild, ensure_capacity).
+/// Owns the overlay's compute pipeline + its private UBO. The host-side bind groups are built per
+/// dispatch because the colour view + scene buffers + cull buffers can be swapped between frames
+/// (resize, scene-pool rebuild, ensure_capacity).
 pub struct MeshletRejectOverlay {
     pipeline: wgpu::ComputePipeline,
     overlay_bgl: wgpu::BindGroupLayout,
@@ -79,10 +46,9 @@ pub struct MeshletRejectOverlay {
 }
 
 impl MeshletRejectOverlay {
-    /// Builds the overlay pipeline. The pipeline_layout reuses the
-    /// pool / scene / debug BGLs exposed by [`MeshletCullPipelines`] so
-    /// a single layout source drives both the cull writes and
-    /// the overlay reads.
+    /// Builds the overlay pipeline. The pipeline_layout reuses the pool / scene / debug BGLs
+    /// exposed by [`MeshletCullPipelines`] so a single layout source drives both the cull writes
+    /// and the overlay reads.
     pub fn new(device: &wgpu::Device, pipelines: &MeshletCullPipelines) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("meshlet_reject_overlay_shader"),
@@ -149,16 +115,9 @@ impl MeshletRejectOverlay {
         }
     }
 
-    /// Records the overlay compute pass into `encoder`. Builds bind
-    /// groups against the current frame's targets each call because
-    /// resize / pool rebuild / ensure_capacity may have invalidated
-    /// the previous frame's handles.
-    ///
-    /// `total_threads` MUST equal `instance_count × meshlets_per_mesh`
-    /// — the same dispatch shape the cull pass used to populate
-    /// `reject_reasons[]`. A mismatched count either over-iterates
-    /// (reads garbage) or under-iterates (skips clusters); both are
-    /// silent visual bugs in the overlay.
+    /// Records the overlay compute pass into `encoder`. Builds bind groups against the current
+    /// frame's targets each call because resize / pool rebuild / ensure_capacity may have
+    /// invalidated the previous frame's handles.
     #[allow(clippy::too_many_arguments)]
     pub fn dispatch(
         &self,
@@ -230,13 +189,9 @@ impl MeshletRejectOverlay {
                 },
             ],
         });
-        // debug_bgl gained binding(1) for stage_counters in #454.6.
-        // The overlay shader only references reject_reasons, but
-        // wgpu requires every BGL entry to be present in the bind
-        // group at construction — even when the shader doesn't
-        // sample the bound resource. Providing stage_counters here
-        // is a pure table write; the GPU never accesses it from this
-        // pipeline.
+        // debug_bgl gained binding(1) for stage_counters in #454.6. The overlay shader only
+        // references reject_reasons, but wgpu requires every BGL entry to be present in the bind
+        // group at construction — even when the shader doesn't sample the bound resource.
         let debug_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_reject_overlay_debug_bg"),
             layout: pipelines.debug_bind_group_layout(),

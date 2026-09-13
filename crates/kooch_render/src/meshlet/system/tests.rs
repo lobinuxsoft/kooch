@@ -77,11 +77,9 @@ fn instance_at_origin_uses_identity() {
     assert_eq!(m, Mat4::IDENTITY);
 }
 
-/// #492 regression: `MeshRenderer.visible == false` must be
-/// filtered at the scene-collection step so the cull dispatch
-/// never sees the entity. Same rule applies to
-/// `collect_referenced_guids` — an invisible mesh should not be
-/// pulled into the GPU pool either.
+/// filtered at the scene-collection step so the cull dispatch never sees the entity. Same rule
+/// applies to `collect_referenced_guids` — an invisible mesh should not be pulled into the GPU pool
+/// either.
 #[test]
 fn invisible_mesh_renderer_is_filtered_at_collect() {
     use kooch_ecs::allocator::EntityAllocator;

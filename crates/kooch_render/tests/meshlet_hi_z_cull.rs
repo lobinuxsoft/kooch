@@ -1,17 +1,5 @@
-//! GPU integration test: Hi-Z occlusion test in `cs_cull_hi_z` rejects
-//! meshlets whose bounding sphere lies behind the pyramid's depth.
-//!
-//! Uses an identity `view_proj` so the synthetic descriptor's
-//! `bounds_center` is interpreted directly as an NDC point — keeps the
-//! test readable, no perspective math needed.
-//!
-//! Hi-Z source is a 32×32 R32Float texture filled with a uniform
-//! occluder depth (e.g. 0.5). Pyramid mips inherit the same value via
-//! `cs_reduce_max`. Cull then rejects meshlets whose centre depth is
-//! greater than the occluder.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test meshlet_hi_z_cull
+//! GPU integration test: Hi-Z occlusion test in `cs_cull_hi_z` rejects meshlets whose bounding
+//! sphere lies behind the pyramid's depth.
 
 mod common;
 
@@ -157,12 +145,8 @@ fn run_cull_with_hi_z(
     common::read_u32(device, queue, cull.visible_count_buffer(), 0)
 }
 
-// All depth values below are in REVERSED-Z (#488): NDC depth 1 =
-// near, 0 = far. Hi-Z occluder at depth d means "the closest
-// fragment in the tile is at d"; a meshlet behind it has SMALLER
-// ndc.z. The legacy `occluded_by_hi_z` test is now
-// `sphere_nearest < tile_max` (max-reduced pyramid keeps closest
-// fragment under reversed-Z).
+// All depth values below are in REVERSED-Z (#488): NDC depth 1 = near, 0 = far. Hi-Z occluder at
+// depth d means "the closest fragment in the tile is at d"; a meshlet behind it has SMALLER ndc.z.
 
 #[test]
 fn meshlet_behind_occluder_is_hi_z_culled() {

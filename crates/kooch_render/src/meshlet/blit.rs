@@ -1,18 +1,5 @@
-//! Composes the meshlet stage's `Rgba8Unorm` color texture onto an
-//! arbitrary RENDER_ATTACHMENT view.
-//!
-//! Phase 1.E.3b helper. The stage's deferred shader writes through a
-//! storage-texture binding which forces the output format
-//! ([`DEFERRED_COLOR_FORMAT`]). When the destination — the swapchain
-//! surface or the editor's `ViewportTarget` — uses a different format
-//! (typically `Bgra8Unorm`), wgpu refuses both `copy_texture_to_texture`
-//! (cross-format) and direct binding (storage format mismatch). The
-//! cheapest portable answer is a triangle-cover blit pass.
-//!
-//! One [`MeshletBlit`] per destination format. Construct it once per
-//! viewport / surface and reuse across frames; [`MeshletBlit::blit`]
-//! records a single render pass that consumes the stage's color view
-//! and writes the destination view.
+//! Composes the meshlet stage's `Rgba8Unorm` color texture onto an arbitrary RENDER_ATTACHMENT
+//! view.
 
 use super::deferred::DEFERRED_COLOR_FORMAT;
 
@@ -29,10 +16,9 @@ pub struct MeshletBlit {
 }
 
 impl MeshletBlit {
-    /// Builds a blit pipeline that writes to a render attachment of
-    /// `target_format`. The source view is sampled as
-    /// [`DEFERRED_COLOR_FORMAT`] (`Rgba8Unorm`); wgpu's swizzle handles
-    /// the channel reorder when targeting `Bgra8Unorm`.
+    /// Builds a blit pipeline that writes to a render attachment of `target_format`. The source
+    /// view is sampled as [`DEFERRED_COLOR_FORMAT`] (`Rgba8Unorm`); wgpu's swizzle handles the
+    /// channel reorder when targeting `Bgra8Unorm`.
     pub fn new(
         device: &wgpu::Device,
         target_format: wgpu::TextureFormat,

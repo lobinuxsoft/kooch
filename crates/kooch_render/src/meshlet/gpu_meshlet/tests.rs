@@ -29,9 +29,8 @@ fn binding_slot_constants_are_distinct() {
 
 #[test]
 fn descriptor_size_matches_max_vertex_constant_at_compile_time() {
-    // Defensive — DEFAULT_MAX_VERTICES is referenced by the
-    // builder; confirm it stays within u8 since meshlet-local
-    // triangle indices are u8 (0..max_vertices-1 fits when
-    // max_vertices <= 256).
+    // Defensive — DEFAULT_MAX_VERTICES is referenced by the builder; confirm it stays within u8
+    // since meshlet-local triangle indices are u8 (0..max_vertices-1 fits when max_vertices <=
+    // 256).
     assert!(DEFAULT_MAX_VERTICES <= 256);
 }

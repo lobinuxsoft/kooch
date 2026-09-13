@@ -1,12 +1,6 @@
 use super::*;
 
 /// 🔴 An unset variable has to read as `None`, not as `Some(false)`.
-///
-/// The variable now sits ON TOP of the project's `.rendersettings`
-/// (#830). If "unset" meant "off", every project would be forced onto
-/// the fragment path by an environment nobody configured, and the
-/// settings asset would appear to have a compute-shading switch that
-/// does nothing.
 #[test]
 fn an_unset_variable_says_nothing() {
     assert_eq!(parse_enabled(None), None);

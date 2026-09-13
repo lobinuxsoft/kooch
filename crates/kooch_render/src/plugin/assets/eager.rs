@@ -13,15 +13,8 @@ pub(super) fn eager_import_typed_assets(app: &mut App, root: &Path) {
     eager_import_with(resources, root);
 }
 
-/// Walks `root` recursively and loads every file with a recognised
-/// typed extension through the `AssetServer`. The load step generates
-/// `.meta` sidecars on the fly for assets that do not yet have one,
-/// back-fills `asset_type` on legacy sidecars, and registers the
-/// entry in the `AssetDatabase` — exactly what the inspector picker
-/// needs to surface a new asset at first frame.
-///
-/// Public so the project-side scan system can rerun the same import
-/// pass after a project opens.
+/// Walks `root` recursively and loads every file with a recognised typed extension through the
+/// `AssetServer`.
 pub fn eager_import_with(resources: &mut Resources, root: &Path) {
     let scanned = collect_typed_files(root);
     if scanned.is_empty() {
@@ -64,9 +57,8 @@ pub fn eager_import_with(resources: &mut Resources, root: &Path) {
                 }
             }
             crate::material::MATERIAL_EXTENSION => {
-                // The discriminator this branch used to want turned out
-                // to be the file name: every RON-authored type carries
-                // its own extension, so the match already knows which
+                // The discriminator this branch used to want turned out to be the file name: every
+                // RON-authored type carries its own extension, so the match already knows which
                 // loader it is without peeking at the bytes.
                 if let Err(e) = server.load::<Material>(path, resources) {
                     tracing::warn!(

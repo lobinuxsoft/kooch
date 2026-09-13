@@ -1,17 +1,4 @@
 //! Atomic R64 visibility-buffer rasterizer (#493).
-//!
-//! Mirrors Bevy's meshlet pipeline: the fragment writes a packed u64 to
-//! the storage R64 vbuf via `textureAtomicMax`, so the closest fragment
-//! per pixel wins atomically under reversed-Z. No color attachment; the
-//! depth attachment is kept so hardware early-Z still elides occluded
-//! fragments before they reach the atomic.
-//!
-//! Bind groups (matches `meshlet_vbuf64.wgsl`):
-//!   group(0) — camera UBO
-//!   group(1) — meshlet pool (shared with cull / R32 raster)
-//!   group(2) — visible_meshlets storage (from cull)
-//!   group(3) — instances storage (from scene)
-//!   group(4) — vbuf64 storage texture, atomic access
 
 use std::num::NonZeroU64;
 
@@ -33,11 +20,9 @@ pub(super) struct Vbuf64Rasterizer {
     density_bgl: wgpu::BindGroupLayout,
     camera_buffer: wgpu::Buffer,
     camera_bg: wgpu::BindGroup,
-    /// 16-byte UBO storing the per-frame accumulator mode (only `.x`
-    /// is read by the shader): 0 = disabled, 1 = TriangleDensity
-    /// (count all fragments), 2 = Overdraw (count winning fragments
-    /// only). Written from `render_scene` so the production path
-    /// leaves the atomicAdd dormant.
+    /// 16-byte UBO storing the per-frame accumulator mode (only `.x` is read by the shader): 0 =
+    /// disabled, 1 = TriangleDensity (count all fragments), 2 = Overdraw (count winning fragments
+    /// only). Written from `render_scene` so the production path leaves the atomicAdd dormant.
     density_enable_buffer: wgpu::Buffer,
 }
 
@@ -93,12 +78,9 @@ impl Vbuf64Rasterizer {
                 count: None,
             }],
         });
-        // #454 — Bind group 5: triangle-density accumulator + the
-        // uniform that gates the atomicAdd. Both are bound on every
-        // frame regardless of the active debug mode; the uniform
-        // disables the accumulation for production rendering so the
-        // hot path costs at most one uniform fetch and a predicted
-        // branch.
+        // uniform that gates the atomicAdd. Both are bound on every frame regardless of the active
+        // debug mode; the uniform disables the accumulation for production rendering so the hot
+        // path costs at most one uniform fetch and a predicted branch.
         let density_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("meshlet_vbuf64_density_bgl"),
             entries: &[
@@ -150,14 +132,9 @@ impl Vbuf64Rasterizer {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_vbuf64_scene"),
-                // Bevy convention (#493): wgpu / Vulkan reject a render
-                // pipeline with zero color targets when there is a
-                // fragment stage, even though our fragment writes via
-                // textureAtomicMax through a storage binding instead of
-                // a return value. Declaring a dummy R8Uint target with
-                // an empty write_mask satisfies the validation; the
-                // attachment is bound at render-pass time but every
-                // write is masked off so it stays cleared / undefined.
+                // Bevy convention (#493): wgpu / Vulkan reject a render pipeline with zero color
+                // targets when there is a fragment stage, even though our fragment writes via
+                // textureAtomicMax through a storage binding instead of a return value.
                 targets: &[Some(wgpu::ColorTargetState {
                     format: super::DUMMY_COLOR_FORMAT,
                     blend: None,
@@ -288,10 +265,9 @@ impl Vbuf64Rasterizer {
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("meshlet_vbuf64_pass"),
-            // Dummy color attachment to match the pipeline's declared
-            // target. Every write is masked off so the load/store ops
-            // are immaterial — `LoadOp::Clear(0)` keeps the texture in
-            // a defined state if anything else samples it.
+            // Dummy color attachment to match the pipeline's declared target. Every write is masked
+            // off so the load/store ops are immaterial — `LoadOp::Clear(0)` keeps the texture in a
+            // defined state if anything else samples it.
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: dummy_color,
                 depth_slice: None,

@@ -1,16 +1,5 @@
-//! Integration test that exercises `MeshletRejectOverlay::new` on a
-//! real device and asserts no uncaptured wgpu errors are raised during
-//! pipeline creation. Catches "ComputePipeline … is invalid" failures
-//! that surface only at submit time on the editor — the validation
-//! error is reported asynchronously via `on_uncaptured_error` and the
-//! pipeline is then a black hole.
-//!
-//! Also dispatches the overlay against a 1-instance / 1-mesh scene so
-//! the per-frame bind-group construction (debug_bg, pool_bg, scene_bg)
-//! goes through wgpu's validator. Adding a binding to the cull-side
-//! `debug_bgl` without updating the overlay's `debug_bg` entries was
-//! caught by the editor smoke in #454.6 — this dispatch ensures the
-//! same shape mismatch trips here first.
+//! Integration test that exercises `MeshletRejectOverlay::new` on a real device and asserts no
+//! uncaptured wgpu errors are raised during pipeline creation.
 
 use glam::{Mat4, Vec3};
 use kooch_render::mesh::{Mesh, MeshVertex};
@@ -109,11 +98,8 @@ fn reject_overlay_creates_without_uncaptured_errors() {
     let cull_pipelines = MeshletCullPipelines::new(&device);
     let overlay = MeshletRejectOverlay::new(&device, &cull_pipelines);
 
-    // Dispatch a real frame so debug_bg / pool_bg / scene_bg are
-    // constructed against the same BGLs the cull pipeline owns. A
-    // shape mismatch (BGL grew a binding, bind_group entries didn't
-    // follow) shows up here as a "Number of bindings ... does not
-    // match" validation error rather than at editor submit time.
+    // Dispatch a real frame so debug_bg / pool_bg / scene_bg are constructed against the same BGLs
+    // the cull pipeline owns.
     let mesh = build_unit_quad();
     let meshlet_mesh = build_default_meshlets(&mesh).expect("build meshlets");
     let mut pool = GlobalMeshPool::new();

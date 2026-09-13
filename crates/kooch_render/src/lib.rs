@@ -1,19 +1,4 @@
 //! kooch_render — renderers for kooch.
-//!
-//! Post-pivot 2026-05-02 (plan C): mesh-only render path. SDF render
-//! (raymarch + tile-cull + GDF) was deleted. The CSG brush primitives
-//! that fed it went with it in 2026-07; what survived is the sparse
-//! voxel storage, now `kooch_world::voxel`, which the Phase 2.5 dual
-//! contouring pipeline extracts meshes from.
-//!
-//! - [`RenderPlugin`] is the full game render pipeline (sky + meshlet
-//!   GPU-driven cull/raster/shade) targeting the swapchain surface. Used
-//!   by play-mode binaries via `kooch::DefaultPlugins`.
-//! - [`SkyRenderPass`] and the `meshlet` module's `MeshletRenderStage` /
-//!   `MeshletBlit` are reused by the editor's offscreen viewport
-//!   orchestrator.
-//!
-//! Gizmo rendering lives in the dedicated `kooch_gizmos` crate.
 
 pub mod contact_shadow;
 pub mod graph;

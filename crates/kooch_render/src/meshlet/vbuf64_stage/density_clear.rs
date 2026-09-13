@@ -1,11 +1,4 @@
 //! Compute clear of the triangle-density accumulator (#454).
-//!
-//! Mirror of [`Vbuf64Clear`](super::clear::Vbuf64Clear). The atomic
-//! R32Uint texture that backs the heatmap debug modes needs to start
-//! every frame at zero before the vbuf64 fragment accumulates into
-//! it; `wgpu::CommandEncoder::clear_texture` requires a feature flag
-//! the engine does not pull in across all baseline adapters, so the
-//! stage owns this tiny compute shader instead.
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;

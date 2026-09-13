@@ -1,11 +1,5 @@
-//! Acceptance: continuous-LOD selector reduces meshlet count with
-//! distance and never starves a frame to zero meshlets.
-//!
-//! Mirrors the shader's per-thread selection logic in CPU so the
-//! algorithm can be validated headlessly without a GPU readback. The
-//! shader and this mirror MUST stay in sync — divergence would mask
-//! a bug. The cull WGSL is the source of truth; treat changes here
-//! as proof-of-work for shader changes.
+//! Acceptance: continuous-LOD selector reduces meshlet count with distance and never starves a
+//! frame to zero meshlets.
 
 use glam::{Mat4, Vec3};
 use kooch_render::meshlet::{
@@ -49,11 +43,7 @@ fn select_meshlets_cpu(
         .count()
 }
 
-/// Curved grid in world space `[-scale, scale]²` with a sinusoidal
-/// height field on Z. Curvature is critical: a flat grid lets
-/// `meshopt::simplify` collapse to near-zero error in one step
-/// (border-locked vertices are the only constraint), so the LOD
-/// chain has nothing meaningful to pick between distances.
+/// Curved grid in world space `[-scale, scale]²` with a sinusoidal height field on Z.
 fn make_curved_grid(subdivisions: usize, scale: f32) -> kooch_render::mesh::Mesh {
     let n = subdivisions + 1;
     let mut verts = Vec::with_capacity(n * n);
@@ -131,13 +121,9 @@ fn lod_selector_reduces_meshlet_count_with_distance() {
         prev = count;
     }
 
-    // Reduction must be present but the magnitude is geometry-
-    // sensitive: per-group simplify (Nanite-grouped DAG, post-#462)
-    // builds shallower chains on small meshes than the previous
-    // global-simplify algorithm did. Asserting "any reduction"
-    // confirms the selector is wired without baking a magic ratio
-    // that depends on how aggressively meshopt::simplify can chew
-    // through this particular fixture.
+    // Reduction must be present but the magnitude is geometry- sensitive: per-group simplify
+    // (Nanite-grouped DAG, post-#462) builds shallower chains on small meshes than the previous
+    // global-simplify algorithm did.
     let close = counts.first().unwrap().1;
     let far = counts.last().unwrap().1;
     assert!(
@@ -148,10 +134,9 @@ fn lod_selector_reduces_meshlet_count_with_distance() {
 
 #[test]
 fn lod_selector_with_factor_zero_keeps_only_root_meshlets() {
-    // When CullParams::new is used (no .with_lod call), factor = 0,
-    // so non-root meshlets reject and only the coarsest level
-    // survives. Verifies the CPU mirror matches the shader's
-    // degenerate behaviour.
+    // When CullParams::new is used (no .with_lod call), factor = 0, so non-root meshlets reject and
+    // only the coarsest level survives. Verifies the CPU mirror matches the shader's degenerate
+    // behaviour.
     let mesh = make_curved_grid(64, 5.0);
     let chain = build_meshlets_lod_chain(
         &mesh,
@@ -213,12 +198,8 @@ fn lod_selector_at_extreme_distance_collapses_to_root_set() {
         proj_scale_y,
         1.0,
     );
-    // Post-#462 (Nanite-grouped DAG): roots are meshlets whose
-    // parent_meshlet_index is the sentinel — these are the terminal
-    // descent stops, regardless of which LOD level they ended up at.
-    // At extreme distance every parent's pixel error collapses
-    // below the threshold, so the selector never descends past the
-    // root set.
+    // Post-#462 (Nanite-grouped DAG): roots are meshlets whose parent_meshlet_index is the sentinel
+    // — these are the terminal descent stops, regardless of which LOD level they ended up at.
     let root_count = chain
         .meshlets
         .iter()

@@ -24,12 +24,8 @@ pub(crate) fn assert_uvs_in_unit_range(mesh: &Mesh) {
     }
 }
 
-/// Winding agrees with the vertex normals: the geometric normal of
-/// every non-degenerate triangle points the same way as its corners'.
-///
-/// This is the assertion that catches an inside-out primitive, which
-/// otherwise only shows up as an invisible mesh once backface culling
-/// is on.
+/// Winding agrees with the vertex normals: the geometric normal of every non-degenerate triangle
+/// points the same way as its corners'.
 pub(crate) fn assert_outward_facing(mesh: &Mesh) {
     let position = |i: u32| Vec3::from_array(mesh.vertices[i as usize].position);
     let normal = |i: u32| Vec3::from_array(mesh.vertices[i as usize].normal);

@@ -1,11 +1,6 @@
 use super::*;
 
 /// The jitter moves the count a few pages a frame; that is not news.
-///
-/// 🔴 The measured flood: `resident` walked 2260, 2268, 2273, 2261
-/// with the camera still, because the temporal jitter puts sub-pixel
-/// samples in other pages. An equality check calls every one of
-/// those a change.
 #[test]
 fn the_log_ignores_jitter_and_not_a_real_move() {
     for (before, now) in [(2260u32, 2268u32), (2273, 2261), (1669, 1674)] {
@@ -29,11 +24,6 @@ fn a_camera_logs_against_its_own_last() {
 }
 
 /// The first camera owns the first slice.
-///
-/// 🔴 A slot map reserves index zero for its null key, so the first
-/// real view is index 1 — and a slice numbering that forgot it would
-/// leave slice 0 permanently unused and put the last camera one past
-/// the end of the pool.
 #[test]
 fn the_first_view_owns_the_first_slice() {
     let mut views: slotmap::SlotMap<crate::meshlet::render_stage::ViewId, u32> =
@@ -51,11 +41,9 @@ fn the_first_view_owns_the_first_slice() {
 
 #[test]
 fn no_settings_asset_means_defaults_not_disabled() {
-    // 🔴 The half of the bug that is testable without touching the
-    // environment. The original read took an early return with a
-    // hardcoded `enabled: false` whenever the resource was absent —
-    // which was every build. A project with no settings asset is
-    // the normal case, so absence has to mean DEFAULTS.
+    // 🔴 The half of the bug that is testable without touching the environment. The original read
+    // took an early return with a hardcoded `enabled: false` whenever the resource was absent —
+    // which was every build.
     let resources = Resources::default();
     let settings = page_settings(&resources);
     let defaults = crate::shadow::ShadowSettings::default();

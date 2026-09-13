@@ -1,28 +1,4 @@
 //! Robust Contrast Adaptive Sharpening (#481, step 5).
-//!
-//! One full-screen pass at the very end of the frame, after the tonemap
-//! and before whatever presents. The algorithm and the reasoning for
-//! where it sits are in `rcas.wgsl`; this owns the target the tonemap
-//! writes into when it runs, and nothing else.
-//!
-//! # Why it owns the intermediate rather than the tonemap
-//!
-//! The tonemap resolves onto the caller's view, and that view is the
-//! window. Sharpening has to read a finished image and write another
-//! one, so something has to hold the finished image — and it is this
-//! pass that decides whether that texture is needed at all. Putting it
-//! here keeps the tonemap's signature the same whether sharpening runs
-//! or not: it is handed a target, and which target it is, is this
-//! module's business.
-//!
-//! # Why it is not folded into the tonemap
-//!
-//! Five taps of the curve instead of one would save the pass and the
-//! texture, and it would also make "what does sharpening cost" an
-//! unanswerable question on a device that is measured in scopes. The
-//! engine's rule is that a pass which can be A/B'd is a pass of its own
-//! (#795), and this one exists precisely to be judged by eye against
-//! its own cost.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -41,10 +17,6 @@ struct SharpenUbo {
 }
 
 /// The author's amount, as the shader wants it.
-///
-/// The setting is a percentage because that is what an inspector slider
-/// and a `.rendersettings` file can carry without a float's rounding
-/// showing up in a diff; upstream's amount is `0..=1`.
 pub fn sharpness_of(percent: u32) -> f32 {
     percent.min(100) as f32 / 100.0
 }
@@ -152,11 +124,6 @@ impl Sharpen {
     }
 
     /// Sharpens [`Self::input_view`] onto `target`.
-    ///
-    /// `percent` is the author's amount and is never zero here — a zero
-    /// means the pass does not run at all, which is a decision the
-    /// caller makes so that "off" costs nothing rather than costing a
-    /// full-screen pass that computes an identity.
     pub(super) fn draw(
         &self,
         device: &wgpu::Device,

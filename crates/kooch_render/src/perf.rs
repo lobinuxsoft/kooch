@@ -1,51 +1,9 @@
 //! Cross-module engine perf counters (#463.5).
-//!
-//! Today: VRAM-tracked total. The engine instruments the buffer /
-//! texture creations it owns (asset pool, render targets, etc.) so
-//! the editor HUD can report a meaningful "engine VRAM footprint"
-//! without a vendor-specific GPU memory query — those queries do not
-//! exist as a portable Rust API today (Vulkan / D3D12 / Metal each
-//! need their own native call).
-//!
-//! Future: this module is the natural home for any other
-//! cross-module render-side counter (allocation churn, dispatch
-//! count, etc.) that the editor's HUD or future telemetry exposes.
-//!
-//! ## Tracker semantics
-//!
-//! - `add` / `sub` are atomic relaxed — counters do not coordinate
-//!   with anything else, only the most-recently-published value
-//!   matters.
-//! - The tracker is wrapped in `Arc` so multiple subsystems
-//!   (MeshletRenderStage, MeshletPipeline, sky pass, gizmos…) can
-//!   write into the same counter without passing it through every
-//!   function signature.
-//! - The HUD reads `bytes()` once per frame — no syncing needed.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Cumulative count of GPU buffer / texture bytes the engine has
-/// allocated through wgpu and is currently holding live. Excludes
-/// driver overhead, swap chain, and anything wgpu allocates
-/// implicitly (uniform staging, descriptor heaps, etc.) — those
-/// require per-backend queries the wgpu API does not expose
-/// portably.
-///
-/// What IS counted today:
-/// - GlobalMeshPool persistent vertex / index / meshlet / triangle
-///   storage (the dominant footprint of a loaded scene)
-/// - MeshletRenderStage's vbuf / depth / color render targets
-///
-/// What is NOT counted today (intentionally — out-of-scope for the
-/// engine-tracked HUD field):
-/// - MaterialPool / GPU bind-group descriptors (kilobyte-range)
-/// - egui texture atlas / per-frame staging
-/// - sky / gizmo small uniform buffers
-/// - the GPU's actual driver overhead (swap chain, descriptor heaps,
-///   command pools)
-///
-/// The number is informational — useful for "watch VRAM grow as I
-/// load this asset", NOT for "am I about to OOM the GPU".
+/// Cumulative count of GPU buffer / texture bytes the engine has allocated through wgpu and is
+/// currently holding live.
 #[derive(Default, Debug)]
 pub struct EngineVramTracker {
     bytes: AtomicU64,

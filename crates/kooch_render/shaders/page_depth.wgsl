@@ -1,55 +1,4 @@
-// page_depth.wgsl — rasterising a meshlet into the page it was paired
-// with (#866).
-//
-// CONCATENATED after `page_table.wgsl`. Vertex routing is
-// `shadow_depth.wgsl`'s with one change: the matrix is not a uniform,
-// it is BUILT PER INSTANCE out of the page the pair names.
-//
-// # One render pass for the whole clipmap
-//
-// The atlas is a single depth attachment and every page is a sub-rect of
-// it. `page_clip` places a page's own clip space inside that rect, so
-// 1681 pages are one `begin_render_pass` and one `draw_indirect` rather
-// than 1681 of each. The hardware depth test does winner-takes-all
-// exactly as it does for a cascade.
-//
-// # 🔴 Why this one HAS a fragment shader when `shadow_depth` does not
-//
-// A triangle wider than its page keeps rasterising past the rect and
-// into the neighbouring page, which belongs to another level — a caster
-// would appear in a shadow map it was never meant to be in, at the wrong
-// scale, and nothing about the result would say why. A scissor would fix
-// it and cannot: scissor is pass state and the page changes per
-// instance.
-//
-// So the fragment shader exists to `discard` outside the rect, and the
-// cost is early-Z: a discard makes depth writes late. That is the price
-// of one pass instead of one per page, and it is the right side of the
-// trade by three orders of magnitude.
-//
-// # 🔴 …and why the hardware does it instead where it can
-//
-// `discard` pays TWICE, and the second one is the larger: the fragments
-// outside the rect are rasterised, interpolated and only then thrown
-// away, so the pass carries every one of them to the point of no use.
-// A page whose caster spans ten of its own widths rasterises a hundred
-// times its own texels to keep one.
-//
-// User clip planes remove both. `vs_page_clipped` hands the clipper the
-// page's own four edges, the triangle is cut geometrically before any
-// fragment exists, and with nothing left to discard the pass drops its
-// fragment shader entirely — which is also how a depth-only pass reaches
-// the hardware's double-rate depth path.
-//
-// The arithmetic is smaller than it looks. A page's local space IS the
-// clip volume — `page_clip_w` maps `local_w / w ∈ [-1, 1]` onto the
-// rect — so the four distances are `w ± local.x` and `w ± local.y`,
-// which is the standard volume test aimed at the page instead of at the
-// atlas. The rect's half-extent scales all four by a positive constant
-// and a positive scale cannot move a sign, so it drops out.
-//
-// It is optional (`Features::CLIP_DISTANCES`), so `vs_page` + `fs_page`
-// stay as the fallback and both paths must agree. See the tests.
+// page_depth.wgsl — rasterising a meshlet into the page it was paired with (#866).
 
 struct MeshVertexStored {
     position: array<f32, 3>,
@@ -91,20 +40,12 @@ struct MeshInstance {
 }
 
 @group(0) @binding(0) var<uniform> raster: PageRaster;
-// 🔴 FOUR words a pair — the virtual page, its physical slot, the
-// cull's packed `(instance, meshlet)`, and a spare. It used to be two,
-// with the page and slot fetched through `page_list`, and that
-// indirection cost this stage a storage binding it does not have:
-// `max_storage_buffers_per_shader_stage` is 8 and the mesh pool alone
-// spends five.
-//
-// It also costs LESS memory, because the capacity came down with it.
+// 🔴 FOUR words a pair — the virtual page, its physical slot, the cull's packed `(instance,
+// meshlet)`, and a spare.
 @group(0) @binding(2) var<storage, read> pairs: array<vec4<u32>>;
-// 🔴 A lamp's page is a frustum from the light's own position, so its
-// transform cannot come from a uniform the way the sun's does: apex,
-// axis and reach are all properties of the light the page names. In
-// group 0 because group 2 is the shared one-buffer instance layout and
-// widening it would widen every pass that uses it.
+// 🔴 A lamp's page is a frustum from the light's own position, so its transform cannot come from a
+// uniform the way the sun's does: apex, axis and reach are all properties of the light the page
+// names.
 @group(0) @binding(1) var<storage, read> lights: array<ClusterLight>;
 
 @group(1) @binding(0) var<storage, read> vertices: array<MeshVertexStored>;
@@ -144,10 +85,9 @@ struct PageGeom {
     dead: bool,
 }
 
-/// One body, two entry points. Splitting it was the point: the clipped
-/// path differs from the fragment path in what it DECLARES, never in
-/// where it puts a vertex, and a second copy of this arithmetic is how
-/// the two paths would quietly stop agreeing.
+/// One body, two entry points. Splitting it was the point: the clipped path differs from the
+/// fragment path in what it DECLARES, never in where it puts a vertex, and a second copy of this
+/// arithmetic is how the two paths would quietly stop agreeing.
 fn page_geometry(vertex_index: u32, instance_index: u32) -> PageGeom {
     var out: PageGeom;
     out.local = vec2<f32>(0.0);
@@ -180,10 +120,9 @@ fn page_geometry(vertex_index: u32, instance_index: u32) -> PageGeom {
 
     let triangle_idx = vertex_index / 3u;
     let corner_idx = vertex_index % 3u;
-    // The draw is indirect with a fixed vertex count per meshlet, so the
-    // tail of a meshlet with fewer triangles still runs. Sending those
-    // vertices outside the clip volume discards the triangle without a
-    // branch anywhere else.
+    // The draw is indirect with a fixed vertex count per meshlet, so the tail of a meshlet with
+    // fewer triangles still runs. Sending those vertices outside the clip volume discards the
+    // triangle without a branch anywhere else.
     if triangle_idx >= desc.triangle_count {
         out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
         out.dead = true;
@@ -202,9 +141,8 @@ fn page_geometry(vertex_index: u32, instance_index: u32) -> PageGeom {
 
     if id.is_sun {
         let basis = sun_basis(raster.sun.xyz);
-        // 🔴 The plane is ABSOLUTE and the rect carries the snapped
-        // centre. Measuring from the camera instead would put the
-        // geometry on a grid that slides with it, which is the shadow
+        // 🔴 The plane is ABSOLUTE and the rect carries the snapped centre. Measuring from the
+        // camera instead would put the geometry on a grid that slides with it, which is the shadow
         // crawl `sun_centre` exists to remove.
         let centre = sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
         let plane = sun_plane(world, basis);
@@ -222,13 +160,8 @@ fn page_geometry(vertex_index: u32, instance_index: u32) -> PageGeom {
         let span = raster.world.y;
         depth = 1.0 - (along + span) / (2.0 * span);
     } else {
-        // A lamp's page: a perspective frustum from the light, narrowed
-        // to the one cell of the one face the page names.
-        //
-        // Built here rather than uploaded because there is no per-page
-        // uniform to upload it into — a draw covers every page of every
-        // light at once, and which page an instance belongs to is only
-        // known from the pair it read.
+        // A lamp's page: a perspective frustum from the light, narrowed to the one cell of the one
+        // face the page names.
         let light = lights[id.light];
         var offset = world - light.position;
         // A spot's page projects along the SPOT's axis. See
@@ -238,18 +171,12 @@ fn page_geometry(vertex_index: u32, instance_index: u32) -> PageGeom {
             offset = spot_local(light.direction, offset);
         }
         let side = level_side_of(id.level, raster.space.z);
-        // 🔴 NOT rejected per vertex. `cell_face` projects whatever it
-        // is given and returns a NEGATIVE `w` for a point behind this
-        // face — which is what the clipper is for. Rejecting per vertex
-        // pushed one corner of a seam-straddling triangle outside the
-        // clip volume while the other two projected normally, and the
-        // interpolation between them drew a wedge along every seam. On
-        // screen: a straight bar of false occlusion across the pool.
+        // 🔴 NOT rejected per vertex. `cell_face` projects whatever it is given and returns a
+        // NEGATIVE `w` for a point behind this face — which is what the clipper is for.
         let face = cell_face(id.face, id.cell, side, offset);
-        // Reversed-Z along the face's axis. `depth * w` is the constant
-        // PAGE_NEAR, so the rasteriser's own divide reconstructs
-        // `PAGE_NEAR / z` exactly at every fragment — the identity
-        // `GpuPointShadow` documents for the cube path.
+        // Reversed-Z along the face's axis. `depth * w` is the constant PAGE_NEAR, so the
+        // rasteriser's own divide reconstructs `PAGE_NEAR / z` exactly at every fragment — the
+        // identity `GpuPointShadow` documents for the cube path.
         out.local = face.xy;
         out.w = face.z;
         out.clip = page_clip_w(
@@ -286,12 +213,9 @@ fn vs_page(
 // listed this dispatch. Only `vs_page_clear` reads it.
 @group(0) @binding(3) var<storage, read> clear_dirty: array<u32>;
 
-// One quad per dirty page at far depth — the per-page replacement for
-// the whole-layer clear the content cache retired. Reversed-Z: 0 is
-// far, so a wiped page reads as "nothing between here and the light".
-// The quad's corners ARE the page's rect, so no fragment scissor is
-// needed; drawn with depth compare `Always` so it wins over whatever
-// the slot held.
+// One quad per dirty page at far depth — the per-page replacement for the whole-layer clear the
+// content cache retired. Reversed-Z: 0 is far, so a wiped page reads as "nothing between here and
+// the light".
 @vertex
 fn vs_page_clear(
     @builtin(vertex_index) vertex_index: u32,

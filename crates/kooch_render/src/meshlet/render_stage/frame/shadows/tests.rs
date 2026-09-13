@@ -1,10 +1,8 @@
 use super::{ClassicAlloc, classic_shadow_alloc};
 use crate::shadow::ShadowSettings;
 
-/// #945: the pages replace every classic reader, so the classic pass
-/// holds a token allocation — not zero, because the shading's bind
-/// group needs live views — and gets its real one back when the pages
-/// turn off.
+/// holds a token allocation — not zero, because the shading's bind group needs live views — and
+/// gets its real one back when the pages turn off.
 #[test]
 fn the_pages_shrink_the_classic_alloc() {
     let mut settings = ShadowSettings::default();

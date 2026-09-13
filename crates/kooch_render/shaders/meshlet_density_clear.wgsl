@@ -1,15 +1,4 @@
-// meshlet_density_clear.wgsl — compute clear of the triangle-density
-// accumulator (#454).
-//
-// Mirrors `meshlet_clear_vbuf64.wgsl`. The atomic R32Uint storage
-// texture that backs the TriangleDensity / Overdraw / reject overlay
-// heatmaps must start each frame at zero before the vbuf64 raster
-// accumulates into it. `wgpu::CommandEncoder::clear_texture` is gated
-// on a feature flag that does not always coincide with TEXTURE_ATOMIC,
-// so the engine owns this tiny shader instead of relying on the helper.
-//
-// One workgroup per 8×8 tile of the destination. Cost is negligible
-// against the cull / raster passes the heatmap modes accompany.
+// meshlet_density_clear.wgsl — compute clear of the triangle-density accumulator (#454).
 
 struct ClearUbo {
     size: vec2<u32>,

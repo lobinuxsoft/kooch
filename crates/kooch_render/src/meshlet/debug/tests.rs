@@ -6,14 +6,9 @@ fn off_is_zero() {
     assert_eq!(MeshletDebugMode::default(), MeshletDebugMode::Off);
 }
 
-/// WGSL cannot import a Rust constant, so `inti_debug.wgsl` declares
-/// the discriminants itself and this test is the only thing holding the
-/// two ends together — renumber a variant and the dropdown silently
-/// selects a different view from the one it names.
-///
-/// It reads the shader text rather than restating the numbers: a copy of
-/// the literals here would go stale in exactly the same way as the copy
-/// in the shader, and agree with nothing.
+/// WGSL cannot import a Rust constant, so `inti_debug.wgsl` declares the discriminants itself and
+/// this test is the only thing holding the two ends together — renumber a variant and the dropdown
+/// silently selects a different view from the one it names.
 #[test]
 fn discriminants_match_the_shader() {
     let source = kooch_lighting::inti_debug_shader();
@@ -62,14 +57,7 @@ fn every_inti_view_is_above_the_dispatch_floor() {
     }
 }
 
-/// A mode the dropdown offers that the shader's own gate rejects paints
-/// BLACK, silently.
-///
-/// 🔴 The gate is not a range: modes 18 through 25 are resolved by other
-/// passes, so `inti_debug.wgsl` lists the high ones by name. Adding a
-/// variant to the enum and forgetting the gate gives a menu entry that
-/// blanks the screen, and the comment on `INTI_DEBUG_LAST` is there
-/// because it happened.
+/// A mode the dropdown offers that the shader's own gate rejects paints BLACK, silently.
 #[test]
 fn every_paged_view_passes_the_shader_gate() {
     let source = kooch_lighting::inti_debug_shader();
@@ -91,20 +79,7 @@ fn every_paged_view_passes_the_shader_gate() {
     }
 }
 
-/// Every view whose shader reads `inti.debug_light` is listed in
-/// `needs_selected_light`.
-///
-/// # 🔴 The third time this happened
-///
-/// A view not listed gets `None` for the selection and renders its
-/// "nothing picked" branch forever, with nothing on screen to suggest
-/// the fault is in another crate entirely. It cost a removed view once,
-/// and then both lamp page views — which shipped painting the whole
-/// screen a flat colour, in the same commit that added a test for the
-/// dispatch gate and missed this.
-///
-/// The list cannot be trusted to be maintained, so this reads the
-/// shader: a mode whose branch touches `debug_light` has to be in it.
+/// Every view whose shader reads `inti.debug_light` is listed in `needs_selected_light`.
 #[test]
 fn every_view_that_reads_the_selected_light_is_listed() {
     let source = kooch_lighting::inti_debug_shader();
@@ -191,15 +166,8 @@ fn all_available_with_caps_filters_atomic_modes() {
     assert_eq!(unfiltered.len(), MeshletDebugMode::all_implemented().len());
 }
 
-/// The same predicate decides two things that look unrelated: whether
-/// the cull shader records reject reasons, and whether the HUD has
-/// per-stage survivor counts to show at all (#703).
-///
-/// A mode added later that measures the counters but returns `None`
-/// here would read them and then hide them. One that returns `Some`
-/// without the shader writing reasons would show four zeros. Both
-/// failures are silent, which is why this is pinned rather than left
-/// to the two call sites to agree.
+/// The same predicate decides two things that look unrelated: whether the cull shader records
+/// reject reasons, and whether the HUD has per-stage survivor counts to show at all (#703).
 #[test]
 fn only_the_modes_that_measure_the_counters_report_them() {
     let measures = |mode: MeshletDebugMode| mode.reject_reason_code().is_some();
@@ -304,14 +272,6 @@ fn the_scale_comes_from_the_uniform() {
 }
 
 /// 🔴 The invariant this whole staircase rests on.
-///
-/// Every debug mode above the Inti floor replaces the shading, which is
-/// why nothing temporal runs under one — except these six, which exist
-/// precisely to inspect the temporal pass and are useless if it is
-/// skipped. A later tidy-up of `replaces_shading` back into a `>= 11`
-/// would turn the tool off exactly when it is reached for, and nothing
-/// would report it: the dropdown would still list them and the frame
-/// would still look plausible.
 #[test]
 fn the_fsr_views_leave_the_upscaler_running() {
     for mode in [
@@ -357,10 +317,9 @@ fn every_inti_view_still_replaces_the_shading() {
 /// a gap silently shows the wrong intermediate.
 #[test]
 fn the_fsr_stages_are_one_to_six() {
-    // Enumerated directly: the views retired from the DROPDOWN (the
-    // upscaler works and the user asked for the clutter gone), but the
-    // variants and their shader stages remain the diagnosis tools for
-    // the next regression, and this contract still guards them.
+    // Enumerated directly: the views retired from the DROPDOWN (the upscaler works and the user
+    // asked for the clutter gone), but the variants and their shader stages remain the diagnosis
+    // tools for the next regression, and this contract still guards them.
     let stages: Vec<u32> = [
         MeshletDebugMode::Fsr3Input,
         MeshletDebugMode::Fsr3Motion,
@@ -384,12 +343,6 @@ fn off_asks_for_no_stage() {
 }
 
 /// 🔴 The three steps that show radiance must NOT bypass the tonemap.
-///
-/// Bypassing it was the first attempt, and it painted a perfectly good
-/// frame black: radiance without the filmic curve is nearly nothing in
-/// any dimly-lit scene, so the instrument reported a defect that was not
-/// there. The numeric steps are the opposite case and must bypass it, or
-/// a 0..1 ramp comes back crushed.
 #[test]
 fn the_radiance_steps_keep_the_tonemap() {
     for mode in [
@@ -424,17 +377,6 @@ fn off_is_not_display_referred() {
 }
 
 /// 🔴 Inti's dispatch is a RANGE, and it has to stay one.
-///
-/// It was an open-ended `mode >= INTI_DEBUG_FIRST`, and the fallthrough
-/// for a mode it does not implement is black. So every discriminant
-/// added above the range silently became "an Inti view Inti does not
-/// know", and its surface was painted black before the pass that was
-/// meant to answer for it ever ran — which is exactly what happened to
-/// FSR's six steps, and what the texture-mip view escapes only because
-/// the material shader tests for it first.
-///
-/// This asserts the shader's two bounds against the enum, the way
-/// `discriminants_match_the_shader` already does for the names.
 #[test]
 fn the_inti_range_stops_where_inti_stops() {
     let shader = include_str!("../../../../kooch_lighting/shaders/inti_debug.wgsl");

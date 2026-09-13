@@ -1,12 +1,4 @@
 //! End-to-end GPU integration test: cull → indirect draw → pixels.
-//!
-//! Builds a small cube, runs the meshlet pipeline (compute cull
-//! followed by single `draw_indirect`), reads back the color
-//! attachment, and asserts the rasterizer painted something visible
-//! (i.e. at least some non-clear pixels carry a recognisable normal-
-//! debug color).
-//!
-//! Run with: `cargo test -p kooch_render --test meshlet_render`
 
 mod common;
 

@@ -1,18 +1,4 @@
 //! `Material` — CPU-side PBR asset stored in `Assets<Material>`.
-//!
-//! Authored as RON in a `*.material` file; the inspector exposes it
-//! as a typed asset reference on `MeshRenderer.material`. Convertible
-//! to [`MaterialParams`](super::MaterialParams) for GPU upload — the
-//! runtime sync system mirrors the asset storage into the
-//! `MaterialPool` storage buffer once per change.
-//!
-//! Field set carries the PBR scalars (`base_color`, `metallic`,
-//! `roughness`, `emissive`) plus optional texture references (`albedo`,
-//! `normal`, `metal_roughness`) stored as [`Guid`]s — the same
-//! persistible identifier `MeshRenderer` uses for mesh/material. A
-//! `None` texture falls back to the scalar (`base_color` for albedo, a
-//! flat normal, scalar metal/roughness) so pre-texture projects keep
-//! their look with zero migration.
 
 use std::fmt;
 
@@ -23,24 +9,10 @@ use serde::{Deserialize, Serialize};
 use super::MaterialParams;
 
 /// What a material file is called.
-///
-/// 🔴 Named after the thing, not the syntax. RON is the format, and
-/// leaving the extension as `ron` meant the first RON asset type to
-/// arrive after it collided: the scan resolves a loader by extension
-/// with a `find`, so a block written as `.ron` was typed as a material.
-/// One extension, one type.
 pub const MATERIAL_EXTENSION: &str = "material";
 
-/// CPU-side PBR material. The fields match Unity's "Standard
-/// (Specular setup)" minus textures — enough to colour-modulate the
-/// deferred normal-debug pass without a real shading rig.
-///
-/// `base_color` is RGBA in linear space. `metallic`, `roughness`,
-/// `emissive` are scalar coefficients.
-///
-/// Defaults to a neutral white diffuse so a fresh `Material::new()`
-/// (or a RON file with all fields elided) produces the same look as
-/// the legacy hard-coded `MaterialParams::default`.
+/// CPU-side PBR material. The fields match Unity's "Standard (Specular setup)" minus textures —
+/// enough to colour-modulate the deferred normal-debug pass without a real shading rig.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Material {
     #[serde(default = "default_base_color")]
@@ -62,16 +34,6 @@ pub struct Material {
     #[serde(default)]
     pub metal_roughness: Option<Guid>,
     /// How many times the maps repeat across the mesh's UVs.
-    ///
-    /// A mesh's UVs describe the surface once; how densely a texture
-    /// sits on it is the material's business, not the mesh's. Without
-    /// this a 1024-pixel grid stretches to a single tile over a floor
-    /// however large the floor is, which is the one thing a prototype
-    /// grid exists not to do — one square is supposed to be a known
-    /// distance.
-    ///
-    /// 🔴 Scaling the mesh's UVs instead is not the same thing: the mesh
-    /// is shared, so it would change every object that uses it.
     #[serde(default = "default_uv_scale")]
     pub uv_scale: [f32; 2],
     /// Where the maps start, in the same units. Slides the texture
@@ -169,13 +131,6 @@ fn default_uv_scale() -> [f32; 2] {
 }
 
 /// `AssetLoader<Material>` for `*.ron` files.
-///
-/// PR5 carries only `Material` as a RON-authored asset, so the
-/// extension is unambiguous. When other RON-authored asset types
-/// arrive (`Scene`, `Prefab`, …) we discriminate by inspecting the
-/// nominal struct tag at the head of the file (`Material(...)` vs
-/// `Scene(...)`) and the eager-import logic gains a per-type tier.
-/// Until then, every `.ron` under `assets/` is parsed as a Material.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MaterialLoader;
 

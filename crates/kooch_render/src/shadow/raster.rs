@@ -1,13 +1,4 @@
 //! Rendering the cascades: cull from the light, then draw depth.
-//!
-//! One `begin_render_pass` per cascade rather than one pass with four
-//! viewports. A viewport can be changed inside a pass, but the depth
-//! **clear** cannot: `LoadOp::Clear` applies to the whole attachment, so
-//! a single pass would clear the atlas four times and leave only the
-//! last cascade. Clearing once and switching viewport works and hides a
-//! trap — the second cascade would silently depth-test against the
-//! first's leftovers wherever their quadrants touch. Four passes cost
-//! four begin/end and are obviously correct.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -28,33 +19,9 @@ const POINT_UBO_BASE: usize = CASCADE_COUNT + kooch_lighting::MAX_SPOT_SHADOWS;
 const SHADER_SOURCE: &str = include_str!("../../shaders/shadow_depth.wgsl");
 
 /// A shadow gets the same geometric budget as the camera.
-///
-/// 🔴 This was 4×, on the reasoning that a shadow is a silhouette and
-/// "nobody has ever noticed a shadow drawn from a slightly simpler
-/// mesh". The owner noticed immediately, and the reasoning is wrong on
-/// its own terms: a silhouette is the ONLY thing a shadow is, so
-/// simplification error goes straight into the outline where nothing
-/// hides it. On a lit surface the same error is a shading gradient.
-///
-/// Bevy 0.19 tests `norm_error * viewport_height < 1.0` for every view,
-/// shadow cascades included — no relaxation term exists in their
-/// selector. The budget is already measured in the cascade's own texels,
-/// so a cascade covering more world already asks for less detail; that
-/// relationship was doing the job this constant was invented to do, and
-/// then it was applied twice.
 const SHADOW_LOD_RELAXATION: f32 = 1.0;
 
 /// No rasteriser depth bias.
-///
-/// 🔴 The bias moved into the shading pass, in world space, where Bevy
-/// 0.19 keeps both of theirs (`shadow_depth_bias` along the direction to
-/// the light, `shadow_normal_bias` along the surface normal). Bevy sets
-/// no `DepthBiasState` on its shadow pipeline at all.
-///
-/// Running both is how a shadow ends up detached from its object *and*
-/// still showing acne elsewhere: each bias is tuned against artifacts
-/// the other is already half-hiding, so neither ends up at a value that
-/// is right on its own.
 const DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
     constant: 0,
     slope_scale: 0.0,
@@ -85,12 +52,9 @@ pub struct ShadowRasterizer {
 
 impl ShadowRasterizer {
     pub fn new(device: &wgpu::Device, meshlet_bgl: &wgpu::BindGroupLayout) -> Self {
-        // Clamp depth rather than clip it, so an occluder nearer the
-        // light than the cascade's near plane is still recorded at the
-        // near plane instead of vanishing. That is what lets the depth
-        // range hug the slice — see `build_cascades`. Optional: the
-        // fallback is a near-plane margin, which costs precision rather
-        // than correctness.
+        // Clamp depth rather than clip it, so an occluder nearer the light than the cascade's near
+        // plane is still recorded at the near plane instead of vanishing. That is what lets the
+        // depth range hug the slice — see `build_cascades`.
         let unclipped_depth = device
             .features()
             .contains(wgpu::Features::DEPTH_CLIP_CONTROL);
@@ -151,22 +115,13 @@ impl ShadowRasterizer {
                 buffers: &[],
                 compilation_options: Default::default(),
             },
-            // No fragment stage at all. Depth goes through fixed-function
-            // hardware; there is no invocation to skip and nothing to
-            // disable early-Z. See shadow_depth.wgsl for what that costs
-            // (alpha-cut geometry does not cut).
+            // No fragment stage at all. Depth goes through fixed-function hardware; there is no
+            // invocation to skip and nothing to disable early-Z. See shadow_depth.wgsl for what
+            // that costs (alpha-cut geometry does not cut).
             fragment: None,
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 // Back-face culling, the same as the main pass.
-                //
-                // Front-face culling is the classic shadow trick — it
-                // pushes recorded depth behind the lit surface and hides
-                // acne — and it trades acne for peter-panning and breaks
-                // outright on single-sided geometry, which a plane and a
-                // leaf both are. Modern practice is back faces plus a
-                // slope-scaled bias, and the bias is where the fix
-                // belongs.
                 cull_mode: Some(wgpu::Face::Back),
                 unclipped_depth,
                 ..Default::default()
@@ -190,11 +145,8 @@ impl ShadowRasterizer {
         let cascade_stride = align.max(std::mem::size_of::<CascadeUbo>() as u64);
         let cascade_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("shadow_cascade_ubo"),
-            // Cascades, then one slot per spot light's shadow (#777),
-            // on the same index scheme as the array's layers, then six
-            // per point light (#778) — those index a different texture,
-            // but they are the same kind of per-draw matrix and a second
-            // uniform buffer would be a second alignment to get wrong.
+            // Cascades, then one slot per spot light's shadow (#777), on the same index scheme as
+            // the array's layers, then six per point light (#778).
             size: cascade_stride * POINT_UBO_BASE as u64
                 + cascade_stride * (kooch_lighting::MAX_POINT_SHADOWS * CUBE_FACES) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -212,21 +164,13 @@ impl ShadowRasterizer {
         }
     }
 
-    /// How far past its own nearest point a cascade's near plane has to
-    /// sit, as a fraction of the cascade's width.
-    ///
-    /// Zero when the pipeline clamps depth: an occluder in front of the
-    /// near plane is recorded at it rather than clipped away, so there
-    /// is nothing to make room for.
+    /// How far past its own nearest point a cascade's near plane has to sit, as a fraction of the
+    /// cascade's width.
     pub fn near_extension_scale(&self) -> f32 {
         if self.unclipped_depth { 0.0 } else { 1.0 }
     }
 
     /// Culls and draws every cascade into the atlas.
-    ///
-    /// `lod_target` is the camera's, relaxed by
-    /// [`SHADOW_LOD_RELAXATION`]: a shadow is a silhouette, and it loses
-    /// the detail a surface facing the camera keeps.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
@@ -275,28 +219,17 @@ impl ShadowRasterizer {
             }],
         });
 
-        // Every cull first, then every draw. The culls write buffers the
-        // draws read, so interleaving them would put a barrier between
-        // each pair and serialise four cascades that have no reason to
-        // wait for each other.
+        // Every cull first, then every draw. The culls write buffers the draws read, so
+        // interleaving them would put a barrier between each pair and serialise four cascades that
+        // have no reason to wait for each other.
         for (i, cascade) in cascades.iter().enumerate() {
             let cull = atlas.cull(i);
             // 🔴 The light's eye, not the origin.
-            //
-            // The projection is orthographic and has no eye, which is
-            // why this used to pass `Vec3::ZERO` — and the cull pass
-            // measures from a point twice regardless. Its backface cone
-            // test then rejected every meshlet whose normals face away
-            // from the world origin rather than away from the sun, so
-            // those meshlets wrote no depth and the shadow came out with
-            // pieces missing. It reads as "some meshlets cannot cast",
-            // which is exactly what it was.
             let params =
                 CullParams::new(cascade.view_proj, cascade.light_eye, max_meshlets_per_mesh)
-                    // The cascade's world height, which under an
-                    // orthographic projection is the entire relationship
-                    // between a simplification error and how much of the
-                    // shadow map it covers.
+                    // The cascade's world height, which under an orthographic projection is the
+                    // entire relationship between a simplification error and how much of the shadow
+                    // map it covers.
                     .with_orthographic_lod(
                         atlas.cascade_size() as f32 * cascade.texel_world_size,
                         atlas.cascade_size() as f32,
@@ -331,17 +264,8 @@ impl ShadowRasterizer {
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: atlas.layer_view(i),
                     depth_ops: Some(wgpu::Operations {
-                        // Reversed-Z: 0 is the far plane, so an empty
-                        // cascade reads as "nothing between here and the
-                        // light" rather than as "everything is shadowed".
-                        // Clearing to 1 would put the whole scene in
-                        // shadow the first frame a cascade draws nothing.
-                        //
-                        // Every layer clears, where the atlas had only
-                        // cascade 0 clear (it owned the whole texture)
-                        // and the rest load. A layer is its own
-                        // attachment and loading here would keep last
-                        // frame's depths.
+                        // Reversed-Z: 0 is the far plane, so an empty cascade reads as "nothing
+                        // between here and the light" rather than as "everything is shadowed".
                         load: wgpu::LoadOp::Clear(0.0),
                         store: wgpu::StoreOp::Store,
                     }),
@@ -352,11 +276,6 @@ impl ShadowRasterizer {
                 multiview_mask: None,
             });
             // No viewport and no scissor: the layer IS the cascade.
-            // The atlas needed both, because a viewport clips geometry
-            // but does not stop a clear or a depth bias from reaching
-            // the rest of the attachment, and a cascade bleeding into
-            // its neighbour's quadrant read as a shadow from the wrong
-            // distance. Layers cannot touch each other.
             pass.set_pipeline(&self.pipeline);
             let offset = (i as u64 * self.cascade_stride) as u32;
             pass.set_bind_group(0, &cascade_bg, &[offset]);
@@ -367,13 +286,7 @@ impl ShadowRasterizer {
         }
     }
 
-    /// Culls and draws every shadow-casting spot light into its own
-    /// layer (#777).
-    ///
-    /// Separate from [`Self::render`] rather than folded into it: a
-    /// cascade is orthographic and a spot is not, and the two differ in
-    /// the one place that matters to the cull — how a simplification
-    /// error in metres becomes an error in pixels.
+    /// Culls and draws every shadow-casting spot light into its own layer (#777).
     #[allow(clippy::too_many_arguments)]
     pub fn render_spots(
         &self,
@@ -430,23 +343,12 @@ impl ShadowRasterizer {
         // interleaving puts a barrier between each pair.
         for (slot, spot) in spots.iter().enumerate() {
             let cull = atlas.spot_cull(slot);
-            // The light's own position, and here it is the real eye of a
-            // real perspective rather than the stand-in an orthographic
-            // cascade needs. The LOD selector is left on its distance
-            // form for the same reason: a spot has a viewpoint, so a
-            // simplification error projects to pixels the ordinary way.
+            // The light's own position, and here it is the real eye of a real perspective rather
+            // than the stand-in an orthographic cascade needs.
             let view_proj = glam::Mat4::from_cols_array_2d(&spot.record.view_proj);
-            // 🔴 The LOD selector, which `CullParams::new` leaves at a
-            // factor of ZERO — and a factor of zero does not mean "no
-            // LOD", it means every meshlet's projected error is 0 px, so
-            // the selector keeps only roots. `projection_scale_y`'s own
-            // doc has the symptom: "a sphere collapses to a blob and a
-            // cube to a spike". That is precisely what the first smoke
-            // saw in the sphere's shadow.
-            //
-            // Perspective, so `with_lod` rather than the cascades'
-            // orthographic form: a spot has a viewpoint and a
-            // simplification error really does shrink with distance.
+            // 🔴 The LOD selector, which `CullParams::new` leaves at a factor of ZERO — and a factor
+            // of zero does not mean "no LOD", it means every meshlet's projected error is 0 px, so
+            // the selector keeps only roots.
             let params = CullParams::new(view_proj, spot.eye, max_meshlets_per_mesh).with_lod(
                 atlas.cascade_size() as f32,
                 projection_scale_y(view_proj),
@@ -502,12 +404,6 @@ impl ShadowRasterizer {
     }
 
     /// Renders every casting point light's six faces (#778).
-    ///
-    /// 🔴 Per light, not per face across lights: the six culls are
-    /// shared between lights (see [`PointShadowCubes`]), so a light's
-    /// draws must be recorded before the next light's culls overwrite
-    /// the survivor lists they read. Within one light the six faces do
-    /// overlap, which is where the parallelism actually is.
     #[allow(clippy::too_many_arguments)]
     pub fn render_points(
         &self,
@@ -563,11 +459,8 @@ impl ShadowRasterizer {
 
         for (slot, light) in points.iter() {
             for (face, view_proj) in light.faces.iter().enumerate() {
-                // Perspective with a real eye, so the LOD selector takes
-                // its distance form — `with_lod`, not the cascades'
-                // orthographic one. And it must be set at all: a factor
-                // of zero is not "no LOD", it projects every error to
-                // 0 px and keeps only roots (#777's smoke).
+                // Perspective with a real eye, so the LOD selector takes its distance form —
+                // `with_lod`, not the cascades' orthographic one.
                 let params = CullParams::new(*view_proj, light.eye, max_meshlets_per_mesh)
                     .with_lod(
                         cubes.size() as f32,

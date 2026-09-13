@@ -1,10 +1,4 @@
 //! End-to-end test for `MeshletRenderStage::sync_assets_to_gpu`.
-//!
-//! Validates the full chain that PR3 wires: `MeshRenderer.mesh: Some(guid)`
-//! → `AssetServer::load_by_guid::<MeshletMesh>` → `Assets<MeshletMesh>`
-//! lookup → `ensure_gpu_mesh` upload + `MeshletPipeline.registry`
-//! registration. Headless except for the wgpu device the upload step
-//! needs — gated on `try_acquire_device`.
 
 mod common;
 

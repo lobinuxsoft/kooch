@@ -1,41 +1,4 @@
-//! Compute shading over the visibility buffer (#824) — the tile's light
-//! list, read once.
-//!
-//! The alternative to [`MaterialTwoPass`](super::two_pass::MaterialTwoPass),
-//! not a replacement for it: both stay wired, and
-//! [`ComputeShading::enabled`] decides which one a frame takes. Two
-//! paths that shade the same vbuf is what makes the capture pair the
-//! issue asks for possible on the device, with one environment variable
-//! and no rebuild.
-//!
-//! # What differs from the fragment path
-//!
-//! Everything above the entry point is the same composed shader, so the
-//! shading model, the reconstruction and the material sampling are
-//! identical by construction. Three things change:
-//!
-//! - **A workgroup owns a 16x16 tile.** It reduces its threads' froxels
-//!   to one block of cells, copies that block's light *indices* into
-//!   `var<workgroup>` memory, and every thread then walks its own cell's
-//!   run out of shared memory.
-//!
-//!   🔴 The INDICES, and only those — four bytes each. Every thread
-//!   still fetches the whole 80-byte `IntiLight` out of the storage
-//!   buffer for every light in its froxel, because that is what
-//!   `inti_lights[tile_lights[i]]` reads. Fifteen of those is 1.2 KB a
-//!   pixel; this pass removed the 60 bytes of indices and left the
-//!   1200, which is why it measured 6.6 % on the device and not more.
-//!   Moving the records themselves is #826's, and `ROADMAP.md` carries
-//!   the numbers.
-//! - **No material-depth target.** The fragment path resolves
-//!   `material_id` into a depth buffer and lets a hardware `Equal` test
-//!   do the per-material cull. A compute pass has no depth test, so each
-//!   thread resolves its own pixel's material — two dependent reads,
-//!   short of the full reconstruction, which only the pixels a dispatch
-//!   owns pay for.
-//! - **The colour target is cleared once**, up front, instead of by the
-//!   first material's `LoadOp::Clear`. Nothing else can clear it: a
-//!   compute dispatch writes the pixels it owns and no others.
+//! Compute shading over the visibility buffer (#824) — the tile's light list, read once.
 
 use bytemuck::bytes_of;
 
@@ -67,27 +30,6 @@ const COLOR_OUT_BINDING: u32 = 5;
 const SHADED_IDS_BINDING: u32 = 6;
 
 /// `KOOCH_COMPUTE_SHADING=on` (or `1`, or `true`), read once.
-///
-/// 🔴 **Off by default, and an environment variable rather than only an
-/// editor control.** Both halves matter and for different reasons.
-///
-/// Off, because the fragment path is the one three sessions of captures
-/// were taken against. A new shading path that is one bit different
-/// from it would change every baseline at once, and the way to find out
-/// whether it is different is to run both — not to ship one.
-///
-/// An environment variable, because **the editor is not where this can
-/// be measured**. On the desktop GPU the whole raster pass is 0.12 ms;
-/// deleting the entire specular model moved it by 0.001 (#821). The
-/// frame this exists for is a game on the OneXFly launched through
-/// Steam, with no editor in the process. `KOOCH_CLUSTERING` and
-/// `KOOCH_SPECULAR_FLOOR` already carried that lesson; this is the
-/// third time it has been the same lesson.
-///
-/// Anything unrecognised is `None`, the same as unset: a typo during a
-/// measurement run must not silently change which path is being
-/// measured, and — since the settings asset now supplies a value too
-/// (#830) — must not silently override the author's either.
 pub(crate) fn enabled_by_environment() -> Option<bool> {
     static ON: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
@@ -103,14 +45,9 @@ pub(crate) fn enabled_by_environment() -> Option<bool> {
     })
 }
 
-/// The parse, apart from the read, so a test can exercise it without
-/// touching the process environment. Three tests fighting over one
-/// variable is a bug this repository has already shipped twice
-/// (`KOOCH_PACK_KEY`, `KOOCH_ENGINE_HOME`) and a pure function cannot
-/// have it.
-///
-/// `None` means "the variable said nothing", which is what lets the
-/// project's own setting stand.
+/// The parse, apart from the read, so a test can exercise it without touching the process
+/// environment. Three tests fighting over one variable is a bug this repository has already shipped
+/// twice (`KOOCH_PACK_KEY`, `KOOCH_ENGINE_HOME`) and a pure function cannot have it.
 fn parse_enabled(raw: Option<&str>) -> Option<bool> {
     match raw {
         Some("on") | Some("1") | Some("true") => Some(true),
@@ -145,10 +82,9 @@ fn build_pipeline(
 
 pub(super) struct ComputeShading {
     pipeline: wgpu::ComputePipeline,
-    /// The same pipeline with the debug views concatenated in (#743).
-    /// Built on the frame somebody first opens one, for the reasons
-    /// `MaterialTwoPass` documents at length: a shipped game compiles
-    /// neither this nor a byte of what is inside it.
+    /// The same pipeline with the debug views concatenated in (#743). Built on the frame somebody
+    /// first opens one, for the reasons `MaterialTwoPass` documents at length: a shipped game
+    /// compiles neither this nor a byte of what is inside it.
     pipeline_debug: std::sync::OnceLock<wgpu::ComputePipeline>,
     layout: wgpu::PipelineLayout,
     frame_bgl: wgpu::BindGroupLayout,
@@ -308,39 +244,7 @@ impl ComputeShading {
             .get_or_init(|| build_pipeline(device, &self.layout, true))
     }
 
-    /// One dispatch per registered shading slot, each over the whole
-    /// shaded target in 16x16 tiles.
-    ///
-    /// Whole-target and not "the tiles this material covers": which
-    /// tiles those are is not known without a classification pass. A
-    /// tile with none of this material's pixels does no reconstruction,
-    /// reads no lights and writes nothing — but it does not leave for
-    /// free either. Every thread of it still pays:
-    ///
-    /// - one `textureLoad` of the R64 vbuf,
-    /// - `visible_meshlets[slot]`, which depends on that load,
-    /// - `instances[inst_id].material_id`, which depends on that one,
-    /// - and the three `workgroupBarrier`s, which are unconditional.
-    ///
-    /// Two dependent storage reads, which is the access pattern the
-    /// device measurements left standing after ALU was ruled out.
-    ///
-    /// 🔴 And the count is not "materials in the scene". [`shading_slots`]
-    /// is `0..next_slot`, and `sync_from_resources` registers every
-    /// material the `AssetDatabase` knows about — so dropping an unused
-    /// `.ron` into the project's folder adds a full-screen sweep to
-    /// every frame. Compacting the dispatch is a change to this function
-    /// alone, and `KOOCH_SHADING_PAD` is what says whether it is worth
-    /// making: it appends sweeps that own no pixel, so an A/B across it
-    /// prices exactly this paragraph (#885).
-    ///
-    /// [`shading_slots`]: crate::material::MaterialPipeline::shading_slots
-    ///
-    /// `color_view` and `ids_view` are the targets for the given `rate`:
-    /// the screen at [`ShadingRate::Full`], the half-resolution pair at
-    /// [`ShadingRate::Half`]. `screen_size` stays the full resolution on
-    /// both — the tile still covers `rate` times as many pixels, and
-    /// every coordinate the shading model uses is a screen coordinate.
+    /// One dispatch per registered shading slot, each over the whole shaded target in 16x16 tiles.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn shade(
         &self,
@@ -398,10 +302,9 @@ impl ComputeShading {
             );
         }
 
-        // The background. A dispatch writes only the pixels it owns, so
-        // without this the previous frame's colour survives wherever
-        // nothing is drawn — and the blit composes this target over the
-        // sky expecting alpha to say what was covered.
+        // The background. A dispatch writes only the pixels it owns, so without this the previous
+        // frame's colour survives wherever nothing is drawn — and the blit composes this target
+        // over the sky expecting alpha to say what was covered.
         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("compute_shading_clear"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

@@ -1,8 +1,6 @@
-/// With no far plane the `ndc.z >= 0` row degenerates to a
-/// zero-length normal, and the extractor has to answer "cull
-/// nothing" rather than divide by it. The shader already walks
-/// five planes, so this one is skipped work rather than a wrong
-/// test — but a NaN here would cull the whole scene.
+/// With no far plane the `ndc.z >= 0` row degenerates to a zero-length normal, and the extractor
+/// has to answer "cull nothing" rather than divide by it. The shader already walks five planes, so
+/// this one is skipped work rather than a wrong test — but a NaN here would cull the whole scene.
 #[test]
 fn the_vanished_far_plane_culls_nothing_instead_of_producing_nan() {
     let proj =
@@ -90,11 +88,9 @@ fn cull_params_carries_meshlet_count_and_camera() {
 
 #[test]
 fn camera_in_front_of_meshlet_is_not_culled() {
-    // meshopt convention: `cone_axis` points along the meshlet's
-    // average front-face normal. With `axis = +Z` the meshlet's
-    // front faces look towards +Z, so a camera at +Z is IN FRONT
-    // and must keep rendering. A camera at -Z is behind the
-    // meshlet (backface side) and gets culled.
+    // meshopt convention: `cone_axis` points along the meshlet's average front-face normal. With
+    // `axis = +Z` the meshlet's front faces look towards +Z, so a camera at +Z is IN FRONT and must
+    // keep rendering. A camera at -Z is behind the meshlet (backface side) and gets culled.
     let apex = Vec3::ZERO;
     let axis = Vec3::Z;
     let cutoff = 0.9;
@@ -167,17 +163,9 @@ fn rotated_camera_still_normalises_planes() {
     }
 }
 
-/// The LOD factor belongs to the projection, so **no** camera
-/// orientation may change it. The old code read
-/// `view_proj.y_axis.y`, which is `f × cos(angle between the
-/// camera's up and the world's)` — right for a level camera and
-/// zero at 90° of roll or looking straight down. Zero switches the
-/// LOD selector off, leaving only root meshlets: a sphere becomes a
-/// blob.
-///
-/// Every case here fails against that formula, including the two
-/// that silently return a *plausible but wrong* number rather than
-/// zero.
+/// The LOD factor belongs to the projection, so **no** camera orientation may change it. The old
+/// code read `view_proj.y_axis.y`, which is `f × cos(angle between the camera's up and the
+/// world's)` — right for a level camera and zero at 90° of roll or looking straight down.
 #[test]
 fn the_lod_factor_survives_any_camera_orientation() {
     use std::f32::consts::FRAC_PI_2;
@@ -243,9 +231,8 @@ fn the_lod_factor_survives_any_camera_position() {
     }
 }
 
-/// A narrower field of view concentrates more pixels on the same
-/// object, so the same world-space error covers more of them — the
-/// factor has to grow. Without this the test above would pass on a
+/// A narrower field of view concentrates more pixels on the same object, so the same world-space
+/// error covers more of them — the factor has to grow. Without this the test above would pass on a
 /// function that returned a constant.
 #[test]
 fn a_narrower_field_of_view_raises_the_factor() {

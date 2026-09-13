@@ -1,21 +1,4 @@
 //! Integration tests for #493: atomic R64 visibility buffer winner-takes-all.
-//!
-//! Skips on adapters that lack the `TEXTURE_INT64_ATOMIC | SHADER_INT64 |
-//! SHADER_INT64_ATOMIC_MIN_MAX` feature bundle so headless CI without int64
-//! atomics still passes. On supported HW (RDNA 2+ via radv on Linux, RDNA 4
-//! desktop, RDNA 3 OneXFly handheld) it verifies the two invariants the
-//! production raster shader relies on:
-//!
-//! 1. **Closer-fragment depth wins.** Under reversed-Z the bit pattern of
-//!    `f32` depth is monotonically ordered, so packing it in the high 32
-//!    bits makes `textureAtomicMax` deterministically pick the closest
-//!    fragment per pixel. This is the load-bearing invariant that fixes
-//!    the coplanar z-fighting visible since #491's dragon import.
-//!
-//! 2. **Equal-depth tie-break is larger packed_ids.** Mirrors Bevy: at
-//!    identical depth bits the larger `(slot << 7 | tri)` wins under
-//!    `atomicMax`. The integration tests assert this direction so the
-//!    deferred shader's unpack matches the raster's pack.
 
 use kooch_render::vbuf64::{pack_visibility, unpack_visibility};
 use std::sync::mpsc;
@@ -37,10 +20,9 @@ fn cs_atomic_max_two() {
 }
 "#;
 
-/// Acquires a wgpu device with the int64-atomic feature bundle (#493).
-/// Returns `None` when the adapter does not advertise the bundle, so the
-/// test skips cleanly on adapters / backends that lack it (Mac/MSL has
-/// no `atomic_uint64`, older drivers, etc.).
+/// Acquires a wgpu device with the int64-atomic feature bundle (#493). Returns `None` when the
+/// adapter does not advertise the bundle, so the test skips cleanly on adapters / backends that
+/// lack it (Mac/MSL has no `atomic_uint64`, older drivers, etc.).
 fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
@@ -56,17 +38,9 @@ fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
     }))
     .ok()?;
 
-    // Atomic storage textures need TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-    // as the gating feature on top of the int64-atomic bundle. The
-    // production GpuContext requests it as a hard-required feature, so
-    // any device that runs the engine has it.
-    // `StorageTextureAccess::Atomic` is gated by Features::TEXTURE_ATOMIC
-    // (wgpu 29 names; the validation error message names
-    // TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES but the actual gate is
-    // TEXTURE_ATOMIC + format-specific features). The R64 atomic format
-    // additionally requires TEXTURE_INT64_ATOMIC; the int64 max/min
-    // shader op needs SHADER_INT64_ATOMIC_MIN_MAX; the u64 type itself
-    // needs SHADER_INT64.
+    // Atomic storage textures need TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES as the gating feature
+    // on top of the int64-atomic bundle. The production GpuContext requests it as a hard-required
+    // feature, so any device that runs the engine has it.
     let needed = kooch_core::gpu::vbuf64_features()
         | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
     if !adapter.features().contains(needed) {
@@ -107,10 +81,9 @@ fn run_atomic_max_two(device: &wgpu::Device, queue: &wgpu::Queue, v1: u64, v2: u
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-    // Zero the texture explicitly. We can't rely on `clear_texture`
-    // (Features::CLEAR_TEXTURE not always available); instead we upload
-    // a zero buffer once at the start, mirroring what the production
-    // clear shader does each frame.
+    // Zero the texture explicitly. We can't rely on `clear_texture` (Features::CLEAR_TEXTURE not
+    // always available); instead we upload a zero buffer once at the start, mirroring what the
+    // production clear shader does each frame.
     let zero_bytes = vec![0u8; 32 * 8];
     queue.write_texture(
         wgpu::TexelCopyTextureInfo {

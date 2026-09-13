@@ -1,7 +1,4 @@
 //! Mip chains, and the one thing they are easy to get wrong.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test texture_mipmaps
 
 mod common;
 
@@ -87,17 +84,6 @@ fn checker(format: ImageFormat) -> Image {
 }
 
 /// 🔴 The chain averages in LINEAR light, not in gamma-encoded bytes.
-///
-/// Half black and half white is 0.5 of the light, and 0.5 of the light
-/// is **188** written back as sRGB — not 128. Averaging the bytes gives
-/// 128, which is 0.216 of the light: every distant surface comes out
-/// visibly darker than the one next to it, and the seam moves with the
-/// camera. It is the classic mip bug and it looks like a lighting
-/// problem, which is where the search would go.
-///
-/// This is the assertion that pays for the pass being a render pass:
-/// sampling an sRGB view decodes and writing an sRGB attachment
-/// re-encodes, both in hardware.
 #[test]
 fn the_chain_averages_in_linear_light() {
     let _gpu = gpu_lock();
@@ -125,12 +111,7 @@ fn the_chain_averages_in_linear_light() {
     }
 }
 
-/// And a linear texture averages its bytes, because there the bytes ARE
-/// the quantity.
-///
-/// A normal map or a metal/roughness pair is data, not colour: putting
-/// it through a transfer function it never had would bend the mid tones
-/// of a normal and tilt every distant surface's lighting.
+/// And a linear texture averages its bytes, because there the bytes ARE the quantity.
 #[test]
 fn a_linear_texture_averages_its_bytes() {
     let _gpu = gpu_lock();
@@ -158,10 +139,6 @@ fn a_linear_texture_averages_its_bytes() {
 }
 
 /// The whole chain is written, not just the first level.
-///
-/// A loop that stops one short leaves the smallest levels holding
-/// whatever the allocation had in it, and those are exactly the levels a
-/// surface at the horizon samples.
 #[test]
 fn every_level_is_written() {
     let _gpu = gpu_lock();
@@ -192,9 +169,6 @@ fn every_level_is_written() {
 }
 
 /// And an import that says no gets exactly one level.
-///
-/// The setting is what a UI atlas and a lookup table need: a chain there
-/// is memory spent to make a 1:1 sample blurrier at glancing angles.
 #[test]
 fn an_import_can_refuse_the_chain() {
     let _gpu = gpu_lock();
@@ -209,19 +183,6 @@ fn an_import_can_refuse_the_chain() {
 }
 
 /// 🔴 Level zero survives, and the levels above it lose detail in order.
-///
-/// ⚠️ Written because `every_level_is_written` cannot fail on the thing
-/// that matters: it fills a texture with solid white and asserts every
-/// level is white, and every average of white is white. A chain that
-/// wrote garbage, that copied the smallest level over all of them, or
-/// that overwrote level zero with its own average would pass it.
-///
-/// This one uses a checker, so each level has an expected VARIANCE: the
-/// original is all-or-nothing, and each halving averages more of it away
-/// until the last level is flat. Level zero staying sharp is the half
-/// that matters — a texture whose level zero was averaged looks the same
-/// at every distance, which is exactly what a broken LOD selection also
-/// looks like, and the two would be indistinguishable from a screenshot.
 #[test]
 fn the_chain_loses_detail_in_order() {
     let _gpu = gpu_lock();

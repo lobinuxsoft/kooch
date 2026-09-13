@@ -1,13 +1,4 @@
 //! GPU integration test for the Hi-Z pyramid builder.
-//!
-//! Uploads a small Depth32Float texture with hand-crafted values,
-//! runs `HiZ::build`, and reads back every mip level to assert:
-//!   - mip 0 is a byte-perfect copy of the depth source,
-//!   - mip k is the max() of its 2×2 parent block,
-//!   - the top mip (1×1) carries the global max.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test hi_z_build
 
 mod common;
 
@@ -22,10 +13,9 @@ const ROW_BYTES: u32 = WIDTH * 4; // R32Float: 4 bytes per texel; 64×4 = 256 = 
 fn upload_r32(device: &wgpu::Device, queue: &wgpu::Queue, values: &[f32]) -> wgpu::Texture {
     assert_eq!(values.len(), PIXELS);
 
-    // wgpu refuses Queue::write_texture into Depth32Float, so the
-    // test path uses an R32Float texture and routes it through
-    // HiZ::build_from_r32. Production code uses
-    // HiZ::build_from_depth with the real depth attachment.
+    // wgpu refuses Queue::write_texture into Depth32Float, so the test path uses an R32Float
+    // texture and routes it through HiZ::build_from_r32. Production code uses HiZ::build_from_depth
+    // with the real depth attachment.
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("hi_z_test_r32"),
         size: wgpu::Extent3d {

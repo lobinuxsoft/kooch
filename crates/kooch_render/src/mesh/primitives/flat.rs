@@ -1,9 +1,4 @@
 //! Cube and quad — the two primitives with no curvature.
-//!
-//! Both duplicate vertices per face rather than sharing corners. A cube
-//! with eight shared vertices has to average three perpendicular normals
-//! at every corner, which rounds the lighting off the edges and makes a
-//! box look like a beanbag. Twenty-four vertices buy flat faces.
 
 use glam::{Vec2, Vec3};
 

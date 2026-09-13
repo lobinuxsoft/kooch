@@ -1,43 +1,15 @@
 //! What the author decides about shadows.
-//!
-//! A `Resource` with a default, published from `.rendersettings` the
-//! same way exposure and ambient are (#744). Separate from
-//! `RenderSettings` as a type because the shadow pass reads it and the
-//! shading model does not — and because a `Resource` nobody can author
-//! is the failure this engine has now committed three times.
 
 /// How far from the camera shadows are drawn, in metres.
-///
-/// Two hundred is a scene, not a planet. The cascades are fitted to
-/// whatever range they are given, so raising this does not add shadows
-/// in the distance — it moves the near cascade's texels outward and
-/// blurs the shadows that are actually being looked at.
 pub const DEFAULT_SHADOW_DISTANCE: f32 = 100.0;
 
 /// Where the first cascade ends, in metres.
-///
-/// The split scheme is logarithmic from here, so this is the single
-/// number that decides how much resolution the shadows near the camera
-/// get. Unity ships 10.05, Godot 10, and Bevy takes both as its
-/// reference — ten metres around the camera is what a scene at human
-/// scale wants, and anchoring at the camera's near plane instead spends
-/// the first cascade on the first few centimetres.
 pub const DEFAULT_FIRST_CASCADE_DISTANCE: f32 = 10.0;
 
 /// Side of one cascade in texels, when the author has not said.
-///
-/// Mirrors [`crate::shadow::DEFAULT_CASCADE_SIZE`]; stated here so the
-/// settings type has a complete default without the caller reaching for
-/// the atlas.
 pub const DEFAULT_CASCADE_TEXELS: u32 = super::atlas::DEFAULT_CASCADE_SIZE;
 
-/// Shadow settings, as a `Resource`.
-/// Cubes a project gets before it asks for more.
-///
-/// Four, unchanged from when it was a hard constant: it is what every
-/// capture so far was taken against, and a default that quietly costs a
-/// project 192 MiB of VRAM would be a worse surprise than a shadow that
-/// pops.
+/// Shadow settings, as a `Resource`. Cubes a project gets before it asks for more.
 pub const DEFAULT_POINT_SHADOWS: u32 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -58,29 +30,9 @@ pub struct ShadowSettings {
     /// logarithmically out to `max_distance`.
     pub first_cascade_distance: f32,
     /// How many point lights may hold a cube at once (#849).
-    ///
-    /// 🔴 The one number that decides whether shadows **pop**. Which
-    /// lights hold the cubes is chosen per frame from where the camera
-    /// is, so when the budget is smaller than the number of lights on
-    /// screen, moving hands the cubes to different lamps and a shadow
-    /// appears or vanishes with no authored reason. Raising it does not
-    /// make shadows better — it makes them stop changing.
-    ///
-    /// **6 MiB each**, six faces of 512² at `Depth32Float`. Clamped to
-    /// [`MAX_POINT_SHADOWS`](kooch_lighting::MAX_POINT_SHADOWS), which
-    /// sizes the uniform array and costs nothing unspent.
     pub point_shadows: u32,
-    /// Whether the sun's shadow comes from the virtual page pool
-    /// instead of the four cascades (#866/#477).
-    ///
-    /// 🔴 Here, in the **published** settings, and not read off
-    /// `RenderSettings` at the call site. That is not a style
-    /// preference: `RenderSettings` is never inserted as a `Resources`
-    /// value — `apply` publishes these derived structs instead — so a
-    /// frame that asked for the whole struct got `None` in every build
-    /// and silently took its fallback. That is precisely how this
-    /// feature shipped inert, and the profile that caught it showed two
-    /// captures, on and off, byte for byte the same.
+    /// Whether the sun's shadow comes from the virtual page pool instead of the four cascades
+    /// (#866/#477).
     pub virtual_pages: bool,
     /// Shadow texels per screen pixel, as a percentage.
     pub page_density: u32,
@@ -90,72 +42,33 @@ pub struct ShadowSettings {
     /// 1 = bilinear; wider = Castano-style box with bilinear edges,
     /// `(width + 1)²` loads per light per pixel (#941).
     pub page_softness: u32,
-    /// How far a shadow lookup steps along the receiver's NORMAL before
-    /// comparing, as a multiple of the clipmap texel it landed on.
-    ///
-    /// 🔴 The multiplier is per TEXEL, and a clipmap texel is 0.1 mm at
-    /// level 0 and five metres at level 16. So this number is not a
-    /// distance — it decides one, and the distance it decides spans
-    /// five orders of magnitude across the chain. See
-    /// [`Self::page_bias_max`], which is the cap that keeps it finite.
+    /// How far a shadow lookup steps along the receiver's NORMAL before comparing, as a multiple of
+    /// the clipmap texel it landed on.
     pub page_normal_bias: f32,
     /// How far the same lookup steps TOWARDS the light, in metres.
     /// Constant across the chain, unlike the normal step.
     pub page_depth_bias: f32,
-    /// A ceiling on the world-space normal step, in metres. 0 = none,
-    /// which is what shipped.
-    ///
-    /// 🔴 Without it the step grows with the texel: 0.58 m at clipmap
-    /// level 12, 9.2 m at level 16. A receiver pushed metres along its
-    /// own normal leaves the volume its caster shadows, the depth test
-    /// answers LIT, and the shadow ends in a straight line at the level
-    /// boundary — with the page present, resident and correctly drawn.
+    /// A ceiling on the world-space normal step, in metres. 0 = none, which is what shipped.
     pub page_bias_max: f32,
-    /// A ceiling on the receiver's own depth GRADIENT, as a slope
-    /// (`tan` of the incidence, per axis) — #1017.
-    ///
-    /// The reader compares every filter tap against the depth the
-    /// receiving plane actually has where that tap looks, instead of
-    /// against the depth under the pixel. This bounds that
-    /// extrapolation: the slope diverges as a surface turns edge-on to
-    /// the sun, and an unbounded one reads as a lit pixel inside a
-    /// shadow. 0 disables the term.
+    /// A ceiling on the receiver's own depth GRADIENT, as a slope (`tan` of the incidence, per
+    /// axis) — #1017.
     pub page_bias_slope: f32,
-    /// Whether the shading MARCHES the atlas rather than sampling one
-    /// texel through a PCF box (#1017).
-    ///
-    /// A single tap asks what is stored under the pixel, so an occluder
-    /// that did not land in that exact texel is not found and the pixel
-    /// is lit — a hole inside a shadow with the page present and
-    /// correctly drawn. Widening the filter cannot repair it: every tap
-    /// is still one comparison at one place. The march asks whether
-    /// anything blocks ALONG a ray, over several rays spread across the
-    /// sun's disc, and needs no bias constant because its tolerance is
-    /// measured from the ray itself.
+    /// Whether the shading MARCHES the atlas rather than sampling one texel through a PCF box
+    /// (#1017).
     pub page_march: bool,
     /// Whether the expansion runs from the geometry rather than pairing
     /// pages against survivors (#1022). See
-    /// [`RenderSettings::shadow_page_geometry`].
+    /// `RenderSettings::shadow_page_geometry`.
     pub page_geometry: bool,
     /// How far, in pages, a receiver dilates its request (#1022). See
-    /// [`RenderSettings::shadow_page_halo`].
+    /// `RenderSettings::shadow_page_halo`.
     pub page_halo: f32,
-    /// Projected radius in screen pixels under which a local light
-    /// becomes DISTANT: one page per cube face rather than a chain
-    /// (#1009). 0 = every light gets a chain. See
-    /// [`RenderSettings::shadow_min_pixels`].
+    /// Projected radius in screen pixels under which a local light becomes DISTANT: one page per
+    /// cube face rather than a chain (#1009). 0 = every light gets a chain. See
+    /// `RenderSettings::shadow_min_pixels`.
     pub page_min_pixels: u32,
-    /// How far a local light may cast pages from, in multiples of its
-    /// OWN range. 0 = no distance limit, which is what shipped.
-    ///
-    /// 🔴 Not the same question as [`Self::page_min_pixels`], and since
-    /// #1009 not even the same kind of answer: that one DEMOTES a light
-    /// and this one silences it. That one is a projected SIZE, so the
-    /// distance it implies scales with the light's range and with the
-    /// viewport — at 808x439 a range-50 light does not fall under eight
-    /// pixels until 2.4 km, and a threshold high enough to cut it at a
-    /// hundred metres also cuts a small light beside the camera. This
-    /// one scales with the light instead of with the screen.
+    /// How far a local light may cast pages from, in multiples of its OWN range. 0 = no distance
+    /// limit, which is what shipped.
     pub page_light_reach: u32,
 }
 
@@ -175,10 +88,9 @@ impl Default for ShadowSettings {
             sun_softness: kooch_lighting::DEFAULT_SUN_SOFTNESS,
             first_cascade_distance: DEFAULT_FIRST_CASCADE_DISTANCE,
             point_shadows: DEFAULT_POINT_SHADOWS,
-            // 🔴 Off, and the environment variable is applied where the
-            // asset is read rather than here: a `Default` that consulted
-            // the environment would make every test depend on the shell
-            // it ran in.
+            // 🔴 Off, and the environment variable is applied where the asset is read rather than
+            // here: a `Default` that consulted the environment would make every test depend on the
+            // shell it ran in.
             virtual_pages: false,
             page_density: 100,
             pool_pages: crate::shadow::pages::pool::DEFAULT_PAGES,
@@ -186,17 +98,10 @@ impl Default for ShadowSettings {
             page_normal_bias: 1.8,
             page_depth_bias: 0.02,
             page_bias_max: 0.0,
-            // 🔴 ON, unlike the cap above it. That one is a distance in
-            // metres nobody has measured for a given scene; this is the
-            // receiver's own geometry, and leaving it at 0 ships the
-            // defect behind a setting no project knows to turn on.
-            // 4 is `tan 76°`, past which a surface is nearly edge-on.
+            // 🔴 ON, unlike the cap above it.
             page_bias_slope: 4.0,
-            // 🔴 OFF. It replaces the reader every shipped frame goes
-            // through and it costs rays times steps of lookups against
-            // the box's taps. Both of those are measurements nobody has
-            // taken yet, and `virtual_pages` is the standing lesson
-            // about defaulting a technique on before that.
+            // 🔴 OFF. It replaces the reader every shipped frame goes through and it costs rays
+            // times steps of lookups against the box's taps.
             page_march: false,
             // Off: the shape is new and what it costs on a real scene
             // is a measurement nobody has taken. The pairs are the same
@@ -204,9 +109,8 @@ impl Default for ShadowSettings {
             page_geometry: false,
             page_halo: 0.5,
             page_min_pixels: 8,
-            // 🔴 Off, because it is a behaviour change and nothing has
-            // measured what it costs yet: a light out of reach stops
-            // casting, and a threshold picked from a whiteboard is how
+            // 🔴 Off, because it is a behaviour change and nothing has measured what it costs yet: a
+            // light out of reach stops casting, and a threshold picked from a whiteboard is how
             // `DEFAULT_PAGES` ended up at half of Epic's.
             page_light_reach: 0,
         }
@@ -215,11 +119,6 @@ impl Default for ShadowSettings {
 
 impl ShadowSettings {
     /// Cascade size clamped to something a device will allocate.
-    ///
-    /// The atlas is twice this per axis, and 8192 is the smallest
-    /// `max_texture_dimension_2d` any target guarantees — so a cascade
-    /// larger than 4096 is a texture creation failure, which surfaces as
-    /// a panic in wgpu rather than as a bad-looking shadow.
     pub fn clamped_texels(&self) -> u32 {
         self.cascade_texels.clamp(256, 4096)
     }
@@ -229,12 +128,6 @@ impl ShadowSettings {
 mod tests;
 
 /// `KOOCH_POINT_SHADOWS=<count>`, read once (#849).
-///
-/// The seventh variable of its family, for the reason all of them exist:
-/// the question this answers — does raising the budget stop the shadows
-/// from popping, and what does it cost — is answered on the OneXFly
-/// through Steam, where reaching the settings asset means a repack and a
-/// copy.
 pub fn point_shadows_from_environment() -> Option<u32> {
     static COUNT: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
     *COUNT.get_or_init(|| {

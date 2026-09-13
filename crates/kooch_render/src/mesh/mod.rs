@@ -1,15 +1,4 @@
 //! Mesh assets shared by the meshlet GPU-driven pipeline.
-//!
-//! The actual rendering lives in [`crate::meshlet`]: meshlet generation
-//! consumes a [`Mesh`] (vertices + indices + AABB), packs it into
-//! `MeshletMesh`, and the `MeshletRenderStage` runs cull + visibility
-//! raster + deferred shading off it.
-//!
-//! This module owns:
-//! - [`Mesh`] — CPU-side POD asset stored in `Assets<Mesh>`.
-//! - [`GltfMeshLoader`] — `AssetLoader<Mesh>` impl for glTF / GLB.
-//! - [`MeshVertex`] / [`Aabb`] — shared vertex layout + local AABB.
-//! - [`Primitive`] — procedurally generated cube / sphere / capsule / …
 
 mod asset;
 pub mod export;

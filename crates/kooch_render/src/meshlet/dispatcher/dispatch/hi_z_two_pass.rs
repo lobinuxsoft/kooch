@@ -8,17 +8,7 @@ use super::super::pipelines::MeshletCullPipelines;
 use super::super::types::HiZTestParams;
 
 impl MeshletCull {
-    /// Hi-Z 2-pass cull (#445), pass A. Same as
-    /// [`Self::dispatch_scene_pool_atomic`] but additionally tests
-    /// every meshlet that survives frustum + cone against the
-    /// previous frame's Hi-Z pyramid (`hi_z_view`); rejects are
-    /// appended to `culled_meshlets` for the pass B retest the
-    /// orchestrator dispatches once `hi_z_curr` is rebuilt.
-    ///
-    /// Caller must call [`Self::ensure_capacity`] +
-    /// [`Self::ensure_group_capacity`] beforehand. `hi_z_view` must
-    /// be the multi-mip view of a [`crate::hi_z::HiZ`] sized to the
-    /// active depth attachment — the view is sampled, not written.
+    /// Hi-Z 2-pass cull (#445), pass A.
     #[allow(clippy::too_many_arguments)]
     pub fn dispatch_scene_pool_atomic_hi_z(
         &self,
@@ -155,39 +145,22 @@ impl MeshletCull {
             pass.dispatch_workgroups(groups_x, groups_y, 1);
         }
 
-        // Mirror visible_count → indirect_args.instance_count so the
-        // pass-A raster has a draw count covering exactly pass A's
-        // survivors. Pass B re-mirrors at the end with the union
-        // total, and the pass-B raster (LoadOp::Load on the vbuf +
-        // depth) re-rasterises pass A's set as well — the depth test
-        // makes that idempotent for correctness, and the overhead is
-        // bounded by `count_a` extra fragment-shader invocations.
+        // Mirror visible_count → indirect_args.instance_count so the pass-A raster has a draw count
+        // covering exactly pass A's survivors.
         self.mirror_count_to_indirect_args(encoder);
 
-        // Park the bind groups in the caller's arena so they outlive
-        // the encoder's submit. wgpu does not internally Arc-clone
-        // bind groups on `set_bind_group`; dropping them between
-        // record and submit makes the bound views "invalid" on Mesa
-        // radv. Caller clears the arena after the queue.submit cycle
-        // completes for this frame.
+        // Park the bind groups in the caller's arena so they outlive the encoder's submit. wgpu
+        // does not internally Arc-clone bind groups on `set_bind_group`; dropping them between
+        // record and submit makes the bound views "invalid" on Mesa radv.
         arena.push(extended_cull_bg);
         arena.push(pool_bg);
         arena.push(scene_with_hi_z_bg);
         arena.push(group_err_bg);
     }
 
-    /// Hi-Z 2-pass cull (#445), pass B. Drains
-    /// `culled_meshlets[0..culled_count]` (pass A's reject queue) and
-    /// re-tests every entry against `hi_z_view`, which the
-    /// orchestrator points at the *current* frame's pyramid (rebuilt
-    /// from the pass-A raster's depth between passes). Survivors
-    /// append to `visible_meshlets`; final mirror to `indirect_args`
-    /// happens here so a single buffer-to-buffer copy covers both
-    /// passes' contributions.
-    ///
-    /// Bind groups: same `extended_cull` + `scene_with_hi_z` shapes
-    /// as pass A — only the pyramid view changes between bind-group
-    /// constructions.
+    /// Hi-Z 2-pass cull (#445), pass B. Drains `culled_meshlets[0..culled_count]` (pass A's reject
+    /// queue) and re-tests every entry against `hi_z_view`, which the orchestrator points at the
+    /// *current* frame's pyramid (rebuilt from the pass-A raster's depth between passes).
     #[allow(clippy::too_many_arguments)]
     pub fn dispatch_cull_pass_b(
         &self,
@@ -201,11 +174,9 @@ impl MeshletCull {
         hi_z_view: &wgpu::TextureView,
         arena: &mut Vec<wgpu::BindGroup>,
     ) {
-        // hi_z_params for pass B targets the freshly-built pyramid;
-        // the view_proj / pyramid dims may differ from pass A only
-        // when mip count or viewport dims diverged (they shouldn't,
-        // but the API takes the params explicitly to keep the call
-        // site self-documenting).
+        // hi_z_params for pass B targets the freshly-built pyramid; the view_proj / pyramid dims
+        // may differ from pass A only when mip count or viewport dims diverged (they shouldn't, but
+        // the API takes the params explicitly to keep the call site self-documenting).
         queue.write_buffer(&self.hi_z_params_buffer, 0, bytemuck::bytes_of(hi_z_params));
         // Pass A's parameters, deliberately — pass B re-tests the same
         // frustum against the pyramid it just built.

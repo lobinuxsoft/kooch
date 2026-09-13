@@ -1,48 +1,10 @@
 //! Buffer resolution for the glTF document.
-//!
-//! glTF documents reference their binary buffers in three flavours:
-//!
-//! 1. **GLB binary chunk** — packaged inline in the same file. The
-//!    parser hands us the bytes via `Gltf::blob`.
-//! 2. **External sidecar** — `"uri": "scene.bin"` (or any relative
-//!    path). Lives next to the `.gltf` document on disk. This is what
-//!    Blender's *glTF Separate* export emits.
-//! 3. **Data URI** — `"uri": "data:application/octet-stream;base64,…"`
-//!    embedded directly in the JSON. This is what Blender's
-//!    *glTF Embedded* export emits, and what every standalone-`.gltf`
-//!    publishing tool inlines. Decoded in [`super::data_uri`] (#490 follow-up).
-//!
-//! ## URI hygiene
-//!
-//! A `.gltf` document is parsed JSON authored on some other machine —
-//! its `uri` field can claim anything, including paths that escape the
-//! document's own directory. We resolve only relative single-component
-//! paths and reject:
-//!
-//! - Absolute POSIX paths (`/foo`).
-//! - Absolute Windows paths (`C:\…`, `\\server\…`).
-//! - URI schemes other than `data:` (`file://`, `http://`, …).
-//! - `..` path segments (traversal).
-//!
-//! Every commercial / open-source exporter (Blender, Maya, three.js,
-//! gltfpack) emits sidecar URIs of the form `"name.bin"` — relative,
-//! single component, no traversal. The reject list does not collide
-//! with any legitimate workflow.
 
 use std::path::Path;
 
 use super::GltfMeshError;
 
-/// Resolves the document's buffer bytes. Three sources covered:
-///
-/// - [`gltf::buffer::Source::Bin`] — GLB inline `blob` chunk.
-/// - [`gltf::buffer::Source::Uri`] starting with `data:` — embedded
-///   base64 (delegated to [`super::data_uri::decode`]).
-/// - [`gltf::buffer::Source::Uri`] otherwise — sidecar path resolved
-///   relative to `base_dir`. `base_dir` is the directory containing
-///   the source `.gltf` document; when `None`, sidecar resolution
-///   is impossible (e.g., bytes loaded from memory) and the load
-///   fails with [`GltfMeshError::BufferUriUnresolvable`].
+/// Resolves the document's buffer bytes. Three sources covered.
 pub(super) fn collect_buffers(
     document: &gltf::Document,
     glb_blob: Option<&[u8]>,
@@ -92,10 +54,9 @@ fn resolve_sidecar(uri: &str, base_dir: Option<&Path>) -> Result<Vec<u8>, GltfMe
     })
 }
 
-/// Hygiene gate: returns `Some(reason)` if the URI must be rejected,
-/// `None` if it is a safe relative path. Conservative by design — any
-/// shape that doesn't look like a single-component relative file is
-/// rejected, even if a particular exporter could in theory produce it.
+/// Hygiene gate: returns `Some(reason)` if the URI must be rejected, `None` if it is a safe
+/// relative path. Conservative by design — any shape that doesn't look like a single-component
+/// relative file is rejected, even if a particular exporter could in theory produce it.
 fn reject_unsafe_uri(uri: &str) -> Option<&'static str> {
     if uri.is_empty() {
         return Some("empty uri");

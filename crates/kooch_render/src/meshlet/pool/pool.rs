@@ -9,10 +9,6 @@ use super::descriptor::{MeshDescriptor, MeshHandle};
 use glam::{Mat4, Vec3};
 
 /// A mesh's extent, as one sphere in mesh space.
-///
-/// A sphere and not the AABB it is derived from: the question it answers
-/// is "does this instance come within a light's range", and a sphere
-/// survives an arbitrary rotation where an AABB has to be rebuilt.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct MeshBounds {
     pub center: Vec3,
@@ -21,12 +17,6 @@ pub struct MeshBounds {
 
 impl MeshBounds {
     /// The union of every meshlet's AABB, as a sphere.
-    ///
-    /// Every LOD level, not just LOD 0: a coarser level is a simplified
-    /// copy of the same surface and can bulge slightly past the original.
-    /// Conservative in the direction that matters — a sphere too large
-    /// redraws a cube that did not need it, one too small freezes a
-    /// shadow, and only the second is silent.
     pub fn of_meshlets(meshlets: &[MeshletDescriptor]) -> Self {
         let Some(first) = meshlets.first() else {
             return Self::default();
@@ -44,10 +34,6 @@ impl MeshBounds {
     }
 
     /// The same sphere after `transform`, in world space.
-    ///
-    /// The radius scales by the LARGEST axis scale, because a sphere has
-    /// no axes to scale separately: taking the average would shrink the
-    /// bound on a stretched instance, which is the silent failure.
     pub fn transformed(&self, transform: Mat4) -> (Vec3, f32) {
         let center = transform.transform_point3(self.center);
         let scale = transform
@@ -61,7 +47,7 @@ impl MeshBounds {
 }
 
 /// CPU-side accumulator. Call [`Self::register`] once per meshlet mesh,
-/// then [`super::GpuGlobalMeshPool::upload`] to push the latest state to
+/// then `super::GpuGlobalMeshPool::upload` to push the latest state to
 /// GPU. Keep the resulting `GpuGlobalMeshPool` alive across frames.
 #[derive(Debug, Default)]
 pub struct GlobalMeshPool {
@@ -70,21 +56,11 @@ pub struct GlobalMeshPool {
     pub vertices: Vec<MeshVertex>,
     pub meshlet_vertices: Vec<u32>,
     pub meshlet_triangles: Vec<u8>,
-    /// One bounding sphere per registered mesh, in MESH space, parallel
-    /// to `mesh_descriptors` (#847).
-    ///
-    /// 🔴 A separate array and not a field on [`MeshDescriptor`]: that
-    /// struct is `#[repr(C)]` and uploaded verbatim, mirrored by WGSL
-    /// that would read every field after the insertion at the wrong
-    /// offset — and **would not fail to compile**. This is read by the
-    /// CPU only.
+    /// One bounding sphere per registered mesh, in MESH space, parallel to `mesh_descriptors`
+    /// (#847).
     pub mesh_bounds: Vec<MeshBounds>,
-    /// Sum of `1 + max_group_id` across registered meshes — the size
-    /// of the per-frame `group_max_err` buffer the 2-pass cull (#465)
-    /// indexes by `MeshletDescriptor::group_index`. Pooled meshes
-    /// each generate group_ids starting at 0; [`Self::register`]
-    /// shifts incoming group_ids by the running total so collisions
-    /// across meshes cannot occur.
+    /// Sum of `1 + max_group_id` across registered meshes — the size of the per-frame
+    /// `group_max_err` buffer the 2-pass cull (#465) indexes by `MeshletDescriptor::group_index`.
     pub group_capacity: u32,
 }
 
@@ -109,12 +85,9 @@ impl GlobalMeshPool {
             .unwrap_or(0)
     }
 
-    /// Approximate bytes the persistent storage of this pool occupies
-    /// when uploaded to wgpu (vertex + meshlet index + triangle byte
-    /// pool + descriptor pool). Used by the perf HUD's VRAM-tracked
-    /// counter (#463.5). Not every byte will hit GPU memory exactly
-    /// (alignment / driver padding can grow it), but the value is
-    /// the closest portable estimate.
+    /// Approximate bytes the persistent storage of this pool occupies when uploaded to wgpu (vertex
+    /// + meshlet index + triangle byte pool + descriptor pool). Used by the perf HUD's VRAM-tracked
+    /// counter (#463.5).
     pub fn byte_size(&self) -> u64 {
         let v = (self.vertices.len() * std::mem::size_of::<crate::mesh::MeshVertex>()) as u64;
         let mlv = (self.meshlet_vertices.len() * std::mem::size_of::<u32>()) as u64;
@@ -138,13 +111,9 @@ impl GlobalMeshPool {
         let meshlet_count = mesh.meshlet_count();
 
         self.vertices.extend_from_slice(&mesh.vertices);
-        // meshlet_vertices stores indices INTO the global vertex pool.
-        // Each appended value must be shifted by `vertex_offset`
-        // (where this mesh's vertices land in the pool) so the GPU
-        // shader's `vertices[meshlet_vertices[...]]` lookup hits the
-        // correct mesh's vertex slice. Without this rebase the second
-        // and later registered meshes silently read vertices from the
-        // first mesh — geometry collapses into apparent random spikes.
+        // meshlet_vertices stores indices INTO the global vertex pool. Each appended value must be
+        // shifted by `vertex_offset` (where this mesh's vertices land in the pool) so the GPU
+        // shader's `vertices[meshlet_vertices[...]]` lookup hits the correct mesh's vertex slice.
         self.meshlet_vertices.extend(
             mesh.meshlet_vertices
                 .iter()
@@ -153,28 +122,15 @@ impl GlobalMeshPool {
         self.meshlet_triangles
             .extend_from_slice(&mesh.meshlet_triangles);
 
-        // Pad triangles up to a 4-byte boundary so the next mesh's
-        // first triangle byte lands on a u32 word boundary — the cull
-        // shader reads `array<u32>` and extracts bytes via shift-mask;
+        // Pad triangles up to a 4-byte boundary so the next mesh's first triangle byte lands on a
+        // u32 word boundary — the cull shader reads `array<u32>` and extracts bytes via shift-mask;
         // an unaligned base offset would mis-read the first byte.
         while self.meshlet_triangles.len() % 4 != 0 {
             self.meshlet_triangles.push(0);
         }
 
-        // Re-base each meshlet's offsets into pool-global coordinates.
-        // Three indices need shifting on top of the byte-offset
-        // rebases above:
-        //
-        // - `parent_meshlet_index`: a meshlet index INTO the same
-        //   chain. Without `+ first_meshlet`, mesh #2's parent ids
-        //   silently reference mesh #1's slice in the concatenated
-        //   pool — the 2-pass cull then reads wrong parents in pass 1
-        //   and the LOD selector behaves randomly per mesh.
-        // - `group_index` / `children_group_index`: every mesh's
-        //   builder allocated group ids starting at 0, so without
-        //   shifting they would collide across meshes in the shared
-        //   `group_max_err` buffer the 2-pass cull (#465) keys by
-        //   these ids.
+        // Re-base each meshlet's offsets into pool-global coordinates. Three indices need shifting
+        // on top of the byte-offset rebases above.
         let group_offset = self.group_capacity;
         let mut max_local_group: i64 = -1;
         for desc in &mesh.meshlets {

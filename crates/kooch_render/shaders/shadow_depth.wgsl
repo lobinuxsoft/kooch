@@ -1,33 +1,4 @@
-// shadow_depth.wgsl — the meshlet rasteriser, from a light, writing
-// depth and nothing else (#476).
-//
-// Vertex routing is `meshlet_vbuf.wgsl`'s `vs_vbuf_scene` with the
-// colour half removed: decode `(instance_id << 16 | meshlet_idx)` from
-// this cascade's survivors, fetch the instance transform, project by the
-// cascade's matrix.
-//
-// # There is no fragment shader
-//
-// A shadow map is depth. wgpu accepts `fragment: None`, so the
-// rasteriser writes depth through fixed-function hardware and no
-// fragment work happens at all — no interpolants, no exports, and
-// early-Z with nothing to disable it. A fragment entry that returns
-// nothing would still cost the invocation.
-//
-// The consequence to know: **alpha-cut geometry does not cut here.**
-// Foliage casts the shadow of its quad, not of its leaves. Fixing that
-// means a second pipeline with a fragment shader that discards, for the
-// materials that need it — not a fragment shader for everything.
-//
-// # Bind groups
-//
-// Deliberately the same layout as the visibility-buffer rasteriser, so
-// the pool and instance bind groups are shared rather than rebuilt:
-//
-//   0  cascade matrix
-//   1  meshlet pool (vertices, indices, triangles, descriptors)
-//   2  this cascade's visible meshlets
-//   3  scene instances
+// shadow_depth.wgsl — the meshlet rasteriser, from a light, writing depth and nothing else (#476).
 
 struct CascadeUniforms {
     // Light-space clip-from-world for the cascade being rendered.
@@ -108,10 +79,9 @@ fn vs_shadow(
     let triangle_idx = vertex_index / 3u;
     let corner_idx = vertex_index % 3u;
 
-    // The draw is indirect with a fixed vertex count per meshlet, so the
-    // tail of a meshlet with fewer triangles still runs. Sending those
-    // vertices outside the clip volume discards the triangle without a
-    // branch anywhere else.
+    // The draw is indirect with a fixed vertex count per meshlet, so the tail of a meshlet with
+    // fewer triangles still runs. Sending those vertices outside the clip volume discards the
+    // triangle without a branch anywhere else.
     if (triangle_idx >= desc.triangle_count) {
         return vec4<f32>(2.0, 2.0, 2.0, 1.0);
     }

@@ -65,13 +65,6 @@ fn the_six_faces_cover_every_direction() {
 }
 
 /// 🔴 The test the whole record depends on.
-///
-/// `GpuPointShadow` carries a single `near` where Bevy carries four
-/// projection terms, on the claim that with an infinite reverse-Z
-/// projection the stored depth is exactly `near / major_axis_magnitude`.
-/// If that is wrong, every comparison in the shader is off by a factor
-/// that varies with distance — which reads as a bias that cannot be
-/// tuned, not as a wrong formula.
 #[test]
 fn depth_is_near_over_the_major_axis() {
     let eye = Vec3::new(-2.0, 5.0, 1.5);
@@ -166,14 +159,6 @@ fn a_clearly_better_rival_takes_the_cube() {
 }
 
 /// 🔴 A lamp behind the camera KEEPS its cube, and that is the fix.
-///
-/// This used to assert the opposite. The reasoning was that six faces
-/// rasterised for a viewer who turned around are six faces wasted — true
-/// as arithmetic, wrong as a contract: a cube map is drawn from the
-/// light, so what it holds cannot depend on where anyone stands, and
-/// this selection runs once per VIEW while the cubes and `holders`
-/// belong to the stage. With the editor's two views on one stage, the
-/// gameplay camera decided what the View panel could see a shadow of.
 #[test]
 fn a_lamp_behind_the_camera_keeps_its_cube() {
     let behind = source(Vec3::new(0.0, 0.0, 50.0), 5.0);
@@ -185,12 +170,8 @@ fn a_lamp_behind_the_camera_keeps_its_cube() {
     );
 }
 
-/// 🔴 The stress scene in miniature: a hundred lamps on a two-metre
-/// grid, all in front of the camera, all casting.
-///
-/// Written because a device capture showed `Device::create_bind_group`
-/// at 53 calls a frame — the number a frame with NO cube draws reports —
-/// while the scene had `cast_shadows: true` on all hundred lights.
+/// 🔴 The stress scene in miniature: a hundred lamps on a two-metre grid, all in front of the
+/// camera, all casting.
 #[test]
 fn a_grid_of_lamps_fills_every_cube() {
     let eye = Vec3::ZERO;
@@ -263,10 +244,9 @@ fn an_instance_in_range_does_change_it() {
     );
 }
 
-/// The floor case, and the reason the test is sphere against sphere
-/// rather than point against sphere: a 20 m floor slab is centred far
-/// from a lamp standing on it and is the very surface its shadow lands
-/// on. A point test would drop it and freeze the shadow.
+/// The floor case, and the reason the test is sphere against sphere rather than point against
+/// sphere: a 20 m floor slab is centred far from a lamp standing on it and is the very surface its
+/// shadow lands on. A point test would drop it and freeze the shadow.
 #[test]
 fn a_big_slab_counts_from_its_edge() {
     let lamp = Vec3::new(0.0, 1.0, 0.0);

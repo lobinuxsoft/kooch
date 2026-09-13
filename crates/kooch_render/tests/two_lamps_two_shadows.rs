@@ -1,24 +1,4 @@
 //! Do two casting lamps produce TWO shadows, or two copies of one?
-//!
-//! 🔴 This exists because three hypotheses were argued from the code and
-//! all three were wrong. The owner's report is specific and measurable —
-//! *"aparecen muchas sombras que son copias exactas de una sola, no
-//! tienen consideración de las otras luces"* — and a claim that precise
-//! does not need another reading of the dispatcher. It needs the one
-//! measurement that separates "the cubes are wrong" from everything
-//! else.
-//!
-//! The discriminator: an occluder between two lamps on OPPOSITE sides
-//! throws two shadows in different directions. If every lamp renders
-//! the same cube, lighting both covers no more floor than lighting one.
-//!
-//! Shadow is isolated from illumination by differencing each
-//! configuration against itself without an occluder — two lamps are
-//! brighter than one, and comparing lit frames would measure that
-//! instead.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test two_lamps_two_shadows
 
 mod common;
 
@@ -39,10 +19,9 @@ use kooch_render::material::{Material, MaterialPipeline};
 use kooch_render::meshlet::{MeshletRenderStage, MeshletRenderStageConfig, build_default_meshlets};
 use kooch_render::shadow::ShadowSettings;
 
-// 🔴 1536, not 512. The cube view tiles six faces into a 3x2 grid, so
-// at 512 each face gets 170x256 px and a ball 27 px across — small
-// enough that its own edge reads as a crescent. Two sessions were spent
-// interpreting that crescent.
+// 🔴 1536, not 512. The cube view tiles six faces into a 3x2 grid, so at 512 each face gets 170x256
+// px and a ball 27 px across — small enough that its own edge reads as a crescent. Two sessions
+// were spent interpreting that crescent.
 const SIZE: u32 = 1536;
 
 /// The lamp the inspector showed, overhead.
@@ -65,11 +44,7 @@ fn build(lights: &[(Vec3, bool)], occluder: bool, compute: bool) -> Option<Rig> 
     build_with(lights, occluder, compute, false)
 }
 
-/// `contact` turns the screen-space march on, which is what the owner's
-/// lamps now have. It is the one shadow in the engine that reads the
-/// CAMERA's depth buffer, so an occluder that leaves the screen stops
-/// occluding — and #845 marches only the brightest light per pixel, so
-/// two lamps never both get one.
+/// `contact` turns the screen-space march on, which is what the owner's lamps now have.
 fn build_with(
     lights: &[(Vec3, bool)],
     occluder: bool,
@@ -88,10 +63,9 @@ fn build_with(
         cascade_texels: 1024,
         max_distance: 60.0,
         enabled: true,
-        // 🔴 NOT the default of 4. The whole question is what happens
-        // past a handful of casting lamps, and a rig that budgets four
-        // measures the budget rather than the defect — which is exactly
-        // what the first run of the sweep below did.
+        // 🔴 NOT the default of 4. The whole question is what happens past a handful of casting
+        // lamps, and a rig that budgets four measures the budget rather than the defect — which is
+        // exactly what the first run of the sweep below did.
         point_shadows: kooch_lighting::MAX_POINT_SHADOWS as u32,
         ..Default::default()
     });
@@ -125,16 +99,8 @@ fn build_with(
     );
     let mesh = Guid::new_v4();
     stage.ensure_gpu_mesh(&device, mesh, &meshlet_mesh);
-    // A dense sphere for the caster, because the owner's is a ball and
-    // a cube is six quads: a defect that drops SOME meshlets of an
-    // object cannot show on geometry that has almost none.
-    //
-    // 🔴 And with a real LOD **chain**, not `build_default_meshlets` —
-    // that one lives in `builder/single_lod.rs` and produces one level.
-    // The LOD selector is the only thing in the cull that can drop
-    // meshlets from the MIDDLE of an object, and against a single-level
-    // mesh it cannot run at all. Five reproductions came out clean for
-    // that reason and for no other.
+    // A dense sphere for the caster, because the owner's is a ball and a cube is six quads: a
+    // defect that drops SOME meshlets of an object cannot show on geometry that has almost none.
     let ball_mesh = kooch_render::meshlet::build_meshlets_lod_chain(
         &common::build_sphere_mesh(32, 48),
         kooch_render::meshlet::DEFAULT_MAX_VERTICES,
@@ -239,10 +205,6 @@ fn shadowed_pixels(mask: &[f32]) -> usize {
 }
 
 /// 🔴 Two lamps on opposite sides must shadow more floor than one.
-///
-/// If every casting lamp ends up rendering the same cube — the reported
-/// "copias exactas de una sola" — then the second lamp contributes no
-/// shadow of its own and this count barely moves.
 #[test]
 fn two_lamps_shadow_more_than_one() {
     let _gpu = gpu_lock();
@@ -279,10 +241,6 @@ fn two_lamps_shadow_more_than_one() {
 }
 
 /// And the two single-lamp shadows must land in different places.
-///
-/// The guard for the test above: if both lamps happened to throw their
-/// shadow onto the same pixels, the count could rise for the wrong
-/// reason and the assertion would pass while the defect stands.
 #[test]
 fn the_two_shadows_do_not_coincide() {
     let _gpu = gpu_lock();
@@ -310,16 +268,6 @@ fn the_two_shadows_do_not_coincide() {
 }
 
 /// 🔴 The sweep that answers "at how many lamps does it break".
-///
-/// Two lamps are correct — the assertions above say so — and the owner
-/// sees copies at thirty-two. Something between those two numbers stops
-/// working, and which number it is names the cause: a ring, a slot
-/// array, a cube-array capacity or a per-frame dispatch bound all fail
-/// at a specific count, and none of them fail gradually.
-///
-/// Each round adds one lamp on a circle and asks whether the newest one
-/// contributes shadow the others do not. The first N where it stops is
-/// the answer.
 #[test]
 #[ignore = "diagnostic sweep; run explicitly"]
 fn find_where_the_cubes_start_repeating() {

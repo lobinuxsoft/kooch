@@ -1,55 +1,16 @@
 //! Scene-wide GPU-driven meshlet pipeline state.
-//!
-//! Phase 1.E.1: introduces the `MeshInstance` POD and the storage buffer
-//! the scene-wide cull dispatch enumerates. Single-mesh multi-instance
-//! for now; the global mesh pool that lets one cull dispatch enumerate
-//! meshlets across *different* meshes lands in 1.E.1b.
-//!
-//! # Why this exists (post Phase 1.D close audit)
-//!
-//! Phase 1.D delivered per-meshlet primitives (cull, vbuf, deferred,
-//! materials) but every test in `tests/` rasterizes a single
-//! `GpuMeshletMesh` per dispatch. That path is correct DOD-shape but
-//! NOT GPU-driven in spirit: the CPU still enumerates meshes one at a
-//! time. `feedback_gpu_driven_spirit.md` and the project's planet-
-//! scale + GPU-driven constraints demand: hot loop on GPU, scene
-//! enumeration on GPU, indirect dispatch fed by compute. This module
-//! is the foundation.
 
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 
-/// Sentinel value for [`MeshInstance::lod_force_level`] meaning
-/// "no force — let the normal LOD selector decide". Stored as
-/// `i32::MIN` so any sensible level (positive small int) cannot
-/// collide with it.
+/// Sentinel value for [`MeshInstance::lod_force_level`] meaning "no force — let the normal LOD
+/// selector decide". Stored as `i32::MIN` so any sensible level (positive small int) cannot collide
+/// with it.
 pub const LOD_FORCE_NONE: i32 = i32::MIN;
 /// This instance samples shadow maps.
-///
-/// Clear it and the shading path skips the fetch entirely — not a
-/// cheaper fetch, no fetch. That cost is per pixel **and** per casting
-/// light, which is why it is worth a bit (#804).
 pub const INSTANCE_RECEIVES_SHADOWS: u32 = 1u32 << 0;
 
 /// Per-instance scene record consumed by `cs_cull_scene`.
-///
-/// Layout (96 B, multiple of 16):
-/// - `transform` (mat4, 64 B): world-space transform of this instance.
-/// - `mesh_id` (u32): index into the global mesh pool (stub for 1.E.1b
-///   — single-mesh path ignores this).
-/// - `material_id` (u32): material pool index this instance shades against.
-/// - `lod_bias` (f32): per-instance LOD bias for the screen-space-error
-///   selector (1.E follow-up).
-/// - `lod_force_level` (i32): when ≥ 0, the cull short-circuits the
-///   LOD selector and emits only meshlets whose `lod_level` matches
-///   this value. [`LOD_FORCE_NONE`] = normal selector. Drives the
-///   side-by-side LOD inspector (#467).
-/// - `group_base` (u32): per-instance prefix-sum base into the
-///   `group_max_err` atomic buffer (#474). The shader resolves a
-///   group's slot as `group_base + (m.group_index - mesh_desc.group_base)`,
-///   which guarantees that two instances of the same mesh write to
-///   disjoint slot ranges and pick LOD independently. `0` is valid
-///   when the scene has at most one instance per mesh.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct MeshInstance {
@@ -59,13 +20,7 @@ pub struct MeshInstance {
     pub lod_bias: f32,
     pub lod_force_level: i32,
     pub group_base: u32,
-    /// Per-instance bits the shading path reads. See
-    /// [`INSTANCE_RECEIVES_SHADOWS`].
-    ///
-    /// Was `_pad0`: same offset, same size, so the 96-byte stride every
-    /// shader mirrors is unchanged. 🔴 Seven WGSL files declare this
-    /// struct; one left behind reads the next field at the wrong offset
-    /// and **does not fail to compile**.
+    /// Per-instance bits the shading path reads. See `INSTANCE_RECEIVES_SHADOWS`.
     pub flags: u32,
     pub _pad1: u32,
     pub _pad2: u32,
@@ -100,41 +55,18 @@ impl Default for MeshInstance {
     }
 }
 
-/// Per-frame scene parameters consumed by `cs_cull_scene` — the
-/// per-meshlet `CullParams` already carries the camera state; this
-/// adds the instance-count + per-mesh meshlet-count needed for the
+/// Per-frame scene parameters consumed by `cs_cull_scene` — the per-meshlet `CullParams` already
+/// carries the camera state; this adds the instance-count + per-mesh meshlet-count needed for the
 /// 1D thread → (instance, meshlet) decoding.
-///
-/// Layout (16 B):
-/// - `instance_count`: number of valid `MeshInstance` slots in the buffer.
-/// - `meshlets_per_mesh`: meshlet count of the (single) mesh registered
-///   for this scene. 1.E.1b replaces this with a per-mesh-id lookup.
-/// - `_pad0`, `_pad1`: keep 16-byte alignment.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 pub struct SceneCullParams {
     pub instance_count: u32,
     pub meshlets_per_mesh: u32,
-    /// LOD groups the scene actually has — `instance_group_capacity`'s
-    /// O(1) prefix sum, not `instance_count * meshlets_per_mesh`.
-    ///
-    /// 🔴 The two differ by orders of magnitude and one of them cannot
-    /// be used to size a per-LIGHT arena. A group-error arena indexed
-    /// `[slot * capacity + group]` over 2024 instances, 4700 meshlets
-    /// and 64 lamps is 2.4 GB with the over-approximation and 6.6 MB
-    /// with the real count — and 2.4 GB is past `max_buffer_size`, so
-    /// wgpu returns an INVALID buffer and every submit fails.
-    ///
-    /// ⚠️ Read by the CPU to size buffers, not by any shader. It rides
-    /// this struct because this is what already reaches every pass that
-    /// needs it.
+    /// LOD groups the scene actually has — `instance_group_capacity`'s O(1) prefix sum, not
+    /// `instance_count * meshlets_per_mesh`.
     pub group_capacity: u32,
     /// Chunk slots the two-level cull's list holds (#1002).
-    ///
-    /// 🔴 A CAPACITY, not a count. `cs_cull_instances` reserves chunks
-    /// with an atomic that is never clamped — that is how an overflow
-    /// stays visible — so every reader clamps to this instead, and the
-    /// writer drops past it rather than scribbling off the end.
     pub chunk_capacity: u32,
 }
 
@@ -163,39 +95,14 @@ impl SceneCullParams {
 }
 
 /// Owns the scene-wide instance storage buffer + an upload helper.
-///
-/// Capacity starts at a construction-time guess and grows to fit via
-/// [`MeshletScene::ensure_capacity`]; growth re-creates the buffer, which
-/// is cheap next to the per-frame upload. Recreating it is safe because
-/// every consumer builds its bind group per frame — nothing caches a
-/// reference to the buffer across frames.
 pub struct MeshletScene {
     instance_buffer: wgpu::Buffer,
-    /// Each instance's transform **from the previous frame** (#481), as a
-    /// flat array the motion-vector pass indexes with the same
-    /// `inst_id`.
-    ///
-    /// 🔴 Parallel to the instances rather than a field inside them. The
-    /// record is 96 bytes and six shaders mirror its layout; growing it
-    /// would mean editing all six to add a matrix that exactly one of
-    /// them reads. Separate arrays, indexed by the same id, is also what
-    /// the engine's own data-oriented rule asks for.
+    /// Each instance's transform **from the previous frame** (#481), as a flat array the
+    /// motion-vector pass indexes with the same `inst_id`.
     previous_transform_buffer: wgpu::Buffer,
     capacity: u32,
     bgl: wgpu::BindGroupLayout,
     /// Last frame's transform for each entity that had one.
-    ///
-    /// 🔴 Keyed by ENTITY, never by position. The instance vector is
-    /// rebuilt from an ECS query every frame, so an entity appearing or
-    /// changing archetype renumbers everything after it — index `i`
-    /// simply is not the same object two frames running. Keyed by index,
-    /// a reorder hands each instance somebody else's previous matrix and
-    /// the motion vectors come out wrong with nothing failing.
-    ///
-    /// A map on the CPU, feeding a flat array on the GPU. The DOD rule
-    /// bans hash lookups from hot paths that cross to the GPU; this one
-    /// runs once per frame over the instance list to *build* that array,
-    /// which is the streaming-and-coordination case it allows.
     previous_transforms: std::collections::HashMap<kooch_ecs::entity::Entity, [[f32; 4]; 4]>,
     /// Scratch for the upload, kept so the per-frame gather does not
     /// allocate.
@@ -229,22 +136,6 @@ impl MeshletScene {
     }
 
     /// Grows the instance buffer to hold at least `required` slots.
-    ///
-    /// Construction-time capacity is a starting guess, not a contract: a
-    /// scene is authored, not declared, and the renderer finds out how
-    /// many instances it has when it walks the ECS. Until this existed
-    /// the 257th mesh instance aborted the process — in the editor *and*
-    /// in a shipped game, since both build the stage with the same
-    /// default of 256.
-    ///
-    /// Geometric growth, matching
-    /// [`MeshletCull::ensure_capacity`](crate::meshlet::MeshletCull::ensure_capacity):
-    /// next power of two, and never less than double, so a scene that
-    /// grows an instance at a time does not reallocate every frame.
-    ///
-    /// The old buffer is dropped rather than retired into a frame slot.
-    /// This is called from `render()` **before** any command encoder for
-    /// the frame binds it, so nothing in flight can be referencing it.
     pub fn ensure_capacity(&mut self, device: &wgpu::Device, required: u32) {
         if required <= self.capacity {
             return;
@@ -322,16 +213,8 @@ impl MeshletScene {
         self.upload_instance_data(queue, instances);
     }
 
-    /// Uploads the instances **and** each one's transform from the
-    /// previous frame, then remembers this frame's for the next one
-    /// (#481).
-    ///
-    /// An entity seen for the first time gets its current transform as
-    /// its previous one, which is a motion vector of zero. That is the
-    /// right answer: an object that did not exist last frame has no
-    /// history for a temporal pass to reproject, and claiming it moved
-    /// from wherever the slot's last occupant was would smear it across
-    /// the screen on its first frame.
+    /// Uploads the instances **and** each one's transform from the previous frame, then remembers
+    /// this frame's for the next one (#481).
     pub fn upload_instances_with_history(
         &mut self,
         queue: &wgpu::Queue,
@@ -356,10 +239,9 @@ impl MeshletScene {
         }
         self.upload_instance_data(queue, instances);
 
-        // Rebuilt rather than updated: an entity that stopped rendering
-        // has to leave, or the map grows for the lifetime of the process
-        // and a despawned object's matrix comes back if its entity id is
-        // reused.
+        // Rebuilt rather than updated: an entity that stopped rendering has to leave, or the map
+        // grows for the lifetime of the process and a despawned object's matrix comes back if its
+        // entity id is reused.
         self.previous_transforms.clear();
         self.previous_transforms.extend(
             entities
@@ -383,10 +265,9 @@ impl MeshletScene {
     }
 }
 
-/// Decodes the packed `(instance_id, meshlet_id)` value the scene cull
-/// shader writes into `visible_meshlets`. CPU mirror of the WGSL
-/// extract logic so tests can verify expected pairs without
-/// reimplementing the bit math.
+/// Decodes the packed `(instance_id, meshlet_id)` value the scene cull shader writes into
+/// `visible_meshlets`. CPU mirror of the WGSL extract logic so tests can verify expected pairs
+/// without reimplementing the bit math.
 pub fn decode_scene_visible_id(packed: u32) -> (u32, u32) {
     // bit 16..32 = instance_id, bit 0..16 = meshlet_id
     (packed >> 16, packed & 0xFFFF)

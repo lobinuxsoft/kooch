@@ -1,15 +1,4 @@
 //! GPU integration test: scene-wide cull dispatch (Phase 1.E.1).
-//!
-//! Uploads 4 cube instances at distinct world positions, runs ONE
-//! dispatch of `cs_cull_scene` over the full (instance × meshlet)
-//! grid, and asserts:
-//!   - frustum-visible instances survive
-//!   - off-screen instances get culled
-//!   - the packed `(instance_id, meshlet_id)` decoding matches the
-//!     CPU mirror in `meshlet::scene::decode_scene_visible_id`
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test meshlet_scene_cull
 
 mod common;
 

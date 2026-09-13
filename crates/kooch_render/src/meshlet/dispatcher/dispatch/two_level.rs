@@ -9,13 +9,8 @@ use super::super::{
     CHUNK_ARGS_OFFSET, CHUNK_HEADER_WORDS, CULL_CHUNK_MESHLETS, DISPATCH_ARGS_BYTES,
 };
 
-/// Chunks the worst case needs: every instance surviving, each expanded
-/// at the heaviest mesh in the pool.
-///
-/// This is the old rectangle divided by the workgroup size, and it is
-/// deliberately still an over-approximation — it sizes a BUFFER, not a
-/// dispatch. Four bytes a chunk against nine million lanes is the whole
-/// point of #1002.
+/// Chunks the worst case needs: every instance surviving, each expanded at the heaviest mesh in the
+/// pool.
 pub fn chunks_for(instance_count: u32, meshlets_per_mesh: u32) -> u32 {
     instance_count
         .saturating_mul(meshlets_per_mesh.div_ceil(CULL_CHUNK_MESHLETS).max(1))
@@ -23,41 +18,7 @@ pub fn chunks_for(instance_count: u32, meshlets_per_mesh: u32) -> u32 {
 }
 
 impl MeshletCull {
-    /// The 2-pass atomic cull (#465), entered per instance rather than
-    /// per rectangle cell (#1002).
-    ///
-    /// Four dispatches where [`Self::dispatch_scene_pool_atomic`] had
-    /// two:
-    ///
-    /// 1. `cs_cull_instances` — one thread per instance. Frustum, then
-    ///    screen coverage. A survivor reserves
-    ///    `⌈its own meshlet_count / 64⌉` chunks.
-    /// 2. `cs_cull_expand_args` — one thread turning that count into
-    ///    dispatch args.
-    /// 3. `cs_lod_group_max_err_chunked` — #465's pass 1, indirect.
-    /// 4. `cs_cull_scene_pool_atomic_chunked` — #465's pass 2,
-    ///    indirect.
-    ///
-    /// 🔴 In TWO compute passes with a buffer copy between them, and
-    /// that is a wgpu rule rather than a preference: a buffer may not
-    /// be `STORAGE_READ_WRITE` and `INDIRECT` inside one usage scope.
-    /// `chunks` has to stay bound as storage for the expansion to read
-    /// the list, so the three words it dispatches off are copied into
-    /// `chunk_args` first — the same move
-    /// `mirror_count_to_indirect_args` makes for `visible_count`.
-    ///
-    /// The two extra dispatches are the price. What they buy on
-    /// `dense.scene` is the meshlet domain entered on the order of the
-    /// scene's real meshlet count instead of 9 633 630 times, and — the
-    /// part that matters more — registering a heavy mesh no longer
-    /// changes what a field of cubes costs.
-    ///
-    /// # Capacity
-    ///
-    /// `capacity` and `group_capacity` are unchanged: they size the
-    /// SURVIVORS and the error arena, neither of which this reshapes.
-    /// `chunk_capacity` must cover [`chunks_for`] — call
-    /// [`Self::ensure_chunk_capacity`] first.
+    /// The 2-pass atomic cull (#465), entered per instance rather than per rectangle cell (#1002).
     #[allow(clippy::too_many_arguments)]
     pub fn dispatch_scene_pool_atomic_chunked(
         &self,
@@ -93,11 +54,7 @@ impl MeshletCull {
             encoder.clear_buffer(&self.reject_reasons, 0, None);
         }
         encoder.clear_buffer(&self.stage_counters, 0, None);
-        // 🔴 The chunk HEADER only. Clearing the list too would be a
-        // memset of the whole rectangle every frame — the cost this
-        // pass exists to stop paying — and it is dead weight: a slot
-        // past `chunk_count` is never read, and one below it was
-        // written this frame by the instance pass.
+        // 🔴 The chunk HEADER only.
         encoder.clear_buffer(&self.chunks, 0, Some(CHUNK_HEADER_WORDS * 4));
 
         let cull_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -221,11 +178,9 @@ impl MeshletCull {
             });
             bind(&mut pass);
 
-            // The size of these two was decided by the GPU one pass ago
-            // and the CPU never learns it. That is the property the
-            // whole change turns on: a CPU-side count would need a
-            // readback, and a readback in the hot path is a frame of
-            // latency.
+            // The size of these two was decided by the GPU one pass ago and the CPU never learns
+            // it. That is the property the whole change turns on: a CPU-side count would need a
+            // readback, and a readback in the hot path is a frame of latency.
             pass.set_pipeline(&pipelines.pipeline_lod_group_max_err_chunked);
             pass.dispatch_workgroups_indirect(&self.chunk_args, 0);
 

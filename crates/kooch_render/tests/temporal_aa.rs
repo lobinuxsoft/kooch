@@ -1,19 +1,4 @@
 //! Temporal anti-aliasing, asserted on the image it produces (#481).
-//!
-//! The unit tests next to the code check the two halves separately —
-//! `jitter/tests.rs` that the offset is sub-pixel and evenly spread,
-//! `motion_vectors.rs` that the vectors point the right way. Neither
-//! would catch the failure this file exists for: both halves correct and
-//! the pair wired together wrongly, which renders a plausible image that
-//! anti-aliases nothing.
-//!
-//! Everything here reads the **final `Rgba8Unorm` image**, not the HDR
-//! resolve. That is what the tonemap produced, which is what somebody
-//! looking at the screen sees, and it means an assertion cannot pass
-//! while the resolve is being written to a texture nobody reads.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test temporal_aa
 
 mod common;
 
@@ -21,11 +6,6 @@ use common::lit_scene::{SIZE, rig};
 use kooch_render::meshlet::ShadingRate;
 
 /// Renders `frames` in sequence and hands back the last image.
-///
-/// Sequence, not repetition: the whole mechanism is that frame *n* sees
-/// what frames 0..n left behind. A test that rendered once and asserted
-/// would be measuring the reset path, which is the one frame TAA does
-/// nothing on.
 fn accumulate(r: &mut common::lit_scene::Rig, taa: bool, frames: u32) -> Vec<u8> {
     assert!(
         r.stage.set_compute_shading(true) > 0,
@@ -46,9 +26,6 @@ fn accumulate(r: &mut common::lit_scene::Rig, taa: bool, frames: u32) -> Vec<u8>
 }
 
 /// Mean absolute difference per colour channel, 0..255.
-///
-/// RGB only. Alpha is coverage, not colour, and including it would mix a
-/// flag into a measurement of the picture.
 fn mean_difference(a: &[u8], b: &[u8]) -> f64 {
     let sum: u64 = a
         .chunks_exact(4)
@@ -86,35 +63,8 @@ fn gradients(image: &[u8]) -> Vec<f64> {
     out
 }
 
-/// Squared-gradient energy of `resolved` over that of `plain`, counting
-/// only the pairs that are among the strongest `1 - percentile` of the
-/// **plain** image.
-///
-/// # 🔴 Why it is masked, and why the mask comes from the plain frame
-///
-/// Two earlier metrics measured nothing, both for the same reason, and
-/// both are worth writing down. Counting "intermediate" pixels gave
-/// 21595 against 21337 — a lit floor is already a gradient, so half the
-/// frame qualifies with or without a resolve. Summing squared gradients
-/// over the *whole* image gave 124 against 123, because the smooth
-/// lighting falloff carries most of the total and the resolve rightly
-/// leaves it alone.
-///
-/// Masking to the pixels that actually are edges separates the two, and
-/// the mask is taken from the unresolved image so it cannot be shaped by
-/// the thing being measured. Squared, because that is what turns
-/// anti-aliasing into a number: one step of `d` carries `d²`, the same
-/// step spread over two pixels carries `2(d/2)² = d²/2`. Halved, every
-/// time, with no threshold to argue about.
-///
-/// Measured on the lit scene, resolved over plain:
-///
-///     top 10 %    0.61
-///     top 1 %     0.38
-///     top 0.1 %   0.32
-///
-/// Past the halving on the strongest edges, because a step there is
-/// spread over more than two pixels — eight jitter phases, not two.
+/// Squared-gradient energy of `resolved` over that of `plain`, counting only the pairs that are
+/// among the strongest `1 - percentile` of the **plain** image.
 fn edge_energy_ratio(plain: &[u8], resolved: &[u8], percentile: f64) -> f64 {
     let before = gradients(plain);
     let after = gradients(resolved);
@@ -134,16 +84,6 @@ fn edge_energy_ratio(plain: &[u8], resolved: &[u8], percentile: f64) -> f64 {
 }
 
 /// 🔴 The assertion the whole feature is for.
-///
-/// A silhouette rendered once is a step: the pixel is the object or it
-/// is the background, with nothing in between for the eye to read as a
-/// smooth line. Averaging jittered frames turns each step into a ramp.
-///
-/// This fails for every wiring mistake at once — jitter that never
-/// reaches the projection, a history that is cleared every frame, motion
-/// vectors carrying the jitter and cancelling it, a resolve written to a
-/// texture the tonemap does not read. All four produce an image
-/// identical to the untouched one, and only this says so.
 #[test]
 fn a_silhouette_stops_being_a_step() {
     let Some(mut r) = rig(3, true) else {
@@ -153,10 +93,9 @@ fn a_silhouette_stops_being_a_step() {
     let plain = accumulate(&mut r, false, 4);
     let resolved = accumulate(&mut r, true, 24);
 
-    // First, that anything happened at all. Without this the ratio could
-    // come out at 1.0 by the resolve never having run, and the message
-    // below would send the reader looking for a subtle averaging bug
-    // instead of a pass that is not in the frame.
+    // First, that anything happened at all. Without this the ratio could come out at 1.0 by the
+    // resolve never having run, and the message below would send the reader looking for a subtle
+    // averaging bug instead of a pass that is not in the frame.
     let moved = mean_difference(&plain, &resolved);
     assert!(
         moved > 0.1,
@@ -180,30 +119,6 @@ fn a_silhouette_stops_being_a_step() {
 }
 
 /// And a still scene must not run away from itself.
-///
-/// # 🔴 It does not fully settle, and that is measured rather than
-/// wished away
-///
-/// The obvious assertion — the frame changes less at step 23 than at
-/// step 3 — is false here, and chasing it is what produced a bug. The
-/// variance clip fires on about 11 % of the pixels of this scene even
-/// with nothing moving, and *which* 11 % follows the jitter phase, so
-/// the image keeps a small period-eight wobble forever: **0.172 at step
-/// 3, 0.181 at step 23**, both under a tenth of a percent of full
-/// scale. That is the shimmer TAA is known for on high-frequency
-/// content, it is upstream's behaviour at upstream's clip width, and it
-/// is not divergence.
-///
-/// Widening the clip does remove it — two sigma gives 0.080 and
-/// settling — and that is exactly the trade this must not take
-/// unmeasured. The clip is what stops a stale history from ghosting,
-/// and it was widened once already on the strength of a metric that
-/// turned out to be measuring the lighting falloff rather than the
-/// edges. See the header of `taa.wgsl`.
-///
-/// So what is asserted is the property that actually matters: the
-/// wobble stays small. A resolve whose history is genuinely wrong does
-/// not wobble, it diverges, and by orders of magnitude.
 #[test]
 fn a_still_scene_does_not_diverge() {
     let Some(mut r) = rig(3, true) else {
@@ -241,11 +156,6 @@ fn a_still_scene_does_not_diverge() {
 }
 
 /// Off has to mean off, all the way down to the projection.
-///
-/// The jitter and the resolve are one switch precisely so that half of
-/// the pair cannot be left on, and this is what checks the switch
-/// reaches both: with TAA off the same still scene must render to the
-/// same bytes twice, which a jittered projection makes impossible.
 #[test]
 fn nothing_moves_with_the_resolve_off() {
     let Some(mut r) = rig(3, true) else {
@@ -261,12 +171,9 @@ fn nothing_moves_with_the_resolve_off() {
         (SIZE * SIZE * 4) as usize,
         "the readback is not the frame it claims to be",
     );
-    // Not exactly zero, and the slack is measured rather than guessed:
-    // 0.000006 of a level per channel, which is one pixel of the forty
-    // thousand landing on the other side of a `textureAtomicMax` tie
-    // between two coplanar meshlets. That race predates this feature. A
-    // jittered projection moves every silhouette in the frame and scores
-    // three orders of magnitude above it.
+    // Not exactly zero, and the slack is measured rather than guessed: 0.000006 of a level per
+    // channel, which is one pixel of the forty thousand landing on the other side of a
+    // `textureAtomicMax` tie between two coplanar meshlets. That race predates this feature.
     assert!(
         delta < 1e-3,
         "two renders of a still scene with the resolve off differ by {delta:.6}. The \
@@ -275,23 +182,8 @@ fn nothing_moves_with_the_resolve_off() {
     );
 }
 
-/// Writes plain / resolved / difference as binary PPMs for eyeballing.
-/// The tool that found the posterisation, kept because it found it.
-///
-/// `cargo test -p kooch_render --test temporal_aa dump_frames -- --ignored`
-/// writes three binary PPMs to `KOOCH_DUMP_DIR` (default `/tmp`): the
-/// unresolved frame, the resolved one, and their **signed** difference
-/// amplified four times about mid grey.
-///
-/// 🔴 The signed difference is the one that matters, and it is why this
-/// exists rather than a pair of screenshots. A magnitude image says
-/// "these pixels changed", which at every edge is true and expected. The
-/// signed one says whether the resolve *darkened* or *brightened* them,
-/// and a temporal pass that is misbehaving does both in alternating
-/// bands — which is what it showed: iso-luminance contours sweeping the
-/// floor, the signature of a range compressor being fed values it has no
-/// resolution for. Nothing in the numeric assertions above could have
-/// named that.
+/// Writes plain / resolved / difference as binary PPMs for eyeballing. The tool that found the
+/// posterisation, kept because it found it.
 #[test]
 #[ignore]
 fn dump_frames() {

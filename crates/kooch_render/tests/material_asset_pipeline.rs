@@ -1,20 +1,4 @@
 //! End-to-end test for the material asset pipeline.
-//!
-//! Walks the same chain the editor exercises when the inspector
-//! picker assigns a `.ron` material to `MeshRenderer.material`:
-//! tempdir-on-disk `.ron` + `.meta` → `AssetDatabase` → `AssetServer`
-//! → `MaterialPipeline::sync_from_resources` → `register` →
-//! `lookup_or_fallback` returns a non-fallback slot.
-//!
-//! Differs from `meshlet_materials.rs` (which calls
-//! `MaterialPipeline.register` directly with a freshly-minted GUID
-//! and bypasses the asset pipeline entirely) by going through
-//! `AssetServer::load_by_guid`. Regression guard for #533: the bug
-//! that surfaced there was invisible to the bypassed path, so this
-//! test must own the picker → GPU contract.
-//!
-//! Headless except for the wgpu device the pool needs — gated on
-//! `try_acquire_device`.
 
 mod common;
 
@@ -74,10 +58,9 @@ fn ron_blue_metal() -> &'static str {
 
 fn build_resources(database: AssetDatabase, server: AssetServer) -> Resources {
     let mut resources = Resources::new();
-    // ECS scaffolding the meshlet stage queries through when it
-    // collects referenced GUIDs. Even the material-only tests need
-    // this when `MeshletRenderStage::sync_assets_to_gpu` runs end-
-    // to-end, so we install it unconditionally for shape parity.
+    // ECS scaffolding the meshlet stage queries through when it collects referenced GUIDs. Even the
+    // material-only tests need this when `MeshletRenderStage::sync_assets_to_gpu` runs end- to-end,
+    // so we install it unconditionally for shape parity.
     resources.insert(EntityAllocator::new());
     resources.insert(ComponentRegistry::new());
     resources.insert(ArchetypeRegistry::new());
@@ -186,15 +169,7 @@ fn sync_from_resources_is_idempotent_across_frames() {
 
 #[test]
 fn editor_path_syncs_material_with_gpu_context_outside_resources() {
-    // Regression guard for #533. The editor's frame-driver removes
-    // `GpuContext` from `Resources` for the whole frame, so by the
-    // time `MeshletRenderStage::sync_assets_to_gpu` ran the previous
-    // implementation's inner `resources.remove::<GpuContext>()`
-    // returned `None` and `MaterialPipeline::sync_from_resources`
-    // was silently skipped. This test mirrors the editor's call
-    // shape — queue + device come in as parameters and `Resources`
-    // never holds a `GpuContext` — and asserts the picker GUID ends
-    // up registered after a single tick.
+    // Regression guard for #533.
     let Some((device, queue)) = try_acquire_device() else {
         eprintln!("no GPU adapter; skipping");
         return;
@@ -243,10 +218,9 @@ fn sync_from_resources_skips_database_without_material_entries() {
     let dir = TempDir::new("empty_db");
     let (asset_path, guid) = write_material_asset(&dir.path, "blue_metal", ron_blue_metal());
 
-    // Database is populated, but with a non-material `type_name`. The
-    // sync must walk past it silently — exercising the
-    // `entries_of_type(MATERIAL_TYPE_NAME)` filter that gates the
-    // entire pass.
+    // Database is populated, but with a non-material `type_name`. The sync must walk past it
+    // silently — exercising the `entries_of_type(MATERIAL_TYPE_NAME)` filter that gates the entire
+    // pass.
     let mut database = AssetDatabase::new();
     database.register(
         guid,

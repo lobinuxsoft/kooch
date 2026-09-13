@@ -48,22 +48,17 @@ fn ensure_gpu_mesh_marks_pool_dirty_only_for_new_guids() {
     }
     assert!(pipeline_dirty);
 
-    // Re-registration of the same MeshletMesh adds another pool
-    // entry, but the MeshletPipeline registry deduplicates by
-    // GUID; the dirty flag mirror in ensure_gpu_mesh keys on the
+    // Re-registration of the same MeshletMesh adds another pool entry, but the MeshletPipeline
+    // registry deduplicates by GUID; the dirty flag mirror in ensure_gpu_mesh keys on the
     // registered_count delta. This test pins the directional rule.
     let before2 = pool.mesh_count();
     let after2 = before2; // simulate dedup hit (no register call)
     assert!(after2 == before2, "dedup keeps the pool unchanged");
 }
 
-/// A failed load never enters the cache, so the GUID is still pending
-/// next frame — the retry loop is unbounded by construction and the
-/// warning was too: 1068 lines for two GUIDs in nine seconds (#693).
-///
-/// Modelled directly, the way `ensure_gpu_mesh_marks_pool_dirty_only_for_new_guids`
-/// above models registration: the call site needs a GPU stage, and the
-/// rule being locked is "said once per GUID until it resolves".
+/// A failed load never enters the cache, so the GUID is still pending next frame — the retry loop
+/// is unbounded by construction and the warning was too: 1068 lines for two GUIDs in nine seconds
+/// (#693).
 #[test]
 fn an_unresolved_mesh_is_said_once() {
     use kooch_core::Guid;
@@ -90,9 +85,6 @@ fn an_unresolved_mesh_is_said_once() {
 }
 
 /// The actionable line, and the condition that keeps it to one.
-///
-/// A scene where nothing resolves is a broken run, not N warnings — and
-/// the message naming the cause was buried under a thousand correct ones.
 #[test]
 fn a_scene_that_resolves_nothing_says_so_once() {
     let fired = |pending: usize, referenced: usize, reported: usize, cached: usize| {

@@ -1,9 +1,5 @@
-//! Atomic R64 visibility-buffer path (#493) — single-pass cull → R64
-//! winner-takes-all raster → deferred shade. Routed by
-//! [`MeshletRenderStage::render`] when `vbuf64_stage` is `Some`.
-//!
-//! Owns the encoder it receives, writes the GPU timer end + readback,
-//! submits, and returns the per-frame [`MeshletRenderStats`].
+//! Atomic R64 visibility-buffer path (#493) — single-pass cull → R64 winner-takes-all raster →
+//! deferred shade. Routed by [`MeshletRenderStage::render`] when `vbuf64_stage` is `Some`.
 
 use glam::{Mat4, Vec3};
 
@@ -16,13 +12,8 @@ use crate::meshlet::scene::SceneCullParams;
 use super::super::{MeshletRenderStage, MeshletRenderStats, ViewId};
 
 impl MeshletRenderStage {
-    /// Atomic R64 vbuf path. Same observable contract as the legacy
-    /// path: 4 logical passes (cull + clear + raster + shade) and
-    /// stats reporting `draw_calls = 4`. See [`Self::render`] for the
-    /// dispatch decision and the prelude that builds `cull_params` /
-    /// `scene_params` / `meshlet_bg` / `timer_slot`. The material pool
-    /// reaches the two-pass shader via the `MaterialPipeline` resource,
-    /// so this path takes no precomputed material bind group.
+    /// Atomic R64 vbuf path. Same observable contract as the legacy path: 4 logical passes (cull +
+    /// clear + raster + shade) and stats reporting `draw_calls = 4`.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn render_path_r64(
         &mut self,
@@ -62,10 +53,8 @@ impl MeshletRenderStage {
         {
             profiling::scope!("cull: view");
             let query = scopes.map(|s| s.begin("cull", &mut encoder));
-            // #1002 — same two passes, entered per instance instead of
-            // per cell of an `instances × heaviest mesh` rectangle. The
-            // switch exists so the two shapes stay comparable in one
-            // build; it is not a fallback for a path that works.
+            // per cell of an `instances × heaviest mesh` rectangle. The switch exists so the two
+            // shapes stay comparable in one build; it is not a fallback for a path that works.
             let two_level = resources
                 .get::<crate::meshlet::MeshletLodSettings>()
                 .copied()
@@ -106,15 +95,8 @@ impl MeshletRenderStage {
             .get::<MeshletDebugMode>()
             .copied()
             .unwrap_or_default();
-        // #454: the modal accumulator runs in TriangleDensity /
-        // Overdraw modes (and falls back to the TriangleDensity
-        // count for the reject overlay modes still being wired in
-        // later subtasks). Production rendering (`Off`, `MeshletIds`,
-        // `InstanceIds`, `CullPassthrough`, `OnlyLod0`, `OnlyRoots`)
-        // leaves the uniform at 0 so the hot path skips the atomic
-        // increment. The density texture is allocated in lockstep
-        // with the stage's render targets; it is `Some` whenever
-        // the vbuf64 path is selectable.
+        // Overdraw modes (and falls back to the TriangleDensity count for the reject overlay modes
+        // still being wired in later subtasks).
         let density_mode: u32 = match debug_mode {
             MeshletDebugMode::TriangleDensity
             | MeshletDebugMode::HiZRejected
@@ -142,14 +124,9 @@ impl MeshletRenderStage {
             .copied()
             .unwrap_or_default()
             .multiplier();
-        // 🔴 Braced, like `upload instances`: a `profiling::scope!`
-        // lives to the end of its block, and mid-function this one
-        // reported the overlay dispatch, the readbacks and `Queue::
-        // submit` as part of the raster. The CPU cost of submitting is
-        // not the cost of shading.
-        // 🔴 The block's value, not a mutable binding written from
-        // inside it: DLSS hands back a command buffer that has to reach
-        // the single submit at the bottom of this function (#536).
+        // 🔴 Braced, like `upload instances`: a `profiling::scope!` lives to the end of its block,
+        // and mid-function this one reported the overlay dispatch, the readbacks and `Queue::
+        // submit` as part of the raster. The CPU cost of submitting is not the cost of shading.
         let vbuf64 = self.views[view_id]
             .vbuf64_stage
             .as_ref()
@@ -176,23 +153,8 @@ impl MeshletRenderStage {
             scopes.end(&mut encoder, query);
         }
 
-        // 2. 🔴 Shadow pages (#866), BETWEEN the raster and the shading,
-        //    which is Unreal's order and the only window where both
-        //    halves can be right at once.
-        //
-        //    The marking reads the depth buffer to find out which
-        //    receivers exist and therefore which pages do. While the
-        //    raster and the shading were one call the only depth it
-        //    could read was the PREVIOUS frame's, so pages were
-        //    requested for where the geometry used to be — and a
-        //    receiver that crossed a clipmap level boundary landed on a
-        //    page nobody had asked for. A page that does not exist
-        //    shades as lit.
-        //
-        //    It cannot go after the shading either: that was tried, and
-        //    the atlas was then a frame old, so a moving object was
-        //    compared against its OWN caster from the previous frame
-        //    and shadowed itself.
+        // 2. 🔴 Shadow pages (#866), BETWEEN the raster and the shading, which is Unreal's order and
+        // the only window where both halves can be right at once.
         self.record_page_marking(
             device,
             queue,
@@ -244,27 +206,20 @@ impl MeshletRenderStage {
             if let (Some(scopes), Some(query)) = (scopes, shade_query) {
                 scopes.end(&mut encoder, query);
             }
-            // 🔴 Kept until the submit below, where it goes in the SAME
-            // submission and immediately after this encoder. DLSS
-            // records into wgpu's Vulkan command pool behind its back;
-            // submitting it apart from, or before, the frame that fed
-            // it is undefined behaviour by the crate's own contract.
+            // 🔴 Kept until the submit below, where it goes in the SAME submission and immediately
+            // after this encoder.
             dlss_commands
         };
 
-        // 🔴 The frame is CUT here when DLSS ran, and the rest of it —
-        // the debug overlay below, the GPU timer resolve, the final
-        // submit — continues in the encoder the stage handed back.
-        // Everything downstream reads the upscaled image, and DLSS has
-        // not written it until its own buffer reaches the queue.
+        // 🔴 The frame is CUT here when DLSS ran, and the rest of it — the debug overlay below, the
+        // GPU timer resolve, the final submit — continues in the encoder the stage handed back.
         if let Some(deferred) = frame_dlss_commands {
             queue.submit([encoder.finish(), deferred.dlss]);
             encoder = deferred.post;
         }
-        // The debug paint, which is all that is left here. See
-        // `PageMarker::record_paint`: the marking itself moved to the
-        // top of the frame, but the paint writes the view's FINAL colour
-        // and has to land after the fused pass and after the DLSS cut.
+        // The debug paint, which is all that is left here. See `PageMarker::record_paint`: the
+        // marking itself moved to the top of the frame, but the paint writes the view's FINAL
+        // colour and has to land after the fused pass and after the DLSS cut.
         self.record_page_paint(&mut encoder, view_id);
 
         if timer_slot.is_some() {
@@ -272,14 +227,9 @@ impl MeshletRenderStage {
             self.gpu_timers.write_stage_start(&mut encoder, 2);
         }
 
-        // Reject-reason overlay (#454.4). Dispatched only when the
-        // current debug mode is one the cull pass tagged into
-        // `reject_reasons[]` AND the stage owns the overlay pipeline
-        // (i.e. `MeshletDebugCaps::supports_texture_atomic` was true
-        // at construction). The dropdown filter prevents the user
-        // from selecting a mode for which one of those is false, but
-        // we re-check defensively so a runtime resource swap can't
-        // dispatch into nothing.
+        // Reject-reason overlay (#454.4). Dispatched only when the current debug mode is one the
+        // cull pass tagged into `reject_reasons[]` AND the stage owns the overlay pipeline (i.e.
+        // `MeshletDebugCaps::supports_texture_atomic` was true at construction).
         if let (Some(reject_code), Some(overlay), Some(gpu_pool)) = (
             debug_mode.reject_reason_code(),
             self.reject_overlay.as_ref(),
@@ -309,12 +259,9 @@ impl MeshletRenderStage {
             );
         }
 
-        // #454.6 — stage-counter readback is gated to debug-active
-        // frames. The cull shader only writes the SSBO when
-        // `params.debug_active != 0`; if it didn't this frame, the
-        // copy would just shuttle stale zeros (or last-frame's
-        // values when the user just toggled the mode off). Skip
-        // entirely in that case.
+        // frames. The cull shader only writes the SSBO when `params.debug_active != 0`; if it
+        // didn't this frame, the copy would just shuttle stale zeros (or last-frame's values when
+        // the user just toggled the mode off). Skip entirely in that case.
         let stage_slot = if cull_params.debug_active != 0 {
             let slot = self.stage_counters.acquire_slot();
             if let Some(idx) = slot {
@@ -372,14 +319,12 @@ impl MeshletRenderStage {
             pool_meshlets_roots,
             gpu_frame_ms: self.gpu_timers.last_frame_ms(),
             draw_calls: meshlet_draw_calls,
-            // Only when this frame asked for them. The cache holds
-            // whatever the last debug-active frame read, and handing
-            // that to the HUD draws a number from an unknown moment as
-            // if it described the frame on screen (#703).
+            // Only when this frame asked for them. The cache holds whatever the last debug-active
+            // frame read, and handing that to the HUD draws a number from an unknown moment as if
+            // it described the frame on screen (#703).
             cluster_occupancy: self.lights.clusters().occupancy(),
-            // 🔴 THIS view's counts, not the last readback to land. The
-            // stats a view publishes have to describe the camera that
-            // produced them, or a panel drawn beside one viewport
+            // 🔴 THIS view's counts, not the last readback to land. The stats a view publishes have
+            // to describe the camera that produced them, or a panel drawn beside one viewport
             // reports the other one's frustum.
             page_marking: self.page_marking_for(view_id),
             page_raster: self.page_raster_for(view_id),

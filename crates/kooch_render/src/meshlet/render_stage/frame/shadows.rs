@@ -1,14 +1,4 @@
 //! Wiring the shadow pass into a frame (#476).
-//!
-//! Two steps, in this order and for a reason:
-//!
-//! 1. [`MeshletRenderStage::prepare_shadows`] runs **before** the
-//!    frame's encoder exists, because it can allocate — the atlas on the
-//!    first sunlit frame, the cascade culls whenever the scene grows —
-//!    and a buffer replaced after a pass references it is a use of the
-//!    old one.
-//! 2. [`MeshletRenderStage::record_shadows`] runs **first inside** the
-//!    encoder, because everything that shades reads the atlas it fills.
 
 use kooch_core::resource::Resources;
 
@@ -27,18 +17,8 @@ pub(in crate::meshlet::render_stage) struct ClassicAlloc {
     pub(in crate::meshlet::render_stage) cubes: u32,
 }
 
-/// The decision, pure so a test can hold it still: what the classic
-/// pass allocates given the settings.
-///
-/// 🔴 With the pages on, NOTHING reads the atlas or the cubes — the
-/// draws are gated, the lists are empty, `inti_shadow` branches to the
-/// pages — but the textures stayed allocated: 64 MiB of atlas and 6 per
-/// cube, held for a reader that never comes (#945). They cannot go to
-/// zero: the shading's bind group needs live views and wgpu refuses a
-/// zero-layer texture. So they go to a TOKEN — the atlas at its clamp
-/// floor, one sixteen-texel cube — under half a megabyte standing where
-/// eighty-eight stood, and the resize-release door that already existed
-/// swaps the real allocation back the frame the pages turn off.
+/// The decision, pure so a test can hold it still: what the classic pass allocates given the
+/// settings.
 pub(in crate::meshlet::render_stage) fn classic_shadow_alloc(
     settings: &ShadowSettings,
 ) -> ClassicAlloc {
@@ -57,13 +37,7 @@ pub(in crate::meshlet::render_stage) fn classic_shadow_alloc(
 }
 
 impl MeshletRenderStage {
-    /// Allocates the atlas if this frame needs one, places the cascades
-    /// and sizes the culls.
-    ///
-    /// `None` when nothing casts: no directional light with
-    /// `cast_shadows`, or the author turned shadows off. The caller
-    /// passes that straight through to `GpuLights::update`, which leaves
-    /// the dummy atlas bound and the sampling switched off.
+    /// Allocates the atlas if this frame needs one, places the cascades and sizes the culls.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::meshlet::render_stage) fn prepare_shadows(
         &mut self,
@@ -81,46 +55,16 @@ impl MeshletRenderStage {
             .copied()
             .unwrap_or_default();
         let sun = lights.sun();
-        // Spot lights keep the array alive on their own (#777): a scene
-        // lit by a torch and no sun still casts, and releasing the
-        // texture because nothing directional casts would have made
+        // Spot lights keep the array alive on their own (#777): a scene lit by a torch and no sun
+        // still casts, and releasing the texture because nothing directional casts would have made
         // that scene the one case where shadows silently do not exist.
-        // Already capped at the budget during the walk, and numbered in
-        // the order the slots were handed out — there is no second place
-        // that decides which spots fit.
-        // 🔴 With virtual pages on, every lamp samples the PAGE pool —
-        // `inti_light_lit` takes the page branch whenever the pages are
-        // bound — so the cube maps and the spot layers would be drawn
-        // for nobody. Six faces per lamp is the single most expensive
-        // shadow this engine draws, and it was running in parallel with
-        // the pages that replaced it. Empty lists skip those passes
-        // wholesale, and the atlas releases through the same
-        // `nothing_casts` door a lamp-less scene uses.
         let spots = if settings.virtual_pages {
             Vec::new()
         } else {
             lights.spot_shadows().to_vec()
         };
-        // Point lights, likewise (#778) — ranked by what a cube would
-        // show, because past the limit a light stops casting and which
-        // one should not depend on spawn order.
-        //
-        // 🔴 No camera frustum here any more. It used to cull lamps whose
-        // `range` sphere fell outside this camera before the limit was
-        // applied, to keep a corridor of lamps behind the viewer from
-        // rasterising twenty-four faces nobody can see.
-        //
-        // A cube map is drawn from the LIGHT, so what it holds cannot
-        // depend on where anyone stands — and this function runs once per
-        // VIEW while the cubes, the cache and the holders below belong to
-        // the stage. The editor renders two views through one stage, so a
-        // lamp outside the gameplay camera lost its cube for both panels
-        // and the one looking straight at it drew no shadow. Whichever
-        // view rendered last decided.
-        //
-        // The optimisation is still worth having, but it has to be asked
-        // of the frame — the union of every active view's frustum, or one
-        // selection reused by all of them — not of whoever is rendering.
+        // Point lights, likewise (#778) — ranked by what a cube would show, because past the limit
+        // a light stops casting and which one should not depend on spawn order.
         let ranked = lights.ranked_points(camera.position(), usize::MAX);
         let points = if settings.virtual_pages {
             // The page pool shadows them; see `spots` above.
@@ -139,16 +83,9 @@ impl MeshletRenderStage {
         self.point_shadow_holders
             .extend(points.iter().map(|light| light.entity));
 
-        // 🔴 The cap degrades in silence otherwise. A light past the
-        // budget keeps lighting the scene and stops casting, which is
-        // the right failure — but an author looking at a lamp whose
+        // 🔴 The cap degrades in silence otherwise. A light past the budget keeps lighting the scene
+        // and stops casting, which is the right failure — but an author looking at a lamp whose
         // shadow is missing has no way to tell that from a bug.
-        //
-        // Reported on entering the state, once, and not on every change
-        // of the overflow. It used to move with the camera — 84 and 96
-        // alternating in the roll-a-ball stress scene — because the cull
-        // ran before the budget; now the count is a property of the
-        // scene, so the line is printed once and stays true.
         let dropped = if settings.virtual_pages {
             // Nothing was dropped: the pages shadow every caster, which
             // is the ceiling this warn exists to name the loss of.
@@ -170,10 +107,9 @@ impl MeshletRenderStage {
             self.point_shadows_over_budget = dropped > 0;
         }
 
-        // Release the atlas when it stops being wanted, or when it was
-        // allocated at a resolution the author has since changed. Sixty
-        // -four megabytes is worth noticing a settings change over, and
-        // a texture cannot be resized in place.
+        // Release the atlas when it stops being wanted, or when it was allocated at a resolution
+        // the author has since changed. Sixty -four megabytes is worth noticing a settings change
+        // over, and a texture cannot be resized in place.
         let alloc = classic_shadow_alloc(&settings);
         let nothing_casts = sun.is_none() && spots.is_empty() && points.is_empty();
         if !settings.enabled || nothing_casts || self.shadow_alloc != alloc {
@@ -191,22 +127,11 @@ impl MeshletRenderStage {
         if !settings.enabled || nothing_casts {
             return None;
         }
-        // No sun is not no shadows any more. A scene with only spot
-        // lights fits no cascades and still renders their maps; the
-        // cascades' own `shadows_enabled` flag stays off, which is what
-        // stops the shading model from sampling four empty layers.
-        //
+        // No sun is not no shadows any more. A scene with only spot lights fits no cascades and
+        // still renders their maps; the cascades' own `shadows_enabled` flag stays off, which is
+        // what stops the shading model from sampling four empty layers.
         let cascades_enabled = sun.is_some();
         // 🔴 A SEPARATE decision, and the separation is the whole point.
-        // `cascades_enabled` means "the sun's shadow data in the frame
-        // uniform is valid", and `IntiFrame::with_optional_shadows` is
-        // what turns `shadows_enabled` on when it is — which
-        // `inti_shadow` checks BEFORE it branches to the pages. Folding
-        // the raster's decision into that flag turned the whole sun off:
-        // fully lit everywhere, cascades and pages alike.
-        //
-        // This one says only "draw the cascade layers", which with the
-        // pages on nothing reads.
         let draw_cascades = cascades_enabled && !settings.virtual_pages;
         let sun = sun.unwrap_or(glam::Vec3::NEG_Y);
 
@@ -237,9 +162,8 @@ impl MeshletRenderStage {
             }
         };
 
-        // Binding is idempotent and lives here rather than at
-        // allocation: growing the light buffer rebuilds the bind group,
-        // and this is the one call site that runs after every possible
+        // Binding is idempotent and lives here rather than at allocation: growing the light buffer
+        // rebuilds the bind group, and this is the one call site that runs after every possible
         // rebuild.
         let atlas_view = shadows.atlas_view().clone();
         let cubes_view = shadows.cubes_view().clone();
@@ -278,27 +202,6 @@ impl MeshletRenderStage {
     ) {
         profiling::scope!("shadows: record");
         // 🔴 Which cubes still hold last frame's truth.
-        //
-        // Six faces per light is the most expensive shadow the engine
-        // draws, and a lamp bolted to a wall in a room where nothing
-        // moves redraws all six of them sixty times a second for no
-        // reason. Epic measures a cached local shadow map at 0.05 ms
-        // against 0.4-0.8 ms invalidated, on a PS5.
-        //
-        // The key is the light's identity, its position, and a digest of
-        // the instances ITS OWN RANGE reaches (#847). It used to be a
-        // hash of every instance in the frame, which meant a crate
-        // moving across the level invalidated a lamp that could not see
-        // it — +2.0 ms in any scene where anything moves, which is every
-        // scene in a game.
-        //
-        // Still conservative where it counts: a cube redrawn for nothing
-        // costs a frame's work, and a cube NOT redrawn when it should
-        // have been is a shadow frozen in place, which is silent and
-        // gets blamed on everything else first.
-        // `light_scene_hash` digests
-        // only the instances this lamp's own range can reach, so a crate
-        // moving in another room no longer costs six faces here.
         let keys: Vec<CubeKey> = prepared
             .points
             .iter()

@@ -1,9 +1,4 @@
 //! The paged depth raster (#866).
-//!
-//! The first test is the one that matters most: four shaders share
-//! `page_table.wgsl`, and a page id encoded one way and decoded another
-//! rasterises geometry into somebody else's page. A compile failure
-//! belongs here rather than in a frame.
 
 mod common;
 
@@ -47,10 +42,9 @@ fn rasterizer(device: &wgpu::Device) -> PageRasterizer {
         PageConfig::default(),
         ClipmapConfig::default(),
         small(),
-        // 🔴 The engine's own cap, not a round number. The test used to
-        // pass 64 and the builder really emits meshlets of up to 98
-        // triangles, so a helper configured for less would have hidden
-        // the very thing `the_draw_covers_a_whole_meshlet` asserts.
+        // 🔴 The engine's own cap, not a round number. The test used to pass 64 and the builder
+        // really emits meshlets of up to 98 triangles, so a helper configured for less would have
+        // hidden the very thing `the_draw_covers_a_whole_meshlet` asserts.
         kooch_render::meshlet::DEFAULT_MAX_TRIANGLES as u32,
     )
 }
@@ -99,14 +93,9 @@ fn the_atlas_holds_the_pool() {
 
 #[test]
 fn the_lamp_arena_is_sized_by_groups() {
-    // The arena is `[slot * capacity + group]` — one ROW A LAMP — so
-    // whatever sizes it is multiplied by up to `LAMP_CULLS`. Sized by
-    // the cull's thread count instead of the scene's real group count,
-    // 2024 instances at 4700 meshlets over 64 lamps asks for 2.4 GB.
-    //
-    // 🔴 wgpu does not panic on that. It returns an INVALID buffer, and
-    // every `Queue::submit` for the rest of the run fails validation
-    // with a message that names a label and no cause.
+    // The arena is `[slot * capacity + group]` — one ROW A LAMP — so whatever sizes it is
+    // multiplied by up to `LAMP_CULLS`. Sized by the cull's thread count instead of the scene's
+    // real group count, 2024 instances at 4700 meshlets over 64 lamps asks for 2.4 GB.
     let instances = 2024u64;
     let meshlets = 4700u64;
     let lamps = 64u64;
@@ -126,21 +115,7 @@ fn the_lamp_arena_is_sized_by_groups() {
     );
 }
 
-/// The pre-pass's pair list is a PRODUCT — lamps times instances — and
-/// a constant cannot hold one.
-///
-/// 🔴 The failure it caused is the one this whole track keeps meeting:
-/// silent and healthy-looking. `cs_lamp_pairs` claims a slot with an
-/// `atomicAdd` and drops the pair past the cap, so WHICH lamps keep
-/// their geometry is whichever threads arrived first. A lamp that loses
-/// its pairs still marks its pages, still gets them resident, still
-/// gets them listed — and its cull finds no survivor, so they are
-/// cleared. A cleared page is far depth under reversed-Z, which every
-/// reader answers "nothing occludes".
-///
-/// The two `Lamp shadow pages` views named it in one look: no white in
-/// `faces`, so every page was resident, and uniform green in
-/// `occlusion`, so every page was empty.
+/// The pre-pass's pair list is a PRODUCT — lamps times instances — and a constant cannot hold one.
 #[test]
 fn the_pair_list_outgrows_constants() {
     // `dense.scene`, measured: 2157 entities and 64 lamps, and the ones
@@ -162,25 +137,7 @@ fn the_pair_list_outgrows_constants() {
     );
 }
 
-/// The per-view clear of `visible_counts` must not reach the lamps'
-/// buckets.
-///
-/// # 🔴 A source check, because the defect needs two cameras to appear
-///
-/// `PageRasterizer::record` runs once per VIEW and `LampCull::record`
-/// once per FRAME, guarded by `lamp_frame`. So a clear that spans the
-/// whole buffer is undone for the sun — its culls rerun after it — and
-/// permanent for the lamps: the second camera wipes their survivor
-/// counts and then skips the cull that refills them.
-///
-/// A lamp bucket reading zero survivors is not a slow path. The
-/// compaction stamps its pages `PAGE_EMPTY` and clears them, and a
-/// cleared page is far depth under reversed-Z, which every reader
-/// answers "nothing occludes". Every lamp in the scene stops casting
-/// and every counter stays healthy.
-///
-/// Every headless test here runs ONE view, so nothing in this file can
-/// reproduce it. The editor has two.
+/// The per-view clear of `visible_counts` must not reach the lamps' buckets.
 #[test]
 fn the_clear_spares_lamp_buckets() {
     let source = include_str!("../src/shadow/pages/raster.rs");
@@ -194,24 +151,8 @@ fn the_clear_spares_lamp_buckets() {
     );
 }
 
-/// The lamps' meshlet passes are dispatched over `pairs * meshlets`, and
-/// that product does not fit one dispatch dimension.
-///
-/// # 🔴 Why no GPU test in this file can catch it
-///
-/// The rigs here draw two instances of a cube. `meshlets_per_mesh` is
-/// one, the pair count is two, the dispatch is a single workgroup, and
-/// it will be a single workgroup no matter what the arithmetic does.
-/// `dense.scene` is 2157 instances at a SCENE-WIDE max of 4563 meshlets
-/// with 64 lamps — and `meshlets_per_mesh` is the maximum over the whole
-/// pool, not this mesh's own count, so it multiplies every pair.
-///
-/// An indirect dispatch past `maxComputeWorkGroupCount` is undefined,
-/// and here it did nothing: the culls never ran, every lamp bucket kept
-/// zero survivors, every lamp page was stamped empty and cleared, and
-/// every reader answered "nothing occludes" over a page that was
-/// resident and correctly keyed. No lamp in the scene cast a shadow and
-/// no counter said why.
+/// The lamps' meshlet passes are dispatched over `pairs * meshlets`, and that product does not fit
+/// one dispatch dimension.
 #[test]
 fn the_dispatch_outgrows_one_dimension() {
     use kooch_core::gpu::limits::{MAX_WORKGROUPS_PER_DIM, tiled_workgroups};
@@ -258,15 +199,7 @@ fn the_dispatch_outgrows_one_dimension() {
     }
 }
 
-/// The moved-caster list is sized by what the scene moves, not by a
-/// constant.
-///
-/// 🔴 The cap was not a memory budget, it was a cache switch. Past it
-/// `write_moved` bumps the scene generation, which voids every page
-/// every frame it happens — and `dense.scene` spins 2026 casters against
-/// a cap of 256, so it happened continuously. The panel then reads a
-/// pool at 100% hit over a raster redrawing two thirds of the atlas, and
-/// the two together look like a working cache.
+/// The moved-caster list is sized by what the scene moves, not by a constant.
 #[test]
 fn the_moved_list_grows() {
     // Measured on `dense.scene`, from the engine's own warning.
@@ -294,24 +227,15 @@ fn the_counters_name_every_level() {
     let raster = rasterizer(&device);
     let sun = ClipmapConfig::default().levels;
     let buckets = raster.buckets();
-    // 🔴 Per BUCKET: the sun's clipmap levels first — octaves of its
-    // own scale, level L on bucket L — then one bucket per lamp slot,
-    // each fed by that lamp's own cull. Then bucket overflow, local
-    // pages, pairs, pair overflow, a retired slot (it counted the other
-    // camera's pages when the compaction walked the whole shared
-    // table) — and then a second run per bucket for the survivors each
-    // cull produced, which is the other half of the expansion's cost,
-    // and a third for the cells a scatter would have visited instead.
+    // 🔴 Per BUCKET: the sun's clipmap levels first — octaves of its own scale, level L on bucket L
+    // — then one bucket per lamp slot, each fed by that lamp's own cull.
     assert_eq!(
         buckets,
         sun + 256,
         "the lamp buckets moved; `LAMP_CULLS` and the shader's constant have to move together"
     );
-    // …then the two receiver-bound rejections, the lamps' (#940) and
-    // the sun's (#949), which are counted apart because they measure
-    // different properties of a scene — and last the inverted
-    // expansion's own two (#1022): the pages its descents reached, and
-    // the descents that ran out of stack.
+    // …then the two receiver-bound rejections, the lamps' (#940) and the sun's (#949), which are
+    // counted apart because they measure different properties of a scene.
     assert_eq!(raster.count_slots(), buckets * 3 + 9);
     let mut words = vec![0u32; raster.count_slots() as usize];
     words[0] = 7;
@@ -345,10 +269,9 @@ fn the_counters_name_every_level() {
     assert_eq!(counts.view, 1);
 }
 
-/// Pages one LOCAL light addresses. Recomputed from the public config
-/// rather than read off the marking pass, so the two derivations have
-/// to agree: six faces of a chain from the floor up, on a word
-/// boundary.
+/// Pages one LOCAL light addresses. Recomputed from the public config rather than read off the
+/// marking pass, so the two derivations have to agree: six faces of a chain from the floor up, on a
+/// word boundary.
 fn stride(config: PageConfig, _clipmap: ClipmapConfig) -> u32 {
     (config.local_face_pages() * 6).div_ceil(32) * 32
 }
@@ -383,10 +306,6 @@ fn sun_page(view: u32, level: u32, cell: (u32, u32), lights: u32) -> u32 {
 }
 
 /// A page belonging to light 0, which this raster does not draw.
-///
-/// `level` has to be at or above the floor: the address space stops at
-/// `local_floor` on the fine side, which is what made the flat table
-/// affordable.
 fn local_page(view: u32, level: u32, cell: (u32, u32), lights: u32) -> u32 {
     let config = PageConfig::default();
     assert!(level >= config.local_floor(), "below the addressable floor");
@@ -398,12 +317,6 @@ fn local_page(view: u32, level: u32, cell: (u32, u32), lights: u32) -> u32 {
 }
 
 /// A lights buffer the compaction can read a `range` out of.
-///
-/// 🔴 It reads exactly one field, and it is the field that places a
-/// lamp's pages on the same density scale as the sun's — see
-/// `page_octave`. A buffer of the wrong stride reads somebody else's
-/// float as a range and buckets the lamp somewhere plausible and wrong,
-/// so this builds real `GpuLight` records rather than a flat array.
 fn lights_buffer(device: &wgpu::Device, queue: &wgpu::Queue, ranges: &[f32]) -> wgpu::Buffer {
     let records: Vec<kooch_lighting::GpuLight> = ranges
         .iter()
@@ -445,19 +358,8 @@ fn read_words(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer)
     words
 }
 
-/// The sun's cache generation mirrors `sun_centre` exactly: a still
-/// camera caches, a lateral step inside one page width still caches,
-/// and a step that crosses the snap grid redraws.
-///
-/// This is the CPU/WGSL arithmetic seam of the cache — `write_gens`
-/// recomputes the shader's snapped centre, and a mismatch here caches
-/// pages whose world rect silently moved.
-/// A hundred lights — `many_lights`, the scene that found the cap —
-/// and one page per lamp: every one must land in its own bucket, none
-/// in the dropped counter. At `LAMP_CULLS = 64` the lights past slot
-/// 63 lost every page (121 dropped in the editor, a third of the
-/// scene shadowless, and every unshadowed light washing out its
-/// neighbours' shadows).
+/// The sun's cache generation mirrors `sun_centre` exactly: a still camera caches, a lateral step
+/// inside one page width still caches, and a step that crosses the snap grid redraws.
 #[test]
 fn a_hundred_lamps_compact_without_drops() {
     let Some((device, queue)) = device() else {
@@ -578,12 +480,7 @@ fn a_still_suns_page_caches() {
         "a sub-page step invalidated the level: {:?}",
         &counts[..8]
     );
-    // 🔴 A step of a WHOLE page, which used to be the expensive case
-    // and is the point of the fix. The snapped centre steps, so under
-    // the camera-relative key every cell index in the level shifted by
-    // one and every page redrew — for pages whose world footprint had
-    // not moved a millimetre. Keyed by absolute world position, this
-    // page is exactly where it was and keeps its content.
+    // 🔴 A step of a WHOLE page, which used to be the expensive case and is the point of the fix.
     let counts = compact(&mut raster, eye + glam::Vec3::new(width, 0.0, 0.0));
     assert_eq!(
         counts[buckets + 4],
@@ -615,10 +512,9 @@ fn a_page_compacts_into_the_level_it_came_from() {
     let levels = ClipmapConfig::default().levels;
     const LIGHTS: u32 = 1;
 
-    // Camera 1's table, seen from camera 1: three sun pages on two
-    // levels, one local page this raster does not draw, and two pages
-    // belonging to the OTHER camera. The table is flat — the entry
-    // index IS the page id and the first word is `slot + 1`.
+    // Camera 1's table, seen from camera 1: three sun pages on two levels, one local page this
+    // raster does not draw, and two pages belonging to the OTHER camera. The table is flat — the
+    // entry index IS the page id and the first word is `slot + 1`.
     const VIEW: u32 = 1;
     // The finest addressable local level — the floor itself.
     const LOCAL_LEVEL: u32 = 3;
@@ -676,11 +572,9 @@ fn a_page_compacts_into_the_level_it_came_from() {
         0,
         "the other camera's pages are outside the dispatch, so the retired          counter stays zero"
     );
-    // 🔴 And it LANDS in the lamp's OWN bucket — after the sun's
-    // levels, at `levels + slot` — where its own cull's survivors are
-    // bound. It briefly shared the sun's octave buckets; that borrowed
-    // survivor lists culled for the camera's orthographic boxes and
-    // broke lamp shadows both ways.
+    // 🔴 And it LANDS in the lamp's OWN bucket — after the sun's levels, at `levels + slot` — where
+    // its own cull's survivors are bound. It briefly shared the sun's octave buckets; that borrowed
+    // survivor lists culled for the camera's orthographic boxes and broke lamp shadows both ways.
     let listed: u32 = (0..levels as usize).map(|l| counts[l]).sum();
     assert_eq!(
         listed, 3,
@@ -714,13 +608,8 @@ fn a_page_compacts_into_the_level_it_came_from() {
         "level 5's bucket holds its page and its physical slot"
     );
 
-    // 🔴 And the way BACK. `page_list` is dense and per view, so a pass
-    // that computes a page KEY — rather than reading one out of the list
-    // — has no route to the entry the draw indexes by. The compaction is
-    // the only pass holding both, so it writes the listing into the
-    // table's third word. Without it, finding pages by walking cells
-    // means walking every resident page to identify each one, which is
-    // the pairing this was meant to replace.
+    // 🔴 And the way BACK. `page_list` is dense and per view, so a pass that computes a page KEY —
+    // rather than reading one out of the list — has no route to the entry the draw indexes by.
     let cells = read_words(&device, &queue, pool.slots());
     let listing = |page: u32| cells[page as usize * cell + 2];
     for (planted_page, slot) in planted.iter() {
@@ -774,29 +663,9 @@ fn lamp_face_page(view: u32, face: u32, level: u32, cell: (u32, u32), lights: u3
     local_page(view, level, cell, lights) + face * PageConfig::default().local_face_pages()
 }
 
-/// One lamp over a floor and a box, through the REAL pipeline: planted
-/// table -> per-level culls -> compaction -> expansion -> draw, then
-/// the atlas texels are read back and checked against what the light
-/// actually sees.
-///
-/// # 🔴 The rig this track never had, and the recurring bug it is for
-///
-/// Every lamp defect so far — the world-axis spot, the sunless gate,
-/// the seam wedge — was found by a person staring at a broken frame,
-/// because nothing between "the shaders compile" and "the editor looks
-/// wrong" ever drew a lamp's page and read it. This does: if geometry
-/// lands in the wrong page, at the wrong depth, at a blob's LOD or not
-/// at all, a texel count here moves.
-///
-/// Two pages on purpose: the lamp's FINEST level and a coarse one. The
-/// coarse page pairs against a coarse clipmap bucket's survivors —
-/// the exact machinery behind "the shadow is a deformed blob", so an
-/// empty or garbage coarse page fails here rather than on screen.
-/// 🔴 Run under BOTH cull dispatch shapes (#1002). The clipmap culls
-/// used to enter per rectangle cell and now enter per instance; what
-/// they must not change is a single texel of what lands in the atlas.
-/// This test draws real depth and reads it back, so a shape that lost
-/// geometry fails here rather than on screen.
+/// One lamp over a floor and a box, through the REAL pipeline: planted table -> per-level culls ->
+/// compaction -> expansion -> draw, then the atlas texels are read back and checked against what
+/// the light actually sees.
 #[test]
 fn a_lamp_page_holds_what_its_light_sees() {
     lamp_page_holds_its_view(false, small(), 7, coarse_level());
@@ -807,13 +676,8 @@ fn the_two_level_cull_draws_the_same_page() {
     lamp_page_holds_its_view(true, small(), 7, coarse_level());
 }
 
-/// The TOP of a lamp's chain — one page for the whole cube face, which
-/// is the only page a distant light gets (#1009).
-///
-/// 🔴 The rig above plants the floor and three levels up, and stops
-/// three short of the top. So the level the distant tier depends on had
-/// never been rasterised by anything but the editor, where "the lamp
-/// casts nothing" and "the page is empty" look identical.
+/// The TOP of a lamp's chain — one page for the whole cube face, which is the only page a distant
+/// light gets (#1009).
 #[test]
 fn the_chain_top_draws() {
     let config = PageConfig::default();
@@ -826,14 +690,8 @@ fn the_chain_top_draws() {
     lamp_page_holds_its_view(false, small(), 7, top);
 }
 
-/// 🔴 The acceptance for #1016: the SAME page, read back from a pool
-/// whose view spans two layers, with the coarse page living in the
-/// second one.
-///
-/// A page's rect is the same texels of every layer, so a depth pass
-/// that drew every page into the layer it happened to be attached to
-/// would put the coarse page's depth on top of some other page — and
-/// pass every test that only ever looked at layer zero.
+/// 🔴 The acceptance for #1016: the SAME page, read back from a pool whose view spans two layers,
+/// with the coarse page living in the second one.
 #[test]
 fn a_page_on_the_far_layer_draws_the_same() {
     // 64 pages across two views is 32 each; a cap of four pages a row
@@ -875,10 +733,9 @@ fn lamp_page_holds_its_view(
     let device = device.clone();
     let queue = queue.clone();
 
-    // The scene: a lamp 4 m up, a 40 m floor whose top is y = 0, and a
-    // half-metre box hanging at (0.45, 2, -0.45) — inside the window of
-    // face 3's cell (8, 8) but covering only part of it, so the page
-    // must hold BOTH populations: box depth and floor depth.
+    // The scene: a lamp 4 m up, a 40 m floor whose top is y = 0, and a half-metre box hanging at
+    // (0.45, 2, -0.45) — inside the window of face 3's cell (8, 8) but covering only part of it, so
+    // the page must hold BOTH populations: box depth and floor depth.
     let mesh = kooch_render::mesh::primitives::Primitive::Cube {
         half_extents: Vec3::splat(0.5),
     }
@@ -964,21 +821,16 @@ fn lamp_page_holds_its_view(
     page_pool.ensure_entries(&device, entries);
     let cell = PAGE_CELL as usize;
     let mut slots = vec![0u32; entries as usize * cell];
-    // 🔴 FOUR, not three, and that is the whole of what makes the
-    // far-layer case detectable: with a layer of sixteen pages, slot 4
-    // and slot 20 are the SAME rect of different layers. A depth pass
-    // that drew every page into whichever layer it was attached to
-    // would put the coarse page's depth on top of this one — and a
-    // test whose two pages had different rects would never see it.
+    // 🔴 FOUR, not three, and that is the whole of what makes the far-layer case detectable: with a
+    // layer of sixteen pages, slot 4 and slot 20 are the SAME rect of different layers.
     const FINE_SLOT: u32 = 4;
     let coarse_slot = coarse_slot;
     slots[fine as usize * cell] = FINE_SLOT + 1;
     slots[coarse as usize * cell] = coarse_slot + 1;
     queue.write_buffer(page_pool.slots(), 0, bytemuck::cast_slice(&slots));
 
-    // Built the way the FRAME builds it — against the cull pipelines'
-    // meshlet layout, which is what the depth pipeline's group(1)
-    // expects. The `rasterizer()` helper hands the pool's own layout,
+    // Built the way the FRAME builds it — against the cull pipelines' meshlet layout, which is what
+    // the depth pipeline's group(1) expects. The `rasterizer()` helper hands the pool's own layout,
     // which no test had ever exercised a draw through.
     let cull_pipelines = MeshletCullPipelines::new(&device);
     let mut raster = PageRasterizer::new(
@@ -1022,12 +874,8 @@ fn lamp_page_holds_its_view(
     );
     queue.submit([encoder.finish()]);
 
-    // The bucketing half: a lamp's pages — every level of its chain —
-    // land in ITS bucket, after the sun's levels, where its own cull's
-    // survivors are bound. Bucketing them by octave into the sun's
-    // buckets handed them survivor lists culled for the camera's
-    // orthographic boxes: a close lamp's casters were culled away and a
-    // far bucket drew root meshlets — sphere shadows as faceted lumps.
+    // The bucketing half: a lamp's pages — every level of its chain — land in ITS bucket, after the
+    // sun's levels, where its own cull's survivors are bound.
     let counts = read_words(&device, &queue, raster.counts_buffer());
     let clipmap = ClipmapConfig::default();
     let lamp_bucket = clipmap.levels as usize;
@@ -1044,9 +892,8 @@ fn lamp_page_holds_its_view(
         "a lamp page strayed into the sun's buckets: {:?}",
         &counts[..lamp_bucket]
     );
-    // The survivors mirror: lamp 0's cull found the floor and the box,
-    // and the out-of-range lamp's slice is EMPTY — its light sphere
-    // touches no instance, so the pre-pass never let it reach the
+    // The survivors mirror: lamp 0's cull found the floor and the box, and the out-of-range lamp's
+    // slice is EMPTY — its light sphere touches no instance, so the pre-pass never let it reach the
     // meshlet domain.
     let buckets = raster.buckets() as usize;
     let survivors = |bucket: usize| counts[buckets + 5 + bucket];
@@ -1112,10 +959,9 @@ fn lamp_page_holds_its_view(
         );
     }
 
-    // ---- The cache: a second frame with nothing changed draws NOTHING.
-    // The stamps written by the first compaction match their lamp's
-    // generation, so both pages are cached, no page is listed, the
-    // depth pass clears no quad — and the atlas still holds the scene.
+    // ---- The cache: a second frame with nothing changed draws NOTHING. The stamps written by the
+    // first compaction match their lamp's generation, so both pages are cached, no page is listed,
+    // the depth pass clears no quad — and the atlas still holds the scene.
     let mut encoder = device.create_command_encoder(&Default::default());
     raster.record(
         &device,
@@ -1214,9 +1060,6 @@ fn lamp_page_holds_its_view(
 }
 
 /// One page of the atlas, as f32 depths.
-///
-/// Depth formats refuse partial copies, so the whole layer comes back
-/// and the page is cut out on the CPU.
 fn read_atlas_page(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -1278,11 +1121,6 @@ fn read_atlas_page(
 }
 
 /// Which way a light-facing triangle winds after the page transform.
-///
-/// 🔴 Run through the SHADER'S OWN `sun_basis`, `sun_page_rect` and
-/// `page_clip` — not a Rust mirror of them. A mirror is what let this
-/// ship: three separate flips, each individually right, and nobody ever
-/// multiplied them out.
 const WINDING: &str = r#"
 @group(0) @binding(0) var<storage, read_write> out: array<f32>;
 
@@ -1323,18 +1161,6 @@ fn cs_winding() {
 "#;
 
 /// The pipeline's front face has to be the one the transform produces.
-///
-/// 🔴 The defect, measured: the sun's basis `(s, u, f)` has a
-/// determinant of **-1** — `u = cross(s, f)` makes it left-handed — and
-/// `page_clip` flips Y again to turn a texel row into a clip position.
-/// Two flips do not cancel here, because only the second one is part of
-/// the 2D map the rasteriser winds by. A triangle FACING the light comes
-/// out clockwise, so `FrontFace::Ccw` called it a back face and
-/// `cull_mode: Back` threw away exactly the geometry that casts.
-///
-/// What survived was the far shell of every closed mesh, which is why
-/// the shadows were blobs with holes in them that changed shape as the
-/// clipmap level — and with it the meshlet LOD — changed.
 #[test]
 fn a_light_facing_triangle_is_the_front_face() {
     let Some((device, queue)) = device() else {
@@ -1450,15 +1276,6 @@ fn cs_slope() {
 "#;
 
 /// The receiver's gradient is per AXIS, not one number.
-///
-/// 🔴 This is the property a scalar bias cannot have, and the reason the
-/// first attempt at #1017 measured as doing nothing. How much depth a
-/// filter tap crosses depends on WHICH WAY it moved: along the tilt it
-/// crosses the whole run, across it none. A single multiplier has to
-/// cover the worst axis on every axis, so it detaches the shadow along
-/// the one that needed no correction — and three captures at 79° of
-/// incidence, with the multiplier at 0, at 8, and replaced by a constant
-/// raised to the same step, were indistinguishable from each other.
 #[test]
 fn a_tilt_gradient_is_directional() {
     let Some((device, queue)) = device() else {
@@ -1557,24 +1374,6 @@ fn a_tilt_gradient_is_directional() {
 }
 
 /// The indirect draw has to issue enough vertices for a WHOLE meshlet.
-///
-/// 🔴 The defect, and it looked like everything except what it was. The
-/// draw is indirect with a FIXED vertex count and the vertex shader
-/// discards the tail past `desc.triangle_count`, so the count has to be
-/// `max_triangles_per_meshlet * 3` — the figure `MeshletCull::new`
-/// documents for the cascades' own draw, which is why theirs was right.
-///
-/// The page raster was issuing `meshlets_per_mesh * 3` instead: the
-/// meshlet count of the registered mesh, a completely different
-/// quantity. At the engine's defaults that is about a third of what a
-/// 124-triangle meshlet needs, so every meshlet was drawn up to its
-/// fortieth triangle or so and cut.
-///
-/// On screen it read as a shadow made of fragments that followed the
-/// meshlet structure and rearranged themselves whenever the clipmap
-/// level — and with it the LOD — changed. Three sessions' worth of
-/// hypotheses went past it: page starvation, inverted meshlet faces,
-/// the sampling bias.
 #[test]
 fn the_draw_covers_a_whole_meshlet() {
     let Some((device, queue)) = device() else {
@@ -1626,14 +1425,7 @@ fn the_draw_covers_a_whole_meshlet() {
     }
 }
 
-/// A clipmap texel is not one size, so a bias in metres cannot serve
-/// both ends of the chain.
-///
-/// This is the argument the reader's bias is built on, in numbers: at
-/// the defaults, level 0's texel and the last level's differ by four
-/// orders of magnitude. Half a metre — what the reader used to add flat
-/// — is six thousand texels at the near end and a fraction of one at
-/// the far end. The near end is where an object meets the ground.
+/// A clipmap texel is not one size, so a bias in metres cannot serve both ends of the chain.
 #[test]
 fn a_clipmap_texel_is_not_one_size() {
     let clipmap = ClipmapConfig::default();
@@ -1656,20 +1448,8 @@ fn a_clipmap_texel_is_not_one_size() {
     );
 }
 
-/// The page reader offsets its SAMPLE by the texel, the way the cascade
-/// does — it does not add a constant to the depth it compares.
-///
-/// 🔴 A grep, because the alternative is a GPU test that reproduces the
-/// whole shading bind group to observe one term. What it guards is
-/// narrow and exact: the normal step has to be multiplied by a
-/// per-level texel size INSIDE the walk, the depth step has to be
-/// carried, and the comparison has to be against `receiver` alone.
-/// All of them regressed together once.
-///
-/// 🔴 And the step has to be CAPPED. Uncapped it follows the texel —
-/// 0.0002 m at clipmap level 0 and 9.2 m at level 16 — and nine metres
-/// walks a receiver clean out of the volume its caster shadows, so the
-/// comparison answers LIT with the page present and correctly drawn.
+/// The page reader offsets its SAMPLE by the texel, the way the cascade does — it does not add a
+/// constant to the depth it compares.
 #[test]
 fn the_page_reader_biases_in_texels() {
     let source = kooch_lighting::inti_pbr_shader(1);
@@ -1682,10 +1462,9 @@ fn the_page_reader_biases_in_texels() {
         + start;
     let body = &source[start..end];
 
-    // 🔴 Matched without the whitespace, because the expression grew a
-    // third factor and wrapped across lines. A grep test that pins the
-    // FORMATTING fails on a change that never touched the behaviour,
-    // which is how this one first fired.
+    // 🔴 Matched without the whitespace, because the expression grew a third factor and wrapped
+    // across lines. A grep test that pins the FORMATTING fails on a change that never touched the
+    // behaviour, which is how this one first fired.
     let dense: String = body.chars().filter(|c| !c.is_whitespace()).collect();
     assert!(
         dense.contains("texel_world*inti_pages.bias.x"),
@@ -1706,18 +1485,6 @@ fn the_page_reader_biases_in_texels() {
 }
 
 /// Every pass that reads the page table reads it the SAME way.
-///
-/// 🔴 Written after breaking it, under the hash: the table grew a word
-/// per entry and the compaction was not updated — it kept compiling,
-/// kept running, and rasterised garbage into slots read off the wrong
-/// word. The hash is gone; what can still drift is the entry STRIDE
-/// and the flat contract itself — an entry is `PAGE_CELL` words, its
-/// index is the page id, and the first word is `slot + 1` with zero
-/// meaning absent. A reader that grows a probe loop back, or indexes
-/// without the stride, reads an age as a slot again.
-///
-/// A grep, because the alternative is running four passes against a
-/// table hand-built into a hostile state.
 #[test]
 fn every_table_reader_agrees_on_the_layout() {
     let readers = [
@@ -1753,20 +1520,6 @@ fn every_table_reader_agrees_on_the_layout() {
 }
 
 /// The shading reads the slice this frame's raster wrote.
-///
-/// 🔴 This assertion is the INVERSE of the one that stood here for an
-/// hour, and the flip is the point. While the marking ran after the
-/// fused pass, the shading sampled a table and an atlas that were a
-/// frame old — but `Queue::write_buffer` is applied at the top of the
-/// submit, ahead of every command in it, so the uniform it read was
-/// THIS frame's. The reader re-based the clipmap a frame ahead of the
-/// pages it was searching, and the fix was to double-buffer by parity.
-///
-/// The marking now runs BEFORE the fused pass, so all three are this
-/// frame's and the parity is gone. What has to hold instead is that the
-/// cameras still do not collide, and that the offset does not depend on
-/// the frame at all — a leftover parity would now split the uniform
-/// from the atlas it describes.
 #[test]
 fn the_uniform_slice_is_per_camera_and_not_per_frame() {
     let Some((device, _queue)) = device() else {
@@ -1792,27 +1545,15 @@ fn the_uniform_slice_is_per_camera_and_not_per_frame() {
 }
 
 /// The clipmap's texel grid does not slide with the camera.
-///
-/// 🔴 The property that stops a shadow edge from crawling, and it is
-/// only a property if it is measured. A clipmap is centred on the
-/// camera, so without a snap every texel of it slides through the world
-/// as the camera moves — a shadow edge is decided per texel, so the
-/// silhouette is re-quantised every frame and shimmers. Temporal
-/// blending hides that at the price of smearing; snapping removes it.
-///
-/// Runs the real WGSL on the GPU rather than a copy of the arithmetic:
-/// five camera positions inside one page, and the page a fixed world
-/// point lands in has to be identical in all of them.
 #[test]
 fn the_clipmap_grid_does_not_slide_with_the_camera() {
     let Some((device, queue)) = device() else {
         eprintln!("no adapter; skipping");
         return;
     };
-    // 🔴 The ENGINE'S base, and it is not a power of two. An earlier
-    // version of this test used 64.0, where every division lands exactly on
-    // a power of two and `floor(log2(...))` cannot round down — so it passed
-    // while the sun's levels were falling into the bucket below.
+    // 🔴 The ENGINE'S base, and it is not a power of two. An earlier version of this test used 64.0,
+    // where every division lands exactly on a power of two and `floor(log2(...))` cannot round down
+    // — so it passed while the sun's levels were falling into the bucket below.
     const BASE: f32 = 1.28;
     const SIDE: u32 = 128;
     const LEVEL: u32 = 3;
@@ -1838,11 +1579,7 @@ fn cs_snap(@builtin(global_invocation_id) id: vec3<u32>) {
     let extent = base * exp2(f32(level));
 
     let eye = eyes[id.x].xyz;
-    // 🔴 The KEY of a fixed world point, and the world rect that key
-    // stands for. Both are supposed to be properties of the POINT, not
-    // of wherever the camera happens to be — that is what `sun_cell`'s
-    // absolute-world addressing buys, and what the camera-relative key
-    // it replaced could not do.
+    // 🔴 The KEY of a fixed world point, and the world rect that key stands for.
     let cell = sun_cell(world, eye, basis, base, side, level);
     let rect = sun_page_rect(level, cell, eye, basis, base, side);
     cells[id.x] = vec4<f32>(vec2<f32>(cell), rect.xy);
@@ -1863,10 +1600,9 @@ fn cs_snap(@builtin(global_invocation_id) id: vec3<u32>) {
         cache: None,
     });
 
-    // ⚠️ The shader's own constants, which are NOT the ones above: it
-    // declares `base = 64.0` where the engine ships 1.28. One page of
-    // the level it reads is this wide, and the cameras have to cross
-    // several of them or the test proves nothing.
+    // ⚠️ The shader's own constants, which are NOT the ones above: it declares `base = 64.0` where
+    // the engine ships 1.28. One page of the level it reads is this wide, and the cameras have to
+    // cross several of them or the test proves nothing.
     let page = 64.0 * 8.0 / 128.0;
     let eyes: Vec<[f32; 4]> = (0..9)
         .map(|i| {
@@ -1930,16 +1666,9 @@ fn cs_snap(@builtin(global_invocation_id) id: vec3<u32>) {
         bytemuck::cast_slice::<u8, [f32; 4]>(&staging.slice(..).get_mapped_range()).to_vec();
     staging.unmap();
 
-    // 🔴 The property, now that a page is keyed by absolute world
-    // position: a fixed point's page does not move AT ALL while the
-    // camera walks across several pages. Neither its key nor the world
-    // rect that key stands for.
-    //
-    // The camera-relative key this replaced could only manage the weaker
-    // version — the grid moved by WHOLE pages rather than fractions, so
-    // texel footprints held and shadows did not crawl — and it paid for
-    // it by re-keying every page of the level on every step: 72 FPS
-    // standing still and 5 FPS moving (#948).
+    // 🔴 The property, now that a page is keyed by absolute world position: a fixed point's page
+    // does not move AT ALL while the camera walks across several pages. Neither its key nor the
+    // world rect that key stands for.
     let first = read[0];
     for (i, got) in read.iter().enumerate().skip(1) {
         assert_eq!(
@@ -1959,20 +1688,6 @@ fn cs_snap(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 /// The page marking is recorded BEFORE the pass that shades with it.
-///
-/// 🔴 A source check, because the failure it guards has no test that can
-/// see it: swapping the two lines compiles, runs, and produces a frame
-/// that is correct for everything standing still. What breaks is
-/// geometry that MOVES — the atlas is then a frame old, so an object is
-/// compared against its own caster from the previous frame and shadows
-/// itself while it travels. That was the reported symptom, and it took
-/// the whole ordering to explain it.
-///
-/// The trade is Epic's and it is deliberate: the marking reads a depth
-/// buffer the fused pass has not refilled yet, so LAST frame's depth
-/// decides which pages exist — off by however far the camera moved, and
-/// costing a page at the edge of the screen. THIS frame's geometry fills
-/// them, which is what the shading compares against.
 #[test]
 fn the_marking_sits_between_raster_and_shading() {
     let source = include_str!("../src/meshlet/render_stage/frame/render_r64.rs");
@@ -1989,17 +1704,6 @@ fn the_marking_sits_between_raster_and_shading() {
     let shade = source.find(".render_shading(").expect("the frame shades");
 
     // 🔴 The window, and it is one line wide on both sides.
-    //
-    // Before the raster the depth buffer still holds the PREVIOUS
-    // frame, so the marking asks for pages where the geometry used to
-    // be — a receiver that crossed a clipmap level boundary lands on a
-    // page nobody requested, and a page that does not exist shades as
-    // lit. That is what this order exists to stop, and it is Unreal's:
-    // depth, then page management, then shading.
-    //
-    // After the shading is worse and was tried: the atlas is then a
-    // frame old, so a moving object is compared against its OWN caster
-    // from the previous frame and shadows itself.
     assert!(
         raster < mark,
         "the marking reads a depth buffer the raster has not filled yet, so it asks for \
@@ -2025,20 +1729,7 @@ fn the_marking_sits_between_raster_and_shading() {
     );
 }
 
-/// The paged shadow resolves at least as finely as the cascade it
-/// replaces.
-///
-/// 🔴 The comparison that decided the default, and the reason it is a
-/// test rather than a paragraph. "One shadow texel per screen pixel" is
-/// Epic's ask and it is honest, but the technique being replaced is not
-/// spending that: a cascade hands 2048 texels to a slice of the frustum
-/// whatever the screen asked for. Measured, that is about twice the
-/// resolution at every distance — so a project switching over at 100 %
-/// gets a visibly coarser shadow and no setting that says why.
-///
-/// Both sides are computed with the engine's own arithmetic:
-/// `level_below` is what the marking pass mirrors, and the cascade's
-/// diameter/texels is what `cascades.rs` fits.
+/// The paged shadow resolves at least as finely as the cascade it replaces.
 #[test]
 fn the_paged_shadow_resolves_like_a_cascade() {
     use kooch_render::shadow::pages::{ClipmapConfig, PageConfig, level_below};
@@ -2082,19 +1773,10 @@ fn the_paged_shadow_resolves_like_a_cascade() {
         clipmap.extent(level) / virtual_texels
     };
 
-    // 🔴 The gap is SIZED, not closed. A quality setting's maximum is
-    // its maximum, so the list stops at 100 % — and at 100 % the pages
-    // are the coarser of the two at every distance measured. The number
-    // below is how much coarser, and it is here so the day somebody
-    // claims the page path "looks about the same" there is a figure to
-    // answer with.
+    // 🔴 The gap is SIZED, not closed. A quality setting's maximum is its maximum, so the list stops
+    // at 100 % — and at 100 % the pages are the coarser of the two at every distance measured.
     let distances = [5.0_f32, 10.0, 20.0, 40.0, 80.0];
-    // 🔴 The REFERENCE density, taken from the choices list rather than
-    // from `Default`. It used to read the default and assert it was 100,
-    // which was the same number by coincidence until the defaults moved
-    // to what the engine is tuned at — and the comparison below is
-    // against a cascade at full rate, so it has to be measured at the
-    // reference whatever a project happens to ship.
+    // 🔴 The REFERENCE density, taken from the choices list rather than from `Default`.
     let density = kooch_render::settings::shadow_density_choices()
         .iter()
         .map(|choice| choice.value as u32)
@@ -2115,13 +1797,8 @@ fn the_paged_shadow_resolves_like_a_cascade() {
             worst = (distance, ratio);
         }
     }
-    // Measured. A clipmap level is a power of two, so where the chain
-    // steps decides this as much as the density does — which is why the
-    // worst case is not at the far end.
-    // Measured at 2.41x, at 10 m — the far edge of the first cascade,
-    // which is where a cascade is most generous and the chain has just
-    // stepped. Pinned with a little slack so the number is a fact under
-    // guard, not a tripwire on rounding.
+    // Measured. A clipmap level is a power of two, so where the chain steps decides this as much as
+    // the density does — which is why the worst case is not at the far end.
     assert!(
         worst.1 <= 2.5,
         "the pages fell to {:.2}x the cascade at {} m",
@@ -2129,24 +1806,7 @@ fn the_paged_shadow_resolves_like_a_cascade() {
         worst.0,
     );
 
-    // 🔴 The list REACHES past the default now, and the entries above it
-    // have to say what they cost.
-    //
-    // This assertion used to be `top == default`, guarding "a list with
-    // something above the default is a list whose maximum is a lie".
-    // That is right for a quality tier and wrong for this number: 100 %
-    // is one texel per screen pixel measured in the SUN's plane, and a
-    // texel lands square only on a surface facing the sun. A receiver
-    // tilted by 79° is already under one texel per pixel with the
-    // control at its old ceiling — so the ceiling was pinned on the
-    // wrong side of the case that needs it, and the pass had clamped to
-    // 400 the whole time. Epic's equivalent goes negative for the same
-    // reason.
-    //
-    // What replaces it is the guard that actually matters: an option
-    // that multiplies the page count must NAME the multiplier, because
-    // the pool overflows without a word and its failure looks like a
-    // missing shadow.
+    // 🔴 The list REACHES past the default now, and the entries above it have to say what they cost.
     let choices = kooch_render::settings::shadow_density_choices();
     assert!(
         choices.iter().any(|choice| choice.value == density as i64),
@@ -2162,17 +1822,6 @@ fn the_paged_shadow_resolves_like_a_cascade() {
 }
 
 /// The expansion's cost is reported as the product it is.
-///
-/// 🔴 Written after guessing this number instead of measuring it. The
-/// scatter form was built on the assumption that a meshlet touches "a
-/// handful" of pages; at the finest clipmap levels a page is a
-/// centimetre across and a one-metre meshlet's rect covers 16384 cells,
-/// so the frame went from 200 fps to 30. The assumption was never in a
-/// test because it was never a measurement.
-///
-/// Now both halves come home in the same readback — pages per level from
-/// the compaction, survivors per level copied in from the culls — and
-/// the product is exact rather than assumed.
 #[test]
 fn the_counters_carry_the_expansions_cost() {
     let Some((device, queue)) = device() else {
@@ -2210,17 +1859,7 @@ fn the_counters_carry_the_expansions_cost() {
     );
     assert_eq!(counts.pairs, 40);
 
-    // And the third run: what the OTHER shape would have cost, and the
-    // choice between them.
-    //
-    // 🔴 The numbers are picked so a GLOBAL choice and a PER-LEVEL one
-    // disagree. Level 3 is cheaper to scatter, level 9 is cheaper to
-    // pair; summed, pairing wins outright (1700 against 4050), so a
-    // hybrid that compared totals would pick pairing everywhere and
-    // save nothing. Comparing per level saves the 650 that level 3 was
-    // wasting. That distinction IS the feature — the last attempt at
-    // this picked one shape for the whole chain and cost two thirds of
-    // the frame rate.
+    // And the third run: what the OTHER shape would have cost, and the choice between them.
     words[levels * 2 + 5 + 3] = 50; // level 3: cheap to scatter
     words[levels * 2 + 5 + 9] = 4000; // level 9: ruinous to scatter
     let counts = raster.decode(&words, 0);
@@ -2238,15 +1877,6 @@ fn the_counters_carry_the_expansions_cost() {
 }
 
 /// The shadow page track is visible to the profiler.
-///
-/// 🔴 It ran completely UNSCOPED: not one `profiling::scope!` across the
-/// marking, the seventeen per-level culls, the compaction, the expansion
-/// or the draw. In a capture that is time that simply goes missing, and
-/// the CPU cost of this track was argued about for an hour without a
-/// single measurement because there was nothing to measure.
-///
-/// A source check, because a scope's whole purpose is to exist in a
-/// build a test does not run.
 #[test]
 fn the_page_passes_are_profiled() {
     for (name, source, wanted) in [
@@ -2281,13 +1911,9 @@ fn the_page_passes_are_profiled() {
         );
     }
 
-    // 🔴 Every scope OPENED has to be closed, and nothing above checks
-    // that. A `nested()` without its `close()` is not a missing timing:
-    // wgpu refuses the whole encoder — "a debug group was not popped
-    // before the encoder was finished" — and the frame stops being
-    // submitted at all. It shipped that way once, from a reorder that
-    // moved a `close` out from under the scope it belonged to, and the
-    // only warning was an unused variable nobody read.
+    // 🔴 Every scope OPENED has to be closed, and nothing above checks that. A `nested()` without
+    // its `close()` is not a missing timing: wgpu refuses the whole encoder — "a debug group was
+    // not popped before the encoder was finished" — and the frame stops being submitted at all.
     {
         let source = include_str!("../src/shadow/pages/raster.rs");
         let opened = source.matches("= nested(track,").count();
@@ -2299,13 +1925,8 @@ fn the_page_passes_are_profiled() {
         );
     }
 
-    // 🔴 Everything above measures the CPU, and every line of it passed
-    // while this track spent 34 ms per frame on the OneXFly that no
-    // capture could see. `profiling::scope!` times the RECORDING —
-    // walking levels, writing uniforms, building bind groups — and the
-    // recording is under a millisecond. What the dispatches then cost
-    // the GPU needs a timestamp on the encoder, which is a different
-    // call, and the name of this test claimed both.
+    // 🔴 Everything above measures the CPU, and every line of it passed while this track spent 34 ms
+    // per frame on the OneXFly that no capture could see.
     for (name, source, wanted) in [
         (
             "frame/pages.rs",
@@ -2329,22 +1950,12 @@ fn the_page_passes_are_profiled() {
 }
 
 /// The octave a page asks for, run through the SHADER'S OWN arithmetic.
-///
-/// 🔴 The anchor is the whole claim. A bucket is a density, so the
-/// expansion can pair a lamp's pages against the sun's survivors — but
-/// only if the sun's clipmap level `L` lands on bucket `L` exactly.
-/// Off by one and every page draws geometry from the wrong LOD; off by a
-/// scale factor and the local pages pile into one bucket.
-///
-/// A Rust mirror of `page_octave` would prove the mirror. This runs the
-/// shader.
 const OCTAVE: &str = r#"
 @group(0) @binding(0) var<storage, read_write> out: array<u32>;
 
-// 🔴 The ENGINE'S base, and it is not a power of two. An earlier
-// version of this test used 64.0, where every division lands exactly on
-// a power of two and `floor(log2(...))` cannot round down — so it passed
-// while the sun's levels were falling into the bucket below.
+// 🔴 The ENGINE'S base, and it is not a power of two. An earlier version of this test used 64.0,
+// where every division lands exactly on a power of two and `floor(log2(...))` cannot round down —
+// so it passed while the sun's levels were falling into the bucket below.
 const BASE: f32 = 1.28;
 const VIRTUAL: u32 = 16384u;
 const LEVELS: u32 = 17u;
@@ -2421,10 +2032,9 @@ fn a_page_asks_for_the_octave_its_texels_are() {
          not separating them and one list would serve densities 128x apart"
     );
 
-    // And range moves it. A hundred-metre lamp covers ten times the
-    // world with the same texels, so it asks for coarser geometry than
-    // a ten-metre one at the same chain level — which is the reason the
-    // bucket cannot be read off the chain level alone.
+    // And range moves it. A hundred-metre lamp covers ten times the world with the same texels, so
+    // it asks for coarser geometry than a ten-metre one at the same chain level — which is the
+    // reason the bucket cannot be read off the chain level alone.
     assert!(
         out[LEVELS + 8] > lamp[0],
         "a 100 m lamp asked for bucket {} at chain level 0, the same as a 10 m lamp's {}",
@@ -2432,10 +2042,9 @@ fn a_page_asks_for_the_octave_its_texels_are() {
         lamp[0]
     );
     assert!(out[LEVELS + 9] > lamp[4], "and the same at chain level 4");
-    // Measured: a 10 m lamp's chain lands on buckets [0,0,0,1,2,3,4,5]
-    // and a 100 m lamp's on [1,..,5,..] — inside the sun's range, where
-    // its culls already produce survivor lists. That is the claim C
-    // rests on and it is checked rather than assumed.
+    // Measured: a 10 m lamp's chain lands on buckets [0,0,0,1,2,3,4,5] and a 100 m lamp's on
+    // [1,..,5,..] — inside the sun's range, where its culls already produce survivor lists. That is
+    // the claim C rests on and it is checked rather than assumed.
 }
 
 /// Runs a snippet concatenated after `page_table.wgsl`, with one
@@ -2503,14 +2112,6 @@ fn run_page_table_shader(
 }
 
 /// `face_dir` really is `cube_face`'s inverse, on all six faces.
-///
-/// 🔴 A cube face's axis conventions are six sign choices, and every one
-/// of them is invisible until a shadow lands on the wrong wall — at
-/// which point it looks like a bad matrix, a bad cull, or a bad page
-/// key. The expansion and the depth pass both build a face's frustum
-/// from `face_dir` while the marking picks the face with `cube_face`;
-/// one flipped sign between them puts a caster in a page it never
-/// touches, on the opposite side of the lamp.
 const FACE_ROUNDTRIP: &str = r#"
 @group(0) @binding(0) var<storage, read_write> out: array<f32>;
 
@@ -2561,13 +2162,6 @@ fn a_cube_face_maps_back_to_itself() {
 }
 
 /// A lamp's chain is floored, and every pass agrees on where.
-///
-/// 🔴 The marking picks a level, the reader walks from one and the
-/// debug view walks from one. A floor the three disagree on is a reader
-/// looking for pages in levels nothing marks — three table lookups a
-/// pixel that can only miss — or, worse, a marking that allocates
-/// levels the reader never visits, which is pool spent on pages nobody
-/// can sample.
 
 const SPOT: &str = r#"
 @group(0) @binding(0) var<storage, read_write> out: array<f32>;
@@ -2606,13 +2200,8 @@ fn cs_spot() {
 }
 "#;
 
-/// A spot's page frame follows the SPOT's axis, through the shader's
-/// own `spot_local`, `cube_face` and `cell_face` — not a Rust mirror.
-///
-/// 🔴 Written after the defect shipped: the marking and the reader
-/// forced `face = 0` while keeping the WORLD-axis uv, and the depth
-/// raster projected through the world's +X. Three mappings of one page;
-/// on screen, occlusion the shape of nothing that exists.
+/// A spot's page frame follows the SPOT's axis, through the shader's own `spot_local`, `cube_face`
+/// and `cell_face` — not a Rust mirror.
 #[test]
 fn a_spot_page_rotates_with_its_axis() {
     let Some((device, queue)) = device() else {
@@ -2717,17 +2306,8 @@ fn a_lamp_cannot_ask_for_the_suns_finest_levels() {
     }
 }
 
-/// `face_local` and `cube_face` agree, and a point behind a face comes
-/// back with a negative `w` rather than being rejected.
-///
-/// 🔴 The bar. A triangle straddling a cube seam has vertices on two
-/// faces, and rejecting one of them per vertex does not remove the
-/// triangle — it pushes one corner outside the clip volume and lets the
-/// clipper interpolate the rest, drawing a wedge of geometry into a page
-/// it never touched. The fix is to project unconditionally and let `w`
-/// carry the answer, so this pins BOTH halves: the projection agrees
-/// with the face selection where they overlap, and disagrees by SIGN
-/// where the point is behind.
+/// `face_local` and `cube_face` agree, and a point behind a face comes back with a negative `w`
+/// rather than being rejected.
 const FACE_LOCAL: &str = r#"
 @group(0) @binding(0) var<storage, read_write> out: array<f32>;
 
@@ -2794,44 +2374,10 @@ fn a_point_behind_a_face_gets_a_negative_w() {
     );
 }
 
-/// 🔴 `a_caster_behind_every_receiver_pairs_nothing` lived here and is
-/// gone with the bound it tested.
-///
-/// Olsson §4's receiver bound rejected a caster whose nearest point lay
-/// beyond a page's furthest RECORDED receiver. The record only ever
-/// covered the receivers that marked THAT level, while the reader
-/// climbs to coarser ones — so a receiver that climbed met a bound
-/// written by other receivers and lost the caster it needed. The page
-/// was then drawn with the ground in it and without the occluder, which
-/// shades lit and which `VirtualPages` paints GREEN, the colour it
-/// documents as "the comparison is wrong".
-///
-/// It saved 7% of the sun's candidates, measured. Making it correct
-/// means the marking writing the bound on every level the reader could
-/// reach — seventeen atomics per sample instead of one, over 1.2M
-/// samples a frame — which costs more than it saved. Removed rather
-/// than left behind a switch.
+/// 🔴 `a_caster_behind_every_receiver_pairs_nothing` lived here and is gone with the bound it
+/// tested.
 
-/// A cleared page outlives the generation it was cleared under, and only
-/// a lamp's does.
-///
-/// 🔴 A grep, because the alternative is a fixture with a spinning lamp,
-/// a cull, and a readback to observe one skipped listing. What it guards
-/// is exact and was measured: `dense.scene` spins 64 light pivots, every
-/// spin turns that lamp's generation over, and every one of its pages
-/// then misses the cache gate and is listed and cleared to produce the
-/// same nothing. 902 of the 924 pages one frame rasterised; 1469 of 1491
-/// in another.
-///
-/// Empty content does not depend on a generation — a page with no caster
-/// in reach reads lit whether or not the lamp moved — so the stamp says
-/// EMPTY and the gate honours it while the bucket stays empty.
-///
-/// ⚠️ The sun is excluded and has to be. Its pages carry an invariant
-/// the lamps' do not: one whose ADDRESSING changed under a snap crossing
-/// must redraw even though its content would be identical, because the
-/// listing is what writes the way back into the table.
-/// `a_still_suns_page_caches` caught this gate applying to the sun.
+/// A cleared page outlives the generation it was cleared under, and only a lamp's does.
 #[test]
 fn an_empty_lamp_page_stops_relisting() {
     let table = kooch_lighting::PAGE_TABLE;
@@ -2856,20 +2402,6 @@ fn an_empty_lamp_page_stops_relisting() {
 }
 
 /// The march is a different QUESTION, not a wider filter.
-///
-/// 🔴 A grep, because observing it needs an atlas with a caster whose
-/// footprint misses one texel — the exact configuration that is hard to
-/// build on purpose and easy to hit by accident, which is why the
-/// artefact survived four rounds of tuning the reader that cannot see
-/// it.
-///
-/// What it pins is the part that would be quietly lost in a cleanup:
-/// the rays have to SPREAD. Stepping along the sun's own axis does not
-/// move the sample in the sun's plane at all — `basis[2]` is
-/// perpendicular to the two axes a page is addressed by — so an
-/// unjittered march reads one texel at several depths and answers
-/// exactly what the single tap already answered. The spread is the
-/// mechanism, not a soft-shadow nicety on top of it.
 #[test]
 fn the_march_spreads_over_the_suns_disc() {
     let shading = kooch_lighting::inti_pbr_shader(1);
@@ -2910,25 +2442,6 @@ fn the_march_spreads_over_the_suns_disc() {
 }
 
 /// The inverted expansion emits the SAME pairs as the paired one.
-///
-/// # 🔴 The only claim #1022 is allowed to make
-///
-/// One shape walks every listed page against every survivor; the other
-/// runs one thread per survivor and descends the page pyramid to the
-/// pages it lands in. They reach a page from opposite ends and then ask
-/// the same three questions about it — `sun_pair` is one function, and
-/// this is the test that says so.
-///
-/// So the switch is a COST switch. If this ever fails, the two halves
-/// of the pass disagree about which caster belongs in which page, and
-/// that disagreement is exactly the artefact the whole line of work is
-/// chasing: it would be a finding, not a regression to paper over.
-///
-/// The pages are planted around the toroidal seam on purpose — absolute
-/// indices −2..1 wrap to cells 126, 127, 0, 1 — because a rectangle
-/// that crosses it becomes four rectangles in the table's own
-/// coordinates, and a descent that ignored the wrap would read the far
-/// side of the world.
 #[test]
 fn both_expansions_emit_the_same_pairs() {
     use glam::{Mat4, Vec3};
@@ -3030,11 +2543,7 @@ fn both_expansions_emit_the_same_pairs() {
             kooch_render::meshlet::DEFAULT_MAX_TRIANGLES as u32,
         );
         raster.set_geometry(geometry);
-        // ⚠️ The per-instance cull, not the chunked one. The two-level
-        // path produces ZERO survivors at every level in this rig — it
-        // enters per rectangle cell and this scene has no cell data to
-        // enter by — so leaving it on would compare two empty lists and
-        // pass for the wrong reason.
+        // ⚠️ The per-instance cull, not the chunked one.
         raster.set_two_level(false);
         let meshlet_bg = kooch_render::meshlet::pool_meshlet_bind_group(
             &device,
@@ -3117,26 +2626,8 @@ fn both_expansions_emit_the_same_pairs() {
     );
 }
 
-/// A resident page with no content has to read as a MISS, and the
-/// reader has to keep climbing when it does.
-///
-/// # 🔴 Resident is not readable
-///
-/// `PAGE_CELL` says the fourth word is the content stamp and that zero
-/// means "no valid content". A page reaches that state by being freshly
-/// claimed, by being invalidated, or by its bucket overflowing so the
-/// compaction never listed it — and the atlas under its slot then holds
-/// whatever was there before, or a clear. A clear is far depth under
-/// reversed-Z, which every reader answers "nothing occludes here".
-///
-/// Reporting it as a hit does not only read one wrong texel: it ENDS
-/// the walk. `inti_page_shadow` climbs the clipmap until a level
-/// answers — Unreal's "onwards to coarser levels if no valid data is
-/// present" — and a present, empty page stops the search at the one
-/// level that cannot answer, with a coarser one right above it holding
-/// the shadow. The panel already called this out; its `pages dropped`
-/// alert says "some resident pages hold no depth and shade as lit". The
-/// reader was the half that did not know.
+/// A resident page with no content has to read as a MISS, and the reader has to keep climbing when
+/// it does.
 #[test]
 fn an_empty_page_is_not_a_hit() {
     let source = kooch_lighting::inti_pbr_shader(1);
@@ -3176,25 +2667,6 @@ fn an_empty_page_is_not_a_hit() {
 }
 
 /// A PCF tap that leaves its page is resolved through the table.
-///
-/// # 🔴 Clamping is a lit band along every page seam
-///
-/// The kernel is `W` texels wide, so a receiver within `W/2` of a page
-/// edge has taps that belong to the neighbouring page — and whenever a
-/// shadow crosses a seam the occluder's depth is exactly there. Folded
-/// back onto the edge, those taps read the receiver's own page, find
-/// nothing, and the pixel answers LIT with the page present, resident
-/// and correctly drawn.
-///
-/// That is the third of the three faults `VirtualPages` separates, and
-/// it is the one that looks like the other two: the debug view paints
-/// it green — a real page whose COMPARISON is wrong — while a missing
-/// page is red and an undrawn one yellow. A texel is centimetres at the
-/// fine levels and metres at the coarse ones, so the same defect is a
-/// hairline near the camera and a wedge further out.
-///
-/// Unreal resolve every sample through the page table inside
-/// `SampleBilinear` for exactly this reason.
 #[test]
 fn a_tap_off_the_page_finds_its_neighbour() {
     let source = kooch_lighting::inti_pbr_shader(1);
@@ -3239,22 +2711,6 @@ fn a_tap_off_the_page_finds_its_neighbour() {
 }
 
 /// The reader jumps to the level that answers instead of walking to it.
-///
-/// # 🔴 Up to seventeen misses per pixel PER LIGHT
-///
-/// The walk starts at the containment floor and the marking chose
-/// `max(contain, density)`, so the common case is `density - contain`
-/// levels of pure misses before the first hit, with the whole chain as
-/// the ceiling. Each miss is one indexed read — the flat table's whole
-/// point — and seventeen of them per pixel per light is not cheap.
-///
-/// `cs_lod_offsets` walks the chain once per page per frame and writes
-/// the answer into `PAGE_LOD`; the reader then does two reads. That is
-/// Unreal's `LODOffset` beside its `bAnyLODValid` bit.
-///
-/// The loop stays, and must: the hint is a frame's worth of arithmetic
-/// over a table that other passes are still writing, so a stale one has
-/// to degrade into the walk rather than into a wrong answer.
 #[test]
 fn the_reader_jumps_to_the_level_that_answers() {
     let source = kooch_lighting::inti_pbr_shader(1);

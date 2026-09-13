@@ -1,12 +1,5 @@
-//! GPU integration test: backface cone cull rejects meshlets whose
-//! normal cone points away from the camera.
-//!
-//! Builds a synthetic [`MeshletMesh`] with a single descriptor whose
-//! cone parameters are controlled by hand, so the test does not depend
-//! on `meshopt`'s clustering heuristics for the assertion.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test meshlet_backface_cone
+//! GPU integration test: backface cone cull rejects meshlets whose normal cone points away from the
+//! camera.
 
 mod common;
 
@@ -42,11 +35,8 @@ fn synthetic_meshlet_facing(normal: Vec3) -> MeshletMesh {
     let meshlet_vertices = vec![0u32, 1, 2];
     let meshlet_triangles = vec![0u8, 1, 2];
 
-    // meshopt convention: `cone_axis` points along the meshlet's
-    // average front-face normal. For a triangle whose normal is
-    // `normal`, the cone axis IS `normal`. A camera sitting on the
-    // `-normal` side of the apex sees the meshlet from behind and
-    // gets culled by the shader's backface test.
+    // meshopt convention: `cone_axis` points along the meshlet's average front-face normal. For a
+    // triangle whose normal is `normal`, the cone axis IS `normal`.
     let cone_axis = normal.normalize();
     let descriptor = MeshletDescriptor {
         vertex_offset: 0,

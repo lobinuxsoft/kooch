@@ -1,13 +1,5 @@
-// meshlet_debug_resolve.wgsl — fullscreen fragment debug visualizations
-// for the R64 path (#440 two-pass migration).
-//
-// Ports the "colorize" debug branches that used to live in the compute
-// deferred (meshlet_deferred_r64.wgsl): MeshletIds (1), InstanceIds (2),
-// TriangleDensity (3), Overdraw (4), CullPassthrough (7). Normal-look
-// modes (Off, OnlyLod0/Roots, *Rejected) render through the two-pass
-// material path instead; the reject overlay is a separate dispatch.
-//
-// vbuf64 packing mirrors the raster pass: (depth<<32) | (slot<<7 | tri).
+// meshlet_debug_resolve.wgsl — fullscreen fragment debug visualizations for the R64 path (#440
+// two-pass migration).
 
 struct ScreenUniforms {
     size: vec2<u32>,

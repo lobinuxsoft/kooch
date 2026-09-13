@@ -1,20 +1,4 @@
-/// The ordering the frame loop exists to get right, pinned against the
-/// source itself.
-///
-/// There is no headless surface, so nothing in the test suite can watch
-/// a real `get_current_texture` block. What can be checked is the thing
-/// that would silently regress: the scene must be recorded and submitted
-/// **before** the swapchain image is asked for.
-///
-/// 🔴 Reversing these two is invisible. Every pixel is identical, every
-/// other test still passes, and the only symptom is a frame that adds
-/// its recording time to its GPU time instead of hiding one behind the
-/// other — 3.006 ms on top of 34 on the OneXFly, and no overlap between
-/// this frame's CPU work and the last frame's GPU work at all.
-///
-/// The same idiom `kooch_lighting`'s own tests use to pin a line of
-/// shader source: crude, and it fails the day someone moves the acquire
-/// back up, which is the entire point.
+/// The ordering the frame loop exists to get right, pinned against the source itself.
 #[test]
 fn the_scene_is_submitted_before_the_image_is_asked_for() {
     let source = include_str!("mod.rs");
@@ -53,12 +37,6 @@ fn the_frame_loop_still_does_both() {
 }
 
 /// 🔴 Absent means "no opinion", and the system must not invent one.
-///
-/// A game that never loaded a settings asset, and a test that
-/// configured its own surface, both have to keep the surface they
-/// already have — the rule the whole `quality` module is built on. A
-/// default inserted here would reconfigure every such surface to vsync
-/// on the first frame.
 #[test]
 fn no_presentation_means_no_change() {
     let mut resources = kooch_core::resource::Resources::new();
@@ -90,12 +68,8 @@ mod present_precedence {
     }
 }
 
-/// 🔴 A generated mesh reaches the GPU only through this store, and its
-/// absence reads exactly like "nothing to upload".
-///
-/// Both sides used `remove::<GeneratedMeshes>()` and answered `None`
-/// forever, because nobody inserted it: every block built its mesh and
-/// dropped it, and the entity was invisible with no error anywhere.
+/// 🔴 A generated mesh reaches the GPU only through this store, and its absence reads exactly like
+/// "nothing to upload".
 #[test]
 fn build_inserts_the_generated_mesh_store() {
     use crate::meshlet::GeneratedMeshes;

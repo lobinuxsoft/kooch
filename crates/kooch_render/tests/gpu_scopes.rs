@@ -1,20 +1,4 @@
-//! #785's acceptance: the render stage's passes come back **named**,
 //! on both GPU paths.
-//!
-//! `kooch_core`'s own tests prove the bridge carries a scope from an
-//! encoder into puffin. They cannot prove that this crate opens one:
-//! every one of them passed while `MeshletRenderStage` recorded nothing,
-//! and a profiler that reports nothing looks exactly like a frame with
-//! no GPU work.
-//!
-//! 🔴 **Both paths get their own test on purpose.** The first version
-//! of this file had one, on a device that asked for timestamps and
-//! nothing else — so it ran the Hi-Z path, passed, and kept passing
-//! when the R64 path's scopes were deleted. The R64 path is the one the
-//! OneXFly takes, which is the whole reason any of this exists.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --features gpu-profiler --test gpu_scopes
 
 #![cfg(feature = "gpu-profiler")]
 
@@ -66,18 +50,9 @@ fn device_for(atomic_vbuf: bool) -> Option<(wgpu::Device, wgpu::Queue)> {
     let mut needed =
         wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
     if atomic_vbuf {
-        // 🔴 `all_required_features`, not the bundle spelled out again.
-        // This site listed `vbuf64_features` alone, which is every flag
-        // the R64 path needs except `SHADER_F16` — and the R64 path
-        // builds `fsr3_accumulate`, whose first line is `enable f16`.
-        // The device came back short and the three tests on this path
-        // died inside `create_shader_module`, so the path the OneXFly
-        // takes had no passing test at all while it was being measured.
-        //
-        // TEXTURE_ATOMIC on top: the R64 path dereferences the
-        // triangle-density texture unconditionally, and that texture is
-        // only allocated when the debug caps probe finds R32Uint
-        // atomics. Production requests it in `optional_features`.
+        // 🔴 `all_required_features`, not the bundle spelled out again. This site listed
+        // `vbuf64_features` alone, which is every flag the R64 path needs except `SHADER_F16` — and
+        // the R64 path builds `fsr3_accumulate`, whose first line is `enable f16`.
         needed |= kooch_core::gpu::all_required_features() | wgpu::Features::TEXTURE_ATOMIC;
     }
     if !adapter.features().contains(needed) {
@@ -104,9 +79,8 @@ fn device_for(atomic_vbuf: bool) -> Option<(wgpu::Device, wgpu::Queue)> {
     .ok()
 }
 
-/// One cube in front of a camera, and a `GpuScopes` in `Resources` —
-/// which is the only thing that makes the stage record anything. The
-/// path is decided by what the device supports, exactly as in
+/// One cube in front of a camera, and a `GpuScopes` in `Resources` — which is the only thing that
+/// makes the stage record anything. The path is decided by what the device supports, exactly as in
 /// production.
 fn scene(device: &wgpu::Device, queue: &wgpu::Queue) -> (Resources, MeshletRenderStage) {
     let mut resources = Resources::new();
@@ -254,11 +228,8 @@ fn labels_from(
         .collect()
 }
 
-/// 🔴 The names are the deliverable, not the count. #769 is blocked on
-/// knowing *which* pass owns the 96 %, and a `GPU` row of anonymous
-/// boxes answers that no better than no row at all.
-///
-/// This is the path the OneXFly takes.
+/// 🔴 The names are the deliverable, not the count. #769 is blocked on knowing *which* pass owns the
+/// 96 %, and a `GPU` row of anonymous boxes answers that no better than no row at all.
 #[test]
 fn the_atomic_path_names_its_passes() {
     let _guard = PUFFIN.lock().unwrap_or_else(|e| e.into_inner());
@@ -271,12 +242,9 @@ fn the_atomic_path_names_its_passes() {
         labels.iter().any(|l| l == "cull"),
         "no cull scope among {labels:?}"
     );
-    // 🔴 TWO scopes, not the fused one. `raster + shade` was split when
-    // the marking moved between the halves: `Vbuf64Stage::render` became
-    // `render_geometry` / `render_shading` so the page marking could read
-    // THIS frame's depth, which is the order Unreal use. A fused box
-    // cannot show that, and the comment below already argued for the
-    // split before the split existed.
+    // 🔴 TWO scopes, not the fused one. `raster + shade` was split when the marking moved between
+    // the halves: `Vbuf64Stage::render` became `render_geometry` / `render_shading` so the page
+    // marking could read THIS frame's depth, which is the order Unreal use.
     assert!(
         labels.iter().any(|l| l == "raster"),
         "no raster scope among {labels:?}"
@@ -285,10 +253,8 @@ fn the_atomic_path_names_its_passes() {
         labels.iter().any(|l| l == "shade"),
         "no shading scope among {labels:?}"
     );
-    // #824 — `raster + shade` fuses two halves that no longer change
-    // together. The raster is the same on both shading paths, so a
-    // capture that only names the pair dilutes whatever the shading
-    // gained: a fifth off the shading reads as a tenth off the fused
+    // together. The raster is the same on both shading paths, so a capture that only names the pair
+    // dilutes whatever the shading gained: a fifth off the shading reads as a tenth off the fused
     // number.
     assert!(
         labels.iter().any(|l| l == "shade: fragment"),
@@ -297,12 +263,6 @@ fn the_atomic_path_names_its_passes() {
 }
 
 /// 🔴 The label a capture is read by (#824).
-///
-/// `KOOCH_COMPUTE_SHADING` failing to reach the process through Steam
-/// looks exactly like the compute path being no faster — same scenes,
-/// same numbers, nothing wrong anywhere. The name in the capture is what
-/// tells those apart, so a capture taken to decide #824 is only worth
-/// reading if this scope exists.
 #[test]
 fn the_compute_path_names_itself() {
     let _guard = PUFFIN.lock().unwrap_or_else(|e| e.into_inner());
@@ -315,18 +275,8 @@ fn the_compute_path_names_itself() {
         labels.iter().any(|l| l == "shade: compute"),
         "no compute shading scope among {labels:?}"
     );
-    // ⚠️ Nothing more than that, and the reason is the harness rather
-    // than the renderer: `scope_delta` is a DELTA. `new_frame` fills it
-    // from `new_scopes` and drains the list, so a name another test in
-    // this binary already registered never reaches this one's
-    // `FrameView` — this test sees `["shade: compute"]` and nothing
-    // else, whatever the frame actually recorded. Asserting that
-    // `raster + shade` is still here, or that `shade: fragment` is not,
-    // would be asserting which test ran first.
-    //
-    // The same puffin behaviour that made a late-starting server draw
-    // `scope#ScopeId(67)` forever, worth an upstream issue and noted in
-    // #785.
+    // ⚠️ Nothing more than that, and the reason is the harness rather than the renderer:
+    // `scope_delta` is a DELTA.
 }
 
 /// The fallback path an adapter without int64 atomics takes. Left
@@ -355,12 +305,6 @@ fn the_hi_z_path_names_its_passes() {
 }
 
 /// 🔴 The track that cost the OneXFly 34 ms nobody could see.
-///
-/// Its CPU scopes existed and said 0.7 ms, so the pass looked cheap and
-/// settled. The dispatches it records ran between `cull` and
-/// `raster + shade` and inside neither, so a capture reported an 11 ms
-/// GPU frame while `drm-engine-gfx` reported 45 for the same process —
-/// and the gap had no name to be filed under.
 #[test]
 fn the_pages_name_their_passes() {
     let _guard = PUFFIN.lock().unwrap_or_else(|e| e.into_inner());

@@ -21,10 +21,9 @@ fn splits_cover_the_range_and_increase() {
     );
 }
 
-/// The first cascade covers exactly what it was asked to, rather
-/// than a share of the range derived from the lens. That is the
-/// difference between a scheme an author can reason about and one
-/// that changes when someone edits the camera's near plane.
+/// The first cascade covers exactly what it was asked to, rather than a share of the range derived
+/// from the lens. That is the difference between a scheme an author can reason about and one that
+/// changes when someone edits the camera's near plane.
 #[test]
 fn the_first_cascade_ends_where_it_was_told_to() {
     let splits = split_distances(10.0, 1000.0);
@@ -51,12 +50,6 @@ fn every_cascade_covers_the_same_ratio_as_the_last() {
 }
 
 /// 🔴 Consecutive cascades must OVERLAP, not merely touch.
-///
-/// The shading pass blends the two across the last
-/// `CASCADE_BLEND_FRACTION` of a split. If the next cascade's volume
-/// starts exactly where this one ends, every point in that band is
-/// outside it, the sample comes back "fully lit", and the blend
-/// paints a pale stripe across every shadow crossing the boundary.
 #[test]
 fn each_cascade_starts_inside_the_previous_one() {
     let cascades = build_cascades(
@@ -68,10 +61,9 @@ fn each_cascade_starts_inside_the_previous_one() {
         2048,
         0.0,
     );
-    // The volume is a square of side `texel_world_size * size`
-    // centred on the slice, so a cascade reaching back over the
-    // blend band shows up as its width covering more than its own
-    // split range.
+    // The volume is a square of side `texel_world_size * size` centred on the slice, so a cascade
+    // reaching back over the blend band shows up as its width covering more than its own split
+    // range.
     for i in 1..CASCADE_COUNT {
         let previous_far = cascades[i - 1].far_depth;
         let this_far = cascades[i].far_depth;
@@ -230,9 +222,8 @@ fn a_degenerate_light_direction_falls_back_rather_than_producing_nan() {
     );
 }
 
-/// Reversed-Z: a point at the light's near plane must land at ndc.z
-/// = 1 and one at the far plane at 0. Getting this backwards fills
-/// the atlas with the farthest surface instead of the nearest, and
+/// Reversed-Z: a point at the light's near plane must land at ndc.z = 1 and one at the far plane at
+/// 0. Getting this backwards fills the atlas with the farthest surface instead of the nearest, and
 /// every shadow inverts.
 #[test]
 fn orthographic_is_reversed_z() {

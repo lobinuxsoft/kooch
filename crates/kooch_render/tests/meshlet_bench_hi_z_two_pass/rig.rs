@@ -22,10 +22,9 @@ pub(crate) struct BenchRig {
     pub(crate) deferred: MeshletDeferredShader,
     pub(crate) meshlet_bg: wgpu::BindGroup,
     pub(crate) material_bg: wgpu::BindGroup,
-    /// Inti's bind group. The bench never places a light, so this is
-    /// the unlit case — which is exactly what a cull/raster benchmark
-    /// wants: the shading cost it measures should not move because
-    /// someone tuned a light.
+    /// Inti's bind group. The bench never places a light, so this is the unlit case — which is
+    /// exactly what a cull/raster benchmark wants: the shading cost it measures should not move
+    /// because someone tuned a light.
     pub(crate) lights: kooch_lighting::GpuLights,
     pub(crate) vbuf_view: wgpu::TextureView,
     pub(crate) depth_view: wgpu::TextureView,

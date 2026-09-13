@@ -1,18 +1,4 @@
 //! Mesh decimation, for turning a visual mesh into a collision mesh.
-//!
-//! A 50k-triangle prop is the wrong thing to collide against: rapier will
-//! do it, and it will cost more per contact than the rest of the frame.
-//! The usual answer is a hand-made low-poly proxy. This is the automatic
-//! first draft of that proxy — export it (see [`to_glb`]), look at it,
-//! fix it if it is wrong, and hand it back as the collider source.
-//!
-//! Built on `meshopt`, already a workspace dependency driving the meshlet
-//! LOD chain. Nothing hand-rolled: the LOD chain uses
-//! `simplify_with_locks` because it must preserve cell boundaries across
-//! independently-simplified groups, and a whole-mesh decimation has no
-//! such constraint, so plain `simplify` is the right call here.
-//!
-//! [`to_glb`]: super::to_glb
 
 use crate::mesh::{Mesh, MeshVertex};
 
@@ -41,17 +27,7 @@ impl SimplifyTarget {
     }
 }
 
-/// Decimates `mesh` towards `target`, preserving its silhouette as far as
-/// the collapse allows.
-///
-/// Returns the mesh unchanged when it is already at or below the target,
-/// or when `meshopt` cannot reduce it further — a mesh of disconnected
-/// triangles has no edges to collapse, and reporting that as an error
-/// would make the caller handle a case where "unchanged" is the answer.
-///
-/// The error `meshopt` reports for the collapse is returned alongside, in
-/// mesh units, so a caller can refuse a proxy that drifted too far from
-/// the original.
+/// Decimates `mesh` towards `target`, preserving its silhouette as far as the collapse allows.
 pub fn simplify(mesh: &Mesh, target: SimplifyTarget) -> (Mesh, f32) {
     let triangles = mesh.indices.len() / 3;
     if triangles <= 1 || mesh.vertices.is_empty() {
@@ -91,13 +67,7 @@ pub fn simplify(mesh: &Mesh, target: SimplifyTarget) -> (Mesh, f32) {
     (compact(mesh, &indices), error)
 }
 
-/// Rebuilds a mesh from a surviving index list, dropping orphaned
-/// vertices and renumbering.
-///
-/// `meshopt::simplify` returns indices into the *original* vertex array,
-/// so the collapsed vertices are still in the buffer, unreferenced.
-/// Exporting that writes a file whose vertex count says nothing about its
-/// complexity, and whose AABB still covers geometry that no longer exists.
+/// Rebuilds a mesh from a surviving index list, dropping orphaned vertices and renumbering.
 fn compact(mesh: &Mesh, indices: &[u32]) -> Mesh {
     let mut remap = vec![u32::MAX; mesh.vertices.len()];
     let mut vertices = Vec::new();

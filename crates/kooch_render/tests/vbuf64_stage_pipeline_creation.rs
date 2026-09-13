@@ -1,12 +1,5 @@
-//! Integration test that exercises the production `Vbuf64Stage::new`
-//! path on a real device and asserts no uncaptured wgpu errors are
-//! raised during pipeline creation. Catches "RenderPipeline … is
-//! invalid" failures that surface only at submit time on the editor —
-//! the validation error is reported asynchronously via
-//! `on_uncaptured_error` and the pipeline is then a black hole.
-//!
-//! Skips when the adapter does not advertise the int64-atomic feature
-//! bundle (#493).
+//! Integration test that exercises the production `Vbuf64Stage::new` path on a real device and
+//! asserts no uncaptured wgpu errors are raised during pipeline creation.
 
 use kooch_render::meshlet::Vbuf64Stage;
 use std::sync::{Arc, Mutex};
@@ -34,10 +27,8 @@ fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
     let mut limits = wgpu::Limits::default();
     limits.max_storage_textures_per_shader_stage =
         16.min(adapter.limits().max_storage_textures_per_shader_stage);
-    // #493 vbuf64 raster pipeline uses 5 bind groups (camera, pool,
-    // visible, instances, vbuf64); #454 adds bind group 5 for the
-    // triangle-density accumulator + the uniform that gates the
-    // atomicAdd, raising the total to 6. Default is 4. Mirror the
+    // visible, instances, vbuf64); #454 adds bind group 5 for the triangle-density accumulator +
+    // the uniform that gates the atomicAdd, raising the total to 6. Default is 4. Mirror the
     // production GpuContext setup in `elevated_compute_limits`.
     limits.max_bind_groups = 6.min(adapter.limits().max_bind_groups);
     // #454.6 cull pipeline jumps from 8 → 9 storage buffers; bump
@@ -63,10 +54,9 @@ fn vbuf64_stage_creates_without_uncaptured_errors() {
         return;
     };
 
-    // Trap any wgpu validation error that fires during construction.
-    // The editor smoke surfaced "RenderPipeline … is invalid" at submit
-    // time; the actual cause is logged asynchronously via this hook
-    // when the pipeline is built.
+    // Trap any wgpu validation error that fires during construction. The editor smoke surfaced
+    // "RenderPipeline … is invalid" at submit time; the actual cause is logged asynchronously via
+    // this hook when the pipeline is built.
     let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let errors_capture = errors.clone();
     device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| {
@@ -76,11 +66,9 @@ fn vbuf64_stage_creates_without_uncaptured_errors() {
             .push(format!("{error}"));
     }));
 
-    // Same arguments the production render plugin uses: the meshlet
-    // pool BGL comes from `MeshletCull::meshlet_bind_group_layout`,
-    // depth format is the engine's reversed-Z target, size matches the
-    // default render stage. No surface needed — this is a headless
-    // construction smoke.
+    // Same arguments the production render plugin uses: the meshlet pool BGL comes from
+    // `MeshletCull::meshlet_bind_group_layout`, depth format is the engine's reversed-Z target,
+    // size matches the default render stage.
     let cull = kooch_render::meshlet::MeshletCull::new(
         &device,
         4096,

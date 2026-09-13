@@ -35,11 +35,9 @@ impl MeshletCull {
         })
     }
 
-    /// Mirror the atomic visible counter into the indirect args'
-    /// `instance_count` slot. Offset 4 inside DrawIndirectArgs:
-    ///   [0..4)   vertex_count    (constant, set at construction)
-    ///   [4..8)   instance_count  (this copy)
-    ///   [8..16)  first_vertex / first_instance (zero, immutable)
+    /// Mirror the atomic visible counter into the indirect args' `instance_count` slot. Offset 4
+    /// inside DrawIndirectArgs: [0..4) vertex_count (constant, set at construction) [4..8)
+    /// instance_count (this copy) [8..16) first_vertex / first_instance (zero, immutable)
     pub(super) fn mirror_count_to_indirect_args(&self, encoder: &mut wgpu::CommandEncoder) {
         encoder.copy_buffer_to_buffer(&self.visible_count, 0, &self.indirect_args, 4, 4);
     }

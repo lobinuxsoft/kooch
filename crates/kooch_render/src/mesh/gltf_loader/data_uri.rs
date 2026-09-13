@@ -20,10 +20,9 @@ use base64::Engine;
 
 use super::GltfMeshError;
 
-/// Decodes the payload of a `data:` URI (i.e., the substring **after**
-/// the leading `data:` prefix). Splits the metadata header from the
-/// payload at the first `,`, requires the `;base64` parameter, then
-/// decodes with the RFC 4648 standard alphabet.
+/// Decodes the payload of a `data:` URI (i.e., the substring **after** the leading `data:` prefix).
+/// Splits the metadata header from the payload at the first `,`, requires the `;base64` parameter,
+/// then decodes with the RFC 4648 standard alphabet.
 pub(super) fn decode(payload: &str) -> Result<Vec<u8>, GltfMeshError> {
     let (header, data) = payload
         .split_once(',')

@@ -1,9 +1,4 @@
 //! Shared vertex layout + local AABB for CPU and GPU meshes.
-//!
-//! `MeshVertex` is the interleaved POD vertex consumed by both the
-//! CPU-side `Mesh` asset and the meshlet builder (which feeds the
-//! GPU-driven pipeline). `Aabb` is the mesh-local axis-aligned bounding
-//! box, used by mesh imports and meshlet bounding-sphere derivation.
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;

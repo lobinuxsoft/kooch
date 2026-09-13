@@ -7,23 +7,9 @@ use super::super::MeshletCull;
 use super::super::pipelines::MeshletCullPipelines;
 
 impl MeshletCull {
-    /// Multi-mesh scene cull (#446). One dispatch covers every
-    /// instance × meshlet across the entire [`GpuGlobalMeshPool`].
-    /// Visible pairs land in `visible_meshlets[]` packed as
-    /// `(instance_id << 16) | global_meshlet_idx` (pool-relative —
-    /// not per-mesh as in [`Self::dispatch_scene`]).
-    ///
-    /// # Capacity
-    ///
-    /// `MeshletCull::capacity` must cover the worst-case dispatch
-    /// (`instance_count × pool.max_meshlets_per_mesh`). Per-thread
-    /// bounds checks against the actual mesh's meshlet_count keep
-    /// shorter meshes from over-running, but the capacity must still
-    /// cover the rectangular thread grid.
-    ///
-    /// `mesh_count_for_dispatch` is the worst-case meshlet stride —
-    /// pass `pool.max_meshlets_per_mesh()`. The shader bounds-checks
-    /// per-instance via `mesh_descriptors[mesh_id].meshlet_count`.
+    /// Multi-mesh scene cull (#446). One dispatch covers every instance × meshlet across the entire
+    /// [`GpuGlobalMeshPool`]. Visible pairs land in `visible_meshlets[]` packed as `(instance_id <<
+    /// 16) | global_meshlet_idx` (pool-relative — not per-mesh as in [`Self::dispatch_scene`]).
     #[allow(clippy::too_many_arguments)]
     pub fn dispatch_scene_pool(
         &self,
@@ -56,11 +42,9 @@ impl MeshletCull {
         );
         encoder.clear_buffer(&self.visible_count, 0, None);
 
-        // The pool path leaves the single-mesh `descriptors` binding
-        // unbound at the WGSL level (Naga drops it from the entry's
-        // required set), but the BGL still requires a valid resource
-        // there. Bind the pool's meshlets buffer as a placeholder —
-        // the shader simply does not read from it.
+        // The pool path leaves the single-mesh `descriptors` binding unbound at the WGSL level
+        // (Naga drops it from the entry's required set), but the BGL still requires a valid
+        // resource there.
         let cull_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_scene_pool_cull_bg"),
             layout: &pipelines.cull_bgl,

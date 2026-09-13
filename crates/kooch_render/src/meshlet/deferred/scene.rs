@@ -1,7 +1,6 @@
-//! Scene-path deferred shading — wraps the `cs_shade_scene` compute
-//! entry. Lives next to `mod.rs` so the deferred submodule keeps each
-//! file under the 400-LoC ceiling and makes the path-vs-path split
-//! visible at a glance.
+//! Scene-path deferred shading — wraps the `cs_shade_scene` compute entry. Lives next to `mod.rs`
+//! so the deferred submodule keeps each file under the 400-LoC ceiling and makes the path-vs-path
+//! split visible at a glance.
 
 use bytemuck::bytes_of;
 
@@ -29,22 +28,8 @@ impl MeshletDeferredShader {
         })
     }
 
-    /// Records `cs_shade_scene` for the entire output. Walks every
-    /// pixel; background pixels (cleared id 0) keep the clear color.
-    /// Foreground pixels resolve their `(instance_id, meshlet_idx)`
-    /// via `cull.visible_meshlets_buffer()` and read the per-instance
-    /// transform + material id from `scene.instance_buffer()`.
-    ///
-    /// Unlike [`Self::shade`], this method does NOT take a per-call
-    /// `model` matrix or `material_id` — those are per-instance state
-    /// the shader pulls from the scene buffer.
-    ///
-    /// `debug_mode` is the raw [`MeshletDebugMode`](crate::meshlet::MeshletDebugMode)
-    /// discriminant; 0 selects the production path. Anything else
-    /// selects a second pipeline, compiled on first use, whose shader is
-    /// the only one that contains the debug views at all (#743) — the
-    /// production module does not carry them, so it cannot be slowed by
-    /// them.
+    /// Records `cs_shade_scene` for the entire output. Walks every pixel; background pixels
+    /// (cleared id 0) keep the clear color.
     #[allow(clippy::too_many_arguments)]
     pub fn shade_scene(
         &self,

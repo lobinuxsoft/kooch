@@ -8,19 +8,9 @@ use crate::meshlet::asset::{DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES, Meshlet
 use super::common::{clusterize_lod, total_aabb};
 use super::error::MeshletBuildError;
 
-/// Builds a [`MeshletMesh`] from `mesh` using `meshopt`'s
-/// clusterization. Single-LOD output: every meshlet is a DAG root
-/// with `lod_error = 0`. Use [`super::build_meshlets_lod_chain`] to
-/// produce a multi-LOD asset.
-///
-/// `max_vertices` and `max_triangles` cap each meshlet's size — the
-/// defaults ([`DEFAULT_MAX_VERTICES`] / [`DEFAULT_MAX_TRIANGLES`])
-/// match every mesh-shader-capable GPU's recommended limits.
-///
-/// `cone_weight` weights the spatial vs. cone-tightness cost during
-/// clusterisation. `0.5` is a balanced default; `0.0` ignores cones
-/// (meshlets cluster by spatial proximity only); `1.0` heavily favours
-/// tight cones at the cost of spatial coherence.
+/// Builds a [`MeshletMesh`] from `mesh` using `meshopt`'s clusterization. Single-LOD output: every
+/// meshlet is a DAG root with `lod_error = 0`. Use [`super::build_meshlets_lod_chain`] to produce a
+/// multi-LOD asset.
 pub fn build_meshlets_from_mesh(
     mesh: &Mesh,
     max_vertices: usize,

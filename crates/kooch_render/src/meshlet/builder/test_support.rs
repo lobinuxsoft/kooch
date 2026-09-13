@@ -14,10 +14,8 @@ pub(crate) fn vertex(p: [f32; 3]) -> MeshVertex {
     }
 }
 
-/// Triangulated grid (`subdivisions × subdivisions` quads) on the
-/// XY plane spanning `[0, 1]²`. Used throughout the chain tests
-/// because `meshopt::simplify` needs a dense surface to actually
-/// reduce.
+/// Triangulated grid (`subdivisions × subdivisions` quads) on the XY plane spanning `[0, 1]²`. Used
+/// throughout the chain tests because `meshopt::simplify` needs a dense surface to actually reduce.
 pub(crate) fn make_grid_mesh(subdivisions: usize) -> Mesh {
     let n = subdivisions + 1;
     let mut verts = Vec::with_capacity(n * n);

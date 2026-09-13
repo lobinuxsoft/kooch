@@ -1,42 +1,9 @@
 // motion_vectors.wgsl — where each pixel's surface was last frame (#481).
-//
-// The prerequisite every temporal technique shares: TAA, FSR 2+, DLSS,
-// XeSS and motion blur all want depth, a jittered projection and this.
-//
-// CONCATENATED after `visibility_buffer_resolve.wgsl` and
-// `surface_reconstruct.wgsl`, so the vbuf decode, the meshlet indexing
-// and the perspective-correct barycentrics are the ones the shading path
-// already uses, not a second implementation of them.
-//
-// # 🔴 Why this reconstructs the surface instead of reading the vbuf twice
-//
-// The obvious implementation asks "what was at this pixel last frame".
-// That question has no answer under continuous LOD: a surface can change
-// cluster between frames without moving a millimetre, and every LOD
-// transition would then read as motion and smear.
-//
-// So the question asked here is the other one — **where was THIS point of
-// THIS surface** — answered by transforming the same three vertices by
-// the instance's previous matrix and interpolating with the same
-// barycentrics. A LOD switch changes which triangle covers the pixel; it
-// does not change where the surface was, so the vector stays zero on a
-// static object. Bevy's meshlet path does exactly this
-// (`visibility_buffer_resolve.wesl:152`).
-//
-// # Why it is a pass of its own
-//
-// Shading runs at half rate (#825) and a temporal resolve needs a vector
-// per pixel, not per 2x2 quad. This is the cheap half of the
-// reconstruction — positions only, no normals, no tangents, no texture
-// sampling — so running it at full resolution costs a fraction of what
-// shading there would.
 
 struct MotionUniforms {
-    // 🔴 Both UNJITTERED, and that is not a naming detail. Sub-pixel
-    // jitter is what the temporal resolve accumulates; a motion vector
-    // carrying it would describe the jitter as scene motion and the
-    // reprojection would cancel exactly the signal TAA exists to
-    // integrate.
+    // 🔴 Both UNJITTERED, and that is not a naming detail. Sub-pixel jitter is what the temporal
+    // resolve accumulates; a motion vector carrying it would describe the jitter as scene motion
+    // and the reprojection would cancel exactly the signal TAA exists to integrate.
     clip_from_world: mat4x4<f32>,
     previous_clip_from_world: mat4x4<f32>,
 }
@@ -52,13 +19,7 @@ fn corner_previous_position(previous: mat4x4<f32>, global_vertex: u32) -> vec4<f
     return previous * local;
 }
 
-/// Bevy's `calculate_motion_vector` (`pbr_prepass_functions.wesl:93`),
-/// line for line.
-///
-/// The result is a UV offset in the range -1..1, so a pixel can point at
-/// the diagonally opposite corner in either direction. Clip space spans
-/// -2..2 between those corners, hence the 0.5; V runs down where clip Y
-/// runs up, hence the flip.
+/// Bevy's `calculate_motion_vector` (`pbr_prepass_functions.wesl:93`), line for line.
 fn calculate_motion_vector(world_position: vec4<f32>, previous_world_position: vec4<f32>) -> vec2<f32> {
     let clip_position_t = motion.clip_from_world * world_position;
     let clip_position = clip_position_t.xy / clip_position_t.w;
@@ -67,13 +28,9 @@ fn calculate_motion_vector(world_position: vec4<f32>, previous_world_position: v
     return (clip_position - previous_clip_position) * vec2<f32>(0.5, -0.5);
 }
 
-// 🔴 A fragment pass, not a compute one, and the reason is the format.
-// `Rg16Float` is not a storage-texture format in WebGPU's core set, so a
-// compute shader cannot write it — the alternatives that can are
-// `Rgba16Float` and `Rg32Float`, both eight bytes a pixel against four.
-// As a render attachment `Rg16Float` is fine, which is also how Bevy's
-// prepass writes it. Half the bandwidth of a pass we are adding to a
-// frame the device already says is memory-bound.
+// 🔴 A fragment pass, not a compute one, and the reason is the format. `Rg16Float` is not a
+// storage-texture format in WebGPU's core set, so a compute shader cannot write it — the
+// alternatives that can are `Rgba16Float` and `Rg32Float`, both eight bytes a pixel against four.
 struct Varyings {
     @builtin(position) position: vec4<f32>,
 }
@@ -90,10 +47,9 @@ fn vs_motion_vectors(@builtin(vertex_index) index: u32) -> Varyings {
 fn fs_motion_vectors(in: Varyings) -> @location(0) vec2<f32> {
     let pixel = vec2<u32>(in.position.xy);
 
-    // 🔴 The ids are the LOW half. The high 32 bits are the depth key
-    // `textureAtomicMax` sorts on, so they are what says "covered" —
-    // reading the payload to test coverage would call a pixel empty
-    // wherever the winning triangle happened to be slot 0.
+    // 🔴 The ids are the LOW half. The high 32 bits are the depth key `textureAtomicMax` sorts on,
+    // so they are what says "covered" — reading the payload to test coverage would call a pixel
+    // empty wherever the winning triangle happened to be slot 0.
     let packed = textureLoad(vbuf64, pixel).x;
     if ((packed >> 32u) == 0lu) {
         // Background. Zero, not "unwritten": a temporal resolve reads
@@ -126,10 +82,9 @@ fn fs_motion_vectors(in: Varyings) -> @location(0) vec2<f32> {
 
     let world_position = mat3x4<f32>(wp0, wp1, wp2) * pd.barycentrics;
 
-    // 🔴 The SAME barycentrics, against the previous matrix. Recomputing
-    // them from the previous positions would ask where the pixel's
-    // *screen* position was, which is the question that cannot survive a
-    // LOD change.
+    // 🔴 The SAME barycentrics, against the previous matrix. Recomputing them from the previous
+    // positions would ask where the pixel's *screen* position was, which is the question that
+    // cannot survive a LOD change.
     let previous = previous_transforms[inst_id];
     let pp0 = corner_previous_position(previous, g0);
     let pp1 = corner_previous_position(previous, g1);

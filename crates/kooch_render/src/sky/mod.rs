@@ -1,12 +1,4 @@
 //! Sky renderer — procedural vertical-gradient background pass.
-//!
-//! Runs **before** the ray-march pass when an ECS entity with an active
-//! `SkyRenderer` component exists. Clears the viewport color target and
-//! writes `frag_depth = 1.0` so subsequent passes depth-test correctly.
-//!
-//! When no `SkyRenderer` is active the pass is skipped entirely and the
-//! ray-march pass reverts to its internal gradient (matching pre-SkyRenderer
-//! behavior).
 
 mod renderer;
 

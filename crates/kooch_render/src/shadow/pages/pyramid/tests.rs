@@ -110,13 +110,6 @@ fn read_mip(
 }
 
 /// One resident page has to light every texel above it, and only those.
-///
-/// 🔴 Both halves matter and they fail differently. A missing ancestor
-/// is a caster the overlap test will reject — geometry that silently
-/// stops being drawn into a page that asked for it, which is the exact
-/// shape of the artefact this whole line of work is chasing. A spurious
-/// one is only wasted raster. The first is why the structure has to be
-/// proven before anything reads it.
 #[test]
 fn a_listed_page_lights_its_ancestors() {
     let Some((device, queue)) = device() else {
@@ -174,14 +167,6 @@ fn a_listed_page_lights_its_ancestors() {
 }
 
 /// A page that is RESIDENT but not listed has to stay dark.
-///
-/// 🔴 The failure this guards is not an artefact, it is the cache. Most
-/// of the atlas is resident at any moment and almost none of it is
-/// listed — listing is the compaction's decision that a page redraws
-/// this frame. A pyramid seeded on residency answers `true` for every
-/// cached page, the inverted expansion pairs against all of them, and
-/// the frame rasterises the whole atlas every frame while every counter
-/// reports health. That is #477 undone in one texture.
 #[test]
 fn a_cached_page_stays_dark() {
     let Some((device, queue)) = device() else {
@@ -247,15 +232,6 @@ fn cs_probe(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
 
 /// The constant-time answer may never miss a resident page.
-///
-/// 🔴 The two directions are not equally bad and the assertions say so.
-/// A FALSE NEGATIVE drops a caster: the expansion never pairs it with
-/// the page it belongs in, the page is drawn without it, and the shadow
-/// is missing with every counter reporting health. A false positive is
-/// one pair tested and discarded. So the first is checked exhaustively
-/// against the slow answer, and the second only has to stay away from
-/// the degenerate case — a function that returned `true` always would
-/// satisfy the safety property and be worthless.
 #[test]
 fn the_pyramid_never_misses_a_page() {
     let Some((device, queue)) = device() else {

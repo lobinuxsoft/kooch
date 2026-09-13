@@ -1,15 +1,4 @@
 //! Engine render plugins.
-//!
-//! - [`RenderPlugin`] — full game render pipeline targeting the surface
-//!   (sky + meshlet stage + blit). Used by play-mode binaries via
-//!   `kooch::DefaultPlugins`.
-//! - [`AssetPlugin`] (in [`assets`]) — installs `AssetServer`,
-//!   `AssetDatabase`, and the `Assets<T>` storages for every asset type
-//!   the engine knows how to load. Independent of the GPU pipeline,
-//!   so headless tools can install asset loading without rendering.
-//!
-//! Post-pivot 2026-05-02: SDF raymarch pass removed. Engine is mesh-only;
-//! voxel + DC pipeline (Phase 2.5) will feed mesh chunks into pass 2.
 
 pub mod assets;
 
@@ -39,28 +28,18 @@ use crate::vbuf64::Vbuf64Support;
 const SKY_FALLBACK: Vec4 = Vec4::new(0.1, 0.2, 0.4, 1.0);
 
 /// Plugin that installs the full render pipeline.
-///
-/// Inserts [`SkyRenderPass`], [`MeshletRenderStage`], [`MeshletBlit`] and a
-/// surface-sized depth texture as resources at `Stage::Startup`, and runs
-/// the per-frame orchestrator at `Stage::Render`.
 #[derive(Default)]
 pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        // 🔴 Inserted here, not by whoever generates a mesh: the store
-        // belongs to this crate and the drain is in this crate's meshlet
-        // sync. Leaving it to a generator meant nobody inserted it at
-        // all, and `remove::<GeneratedMeshes>()` answering `None` reads
-        // exactly like "nothing to upload" — every generated mesh was
-        // built and dropped, and the block that used it was invisible
-        // with nothing failing.
+        // 🔴 Inserted here, not by whoever generates a mesh: the store belongs to this crate and the
+        // drain is in this crate's meshlet sync.
         app.insert_resource(crate::meshlet::GeneratedMeshes::new());
         app.add_system(Stage::Startup, init_renderers);
-        // Before the frame, and in `Render` rather than `Update`: the
-        // resource it reads is written by `apply_render_settings_system`
-        // in `Update`, and a stage boundary is the only ordering between
-        // two plugins that does not depend on which one registered first.
+        // Before the frame, and in `Render` rather than `Update`: the resource it reads is written
+        // by `apply_render_settings_system` in `Update`, and a stage boundary is the only ordering
+        // between two plugins that does not depend on which one registered first.
         app.add_system(Stage::Render, apply_presentation_system);
         app.add_system(Stage::Render, render_frame_system);
     }
@@ -71,23 +50,6 @@ impl Plugin for RenderPlugin {
 }
 
 /// Puts [`Presentation`](crate::quality::Presentation) on the surface.
-///
-/// 🔴 Absent means "no opinion", the same as everywhere else in
-/// [`crate::quality`]: a game that never loaded a settings asset, and a
-/// test that configured its surface itself, keep exactly the surface
-/// they had. This system creates no default.
-///
-/// [`GpuContext::set_vsync`] is what decides whether anything happens —
-/// it compares against the mode the surface is already presenting with,
-/// so the common case of "the resource says what it said last frame"
-/// costs one comparison rather than a swapchain rebuild.
-///
-/// 🔴 `KOOCH_PRESENT_MODE` wins over the asset, and it has to. The
-/// variable was read once at surface creation and then overwritten here
-/// on the first frame, so a `novsync` measurement run presented with
-/// vsync anyway and reported the vblank as if it were work — the exact
-/// thing the variable exists to stop. An override that any settings file
-/// silently undoes is not an override.
 fn apply_presentation_system(resources: &mut Resources) {
     let Some(wanted) = resources.get::<crate::quality::Presentation>().copied() else {
         return;
@@ -287,22 +249,8 @@ fn acquire_and_render(
     resources: &mut Resources,
     aspect: f32,
 ) -> SurfaceOutcome {
-    // 🔴 The scene is recorded and submitted BEFORE the swapchain image is
-    // asked for, and the order is the whole point of this function.
-    //
-    // Nothing between here and the sky pass touches the surface: the
-    // meshlet stage draws into its own textures and submits its own
-    // command buffer. Acquiring first — which is what this did — makes
-    // the CPU block on the compositor before recording work the
-    // compositor has nothing to do with, so the GPU cannot start this
-    // frame until the presentation engine has let go of the last one.
-    // Measured on the OneXFly: a 37.14 ms median frame made of 34 ms of
-    // GPU and 3.006 ms of recording, added rather than overlapped.
-    //
-    // ⚠️ On the failure paths below this work is already submitted and
-    // goes unseen. That is a resize or a lost surface — rare, and the
-    // alternative is paying the serialisation on every frame that works
-    // to save one that does not.
+    // 🔴 The scene is recorded and submitted BEFORE the swapchain image is asked for, and the order
+    // is the whole point of this function.
     let camera = active_camera(resources);
     let stats = meshlet_stage.render_with_assets_primary(
         gpu.device(),
@@ -315,10 +263,9 @@ fn acquire_and_render(
         aspect,
     );
 
-    // The one measurement a game could not otherwise have: the editor
-    // reads these stats, and until now a windowed game threw them away.
-    // Written into the engine's own metrics rather than kept here, so
-    // there is one place that answers "how long did the frame take".
+    // The one measurement a game could not otherwise have: the editor reads these stats, and until
+    // now a windowed game threw them away. Written into the engine's own metrics rather than kept
+    // here, so there is one place that answers "how long did the frame take".
     if let Some(metrics) = resources.get_mut::<kooch_core::frame_metrics::FrameMetrics>() {
         metrics.gpu_frame_ms = stats.gpu_frame_ms;
     }
@@ -348,12 +295,6 @@ fn acquire_and_render(
 
 #[allow(clippy::too_many_arguments)]
 /// Everything that needs the swapchain image, and nothing that does not.
-///
-/// The meshlet stage has already submitted its own command buffer (cull
-/// + raster + deferred) by the time this runs — see the comment in
-/// [`acquire_and_render`]. Order still matters on the queue: the blit
-/// reads the stage's colour view, so the stage's submit must land first,
-/// and it does because it happened before the acquire.
 fn render_passes(
     gpu: &GpuContext,
     sky_pass: &mut SkyRenderPass,
@@ -410,10 +351,9 @@ fn render_passes(
         scopes.end(&mut encoder, query);
     }
 
-    // Composite the meshlet stage's color over the sky only when the
-    // stage has GPU-resident meshes. Without this guard the blit would
-    // copy the stage's empty color buffer over the sky every frame,
-    // blanking the surface to black until something is registered.
+    // Composite the meshlet stage's color over the sky only when the stage has GPU-resident meshes.
+    // Without this guard the blit would copy the stage's empty color buffer over the sky every
+    // frame, blanking the surface to black until something is registered.
     if meshlet_stage.gpu_mesh_count() > 0 {
         let blit_query = scopes.map(|s| s.begin("blit", &mut encoder));
         meshlet_blit.blit(
@@ -429,10 +369,9 @@ fn render_passes(
         }
     }
 
-    // The frame's last encoder, so this is where the timestamps are
-    // copied out — including the meshlet stage's, which were written
-    // into an encoder submitted before this one and are therefore
-    // already resolved on the queue by the time this copy runs.
+    // The frame's last encoder, so this is where the timestamps are copied out — including the
+    // meshlet stage's, which were written into an encoder submitted before this one and are
+    // therefore already resolved on the queue by the time this copy runs.
     if let Some(mut scopes) = resources.remove::<kooch_core::gpu::GpuScopes>() {
         scopes.resolve(&mut encoder);
         gpu.queue().submit(Some(encoder.finish()));

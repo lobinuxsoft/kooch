@@ -1,45 +1,6 @@
-// bevy_raymarch.wgsl — Bevy 0.19's `bevy_pbr::raymarch`, ported here
-// LITERALLY (#735).
-//
-// Everything below the licence block is Bevy's text with two mechanical
-// changes and no others: their `#import` lines are gone (this engine
-// concatenates in Rust rather than preprocessing), and the
-// `USE_DEPTH_SAMPLERS` branch is resolved to the manual-fetch side —
-// the same side Bevy takes on WebGPU, because a depth texture with a
-// filtering sampler is invalid there.
-//
-// 🔴 It is a literal port on purpose. The first attempt at this march
-// was a rewrite that was equivalent on paper — `bisection_steps = 0`
-// and `linear_march_exponent = 1.0` really do reduce the root finder to
-// a flat loop — and it shipped an inverted `select` in the frustum clip
-// that took a debug view to find. A rewrite has to be re-verified; a
-// copy has to be diffed.
-//
-// What the host must declare ABOVE this file: `depth_prepass_texture`,
-// and the four view helpers `ndc_to_uv`, `position_world_to_ndc`,
-// `direction_world_to_clip` and `perspective_camera_near`. See
-// `contact_shadow.wgsl`.
-//
-// ⚠️ `perspective_camera_near()` and `ray_depth = 1.0 / ray_point_cs.z`
-// are only each other's inverse under a **reversed-Z projection with no
-// far plane**. That is why this engine's camera now has one — see
-// `projection::perspective_infinite_rh_reverse_z`.
+// bevy_raymarch.wgsl — Bevy 0.19's `bevy_pbr::raymarch`, ported here LITERALLY (#735).
 
 // Copyright (c) 2023 Tomasz Stachowiak
-//
-// This contribution is dual licensed under EITHER OF
-//
-//     Apache License, Version 2.0, (http://www.apache.org/licenses/LICENSE-2.0)
-//     MIT license (http://opensource.org/licenses/MIT)
-//
-// at your option.
-//
-// This is a port of the original [`raymarch.hlsl`] to WGSL. It's deliberately
-// kept as close as possible so that patches to the original `raymarch.hlsl`
-// have the greatest chances of applying to this version.
-//
-// [`raymarch.hlsl`]:
-// https://gist.github.com/h3r2tic/9c8356bdaefbe80b1a22ae0aaee192db
 
 // Manual depth fetch helpers used on WebGPU where depth + filtering sampler is invalid.
 fn depth_texel_clamped(texel: vec2<i32>) -> f32 {
@@ -210,12 +171,7 @@ fn hybrid_root_finder_find_root(
             let candidate = start + dir * mid_t;
             let candidate_d = depth_raymarch_distance_fn_evaluate(distance_fn, candidate);
 
-            // Only accept the result of the secant method if it improves upon
-            // the previous result.
-            //
-            // Technically root_finder should be `abs(candidate_d.distance) <
-            // min(min_d.distance, -max_d.distance) * frac`, but root_finder seems
-            // sufficient.
+            // Only accept the result of the secant method if it improves upon the previous result.
             if (abs(candidate_d.distance) < min_d.distance * 0.9 && candidate_d.valid) {
                 *hit_t = mid_t;
                 *hit_d = candidate_d;
@@ -268,26 +224,6 @@ fn depth_raymarch_distance_fn_evaluate(
     let ray_depth = 1.0 / ray_point_cs.z;
 
     // We're using both point-sampled and bilinear-filtered values from the depth buffer.
-    //
-    // That's really stupid but works like magic. For samples taken near the ray origin,
-    // the discrete nature of the depth buffer becomes a problem. It's not a land of continuous surfaces,
-    // but a bunch of stacked duplo bricks.
-    //
-    // Technically we should be taking discrete steps in distance_fn duplo land, but then we're at the mercy
-    // of arbitrary quantization of our directions -- and sometimes we'll take a step which would
-    // claim that the ray is occluded -- even though the underlying smooth surface wouldn't occlude it.
-    //
-    // If we instead take linear taps from the depth buffer, we reconstruct the linear surface.
-    // That fixes acne, but introduces false shadowing near object boundaries, as we now pretend
-    // that everything is shrink-wrapped by distance_fn continuous 2.5D surface, and our depth thickness
-    // heuristic ends up falling apart.
-    //
-    // The fix is to consider both the smooth and the discrete surfaces, and only claim occlusion
-    // when the ray descends below both.
-    //
-    // The two approaches end up fixing each other's artifacts:
-    // * The false occlusions due to duplo land are rejected because the ray stays above the smooth surface.
-    // * The shrink-wrap surface is no longer continuous, so it's possible for rays to miss it.
 
     let linear_depth = 1.0 / depth_sample_linear(interp_uv, (*distance_fn).depth_tex_size);
     let unfiltered_depth = 1.0 / depth_sample_nearest(interp_uv, (*distance_fn).depth_tex_size);
@@ -325,20 +261,13 @@ struct DepthRayMarchResult {
     hit: bool,
 
     /// In case of a hit, the normalized distance to it.
-    ///
-    /// In case of a miss, the furthest the ray managed to travel, which could either be
-    /// exceeding the max range, or getting behind a surface further than the depth thickness.
-    ///
-    /// Range: `0..=1` as a lerp factor over `ray_start_cs..=ray_end_cs`.
     hit_t: f32,
 
     /// UV corresponding to `hit_t`.
     hit_uv: vec2<f32>,
 
-    /// The distance that the hit point penetrates into the hit surface.
-    /// Will normally be non-zero due to limited precision of the ray march.
-    ///
-    /// In case of a miss: undefined.
+    /// The distance that the hit point penetrates into the hit surface. Will normally be non-zero
+    /// due to limited precision of the ray march.
     hit_penetration: f32,
 
     /// Ditto, within the range `0..DepthRayMarch::depth_thickness_linear_z`
@@ -353,26 +282,15 @@ struct DepthRayMarch {
     linear_steps: u32,
 
     /// Exponent to be applied in the linear part of the march.
-    ///
-    /// A value of 1.0 will result in equidistant steps, and higher values will compress
-    /// the earlier steps, and expand the later ones. This might be desirable in order
-    /// to get more detail close to objects in SSR or SSGI.
-    ///
-    /// For optimal performance, this should be a small compile-time unsigned integer,
-    /// such as 1 or 2.
     linear_march_exponent: f32,
 
-    /// Number of steps in a bisection (binary search) to perform once the linear search
-    /// has found an intersection. Helps narrow down the hit, increasing the chance of
-    /// the secant method finding an accurate hit point.
-    ///
-    /// Useful when sampling color, e.g. SSR or SSGI, but pointless for contact shadows.
+    /// Number of steps in a bisection (binary search) to perform once the linear search has found
+    /// an intersection. Helps narrow down the hit, increasing the chance of the secant method
+    /// finding an accurate hit point.
     bisection_steps: u32,
 
     /// Approximate the root position using the secant method -- by solving for line-line
     /// intersection between the ray approach rate and the surface gradient.
-    ///
-    /// Useful when sampling color, e.g. SSR or SSGI, but pointless for contact shadows.
     use_secant: bool,
 
     /// Jitter to apply to the first step of the linear search; 0..=1 range, mapping
@@ -385,16 +303,6 @@ struct DepthRayMarch {
     ray_end_cs: vec3<f32>,
 
     /// Should be used for contact shadows, but not for any color bounce, e.g. SSR.
-    ///
-    /// For SSR etc. this can easily create leaks, but with contact shadows it allows the rays
-    /// to pass over invalid occlusions (due to thickness), and find potentially valid ones ahead.
-    ///
-    /// Note that this will cause the linear search to potentially miss surfaces,
-    /// because when the ray overshoots and ends up penetrating a surface further than
-    /// `depth_thickness_linear_z`, the ray marcher will just carry on.
-    ///
-    /// For this reason, this may require a lot of samples, or high depth thickness,
-    /// so that `depth_thickness_linear_z >= world space ray length / linear_steps`.
     march_behind_surfaces: bool,
 
     /// If `true`, the ray marcher only performs nearest lookups of the depth buffer,

@@ -1,13 +1,5 @@
-//! End-to-end GPU integration: meshlet visibility-buffer + deferred
-//! shading renders the cube test scene with non-clear pixels.
-//!
-//! Same camera + cube setup as `meshlet_render.rs`, but the pipeline
-//! goes:
-//!   cull → vbuf rasterize (R32Uint + depth) → deferred shade (compute
-//!   into Rgba8Unorm storage texture).
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test meshlet_deferred
+//! End-to-end GPU integration: meshlet visibility-buffer + deferred shading renders the cube test
+//! scene with non-clear pixels.
 
 mod common;
 

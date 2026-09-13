@@ -1,17 +1,4 @@
 //! The GPU marking pass, against a real device (#866).
-//!
-//! What these assert is the half a CPU census cannot: that the shader
-//! **compiles** — `PageMarker::new` builds the pipeline, and a WGSL
-//! mistake surfaces here rather than three layers away as a frame that
-//! renders nothing — and that the pass reads depth the way the engine
-//! writes it.
-//!
-//! 🔴 They deliberately do **not** assert the census's numbers. The
-//! census marks per froxel cell and this marks per pixel; they are meant
-//! to be close, and pinning them to each other in a unit test would
-//! either be flaky or would freeze one of them as the other's
-//! definition. That comparison belongs in the instrument, where a
-//! disagreement is a finding rather than a red build.
 
 use glam::{Mat4, Vec3};
 
@@ -100,10 +87,6 @@ fn projection() -> Mat4 {
 }
 
 /// A depth texture every texel of which holds `depth`.
-///
-/// 🔴 Reversed-Z infinite (ADR 0002): 0 is FAR, so a cleared buffer is
-/// sky and a *larger* value is *nearer*. `0.01` puts the surface ten
-/// metres out, which is inside the light ranges these tests use.
 fn depth_texture(device: &wgpu::Device, queue: &wgpu::Queue, depth: f32) -> wgpu::TextureView {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("page_marking_depth"),
@@ -261,10 +244,9 @@ fn run_pool(
         },
     );
     queue.submit([encoder.finish()]);
-    // The ring is asynchronous on purpose, so a test has to drive both
-    // halves: `poll` maps what was just submitted, the wait lets wgpu
-    // run the callback, and the second `poll` picks it up. In a frame
-    // the answer simply arrives one or two frames later.
+    // The ring is asynchronous on purpose, so a test has to drive both halves: `poll` maps what was
+    // just submitted, the wait lets wgpu run the callback, and the second `poll` picks it up. In a
+    // frame the answer simply arrives one or two frames later.
     marker.poll();
     wait(device);
     marker.poll();
@@ -406,19 +388,13 @@ fn a_stopped_pass_reports_nothing() {
     marker.poll();
     assert!(marker.last().is_some_and(|c| c.resident > 0));
 
-    // 🔴 The count is sticky on purpose — the ring runs a frame or two
-    // behind, so a frame with nothing new keeps the last real answer.
-    // That is right while the pass runs and wrong the moment it stops,
-    // and forgetting it was what made turning the pass OFF log every
-    // frame instead of none.
+    // 🔴 The count is sticky on purpose — the ring runs a frame or two behind, so a frame with
+    // nothing new keeps the last real answer.
     marker.forget();
     assert_eq!(marker.last(), None);
 }
 
 /// Reads the paint target back as `[r, g, b, a]` per pixel, 0..1.
-///
-/// `Rgba8Unorm`, so four bytes a texel and the row pitch has to be
-/// padded to wgpu's 256-byte alignment like any other copy.
 fn read_paint(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::Texture) -> Vec<[f32; 4]> {
     let row = SIZE as u64 * 4;
     let padded = row.div_ceil(256) * 256;
@@ -533,11 +509,7 @@ fn paint(
             size: (SIZE, SIZE),
         },
     );
-    // 🔴 A dispatch of its own now, recorded where the frame records it:
-    // after the shading. The marking moved to the top of the frame so
-    // the raster can fill the atlas before anything samples it, and the
-    // paint could not go with it — it writes the view's FINAL colour,
-    // which at that point still holds the last frame.
+    // 🔴 A dispatch of its own now, recorded where the frame records it: after the shading.
     marker.record_paint(&mut encoder, (SIZE, SIZE));
     queue.submit([encoder.finish()]);
     wait(device);
@@ -589,15 +561,7 @@ fn the_view_leaves_the_sky_alone() {
 
 #[test]
 fn the_paint_format_is_the_views_own() {
-    // 🔴 The bug this pins cost a frame's worth of validation errors per
-    // second: the pass declared `Rgba16Float` because the radiance
-    // target is HDR, and was handed `MeshletView::color_view`, which is
-    // the TONEMAPPED target and `Rgba8Unorm`. wgpu compares the storage
-    // class in the shader against the bind group layout, so the mismatch
-    // surfaces as "Storage texture binding 8 expects format ..." on
-    // every frame rather than as a wrong image — and no test caught it,
-    // because the tests built their own target from the pass's own
-    // constant instead of from the engine's.
+    // 🔴 The bug this pins cost a frame's worth of validation errors per second.
     assert_eq!(PAINT_FORMAT, DEFERRED_COLOR_FORMAT);
 }
 
@@ -609,10 +573,9 @@ fn a_count_carries_its_resolution() {
     };
     let mut resources = world();
     add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
-    // 🔴 A page count without the resolution it was taken at is not a
-    // reading. The editor renders TWO views at two sizes, so the same
-    // panel shows two different numbers a frame apart — and this project
-    // has already had to retract a table that mixed 1080p with 720p.
+    // 🔴 A page count without the resolution it was taken at is not a reading. The editor renders
+    // TWO views at two sizes, so the same panel shows two different numbers a frame apart — and
+    // this project has already had to retract a table that mixed 1080p with 720p.
     let counts = run(&device, &queue, &resources, 0.01, None);
     assert_eq!(counts.size, (SIZE, SIZE));
 }
@@ -670,11 +633,8 @@ fn half_density_is_a_quarter_of_the_pages() {
         marker.last().expect("counters came back").resident
     };
 
-    // 🔴 The lever, and the reason it is the ONE that moves: a coarser
-    // texel is a level coarser in BOTH axes, so halving the density
-    // quarters the pages. Not exact — a level is a power of two and the
-    // cells round into it — so this asserts the direction and the
-    // magnitude, not an identity.
+    // 🔴 The lever, and the reason it is the ONE that moves: a coarser texel is a level coarser in
+    // BOTH axes, so halving the density quarters the pages.
     let full = at(100);
     let half = at(50);
     assert!(full > 0 && half > 0);
@@ -691,10 +651,9 @@ fn every_drawable_page_claims_a_slot() {
         eprintln!("no adapter; skipping");
         return;
     };
-    // 🔴 The sun ALONE, because it is the only thing the raster draws
-    // and therefore the only thing that spends the pool. With a local
-    // light in the scene the two counts are meant to differ — that is
-    // `a_local_light_marks_but_does_not_claim`.
+    // 🔴 The sun ALONE, because it is the only thing the raster draws and therefore the only thing
+    // that spends the pool. With a local light in the scene the two counts are meant to differ —
+    // that is `a_local_light_marks_but_does_not_claim`.
     let resources = world();
     let counts = run(
         &device,
@@ -715,24 +674,6 @@ fn every_drawable_page_claims_a_slot() {
 }
 
 /// A local light claims its pages, now that something draws them.
-///
-/// # 🔴 The guard this replaces, and why it was there
-///
-/// Local pages used to be marked and NOT claimed. Measured on
-/// `many_lights` with two viewports, claiming them held **991 and 1004
-/// of each camera's 1024 slots**, leaving the sun — the raster's only
-/// consumer at the time — 33 and 20 pages. The pool reported itself
-/// 100 % full while producing almost no shadow.
-///
-/// What makes claiming safe is that the rest of the chain now exists:
-/// the compaction buckets a lamp's pages by octave, the expansion tests
-/// them against the lamp's own frustum, and the depth pass builds that
-/// frustum from the light the page names. A claimed page is a drawn
-/// page.
-///
-/// ⚠️ The pressure is real and did not go away. What changed is that
-/// the pages bought something — `RasterCounts::local` and the pool's own
-/// overflow counter are what say when the budget stops covering it.
 #[test]
 fn a_local_light_claims_its_pages() {
     let Some((device, queue)) = device() else {
@@ -795,10 +736,9 @@ fn a_full_pool_denies_by_rank() {
         &resources,
         0.6,
         Some(Vec3::new(0.3, -1.0, 0.2)),
-        // Four times the screen's density, so the clipmap picks a level
-        // fine enough for the frustum to cover more than a handful of
-        // pages. Containment is a floor on the level and a far surface
-        // pins it coarse whatever the density says.
+        // Four times the screen's density, so the clipmap picks a level fine enough for the frustum
+        // to cover more than a handful of pages. Containment is a floor on the level and a far
+        // surface pins it coarse whatever the density says.
         400,
         small,
     );
@@ -809,10 +749,9 @@ fn a_full_pool_denies_by_rank() {
         small.slice()
     );
     assert_eq!(counts.pool.allocated(), small.slice(), "the pool filled");
-    // 🔴 With the seating plan (#942) a request the slice cannot fund is
-    // DENIED at its rank, not dropped at the allocator: the plan funds
-    // exactly `slice` seats, so the free list never runs dry and
-    // `overflow` — the allocator's own miss — stays zero.
+    // 🔴 With the seating plan (#942) a request the slice cannot fund is DENIED at its rank, not
+    // dropped at the allocator: the plan funds exactly `slice` seats, so the free list never runs
+    // dry and `overflow` — the allocator's own miss — stays zero.
     assert_eq!(
         counts.pool.claims + counts.pool.reused,
         small.slice(),
@@ -879,15 +818,6 @@ fn the_table_holds_every_claim() {
 }
 
 /// Two cameras, one table.
-///
-/// 🔴 The defect this whole change exists for. `PageMarker` lives on the
-/// stage, so both viewports marked into the same table — and the second
-/// one to run had just emptied it with a `clear_buffer`. What the user
-/// saw was shadows in one viewport and none in the other.
-///
-/// So: mark for camera 0, mark for camera 1, and camera 0's entries have
-/// to still be there. The camera lives in the high part of the page id
-/// and the reset is a pass that reads it.
 #[test]
 fn a_view_clears_only_its_own_pages() {
     let Some((device, queue)) = device() else {
@@ -976,12 +906,7 @@ fn a_view_clears_only_its_own_pages() {
 // Persistence (#866 A). The pool outlives the frame that filled it.
 // ---------------------------------------------------------------------
 
-/// Marks the same view `frames` times through one marker, returning what
-/// each frame counted.
-///
-/// The camera does not move, so after the first frame every request is
-/// for a page that is already there. That is the whole point: a scene
-/// standing still should stop allocating.
+/// Marks the same view `frames` times through one marker, returning what each frame counted.
 fn run_frames(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -989,22 +914,15 @@ fn run_frames(
     frames: u32,
     max_age: u32,
     pool: PoolConfig,
-    // Shadow texels per screen pixel, per frame. Varying it moves which
-    // clipmap levels are marked, which is a standing camera's cheapest
-    // way to ask for DIFFERENT pages each frame — the case where an
-    // unreused hole is left behind for good.
+    // Shadow texels per screen pixel, per frame. Varying it moves which clipmap levels are marked,
+    // which is a standing camera's cheapest way to ask for DIFFERENT pages each frame — the case
+    // where an unreused hole is left behind for good.
     density: &dyn Fn(u32) -> u32,
     // Where the camera stands on each frame. A clipmap is centred on it,
     // so moving it is what makes a frame ask for DIFFERENT pages than
     // the last one — the case a standing camera cannot produce.
     eye_of: &dyn Fn(u32) -> Vec3,
     // Where the sun points on each frame.
-    //
-    // 🔴 The most hostile input there is, and the user's suggestion.
-    // `sun_basis` is built from this direction, so rotating it moves
-    // EVERY page's identity at once — a frame after a rotation shares
-    // nothing with the frame before it, and every entry the last frame
-    // filed becomes a hole nobody will ever probe through again.
     sun_of: &dyn Fn(u32) -> Vec3,
 ) -> Vec<MarkCounts> {
     let proj = projection();
@@ -1054,12 +972,7 @@ fn run_frames(
     out
 }
 
-/// A page nothing stopped wanting is still there next frame, and cost
-/// nothing to have.
-///
-/// 🔴 The reading the whole change exists for. Frame 0 allocates; every
-/// frame after it reuses, allocates nothing, and therefore has nothing
-/// to rasterise. Before this, every frame allocated every page again.
+/// A page nothing stopped wanting is still there next frame, and cost nothing to have.
 #[test]
 fn a_page_survives_a_frame_that_wants_it() {
     let Some((device, queue)) = device() else {
@@ -1101,14 +1014,7 @@ fn a_page_survives_a_frame_that_wants_it() {
     }
 }
 
-/// Every request is answered exactly once, whether by a reuse or by an
-/// allocation.
-///
-/// ⚠️ This is the tombstone test. A lookup that stopped at a freed entry
-/// would declare a resident page missing and allocate a SECOND slot for
-/// it, which shows up here as the two halves summing past `resident` —
-/// and nowhere else, because both pages then rasterise correctly and
-/// only the pool runs out early.
+/// Every request is answered exactly once, whether by a reuse or by an allocation.
 #[test]
 fn a_request_is_answered_once() {
     let Some((device, queue)) = device() else {
@@ -1149,11 +1055,6 @@ fn a_request_is_answered_once() {
 }
 
 /// A slot freed by eviction is handed out again.
-///
-/// 🔴 Without recycling the pool is a bump allocator over the session
-/// rather than over the frame: it runs out after `slice` distinct pages
-/// have EVER been asked for. Four frames at age 0 request roughly four
-/// times what one frame does, so a pool sized for one frame proves it.
 #[test]
 fn an_evicted_slot_comes_back() {
     let Some((device, queue)) = device() else {
@@ -1203,14 +1104,6 @@ fn an_evicted_slot_comes_back() {
 }
 
 /// Ageing is measured in FRAMES, and `max_age` decides how many.
-///
-/// 🔴 `age_view` runs BEFORE the marking, so a page requested last frame
-/// is already one frame old when it is judged. At `max_age` 0 that is
-/// too old and it is evicted and immediately re-requested — which is
-/// exactly the behaviour that came before persistence, produced by the
-/// machine that replaces it. At 1 or more it survives. Both directions
-/// are asserted, because a threshold nothing tests off-by-one is a
-/// threshold nobody knows the meaning of.
 #[test]
 fn max_age_decides_whether_a_page_is_kept() {
     let Some((device, queue)) = device() else {
@@ -1273,18 +1166,6 @@ fn max_age_decides_whether_a_page_is_kept() {
 // leave a hole for a lookup to walk. See `page_table.wgsl`.
 
 /// A page that stays resident keeps the SAME physical slot.
-///
-/// 🔴 The property the fused raster depends on and nobody wrote down.
-/// `vbuf64.render` rasterises and shades in one pass, so the shading
-/// samples an atlas a frame old while reading THIS frame's table. That
-/// only works if the two agree about where a page lives — and before
-/// persistence they did by accident, because the allocator was a bump
-/// from zero every frame and handed the same page the same slot as long
-/// as the marking order held.
-///
-/// A free list has no such order. If a page can be freed and re-taken
-/// into a different slot, the table says slot 7 and last frame's atlas
-/// has that page in slot 3, with something else in 7.
 #[test]
 fn a_resident_page_keeps_its_slot() {
     let Some((device, queue)) = device() else {
@@ -1360,18 +1241,6 @@ fn a_resident_page_keeps_its_slot() {
 }
 
 /// A camera that keeps moving does not run the pool dry.
-///
-/// 🔴 The measurement, not a guess. With a long `max_age` a page stays
-/// resident for a second after the last frame that wanted it, so a
-/// camera sweeping across a scene accumulates the pages of everywhere it
-/// has been. If that fills the slice, new pages get no slot, render
-/// unshadowed, and come back when something finally ages out — a shadow
-/// that blinks in and out, which is what the user reported.
-///
-/// What it pins is the failure, not a policy. Eviction under pressure
-/// exists now — `preempt_view`, #942 — so a walking camera's stale
-/// pages are reseated the frame the plan stops funding them; what this
-/// asserts is that the reseating actually keeps up.
 #[test]
 fn a_moving_camera_does_not_exhaust_the_pool() {
     let Some((device, queue)) = device() else {
@@ -1428,9 +1297,8 @@ fn entry_rank(config: &PageConfig, clip_levels: u32, within: u32) -> u32 {
     (clip_levels + (config.levels() - 1 - level)).min(31)
 }
 
-/// Under pressure, what survives is the top of the ranking — never a
-/// page the plan ranked below one it turned away. The issue's own
-/// acceptance test: plant more requests than slots, read the table,
+/// Under pressure, what survives is the top of the ranking — never a page the plan ranked below one
+/// it turned away. The issue's own acceptance test: plant more requests than slots, read the table,
 /// and check every resident against the cutoff the plan reported.
 #[test]
 fn the_survivors_are_the_top_ranks() {
@@ -1478,10 +1346,9 @@ fn the_survivors_are_the_top_ranks() {
     assert_eq!(residents, small.slice(), "the slice seated exactly itself");
 }
 
-/// A saturated pool reseats the frame the camera moves: the new view's
-/// pages take their seats from the stale ones IN THE SAME FRAME, not
-/// after `max_age` lets them go. The starvation this replaces sat at
-/// `0 new` forever while 6 652 requests waited.
+/// A saturated pool reseats the frame the camera moves: the new view's pages take their seats from
+/// the stale ones IN THE SAME FRAME, not after `max_age` lets them go. The starvation this replaces
+/// sat at `0 new` forever while 6 652 requests waited.
 #[test]
 fn a_saturated_pool_reseats_on_move() {
     let Some((device, queue)) = device() else {
@@ -1551,12 +1418,9 @@ fn a_saturated_pool_reseats_on_move() {
     );
 }
 
-/// The pressure bias settles the denials (#943): a pool too small for
-/// the frame converges, one level per frame, to a marking that fits —
-/// and then HOLDS, because the step down needs slack the settled state
-/// does not have. The acceptance criteria of the issue, in order:
-/// denials reach zero, the bias is the reason, and it does not
-/// oscillate.
+/// The pressure bias settles the denials (#943): a pool too small for the frame converges, one
+/// level per frame, to a marking that fits — and then HOLDS, because the step down needs slack the
+/// settled state does not have.
 #[test]
 fn the_bias_settles_the_denials() {
     let Some((device, queue)) = device() else {
@@ -1640,10 +1504,9 @@ fn the_bias_settles_the_denials() {
         "the bias oscillates at the end: {tail:?}"
     );
 
-    // And it unwinds: drop the demand to almost nothing and the bias
-    // walks back to zero on its own — quality is only ever borrowed.
-    // Two trial steps 16 frames of patience apart, plus the readback
-    // ring's lag: 48 relaxed frames is the controller's own arithmetic.
+    // And it unwinds: drop the demand to almost nothing and the bias walks back to zero on its own
+    // — quality is only ever borrowed. Two trial steps 16 frames of patience apart, plus the
+    // readback ring's lag: 48 relaxed frames is the controller's own arithmetic.
     let mut relaxed = None;
     for index in 12..60u32 {
         marker.set_frame(index);
@@ -1684,16 +1547,9 @@ fn the_bias_settles_the_denials() {
     assert_eq!(relaxed.pool.denied, 0, "relaxed and still denying");
 }
 
-/// A light too small on screen drops to ONE page per cube face instead
-/// of a chain (#1009), and gets its chain back the moment the threshold
-/// would pass it — here by turning it off, which is the same comparison
-/// a closer camera flips.
-///
-/// 🔴 This test used to be `a_tiny_light_casts_nothing` and asserted
-/// `resident == 0`. That was #944's cliff, and the measurement that
-/// retired it is in `light_distant`: on `dense.scene` the cliff silenced
-/// 34 lights and the pool was still full, because the thirty above it
-/// took every slot.
+/// A light too small on screen drops to ONE page per cube face instead of a chain (#1009), and gets
+/// its chain back the moment the threshold would pass it — here by turning it off, which is the
+/// same comparison a closer camera flips.
 #[test]
 fn a_tiny_light_is_distant() {
     let Some((device, queue)) = device() else {
@@ -1733,11 +1589,7 @@ fn a_tiny_light_is_distant() {
             (SIZE, SIZE),
             0,
             1,
-            // 🔴 The finest density the settings allow, so the chain
-            // case actually asks for a chain. At 100 the receivers this
-            // rig writes are far enough that `page_level` lands near the
-            // top by itself, and both runs came back with four pages —
-            // the tier looked free and proved nothing.
+            // 🔴 The finest density the settings allow, so the chain case actually asks for a chain.
             400,
             Paint {
                 target: &target,
@@ -1779,20 +1631,7 @@ fn a_tiny_light_is_distant() {
     );
 }
 
-/// The per-pixel path counts into workgroup memory, never into a global
-/// counter.
-///
-/// 🔴 `mark_pixel` runs one thread per pixel and loops over the lights
-/// of that pixel's cluster. A global `atomicAdd` in there lands every
-/// thread of the dispatch on one address: at the OneXFly's resolution,
-/// millions of increments serialised on two words, inside a pass
-/// measured at a flat 13.975 ms (#952). The counts are load-bearing —
-/// the panel and #942's plan read them — so they are reduced per
-/// workgroup and flushed once, and this is what stops the cheap-looking
-/// one-liner from coming back.
-///
-/// A source check, because the defect is invisible in behaviour: the
-/// census comes out identical either way, only slower.
+/// The per-pixel path counts into workgroup memory, never into a global counter.
 #[test]
 fn the_hot_path_counts_in_workgroup_memory() {
     let source = include_str!("../shaders/page_mark.wgsl");
@@ -1813,16 +1652,7 @@ fn the_hot_path_counts_in_workgroup_memory() {
     );
 }
 
-/// The occupancy census counts froxels, and there are fewer of them than
-/// there are samples.
-///
-/// 🔴 The ratio the move to cluster/light pairs rests on. Olsson §III
-/// derives page masks from cluster bounds "several orders of magnitude
-/// fewer than the samples", and this engine measured 3 369 702
-/// sample/light pairs against 218 772 covered pixels (#952). A census
-/// that counted samples, or the whole grid, would make that comparison
-/// meaningless — so the two properties worth pinning are that it counts
-/// something, and that it counts FEWER things.
+/// The occupancy census counts froxels, and there are fewer of them than there are samples.
 #[test]
 fn the_census_counts_froxels_not_samples() {
     let Some((device, queue)) = device() else {
@@ -1850,11 +1680,6 @@ fn the_census_counts_froxels_not_samples() {
 }
 
 /// Sky occupies nothing.
-///
-/// The census reads the same early return the marking does, so a frame
-/// with no surface must report an empty grid rather than the whole one —
-/// which is the property that keeps a cluster pass from marking pages
-/// for empty air.
 #[test]
 fn sky_occupies_no_froxel() {
     let Some((device, queue)) = device() else {
@@ -1869,14 +1694,6 @@ fn sky_occupies_no_froxel() {
 }
 
 /// The cluster path marks the same scene for a fraction of the pairs.
-///
-/// 🔴 Olsson §III, measured against the path it replaces, in one
-/// process. `many_lights` on the OneXFly walks 2 937 330 sample/light
-/// pairs where 199 occupied froxels at 17.9 lights each would walk
-/// ~3 560 — 824x — and the whole point is that the cheaper answer is
-/// still an answer: pages get marked, nothing overflows, and the
-/// coarsest-corner rule keeps every one of them reachable by a reader
-/// walking its chain from the fine end.
 #[test]
 fn the_cluster_path_marks_for_fewer_pairs() {
     let Some((device, queue)) = device() else {
@@ -1891,12 +1708,8 @@ fn the_cluster_path_marks_for_fewer_pairs() {
 
     assert!(per_pixel.pairs > 0, "the per-pixel path walked nothing");
     assert_eq!(per_froxel.overflow, 0, "a page index past the buffer");
-    // 🔴 Olsson's EXPLICIT bounds, in one number. A froxel is mostly
-    // empty and its box is a slab; marking the box asks for pages across
-    // depth that holds nothing. With the implicit bounds this scene sent
-    // the resolution bias straight to its ceiling — `locals +4 · sun +2`
-    // and 21 pages denied — so a superset is required and a superset
-    // three times over is the feature failing.
+    // 🔴 Olsson's EXPLICIT bounds, in one number. A froxel is mostly empty and its box is a slab;
+    // marking the box asks for pages across depth that holds nothing.
     assert!(
         per_froxel.resident <= per_pixel.resident * 2,
         "cluster marked {} pages against {} — the over-marking is what \
@@ -1904,12 +1717,8 @@ fn the_cluster_path_marks_for_fewer_pairs() {
         per_froxel.resident,
         per_pixel.resident
     );
-    // 🔴 The safety property, and the only direction an approximation of
-    // "which pages does this scene need" may err in. A froxel is a
-    // frustum and its rect on a cube face is that frustum's bounding
-    // box, so the cluster path marks a SUPERSET: pages nothing samples
-    // cost a pool slot, pages nobody marked cost a shadow. Measured
-    // here at 22 against 12.
+    // 🔴 The safety property, and the only direction an approximation of "which pages does this
+    // scene need" may err in.
     assert!(
         per_froxel.resident >= per_pixel.resident,
         "cluster marked {} pages against the per-pixel path's {} — it is \
@@ -1928,11 +1737,6 @@ fn the_cluster_path_marks_for_fewer_pairs() {
 }
 
 /// The counts say which path produced them.
-///
-/// 🔴 `pairs` means (pixel, light) on one path and (froxel, light) on
-/// the other, and the panel divided it by samples either way — printing
-/// `0.0 lights each` beside a multiplier it had invented. A number whose
-/// MEANING changes with a switch has to carry the switch.
 #[test]
 fn the_counts_say_which_path_walked_them() {
     let Some((device, queue)) = device() else {
@@ -1959,20 +1763,6 @@ fn the_counts_say_which_path_walked_them() {
 }
 
 /// Lamps that overrun the pool do not blur the sun.
-///
-/// 🔴 The ranking has always had this right — a clipmap level never
-/// loses to a lamp — and the pressure valve did not. `cutoff` is the
-/// first rank the budget could not fund whole, the sun owns ranks
-/// `0..chain.w`, so a cutoff at or past `chain.w` means every sun rank
-/// was funded in full. Raising the sun's bias there buys back no page it
-/// asked for; it only punishes the consumer that won the ranking for the
-/// overdemand of the ones that lost.
-///
-/// Seen in `many_lights`: "the plan funded down to rank 17" — the sun
-/// complete, the cut inside the lamps — beside `locals +4 · sun +2`.
-/// Two levels of sun is four times the world per shadow texel on the one
-/// shadow the scene is about, and walking somewhere with fewer lamps in
-/// frame snapped it back. Resolution that depended on where you stood.
 #[test]
 fn lamps_that_overrun_the_pool_spare_the_sun() {
     let Some((device, queue)) = device() else {
@@ -2061,11 +1851,6 @@ fn lamps_that_overrun_the_pool_spare_the_sun() {
 }
 
 /// The peak overlap is a peak, not the average, and both paths report it.
-///
-/// 🔴 `pairs / froxels` hides the case that hurts. Lights are authored
-/// one at a time and the froxel they share is drawn nowhere, so the
-/// number that matters is the worst cell — it decides the shading
-/// loop's worst pixel and how much of the pool one cell can claim.
 #[test]
 fn the_census_reports_the_worst_froxel() {
     let Some((device, queue)) = device() else {
@@ -2102,27 +1887,6 @@ fn the_census_reports_the_worst_froxel() {
 }
 
 /// The bias lands on its value in one step, not one step a frame.
-///
-/// 🔴 The raise used to move by one and wait for the next frame to see
-/// whether that was enough: a scene needing four steps denied pages for
-/// four frames, and gave them back over as many as ninety-six. The
-/// player saw it — shadows blurring on the way into a lit area and
-/// sharpening again on the way out, resolution as a function of where
-/// they had been.
-///
-/// WickedEngine has no lag at all: it sizes lights from a formula, packs,
-/// halves on failure and repacks inside the frame. Ours are measured by
-/// a per-pixel pass, so one frame is the floor — and this pins that it
-/// reaches the floor.
-///
-/// ⚠️ **Both paths, and they are allowed different bounds.** The raise
-/// estimates a level as four pages becoming one, which is exact for the
-/// sun's clipmap and only an upper bound for a lamp: `mark_face_rect`
-/// caps a face's rect at `FROXEL_RECT_MAX`, so a rect already at the cap
-/// shrinks by less than four when the level goes up. The cluster path
-/// therefore lands one correction further out. It is measured here
-/// rather than hidden because a bound nobody states is a bound nobody
-/// notices growing.
 #[test]
 fn the_bias_reaches_its_value_in_one_step() {
     let Some((device, queue)) = device() else {
@@ -2191,10 +1955,9 @@ fn the_bias_reaches_its_value_in_one_step() {
         series
     };
 
-    // `corrections` is how many times the bias moved up AFTER its first
-    // move. Stepping one per frame would need `settled - 1` of them; the
-    // point of computing the fit is that this number stays tiny however
-    // deep the scene's answer is.
+    // `corrections` is how many times the bias moved up AFTER its first move. Stepping one per
+    // frame would need `settled - 1` of them; the point of computing the fit is that this number
+    // stays tiny however deep the scene's answer is.
     let check = |series: Vec<u32>, corrections: usize, path: &str| {
         let settled = *series.last().expect("counters came back");
         assert!(
@@ -2202,11 +1965,9 @@ fn the_bias_reaches_its_value_in_one_step() {
             "{path}: this scene does not need a multi-step bias, so it \
              cannot show one being reached in a step: settled at +{settled}"
         );
-        // 🔴 The property, and it is deliberately not exactness. The
-        // raise uses the OPTIMISTIC estimate — four pages become one per
-        // level — because raising too little costs a frame of denials
-        // while raising too much costs blur the player sees. So it lands
-        // at or under the answer and corrects, never climbing through it.
+        // 🔴 The property, and it is deliberately not exactness. The raise uses the OPTIMISTIC
+        // estimate — four pages become one per level — because raising too little costs a frame of
+        // denials while raising too much costs blur the player sees.
         let first_move = series
             .iter()
             .copied()
@@ -2247,28 +2008,6 @@ fn the_bias_reaches_its_value_in_one_step() {
 }
 
 /// A dilated request asks for the neighbouring pages too.
-///
-/// # 🔴 What it buys is a FRAME
-///
-/// `vbuf64.render` rasterises and shades in one pass, so the atlas the
-/// shading samples is a frame old. A page allocated this frame is read
-/// with whatever its slot held last frame — cleared, which is far depth
-/// under reversed-Z, which every reader answers "nothing occludes
-/// here". One lit frame every time a page turns over, and standing on a
-/// clipmap level boundary turns them over continuously: that is where
-/// it was reported from, a player sitting exactly on the line where the
-/// resolution changes.
-///
-/// The halo asks for the page before the camera reaches it, so the
-/// content is there by the time anything samples it. Epic's
-/// `PageDilationOffset` in `PageMarking.ush` does the same thing, and
-/// theirs is a mitigation on top of a pipeline that has no such
-/// latency at all.
-///
-/// Both bounds matter. It must grow — a halo that asked for nothing new
-/// would buy no frame — and it must stay well under three times, or
-/// every receiver really is paying for three pages and the pool pays
-/// for all of them.
 #[test]
 fn a_halo_asks_for_the_neighbours() {
     let Some((device, queue)) = device() else {
@@ -2301,25 +2040,6 @@ fn a_halo_asks_for_the_neighbours() {
 }
 
 /// The dilation direction has to vary per thread.
-///
-/// # 🔴 A fixed diagonal is three quarters of a halo missing
-///
-/// The offset is applied as `±step`, so one diagonal covers two of the
-/// eight neighbours. Epic vary which diagonal on a bit of the thread's
-/// own index — `PageDilationDither` — and their comment says why that
-/// is enough: *"as long as there's at least a single pixel near the
-/// edge the adjacent one will get mapped"*. Over a 2x2 block all four
-/// diagonals are asked for, at two marks per pixel instead of eight.
-///
-/// A constant direction still marks two pages per pixel, still raises
-/// `resident`, and still passes a test that only counts. It just never
-/// asks for the pages on the other three sides — so the halo does
-/// nothing at all on the side the camera happens to be moving towards,
-/// which is the only side that matters.
-///
-/// ⚠️ And it has to come off the THREAD index, not the pixel: `pixel`
-/// is `id.xy * rate`, so at any even rate every thread shares a parity
-/// and the pattern collapses back to the constant it replaced.
 #[test]
 fn the_dilation_picks_a_diagonal_per_thread() {
     let source = include_str!("../shaders/page_mark.wgsl");

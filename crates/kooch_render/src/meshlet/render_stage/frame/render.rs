@@ -1,16 +1,4 @@
-//! `pub fn render_with_assets` + `pub fn render` — the per-frame
-//! orchestrator entry points.
-//!
-//! `render` is a thin dispatcher: it runs the prelude common to both
-//! GPU paths (pool sync, ECS query, instance upload, growth checks,
-//! per-frame bind groups, GPU timer slot, encoder) and then routes the
-//! frame either through [`Self::render_path_r64`] (#493 atomic R64
-//! vbuf, sibling file `render_r64.rs`) when the device supports it, or
-//! through [`Self::render_path_hi_z_two_pass`] (legacy R32 + Hi-Z
-//! 2-pass, sibling file `render_hi_z_2pass.rs`).
-//!
-//! Both extracted methods own their submits + readbacks and return
-//! the [`MeshletRenderStats`] for the frame.
+//! `pub fn render_with_assets` + `pub fn render` — the per-frame orchestrator entry points.
 
 use kooch_core::resource::Resources;
 
@@ -23,12 +11,9 @@ use crate::view_camera::ViewCamera;
 use super::super::{MeshletRenderStage, MeshletRenderStats, ViewId};
 
 impl MeshletRenderStage {
-    /// Records + submits one frame of the meshlet pipeline driven by
-    /// `resources`'s ECS query against the multi-mesh `GpuGlobalMeshPool`.
-    /// Lazy-rebuilds the GPU pool when [`Self::pool_dirty`] is set.
-    ///
-    /// Returns [`MeshletRenderStats::default`] when the pool has no
-    /// registered mesh yet or the ECS query yielded no instances.
+    /// Records + submits one frame of the meshlet pipeline driven by `resources`'s ECS query
+    /// against the multi-mesh `GpuGlobalMeshPool`. Lazy-rebuilds the GPU pool when
+    /// `Self::pool_dirty` is set.
     pub fn render_with_assets(
         &mut self,
         view_id: ViewId,
@@ -38,10 +23,9 @@ impl MeshletRenderStage {
         camera: &ViewCamera,
         aspect: f32,
     ) -> MeshletRenderStats {
-        // The root of every frame's flamegraph (#785). Named for what a
-        // reader is looking for — "the frame" — rather than for the
-        // function, because a flamegraph of function names tells nobody
-        // which part of the engine to open.
+        // The root of every frame's flamegraph (#785). Named for what a reader is looking for —
+        // "the frame" — rather than for the function, because a flamegraph of function names tells
+        // nobody which part of the engine to open.
         profiling::scope!("frame");
         if self.pool_dirty || self.gpu_pool.is_none() {
             if self.pipeline.registered_count() == 0 {
@@ -72,45 +56,8 @@ impl MeshletRenderStage {
         self.render_with_assets(self.primary, device, queue, resources, camera, aspect)
     }
 
-    /// Records + submits one frame against the current `gpu_pool`.
-    /// Caller must have populated the pool via [`Self::ensure_gpu_mesh`]
-    /// before invoking. Returns zero stats when the ECS query yields
-    /// no instances; the stage does not clear in that case so the
-    /// previous frame's color stays on the offscreen target.
-    ///
-    /// Takes `&mut self` because the cull dispatcher's
-    /// `visible_meshlets` buffer is grown on demand to fit the
-    /// scene's worst-case (instances × max_meshlets/mesh) thread
-    /// count.
-    ///
-    /// # Draw-call accounting (#492)
-    ///
-    /// `MeshletRenderStats::draw_calls` reports **only the meshlet
-    /// stage's contribution**:
-    /// - `0` when the ECS query yields no instances (early return below
-    ///   skips both the cull dispatch and every raster / deferred
-    ///   submit).
-    /// - `4` on the atomic R64 vbuf path (#493): cull + clear + raster
-    ///   + deferred shade, all single-pass.
-    /// - `6` on the legacy R32 + Hi-Z 2-pass path: cull A + raster A +
-    ///   SPD pyramid build + cull B + raster B + deferred shade.
-    ///
-    /// The editor surface adds 3 fixed passes (sky background +
-    /// viewport blit + egui paint) outside this stage; the perf-HUD
-    /// `Draw calls / frame` field sums both contributions. An empty
-    /// scene therefore reports `3`, not `0` — that is the editor base,
-    /// not a leak.
-    ///
-    /// # Visibility filtering (#492)
-    ///
-    /// `MeshRenderer.visible == false` is filtered upstream at
-    /// [`MeshletPipeline::collect_scene_instances`], so an invisible
-    /// entity never enters the `Vec<MeshInstance>` and never reaches
-    /// the cull dispatch. Same filter runs in
-    /// [`MeshletPipeline::collect_referenced_guids`] so an invisible
-    /// mesh is also not pulled into the GPU pool. There is no
-    /// per-instance visibility flag inside the cull shader because the
-    /// upstream filter makes one redundant.
+    /// Records + submits one frame against the current `gpu_pool`. Caller must have populated the
+    /// pool via [`Self::ensure_gpu_mesh`] before invoking.
     pub fn render(
         &mut self,
         view_id: ViewId,
@@ -125,46 +72,12 @@ impl MeshletRenderStage {
         // `Mat4` has already thrown them away (#476).
         let unjittered_view_proj = camera.view_proj(aspect);
 
-        // #481 — the sub-pixel offset, advanced once per frame per view.
-        //
         // 🔴 This is the only place the two matrices are still together.
-        // Everything below takes the jittered one — the cull, the Hi-Z
-        // test, the raster, and every reconstruction that reads the
-        // visibility buffer the raster wrote, all of which have to agree
-        // on where a triangle landed. The camera's own matrix goes to
-        // exactly one pass, and carrying it that far as a second
-        // argument is the price of not having a `ViewUniform` the way
-        // Bevy does.
-        //
-        // The cascades are deliberately not in that list: they build
-        // from `camera` directly, and a shadow map that jittered would
-        // put the offset into the shadow rather than into the image.
-        //
-        // 🔴 The quality resources are applied only when they EXIST, not
-        // with a default when they do not. A test that calls
-        // `set_shading_rate` and then renders must keep the rate it
-        // asked for, and a project with no settings asset must render
-        // exactly as it did before those resources were introduced.
-        // Absent is "nobody has an opinion", not "everybody wants the
-        // default" — see `crate::quality`.
         let temporal = resources.get::<crate::quality::TemporalSettings>().copied();
         let shading = resources.get::<crate::quality::ShadingSettings>().copied();
-        // 🔴 Recorded on the stage BEFORE the per-view borrow below,
-        // because what a view renders at is decided by the technique and
-        // the scale, and `resize_view` is where that turns into
-        // textures. It is the editor dragging a divider that calls it,
-        // and a divider knows nothing about upscaling.
-        //
-        // ⚠️ So a change of scale lands on the next `resize_view`, which
-        // is the FOLLOWING frame in both hosts: the editor calls it per
-        // viewport and `render_frame_system` calls `resize` once a frame
-        // before it renders (`plugin/mod.rs`). `resize_view` recomputes
-        // the render size and returns immediately when neither it nor
-        // the output moved, so the per-frame call costs a comparison and
-        // a scale set from a game's options menu is live.
-        //
-        // Reallocating from inside the render instead would drop bind
-        // groups the GPU still has in flight.
+        // 🔴 Recorded on the stage BEFORE the per-view borrow below, because what a view renders at
+        // is decided by the technique and the scale, and `resize_view` is where that turns into
+        // textures.
         if let Some(temporal) = temporal {
             self.upscale_technique = temporal.technique;
             self.render_scale = temporal.render_scale;
@@ -180,17 +93,14 @@ impl MeshletRenderStage {
                 }
                 if let Some(temporal) = temporal {
                     stage.set_upscale(temporal.technique);
-                    // Applied per frame rather than at resize: unlike
-                    // the scale, this allocates nothing and changes no
-                    // texture's size, so it can land immediately and be
+                    // Applied per frame rather than at resize: unlike the scale, this allocates
+                    // nothing and changes no texture's size, so it can land immediately and be
                     // judged by dragging the slider and looking.
                     stage.set_sharpening(temporal.sharpening);
                 }
-                // SGSR 2's depth-clip threshold scales by the lens, so
-                // it has to be told. Set unconditionally: a technique
-                // that ignores it costs nothing, and one that needs it
-                // and does not get it fails as a wrong edge mask rather
-                // than as an error.
+                // SGSR 2's depth-clip threshold scales by the lens, so it has to be told. Set
+                // unconditionally: a technique that ignores it costs nothing, and one that needs it
+                // and does not get it fails as a wrong edge mask rather than as an error.
                 stage.set_camera_lens(camera.fov_y_rad, aspect, camera.near);
                 stage.next_jitter(unjittered_view_proj)
             }
@@ -201,11 +111,9 @@ impl MeshletRenderStage {
         let view_proj = jitter.view_proj;
         let cam_pos = camera.position();
 
-        // ── Prelude: shared between both GPU paths ─────────────────
-        // Extract the per-frame `max_meshlets_per_mesh` immediately so
-        // the `&self.gpu_pool` borrow is released before any `&mut
-        // self` mutation (cull growth, scene upload). The path methods
-        // re-borrow the pool internally for their dispatch calls.
+        // ── Prelude: shared between both GPU paths ───────────────── Extract the per-frame
+        // `max_meshlets_per_mesh` immediately so the `&self.gpu_pool` borrow is released before any
+        // `&mut self` mutation (cull growth, scene upload).
         let max_meshlets_per_mesh = match self.gpu_pool.as_ref() {
             Some(pool) => pool.max_meshlets_per_mesh.max(1),
             None => {
@@ -232,41 +140,22 @@ impl MeshletRenderStage {
             instances = instances.len(),
             "render dispatching meshlet pipeline",
         );
-        // Grow to fit rather than abort. A scene is authored, not
-        // declared: the count arrives from the ECS walk above, and the
-        // construction-time capacity was only ever a starting guess.
-        // Before this, the 257th instance panicked — in the editor and
-        // in a shipped game alike.
-        //
-        // Ahead of any encoder for this frame, so the buffer being
-        // replaced cannot be in flight.
+        // Grow to fit rather than abort. A scene is authored, not declared: the count arrives from
+        // the ECS walk above, and the construction-time capacity was only ever a starting guess.
+        // Before this, the 257th instance panicked — in the editor and in a shipped game alike.
         let required = instances.len() as u32;
         self.scene.ensure_capacity(device, required);
         self.instance_capacity = self.scene.capacity();
 
-        // 🔴 Braced. A `profiling::scope!` lives until the end of its
-        // enclosing block, so this one — declared mid-function —
-        // reported everything after it as its own: 1.900 ms of which
-        // 0.031 was actually the upload, with the whole render path
-        // nested underneath. A flat table cannot show that; the tree
-        // in `read_capture` made it obvious.
+        // 🔴 Braced. A `profiling::scope!` lives until the end of its enclosing block, so this one —
+        // declared mid-function — reported everything after it as its own: 1.900 ms of which 0.031
+        // was actually the upload, with the whole render path nested underneath.
         {
             profiling::scope!("upload instances");
             self.scene
                 .upload_instances_with_history(queue, &instances, &instance_entities);
-            // Every instance as a world-space sphere and a hash of its
-            // own bytes, for the point-shadow cube cache (#778, #847).
-            //
-            // 🔴 Per instance rather than one number for the scene. A
-            // single hash meant a crate sliding anywhere in the level
-            // invalidated all four cubes — 24 faces redrawn, measured at
-            // +2.0 ms — and since something always moves in a game, the
-            // cache helped only in the case that never happens.
-            //
-            // Hashed over the bytes that go to the GPU, so anything that
-            // could move a shadow — a transform, a mesh swap — changes
-            // it, and nothing that cannot does. O(n) over a Vec that was
-            // just walked to upload it.
+            // Every instance as a world-space sphere and a hash of its own bytes, for the
+            // point-shadow cube cache (#778, #847).
             self.instance_bounds.clear();
             self.instance_bounds.reserve(instances.len());
             for instance in &instances {
@@ -289,11 +178,9 @@ impl MeshletRenderStage {
                 });
             }
 
-            // The page cache's movement diff (#477): index against
-            // index, because the walk order is the buffer order and is
-            // stable frame to frame. A reorder reads as moves — extra
-            // redraws, never a stale page. Both bounds go in: the
-            // shadow the caster LEFT has to redraw too.
+            // The page cache's movement diff (#477): index against index, because the walk order is
+            // the buffer order and is stable frame to frame. A reorder reads as moves — extra
+            // redraws, never a stale page.
             self.moved_casters.clear();
             let frames = self.instance_bounds.len().max(self.previous_bounds.len());
             for i in 0..frames {
@@ -322,23 +209,10 @@ impl MeshletRenderStage {
         let required_capacity = scene_params
             .instance_count
             .saturating_mul(scene_params.meshlets_per_mesh);
-        // group_max_err sized to the per-instance prefix-sum total
-        // (Σ over instances of mesh_descriptors[mesh_id].group_count),
-        // not the pool's group_capacity. Per-mesh sizing collapsed
-        // every instance of the same mesh into one slot range and
-        // forced multi-instance LOD descent to the closest one's
-        // verdict (#474).
+        // group_max_err sized to the per-instance prefix-sum total (Σ over instances of
+        // mesh_descriptors[mesh_id].group_count), not the pool's group_capacity.
         let required_group_capacity = self.pipeline.instance_group_capacity(&instances).max(1);
-        // 🔴 Carried on the params so the LAMP cull sizes its arena by
-        // the same number. Its arena is `[slot * capacity + group]`, so
-        // the over-approximation the main cull can afford in one row
-        // becomes 2.4 GB across sixty-four — past `max_buffer_size`,
-        // which wgpu answers with an invalid buffer and a validation
-        // error on every submit for the rest of the run.
-        // The chunk list is sized off the SAME rectangle the old
-        // dispatch used, divided by the workgroup — a buffer of four
-        // bytes a chunk, where the thing being replaced was nine
-        // million lanes.
+        // 🔴 Carried on the params so the LAMP cull sizes its arena by the same number.
         let required_chunks = crate::meshlet::dispatcher::chunks_for(
             scene_params.instance_count,
             scene_params.meshlets_per_mesh,
@@ -348,27 +222,6 @@ impl MeshletRenderStage {
             .with_chunks(required_chunks);
 
         // 🎯 ONE walk of the light archetypes, for the whole view.
-        //
-        // The shadow stage and the light buffer both used to walk them —
-        // the same components read twice, and three times in the editor,
-        // which renders two views through one stage. They agreed only
-        // because nobody had added a condition to one of them, and
-        // nothing would have failed when they drifted.
-        //
-        // Built here and BORROWED by both. Not parked in `Resources`: a
-        // value that outlives the frame can name a despawned entity, and
-        // nothing here outlives the frame it describes.
-        //
-        // 🎯 Once per FRAME now, not per view. `Time::frame_count` is the
-        // stamp: the editor's two views and a split screen's N all render
-        // inside one count, so the second and later views reuse the walk
-        // rather than repeating it.
-        //
-        // Taken out and put back rather than borrowed, because everything
-        // between here and there wants `&mut self`.
-        //
-        // ⚠️ Without a `Time` — every headless test — it falls back to a
-        // walk per view, which is exactly what it did before.
         let stamp = resources
             .get::<kooch_core::time::Time>()
             .map(|t| t.frame_count());
@@ -389,27 +242,9 @@ impl MeshletRenderStage {
             required_group_capacity,
             &lights,
         );
-        // Inti's per-frame walk, and the froxel grid it builds from it
-        // (#780). Ahead of the encoder for the same reason
-        // `ensure_capacity` is: growing a buffer replaces it, and a
-        // replaced buffer must not be one an already-recorded pass
-        // references.
-        //
-        // The view and its projection go in separately rather than as
-        // the `view_proj` everything else here takes: the grid slices
-        // depth in VIEW space, and a combined matrix cannot be taken
-        // apart again.
-        // 🔴 RENDER size, not the presented one. The froxel grid is
-        // indexed from `frag_coord` by the shading pass, and the shading
-        // pass runs at render resolution once a technique upscales
-        // (#481 step 4). Sized to the window instead, every pixel reads
-        // a froxel at twice its address: half the grid is never
-        // consulted and the other half is read crossed, which looks like
-        // blocks of wrong-coloured light and not like a resolution bug.
-        //
-        // Found by the owner in the editor, from the picture. The two
-        // sizes agreeing was an assumption this file never had to state
-        // until the split existed.
+        // Inti's per-frame walk, and the froxel grid it builds from it (#780). Ahead of the encoder
+        // for the same reason `ensure_capacity` is: growing a buffer replaces it, and a replaced
+        // buffer must not be one an already-recorded pass references.
         let size = self.views[view_id].render_size;
         self.lights.update(
             device,
@@ -429,19 +264,11 @@ impl MeshletRenderStage {
         if let Some(stamp) = stamp {
             self.light_frame = Some((stamp, lights));
         }
-        // Worst-case meshlet stride covers every mesh; the pool path
-        // bounds-checks per-instance against pool_mesh_descriptors.
-        // (`max_meshlets_per_mesh` was bound from `gpu_pool` above so
-        // the borrow released before the &mut-self upload.)
-        // Orientation-independent: see `projection_scale_y`. Reading a
-        // single matrix element here used to disable the LOD selector
-        // outright at 90° of roll or looking straight down.
+        // Worst-case meshlet stride covers every mesh; the pool path bounds-checks per-instance
+        // against pool_mesh_descriptors.
         let proj_scale_y = crate::meshlet::cull::projection_scale_y(view_proj);
-        // Render size for the same reason: the LOD selector compares a
-        // meshlet's projected error against a PIXEL, and the pixels that
-        // exist are the rasterised ones. Measured against the window it
-        // would keep detail the raster cannot resolve — paying for
-        // triangles that land inside one sample.
+        // Render size for the same reason: the LOD selector compares a meshlet's projected error
+        // against a PIXEL, and the pixels that exist are the rasterised ones.
         let viewport_h_px = self.views[view_id].render_size.1 as f32;
         let lod_settings = resources
             .get::<MeshletLodSettings>()
@@ -453,21 +280,17 @@ impl MeshletRenderStage {
             .copied()
             .unwrap_or_default();
         let debug_mode = debug_mode_enum.as_u32();
-        // Reject-overlay modes need the cull pass to record per-thread
-        // reasons into the `reject_reasons[]` SSBO. Production rendering
-        // and every non-reject debug mode leaves this off so the cull
-        // hot path doesn't pay the conditional store.
+        // Reject-overlay modes need the cull pass to record per-thread reasons into the
+        // `reject_reasons[]` SSBO. Production rendering and every non-reject debug mode leaves this
+        // off so the cull hot path doesn't pay the conditional store.
         let debug_active = debug_mode_enum.reject_reason_code().is_some();
         let cull_params = CullParams::new(view_proj, cam_pos, max_meshlets_per_mesh)
             .with_lod(viewport_h_px, proj_scale_y, lod_target)
             .with_debug_mode(debug_mode)
             .with_debug_active(debug_active)
-            // 🔴 Read only by `cs_cull_instances`, so it reaches the
-            // main view and NOT the cascades: a shadow cascade is
-            // orthographic and its "pixels" are shadow texels, where
-            // this number is authored against the screen. Rejecting a
-            // caster because it is small on the CAMERA is how a shadow
-            // loses the object throwing it.
+            // 🔴 Read only by `cs_cull_instances`, so it reaches the main view and NOT the cascades:
+            // a shadow cascade is orthographic and its "pixels" are shadow texels, where this
+            // number is authored against the screen.
             .with_min_screen_pixels(lod_settings.min_screen_pixels);
 
         // Grow visible_meshlets if the scene now needs more slots
@@ -490,10 +313,7 @@ impl MeshletRenderStage {
             let gpu_pool = self.gpu_pool.as_ref().expect("checked above");
             pool_meshlet_bind_group(device, &self.meshlet_bgl, gpu_pool)
         };
-        // `MaterialPipeline` is the single source of truth for the
-        // material pool — see #447. Headless tests must insert one
-        // via `Resources::insert(MaterialPipeline::with_capacity(...))`
-        // before calling `render_with_assets`.
+        // `MaterialPipeline` is the single source of truth for the material pool — see #447.
         let material_bg = resources
             .get::<crate::material::MaterialPipeline>()
             .expect(
@@ -503,20 +323,15 @@ impl MeshletRenderStage {
             .pool()
             .bind_group(device);
 
-        // #463.4 — drain any GPU timer slots that completed since
-        // last frame, then acquire a fresh slot for this frame's
-        // start/end timestamps. `None` means timers are disabled or
-        // every ring slot is in flight; either way the render path
-        // proceeds normally and the HUD keeps the previously-sampled
-        // value.
+        // last frame, then acquire a fresh slot for this frame's start/end timestamps. `None` means
+        // timers are disabled or every ring slot is in flight; either way the render path proceeds
+        // normally and the HUD keeps the previously-sampled value.
         self.gpu_timers.drain_ready();
         let timer_slot = self.gpu_timers.acquire_slot();
 
-        // #454.6 — same pattern for the per-stage survivor counter
-        // ring. Drain whatever the wgpu driver thread completed
-        // since last frame so `MeshletRenderStats.cull_stage_counts`
-        // reports the freshest value the editor stats overlay can
-        // surface.
+        // ring. Drain whatever the wgpu driver thread completed since last frame so
+        // `MeshletRenderStats.cull_stage_counts` reports the freshest value the editor stats
+        // overlay can surface.
         self.stage_counters.drain_ready();
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -529,10 +344,9 @@ impl MeshletRenderStage {
 
         let instance_count = instances.len() as u32;
 
-        // Contact shadows (#735). Built here rather than in each path
-        // because both need it and only this function still holds the
-        // camera's lens: `near` and `far` are what turn a stored depth
-        // back into metres, and a `Mat4` has thrown them away.
+        // Contact shadows (#735). Built here rather than in each path because both need it and only
+        // this function still holds the camera's lens: `near` and `far` are what turn a stored
+        // depth back into metres, and a `Mat4` has thrown them away.
         self.frames_recorded = self.frames_recorded.wrapping_add(1);
         let contact = crate::contact_shadow::ContactShadowUbo::new(
             view_proj,
@@ -544,10 +358,9 @@ impl MeshletRenderStage {
             self.frames_recorded,
         );
 
-        // First in the encoder: every shading pass below samples the
-        // atlas this fills. Inside the timer, because a shadow pass that
-        // costs four culls and four rasters is part of the frame whether
-        // or not the HUD says so.
+        // First in the encoder: every shading pass below samples the atlas this fills. Inside the
+        // timer, because a shadow pass that costs four culls and four rasters is part of the frame
+        // whether or not the HUD says so.
         if let Some(prepared) = shadows.as_ref() {
             // #785 — the shadow passes are four culls and four rasters
             // plus a cube face per point light, and until now their
@@ -569,10 +382,9 @@ impl MeshletRenderStage {
             }
         }
 
-        // The froxel grid (#780), after the shadows and before any
-        // shading: shading reads what it writes. Scoped, because the
-        // whole point of it is a number that moves — the grid costs four
-        // small passes and buys back the light loop.
+        // The froxel grid (#780), after the shadows and before any shading: shading reads what it
+        // writes. Scoped, because the whole point of it is a number that moves — the grid costs
+        // four small passes and buys back the light loop.
         {
             let scopes = resources.get::<kooch_core::gpu::GpuScopes>();
             let query = scopes.map(|s| s.begin("cluster grid", &mut encoder));

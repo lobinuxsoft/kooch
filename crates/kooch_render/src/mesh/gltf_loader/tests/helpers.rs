@@ -1,8 +1,4 @@
 //! Shared fixtures for the gltf_loader test sub-modules.
-//!
-//! Builders fabricate hand-crafted GLB / glTF documents so the tests
-//! never depend on real-asset binaries. Filesystem helpers manage
-//! per-test tmpdirs that survive `--test-threads=N` runs.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -77,11 +73,8 @@ pub(super) fn build_minimal_triangle_glb() -> Vec<u8> {
     out
 }
 
-/// Two-node scene. Each node owns a single-triangle mesh; the first
-/// is translated +10 along X, the second -10. Shares one vertex
-/// buffer (every triangle reuses the same accessors at offset 0).
-/// Used to lock the scene-walk + transform-bake + index-rebase
-/// behaviour without dragging in real-asset binaries.
+/// Two-node scene. Each node owns a single-triangle mesh; the first is translated +10 along X, the
+/// second -10. Shares one vertex buffer (every triangle reuses the same accessors at offset 0).
 pub(super) fn build_two_translated_triangles_glb() -> Vec<u8> {
     let indices: [u32; 3] = [0, 1, 2];
     let positions: [[f32; 3]; 3] = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
@@ -152,9 +145,8 @@ pub(super) fn build_two_translated_triangles_glb() -> Vec<u8> {
     out
 }
 
-/// Builds a `.gltf` JSON whose single buffer is a `data:` URI with
-/// base64-encoded triangle bytes. Equivalent payload to
-/// [`build_minimal_triangle_glb`] — used to exercise the embedded path
+/// Builds a `.gltf` JSON whose single buffer is a `data:` URI with base64-encoded triangle bytes.
+/// Equivalent payload to [`build_minimal_triangle_glb`] — used to exercise the embedded path
 /// without touching the filesystem.
 pub(super) fn build_data_uri_gltf() -> String {
     use base64::Engine;
@@ -220,10 +212,9 @@ pub(super) fn cleanup_tmpdir(dir: &Path) {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// Writes a glTF *Separate* pair into `dir`: `<name>.gltf` referencing
-/// the supplied URI for buffer 0, plus `<dir>/scene.bin` containing the
-/// triangle's binary payload. The URI is the verbatim string the
-/// document uses — useful for traversal / absolute-path hostile cases.
+/// Writes a glTF *Separate* pair into `dir`: `<name>.gltf` referencing the supplied URI for buffer
+/// 0, plus `<dir>/scene.bin` containing the triangle's binary payload. The URI is the verbatim
+/// string the document uses — useful for traversal / absolute-path hostile cases.
 pub(super) fn write_separate_gltf_pair(dir: &Path, name: &str, uri: &str) -> (PathBuf, PathBuf) {
     let indices: [u32; 3] = [0, 1, 2];
     let positions: [[f32; 3]; 3] = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];

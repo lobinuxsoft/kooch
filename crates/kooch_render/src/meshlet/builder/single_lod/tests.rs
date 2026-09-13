@@ -88,15 +88,6 @@ fn single_lod_meshes_keep_root_sentinel_and_zero_error() {
 }
 
 /// Every meshlet triangle still faces the way its mesh did.
-///
-/// 🔴 The layer the shadow raster actually reads, and the one the
-/// primitives' own `assert_outward_facing` cannot reach. That test walks
-/// `mesh.indices`; this walks `meshlet_triangles`, three bytes a
-/// triangle, through `meshlet_vertices` — the same double indirection
-/// `page_depth.wgsl` does. A `meshopt` pass that reordered a corner
-/// would be invisible to the source test and would show up on screen as
-/// a shadow with holes in it, which is the shape of a bug that is
-/// expensive to chase from the wrong end.
 #[test]
 fn a_meshlet_triangle_faces_the_way_its_mesh_did() {
     use crate::mesh::primitives::Primitive;

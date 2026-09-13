@@ -1,21 +1,4 @@
 // resolve_material_depth.wgsl — pass 1 of the two-pass material path (#440).
-//
-// A fullscreen fragment pass that reads the atomic R64 visibility buffer
-// and writes each covered pixel's `material_id` into a Depth16Unorm
-// target, encoded as `f32(material_id) / 65535.0`. Pass 2 then binds this
-// as a read-only depth attachment with `CompareFunction::Equal` so each
-// per-material shading pass only touches the pixels assigned to it — a
-// hardware depth test doing the material cull for free.
-//
-// vbuf64 packing (mirrors meshlet_deferred_r64.wgsl):
-//   packed = (depth_bits << 32) | (visible_slot << 7 | tri_idx)
-// `packed == 0` (reversed-Z far + cleared vbuf) is the background
-// sentinel — those pixels `discard`, leaving the depth target cleared.
-//
-// Adapted from Bevy's resolve_render_targets.wgsl::resolve_material_depth.
-// Our layout differs only in how instance/material are resolved:
-// `visible_meshlets[slot] = (inst_id << 16) | meshlet_id`, then
-// `instances[inst_id].material_id`.
 
 struct MeshInstance {
     transform: mat4x4<f32>,

@@ -51,13 +51,7 @@ struct CounterSlot {
     state: Arc<Mutex<SlotState>>,
 }
 
-/// 4-element snapshot pulled out of the cull shader's
-/// `stage_counters[]` buffer.
-///
-/// - `[0]` after_frustum  (passed frustum)
-/// - `[1]` after_backface (passed frustum + backface)
-/// - `[2]` after_hi_z     (Hi-Z 2-pass entry only writes here)
-/// - `[3]` total_visible  (terminal — equals visible_count)
+/// 4-element snapshot pulled out of the cull shader's `stage_counters[]` buffer.
 pub type CullStageCounts = [u32; 4];
 
 /// Owned by [`super::MeshletRenderStage`]. See module docs for the
@@ -101,12 +95,9 @@ impl MeshletStageCounters {
         self.last_frame_counts
     }
 
-    /// Walks every slot, reads any that fired their callback,
-    /// updates [`Self::last_frame_counts`], and resets those slots
-    /// to `Writable`. Cheap when nothing has fired — `Mutex::lock`
-    /// + state compare per slot.
-    ///
-    /// Call once per frame BEFORE acquiring a new slot.
+    /// Walks every slot, reads any that fired their callback, updates [`Self::last_frame_counts`],
+    /// and resets those slots to `Writable`. Cheap when nothing has fired — `Mutex::lock` + state
+    /// compare per slot.
     pub fn drain_ready(&mut self) {
         for slot in &self.slots {
             let mut state_guard = slot.state.lock().unwrap();
@@ -122,10 +113,9 @@ impl MeshletStageCounters {
         }
     }
 
-    /// Returns the index of the next `Writable` slot, advancing the
-    /// round-robin pointer. Returns `None` when every slot is in
-    /// flight — the caller should skip the readback for this frame
-    /// and rely on the cached [`Self::last_frame_counts`].
+    /// Returns the index of the next `Writable` slot, advancing the round-robin pointer. Returns
+    /// `None` when every slot is in flight — the caller should skip the readback for this frame and
+    /// rely on the cached [`Self::last_frame_counts`].
     pub fn acquire_slot(&mut self) -> Option<usize> {
         for _ in 0..self.slots.len() {
             let idx = self.next_write_idx;
@@ -169,10 +159,9 @@ impl MeshletStageCounters {
                 if result.is_ok() {
                     *state.lock().unwrap() = SlotState::Ready;
                 }
-                // Map errors are device-loss territory; leave the
-                // slot InFlight so subsequent acquires skip it. The
-                // cached `last_frame_counts` keeps reporting the
-                // last good value instead of crashing.
+                // Map errors are device-loss territory; leave the slot InFlight so subsequent
+                // acquires skip it. The cached `last_frame_counts` keeps reporting the last good
+                // value instead of crashing.
             });
     }
 }

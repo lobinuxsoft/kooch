@@ -1,29 +1,5 @@
 
-// ---------------------------------------------------------------
 // Hi-Z 2-pass scene-pool cull (#445).
-//
-// Pass A (`cs_cull_scene_pool_atomic_hi_z`) mirrors
-// `cs_cull_scene_pool_atomic` exactly but adds a Hi-Z test against
-// the *previous frame's* pyramid (`hi_z_pyramid_atomic`) at the very
-// tail. Meshlets that survive frustum + cone but fail Hi-Z are
-// appended to `culled_meshlets[]`; pass B (lands in T3) re-tests
-// them against this frame's freshly-built pyramid so anything that
-// became visible since the previous frame slips back in.
-//
-// New bindings (consumed only by this entry + pass B):
-//   group(0) @ binding(4): culled_meshlets — append target for
-//     Hi-Z rejects, packed identically to visible_meshlets.
-//   group(0) @ binding(5): culled_count — atomic counter for the
-//     above; pass B reads it as a workgroup count.
-//   group(2) @ binding(2): hi_z_params_atomic — view_proj +
-//     pyramid dimensions for the previous-frame pyramid sample.
-//   group(2) @ binding(3): hi_z_pyramid_atomic — multi-mip R32Float
-//     view of the previous-frame pyramid.
-//
-// Existing entry points keep their old layout (cull_bgl / scene_bgl
-// unchanged); the Hi-Z entry uses extended layouts the dispatcher
-// builds separately so the shader file can host both shapes.
-// ---------------------------------------------------------------
 
 @group(0) @binding(4) var<storage, read_write> culled_meshlets: array<u32>;
 @group(0) @binding(5) var<storage, read_write> culled_count: atomic<u32>;
@@ -31,19 +7,7 @@
 @group(2) @binding(3) var hi_z_pyramid_atomic: texture_2d<f32>;
 
 // AABB-based occlusion test ported from Bevy's
-// `crates/bevy_pbr/src/meshlet/meshlet_cull_shared.wgsl`
-// (`should_occlusion_cull_aabb` family). Sphere-bounds + small-angle
-// approximation produced silhouette holes on close-up models in
-// PR #487 that no amount of conservative-shift tuning could close
-// cleanly; AABB 8-corner projection (zeux's algorithm,
-// https://zeux.io/2023/01/12/approximate-projected-bounds/) plus a
-// 16-tap min sample is the standard fix.
-//
-// Reversed-Z (#488): the depth pyramid stores the FARTHEST fragment
-// per tile as the SMALLEST ndc.z value (because near=1, far=0). The
-// conservative occlusion test becomes "is the closest point of the
-// AABB (= max ndc.z in reversed-Z) BEHIND the farthest tile fragment
-// (= tile min)?" → `aabb.max.z <= tile_min`.
+// `crates/bevy_pbr/src/meshlet/meshlet_cull_shared.wgsl` (`should_occlusion_cull_aabb` family).
 
 struct ScreenAabb {
     min: vec3<f32>,
@@ -62,24 +26,8 @@ fn min8_4_atomic(a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>, e: vec4
     return min(min(min(a, b), min(c, d)), min(min(e, f), min(g, h)));
 }
 
-// AABB-vs-frustum (positive-vertex test). Ports Bevy's
-// `aabb_in_frustum` from meshlet_cull_shared.wgsl. Uses 5 planes
-// only (4 lateral + ndc.z >= 0); the second z-plane is dropped
-// intentionally so meshlets straddling near don't get rejected
-// by the cull — the rasterizer clips them against near anyway,
-// and rejecting here causes silhouette holes at viewport edges
-// where projected AABBs partially leave the frustum (#488 follow-up).
-//
-// Planes are extracted GPU-side from `clip_from_local`. The
-// `transpose` puts row-i of the matrix into `row_major[i]`, then
-// Gribb-Hartmann gives the 6 standard planes; we keep only 5.
-//
-// `flipped = half_extent * sign(plane.xyz)` is the offset from
-// AABB centre to its "positive vertex" w.r.t. the plane normal.
-// If the positive vertex is outside the half-space, the entire
-// AABB is outside.
-//
-// Returns true iff AABB is outside the frustum (= reject).
+// AABB-vs-frustum (positive-vertex test). Ports Bevy's `aabb_in_frustum` from
+// meshlet_cull_shared.wgsl.
 fn aabb_outside_frustum_atomic(
     world_from_local: mat4x4<f32>,
     aabb_min_local: vec3<f32>,
@@ -106,11 +54,8 @@ fn aabb_outside_frustum_atomic(
     return false;
 }
 
-// Projects an AABB's 8 corners to clip space, divides by w, and
-// returns the screen-space [0,1] rectangle + min/max NDC depth.
-// Returns `false` when the camera lies INSIDE the AABB (one or more
-// corners cross the near plane), in which case occlusion culling
-// must NOT happen — the perspective divide would flip signs.
+// Projects an AABB's 8 corners to clip space, divides by w, and returns the screen-space [0,1]
+// rectangle + min/max NDC depth.
 fn project_aabb_atomic(
     clip_from_local: mat4x4<f32>,
     near: f32,
@@ -230,11 +175,7 @@ fn occluded_by_hi_z_atomic(
 }
 
 fn run_cull_scene_pool_atomic_hi_z(thread_id: u32) {
-    // Mirror of run_cull_scene_pool_atomic with a Hi-Z test injected
-    // before the visible-emit. Keep these two functions in lock-step
-    // when LOD / frustum / cone logic changes — there is no shared
-    // helper because the only difference is the tail decision and a
-    // shared helper would have to take every binding by parameter.
+    // Mirror of run_cull_scene_pool_atomic with a Hi-Z test injected before the visible-emit.
     let max_meshlets = scene_params.meshlets_per_mesh;
     let total_threads = scene_params.instance_count * max_meshlets;
     if (thread_id >= total_threads) {
@@ -294,10 +235,9 @@ fn run_cull_scene_pool_atomic_hi_z(thread_id: u32) {
         }
     }
 
-    // AABB-vs-frustum (Bevy parity). Sphere bounds were rejecting
-    // meshlets at viewport edges whose AABB still overlapped the
-    // frustum — caused silhouette holes on close-up models. Drops
-    // far plane on purpose; rasterizer clips at near.
+    // AABB-vs-frustum (Bevy parity). Sphere bounds were rejecting meshlets at viewport edges whose
+    // AABB still overlapped the frustum — caused silhouette holes on close-up models. Drops far
+    // plane on purpose; rasterizer clips at near.
     if (aabb_outside_frustum_atomic(inst.transform, m.aabb_min, m.aabb_max)) {
         return;
     }
@@ -331,27 +271,7 @@ fn cs_cull_scene_pool_atomic_hi_z(
     run_cull_scene_pool_atomic_hi_z(linear_thread(gid, groups));
 }
 
-// ---------------------------------------------------------------
 // Pass B (#445).
-//
-// Iterates the compact `culled_meshlets[]` array pass A populated
-// and re-tests every entry against the *current* frame's Hi-Z
-// pyramid (orchestrator binds `hi_z_pyramid_atomic` to `hiz_curr`
-// for this dispatch). Survivors append to `visible_meshlets`.
-//
-// Frustum / cone / LOD are NOT re-checked — pass A already cleared
-// those; the only reason a meshlet landed in `culled_meshlets` is
-// the previous frame's Hi-Z said it was occluded, which can be a
-// false negative if geometry moved or rotated into view.
-//
-// Dispatch shape: workgroup count = `ceil(capacity / 64)` — the
-// worst case where every meshlet was occluded. Threads past
-// `culled_count` early-out, paying only an atomic load. This
-// avoids a CPU readback of culled_count + a separate indirect
-// dispatch buffer; with `wgpu::DispatchIndirect` we could trim the
-// dispatch tighter, but the early-out cost is ~one atomic load per
-// surplus thread and the readback would be a CPU stall.
-// ---------------------------------------------------------------
 
 fn run_cull_pass_b(thread_id: u32) {
     let count = atomicLoad(&culled_count);

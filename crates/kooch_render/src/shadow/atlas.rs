@@ -1,53 +1,13 @@
 //! The shadow depth array: one texture, one cascade per layer.
-//!
-//! # Why an array and not an atlas
-//!
-//! This used to be a single 2×2 atlas with a cascade in each quadrant,
-//! on the stated belief that several shadow maps would mean several
-//! bindings "and a dynamic index into them, which WGSL only offers
-//! through binding arrays".
-//!
-//! 🔴 That conflated two different things. A `texture_depth_2d_array` is
-//! **one** texture and **one** binding, and the layer is an ordinary
-//! argument to `textureSampleCompareLevel` — binding arrays are a
-//! separate feature and are not involved. Bevy has always bound its
-//! shadow maps this way (`directional_shadow_textures:
-//! texture_depth_2d_array`).
-//!
-//! The cost of the mistake was that the atlas is full at four cascades:
-//! a spot light (#777) had nowhere to go, when in Bevy it is one more
-//! layer. Layers also grow without the texture getting quadratically
-//! larger, which is what a 4096² atlas does the moment it needs a fifth
-//! occupant.
-//!
-//! # Why four culls
-//!
-//! Each cascade culls from its own light-space frustum, so each needs
-//! its own survivor list. They could share one `MeshletCull` used four
-//! times, and that would serialise the whole pass: cascade 0's indirect
-//! draw reads the same `visible_meshlets` that cascade 1's cull writes,
-//! so wgpu inserts a barrier between every pair. Four culls are buffers
-//! — no textures — and let the cascades overlap on the GPU.
 
 use crate::meshlet::MeshletCull;
 
 use super::cascades::{CASCADE_COUNT, Cascade};
 
 /// Depth format for the atlas.
-///
-/// `Depth32Float` rather than the 16-bit variant: the comparison happens
-/// against a reconstructed world position, and 16 bits of depth over a
-/// cascade that can span hundreds of metres quantises into visible
-/// stair-stepping on the shadow of anything at a shallow angle.
 pub const SHADOW_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// Side of one layer, in texels.
-///
-/// 2048 per cascade over four layers is 64 MiB at `Depth32Float` — the
-/// same as the 4096² atlas it replaced, because the pixel count is
-/// identical. It is the default because the alternative is visible: at
-/// 1024 the near cascade is already soft enough that contact shadows
-/// look detached.
 pub const DEFAULT_CASCADE_SIZE: u32 = 2048;
 
 /// The atlas texture, its per-cascade culls, and where each cascade sits.
@@ -65,12 +25,6 @@ pub struct ShadowAtlas {
 
 impl ShadowAtlas {
     /// Allocates the atlas and one cull per cascade.
-    ///
-    /// `initial_capacity` sizes the survivor lists; they grow later like
-    /// every other buffer here, so a low guess costs a reallocation
-    /// rather than a panic. The cull pipelines are shared and live on
-    /// the render stage — nine compute pipelines per cascade is exactly
-    /// what `MeshletCullPipelines` exists to avoid.
     pub fn new(
         device: &wgpu::Device,
         cascade_size: u32,
@@ -167,11 +121,6 @@ impl ShadowAtlas {
     }
 
     /// Grows every cascade's survivor lists to fit the scene.
-    ///
-    /// All four, unconditionally: a cascade that culls nothing this
-    /// frame still dispatches one thread per instance-meshlet pair, and
-    /// sizing only the ones that drew last frame is how the 257th
-    /// instance panics in the cascade nobody was looking at.
     pub fn ensure_capacity(&mut self, device: &wgpu::Device, meshlets: u32, groups: u32) {
         for cull in &mut self.culls {
             cull.ensure_capacity(device, meshlets);
@@ -180,10 +129,6 @@ impl ShadowAtlas {
     }
 
     /// Packs placed cascades into the records the shading model reads.
-    ///
-    /// The atlas does this rather than `cascades.rs` because the uv
-    /// transform is the atlas's own layout — a cascade knows where it
-    /// is in the world and nothing about which quadrant it landed in.
     pub fn gpu_cascades(
         &self,
         cascades: &[Cascade; CASCADE_COUNT],
@@ -193,11 +138,6 @@ impl ShadowAtlas {
 }
 
 /// The packing, free of the atlas so it is testable without a device.
-///
-/// Cascade `i` renders into layer `i`. It is the identity today and it
-/// is still written down, because the moment spot lights take layers
-/// behind the cascades (#777) this is the function that has to keep them
-/// apart.
 pub fn gpu_cascade_layers(
     cascades: &[Cascade; CASCADE_COUNT],
 ) -> [kooch_lighting::GpuCascade; kooch_lighting::FRAME_CASCADE_COUNT] {

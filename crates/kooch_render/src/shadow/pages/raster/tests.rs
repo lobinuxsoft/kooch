@@ -1,14 +1,8 @@
 use super::*;
 
-/// What the shader says a struct measures, per WGSL's own layout
-/// rules.
-/// The compaction as the device sees it: the cluster records, the
-/// page table, then the pass. Parsing the pass alone stopped working
-/// the moment it reached for `ClusterLight`.
-/// The expansion as the device sees it. Same reason as
-/// `compact_source`: it reaches for `ClusterLight` — and, since the
-/// inversion, for the overlap query over the page pyramid too. Anything
-/// this omits is a parse error that only the device would have found.
+/// What the shader says a struct measures, per WGSL's own layout rules. The compaction as the
+/// device sees it: the cluster records, the page table, then the pass. Parsing the pass alone
+/// stopped working the moment it reached for `ClusterLight`. The expansion as the device sees it.
 fn expand_source() -> String {
     format!(
         "{CLUSTER_COMMON}\n{}\n{EXPAND}",
@@ -37,14 +31,7 @@ fn shader_size(body: &str, name: &str) -> u32 {
     panic!("`{name}` is not declared in this shader");
 }
 
-/// Where every field of a shader struct starts, in declaration
-/// order.
-///
-/// 🔴 The half a size check cannot see. Two structs of the same
-/// size with two fields swapped measure identical and mean
-/// different things — and that is not hypothetical either: a field
-/// added after `paint` in the shader and before it in Rust broke
-/// the page DEBUG VIEW, a feature the change had not touched.
+/// Where every field of a shader struct starts, in declaration order.
 pub fn shader_offsets(body: &str, name: &str) -> Vec<(String, u32)> {
     let source = format!("{TABLE}\n{body}");
     let module = naga::front::wgsl::parse_str(&source).expect("the shader parses");
@@ -63,18 +50,8 @@ pub fn shader_offsets(body: &str, name: &str) -> Vec<(String, u32)> {
     panic!("`{name}` is not declared in this shader");
 }
 
-/// 🔴 The bug class this exists for cost a frame that rendered
-/// nothing but validation errors, once per frame forever.
-///
-/// `ExpandLevel` held a `vec3<u32>` for padding. A `vec3<u32>`
-/// **aligns to 16**, so the field started at offset 16 and the
-/// struct measured 32 bytes against the Rust mirror's 16. It
-/// compiles. It validates. It fails at BIND time — *"bound with
-/// size 16 where the shader expects 32"* — which is the one place
-/// no test was looking.
-///
-/// A comment saying "mirrors X field for field" is not a check.
-/// This is.
+/// 🔴 The bug class this exists for cost a frame that rendered nothing but validation errors, once
+/// per frame forever.
 #[test]
 fn the_uniform_mirrors_match_the_shader() {
     assert_eq!(
@@ -111,25 +88,8 @@ fn the_uniform_fields_line_up() {
     }
 }
 
-/// The three runs of counters do not overlap, and the shader that
-/// writes the third one agrees with the Rust that reads it.
-///
-/// Per BUCKET rather than per clipmap level: the sun's levels and a
-/// local light's chain levels both get one, so a run sized to the
-/// clipmap alone puts the survivors inside the overflow flags.
-///
-/// 🔴 A counter buffer is one flat array of `u32` shared by four
-/// shaders and one `copy_buffer_to_buffer`, addressed by arithmetic
-/// written out twice. The first run is per level, the second is
-/// filled by a copy from `visible_counts`, the third is written by
-/// `count_scatter`. Getting the base of the third wrong does not
-/// fail: it lands in the survivor counts, which are plausible
-/// numbers, and the panel reports a comparison built on the wrong
-/// half of the buffer.
-///
-/// This session already shipped one defect of exactly this shape —
-/// `page_compact.wgsl` reading a two-word table entry with a
-/// one-word stride — and it took a screen full of squares to find.
+/// The three runs of counters do not overlap, and the shader that writes the third one agrees with
+/// the Rust that reads it.
 #[test]
 fn the_counter_runs_do_not_overlap() {
     for buckets in [1u32, 4, 25, 40] {
@@ -158,16 +118,6 @@ fn the_counter_runs_do_not_overlap() {
 }
 
 /// Every buffer this pass copies OUT of declares that it can be.
-///
-/// 🔴 Written after shipping a `copy_buffer_to_buffer` whose source
-/// lacked `COPY_SRC`. It compiles; it passes every test that plants
-/// words and decodes them; and it fails at RUNTIME, once per view
-/// per frame forever, with the shadow pass producing nothing. The
-/// tests around it never ran `record`, which is where the copy is.
-///
-/// A source check rather than a GPU one, because the question is
-/// about a declaration and answering it on a device would mean
-/// building a whole frame to observe one flag.
 #[test]
 fn every_copied_buffer_can_be_copied_from() {
     let source = include_str!("../raster.rs");
@@ -178,12 +128,7 @@ fn every_copied_buffer_can_be_copied_from() {
         !copied.is_empty(),
         "the scan found no copies at all; it has stopped matching the source"
     );
-    // 🔴 And every buffer this module hands OUT. The only reason to
-    // expose a GPU buffer is for something to read it back, and a
-    // reader outside this file is a copy this scan cannot see — that
-    // is exactly how `page_list` shipped without the flag, failing
-    // only sometimes, because wgpu reports the error whenever it
-    // gets round to it.
+    // 🔴 And every buffer this module hands OUT.
     let mut labels: Vec<String> = copied
         .iter()
         .map(|field| format!("page_raster_{field}"))
@@ -222,9 +167,8 @@ fn copied_fields(source: &str) -> std::collections::BTreeSet<&str> {
     let mut rest = source;
     while let Some(at) = rest.find("copy_buffer_to_buffer(") {
         let tail = &rest[at + "copy_buffer_to_buffer(".len()..];
-        // 🔴 The FIRST argument only. The destination is the third,
-        // and it needs COPY_DST rather than COPY_SRC — a scan that
-        // took whichever `&self.` came first would demand the wrong
+        // 🔴 The FIRST argument only. The destination is the third, and it needs COPY_DST rather
+        // than COPY_SRC — a scan that took whichever `&self.` came first would demand the wrong
         // flag of the wrong buffer.
         let first = &tail[..tail.find(',').unwrap_or(0)];
         if let Some(field) = first.trim().strip_prefix("&self.") {
@@ -288,17 +232,6 @@ fn slicing_does_not_grow_the_atlas() {
 }
 
 /// A sub-page step along the sun keeps every level's content.
-///
-/// 🔴 The defect this file exists to stop coming back. A page's depth
-/// was measured from the raw camera, so `write_gens` had to hash the raw
-/// `eye.dot(sun)` to stay honest — and that turned over EVERY level's
-/// stamp on any movement at all. The sibling test is
-/// `a_still_suns_page_caches`: a camera that never moves cached fine,
-/// which is why this went unnoticed. Measured on the OneXFly, the depth
-/// draw cost 0.064 ms when the cache held and 29.7 ms when it did not,
-/// and it did not hold (#948).
-///
-/// One millimetre, which is a hundredth of the FINEST level's page.
 #[test]
 fn a_millimetre_along_the_sun_keeps_the_cache() {
     let clipmap = ClipmapConfig::default();
@@ -319,13 +252,8 @@ fn a_millimetre_along_the_sun_keeps_the_cache() {
     );
 }
 
-/// Crossing a level's page along the sun DOES void that level — the
-/// stamp is a cache gate, not a promise that depth never goes stale.
-///
-/// The finest level's page is 1 cm wide, so a metre crosses it and every
-/// level below the one whose page is a metre across. The coarsest, whose
-/// pages are hundreds of metres, must survive: that is the whole point
-/// of snapping per level rather than globally.
+/// Crossing a level's page along the sun DOES void that level — the stamp is a cache gate, not a
+/// promise that depth never goes stale.
 #[test]
 fn a_metre_voids_the_fine_levels_only() {
     let clipmap = ClipmapConfig::default();
@@ -347,27 +275,7 @@ fn a_metre_voids_the_fine_levels_only() {
     );
 }
 
-/// Every page of a level's window has to sit inside the box its cull
-/// runs against.
-///
-/// # 🔴 The failure is a lit band that crawls with the camera
-///
-/// `sun_window` places a level's window on the SNAPPED page grid and
-/// the cull box used to be centred on the camera, which is not on it.
-/// The two are the same size and offset by however far the camera sits
-/// into its own page, so the window's lowest band — up to a whole page
-/// wide, and 655 m at the coarsest level — lay outside the box.
-///
-/// Geometry there is culled. The pages there are marked by their
-/// receivers and drawn anyway, empty, and an empty page stores far
-/// depth under reversed-Z: every reader over it answers "nothing
-/// occludes here". A lit band at each level's edge, which is a ring at
-/// a fixed distance from the camera, and the offset changes as the
-/// camera moves so the ring crawls.
-///
-/// The window is computed here from `sun_window`'s own formula rather
-/// than from the function under test, or this would only prove that a
-/// number equals itself.
+/// Every page of a level's window has to sit inside the box its cull runs against.
 #[test]
 fn the_cull_box_covers_the_window() {
     let clipmap = ClipmapConfig::default();

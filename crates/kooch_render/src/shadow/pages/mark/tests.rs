@@ -1,13 +1,6 @@
 use super::*;
 
-/// The same guard the raster has, on the mirror that has existed
-/// longest.
-///
-/// 🔴 `PageView` is described as mirroring `PageMarkView` "field for
-/// field", and a comment saying so is not a check. The identical
-/// claim in the raster was false: a `vec3<u32>` of padding made the
-/// shader's struct twice the Rust one, and it surfaced as a
-/// per-frame bind error rather than as a failing test.
+/// The same guard the raster has, on the mirror that has existed longest.
 #[test]
 fn the_view_mirror_matches_the_shader() {
     let source = format!("{CLUSTER_COMMON}\n{PAGE_TABLE}\n{SOURCE}");
@@ -26,10 +19,6 @@ fn the_view_mirror_matches_the_shader() {
 }
 
 /// Same size, wrong order — the failure a size check waves through.
-///
-/// 🔴 It has already happened here: `pool` went in after `paint` on
-/// one side and before it on the other, and what broke was the page
-/// DEBUG VIEW, which the change never touched.
 #[test]
 fn the_view_fields_line_up() {
     let mine = [

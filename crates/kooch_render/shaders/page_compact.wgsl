@@ -1,47 +1,13 @@
-// page_compact.wgsl — the resident pages, as a list the GPU can dispatch
-// over (#866).
-//
-// CONCATENATED after `page_table.wgsl`.
-//
-// # Why the flat table gets compacted at all
-//
-// The table is one entry per VIRTUAL page — ~half a million per view —
-// and a frame makes a couple of thousand of them resident. Every pass
-// after this one runs per page TIMES per meshlet, so walking the empty
-// entries would multiply the emptiness by the scene's whole geometry.
-// One pass over this view's span turns it into a dense list.
-//
-// # Bucketed by level, because the cull is
-//
-// A clipmap level is a texel density, and a density is a LOD. The
-// meshlets that survive for level 3 are not the ones that survive for
-// level 12, so the levels are culled separately and the pages have to
-// be grouped the same way.
-//
-// 🔴 Local lights bucket by LIGHT, after the sun's levels: lamp
-// `L`'s pages land in bucket `chain.x + L`, where its own cull's
-// survivor list is bound. They used to bucket by octave into the SUN's
-// buckets — borrowing survivor lists simplified for an orthographic box
-// around the CAMERA, which broke both ways: a close lamp's casters fell
-// outside the fine levels' box and its shadow vanished, and a coarse
-// bucket handed root meshlets and drew spheres as faceted lumps. One
-// bucket per lamp is the retired cube path's shape — one cull per
-// light — not the feared bucket-per-light-per-LEVEL explosion: a lamp's
-// pages of every level share its one perspective-LOD survivor list,
-// because a perspective error metric already scales with distance.
+// page_compact.wgsl — the resident pages, as a list the GPU can dispatch over (#866).
 
 @group(0) @binding(0) var<uniform> raster: PageRaster;
-// The flat table: `PAGE_CELL` words per virtual page — `slot + 1`
-// (`PAGE_ABSENT` = not resident), the age, the listing. It is the
-// marking pass's buffer and this reads it with the same stride or it
-// reads an age as a slot.
+// The flat table: `PAGE_CELL` words per virtual page — `slot + 1` (`PAGE_ABSENT` = not resident),
+// the age, the listing. It is the marking pass's buffer and this reads it with the same stride or
+// it reads an age as a slot.
 @group(0) @binding(2) var<storage, read_write> table_slots: array<u32>;
-// `x` the virtual page, `y` its physical slot. Bucketed: level `L`
-// owns `[L * chain.z, (L + 1) * chain.z)`.
-// Four words per listing: the page, its slot, the furthest receiver
-// this frame recorded on it (#940, f32 bits, 0 = none), and a spare.
-// Widened rather than given a sibling buffer: the expansion sits AT
-// the eight-storage-buffer downlevel limit and cannot bind the table.
+// `x` the virtual page, `y` its physical slot. Bucketed: level `L` owns `[L * chain.z, (L + 1) *
+// chain.z)`. Four words per listing: the page, its slot, the furthest receiver this frame recorded
+// on it (#940, f32 bits, 0 = none), and a spare.
 @group(0) @binding(3) var<storage, read_write> page_list: array<vec4<u32>>;
 // x..levels the pages listed per level, then: the sun pages that did
 // not fit a bucket, the local-light pages skipped, the pairs, the pairs
@@ -53,10 +19,9 @@
 // its draw arguments.
 @group(0) @binding(6) var<storage, read> visible_counts: array<u32>;
 @group(0) @binding(7) var<storage, read_write> draw_args: array<u32>;
-// One generation per bucket owner, per view: the sun's levels first
-// (snapped centre + direction), then the lamps (transform, range,
-// cone). A page whose stamp equals its owner's generation keeps last
-// frame's content and is never listed. Never zero.
+// One generation per bucket owner, per view: the sun's levels first (snapped centre + direction),
+// then the lamps (transform, range, cone). A page whose stamp equals its owner's generation keeps
+// last frame's content and is never listed. Never zero.
 @group(0) @binding(8) var<storage, read> gens: array<u32>;
 // `[0]` the count, then the physical SLOT of every page listed this
 // dispatch — what the depth pass clears, page by page, now that whole
@@ -72,10 +37,9 @@ const EXPAND_GROUP: u32 = 64u;
 
 @compute @workgroup_size(COMPACT_GROUP, 1, 1)
 fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
-    // One thread per entry of THIS VIEW'S span. The table is flat and a
-    // view's entries are a contiguous run, so the other cameras' pages
-    // are outside the dispatch rather than a decode-and-skip — which is
-    // also why the "belongs to another view" counter is gone.
+    // One thread per entry of THIS VIEW'S span. The table is flat and a view's entries are a
+    // contiguous run, so the other cameras' pages are outside the dispatch rather than a
+    // decode-and-skip — which is also why the "belongs to another view" counter is gone.
     if gid.x >= raster.views.y {
         return;
     }
@@ -104,11 +68,8 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
     let buckets = sun_buckets + LAMP_CULLS;
     var slot: u32;
     if id.is_sun {
-        // An OCTAVE of world texel size, anchored so the clipmap's
-        // level L lands on bucket L exactly — the level whose cull was
-        // handed that density. Virtual TEXELS across level 0: pages
-        // across it times a page's side; `space.y` is a face's page
-        // count and would be off by the page size squared.
+        // An OCTAVE of world texel size, anchored so the clipmap's level L lands on bucket L
+        // exactly — the level whose cull was handed that density.
         let virtual_texels = raster.space.z * raster.pool.w;
         let texel = page_texel_world(id, raster.world.x, virtual_texels, 0.0);
         slot = page_octave(texel, raster.world.x, virtual_texels, sun_buckets);
@@ -122,24 +83,17 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         slot = sun_buckets + id.light;
     }
-    // The cache gate: a page whose content was drawn under the
-    // generation its owner still has keeps it — not listed, not
-    // stamped, not drawn. `page_stamp` zeroes fresh claims and
-    // `cs_invalidate` zeroes touched pages, so 0 never matches.
+    // The cache gate: a page whose content was drawn under the generation its owner still has keeps
+    // it — not listed, not stamped, not drawn. `page_stamp` zeroes fresh claims and `cs_invalidate`
+    // zeroes touched pages, so 0 never matches.
     var gen_at = id.level;
     if !id.is_sun {
         gen_at = sun_buckets + id.light;
     }
     var gen = gens[raster.views.x * buckets + gen_at];
-    // 🔴 A sun page's validity is PER PAGE, not per level. `sun_cell`
-    // keys by absolute world position and wraps into the table, so when
-    // the window scrolls the ring that enters lands on the very slots
-    // the ring that left was using: same key, different piece of world.
-    // Folding the page's own absolute index into the generation is what
-    // tells those two apart — the interior, whose index did not move,
-    // matches and keeps its content; the wrapped ring does not and
-    // redraws. The level-wide generation carries only what is genuinely
-    // level-wide (the sun's direction, the depth anchor, the scene).
+    // 🔴 A sun page's validity is PER PAGE, not per level. `sun_cell` keys by absolute world
+    // position and wraps into the table, so when the window scrolls the ring that enters lands on
+    // the very slots the ring that left was using: same key, different piece of world.
     if id.is_sun {
         let basis = sun_basis(raster.sun.xyz);
         let idx = sun_page_index(
@@ -154,35 +108,8 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         atomicAdd(&page_counts[buckets + 4u], 1u);
         return;
     }
-    // 🔴 An EMPTY page is valid under every generation, and that is what
-    // rescues a moving light (#1022).
-    //
-    // A bucket whose cull produced no survivors has nothing to draw, so
-    // listing its pages accomplishes exactly one thing: clearing them.
-    // Cleared, they hold no depth and read as lit — which is the RIGHT
-    // answer when no caster is in reach. And that answer does not depend
-    // on the generation: empty is empty whether or not the lamp moved.
-    //
-    // Without this, a lamp with a `Spin` on it turns its generation over
-    // every frame, every one of its pages misses the gate, and every one
-    // is listed and cleared to produce the same nothing. Measured on
-    // `dense.scene`, which spins 64 of them: 902 of the 924 pages the
-    // frame rasterised, and 1469 of 1491 in another capture — 98.5% of
-    // the pass.
-    //
-    // The sentinel is EVEN, and that is why it can never be mistaken for
-    // a generation: `gens_for` ends every one of them with `h | 1` and
-    // the sun's per-page mix does the same, so all of them are odd.
-    //
-    // ⚠️ LAMPS ONLY, and the restriction is not caution — it is what
-    // was measured. `unfilled_sun` reads 0 in every capture taken, so
-    // the sun has never once been in this state, while the lamps are in
-    // it for 98% of the pass. And the sun's cache has an invariant the
-    // lamps do not: a page whose ADDRESSING changed under a snap
-    // crossing has to redraw even though its content would be
-    // identical, because `cs_compact` writes the way back into the
-    // table when it lists. `a_still_suns_page_caches` guards exactly
-    // that, and caught this gate applying to the sun.
+    // 🔴 An EMPTY page is valid under every generation, and that is what rescues a moving light
+    // (#1022).
     let survivors = visible_counts[slot];
     if !id.is_sun && stamp == PAGE_EMPTY && survivors == 0u {
         atomicAdd(&page_counts[buckets + 4u], 1u);
@@ -214,14 +141,9 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
     // entry the draw indexes, without walking every resident page to
     // find it. See `PAGE_CELL`.
     table_slots[entry * PAGE_CELL + 2u] = listing;
-    // Listed means "drawn this frame", which is when the content
-    // becomes this generation's. Stamped here rather than after the
-    // draw because nothing between the two can fail — the one thing
-    // that can, a pair-list overflow, is counted and handled by the
-    // CPU bumping the scene generation.
-    // Stamped EMPTY rather than with the generation when there is
-    // nothing to draw: the content about to be produced is "cleared",
-    // which outlives any generation. See the gate above.
+    // Listed means "drawn this frame", which is when the content becomes this generation's. Stamped
+    // here rather than after the draw because nothing between the two can fail — the one thing that
+    // can, a pair-list overflow, is counted and handled by the CPU bumping the scene generation.
     table_slots[entry * PAGE_CELL + 3u] = select(gen, PAGE_EMPTY, !id.is_sun && survivors == 0u);
     let d = atomicAdd(&dirty[0], 1u);
     if d + 1u < arrayLength(&dirty) {
@@ -229,15 +151,9 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 }
 
-// Zeroes the content stamp of every page a moved caster can reach —
-// the shadow it cast (old bounds) and the one it casts now (new
-// bounds) both have to redraw. One thread per entry of THIS VIEW's
+// Zeroes the content stamp of every page a moved caster can reach — the shadow it cast (old bounds)
+// and the one it casts now (new bounds) both have to redraw. One thread per entry of THIS VIEW's
 // span, a loop over the handful of moved spheres inside it.
-//
-// A lamp page invalidates at LIGHT granularity — sphere against the
-// light's range — which over-invalidates that lamp's few pages and
-// never misses; the sun's pages, where the volume is, test their own
-// rect. Per-cell lamp tests are #866's refinement.
 @compute @workgroup_size(COMPACT_GROUP, 1, 1)
 fn cs_invalidate(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= raster.views.y {
@@ -304,9 +220,8 @@ fn cs_expand_args(@builtin(global_invocation_id) gid: vec3<u32>) {
     if level >= raster.chain.x {
         meshlets = min(meshlets, LAMP_SURVIVORS);
     }
-    // 🔴 The inverted expansion runs ONE thread per survivor, and only
-    // for the sun's buckets — the pyramid it descends covers one
-    // clipmap. Sizing this the paired way would run the descent once
+    // 🔴 The inverted expansion runs ONE thread per survivor, and only for the sun's buckets — the
+    // pyramid it descends covers one clipmap. Sizing this the paired way would run the descent once
     // per page and every pair would land `pages` times.
     let inverted = raster.layer.w != 0u && level < raster.chain.x;
     let threads = select(pages * meshlets, meshlets, inverted);
@@ -315,13 +230,8 @@ fn cs_expand_args(@builtin(global_invocation_id) gid: vec3<u32>) {
     expand_args[level * 3u + 2u] = 1u;
 }
 
-// One thread, after every level has expanded: the draw covers all of
-// them at once, so its instance count is the whole pair list.
-//
-// 🔴 ONE `draw_indirect` for the entire clipmap, not one per level. A
-// pair carries the packed `(instance, meshlet)` its cull produced, which
-// is self-describing, so the draw never has to know which level a pair
-// came from.
+// One thread, after every level has expanded: the draw covers all of them at once, so its instance
+// count is the whole pair list.
 @compute @workgroup_size(1, 1, 1)
 fn cs_draw_args() {
     let pairs = min(atomicLoad(&page_counts[raster.chain.x + LAMP_CULLS + 2u]), raster.chain.y);
@@ -341,35 +251,8 @@ fn cs_draw_args() {
     draw_args[7] = 0u;
 }
 
-/// Fills `PAGE_LOD` for every page of the sun's clipmap: how many
-/// levels up the first READABLE page covering the same world position
-/// sits.
-///
-/// # 🔴 One walk here instead of one per pixel per light
-///
-/// `inti_page_shadow` climbs the clipmap until a level answers. It
-/// starts at the containment floor while the marking chose
-/// `max(contain, density)`, so the common case is `density - contain`
-/// levels of pure misses before the first hit — and the ceiling is the
-/// whole seventeen-level chain. Each miss is one indexed read, which is
-/// cheap; seventeen of them per pixel per light is not.
-///
-/// This walks the same chain once per page per frame and writes the
-/// answer down, which is what Unreal's `LODOffset` is. The reader then
-/// does two reads: the floor's entry to learn the jump, and the page it
-/// lands on.
-///
-/// # The cell is not the same cell
-///
-/// A page's world rect maps to a DIFFERENT cell at a coarser level,
-/// because the levels' page widths differ by a factor of two. Working
-/// in absolute world page indices makes it a shift: the page whose
-/// absolute index is `idx` at level `L` sits inside `idx >> k` at level
-/// `L + k`, and that index wraps into the coarser level's own window.
-/// Unreal do the same arithmetic in `CalcClipmapOffsetLevelPage`.
-///
-/// ⚠️ Runs AFTER `cs_compact`, because readable means resident AND
-/// stamped and the stamp is what the compaction writes.
+/// Fills `PAGE_LOD` for every page of the sun's clipmap: how many levels up the first READABLE page
+/// covering the same world position sits.
 @compute @workgroup_size(64, 1, 1)
 fn cs_lod_offsets(@builtin(global_invocation_id) gid: vec3<u32>) {
     let side = raster.space.z;

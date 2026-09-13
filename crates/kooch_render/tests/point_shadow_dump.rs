@@ -1,15 +1,4 @@
 //! Not a test — a **look**. The owner's scene, rendered to PNGs (#851).
-//!
-//! Thirteen assertions in `point_shadows.rs` pass while the owner sees
-//! shadows that die, a square drawn outward, and a different picture in
-//! each camera. When that happens the rig is wrong, not the eye. This
-//! reproduces the reported scene by its numbers — `intensity 320000`,
-//! `range 10.0`, `ambient 0.0`, compute shading — and writes pictures
-//! instead of asserting, because every assertion so far has agreed with
-//! the code and disagreed with the screen.
-//!
-//! Run with:
-//!   cargo test -p kooch_render --test point_shadow_dump -- --ignored --nocapture
 
 mod common;
 
@@ -30,10 +19,9 @@ use kooch_render::material::{Material, MaterialPipeline};
 use kooch_render::meshlet::{MeshletRenderStage, MeshletRenderStageConfig, build_default_meshlets};
 use kooch_render::shadow::ShadowSettings;
 
-// 🔴 1536, not 512. The cube view tiles six faces into a 3x2 grid, so
-// at 512 each face gets 170x256 px and a ball 27 px across — small
-// enough that its own edge reads as a crescent. Two sessions were spent
-// interpreting that crescent.
+// 🔴 1536, not 512. The cube view tiles six faces into a 3x2 grid, so at 512 each face gets 170x256
+// px and a ball 27 px across — small enough that its own edge reads as a crescent. Two sessions
+// were spent interpreting that crescent.
 const SIZE: u32 = 1536;
 
 /// The lamp the inspector showed, overhead.
@@ -56,11 +44,7 @@ fn build(lights: &[(Vec3, bool)], occluder: bool, compute: bool) -> Option<Rig> 
     build_with(lights, occluder, compute, false)
 }
 
-/// `contact` turns the screen-space march on, which is what the owner's
-/// lamps now have. It is the one shadow in the engine that reads the
-/// CAMERA's depth buffer, so an occluder that leaves the screen stops
-/// occluding — and #845 marches only the brightest light per pixel, so
-/// two lamps never both get one.
+/// `contact` turns the screen-space march on, which is what the owner's lamps now have.
 fn build_with(
     lights: &[(Vec3, bool)],
     occluder: bool,
@@ -111,16 +95,8 @@ fn build_with(
     );
     let mesh = Guid::new_v4();
     stage.ensure_gpu_mesh(&device, mesh, &meshlet_mesh);
-    // A dense sphere for the caster, because the owner's is a ball and
-    // a cube is six quads: a defect that drops SOME meshlets of an
-    // object cannot show on geometry that has almost none.
-    //
-    // 🔴 And with a real LOD **chain**, not `build_default_meshlets` —
-    // that one lives in `builder/single_lod.rs` and produces one level.
-    // The LOD selector is the only thing in the cull that can drop
-    // meshlets from the MIDDLE of an object, and against a single-level
-    // mesh it cannot run at all. Five reproductions came out clean for
-    // that reason and for no other.
+    // A dense sphere for the caster, because the owner's is a ball and a cube is six quads: a
+    // defect that drops SOME meshlets of an object cannot show on geometry that has almost none.
     let ball_mesh = kooch_render::meshlet::build_meshlets_lod_chain(
         &common::build_sphere_mesh(32, 48),
         kooch_render::meshlet::DEFAULT_MAX_VERTICES,
@@ -204,12 +180,7 @@ fn move_occluder(resources: &Resources, to: Vec3) {
     );
 }
 
-/// Observation 2 — "las point lights dibujan un cuadrado de sombra hacia
-/// afuera".
-///
-/// An EMPTY floor under one lamp. There is nothing to cast, so the
-/// picture must be a smooth pool of light. A square, a diamond or a
-/// diagonal seam is the cube's own face boundary printed onto the world.
+/// Observation 2 — "las point lights dibujan un cuadrado de sombra hacia afuera".
 #[test]
 #[ignore = "writes PNGs to look at; not an assertion"]
 fn an_empty_floor_must_be_smooth() {
@@ -278,12 +249,7 @@ fn compare(a: &[u8], b: &[u8]) -> (f32, f32) {
     (worst, (total / count as f64) as f32)
 }
 
-/// Observation 1 — "si muevo la luz se actualizan las sombras, si no la
-/// muevo mueren".
-///
-/// The lamp never moves. The caster does, three times, through ONE
-/// stage so the cube cache is live. Frame 1 is always drawn; what a
-/// cache breaks only shows on frame 2 and after.
+/// Observation 1 — "si muevo la luz se actualizan las sombras, si no la muevo mueren".
 #[test]
 #[ignore = "writes PNGs to look at; not an assertion"]
 fn a_still_lamp_over_a_moving_caster() {
@@ -302,12 +268,6 @@ fn a_still_lamp_over_a_moving_caster() {
 }
 
 /// Observation 3 — "en cada cámara se ve diferente".
-///
-/// Two cameras, one stage, one frame's worth of state, nothing moved
-/// between them. The cube maps are rendered from the LIGHT, so the two
-/// pictures must agree about where the shadow is. If they do not, the
-/// cube's contents depend on who is looking — which is the one thing a
-/// shadow map must never do.
 #[test]
 #[ignore = "writes PNGs to look at; not an assertion"]
 fn two_cameras_must_agree() {
@@ -325,14 +285,8 @@ fn two_cameras_must_agree() {
     shoot(&mut rig, "agree_3_back.png", Vec3::new(6.0, 5.0, 6.0));
 }
 
-/// The remaining report — "dependiendo de en qué posición esté la cámara
-/// la point light genera sombras cortadas o no las genera".
-///
-/// A dense ball, the lamp at the position the inspector showed, and NINE
-/// cameras around it through ONE stage, so the cube cache lives across
-/// all of them exactly as it does in a running editor. The cube maps are
-/// rendered from the LIGHT: the shadow must land on the same patch of
-/// floor in every one of these, whole, with no straight edge cutting it.
+/// The remaining report — "dependiendo de en qué posición esté la cámara la point light genera
+/// sombras cortadas o no las genera".
 #[test]
 #[ignore = "writes PNGs to look at; not an assertion"]
 fn the_shadow_must_not_depend_on_the_camera() {
@@ -351,19 +305,7 @@ fn the_shadow_must_not_depend_on_the_camera() {
     }
 }
 
-/// The editor's arrangement, which no test has ever had: **two views on
-/// one stage**.
-///
-/// `render_with_assets(view_id, ..)` runs the whole frame per view, and
-/// `prepare_shadows` takes the CAMERA. So `select_point_casters` culls
-/// lamps against whichever camera is rendering, while
-/// `point_cube_cache` and `point_shadow_holders` belong to the stage and
-/// are shared. Every previous picture in this file came from one view,
-/// which is why every previous picture agreed with itself.
-///
-/// The Game camera here is deliberately pointed away from the lamp, the
-/// way a gameplay camera is while the author looks at the lamp in the
-/// View panel.
+/// The editor's arrangement, which no test has ever had: **two views on one stage**.
 #[test]
 #[ignore = "writes PNGs to look at; not an assertion"]
 fn two_views_on_one_stage() {
@@ -380,10 +322,9 @@ fn two_views_on_one_stage() {
     shoot(&mut rig, "views_0_alone.png", view_eye);
     shoot(&mut rig, "views_1_alone_again.png", view_eye);
 
-    // Now alternate, the way the editor does every frame: Game looking
-    // away from the lamp, then View from the same eye as above. If the
-    // last picture differs from the first two, the shadow depends on
-    // who else looked this frame.
+    // Now alternate, the way the editor does every frame: Game looking away from the lamp, then
+    // View from the same eye as above. If the last picture differs from the first two, the shadow
+    // depends on who else looked this frame.
     for round in 0..3 {
         let game = ViewCamera::looking_at(Vec3::new(30.0, 2.0, 30.0), Vec3::new(40.0, 0.0, 40.0));
         rig.stage
@@ -396,15 +337,7 @@ fn two_views_on_one_stage() {
     }
 }
 
-/// Which half of the two-view frame does it: the camera-frustum cull, or
-/// the shared cube cache?
-///
-/// Same alternation as `two_views_on_one_stage`, except the Game camera
-/// is pointed AT the lamp instead of away from it. Everything else is
-/// identical — same stage, same alternation, same cache traffic. If the
-/// shadow survives this and dies in the other, the deciding input is
-/// whether the lamp fell inside the rendering camera's frustum, and
-/// `select_point_casters` culling against `camera` is the whole bug.
+/// Which half of the two-view frame does it: the camera-frustum cull, or the shared cube cache?
 #[test]
 #[ignore = "writes PNGs to look at; not an assertion"]
 fn two_views_where_game_also_sees_the_lamp() {
@@ -431,15 +364,6 @@ fn two_views_where_game_also_sees_the_lamp() {
 }
 
 /// Two lamps, two views, and the Game camera turning.
-///
-/// The frustum cull is gone, but `shadow_casting_points` still ranks by
-/// distance to `camera.position()`, so the ORDER of the chosen lamps —
-/// and therefore which cube slot each one occupies — is still a property
-/// of whoever is rendering. The cube array and `point_cube_cache` are
-/// still the stage's.
-///
-/// The View camera never moves in any of these. Every picture must show
-/// both shadows, in the same two places.
 #[test]
 #[ignore = "writes PNGs to look at; not an assertion"]
 fn two_lamps_while_the_game_camera_turns() {
@@ -494,15 +418,8 @@ fn two_lamps_with_contact_shadows_on() {
     }
 }
 
-/// The owner's configuration exactly: two lamps, both casting, both with
-/// `contact_shadows` on, and the camera that MOVES is the one being
-/// looked at.
-///
-/// Every earlier orbit ran with the march off. A contact shadow is a
-/// march through this view's own depth buffer, so it is the one shadow
-/// that is allowed to change when the camera turns — and #845 marches
-/// only the brightest light per pixel, so of two lamps only ever one
-/// gets one.
+/// The owner's configuration exactly: two lamps, both casting, both with `contact_shadows` on, and
+/// the camera that MOVES is the one being looked at.
 #[test]
 #[ignore = "writes PNGs to look at; not an assertion"]
 fn orbiting_with_two_lamps_and_contact_on() {
@@ -523,13 +440,6 @@ fn orbiting_with_two_lamps_and_contact_on() {
 }
 
 /// The same orbit, measured instead of looked at.
-///
-/// Each lamp's shadow lands on a FIXED patch of floor — the ball's centre
-/// traced away from that lamp down to y = 0 — so the camera moving
-/// changes where that patch appears on screen and nothing else. Probing
-/// the world point and reporting it against open floor is the only way
-/// to tell "the shadow moved off screen" from "the shadow stopped being
-/// computed".
 #[test]
 #[ignore = "prints a table; not an assertion"]
 fn measure_the_orbit() {
@@ -581,18 +491,6 @@ fn measure_the_orbit() {
 }
 
 /// The orbit measured so that framing cancels exactly.
-///
-/// A probe at a fixed world point is not enough: at some angles the ball
-/// stands between the lens and that point, and the sample then reads the
-/// BALL — 1.42x "brighter than open floor", which looks like a missing
-/// shadow and is a missing floor. The rig's own comment warns about it
-/// and I walked into it anyway.
-///
-/// So: the same camera renders twice, once with both lamps casting and
-/// once with neither, and the two frames are differenced. Occlusion,
-/// perspective, penumbra size and tonemap are identical between them;
-/// the only thing that differs is the shadow. `dark` is the fraction of
-/// the frame the shadows remove, and it must not depend on the camera.
 #[test]
 #[ignore = "prints a table; not an assertion"]
 fn the_orbit_differenced() {
@@ -631,15 +529,7 @@ fn the_orbit_differenced() {
     }
 }
 
-/// The owner's `project.rendersettings`, verbatim, which no picture in
-/// this file has used.
-///
-/// Every rig above ran with ambient 0, full-rate shading and no temporal
-/// pass. `roll-a-ball` ships `ambient_intensity: 300`, `shading_rate: 2`,
-/// `temporal_aa: true`, `point_shadows: 32` and
-/// `contact_shadow_dominant: true` — and two of those make a frame
-/// depend on where the camera WAS, which is the one property none of the
-/// earlier reproductions had.
+/// The owner's `project.rendersettings`, verbatim, which no picture in this file has used.
 fn owners_rig(casting: bool) -> Option<Rig> {
     let mut rig = build_with(
         &[
@@ -677,10 +567,9 @@ fn owners_rig(casting: bool) -> Option<Rig> {
     Some(rig)
 }
 
-/// A slow orbit under those settings, differenced against the same orbit
-/// with neither lamp casting. Framing, occlusion, half-rate upsampling
-/// and the temporal resolve are identical between the two runs; the only
-/// difference is the shadow.
+/// A slow orbit under those settings, differenced against the same orbit with neither lamp casting.
+/// Framing, occlusion, half-rate upsampling and the temporal resolve are identical between the two
+/// runs; the only difference is the shadow.
 #[test]
 #[ignore = "prints a table; not an assertion"]
 fn the_owners_settings_orbit() {
@@ -714,11 +603,6 @@ fn the_owners_settings_orbit() {
 }
 
 /// The Game panel's own image, which is what the owner is looking at.
-///
-/// Every picture above is the primary view. The Game panel is a SECOND
-/// `ViewId` on the same stage, and until `view_color_texture` existed no
-/// test could read it back. The View panel renders first each frame,
-/// exactly as the editor does it, and then this turns the Game camera.
 #[test]
 #[ignore = "writes PNGs to look at; not an assertion"]
 fn the_game_panel_while_its_camera_turns() {
@@ -746,19 +630,7 @@ fn the_game_panel_while_its_camera_turns() {
     }
 }
 
-/// "es como si la geometría se estuviera quedando sin mesh… será que se
-/// ocluden las meshlets?"
-///
-/// Each of the six cube faces IS a camera — a 90° perspective view from
-/// the lamp — and each runs its own meshlet cull with its own LOD
-/// selection against `cubes.size()` texels. So the shadow can lose
-/// meshlets the main view kept, and a sphere whose middle meshlets went
-/// missing casts a horseshoe: dark at the rim, lit in the centre.
-///
-/// If the shadow closes up as `target_error_pixels` goes to zero, the
-/// LOD selector in the shadow cull is choosing the cut and the holes are
-/// its doing. If it does not, the geometry is whole and the shape is
-/// something else.
+/// "es como si la geometría se estuviera quedando sin mesh… será que se ocluden las meshlets?"
 #[test]
 #[ignore = "writes PNGs to look at; not an assertion"]
 fn does_the_shadow_close_up_at_a_finer_lod() {
@@ -788,10 +660,6 @@ fn does_the_shadow_close_up_at_a_finer_lod() {
 }
 
 /// The new view (#852), on the owner's scene.
-///
-/// Nothing on top of the cube's answer, so what comes out is readable as
-/// a fault and not as a shade: magenta no caster, blue past range, grey
-/// the factor itself.
 #[test]
 #[ignore = "writes PNGs to look at; not an assertion"]
 fn the_point_shadow_factor_view() {
@@ -845,18 +713,8 @@ fn the_point_cube_view() {
     eprintln!("wrote cube_faces.png");
 }
 
-/// The cube's six faces read **out of the depth texture**, with the
-/// contrast stretched to whatever is actually in them.
-///
-/// 🔴 Every other picture in this file goes through the sampling path,
-/// the filter, the bias and a surface shader before it reaches a PNG.
-/// Four places a picture can lie, and one of them already did: the 3×2
-/// grid normalises by the light's `range`, so a ball at 5.4 m against a
-/// floor at 5.9 m is two greys a hundredth apart and reads as noise.
-///
-/// This one copies the layer and stretches min..max. If the occluder is
-/// in the map it is unmissable here, and if it is not, that is not an
-/// interpretation either.
+/// The cube's six faces read **out of the depth texture**, with the contrast stretched to whatever
+/// is actually in them.
 #[test]
 #[ignore = "writes PNGs to look at; not an assertion"]
 fn the_cube_faces_raw() {
@@ -968,18 +826,6 @@ fn read_face_depth(
 }
 
 /// The reported scene, by its own numbers, not by my memory of them.
-///
-/// 🔴 `owners_rig` above had the lamps in the wrong place. It put both
-/// off to one side, so the ball always landed on the **+X** face. The
-/// scene the owner is looking at — `point_light_test.scene` — has a lamp
-/// at the ORIGIN, `(0, 3.4766, 0)`, directly over a ball at `(0, 1, 0)`,
-/// which puts the occluder on **−Y**: the one face where a flat floor
-/// records a single constant depth, because the stored value is
-/// `near / major-axis magnitude` and the major axis there IS the height.
-/// Five reproductions never put anything on that face.
-///
-/// The other two corrections: the ball floats a metre up, not half a
-/// metre, and both lamps have `contact_shadows: false`.
 fn reported_scene(casting: bool) -> Option<Rig> {
     let mut rig = build_with(
         &[
@@ -1151,11 +997,6 @@ fn one_lamp_then_two() {
 }
 
 /// Where does the ball have to stand before the cube records it?
-///
-/// The cube holds the floor at 3.48 m on every face. A ball at `y = 1`
-/// puts its top 1.98 m under the lamp, so "the closest thing in the
-/// whole cube" is 3.48 m when the ball is missing and 1.98 m when it is
-/// there. One number, no picture to read.
 #[test]
 #[ignore = "prints a table; not an assertion"]
 fn where_the_ball_enters_the_cube() {
@@ -1204,13 +1045,8 @@ fn where_the_ball_enters_the_cube() {
     }
 }
 
-/// The AABB-vs-frustum test from `meshlet_cull/atomic.wgsl`, on the CPU,
-/// so a rejection can name the plane that made it.
-///
-/// 🔴 It says every meshlet is KEPT on the -Y face, and the GPU dropped
-/// them all — which is what pointed at #853. The two disagreeing was the
-/// finding: the maths was right and the matrix the GPU read was somebody
-/// else's.
+/// The AABB-vs-frustum test from `meshlet_cull/atomic.wgsl`, on the CPU, so a rejection can name
+/// the plane that made it.
 #[test]
 #[ignore = "prints a table; not an assertion"]
 fn which_plane_rejects_the_ball() {

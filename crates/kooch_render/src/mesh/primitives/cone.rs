@@ -1,9 +1,4 @@
 //! Cylinder and cone — a side surface plus flat caps.
-//!
-//! The caps get their own vertices with the cap's normal, never shared
-//! with the side wall. Sharing them would average a vertical normal with
-//! a horizontal one and round the rim off, which on a cylinder reads as a
-//! badly smoothed bevel.
 
 use glam::{Vec2, Vec3};
 
@@ -40,12 +35,8 @@ pub(super) fn cylinder(radius: f32, half_height: f32, sectors: u32) -> Mesh {
     b.build()
 }
 
-/// Cone along local Y with its base at `-half_height` and apex at
-/// `+half_height`, centred on the origin.
-///
-/// The apex is one vertex per sector rather than a single shared one: a
-/// cone's normal is discontinuous at the tip, so one shared apex vertex
-/// would have to pick a single normal and light the whole tip flat.
+/// Cone along local Y with its base at `-half_height` and apex at `+half_height`, centred on the
+/// origin.
 pub(super) fn cone(radius: f32, half_height: f32, sectors: u32) -> Mesh {
     let radius = radius.max(super::MIN_EXTENT);
     let half_height = half_height.max(super::MIN_EXTENT);

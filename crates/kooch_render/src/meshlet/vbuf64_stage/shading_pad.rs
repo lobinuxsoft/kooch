@@ -94,12 +94,8 @@
 
 use std::ops::Range;
 
-/// Appends `KOOCH_SHADING_PAD` sweeps that own no pixel, clamped so the
-/// range never leaves the slot table `max` describes.
-///
-/// Clamped rather than asserted: this is a measurement knob read from a
-/// launch option, and a typo must cost a wrong number rather than a
-/// crash on a handheld nobody is sitting in front of.
+/// Appends `KOOCH_SHADING_PAD` sweeps that own no pixel, clamped so the range never leaves the slot
+/// table `max` describes.
 pub(crate) fn padded_slots(slots: Range<u32>, max: u32) -> Range<u32> {
     extend_slots(slots, pad_from_environment(), max)
 }
@@ -128,11 +124,8 @@ fn pad_from_environment() -> u32 {
     })
 }
 
-/// The parse, apart from the read, so a test can exercise it without
-/// touching the process environment.
-///
-/// Anything unparseable is zero, the same as unset: a typo during a
-/// measurement run must not silently change what is being measured.
+/// The parse, apart from the read, so a test can exercise it without touching the process
+/// environment.
 fn parse_pad(raw: Option<&str>) -> u32 {
     raw.map(str::trim)
         .filter(|raw| !raw.is_empty())

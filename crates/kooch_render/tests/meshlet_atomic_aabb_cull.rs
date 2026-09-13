@@ -1,16 +1,5 @@
-//! GPU integration test: scene-pool atomic cull (#454.4) frustum
-//! rejection via AABB-vs-frustum (`aabb_outside_frustum_local`).
-//!
-//! Exercises `dispatch_scene_pool_atomic` directly so the AABB switch
-//! introduced in #454.4 can be verified end-to-end on a real adapter
-//! — the `meshlet_scene_cull` suite covers the legacy `cs_cull_scene`
-//! entry which still uses `sphere_outside_frustum` and therefore would
-//! pass even if the AABB port were broken.
-//!
-//! Asserts:
-//!   - instances clearly inside the frustum survive cull
-//!   - instances clearly outside the frustum (behind camera, far off
-//!     to the side) are dropped from `visible_meshlets`
+//! GPU integration test: scene-pool atomic cull (#454.4) frustum rejection via AABB-vs-frustum
+//! (`aabb_outside_frustum_local`).
 
 mod common;
 
@@ -39,9 +28,8 @@ fn atomic_pool_cull_drops_off_frustum_aabb() {
     let gpu_pool = pool.upload(&device);
     let meshlets_per_mesh = gpu_pool.max_meshlets_per_mesh.max(1);
 
-    // 4 instances: 0/1 in front of cam, 2 behind camera, 3 way to
-    // the right outside a 45° FOV. The AABB version should drop the
-    // last two; sphere bounds would also drop them, but we keep the
+    // 4 instances: 0/1 in front of cam, 2 behind camera, 3 way to the right outside a 45° FOV. The
+    // AABB version should drop the last two; sphere bounds would also drop them, but we keep the
     // gap large so even a buggy AABB couldn't pass them.
     let instances = vec![
         MeshInstance::new(

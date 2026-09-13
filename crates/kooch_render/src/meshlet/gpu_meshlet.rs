@@ -1,21 +1,5 @@
-//! GPU-resident meshlet mesh — storage buffers + bind group layout for
-//! the upcoming compute culling shader.
-//!
-//! Splitting CPU [`MeshletMesh`] from GPU [`GpuMeshletMesh`] mirrors the
-//! pattern we use for `Mesh` / `GpuMesh`: same asset can sit in CPU
-//! tools (mesh viewer, exporter) and be uploaded to wgpu when the
-//! renderer needs it.
-//!
-//! # Layout
-//!
-//! Four storage buffers, each `bytemuck::cast_slice`-uploaded:
-//!
-//! | Buffer | Contents | Stride |
-//! |---|---|---|
-//! | `vertices` | `Vec<MeshVertex>` (the shared vertex pool) | 32 B |
-//! | `meshlet_vertices` | `Vec<u32>` (per-meshlet indices into `vertices`) | 4 B |
-//! | `meshlet_triangles` | `Vec<u8>` (3-byte triangles, packed contiguously) | 1 B |
-//! | `descriptors` | `Vec<MeshletDescriptor>` (per-meshlet metadata) | 80 B |
+//! GPU-resident meshlet mesh — storage buffers + bind group layout for the upcoming compute culling
+//! shader.
 
 use wgpu::util::DeviceExt;
 
@@ -23,11 +7,8 @@ use crate::mesh::MeshVertex;
 
 use super::asset::MeshletMesh;
 
-/// GPU-resident counterpart of [`MeshletMesh`]. Owns four
-/// `wgpu::Buffer`s; dropping it releases all four.
-///
-/// Bind group layout is `bind_group_layout()`; buffers are bound at
-/// slots 0..3 via [`bind_group`](Self::bind_group).
+/// GPU-resident counterpart of [`MeshletMesh`]. Owns four `wgpu::Buffer`s; dropping it releases all
+/// four.
 pub struct GpuMeshletMesh {
     pub vertices: wgpu::Buffer,
     pub meshlet_vertices: wgpu::Buffer,
@@ -186,13 +167,8 @@ pub fn meshlet_bind_group(
     })
 }
 
-/// Builds the meshlet bind group from the multi-mesh
-/// [`super::pool::GpuGlobalMeshPool`] using the same
-/// [`meshlet_bind_group_layout`]. Per-meshlet `vertex_offset` and
-/// `triangle_offset` were already rebased into pool-global coordinates
-/// by [`super::pool::GlobalMeshPool::register`], so the rasterizer +
-/// deferred shaders need no per-mesh remapping — they index the
-/// concatenated buffers as if every meshlet lived in one giant mesh.
+/// Builds the meshlet bind group from the multi-mesh [`super::pool::GpuGlobalMeshPool`] using the
+/// same [`meshlet_bind_group_layout`].
 pub fn pool_meshlet_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,

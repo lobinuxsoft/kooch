@@ -7,16 +7,9 @@ use super::super::MeshletCull;
 use super::super::pipelines::MeshletCullPipelines;
 
 impl MeshletCull {
-    /// 2-pass cull with group-atomic LOD descent (#465). Pass 1
-    /// atomicMaxes pixel error per group_index into `group_max_err`;
-    /// pass 2 reads it to produce group-coherent descent decisions.
-    /// Sibling meshlets sharing a group always either all descend or
-    /// all stay together — no torn coverage seam between LOD levels.
-    ///
-    /// Caller must call [`Self::ensure_capacity`] +
-    /// [`Self::ensure_group_capacity`] beforehand. Visible meshlet
-    /// packing matches [`Self::dispatch_scene_pool`]:
-    /// `(instance_id << 16) | global_meshlet_idx`.
+    /// 2-pass cull with group-atomic LOD descent (#465). Pass 1 atomicMaxes pixel error per
+    /// group_index into `group_max_err`; pass 2 reads it to produce group-coherent descent
+    /// decisions.
     #[allow(clippy::too_many_arguments)]
     pub fn dispatch_scene_pool_atomic(
         &self,
@@ -52,19 +45,14 @@ impl MeshletCull {
         // atomicMaxes only positive pixel errors so 0 is a valid
         // "no contribution yet" floor.
         encoder.clear_buffer(&self.group_max_err, 0, None);
-        // Reset reject_reasons so stale values from the previous
-        // frame don't leak into the overlay raster pass when
-        // `debug_active` is set this frame. 0 = "thread skipped",
-        // which the overlay treats as no-op. Cost is negligible
-        // (single buffer clear per frame) and only paid when the
-        // dispatcher runs the atomic path at all.
+        // Reset reject_reasons so stale values from the previous frame don't leak into the overlay
+        // raster pass when `debug_active` is set this frame. 0 = "thread skipped", which the
+        // overlay treats as no-op.
         if self.rejects {
             encoder.clear_buffer(&self.reject_reasons, 0, None);
         }
-        // Reset the per-stage survivor counters (#454.6) — cull
-        // shader atomicAdds per cluster, so stale frame N-1 totals
-        // would compound otherwise. 16-byte clear is essentially
-        // free.
+        // Reset the per-stage survivor counters (#454.6) — cull shader atomicAdds per cluster, so
+        // stale frame N-1 totals would compound otherwise. 16-byte clear is essentially free.
         encoder.clear_buffer(&self.stage_counters, 0, None);
 
         // Bind groups shared by both passes.
@@ -126,10 +114,9 @@ impl MeshletCull {
                 resource: self.group_max_err.as_entire_binding(),
             }],
         });
-        // Group(4) cull debug buffers (#454.4 + #454.6). Bound for
-        // both passes because the pipeline layout is shared; the
-        // lod-compute entry never references either global so the
-        // binding is a no-op there beyond the table write.
+        // Group(4) cull debug buffers (#454.4 + #454.6). Bound for both passes because the pipeline
+        // layout is shared; the lod-compute entry never references either global so the binding is
+        // a no-op there beyond the table write.
         let debug_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_debug_bg"),
             layout: &pipelines.debug_bgl,
