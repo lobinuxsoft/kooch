@@ -23,11 +23,8 @@ enum SetState {
     },
 }
 
-/// Coordinator for a group of handles. Owns the `Idle → Hover → Drag`
-/// state machine, dispatches input to the right handle, and forwards
-/// the resulting translation delta back to the editor.
-///
-/// The default `HandleSet` contains three [`TranslateHandle`]s (X, Y, Z).
+/// Coordinator for a group of handles: runs `Idle → Hover → Drag`, dispatches input to the right
+/// handle and returns its transform delta.
 pub struct HandleSet {
     handles: Vec<Box<dyn Handle>>,
     state: SetState,
@@ -95,10 +92,8 @@ impl HandleSet {
         self.frame.entity_world_rotation = rotation;
     }
 
-    /// Switches the active edit mode. Filters which handles render /
-    /// pick / drag this frame. Resets transient hover/drag state when
-    /// the mode actually changes so leftover state from another mode
-    /// doesn't bleed into the new one.
+    /// Switches the edit mode, resetting hover and drag state when it changes so none bleeds into
+    /// the new mode.
     pub fn set_mode(&mut self, mode: HandleMode) {
         if self.mode != mode {
             self.mode = mode;
@@ -187,12 +182,8 @@ impl HandleSet {
         }
     }
 
-    /// Renders the active-mode handles into the gizmo batch with their
-    /// current state. Inactive-mode handles are skipped entirely.
-    /// **While a drag is active**, sibling handles in the same mode are
-    /// also hidden so the user only sees the one they're dragging —
-    /// matches Unity / Maya / Blender behavior and reduces visual
-    /// clutter while the manipulation is in progress.
+    /// Renders the active mode's handles. While dragging, only the dragged handle shows, as in
+    /// Unity, Maya and Blender.
     pub fn draw(&self, gizmos: &mut Gizmos<'_>) {
         let dragging_idx = match self.state {
             SetState::Drag { idx, .. } => Some(idx),

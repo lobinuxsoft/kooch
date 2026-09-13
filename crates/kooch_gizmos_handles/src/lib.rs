@@ -1,23 +1,6 @@
-//! Interactive editor handles — translate / rotate / scale gizmos.
-//!
-//! Stateful counterpart to [`kooch_gizmos`]. While `kooch_gizmos` is
-//! immediate-mode (rebuild per frame from selection), handles carry
-//! drag state across frames: the user clicks an axis, drags, releases.
-//!
-//! Architecture:
-//!
-//! - [`Handle`] trait: each interactive handle implements `draw` (visual),
-//!   `pick` (ray-vs-handle hit test), and `drag` (per-frame world delta
-//!   from input rays).
-//! - [`HandleSet`] coordinator: owns a list of handles, runs the state
-//!   machine `Idle → Hover → Drag`, returns the accumulated translation
-//!   delta to apply to the selected entity each frame.
-//! - [`TranslateHandle`]: built-in handle for one axis. The default
-//!   [`HandleSet`] contains three (X, Y, Z).
-//!
-//! v1 scope: translate only, world-space, single-entity. Rotate and
-//! scale are separate phases of #278; multi-entity drag, Local-space
-//! mode, and undo integration are polish follow-ups.
+//! Editor handles that keep drag state across frames: translate, rotate, scale and plane.
+//! [`Handle`] draws, picks and turns rays into a transform delta; [`HandleSet`] runs `Idle → Hover
+//! → Drag`.
 
 mod plane;
 mod rotate;
@@ -93,17 +76,8 @@ impl Axis {
     }
 }
 
-/// Per-frame ray delta passed to [`Handle::drag`] while a drag is
-/// active.
-///
-/// - `start_ray` is the ray captured at the moment the user clicked
-///   the handle. Stays fixed for the whole drag and lets snap math
-///   anchor totals to a stable reference (so toggling a modifier
-///   mid-drag works without rewinding more than one snap step).
-/// - `last_ray` / `current_ray` are the previous and current frame's
-///   rays — what the unsnapped per-frame delta is computed from.
-/// - `modifiers` reflects the current keyboard state so handles can
-///   gate snap math on Ctrl / Shift / Alt.
+/// Per-frame rays for [`Handle::drag`]. `start_ray` stays fixed at the click so snapping anchors to
+/// it; `last_ray`/`current_ray` give the unsnapped delta; `modifiers` gate snapping.
 #[derive(Debug, Clone, Copy)]
 pub struct DragInfo {
     pub start_ray: Ray,
@@ -169,12 +143,8 @@ impl TransformDelta {
     }
 }
 
-/// Edit mode for a [`HandleSet`] — selects which subset of handles
-/// renders / picks / drags this frame. Mirrors Maya / Unity / Unreal
-/// conventions (W = translate, E = rotate, R = scale).
-///
-/// Note: the W/E/R hotkey labels are conventions enforced by the
-/// editor's input layer; the enum itself is shortcut-agnostic.
+/// Which handles render, pick and drag this frame. The editor binds W/E/R; the enum itself knows no
+/// shortcuts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandleMode {
     Translate,
@@ -188,17 +158,8 @@ impl Default for HandleMode {
     }
 }
 
-/// World-space frame in which a handle is placed.
-///
-/// - `origin` — world position of the entity (handles are drawn around it).
-/// - `basis` — display orientation. `Mat3::IDENTITY` in World mode,
-///   the entity's world rotation in Local mode. Drives visual cube /
-///   arrow / torus orientation and the drag axis selection.
-/// - `entity_world_rotation` — always the entity's actual world
-///   rotation, regardless of mode. Needed for handles that have to
-///   convert between world and local spaces (e.g. scale's
-///   stretch-matrix conversion in World mode). Equal to `basis` in
-///   Local mode; differs in World mode.
+/// World-space frame a handle is placed in: `origin`, a display `basis` (identity in World mode,
+/// the entity's rotation in Local), and the entity's actual rotation for world/local conversion.
 #[derive(Debug, Clone, Copy)]
 pub struct HandleFrame {
     pub origin: Vec3,
@@ -217,10 +178,8 @@ impl Default for HandleFrame {
 }
 
 impl HandleFrame {
-    /// Maps a local-space direction to world space using the frame's
-    /// rotation. For built-in axis handles this turns `Axis::X` into
-    /// either `(1,0,0)` (World mode) or the entity's local +X
-    /// direction (Local mode).
+    /// Maps a local-space direction to world space: `Axis::X` becomes world +X in World mode, the
+    /// entity's +X in Local.
     pub fn world_axis(&self, axis: Axis) -> Vec3 {
         (self.basis * axis.vec()).normalize_or(axis.vec())
     }
@@ -242,9 +201,7 @@ pub trait Handle: Send + Sync + 'static {
     /// otherwise. Smallest distance wins when multiple handles are hit.
     fn pick(&self, ray: Ray, frame: HandleFrame) -> Option<f32>;
 
-    /// Returns the world-space transform delta for one drag frame.
-    /// Variant depends on the handle kind: translate handles return
-    /// `Translation`, rotate handles return `Rotation`, scale handles
-    /// return `Scale`.
+    /// The world-space transform delta for one drag frame: `Translation`, `Rotation` or `Scale` by
+    /// handle kind.
     fn drag(&self, drag: DragInfo, frame: HandleFrame) -> TransformDelta;
 }

@@ -6,18 +6,8 @@ use kooch_gizmos::Gizmos;
 
 use crate::{Axis, DragInfo, Handle, HandleFrame, HandleMode, HandleState, Ray, TransformDelta};
 
-/// Two-axis translate handle. Lives at the "corner" between two
-/// cardinal axes and constrains drag to that plane.
-///
-/// For example, the X-Y plane handle (`axis_a = X, axis_b = Y`) lets
-/// the user drag in the X-Y plane — Z stays fixed. Useful for
-/// table-top-style positioning where the user wants to move along the
-/// ground but not vertically.
-///
-/// Coloring follows the Unity convention: the plane handle is tinted
-/// by the color of the **third** axis (the one perpendicular to the
-/// plane, i.e. the constrained axis). X-Y plane → blue, X-Z → green,
-/// Y-Z → red.
+/// Two-axis translate handle at the corner between two axes; the drag stays in their plane.
+/// Tinted by the constrained third axis, as in Unity: X-Y blue, X-Z green, Y-Z red.
 pub struct PlaneHandle {
     pub axis_a: Axis,
     pub axis_b: Axis,
@@ -75,10 +65,8 @@ impl Handle for PlaneHandle {
             HandleState::Hover => bright(base_color),
             HandleState::Dragging => Vec3::new(1.0, 0.85, 0.2),
         };
-        // Fill alpha 0.55 reads cleanly over the colorful SDF background;
-        // the shader renders the perimeter with alpha 1.0 via per-vertex
-        // `edge_uv`. Hover / drag feedback comes from the color shift,
-        // not the alpha.
+        // Fill alpha 0.55; the shader draws the perimeter opaque via `edge_uv`. Hover shows through
+        // colour, not alpha.
         let fill_color = Vec4::new(rgb.x, rgb.y, rgb.z, 0.55);
         let ([p0, p1, p2, p3], _, _, _) = self.corners(frame);
         gizmos.filled_quad(p0, p1, p2, p3, fill_color);
