@@ -1,20 +1,6 @@
-//! Blocking client for the remote editor protocol.
-//!
-//! The editor calls this to drive a project's running ECS. It is the
-//! mirror of [`server`](crate::server) and speaks the same
-//! [`protocol`](crate::protocol) types, so a request built here
-//! deserializes there and back with no schema drift.
-//!
-//! The transport is a **local socket** — a Unix domain socket or a
-//! Windows named pipe — carrying one JSON object per line. It is not a
-//! TCP port, which is the point: a port is reachable by anything on the
-//! machine, including a web page, and this protocol can write files
-//! (#647). A local socket is not addressable from a browser at all.
-//!
-//! One connection per request, as before. That is more than a local
-//! socket needs and is worth revisiting, but changing the transport and
-//! the connection lifetime at once would make a regression impossible to
-//! attribute.
+//! Blocking client for the remote editor protocol, the mirror of [`server`](crate::server) speaking
+//! the same [`protocol`](crate::protocol) types.
+//! Over a local socket, never a TCP port a web page could reach (#647).
 
 use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -63,17 +49,8 @@ impl From<std::io::Error> for ClientError {
     }
 }
 
-/// What the most recent [`RemoteClient::call`] spent, split by where.
-///
-/// The split is the whole point. A call's total says the editor stalled;
-/// it does not say why, and the two causes have unrelated fixes:
-///
-/// - **Transport dominating** — the wait is not the loopback socket, it
-///   is the server's main thread. [`crate::plugin`] answers queued
-///   requests from a `Stage::First` system, so a caller blocks until the
-///   project reaches its next frame boundary.
-/// - **Decode dominating** — the payload itself is too big, and the
-///   answer is to send less of it rather than to send it elsewhere.
+/// What the last [`RemoteClient::call`] spent: transport (waiting for the host's next
+/// `Stage::First`) or decode (a payload too big) — unrelated fixes.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct CallStats {
     /// Microseconds from opening the socket to holding the reply text.
@@ -84,13 +61,8 @@ pub struct CallStats {
     pub response_bytes: u32,
 }
 
-/// [`CallStats`] as atomics, so recording one keeps [`RemoteClient`]
-/// `Sync` without a lock — callers hold it behind `&self`.
-///
-/// `Relaxed` throughout: the three fields are a diagnostic read once a
-/// frame by a HUD, not a synchronisation edge. A torn read across a
-/// call boundary would mix two adjacent samples of the same metric,
-/// which is invisible at HUD resolution and not worth an `Acquire`.
+/// [`CallStats`] as atomics, keeping [`RemoteClient`] `Sync` without a lock; `Relaxed`, since a HUD
+/// diagnostic tolerates a torn read.
 #[derive(Default)]
 struct CallStatsCell {
     transport_us: AtomicU32,
@@ -121,10 +93,8 @@ impl CallStatsCell {
     }
 }
 
-/// Connection details for a running project's remote server.
-///
-/// Cheap to hold; each call opens its own short-lived connection, so a
-/// [`RemoteClient`] is just a socket name plus a request-id counter.
+/// Connection details for a running project's server: a socket name and a request-id counter, one
+/// short connection per call.
 pub struct RemoteClient {
     /// Name of the local socket the project is listening on.
     name: String,
@@ -149,18 +119,13 @@ impl RemoteClient {
         &self.name
     }
 
-    /// What the last completed [`Self::call`] cost, split by transport
-    /// and decode. All zeroes before the first call completes; a call
-    /// that fails leaves the previous sample standing rather than
-    /// reporting a zero that reads like "free".
+    /// What the last completed [`Self::call`] cost, split by transport and decode; a failed call
+    /// keeps the previous sample, not a free-looking zero.
     pub fn last_call_stats(&self) -> CallStats {
         self.last_call.load()
     }
 
-    /// Liveness probe. `Ok(())` means the server answered a ping.
-    ///
-    /// Distinct from a full [`Self::call`] in intent: used to poll
-    /// whether a just-launched project has finished booting its server.
+    /// Liveness probe: `Ok(())` means the server answered — for polling a just-launched project.
     pub fn ping(&self) -> Result<(), ClientError> {
         match self.call(Method::Ping)? {
             ResponseData::Pong => Ok(()),
@@ -168,28 +133,14 @@ impl RemoteClient {
         }
     }
 
-    /// Every non-ephemeral entity with its components and fields.
-    ///
-    /// Kept for callers that want the world outright — tests, and any
-    /// one-shot inspection. A client mirroring every frame wants
-    /// [`RemoteClient::list_entities_since`] instead, which is what
-    /// makes an unchanged scene cost nothing to receive.
+    /// Every non-ephemeral entity with its components — for tests and one-shot inspection; a mirror
+    /// wants [`RemoteClient::list_entities_since`].
     pub fn list_entities(&self) -> Result<Vec<EntitySnapshot>, ClientError> {
         Ok(self.list_entities_since(None)?.entities)
     }
 
-    /// The world, or what changed in it since `since`.
-    ///
-    /// Pass the `revision` from the previous reply. The server decides
-    /// whether it can honour the request and says so in
-    /// [`EntityUpdate::full`] — a caller must not assume, because
-    /// merging what it thought was a diff would keep entities the
-    /// project has deleted.
-    /// What moved since `since` — the play-mode pull (#1012).
-    ///
-    /// A `full` reply is the host declining the question, not an error:
-    /// the entity set changed, so the caller has to ask
-    /// [`Self::list_entities_since`] instead on that frame.
+    /// What moved since `since`, the play-mode pull (#1012). A `full` reply is the host declining,
+    /// not an error: ask [`Self::list_entities_since`] that frame.
     pub fn list_moved_since(&self, since: Option<u64>) -> Result<MovedUpdate, ClientError> {
         match self.call(Method::ListMoved { since })? {
             ResponseData::Moved {
@@ -209,6 +160,8 @@ impl RemoteClient {
         }
     }
 
+    /// The world, or what changed since `since`; [`EntityUpdate::full`] says which, since merging a
+    /// full reply as a diff keeps deleted entities.
     pub fn list_entities_since(&self, since: Option<u64>) -> Result<EntityUpdate, ClientError> {
         match self.call(Method::ListEntities { since })? {
             ResponseData::Entities {
@@ -297,11 +250,8 @@ impl RemoteClient {
         })
     }
 
-    /// Spawns a new entity, optionally named; returns its handle.
-    ///
-    /// `scene` names the scene to author it into (`None` = the active
-    /// one) and `parent` what to hang it off. A parent already names the
-    /// scene, so `scene` is ignored when one is given.
+    /// Spawns a new entity, optionally named, into `scene` (`None` = active) under `parent`, which,
+    /// when given, decides the scene.
     pub fn spawn(
         &self,
         name: Option<&str>,
@@ -323,10 +273,8 @@ impl RemoteClient {
         self.expect_ok(Method::Despawn { entity })
     }
 
-    /// Reparents an entity on the server, or unparents it with `None`.
-    ///
-    /// Not expressible as `set_field`: `Parent::reflect_set` is read-only
-    /// because an entity handle is not a reflectable value.
+    /// Reparents an entity, or unparents with `None` — not a `set_field`, since `Parent` is
+    /// read-only through reflection.
     pub fn set_parent(
         &self,
         entity: EntityId,
@@ -335,10 +283,8 @@ impl RemoteClient {
         self.expect_ok(Method::SetParent { entity, parent })
     }
 
-    /// Persists one open scene to a file on the server's disk.
-    ///
-    /// `scene` names it; `None` saves the active one. Only that scene's
-    /// entities are written — see [`Method::SaveScene`].
+    /// Persists one open scene to the server's disk (`None` = active), writing only its entities —
+    /// see [`Method::SaveScene`].
     pub fn save_scene(
         &self,
         path: &str,
@@ -376,12 +322,8 @@ impl RemoteClient {
         }
     }
 
-    /// Replaces the server's live ECS with a scene file from its disk.
-    /// Starts or stops the project's gameplay systems.
-    ///
-    /// Stopping restores the world as it stood when play began, which
-    /// respawns every entity — treat previously held [`EntityId`]s as
-    /// stale afterwards.
+    /// Starts or stops the project's gameplay; stopping restores the world as play found it, entity
+    /// handles included.
     pub fn set_playing(&self, playing: bool) -> Result<(), ClientError> {
         self.call(Method::SetPlaying { playing })?;
         Ok(())
@@ -411,6 +353,7 @@ impl RemoteClient {
         })
     }
 
+    /// Replaces the server's live ECS with a scene file from its disk.
     pub fn load_scene(&self, path: &str) -> Result<(), ClientError> {
         self.expect_ok(Method::LoadScene {
             path: path.to_owned(),
@@ -464,10 +407,8 @@ impl RemoteClient {
         let transport = started.elapsed();
 
         let decoding = Instant::now();
-        // The reply is quoted into the error on failure. Without it a
-        // decode error names the missing field and not the text that
-        // lacked it, which says nothing about whether the reply was
-        // truncated, framed wrong, or simply not what was expected.
+        // The reply is quoted into the error, or a decode failure names a missing field and not the
+        // text that lacked it.
         let decoded: Result<Response, _> = serde_json::from_str(&raw).map_err(|e| {
             let head: String = raw.chars().take(200).collect();
             ClientError::Decode(format!(
@@ -487,23 +428,8 @@ impl RemoteClient {
         }
     }
 
-    /// Connects, writes one JSON line, and reads the reply line.
-    /// Sends a method and does NOT wait for the reply (#1013).
-    ///
-    /// 🔴 The wait is the cost, not the payload. `call` blocks this
-    /// thread until the host reaches its next `Stage::First` and answers
-    /// — measured at 5.9 ms a frame for the input snapshot, whose reply
-    /// the caller was discarding with `let _ =`. A caller that does not
-    /// read the answer has no reason to be slept for it.
-    ///
-    /// The host still queues, executes and writes the reply; the write
-    /// lands on a closed pipe and `serve_one` already logs that at debug
-    /// and carries on. Nothing is lost that anyone was reading.
-    ///
-    /// ⚠️ Errors REACHING the host are still returned — a socket that
-    /// will not accept is worth knowing about. What is given up is the
-    /// host's opinion of the request, so this is only for methods whose
-    /// answer nobody wants.
+    /// Sends a method without waiting for its reply (#1013): `call` slept 5.9 ms a frame for a
+    /// discarded answer. Errors reaching the host still return.
     pub fn notify(&self, method: Method) -> Result<(), ClientError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         // Marked so the SERVER can skip the reply too. Without this the
@@ -529,6 +455,7 @@ impl RemoteClient {
         Ok(())
     }
 
+    /// Connects, writes one JSON line and reads the reply line.
     fn round_trip(&self, body: &str) -> Result<String, ClientError> {
         let name = self
             .name
@@ -555,11 +482,8 @@ impl RemoteClient {
 #[cfg(test)]
 mod tests;
 
-/// One reply to [`RemoteClient::list_entities_since`].
-///
-/// `full` is the field that matters: it decides whether the caller
-/// replaces its mirror or merges into it, and merging a full reply
-/// would silently keep whatever the reply left out.
+/// One reply to [`RemoteClient::list_entities_since`]: `full` decides whether the caller replaces
+/// its mirror or merges into it.
 #[derive(Debug, Clone)]
 pub struct EntityUpdate {
     /// The whole world when `full`, otherwise only what changed.
@@ -572,20 +496,12 @@ pub struct EntityUpdate {
     pub full: bool,
     /// What the host's frame cost, if it reported one.
     pub host: Option<crate::protocol::HostMetrics>,
-    /// The scenes the project has open, or `None` if it did not say.
-    ///
-    /// Not diffed: it arrives whole or not at all, so a caller replaces
-    /// its list rather than merging into one.
+    /// The scenes the project has open, or `None` if it did not say — replaced whole, never merged.
     pub scenes: Option<Vec<crate::protocol::SceneEntry>>,
 }
 
-/// One reply to [`RemoteClient::list_moved_since`] (#1012).
-///
-/// 🔴 `full` here does NOT carry a world. It means the host refused the
-/// question — the entity set changed — and the caller has to ask
-/// [`RemoteClient::list_entities_since`] on that frame. A caller that
-/// read it the way it reads `EntityUpdate::full` would clear its mirror
-/// and replace it with nothing.
+/// One reply to [`RemoteClient::list_moved_since`] (#1012). 🔴 `full` carries no world: the host
+/// refused, so ask [`RemoteClient::list_entities_since`] instead.
 #[derive(Debug, Clone)]
 pub struct MovedUpdate {
     pub moved: Vec<crate::protocol::MovedTransform>,

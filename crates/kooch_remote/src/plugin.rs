@@ -11,23 +11,17 @@ use kooch_core::time::Time;
 use crate::handlers::handle;
 use crate::server::RemoteServer;
 
-/// Adds the remote editor server to a running project.
-///
-/// Binds a loopback HTTP port on a dedicated thread and installs a
-/// [`Stage::First`] system that answers queued requests against the ECS.
-/// A bind failure is logged and the plugin becomes inert rather than
-/// aborting the app — a project should still run if the port is taken.
+/// Adds the remote editor server to a running project: a local socket on a dedicated thread and a
+/// [`Stage::First`] system answering queued requests. A bind failure leaves it inert rather than
+/// aborting.
 pub struct RemotePlugin {
     /// Socket name to bind, or `None` to read it from the environment.
     name: Option<String>,
 }
 
 impl RemotePlugin {
-    /// The plugin on the socket name the launcher passed down.
-    ///
-    /// Reads [`NAME_ENV`](crate::NAME_ENV), falling back to
-    /// [`DEFAULT_NAME`](crate::DEFAULT_NAME) so a project run by hand
-    /// still works.
+    /// The plugin on the socket name the launcher passed down ([`NAME_ENV`](crate::NAME_ENV)), or
+    /// [`DEFAULT_NAME`](crate::DEFAULT_NAME) when run by hand.
     pub fn new() -> Self {
         Self { name: None }
     }
@@ -55,13 +49,8 @@ impl Plugin for RemotePlugin {
         match started {
             Ok(server) => {
                 app.insert_resource(server);
-                // #656 — a project under an editor is not a game running:
-                // between edits nothing simulates, and a frame that
-                // nobody asked for is a core spent mirroring a still
-                // scene. The baseline sleeps; the socket wakes it, and
-                // Play overrides it for as long as Play lasts. A project
-                // launched without this plugin never gets a
-                // `FrameRequest` and keeps spinning, as a game should.
+                // #656 — under an editor nothing simulates between edits, so the baseline sleeps;
+                // the socket wakes it and Play overrides it.
                 app.insert_resource(FrameRequest::new(FramePace::Wait));
                 // First stage: apply remote edits before this frame's
                 // systems observe the world, so a client edit lands the
@@ -79,17 +68,8 @@ impl Plugin for RemotePlugin {
     }
 }
 
-/// Paces the loop while the project is playing.
-///
-/// A hosting project draws nothing: the editor owns the viewport. So the
-/// only clock it has is the fixed timestep, and running faster than that
-/// re-reads `Time`, finds no step owed, and does the whole frame for
-/// nothing. Before this it ran flat out — thousands of frames a second
-/// to advance a solver sixty times (#656).
-///
-/// `After` is a ceiling, not a floor: an edit arriving on the socket
-/// still wakes the loop immediately, so a paced project is no less
-/// responsive than a spinning one.
+/// Paces the loop while playing to the fixed timestep: a host draws nothing, so faster frames find
+/// no step owed (#656). `After` is a ceiling; the socket still wakes it.
 fn pace_system(resources: &mut Resources) {
     if !Playing::is_playing(resources) {
         return;
@@ -104,11 +84,8 @@ fn pace_system(resources: &mut Resources) {
     FrameRequest::raise(resources, pace);
 }
 
-/// Environment variable that turns the frame-cost report on.
-///
-/// Off by default: this logs, and a hosting project's log is forwarded
-/// into the editor's Console, where a line every frame would be the
-/// #656 feedback loop all over again.
+/// Environment variable enabling the frame-cost report — off, since the host's log lands in the
+/// editor's Console every frame (#656).
 const PROFILE_ENV: &str = "KOOCH_REMOTE_PROFILE";
 
 /// Rolling frame-cost totals for the report below.
@@ -123,16 +100,8 @@ struct FrameCostProbe {
     window_start: Option<std::time::Instant>,
 }
 
-/// Says where the hosting project's frame goes, every two seconds.
-///
-/// #645 measures the editor's half — the wait for this process to reach
-/// its next `Stage::First`. This is the other half, and the question it
-/// answers is which one to fix: if `serving` dominates, the snapshot is
-/// too big and the answer is to send less; if `work` dominates, it is
-/// the simulation and no amount of transport work will help.
-///
-/// Runs at `Stage::Last`, so `frame_start().elapsed()` is the frame's
-/// work with the previous frame's wait excluded.
+/// Every two seconds, where the host's frame goes: `serving` dominating means send less, `work`
+/// means the simulation (#645 measures the editor's half). Runs in `Stage::Last`.
 fn report_frame_cost(resources: &mut Resources) {
     if std::env::var_os(PROFILE_ENV).is_none() {
         return;

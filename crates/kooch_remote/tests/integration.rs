@@ -36,10 +36,8 @@ fn ecs() -> Resources {
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     registry.register_cpu_reflected::<Name>();
     registry.register_cpu_reflected::<Transform>();
-    // The hierarchy and ordering types a real host gets from `EcsPlugin`.
-    // Without them `reparent` and `place` find no storage and do nothing
-    // — silently, which is how a fixture ends up testing the absence of
-    // a feature rather than the feature.
+    // The hierarchy and ordering types `EcsPlugin` provides; without them `reparent` and `place`
+    // silently do nothing.
     registry.register_cpu_reflected::<kooch_ecs::hierarchy::Parent>();
     registry.register_cpu_reflected::<kooch_ecs::hierarchy::Children>();
     registry.register_cpu_reflected::<kooch_ecs::Order>();
@@ -126,15 +124,8 @@ fn spawn_set_field_and_list_round_trip() {
     );
 }
 
-/// A spawned entity carries `Name` and `Transform` whether or not a name
-/// came with it.
-///
-/// "Spawn → Entity" in the World panel sends no name, and this path used
-/// to add `Name` only when one was given — so a remote project produced an
-/// entity the Inspector could not rename, because the name editor reads
-/// the component and there was none. The editor's local spawn has always
-/// added both; the two paths have to agree or the same menu entry means
-/// two different things.
+/// A spawned entity carries `Name` and `Transform` with or without a name, as the local spawn does
+/// — or the Inspector cannot rename it.
 #[test]
 fn a_nameless_spawn_still_carries_name_and_transform() {
     let mut resources = ecs();
@@ -206,19 +197,13 @@ fn unknown_component_is_a_typed_error() {
     }
 }
 
-/// A socket name unique to this test.
-///
-/// Tests run in parallel in one process, so a shared name would have them
-/// binding over each other — the local-socket equivalent of the port
-/// scan this replaced, but solved instead of retried.
+/// A socket name unique to this test, since parallel tests would otherwise bind over each other.
 fn test_socket_name() -> String {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     static N: AtomicU32 = AtomicU32::new(0);
-    // The counter alone is not enough: it is per-module, so two test
-    // modules in one binary both start at zero and collide on the same
-    // name. The clock disambiguates without the modules having to know
-    // about each other.
+    // The counter is per module, so the clock disambiguates names across test modules in one
+    // binary.
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.subsec_nanos());
@@ -230,11 +215,8 @@ fn test_socket_name() -> String {
     )
 }
 
-/// The wire format, exercised without `RemoteClient`.
-///
-/// Deliberately raw: if this only went through the client, the two could
-/// drift into agreeing on something the protocol does not actually
-/// specify. One JSON object per line, in and out.
+/// The wire format, exercised raw without `RemoteClient`, so client and server cannot drift into
+/// agreeing on something unspecified.
 #[test]
 fn a_raw_line_round_trips_through_the_bridge() {
     let server = RemoteServer::start(&test_socket_name()).expect("bind a socket");
@@ -337,10 +319,8 @@ fn client_drives_server_end_to_end() {
         Some(&ReflectValue::Vec3(glam::Vec3::new(4.0, 5.0, 6.0)))
     );
 
-    // #645 — every call records what it cost, split into the wait for
-    // the server's main thread and the parse of what came back. The
-    // editor pulls this every frame while playing, so it has to be
-    // possible to tell which half is the bill.
+    // #645 — every call records transport and decode cost, so the editor can tell which half is the
+    // bill.
     let stats = client.last_call_stats();
     assert!(
         stats.response_bytes > 0,
@@ -525,16 +505,8 @@ fn repeated_play_keeps_the_original_snapshot() {
     assert!(entities.is_empty(), "runtime spawn survived Stop");
 }
 
-/// The security property, asserted rather than assumed.
-///
-/// A running server must not be reachable over TCP. The old transport
-/// bound 15703 on loopback, which any process — and any web page, via
-/// `fetch` with a `text/plain` body and no CORS preflight — could reach
-/// and drive. `SaveScene` writes to any path, so that was code execution
-/// from visiting a page (#647).
-///
-/// This does not prove the whole class is closed; it proves the port that
-/// was open is not.
+/// The security property: a running server is not reachable over TCP — the old loopback port let a
+/// web page drive `SaveScene` (#647).
 #[test]
 fn the_server_is_not_reachable_over_tcp() {
     use std::net::TcpStream;
@@ -551,12 +523,7 @@ fn the_server_is_not_reachable_over_tcp() {
     );
 }
 
-/// Where does the line framing stop working?
-///
-/// The reported failure — a snapshot that decodes as
-/// `missing field \`id\`` — appeared once entities carried enough fields
-/// to make the reply large. This grows the reply until it breaks, so the
-/// limit is a number rather than a guess.
+/// Where the line framing stops working: grows the reply until it breaks, so the limit is a number.
 #[test]
 fn a_large_snapshot_survives_the_framing() {
     use std::sync::Arc;
@@ -599,10 +566,8 @@ fn a_large_snapshot_survives_the_framing() {
     main_loop.join().unwrap();
 }
 
-/// Every field value has to survive JSON as **one line**: the protocol
-/// frames messages by newline, so a value carrying a raw `\n` would cut
-/// the message in half and the second half would decode as a stray
-/// object — which is exactly the `missing field \`id\`` that was seen.
+/// Every field value survives JSON as one line, since a raw newline would split the message into a
+/// stray object.
 #[test]
 fn no_field_value_serialises_with_a_raw_newline() {
     let values = [
@@ -621,13 +586,8 @@ fn no_field_value_serialises_with_a_raw_newline() {
     }
 }
 
-/// A non-finite float survives the wire.
-///
-/// JSON has no spelling for infinity or NaN, and `serde_json` does not
-/// refuse — it writes `null`, which then fails to read back as a float.
-/// `ReflectValue` writes the three that have no number as text instead;
-/// infinity is how a joint spells "this motor has no ceiling", so it is
-/// not a corner case.
+/// A non-finite float survives the wire: `ReflectValue` writes infinity and NaN as text, because
+/// `serde_json` writes `null`.
 #[test]
 fn a_non_finite_float_survives_the_wire() {
     for value in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
@@ -641,13 +601,8 @@ fn a_non_finite_float_survives_the_wire() {
     }
 }
 
-/// A queued request wakes a main loop that is allowed to sleep.
-///
-/// The listener parks on a reply only the main thread can produce. Once
-/// that thread stops spinning between frames (#656), a request arriving
-/// mid-sleep has to be what wakes it — otherwise the editor asking a
-/// perfectly healthy project a question hangs until something unrelated
-/// happens to produce a frame.
+/// A queued request wakes a main loop allowed to sleep (#656), or a healthy project hangs the
+/// editor until an unrelated frame.
 #[test]
 fn a_queued_request_wakes_a_sleeping_main_loop() {
     use std::time::Duration;
@@ -708,14 +663,8 @@ fn a_queued_request_wakes_a_sleeping_main_loop() {
     assert!(response.contains("\"kind\":\"pong\""), "body: {response}");
 }
 
-/// The project's open scenes travel with the snapshot the editor
-/// already pulls every frame.
-///
-/// 🔴 This is the field the World panel draws its roots from. The
-/// editor cannot answer it locally: its own `SceneManager` seeds an
-/// unsaved scene with a random id, so without this the panel listed a
-/// scene nothing belongs to and filed every mirrored entity under
-/// "Unsaved" — the scene each one named was in nobody's list.
+/// The project's open scenes travel with the per-frame snapshot. 🔴 The World panel's roots come
+/// from here; the editor's own manager lists a scene nothing belongs to.
 #[test]
 fn the_open_scene_set_is_listed() {
     let mut resources = ecs();
@@ -740,12 +689,8 @@ fn the_open_scene_set_is_listed() {
     assert!(scenes[0].active);
 }
 
-/// A host with no `SceneManager` says nothing, rather than saying no
-/// scenes are open.
-///
-/// The editor replaces its list from this field, so the two have to be
-/// distinguishable — answering with an empty list would blank the
-/// World panel every frame.
+/// A host with no `SceneManager` says nothing rather than no scenes, or the World panel blanks
+/// every frame.
 #[test]
 fn a_host_without_scenes_says_nothing() {
     let mut resources = ecs();
@@ -755,17 +700,8 @@ fn a_host_without_scenes_says_nothing() {
     }
 }
 
-/// Loading a *second* scene teaches the project's `SceneManager`.
-///
-/// 🔴 The handler used to go straight to `sync_scene_to_ecs`: the
-/// entities arrived and the manager was told nothing, so it went on
-/// describing the scene before this one.
-///
-/// The boot scene hides that. `SceneBootstrapPlugin` loads through the
-/// manager, so a host that opens its startup scene and is never asked
-/// for another looks perfectly correct — record and world agree because
-/// neither has moved. Which is why this test loads twice: one load
-/// passes with the bug in place.
+/// Loading a *second* scene teaches the project's manager. 🔴 Loads twice, because the boot scene
+/// hides the bug on one.
 #[test]
 fn loading_a_second_scene_teaches_the_manager() {
     let mut resources = ecs();
@@ -819,18 +755,8 @@ fn loading_a_second_scene_teaches_the_manager() {
     let _ = std::fs::remove_file(&second);
 }
 
-/// Saving over the wire writes one scene, and does not re-mint its id.
-///
-/// 🔴 `SaveScene` used to call `SceneDocument::from_ecs`:
-/// `Capture::Everything` plus a fresh `Guid` for the document. Two
-/// consequences, both silent. With more than one scene open it wrote
-/// them all into the one file, so the next load spawned every entity
-/// twice. And the id changed on every save, so anything that referred to
-/// the scene by identity pointed at a file that no longer claimed it.
-///
-/// The engine has always had `from_ecs_scene`. The local editor path used
-/// it, this one did not, and **Open Project always opens remote** — so
-/// the wrong one was the one that ran.
+/// Saving over the wire writes one scene and keeps its id. 🔴 Writing the world doubled entities on
+/// the next load and re-minted the id each save.
 #[test]
 fn saving_writes_one_scene_and_keeps_its_id() {
     let mut resources = ecs();
@@ -900,13 +826,8 @@ fn saving_without_a_manager_is_refused() {
     assert!(!out.exists(), "a refused save left a file behind");
 }
 
-/// An edit marks the scene it changed, and a save clears it.
-///
-/// 🔴 Nothing in the engine marked a scene dirty before this.
-/// `SceneManager::mark_dirty` was called by its own tests and by nothing
-/// else, so `dirty` was permanently `false`: the World panel's asterisk
-/// could never appear and `any_dirty()` always answered "nothing to
-/// lose". Nobody had seen the asterisk, so nobody noticed it was inert.
+/// An edit marks the scene it changed, and a save clears it. 🔴 Nothing marked scenes dirty before,
+/// so the asterisk was inert.
 #[test]
 fn an_edit_marks_the_scene_dirty() {
     let mut resources = ecs();
@@ -963,12 +884,7 @@ fn an_edit_marks_the_scene_dirty() {
     let _ = std::fs::remove_file(&out);
 }
 
-/// The scene that changed is marked, not the one that happens to be
-/// active.
-///
-/// With two open those are different, and marking the active one puts
-/// the asterisk on the file nobody touched while leaving it off the one
-/// they did.
+/// The scene that changed is marked, not the active one — with two open they differ.
 #[test]
 fn the_edited_scene_is_the_one_marked() {
     use kooch_ecs::SceneManager;
@@ -1006,12 +922,7 @@ fn the_edited_scene_is_the_one_marked() {
     let _ = entity;
 }
 
-/// A spawn lands where it was asked for, not in the active scene.
-///
-/// 🔴 Every spawn used to arrive in the active scene at the root — right
-/// for a toolbar button, wrong for a menu opened on a scene or an entity
-/// that is not the active one. The entity appears somewhere other than
-/// where it was asked for, and the only sign is a row in the wrong group.
+/// A spawn lands where it was asked for, not in the active scene's root.
 #[test]
 fn a_spawn_lands_in_the_scene_it_names() {
     use kooch_ecs::SceneManager;
@@ -1072,13 +983,8 @@ fn a_spawn_lands_in_the_scene_it_names() {
     );
 }
 
-/// A new scene opens beside the others and takes the spawn that asked
-/// for it.
-///
-/// What right-clicking the World panel's empty space means: not "put
-/// this somewhere" — there is no row under the pointer to name a
-/// somewhere — but "start something new". An entity has to belong to a
-/// scene, so opening one is what makes the gesture answerable.
+/// A new scene opens beside the others and takes the spawn that asked for it — the World panel's
+/// empty-space gesture.
 #[test]
 fn a_new_scene_opens_unsaved() {
     let mut resources = ecs();
@@ -1175,11 +1081,8 @@ fn a_revert_reads_the_file_back() {
     let _ = std::fs::remove_file(&path);
 }
 
-/// A scene that has never been saved refuses to revert.
-///
-/// 🔴 There is nothing to read back, and despawning its entities would
-/// delete work rather than undo it — the one thing "discard changes"
-/// must never be mistaken for.
+/// A never-saved scene refuses to revert: there is nothing to read back, and despawning would
+/// delete work.
 #[test]
 fn an_unsaved_scene_refuses_to_revert() {
     let mut resources = ecs();
@@ -1318,14 +1221,8 @@ fn a_move_into_itself_is_refused() {
     assert!(matches!(response.payload, ResponsePayload::Error(_)));
 }
 
-/// Membership travels once, in `scene` — never among the components.
-///
-/// 🔴 It is a reflected component now, so the snapshot's "every
-/// reflected component on the archetype" loop will pick it up unless the
-/// skip list stops it. Sending it twice puts the same fact on the wire
-/// in two shapes, and with several copies of a scene open the component
-/// carries the *instance* guid — so a client merging the two would file
-/// entities under a scene the project never named.
+/// Membership travels once, in `scene`, never among components. 🔴 As a reflected component the skip
+/// list must stop it, or instance guids file entities wrongly.
 #[test]
 fn membership_travels_beside_the_components_not_among_them() {
     let mut resources = ecs();
@@ -1370,16 +1267,8 @@ fn membership_travels_beside_the_components_not_among_them() {
     );
 }
 
-/// 🔴 `notify` must not wait for the host.
-///
-/// This is the whole point of it: `call` sleeps the caller until the
-/// host reaches its next `Stage::First`, which cost the editor 5.9 ms a
-/// frame for an input snapshot whose reply it discarded. A `notify` that
-/// blocked would be `call` with the answer thrown away — the same bill,
-/// less information.
-///
-/// The server here never drains its queue, so a `call` would sit until
-/// the test gave up. `notify` returning promptly is the assertion.
+/// 🔴 `notify` must not wait for the host — `call` cost 5.9 ms a frame for a discarded reply. The
+/// server never drains here, so returning promptly is the assertion.
 #[test]
 fn notify_does_not_wait_for_the_host() {
     let server = RemoteServer::start(&test_socket_name()).expect("bind a port");

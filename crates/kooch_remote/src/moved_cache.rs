@@ -1,25 +1,6 @@
-//! What the project remembers about where everything was last frame.
-//!
-//! # Why this is not [`SnapshotCache`](crate::snapshot_cache::SnapshotCache)
-//!
-//! That one answers *what is the world*, and to answer it the host
-//! reflects every field of every component of every entity into strings
-//! before it diffs. Measured on `dense.scene`: **38.9 ms of the editor's
-//! 46 ms frame**, waiting, on 2159 entities — and then throwing almost
-//! all of it away, because a cube that did not move describes itself
-//! identically.
-//!
-//! This answers *what moved*, which is a direct read of one component
-//! and a compare of sixteen floats. Nothing is reflected and nothing is
-//! allocated per component.
-//!
-//! # When the host refuses
-//!
-//! A transform diff only describes a world the caller already has. When
-//! the entity SET changes — a spawn, a despawn — the reply is `full` and
-//! carries nothing: the caller is being told to ask the other question
-//! instead. Answering with transforms anyway would leave the editor
-//! drawing a world missing whatever was created.
+//! Where everything was last frame: one component and sixteen floats, not the 38.9 ms reflection of
+//! [`SnapshotCache`](crate::snapshot_cache::SnapshotCache). A changed entity set replies `full` and
+//! empty — ask the other question.
 
 use std::collections::HashMap;
 
@@ -42,11 +23,8 @@ pub struct MovedDelta {
 }
 
 impl MovedCache {
-    /// Diffs `current` against the last world described.
-    ///
-    /// `full` when the caller's revision is not the one this holds, or
-    /// when an entity appeared — both mean the caller's world and this
-    /// one disagree about more than positions.
+    /// Diffs `current` against the last world described; `full` on a stale revision or a new
+    /// entity, where the worlds differ beyond positions.
     pub fn reply(&mut self, current: Vec<MovedTransform>, since: Option<u64>) -> MovedDelta {
         let appeared = current.iter().any(|m| !self.last.contains_key(&m.id));
         let stale = since != Some(self.revision);
@@ -73,10 +51,8 @@ impl MovedCache {
                 .collect()
         };
 
-        // 🔴 The revision moves only when the reply does. A bump on a
-        // frame that said nothing would leave the caller holding a
-        // revision for a world it was never sent, and the next diff
-        // would be computed against it.
+        // 🔴 The revision moves only with a reply, or the caller holds a revision for a world it was
+        // never sent.
         if !moved.is_empty() || !removed.is_empty() || appeared || stale {
             self.revision += 1;
         }

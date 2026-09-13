@@ -1,11 +1,5 @@
-//! A push must not hold the listener thread (#1015).
-//!
-//! The server has ONE listener and `serve_one` used to block it on the
-//! main loop's reply before accepting the next connection. A caller that
-//! will not read the answer still cost a whole host frame of that
-//! thread, so holding a key — one input push per frame on top of the
-//! editor's pull — put two blocking connections through a queue that
-//! serves one.
+//! A push must not hold the single listener thread (#1015): a reply nobody reads cost a host frame
+//! per push.
 
 use std::time::{Duration, Instant};
 
