@@ -1,28 +1,6 @@
-//! Input for a process that has no window.
-//!
-//! The editor's Play button runs the project as a **headless host**: it
-//! simulates, the editor draws. Headless means no window, and no window
-//! means no `WindowEvent` — so the host never sees a key. Pressing Play
-//! and then a key did nothing at all (#710).
-//!
-//! [`RemoteInputBackend`] closes that: the editor captures input from its
-//! own window and sends [`InputSnapshot`]s over the protocol, and this
-//! applies them. Gameplay reads `Box<dyn InputBackend>` and cannot tell
-//! which process filled it — the same code runs in the shipped game,
-//! where `WinitGilrsBackend` fills it directly.
-//!
-//! # State, not events
-//!
-//! A snapshot says *what is held*, never *what changed*. Three reasons,
-//! and the first is the one that matters:
-//!
-//! - **A dropped frame cannot leave a key stuck down.** With events, one
-//!   lost `KeyReleased` means the player walks into a wall forever. With
-//!   state, the next snapshot corrects it.
-//! - It is idempotent, so a resend is free.
-//! - The edges (`just_pressed`, `just_released`) are derived here by
-//!   comparing consecutive snapshots, which is the same thing the local
-//!   backend does — one definition of "this frame", not two.
+//! Input for the windowless host behind Play (#710): the editor sends [`InputSnapshot`]s, applied
+//! here behind the same `Box<dyn InputBackend>`.
+//! State, not events, so a dropped snapshot cannot leave a key stuck.
 
 use std::collections::{HashMap, HashSet};
 
@@ -45,11 +23,8 @@ pub struct GamepadSnapshot {
     pub axes: Vec<(GamepadAxis, f32)>,
 }
 
-/// Everything an input backend holds, at one instant.
-///
-/// Sorted on the way out (see [`InputSnapshot::from_backend`]) so two
-/// equal states serialise identically — which is what lets the sender
-/// skip a send when nothing changed.
+/// Everything an input backend holds at one instant, sorted so equal states serialise equally and
+/// an unchanged frame can skip sending.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct InputSnapshot {
     /// Keys currently held.
@@ -61,11 +36,8 @@ pub struct InputSnapshot {
     /// Cursor position, in the coordinate space of whatever captured it.
     #[serde(default)]
     pub mouse_position: [f32; 2],
-    /// Cursor movement accumulated over the frame being described.
-    ///
-    /// A delta rather than a difference of positions: the sender resets
-    /// it every frame, and two positions cannot tell a still cursor from
-    /// one that went out and came back.
+    /// Cursor movement accumulated over the frame, as a delta — two positions cannot tell a still
+    /// cursor from a round trip.
     #[serde(default)]
     pub mouse_delta: [f32; 2],
     /// Connected gamepads and their state.
@@ -74,11 +46,7 @@ pub struct InputSnapshot {
 }
 
 impl InputSnapshot {
-    /// Reads the current state of any backend into a snapshot.
-    ///
-    /// Ordering is fixed rather than whatever the backend's sets iterate
-    /// in, so an unchanged state produces an equal snapshot and the
-    /// sender can tell "nothing happened" from "something did".
+    /// Reads any backend into a snapshot, in fixed order so an unchanged state compares equal.
     pub fn from_backend(backend: &dyn InputBackend) -> Self {
         let mut keys: Vec<KeyCode> = backend.pressed_keys().into_iter().collect();
         keys.sort_unstable();
@@ -186,10 +154,8 @@ pub struct RemoteInputBackend {
 
 #[derive(Default)]
 struct PadState {
-    /// Edges derived in `apply`, from the difference between two state
-    /// snapshots. Expired there too, for the same reason the key edges
-    /// are: the host ticks faster than the editor sends, so clearing on
-    /// `begin_frame` would drop a press before anything read it.
+    /// Edges derived in `apply` and expired there too, not in `begin_frame`, since the host ticks
+    /// faster than the editor sends.
     just_pressed: HashSet<GamepadButton>,
     just_released: HashSet<GamepadButton>,
     buttons: HashSet<GamepadButton>,
@@ -202,11 +168,8 @@ impl RemoteInputBackend {
         Self::default()
     }
 
-    /// Replaces the held state with `snapshot`, deriving the edges from
-    /// what was held before.
-    ///
-    /// **This is what expires the previous edges**, not `begin_frame` —
-    /// see the note there.
+    /// Replaces the held state with `snapshot`, deriving edges — **this** expires the previous
+    /// ones, not `begin_frame`.
     pub fn apply(&mut self, snapshot: &InputSnapshot) {
         self.just_pressed_keys.clear();
         self.just_released_keys.clear();
@@ -297,21 +260,8 @@ impl InputBackend for RemoteInputBackend {
         self.apply(snapshot);
     }
 
-    /// Deliberately does nothing.
-    ///
-    /// # Why the frame boundary is not here
-    ///
-    /// For a local backend a frame is the unit an edge lives for, and
-    /// `begin_frame` is what ends it. Here the two processes do not tick
-    /// together: the host runs its own loop and the editor sends at its
-    /// own rate, usually slower. Expiring edges on the host's frame means
-    /// a keypress that arrives between two host frames is cleared before
-    /// any system reads it — the #711 bug again, one process over.
-    ///
-    /// So a snapshot *is* the frame boundary, and [`apply`](Self::apply)
-    /// is what expires the previous one. An edge lives from the snapshot
-    /// that produced it until the snapshot that supersedes it, however
-    /// many host frames that spans.
+    /// Deliberately does nothing: the processes tick independently, so a snapshot is the frame
+    /// boundary, expired by [`apply`](Self::apply), not by the host's frame (#711).
     fn begin_frame(&mut self) {}
 
     fn poll(&mut self) -> Vec<InputEvent> {

@@ -1,40 +1,6 @@
-//! Input identifiers that belong to this engine.
-//!
-//! # Why not just re-export winit's and gilrs'
-//!
-//! That is what this crate did, under a note saying neutral wrappers were
-//! deferred until a non-winit backend shipped. Three things came due at
-//! once:
-//!
-//! - **`gilrs::GamepadId` cannot be constructed.** It is
-//!   `GamepadId(pub(crate) usize)` with a one-way `From<GamepadId> for
-//!   usize`. A remote host receiving gamepad state over a socket has no
-//!   way to name the pad it was told about (#710).
-//! - **A binding has to survive being written to disk.** An `.inputmap`
-//!   holding `winit::keyboard::KeyCode` ties the file format to winit's
-//!   version, and the serialised name carries the crate it came from —
-//!   the trap that already cost us a silent breakage during the rename.
-//! - **Steam Input is a non-winit backend** (#60), which is exactly the
-//!   condition the old note deferred to.
-//!
-//! # Where the names come from
-//!
-//! [`KeyCode`] mirrors winit's `KeyCode`, which mirrors the W3C UI Events
-//! `code` values — physical positions on the keyboard, not the letters
-//! printed on them. `KeyA` is the key left of `KeyS` whatever the layout
-//! says. Copying that vocabulary rather than inventing one means the
-//! conversion is a rename and a reader who knows one knows the other.
-//!
-//! [`GamepadButton`] and [`GamepadAxis`] mirror gilrs, which follows the
-//! SDL game-controller layout: `South`/`East`/`North`/`West` by position,
-//! so a binding does not lie about A/B/X/Y on a DualSense.
-//!
-//! # The lists are generated from those crates, and the macro is why
-//!
-//! Each list appears **once**. The macro derives the enum, the conversion
-//! in, and the conversion out from the same source, so a variant cannot
-//! exist in one and be missing from another — which is the failure a
-//! hand-written 194-arm match invites.
+//! Input identifiers owned by the engine, not winit's or gilrs': `gilrs::GamepadId` cannot be
+//! constructed by a remote host (#710), and saved bindings must not depend on winit.
+//! Names mirror winit and gilrs; one macro list derives each enum and both conversions.
 
 use serde::{Deserialize, Serialize};
 
@@ -55,21 +21,12 @@ macro_rules! mirrored {
         }
 
         impl $name {
-            /// Every variant, in declaration order.
-            ///
-            /// The editor's binding picker needs a list to offer, and a
-            /// hand-written one beside the enum is a second place to add a
-            /// variant to — which is the failure this macro exists to
-            /// prevent. Same list, same expansion.
+            /// Every variant in declaration order, for the binding picker — generated so no second
+            /// list can drift.
             pub const ALL: &'static [Self] = &[$(Self::$variant,)*];
 
-            /// The upstream value this mirrors, or `None` for one this
-            /// engine has no name for.
-            ///
-            /// `None` rather than a fallback variant: an input we cannot
-            /// name is an input no binding can mention, and inventing an
-            /// `Unknown` that every unmapped key collapses into would make
-            /// them all compare equal.
+            /// The upstream value this mirrors, or `None` for one with no name here — not a
+            /// catch-all `Unknown` that would make them all equal.
             pub fn from_upstream(value: $upstream) -> Option<Self> {
                 match value {
                     $(<$upstream>::$variant => Some(Self::$variant),)*
@@ -134,11 +91,8 @@ mirrored! {
 }
 
 mirrored! {
-    /// A gamepad button, named by position on an SDL-layout pad.
-    ///
-    /// `South` is the bottom face button: A on Xbox, Cross on PlayStation,
-    /// B on a Nintendo pad. Naming it by position is what lets one binding
-    /// mean "the confirm button" everywhere.
+    /// A gamepad button by position on an SDL-layout pad: `South` is A, Cross or B, so one binding
+    /// means confirm everywhere.
     GamepadButton <=> gilrs::Button {
     South, East, North, West, C, Z,
     LeftTrigger, LeftTrigger2, RightTrigger, RightTrigger2, Select, Start,
@@ -156,26 +110,14 @@ mirrored! {
 }
 
 mirrored! {
-    /// A mouse button.
-    ///
-    /// The upstream type also has `Back`, `Forward` and `Other(u16)`;
-    /// `Other` is the reason this is not generated from the same list —
-    /// a variant with a payload is not a name.
+    /// A mouse button; not generated, because upstream's `Other(u16)` carries a payload.
     MouseButton <=> winit::event::MouseButton {
     Left, Right, Middle, Back, Forward,
     }
 }
 
-/// Which gamepad, as this engine numbers them.
-///
-/// A plain number because the backend that owns the devices is not always
-/// the process that reads them: a remote host is told "pad 0 pressed
-/// South" over a socket and must be able to say so, which
-/// `gilrs::GamepadId` makes impossible — it has no public constructor.
-///
-/// Stable only within a session. Two sessions, or two backends, may
-/// number the same physical pad differently, so this must never reach a
-/// file. A binding names a **slot** (#55), not a device.
+/// Which gamepad, as the engine numbers them — a plain number a remote host can name.
+/// Session-scoped: never written to a file (#55).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct GamepadId(pub u32);
 

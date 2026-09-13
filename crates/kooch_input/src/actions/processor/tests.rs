@@ -1,10 +1,6 @@
 use super::*;
 
-/// The reason there are two deadzones and not one parameterised.
-///
-/// A per-axis deadzone leaves a square hole: a stick pushed diagonally
-/// clears it while the same magnitude along an axis does not. This is
-/// the bug #57 names, drawn as a test.
+/// Why there are two deadzones: a per-axis one leaves a square hole, the bug #57 names.
 #[test]
 fn only_the_stick_deadzone_leaves_a_round_hole() {
     let (min, max) = (0.2, 0.9);

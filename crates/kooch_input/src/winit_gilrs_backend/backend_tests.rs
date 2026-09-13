@@ -2,13 +2,8 @@ use std::time::Instant;
 
 use super::*;
 
-/// 🔴 The point of the whole thing: a build that never returns must not
-/// hold up the caller.
-///
-/// This is what a Windows build did on a OneXFly under Proton (#963) —
-/// gilrs went into `Windows.Gaming.Input`, met a vendor HID Wine cannot
-/// open, and never came back. Input is built before the window and the
-/// GPU, so the game showed nothing, printed nothing, and did not fail.
+/// 🔴 A build that never returns must not hold up the caller — gilrs under Proton on a OneXFly hung
+/// the game before its window (#963).
 #[test]
 fn a_build_that_never_answers_is_abandoned() {
     let started = Instant::now();
@@ -37,12 +32,7 @@ fn a_build_that_answers_is_returned() {
     }
 }
 
-/// ⚠️ Refusing and hanging are different, and must stay different.
-///
-/// Both end with no gamepads, but one is a machine without a device
-/// backend — headless, a container, no evdev — and the other is a
-/// backend that is stuck. Collapsing them would put the wrong sentence
-/// in the log of whichever happens next.
+/// ⚠️ Refusing and hanging must stay distinct: both mean no gamepads, but the log has to say which.
 #[test]
 fn a_refusal_is_not_a_silence() {
     let outcome = build_within(Duration::from_secs(5), || {

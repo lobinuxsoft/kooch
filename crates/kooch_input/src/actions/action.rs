@@ -1,28 +1,6 @@
-//! [`Action`] and [`ActionMap`] — the data an editor authors.
-//!
-//! # An action is a name, not a type
-//!
-//! `ActionMap<A: Action>` keyed its bindings by a Rust enum. A type does
-//! not serialise, does not appear in an Inspector and cannot be edited,
-//! so authoring bindings in a panel was impossible by construction —
-//! which is why #58 was blocked on this rather than on drawing widgets.
-//!
-//! Here an action is a **string name** and a control type. Unity reached
-//! the same place; so did Rewired before it.
-//!
-//! ⚠️ The cost is real and worth naming: a typo in a name is a lookup
-//! that silently finds nothing, where an enum would not have compiled.
-//! That is bought back at the edges — [`ActionMap::resolve`] hands out a
-//! stable [`ActionId`] once, and gameplay holds the id rather than
-//! re-looking-up a string every frame.
-//!
-//! # Priority, and why maps stack
-//!
-//! Unity's action maps are switched on and off by hand. Unreal's mapping
-//! contexts **stack with a priority** and consume what they handle, so
-//! "in vehicle" sitting over "on foot" is the engine's job and not every
-//! game's re-implementation. It costs one field and changes nothing about
-//! the panel, so it is taken from Unreal rather than Unity.
+//! [`Action`] and [`ActionMap`] — authored data: an action is a name and a control type, and
+//! gameplay holds a resolved [`ActionId`], not a string.
+//! Maps stack by priority and consume what they handle, as Unreal's mapping contexts do.
 
 use serde::{Deserialize, Serialize};
 
@@ -44,22 +22,14 @@ pub enum ControlType {
     Vector3,
 }
 
-/// The id a file written before [`Action::id`] existed deserialises to.
-///
-/// A real id is assigned by [`ActionMap::assign_missing_ids`] on load,
-/// derived from the name so that it is the same on every load of the
-/// same file. Random would mean a reference stored in a scene pointed at
-/// nothing until someone opened the map and saved it.
+/// The id a file written before [`Action::id`] existed deserialises to, replaced on load by
+/// [`ActionMap::assign_missing_ids`] with one derived from the name, stable across loads.
 fn unassigned_id() -> kooch_core::Guid {
     kooch_core::Guid::from_bytes([0; 16])
 }
 
-/// Derives a stable id from the map and action names.
-///
-/// FNV-1a over both, twice with different offsets to fill 16 bytes. Not
-/// a cryptographic hash and does not need to be: it exists so a file
-/// without ids reads the same way twice, and every id it produces is
-/// replaced the first time the map is saved.
+/// Derives a stable id from the map and action names: FNV-1a twice for 16 bytes. Not cryptographic
+/// — it only has to read the same twice until the map is saved.
 fn derived_id(map: &str, action: &str) -> kooch_core::Guid {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -83,12 +53,8 @@ fn derived_id(map: &str, action: &str) -> kooch_core::Guid {
     kooch_core::Guid::from_bytes(bytes)
 }
 
-/// A stable handle to an action inside its map.
-///
-/// Resolved once from a name; gameplay keeps this. An index rather than a
-/// string because the lookup happens per action per frame, and because
-/// this is the shape the rest of the engine already uses for identity —
-/// entities, physics slots, meshlets.
+/// A stable handle to an action inside its map, resolved once from a name — an index, as the engine
+/// names entities and slots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ActionId(pub u32);
 
@@ -101,22 +67,9 @@ impl ActionId {
 /// One thing the player can do, and everything that triggers it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Action {
-    /// Stable identity, written to the file and never reused.
-    ///
-    /// **This is what a reference points at**, not the name. Unity
-    /// learned the same thing — `InputAction.id` exists so that
-    /// "renaming the action does not break references" — and the engine
-    /// learned it once already with assets, which is why a `.meta` holds
-    /// a guid instead of trusting a filename.
-    ///
-    /// Without it the identifier of an action is its name, so every
-    /// consumer has to spell that name out and a rename in the panel
-    /// becomes a control that silently stops answering.
-    ///
-    /// Derived from the name when a file predates the field, rather than
-    /// randomly: a random id would differ on every load until someone
-    /// saved, so a reference stored in a scene would point at nothing
-    /// until then. Derived, an old file is stable from the first load.
+    /// Stable identity, written to the file and never reused — **what a reference points at**, not
+    /// the name, so a rename does not break references.
+    /// Derived from the name for older files, stable from the first load.
     #[serde(default = "unassigned_id")]
     pub id: kooch_core::Guid,
     /// What gameplay asks for. Unique within its map, and free to change:
@@ -126,20 +79,9 @@ pub struct Action {
     pub control_type: ControlType,
     /// Flat list; a composite is a head followed by its parts.
     pub bindings: Vec<Binding>,
-    /// Applied to the **final value**, after the winning binding is
-    /// chosen — so a normalize or a sensitivity is written once instead
-    /// of on every binding.
-    ///
-    /// This is deliberately not Unity's arrangement. There the action's
-    /// processors are applied to *each binding*, so a stick that already
-    /// carries a deadzone from its layout gets a second one — a known
-    /// source of "my stick feels wrong", questioned by a `////REVIEW` in
-    /// their own `InputBinding.cs`. Applied once to the result there is
-    /// nothing to double: a binding shapes the **device**, an action
-    /// shapes the **meaning**.
-    ///
-    /// `#[serde(default)]` so every `.inputmap` written before this
-    /// field existed still loads.
+    /// Applied to the **final value**, after the winning binding is chosen, so a normalize or
+    /// sensitivity is written once — not per binding, which is how Unity doubles a deadzone.
+    /// Defaults for older files.
     #[serde(default)]
     pub processors: Vec<Processor>,
 }
@@ -157,11 +99,8 @@ impl Action {
         }
     }
 
-    /// Gives this action an id derived from its name if it has none.
-    ///
-    /// `scope` is the map's name when it has one, so two maps can each
-    /// hold a `jump` without colliding. A standalone `.inputaction`
-    /// passes `""`.
+    /// Gives this action a name-derived id if it has none; `scope` is the map's name, so two maps
+    /// can each hold a `jump`, and empty for a standalone action.
     pub fn ensure_id(&mut self, scope: &str) {
         if self.id == unassigned_id() {
             self.id = derived_id(scope, &self.name);
@@ -185,13 +124,8 @@ impl Action {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActionMap {
     pub name: String,
-    /// Higher wins. A map on top **consumes** the actions it declares, so
-    /// a lower map does not also see them.
-    ///
-    /// The point is that "driving" and "on foot" both binding `South` is
-    /// not a conflict to resolve in gameplay: push the vehicle map and
-    /// the on-foot jump stops answering, without either map knowing the
-    /// other exists.
+    /// Higher wins, and a map on top **consumes** the actions it declares — push the vehicle map
+    /// and the on-foot jump stops answering, with neither knowing the other.
     pub priority: i32,
     pub actions: Vec<Action>,
 }
@@ -210,12 +144,8 @@ impl ActionMap {
         self
     }
 
-    /// Gives every action without an id one derived from its name.
-    ///
-    /// Called on load. A file written before ids existed gets the same
-    /// ones on every load, so a reference stored in a scene resolves
-    /// immediately rather than only after someone opens and saves the
-    /// map.
+    /// Gives every action without an id one derived from its name, on load, so references resolve
+    /// before anyone saves the map.
     pub fn assign_missing_ids(&mut self) {
         let map_name = self.name.clone();
         for action in &mut self.actions {
@@ -223,10 +153,7 @@ impl ActionMap {
         }
     }
 
-    /// The id for a name, or `None` if this map has no such action.
-    ///
-    /// Called once at startup. A game that calls it per frame is paying
-    /// for a string compare per action per frame, which is exactly what
+    /// The id for a name, or `None`. Call once at startup; per frame it is the string compare
     /// [`ActionId`] exists to avoid.
     pub fn resolve(&self, name: &str) -> Option<ActionId> {
         self.actions
@@ -239,11 +166,8 @@ impl ActionMap {
         self.actions.get(id.index())
     }
 
-    /// Names that appear more than once.
-    ///
-    /// Two actions of the same name make [`resolve`](Self::resolve) a
-    /// coin toss, and the editor should refuse to save one — so this
-    /// exists to be asked, rather than discovered at runtime.
+    /// Names that appear more than once, which make [`resolve`](Self::resolve) a coin toss — for
+    /// the editor to refuse saving.
     pub fn duplicate_names(&self) -> Vec<&str> {
         let mut seen: Vec<&str> = Vec::new();
         let mut duplicates: Vec<&str> = Vec::new();

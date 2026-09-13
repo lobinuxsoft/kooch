@@ -1,12 +1,4 @@
-//! [`InputPlugin`] — what makes the rest of this crate reachable.
-//!
-//! Everything else here compiled for months without a single call site
-//! outside the crate: no backend was ever constructed, no resource was
-//! ever inserted, and winit's `KeyboardInput` events reached the window
-//! runner and asked for a redraw. A game could not read a key.
-//!
-//! # The path an keypress takes
-//!
+//! [`InputPlugin`] — connects the backend to a running app. A keypress's path:
 //! ```text
 //! winit  ──WindowEvent──▶  RawEventHandlers  ──▶  WinitEventCollector
 //!                                                        │ queues
@@ -16,13 +8,9 @@
 //!   Stage::Update: gameplay reads is_pressed / just_pressed
 //! ```
 //!
-//! # Why the events are queued instead of applied on arrival
 //!
-//! winit delivers events *between* frames, and `just_pressed` is true
-//! for exactly one frame. Applying on arrival means the edge is recorded
-//! against no particular frame, and whichever frame boundary clears it
-//! decides whether anyone ever saw it. Queuing moves the whole sequence
-//! — clear, apply, read — inside one frame, where the order is ours.
+//! Queued, not applied on arrival: winit delivers between frames, and queueing keeps clear → apply
+//! → read inside one frame, where `just_pressed` lives.
 
 use std::sync::{Arc, Mutex};
 
@@ -36,10 +24,8 @@ use winit::event::WindowEvent;
 use crate::backend::{InputBackend, InputEvent};
 use crate::winit_gilrs_backend::WinitGilrsBackend;
 
-/// Window events waiting to be applied to the backend this frame.
-///
-/// Shared because the producer is a raw-event handler owned by the
-/// window runner and the consumer is a system holding `Resources`.
+/// Window events waiting for the backend this frame, shared between the runner's raw-event handler
+/// and a system.
 #[derive(Clone, Default)]
 pub struct PendingWindowEvents(Arc<Mutex<Vec<WindowEvent>>>);
 
@@ -56,10 +42,8 @@ impl PendingWindowEvents {
     }
 }
 
-/// Queues the window events the input backend cares about.
-///
-/// Never consumes: input is the last thing that wants a key, after any
-/// UI that had it focused.
+/// Queues the window events the backend cares about, never consuming them — focused UI gets the key
+/// first.
 struct WinitEventCollector {
     pending: PendingWindowEvents,
 }
@@ -84,10 +68,8 @@ impl RawEventHandler for WinitEventCollector {
     }
 }
 
-/// Inserts an input backend and drives its frame cycle.
-///
-/// After this plugin, `Box<dyn InputBackend>` is a resource any gameplay
-/// system can read:
+/// Inserts an input backend and drives its frame cycle; gameplay then reads `Box<dyn
+/// InputBackend>`:
 ///
 /// ```ignore
 /// fn move_player(resources: &mut Resources) {
@@ -108,10 +90,8 @@ impl Plugin for InputPlugin {
             .add_event::<InputEvent>()
             .add_system(Stage::Input, pump_input);
 
-        // Registered from a Startup system rather than here, so the order
-        // is the order plugins were added rather than the order they were
-        // built. That is what lets an editor's egui overlay register
-        // first and keep a keystroke aimed at a focused text field.
+        // Registered from a Startup system so plugin add order decides — letting the editor's egui
+        // take keys for a focused field first.
         app.add_system(Stage::Startup, move |resources: &mut Resources| {
             let collector: Box<dyn RawEventHandler> = Box::new(WinitEventCollector {
                 pending: pending.clone(),
@@ -127,11 +107,8 @@ impl Plugin for InputPlugin {
     }
 }
 
-/// Advances the backend one frame: forget last frame's edges, apply the
-/// events that arrived since, drain the device sources.
-///
-/// Runs in [`Stage::Input`], which sits before `PreUpdate` — so a
-/// gameplay system reads the key that was pressed on *this* frame.
+/// Advances the backend one frame — forget edges, apply queued events, drain devices — in
+/// [`Stage::Input`], before `PreUpdate`.
 fn pump_input(resources: &mut Resources) {
     // Cloned out first: the queue and the backend are two resources, and
     // holding a borrow of one rules out asking for the other.

@@ -1,28 +1,6 @@
-//! Reading a [`ActionMap`] against a backend, once per frame.
-//!
-//! # Why the most actuated binding wins
-//!
-//! An action with several bindings has to decide what happens when more
-//! than one is actuated. Two answers are defensible:
-//!
-//! - **Sum them.** What roll-a-ball did by hand: add the keyboard's
-//!   direction to the stick's and cap the result. Holding `W` while
-//!   pushing the stick right produces a diagonal nobody asked for.
-//! - **The strongest wins.** What Unity does. `W` and a stick pushed
-//!   further apart give the stick; `W` alone gives `W`.
-//!
-//! The second is taken, for a reason beyond taste: the same "who wins"
-//! machinery is what lets a map on top **consume** an action so the map
-//! below stops seeing it (see [`ActionMap::priority`]). Two mechanisms
-//! for one question would drift.
-//!
-//! # State, never events
-//!
-//! [`ActionState`] holds what is true *now*, and edges are derived by
-//! comparing against the previous frame. A dropped frame therefore
-//! self-corrects, where a queue of events would leave an action stuck
-//! down forever — the failure that #711 and #713 both were, once at the
-//! backend and once across the wire.
+//! Reading an [`ActionMap`] against a backend, once per frame. The most actuated binding wins, as
+//! in Unity — the same rule lets a higher map consume an action.
+//! State, never events, so a dropped frame self-corrects (#711, #713).
 
 use glam::{Vec2, Vec3};
 
@@ -55,14 +33,7 @@ impl ActionValue {
     }
 }
 
-/// Reads one action against a backend, with no map involved.
-///
-/// A map is a way to group actions that turn on and off together; it is
-/// not a requirement for evaluating one. Unity draws the same line — an
-/// action can "stand on its own", and internally it wraps it in a map of
-/// one, because *"to the action system, there are no actions without
-/// action maps"*. Here there is no wrapper: the evaluator never needed
-/// the map, only the action.
+/// Reads one action against a backend, with no map involved — evaluation never needed one.
 pub fn evaluate(action: &Action, backend: &dyn InputBackend) -> ActionValue {
     let pad = backend.gamepads().first().copied();
     read_action(action, backend, pad)
@@ -93,11 +64,8 @@ fn read_action(action: &Action, backend: &dyn InputBackend, pad: Option<GamepadI
         }
     }
 
-    // The action's own processors, run once on the value that won rather
-    // than on each binding. Unity applies its equivalents per binding,
-    // which is how a stick ends up with two deadzones; once at the end
-    // there is nothing to double, and a normalize or a sensitivity is
-    // written in one place instead of on every binding.
+    // The action's processors, once on the winning value rather than per binding, so nothing is
+    // applied twice.
     let value = action
         .processors
         .iter()
@@ -173,10 +141,8 @@ fn read_composite(
     }
 }
 
-/// Caps a composite's raw sum at length 1 when its parts are buttons.
-///
-/// Without it a diagonal travels 1.41× faster than a straight line —
-/// 1.73× in three dimensions, where three keys can be held at once.
+/// Caps a composite's raw sum at length 1 when its parts are buttons, or diagonals run 1.41× faster
+/// (1.73× in 3D).
 fn normalized(raw: Vec3, mode: VectorMode) -> Vec3 {
     match mode {
         // A stick already reports how far it is pushed; normalising
@@ -201,11 +167,8 @@ fn gated(open: bool, value: f32) -> Vec3 {
     }
 }
 
-/// One control's current value, as a number.
-///
-/// A button reads 0 or 1, so a button bound where an axis is expected
-/// behaves like a stick pushed fully — which is what makes a d-pad and a
-/// stick interchangeable in a binding.
+/// One control's value as a number: a button reads 0 or 1, so a d-pad and a stick are
+/// interchangeable in a binding.
 fn read_control(path: ControlPath, backend: &dyn InputBackend, pad: Option<GamepadId>) -> f32 {
     match path {
         ControlPath::Key(key) => backend.is_pressed(key) as u8 as f32,

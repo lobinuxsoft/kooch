@@ -1,23 +1,6 @@
-//! kooch_input — input subsystem.
-//!
-//! [`InputBackend`] is the trait the engine consumes; concrete impls
-//! (`WinitGilrsBackend`, `MockInputBackend`, future SDL2 / Steam Input)
-//! plug behind it. [`ActionMap`] sits on top, mapping typed actions to
-//! one or more input bindings so gameplay code reads `is_pressed(Jump)`
-//! without caring whether `Jump` is `Space`, `GamepadButton::South`,
-//! or `MouseButton::Right` today.
-//!
-//! # Architecture
-//!
-//! - [`backend`] — public trait + re-exported winit / gilrs types
-//! - [`winit_gilrs_backend`] — production backend
-//! - [`mock_backend`] — headless backend for tests + tooling
-//! - [`plugin`] — what connects all of the above to a running app
-//!
-//! # Reaching this from a game
-//!
-//! [`InputPlugin`] ships in `DefaultPlugins`, so a project reads input
-//! straight off the resource:
+//! `kooch_input` — [`InputBackend`] is what the engine reads (winit + gilrs in a game, a remote
+//! backend behind Play, a mock in tests), with authored actions on top.
+//! [`InputPlugin`] ships in `DefaultPlugins`, so a project reads the resource:
 //!
 //! ```ignore
 //! use kooch::prelude::*;

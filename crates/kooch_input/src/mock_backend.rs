@@ -1,8 +1,4 @@
-//! [`MockInputBackend`] — deterministic, headless input source for tests.
-//!
-//! Game code that depends on `Box<dyn InputBackend>` can be exercised
-//! without winit / gilrs by inserting a `MockInputBackend` and driving
-//! its setters directly.
+//! [`MockInputBackend`] — a deterministic, headless input source driven by direct setters.
 
 use glam::Vec2;
 use std::collections::{HashMap, HashSet};
@@ -11,10 +7,7 @@ use crate::backend::{
     GamepadAxis, GamepadButton, GamepadId, InputBackend, InputEvent, KeyCode, MouseButton,
 };
 
-/// Test-friendly backend with direct setters for each piece of state.
-///
-/// `poll` drains queued events; `begin_frame` is what expires
-/// `just_pressed` / `just_released`, exactly as in the real backend.
+/// Test backend with direct setters; `begin_frame` expires edges as the real backend does.
 #[derive(Default)]
 pub struct MockInputBackend {
     pressed_keys: HashSet<KeyCode>,
