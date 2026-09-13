@@ -79,15 +79,6 @@ impl EntityAllocator {
         Entity::new(index, self.generations[index as usize])
     }
 
-    /// Spawns `count` entities in one call.
-    pub fn spawn_batch(&mut self, count: u32) -> Vec<Entity> {
-        let mut batch = Vec::with_capacity(count as usize);
-        for _ in 0..count {
-            batch.push(self.spawn());
-        }
-        batch
-    }
-
     /// Despawns an entity, incrementing its generation and returning the
     /// slot to the free-list.
     ///
@@ -123,32 +114,17 @@ impl EntityAllocator {
             && self.alive[idx]
     }
 
-    /// Returns `true` if the slot at `index` is currently alive.
-    ///
-    /// This only checks liveness, not generation — useful when building
-    /// the GPU alive_mask from raw indices.
-    pub fn is_index_alive(&self, index: u32) -> bool {
-        (index as usize) < self.alive.len() && self.alive[index as usize]
-    }
-
     /// Number of entities currently alive.
     #[inline]
     pub fn alive_count(&self) -> u32 {
         self.alive_count
     }
 
+    #[cfg(test)]
     /// Total number of allocated slots (alive + free).
     #[inline]
     pub fn total_slots(&self) -> u32 {
         self.generations.len() as u32
-    }
-
-    /// Drains and returns slot indices that changed since the last call.
-    ///
-    /// The GPU sync system calls this once per frame to know which slots
-    /// need their `alive_mask` value updated.
-    pub fn take_pending_sync(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.pending_sync)
     }
 
     /// Drains and returns entities despawned since the last call.

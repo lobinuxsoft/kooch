@@ -104,6 +104,7 @@ impl Table {
         &self.entities
     }
 
+    #[cfg(test)]
     /// The components this table holds a column for.
     #[inline]
     pub fn component_ids(&self) -> &[StorageId] {

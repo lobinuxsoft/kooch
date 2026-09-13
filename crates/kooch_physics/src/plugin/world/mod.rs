@@ -29,7 +29,7 @@ use kooch_ecs::entity::Entity;
 
 use crate::backend::{
     BodyDesc, BodyHandle, ColliderInteraction, ColliderMeshCache, CollisionShape, Damping,
-    PhysicsBackend, PointHit, QueryFilter, RayHit, ShapeAt, ShapeHit, SurfaceMaterial,
+    PhysicsBackend, SurfaceMaterial,
 };
 use crate::components::{Collider, PhysicsBody, ShapeSpec};
 

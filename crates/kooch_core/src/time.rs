@@ -234,6 +234,7 @@ impl Time {
         self.fixed_count
     }
 
+    #[cfg(test)]
     /// Current fixed update rate in Hz.
     #[inline]
     pub fn fixed_hz(&self) -> f64 {

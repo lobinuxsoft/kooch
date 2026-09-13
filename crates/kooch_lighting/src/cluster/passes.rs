@@ -426,6 +426,7 @@ fn raster_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     })
 }
 
+#[cfg(test)]
 /// Every module the passes compile, as the shader compiler sees it:
 /// name, and the common declarations already concatenated.
 ///
@@ -451,6 +452,7 @@ pub(super) fn shader_sources() -> Vec<(&'static str, String)> {
     ]
 }
 
+#[cfg(test)]
 /// The rasterizer's source before substitution, for the test that pins
 /// the placeholder is still there to substitute.
 pub(super) const RASTER_TEMPLATE: &str = RASTER;

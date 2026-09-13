@@ -234,29 +234,6 @@ fn re_register_does_not_clobber_existing_type_name() {
 }
 
 #[test]
-fn set_type_name_updates_existing_entry() {
-    let mut db = AssetDatabase::new();
-    let g = Guid::new_v4();
-    db.register(
-        g,
-        AssetEntry {
-            path: PathBuf::from("x.glb"),
-            mtime: SystemTime::UNIX_EPOCH,
-            type_name: None,
-        },
-    );
-    assert!(db.set_type_name(g, "kooch_render::meshlet::MeshletMesh"));
-    assert_eq!(
-        db.entry(g).unwrap().type_name.as_deref(),
-        Some("kooch_render::meshlet::MeshletMesh"),
-    );
-    // Idempotent re-write returns true and does not allocate.
-    assert!(db.set_type_name(g, "kooch_render::meshlet::MeshletMesh"));
-    // Unknown GUID returns false without registering anything new.
-    assert!(!db.set_type_name(Guid::new_v4(), "Whatever"));
-}
-
-#[test]
 fn register_replaces_when_path_guid_changes() {
     let mut db = AssetDatabase::new();
     let path = PathBuf::from("foo.glb");

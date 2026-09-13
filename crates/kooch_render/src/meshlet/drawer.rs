@@ -32,7 +32,6 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use super::dispatcher::MeshletCull;
-use super::gpu_meshlet::GpuMeshletMesh;
 
 const MESHLET_SHADER_SOURCE: &str = include_str!("../../shaders/meshlet_main.wgsl");
 
@@ -53,7 +52,6 @@ struct ModelUbo {
 /// model UBOs, which the caller updates via [`Self::render`].
 pub struct MeshletDrawer {
     pipeline: wgpu::RenderPipeline,
-    camera_bgl: wgpu::BindGroupLayout,
     visible_bgl: wgpu::BindGroupLayout,
     camera_buffer: wgpu::Buffer,
     model_buffer: wgpu::Buffer,
@@ -188,7 +186,6 @@ impl MeshletDrawer {
 
         Self {
             pipeline,
-            camera_bgl,
             visible_bgl,
             camera_buffer,
             model_buffer,

@@ -107,23 +107,6 @@ fn spawn_without_id() {
     assert_eq!(health.0, 42);
 }
 
-#[test]
-fn spawn_batch_entities() {
-    let mut resources = setup();
-    let mut commands = Commands::new();
-
-    let entities = commands.spawn_batch(&mut resources, 5, |i, builder| {
-        builder.insert(Health(i as u32 * 10));
-    });
-
-    assert_eq!(entities.len(), 5);
-    commands.apply(&mut resources);
-
-    let query = Query::<&Health>::new(&resources);
-    let total: u32 = query.iter().map(|h| h.0).sum();
-    assert_eq!(total, 0 + 10 + 20 + 30 + 40);
-}
-
 // -- Despawn tests --
 
 #[test]

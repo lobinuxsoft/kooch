@@ -294,32 +294,3 @@ fn a_cast_that_starts_stuck_says_so() {
     assert!(hit.penetrating);
     assert_eq!(hit.t, 0.0);
 }
-
-/// A sensor is not a floor and not a wall.
-#[test]
-fn sensors_are_skipped_unless_asked_for() {
-    let mut backend = RapierBackend::new();
-    let mut desc = BodyDesc::static_at(
-        CollisionShape::Cuboid {
-            half_extents: Vec3::new(4.0, 4.0, 0.5),
-        },
-        Vec3::new(0.0, 0.0, 3.0),
-    );
-    desc.interaction.sensor = true;
-    let trigger = backend.add_body(desc);
-    let solid = wall(
-        &mut backend,
-        Vec3::new(0.0, 0.0, 8.0),
-        Vec3::new(4.0, 4.0, 0.5),
-    );
-
-    let hit = backend
-        .query_ray(Vec3::ZERO, Vec3::Z, 100.0, QueryFilter::ALL)
-        .expect("the solid wall is behind it");
-    assert_eq!(hit.body, solid, "a trigger volume is not a wall");
-
-    let hit = backend
-        .query_ray(Vec3::ZERO, Vec3::Z, 100.0, QueryFilter::ALL.with_sensors())
-        .expect("asked for triggers this time");
-    assert_eq!(hit.body, trigger);
-}

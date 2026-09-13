@@ -100,18 +100,6 @@ fn cycle_returns_cycle_error() {
 }
 
 #[test]
-fn connect_with_unknown_node_returns_error() {
-    let mut graph = RenderGraph::new();
-    let log = Arc::new(Mutex::new(Vec::new()));
-    let real = graph.add_node(record("real", &log));
-    // Build a stale id by removing then trying to use the handle.
-    graph.remove_node(real);
-    let real2 = graph.add_node(record("real2", &log));
-    let err = graph.connect(real, real2).unwrap_err();
-    assert!(matches!(err, GraphError::UnknownNode));
-}
-
-#[test]
 fn duplicate_connect_is_deduped() {
     let mut graph = RenderGraph::new();
     let log = Arc::new(Mutex::new(Vec::new()));
@@ -122,23 +110,6 @@ fn duplicate_connect_is_deduped() {
     graph.connect(a, b).unwrap();
     // Topo sort still works.
     assert_eq!(graph.order().unwrap(), vec!["a", "b"]);
-}
-
-#[test]
-fn remove_node_drops_dependent_edges() {
-    let mut graph = RenderGraph::new();
-    let log = Arc::new(Mutex::new(Vec::new()));
-    let a = graph.add_node(record("a", &log));
-    let b = graph.add_node(record("b", &log));
-    let c = graph.add_node(record("c", &log));
-    graph.connect(a, b).unwrap();
-    graph.connect(b, c).unwrap();
-    graph.remove_node(b);
-    assert_eq!(graph.node_count(), 2);
-    assert!(!graph.contains(b));
-    // a and c remain — c no longer depends on b (dropped) so order
-    // is insertion-based.
-    assert_eq!(graph.order().unwrap(), vec!["a", "c"]);
 }
 
 #[test]

@@ -163,6 +163,7 @@ impl LookupBindings {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&host));
     }
 
+    #[cfg(test)]
     /// Bind group layout entries matching [`lookup_wgsl`]'s prepended
     /// declarations. Visibility is `COMPUTE | FRAGMENT | VERTEX` so a
     /// single layout serves any of the three consumer pipelines.

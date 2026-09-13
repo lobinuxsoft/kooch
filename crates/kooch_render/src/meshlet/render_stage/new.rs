@@ -1,16 +1,15 @@
 use std::sync::Arc;
 
 use super::super::DEFAULT_MAX_TRIANGLES;
-use super::super::deferred::{DEFERRED_COLOR_FORMAT, MeshletDeferredShader};
+use super::super::deferred::MeshletDeferredShader;
 use super::super::dispatcher::{MeshletCull, MeshletCullPipelines};
 use super::super::gpu_meshlet::meshlet_bind_group_layout;
 use super::super::gpu_timers::MeshletGpuTimers;
 use super::super::scene::MeshletScene;
 use super::super::system::MeshletPipeline;
-use super::super::vbuf64_stage::Vbuf64Stage;
-use super::super::vis_buffer::{MeshletVisRasterizer, VISIBILITY_BUFFER_FORMAT};
+use super::super::vis_buffer::MeshletVisRasterizer;
 use super::config::MeshletRenderStageConfig;
-use super::helpers::{create_2d_attachment, depth_sample_view, render_target_byte_estimate};
+use super::helpers::render_target_byte_estimate;
 use super::stage::MeshletRenderStage;
 use super::stage::ViewId;
 use crate::hi_z::HiZ;
@@ -544,33 +543,9 @@ impl MeshletRenderStage {
         ))
     }
 
-    /// Drops a view and its attachments.
-    ///
-    /// Refuses to drop the primary — a stage with no view cannot
-    /// render, and every single-view accessor would have to start
-    /// returning `Option`. Returns whether anything was removed, so a
-    /// double close is a `false` rather than a panic.
-    pub fn destroy_view(&mut self, id: ViewId) -> bool {
-        if id == self.primary {
-            tracing::warn!(
-                target: "kooch_render::meshlet::render",
-                "refusing to destroy the primary view",
-            );
-            return false;
-        }
-        self.views.remove(id).is_some()
-    }
-
     /// Number of live views, primary included.
     pub fn view_count(&self) -> usize {
         self.views.len()
-    }
-
-    /// Whether `id` still addresses a live view. A generational key, so
-    /// this stays false once the view is destroyed rather than
-    /// silently resolving to whichever view took its slot.
-    pub fn has_view(&self, id: ViewId) -> bool {
-        self.views.contains_key(id)
     }
 
     /// Colour target of `id`, or `None` if the handle is stale.

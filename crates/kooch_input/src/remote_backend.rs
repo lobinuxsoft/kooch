@@ -290,16 +290,6 @@ impl RemoteInputBackend {
             self.queued_events.push(InputEvent::GamepadDisconnected(id));
         }
     }
-
-    /// Releases everything, as though every device were let go.
-    ///
-    /// What Stop calls. Without it, a key held at the moment play ended
-    /// stays held in this backend, and the next play session starts with
-    /// the player already walking.
-    pub fn release_all(&mut self) {
-        let snapshot = InputSnapshot::default();
-        self.apply(&snapshot);
-    }
 }
 
 impl InputBackend for RemoteInputBackend {

@@ -31,8 +31,6 @@
 //! [`super::key`], outside the preset and outside git, which is the same
 //! line Godot draws between `export_presets.cfg` and its encryption key.
 
-use std::path::{Path, PathBuf};
-
 use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
 use kooch_ecs::Reflect;
 use kooch_ecs::reflect::FieldChoice;
@@ -312,11 +310,6 @@ impl BuildPreset {
                 Platform::Windows => self.windows,
             })
             .collect()
-    }
-
-    /// Where `platform`'s build is written, relative to the project.
-    pub fn platform_dir(&self, platform: Platform) -> PathBuf {
-        Path::new(&self.output_dir).join(platform.folder())
     }
 
     /// The glibc version this build must not go above, if one was asked

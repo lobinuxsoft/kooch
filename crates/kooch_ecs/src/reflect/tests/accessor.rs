@@ -1,5 +1,5 @@
-use super::common::{Health, Position};
-use crate::reflect::{Reflect, ReflectAccessor, ReflectError, ReflectValue, TypedReflectAccessor};
+use super::common::Health;
+use crate::reflect::{ReflectAccessor, ReflectValue, TypedReflectAccessor};
 
 // -- TypedReflectAccessor tests ------------------------------------------
 

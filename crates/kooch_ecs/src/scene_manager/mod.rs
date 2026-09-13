@@ -286,6 +286,7 @@ impl SceneManager {
         }
     }
 
+    #[cfg(test)]
     pub fn mark_clean(&mut self) {
         if let Some(scene) = self.active_mut() {
             scene.dirty = false;

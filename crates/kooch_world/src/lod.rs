@@ -39,23 +39,6 @@ impl LodRingConfig {
     pub fn lod_count(&self) -> u8 {
         self.rings.len() as u8
     }
-
-    /// Radius for the given LOD level, or `0.0` when out of range.
-    pub fn radius_for(&self, lod: u8) -> f32 {
-        self.rings
-            .iter()
-            .find(|r| r.lod == lod)
-            .map(|r| r.radius_meters)
-            .unwrap_or(0.0)
-    }
-
-    /// Largest radius in the table — the outer streaming horizon.
-    pub fn max_radius(&self) -> f32 {
-        self.rings
-            .iter()
-            .map(|r| r.radius_meters)
-            .fold(0.0_f32, f32::max)
-    }
 }
 
 impl Default for LodRingConfig {
@@ -77,37 +60,4 @@ impl Default for LodRingConfig {
     // async loading land.
 }
 
-impl LodRingConfig {
-    /// Aspirational planet-scale config: 4 rings at 512 m / 2 km /
-    /// 8 km / 32 km. **Will hitch with the current PR #318 cache-only
-    /// activation.** Use only after the #327 streaming performance
-    /// roadmap lands PHASE 1 (#319 + #322).
-    ///
-    /// Kept as a named factory so games that want to opt in have a
-    /// single call site to update once PHASE 1 ships.
-    pub fn aspirational_planet_scale() -> Self {
-        Self {
-            rings: vec![
-                LodRing {
-                    lod: 0,
-                    radius_meters: 512.0,
-                },
-                LodRing {
-                    lod: 1,
-                    radius_meters: 2000.0,
-                },
-                LodRing {
-                    lod: 2,
-                    radius_meters: 8000.0,
-                },
-                LodRing {
-                    lod: 3,
-                    radius_meters: 32000.0,
-                },
-            ],
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests;
+impl LodRingConfig {}

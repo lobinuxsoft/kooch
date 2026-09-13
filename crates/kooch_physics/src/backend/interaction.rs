@@ -113,12 +113,7 @@ impl Default for ColliderInteraction {
     }
 }
 
-impl ColliderInteraction {
-    /// Whether anything about this collider asks rapier for events.
-    pub fn wants_events(&self) -> bool {
-        self.collision_events || self.contact_force_events
-    }
-}
+impl ColliderInteraction {}
 
 #[cfg(test)]
 mod tests;

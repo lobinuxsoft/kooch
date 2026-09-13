@@ -1,4 +1,4 @@
-use super::common::{Health, Position};
+use super::common::Health;
 use crate::reflect::ReflectValue;
 
 // -- Registry integration tests ------------------------------------------
@@ -68,19 +68,6 @@ fn registry_reflect_set_field() {
 
     let health = registry.get_cpu::<Health>().unwrap().get(e).unwrap();
     assert_eq!(health.hp, 75);
-}
-
-#[test]
-fn registry_reflected_type_ids() {
-    use crate::component::registry::ComponentRegistry;
-
-    let mut registry = ComponentRegistry::new();
-    registry.register_cpu_reflected::<Health>();
-    registry.register_cpu::<Position>(); // Not reflected
-
-    let ids = registry.reflected_type_ids();
-    assert_eq!(ids.len(), 1);
-    assert!(ids.contains(&std::any::TypeId::of::<Health>()));
 }
 
 #[test]

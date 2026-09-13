@@ -226,23 +226,6 @@ impl CollisionShape {
         }
     }
 
-    /// Whether the solver gets a closed volume, and therefore an inertia
-    /// tensor worth having.
-    ///
-    /// A dynamic body on a hollow shape tumbles wrongly and tunnels
-    /// through its own edges, so this is what a warning keys on.
-    pub fn is_solid(&self) -> bool {
-        !matches!(
-            self,
-            Self::Segment { .. }
-                | Self::Triangle { .. }
-                | Self::TriMesh { .. }
-                | Self::Polyline { .. }
-                | Self::Heightfield { .. }
-                | Self::HalfSpace { .. }
-        )
-    }
-
     /// How far this shape extends below its own origin, along local Y.
     ///
     /// `None` for the shapes that have no answer without their point

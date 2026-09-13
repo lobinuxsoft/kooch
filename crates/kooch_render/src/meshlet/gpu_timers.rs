@@ -213,6 +213,7 @@ impl MeshletGpuTimers {
         self.last_stage_timings_ms.as_ref().map(|v| v.iter().sum())
     }
 
+    #[cfg(test)]
     /// Duration of stage `stage_idx` from the most recent successful
     /// readback. Returns `None` if no readback has landed yet or
     /// `stage_idx` exceeds `stage_count`.

@@ -448,6 +448,7 @@ impl AssetServer {
         Ok(entries)
     }
 
+    #[cfg(test)]
     /// Whether anything is mounted — i.e. whether this is a packaged game
     /// rather than a project being edited.
     pub fn has_packs(&self) -> bool {

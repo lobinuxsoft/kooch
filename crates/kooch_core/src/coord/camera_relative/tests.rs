@@ -1,5 +1,4 @@
 use super::*;
-use crate::coord::CelestialBodyRef;
 use glam::DVec3;
 
 const EPS_F32: f32 = 1e-3;
@@ -40,21 +39,6 @@ fn far_camera_preserves_near_object_precision() {
     let cr = CameraRelativeCoord::from_universe(world, cam);
     // f32 absolute error at 10.0 is ~1e-6 — well within EPS_F32.
     assert!((cr.position.x - 10.0).abs() < 1e-5);
-}
-
-#[test]
-fn from_local_composes_through_universe() {
-    // Body 1 km from origin; camera 100 m from body; world point
-    // 5 m from body.
-    let body_origin = UniverseCoord::from_dvec3(DVec3::new(1000.0, 0.0, 0.0));
-    let cam = UniverseCoord::from_dvec3(DVec3::new(1100.0, 0.0, 0.0));
-    let local = LocalCoord {
-        reference: CelestialBodyRef::new(7),
-        position: Vec3::new(5.0, 0.0, 0.0),
-    };
-    let cr = CameraRelativeCoord::from_local(local, body_origin, cam);
-    // World = body + 5 = 1005. Camera = 1100. Delta = -95.
-    assert!((cr.position.x - (-95.0)).abs() < EPS_F32);
 }
 
 #[test]

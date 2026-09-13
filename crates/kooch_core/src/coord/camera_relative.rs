@@ -7,7 +7,7 @@
 
 use glam::Vec3;
 
-use crate::coord::{LocalCoord, UniverseCoord};
+use crate::coord::UniverseCoord;
 
 /// Position relative to the active camera, in meters.
 ///
@@ -37,19 +37,6 @@ impl CameraRelativeCoord {
         Self {
             position: delta.as_vec3(),
         }
-    }
-
-    /// Compose a `LocalCoord` (already relative to a celestial body)
-    /// into camera-relative form. Goes via [`UniverseCoord`] internally
-    /// so precision is preserved when the body itself is far from the
-    /// camera.
-    pub fn from_local(
-        local: LocalCoord,
-        body_origin: UniverseCoord,
-        camera: UniverseCoord,
-    ) -> Self {
-        let world = local.to_universe(body_origin);
-        Self::from_universe(world, camera)
     }
 
     /// Recover the absolute world position by adding the camera's

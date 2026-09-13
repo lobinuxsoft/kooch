@@ -88,6 +88,7 @@ impl MeshInstance {
         }
     }
 
+    #[cfg(test)]
     pub fn transform_mat4(&self) -> Mat4 {
         Mat4::from_cols_array_2d(&self.transform)
     }

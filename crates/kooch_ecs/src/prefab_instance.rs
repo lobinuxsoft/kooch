@@ -215,11 +215,6 @@ impl PrefabInstance {
         self.set_overrides(kept);
     }
 
-    /// Drops every override on this instance.
-    pub fn revert_all(&mut self) {
-        self.overrides.clear();
-    }
-
     /// Whether `address` is one the prefab must not overwrite.
     pub fn is_overridden(&self, address: &OverrideAddress) -> bool {
         self.overrides().iter().any(|o| &o.address == address)

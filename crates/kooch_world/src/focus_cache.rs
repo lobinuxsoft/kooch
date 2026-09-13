@@ -85,6 +85,7 @@ impl FocusCacheState {
         self.last_chunks.retain(|e, _| alive.contains(e));
     }
 
+    #[cfg(test)]
     /// Test/debug accessor: number of focus entities currently tracked.
     pub fn tracked_count(&self) -> usize {
         self.last_chunks.len()
@@ -104,6 +105,7 @@ pub struct DirtyFocusLod {
 }
 
 impl DirtyFocusLod {
+    #[cfg(test)]
     /// Returns `true` when this dirty entry comes from a never-seen
     /// entity-lod pair (no previous position to diff against).
     pub fn is_first_seen(&self) -> bool {

@@ -51,7 +51,6 @@ pub(super) struct ModelUbo {
 pub struct MeshletVisRasterizer {
     pub(super) pipeline: wgpu::RenderPipeline,
     pub(super) pipeline_scene: wgpu::RenderPipeline,
-    pub(super) camera_bgl: wgpu::BindGroupLayout,
     pub(super) visible_bgl: wgpu::BindGroupLayout,
     pub(super) instances_bgl: wgpu::BindGroupLayout,
     pub(super) camera_buffer: wgpu::Buffer,
@@ -162,7 +161,6 @@ impl MeshletVisRasterizer {
         Self {
             pipeline,
             pipeline_scene,
-            camera_bgl,
             visible_bgl,
             instances_bgl,
             camera_buffer,

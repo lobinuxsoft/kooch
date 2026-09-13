@@ -86,18 +86,6 @@ impl Stage {
         Stage::Last,
     ];
 
-    /// Returns `true` if this stage uses fixed timestep.
-    #[inline]
-    pub const fn is_fixed(self) -> bool {
-        matches!(self, Stage::Physics | Stage::PostPhysics)
-    }
-
-    /// Returns `true` if this stage runs only once at startup.
-    #[inline]
-    pub const fn is_startup(self) -> bool {
-        matches!(self, Stage::Startup)
-    }
-
     /// Returns the stage name as a string.
     pub const fn name(self) -> &'static str {
         match self {

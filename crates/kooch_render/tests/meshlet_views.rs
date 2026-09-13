@@ -27,17 +27,6 @@ fn test_stage(device: &wgpu::Device) -> MeshletRenderStage {
 }
 
 #[test]
-fn a_new_stage_has_exactly_one_view() {
-    let Some((device, _queue)) = try_acquire_device() else {
-        eprintln!("skipping: no GPU adapter");
-        return;
-    };
-    let stage = test_stage(&device);
-    assert_eq!(stage.view_count(), 1);
-    assert!(stage.has_view(stage.primary_view()));
-}
-
-#[test]
 fn a_second_view_gets_its_own_cull_buffers() {
     let Some((device, _queue)) = try_acquire_device() else {
         eprintln!("skipping: no GPU adapter");
@@ -74,40 +63,4 @@ fn a_view_keeps_its_own_size() {
     let second = stage.create_view(&device, (32, 16));
     assert_eq!(stage.view_size(stage.primary_view()), Some((64, 64)));
     assert_eq!(stage.view_size(second), Some((32, 16)));
-}
-
-#[test]
-fn a_destroyed_view_stops_resolving() {
-    let Some((device, _queue)) = try_acquire_device() else {
-        eprintln!("skipping: no GPU adapter");
-        return;
-    };
-    let mut stage = test_stage(&device);
-    let second = stage.create_view(&device, (32, 32));
-    assert!(stage.destroy_view(second));
-    assert_eq!(stage.view_count(), 1);
-
-    // Generational key: the handle reads as gone, not as whichever view
-    // lands in that slot next. A closed editor panel leaves its id
-    // behind, and a bare index would silently address a stranger.
-    assert!(!stage.has_view(second));
-    assert_eq!(stage.view_size(second), None);
-    assert!(stage.view_cull(second).is_none());
-
-    let third = stage.create_view(&device, (8, 8));
-    assert_ne!(third, second);
-    assert!(!stage.has_view(second));
-}
-
-#[test]
-fn the_primary_view_cannot_be_destroyed() {
-    let Some((device, _queue)) = try_acquire_device() else {
-        eprintln!("skipping: no GPU adapter");
-        return;
-    };
-    let mut stage = test_stage(&device);
-    // A stage with no view cannot render, and every single-view
-    // accessor would have to start returning Option.
-    assert!(!stage.destroy_view(stage.primary_view()));
-    assert_eq!(stage.view_count(), 1);
 }

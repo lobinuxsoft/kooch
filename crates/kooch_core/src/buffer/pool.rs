@@ -51,6 +51,7 @@ impl BufferPool {
         })
     }
 
+    #[cfg(test)]
     /// Returns a buffer to the pool for future reuse.
     ///
     /// `size` must be the **original requested size** (not the bucket size) —
@@ -61,6 +62,7 @@ impl BufferPool {
         self.pools.entry(key).or_default().push(buffer);
     }
 
+    #[cfg(test)]
     /// Total number of buffers currently held in the pool.
     pub fn held_count(&self) -> usize {
         self.pools.values().map(|v| v.len()).sum()

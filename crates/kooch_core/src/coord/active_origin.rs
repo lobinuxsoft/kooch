@@ -52,18 +52,6 @@ impl ActiveOrigin {
     pub fn set(&mut self, coord: UniverseCoord) {
         self.coord = coord;
     }
-
-    /// Convenience: returns the rebase outcome for a player at
-    /// `player_position` against this origin and `threshold`. Mirrors
-    /// [`super::check_rebase`] but reads `self.coord` for the current
-    /// origin so callers don't have to thread it.
-    pub fn evaluate_rebase(
-        &self,
-        player_position: UniverseCoord,
-        threshold_meters: f64,
-    ) -> super::RebaseOutcome {
-        super::check_rebase(player_position, self.coord, threshold_meters)
-    }
 }
 
 #[cfg(test)]

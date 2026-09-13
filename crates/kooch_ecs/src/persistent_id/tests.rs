@@ -32,26 +32,3 @@ fn observing_an_id_stops_it_being_reissued() {
     alloc.observe(EntityGuid::new(42).unwrap());
     assert_eq!(alloc.allocate().get(), 43);
 }
-
-/// A scene file is not trusted to move the watermark backwards. Loading
-/// one that claims a lower value than ids already live would reissue
-/// them, and the aliasing would only show up as two entities answering
-/// to one reference.
-#[test]
-fn resuming_never_moves_the_watermark_backwards() {
-    let mut alloc = PersistentIdAllocator::new();
-    alloc.observe(EntityGuid::new(100).unwrap());
-    alloc.resume_from(5);
-    assert_eq!(alloc.allocate().get(), 101);
-}
-
-#[test]
-fn a_watermark_round_trips_through_a_fresh_allocator() {
-    let mut alloc = PersistentIdAllocator::new();
-    alloc.allocate();
-    alloc.allocate();
-
-    let mut reloaded = PersistentIdAllocator::new();
-    reloaded.resume_from(alloc.watermark());
-    assert_eq!(reloaded.allocate().get(), 3, "ids must not be reissued");
-}

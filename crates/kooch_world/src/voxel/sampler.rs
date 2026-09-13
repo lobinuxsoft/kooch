@@ -116,6 +116,7 @@ impl AnalyticSphereSampler {
         self.radius
     }
 
+    #[cfg(test)]
     /// CPU mirror of the WGSL `sample_sdf` — used by tests to compare
     /// classify-pass output against a brute-force ground truth.
     pub fn sample_cpu(&self, p: Vec3) -> f32 {

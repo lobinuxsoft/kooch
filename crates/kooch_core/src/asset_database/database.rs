@@ -65,23 +65,6 @@ impl AssetDatabase {
             .map(|(guid, entry)| (*guid, entry))
     }
 
-    /// Sets `type_name` on an existing entry. Returns `true` if the
-    /// entry was found and the type was updated (or already matched);
-    /// `false` if the GUID is unknown. Idempotent: writing the same
-    /// type twice is a no-op.
-    pub fn set_type_name(&mut self, guid: Guid, type_name: &str) -> bool {
-        let Some(entry) = self.by_guid.get_mut(&guid) else {
-            return false;
-        };
-        match entry.type_name.as_deref() {
-            Some(existing) if existing == type_name => true,
-            _ => {
-                entry.type_name = Some(type_name.to_owned());
-                true
-            }
-        }
-    }
-
     /// Registers `(guid, path)` with the database. Idempotent on the
     /// path↔GUID mapping; returns `true` if a brand-new entry was
     /// added.

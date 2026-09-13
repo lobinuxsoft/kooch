@@ -50,6 +50,7 @@ pub enum ControlPath {
 }
 
 impl ControlPath {
+    #[cfg(test)]
     /// Whether this control is on/off rather than continuous.
     ///
     /// An axis read as a button is "past halfway", and a button read as

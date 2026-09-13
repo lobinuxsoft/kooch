@@ -17,12 +17,11 @@
 //! | `meshlet_triangles` | `Vec<u8>` (3-byte triangles, packed contiguously) | 1 B |
 //! | `descriptors` | `Vec<MeshletDescriptor>` (per-meshlet metadata) | 80 B |
 
-use bytemuck::Zeroable;
 use wgpu::util::DeviceExt;
 
 use crate::mesh::MeshVertex;
 
-use super::asset::{MeshletDescriptor, MeshletMesh};
+use super::asset::MeshletMesh;
 
 /// GPU-resident counterpart of [`MeshletMesh`]. Owns four
 /// `wgpu::Buffer`s; dropping it releases all four.
@@ -221,11 +220,6 @@ pub fn pool_meshlet_bind_group(
             },
         ],
     })
-}
-
-/// Used by tests + descriptor placeholder construction.
-pub fn zeroed_descriptor() -> MeshletDescriptor {
-    MeshletDescriptor::zeroed()
 }
 
 #[cfg(test)]

@@ -283,6 +283,7 @@ impl App {
             .send(event);
     }
 
+    #[cfg(test)]
     /// Returns an iterator over events of type `E` from the previous frame.
     ///
     /// Returns `None` if the event type hasn't been registered.

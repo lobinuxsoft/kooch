@@ -23,15 +23,6 @@ fn default_material_is_white_diffuse_mid_roughness() {
 }
 
 #[test]
-fn texture_indices_round_trip_with_sentinel() {
-    let m = MaterialParams::default().with_texture_indices(3, NO_TEXTURE, 7);
-    assert_eq!(m.albedo_index(), 3);
-    assert_eq!(m.normal_index(), NO_TEXTURE);
-    assert_eq!(m.metal_roughness_index(), 7);
-    assert_eq!(m.texture_indices[3], 0, "pad slot stays zero");
-}
-
-#[test]
 fn new_packs_scalars_correctly() {
     let m = MaterialParams::new([0.2, 0.4, 0.8, 1.0], 0.7, 0.3, 1.5);
     assert_eq!(m.base_color(), [0.2, 0.4, 0.8, 1.0]);

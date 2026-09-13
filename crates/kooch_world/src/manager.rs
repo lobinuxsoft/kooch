@@ -1,15 +1,11 @@
 //! [`ChunkManager`] — central registry of in-memory chunks plus the
-//! load/unload pipeline and eviction-hook plumbing.
+//! load/unload pipeline.
 //!
 //! What this manager owns:
 //! - `active`: HashMap of every chunk currently tracked.
 //! - `load_queue`: priority queue (smallest distance² = highest priority).
 //! - `unload_queue`: FIFO of chunks scheduled for eviction.
 //! - `memory_budget_bytes`: cap; eviction is triggered when exceeded.
-//! - `listeners`: callbacks invoked BEFORE a `Loaded` chunk transitions
-//!   to `Unloading`. The hook is the integration point for #309 Edit
-//!   Baker (flush deltas), #312 persistent edit log (commit on
-//!   eviction), and similar lifecycle observers.
 //!
 //! The actual loading is **synchronous in this warmup**: `process_queues`
 //! moves a chunk from queue → `active` with `state = Loaded` in one
@@ -21,18 +17,6 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
 use crate::chunk::{ChunkData, ChunkId, ChunkState};
-
-/// Listener invoked when a chunk is about to be evicted (transition
-/// `Loaded → Unloading` in async, or `Loaded → removed` in the
-/// synchronous warmup path).
-///
-/// Implementations: #309 Edit Baker flushes deltas to the sparse
-/// baseline; #312 persistent edit log commits the on-disk file before
-/// the chunk pages out. Order of invocation across multiple listeners
-/// is registration order.
-pub trait ChunkEvictionListener: Send + Sync {
-    fn on_evict(&self, id: ChunkId);
-}
 
 /// Internal queue entry. `priority` is a squared distance (smaller =
 /// closer = higher priority). Equality / ordering compare on
@@ -81,7 +65,6 @@ pub struct ChunkManager {
     /// lives in #136 sparse storage / #115 BVH and the warmup keeps
     /// this at zero).
     pub memory_used_bytes: u64,
-    listeners: Vec<Box<dyn ChunkEvictionListener>>,
     /// Chunks that hit `process_queues`'s eviction path since the last
     /// drain. Renderer reads + clears this list to mirror the pool
     /// state. Decoupled from the load buffer so a chunk that loads and
@@ -99,15 +82,8 @@ impl ChunkManager {
             unload_queue: Vec::new(),
             memory_budget_bytes,
             memory_used_bytes: 0,
-            listeners: Vec::new(),
             pending_unloads: Vec::new(),
         }
-    }
-
-    /// Register an eviction observer. Listeners fire in registration
-    /// order on each evicted chunk.
-    pub fn register_listener(&mut self, listener: Box<dyn ChunkEvictionListener>) {
-        self.listeners.push(listener);
     }
 
     /// Request that the chunk be loaded. Idempotent: requesting an
@@ -132,10 +108,6 @@ impl ChunkManager {
     /// Drain up to `max_loads` and `max_unloads` queued operations.
     /// Returns `(loaded_count, unloaded_count)` — useful for telemetry
     /// and for tuning the per-frame budget.
-    ///
-    /// Eviction listeners fire synchronously inside this call — they
-    /// are observation hooks, not GPU coordinators.
-    ///
     pub fn process_queues(&mut self, max_loads: usize, max_unloads: usize) -> (usize, usize) {
         let mut loaded = 0;
         let mut unloaded = 0;
@@ -148,9 +120,6 @@ impl ChunkManager {
             };
             if let Some(data) = self.active.remove(&id) {
                 if matches!(data.state, ChunkState::Loaded) {
-                    for l in &self.listeners {
-                        l.on_evict(id);
-                    }
                     self.pending_unloads.push(id);
                 }
                 unloaded += 1;

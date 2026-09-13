@@ -1,7 +1,7 @@
 use super::error::{AssetError, AssetResult};
 use crate::assets::{Asset, Assets, Handle};
 use crate::resource::Resources;
-use std::any::{Any, TypeId, type_name};
+use std::any::{Any, type_name};
 use std::marker::PhantomData;
 use std::path::Path;
 

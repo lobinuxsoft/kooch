@@ -170,23 +170,6 @@ fn startup_runs_once() {
     assert_eq!(counter.load(Ordering::SeqCst), 1);
 }
 
-#[test]
-fn system_counts() {
-    let mut schedule = Schedule::new();
-
-    schedule.add_system(Stage::Update, |_: &mut Resources| {});
-    schedule.add_system(Stage::Update, |_: &mut Resources| {});
-    schedule.add_system(Stage::Render, |_: &mut Resources| {});
-
-    assert_eq!(schedule.system_count(Stage::Update), 2);
-    assert_eq!(schedule.system_count(Stage::Render), 1);
-    assert_eq!(schedule.system_count(Stage::Physics), 0);
-    assert_eq!(schedule.total_system_count(), 3);
-
-    assert!(schedule.has_systems(Stage::Update));
-    assert!(!schedule.has_systems(Stage::Physics));
-}
-
 // --- New tests for System trait and GPU systems ---
 
 struct IncrementSystem {
@@ -269,18 +252,6 @@ fn system_names_reported() {
 
     let names = schedule.system_names(Stage::Update);
     assert_eq!(names, vec!["Alpha", "Beta"]);
-}
-
-#[test]
-fn cpu_gpu_system_counts() {
-    let mut schedule = Schedule::new();
-
-    schedule.add_system(Stage::Update, |_: &mut Resources| {});
-    schedule.add_cpu_system(Stage::Update, NamedSystem("A"));
-
-    assert_eq!(schedule.cpu_system_count(Stage::Update), 2);
-    assert_eq!(schedule.gpu_system_count(Stage::Update), 0);
-    assert_eq!(schedule.system_count(Stage::Update), 2);
 }
 
 #[test]

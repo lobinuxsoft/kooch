@@ -62,12 +62,6 @@ impl QueryFilter {
             ..Self::ALL
         }
     }
-
-    /// Including sensors, for a query that is *looking* for triggers.
-    pub fn with_sensors(mut self) -> Self {
-        self.skip_sensors = false;
-        self
-    }
 }
 
 /// Where a swept shape first met something.

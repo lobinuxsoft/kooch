@@ -54,8 +54,8 @@
 use glam::Vec3;
 
 use super::{
-    CASCADE_COUNT, ChunkLodPass, ClassifyPass, DEFAULT_LOD_DISTANCE_THRESHOLDS, DEFAULT_MARGIN,
-    DownsamplePass, MetricsPass, PopulatePass, SparseGrid,
+    CASCADE_COUNT, ChunkLodPass, ClassifyPass, DownsamplePass, MetricsPass, PopulatePass,
+    SparseGrid,
 };
 
 /// Compose all five cascade passes into one orchestrator. One
@@ -156,6 +156,7 @@ impl SparseLodPass {
     pub fn populate_pass(&self) -> &PopulatePass {
         &self.populate
     }
+    #[cfg(test)]
     pub fn metrics_pass(&self) -> &MetricsPass {
         &self.metrics
     }

@@ -35,11 +35,3 @@ fn descriptor_size_matches_max_vertex_constant_at_compile_time() {
     // max_vertices <= 256).
     assert!(DEFAULT_MAX_VERTICES <= 256);
 }
-
-#[test]
-fn zeroed_descriptor_is_safe_default() {
-    let d = zeroed_descriptor();
-    assert_eq!(d.vertex_count, 0);
-    assert_eq!(d.triangle_count, 0);
-    assert_eq!(d.bounding_radius, 0.0);
-}

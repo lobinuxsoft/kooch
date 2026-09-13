@@ -36,17 +36,6 @@ fn forgetting_asks_for_a_rebuild() {
 }
 
 #[test]
-fn forget_all_clears_every_source() {
-    let (first, second) = (Guid::new_v4(), Guid::new_v4());
-    let mut built = BuiltBlocks::default();
-    built.built.insert(first, built_now());
-    built.built.insert(second, built_now());
-    built.forget_all();
-    assert!(!built.is_built(first, 0));
-    assert!(!built.is_built(second, 0));
-}
-
-#[test]
 fn forgetting_an_unknown_source_is_quiet() {
     BuiltBlocks::default().forget(Guid::new_v4());
 }

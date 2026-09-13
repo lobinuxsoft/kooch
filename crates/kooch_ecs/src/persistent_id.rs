@@ -175,16 +175,6 @@ impl PersistentIdAllocator {
         Self { next: 1 }
     }
 
-    /// Resumes from a persisted watermark.
-    ///
-    /// Takes the larger of `next` and the current value: a scene file
-    /// claiming a lower watermark than ids already handed out this session
-    /// would reissue them, which is silent aliasing rather than a load
-    /// error.
-    pub fn resume_from(&mut self, next: u64) {
-        self.next = self.next.max(next);
-    }
-
     /// The value to persist so a later session does not reissue live ids.
     pub const fn watermark(&self) -> u64 {
         self.next

@@ -10,20 +10,6 @@ fn stage_ordering() {
 }
 
 #[test]
-fn fixed_stages() {
-    assert!(Stage::Physics.is_fixed());
-    assert!(Stage::PostPhysics.is_fixed());
-    assert!(!Stage::Update.is_fixed());
-    assert!(!Stage::Render.is_fixed());
-}
-
-#[test]
-fn startup_stage() {
-    assert!(Stage::Startup.is_startup());
-    assert!(!Stage::First.is_startup());
-}
-
-#[test]
 fn all_stages_count() {
     assert_eq!(Stage::ALL.len(), 14);
 }

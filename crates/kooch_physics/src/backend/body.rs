@@ -87,6 +87,7 @@ impl BodyDesc {
         }
     }
 
+    #[cfg(test)]
     /// Convenience constructor — static body at world origin.
     pub fn static_at(shape: CollisionShape, position: Vec3) -> Self {
         Self {

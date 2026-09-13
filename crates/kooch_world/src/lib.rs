@@ -27,7 +27,7 @@ pub use focus::StreamingFocus;
 pub use focus_cache::{DirtyFocusLod, FocusCacheState, FocusPosition};
 pub use kooch_core::Aabb;
 pub use lod::{LodRing, LodRingConfig};
-pub use manager::{ChunkEvictionListener, ChunkManager};
+pub use manager::ChunkManager;
 pub use plugin::{
     DEFAULT_MAX_LOADS_PER_FRAME, DEFAULT_MAX_UNLOADS_PER_FRAME, WorldStreamingPlugin,
     world_streaming_system,
