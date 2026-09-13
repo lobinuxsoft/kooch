@@ -1,12 +1,4 @@
 //! Systems panel — what runs each frame, and what is switched off.
-//!
-//! Two groups, because they are two different decisions: switching off
-//! an engine system is an experiment and can break a frame, while
-//! switching off a project system is ordinary gameplay control.
-//!
-//! 🔴 No GPU group. Nothing implements `GpuSystem` outside tests, so the
-//! group would be permanently empty — a question nobody can answer by
-//! looking at the screen. It arrives with #392.
 
 use kooch_remote::protocol::SystemEntry;
 

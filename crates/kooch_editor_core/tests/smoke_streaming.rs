@@ -1,15 +1,4 @@
 //! Editor smoke test (CI-friendly, headless).
-//!
-//! Wires the same Startup chain the real editor uses — register the
-//! ECS built-ins, spawn the editor camera with `StreamingFocus` — then
-//! ticks the frame schedule for a fixed budget and asserts that the
-//! chunk manager observed at least one load request. No GPU surface is
-//! involved: only `WorldStreamingPlugin` (CPU-only) plus the camera
-//! spawn system are exercised.
-//!
-//! Skips the `EditorPlugin` itself because that one drags in egui /
-//! wgpu / a real window. The system under test for #362 is the
-//! Startup-time wiring; the render stack is covered elsewhere.
 
 use kooch_core::app::App;
 use kooch_core::plugin::CorePlugin;
@@ -40,14 +29,7 @@ fn editor_camera_drives_chunk_streaming_within_60_frames() {
 
     app.schedule.run_startup(&mut app.resources);
 
-    // Run the regular frame schedule. 60 frames is the issue's stated
-    // ceiling — the streaming pipeline stages are:
-    //   frame 1 : Startup buffered the camera spawn → Commands apply on
-    //             GpuSync → transform propagation on PostUpdate produces
-    //             the camera's GlobalTransform.
-    //   frame 2 : PreUpdate sees the focus → activation enqueues loads.
-    //   frame 3+: ChunkManager drains pending → loaded.
-    // Asserting before frame 2 would race the apply step.
+    // Run the regular frame schedule. 60 frames is the issue's stated ceiling.
     let mut max_pending = 0;
     let mut max_loaded = 0;
     for frame in 1..=60 {

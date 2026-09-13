@@ -1,17 +1,4 @@
-/// 🔴 Every `*ComponentsPlugin` in the workspace is added by the
-/// editor.
-///
-/// The editor keeps its **own** `ComponentRegistry`. A component the
-/// project registers is invisible here, so authoring one requires the
-/// matching components-plugin in `EditorPlugin::build` — and the list
-/// is written by hand, which is exactly as reliable as it sounds:
-/// this has now been the fifth omission (#722 was the third,
-/// `InputMapSource` the fifth), and each one surfaces as a component
-/// the menu offers and then refuses with "no default value".
-///
-/// Scanning the source rather than a registry because the failure is
-/// a plugin that was never *added* — a runtime check could only see
-/// what was added, which is the set that is already correct.
+/// 🔴 Every `*ComponentsPlugin` in the workspace is added by the editor.
 #[test]
 fn every_components_plugin_is_added_by_the_editor() {
     let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

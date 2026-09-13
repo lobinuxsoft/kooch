@@ -42,11 +42,6 @@ impl FrameDisplayData {
     }
 
     /// Gathers the frame's data, and says what each part of it cost.
-    ///
-    /// The timings are returned rather than written into the perf
-    /// Resource here: the render system already assembles its stages as
-    /// a local and publishes them once, and a second writer would make
-    /// the order of two writes decide what the HUD shows.
     pub(super) fn gather(resources: &mut Resources) -> (Self, GatherStages) {
         let mut stages = GatherStages::default();
 
@@ -56,10 +51,9 @@ impl FrameDisplayData {
         crate::queries::intern_registry_names(resources);
         stages.intern_ms = ms_since(t);
 
-        // Read before the gather so the entities the Inspector will show
-        // are known while their values are still being decided. The
-        // overlay is still in `Resources` at this point in the frame;
-        // the render system removes it further down.
+        // Read before the gather so the entities the Inspector will show are known while their
+        // values are still being decided. The overlay is still in `Resources` at this point in the
+        // frame; the render system removes it further down.
         let detail_for: std::collections::HashSet<kooch_ecs::Entity> = resources
             .get::<crate::state::EditorOverlay>()
             .map(|overlay| overlay.selected_entities.iter().copied().collect())
@@ -102,13 +96,7 @@ impl FrameDisplayData {
     }
 }
 
-/// What the project schedules, or what this editor does when there is no
-/// project.
-///
-/// 🔴 The project's, when one is connected. The editor's own schedule is
-/// a different set of systems in a different process, and listing it
-/// while a project is open would offer switches that do nothing to the
-/// world on screen.
+/// What the project schedules, or what this editor does when there is no project.
 fn gather_systems(resources: &Resources) -> Vec<kooch_remote::protocol::SystemEntry> {
     if let Some(systems) = resources
         .get::<crate::remote_session::RemoteState>()
@@ -121,9 +109,6 @@ fn gather_systems(resources: &Resources) -> Vec<kooch_remote::protocol::SystemEn
 }
 
 /// The editor's own schedule, read from the catalog it published.
-///
-/// The fallback for local mode, and what makes the panel testable
-/// without a project.
 fn local_systems(resources: &Resources) -> Vec<kooch_remote::protocol::SystemEntry> {
     use kooch_core::schedule::{SystemCatalog, SystemSource, SystemToggles};
 
@@ -149,17 +134,6 @@ fn local_systems(resources: &Resources) -> Vec<kooch_remote::protocol::SystemEnt
 }
 
 /// Snapshots the open scenes for the World panel.
-///
-/// 🔴 The project's list wins whenever there is one. **Open Project
-/// always opens remote**, so the scenes on screen belong to another
-/// process; the editor's own `SceneManager` still holds the unsaved
-/// scene it seeds at startup, under an id no entity will ever name.
-/// Listing that one put an `Untitled (0 entities)` row above the real
-/// scene and dropped everything else into "Unsaved" — the panel
-/// describing the editor's idea of the world instead of the world.
-///
-/// The local manager is the fallback, not the default: it is right in
-/// local mode and right again before the project has answered.
 fn gather_scenes(resources: &Resources) -> Vec<SceneDisplayInfo> {
     if let Some(scenes) = remote_scenes(resources) {
         return scenes;
@@ -187,11 +161,6 @@ fn gather_scenes(resources: &Resources) -> Vec<SceneDisplayInfo> {
 }
 
 /// The open scenes as the connected project reports them.
-///
-/// `None` in local mode and until the project has answered once, which
-/// is the difference between "no news" and "no scenes open" — the
-/// latter would blank the panel on every reply from a host too old to
-/// send the field.
 fn remote_scenes(resources: &Resources) -> Option<Vec<SceneDisplayInfo>> {
     let session = resources
         .get::<crate::remote_session::RemoteState>()?

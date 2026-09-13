@@ -51,13 +51,7 @@ fn an_older_project_gains_the_gravity_feature() {
     );
 }
 
-/// Running twice must not append anything twice, because this runs on
-/// every script regeneration.
-///
-/// Compares the second pass against the first rather than against the
-/// original: the point is that repetition is a no-op, not which
-/// features `ADDED` currently holds — pinning the list here made this
-/// fail every time a feature was added, which is noise, not a signal.
+/// Running twice must not append anything twice, because this runs on every script regeneration.
 #[test]
 fn adding_a_feature_is_idempotent() {
     let dir = manifest_dir(
@@ -179,11 +173,9 @@ fn a_hand_written_manifest_is_left_alone_by_the_migration() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// **The parity lock.** A freshly scaffolded project must already
-/// satisfy the migration: if the scaffold grows something the
-/// migration does not add, existing projects silently diverge and
-/// nothing notices. This is the test that was missing when `--remote`
-/// opened a second window for weeks.
+/// **The parity lock.** A freshly scaffolded project must already satisfy the migration: if the
+/// scaffold grows something the migration does not add, existing projects silently diverge and
+/// nothing notices.
 #[test]
 fn the_scaffold_already_satisfies_the_migration() {
     use crate::project::{generate_lib_rs, generate_main_rs};
@@ -243,13 +235,8 @@ pub fn movement(resources: &mut Resources) {}
     assert!(systems[0].gated);
 }
 
-/// `#[system(...)]` decides the stage and the wrapper, and a bare `pub
-/// fn` still gets the old default.
-///
-/// 🔴 The third case is the one worth having: an attribute must not
-/// drift onto the NEXT function. `pending` is cleared by any line that
-/// is not a doc comment or another attribute, and without that the
-/// `always` below would silently un-gate `plain`.
+/// `#[system(...)]` decides the stage and the wrapper, and a bare `pub fn` still gets the old
+/// default.
 #[test]
 fn an_attribute_binds_only_its_own_system() {
     let src = "\
@@ -316,14 +303,8 @@ fn a_folder_becomes_a_module_rather_than_a_prefix() {
     assert_eq!(module_path("a/b/c.rs"), "a::b::c");
 }
 
-/// The layout the generated file has to produce, verified by
-/// compiling it in a real project before it was ever generated.
-///
-/// The `#[path]` on a container is the bare directory name: Rust
-/// resolves it against the directory of `registrations.rs` and
-/// *replaces* the path rather than appending to it, so neither `../`
-/// nor a `registrations/` prefix belongs here. Children then resolve
-/// against their container and only name their own file.
+/// The layout the generated file has to produce, verified by compiling it in a real project before
+/// it was ever generated.
 #[test]
 fn folders_are_emitted_as_nested_modules() {
     let files = vec![
@@ -422,11 +403,7 @@ fn a_file_and_a_folder_of_the_same_name_are_reported() {
     assert!(colliding_names(&fine).is_empty());
 }
 
-/// The generated file used to open with
-/// `#![allow(unused_imports, unused_variables, dead_code)]`. That is an
-/// inner attribute on the `registrations` module, and every project
-/// script is mounted inside it via `#[path]` — so it silenced those
-/// three lints across the user's whole project, for good.
+/// The generated file used to open with `#![allow(unused_imports, unused_variables, dead_code)]`.
 #[test]
 fn the_generated_file_does_not_silence_lints_for_the_whole_project() {
     let out = render_registrations(&[source("components/movement.rs", &["GroundMovement"], &[])]);
@@ -436,10 +413,9 @@ fn the_generated_file_does_not_silence_lints_for_the_whole_project() {
     );
 }
 
-/// …which is only safe if the generated code is itself warning-free.
-/// With no components, `declare_components` never mentions its
-/// parameter, and an unused parameter is exactly the warning the
-/// blanket allow used to hide.
+/// …which is only safe if the generated code is itself warning-free. With no components,
+/// `declare_components` never mentions its parameter, and an unused parameter is exactly the
+/// warning the blanket allow used to hide.
 #[test]
 fn a_project_with_no_components_still_uses_its_parameter() {
     let out = render_registrations(&[source("systems/movement.rs", &[], &["apply_movement"])]);
@@ -476,10 +452,9 @@ fn remote_host_migration_is_narrow() {
     assert_eq!(migrate_remote_host(&migrated), migrated);
 }
 
-/// Gameplay systems must be registered unconditionally and wrapped
-/// in the runtime gate — registering them only when `run_systems` is
-/// set would make Play require a rebuild, which is the whole point
-/// of the gate.
+/// Gameplay systems must be registered unconditionally and wrapped in the runtime gate —
+/// registering them only when `run_systems` is set would make Play require a rebuild, which is the
+/// whole point of the gate.
 #[test]
 fn generated_plugin_wraps_systems_in_the_runtime_gate() {
     let files = vec![source("movement.rs", &[], &["move_system"])];
@@ -499,11 +474,9 @@ fn generated_plugin_wraps_systems_in_the_runtime_gate() {
     );
 }
 
-/// The regression that broke three real projects: `ensure_main_wired`
-/// re-added `mod registrations;` beside the `use` the migration had
-/// just written, declaring the name twice so the project stopped
-/// compiling. The remote host then died on launch and the editor
-/// reported only "remote project exited".
+/// The regression that broke three real projects: `ensure_main_wired` re-added `mod registrations;`
+/// beside the `use` the migration had just written, declaring the name twice so the project stopped
+/// compiling.
 #[test]
 fn a_duplicated_registrations_module_is_cleaned_up() {
     let dir = std::env::temp_dir().join("kooch_double_mod_test");
@@ -560,15 +533,8 @@ fn wiring_does_not_re_add_a_module_that_moved_to_the_library() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 🔴 Everything the generated `registrations.rs` reaches for outside the
-/// game's own feature set must be gated.
-///
-/// `declare_components` names `kooch::kooch_plugin_api` and
-/// `component::plugin_bridge`, and both live behind `dynamic` — which a
-/// game build does not enable (#558). `lib.rs` was gated and this was
-/// not, so a game build failed to compile **on a file the editor had
-/// written itself**, with an error naming a module the author never
-/// mentioned.
+/// 🔴 Everything the generated `registrations.rs` reaches for outside the game's own feature set
+/// must be gated.
 #[test]
 fn the_plugin_api_is_behind_the_editor_feature() {
     let files = vec![SourceFile {
@@ -616,11 +582,8 @@ fn the_game_half_is_not_gated() {
     );
 }
 
-/// The project's plugin has to say it is the project's, or the system
-/// panel groups every project system under the engine (#982).
-///
-/// Declared by the generated code rather than sniffed from the crate
-/// name: a plugin is the only thing that knows which side it is on.
+/// The project's plugin has to say it is the project's, or the system panel groups every project
+/// system under the engine (#982).
 #[test]
 fn the_generated_plugin_names_its_source() {
     let generated = super::super::render::render_registrations(&[source(

@@ -1,17 +1,4 @@
 //! Entity-reference picker for `ReflectValue::EntityRef` fields.
-//!
-//! The field was read-only until #655: a `Joint` could be added and never
-//! told which two bodies it held, which made it a component that could not
-//! do anything. Two gestures assign one now — picking from the dropdown
-//! and dropping an entity from the World panel — and both write the same
-//! `EntityRef` that code writes, so none of the three is a special case.
-//!
-//! # Why the name and not the handle
-//!
-//! `4:1` is not an answer to "which body is this". The label shows the
-//! target's `Name`, falling back to the handle only for an entity that has
-//! none — which is also how the World panel labels its rows, so the same
-//! entity reads the same way in both places.
 
 use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::{EntityRef, ReflectValue};
@@ -19,13 +6,8 @@ use kooch_ecs::reflect::{EntityRef, ReflectValue};
 use crate::panels::world::entity_row::display_name_for;
 use crate::state::EntityDisplayInfo;
 
-/// Renders the picker for a `ReflectValue::EntityRef` field. Returns
-/// `Some(new_value)` when the user picks a different target or clears it.
-///
-/// `requires` is the short name of a component the target must carry, or
-/// empty when anything will do. A `Joint` body without a `PhysicsBody` is
-/// not a body: accepting it would leave the joint silently inert, which is
-/// indistinguishable from the joint being broken.
+/// Renders the picker for a `ReflectValue::EntityRef` field. Returns `Some(new_value)` when the
+/// user picks a different target or clears it.
 pub(crate) fn draw_entity_picker(
     ui: &mut egui::Ui,
     current: Option<EntityRef>,
@@ -54,10 +36,9 @@ pub(crate) fn draw_entity_picker(
     let combo = egui::ComboBox::from_id_salt(("entity_picker", salt))
         .selected_text(selected_text)
         .show_ui(ui, |ui| {
-            // Everything below runs only while the popup is open. In an
-            // immediate-mode UI the cost of a panel's draw is paid every
-            // frame it is visible, and filtering a scene's entities is not
-            // something to pay for a closed dropdown.
+            // Everything below runs only while the popup is open. In an immediate-mode UI the cost
+            // of a panel's draw is paid every frame it is visible, and filtering a scene's entities
+            // is not something to pay for a closed dropdown.
             let mut query: String = ui
                 .ctx()
                 .data(|d| d.get_temp::<String>(search_id))
@@ -102,11 +83,8 @@ pub(crate) fn draw_entity_picker(
             }
         });
 
-    // Drop target: an entity dragged out of the World panel, which sets a
-    // bare `Entity` as its payload — the same one reparenting uses.
-    //
-    // `dnd_release_payload` takes the payload before checking anything, so
-    // the refusal has to happen while hovering, not after the drop.
+    // Drop target: an entity dragged out of the World panel, which sets a bare `Entity` as its
+    // payload — the same one reparenting uses.
     let slot = combo.response;
     if let Some(hovered) = slot.dnd_hover_payload::<Entity>() {
         let dropped = *hovered;

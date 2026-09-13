@@ -1,9 +1,4 @@
 //! Saving an entity as a prefab, and stamping one back into the scene.
-//!
-//! A prefab is a scene file — see
-//! [`SceneDocument::from_ecs_subtree`](kooch_ecs::scene::SceneDocument::from_ecs_subtree)
-//! for why there is no second format. What lives here is only the editor's
-//! side of it: choosing where the file goes and what it is called.
 
 use std::path::{Path, PathBuf};
 
@@ -24,10 +19,6 @@ pub(crate) fn project_root(resources: &Resources) -> Option<PathBuf> {
 }
 
 /// The name to call an entity's prefab file.
-///
-/// Read from the entity's `Name`, falling back to its index — the same
-/// fallback the World panel shows, so the file matches the row the user
-/// right-clicked.
 pub(crate) fn entity_name(resources: &Resources, entity: Entity) -> String {
     resources
         .get::<kooch_ecs::component::ComponentRegistry>()
@@ -39,12 +30,6 @@ pub(crate) fn entity_name(resources: &Resources, entity: Entity) -> String {
 }
 
 /// Turns an entity's display name into something a filesystem accepts.
-///
-/// Entity names are free text — "Player (spare)", "enemy/variant b" — and
-/// a slash in one would silently write outside the folder that was chosen.
-/// Kept deliberately narrow rather than trying to preserve as much as
-/// possible: the file is renameable afterwards, so a conservative
-/// starting point costs the user nothing.
 pub(crate) fn sanitize_file_stem(name: &str) -> String {
     // Runs collapse: "Player (spare)" replaces three characters in a row
     // and would otherwise come out "Player__spare".
@@ -66,15 +51,6 @@ pub(crate) fn sanitize_file_stem(name: &str) -> String {
 }
 
 /// Where a prefab named `name` gets written.
-///
-/// `dest` is the folder a drag was dropped on; without one the project's
-/// `assets/` is used, which is where the user asked prefabs to live.
-///
-/// The same entity always resolves to the same file, so saving a prefab
-/// again after editing the entity updates it. It used to suffix — `Enemy`,
-/// `Enemy_1`, `Enemy_2` — which never destroyed anything and made
-/// iterating on a prefab impossible. Replacement is guarded by a
-/// confirmation prompt instead; see `actions::intercept_prefab_overwrites`.
 pub(crate) fn prefab_path(root: &Path, name: &str, dest: Option<&Path>) -> PathBuf {
     let folder = match dest {
         // A folder outside the project would put the file somewhere the
@@ -85,25 +61,7 @@ pub(crate) fn prefab_path(root: &Path, name: &str, dest: Option<&Path>) -> PathB
     folder.join(format!("{}.{PREFAB_EXTENSION}", sanitize_file_stem(name)))
 }
 
-/// What every write of an asset file goes through, whichever panel or
-/// action did the writing.
-///
-/// Three things have to happen and none of them are optional:
-///
-/// 1. **The database learns the file exists.** The project's asset scan
-///    only runs when the active project changes, so a file created
-///    mid-session is invisible until the editor restarts: its `.meta`
-///    gives it a guid, which is why it can be selected, but the catalog
-///    the Inspector looks it up in has never heard of it. The result was
-///    an asset you could click and an Inspector that showed nothing.
-/// 2. **What is already loaded stops being the old bytes.** Overwritten
-///    in place, so the handles components are holding stay valid — see
-///    [`kooch_core::asset_loader::asset_written`].
-/// 3. **The project is told.** It has its own copy of both, in another
-///    process, and it did not write this file.
-///
-/// Doing the one file that changed, at the moment it changes, is narrower
-/// than rescanning the tree and costs nothing per frame.
+/// What every write of an asset file goes through, whichever panel or action did the writing.
 pub(crate) fn asset_saved(resources: &mut Resources, path: &Path) {
     let written = kooch_core::asset_loader::asset_written(path, resources);
     if written.guid.is_none() {
@@ -112,15 +70,8 @@ pub(crate) fn asset_saved(resources: &mut Resources, path: &Path) {
     announce_to_host(resources, path);
 }
 
-/// The part of saving a prefab that is *about* prefabs, after
-/// [`asset_saved`] has dealt with the file.
-///
-/// A prefab has instances, which no other asset does: the document in
-/// memory is now ahead of every entity stamped from it, and those have to
-/// catch up. Nothing here re-reads the file — that already happened.
-///
-/// Queued rather than applied: this runs in the middle of handling an
-/// action, and the writes have to travel the same way an edit does.
+/// The part of saving a prefab that is *about* prefabs, after [`asset_saved`] has dealt with the
+/// file.
 pub(crate) fn prefab_saved(resources: &mut Resources, path: &Path) {
     let Ok(meta) = kooch_core::asset_meta::read_meta(path) else {
         return;
@@ -133,11 +84,6 @@ pub(crate) fn prefab_saved(resources: &mut Resources, path: &Path) {
 }
 
 /// Queues the message that tells the project its cached copy is stale.
-///
-/// The project caches the documents it instances from, and the editor is
-/// what writes those files. Without this the project keeps rebuilding
-/// instances from the version it read first — so a component removed from
-/// a prefab came back the next time the scene loaded.
 fn announce_to_host(resources: &mut Resources, path: &Path) {
     if resources.get::<PendingHostReloads>().is_none() {
         resources.insert(PendingHostReloads::default());
@@ -158,10 +104,6 @@ fn announce_to_host(resources: &mut Resources, path: &Path) {
 pub(crate) struct PendingHostReloads(pub(crate) Vec<std::path::PathBuf>);
 
 /// Writes `entity` and its descendants to a prefab file.
-///
-/// The local path — used when the editor is driving its own world. With a
-/// project connected this goes over the wire instead, because the world
-/// being captured is the project's; see `remote_edit`.
 pub(super) fn handle_save_prefab(resources: &mut Resources, entity: Entity, dest: Option<&Path>) {
     let Some(root) = project_root(resources) else {
         tracing::error!("cannot save a prefab without a project open");
@@ -169,10 +111,8 @@ pub(super) fn handle_save_prefab(resources: &mut Resources, entity: Entity, dest
     };
     let path = prefab_path(&root, &entity_name(resources, entity), dest);
     let document = SceneDocument::from_ecs_subtree(resources, entity);
-    // The extension promises one root; checked here so the promise holds
-    // for everything on disk rather than being discovered at the click
-    // that instances it. A subtree has one by construction — this catches
-    // an entity with nothing capturable on it, which yields no root at all.
+    // The extension promises one root; checked here so the promise holds for everything on disk
+    // rather than being discovered at the click that instances it.
     if let Err(e) = document.root_index() {
         tracing::error!("refusing to write a prefab that cannot be instanced: {e}");
         return;
@@ -191,10 +131,6 @@ pub(super) fn handle_save_prefab(resources: &mut Resources, entity: Entity, dest
 }
 
 /// Stamps a prefab into the open scene, optionally placing its root.
-///
-/// Goes through `spawn_prefab`, which is the same entry point a game's own
-/// spawner uses — so the editor exercises the runtime path rather than a
-/// parallel one that could rot.
 pub(super) fn handle_instantiate_prefab(
     resources: &mut Resources,
     prefab: kooch_core::Guid,
@@ -234,11 +170,6 @@ mod tests;
 // ---------------------------------------------------------------------------
 
 /// Runs `edit` against the cached document for `prefab` and marks it dirty.
-///
-/// Edits land in `Assets<SceneDocument>` rather than on disk, so they are
-/// live for anything spawning the prefab and the file is behind until the
-/// user saves. That is the whole shape of an explicit save; the Inspector's
-/// button is what makes it visible.
 fn with_cached_document<R>(
     resources: &mut Resources,
     prefab: kooch_core::Guid,
@@ -370,25 +301,6 @@ pub(super) fn handle_edit_prefab_component(
 }
 
 /// The fields a freshly-constructed component would have.
-///
-/// Built from the type's own `Default` rather than from field *kinds*: a
-/// component whose default sets `visible: true` must arrive that way, and a
-/// zero-per-kind table would silently disagree with what spawning the same
-/// component in the World gives.
-/// What a freshly added component of `type_name` should hold.
-///
-/// Two sources, and both are needed. The reflected registry knows the
-/// types the editor itself compiled. A project's component was compiled
-/// into its dylib, so the editor cannot call `Default` on it and knows it
-/// only through [`DynamicTypeRegistry`], which now carries the values the
-/// plugin read off its own `Default` when it declared the type.
-///
-/// Asking only the first is why adding a project component to a prefab
-/// answered "no default value; not added" — the fourth time a panel has
-/// asked one of these registries when the answer lived in the other
-/// (#722 was the third).
-///
-/// [`DynamicTypeRegistry`]: kooch_ecs::component::DynamicTypeRegistry
 fn default_fields(
     resources: &Resources,
     type_name: &str,

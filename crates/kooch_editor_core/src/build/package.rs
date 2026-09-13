@@ -54,36 +54,20 @@ pub struct Package {
     pub assets: usize,
     /// How many scene files travelled.
     pub scenes: usize,
-    /// What DLSS put beside the executable, when the preset asked for
-    /// it (#536): the runtime blob and NVIDIA's notices.
-    ///
-    /// Reported rather than silent — a file that appears in a build
-    /// folder without being mentioned is a file its author deletes, and
-    /// the notices are the one that must not be deleted.
+    /// What DLSS put beside the executable, when the preset asked for it (#536): the runtime blob
+    /// and NVIDIA's notices.
     pub dlss: Vec<PathBuf>,
-    /// The mingw C++ runtime a cross-compiled Windows build carries
-    /// (#962), empty for every other build.
-    ///
-    /// Reported for the same reason `dlss` is: three DLLs appear in the
-    /// folder, and an unexplained file beside a game is a file somebody
-    /// deletes — these are the ones it cannot start without.
+    /// The mingw C++ runtime a cross-compiled Windows build carries (#962), empty for every other
+    /// build.
     pub runtime: Vec<PathBuf>,
     /// Project assets that shadowed an engine asset of the same name.
-    ///
-    /// Not an error — the project is the author and wins — but worth
-    /// reporting, because the engine's version is simply gone from the
-    /// build and nothing else would say so.
     pub shadowed: Vec<String>,
 }
 
 #[derive(Debug)]
 pub enum PackageError {
     Io(std::io::Error),
-    /// A runtime file the build cannot start without could not be found
-    /// or copied.
-    ///
-    /// Separate from `Io` because the fix is not a filesystem one: it
-    /// names a missing toolchain piece and what to install.
+    /// A runtime file the build cannot start without could not be found or copied.
     Runtime(String),
     /// The built executable was not where it was said to be.
     NoBinary(PathBuf),
@@ -121,9 +105,6 @@ impl From<std::io::Error> for PackageError {
 pub const PACK_FILE: &str = "assets.kpack";
 
 /// Assembles `preset`'s output folder from an already-built `binary`.
-///
-/// `known` is every extension some registered loader claims — the
-/// allowlist, derived rather than maintained.
 pub fn assemble(
     preset: &BuildPreset,
     platform: Platform,
@@ -137,20 +118,8 @@ pub fn assemble(
     if !binary.is_file() {
         return Err(PackageError::NoBinary(binary.to_path_buf()));
     }
-    // Both paths canonical-ish before comparing: `output_dir: "."`
-    // joins to `<root>/.`, which is the project root and is not equal to
-    // it as written.
-    //
-    // 🔴 Each platform gets its own subfolder. Sharing one would have the
-    // second build overwrite the first's pack and manifest while leaving
-    // both executables behind — a folder that looks like it holds two
-    // games and holds one and a half.
-    //
-    // 🔴 The *base* is checked, not just the platform folder. Appending
-    // `linux/` to a dangerous `output_dir` would make it look safe —
-    // `output_dir: "src"` becomes `src/linux`, which is not `src` and
-    // would sail past a guard that only saw the final path, while
-    // packaging still emptied a folder inside the project's source.
+    // Both paths canonical-ish before comparing: `output_dir: "."` joins to `<root>/.`, which is
+    // the project root and is not equal to it as written.
     let root = normalise(project_root);
     let base = normalise(&project_root.join(&preset.output_dir));
     guard(&base, &root)?;
@@ -161,18 +130,7 @@ pub fn assemble(
     std::fs::copy(binary, &dest_binary)?;
     keep_executable(binary, &dest_binary);
 
-    // The manifest travels, so the game can open the scene the project
-    // says it opens with (#808).
-    //
-    // 🔴 Beside the executable and NOT in the pack. The scene bootstrap
-    // reads it before the asset system exists — a game that failed to
-    // open its pack still has to find its scene — and it holds no
-    // authoring state worth protecting: a name, a version, and the
-    // window size the same game shows in its title bar.
-    //
-    // Missing is not an error. A project built before this had no
-    // manifest beside its binary, and the convention below is what such
-    // a build has always used.
+    // The manifest travels, so the game can open the scene the project says it opens with (#808).
     let manifest = project_root.join(kooch_core::scene_paths::PROJECT_MANIFEST_FILE);
     if manifest.is_file() {
         std::fs::copy(
@@ -181,11 +139,9 @@ pub fn assemble(
         )?;
     }
 
-    // 🔴 Scenes go in the pack too. A scene is the structure of the
-    // whole game — every entity, every component, every value, including
-    // the names of components its author wrote — and leaving it in plain
-    // RON beside an encrypted pack protects the textures and publishes
-    // the design.
+    // 🔴 Scenes go in the pack too. A scene is the structure of the whole game — every entity, every
+    // component, every value, including the names of components its author wrote — and leaving it
+    // in plain RON beside an encrypted pack protects the textures and publishes the design.
     let (files, shadowed) = collect_assets(project_root, engine_root, known);
     let scene_count = files
         .iter()
@@ -216,9 +172,8 @@ pub fn assemble(
     // asked for DLSS. Nothing for every other build.
     let dlss = super::dlss::ship(preset, platform, &dir)?;
 
-    // 🔴 mingw's C++ runtime, for a Windows build cross-compiled from
-    // Linux (#962). Without it the folder looks complete and the game
-    // stops at a Windows dialog naming a DLL — on someone else's
+    // 🔴 mingw's C++ runtime, for a Windows build cross-compiled from Linux (#962). Without it the
+    // folder looks complete and the game stops at a Windows dialog naming a DLL — on someone else's
     // machine, which is the whole point of making a build.
     let runtime = super::mingw::ship(platform, &dir).map_err(PackageError::Runtime)?;
 
@@ -235,9 +190,6 @@ pub fn assemble(
 }
 
 /// `a/b/./c` → `a/b/c`, and `a/b/../c` → `a/c`.
-///
-/// Lexical, not `canonicalize`: the output folder usually does not exist
-/// yet, and `canonicalize` fails on a path that does not.
 fn normalise(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for part in path.components() {
@@ -257,17 +209,6 @@ fn normalise(path: &Path) -> PathBuf {
 const PROJECT_OWNED: [&str; 5] = ["src", "assets", "scenes", ".git", ".kooch"];
 
 /// Empties the output folder, refusing anywhere that is not one.
-///
-/// 🔴 This deletes recursively and the path comes from a text field in a
-/// preset, so it is checked two ways — and the first version had only the
-/// second, which let `output_dir: "assets"` through:
-///
-/// 1. **By where it is.** The project root itself, or anything at or
-///    inside `src/`, `assets/`, `scenes/`, `.git/`, `.kooch/`. Asking
-///    "does it *contain* a `src`?" does not catch `src` itself, and a
-///    test caught that this was exactly what happened.
-/// 2. **By what it holds.** Somewhere outside the project that looks like
-///    a source tree — a sibling checkout, a home directory.
 fn prepare(dir: &Path, project_root: &Path) -> Result<(), PackageError> {
     guard(dir, project_root)?;
 
@@ -284,12 +225,7 @@ fn prepare(dir: &Path, project_root: &Path) -> Result<(), PackageError> {
     Ok(())
 }
 
-/// Refuses a path that is the project, or inside something the project
-/// owns.
-///
-/// Applied to the output base *and* to the platform folder under it:
-/// either one landing in the project's own tree is a folder packaging
-/// would empty.
+/// Refuses a path that is the project, or inside something the project owns.
 fn guard(dir: &Path, project_root: &Path) -> Result<(), PackageError> {
     let unsafe_place = dir == project_root
         || PROJECT_OWNED
@@ -302,24 +238,6 @@ fn guard(dir: &Path, project_root: &Path) -> Result<(), PackageError> {
 }
 
 /// Every asset that travels, as `(name in the pack, file on disk)`.
-///
-/// Engine first, then the project — so a project file of the same name
-/// replaces the engine's rather than colliding, and the replacement is
-/// reported.
-///
-/// # 🔴 The engine's assets are filtered by what the game references
-///
-/// The first version copied a fixed list — `materials` and
-/// `meshes/primitives` — borrowed from the *vendoring* allowlist. That
-/// list answers "what source does a project need to build", which is a
-/// different question from "what does this game draw", and it guessed
-/// wrong: a scene using the engine's `suzanne.glb` shipped without it and
-/// rendered nothing, with no error, because a missing GUID is silent.
-///
-/// So the engine's tree is walked whole and then cut down to the GUIDs
-/// the project's own scenes and prefabs actually name. That is smaller
-/// than the curated list would ever be — the engine's 13 MB of assets are
-/// mostly demos — and it cannot be wrong about a mesh somebody used.
 fn collect_assets(
     project_root: &Path,
     engine_root: Option<&Path>,
@@ -380,40 +298,9 @@ fn collect_assets(
 }
 
 /// Files that live under `assets/` and are not the game's.
-///
-/// 🔴 A `.buildpreset` describes how to *make* the game — output folder,
-/// target triple, cargo features. The game itself never reads one, and
-/// shipping it hands anyone who opens the pack a description of how it is
-/// built.
-///
-/// `.rendersettings` is the opposite and stays: exposure, ambient and
-/// shadow distance are what the project *looks* like, and the renderer
-/// reads them at startup.
 const AUTHORING_ONLY: [&str; 1] = [super::preset::BUILD_PRESET_EXTENSION];
 
 /// Every guid the game can reach, followed to a fixed point.
-///
-/// 🔴 The graph has DEPTH, and this used to read one level of it. A
-/// scene names a material and the material names a texture; collecting
-/// only what scenes and prefabs say ships the material and leaves the
-/// texture behind. A missing guid is silent, so the game starts and
-/// samples the 1x1 white fallback — a textured surface that renders like
-/// somebody authored it flat. Reported from a build made for the
-/// handheld, and the earlier shape of this same bug is recorded two
-/// functions down.
-///
-/// # How it walks
-///
-/// An index of `guid -> path` built once over both trees, then a
-/// worklist from the roots. Each guid is visited **once**: a texture
-/// forty materials share is queued once, resolved once, and its file
-/// read once. That is what makes a cycle — two prefabs naming each
-/// other — terminate rather than hang the build.
-///
-/// The roots are every project asset that travels, not just its
-/// documents. The project ships whole, so any file in it can reach into
-/// the engine's tree, which is exactly what a project material with an
-/// engine texture does.
 fn reachable_guids(
     project_root: &Path,
     engine_root: Option<&Path>,
@@ -453,10 +340,9 @@ fn reachable_guids(
     // brings the textures it points at.
     queue.extend(declared_roots(project_root, engine_root));
 
-    // 🔴 The roots are the project's FILES, not their guids. The whole
-    // project ships, so anything in it can reach into the engine's tree
-    // — and a scene has no sidecar of its own, so keying the roots off
-    // guids drops the very documents the walk exists to start from.
+    // 🔴 The roots are the project's FILES, not their guids. The whole project ships, so anything in
+    // it can reach into the engine's tree — and a scene has no sidecar of its own, so keying the
+    // roots off guids drops the very documents the walk exists to start from.
     let mut project_files = Vec::new();
     walk(&project_root.join("assets"), "assets", &mut project_files);
     for (name, path) in project_files {
@@ -492,21 +378,6 @@ fn reachable_guids(
 }
 
 /// The manifest's `build.include` list, resolved to files.
-///
-/// A path is looked for in the project first and in the engine second,
-/// which is the order everything else here resolves names in: the
-/// project is the author and wins.
-///
-/// ⚠️ A declared path that resolves to nothing is REPORTED, not fatal.
-/// It is the same class of mistake this whole walk exists to prevent —
-/// an asset that does not ship — so it must not be silent; but refusing
-/// to build over one stale line in a manifest is a worse trade than a
-/// build that says what it could not find.
-/// ⚠️ Guids, not files. Reading the declared file directly looks like
-/// the thorough thing to do and is unreachable: a declared file in the
-/// PROJECT is already read as a root, and one in the engine has a
-/// sidecar, so its guid goes on the queue and the walk opens it there.
-/// Written, found untestable, removed.
 fn declared_roots(project_root: &Path, engine_root: Option<&Path>) -> Vec<String> {
     let Ok(manifest) = crate::project::ProjectManifest::load(project_root) else {
         return Vec::new();
@@ -532,16 +403,6 @@ fn declared_roots(project_root: &Path, engine_root: Option<&Path>) -> Vec<String
 }
 
 /// Extensions whose bytes cannot name another asset.
-///
-/// 🔴 Verified across every loader this engine registers: nothing
-/// binary embeds a guid. A `.glb` is geometry and its material is
-/// assigned by the scene, not by the file.
-///
-/// This exists for cost, not for correctness — reading a 16 MB texture
-/// to search it for a 36-character string is waste repeated once per
-/// asset. ⚠️ **A binary format that starts referencing assets has to
-/// come off this list**, and `binary_formats_reference_nothing` in the
-/// tests is what fails when one is added without doing so.
 pub(super) const OPAQUE_FORMATS: [&str; 7] = ["png", "jpg", "jpeg", "glb", "gltf", "bin", "kpack"];
 
 /// The file's text, or `None` when it cannot name anything.
@@ -560,12 +421,6 @@ fn read_if_text(path: &Path) -> Option<String> {
 }
 
 /// A guid as bytes only, so two spellings of one id compare equal.
-///
-/// 🔴 `Guid::to_string()` writes no hyphens and a scene file writes them,
-/// so comparing the two as they come found nothing — every engine asset
-/// looked unreferenced and none of them shipped. The first symptom was a
-/// game whose Suzanne was missing, which is also what the curated list
-/// this replaced used to do.
 fn normalise_guid(guid: &str) -> String {
     guid.chars()
         .filter(|c| c.is_ascii_hexdigit())
@@ -574,12 +429,6 @@ fn normalise_guid(guid: &str) -> String {
 }
 
 /// Every `"xxxxxxxx-xxxx-…"` in `text`.
-///
-/// A shape match rather than a parse: the document format is RON and the
-/// guids sit inside `AssetRef(guid: Some("…"))`, but reaching for them
-/// through the type would mean deserialising a scene here — and a scene
-/// that fails to deserialise must not stop a build from packaging the
-/// rest.
 fn guids_in(text: &str) -> Vec<String> {
     text.split('"')
         .filter(|candidate| {
@@ -598,18 +447,6 @@ fn guid_of(path: &Path) -> Option<String> {
 }
 
 /// Whether a file travels into the build.
-///
-/// 🔴 An allowlist, and derived: a file no registered loader claims is
-/// not an asset. A `.blend` exported beside its `.glb` — which is what
-/// everyone does — is source, not content, and shipping it hands 80 MB
-/// and the editable original to whoever opens the pack.
-///
-/// Derived rather than a list somebody maintains, because a list is a
-/// second place to add an asset type and the day it is forgotten the
-/// type stops shipping with no error. `known_extensions()` comes from
-/// the loaders themselves.
-///
-/// `.meta` always travels: it is not an asset, it is how one is found.
 fn travels(name: &str, known: &[String]) -> bool {
     let stem = name.strip_suffix(".meta").unwrap_or(name);
     if authoring_only(stem) {
@@ -626,9 +463,6 @@ fn travels(name: &str, known: &[String]) -> bool {
 }
 
 /// Whether `name` is authoring configuration rather than game content.
-///
-/// Sidecars go with whatever they describe: a `.buildpreset.meta` left
-/// behind would be an orphan the pack scan counts and nothing resolves.
 fn authoring_only(name: &str) -> bool {
     let name = name.strip_suffix(".meta").unwrap_or(name);
     AUTHORING_ONLY
@@ -637,10 +471,6 @@ fn authoring_only(name: &str) -> bool {
 }
 
 /// Collects every file under `dir` as `prefix`-relative names.
-///
-/// ⚠️ Everything, `.meta` included: a scene references assets by GUID and
-/// the GUID lives in the sidecar. Everything except authoring-only files
-/// — see [`authoring_only`].
 fn walk(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;

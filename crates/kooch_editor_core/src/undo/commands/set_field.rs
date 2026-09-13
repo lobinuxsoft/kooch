@@ -72,13 +72,8 @@ impl EditorCommand for SetFieldCommand {
     }
 }
 
-/// Write a single reflected field, then re-derive `GlobalTransform`
-/// when the mutation touched a `Transform` component. The Inspector
-/// path used to skip propagation, so any same-frame consumer that
-/// reads `GlobalTransform` (the raymarch BVH kick included) saw the
-/// pre-edit pose for one extra frame. `TransformEditCommand` already
-/// runs propagation for the gizmo path; this aligns the Inspector
-/// with that contract — see #356.
+/// Write a single reflected field, then re-derive `GlobalTransform` when the mutation touched a
+/// `Transform` component.
 fn apply_field(
     resources: &mut Resources,
     type_id: &TypeId,

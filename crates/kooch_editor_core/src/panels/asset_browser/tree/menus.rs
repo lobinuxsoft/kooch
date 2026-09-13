@@ -18,10 +18,9 @@ pub(super) fn folder_menu(
     has_settings: bool,
     role: FolderRole,
 ) {
-    // Offered on folders too, and on read-only ones: opening the crate
-    // that owns a folder is how you get at the code behind it, which is
-    // the whole point of the entry. The handler resolves the workspace,
-    // so this works the same on a project folder and an engine one.
+    // Offered on folders too, and on read-only ones: opening the crate that owns a folder is how
+    // you get at the code behind it, which is the whole point of the entry. The handler resolves
+    // the workspace, so this works the same on a project folder and an engine one.
     if ui.button("Open in IDE").clicked() {
         actions.push(EditorAction::OpenInIde {
             file: node.path.clone(),
@@ -55,11 +54,9 @@ pub(super) fn folder_menu(
         ui.close();
     }
 
-    // 🔴 Every entry below is disabled outside the tree that would
-    // register it. The editor scans `assets/` for assets and `src/` for
-    // scripts, so a file created anywhere else is a file nothing reads —
-    // no error, no GUID, no compile, just a file. Disabled with the
-    // reason beats offering an action whose result is silence.
+    // 🔴 Every entry below is disabled outside the tree that would register it. The editor scans
+    // `assets/` for assets and `src/` for scripts, so a file created anywhere else is a file
+    // nothing reads — no error, no GUID, no compile, just a file.
     let mut entry = |ui: &mut egui::Ui, label: String, wants: FolderRole| {
         let refusal = role.refusal(wants);
         let resp = ui.add_enabled(refusal.is_none(), egui::Button::new(label));
@@ -80,11 +77,8 @@ pub(super) fn folder_menu(
         start(CreateKind::Material);
         ui.close();
     }
-    // Scripts are code and go under `src/`; a scene and an input map are
-    // assets and go under `assets/`. They were one menu called
-    // "New Script / Scene", which put three unrelated things behind one
-    // label and made the input map hard to find precisely because it
-    // belonged to none of them.
+    // Scripts are code and go under `src/`; a scene and an input map are assets and go under
+    // `assets/`.
     ui.menu_button(format!("{} New Script", icons::PLUS), |ui| {
         for (label, kind) in [
             (
@@ -137,11 +131,8 @@ pub(super) fn folder_menu(
         start(CreateKind::File(NewFileKind::BuildPreset));
         ui.close();
     }
-    // Settings are per project, and the renderer finds them by type: a
-    // second file is read by nothing and warns where nobody looks. Shown
-    // disabled rather than hidden, so a project that already has one says
-    // so instead of leaving someone hunting for a menu entry that was
-    // there yesterday.
+    // Settings are per project, and the renderer finds them by type: a second file is read by
+    // nothing and warns where nobody looks.
     let allowed = role.refusal(FolderRole::Assets).is_none() && !has_settings;
     let settings = ui.add_enabled(
         allowed,
@@ -194,14 +185,9 @@ pub(super) fn leaf_menu(
     is_main_scene: bool,
 ) {
     ui.set_min_width(240.0);
-    // Opening comes first: it is what a scene is FOR, and it was the one
-    // thing this menu could not do. Reaching a scene meant File > Open
-    // Scene and navigating to the file already under the pointer.
-    //
-    // 🔴 Keyed on the extension, not on `offers_main_scene`, which also
-    // asks whether the folder is writable. Opening a read-only scene --
-    // one vendored with the engine -- is a perfectly ordinary thing to
-    // want; setting it as the project's main scene is not.
+    // Opening comes first: it is what a scene is FOR, and it was the one thing this menu could not
+    // do. Reaching a scene meant File > Open Scene and navigating to the file already under the
+    // pointer.
     if is_scene(&leaf.path) {
         if ui
             .button(format!("{} Open Scene", icons::FOLDER_OPEN))
@@ -226,11 +212,9 @@ pub(super) fn leaf_menu(
         ui.separator();
     }
     if offers_main_scene(&leaf.path, writable) {
-        // Offered as disabled rather than hidden on the scene that
-        // already is the main one: a menu that changes shape depending on
-        // a state nothing else displays is how you end up right-clicking
-        // three scenes to find out which is which. The badge in the tree
-        // says which; this says it again where the question was asked.
+        // Offered as disabled rather than hidden on the scene that already is the main one: a menu
+        // that changes shape depending on a state nothing else displays is how you end up
+        // right-clicking three scenes to find out which is which.
         let entry = egui::Button::new(format!("{} Set as Main Scene", icons::GLOBE));
         let resp = ui.add_enabled(!is_main_scene, entry);
         if is_main_scene {
@@ -243,13 +227,9 @@ pub(super) fn leaf_menu(
         }
         ui.separator();
     }
-    // Prefabs only. A scene is the same format but not the same invariant:
-    // it may have any number of roots, and instancing needs exactly one.
-    // Offering this on a scene meant a four-root scene failed at the click
-    // instead of never being offered — see `project::PREFAB_EXTENSION`.
-    //
-    // Instancing adds to the open scene, unlike File > Open Scene which
-    // replaces it.
+    // Prefabs only. A scene is the same format but not the same invariant: it may have any number
+    // of roots, and instancing needs exactly one. Offering this on a scene meant a four-root scene
+    // failed at the click instead of never being offered — see `project::PREFAB_EXTENSION`.
     if leaf
         .path
         .extension()
@@ -258,10 +238,9 @@ pub(super) fn leaf_menu(
             .button(format!("{} Instantiate into Scene", icons::PACKAGE))
             .clicked()
     {
-        // Only a *registered* prefab can be instanced: the guid is what
-        // both the local spawn and the wire call address it by. An
-        // unregistered file has no identity yet, and the menu says nothing
-        // rather than offering an action that would fail.
+        // Only a *registered* prefab can be instanced: the guid is what both the local spawn and
+        // the wire call address it by. An unregistered file has no identity yet, and the menu says
+        // nothing rather than offering an action that would fail.
         if let Some((guid, _)) = &leaf.asset {
             actions.push(EditorAction::InstantiatePrefab {
                 prefab: *guid,
@@ -330,24 +309,11 @@ pub(super) fn leaf_menu(
 }
 
 /// Whether "Set as Main Scene" belongs on this file's menu (#808).
-///
-/// Scenes only, and only under a writable root. A `.material` is not
-/// something a game can open with, and the engine's shipped assets are
-/// somebody else's — pointing a project's manifest at one would store a
-/// path outside the project, which the handler refuses anyway.
-///
-/// 🔴 A prefab is the same format with a different extension and must
-/// **not** qualify: it carries exactly one root entity, so a game opening
-/// one would start with a single object and no camera. The extension is
-/// the only thing separating them — see `PREFAB_EXTENSION`.
 pub(super) fn offers_main_scene(path: &Path, writable: bool) -> bool {
     writable && is_scene(path)
 }
 
 /// Whether this file is a scene rather than a prefab.
-///
-/// The extension is the only thing separating them: same format, and a
-/// prefab carries exactly one root.
 pub(super) fn is_scene(path: &Path) -> bool {
     path.extension()
         .is_some_and(|ext| ext == crate::project::SCENE_EXTENSION)

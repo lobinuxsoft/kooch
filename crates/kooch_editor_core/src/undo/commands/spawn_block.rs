@@ -1,14 +1,4 @@
 //! [`SpawnBlockCommand`] — a new block, asset and entity together.
-//!
-//! Writes a fresh `.blockmesh.ron` holding a cube, registers it so it
-//! has a [`Guid`], then spawns an entity carrying `Name`, `Transform`,
-//! `Block`, `MeshRenderer` and `Collider`, pointing at it.
-//! `sync_blocks` fills the last two in from the source on the next
-//! frame.
-//!
-//! One command rather than two because a block's shape belongs to the
-//! entity standing in the level: sharing a source means editing either
-//! one moves both, which is occasionally wanted and never the default.
 
 use std::any::TypeId;
 use std::path::PathBuf;
@@ -118,11 +108,7 @@ impl SpawnBlockCommand {
             body.kind = kooch_physics::components::KIND_STATIC;
         }
 
-        // A prototype grid rather than the white default. The UVs
-        // `to_mesh` generates are one repeat per world unit, so a
-        // textured block SHOWS its size and shows a dragged face
-        // changing it — on flat white, a wall pulled two metres and a
-        // wall pulled four look identical.
+        // A prototype grid rather than the white default.
         if let Some(guid) = prototype_material(resources)
             && let Some(registry) = resources.get_mut::<ComponentRegistry>()
             && let Some(storage) = registry.get_cpu_mut::<MeshRenderer>()
@@ -160,11 +146,6 @@ impl SpawnBlockCommand {
 }
 
 /// The engine's own prototype grid, if it is registered.
-///
-/// Looked up by path rather than hard-coded as a GUID: a GUID lives in
-/// a sidecar that a fresh checkout regenerates, and a block spawning
-/// with a reference to a material from somebody else's machine is worse
-/// than one spawning white.
 pub(crate) fn prototype_material(resources: &Resources) -> Option<kooch_core::Guid> {
     const PROTOTYPE: &str = "materials/prototype/orange/orange_texture_01.material";
 
@@ -210,10 +191,6 @@ impl EditorCommand for SpawnBlockCommand {
     }
 
     /// Removes the entity and leaves the file.
-    ///
-    /// Deleting it would take a shape somebody may have already edited,
-    /// and an orphaned cube in `assets/blocks` is visible and cheap. A
-    /// redo finds it again by GUID rather than writing a second one.
     fn undo(&mut self, resources: &mut Resources) {
         let Some(entity) = self.entity else { return };
 

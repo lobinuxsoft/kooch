@@ -1,13 +1,4 @@
 //! [`PasteCommand`] — builds entities out of the clipboard.
-//!
-//! The local half of Ctrl+V. Remote mode has its own path, because the
-//! entities have to be built by the process that owns the world; both
-//! read the same [`EntityState`]s, so the two agree on what a paste *is*
-//! even though they cannot share how it is done.
-//!
-//! Undo despawns what the paste created. Redo builds it again — from the
-//! same captured values, so a paste undone and redone twenty times is the
-//! same entity twenty times.
 
 use kooch_core::resource::Resources;
 use kooch_ecs::allocator::EntityAllocator;
@@ -50,10 +41,9 @@ impl PasteCommand {
 impl EditorCommand for PasteCommand {
     fn execute(&mut self, resources: &mut Resources) {
         self.pasted.clear();
-        // 🔴 Resolved once for the whole paste, not once per entity.
-        // `SpawnTarget::NewScene` makes a scene every time it is asked,
-        // so resolving it inside the loop would give a clipboard of five
-        // entities five scenes holding one each.
+        // 🔴 Resolved once for the whole paste, not once per entity. `SpawnTarget::NewScene` makes a
+        // scene every time it is asked, so resolving it inside the loop would give a clipboard of
+        // five entities five scenes holding one each.
         let scene = super::place::resolve_scene(resources, self.into);
         for state in &self.states {
             let mut commands = resources.remove::<Commands>().expect("Commands not found");
@@ -67,9 +57,8 @@ impl EditorCommand for PasteCommand {
             if let Some(name) = entity_state::copy_name(state) {
                 rename(resources, entity, &name);
             }
-            // Without this the copy carries no `SceneMember`, lands
-            // under "Unsaved", and is adopted by whichever scene happens
-            // to be active at the next save — which is why pasting into
+            // Without this the copy carries no `SceneMember`, lands under "Unsaved", and is adopted
+            // by whichever scene happens to be active at the next save — which is why pasting into
             // a scene used to look like it created a new one.
             if let Some(scene) = scene {
                 super::place::adopt(resources, entity, scene);

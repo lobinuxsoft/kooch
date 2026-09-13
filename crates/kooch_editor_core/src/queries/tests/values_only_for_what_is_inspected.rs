@@ -1,10 +1,4 @@
 //! Reflected values are read for the selection and skipped elsewhere.
-//!
-//! Reading them was 5.26 ms of a 610-entity frame — 97% of the gather
-//! stage (#691) — for values only the Inspector reads, of the one entity
-//! it shows. What matters here is that skipping them stays *legible*:
-//! a component whose values were not read must not be indistinguishable
-//! from one whose type has no reflection.
 
 use std::collections::HashSet;
 

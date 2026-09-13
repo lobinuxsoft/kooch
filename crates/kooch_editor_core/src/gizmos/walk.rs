@@ -1,9 +1,4 @@
 //! The velocity being asked for, beside the one the body has.
-//!
-//! Both are invisible. A character that will not stop and one that is
-//! merely slow look identical standing still, and the difference is
-//! whether the goal went to zero — which is a number in a resource
-//! nobody can open.
 
 use glam::Vec3;
 

@@ -1,14 +1,4 @@
 //! Input Map panel — where bindings are configured.
-//!
-//! Shows the map and what the **running host** says each action is worth;
-//! it never resolves the map itself. Evaluating for display while the
-//! host evaluates for play would put one value in two code paths — the
-//! shape behind all five prefab bugs in #611. Hence an empty live column
-//! when nothing is playing.
-//!
-//! Rebinding reads the editor's own input backend (#711,
-//! `bootstrap.rs`), registered after the egui layer so a key typed into a
-//! focused field stops there.
 
 use kooch_input::actions::{
     Action, ActionMap, Binding, BothHeld, Composite, ControlPath, ControlType, DeviceClass,
@@ -32,12 +22,6 @@ pub(crate) struct InputMapView<'a> {
     /// What the properties pane at the bottom is editing.
     pub selected: Option<Selection>,
     /// Whether the open document is a single `.inputaction`.
-    ///
-    /// It is held as a map of one, so everything below draws the same
-    /// either way — what changes is that the map-level controls (add an
-    /// action, delete one, the priority) describe something the file does
-    /// not have, and offering them would let you save a `.inputaction`
-    /// with two actions in it.
     pub single_action: bool,
 }
 
@@ -66,10 +50,6 @@ pub(crate) struct BindingAddress {
 }
 
 /// Whose processor list an edit is aimed at.
-///
-/// Both lists exist and run at different moments: a binding's shape the
-/// **device** (a stick's deadzone), an action's shape the **meaning**,
-/// once, on whichever binding won.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum ProcessorTarget {
     Binding(BindingAddress),
@@ -130,9 +110,6 @@ pub(crate) enum InputMapAction {
         index: usize,
     },
     /// Move one up (`-1`) or down (`+1`).
-    ///
-    /// Order is meaning, not presentation: a deadzone after a scale cuts
-    /// a different amount than one before it.
     MoveProcessor {
         to: ProcessorTarget,
         index: usize,
@@ -184,12 +161,8 @@ pub(crate) fn draw_input_map_content(
     }
     ui.separator();
 
-    // Unity's third column. A column rather than a strip along the
-    // bottom: the strip's fixed height came off the tree whether or not
-    // anything was selected, and the tree is the part that grows.
-    //
-    // Before the central panel, because egui allocates edges first —
-    // reversed, the side panel gets only what the tree declined.
+    // Unity's third column. A column rather than a strip along the bottom: the strip's fixed height
+    // came off the tree whether or not anything was selected, and the tree is the part that grows.
     let (default_width, width_range) = properties_column(ui.available_width());
     // `Panel::right` rather than `SidePanel`: egui 0.35 folded the four
     // side/top/bottom builders into one `Panel`, so the old name does not
@@ -221,23 +194,14 @@ pub(crate) fn draw_input_map_content(
     actions
 }
 
-/// Starting width of the properties column and the range a drag may take
-/// it to, for a tab of `tab_width`.
-///
-/// Fractions, never pixels: a 190px floor on a 260px tab left the tree
-/// 70px and pushed the properties off the right edge. A fixed minimum
-/// does not stop the window shrinking under it, it just stops fitting.
-/// The ceiling is half the tab, so the properties never outgrow the tree.
+/// Starting width of the properties column and the range a drag may take it to, for a tab of
+/// `tab_width`.
 fn properties_column(tab_width: f32) -> (f32, std::ops::RangeInclusive<f32>) {
     (tab_width * 0.34, (tab_width * 0.25)..=(tab_width * 0.5))
 }
 
-/// A labelled control: side by side when there is room, stacked when
-/// there is not. `add` receives the width to take.
-///
-/// Squeezing a field into what is left of a narrow line is what clipped
-/// `Binding — left` to `g — left`. The threshold comes off the font, so
-/// it follows editor zoom.
+/// A labelled control: side by side when there is room, stacked when there is not. `add` receives
+/// the width to take.
 fn labeled_control<R>(
     ui: &mut egui::Ui,
     label: &str,
@@ -353,12 +317,9 @@ fn draw_properties(
                     draw_composite_parameters(ui, at, *composite, out);
                     ui.weak("Its parts are the rows underneath.");
                     ui.separator();
-                    // A head carries processors like any other binding —
-                    // `read_action` applies them to the composite's
-                    // assembled value, which is the only place a stick
-                    // deadzone belongs: on the vector, not on each axis.
-                    // Filtered by what the composite produces rather than
-                    // by the action's type, since that is what arrives.
+                    // A head carries processors like any other binding — `read_action` applies them
+                    // to the composite's assembled value, which is the only place a stick deadzone
+                    // belongs: on the vector, not on each axis.
                     draw_processors(
                         ui,
                         ProcessorTarget::Binding(at),
@@ -388,9 +349,6 @@ fn draw_properties(
 }
 
 /// The binding's processors, in the order they run.
-///
-/// Order is meaning: a deadzone before a scale cuts the raw value, after
-/// it cuts the scaled one. So they are a list you can reorder, not a set.
 fn draw_processors(
     ui: &mut egui::Ui,
     to: ProcessorTarget,
@@ -598,11 +556,6 @@ fn both_held_label(both: BothHeld) -> &'static str {
 }
 
 /// Picks the control a binding reads.
-///
-/// Two dropdowns rather than Unity's control-path tree: ours is a closed
-/// enum, so the device narrows the list and `ALL` makes it exhaustive by
-/// construction. Theirs has to parse `<Gamepad>/buttonSouth` out of a
-/// string and offer wildcards on top.
 fn draw_control_picker(
     ui: &mut egui::Ui,
     at: BindingAddress,
@@ -717,10 +670,9 @@ fn draw_action(
                 }
                 ui.weak(control_type_label(action.control_type));
 
-                // The live half. Only meaningful while something plays,
-                // and deliberately absent rather than zeroed otherwise —
-                // a zero would read as "not firing", which is a different
-                // statement from "nobody is asking".
+                // The live half. Only meaningful while something plays, and deliberately absent
+                // rather than zeroed otherwise — a zero would read as "not firing", which is a
+                // different statement from "nobody is asking".
                 if let Some(live) = live {
                     ui.separator();
                     if live.pressed {
@@ -769,14 +721,6 @@ fn draw_action(
 }
 
 /// The "+ Composite" menu, listing what fits `control_type`.
-///
-/// Filtered the way Unity filters its own, and for the same reason: a 2D
-/// composite under a Button action is a binding that reads as nothing,
-/// with no error to say why. Offering it is offering a trap.
-///
-/// Everything is offered when nothing fits, rather than an empty menu —
-/// a menu that opens onto nothing reads as broken, and the type is one
-/// click away in the properties pane.
 fn draw_add_composite_menu(
     ui: &mut egui::Ui,
     action: usize,

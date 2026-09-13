@@ -1,17 +1,4 @@
 //! [`SpawnMeshCommand`] — spawns an entity bound to a meshlet asset.
-//!
-//! Unity-style flow: load the source `.glb` through the
-//! [`AssetServer`] (which generates a `.meta` sidecar at first import
-//! and registers the resulting [`Guid`] in the [`AssetDatabase`]),
-//! then spawn an entity with `Name + Transform + MeshRenderer` and
-//! write the resolved GUID into `MeshRenderer.mesh`.
-//!
-//! Distinct from the generic [`SpawnCommand`](super::SpawnCommand)
-//! because the asset-bound case needs a side-effect (load + GUID
-//! resolution) before the spawn step, and a direct field write that
-//! reflection cannot perform — `MeshRenderer.mesh` is `#[reflect(skip)]`
-//! so the inspector never tries to expose an opaque GUID as an editable
-//! string.
 
 use std::any::TypeId;
 use std::path::PathBuf;

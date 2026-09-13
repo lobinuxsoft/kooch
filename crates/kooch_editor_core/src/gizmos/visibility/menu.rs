@@ -5,15 +5,8 @@ use kooch_core::resource::Resources;
 
 use super::{GizmoGroup, GizmoVisibility, group_visualizers};
 
-/// Draws the Gizmos dropdown: a master switch, then a checkbox per
-/// category, then the components inside each.
-///
-/// Three levels because "hide all physics" and "hide only the colliders"
-/// are both things you want, and a flat list is the part of Unity's own
-/// panel people complain about.
-///
-/// `groups` comes from [`group_visualizers`], so the menu lists whatever is
-/// registered — a visualizer added later appears here with no change.
+/// Draws the Gizmos dropdown: a master switch, then a checkbox per category, then the components
+/// inside each.
 pub(crate) fn draw_gizmo_menu(
     ui: &mut egui::Ui,
     visibility: &mut GizmoVisibility,

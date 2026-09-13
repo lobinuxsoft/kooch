@@ -1,13 +1,4 @@
 //! Persists the editor's dock layout between sessions.
-//!
-//! Saves to `$XDG_CONFIG_HOME/kooch/editor_layout.ron` (Linux/macOS) or the
-//! platform equivalent. The file is per-user and **not** versioned with
-//! the project — it's UI preference, not scene data.
-//!
-//! Save strategy: on each frame in [`Stage::Last`](kooch_core::stage::Stage),
-//! re-serialize the current `DockState` and compare to the last cached
-//! string. Only writes to disk when the serialization actually differs,
-//! so steady-state editing produces zero disk traffic.
 
 use std::path::PathBuf;
 
@@ -101,10 +92,8 @@ pub(crate) fn load_layout_system(resources: &mut Resources) {
     }
 }
 
-/// Save system: re-serializes the current dock state and writes to disk
-/// only when it differs from the last cached serialization. Designed to
-/// run every frame in [`Stage::Last`](kooch_core::stage::Stage) at minimal
-/// cost — typical frames produce zero disk writes.
+/// Save system: re-serializes the current dock state and writes to disk only when it differs from
+/// the last cached serialization.
 pub(crate) fn save_layout_system(resources: &mut Resources) {
     // Phase 1: snapshot the dock state and its serialization in a tight
     // scope so the immutable borrow on Resources is released before the

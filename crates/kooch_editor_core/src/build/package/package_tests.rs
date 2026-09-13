@@ -44,9 +44,6 @@ const ENGINE_MATERIAL: &str = "11111111-0000-4000-8000-000000000001";
 const ENGINE_CUBE: &str = "22222222-0000-4000-8000-000000000002";
 
 /// A project with a scene, an asset and its sidecar.
-///
-/// The scene names the engine assets it draws — which is what decides
-/// whether they travel, since a curated list guessed wrong once already.
 fn project(root: &Path) {
     write(
         &root.join(kooch_core::scene_paths::DEFAULT_SCENE_REL_PATH),
@@ -560,11 +557,8 @@ fn render_settings_still_ship() {
     );
 }
 
-/// 🔴 The bug this replaced a curated list to fix: a scene using the
-/// engine's `suzanne.glb` shipped without it and rendered nothing. The
-/// old filter copied `materials` and `meshes/primitives` — a list
-/// borrowed from *vendoring*, which answers "what source does a project
-/// need to build", not "what does this game draw".
+/// 🔴 The bug this replaced a curated list to fix: a scene using the engine's `suzanne.glb` shipped
+/// without it and rendered nothing.
 #[test]
 fn an_engine_asset_the_scene_uses_ships() {
     let dir = tmp("suzanne");
@@ -645,12 +639,8 @@ fn an_engine_asset_nothing_uses_stays_behind() {
     );
 }
 
-/// 🔴 Without this the game cannot know which scene it opens with, and
-/// `main_scene` goes back to being a field nothing reads (#808).
-///
-/// The bootstrap looks for the manifest **beside the executable**,
-/// before the asset system exists — so it must be a plain file there,
-/// not an entry in the pack.
+/// 🔴 Without this the game cannot know which scene it opens with, and `main_scene` goes back to
+/// being a field nothing reads (#808).
 #[test]
 fn the_manifest_travels_beside_the_binary() {
     let dir = tmp("manifest");
@@ -727,11 +717,6 @@ fn chained(dir: &Path, key: &PackKey) -> Package {
 }
 
 /// 🔴 The bug: a texture named only by a material has to travel.
-///
-/// The scene names the material, so the material shipped and the texture
-/// did not — and a missing guid is silent, so the game rendered the 1x1
-/// white fallback and looked like a material somebody authored flat.
-/// Reported from a build made for the handheld.
 #[test]
 fn a_texture_named_only_by_a_material_travels() {
     let dir = tmp("packager_chain");
@@ -749,12 +734,6 @@ fn a_texture_named_only_by_a_material_travels() {
 }
 
 /// 🔴 A cycle terminates.
-///
-/// Two prefabs naming each other is authorable — a door prefab
-/// referencing the room it opens into — and a closure that re-queues
-/// what it has already seen turns that into a build which never
-/// finishes. The dedup is what makes this a test that returns rather
-/// than one that hangs the suite.
 #[test]
 fn a_reference_cycle_terminates() {
     let dir = tmp("packager_cycle");
@@ -796,11 +775,6 @@ fn a_reference_cycle_terminates() {
 }
 
 /// 🔴 And the engine's demos still stay behind.
-///
-/// The failure mode of a transitive closure is the opposite of the bug
-/// it fixes: follow one reference too far and the pack grows back into
-/// the engine's 13 MB of demo content. Reachability has to stay
-/// reachability.
 #[test]
 fn the_closure_does_not_swallow_the_engine() {
     let dir = tmp("packager_bounded");
@@ -814,16 +788,6 @@ fn the_closure_does_not_swallow_the_engine() {
 }
 
 /// An asset many things name is collected once.
-///
-/// Measured as a DIFFERENCE rather than a total: the fixture ships its
-/// own files, so an absolute count is a number that has to be updated
-/// whenever the fixture grows — and the first version of this test
-/// asserted 8, got 14, and was measuring the fixture.
-///
-/// Three materials sharing one texture must cost exactly two files more
-/// than one material sharing it — the extra `.ron` and its `.meta`. A
-/// closure that queued the texture once per referrer would copy it
-/// again each time.
 #[test]
 fn a_shared_asset_is_collected_once() {
     fn pack_with(materials: usize, tag: &str) -> usize {
@@ -873,17 +837,6 @@ fn a_shared_asset_is_collected_once() {
 }
 
 /// 🔴 The case that needs the recursion, and not just the roots.
-///
-/// The project's own files are all read as roots, so a PROJECT material
-/// reaching an engine texture is found without following anything —
-/// which is why the first version of the test above passed with the
-/// closure removed entirely.
-///
-/// This is the chain that only a walk can resolve: a scene names an
-/// ENGINE material, and that material — a file the project never
-/// touches — names an ENGINE texture. Exactly the shape of the shipped
-/// prototype pack, where `dark_texture_08.ron` lives beside its own png
-/// in the engine's tree.
 #[test]
 fn a_chain_inside_the_engine_resolves() {
     let dir = tmp("packager_engine_chain");
@@ -926,9 +879,6 @@ fn a_chain_inside_the_engine_resolves() {
 }
 
 /// Extensions the packager reads looking for references.
-///
-/// The counterpart of [`OPAQUE_FORMATS`]: between the two, every format
-/// this engine loads is accounted for.
 const TEXT_FORMATS: [&str; 7] = [
     "material",
     "scene",
@@ -942,21 +892,7 @@ const TEXT_FORMATS: [&str; 7] = [
     "inputaction",
 ];
 
-/// 🔴 A new asset format has to be classified, and nothing else forces
-/// it.
-///
-/// The packager decides whether to read a file by extension: text is
-/// searched for references, binary is skipped. Both answers are silent
-/// when wrong — a binary read as text finds nothing and ships an
-/// incomplete pack; a text file skipped does the same. Neither fails to
-/// compile and neither logs.
-///
-/// So the test is the forcing function. Add a loader, and this fails
-/// until its extension is named as one or the other. ⚠️ Today the
-/// answer for every binary format is "references nothing", which is a
-/// fact about this engine and not a law: a `.glb` carries geometry and
-/// its material is assigned by the scene. When that stops being true,
-/// the format moves to [`TEXT_FORMATS`] and the packager follows it.
+/// 🔴 A new asset format has to be classified, and nothing else forces it.
 #[test]
 fn every_asset_format_is_classified() {
     let server = every_loader();
@@ -980,13 +916,6 @@ fn every_asset_format_is_classified() {
 }
 
 /// 🔴 An asset only the game's code names still ships.
-///
-/// The walk collects what the game can REACH by reading files, and a
-/// guid built in Rust — loaded by path, chosen from a table, assembled
-/// from a string — is reachable by nothing. Unity answers this with
-/// `Resources/`, Godot with export filters; this manifest answers it
-/// with a list, because the assets in question usually live in the
-/// ENGINE's tree where a project cannot put a folder.
 #[test]
 fn a_declared_asset_ships_without_being_named() {
     let dir = tmp("packager_declared");
@@ -1028,10 +957,6 @@ fn a_declared_asset_ships_without_being_named() {
 }
 
 /// And a declared asset is a ROOT, so what it names comes too.
-///
-/// Declaring a material and then having to declare its three textures
-/// as well would be a list that goes stale the first time somebody edits
-/// the material.
 #[test]
 fn a_declared_asset_brings_what_it_references() {
     let dir = tmp("packager_declared_chain");
@@ -1091,15 +1016,6 @@ fn a_declared_asset_brings_what_it_references() {
 }
 
 /// 🔴 One extension, one type.
-///
-/// The scan resolves a loader with a `find` over the registered
-/// extensions, so two loaders claiming the same one means whichever was
-/// registered first silently wins. That is what typed a block written
-/// as `.ron` as a material — the inspector drew it with a base colour
-/// and nothing could load it as what it was.
-///
-/// Naming a format after its syntax is how it happens, so the fix is
-/// the rule: a format is named after the thing.
 #[test]
 fn no_two_loaders_claim_one_extension() {
     use std::collections::HashMap;
@@ -1113,9 +1029,8 @@ fn no_two_loaders_claim_one_extension() {
             .push(type_name.to_owned());
     }
 
-    // `glb` and `gltf` are the documented exception: `Mesh` and
-    // `MeshletMesh` are two views of ONE file, chosen by the type the
-    // caller asks for, and the scan wanting the meshlet is the right
+    // `glb` and `gltf` are the documented exception: `Mesh` and `MeshletMesh` are two views of ONE
+    // file, chosen by the type the caller asks for, and the scan wanting the meshlet is the right
     // answer. Two loaders reading DIFFERENT files is the bug.
     const TWO_VIEWS_OF_ONE_FILE: [&str; 2] = ["glb", "gltf"];
 

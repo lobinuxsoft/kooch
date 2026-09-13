@@ -5,11 +5,6 @@ use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::transform::Transform;
 
 /// An archetype the camera has *left* still lists the marker.
-///
-/// This is what froze the editor camera: the lookup returned from
-/// inside the loop, so the first archetype carrying `EditorCamera`
-/// decided the answer even when it held no entities. Adding or
-/// removing any component on the camera produces exactly this shape.
 #[test]
 fn an_empty_archetype_with_the_marker_does_not_hide_the_camera() {
     let mut resources = Resources::new();

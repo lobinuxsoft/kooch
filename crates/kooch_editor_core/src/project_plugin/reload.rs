@@ -1,17 +1,4 @@
-//! What a reload did to a project's component types, and saying it out
-//! loud.
-//!
-//! # Why a report, and not just a log line
-//!
-//! The engine's standing policy is to break data rather than write
-//! migrations — which is only safe while breaking is LOUD. A reload is
-//! where that policy is cashed: a field dropped from a struct takes the
-//! value off every entity carrying it, and a type renamed makes the
-//! component disappear from them entirely. Both are the author's own
-//! edit, both are usually intended, and neither produces an error.
-//!
-//! So the swap names what it did. Silence would be indistinguishable
-//! from a reload that changed nothing.
+//! What a reload did to a project's component types, and saying it out loud.
 
 use kooch_ecs::component::DynamicTypeRegistry;
 use kooch_ecs::reflect::FieldKind;
@@ -22,10 +9,6 @@ pub struct Reloaded {
     /// Types the new library declares and the old one did not.
     pub gained: Vec<String>,
     /// Types the old library declared and the new one does not.
-    ///
-    /// 🔴 The loud one. Instances stay parked under the old name, so the
-    /// data is not gone — but nothing will draw it, and a save writes it
-    /// back to a type no code claims.
     pub lost: Vec<String>,
     /// Types that survived with a different shape.
     pub changed: Vec<Changed>,
@@ -49,11 +32,6 @@ pub struct Changed {
 
 impl Reloaded {
     /// What the new registry says that the old one did not.
-    ///
-    /// Compared by name in both directions, because a rename is a loss
-    /// and a gain rather than a change — the two schemas share no
-    /// identity, and pretending otherwise would silently carry values
-    /// into a type that never held them.
     pub fn between(before: &DynamicTypeRegistry, after: &DynamicTypeRegistry) -> Self {
         let mut report = Self::default();
         for old in before.iter() {
@@ -78,10 +56,6 @@ impl Reloaded {
     }
 
     /// Whether the two libraries declare the same thing.
-    ///
-    /// A rebuild that only changed a function body lands here, and it is
-    /// the common case: the types are identical and there is nothing to
-    /// announce.
     pub fn is_quiet(&self) -> bool {
         self.gained.is_empty() && self.lost.is_empty() && self.changed.is_empty()
     }

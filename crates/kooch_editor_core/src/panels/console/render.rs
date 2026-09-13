@@ -22,10 +22,9 @@ pub(crate) fn draw_console(
     state.sync(buffer);
 
     ui.horizontal(|ui| {
-        // One toggle per severity rather than a "minimum level" dropdown.
-        // A threshold cannot express "hide the warnings, keep the rest",
-        // which is the thing anyone wants when one warning repeats three
-        // hundred times and buries the log (#641).
+        // One toggle per severity rather than a "minimum level" dropdown. A threshold cannot
+        // express "hide the warnings, keep the rest", which is the thing anyone wants when one
+        // warning repeats three hundred times and buries the log (#641).
         for level in ALL_LEVELS {
             let mut shown = state.levels.shows(level);
             let label = egui::RichText::new(level_name(level)).color(match shown {
@@ -102,11 +101,9 @@ pub(crate) fn draw_console(
         handle_keyboard(ui, state);
     }
 
-    // One line per row, and only the rows on screen are built. Wrapping
-    // would make rows different heights, and a virtualised list needs to
-    // know where row N starts without having laid out the N-1 before it —
-    // so a long line scrolls sideways instead of folding. That is the
-    // trade this panel makes to stay free with a full log.
+    // One line per row, and only the rows on screen are built. Wrapping would make rows different
+    // heights, and a virtualised list needs to know where row N starts without having laid out the
+    // N-1 before it — so a long line scrolls sideways instead of folding.
     let row_height =
         ui.text_style_height(&egui::TextStyle::Monospace) + ui.spacing().item_spacing.y;
 
@@ -133,19 +130,6 @@ pub(crate) fn draw_console(
                 continue;
             };
             // Keyed on the line, not on the slot it landed in.
-            //
-            // Without this every widget takes an automatic id, which
-            // egui hands out by order of creation — so a row emitting a
-            // different number of fragments renames every widget after
-            // it. Rows are a fixed height, so nothing moves on screen:
-            // same rect, new id, which is exactly what egui reports
-            // (#641). And the report is itself a log line, which shifts
-            // the rows again — that is why one bad frame produced three
-            // hundred of them.
-            //
-            // The absolute sequence, not the index: the buffer drops
-            // from the front, so index 0 is a different line after
-            // every eviction.
             let seq = dropped + index as u64;
             ui.push_id(seq, |ui| {
                 let row = ui.horizontal(|ui| {
@@ -190,14 +174,6 @@ fn mono(text: impl Into<String>) -> egui::RichText {
 }
 
 /// Draws the message, with the structured fields picked out.
-///
-/// A line is `a sensor was entered a=8 b=9`, and the part anyone scans for
-/// is the numbers. Rendering it as one flat string makes the reader do
-/// that separation by eye, every line.
-///
-/// A warning or an error tints the whole message: at that point the
-/// severity *is* the message, and a level chip four columns to the left is
-/// not where the eye lands.
 fn draw_message(ui: &mut egui::Ui, entry: &LogEntry) {
     let tint = match entry.level {
         Level::ERROR | Level::WARN => Some(level_colour(entry.level)),
@@ -205,10 +181,9 @@ fn draw_message(ui: &mut egui::Ui, entry: &LogEntry) {
     };
 
     for part in split_fields(&entry.message) {
-        // `selectable(true)` rather than `ui.label`: a plain label cannot
-        // be dragged over, so the text was unreachable — a log you can
-        // read and not quote is half a log. Selection still stops at each
-        // fragment, which is what the copy actions below are for.
+        // `selectable(true)` rather than `ui.label`: a plain label cannot be dragged over, so the
+        // text was unreachable — a log you can read and not quote is half a log. Selection still
+        // stops at each fragment, which is what the copy actions below are for.
         match part {
             Part::Text(text) => {
                 let rich = match tint {
@@ -226,10 +201,6 @@ fn draw_message(ui: &mut egui::Ui, entry: &LogEntry) {
 }
 
 /// One log line as plain text, the way someone would paste it.
-///
-/// Rebuilt from the entry rather than from the drawn fragments: what is
-/// on screen is split into coloured pieces for scanning, and pasting that
-/// separation into a bug report helps nobody.
 pub(super) fn line_as_text(entry: &LogEntry) -> String {
     format!(
         "{} {} {}",
@@ -246,11 +217,6 @@ enum Part<'a> {
 }
 
 /// Splits a message into prose and `key=value` runs.
-///
-/// Whitespace-separated tokens containing `=` are fields; everything else
-/// is prose, kept contiguous so wrapping behaves. Deliberately simple: a
-/// message that happens to contain an equals sign is coloured slightly
-/// oddly, which is a better failure than a parser that swallows a line.
 fn split_fields(message: &str) -> Vec<Part<'_>> {
     let mut parts = Vec::new();
     let mut prose_start = None::<usize>;
@@ -314,9 +280,6 @@ fn level_colour(level: Level) -> egui::Color32 {
 }
 
 /// The last segment of a module path.
-///
-/// `kooch_editor_core::actions::handlers` is thirty characters of mostly
-/// nothing on every line; `handlers` is the part that differs.
 fn short_target(target: &str) -> &str {
     target.rsplit("::").next().unwrap_or(target)
 }
@@ -325,14 +288,10 @@ fn short_target(target: &str) -> &str {
 mod tests;
 
 /// Moves the console's cursor with the keyboard.
-///
-/// Only reached when this panel has focus; the arrows belong to whichever
-/// panel the user last clicked (#661).
 fn handle_keyboard(ui: &egui::Ui, state: &mut ConsoleState) {
-    // A text field with keyboard focus owns the arrows — moving a caret is
-    // what they mean there. The filter box is one click away from every
-    // row in this panel, so without this the panel and the field fight
-    // over every keystroke and the field wins silently.
+    // A text field with keyboard focus owns the arrows — moving a caret is what they mean there.
+    // The filter box is one click away from every row in this panel, so without this the panel and
+    // the field fight over every keystroke and the field wins silently.
     if ui.memory(|m| m.focused().is_some()) {
         return;
     }

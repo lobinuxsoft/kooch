@@ -55,12 +55,9 @@ fn apply_deferred_actions(
     actions: &[EditorAction],
     undo_stack: &mut UndoStack,
 ) {
-    // Not just "did the user do something": a prefab saved last frame
-    // queued work that is drained inside `apply_actions`, and an idle
-    // frame returning early is a frame that queue does not drain. It then
-    // waits for the next unrelated action and lands in *that* batch, which
-    // is how propagating a prefab appeared to only happen when the user
-    // reverted an instance.
+    // Not just "did the user do something": a prefab saved last frame queued work that is drained
+    // inside `apply_actions`, and an idle frame returning early is a frame that queue does not
+    // drain.
     if actions.is_empty() && !crate::actions::prefab_propagate::anything_queued(resources) {
         return;
     }
@@ -72,9 +69,8 @@ fn apply_deferred_actions(
 
     if has_open_scene && let Some(overlay) = resources.get_mut::<EditorOverlay>() {
         overlay.selected_entities.clear();
-        // Pins name entities from the world that just went away. Entity
-        // ids are generational, so a stale one cannot match a new
-        // entity — but keeping them would grow the set for the life of
+        // Pins name entities from the world that just went away. Entity ids are generational, so a
+        // stale one cannot match a new entity — but keeping them would grow the set for the life of
         // the session with ids nothing will ever draw.
         overlay.pinned_gizmos.clear();
         overlay.last_clicked_index = None;
@@ -87,10 +83,8 @@ fn apply_deferred_actions(
 
 /// Render system: runs egui UI and renders the overlay to the surface.
 pub(crate) fn editor_render_system(resources: &mut Resources) {
-    // #463.2 — capture the start of the CPU-side render work so the
-    // perf HUD can report `cpu_frame_ms` (excludes GPU + present).
-    // The matching `record_cpu_frame_ms` call lives at the end of
-    // this function.
+    // perf HUD can report `cpu_frame_ms` (excludes GPU + present). The matching
+    // `record_cpu_frame_ms` call lives at the end of this function.
     let frame_cpu_start = std::time::Instant::now();
 
     // The buffer is cloned out first: it is an `Arc` handle, so this is
@@ -111,10 +105,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         false
     };
 
-    // The host's own output, which was captured and then never read by
-    // anyone. Everything a mirrored project says — including every physics
-    // event — happens over there, so without this the Console shows the
-    // editor talking to itself.
+    // The host's own output, which was captured and then never read by anyone. Everything a
+    // mirrored project says — including every physics event — happens over there, so without this
+    // the Console shows the editor talking to itself.
     forward_remote_output(resources);
 
     if poll_launcher(resources) {
@@ -201,34 +194,23 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<MeshletRenderStats>()
         .copied()
         .unwrap_or_default();
-    // 🔴 The GAME viewport's own, published under its own key. The
-    // resource above is written by the View camera's render alone, so
-    // the Game tab's overlay used to describe a frustum nobody was
-    // looking through — and a page count that never moved while the
-    // game camera did.
+    // 🔴 The GAME viewport's own, published under its own key. The resource above is written by the
+    // View camera's render alone, so the Game tab's overlay used to describe a frustum nobody was
+    // looking through — and a page count that never moved while the game camera did.
     let game_stats = resources
         .get::<crate::viewport::game::GameViewStats>()
         .map(|s| s.0)
         .unwrap_or_default();
 
-    // #463.4 — last frame's GPU timing (when adapter exposes
-    // TIMESTAMP_QUERY) propagates from the render stage into the
-    // perf HUD Resource so the View toolbar reads a single source.
-    // #463.5 — same single-write site for the engine VRAM counter:
-    // read the shared Arc<EngineVramTracker> and stamp the byte
-    // total. Both end up in EditorPerfStats so the toolbar reads
-    // exactly one Resource.
+    // TIMESTAMP_QUERY) propagates from the render stage into the perf HUD Resource so the View
+    // toolbar reads a single source.
     let vram_bytes = resources
         .get::<std::sync::Arc<kooch_render::EngineVramTracker>>()
         .map(|t| t.bytes())
         .unwrap_or(0);
-    // 🔴 EVERY scope, not the meshlet chain. `meshlet_stats.gpu_frame_ms`
-    // times cull → raster → shade for the main view and nothing else,
-    // so the shadow page passes were never in it: on `dense.scene` the
-    // HUD read 0.55 ms while the pages took about nine. The largest GPU
-    // cost in the engine had no row on screen. Falls back to the
-    // meshlet chain when the scopes are off, which is honest about
-    // being a lower bound rather than silently reporting nothing.
+    // 🔴 EVERY scope, not the meshlet chain. `meshlet_stats.gpu_frame_ms` times cull → raster →
+    // shade for the main view and nothing else, so the shadow page passes were never in it: on
+    // `dense.scene` the HUD read 0.55 ms while the pages took about nine.
     let gpu_ms = resources
         .get::<kooch_core::gpu::GpuScopes>()
         .and_then(|scopes| scopes.frame_ms())
@@ -240,16 +222,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         stats.gpu_frame_ms = gpu_ms;
         stats.vsync = vsync;
         stats.vram_tracked_bytes = vram_bytes;
-        // #463.6 — three editor passes always run regardless of
-        // scene contents: sky background, viewport blit, egui
-        // paint. Gizmo line / mesh batches only emit when the
-        // selection actually has something to visualize, so they
-        // are NOT included in the fixed budget — counting them
-        // here would inflate the number when there's nothing to
-        // draw and confuse the artist who just despawned every
-        // MeshRenderer. The meshlet stage already returns 0 when
-        // there are no instances; combined with EDITOR_BASE_PASSES
-        // the HUD shows a clean 3-draws floor in an empty scene.
+        // scene contents: sky background, viewport blit, egui paint.
         const EDITOR_BASE_PASSES: u32 = 3;
         stats.draw_calls = meshlet_stats.draw_calls + EDITOR_BASE_PASSES;
     }
@@ -262,16 +235,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             .resize_if_needed(gpu.device(), &mut overlay.renderer);
     }
 
-    // 🔴 Which history the Edit menu describes follows which one a
-    // Ctrl+Z would reach. With a project open that is the remote one —
-    // the local stack still holds commands, but they describe the mirror
-    // and nothing will ever run them again. Reading the wrong one is how
-    // the menu offered "Undo Duplicate Entity" for an edit made before
-    // the project was opened.
-    // Which document the Edit menu is describing, and therefore which
-    // history it reads. The kind comes from the asset database rather
-    // than the Inspector's own snapshot: both know, and the database
-    // knows before the panel has drawn.
+    // 🔴 Which history the Edit menu describes follows which one a Ctrl+Z would reach. With a
+    // project open that is the remote one — the local stack still holds commands, but they describe
+    // the mirror and nothing will ever run them again.
     let document = crate::history::resolve(
         overlay.focused_tab,
         overlay
@@ -343,13 +309,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .cloned()
         .unwrap_or_default();
 
-    // Snapshot the AssetDatabase once per frame for the inspector's
-    // typed asset picker. Empty when the database is missing — the
-    // picker dropdown will simply show "(no <Type> assets registered)".
-    // The two roots drive the `[engine]` / `[project]` source tag
-    // shown next to each entry — read from the already-extracted
-    // `project_state` local because `ProjectState` was removed from
-    // resources earlier in this function.
+    // Snapshot the AssetDatabase once per frame for the inspector's typed asset picker. Empty when
+    // the database is missing — the picker dropdown will simply show "(no <Type> assets
+    // registered)".
     let (engine_root_owned, project_root_owned) = match project_state.as_ref() {
         Some(ps) => (
             ps.engine_root.as_ref().map(|p| p.join("assets")),
@@ -377,21 +339,18 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         })
         .unwrap_or_default();
 
-    // Resolve the Asset Browser's selection into a data snapshot before
-    // the egui frame — the detail pane needs the asset's contents, and
-    // resolving them requires mutable `Resources` (AssetServer load).
-    // Cloned out: the UI takes `&mut Resources` for other things, and
-    // holding a borrow of one resource rules out asking for another.
+    // Resolve the Asset Browser's selection into a data snapshot before the egui frame — the detail
+    // pane needs the asset's contents, and resolving them requires mutable `Resources` (AssetServer
+    // load).
     let open_input_map = resources.get::<crate::state::OpenInputMap>().cloned();
     let asset_detail = overlay
         .selected_asset
         .and_then(|guid| crate::systems::asset_detail::gather_asset_detail(guid, resources));
     gather_stages.assets_ms = crate::perf::ms_since(assets_start);
 
-    // Lifted out for the frame: the Gizmos dropdown mutates it, and the
-    // egui closure already holds Resources immutably. Groups are resolved
-    // from the registry now rather than rebuilt inside the menu, so the
-    // panel is a pure draw over data.
+    // Lifted out for the frame: the Gizmos dropdown mutates it, and the egui closure already holds
+    // Resources immutably. Groups are resolved from the registry now rather than rebuilt inside the
+    // menu, so the panel is a pure draw over data.
     let mut gizmo_visibility = resources
         .get::<crate::gizmos::GizmoVisibility>()
         .cloned()
@@ -426,10 +385,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<crate::actions::PendingPrefabOverwrite>()
         .cloned();
 
-    // The Build panel's view of things. Assembled here rather than in
-    // the panel because the panel draws and does not read resources —
-    // and because the job has to be polled whether or not its tab is
-    // even visible (#758).
+    // The Build panel's view of things. Assembled here rather than in the panel because the panel
+    // draws and does not read resources — and because the job has to be polled whether or not its
+    // tab is even visible (#758).
     let build_panel = {
         // Two statements, not one: polling takes `resources` mutably and
         // so does loading the presets, and the first borrow has to end
@@ -466,10 +424,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         ..Default::default()
     };
 
-    // What the isolated light casts, in words (#743). Read before the
-    // UI runs because the panel has no `Resources`, and computed only
-    // while the view is open — it is three component lookups, but three
-    // that no other frame has any reason to pay for.
+    // What the isolated light casts, in words (#743). Read before the UI runs because the panel has
+    // no `Resources`, and computed only while the view is open — it is three component lookups, but
+    // three that no other frame has any reason to pay for.
     let single_light_note = meshlet_debug_mode
         .needs_selected_light()
         .then(|| overlay.selected_entities.first().copied())
@@ -575,14 +532,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     resources.insert(cluster_settings);
     resources.insert(specular_floor);
 
-    // Which light the single-light view isolates (#743): the selection,
-    // because "one light at a time" is what selecting a light already
-    // means and a second list to pick from is a second thing to keep in
-    // step with the scene.
-    //
-    // Only while the view is open. Off, the resource carries `None` and
-    // `GpuLights::update` skips resolving a slot — a shipped game never
-    // inserts it at all and pays nothing.
+    // Which light the single-light view isolates (#743): the selection, because "one light at a
+    // time" is what selecting a light already means and a second list to pick from is a second
+    // thing to keep in step with the scene.
     resources.insert(kooch_lighting::DebugLight(
         meshlet_debug_mode
             .needs_selected_light()
@@ -602,16 +554,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         focus.set_owner(input_owner);
     }
 
-    // Apply viewport input to the editor camera before the same frame's
-    // render pass so the new pose is visible immediately. Focus-on-
-    // selection uses the first selected entity's world position, if any.
-    //
-    // First give the gizmo handle system a chance to absorb input. If a
-    // handle is hovered or being dragged, suppress camera input so the
-    // user doesn't inadvertently orbit while moving an entity.
-    // Any camera motion at all, not only the fly keys: an orbit or pan
-    // drag has the same problem if the pointer stops moving for a frame
-    // while a button is still down.
+    // Apply viewport input to the editor camera before the same frame's render pass so the new pose
+    // is visible immediately. Focus-on- selection uses the first selected entity's world position,
+    // if any.
     let driving_camera = viewport_input.is_some_and(|delta| {
         delta.fly_active
             || delta.fly_keys.any()
@@ -695,21 +640,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
 
     let viewport_start = std::time::Instant::now();
 
-    // The Game panel renders first: a second view of the same stage,
-    // through the gameplay camera. Before the View panel's pass rather
-    // than after, so the two submits stay in a fixed order and a frame
-    // capture always reads the same way.
-    //
-    // Skipped entirely when no project is loaded — there is no scene to
-    // look at, and the panel says so rather than showing black.
-    //
-    // Also skipped when the panel is not on screen. `game_request` is
-    // set by `draw_game_content`, so it is `Some` this frame iff the tab
-    // was actually drawn: Game ships as a sibling tab of View, so the
-    // common case is that only one of them is visible, and rendering
-    // both would pay two culls a frame for a panel nobody is looking at.
-    // The UI runs before this point in the frame, so the flag is already
-    // current.
+    // The Game panel renders first: a second view of the same stage, through the gameplay camera.
+    // Before the View panel's pass rather than after, so the two submits stay in a fixed order and
+    // a frame capture always reads the same way.
     if project_loaded
         && game_request.is_some()
         && let (Some(game), Some(stage), Some(blit)) = (
@@ -723,19 +656,11 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         game.has_camera = false;
     }
 
-    // The View panel, gated the way the Game panel above already is:
-    // `viewport_request` is `Some` this frame iff the tab was actually
-    // drawn. View and Game ship as sibling tabs, so the common case is
-    // one of them hidden — and a hidden view must cost NOTHING: no
-    // cull, no raster, no sky, no shadow-page slice. The user's rule,
-    // stated verbatim: "todo lo que no es visible, no tiene que
-    // consumir".
+    // The View panel, gated the way the Game panel above already is: `viewport_request` is `Some`
+    // this frame iff the tab was actually drawn.
     if viewport_request.is_some() {
-        // The meshlet stage + blit are constructed at startup and live
-        // for the whole editor session; if either is missing, another
-        // system removed them mid-frame. Reconstruct minimal
-        // placeholders so the call still type-checks — they'll be
-        // re-inserted at the end of this system anyway.
+        // The meshlet stage + blit are constructed at startup and live for the whole editor
+        // session; if either is missing, another system removed them mid-frame.
         let mut placeholder_stage;
         let placeholder_blit;
         let meshlet = match (meshlet_stage.as_mut(), meshlet_blit.as_ref()) {
@@ -818,12 +743,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
 
     resources.insert(undo_stack);
 
-    // #656 — say what the next frame needs, so the loop can stop when it
-    // needs nothing. Actions are applied first: one of them may have
-    // opened a project or started Play, and the frame that does so must
-    // not go to sleep before the effect is visible. A frame that failed
-    // to present asks for another unconditionally — the image on screen
-    // is not the one this frame drew.
+    // needs nothing. Actions are applied first: one of them may have opened a project or started
+    // Play, and the frame that does so must not go to sleep before the effect is visible.
     let pace = if presented {
         editor_pace(
             ui_repaint_delay,
@@ -836,10 +757,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     };
     kooch_core::frame_pacing::FrameRequest::raise(resources, pace);
 
-    // #463.2 — write the CPU side of the frame budget into the perf
-    // HUD Resource. Last call so the elapsed measurement covers
-    // every CPU branch above (early returns excepted; those are
-    // wall-clock-trivial).
+    // HUD Resource. Last call so the elapsed measurement covers every CPU branch above (early
+    // returns excepted; those are wall-clock-trivial).
     record_cpu_frame_ms(resources, frame_cpu_start);
     // #691 — published after the total, so the residual the HUD derives
     // from the two is read from the same frame.
@@ -847,10 +766,6 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
 }
 
 /// Moves the mirrored project's stdout into the editor's log.
-///
-/// Tagged `[game]` like the spawned-process path, so one prefix means "not
-/// the editor" however the project was started, and the Console's project
-/// filter works for both.
 fn forward_remote_output(resources: &mut Resources) {
     let Some(state) = resources.get::<crate::remote_session::RemoteState>() else {
         return;
@@ -858,11 +773,9 @@ fn forward_remote_output(resources: &mut Resources) {
     let Some(session) = state.session.as_ref() else {
         return;
     };
-    // Kept as well as forwarded, while the handshake is still in flight:
-    // the log is where these belong, but the connecting banner needs
-    // something to show and draining is destructive (#672). Once the
-    // project answers, the Console is the place to read it and the copy
-    // stops growing.
+    // Kept as well as forwarded, while the handshake is still in flight: the log is where these
+    // belong, but the connecting banner needs something to show and draining is destructive (#672).
+    // Once the project answers, the Console is the place to read it and the copy stops growing.
     let keep = session.state() == crate::remote_session::ConnectionState::Connecting;
     let Some(buffer) = resources.get::<kooch_core::LogBuffer>() else {
         return;
@@ -881,20 +794,6 @@ fn forward_remote_output(resources: &mut Resources) {
 }
 
 /// Selects the entity under the cursor, if the viewport was clicked.
-///
-/// # Why not while playing
-///
-/// Play runs the project's gameplay in this same viewport, and a running
-/// game wants its own clicks — aiming, shooting, pressing whatever is on
-/// screen. Selecting an entity out from under that would fight the game for
-/// the mouse, and the selection would be stale the moment Stop restores the
-/// pre-play world anyway.
-///
-/// # Clicking nothing
-///
-/// Clears the selection, the way clicking empty space in the World panel
-/// does. Leaving it alone would make an intentional deselect impossible
-/// without finding a blank row in another panel.
 fn apply_viewport_click(
     delta: ViewportInputDelta,
     resources: &mut Resources,
@@ -913,10 +812,9 @@ fn apply_viewport_click(
         return;
     };
 
-    // 🔴 Element mode first, and it never falls through to entity
-    // picking. A click that missed the face is a click on empty space
-    // beside the block you are editing — selecting whatever entity is
-    // behind it would throw the block out of the inspector mid-edit.
+    // 🔴 Element mode first, and it never falls through to entity picking. A click that missed the
+    // face is a click on empty space beside the block you are editing — selecting whatever entity
+    // is behind it would throw the block out of the inspector mid-edit.
     if overlay.element_mode.edits_elements()
         && let [entity] = overlay.selected_entities.as_slice()
     {
@@ -957,11 +855,6 @@ fn apply_viewport_click(
 }
 
 /// What the scene's history can offer, from whichever one is driving it.
-///
-/// 🔴 With a project open that is the remote one — the local stack still
-/// holds commands, but they describe the mirror and nothing will ever run
-/// them again. Reading the wrong one is how the menu offered "Undo
-/// Duplicate Entity" for an edit made before the project was opened.
 fn world_history(
     resources: &kooch_core::resource::Resources,
     undo_stack: &UndoStack,
@@ -988,10 +881,6 @@ fn world_history(
 }
 
 /// Whether a guid names a prefab or an ordinary asset.
-///
-/// By the type the asset database recorded, which is the same answer the
-/// Inspector reaches through its own snapshot — and available here
-/// before the Inspector has drawn.
 fn asset_kind(
     resources: &kooch_core::resource::Resources,
     guid: kooch_core::Guid,
@@ -1007,19 +896,6 @@ fn asset_kind(
 }
 
 /// Closes the current run of edits in every history.
-///
-/// 🔴 Called *after* this frame's edits are applied, never before: a seal
-/// applied first would close the group those edits are still filling, and
-/// every frame of a drag would be its own step again — the bug the merge
-/// rule exists to fix.
-///
-/// A released pointer is the boundary that covers what a person actually
-/// does: it ends a drag, and it is also how they leave one field for the
-/// next, since focus changes follow a click.
-///
-/// Both of them, because the user does not know which one their last
-/// edit went to — they clicked a field, and whether that was a prefab's
-/// or an entity's is the editor's bookkeeping, not theirs.
 fn seal_histories(resources: &mut Resources) {
     if let Some(history) = resources.get_mut::<crate::actions::remote_undo::RemoteHistory>() {
         history.seal();
@@ -1030,13 +906,6 @@ fn seal_histories(resources: &mut Resources) {
 }
 
 /// What F should frame for this entity.
-///
-/// A face selection wins: pressing F after clicking one face of a wall
-/// should show you that face, and framing the whole wall is what F
-/// already does from object mode.
-///
-/// Falling back to the entity's own bounds, and to its position alone
-/// when it has no mesh — a spawn point has a place but no size.
 fn focus_target(
     resources: &mut Resources,
     entity: kooch_ecs::entity::Entity,

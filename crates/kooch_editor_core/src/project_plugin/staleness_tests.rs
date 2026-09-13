@@ -1,13 +1,7 @@
 use super::stale_source;
 
-/// 🔴 A component written and not yet compiled is simply absent from
-/// the add-component menu, and nothing says why: the editor loads
-/// this library, it does not build it.
-///
-/// Reported from a real session — the `.so` was 21 minutes older than
-/// the component that "did not exist", and the time went into the
-/// derive, `registrations.rs` and the `#[reflect]` attribute, none of
-/// which were wrong.
+/// 🔴 A component written and not yet compiled is simply absent from the add-component menu, and
+/// nothing says why: the editor loads this library, it does not build it.
 #[test]
 fn a_source_newer_than_the_library_is_reported() {
     let dir = std::env::temp_dir().join("kooch_stale_plugin_test");

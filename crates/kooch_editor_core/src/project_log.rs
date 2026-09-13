@@ -1,24 +1,4 @@
 //! Reading what a hosted project said.
-//!
-//! The project logs as JSON when the editor hosts it — `KOOCH_LOG_FORMAT`,
-//! set at launch — so its lines arrive with their own level, target and
-//! fields rather than as one pre-formatted string.
-//!
-//! # Why not just forward the text
-//!
-//! That is what this replaced, and it lost everything that makes a log
-//! usable. A formatted line is opaque: the editor wrapped the project's
-//! whole line, timestamp and level and all, inside a line of its own, so
-//! the Console showed `INFO` twice, attributed every line to the
-//! forwarding module, and could not filter a project's warnings from its
-//! chatter because to the editor they were all the same `info`.
-//!
-//! # Not everything on that pipe is ours
-//!
-//! Cargo builds the project on the same stdout: `Compiling`, `Finished`,
-//! warnings, and whatever a build script prints. None of it is JSON and
-//! all of it is worth showing, so anything that does not parse is kept as
-//! plain text rather than dropped.
 
 use kooch_core::LogBuffer;
 use tracing::Level;
@@ -35,9 +15,6 @@ pub(crate) fn record(buffer: &LogBuffer, line: &str) {
 }
 
 /// Pulls the level, target and message out of a JSON log line.
-///
-/// `None` for anything that is not one, which is the caller's cue to keep
-/// it as text.
 fn parse(line: &str) -> Option<(Level, String, String)> {
     let value: kooch_remote::serde_json::Value =
         kooch_remote::serde_json::from_str(line.trim()).ok()?;

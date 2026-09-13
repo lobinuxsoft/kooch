@@ -71,10 +71,6 @@ fn it_draws_the_tree_and_the_properties_column_together() {
 }
 
 /// 🔴 A labelled control never asks for more room than it has.
-///
-/// The reported clipping: a `.max(60.0)` floor on the remaining
-/// width overflowed the row, drawing `Binding — left` as `g — left`.
-/// Same mistake as a fixed panel width, one widget down.
 #[test]
 fn a_labelled_control_never_exceeds_the_room_it_has() {
     for width in [600.0, 300.0, 160.0, 90.0, 40.0] {
@@ -93,11 +89,6 @@ fn a_labelled_control_never_exceeds_the_room_it_has() {
 }
 
 /// 🔴 Narrow the tab and the properties narrow with it.
-///
-/// `size_range(190.0..=420.0)` in pixels meant that on a 260px tab
-/// the floor alone exceeded half of it: the tree got 70px and the
-/// properties drew past the right edge. Asserted against the tab's
-/// own width, which is what fails for pixels at every narrow size.
 #[test]
 fn the_properties_column_is_a_fraction_of_the_tab() {
     for tab in [3840.0, 1600.0, 900.0, 500.0, 320.0, 240.0, 120.0] {

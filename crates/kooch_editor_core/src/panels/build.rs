@@ -1,12 +1,4 @@
 //! The Build panel — the list, the button, and cargo's output (#758).
-//!
-//! Deliberately small. A `.buildpreset` is a reflected asset (#744), so
-//! *editing* one is the Inspector's job and costs this panel nothing:
-//! what is left is the three things the Inspector cannot do.
-//!
-//! The alternative was a bespoke form with a field per setting, and the
-//! evidence that bespoke forms do not keep up is that `RenderSettings`
-//! had none for as long as it existed.
 
 use kooch_core::Guid;
 
@@ -78,9 +70,8 @@ fn draw_presets(
 ) {
     for (guid, name, preset) in &panel.presets {
         let chosen = Some(*guid) == *selected;
-        // The floor earns a place in the label because it is the
-        // difference between a build that runs on the handheld and one
-        // that stops at a missing symbol version — and nothing else in
+        // The floor earns a place in the label because it is the difference between a build that
+        // runs on the handheld and one that stops at a missing symbol version — and nothing else in
         // the row hints at it.
         let floor = match preset.min_glibc.trim() {
             "" => String::new(),
@@ -97,10 +88,9 @@ fn draw_presets(
                 .collect::<Vec<_>>()
                 .join(" + "),
         };
-        // The mode leads the row: it is the difference between a build
-        // you hand out and one that opens a listening socket, and it is
-        // the field somebody is most likely to have left on the wrong
-        // setting.
+        // The mode leads the row: it is the difference between a build you hand out and one that
+        // opens a listening socket, and it is the field somebody is most likely to have left on the
+        // wrong setting.
         let label = format!(
             "{} {name}  ({}, {}{floor})",
             match preset.is_profiling() {
@@ -112,9 +102,8 @@ fn draw_presets(
         );
         if ui.selectable_label(chosen, label).clicked() {
             *selected = Some(*guid);
-            // Shown in the Inspector, which is where it is edited — this
-            // panel deliberately draws no fields of its own. Set
-            // directly, the way the Asset Browser does it: the selection
+            // Shown in the Inspector, which is where it is edited — this panel deliberately draws
+            // no fields of its own. Set directly, the way the Asset Browser does it: the selection
             // is editor state, not an edit.
             *inspected = Some(*guid);
         }
@@ -154,10 +143,9 @@ fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
     match &panel.status {
         None => ui.weak("Idle."),
         Some(BuildStatus::Compiling { preset, what, step }) => {
-            // The name is looked up rather than stored: a preset can be
-            // renamed while it builds, and the row it came from is the
-            // one a reader is looking at. What it was *told to build*
-            // comes from the status, which cannot be edited underneath.
+            // The name is looked up rather than stored: a preset can be renamed while it builds,
+            // and the row it came from is the one a reader is looking at. What it was *told to
+            // build* comes from the status, which cannot be edited underneath.
             let name = panel
                 .presets
                 .iter()
@@ -166,14 +154,8 @@ fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
                 .unwrap_or("a deleted preset");
             ui.horizontal(|ui| {
                 ui.spinner();
-                // Named, because the first build of a project compiles
-                // the engine and someone watching a still panel for four
-                // minutes reasonably concludes it hung — and because
-                // "which preset is this" is not answerable from a list
-                // whose selection can be changed while it runs.
-                // The step only appears when there is more than one:
-                // "(1 of 1)" on every ordinary build is noise that makes
-                // the useful case harder to notice.
+                // Named, because the first build of a project compiles the engine and someone
+                // watching a still panel for four minutes reasonably concludes it hung.
                 let of = match step {
                     (_, 1) => String::new(),
                     (at, total) => format!(" [{at} of {total}]"),
@@ -190,11 +172,7 @@ fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
             .response
         }
         Some(BuildStatus::Done(packages)) => {
-            // One line per platform, and its warnings under it. A single
-            // summary covering both would have to add the asset counts
-            // together, and the number that matters is whether each
-            // folder got everything — plus the DLSS and shadowing
-            // warnings belong to the folder they happened in.
+            // One line per platform, and its warnings under it.
             let mut response = ui.strong(format!(
                 "{} Built {} {}.",
                 icons::PACKAGE,
@@ -212,9 +190,8 @@ fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
                     package.scenes,
                 ));
                 if !package.dlss.is_empty() {
-                    // 🔴 Said out loud, because one of these files is a
-                    // legal obligation and the other is what makes DLSS
-                    // work at all. A build folder gains two files nobody
+                    // 🔴 Said out loud, because one of these files is a legal obligation and the
+                    // other is what makes DLSS work at all. A build folder gains two files nobody
                     // recognises, and an unexplained file gets deleted.
                     ui.weak(format!(
                         "    {} NVIDIA files travelled with this build — the DLSS runtime \
@@ -231,11 +208,9 @@ fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
                     );
                 }
                 if !package.runtime.is_empty() {
-                    // 🔴 Three DLLs the game cannot start without, and
-                    // nothing else in the folder explains them. An
-                    // unexplained file beside a game gets deleted, and
-                    // deleting these turns a working build into a
-                    // Windows dialog on somebody else's machine.
+                    // 🔴 Three DLLs the game cannot start without, and nothing else in the folder
+                    // explains them. An unexplained file beside a game gets deleted, and deleting
+                    // these turns a working build into a Windows dialog on somebody else's machine.
                     ui.weak(format!(
                         "    {} mingw runtime files travelled — the game will not \
                          start on Windows without them beside the executable.",
@@ -271,16 +246,6 @@ fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
 }
 
 /// Cargo's own words, newest at the bottom.
-///
-/// Its output, not a summary of it: when a build fails the only useful
-/// question is what the compiler said, and paraphrasing loses the line
-/// number.
-///
-/// 🔴 Selectable, and with a button that copies the lot. An error nobody
-/// can get out of the window is an error nobody can paste into a search,
-/// a bug report or a message — which is most of what someone does with a
-/// compiler error. egui labels are not selectable by default, so this was
-/// a log you could read and not use.
 fn draw_log(ui: &mut egui::Ui, log: &[String]) {
     ui.horizontal(|ui| {
         if ui
@@ -312,11 +277,6 @@ fn draw_log(ui: &mut egui::Ui, log: &[String]) {
 }
 
 /// Every `.buildpreset` the project holds, loaded.
-///
-/// Read here rather than kept in a resource: presets are edited in the
-/// Inspector, which writes the file, and a cached copy would be the one
-/// the Build button used — so a preset someone just changed would build
-/// with its old settings.
 pub(crate) fn presets_in(
     resources: &mut kooch_core::resource::Resources,
     catalog: &[crate::panels::inspector::AssetCatalogEntry],

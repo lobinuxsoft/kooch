@@ -1,8 +1,4 @@
 //! Launch screen UI for the editor.
-//!
-//! Renders the initial project selection screen with recent projects,
-//! "New Project" form, "Open Project" button, and the launcher
-//! compilation/output overlay.
 
 use std::path::PathBuf;
 
@@ -25,9 +21,6 @@ pub enum LaunchAction {
 }
 
 /// One project's engine version, and the button that moves it.
-///
-/// Drawn only for a project that still exists: a missing directory has
-/// no manifest to read, and offering to move it would write nothing.
 fn draw_engine_column(
     ui: &mut egui::Ui,
     entry: &crate::project::RecentProject,
@@ -68,10 +61,6 @@ fn draw_engine_column(
 }
 
 /// Draws the full launch screen UI. Returns a list of actions to apply.
-///
-/// Takes a `Ui` rather than the `Context`: egui 0.35 places panels inside
-/// a `Ui`, and `Context::run_ui` hands the render loop a root one. That is
-/// the structural change this signature was waiting for.
 pub fn draw_launch_screen(
     ui: &mut egui::Ui,
     project_state: &mut ProjectState,
@@ -89,11 +78,7 @@ pub fn draw_launch_screen(
             ui.add_space(40.0);
             ui.heading(egui::RichText::new("Kóoch").size(32.0).strong());
             ui.add_space(8.0);
-            // The editor's own version, next to the word that names the
-            // screen. Each row below shows the engine version its
-            // project is pinned to, and the two being different is
-            // normal — but the comparison is unreadable while only one
-            // of the two numbers is on screen.
+            // The editor's own version, next to the word that names the screen.
             ui.label(
                 egui::RichText::new(format!(
                     "Project Manager · {}",
@@ -201,12 +186,8 @@ pub fn draw_launch_screen(
                                     .small(),
                             );
 
-                            // 🔴 Which engine this project builds against,
-                            // and the chance to change it *here* — before
-                            // opening. Opening compiles the project's
-                            // plugin and only then compares versions, so a
-                            // mismatch discovered there costs a compile
-                            // against the engine being left behind (#800).
+                            // 🔴 Which engine this project builds against, and the chance to change
+                            // it *here* — before opening.
                             if exists {
                                 draw_engine_column(ui, entry, &mut actions);
                             }
@@ -358,12 +339,6 @@ fn draw_launcher_overlay(
 }
 
 /// Draws a build log that can be read *and* taken away.
-///
-/// Every line used to be a plain `ui.label`, and an egui label carries no
-/// selection — so a failed build put its error on screen and nothing
-/// could reach it: not a paste into a bug report, not a search. The one
-/// moment this matters is the one moment the Console tab does not exist
-/// yet, because the dock is not up until a project is open (#672).
 pub(crate) fn draw_output_console(ui: &mut egui::Ui, lines: &[String], max_height: f32) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(format!("{} Output", icons::TERMINAL)).strong());

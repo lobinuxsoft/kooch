@@ -126,13 +126,8 @@ impl SpawnCommand {
         self.place(resources, entity);
     }
 
-    /// Puts the new entity where it was asked for: under a parent, in a
-    /// named scene, or in one created for it.
-    ///
-    /// 🔴 Without this a spawned entity carries no `SceneMember` and no
-    /// `Parent`, so it belongs to nothing and shows up under "Unsaved"
-    /// until a save adopts it into whichever scene happened to be active
-    /// — which is not what a menu opened on a different one asked for.
+    /// Puts the new entity where it was asked for: under a parent, in a named scene, or in one
+    /// created for it.
     fn place(&self, resources: &mut Resources, entity: Entity) {
         use crate::actions::SpawnTarget;
 

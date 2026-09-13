@@ -1,27 +1,4 @@
 //! Editing a prefab in the Inspector.
-//!
-//! # What makes this different from inspecting an entity
-//!
-//! A prefab's entities do not exist. There is no `Entity` to name, no
-//! storage to read a component out of, and nothing for an edit to be
-//! applied to — the data is a document, and a field is a `ReflectValue`
-//! sitting in a `Vec` inside it.
-//!
-//! Everything *below* that difference is the same, which is why this
-//! renders through [`super::single::draw_reflected_fields`] rather than
-//! reimplementing it: the same grid, the same asset and entity pickers,
-//! the same `shown_when` rules that hide a capsule's half-height while a
-//! sphere is selected. A second copy of those rules is a second copy to
-//! keep correct, and the one not exercised by the panel people use every
-//! day is the one that rots.
-//!
-//! # Why edits are live before they are saved
-//!
-//! They land in `Assets<SceneDocument>`, which is also the cache
-//! `spawn_prefab` reads. So anything spawned after an edit gets the edited
-//! values while the file still holds the old ones. That is the cost of an
-//! explicit save, and the reason the button says so out loud instead of
-//! relying on the user to remember.
 
 use std::collections::HashMap;
 
@@ -39,11 +16,6 @@ use super::{AssetCatalogEntry, EntityDisplayInfo};
 use crate::state::EulerCacheKey;
 
 /// Generation no live entity carries.
-///
-/// The euler-angle cache is keyed by entity, and a prefab has none. Using
-/// the document index alone would collide with a real entity's cache entry
-/// and make a rotation widget jump while being dragged; this keeps the two
-/// spaces apart without threading a second key type through the grid.
 const PREFAB_PSEUDO_GENERATION: u32 = u32::MAX;
 
 /// Renders a prefab's entities and their components, and the Save button.
@@ -162,16 +134,8 @@ fn draw_component_section(
     actions: &mut Vec<EditorAction>,
 ) {
     let name = component.short_name.clone();
-    // Built the same way the entity inspector builds a section — a bold
-    // title beside the same glyph, and removal as a small X in the header
-    // rather than a button under the fields. They are the same panel
-    // showing the same kind of thing, and looking almost-alike is worse
-    // than looking different: it reads as a second implementation, which
-    // is exactly what it would have become.
-    //
-    // Keyed on the entity index as well as the type: unlike an entity's
-    // sections, several of these are on screen at once and two entities of
-    // one prefab can carry the same component.
+    // Built the same way the entity inspector builds a section — a bold title beside the same
+    // glyph, and removal as a small X in the header rather than a button under the fields.
     let id = ui.make_persistent_id(format!(
         "prefab_comp_{entity_index}_{}",
         component.type_name
@@ -201,11 +165,8 @@ fn draw_component_section(
         })
         .body(|ui| {
             let Some(resolved) = component.resolved else {
-                // Genuinely unknown now: not in the reflected registry
-                // and not declared by any loaded plugin. Naming the type
-                // rather than saying "no type", because the useful next
-                // question is *which* one — a scene written by a build
-                // with a feature this one lacks, or a renamed crate.
+                // Genuinely unknown now: not in the reflected registry and not declared by any
+                // loaded plugin.
                 ui.weak(format!("Unknown component: {}", component.type_name));
                 return;
             };
@@ -265,10 +226,9 @@ fn draw_add_component(
 
     ui.menu_button(format!("{} Add Component", icons::PLUS), |ui| {
         crate::panels::add_component_menu::draw_categorized(ui, &available, |component| {
-            // The menu speaks `ComponentId` and the document speaks type
-            // names, because a name outlives the process that wrote it.
-            // Translating needs the registry, so the handler does it —
-            // it has a world and this does not.
+            // The menu speaks `ComponentId` and the document speaks type names, because a name
+            // outlives the process that wrote it. Translating needs the registry, so the handler
+            // does it — it has a world and this does not.
             actions.push(EditorAction::EditPrefabComponent {
                 prefab: guid,
                 entity_index: entity.index,

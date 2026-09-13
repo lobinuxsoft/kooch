@@ -220,10 +220,9 @@ fn a_fresh_project_is_untouched() {
     assert_eq!(manifest(&dir), before);
 }
 
-/// 🔴 A project made before #758 keeps its scenes where the editor no
-/// longer looks — and the self-healing default-scene path would write a
-/// fresh empty one over the gap, which reads as a project that lost its
-/// work.
+/// 🔴 A project made before #758 keeps its scenes where the editor no longer looks — and the
+/// self-healing default-scene path would write a fresh empty one over the gap, which reads as a
+/// project that lost its work.
 #[test]
 fn scenes_move_under_assets() {
     let dir = tmp("scenes");

@@ -1,9 +1,4 @@
 //! The wall the character found, and which way it faces.
-//!
-//! `Grounded`'s horizontal twin, and drawn like it: the contact where
-//! the probe stopped, and an arrow along the normal. A wall slide that
-//! refuses to start is either a wall nobody found or a normal pointing
-//! somewhere unexpected, and those look identical in the Inspector.
 
 use glam::Vec3;
 

@@ -1,16 +1,11 @@
 /// A socket name unique to this test.
-///
-/// Tests run in parallel in one process, so a shared name would have
-/// them binding over each other — the local-socket equivalent of the
-/// port scan this replaced, but solved instead of retried.
 fn test_socket_name() -> String {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     static N: AtomicU32 = AtomicU32::new(0);
-    // The counter alone is not enough: it is per-module, so two test
-    // modules in one binary both start at zero and collide on the same
-    // name. The clock disambiguates without the modules having to know
-    // about each other.
+    // The counter alone is not enough: it is per-module, so two test modules in one binary both
+    // start at zero and collide on the same name. The clock disambiguates without the modules
+    // having to know about each other.
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.subsec_nanos());
@@ -248,12 +243,8 @@ fn editor_with_assets() -> Resources {
     r
 }
 
-/// The bug: `Spawn ▸ 3D Object` was dropped on the floor in remote
-/// mode, because `classify` had no arm for it and nothing else claimed
-/// it. Silently — no entity, no error.
-///
-/// The project has to end up with an entity carrying `Name`,
-/// `Transform` and `MeshRenderer`, with the mesh reference written.
+/// The bug: `Spawn ▸ 3D Object` was dropped on the floor in remote mode, because `classify` had no
+/// arm for it and nothing else claimed it. Silently — no entity, no error.
 #[test]
 fn spawn_mesh_builds_the_entity_on_the_project() {
     use kooch_ecs::mesh_renderer::MeshRenderer;
@@ -358,11 +349,7 @@ fn an_unresolvable_mesh_is_still_owned_by_the_remote_sink() {
     assert!(dispatch(&mut editor, &action));
 }
 
-/// What was reported: a light spawned remotely arrived with a `Name`
-/// and nothing else. `classify` matched `EditorAction::Spawn { name, .. }`
-/// and the `..` threw away the component list, while remote `spawn`
-/// creates only `Name` — so no Transform, no light component, an entity
-/// with no position and nothing to render.
+/// What was reported: a light spawned remotely arrived with a `Name` and nothing else.
 #[test]
 fn spawn_carries_its_extra_components_over_the_wire() {
     use kooch_ecs::directional_light::DirectionalLight;
@@ -984,10 +971,6 @@ fn a_paste_is_built_and_undone() {
 }
 
 /// Saving one scene is the project's business, and carries which scene.
-///
-/// 🔴 The scene id has to survive `classify`. Dropped, the save would
-/// fall through to the active scene — writing the file the user did not
-/// right-click, which is a mistake nothing shows until the next load.
 #[test]
 fn saving_one_scene_names_it() {
     let editor = ecs();
@@ -1010,13 +993,9 @@ fn saving_one_scene_names_it() {
     );
 }
 
-/// A world edit that `classify` refuses must be routed before it, or it
-/// falls through to `apply_non_ecs_action` — which does not know it
-/// either — and the menu entry does nothing, in silence.
-///
-/// That is exactly what happened to `SpawnBlock`. This names the two
-/// that are handled specially; a third arriving without a route breaks
-/// the count and points here rather than at the wire.
+/// A world edit that `classify` refuses must be routed before it, or it falls through to
+/// `apply_non_ecs_action` — which does not know it either — and the menu entry does nothing, in
+/// silence.
 #[test]
 fn every_unclassified_world_edit_is_routed() {
     use crate::actions::{EditorAction, SpawnTarget};
@@ -1065,18 +1044,8 @@ fn every_unclassified_world_edit_is_routed() {
     );
 }
 
-/// 🔴 A block spawns two ways — locally and over the wire — and the
-/// two lists had already drifted twice.
-///
-/// The wire shipped without `PhysicsBody`, so physics never saw the
-/// block at all; the local path set a field on a component it had
-/// forgotten to add. Neither failed: an absent component reads as a
-/// default, and a write to one is a `None` nobody looks at.
-///
-/// Both paths read `block_components` now, so this asserts the property
-/// that makes that worth doing — the id and the name in each pair name
-/// the same type. A pair that disagreed would add one component by id
-/// and a different one by name, which is the drift wearing a disguise.
+/// 🔴 A block spawns two ways — locally and over the wire — and the two lists had already drifted
+/// twice.
 #[test]
 fn a_blocks_components_agree_by_id_and_name() {
     for (type_id, name) in kooch_blockmesh::block_components() {

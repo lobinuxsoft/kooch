@@ -1,33 +1,4 @@
 //! Where a project keeps the key its packs are sealed with (#758).
-//!
-//! `<project>/.kooch/pack.key`, and **not in version control**. The
-//! scaffold's `.gitignore` excludes `.kooch/`, so a project created by
-//! this editor cannot commit one by accident.
-//!
-//! # Why not in the preset
-//!
-//! A preset is configuration: which target, which folder, packed or not.
-//! It belongs in the repository so everyone builds the same thing. A key
-//! does not — a repository carrying it has published it, and history
-//! keeps it published after the file is deleted.
-//!
-//! Godot draws the same line, between `export_presets.cfg` and its
-//! encryption key.
-//!
-//! # 🔴 One key per project, generated once
-//!
-//! Generated on first use and kept. Not regenerated per build, because
-//! then the editor could not open yesterday's pack to check it, and not
-//! shared between projects, because breaking one would break them all.
-//!
-//! And never a key belonging to the *editor*: a single extraction from
-//! one published editor binary would open the packs of every game ever
-//! made with it.
-//!
-//! # It can be overridden
-//!
-//! `KOOCH_PACK_KEY` wins when set. That is what a CI build uses, where
-//! the key arrives from a secret store and no file should be written.
 
 use std::path::{Path, PathBuf};
 
@@ -42,10 +13,7 @@ pub const KEY_FILE: &str = "pack.key";
 /// Environment variable that overrides the file.
 pub const KEY_ENV: &str = "KOOCH_PACK_KEY";
 
-/// Reads the project's pack key, generating and saving one the first
-/// time.
-///
-/// Order: the environment, then the file, then a fresh key.
+/// Reads the project's pack key, generating and saving one the first time.
 pub fn project_key(project_root: &Path) -> Result<PackKey, std::io::Error> {
     if let Some(text) = std::env::var_os(KEY_ENV) {
         return PackKey::parse(&text.to_string_lossy()).ok_or_else(|| {
@@ -95,11 +63,6 @@ pub fn key_path(project_root: &Path) -> PathBuf {
 }
 
 /// Makes the key readable by its owner only.
-///
-/// Best effort, and deliberately not an error: a key that could not be
-/// chmod'd is still a working key, and refusing to build over a file mode
-/// would be worse than the exposure on a single-user machine. Windows has
-/// no equivalent this cheap.
 #[cfg(unix)]
 fn restrict(path: &Path) {
     use std::os::unix::fs::PermissionsExt;

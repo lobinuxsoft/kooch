@@ -11,10 +11,9 @@ static BITS: &[FieldChoice] = &[
     },
 ];
 
-/// The widget may only touch the bits it names. A mask authored by hand
-/// or by a newer editor has to survive a visit — silently clearing the
-/// high half would be a filtering bug introduced by *looking* at the
-/// field.
+/// The widget may only touch the bits it names. A mask authored by hand or by a newer editor has to
+/// survive a visit — silently clearing the high half would be a filtering bug introduced by
+/// *looking* at the field.
 #[test]
 fn only_the_named_bits_are_in_scope() {
     assert_eq!(named_mask(BITS), 0b11);

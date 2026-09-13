@@ -32,9 +32,8 @@ fn the_next_step_is_named() {
     assert_eq!(history.undo_description(), Some("Duplicate Entity"));
 }
 
-/// 🔴 Editing after an undo drops the redo branch. Keeping it would
-/// offer to redo an edit against a world that has since moved somewhere
-/// else — the classic way an undo history corrupts what it was
+/// 🔴 Editing after an undo drops the redo branch. Keeping it would offer to redo an edit against a
+/// world that has since moved somewhere else — the classic way an undo history corrupts what it was
 /// protecting.
 #[test]
 fn a_new_edit_drops_the_redo() {

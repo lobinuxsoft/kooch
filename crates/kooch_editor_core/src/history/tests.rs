@@ -65,10 +65,9 @@ fn the_input_map_needs_a_map() {
     assert_eq!(resolve(Some(EditorTab::InputMap), None, None), None);
 }
 
-/// The panels whose edits are files, or aren't edits. Deliberately
-/// `None` rather than falling back to the scene: a Ctrl+Z in the Console
-/// undoing something in the viewport is exactly the surprise this
-/// routing exists to prevent.
+/// The panels whose edits are files, or aren't edits. Deliberately `None` rather than falling back
+/// to the scene: a Ctrl+Z in the Console undoing something in the viewport is exactly the surprise
+/// this routing exists to prevent.
 #[test]
 fn the_other_panels_reach_nothing() {
     for tab in [

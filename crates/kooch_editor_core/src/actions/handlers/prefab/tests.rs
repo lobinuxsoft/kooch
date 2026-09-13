@@ -50,12 +50,8 @@ fn a_drop_folder_inside_the_project_is_used() {
     );
 }
 
-/// The same entity resolves to the same file every time, which is what
-/// makes re-saving update a prefab rather than litter the folder. The
-/// prompt is what keeps that from being destructive.
-///
-/// `std::env::temp_dir` rather than a crate — there is no `tempfile` in
-/// this workspace, and the rest of the editor's file tests do the same.
+/// The same entity resolves to the same file every time, which is what makes re-saving update a
+/// prefab rather than litter the folder. The prompt is what keeps that from being destructive.
 #[test]
 fn re_saving_resolves_to_the_same_file() {
     let root = std::env::temp_dir().join("kooch_prefab_name_clash");

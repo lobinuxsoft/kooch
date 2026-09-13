@@ -1,22 +1,4 @@
 //! The play-mode transform pull, taken off the editor's thread (#1014).
-//!
-//! [`RemoteClient::list_moved_since`] is a blocking round trip, and the
-//! wait is not the socket: the project answers queued requests from a
-//! `Stage::First` system, so the caller sleeps until the project reaches
-//! its next frame boundary. Measured at **9.5 ms of a 17.3 ms editor
-//! frame** on `dense.scene` — more than the editor's whole render, and
-//! spent doing nothing.
-//!
-//! Nothing about that wait needs the editor's thread. This runs the pull
-//! on a worker that is *always* one frame ahead: it asks, blocks on the
-//! project's cadence, and leaves the reply in an inbox the editor drains
-//! without ever blocking. The editor draws frame N from the delta that
-//! landed during frame N-1.
-//!
-//! The cost is one frame of latency on mirrored transforms, which is
-//! invisible: the editor was already showing the project's *previous*
-//! frame, since the reply it waited for described the world as of the
-//! host's last `Stage::First`.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,19 +8,9 @@ use std::time::Duration;
 use kooch_remote::{MovedUpdate, RemoteClient};
 
 /// How many replies may wait for the editor before the worker parks.
-///
-/// The worker self-paces to the project's frame rate, so the queue holds
-/// one reply in the steady state. The slack is for an editor frame that
-/// ran long — a shader rebuild, a dialog — and the cap is what stops a
-/// stalled editor from growing an unbounded backlog of a world it will
-/// throw away anyway.
 const INBOX_CAP: usize = 4;
 
 /// How long the worker waits before retrying a failed pull.
-///
-/// Without it a dead project turns the worker into a spin loop on
-/// `Stream::connect`, burning a core and filling the inbox with the same
-/// error four times per editor frame.
 const RETRY_DELAY: Duration = Duration::from_millis(100);
 
 /// One completed pull, in the order the project answered.
@@ -85,23 +57,14 @@ impl MovedPump {
     }
 
     /// Turns the pull on or off.
-    ///
-    /// Off while the project is paused: the editor pulls the whole world
-    /// on its own idle cadence there, and a worker asking what moved
-    /// every frame would spend a slice of every *project* frame
-    /// answering a question nobody reads.
     pub fn set_running(&self, running: bool) {
         if self.inbox.running.swap(running, Ordering::Release) != running {
             self.inbox.room.notify_all();
         }
     }
 
-    /// Moves every reply the worker has finished into `out`, oldest
-    /// first, and returns without blocking.
-    ///
-    /// Order is the contract. The replies are sequential diffs, so the
-    /// caller applying them out of order — or dropping the middle one —
-    /// lands on a world the project never held.
+    /// Moves every reply the worker has finished into `out`, oldest first, and returns without
+    /// blocking.
     pub fn drain(&self, out: &mut Vec<Pulled>) {
         let mut replies = self
             .inbox
@@ -119,12 +82,6 @@ impl MovedPump {
 
 impl Drop for MovedPump {
     /// Signals the worker and returns — deliberately without joining.
-    ///
-    /// 🔴 The worker can be parked inside a round trip for as long as the
-    /// project takes to reach its next frame, and a project that has hung
-    /// never reaches one. Joining would put that wait on whatever thread
-    /// closed the session, which is the UI thread. The worker owns an
-    /// `Arc` of the inbox, so it can outlive this and shut itself down.
     fn drop(&mut self) {
         self.inbox.stop.store(true, Ordering::Release);
         self.inbox.room.notify_all();

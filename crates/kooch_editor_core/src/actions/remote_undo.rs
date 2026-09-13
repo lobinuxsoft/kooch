@@ -51,21 +51,8 @@ use super::entity_state::{self, ComponentState, EntityState};
 const DEPTH: usize = 100;
 
 /// The edit that puts the world back the way it was.
-///
-/// Deliberately not "the action, reversed": several actions share an
-/// inverse (adding a component and pasting an entity are both undone by
-/// something already in this list), and a few have no reversed form at
-/// all — undoing a despawn is a *creation*, and it produces different
-/// entity ids than the ones that went away.
 pub(crate) enum Inverse {
     /// Both sides of a field edit.
-    ///
-    /// 🔴 Carrying `after` too, rather than reading the current value
-    /// when the undo runs. The mirror is a **snapshot on a refresh
-    /// timer**: between the edit and the Ctrl+Z it can be anything from
-    /// current to half a second stale, and a redo built from a stale read
-    /// would put back a value that was never there. Both values are known
-    /// at record time and neither changes afterwards.
     SetField {
         entity: EntityId,
         component: String,
@@ -96,20 +83,11 @@ pub(crate) enum Inverse {
     /// entity **and everything under it**").
     Recreate(Vec<Reborn>),
     /// A block's corners, as they were.
-    ///
-    /// 🔴 Not a wire edit. A block's shape lives in its `.block` file,
-    /// which both processes read — so undoing one writes the file and
-    /// lets the project pick it up, rather than sending anything. It is
-    /// in this history because in remote mode this is the ONLY history,
-    /// and Ctrl+Z has to reach it.
     BlockShape {
         source: kooch_core::Guid,
         shape: Box<kooch_blockmesh::BlockMesh>,
     },
     /// Several edits that have to travel together, applied in order.
-    ///
-    /// A gizmo drag is one action and one entry; a multi-selection
-    /// despawn is several actions the user thinks of as one.
     Several(Vec<Inverse>),
 }
 
@@ -120,10 +98,6 @@ pub(crate) struct Reborn {
 }
 
 /// A parent that either still exists or is being recreated alongside.
-///
-/// A subtree recreates its own links: the child's parent is not an id yet
-/// when the batch is built, it is *the third entry in this batch*, and it
-/// becomes an id when that entry is spawned.
 pub(crate) enum Ancestor {
     Existing(EntityId),
     Batch(usize),
@@ -151,16 +125,11 @@ pub(crate) struct RemoteHistory {
 
 impl RemoteHistory {
     /// Records an edit that has already been sent.
-    ///
-    /// Clears the redo stack, like every undo history: the branch those
-    /// steps undid no longer exists.
     pub fn record(&mut self, step: Step) {
         let sealed = std::mem::take(&mut self.sealed);
-        // A continuation keeps the *older* step's before-state — that is
-        // what an undo has to reach — and takes the newer one's
-        // after-state, which is what a redo has to write. Sixty frames of
-        // a drag become one step holding where it started and where it
-        // ended.
+        // A continuation keeps the *older* step's before-state — that is what an undo has to reach
+        // — and takes the newer one's after-state, which is what a redo has to write. Sixty frames
+        // of a drag become one step holding where it started and where it ended.
         if crate::history::merge::continues(
             self.done.last().and_then(|top| top.key),
             step.key,
@@ -178,10 +147,9 @@ impl RemoteHistory {
                 return;
             }
         }
-        // 🔴 One line per step the history takes, because "how many steps
-        // did that edit file?" is not answerable from the outside: the
-        // symptom of getting it wrong is a Ctrl+Z that needs pressing
-        // twice, and by then the evidence is gone.
+        // 🔴 One line per step the history takes, because "how many steps did that edit file?" is
+        // not answerable from the outside: the symptom of getting it wrong is a Ctrl+Z that needs
+        // pressing twice, and by then the evidence is gone.
         tracing::debug!(
             target: "kooch_editor_core::remote_undo",
             label = %step.label,
@@ -198,14 +166,6 @@ impl RemoteHistory {
     }
 
     /// Folds bookkeeping into the step that caused it.
-    ///
-    /// The step keeps its label and its merge key, so the edit that
-    /// follows still continues the run — which is the half of this that
-    /// makes coalescing work on a prefab instance at all.
-    ///
-    /// With nothing above it to belong to, it becomes a step of its own
-    /// rather than being dropped: an override write that reached the
-    /// project has to be undoable by something.
     pub fn attach(&mut self, inverse: Inverse) {
         let Some(top) = self.done.last_mut() else {
             self.done.push(Step {
@@ -253,10 +213,6 @@ impl RemoteHistory {
 }
 
 /// Takes one step in `direction`, sending the inverse to the project.
-///
-/// Returns `true` when a step was taken. `false` means the stack was
-/// empty or the session had gone — the caller has nothing else to try
-/// either way, since the local stack describes a different world.
 pub(crate) fn step(resources: &mut Resources, undo: bool) -> bool {
     let Some(mut history) = resources.remove::<RemoteHistory>() else {
         return false;
@@ -317,11 +273,9 @@ pub(crate) fn step(resources: &mut Resources, undo: bool) -> bool {
                 key: None,
             });
         }
-        // 🔴 The step is *not* put back. It described a world that no
-        // longer matches — an entity someone else deleted, a component
-        // the project refused — and a history whose next step is known to
-        // fail is worse than a short one, because the second Ctrl+Z would
-        // hit it again.
+        // 🔴 The step is *not* put back. It described a world that no longer matches — an entity
+        // someone else deleted, a component the project refused — and a history whose next step is
+        // known to fail is worse than a short one, because the second Ctrl+Z would hit it again.
         Err(e) => tracing::warn!(
             target: "kooch_editor_core::remote_undo",
             label = %step.label,
@@ -334,12 +288,6 @@ pub(crate) fn step(resources: &mut Resources, undo: bool) -> bool {
 }
 
 /// Reads what an edit is about to destroy, before it is sent.
-///
-/// `None` covers three different things and they are all the same to the
-/// caller: an edit that creates (whose inverse is only knowable *after*
-/// the send, from the ids that came back), an edit that is not undoable
-/// (saving a scene, pressing Play), and an edit whose before-state could
-/// not be read — a component the mirror has no value for.
 pub(crate) fn capture_before(
     action: &EditorAction,
     resources: &Resources,
@@ -433,14 +381,6 @@ pub(crate) fn capture_before(
 }
 
 /// Files a sent edit in the history.
-///
-/// Called after the send, so a creation can be undone by despawning what
-/// it actually created rather than what it was asked to create.
-/// Records one step whose edit has already been applied.
-///
-/// For an edit that is not a wire call — a block's shape lives in a
-/// file both processes read, so the drag that made it is also the thing
-/// that applied it.
 pub(crate) fn record_step(resources: &mut Resources, label: &str, inverse: Inverse) {
     if let Some(mut history) = resources.remove::<RemoteHistory>() {
         history.record(Step {
@@ -458,14 +398,9 @@ pub(crate) fn record(
     before: Option<Inverse>,
     created: Vec<EntityId>,
 ) {
-    // Loading a scene replaces the world every step in the history
-    // describes. Keeping them would offer to undo an edit to an entity
-    // that no longer exists, against ids the project has since reused.
-    //
-    // 🔴 Closing one does the same to part of it, and the history has no
-    // way to say which part: an entry names entities, not scenes. So the
-    // whole stack goes, which is what the local path has always done —
-    // `handle_close_scene`'s doc says why in the same words.
+    // Loading a scene replaces the world every step in the history describes. Keeping them would
+    // offer to undo an edit to an entity that no longer exists, against ids the project has since
+    // reused.
     if matches!(
         action,
         EditorAction::OpenScene { .. } | EditorAction::CloseScene(_)
@@ -500,9 +435,6 @@ pub(crate) fn record(
 }
 
 /// What the Edit menu calls this step.
-///
-/// The same words the local commands use, because the menu shows one of
-/// the two and the user is not supposed to be able to tell which.
 fn label_of(action: &EditorAction) -> String {
     match action {
         EditorAction::Spawn { .. } => "Spawn Entity".to_owned(),
@@ -554,11 +486,6 @@ fn rides_along(action: &EditorAction, resources: &Resources) -> bool {
 }
 
 /// What a run of edits to the same thing looks like.
-///
-/// 🔴 Only the two that arrive continuously. The Inspector emits an edit
-/// per `changed()` — one per keystroke, one per frame of a drag — and a
-/// gizmo emits one per drag. Everything else here is a click, and two
-/// clicks are two steps however fast they were.
 fn merge_key_of(action: &EditorAction) -> Option<crate::history::MergeKey> {
     use crate::history::MergeKey;
     match action {
@@ -596,11 +523,6 @@ fn component_name(
 
 impl Inverse {
     /// Folds a later edit into this one, keeping this one's before-state.
-    ///
-    /// Only the paired kinds can absorb: a field edit knows both sides,
-    /// so the merged step is "from where it started to where it ended".
-    /// Anything else keeps what it has — a step that cannot merge should
-    /// never have carried a key in the first place.
     fn absorb(&mut self, newer: Inverse) {
         match (self, newer) {
             (
@@ -609,10 +531,9 @@ impl Inverse {
                     after: newer_after, ..
                 },
             ) => *after = newer_after,
-            // Zip stops at the shorter of the two, which is what keeps a
-            // transform's three fields merging after bookkeeping has been
-            // appended as a fourth: the rider keeps the oldest state,
-            // which is the one an undo wants.
+            // Zip stops at the shorter of the two, which is what keeps a transform's three fields
+            // merging after bookkeeping has been appended as a fourth: the rider keeps the oldest
+            // state, which is the one an undo wants.
             (Inverse::Several(mine), Inverse::Several(theirs)) => {
                 for (mine, theirs) in mine.iter_mut().zip(theirs) {
                     mine.absorb(theirs);
@@ -630,10 +551,6 @@ impl Inverse {
     }
 
     /// Adds an inverse that has to be applied with this one.
-    ///
-    /// Appended rather than prepended: the edit stays first, so a later
-    /// edit to the same field merges into it and the rider is left
-    /// holding the state it started with.
     fn attach(&mut self, rider: Inverse) {
         match self {
             Inverse::Several(mine) => mine.push(rider),
@@ -645,10 +562,6 @@ impl Inverse {
     }
 
     /// Sends this inverse, and returns the one that reverses *it*.
-    ///
-    /// Every arm captures before it sends: what an undo needs to know is
-    /// the state that is about to be replaced, and after the send it is
-    /// gone.
     pub(crate) fn apply(
         self,
         client: &RemoteClient,
@@ -766,14 +679,6 @@ impl Inverse {
 }
 
 /// Spawns every entry, wiring the batch's own parent links as it goes.
-///
-/// In order, and that order matters: [`Ancestor::Batch`] names an entry
-/// by index, so a child may only refer to an entry already spawned. The
-/// captures in [`subtrees`] are built parent-first for exactly this.
-///
-/// The entity itself is built by [`super::remote_edit::build`] — the same
-/// call duplicate and paste use, so an entity that comes back from an
-/// undo is assembled exactly like one that was just created.
 fn rebuild(
     client: &RemoteClient,
     mirror: &RemoteMirror,

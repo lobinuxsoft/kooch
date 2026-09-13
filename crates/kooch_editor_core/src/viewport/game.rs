@@ -1,26 +1,5 @@
-//! The Game view — the scene through the *gameplay* camera, rendered
-//! beside the View panel rather than instead of it (#592).
-//!
-//! # Why it is a second view and not a second stage
-//!
-//! It shares the stage's mesh pool, scene instances and cull pipelines,
-//! and owns only what depends on where its camera is: attachments, Hi-Z
-//! occlusion state and cull buffers. That is [`ViewId`]. A second
-//! `MeshletRenderStage` would recompile nine compute pipelines and
-//! duplicate the pool for one extra camera.
-//!
-//! # Which camera
-//!
-//! The highest-priority active camera that is **not** the editor's.
-//! Filtering by `Without<EditorCamera>` rather than by priority: the
-//! editor camera ships at priority 1000 to outrank user cameras in the
-//! View panel, and reusing that number as the identity test would break
-//! the moment a game authored a camera at 1000 for its own reasons.
-//!
-//! # No gizmos
-//!
-//! Selection outlines, grids and handles are authoring aids. The Game
-//! panel answers "what does the player see", and a gizmo in it is a lie.
+//! The Game view — the scene through the *gameplay* camera, rendered beside the View panel rather
+//! than instead of it (#592).
 
 use kooch_core::gpu::GpuContext;
 use kooch_core::resource::Resources;
@@ -32,10 +11,6 @@ use kooch_render::SkyRenderPass;
 use kooch_render::meshlet::{MeshletBlit, MeshletRenderStage, ViewId};
 
 /// The Game viewport's own render stats.
-///
-/// A separate resource rather than a second write to
-/// `MeshletRenderStats`: two cameras writing one slot is exactly the
-/// defect this exists to fix, and the last writer would still win.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct GameViewStats(pub kooch_render::meshlet::MeshletRenderStats);
 
@@ -71,10 +46,6 @@ impl GameView {
 }
 
 /// Renders the gameplay camera into `game.target`.
-///
-/// Returns `false` and leaves the target untouched when no gameplay
-/// camera exists — the panel draws its placeholder rather than a stale
-/// frame dressed up as a live one.
 pub(crate) fn render_game_view(
     gpu: &GpuContext,
     sky_pass: &mut SkyRenderPass,
@@ -104,12 +75,7 @@ pub(crate) fn render_game_view(
         &camera,
         aspect,
     );
-    // 🔴 Published under its OWN key. The Edit view's render is the only
-    // one that wrote `MeshletRenderStats`, so the overlay drawn beside
-    // THIS viewport read the other camera's numbers — same scene, other
-    // frustum, and every reading taken from this panel described a
-    // camera nobody was looking through. It also explained a count that
-    // never moved while the game camera did.
+    // 🔴 Published under its OWN key.
     resources.insert(GameViewStats(stats));
 
     let mut encoder = gpu
@@ -141,11 +107,9 @@ pub(crate) fn render_game_view(
         super::render::clear_to_black(&mut encoder, game.target.view(), game.target.depth_view());
     }
 
-    // Same per-frame truth the View panel uses: `instances_uploaded > 0`
-    // iff the pipeline ran a real dispatch this frame. Gating on the
-    // pool's registered count instead would keep blitting a colour view
-    // the stage does not clear when it skips, leaving last frame's ghost
-    // over the sky.
+    // Same per-frame truth the View panel uses: `instances_uploaded > 0` iff the pipeline ran a
+    // real dispatch this frame. Gating on the pool's registered count instead would keep blitting a
+    // colour view the stage does not clear when it skips, leaving last frame's ghost over the sky.
     if stats.instances_uploaded > 0
         && let Some(color) = stage.view_color_view(game.view_id)
         && let Some(depth) = stage.view_depth_sample(game.view_id)

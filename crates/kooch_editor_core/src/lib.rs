@@ -58,12 +58,8 @@ pub mod remote_mirror;
 pub mod remote_session;
 pub mod script_sync;
 
-/// 🔴 A profiling build with the per-system scopes compiled out is not a
-/// build that fails — it is a build whose captures look exactly like the
-/// ones from before the scopes existed. That is how this went unnoticed
-/// once already: the feature was added to the `kooch` facade and not
-/// here, and the next capture reported `PreUpdate: 3.2 ms` with no
-/// children, which is a correct-looking answer to the wrong question.
+/// 🔴 A profiling build with the per-system scopes compiled out is not a build that fails — it is a
+/// build whose captures look exactly like the ones from before the scopes existed.
 #[cfg(feature = "profiling")]
 const _: () = assert!(
     kooch_core::CPU_SCOPES,
@@ -95,23 +91,13 @@ pub use remote_session::{ConnectionState, RemoteSession, RemoteState};
 pub use state::EditorOverlay;
 
 /// Plugin that adds the embedded egui editor overlay.
-///
-/// Requires [`WindowPlugin`](kooch_window::WindowPlugin) and
-/// [`EcsPlugin`](kooch_ecs::EcsPlugin) to be registered first.
-///
-/// Registers two systems:
-/// - **Startup**: initializes egui context, winit integration, and wgpu renderer.
-/// - **Render**: draws the overlay UI and presents to the surface.
 pub struct EditorPlugin;
 
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
-        // Physics is authored here but never simulated here: the editor
-        // needs PhysicsBody and Collider reflected so they reach the
-        // add-component menu and the Inspector, while the project (local
-        // Play, or the remote host) owns the solver. Without this the
-        // menu offers no body component at all — the registry it reads is
-        // the editor's own.
+        // Physics is authored here but never simulated here: the editor needs PhysicsBody and
+        // Collider reflected so they reach the add-component menu and the Inspector, while the
+        // project (local Play, or the remote host) owns the solver.
         app.add_plugin(kooch_physics::PhysicsComponentsPlugin);
         // Components only: the editor authors gravity, the project's
         // process applies it.
@@ -125,16 +111,13 @@ impl Plugin for EditorPlugin {
         // runs it. A vcam driving a camera here would fight the editor's
         // own, which owns the viewport.
         app.add_plugin(kooch_camera::CameraComponentsPlugin);
-        // And input: the editor authors which `.inputmap` a scene plays
-        // under, the project's process reads it. Without this the menu
-        // offers `InputMapSource` — the name reaches it by another route
-        // — and adding it fails with "no default value".
+        // And input: the editor authors which `.inputmap` a scene plays under, the project's
+        // process reads it. Without this the menu offers `InputMapSource` — the name reaches it by
+        // another route — and adding it fails with "no default value".
         app.add_plugin(kooch_input::actions::InputComponentsPlugin);
 
-        // #656 — the editor sleeps by default and every frame has to
-        // earn the next one. The baseline is what the accumulator falls
-        // back to after the runner reads it, so a frame that asks for
-        // nothing is a frame that stops the loop.
+        // earn the next one. The baseline is what the accumulator falls back to after the runner
+        // reads it, so a frame that asks for nothing is a frame that stops the loop.
         app.insert_resource(kooch_core::frame_pacing::FrameRequest::new(
             kooch_core::frame_pacing::FramePace::Wait,
         ));
@@ -162,14 +145,9 @@ impl Plugin for EditorPlugin {
         // One history per open document — a prefab, an input map, a
         // material. The scene's is above; see `history`.
         app.insert_resource(history::documents::DocumentHistories::default());
-        // #463 perf HUD — populated incrementally by per-metric
-        // systems (frame timer, sysinfo poller, GPU timestamp
-        // readback, render-side counters). Inserted at zero so the
-        // toolbar can read it on the very first frame without any
-        // metric system having run yet.
-        // Once per launch: installing anything it reports ends in a
-        // reboot on an image-based system, so the answer cannot change
-        // while the editor runs.
+        // systems (frame timer, sysinfo poller, GPU timestamp readback, render-side counters).
+        // Inserted at zero so the toolbar can read it on the very first frame without any metric
+        // system having run yet.
         app.insert_resource(preflight::Report::detect());
         // Looked at lazily, the first time the Settings window draws:
         // three `is_file`s, and nothing at all until somebody opens it.
@@ -179,17 +157,9 @@ impl Plugin for EditorPlugin {
         app.insert_resource(perf::SysMetricsState::default());
         app.insert_resource(editor_camera::EditorCameraController::default());
         app.insert_resource(layout::LayoutPersistence::default());
-        // The engine's own frame reporting is for a game, which has no
-        // other way to say how fast it runs (#698). The editor has the
-        // perf HUD, so a line per second in the Console is noise on top of
-        // a number already on screen — and the Console keeps every line it
-        // is given.
-        //
-        // Silenced in `Startup` rather than by overwriting the resource
-        // here, because `CorePlugin` builds it from the environment and
-        // which plugin's `build` runs last is not a thing to depend on.
-        // The variable stays set in the process environment, so a game
-        // launched by Play still inherits it and still reports.
+        // The engine's own frame reporting is for a game, which has no other way to say how fast it
+        // runs (#698). The editor has the perf HUD, so a line per second in the Console is noise on
+        // top of a number already on screen — and the Console keeps every line it is given.
         app.add_system(
             Stage::Startup,
             |resources: &mut kooch_core::resource::Resources| {
@@ -205,9 +175,8 @@ impl Plugin for EditorPlugin {
         // overlay's default. Must run AFTER editor_startup_system so the
         // overlay exists.
         app.add_system(Stage::Startup, layout::load_layout_system);
-        // React to project open / close: rescan the project's assets/
-        // tree into the AssetDatabase + eager-import. PreUpdate runs
-        // before the inspector renders, so the picker sees [project]
+        // React to project open / close: rescan the project's assets/ tree into the AssetDatabase +
+        // eager-import. PreUpdate runs before the inspector renders, so the picker sees [project]
         // entries the same frame the user opens a project.
         app.add_system(Stage::PreUpdate, systems::scan_project_assets_system);
         app.add_system(Stage::PreUpdate, systems::ensure_main_exists_system);
@@ -219,10 +188,9 @@ impl Plugin for EditorPlugin {
         // says the build fell behind, this says it caught up. Reloading
         // first would clear a notice the same frame that raised it.
         app.add_system(Stage::PreUpdate, code_reload::reload_code_system);
-        // Idle until something starts an install. It exists because the
-        // first version blocked the frame on `rpm-ostree`, which writes
-        // an image and takes minutes — the editor froze with nothing on
-        // screen and was reported as doing nothing.
+        // Idle until something starts an install. It exists because the first version blocked the
+        // frame on `rpm-ostree`, which writes an image and takes minutes — the editor froze with
+        // nothing on screen and was reported as doing nothing.
         app.add_system(Stage::PreUpdate, install::poll_install_system);
         // Remote mode: advance the handshake and pull the project's
         // world into the local mirror. PreUpdate so the panels and the
@@ -240,10 +208,8 @@ impl Plugin for EditorPlugin {
         );
         app.add_system(Stage::Startup, editor_camera::spawn_editor_camera_system);
 
-        // #463 perf HUD — sample wall-clock delta between successive
-        // editor render invocations and update FPS instant/avg.
-        // Runs in PreRender so the timestamp it captures matches the
-        // frame the Render stage is about to start.
+        // editor render invocations and update FPS instant/avg. Runs in PreRender so the timestamp
+        // it captures matches the frame the Render stage is about to start.
         app.add_system(Stage::PreRender, perf::frame_timer_system);
         // #463.3 — refresh CPU% / RAM RSS at most twice per second.
         // PreRender keeps the metric and the FPS timer phase-locked

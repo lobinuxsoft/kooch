@@ -88,12 +88,8 @@ fn the_faces_turn_with_the_entity() {
     );
 }
 
-/// A field's space is rigid, so its extents are metres and the entity's
-/// scale places it without resizing it.
-///
-/// This used to assert the opposite. Scaling made `range: 20` on an
-/// entity at scale 8 pull from 160 m, which is neither what the field
-/// says nor what the Inspector shows.
+/// A field's space is rigid, so its extents are metres and the entity's scale places it without
+/// resizing it.
 #[test]
 fn a_scaled_box_is_the_same_size() {
     let field = BoxGravity {

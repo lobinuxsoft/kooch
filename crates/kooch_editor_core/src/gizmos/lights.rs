@@ -1,15 +1,4 @@
 //! Light visualizers — where a light points and how far it reaches.
-//!
-//! `range` and the cone angles are numbers in the Inspector with nothing
-//! to check them against, so a light that falls short of the geometry it
-//! was meant to hit looks like a shading bug.
-//!
-//! # White, not the light's colour
-//!
-//! Tempting to tint each outline by `LightN.color`, and wrong: a dim or
-//! near-black light would draw an outline nobody can see, exactly when
-//! they need to find out where it is. Gizmos are instruments, and an
-//! instrument that goes dark with what it measures is not one.
 
 use glam::{Mat3, Vec3, Vec4};
 
@@ -23,25 +12,12 @@ use kooch_gizmos::{Gizmos, Visualizer};
 const WHITE: Vec3 = Vec3::ONE;
 
 /// Length of the directional arrow, in world units.
-///
-/// Fixed rather than derived: a directional light has no range — it is
-/// infinitely far away — so the arrow states a direction, not a distance,
-/// and scaling it by anything would imply a reach it does not have.
 const DIRECTION_ARROW_LENGTH: f32 = 2.0;
 
 /// Smallest range any light outline is drawn at.
-///
-/// A zero range collapses the sphere and makes `tan` of the cone produce a
-/// degenerate radius; a value being typed into the Inspector passes
-/// through zero on the way to the intended one.
 const MIN_RANGE: f32 = 1e-3;
 
 /// An orthonormal basis whose **Y axis is `forward`**.
-///
-/// `wire_cone` and friends build along their basis' Y, while a light points
-/// along its entity's -Z. This is the adaptor, and it is a function rather
-/// than inline maths because getting the handedness wrong flips a cone
-/// inside out in a way that is hard to see and easy to repeat.
 fn basis_along(forward: Vec3) -> Mat3 {
     let up_ref = if forward.y.abs() > 0.99 {
         Vec3::X
@@ -54,9 +30,6 @@ fn basis_along(forward: Vec3) -> Mat3 {
 }
 
 /// The entity's world-space origin and forward direction.
-///
-/// `None` when the transform is degenerate — a zero-scaled entity has no
-/// direction, and normalising it would give a NaN outline.
 fn origin_and_forward(transform: &GlobalTransform) -> Option<(Vec3, Vec3)> {
     let origin = transform.matrix.w_axis.truncate();
     let forward = transform
@@ -123,10 +96,9 @@ impl Visualizer<SpotLight> for SpotLightVisualizer {
         // cone would hide which part of the pool is at full intensity.
         for angle_deg in [light.outer_angle, light.inner_angle] {
             let radius = cone_radius(angle_deg, range);
-            // `wire_cone` puts the apex at `centre + y * half_height` and
-            // the base at `centre - y * half_height`. With Y along forward,
-            // seating the centre half a range back puts the apex on the
-            // light and the base out at `range`.
+            // `wire_cone` puts the apex at `centre + y * half_height` and the base at `centre - y *
+            // half_height`. With Y along forward, seating the centre half a range back puts the
+            // apex on the light and the base out at `range`.
             gizmos.wire_cone(
                 origin + forward * range * 0.5,
                 Mat3::from_cols(basis.x_axis, -basis.y_axis, basis.z_axis),
@@ -139,23 +111,6 @@ impl Visualizer<SpotLight> for SpotLightVisualizer {
 }
 
 /// Base radius of a cone of half-angle `angle_deg` at distance `range`.
-///
-/// # Half-angle, and why it matters that this is written down
-///
-/// Nothing consumes `SpotLight`'s angles yet — no shader reads them — so
-/// drawing the cone *chooses* the convention. Unreal treats inner/outer
-/// cone angles as half-angles, measured from the axis to the edge; Unity
-/// exposes one full `spotAngle` and halves it internally. Half-angle here,
-/// because that is the form the shading maths wants (`cos(outer)` against
-/// `dot(light_dir, surface_dir)`) and because inner/outer is the Unreal
-/// shape rather than the Unity one.
-///
-/// If the lighting work later reads these as full angles, this gizmo will
-/// draw a cone half the width the shader lights, and this is the line to
-/// change.
-///
-/// Clamped below 90°: at 90° the tangent is infinite and beyond it a
-/// "cone" points backwards.
 fn cone_radius(angle_deg: f32, range: f32) -> f32 {
     const MAX_HALF_ANGLE: f32 = 89.0;
     let clamped = angle_deg.clamp(0.0, MAX_HALF_ANGLE);

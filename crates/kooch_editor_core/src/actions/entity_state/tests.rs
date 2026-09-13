@@ -80,10 +80,9 @@ fn a_capture_carries_its_values() {
     )));
 }
 
-/// 🔴 The hierarchy link is never a captured component. It travels as
-/// its own field on both sides of the wire, and a copy that carried its
-/// source's `Parent` as a value would point at whatever entity handle
-/// happened to be at that index in the other process.
+/// 🔴 The hierarchy link is never a captured component. It travels as its own field on both sides of
+/// the wire, and a copy that carried its source's `Parent` as a value would point at whatever
+/// entity handle happened to be at that index in the other process.
 #[test]
 fn the_parent_link_stays_home() {
     let mut resources = world();
@@ -163,11 +162,6 @@ fn a_copy_is_named_after_it() {
 }
 
 /// 🔴 A copy carries what the entity IS, not which file it came out of.
-///
-/// `capture` takes every reflected component and `SceneMember` is one,
-/// so the copy used to name its source scene — and restoring it wrote
-/// that scene over wherever the paste had just placed the entity. The
-/// symptom was a paste that ignored the scene it was asked for.
 #[test]
 fn a_copy_does_not_carry_its_scene() {
     let state = EntityState {
@@ -194,13 +188,6 @@ fn a_copy_does_not_carry_its_scene() {
 }
 
 /// 🔴 The copy of a prefab instance used to VANISH on save.
-///
-/// `PrefabMember` names the instance root, and `SceneDocument::capture`
-/// skips any entity whose root is not itself — the rest of an instance
-/// comes back from the prefab. A copy inherited the ORIGINAL's root, so
-/// the save decided the copy belonged to an instance that was not it and
-/// wrote nothing. Visible in the editor, saved without complaint, absent
-/// from the file.
 #[test]
 fn a_copy_carries_no_prefab_bookkeeping() {
     use kooch_ecs::prefab_instance::{PrefabInstance, PrefabMember};

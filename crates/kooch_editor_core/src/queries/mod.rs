@@ -14,24 +14,14 @@ use crate::state::{
 };
 
 /// Resolves a component's interned identity for a DTO.
-///
-/// Read-only: [`ComponentNames`] is pre-populated with every registry
-/// name by [`intern_registry_names`] before the gather pass, so a known
-/// component always resolves. An unseen name yields
-/// [`ComponentId::INVALID`], which downstream actions treat as
-/// unresolvable rather than misapplying.
 fn component_id(names: Option<&ComponentNames>, full_name: &str) -> ComponentId {
     names
         .and_then(|n| n.id(full_name))
         .unwrap_or(ComponentId::INVALID)
 }
 
-/// The order components are shown in: `Name` first, `Transform` second,
-/// everything else alphabetically.
-///
-/// Shared rather than duplicated because a prefab is inspected in the same
-/// panel as an entity, and two orderings for the same list is the sort of
-/// difference that is only ever noticed by the person using it.
+/// The order components are shown in: `Name` first, `Transform` second, everything else
+/// alphabetically.
 pub(crate) fn display_order(a: &str, b: &str) -> std::cmp::Ordering {
     fn priority(name: &str) -> u8 {
         match name {
@@ -43,16 +33,14 @@ pub(crate) fn display_order(a: &str, b: &str) -> std::cmp::Ordering {
     priority(a).cmp(&priority(b)).then_with(|| a.cmp(b))
 }
 
-/// Stand-in type handle for a component this binary has no Rust type
-/// for. Such a component is addressed only by its [`ComponentId`]; the
-/// `TypeId` slot in the DTO exists for the reflection-facing paths,
-/// which never fire for a parked component.
+/// Stand-in type handle for a component this binary has no Rust type for. Such a component is
+/// addressed only by its [`ComponentId`]; the `TypeId` slot in the DTO exists for the
+/// reflection-facing paths, which never fire for a parked component.
 struct ParkedComponent;
 
-/// Interns every component name the UI can display — the registry's own
-/// types plus any parked in [`DynamicComponents`] — so the read-only
-/// gather pass can resolve each to a [`ComponentId`]. Runs before
-/// gathering.
+/// Interns every component name the UI can display — the registry's own types plus any parked in
+/// [`DynamicComponents`] — so the read-only gather pass can resolve each to a [`ComponentId`]. Runs
+/// before gathering.
 pub(crate) fn intern_registry_names(resources: &mut Resources) {
     let mut names: Vec<String> = resources
         .get::<ComponentRegistry>()
@@ -86,16 +74,6 @@ pub(crate) fn intern_registry_names(resources: &mut Resources) {
 }
 
 /// Builds display entries for the components parked under `entity`.
-///
-/// A parked component is one the loader met by name but this binary has
-/// no Rust type for — a project's own component seen by the standalone
-/// hub, chiefly. It has no reflector, so its fields come straight from
-/// the store and it carries no field metadata.
-///
-/// `editable` gates the fields: an edit is only deliverable when a
-/// remote session owns the type and can apply it. Locally there is
-/// nothing to write to, so the component shows read-only rather than
-/// offering widgets whose edits get dropped.
 fn parked_components(
     dynamic: &DynamicComponents,
     names: Option<&ComponentNames>,
@@ -120,9 +98,8 @@ fn parked_components(
                     .unwrap_or(full_name)
                     .to_owned(),
             ),
-            // A parked component's values live in the editor's own
-            // store, so this is a clone rather than a reflection read —
-            // but a clone per field per entity is the same cost in the
+            // A parked component's values live in the editor's own store, so this is a clone rather
+            // than a reflection read — but a clone per field per entity is the same cost in the
             // same place, and the Inspector is the only reader.
             fields: if detailed {
                 ReflectedFields::Values(fields.to_vec())
@@ -135,15 +112,9 @@ fn parked_components(
         .collect()
 }
 
-/// Everything about a component that depends on its *type* and not on
-/// which entity carries it: its name, its portable id, its field
-/// metadata, whether the Inspector may edit it, whether it reflects.
-///
-/// Every one of these was resolved once per component per entity — four
-/// registry lookups and a `String` allocation, 610 times over for the
-/// 610 entities of one archetype, all of them producing the same answer.
-/// An archetype *is* the set of component types its entities share, so
-/// this is resolved once per archetype and read per entity.
+/// Everything about a component that depends on its *type* and not on which entity carries it: its
+/// name, its portable id, its field metadata, whether the Inspector may edit it, whether it
+/// reflects.
 struct ComponentMeta {
     type_id: std::any::TypeId,
     component: ComponentId,
@@ -200,10 +171,6 @@ impl ArchetypeMeta {
 }
 
 /// Reads one component's field values, or says why they are not here.
-///
-/// `wanted` is the caller's decision, not a property of the component:
-/// the Inspector's selection gets its values, and every row gets its
-/// `Name` because the World panel draws it.
 fn reflected_fields(
     registry: Option<&ComponentRegistry>,
     meta: &ComponentMeta,
@@ -225,14 +192,8 @@ fn reflected_fields(
     }
 }
 
-/// Returns whether an archetype carries any marker registered as
-/// ephemeral. Used to keep editor-owned entities (cameras, gizmos) out
-/// of the World hierarchy and Archetype panels.
-///
-/// `MirrorEntity` is the deliberate exception: it is ephemeral for
-/// *saves* (a mirrored world belongs to the remote project, not to the
-/// editor's scene file) but must stay visible — in remote mode the
-/// mirror **is** the entire contents of the World panel.
+/// Returns whether an archetype carries any marker registered as ephemeral. Used to keep
+/// editor-owned entities (cameras, gizmos) out of the World hierarchy and Archetype panels.
 fn archetype_is_ephemeral(archetype: &Archetype, ephemeral: &EphemeralComponents) -> bool {
     let mirror = std::any::TypeId::of::<crate::remote_mirror::MirrorEntity>();
     archetype
@@ -241,24 +202,7 @@ fn archetype_is_ephemeral(archetype: &Archetype, ephemeral: &EphemeralComponents
         .any(|tid| *tid != mirror && ephemeral.contains(tid))
 }
 
-/// Gathers every entity for the panels, reading reflected field values
-/// only for `detail_for`.
-///
-/// # Why the caller decides
-///
-/// Reading a component's fields allocates a `String` and a `Vec` per
-/// field. Across 610 entities that measured 5.26 ms per frame — 97% of
-/// the gather stage, and gather is the part of the frame that a person
-/// cannot make cheaper by closing a panel (#691). The values feed the
-/// Inspector, which shows the selection: one entity, occasionally a few.
-///
-/// Everything else the panels do with a component — the hierarchy's
-/// `[4]` count, the prefab marker, "does this entity have a Collider" —
-/// needs the component to be *listed*, not read. Those are unaffected.
-///
-/// `Name` is read for every entity regardless: the World panel shows it
-/// on each row, so skipping it would trade a real cost for a list of
-/// "Entity 412".
+/// Gathers every entity for the panels, reading reflected field values only for `detail_for`.
 pub(crate) fn gather_entity_data(
     resources: &Resources,
     detail_for: &std::collections::HashSet<kooch_ecs::Entity>,
@@ -274,12 +218,9 @@ pub(crate) fn gather_entity_data(
     let names = resources.get::<ComponentNames>();
     // Components with no local Rust type, shown alongside the real ones.
     let dynamic = resources.get::<DynamicComponents>();
-    // A parked component is editable when *somebody* can apply the edit.
-    // Over the wire that is the connected project. Locally it is the
-    // editor itself: a plugin declared the type, so the schema is known
-    // and `DynamicComponents` is the editor's own store to write into.
-    // Without the second case, a project's components would show
-    // read-only in the very mode built to author them.
+    // A parked component is editable when *somebody* can apply the edit. Over the wire that is the
+    // connected project. Locally it is the editor itself: a plugin declared the type, so the schema
+    // is known and `DynamicComponents` is the editor's own store to write into.
     let parked_editable = resources
         .get::<crate::remote_session::RemoteState>()
         .is_some_and(|s| s.is_connected())
@@ -343,10 +284,9 @@ pub(crate) fn gather_entity_data(
             let parked = dynamic.as_ref().map(|dynamic| {
                 parked_components(dynamic, names, entity, parked_editable, detailed)
             });
-            // Only re-sorted when there is something to merge in: the
-            // archetype's own components arrived in display order, and a
-            // sort per entity over an already-sorted list was 610 sorts
-            // to produce the order it already had.
+            // Only re-sorted when there is something to merge in: the archetype's own components
+            // arrived in display order, and a sort per entity over an already-sorted list was 610
+            // sorts to produce the order it already had.
             if let Some(parked) = parked.filter(|p| !p.is_empty()) {
                 comps.extend(parked);
                 comps.sort_by(|a, b| display_order(&a.short_name, &b.short_name));
@@ -401,12 +341,9 @@ pub(crate) fn gather_entity_data(
     let mut sorted: Vec<EntityDisplayInfo> = Vec::with_capacity(flat.len());
     let mut stack: Vec<(kooch_ecs::Entity, usize)> = Vec::new();
 
-    // 🔴 By `Order` first, `Entity::index` second. The index alone was
-    // never a decision anybody made — it is the order the allocator
-    // handed slots out in, which the panel and the scene file both read
-    // and therefore agreed on by coincidence. Entities nobody has ordered
-    // have no `Order` and sort after those that do, by index, so a scene
-    // authored before this looks exactly as it did.
+    // 🔴 By `Order` first, `Entity::index` second. The index alone was never a decision anybody made
+    // — it is the order the allocator handed slots out in, which the panel and the scene file both
+    // read and therefore agreed on by coincidence.
     let order_of = |e: &kooch_ecs::Entity| {
         (
             components
@@ -502,12 +439,6 @@ pub(crate) fn gather_archetype_data(resources: &Resources) -> Vec<ArchetypeDispl
 }
 
 /// The rows the Components panel offers for drag-drop.
-///
-/// Reads the plugin registry beside the reflected one, for the same
-/// reason the Add Component menu does: a project's own types have no
-/// `TypeId` in this binary, so `ComponentRegistry` cannot list them.
-/// This panel is a second way to do the same thing as that menu, and it
-/// was still showing only what the editor was compiled with.
 pub(crate) fn gather_component_types(resources: &Resources) -> Vec<ComponentTypeInfo> {
     let names = resources.get::<ComponentNames>();
     let mut types: Vec<ComponentTypeInfo> = resources
@@ -556,9 +487,6 @@ pub(crate) fn gather_component_types(resources: &Resources) -> Vec<ComponentType
 }
 
 /// The connected project's component schema, if there is one.
-///
-/// `None` in local mode, which is what makes every caller fall back to the
-/// editor's own registry without a second branch.
 fn remote_schema(resources: &Resources) -> Option<&[kooch_remote::protocol::ComponentSchema]> {
     let state = resources.get::<crate::remote_session::RemoteState>()?;
     if !state.is_connected() {
@@ -568,45 +496,8 @@ fn remote_schema(resources: &Resources) -> Option<&[kooch_remote::protocol::Comp
 }
 
 /// The components the add-component menu offers.
-///
-/// **In remote mode this comes from the project, not from the editor.** The
-/// project owns the components; asking the editor's own `ComponentRegistry`
-/// answers with whatever that binary happened to be compiled with and omits
-/// everything the project defines. That is why `PhysicsBody` was missing from
-/// the menu until `kooch_editor_core` grew an `kooch_physics` dependency — a
-/// workaround that did nothing for project-defined components.
 
-/// Whether a component is one the engine writes rather than one a user
-/// authors.
-///
-/// The Add Component menu is not a catalogue — the Components panel is
-/// that, and it still lists every one of these so you can see they exist.
-/// This is the shorter question: would adding it by hand mean anything?
-///
-/// For each of these it does not, and for two of them it is actively
-/// harmful:
-///
-/// - **`Parent`** is set by dragging a row onto another, which also fixes
-///   up the other side. Added by hand it is a parent reference to nothing.
-/// - **`Children`** is derived from `Parent` by `hierarchy_sync_system`,
-///   so whatever you put there is overwritten on the next frame.
-/// - **`GlobalTransform`** is the output of transform propagation. It is
-///   read constantly and authored never.
-/// - **`PersistentId`** is the identity a scene file uses to point at an
-///   entity. Handing out a second one is how two entities come to claim
-///   the same reference.
-///
-/// # Matched on the name, and why
-///
-/// In remote mode this list arrives over the wire carrying a type name and
-/// a category, and nothing else — so a name is what there is to match. The
-/// `kooch_` prefix check keeps a project's own `Parent` from being caught by
-/// a rule about the engine's.
-///
-/// A project component that wants out of the menu needs a real mechanism:
-/// a `#[reflect(...)]` flag, carried as a field on the schema. Worth
-/// building when something asks for it, rather than guessing at the
-/// spelling now.
+/// Whether a component is one the engine writes rather than one a user authors.
 fn is_engine_owned(type_name: &str) -> bool {
     const DERIVED: &[&str] = &["Parent", "Children", "GlobalTransform", "PersistentId"];
 
@@ -655,10 +546,9 @@ pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedType
         }
     };
 
-    // Types a loaded plugin declared, added in either mode. They have no
-    // `TypeId` here, so the reflected registry cannot know them; and the
-    // remote schema lists what the *running* project registered, which is
-    // a different set from what its library declares.
+    // Types a loaded plugin declared, added in either mode. They have no `TypeId` here, so the
+    // reflected registry cannot know them; and the remote schema lists what the *running* project
+    // registered, which is a different set from what its library declares.
     if let Some(dynamic) = resources.get::<DynamicTypeRegistry>() {
         for ty in dynamic.iter() {
             // Skip anything the wire already reported, or the same

@@ -1,19 +1,4 @@
-//! Visualizers for the gravity sources — the worst case for an invisible
-//! component.
-//!
-//! A collider that is the wrong size shows up the moment something rests
-//! on it. A gravity field has no surface, no mesh, and no contact: an
-//! `AreaGravity` rotated ninety degrees looks exactly like one that is not,
-//! until something falls sideways and the author has to guess why. Every
-//! number these components carry — a radius, a range, a box, a local
-//! direction — is a piece of world geometry that nothing else draws.
-//!
-//! # Direction is drawn, magnitude is not
-//!
-//! An arrow scaled by `strength` would be 9.81 units long for ordinary
-//! gravity, which is a building. These arrows are a fixed length and say
-//! only which way the field pulls. The strength is a number in the
-//! Inspector, and a number is a perfectly good way to read a number.
+//! Visualizers for the gravity sources — the worst case for an invisible component.
 
 mod area;
 mod box_field;
@@ -45,9 +30,6 @@ const EDGE: Vec3 = Vec3::new(0.36, 0.26, 0.60);
 pub(super) const ARROW: f32 = 1.5;
 
 /// Draws an arrow of [`ARROW`] length from `base` along `direction`.
-///
-/// The perpendiculars for the head are derived rather than passed: a
-/// gravity arrow has no roll anyone can observe, so any pair will do.
 fn arrow(gizmos: &mut Gizmos<'_>, base: Vec3, direction: Vec3, color: Vec3) {
     let Some(direction) = direction.try_normalize() else {
         return;

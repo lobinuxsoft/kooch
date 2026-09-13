@@ -1,14 +1,4 @@
 //! Codegen for the project's Rust registration glue.
-//!
-//! Scans `src/` for components (`impl Component for X`) and systems
-//! (`pub fn f(_: &mut Resources)`), then rewrites the editor-owned
-//! `src/registrations.rs` that declares the modules and registers
-//! everything. The user's `main.rs` includes it with two lines; the
-//! editor only touches `main.rs` to regenerate it when it goes missing.
-//!
-//! Detection is heuristic (line-based, not a full parse) — enough for
-//! the generated templates and typical hand-written code. The Rhai /
-//! convention-based auto-registration counterpart is tracked in #76.
 
 use std::path::Path;
 
@@ -22,12 +12,7 @@ mod split;
 
 pub(crate) use split::split_authoring;
 
-/// What `src/registrations.rs` looks like before a project has a single
-/// script of its own.
-///
-/// Rendered rather than stored: a second copy of this file's text would
-/// be a second thing to keep in step with the generator, and the two had
-/// already drifted apart once.
+/// What `src/registrations.rs` looks like before a project has a single script of its own.
 pub(crate) fn initial_registrations() -> String {
     render::render_registrations(&[])
 }
@@ -42,13 +27,7 @@ struct SourceFile {
     systems: Vec<DetectedSystem>,
 }
 
-/// A system the scan found, and the binding its `#[system(...)]` asked
-/// for.
-///
-/// 🔴 Before the attribute existed this was a bare `String` and every
-/// system was bound to `Stage::Update` with `run_if_playing`. The scan
-/// was never short of power — it had nothing to read. These two extra
-/// fields are that.
+/// A system the scan found, and the binding its `#[system(...)]` asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DetectedSystem {
     pub(crate) name: String,
@@ -136,10 +115,9 @@ pub(crate) fn register_scripts(resources: &mut Resources) -> SyncOutcome {
 
     let content = render::render_registrations(&files);
     let out = src.join("registrations.rs");
-    // 🔴 Compared before writing, and not as an optimisation. This runs
-    // on a timer now, and an unconditional write moves the file's mtime
-    // — which is what cargo decides to rebuild by. Writing the same
-    // bytes twice a second would recompile the project forever.
+    // 🔴 Compared before writing, and not as an optimisation. This runs on a timer now, and an
+    // unconditional write moves the file's mtime — which is what cargo decides to rebuild by.
+    // Writing the same bytes twice a second would recompile the project forever.
     let mut outcome = SyncOutcome::Unchanged;
     if std::fs::read_to_string(&out).is_ok_and(|on_disk| on_disk == content) {
         tracing::debug!(file = %out.display(), "registrations already current");
@@ -182,26 +160,15 @@ pub(crate) fn register_scripts(resources: &mut Resources) -> SyncOutcome {
 }
 
 /// Adds engine features a project predates.
-///
-/// A feature that is missing does not fail to build — it compiles a host
-/// without the system, so the component is authorable, mirrors to the
-/// editor, draws its gizmo and does nothing. That failure mode is
-/// indistinguishable from "the physics is broken", which is how it was
-/// reported the last two times.
-///
-/// Deliberately narrow, like [`migrate_remote_host`]: it edits only the
-/// exact dependency line the editor generated, and leaves a hand-written
-/// manifest alone.
 fn ensure_features(project_root: &Path) {
     /// Features added after the first scaffolds shipped, each with the
     /// component it makes real.
     const ADDED: &[(&str, &str)] = &[
         ("gravity", "PointGravity / AreaGravity"),
         ("camera", "VirtualCamera"),
-        // The prelude offers `AudioBackend` and `PlayParams` behind this
-        // feature. Without it those names simply are not there, which
-        // from inside a project is indistinguishable from an engine that
-        // cannot play sound.
+        // The prelude offers `AudioBackend` and `PlayParams` behind this feature. Without it those
+        // names simply are not there, which from inside a project is indistinguishable from an
+        // engine that cannot play sound.
         ("audio", "playing sounds"),
         // Without this the generated lib.rs does not compile: the plugin
         // API it calls is behind this feature. Every project that
@@ -248,25 +215,6 @@ fn ensure_features(project_root: &Path) {
 }
 
 /// Brings a project created before the library split up to date.
-///
-/// Projects scaffolded earlier are a plain binary: `src/main.rs` with
-/// `mod registrations;` and a manifest with no `[lib]`. The editor can
-/// only load a project's component types from a `dylib`, so without this
-/// every existing project would silently show none of its own
-/// components — the failure mode being "the menu looks the same as
-/// always", which nobody would report as a bug.
-///
-/// Three narrow edits, each skipped when already applied:
-///
-/// 1. `[lib] crate-type = ["rlib", "dylib"]` plus an explicit `[[bin]]`,
-///    because declaring a lib target makes cargo stop inferring the bin.
-/// 2. `src/lib.rs`, if absent.
-/// 3. `mod registrations;` in `main.rs` becomes `use <crate>::registrations;`,
-///    since the module now belongs to the library.
-///
-/// Nothing here rewrites gameplay code, and a manifest that does not
-/// look like the editor's own is left alone — same rule as
-/// [`ensure_features`].
 pub(crate) fn migrate_to_library(project_root: &Path, crate_name: &str) {
     let manifest_path = project_root.join("Cargo.toml");
     let Ok(manifest) = std::fs::read_to_string(&manifest_path) else {
@@ -414,23 +362,16 @@ pub(crate) fn detect(content: &str) -> (Vec<String>, Vec<DetectedSystem>) {
             }
             pending = None;
         } else if !l.is_empty() && !l.starts_with("//") && !l.starts_with("#[") {
-            // 🔴 Anything that is not a doc comment or another attribute
-            // ends the run. Without this an attribute on one item would
-            // drift down and bind the next `pub fn` it happened to reach,
-            // which is the kind of wrong that looks right in the diff.
+            // 🔴 Anything that is not a doc comment or another attribute ends the run. Without this
+            // an attribute on one item would drift down and bind the next `pub fn` it happened to
+            // reach, which is the kind of wrong that looks right in the diff.
             pending = None;
         }
     }
     (components, systems)
 }
 
-/// Reads what follows `#[system` — `]`, `(PreUpdate)]` or
-/// `(PostUpdate, always)]`.
-///
-/// Unknown words are IGNORED here rather than reported: the proc-macro
-/// already rejected them at compile time with a message naming the
-/// fourteen stages, and a second, worse diagnostic from a line scanner
-/// would only disagree with the first.
+/// Reads what follows `#[system` — `]`, `(PreUpdate)]` or `(PostUpdate, always)]`.
 fn parse_system_attr(rest: &str) -> DetectedSystem {
     let inner = rest
         .trim()
@@ -460,17 +401,9 @@ fn ident_prefix(s: &str) -> String {
         .collect()
 }
 
-/// Ensures `src/main.rs` includes + installs the `registrations` module.
-/// Regenerates it from the scaffold when missing; otherwise injects the
-/// two wiring lines (`mod registrations;` + the `add_plugin` call)
-/// non-destructively if they are absent.
-/// Rewrites a scaffold's `--remote` arm to the headless plugin set.
-///
-/// Earlier scaffolds built the remote host from `DefaultPlugins`, which
-/// opens a window — so the project drew the same scene the editor was
-/// already drawing, in a second window competing for focus. The match is
-/// deliberately narrow: it only fires on the exact three lines the
-/// editor itself generated, so a hand-written `main.rs` is left alone.
+/// Ensures `src/main.rs` includes + installs the `registrations` module. Regenerates it from the
+/// scaffold when missing; otherwise injects the two wiring lines (`mod registrations;` + the
+/// `add_plugin` call) non-destructively if they are absent.
 fn migrate_remote_host(content: &str) -> String {
     const OLD: &str = "\
         app.add_plugins(DefaultPlugins);
@@ -519,10 +452,9 @@ fn ensure_main_wired(project_root: &Path, resources: &Resources) {
     let mut lines: Vec<String> = content.lines().map(str::to_owned).collect();
     let mut changed = content != std::fs::read_to_string(&main).unwrap_or_default();
 
-    // `use <crate>::registrations;` means the module belongs to the
-    // project's library now. Re-adding `mod registrations;` beside it
-    // declares the name twice and the project stops compiling — which is
-    // exactly what happened the first time these two ran together.
+    // `use <crate>::registrations;` means the module belongs to the project's library now.
+    // Re-adding `mod registrations;` beside it declares the name twice and the project stops
+    // compiling — which is exactly what happened the first time these two ran together.
     if !content.contains("mod registrations;") && !content.contains("::registrations;") {
         lines.insert(0, "mod registrations;".to_owned());
         lines.insert(1, String::new());

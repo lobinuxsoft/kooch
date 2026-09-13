@@ -7,12 +7,8 @@ use kooch_core::gpu::GpuContext;
 
 use crate::state::EditorOverlay;
 
-/// Runs platform output handling, tessellation, and renders the editor UI
-/// to the current surface texture.
-///
-/// Returns `true` if the frame was presented successfully. Returns `false`
-/// when the surface texture could not be acquired (caller should skip the
-/// frame and keep resources intact).
+/// Runs platform output handling, tessellation, and renders the editor UI to the current surface
+/// texture.
 pub(crate) fn present_editor_frame(
     gpu: &GpuContext,
     overlay: &mut EditorOverlay,
@@ -48,10 +44,8 @@ pub(crate) fn present_editor_frame(
             label: Some("egui_encoder"),
         });
 
-    // #785 — what the editor's own interface costs on the GPU, kept
-    // apart from the viewport passes above it. Someone asking "how
-    // expensive is my scene" is asking about those; someone asking "why
-    // is the editor slow" is usually asking about this one.
+    // apart from the viewport passes above it. Someone asking "how expensive is my scene" is asking
+    // about those; someone asking "why is the editor slow" is usually asking about this one.
     let ui_query = scopes.as_ref().map(|s| s.begin("editor ui", &mut encoder));
 
     let extra_buffers = overlay.renderer.update_buffers(
@@ -62,11 +56,9 @@ pub(crate) fn present_editor_frame(
         &screen_descriptor,
     );
 
-    // 🔴 Both swapchain calls carry a scope, because either one can be
-    // the vblank wait and they are not interchangeable: `acquire` blocks
-    // when no image is free, `present` blocks when the queue is full.
-    // Unscoped, the wait landed outside the flamegraph entirely and the
-    // profiler reported a 9.6 ms frame while the clock said 17.4.
+    // 🔴 Both swapchain calls carry a scope, because either one can be the vblank wait and they are
+    // not interchangeable: `acquire` blocks when no image is free, `present` blocks when the queue
+    // is full.
     let output = {
         profiling::scope!("surface acquire");
         match gpu.surface().get_current_texture() {

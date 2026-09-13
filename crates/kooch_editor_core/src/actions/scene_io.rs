@@ -58,10 +58,6 @@ pub(super) fn save_scene_as(
 }
 
 /// Saves one open scene to `path` via `SceneManager`, adopting it.
-///
-/// Named rather than implied: with several scenes open, the one somebody
-/// right-clicked is routinely not the active one, and `save_as` writes
-/// whichever that is.
 pub(crate) fn save_open_scene_as(
     resources: &mut Resources,
     id: kooch_core::Guid,
@@ -97,12 +93,7 @@ pub(super) fn scene_path(resources: &Resources, id: kooch_core::Guid) -> Option<
         .clone()
 }
 
-/// Builds the scene file dialog, rooted at the active project's
-/// `scenes/` folder when there is one.
-///
-/// Shared by the local handlers and the remote sink so both modes offer
-/// the same picker — the two processes see the same filesystem, so the
-/// path the user picks is meaningful on either side of the wire.
+/// Builds the scene file dialog, rooted at the active project's `scenes/` folder when there is one.
 pub(crate) fn scene_dialog(resources: &Resources) -> rfd::FileDialog {
     let mut dialog = rfd::FileDialog::new().add_filter("Scene", &[crate::project::SCENE_EXTENSION]);
     if let Some(dir) = resources

@@ -27,10 +27,9 @@ fn a_rebuilt_library_moves() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 🔴 Size is in the stamp because mtime alone can stand still: a build
-/// finishing inside the same clock tick reads as nothing having
-/// happened. The reverse case — same size, new bytes — is why mtime is
-/// there too. Neither is enough alone.
+/// 🔴 Size is in the stamp because mtime alone can stand still: a build finishing inside the same
+/// clock tick reads as nothing having happened. The reverse case — same size, new bytes — is why
+/// mtime is there too. Neither is enough alone.
 #[test]
 fn the_stamp_carries_both() {
     let dir = scratch("both");

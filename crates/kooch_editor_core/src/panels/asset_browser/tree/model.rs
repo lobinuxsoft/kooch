@@ -1,8 +1,4 @@
-//! The tree as data: what a folder and a file are, and the walk that
-//! builds them from disk.
-//!
-//! Rebuilt fresh each frame — project trees minus `target/` are small
-//! enough that the filesystem walk is trivial.
+//! The tree as data: what a folder and a file are, and the walk that builds them from disk.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -57,16 +53,7 @@ pub(crate) enum CreateKind {
     File(NewFileKind),
 }
 
-/// What a folder holds, as far as anything that reads the project is
-/// concerned.
-///
-/// 🔴 The editor scans exactly two trees, and a file outside them is
-/// invisible to the thing that would use it: `<project>/assets` is what
-/// `scan_project_assets_system` registers, and `<project>/src` is what
-/// `register_scripts` reads. A material written into `src/` gets no
-/// GUID and cannot be assigned to anything; a component written into
-/// `assets/` is not compiled. Neither says so — the file is simply
-/// there, doing nothing.
+/// What a folder holds, as far as anything that reads the project is concerned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FolderRole {
     /// Under `<project>/assets`.
@@ -93,9 +80,6 @@ impl FolderRole {
     }
 
     /// Why a creation is refused here, or `None` when it is allowed.
-    ///
-    /// The message names the folder that would work, because "disabled"
-    /// on its own is a dead end.
     pub(crate) fn refusal(self, wanted: Self) -> Option<&'static str> {
         if self == wanted {
             return None;

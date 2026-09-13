@@ -1,13 +1,4 @@
 //! Add, remove and edit components the editor has no Rust type for.
-//!
-//! Their reflected counterparts key everything by `TypeId`, which a
-//! plugin's types do not have here. These work by **name** instead,
-//! against [`DynamicComponents`] — the same store the remote mirror
-//! already uses, so the Inspector draws them with machinery that exists.
-//!
-//! Undo is snapshot-restore rather than a reverse operation: the field
-//! values are already owned data, so keeping a copy is cheaper and more
-//! honest than recomputing what a default used to be.
 
 use kooch_core::resource::Resources;
 use kooch_ecs::component::{DynamicType, DynamicTypeRegistry};
@@ -18,10 +9,6 @@ use kooch_ecs::reflect::{FieldKind, ReflectValue};
 use crate::undo::EditorCommand;
 
 /// A field's value before anything has been authored into it.
-///
-/// The schema says what a field *is*, not what it starts as, so the
-/// editor has to pick. Zero and empty are the only defensible answers —
-/// anything else would be the editor inventing gameplay values.
 pub(crate) fn default_value(kind: FieldKind) -> ReflectValue {
     match kind {
         FieldKind::F32 => ReflectValue::F32(0.0),

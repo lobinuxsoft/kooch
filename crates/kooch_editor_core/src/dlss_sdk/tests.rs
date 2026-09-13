@@ -20,10 +20,9 @@ fn fake_sdk(root: &Path) {
     fs::write(runtime_path(root), "elf").unwrap();
 }
 
-/// 🔴 The version is pinned to the crate, not to whatever NVIDIA tagged
-/// last. `dlss_wgpu` 4.0.0's own chart lines up SDK v310.5.3 with wgpu
-/// 29, which is the wgpu this engine uses — a newer SDK is a different
-/// row of that table.
+/// 🔴 The version is pinned to the crate, not to whatever NVIDIA tagged last. `dlss_wgpu` 4.0.0's
+/// own chart lines up SDK v310.5.3 with wgpu 29, which is the wgpu this engine uses — a newer SDK
+/// is a different row of that table.
 #[test]
 fn the_version_matches_the_crate() {
     assert_eq!(VERSION, "310.5.3");

@@ -1,16 +1,4 @@
 //! Gizmo for [`VirtualCamera`].
-//!
-//! A vcam has no mesh, no frustum of its own and nothing that renders,
-//! so without a gizmo it is an empty entity in a list — you cannot see
-//! where it is, which way it faces, or which of several is pointing
-//! somewhere useful.
-//!
-//! It is deliberately *not* drawn like the real cameras. A
-//! `PerspectiveCamera` gizmo shows its actual frustum, because it has a
-//! fov and a near and far plane that mean something. A vcam has none of
-//! that — it is a pose — so it gets a small fixed marker that reads as
-//! "a viewpoint" without pretending to describe what will be seen
-//! through it.
 
 use glam::Vec3;
 use kooch_camera::VirtualCamera;
@@ -74,15 +62,8 @@ impl Visualizer<VirtualCamera> for VirtualCameraVisualizer {
             gizmos.line(origin, origin + up * UP_LENGTH, UP_COLOR);
         }
 
-        // The spring arm's orbit. `distance` and `yaw` are otherwise two
-        // numbers with nothing to check them against, and this is the
-        // circle the camera will swing along when yaw changes.
-        //
-        // Centred on where the arm points *from*: the vcam sits one
-        // `distance` away along its own forward axis, which is where the
-        // target is whenever it is being looked at. When it is not, the
-        // circle is still the right size and in the right plane — it is
-        // the orbit, not the target.
+        // The spring arm's orbit. `distance` and `yaw` are otherwise two numbers with nothing to
+        // check them against, and this is the circle the camera will swing along when yaw changes.
         if vcam.follow == FOLLOW_THIRD_PERSON && vcam.distance > 1e-3 {
             let forward = (to_world(-Vec3::Z) - origin).normalize_or(-Vec3::Z);
             let up = (to_world(Vec3::Y) - origin).normalize_or(Vec3::Y);

@@ -1,15 +1,4 @@
 //! Running cargo for a build preset, and packaging what comes out (#758).
-//!
-//! A build takes minutes, so this is a child process polled each frame —
-//! the same shape as `PlayState` and the project launcher, for the same
-//! reason: the editor has to stay drawable while it happens.
-//!
-//! # 🔴 What is checked before cargo runs
-//!
-//! A missing cross-compilation target fails **ten minutes in**, with a
-//! linker error that says nothing about targets. Both of the things that
-//! can be known up front are checked up front, and the message names the
-//! command that fixes it.
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -26,13 +15,6 @@ use super::{BuildPreset, Package, PackageError};
 #[derive(Debug, Clone)]
 pub enum BuildStatus {
     /// cargo is running, and what it was told to build.
-    ///
-    /// 🔴 The configuration travels with the status rather than being
-    /// read back off the selected preset. The list is editable while a
-    /// build runs: selecting another row, or editing the one that is
-    /// building, would otherwise silently relabel a build already in
-    /// flight — and the whole reason to show this is that a four-minute
-    /// compile should say what it is compiling.
     Compiling {
         /// Which preset started it, so the panel can name it.
         preset: Guid,
@@ -49,9 +31,6 @@ pub enum BuildStatus {
     Done(Vec<Package>),
     Failed(String),
     /// Stopped on purpose.
-    ///
-    /// Separate from `Failed` because it is not one: nothing went wrong,
-    /// and a red error where someone pressed a button reads as a bug.
     Cancelled,
 }
 
@@ -75,11 +54,6 @@ pub struct BuildJob {
     /// The platform cargo is compiling now.
     current: Platform,
     /// Platforms not started yet, in order.
-    ///
-    /// 🔴 One at a time, never in parallel. Two cargos on one machine
-    /// fight over the same `target/` lock and interleave their output
-    /// into one log nobody can read — and the user has one CPU either
-    /// way, so the wall clock would not improve.
     queued: Vec<Platform>,
     /// What each finished platform produced.
     done: Vec<Package>,
@@ -102,11 +76,9 @@ impl BuildJob {
                 "this preset builds for no platform — tick Linux or Windows on it".to_owned(),
             );
         }
-        // 🔴 Every platform is checked before the *first* one compiles.
-        // Checking each as it starts would let Linux build for ten
-        // minutes and only then report that the Windows target is not
-        // installed — the delayed-failure this whole section exists to
-        // avoid, just moved.
+        // 🔴 Every platform is checked before the *first* one compiles. Checking each as it starts
+        // would let Linux build for ten minutes and only then report that the Windows target is not
+        // installed — the delayed-failure this whole section exists to avoid, just moved.
         if let Some(problem) = missing_toolchain(preset) {
             return Err(problem);
         }
@@ -159,10 +131,6 @@ impl BuildJob {
     }
 
     /// Starts cargo on the next queued platform.
-    ///
-    /// The log is kept rather than cleared: a build of two platforms is
-    /// one thing the user pressed once, and the first one's warnings are
-    /// still worth reading when the second is running.
     fn start_next(&mut self) -> Result<(), String> {
         let Some(next) = (!self.queued.is_empty()).then(|| self.queued.remove(0)) else {
             return Ok(());
@@ -268,10 +236,9 @@ impl BuildJob {
                 self.done.push(package);
             }
             Err(PackageError::NoBinary(path)) => {
-                // 🔴 Stop the whole build, rather than carrying on to the
-                // next platform. A build that reports Done with one of
-                // its platforms quietly missing is worse than one that
-                // failed: the folder looks finished.
+                // 🔴 Stop the whole build, rather than carrying on to the next platform. A build
+                // that reports Done with one of its platforms quietly missing is worse than one
+                // that failed: the folder looks finished.
                 self.status = BuildStatus::Failed(format!(
                     "cargo succeeded but produced no executable for {} at {}",
                     platform.label(),
@@ -294,14 +261,6 @@ impl BuildJob {
     }
 
     /// Stops the build.
-    ///
-    /// ⚠️ cargo is killed, not asked. It has no "stop when convenient",
-    /// and a build that keeps compiling after the button says it stopped
-    /// is worse than an interrupted one — cargo recovers from a kill by
-    /// redoing whatever crate it was on.
-    ///
-    /// Nothing is packaged, so a half-built executable never reaches the
-    /// output folder: `assemble` only runs when cargo exits clean.
     pub fn cancel(&mut self) {
         if let Some(child) = self.child.as_mut() {
             let _ = child.kill();
@@ -324,11 +283,6 @@ impl Drop for BuildJob {
 }
 
 /// The cargo invocation a preset describes.
-///
-/// 🔴 `--bin <crate>` names the **game**, never `<crate>_editor`. The
-/// authoring binary is gated behind a feature a shipped build does not
-/// enable (#558), and asking for it by accident is the one way to put the
-/// editor back into a release.
 pub fn cargo_command(
     preset: &BuildPreset,
     platform: Platform,
@@ -351,16 +305,6 @@ pub fn cargo_command(
     command.arg("--release");
     full_optimisation(&mut command);
     // 🔴 Always explicit, even for the platform this machine runs.
-    //
-    // A `--target` is what puts the output in `target/<triple>/`, and a
-    // build that sometimes passes one and sometimes does not has to
-    // guess afterwards where cargo left the binary. It also has to be
-    // there for a glibc floor — zigbuild has nothing to attach the
-    // version to without it, and silently ignores the floor, producing
-    // a build that looks fine and will not start on the handheld.
-    //
-    // The cost is a cargo cache separate from a plain `cargo build`, so
-    // the first build after this recompiles. Once.
     command.arg("--target").arg(match floor {
         // `x86_64-unknown-linux-gnu.2.28` — zigbuild's own spelling for
         // "this target, against that glibc".
@@ -376,10 +320,9 @@ pub fn cargo_command(
     if !features.is_empty() {
         command.arg("--features").arg(features.join(","));
     }
-    // 🔴 mingw's gcc defaults to C23, where `false` is a keyword, and
-    // GKlib declares an enum member with that name — so metis-sys fails
-    // to build for Windows without this. Measured, not guessed: the
-    // engine cross-compiles with it and does not without.
+    // 🔴 mingw's gcc defaults to C23, where `false` is a keyword, and GKlib declares an enum member
+    // with that name — so metis-sys fails to build for Windows without this. Measured, not guessed:
+    // the engine cross-compiles with it and does not without.
     if platform == Platform::Windows {
         command.env("CFLAGS_x86_64_pc_windows_gnu", "-std=gnu17");
     }
@@ -387,18 +330,8 @@ pub fn cargo_command(
     command
 }
 
-/// Lets the link go through with symbols the *host's* shared libraries
-/// need and the target's glibc does not have.
-///
-/// 🔴 Measured, not guessed. Linking a game against a 2.28 sysroot fails
-/// on `pthread_join@GLIBC_2.34 referenced by /usr/lib64/libasound.so` —
-/// symbols of the **build machine's** ALSA, which is not the one the game
-/// loads. At runtime the target's `ld.so` resolves them against the
-/// target's own libc, where they exist. The check is asking a question
-/// about the wrong machine.
-///
-/// It stays narrow: only when a floor was asked for, and appended so a
-/// project's own `RUSTFLAGS` survive instead of being replaced.
+/// Lets the link go through with symbols the *host's* shared libraries need and the target's glibc
+/// does not have.
 fn allow_shlib_undefined(command: &mut Command) {
     const FLAG: &str = "-C link-arg=-Wl,--allow-shlib-undefined";
     let flags = match std::env::var("RUSTFLAGS") {
@@ -409,10 +342,6 @@ fn allow_shlib_undefined(command: &mut Command) {
 }
 
 /// One line saying what cargo was actually asked to produce.
-///
-/// The mode leads it: it is the difference between a build you hand out
-/// and one that opens a listening socket, and a compile long enough to
-/// walk away from should say which one it is making.
 fn describe(preset: &BuildPreset, platform: Platform) -> String {
     let mut parts = vec![preset.mode_label().to_owned()];
     parts.push(platform.label().to_owned());
@@ -429,23 +358,8 @@ fn describe(preset: &BuildPreset, platform: Platform) -> String {
     parts.join(", ")
 }
 
-/// Turns cargo's release profile up to what a shipped game wants: link
-/// time optimisation across every crate, and one codegen unit so the
-/// optimiser sees a whole crate at a time.
-///
-/// 🔴 **Through the environment, never the project's `Cargo.toml`.**
-/// The manifest is generated once, when the project is created, so a
-/// `[profile.release]` written into the template would reach new
-/// projects and silently skip every one that already exists — the same
-/// trap `PROFILING_FEATURE` documents. `CARGO_PROFILE_*` applies to
-/// whatever project is being built.
-///
-/// ⚠️ It costs minutes per build, and it buys throughput on the CPU
-/// side. On the OneXFly the frame is GPU-bound at 96 %, so this is not
-/// the lever that moves that frame — it is what keeps the measured
-/// binary and the shipped binary the same one.
-///
-/// A value already in the environment wins: someone who set it meant it.
+/// Turns cargo's release profile up to what a shipped game wants: link time optimisation across
+/// every crate, and one codegen unit so the optimiser sees a whole crate at a time.
 fn full_optimisation(command: &mut Command) {
     for (key, value) in [
         ("CARGO_PROFILE_RELEASE_LTO", "fat"),
@@ -464,13 +378,8 @@ pub fn built_binary(
     project_root: &Path,
     crate_name: &str,
 ) -> PathBuf {
-    // 🔴 Under the triple, always: `cargo_command` always passes a
-    // `--target`, and cargo puts anything with one in `target/<triple>/`
-    // rather than `target/`.
-    //
-    // ⚠️ Without the floor. `--target x86_64-unknown-linux-gnu.2.28` is
-    // zigbuild's spelling for the *argument*; the directory cargo
-    // creates is still the plain triple.
+    // 🔴 Under the triple, always: `cargo_command` always passes a `--target`, and cargo puts
+    // anything with one in `target/<triple>/` rather than `target/`.
     let path = project_root.join("target").join(platform.triple());
     // The name cargo writes, which is the crate's — the preset's own
     // name is what the *copy* is called.
@@ -481,17 +390,7 @@ pub fn built_binary(
     path.join(preset.profile_dir()).join(produced)
 }
 
-/// The likely cause when a build fails and `main.rs` still starts the
-/// editor.
-///
-/// 🔴 The migration deliberately leaves an edited `main.rs` alone (#558)
-/// — deleting someone's gameplay setup would be worse than doing
-/// nothing — and warns when the project opens. But that warning is a
-/// hundred lines above the error, in a different panel, at a different
-/// time. Someone pressing Build sees a compiler error naming
-/// `kooch_editor_core`, which they never wrote.
-///
-/// So the failure says it too, where it is being read.
+/// The likely cause when a build fails and `main.rs` still starts the editor.
 fn unmigrated_main(project_root: &Path) -> Option<String> {
     let main = std::fs::read_to_string(project_root.join("src/main.rs")).ok()?;
     if !main.contains("run_editor_with") {
@@ -507,10 +406,6 @@ fn unmigrated_main(project_root: &Path) -> Option<String> {
 }
 
 /// A reason this build cannot start, or `None`.
-///
-/// Only what is knowable without compiling. A missing C toolchain is not
-/// — that surfaces from cargo, and guessing at it would mean refusing
-/// builds that would have worked.
 fn missing_toolchain(preset: &BuildPreset) -> Option<String> {
     if preset.needs_zig()
         && let Some(problem) = missing_zig()
@@ -553,26 +448,7 @@ fn missing_toolchain(preset: &BuildPreset) -> Option<String> {
     None
 }
 
-/// The mingw tools a Windows cross-build needs and this machine has not
-/// got.
-///
-/// # 🔴 Why `g++` and not just `gcc`
-///
-/// Measured, not guessed: this machine had `mingw64-gcc` and no
-/// `mingw64-gcc-c++`, and the build died in `meshopt`'s build script —
-/// meshoptimizer is C++ — after cargo had already accepted the target
-/// and started work. A check that asked "is there a mingw gcc?" would
-/// have answered yes and let it through.
-///
-/// Both are checked, because both are used: `metis-sys` is C and
-/// `meshopt` is C++, and a machine can have either half.
-///
-/// # Why this is checkable at all when a C toolchain generally is not
-///
-/// The names are not a guess. `cc-rs` derives them from the target
-/// triple and looks for `x86_64-w64-mingw32-g++` verbatim, which is the
-/// same string this looks for. Nothing is being inferred about how
-/// somebody installed their compiler.
+/// The mingw tools a Windows cross-build needs and this machine has not got.
 fn missing_mingw() -> Option<String> {
     let missing: Vec<&str> = ["x86_64-w64-mingw32-gcc", "x86_64-w64-mingw32-g++"]
         .into_iter()
@@ -581,10 +457,9 @@ fn missing_mingw() -> Option<String> {
     if missing.is_empty() {
         return None;
     }
-    // The package name differs per distribution and getting it wrong
-    // sends someone to install something that does not exist, so all
-    // three common spellings are offered rather than one guessed from
-    // the host.
+    // The package name differs per distribution and getting it wrong sends someone to install
+    // something that does not exist, so all three common spellings are offered rather than one
+    // guessed from the host.
     Some(format!(
         "a Windows build needs the mingw-w64 toolchain, and {} {} not on PATH.\n\
          Install it with one of:\n\
@@ -600,10 +475,6 @@ fn missing_mingw() -> Option<String> {
 }
 
 /// What a glibc floor needs and this machine has not got.
-///
-/// Both pieces are checked separately because they are installed
-/// separately and the fix differs: `cargo-zigbuild` is a cargo
-/// subcommand, `zig` is the compiler it drives.
 fn missing_zig() -> Option<String> {
     let mut missing = Vec::new();
     if !on_path("cargo-zigbuild", "--version") {

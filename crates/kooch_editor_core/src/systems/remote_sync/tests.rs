@@ -1,8 +1,4 @@
 //! Tests for [`super`], against a real `RemoteServer` on loopback.
-//!
-//! The harness stands up an actual project loop in a thread, so these
-//! exercise the same socket path the editor uses — including the wait
-//! for the server's main thread, which is the cost #645 measures.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -60,18 +56,13 @@ fn dragging_handles() -> HandleSet {
 }
 
 /// A socket name unique to this test.
-///
-/// Tests run in parallel in one process, so a shared name would have them
-/// binding over each other — the local-socket equivalent of the port
-/// scan this replaced, but solved instead of retried.
 fn test_socket_name() -> String {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     static N: AtomicU32 = AtomicU32::new(0);
-    // The counter alone is not enough: it is per-module, so two test
-    // modules in one binary both start at zero and collide on the same
-    // name. The clock disambiguates without the modules having to know
-    // about each other.
+    // The counter alone is not enough: it is per-module, so two test modules in one binary both
+    // start at zero and collide on the same name. The clock disambiguates without the modules
+    // having to know about each other.
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.subsec_nanos());
@@ -86,12 +77,7 @@ fn test_socket_name() -> String {
 /// The scene the test project reports as open.
 const PROJECT_SCENE: &str = "assets/scenes/many_lights.scene";
 
-/// A project with one Transform-bearing entity at the origin, served
-/// until `done` flips.
-///
-/// It holds a `SceneManager` because a real one does, and the editor
-/// now reads the open set from it over the wire — a fixture without one
-/// would be a project the World panel could say nothing about.
+/// A project with one Transform-bearing entity at the origin, served until `done` flips.
 fn project(done: Arc<AtomicBool>) -> (String, std::thread::JoinHandle<()>) {
     let server = RemoteServer::start(&test_socket_name()).expect("bind");
     let socket = server.name().to_owned();
@@ -186,10 +172,6 @@ fn drag_it_to(resources: &mut Resources, state: &RemoteState, position: Vec3) {
 }
 
 /// Runs the system `frames` times.
-///
-/// The paused cadence is a duration now (#656), so a test that wants a
-/// pull asks for one through [`RemoteSyncState::every_frame`] rather
-/// than by running enough frames to outlast a real half-second.
 fn tick(resources: &mut Resources, frames: u32) {
     for _ in 0..frames {
         remote_sync_system(resources);
@@ -225,10 +207,9 @@ fn a_drag_in_flight_survives_the_refresh_cadence() {
     thread.join().unwrap();
 }
 
-/// And once the drag ends the poll resumes: the project is still the
-/// source of truth, so a local value the project never received goes
-/// away. (In the editor it does not, because releasing the handle
-/// dispatches the edit first — that path is covered in `remote_edit`.)
+/// And once the drag ends the poll resumes: the project is still the source of truth, so a local
+/// value the project never received goes away. (In the editor it does not, because releasing the
+/// handle dispatches the edit first — that path is covered in `remote_edit`.)
 #[test]
 fn the_refresh_resumes_once_the_drag_ends() {
     let done = Arc::new(AtomicBool::new(false));
@@ -318,11 +299,8 @@ fn the_wait_for_the_project_is_transport_not_decode() {
     thread.join().unwrap();
 }
 
-/// The cadence skips most frames, so the reading must persist instead
-/// of blinking to zero on every frame that does not pull.
-///
-/// The real interval, deliberately: the whole point is the frames in
-/// between, and `every_frame` would leave none.
+/// The cadence skips most frames, so the reading must persist instead of blinking to zero on every
+/// frame that does not pull.
 #[test]
 fn the_sample_survives_the_frames_that_do_not_pull() {
     let done = Arc::new(AtomicBool::new(false));
@@ -412,14 +390,8 @@ fn an_edit_asks_for_a_pull() {
     );
 }
 
-/// The intent is spent when the mirror can name what the project made,
-/// and held until then — the project's id is not a handle this side can
-/// select.
-///
-/// The selection write itself is not covered here: it needs an
-/// `EditorOverlay`, which needs a GPU. What is covered is the half that
-/// decides *when* — which is where a creation either lands selected or
-/// lands lost in a list of six hundred.
+/// The intent is spent when the mirror can name what the project made, and held until then — the
+/// project's id is not a handle this side can select.
 #[test]
 fn a_creation_waits_for_its_snapshot() {
     use kooch_remote::protocol::{EntityId, EntitySnapshot};
@@ -453,13 +425,6 @@ fn a_creation_waits_for_its_snapshot() {
 }
 
 /// The editor lists the project's scenes, not its own.
-///
-/// 🔴 The editor's `SceneManager` seeds an unsaved scene with a random
-/// id at startup. Drawn from that, the World panel showed an
-/// `Untitled` root nothing belongs to and dropped every mirrored entity
-/// into "Unsaved", because the scene each one names was in nobody's
-/// list. **Open Project always opens remote**, so that was the normal
-/// path, not an edge case.
 #[test]
 fn the_project_names_the_open_scenes() {
     let done = Arc::new(AtomicBool::new(false));

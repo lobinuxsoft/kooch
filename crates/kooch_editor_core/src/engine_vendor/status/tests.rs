@@ -46,11 +46,9 @@ fn what_this_editor_installed_is_current() {
     assert_eq!(status_in(&dest, Some(&source)), Difference::Current);
 }
 
-/// 🔴 The case the whole thing exists for. `CARGO_PKG_VERSION` does not
-/// move during development, so the version says these are the same
-/// engine and only the tree hash disagrees — which is exactly the
-/// situation a person needs told, and the one that silently replaced a
-/// project's engine before.
+/// 🔴 The case the whole thing exists for. `CARGO_PKG_VERSION` does not move during development, so
+/// the version says these are the same engine and only the tree hash disagrees — which is exactly
+/// the situation a person needs told, and the one that silently replaced a project's engine before.
 #[test]
 fn a_rebuilt_engine_is_not_current() {
     let dir = tmp("rebuilt");
@@ -107,10 +105,6 @@ fn only_a_real_difference_asks() {
 }
 
 /// What the Settings window lists, and what it refuses to delete.
-///
-/// Takes the environment lock: `KOOCH_ENGINE_HOME` belongs to the
-/// process, so a test that sets it moves the ground under every other
-/// test's `shared_engine_dir`.
 #[test]
 fn engines_are_listed_and_the_editors_own_is_kept() {
     let _env = crate::engine_vendor::ENGINE_HOME_LOCK

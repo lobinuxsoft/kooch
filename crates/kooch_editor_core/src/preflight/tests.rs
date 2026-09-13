@@ -124,10 +124,9 @@ fn rust_is_reported_first() {
     assert_eq!(missing, vec![RUST, ALSA, UDEV, C_COMPILER, VULKAN_HEADERS]);
 }
 
-/// 🔴 The header, not the loader. `pkg-config --exists vulkan` answers
-/// for a library every machine that runs a game already has, and a probe
-/// that asks it would report this requirement satisfied on the machine
-/// where the build fails.
+/// 🔴 The header, not the loader. `pkg-config --exists vulkan` answers for a library every machine
+/// that runs a game already has, and a probe that asks it would report this requirement satisfied
+/// on the machine where the build fails.
 #[test]
 fn the_probe_looks_for_the_header_itself() {
     let path = super::vulkan_header();

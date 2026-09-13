@@ -1,26 +1,4 @@
 //! Performance + debug-controls sidebar (#463).
-//!
-//! Vertical list of collapsable sections rendered as a right-edge
-//! overlay inside the View panel. Each section toggles
-//! independently — the artist closes the ones they don't care
-//! about and the others stay glanceable next to the viewport.
-//!
-//! Sections (top to bottom):
-//! 1. **Debug**            — meshlet debug-view dropdown + LOD threshold slider.
-//!                           Used to live in the View toolbar; pulled here so
-//!                           the toolbar stays focused on gizmo controls and
-//!                           every viewport-specific knob is in one place.
-//! 2. **Frame**            — FPS instant + avg, CPU frame ms, GPU frame ms
-//! 3. **System**           — process CPU%, RAM RSS
-//! 4. **Render**           — engine-tracked VRAM, draw calls
-//! 5. **Meshlet pipeline** — instances uploaded, dispatch threads,
-//!                           pool size + roots
-//! 6. **CPU frame**        — where `cpu_frame_ms` went, stage by stage,
-//!                           plus what no stage claims. Collapsed by
-//!                           default: it is a diagnostic, opened when a
-//!                           number above looks wrong.
-//! 7. **Remote**           — cost of the snapshot pull, split by
-//!                           transport / decode. Hidden in local mode.
 
 use kooch_lighting::{ClusterGrid, ClusterSettings, LightsHot, SpecularFloor};
 use kooch_render::meshlet::{
@@ -79,10 +57,9 @@ pub(crate) fn draw_performance_content(
 
             hud_visibility.pinned.debug = pin_debug;
 
-            // The shadow-pages readout, a section like any other: in
-            // the tab it collapses, on the viewport it is one more
-            // card in the stack. The floating window it once was is
-            // retired — the stack IS the way overlays live now.
+            // The shadow-pages readout, a section like any other: in the tab it collapses, on the
+            // viewport it is one more card in the stack. The floating window it once was is retired
+            // — the stack IS the way overlays live now.
             let mut pin_pages = hud_visibility.shadow_pages_window;
             section(ui, &mut pin_pages, surface, "Shadow pages", true, |ui| {
                 shadow_page_readout(ui, meshlet_stats.page_marking, meshlet_stats.page_raster);
@@ -117,14 +94,9 @@ pub(crate) fn draw_performance_content(
                             .map(|ms| format!("{:.2} ms", ms))
                             .unwrap_or_else(|| "n/a".to_string());
                         metric(ui, "GPU frame time", &gpu_text);
-                        // #252 — per-pass GPU ms breakdown. Labels are
-                        // path-specific: R64 emits `["Cull", "Raster",
-                        // "Overlay"]`; the Hi-Z 2-pass orchestrator emits
-                        // `["Pass A", "Hi-Z", "Pass B"]`. Sum equals
-                        // `GPU frame time` above. `None` until the first
-                        // ring readback completes (1-2 frames after
-                        // `enable_gpu_timers`) or on adapters without
-                        // `TIMESTAMP_QUERY`.
+                        // path-specific: R64 emits `["Cull", "Raster", "Overlay"]`; the Hi-Z 2-pass
+                        // orchestrator emits `["Pass A", "Hi-Z", "Pass B"]`. Sum equals `GPU frame
+                        // time` above.
                         if let Some(stages) = meshlet_stats.stage_timings {
                             for (label, ms) in stages.iter() {
                                 metric(ui, &format!("  · {label}"), &format!("{ms:.3} ms"));
@@ -134,10 +106,8 @@ pub(crate) fn draw_performance_content(
                 },
             );
 
-            // #699 — the process that is actually simulating, next to the
-            // editor's own frame because that is the comparison being
-            // made: everything else on this panel describes the editor,
-            // which is not what a person pressing Play is asking about.
+            // editor's own frame because that is the comparison being made: everything else on this
+            // panel describes the editor, which is not what a person pressing Play is asking about.
             if let Some(host) = perf_stats.host {
                 section(
                     ui,
@@ -209,9 +179,8 @@ pub(crate) fn draw_performance_content(
             });
 
             hud_visibility.pinned.system = pin_system;
-            // Only the PANEL surface votes on the section's openness:
-            // the overlay writes the same flag through `pinned.system`,
-            // and letting it overwrite here would turn the poll off
+            // Only the PANEL surface votes on the section's openness: the overlay writes the same
+            // flag through `pinned.system`, and letting it overwrite here would turn the poll off
             // while the tab still shows the numbers.
             if surface == PerfSurface::Panel {
                 hud_visibility.system_section = system_shown;
@@ -276,10 +245,8 @@ pub(crate) fn draw_performance_content(
                             "Pool meshlets (roots)",
                             &meshlet_stats.pool_meshlets_roots.to_string(),
                         );
-                        // #454.6 — per-stage cull survivor counts. Only
-                        // populated when a debug-active mode is selected
-                        // (any reject-overlay variant); the readback ring
-                        // is skipped on production frames so the field
+                        // populated when a debug-active mode is selected (any reject-overlay
+                        // variant); the readback ring is skipped on production frames so the field
                         // stays None and the rows hide.
                         if let Some([after_frustum, after_backface, after_hi_z, total_visible]) =
                             meshlet_stats.cull_stage_counts
@@ -515,10 +482,9 @@ fn debug_controls(
             .response
             .on_hover_text("Meshlet pipeline visualization mode. Off = production shading.");
     });
-    // What the isolated light actually casts (#743). A point light with
-    // no shadow renders exactly like one whose shadow broke, and the
-    // view has nothing to draw that would tell them apart — so the
-    // limitation is written down instead of left to be inferred.
+    // What the isolated light actually casts (#743). A point light with no shadow renders exactly
+    // like one whose shadow broke, and the view has nothing to draw that would tell them apart — so
+    // the limitation is written down instead of left to be inferred.
     if *meshlet_debug_mode == MeshletDebugMode::SingleLight {
         match single_light_note {
             Some(note) => {
@@ -537,10 +503,9 @@ fn debug_controls(
             }
         }
     }
-    // 🔴 The same problem the note above solves, for the two views that
-    // shipped painting the whole screen one colour: a code the reader
-    // has to remember is a code the reader does not have. Orange means
-    // "pick a lamp", and saying so is one line.
+    // 🔴 The same problem the note above solves, for the two views that shipped painting the whole
+    // screen one colour: a code the reader has to remember is a code the reader does not have.
+    // Orange means "pick a lamp", and saying so is one line.
     let lamp_view = matches!(
         *meshlet_debug_mode,
         MeshletDebugMode::LocalPageFaces | MeshletDebugMode::LocalPageDepth
@@ -600,17 +565,11 @@ fn debug_controls(
              grey ramp is distance to the recorded occluder over the lamp's range.",
         );
     }
-    // The scale is a control, not a caption. A heatmap's top of scale is
-    // the one number that decides whether the picture says anything: at
-    // 16 a hundred-light stress scene is flat red and at 40 the same
-    // frame separates into froxels. Fixed *during* a comparison, movable
-    // between them — two screenshots at different tops mean nothing.
+    // The scale is a control, not a caption. A heatmap's top of scale is the one number that
+    // decides whether the picture says anything: at 16 a hundred-light stress scene is flat red and
+    // at 40 the same frame separates into froxels.
     if *meshlet_debug_mode == MeshletDebugMode::LightsPerPixel {
-        // 🔴 The measurement, rather than a colour to squint at. Read
-        // where the shading loop pays it, carried home by the readback
-        // the grid already runs — bisecting the scale by eye does not
-        // separate 32 from 45, and cannot compare before and after a
-        // change to the grid without doing the bisection twice (#820).
+        // 🔴 The measurement, rather than a colour to squint at.
         match cluster_occupancy {
             Some((peak, mean)) => {
                 ui.label(
@@ -665,17 +624,10 @@ fn debug_controls(
         );
     }
     // The grid's reach, beside the view that shows what it costs (#820).
-    //
-    // A light is charged to every pixel of every cell it touches, so a
-    // slice deeper than the light it holds spreads that light across
-    // depth it never lit. The measurement that opened this: the busiest
-    // froxel charged 40 lights where 14 reach the point.
     if *meshlet_debug_mode == MeshletDebugMode::LightsPerPixel {
-        // 🔴 Both ends, because the window is what matters and the near
-        // one is the stronger lever: 24 slices spread over [5, 200] put
-        // a 5.1 m froxel at 30 m, and over [20, 60] put a 1.4 m one
-        // there. Exposing only `far` hid that the first fifteen metres
-        // of grid were being spent on empty air in front of the camera.
+        // 🔴 Both ends, because the window is what matters and the near one is the stronger lever:
+        // 24 slices spread over [5, 200] put a 5.1 m froxel at 30 m, and over [20, 60] put a 1.4 m
+        // one there.
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("grid from").small());
             ui.add(
@@ -706,12 +658,6 @@ fn debug_controls(
             );
         });
         // What the number means, which the number itself does not say.
-        //
-        // 🔴 Three distances, not one. A single sample invites picking
-        // the flattering one, and the shape is the point: slices grow
-        // logarithmically, so a grid that looks fine up close is coarse
-        // at the far end — and everything past `far` piles into the last
-        // slice, which is the way lowering it makes things *worse*.
         let grid = ClusterGrid::new(cluster_settings, glam::Vec2::new(viewport.x, viewport.y));
         let far = cluster_settings.far;
         ui.label(
@@ -738,10 +684,8 @@ fn debug_controls(
              different aspect and therefore a different grid.",
         );
     }
-    // #821 — the specular layer is the expensive half of the model, and
-    // a light contributing a fraction of the frame's exposure spends all
-    // of it on a highlight nobody can see. Zero is off, and off is what
-    // every frame did before this existed.
+    // a light contributing a fraction of the frame's exposure spends all of it on a highlight
+    // nobody can see. Zero is off, and off is what every frame did before this existed.
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("diffuse-only under").small());
         ui.add(
@@ -758,12 +702,7 @@ fn debug_controls(
              disappearing where anybody looks.",
         );
     });
-    // 🔴 A READOUT now, for the same reason as the shadow-page section
-    // below. This was a live drag that only the editor ever inserted the
-    // resource for, so the value was reachable while editing and
-    // hardcoded to 1.0 in every shipped game — the shape of #744 and of
-    // `virtual_shadows` before it. It is `meshlet_lod_error` in the
-    // project's render settings now, and the file is the only author.
+    // 🔴 A READOUT now, for the same reason as the shadow-page section below.
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("LOD ≤").small());
         ui.label(
@@ -787,28 +726,6 @@ fn debug_controls(
 }
 
 /// The shadow-page marking pass and what it found (#866).
-///
-/// 🔴 A READOUT, not a control. #866 kept these as panel-only
-/// diagnostics while nothing read what marking wrote — a knob promising
-/// memory nobody spent. The pass decides which shadows exist now, so
-/// every knob moved into the project's render settings, in a
-/// `Shadows: virtual pages` group beside the cascades it replaces. What
-/// stays here is what a settings file cannot hold: what the last frame
-/// actually did.
-///
-/// # 🔴 Grouped and tabulated, because a wall of prose is not a readout
-///
-/// Every number here earned its place by naming a defect, and they were
-/// printed as fourteen sentences of identical weight and colour. At the
-/// size this card actually renders that is unreadable: answering "how
-/// full is the pool" meant reading a paragraph to find one figure inside
-/// it, and the coloured ALERTS — the lines that say the frame is wrong —
-/// sat in the middle of the run, where they look like more grey text.
-///
-/// So the numbers get the columns: label left, value right, monospace,
-/// four named blocks. Anything that argues rather than measures moved
-/// into hover text, which is where an explanation belongs, and the
-/// alerts moved to the top, which is where a failure belongs.
 fn shadow_page_readout(
     ui: &mut egui::Ui,
     page_counts: Option<kooch_render::shadow::pages::mark::MarkCounts>,
@@ -825,10 +742,9 @@ fn shadow_page_readout(
         return;
     };
 
-    // 🔴 Every reading that says the frame is WRONG, before anything
-    // that says it is fine. Each of these was already computed and each
-    // was invisible: a red line in the eleventh position of eleven grey
-    // ones is not an alert, it is more text.
+    // 🔴 Every reading that says the frame is WRONG, before anything that says it is fine. Each of
+    // these was already computed and each was invisible: a red line in the eleventh position of
+    // eleven grey ones is not an alert, it is more text.
     let pool = counts.pool;
     if counts.overflow > 0 {
         alert(
@@ -892,20 +808,8 @@ fn shadow_page_readout(
              allocator is wrong.",
         );
     }
-    // 🔴 RED only for the sun, amber for the lamps, and the split is
-    // the reading rather than a refinement of it.
-    //
-    // A LAMP with resident pages and no survivors is usually telling the
-    // truth: the marking makes a page resident because a RECEIVER asked
-    // to be shadowed there, and with no caster inside that light's reach
-    // nothing occludes, so an empty page answers correctly. What it
-    // costs is the clear, every frame, for every one of them.
-    //
-    // The sun is the opposite. Its clipmap covers the whole view, so the
-    // same reading means its cull threw away geometry the marking had
-    // already committed pages to — and those pages render LIT with a
-    // caster standing in them, which by sight is a bias that overshot or
-    // a page that never arrived. Both send you to the wrong knob.
+    // 🔴 RED only for the sun, amber for the lamps, and the split is the reading rather than a
+    // refinement of it.
     if let Some(raster) = raster_counts
         && raster.unfilled_sun > 0
     {
@@ -1087,9 +991,8 @@ fn shadow_page_readout(
 
     block(ui, "Marking");
     grid(ui, "shadow_pages_marking", |ui| {
-        // 🔴 The count is for EVERY light the grid holds, not the
-        // handful that have a shadow slot today — and that is the
-        // measurement, not an oversight. Counting only the four that fit
+        // 🔴 The count is for EVERY light the grid holds, not the handful that have a shadow slot
+        // today — and that is the measurement, not an oversight. Counting only the four that fit
         // today's slots would be measuring the cap the feature removes.
         metric_with_tooltip(
             ui,
@@ -1124,9 +1027,8 @@ fn shadow_page_readout(
              the camera (#944): they still shade, but they claim no pages.",
         );
         if counts.froxels > 0 && counts.samples > 0 {
-            // 🔴 `pairs` counts a different thing on each path, so the
-            // ratio has to be read from the side that owns it. Dividing
-            // froxel pairs by samples printed `0.0 lights each` and a
+            // 🔴 `pairs` counts a different thing on each path, so the ratio has to be read from the
+            // side that owns it. Dividing froxel pairs by samples printed `0.0 lights each` and a
             // made-up multiplier beside it.
             let (lights_each, walked, other) = if counts.by_froxel {
                 let each = counts.pairs as f32 / counts.froxels as f32;
@@ -1138,11 +1040,9 @@ fn shadow_page_readout(
             let ratio = (walked.max(1.0) / other.max(1.0)).max(other.max(1.0) / walked.max(1.0));
             metric(ui, "froxels occupied", &thousands(counts.froxels as u64));
             metric(ui, "lights each", &format!("{lights_each:.1}"));
-            // 🔴 Olsson §III derives shadow resolution from cluster/light
-            // pairs rather than sample/light pairs, because cluster
-            // bounds are "several orders of magnitude fewer than the
-            // samples". This row is that claim, in this scene, as a
-            // number rather than an argument (#952).
+            // 🔴 Olsson §III derives shadow resolution from cluster/light pairs rather than
+            // sample/light pairs, because cluster bounds are "several orders of magnitude fewer
+            // than the samples".
             metric_with_tooltip(
                 ui,
                 "walking",
@@ -1160,13 +1060,9 @@ fn shadow_page_readout(
                  pages rather than one, so a cluster pass marks conservatively and spends \
                  pool slots the per-pixel version never asked for.",
             );
-            // 🔴 Derived from this engine's own budget, not from
-            // folklore. On the OneXFly `shade: compute` measured 5.5 ms
-            // at 17.9 lights per pixel — about 0.31 ms a light — against
-            // a 13.9 ms frame. Holding the shading loop near 2 ms, a
-            // fifth of the budget, puts the sustainable average at six or
-            // seven; a PEAK may run to twice that, so the alert fires at
-            // sixteen.
+            // 🔴 Derived from this engine's own budget, not from folklore. On the OneXFly `shade:
+            // compute` measured 5.5 ms at 17.9 lights per pixel — about 0.31 ms a light — against a
+            // 13.9 ms frame.
             const OVERLAP_WARN: u32 = 16;
             if counts.peak_lights > 0 {
                 let text = format!("{} lights", counts.peak_lights);
@@ -1226,12 +1122,9 @@ fn shadow_page_readout(
              cleared, this one says whether there was ever anything to put in them.",
         );
         metric(ui, "meshlet pairs", &thousands(raster.pairs as u64));
-        // 🔴 Directly under the pair count and NOT at the foot of this
-        // section, because the section does not fit the window: a
-        // reading placed after `scatter would cost` fell below the
-        // panel's edge and an A/B was called on an absence nobody could
-        // observe. A number that decides an experiment goes where the
-        // experiment can see it.
+        // 🔴 Directly under the pair count and NOT at the foot of this section, because the section
+        // does not fit the window: a reading placed after `scatter would cost` fell below the
+        // panel's edge and an A/B was called on an absence nobody could observe.
         if raster.walk_overflow > 0 {
             alert(
                 ui,
@@ -1273,9 +1166,8 @@ fn shadow_page_readout(
                  ⚠️ They spend the same pool the sun does.",
             );
         }
-        // 🔴 The number that decides the shape of the local-light
-        // raster. The expansion is a product — a level's pages times a
-        // level's surviving meshlets — so what it costs is the
+        // 🔴 The number that decides the shape of the local-light raster. The expansion is a product
+        // — a level's pages times a level's surviving meshlets — so what it costs is the
         // combinations it walks, not the pairs it finds.
         if raster.tests > 0 {
             let per_pair = raster.tests as f32 / raster.pairs.max(1) as f32;
@@ -1300,11 +1192,9 @@ fn shadow_page_readout(
                 "The clipmap level whose expansion walked the most combinations. A level \
                  far above the others is the one to bias.",
             );
-            // 🔴 The counted cost of the shape this pass does NOT use.
-            // Both numbers are measured every frame so the choice
-            // between them is arithmetic instead of an opinion — which
-            // is what was missing the last time one of them shipped
-            // everywhere at once.
+            // 🔴 The counted cost of the shape this pass does NOT use. Both numbers are measured
+            // every frame so the choice between them is arithmetic instead of an opinion — which is
+            // what was missing the last time one of them shipped everywhere at once.
             let save = raster.tests.saturating_sub(raster.hybrid);
             let cut = save as f32 / raster.tests.max(1) as f32 * 100.0;
             metric_with_tooltip(
@@ -1333,18 +1223,9 @@ fn shadow_page_readout(
     // run to degrade. See `page_table.wgsl`.
 }
 
-/// Default-open collapsing header — section toggles with the chevron
-/// next to the title. Persists across frames via egui's `Id`-keyed
-/// state so the artist's preferences survive editor reloads.
+/// Default-open collapsing header — section toggles with the chevron next to the title. Persists
+/// across frames via egui's `Id`-keyed state so the artist's preferences survive editor reloads.
 /// One collapsible section. Returns whether its body was drawn.
-///
-/// The return value matters for exactly one section — **System**, whose
-/// numbers cost 2.08 ms to take (#703) — but is returned for all of them
-/// rather than special-casing one, so the next expensive metric can be
-/// gated without changing this signature again.
-/// The Performance dock tab (the user's ask): everything the overlay
-/// sidebar showed, in a real panel off the game view, with every
-/// section pinnable into its own floating window.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_performance_panel(
     ui: &mut egui::Ui,
@@ -1361,10 +1242,9 @@ pub(crate) fn draw_performance_panel(
     single_light_note: Option<&str>,
 ) {
     hud_visibility.panel_visible = true;
-    // The cluster grid's shape needs the GAME viewport, which this tab
-    // does not render — the Game tab's last size request stands in. The
-    // fallback only matters with the Game tab closed, where the grid is
-    // informational anyway.
+    // The cluster grid's shape needs the GAME viewport, which this tab does not render — the Game
+    // tab's last size request stands in. The fallback only matters with the Game tab closed, where
+    // the grid is informational anyway.
     let viewport = game_viewport
         .map(|(w, h)| egui::vec2(w as f32, h as f32))
         .unwrap_or(egui::vec2(1920.0, 1080.0));
@@ -1394,13 +1274,6 @@ pub(crate) enum PerfSurface {
 }
 
 /// One section of the readout.
-///
-/// On the PANEL every section renders, as a collapsing header whose pin
-/// toggle mirrors it onto the game viewport. On the OVERLAY only the
-/// toggled sections render, each as a semi-transparent card in the
-/// stack, with a ✕ to dismiss — Godot's viewport overlays, the user's
-/// ask. Returns whether the body rendered, which the System section's
-/// poll gate reads.
 fn section(
     ui: &mut egui::Ui,
     pinned: &mut bool,
@@ -1484,22 +1357,12 @@ fn metric(ui: &mut egui::Ui, label: &str, value: &str) {
 }
 
 /// A named block heading inside a section.
-///
-/// The section title is one level up and says WHAT is being measured;
-/// this says which half of the pipeline a row belongs to. Without it the
-/// pool's counters and the raster's sit in one undifferentiated run, and
-/// a reader looking for "how full is the pool" has to know the order
-/// they happen to be printed in.
 fn block(ui: &mut egui::Ui, title: &str) {
     ui.add_space(4.0);
     ui.label(egui::RichText::new(title).small().strong());
 }
 
 /// A reading that says the frame is WRONG, in the colour reserved for it.
-///
-/// 🔴 Drawn before every healthy counter rather than in the position the
-/// number happens to be computed in. A red line sitting eleventh in a
-/// list of eleven grey ones is not an alert.
 fn alert(ui: &mut egui::Ui, text: &str, tooltip: &str) {
     ui.label(
         egui::RichText::new(text)
@@ -1509,10 +1372,9 @@ fn alert(ui: &mut egui::Ui, text: &str, tooltip: &str) {
     .on_hover_text(tooltip);
 }
 
-/// A reading that says the frame is under PRESSURE but still correct —
-/// the pool rationing, not the pool failing. Amber rather than red, and
-/// the distinction is the point: one is a budget being spent, the other
-/// is a bug.
+/// A reading that says the frame is under PRESSURE but still correct — the pool rationing, not the
+/// pool failing. Amber rather than red, and the distinction is the point: one is a budget being
+/// spent, the other is a bug.
 fn warn(ui: &mut egui::Ui, text: &str, tooltip: &str) {
     ui.label(
         egui::RichText::new(text)
@@ -1537,10 +1399,9 @@ fn metric_coloured(
     ui.end_row();
 }
 
-/// Same as [`metric`] but attaches `tooltip` on hover for both the label
-/// and the value, used when the metric's number alone is misleading
-/// without context (e.g. fixed editor passes that produce a non-zero
-/// floor in an empty scene).
+/// Same as [`metric`] but attaches `tooltip` on hover for both the label and the value, used when
+/// the metric's number alone is misleading without context (e.g. fixed editor passes that produce a
+/// non-zero floor in an empty scene).
 fn metric_with_tooltip(ui: &mut egui::Ui, label: &str, value: &str, tooltip: &str) {
     ui.label(label).on_hover_text(tooltip);
     ui.label(egui::RichText::new(value).monospace())
@@ -1549,11 +1410,6 @@ fn metric_with_tooltip(ui: &mut egui::Ui, label: &str, value: &str, tooltip: &st
 }
 
 /// A froxel's depth as the panel should state it.
-///
-/// The two clamped ends are the ones that matter: an unbounded last
-/// slice formats as `inf` and a scene sitting in front of the grid reads
-/// as a suspiciously thin cell. Both get words, because both mean "your
-/// geometry is outside the grid" and neither is a measurement.
 fn depth_label(metres: f32) -> String {
     match metres.is_finite() {
         true => format!("{metres:.1} m"),

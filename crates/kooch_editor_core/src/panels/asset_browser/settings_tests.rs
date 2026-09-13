@@ -54,13 +54,8 @@ fn no_project_means_nothing_found() {
     assert!(!has_render_settings(&catalog, None));
 }
 
-/// 🔴 A dropped file used to land in whatever folder was selected — or in
-/// the project root when none was, beside `Cargo.toml`, where nothing
-/// registers it and no build carries it.
-///
-/// The same rule the "New …" menu enforces (#765), applied to the other
-/// way a file enters a project. A rule that holds for one entrance and
-/// not the other is not a rule.
+/// 🔴 A dropped file used to land in whatever folder was selected — or in the project root when none
+/// was, beside `Cargo.toml`, where nothing registers it and no build carries it.
 #[test]
 fn imports_always_land_under_assets() {
     let proj = Path::new("/proj");

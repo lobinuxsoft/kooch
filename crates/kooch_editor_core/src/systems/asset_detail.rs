@@ -1,10 +1,5 @@
-//! Resolves the Asset Browser's selected asset into a data snapshot
-//! ([`AssetDetail`]) before the egui frame.
-//!
-//! Runs against `Resources` (needs the `AssetServer` to load-on-demand
-//! and the typed `Assets<T>` stores), so it lives on the system side
-//! rather than in the panel. The panel only renders the returned
-//! snapshot.
+//! Resolves the Asset Browser's selected asset into a data snapshot ([`AssetDetail`]) before the
+//! egui frame.
 
 use kooch_core::Guid;
 use kooch_core::asset_database::AssetDatabase;
@@ -34,10 +29,9 @@ pub(crate) fn gather_asset_detail(guid: Guid, resources: &mut Resources) -> Opti
         "kooch_render::meshlet::asset::MeshletMesh" => gather_mesh(guid, resources),
         "kooch_render::texture::asset::Image" => gather_image(guid, resources),
         crate::drag_drop::PREFAB_TYPE_NAME => gather_prefab(guid, resources),
-        // Anything without a bespoke view: if the type registered
-        // itself as reflected, the Inspector edits it with the same grid
-        // components use. Before #744 every type landed on the label
-        // below, and a new asset type cost three edits in this crate.
+        // Anything without a bespoke view: if the type registered itself as reflected, the
+        // Inspector edits it with the same grid components use. Before #744 every type landed on
+        // the label below, and a new asset type cost three edits in this crate.
         other => gather_reflected(other, guid, resources).or(Some(AssetDetail::Unknown {
             type_name: other.to_owned(),
         })),
@@ -77,10 +71,6 @@ fn gather_mesh(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
 }
 
 /// Reads a baked collider's sidecar, and re-hashes its source.
-///
-/// Done here rather than in the panel because it touches the disk, and
-/// only for an asset whose sidecar says it was baked — an ordinary mesh
-/// costs one `.meta` read it was going to make anyway.
 fn baked_origin(guid: Guid, resources: &mut Resources) -> Option<BakedFrom> {
     use std::hash::{Hash, Hasher};
 
@@ -129,20 +119,12 @@ fn baked_origin(guid: Guid, resources: &mut Resources) -> Option<BakedFrom> {
 }
 
 /// Resolves a prefab into something the Inspector can draw.
-///
-/// The document is read from `Assets<SceneDocument>` rather than from disk:
-/// that is where edits live until the user saves, so the panel shows what
-/// will be spawned rather than what the file still says.
-///
-/// Resolution happens here, with the registries in hand, so the panel does
-/// not need a world — the same split `EntityDisplayInfo` uses.
 fn gather_prefab(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
     use kooch_ecs::scene::SceneDocument;
 
-    // Logged rather than swallowed: the panel's only other state is
-    // "Loading asset…", so a load that can never succeed is indistinguishable
-    // from one that has not finished. This is how a missing `Assets` store
-    // presented as a permanent spinner.
+    // Logged rather than swallowed: the panel's only other state is "Loading asset…", so a load
+    // that can never succeed is indistinguishable from one that has not finished. This is how a
+    // missing `Assets` store presented as a permanent spinner.
     let Some(handle) = load_handle::<SceneDocument>(guid, resources) else {
         tracing::warn!(target: "kooch_editor_core::asset_detail", %guid, "prefab could not be loaded");
         return None;
@@ -160,10 +142,9 @@ fn gather_prefab(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
 
     let registry = resources.get::<kooch_ecs::component::ComponentRegistry>();
     let names = resources.get::<kooch_ecs::component::ComponentNames>();
-    // The third place a component type can be known from: declared by a
-    // project's plugin rather than compiled into the editor. Asking only
-    // the reflected registry is what left a project's own component with
-    // no fields to edit (#722).
+    // The third place a component type can be known from: declared by a project's plugin rather
+    // than compiled into the editor. Asking only the reflected registry is what left a project's
+    // own component with no fields to edit (#722).
     let dynamic = resources.get::<kooch_ecs::component::DynamicTypeRegistry>();
 
     let entities = document
@@ -236,14 +217,9 @@ fn sorted_visible(
                 return None;
             }
 
-            // Not in the reflected registry, but a project's plugin
-            // declared it. Its fields are known and its values are right
-            // here in the document, so it renders like any other — which
-            // is what `DynamicTypeRegistry`'s own docs already promise.
-            //
-            // No `TypeId`: this binary has no Rust type for it. Nothing
-            // below needs one except the world-space rotation toggle,
-            // which only ever applies to the engine's own `Transform`.
+            // Not in the reflected registry, but a project's plugin declared it. Its fields are
+            // known and its values are right here in the document, so it renders like any other —
+            // which is what `DynamicTypeRegistry`'s own docs already promise.
             let resolved = resolved.or_else(|| {
                 dynamic
                     .filter(|registry| registry.get(&component.type_name).is_some())
@@ -280,11 +256,9 @@ fn gather_image(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
         height: img.height,
         format: format_name(img.format),
         bytes: img.byte_count(),
-        // Read off the loaded image rather than the sidecar: the image
-        // is what the loader decided after reading the sidecar, so this
-        // shows what the texture IS and not what a file says it should
-        // be. They differ exactly while a `.meta` is malformed, which is
-        // the case worth seeing.
+        // Read off the loaded image rather than the sidecar: the image is what the loader decided
+        // after reading the sidecar, so this shows what the texture IS and not what a file says it
+        // should be.
         import: kooch_render::texture::ImageImport {
             mipmaps: img.mipmaps,
         },
@@ -293,10 +267,9 @@ fn gather_image(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
     Some(AssetDetail::Image(info))
 }
 
-/// Resolves `guid` to a typed handle through the `AssetServer`, loading
-/// the asset if it is not already resident. The server is removed and
-/// re-inserted around the call because `load_by_guid` needs mutable
-/// access to the whole `Resources`.
+/// Resolves `guid` to a typed handle through the `AssetServer`, loading the asset if it is not
+/// already resident. The server is removed and re-inserted around the call because `load_by_guid`
+/// needs mutable access to the whole `Resources`.
 fn load_handle<T: kooch_core::assets::Asset>(
     guid: Guid,
     resources: &mut Resources,

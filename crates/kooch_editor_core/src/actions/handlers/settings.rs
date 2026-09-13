@@ -48,10 +48,6 @@ pub(super) fn handle_set_ide_command(resources: &mut Resources, command: Option<
 }
 
 /// Records the launch environment against the OPEN project's path.
-///
-/// Nothing happens with no project open, which is also when the field
-/// that raises this is not drawn: a line stored against no path could
-/// only ever apply to everything or to nothing.
 pub(super) fn handle_set_launch_env(resources: &mut Resources, value: String) {
     if let Some(ps) = resources.get_mut::<ProjectState>() {
         let Some(root) = ps.active_project.as_ref().map(|p| p.root_path.clone()) else {
@@ -65,11 +61,6 @@ pub(super) fn handle_set_launch_env(resources: &mut Resources, value: String) {
 }
 
 /// Deletes an installed engine.
-///
-/// The version this editor ships is refused inside `remove_engine`, and
-/// the panel does not offer the button for it or for the one the open
-/// project uses — belt and braces, because what it deletes is a
-/// directory a manifest may be naming.
 pub(super) fn handle_remove_engine(version: &str) {
     match crate::engine_vendor::remove_engine(version) {
         Ok(()) => tracing::info!(version, "removed an installed engine"),
@@ -77,14 +68,7 @@ pub(super) fn handle_remove_engine(version: &str) {
     }
 }
 
-/// Moves a project onto this editor's engine from the launcher, without
-/// opening it.
-///
-/// 🔴 The whole point is what it does **not** do. Opening a project
-/// compiles its plugin and only then compares engine versions, so a
-/// mismatch costs a full compile against the engine being left behind,
-/// and the `.so` that comes out is refused by `BuildStamp`. Settled
-/// here, the first compile is already against the right engine (#800).
+/// Moves a project onto this editor's engine from the launcher, without opening it.
 pub(super) fn handle_move_project_to_engine(resources: &mut Resources, project_root: &Path) {
     let version = crate::engine_vendor::editor_engine_version();
     let source = resources

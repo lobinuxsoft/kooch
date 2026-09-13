@@ -1,28 +1,4 @@
 //! Keyboard navigation over the Inspector's component sections.
-//!
-//! # What each key belongs to
-//!
-//! Two layers, and keeping them apart is the whole design:
-//!
-//! - **Tab** moves between *fields*, and egui already does that — a
-//!   focusable widget registers itself and `Key::Tab` becomes
-//!   `FocusDirection::Next` in egui's own memory. There is nothing to
-//!   build, and building it would fight the thing that works.
-//! - **The arrows** move between *components*, and only while no field
-//!   holds keyboard focus. Once Tab has landed in a `DragValue` the arrows
-//!   are that widget's — they nudge the value — and taking them back would
-//!   be worse than not having them.
-//!
-//! So the Inspector answers the arrows when you are reading it and gets
-//! out of the way when you are editing it (#661).
-//!
-//! # Why a toggle is a request
-//!
-//! Same reason as the asset tree: a section's collapse state lives in
-//! egui memory under an id from `Ui::make_persistent_id`, which mixes in
-//! the salt of the `Ui` it was called on and cannot be rebuilt from
-//! outside. The keyboard names a component and the renderer applies it on
-//! the way past.
 
 use kooch_ecs::component::ComponentId;
 
@@ -30,10 +6,6 @@ use kooch_ecs::component::ComponentId;
 #[derive(Default)]
 pub(crate) struct InspectorNav {
     /// Which component section the cursor is on.
-    ///
-    /// A `ComponentId` rather than an index: the list changes as
-    /// components are added and removed, and the selection can change
-    /// under it entirely.
     pub(crate) cursor: Option<ComponentId>,
     /// The sections drawn last frame, in order.
     pub(crate) rows: Vec<ComponentId>,
@@ -50,10 +22,6 @@ impl InspectorNav {
     }
 
     /// Moves the cursor by `delta` sections, clamped.
-    ///
-    /// With no cursor, or one whose component is gone — removed, or a
-    /// different entity selected — this lands on the first section rather
-    /// than doing nothing, which would read as a key that never arrived.
     pub(crate) fn step(&mut self, delta: isize) {
         if self.rows.is_empty() {
             self.cursor = None;
@@ -98,10 +66,6 @@ impl InspectorNav {
     }
 
     /// Reads the arrows, if this panel owns them this frame.
-    ///
-    /// Returns without touching anything while a widget holds keyboard
-    /// focus: a `DragValue` under the caret owns Up and Down, and a
-    /// `TextEdit` owns Left and Right.
     pub(crate) fn handle_keyboard(&mut self, ui: &egui::Ui) {
         self.scroll_to_cursor = false;
         if ui.memory(|m| m.focused().is_some()) {

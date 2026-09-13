@@ -201,11 +201,6 @@ fn the_shape_centre_follows_the_transform() {
 }
 
 /// Multi-selection draws one outline per entity, into the same batch.
-///
-/// The dispatch loop relies on visualizers *appending* rather than
-/// replacing, so two selected bodies produce two outlines at two
-/// places. A visualizer that overwrote the batch would show only the
-/// last entity, which is what suppressing multi-selection used to hide.
 #[test]
 fn two_entities_produce_two_outlines_in_one_batch() {
     let collider = Collider::default();

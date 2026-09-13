@@ -1,12 +1,6 @@
 use super::*;
 
-/// 🔴 `KEY_ENV` is the **process's** environment, and cargo runs tests on
-/// several threads. Two of these set it; every other one calls
-/// `project_key`, which reads it — so without a lock, a test that expects
-/// a key on disk intermittently gets the one a sibling had just exported
-/// and finds nothing written. Every test here takes it, including the
-/// ones that never touch the variable, because they are the ones that
-/// lose the race.
+/// 🔴 `KEY_ENV` is the **process's** environment, and cargo runs tests on several threads.
 static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// The lock, surviving a sibling's panic: a poisoned mutex would turn one

@@ -117,15 +117,7 @@ fn no_gameplay_camera_reports_none() {
     assert!(gameplay_camera(&r).is_none());
 }
 
-/// The Game viewport publishes its own stats, and the Edit view's render
-/// is not the only writer.
-///
-/// 🔴 A source check, because the defect is invisible on screen: both
-/// viewports show the same scene, so an overlay reporting the other
-/// camera's frustum looks entirely plausible. It was caught by a page
-/// count that would not move while the game camera did — and every
-/// reading taken from that panel described a camera nobody was looking
-/// through.
+/// The Game viewport publishes its own stats, and the Edit view's render is not the only writer.
 #[test]
 fn the_game_view_publishes_its_own_stats() {
     let source = include_str!("../game.rs");

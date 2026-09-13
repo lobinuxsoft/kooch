@@ -24,10 +24,9 @@ fn the_binary_matches_the_scaffold() {
     );
 }
 
-/// 🔴 The property #558 is about. A game build must not be able to reach
-/// the editor, and what makes that true is `required-features` — without
-/// it a plain `cargo build` produces the authoring binary too, and the
-/// feature unification that comes with it puts the editor back in.
+/// 🔴 The property #558 is about. A game build must not be able to reach the editor, and what makes
+/// that true is `required-features` — without it a plain `cargo build` produces the authoring
+/// binary too, and the feature unification that comes with it puts the editor back in.
 #[test]
 fn the_authoring_binary_is_gated() {
     let manifest = crate::project::generate_cargo_toml_for_test("demo", "/engine");

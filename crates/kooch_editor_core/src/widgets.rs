@@ -1,29 +1,6 @@
 //! Widgets shared by more than one panel.
-//!
-//! Anything here exists because two panels needed the same thing and the
-//! second one silently did without. [`SelectableRow`] is the first: the
-//! World panel worked out how to draw a full-width list row, wrote down
-//! why, and the asset browser kept using `ui.selectable_label` — which
-//! stops at the end of the text and leaves the rest of the panel dead to
-//! the pointer.
 
 /// Height of one list row, in points.
-///
-/// A single definition on purpose. A virtualized list tells egui how tall
-/// its rows are before drawing any of them — it has to place a scrollbar
-/// for six hundred entities while laying out the twenty that fit. Two
-/// copies of this formula drift by a pixel a row, and by the bottom of a
-/// long list the scrollbar is lying about where it is.
-///
-/// # Without the spacing between rows
-///
-/// `ScrollArea::show_rows` names its parameter `row_height_sans_spacing`
-/// and adds `item_spacing.y` itself. This used to include the spacing, so
-/// egui reserved a row's height *plus two* gaps while each row occupied
-/// its height plus one — four pixels of nothing per row. Invisible on ten
-/// rows, a finger's width of empty panel on forty, and growing with the
-/// panel because the number of visible rows does. That is what finally
-/// identified it (#708): the gap scaled with the height.
 pub(crate) fn row_height(ui: &egui::Ui) -> f32 {
     use egui::NumExt as _;
     let line = ui.text_style_height(&egui::TextStyle::Button);
@@ -31,19 +8,6 @@ pub(crate) fn row_height(ui: &egui::Ui) -> f32 {
 }
 
 /// A list row that spans the full width of its panel.
-///
-/// # Why not `ui.selectable_label`
-///
-/// That widget is as wide as its text. A row is a *target* — for a click,
-/// for a drop, for the highlight that says which item is selected — and a
-/// target that stops where the text stops leaves most of the panel dead
-/// to the pointer. It also makes selection look ragged, since the
-/// highlight is a different width on every row.
-///
-/// The text is truncated rather than wrapped: a wrapped name would make
-/// its own row taller than [`row_height`] promised, and in a virtualized
-/// list every row below it would be drawn where the scrollbar says the
-/// previous one ended rather than where it actually did.
 pub(crate) struct SelectableRow {
     text: egui::WidgetText,
     selected: bool,
@@ -95,11 +59,9 @@ impl SelectableRow {
         let (rect, resp) = ui.allocate_at_least(desired_size, self.sense);
 
         if ui.is_rect_visible(rect) {
-            // Left-aligned and vertically centred, stated rather than
-            // inherited from the layout: now that the row is as wide as
-            // the panel, asking the layout where to put the text would
-            // centre a short name in the middle of a wide row — and lose
-            // the leading indentation that shows the hierarchy.
+            // Left-aligned and vertically centred, stated rather than inherited from the layout:
+            // now that the row is as wide as the panel, asking the layout where to put the text
+            // would centre a short name in the middle of a wide row.
             let inner = rect.shrink2(button_padding);
             let text_pos = egui::pos2(inner.left(), inner.center().y - galley.size().y * 0.5);
             let visuals = ui.style().interact_selectable(&resp, self.selected);

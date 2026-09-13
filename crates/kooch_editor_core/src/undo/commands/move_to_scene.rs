@@ -1,9 +1,4 @@
 //! [`MoveToSceneCommand`] — re-homes an entity into another open scene.
-//!
-//! 🔴 An entity's scene is a component, not a folder it sits in, which
-//! is why this is a command at all: the drag that asks for it has to
-//! land in the same history as every other edit, and undo has to know
-//! where the entity was — including the case where it was nowhere.
 
 use kooch_core::resource::Resources;
 use kooch_ecs::entity::Entity;

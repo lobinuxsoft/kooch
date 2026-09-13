@@ -89,13 +89,9 @@ pub(super) fn render_folder(
             if resp.clicked() {
                 ctx.nav.cursor = Some(node.path.clone());
             }
-            // An entity dragged out of the World panel and dropped here is
-            // saved as a prefab in this folder — the second of the two
-            // ways to author one, beside the entity's own context menu.
-            //
-            // Guarded behind `dnd_hover_payload` because
-            // `dnd_release_payload` takes the payload before checking its
-            // type; see the ordering note in `panels/world/entity_row.rs`.
+            // An entity dragged out of the World panel and dropped here is saved as a prefab in
+            // this folder — the second of the two ways to author one, beside the entity's own
+            // context menu.
             if ctx.writable && resp.dnd_hover_payload::<Entity>().is_some() {
                 ui.painter().rect_filled(
                     resp.rect,
@@ -143,11 +139,7 @@ pub(super) fn render_leaf(
         return;
     }
 
-    // 🔴 The main scene gets its own icon rather than a colour. A colour
-    // is a second thing the theme has to keep legible in both light and
-    // dark, and the tree is already read by icon — `file_icon` gives
-    // every `.scene` the same one, which is exactly the ambiguity this
-    // resolves (#808).
+    // 🔴 The main scene gets its own icon rather than a colour.
     let is_main_scene = ctx.main_scene.is_some_and(|main| main == leaf.path);
     let icon = match (&leaf.asset, is_main_scene) {
         (_, true) => icons::PLAY,
@@ -161,22 +153,15 @@ pub(super) fn render_leaf(
         open: false,
     });
 
-    // Typed assets are drag sources for the Inspector's asset slots
-    // (#439); the sense is decided up front rather than upgraded after
-    // the fact, so click / double-click / context menu all come off the
-    // one response.
+    // Typed assets are drag sources for the Inspector's asset slots (#439); the sense is decided up
+    // front rather than upgraded after the fact, so click / double-click / context menu all come
+    // off the one response.
     let sense = match leaf.asset {
         Some(_) => egui::Sense::click_and_drag(),
         None => egui::Sense::click(),
     };
-    // The icon says which one; the colour is what makes it readable
-    // without hunting for the icon. Both, because a row is scanned by
-    // shape at a glance and read by name when you stop on it.
-    //
-    // 🔴 From the theme, never a literal. `selection.bg_fill` is the
-    // accent the editor already lights a focused panel with, so it stays
-    // legible in whichever theme is on — a hard-coded colour is legible
-    // in the one it was picked in.
+    // The icon says which one; the colour is what makes it readable without hunting for the icon.
+    // Both, because a row is scanned by shape at a glance and read by name when you stop on it.
     let label = match is_main_scene {
         true => egui::RichText::new(format!("{icon} {}", leaf.name))
             .color(ui.visuals().selection.bg_fill),
@@ -221,11 +206,8 @@ pub(super) fn render_leaf(
             .extension()
             .and_then(|e| e.to_str())
             .is_some_and(|e| e.eq_ignore_ascii_case(kooch_input::actions::INPUT_ACTION_EXTENSION));
-        // 🔴 A scene opens the scene. It used to go to the IDE as text,
-        // which is a true answer to "what is this file" and never the one
-        // anybody double-clicking a level was asking. Additive stays on
-        // the context menu: a double click is one gesture and it has to
-        // mean one thing.
+        // 🔴 A scene opens the scene. It used to go to the IDE as text, which is a true answer to
+        // "what is this file" and never the one anybody double-clicking a level was asking.
         ctx.actions.push(if super::menus::is_scene(&leaf.path) {
             EditorAction::OpenScene {
                 path: Some(leaf.path.clone()),
