@@ -1,38 +1,6 @@
-//! Listener thread and its bridge to the main loop.
-//!
-//! The listener blocks on a dedicated thread, so nothing here runs on the
-//! engine's critical path and no async runtime is pulled in. Each request
-//! is decoded, handed to the main thread over a channel, and answered
-//! there — the ECS is only ever touched from the main thread. The
-//! listener parks on a per-request reply channel until the main loop
-//! drains the queue.
-//!
-//! # Why a local socket and not a TCP port
-//!
-//! The editor and the project it launched are on the same machine, always.
-//! A TCP port is reachable by anything else on that machine — including a
-//! web page, which can `fetch()` at a loopback address and, with a
-//! `text/plain` body, do it without a CORS preflight. The server would
-//! then run whatever it was sent. Against `SaveScene`, which writes to any
-//! path, that is code execution from visiting a page (#647).
-//!
-//! A local socket is not addressable that way. On Unix it is a domain
-//! socket, on Windows a named pipe; a browser can reach neither. The
-//! vector disappears rather than being filtered for.
-//!
-//! # Why the name is unique per session
-//!
-//! The old port was the constant 15703, so an orphaned project — one that
-//! outlived a crashed editor — kept holding it, and the next editor
-//! connected to *that* instead of the process it had just launched, then
-//! mirrored and edited a dead session's world in silence. A name minted
-//! per session cannot be answered by yesterday's process.
-//!
-//! # Framing
-//!
-//! One JSON object per line, both ways. HTTP bought nothing here: there is
-//! no routing, no content negotiation and no caching — only a request and
-//! a reply on a channel that already guarantees order.
+//! Listener thread and its bridge to the main loop, the only thread touching the ECS.
+//! A per-session local socket, never a TCP port a web page could reach (#647); one JSON object per
+//! line.
 
 use std::io::{BufRead, BufReader, Write};
 use std::sync::Mutex;
@@ -47,12 +15,8 @@ use kooch_core::frame_pacing::FrameWaker;
 
 use crate::protocol::{Request, Response};
 
-/// Environment variable carrying the socket name to a launched project.
-///
-/// The editor mints the name and passes it down; the project reads it
-/// here. A project started by hand with no name set falls back to
-/// [`DEFAULT_NAME`], which is what makes `cargo run -- --remote` still
-/// work on its own.
+/// Environment variable carrying the socket name to a launched project; without it [`DEFAULT_NAME`]
+/// keeps `cargo run -- --remote` working.
 pub const NAME_ENV: &str = "KOOCH_REMOTE_SOCKET";
 
 /// Socket name used when nothing set [`NAME_ENV`].
@@ -65,18 +29,11 @@ pub struct PendingRequest {
     pub reply: Sender<Response>,
 }
 
-/// Main-loop handle to the running server.
-///
-/// Holds the receiving end of the request queue. The listener thread and
-/// its socket live behind [`Self::_listener`]; dropping this resource
-/// drops the receiver, and the listener thread exits the next time it
-/// tries to hand off a request.
+/// Main-loop handle to the running server: the request queue's receiver, whose drop ends the
+/// listener thread at its next hand-off.
 pub struct RemoteServer {
-    /// Requests decoded by the listener thread, awaiting execution.
-    ///
-    /// A [`Resources`](kooch_core::resource::Resources) entry must be
-    /// `Sync`, which [`Receiver`] is not, so it lives behind a `Mutex`.
-    /// The lock is always uncontended — only the main thread drains it.
+    /// Requests decoded by the listener, awaiting execution — behind an always-uncontended `Mutex`,
+    /// since a resource must be `Sync`.
     incoming: Mutex<Receiver<PendingRequest>>,
     /// Kept alive so the listener thread runs for the server's lifetime.
     _listener: JoinHandle<()>,
@@ -85,27 +42,14 @@ pub struct RemoteServer {
 }
 
 impl RemoteServer {
-    /// Binds `name` and spawns the listener thread, with no way to wake
-    /// a sleeping main loop.
-    ///
-    /// Fine for a test, which drives the frame itself. A real project
-    /// wants [`Self::start_waking`] — see it for why.
-    ///
-    /// Returns an error string if the name cannot be bound — most often
-    /// because another process already holds it.
+    /// Binds `name` and spawns the listener with no way to wake a sleeping main loop — for tests;
+    /// projects use [`Self::start_waking`]. Errors when the name is taken.
     pub fn start(name: &str) -> Result<Self, String> {
         Self::start_waking(name, FrameWaker::default())
     }
 
-    /// Binds `name` and spawns the listener thread, waking the main loop
-    /// whenever a request is queued.
-    ///
-    /// The listener parks on a reply that only the main thread can
-    /// produce. Once that thread is allowed to sleep between frames
-    /// (#656), a request arriving while it sleeps would be answered
-    /// only when something else happened to wake it — from the editor's
-    /// side, an indefinite hang on a project that is running perfectly
-    /// well. The wake is what keeps "asleep" from meaning "unreachable".
+    /// Binds `name` and spawns the listener, waking the main loop per queued request — once it may
+    /// sleep (#656), a request would otherwise wait for an unrelated frame.
     pub fn start_waking(name: &str, waker: FrameWaker) -> Result<Self, String> {
         let ns_name = name
             .to_ns_name::<GenericNamespaced>()
@@ -140,10 +84,8 @@ impl RemoteServer {
         &self.name
     }
 
-    /// Drains every request decoded since the last call, without blocking.
-    ///
-    /// The main loop calls this once per tick; each returned request must
-    /// be answered through its `reply` channel to unblock the listener.
+    /// Drains every queued request without blocking, once per tick; each must be answered through
+    /// `reply` to free the listener.
     pub fn take_pending(&self) -> Vec<PendingRequest> {
         match self.incoming.lock() {
             Ok(rx) => rx.try_iter().collect(),
@@ -177,17 +119,8 @@ fn listen(
     }
 }
 
-/// Encodes a response, falling back to an encodable complaint about why
-/// it could not be encoded.
-///
-/// This used to be `unwrap_or_else(|_| "{}")`. The client then failed
-/// decoding `{}` — a different error, in a different process, naming
-/// nothing — and its mirror stopped updating for good. A snapshot that
-/// cannot be described has to say so, in the reply, where the caller is
-/// already looking.
-///
-/// The fallback carries the serialiser's own message: whatever refused to
-/// encode says why, and that sentence is the whole diagnosis.
+/// Encodes a response, falling back to an encodable complaint carrying the serialiser's message —
+/// `{}` used to break the client with an unrelated error.
 fn encode(response: &Response) -> String {
     match serde_json::to_string(response) {
         Ok(json) => json,
@@ -229,10 +162,8 @@ fn serve_one(conn: Stream, tx: &Sender<PendingRequest>, waker: &FrameWaker) -> b
 
     let response = match serde_json::from_str::<Request>(&line) {
         Ok(request) => {
-            // 🔴 Read BEFORE the move, and acted on after the queue: a
-            // push has no reader, so blocking this thread on the main
-            // loop's answer buys nothing and costs the next caller a
-            // whole host frame (#1015).
+            // 🔴 Read before the move: a push has no reader, so blocking on the main loop's answer
+            // only delays the next caller (#1015).
             let quiet = request.notify;
             let (reply_tx, reply_rx) = channel::<Response>();
             let pending = PendingRequest {
@@ -243,17 +174,12 @@ fn serve_one(conn: Stream, tx: &Sender<PendingRequest>, waker: &FrameWaker) -> b
             if tx.send(pending).is_err() {
                 return false;
             }
-            // Queued, so wake whoever drains the queue. Ordering matters:
-            // waking before the send could have the loop run a frame,
-            // find nothing, and go back to sleep just as the request
-            // lands — a wake for the previous request, wasted on this one.
+            // Wake after queuing, never before, or the loop could find nothing and sleep as the
+            // request lands.
             waker.wake();
             if quiet {
-                // Queued and done. The main loop still executes it — the
-                // reply simply lands on a dropped channel, which `handle`
-                // already tolerates. What is given up is an answer nobody
-                // was going to read; what is bought is the listener being
-                // free to accept the pull that comes in behind it.
+                // Queued and done: the reply lands on a dropped channel `handle` tolerates, freeing
+                // the listener for the next pull.
                 return true;
             }
             // Block until the main thread executes and answers. If the

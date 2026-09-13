@@ -1,12 +1,5 @@
-//! Executes a [`Request`] against the live ECS on the main thread.
-//!
-//! Every handler runs where the main loop runs — the [`server`] thread
-//! only ferries bytes — so mutation is single-threaded and needs no
-//! locking. Component identity arrives as a name and is resolved to a
-//! local `TypeId` here; a name this binary has no type for is a
-//! [`RemoteError::UnknownComponent`], never a panic.
-//!
-//! [`server`]: crate::server
+//! Executes a [`Request`] against the live ECS on the main thread — the server thread only ferries
+//! bytes. An unknown component name is [`RemoteError::UnknownComponent`], never a panic.
 
 use std::any::TypeId;
 
@@ -202,12 +195,8 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
     }
 }
 
-/// Snapshots every non-hierarchy component on every alive entity by name.
-///
-/// Built from [`SceneDocument::from_ecs`] so it captures exactly what a
-/// save would, then annotated with live [`EntityId`]s the client needs
-/// to address entities — the scene format keys parents by name, but a
-/// remote client needs stable handles.
+/// Snapshots every non-hierarchy component on every alive entity, built from
+/// [`SceneDocument::from_ecs`] and annotated with the live [`EntityId`]s a client addresses.
 fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Response {
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Response::err(
@@ -226,10 +215,8 @@ fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Resp
         );
     };
 
-    // Membership is reflected — so a world rebuild carries it — but it
-    // still travels beside the components in `scene`, not among them.
-    // Sending both would put the same fact on the wire twice and let a
-    // client act on whichever it read last.
+    // Membership travels beside the components in `scene`, not among them, or the same fact goes
+    // out twice.
     let skip = [
         TypeId::of::<Parent>(),
         TypeId::of::<kooch_ecs::hierarchy::Children>(),
@@ -239,10 +226,8 @@ fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Resp
     let parents = registry.get_cpu::<Parent>();
     let members = registry.get_cpu::<kooch_ecs::SceneMember>();
 
-    // Archetype iteration groups by component set, which scrambles the
-    // order the user authored. Entities are allocated in the order the
-    // scene lists them, so ascending index is that authored order — and
-    // it is what a client shows in its hierarchy.
+    // Ascending index is authored order, since entities are allocated in scene order — archetype
+    // iteration scrambles it.
     let mut entities = Vec::new();
     for archetype in archetypes.iter_matching(&[]) {
         for &entity in archetype.entities() {
@@ -303,16 +288,9 @@ fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Resp
     )
 }
 
-/// What moved since the caller's revision, and nothing else (#1012).
-///
-/// 🔴 No reflection. `list_entities` walks every component of every
-/// entity through `reflect_get_fields` and allocates a `String` for each
-/// type name — 38.9 ms on 2159 entities, every frame, before it diffs.
-/// This reads one component column directly and compares sixteen floats.
-///
-/// The reply is `full` when the entity set changed, which is the host
-/// saying *ask the other question*: a transform diff describes a world
-/// the caller has, and a spawn means it no longer does.
+/// What moved since the caller's revision (#1012). 🔴 No reflection: one Transform column and
+/// sixteen floats, where reflecting everything took 38.9 ms on 2159 entities. `full` means the
+/// entity set changed.
 fn list_moved(id: u64, resources: &mut Resources, since: Option<u64>) -> Response {
     let current = {
         let Some(registry) = resources.get::<ComponentRegistry>() else {
@@ -331,15 +309,8 @@ fn list_moved(id: u64, resources: &mut Resources, since: Option<u64>) -> Respons
                 },
             );
         };
-        // 🔴 ONE pass over the Transform column, not a walk of every
-        // archetype with a lookup per entity. `list_entities` does the
-        // latter because it needs every component of every entity;
-        // this needs one component, and the storage already holds
-        // exactly the entities that have it.
-        //
-        // ⚠️ Despawn is DEFERRED — `EntityAllocator::despawn` queues —
-        // so the column can still list an entity that is gone. The
-        // allocator check is an index, not another hash.
+        // 🔴 One pass over the Transform column. ⚠️ Despawn is deferred, so the allocator check
+        // filters entities already gone.
         let alive = resources.get::<EntityAllocator>();
         let live = |entity: Entity| alive.is_none_or(|a| a.is_alive(entity));
         let mut current: Vec<MovedTransform> = transforms
@@ -375,13 +346,8 @@ fn list_moved(id: u64, resources: &mut Resources, since: Option<u64>) -> Respons
     )
 }
 
-/// The scenes this project has open, for the editor to list.
-///
-/// `None` when there is no [`SceneManager`], which is what a host that
-/// never loaded one looks like — distinct from "none are open", so the
-/// editor keeps showing what it had rather than blanking the panel.
-///
-/// [`SceneManager`]: kooch_ecs::SceneManager
+/// The scenes this project has open; `None` without a `SceneManager`, distinct from none open so
+/// the editor keeps its list.
 fn open_scenes(resources: &Resources) -> Option<Vec<SceneEntry>> {
     let manager = resources.get::<kooch_ecs::SceneManager>()?;
     let active = manager.active_id();
@@ -402,13 +368,8 @@ fn open_scenes(resources: &Resources) -> Option<Vec<SceneEntry>> {
     )
 }
 
-/// The host's own frame cost, read from the engine's measurement rather
-/// than timed again here.
-///
-/// `None` before the first frame has been described — `FrameMetrics`
-/// publishes a frame late on purpose, and a zero would read as a project
-/// running infinitely fast rather than as one that has not been measured
-/// yet.
+/// The host's frame cost from the engine's own measurement; `None` before the first frame is
+/// described, not a zero that reads as infinitely fast.
 fn host_metrics(resources: &Resources) -> Option<crate::protocol::HostMetrics> {
     let metrics = resources.get::<kooch_core::frame_metrics::FrameMetrics>()?;
     if metrics.frame_ms <= 0.0 {
@@ -492,16 +453,8 @@ fn save_prefab(resources: &mut Resources, entity: EntityId, path: &str) -> Resul
         })
 }
 
-/// Brings the project's copy of an asset file back in line with the disk.
-///
-/// Overwrites what is loaded rather than dropping it: the project's world
-/// holds handles into `Assets<T>`, and forgetting a cache entry would
-/// leave every one of them pointing at the bytes from before the edit —
-/// the next load would allocate a new slot that nobody is looking at.
-///
-/// Registering the identity is the other half, and it is what makes a
-/// file the project has never seen usable: a lookup by guid can only find
-/// what the database knows about.
+/// Brings the project's copy of an asset back in line with the disk: overwritten in place so
+/// existing handles see it, and registered so a new file's guid resolves.
 fn reload_asset(resources: &mut Resources, path: &str) {
     let written = kooch_core::asset_loader::asset_written(path.as_ref(), resources);
     tracing::info!(
@@ -534,10 +487,8 @@ fn instantiate_prefab(resources: &mut Resources, path: &str) -> Result<EntityId,
             }
         })?;
 
-    // The link is attached here and not inside `instantiate`, because this
-    // method *is* the editor's instancing — a shipped game does not run
-    // this server, and its own spawner calls `spawn_prefab`, which
-    // deliberately attaches nothing.
+    // The prefab link is attached here because this method *is* the editor's instancing; a game's
+    // `spawn_prefab` attaches nothing.
     match kooch_core::asset_meta::read_meta(path.as_ref()) {
         Ok(meta) => {
             kooch_ecs::prefab_instance::attach(resources, root, &members, meta.guid);
@@ -624,15 +575,8 @@ fn remove_component(
     Ok(())
 }
 
-/// Spawns an entity carrying what every authored entity carries.
-///
-/// `Name` and `Transform` go on unconditionally, named or not. The
-/// editor's local path (`undo/commands/spawn.rs`) has always added both,
-/// and this one only added `Name`, and only when a name came with it — so
-/// "Spawn → Entity", which sends no name, produced an entity with neither
-/// in a remote project and one with both in a local one. An entity with no
-/// `Name` cannot be renamed from the Inspector at all: the name editor
-/// reads the component, and there was nothing to read.
+/// Spawns an entity with what every authored entity carries: `Name` and `Transform`, named or not,
+/// as the editor's local spawn does.
 fn spawn(
     resources: &mut Resources,
     name: Option<&str>,
@@ -677,12 +621,8 @@ fn spawn(
     entity
 }
 
-/// Records which scene a newly spawned entity belongs to.
-///
-/// 🔴 Without this a spawned entity carries no `SceneMember` at all, so
-/// the World panel files it under "Unsaved" and it only joins a scene
-/// when a save adopts it — which is the active scene, whatever the user
-/// actually asked for.
+/// Records which scene a newly spawned entity belongs to. 🔴 Without it the entity is Unsaved until
+/// a save adopts it into the active scene.
 fn tag_with_scene(resources: &mut Resources, entity: Entity, scene: kooch_core::Guid) {
     use kooch_ecs::SceneMember;
 
@@ -695,10 +635,8 @@ fn tag_with_scene(resources: &mut Resources, entity: Entity, scene: kooch_core::
     update_archetype_add(resources, entity, TypeId::of::<SceneMember>());
 }
 
-/// Inserts `type_id`'s default on `entity` and moves it to the archetype
-/// that now describes it. A type this binary has no registration for is
-/// skipped rather than fatal — the same stance the rest of this module
-/// takes towards names it cannot resolve.
+/// Inserts `type_id`'s default on `entity` and moves it to its new archetype; an unregistered type
+/// is skipped, not fatal.
 fn add_default(resources: &mut Resources, entity: Entity, type_id: TypeId) {
     let inserted = resources
         .get_mut::<ComponentRegistry>()
@@ -708,12 +646,8 @@ fn add_default(resources: &mut Resources, entity: Entity, type_id: TypeId) {
     }
 }
 
-/// Reparents an entity, or unparents it when `parent` is `None`.
-///
-/// Delegates to `kooch_ecs::hierarchy::reparent`, which is the same code the
-/// editor's local path runs — the operation preserves the child's
-/// world-space transform and moves it between archetypes, and having two
-/// implementations of that would guarantee they drift.
+/// Reparents an entity, or unparents with `None`, through `kooch_ecs::hierarchy::reparent` — the
+/// editor's own code, keeping the world transform.
 fn set_parent(
     resources: &mut Resources,
     entity: EntityId,
@@ -730,15 +664,8 @@ fn set_parent(
     Ok(())
 }
 
-/// Despawns an entity **and everything under it**.
-///
-/// A child holds a `Parent` pointing at an entity that no longer exists;
-/// leaving it behind gives an entity whose transform is derived from a
-/// dead handle and which nothing in the hierarchy can reach. It survives
-/// the save, too, so the orphans accumulate in the scene file.
-///
-/// `collect_descendants` existed for exactly this and had never been
-/// wired to anything but its own tests.
+/// Despawns an entity **and everything under it**, or children survive with a dead `Parent` and
+/// accumulate in the saved scene.
 fn despawn(resources: &mut Resources, entity: EntityId) -> Result<(), RemoteError> {
     let entity = resolve_entity(resources, entity)?;
 
@@ -765,18 +692,14 @@ fn load_scene(resources: &mut Resources, path: &str) -> Result<(), RemoteError> 
         Some(result) => result?,
         None => load_directly(resources, path)?,
     }
-    // A prefab edited while this scene was closed left stale copies in it.
-    // Done here rather than editor-side because this is where the scene
-    // actually arrives — the editor would have to wait for the mirror
-    // before it even knew what was in it.
+    // Refreshes prefab copies left stale while this scene was closed — here, where the scene
+    // arrives.
     kooch_ecs::scene::propagate::refresh_all(resources);
     Ok(())
 }
 
-/// Closes one open scene, despawning only its entities.
-///
-/// Unsaved edits go with it. Asking about them is the editor's job —
-/// only it has a window to ask in.
+/// Closes one open scene, despawning only its entities; asking about unsaved edits is the editor's
+/// job.
 fn close_scene(resources: &mut Resources, scene: kooch_core::Guid) -> Result<(), RemoteError> {
     let mut manager = resources
         .remove::<kooch_ecs::SceneManager>()
@@ -809,11 +732,8 @@ fn set_active_scene(resources: &mut Resources, scene: kooch_core::Guid) -> Resul
     }
 }
 
-/// Opens a scene beside the ones already loaded.
-///
-/// Unlike [`load_scene`] nothing is despawned, so the entities already
-/// in the world keep their identities and every handle the client holds
-/// stays valid.
+/// Opens a scene beside the loaded ones; unlike [`load_scene`] nothing is despawned, so client
+/// handles stay valid.
 fn load_scene_additive(
     resources: &mut Resources,
     path: &str,
@@ -835,19 +755,8 @@ fn load_scene_additive(
     Ok(scene)
 }
 
-/// Records that the scene holding `entity` has edits not on disk.
-///
-/// 🔴 Nothing marked a scene dirty anywhere in the engine before this.
-/// `SceneManager::mark_dirty` was called by its own tests and by nobody
-/// else, so `dirty` was permanently `false`: the World panel's asterisk
-/// could never appear, `any_dirty()` always answered "nothing to lose",
-/// and a close-without-saving prompt built on it would have waved the
-/// user straight through. Nobody had ever seen the asterisk, so nobody
-/// noticed it was inert.
-///
-/// The scene of the entity that changed, not the active one — with two
-/// scenes open those are different, and marking the active one puts the
-/// asterisk on the file that did not change.
+/// Marks dirty the scene holding `entity` — its own scene, not the active one. 🔴 Before this
+/// nothing marked a scene dirty, so the asterisk never appeared.
 fn touch_entity(resources: &mut Resources, entity: EntityId) {
     let scene = scene_of(resources, entity);
     touch_scene(resources, scene);
@@ -879,21 +788,8 @@ fn touch_scene(resources: &mut Resources, scene: Option<kooch_core::Guid>) {
     }
 }
 
-/// Writes one open scene to `path`, through the project's manager.
-///
-/// 🔴 One scene, not the world. This used to call
-/// [`SceneDocument::from_ecs`] — `Capture::Everything` plus a fresh
-/// `Guid` for the document. With two scenes open it wrote both into the
-/// file, so the next load spawned every entity twice; and the new id on
-/// every save broke anything that referred to the scene by identity.
-///
-/// Through the manager rather than straight to `from_ecs_scene` so the
-/// scene adopts the path and its dirty flag is cleared — a save that
-/// leaves the record saying "unsaved" is a save the user cannot see
-/// happened.
-///
-/// `None` saves the active scene, which is what a client that knows of
-/// only one sends.
+/// Writes one open scene to `path` through the project's manager, so it adopts the path and clears
+/// dirty. 🔴 One scene, not the world, keeping its id. `None` saves the active one.
 fn save_scene(
     resources: &mut Resources,
     path: &str,
@@ -949,11 +845,8 @@ fn move_entity(
     }
 }
 
-/// Throws away one scene's edits and reads it back from its file.
-///
-/// Lifted out and put back for the same reason a load is: the manager
-/// needs `&mut Resources` for the ECS it is about to replace, and it
-/// lives in there.
+/// Throws away one scene's edits and reads it back from its file, with the manager lifted out as a
+/// load does.
 fn revert_scene(
     resources: &mut Resources,
     scene: Option<kooch_core::Guid>,
@@ -983,24 +876,9 @@ fn revert_scene(
     result
 }
 
-/// Loads through the project's [`SceneManager`], so it knows what it has.
-///
-/// 🔴 This used to go straight to [`sync_scene_to_ecs`], which loads the
-/// entities and tells the manager nothing — so after this call the
-/// manager still described the scene *before* it, and every entity in
-/// the world named a file it had never heard of.
-///
-/// The boot scene hid it. `SceneBootstrapPlugin` loads through the
-/// manager, so a host that opens its startup scene and is never asked
-/// for another looks perfectly correct: the record and the world agree,
-/// because neither has moved since. It is the second scene that breaks
-/// — the editor opening a different one — and the project would then go
-/// on naming the first with the entities of the second inside it.
-///
-/// `None` when there is no manager to load through, which is a host that
-/// never installed `EcsPlugin` rather than a failure.
-///
-/// [`SceneManager`]: kooch_ecs::SceneManager
+/// Loads through the project's [`SceneManager`](kooch_ecs::SceneManager), so its record matches the
+/// world — straight to the ECS, the second scene opened kept the first one's name. `None` without a
+/// manager.
 fn load_through_manager(resources: &mut Resources, path: &str) -> Option<Result<(), RemoteError>> {
     // Lifted out and put back: `load` needs `&mut Resources` for the ECS
     // it is about to replace, and the manager lives in there too.
@@ -1022,30 +900,15 @@ fn load_directly(resources: &mut Resources, path: &str) -> Result<(), RemoteErro
     })
 }
 
-/// The authored world, held while a play session runs so Stop can put
-/// it back. Present only between a start and the matching stop.
-///
-/// Drops both diff caches, so the next reply describes the whole world.
-///
-/// 🔴 The restore is invisible to a diff. Both caches describe the world
-/// play STARTED from, and restoring makes the world equal to it again —
-/// so `SnapshotCache` reports nothing changed. Meanwhile the editor
-/// spent the play session learning the played positions from the cheap
-/// moved pull, which is the only one it makes while playing. Two caches
-/// describing one world, and the one that saw play is not the one that
-/// answers afterwards: stop said nothing and the editor kept drawing
-/// where play had left things (#1035).
+/// Drops both diff caches so the next reply describes the whole world. 🔴 A restore is invisible to
+/// a diff, and the cache answering after Stop never saw play (#1035).
 fn forget_the_world(resources: &mut Resources) {
     resources.remove::<crate::snapshot_cache::SnapshotCache>();
     resources.remove::<crate::moved_cache::MovedCache>();
 }
 
-/// Every system the host schedules, with whether it is running.
-///
-/// Read from the catalog the `App` published rather than from the
-/// schedule, which lives on the `App` and never reaches a handler.
-/// Empty before `App::run` has published it, which is what a host that
-/// has not started looks like.
+/// Every system the host schedules and whether it runs, from the catalog the `App` published; empty
+/// before `App::run`.
 fn list_systems(resources: &Resources) -> Vec<crate::protocol::SystemEntry> {
     let Some(catalog) = resources.get::<kooch_core::schedule::SystemCatalog>() else {
         return Vec::new();
@@ -1085,25 +948,12 @@ fn set_system_enabled(resources: &mut Resources, name: &str, nth: u32, enabled: 
     }
 }
 
-/// A [`WorldSnapshot`], not a [`SceneDocument`]: the scene format is
-/// name-keyed, so loading one back respawns everything with fresh
-/// indices, fresh generations and a different order. Stop must be
-/// indistinguishable from never having pressed play, which means the
-/// identities have to survive — a client mirroring this world addresses
-/// entities by handle, and so does every `Parent` in it.
+/// The authored world held during play — a [`WorldSnapshot`], not a [`SceneDocument`]: loading a
+/// scene respawns with new identities, and Stop must keep every handle valid.
 struct PlaySnapshot(WorldSnapshot);
 
-/// Starts or stops gameplay in place.
-///
-/// Play is destructive by nature — systems mutate the very entities the
-/// user authored — so the world is snapshotted on start and restored on
-/// stop. The restore preserves entity handles, generations, order and
-/// the allocator state, so a client's [`EntityId`]s stay valid across a
-/// play session and its mirror sees fields change, not a new world.
-///
-/// Idempotent in both directions: starting while already playing keeps
-/// the original snapshot (so a double Play cannot lose the authored
-/// state), and stopping while stopped is a no-op.
+/// Starts or stops gameplay in place: snapshot on start, restore on stop, preserving handles,
+/// generations, order and the allocator. Idempotent both ways.
 fn set_playing(resources: &mut Resources, playing: bool) -> Result<(), RemoteError> {
     if playing == kooch_core::run_state::Playing::is_playing(resources) {
         return Ok(());

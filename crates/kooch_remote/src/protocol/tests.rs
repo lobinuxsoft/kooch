@@ -148,11 +148,8 @@ fn open_scenes_round_trip() {
     assert_eq!(resp, back);
 }
 
-/// A host too old to send the open set has to arrive as "nobody said".
-///
-/// 🔴 Not as an empty list. The editor replaces its scene list from
-/// this field, so an empty `Vec` here would blank the World panel of
-/// every scene while the entities belonging to them kept arriving.
+/// A host too old to send the open set arrives as nobody said. 🔴 Not an empty list, which would
+/// blank the World panel.
 #[test]
 fn a_reply_without_scenes_parses() {
     let json = r#"{"id":1,"result":{"kind":"entities","entities":[],"revision":7,"full":true}}"#;

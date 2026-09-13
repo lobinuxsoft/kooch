@@ -44,10 +44,8 @@ fn alive(resources: &Resources, entity: kooch_ecs::entity::Entity) -> bool {
         .is_some_and(|a| a.is_alive(entity))
 }
 
-/// Despawning a parent has to take its whole subtree. A child left
-/// behind holds a `Parent` pointing at a dead handle: nothing in the
-/// hierarchy can reach it, its transform derives from an entity that
-/// no longer exists, and it survives into the saved scene.
+/// Despawning a parent takes its whole subtree, or a child keeps a dead `Parent` into the saved
+/// scene.
 #[test]
 fn despawning_a_parent_takes_its_descendants() {
     let mut resources = world();
@@ -86,10 +84,8 @@ fn despawning_leaves_everything_outside_the_subtree_alone() {
     );
 }
 
-/// Stop must be indistinguishable from never having pressed play.
-///
-/// The snapshot is taken on the way in and put back on the way out, so a
-/// value a system moved during play returns to what was authored.
+/// Stop must be indistinguishable from never pressing play: a value moved during play returns to
+/// what was authored.
 #[test]
 fn stop_puts_an_authored_value_back() {
     use kooch_ecs::transform::Transform;
@@ -153,13 +149,8 @@ fn entities_reply(response: Response) -> (Vec<EntityId>, bool) {
     }
 }
 
-/// Stop restores the world the last full pull already described, so the
-/// diff comes out empty — and the editor, which learned the played
-/// positions from the *moved* pull, keeps drawing them.
-///
-/// Two caches describe one world and nothing reconciles them:
-/// `SnapshotCache` never sees a play session, `MovedCache` is the only
-/// thing that does.
+/// Stop's restore leaves the full diff empty while the editor learned played positions from the
+/// moved pull — two caches, one world, nothing reconciling them.
 #[test]
 fn stop_tells_the_caller_the_world_moved_back() {
     use kooch_ecs::transform::Transform;

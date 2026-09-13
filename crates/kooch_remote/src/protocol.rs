@@ -1,14 +1,6 @@
-//! Wire types for the remote editor protocol.
-//!
-//! Every payload is plain, serde-serializable data — no engine handles
-//! cross the boundary. Components are named by their fully-qualified
-//! type path (never [`std::any::TypeId`], which is process-local), and
-//! entities by a `(index, generation)` pair, so a client that shares no
-//! type table with the server can still address ECS state precisely.
-//!
-//! The framing is a minimal JSON-RPC: a [`Request`] names a [`Method`]
-//! and its parameters; a [`Response`] is either the method's result or a
-//! typed [`RemoteError`]. HTTP carries it; see [`crate::server`].
+//! Wire types for the remote editor protocol: plain serde data, components named by type path and
+//! entities by `(index, generation)`, never process-local handles.
+//! A minimal JSON-RPC over a local socket, one object per line; see [`crate::server`].
 
 use kooch_core::Guid;
 use serde::{Deserialize, Serialize};
@@ -40,21 +32,16 @@ impl From<EntityId> for Entity {
     }
 }
 
-/// One component on an entity, named and with its reflected fields.
-///
-/// Field values reuse [`ReflectValue`], the same type the scene format
-/// and the editor's field widgets already serialize.
+/// One component on an entity with its reflected fields, as [`ReflectValue`]s — the scene format's
+/// and the editor widgets' type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ComponentSnapshot {
     pub type_name: String,
     pub fields: Vec<(String, ReflectValue)>,
 }
 
-/// One entity's local transform, as the columns of its matrix.
-///
-/// A matrix and not a translation/rotation/scale triple: the mirror
-/// writes `Transform`, and rebuilding one from three fields is three
-/// conversions the host already did once.
+/// One entity's local transform as matrix columns — the mirror writes `Transform`, so no rebuild
+/// from three fields.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct MovedTransform {
     pub id: EntityId,
@@ -70,44 +57,22 @@ pub struct EntitySnapshot {
     pub name: Option<String>,
     /// Parent entity, for hierarchy reconstruction on the client.
     pub parent: Option<EntityId>,
-    /// The scene this entity was authored in, `None` for one that belongs
-    /// to none — an editor helper, or something spawned and not yet saved.
-    ///
-    /// 🔴 Carried out of band for the same reason `parent` is: membership
-    /// lives in `SceneMember`, which is derived on load and never written
-    /// to a scene file. It is reflected — a world rebuild has to carry it
-    /// — so the host skips it explicitly when listing components, leaving
-    /// this the one place it travels. Without this every mirrored entity
-    /// arrives belonging to nothing, and since **Open Project always
-    /// opens remote**, that is every entity the editor normally shows.
+    /// The entity's scene, `None` for none. 🔴 Out of band like `parent`: membership is derived on
+    /// load and skipped when listing components, and Open Project always opens remote.
     #[serde(default)]
     pub scene: Option<Guid>,
     pub components: Vec<ComponentSnapshot>,
 }
 
-/// One scene the project has open, as the editor needs to list it.
-///
-/// 🔴 The editor cannot answer this from its own state. Its
-/// `SceneManager` seeds an empty scene with a freshly generated `Guid`
-/// and no path, while the project holds a different `SceneManager` with
-/// the real files under different ids — so the editor was listing a
-/// scene that exists nowhere and filing every mirrored entity under
-/// "Unsaved", because the scene each one names was not in its list.
-///
-/// The open set belongs to the project for the same reason the entities
-/// do: it is the side that loaded them. Carried per reply rather than
-/// behind a method of its own, like [`HostMetrics`] — it is a handful of
-/// entries, the editor already pulls a snapshot every frame, and a
-/// second round trip is a second thing that can be a frame out of date.
+/// One scene the project has open, as the editor lists it. 🔴 Only the project can say: the editor's
+/// own manager holds an unsaved scene with a random id. Sent with each reply, like [`HostMetrics`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SceneEntry {
     /// Identity, matching [`EntitySnapshot::scene`] and the scene file's
     /// own `id`.
     pub id: Guid,
-    /// Where it was loaded from, or `None` for one never saved.
-    ///
-    /// A string, not a `PathBuf`: the wire carries no host paths as
-    /// types, and the client only ever shows it.
+    /// Where it was loaded from, or `None` if never saved — a string, since the wire carries no
+    /// host paths as types.
     pub path: Option<String>,
     /// Whether new entities are authored into it.
     pub active: bool,
@@ -126,13 +91,8 @@ pub struct FieldSchema {
     /// Canonical asset type this field references, empty if it is not an
     /// asset reference.
     pub asset_type: String,
-    /// The field's doc comment, shown as an Inspector tooltip (#737).
-    /// Empty when the field has none.
-    ///
-    /// 🔴 This is the path that matters. Open Project always opens
-    /// remote, so the editor inspects the world over the wire — a
-    /// tooltip that only travels the in-process path is one the user
-    /// never sees.
+    /// The field's doc comment, an Inspector tooltip (#737), empty when none. 🔴 Open Project always
+    /// opens remote, so this is the path users see.
     #[serde(default)]
     pub doc: String,
 }
@@ -149,54 +109,29 @@ pub struct ComponentSchema {
     pub category: Option<String>,
 }
 
-/// A remote method and its parameters.
-///
-/// Serialized with an internal `method` tag plus flattened params, so
-/// the JSON reads as `{"method": "set_field", "entity": ..., ...}`.
+/// A remote method and its parameters, serialised as an internal `method` tag with flattened
+/// params.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method", rename_all = "snake_case")]
 pub enum Method {
     /// Liveness check. Returns [`ResponseData::Pong`].
     Ping,
-    /// A method this crate does not know about, served by whichever
-    /// subsystem registered it — see [`crate::extensions`].
-    ///
-    /// The payload is opaque here on purpose: `kooch_remote` depends on
-    /// `kooch_core` and `kooch_ecs` and should keep doing so, rather than
-    /// growing a dependency on every subsystem that wants to be asked
-    /// something.
+    /// A method this crate does not know, served by whichever subsystem registered it (see
+    /// [`crate::extensions`]), opaque so `kooch_remote` depends on no subsystem.
     Extension {
         /// `subsystem.method`, e.g. `physics.debug_lines`.
         name: String,
         #[serde(default)]
         payload: serde_json::Value,
     },
-    /// Every non-ephemeral entity with its components and fields.
-    ///
-    /// `since` is the revision the caller already holds. When it matches
-    /// the one the server last handed out, the reply carries only what
-    /// changed; anything else — a fresh client, a missed frame, a
-    /// restarted project — gets everything, with `full` set.
-    ///
-    /// Asking for a diff is not a promise of receiving one. The server
-    /// decides, and says which it sent, because a client that assumed
-    /// wrong would silently keep entities the project had deleted.
+    /// Every non-ephemeral entity with its components. With a matching `since` the reply holds only
+    /// changes; otherwise everything, with `full` — the server decides and says which.
     ListEntities {
         #[serde(default)]
         since: Option<u64>,
     },
-    /// The transforms that moved since `since`, and nothing else
-    /// (#1012).
-    ///
-    /// 🔴 A separate method rather than a flag on [`Self::ListEntities`],
-    /// because it answers a different question. That one asks *what is
-    /// the world*, and the host answers by reflecting every field of
-    /// every component of every entity into strings — 38.9 ms on 2159
-    /// entities — and only then diffs. This one asks *what moved*, which
-    /// is a direct read of one component and a compare.
-    ///
-    /// The editor uses it while the project is playing, where it cannot
-    /// edit anything anyway and only needs to draw what it is told.
+    /// The transforms that moved since `since` (#1012) — a separate method because it reads one
+    /// component instead of reflecting the world (38.9 ms on 2159 entities). Used while playing.
     ListMoved {
         #[serde(default)]
         since: Option<u64>,
@@ -214,22 +149,12 @@ pub enum Method {
     AddComponent { entity: EntityId, component: String },
     /// Remove a component from an entity.
     RemoveComponent { entity: EntityId, component: String },
-    /// Spawn a new entity, optionally named. Returns its [`EntityId`].
-    ///
-    /// Where it lands is asked for, not inferred. Every spawn used to
-    /// arrive in the active scene at the root, which is right for a
-    /// toolbar button and wrong for a menu opened on a scene, or on an
-    /// entity, that is not the active one — the entity appears somewhere
-    /// other than where it was asked for, and the only sign is a row in
-    /// the wrong group.
+    /// Spawn a new entity, optionally named, returning its [`EntityId`] — placed where asked, not
+    /// always at the active scene's root.
     Spawn {
         name: Option<String>,
-        /// Which scene to author it into. `None` means the active one.
-        ///
-        /// Ignored when `parent` is set: an entity's scene is its
-        /// parent's, so a parent already answers this, and honouring both
-        /// would let a caller ask for a child of an entity in one scene
-        /// and a member of another.
+        /// Which scene to author it into, `None` for the active one; ignored when `parent` is set,
+        /// since a parent decides the scene.
         #[serde(default)]
         scene: Option<Guid>,
         /// What to hang it off, or `None` for a root of its scene.
@@ -238,29 +163,16 @@ pub enum Method {
     },
     /// Despawn an entity.
     Despawn { entity: EntityId },
-    /// Reparent an entity, or unparent it when `parent` is `None`.
-    ///
-    /// A method of its own rather than a `SetField` on `Parent`, because
-    /// `Parent::reflect_set` is deliberately read-only: an entity handle is
-    /// not a reflectable value and `ReflectValue` has no variant for one.
-    /// `Parent.entity` reflects *out* as an `"index:generation"` string for
-    /// display and cannot be written back.
+    /// Reparent an entity, or unparent with `None` — its own method because `Parent` is read-only
+    /// through reflection.
     SetParent {
         entity: EntityId,
         /// `None` unparents to the scene root — the same operation, so it
         /// does not get a second method.
         parent: Option<EntityId>,
     },
-    /// Persist one open scene to a file on the server's disk.
-    ///
-    /// 🔴 One scene, not the world. This used to write
-    /// `SceneDocument::from_ecs` — every entity alive, under a freshly
-    /// generated document id. With two scenes open that put both scenes'
-    /// entities in one file, so the next load spawned everything twice,
-    /// and the id changed on every save, breaking whatever named the
-    /// scene. The engine has always had `from_ecs_scene`; the local
-    /// editor path used it and this one did not, and **Open Project
-    /// always opens remote**.
+    /// Persist one open scene to the server's disk. 🔴 One scene, not the world, under its own id —
+    /// writing the world duplicated entities on the next load.
     SaveScene {
         path: String,
         /// Which scene to write. `None` means the active one — what a
@@ -269,43 +181,17 @@ pub enum Method {
         #[serde(default)]
         scene: Option<Guid>,
     },
-    /// Write one entity and its descendants to a scene file — a prefab.
-    ///
-    /// Server-side because the world it captures lives here; the editor's
-    /// mirror is a projection and is not what should be written to disk.
+    /// Write one entity and its descendants to a scene file — a prefab — server-side, where the
+    /// real world lives.
     SavePrefab { entity: EntityId, path: String },
-    /// Tell the project an asset file on disk was written.
-    ///
-    /// The project caches what it loads and the editor writes those files,
-    /// so without this the project keeps using the version it read first —
-    /// a value held in two places, the exact thing the reference model
-    /// exists to avoid.
-    ///
-    /// Any asset, not only a prefab: a material, an input action and a
-    /// mesh all go stale the same way, and the editor cannot know which
-    /// types the project happens to have loaded a given path under. It
-    /// also covers a file that is new, which the project has no identity
-    /// for until it is told.
+    /// Tell the project an asset file was written — any type, new or not — so it stops using the
+    /// version it read first.
     ReloadAsset { path: String },
-    /// Stamp a prefab file into the live ECS, returning its root.
-    ///
-    /// Distinct from [`Self::LoadScene`], which *replaces* the world. This
-    /// adds to it, with identity remapped so the same file can be
-    /// instanced more than once.
-    ///
-    /// No position parameter: the root comes back, so placing it is a
-    /// `SetField` on its `Transform`. The wire format carries no spatial
-    /// types of its own — everything spatial travels as a `ReflectValue`,
-    /// and a second way to move an entity is a second thing to keep in step
-    /// with the first.
+    /// Stamp a prefab into the live ECS with remapped identity, returning its root; unlike
+    /// [`Self::LoadScene`] it adds. Position it with a `SetField`.
     InstantiatePrefab { path: String },
-    /// Move an entity among its siblings: under `parent`, before
-    /// `before`.
-    ///
-    /// One method rather than a reparent plus a field write, because the
-    /// numbering policy lives in the engine (`kooch_ecs::order::place`)
-    /// and a client computing it would have to renumber a sibling group
-    /// over the wire, one round trip per entity.
+    /// Move an entity among its siblings, under `parent` before `before` — one call, since the
+    /// numbering policy lives in the engine.
     MoveEntity {
         entity: EntityId,
         /// `None` makes it a root of its scene.
@@ -315,62 +201,34 @@ pub enum Method {
         #[serde(default)]
         before: Option<EntityId>,
     },
-    /// Throw away one open scene's edits and read it back from its file.
-    ///
-    /// Only that scene: the others keep their edits. `None` reverts the
+    /// Throw away one open scene's edits and reread it; the others keep theirs. `None` reverts the
     /// active one.
     RevertScene {
         #[serde(default)]
         scene: Option<Guid>,
     },
-    /// Open an empty unsaved scene beside the ones already loaded, and
-    /// make it active. Returns its identity as [`ResponseData::SceneOpened`].
-    ///
-    /// "Start something new" while a world is already open. An entity has
-    /// to belong to a scene, so creating one is what makes "put this
-    /// somewhere of its own" answerable — which is what right-clicking
-    /// the World panel's empty space means.
+    /// Open an empty unsaved scene beside the loaded ones and make it active, returning
+    /// [`ResponseData::SceneOpened`] — the World panel's empty-space gesture.
     NewScene,
     /// Replace the live ECS with a scene file from the server's disk.
     LoadScene { path: String },
-    /// Close one open scene, despawning only its entities.
-    ///
-    /// 🔴 Belongs to the project for the same reason the loads do: the
-    /// open set is the project's, and the editor listing it is a view.
-    /// Closing in the view left the scene open in the world and answered
-    /// *"asked to close scene …, which is not open"* — the editor's own
-    /// manager had never heard of it.
+    /// Close one open scene, despawning only its entities. 🔴 The open set is the project's; closing
+    /// it in the editor's view closed nothing.
     CloseScene { scene: Guid },
     /// Make an already-open scene the one new entities are authored into.
     SetActiveScene { scene: Guid },
-    /// Open a scene file BESIDE what is already loaded, and make it
-    /// active. Returns its identity as [`ResponseData::SceneOpened`].
-    ///
-    /// 🔴 Distinct from [`Self::LoadScene`], which replaces the world.
-    /// Additive loading existed only editor-side, which meant it was
-    /// unavailable exactly when a project is open — and a project being
-    /// open is the normal case, since the world shown in the editor is
-    /// the project's. The scenes have to arrive where the world lives.
+    /// Open a scene file beside what is loaded and make it active, returning
+    /// [`ResponseData::SceneOpened`]. 🔴 Unlike [`Self::LoadScene`], it adds, where the world lives.
     LoadSceneAdditive { path: String },
-    /// Start or stop the project's gameplay systems in place.
-    ///
-    /// Starting snapshots the world first and stopping restores that
-    /// snapshot, so a play session leaves the authored scene untouched.
+    /// Start or stop gameplay in place; stopping restores the snapshot taken on start.
     SetPlaying { playing: bool },
 
-    /// Every system the project schedules, in the order a frame runs
-    /// them.
-    ///
-    /// The editor cannot read the project's schedule: it is a different
-    /// process, and even locally the schedule lives on the `App` rather
-    /// than in `Resources`.
+    /// Every system the project schedules, in frame order — the editor cannot read another
+    /// process's schedule.
     ListSystems,
 
-    /// Stop or restart one system, from the next frame.
-    ///
-    /// Addressed by name and occurrence rather than by index: an index
-    /// moves the moment a plugin is added, and two anonymous closures in
-    /// one module share a name.
+    /// Stop or restart one system from the next frame, addressed by name and occurrence, since
+    /// indices shift and closures share names.
     SetSystemEnabled {
         name: String,
         nth: u32,
@@ -404,20 +262,9 @@ pub struct Request {
     /// Correlation id, echoed back verbatim.
     #[serde(default)]
     pub id: u64,
-    /// Whether the sender has already stopped listening (#1015).
-    ///
-    /// 🔴 The server has ONE listener thread and `serve_one` blocks it
-    /// on the main loop's reply before it can accept the next
-    /// connection. A caller that will not read the answer still cost a
-    /// whole host frame of that thread, so holding a key — one input
-    /// push per frame on top of the editor's pull — put two blocking
-    /// connections through a queue that serves one. The pull then landed
-    /// every OTHER host frame and a full refresh queued behind both:
-    /// measured as 41 ms of a 49 ms editor frame, and only ever while a
-    /// key was down.
-    ///
-    /// `#[serde(default)]`, so a request from an older client reads as
-    /// `false` and keeps the reply it is waiting for.
+    /// Whether the sender has stopped listening (#1015). 🔴 A reply nobody reads still held the
+    /// single listener for a host frame — 41 ms of a 49 ms editor frame while a key was down.
+    /// Defaults `false`.
     #[serde(default)]
     pub notify: bool,
     #[serde(flatten)]
@@ -430,18 +277,8 @@ pub struct Request {
 pub enum ResponseData {
     /// Reply to [`Method::Ping`].
     Pong,
-    /// Reply to [`Method::ListEntities`].
-    ///
-    /// `entities` is the whole world when `full`, and only what changed
-    /// otherwise. `removed` is always the entities that went away since
-    /// the caller's revision — empty in a full reply, since absence
-    /// already says it.
-    /// Reply to [`Method::ListMoved`].
-    ///
-    /// `full` means the host could not answer the question asked — the
-    /// entity SET changed, so a transform diff would describe a world
-    /// the caller does not have. The caller pulls a whole
-    /// [`Method::ListEntities`] on that frame and resumes.
+    /// Reply to [`Method::ListMoved`]; `full` means the entity set changed, so the caller pulls a
+    /// whole [`Method::ListEntities`] that frame.
     Moved {
         moved: Vec<MovedTransform>,
         #[serde(default)]
@@ -451,6 +288,8 @@ pub enum ResponseData {
         #[serde(default)]
         host: Option<HostMetrics>,
     },
+    /// Reply to [`Method::ListEntities`]: the whole world when `full`, otherwise only changes;
+    /// `removed` lists what went away since the caller's revision.
     Entities {
         entities: Vec<EntitySnapshot>,
         /// Entities that no longer exist. Only meaningful in a diff.
@@ -460,34 +299,16 @@ pub enum ResponseData {
         /// `since` on the next call.
         #[serde(default)]
         revision: u64,
-        /// Whether `entities` is the entire world. A client must replace
-        /// its mirror wholesale when this is set, rather than merging —
-        /// merging a full reply into a stale mirror keeps whatever the
-        /// full reply omitted.
+        /// Whether `entities` is the whole world: the client must replace its mirror, not merge
+        /// into it.
         #[serde(default)]
         full: bool,
-        /// What the host's own frame cost, when it is measuring one.
-        ///
-        /// `None` from a host that predates this field, which is why it
-        /// is an `Option` and not a zeroed struct: a zero would render as
-        /// "the project runs infinitely fast" rather than as "nobody
-        /// said".
+        /// The host's frame cost when it measures one — `None` from older hosts, not a zero that
+        /// reads as infinitely fast.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         host: Option<HostMetrics>,
-        /// Which scenes the project has open.
-        ///
-        /// `None` means nobody said — an older host, or one with no
-        /// `SceneManager` — and the client should keep whatever it was
-        /// showing. `Some` is the whole open set, replacing it.
-        ///
-        /// The distinction is the point: an empty `Vec` would be
-        /// indistinguishable from a host that never sent the field, and
-        /// the editor would blank a list it had no news about.
-        ///
-        /// Sent whole every reply rather than diffed like `entities`.
-        /// There are as many of these as a person has scenes open, and
-        /// a diff of three entries costs more to be right about than to
-        /// resend.
+        /// Which scenes the project has open: `None` means nobody said, keep what you show; `Some`
+        /// replaces the set. Sent whole — a few entries.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scenes: Option<Vec<SceneEntry>>,
     },
@@ -509,29 +330,16 @@ pub enum ResponseData {
     },
 }
 
-/// What the project's process costs per frame.
-///
-/// Rides along with the world snapshot the editor already pulls every
-/// frame, so it needs no request of its own and no second round trip.
-///
-/// # These are not frames per second in the rendering sense
-///
-/// A remote host has no window and no renderer — `RemoteHostPlugins`
-/// draws nothing. What it has is a simulation tick: ECS, physics,
-/// gravity, camera rigs. That is what these describe, and calling it FPS
-/// would be a lie drawn in a nice font.
+/// What the project's process costs per frame, riding the snapshot already pulled. Simulation
+/// ticks, not FPS — a host renders nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct HostMetrics {
     /// Wall-clock milliseconds between tick starts, waiting included.
     pub frame_ms: f32,
     /// Milliseconds of work in the tick, waiting excluded.
     pub cpu_frame_ms: f32,
-    /// Ticks per second from the last tick alone.
-    ///
-    /// Sent beside the average rather than left to be derived from
-    /// `frame_ms`: the two are read side by side, and a rate computed
-    /// from one field next to an average computed from sixty is how
-    /// `23 /s` ends up printed next to `513.99 ms`.
+    /// Ticks per second from the last tick alone, sent beside the average so the two read
+    /// consistently.
     pub ticks_instant: f32,
     /// Ticks per second, averaged over the host's own window.
     pub ticks_per_second: f32,
@@ -553,11 +361,8 @@ pub enum RemoteError {
     SceneError { detail: String },
     /// The method ran but the ECS was not available (e.g. no registry).
     Unavailable { detail: String },
-    /// No subsystem on this host registered that extension.
-    ///
-    /// Usually a feature that is off rather than a mistake: a host built
-    /// without physics serves no `physics.*`, and a client should be able
-    /// to tell that from a handler that ran and failed.
+    /// No subsystem on this host registered that extension — usually a feature that is off,
+    /// distinguishable from a handler that failed.
     UnknownExtension { name: String },
     /// The extension ran and reported its own failure.
     ExtensionFailed { name: String, detail: String },
