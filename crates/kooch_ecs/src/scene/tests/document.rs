@@ -143,13 +143,6 @@ fn from_ecs_skips_ephemeral_entities() {
 }
 
 /// Membership is reflected, and must still never reach the file.
-///
-/// Reflecting `SceneMember` is what lets a world rebuild carry it — see
-/// `WorldSnapshot`. It also makes it eligible for every generic "write
-/// the reflected components" pass, and `from_ecs` is one. Writing it
-/// would state membership twice, and with several copies of a scene open
-/// the value on the entity is the *instance* guid — so the file would
-/// come back naming a scene that only existed in one session.
 #[test]
 fn a_saved_scene_never_states_its_own_membership() {
     use crate::scene_member::SceneMember;

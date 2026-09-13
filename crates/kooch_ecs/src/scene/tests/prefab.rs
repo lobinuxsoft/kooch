@@ -1,9 +1,4 @@
 //! Capturing one entity as a prefab, and stamping it back out (#611).
-//!
-//! The document half of these tests needs no world: remapping identity is
-//! a transform from one `SceneDocument` to another, and testing it that way
-//! keeps what is being asserted about identity separate from whether the
-//! ECS happened to spawn things in a given order.
 
 use crate::commands::Commands;
 use crate::component::ComponentRegistry;
@@ -214,14 +209,8 @@ fn a_subtree_takes_every_level_not_just_the_first() {
     assert_eq!(names, ["Barrel", "Muzzle", "Turret"]);
 }
 
-/// The test the whole prefab feature rests on and that nothing covered:
-/// a captured hierarchy has to come back as a hierarchy.
-///
-/// The links travel as `Parent` components holding `EntityRef::Persistent`,
-/// and instancing rewrites every id in the file. If the rewrite misses the
-/// references — or treats an internal one as pointing at another scene —
-/// the entities still spawn and the file still looks right, but the
-/// instance arrives as three unrelated entities at the origin.
+/// The test the whole prefab feature rests on and that nothing covered: a captured hierarchy has to
+/// come back as a hierarchy.
 #[test]
 fn instancing_rebuilds_the_whole_hierarchy() {
     let (mut resources, root) = world_with_a_deep_subtree();
@@ -591,10 +580,9 @@ fn a_linked_instance_is_findable_by_query() {
     assert_eq!(found, vec![spawned], "the archetype never learned about it");
 }
 
-/// Every entity of an instance has to say which entity of the prefab it
-/// is, in both directions: recording an override needs "this is entity 2",
-/// and propagation needs "entity 2 is this one". A link on the root alone
-/// answers neither for a prefab with children.
+/// Every entity of an instance has to say which entity of the prefab it is, in both directions:
+/// recording an override needs "this is entity 2", and propagation needs "entity 2 is this one". A
+/// link on the root alone answers neither for a prefab with children.
 #[test]
 fn every_member_of_an_instance_knows_which_prefab_entity_it_is() {
     use crate::prefab_instance::{PrefabInstance, PrefabMember};
@@ -661,10 +649,9 @@ fn members_belong_to_the_instance_that_spawned_them() {
 
 // -- the reference model -------------------------------------------------
 
-/// A scene stores an instance as a reference and a list of changes, not as
-/// the entities the prefab built. This is what removes the whole class of
-/// bugs that propagation was chasing: a value held in two places drifts,
-/// and now it is held once.
+/// A scene stores an instance as a reference and a list of changes, not as the entities the prefab
+/// built. This is what removes the whole class of bugs that propagation was chasing: a value held
+/// in two places drifts, and now it is held once.
 #[test]
 fn a_scene_writes_an_instance_as_a_reference_not_as_entities() {
     use crate::prefab_instance::PrefabInstance;
@@ -748,14 +735,8 @@ fn loading_a_reference_rebuilds_the_instance() {
     );
 }
 
-/// Saving an instance as a prefab — including over the prefab it came
-/// from, which is how "apply these changes to the prefab" is spelled.
-///
-/// Two ways this broke at once. The scene rule "write the reference, not
-/// the entities" applied to prefab capture too, so the new prefab came out
-/// holding a link and nothing else. And the link it held pointed at the
-/// original, so instancing the result made an instance of *that* — and
-/// saving over the same file left a prefab referencing itself.
+/// Saving an instance as a prefab — including over the prefab it came from, which is how "apply
+/// these changes to the prefab" is spelled.
 #[test]
 fn capturing_an_instance_as_a_prefab_takes_its_components_not_its_link() {
     use crate::prefab_instance::{PrefabInstance, PrefabMember};
@@ -793,15 +774,6 @@ fn capturing_an_instance_as_a_prefab_takes_its_components_not_its_link() {
 }
 
 /// A prefab whose document contains a reference to itself.
-///
-/// Instancing it instances it, forever, and the process dies of a stack
-/// overflow rather than reporting anything — which showed up as the
-/// project failing to start with no error to read.
-///
-/// Capture refuses to write one now, but that only covers files this build
-/// creates. A scene can arrive from a repository, from a hand edit, or
-/// from a build that had the bug, so a cycle has to be survivable on the
-/// way *in*.
 #[test]
 fn a_self_referencing_prefab_does_not_recurse_forever() {
     let mut resources = setup_resources();
@@ -855,13 +827,6 @@ fn a_self_referencing_prefab_does_not_recurse_forever() {
 }
 
 /// 🔴 An instance keeps its place among its siblings across a save.
-///
-/// A saved instance root writes only what makes it an instance and where
-/// it sits — its components come from the prefab. `Order` is neither the
-/// prefab's nor an override of one: a prefab knows nothing about where
-/// its copies land in a scene. Left out, reordering a prefab instance
-/// looked like it worked and was gone on reload, with the entity back in
-/// the middle of the list it had been dragged out of (#961).
 #[test]
 fn an_instance_keeps_its_place_across_a_save() {
     use crate::order::Order;

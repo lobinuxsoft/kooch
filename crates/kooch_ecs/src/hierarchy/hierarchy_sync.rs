@@ -10,14 +10,6 @@ use super::children::Children;
 use super::parent::Parent;
 
 /// Synchronizes `Parent` ↔ `Children` components.
-///
-/// Runs in [`Stage::PostUpdate`]. `Parent` is authoritative:
-/// - If entity A has `Parent(B)`, A is added to B's `Children`.
-/// - Stale entries in `Children` (where the child's `Parent` doesn't match)
-///   are removed.
-///
-/// Also keeps archetypes in sync: entities that gain or lose `Children`
-/// have their archetype updated accordingly.
 pub fn hierarchy_sync_system(resources: &mut kooch_core::resource::Resources) {
     use crate::component::ComponentRegistry;
 

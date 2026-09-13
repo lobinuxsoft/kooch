@@ -8,13 +8,6 @@ use crate::entity::Entity;
 const DEFAULT_CAPACITY: u32 = 1024;
 
 /// Allocates and recycles [`Entity`] handles with generational tracking.
-///
-/// Every spawn/despawn is recorded in a pending-sync list so the GPU
-/// `alive_mask` buffer can be updated incrementally.
-///
-/// [`Clone`] so a world snapshot can put generations and the free list
-/// back exactly as they were, rather than continuing past them — see
-/// [`WorldSnapshot`](crate::world_snapshot::WorldSnapshot).
 #[derive(Clone)]
 pub struct EntityAllocator {
     /// Per-slot generation counter; bumped on despawn.
@@ -38,9 +31,6 @@ impl EntityAllocator {
     }
 
     /// Creates an allocator pre-allocating `capacity` slots.
-    ///
-    /// All slots start as free. The free-list is filled in ascending order
-    /// so the first spawns get indices 0, 1, 2, ...
     pub fn with_capacity(capacity: u32) -> Self {
         let cap = capacity as usize;
         let mut free_list = VecDeque::with_capacity(cap);
@@ -59,9 +49,6 @@ impl EntityAllocator {
     }
 
     /// Spawns a new entity, returning its handle.
-    ///
-    /// Reuses a recycled slot when available; otherwise grows storage by
-    /// doubling the current capacity.
     pub fn spawn(&mut self) -> Entity {
         let index = if let Some(idx) = self.free_list.pop_front() {
             idx
@@ -79,11 +66,7 @@ impl EntityAllocator {
         Entity::new(index, self.generations[index as usize])
     }
 
-    /// Despawns an entity, incrementing its generation and returning the
-    /// slot to the free-list.
-    ///
-    /// Returns `true` if the entity was alive and has been successfully
-    /// despawned, `false` if the handle was stale or already dead.
+    /// Despawns an entity, incrementing its generation and returning the slot to the free-list.
     pub fn despawn(&mut self, entity: Entity) -> bool {
         let idx = entity.index() as usize;
 
@@ -128,22 +111,11 @@ impl EntityAllocator {
     }
 
     /// Drains and returns entities despawned since the last call.
-    ///
-    /// The component cleanup system calls this to remove despawned
-    /// entities from all component storages.
     pub fn take_pending_despawn(&mut self) -> Vec<Entity> {
         std::mem::take(&mut self.pending_despawn)
     }
 
     /// Attempts to revive a previously despawned entity at its original slot.
-    ///
-    /// This is used by the undo system to restore an entity after a despawn
-    /// has been undone, preserving the original `Entity` handle so that any
-    /// references to it remain valid.
-    ///
-    /// Returns `true` if the entity was successfully revived. Returns `false`
-    /// if the slot has been reused (generation advanced beyond +1) or the
-    /// entity is still alive.
     pub fn revive(&mut self, entity: Entity) -> bool {
         let idx = entity.index() as usize;
 
@@ -171,9 +143,6 @@ impl EntityAllocator {
     }
 
     /// Marks every slot as needing a GPU alive-mask sync.
-    ///
-    /// Used after a wholesale world replacement, where the incremental
-    /// dirty list no longer describes what changed.
     pub fn mark_all_pending_sync(&mut self) {
         self.pending_sync.clear();
         self.pending_sync.extend(0..self.generations.len() as u32);

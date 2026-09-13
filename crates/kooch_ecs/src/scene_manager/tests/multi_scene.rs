@@ -123,11 +123,6 @@ fn saving_one_scene_does_not_capture_the_other() {
 }
 
 /// A scene that is not the active one can be saved to a new path.
-///
-/// "Save As" on the scene the user right-clicked, which with several
-/// open is not the one new entities land in. It must write that scene
-/// and adopt the path for it alone — leaving the active scene's own
-/// path, and the other's entities, untouched.
 #[test]
 fn a_scene_that_is_not_active_saves() {
     use crate::scene::SceneDocument;
@@ -212,17 +207,6 @@ fn closing_a_scene_that_is_not_open_reports_it() {
 }
 
 /// The same file can be open twice, as two instances.
-///
-/// 🔴 This used to be refused, and the reason was real: a scene's
-/// identity *was* its file's, so two copies claimed one id and every
-/// `(scene, entity)` pair aliased.
-///
-/// Unity DOTS answers it a level up — instances of a subscene are "exact
-/// copies of each other", told apart by the instance the load hands back
-/// rather than by anything inside them. So the entities keep the ids the
-/// file gives them, which is what makes a scene reload to exactly the
-/// identities it was saved with, and the scene half of the pair says
-/// which copy.
 #[test]
 fn the_same_scene_opens_twice_as_two_instances() {
     let path = write_scene("multi_twice", &[1, 2]);
@@ -258,9 +242,6 @@ fn the_same_scene_opens_twice_as_two_instances() {
 }
 
 /// Saving a second copy writes the **file's** identity, not the copy's.
-///
-/// Writing the instance id would rename the file every time a second copy
-/// was saved, and break every reference that named it.
 #[test]
 fn saving_a_copy_keeps_the_files_identity() {
     use crate::scene::SceneDocument;
@@ -382,10 +363,9 @@ fn a_scene_file_without_an_id_is_marked_dirty_so_the_new_id_persists() {
     assert!(!manager.is_dirty());
 }
 
-/// Entity ids are scene-local, so two open scenes both having an entity 1
-/// is ordinary. Resolving references by id alone would collapse them and
-/// point every reference at whichever scene loaded last — the same class
-/// of failure that made resolving parents by name unusable.
+/// Entity ids are scene-local, so two open scenes both having an entity 1 is ordinary. Resolving
+/// references by id alone would collapse them and point every reference at whichever scene loaded
+/// last — the same class of failure that made resolving parents by name unusable.
 #[test]
 fn two_scenes_may_reuse_the_same_entity_id_without_crossing_references() {
     use crate::archetype_registry::ArchetypeRegistry;
@@ -507,11 +487,8 @@ fn two_scenes_may_reuse_the_same_entity_id_without_crossing_references() {
     }
 }
 
-/// Entity names are free text, so a scene holding one called `grid:floor`
-/// contains the substring `id:` without having an identity field. A
-/// text search would call that file "already identified" and never
-/// persist the id it was just given — a different scene id every session,
-/// and no reference into it ever resolving.
+/// Entity names are free text, so a scene holding one called `grid:floor` contains the substring
+/// `id:` without having an identity field.
 #[test]
 fn an_entity_name_containing_id_does_not_pass_for_a_scene_identity() {
     let path = tmp_path("multi_named_id");
@@ -531,17 +508,7 @@ fn an_entity_name_containing_id_does_not_pass_for_a_scene_identity() {
     );
 }
 
-/// The same file open twice: identical entity ids, references that stay
-/// inside their own copy.
-///
-/// 🔴 This is the whole point of splitting a scene's identity from its
-/// file's. The entities keep the ids the file gives them — which is what
-/// makes a scene reload to exactly the identities it was saved with — and
-/// the copies are told apart by the instance, the way Unity DOTS tells
-/// subscene instances apart by the meta entity the load hands back.
-///
-/// Resolving by id alone would have every link in one copy pointing into
-/// the other, because both copies really do contain entity 1.
+/// The same file open twice: identical entity ids, references that stay inside their own copy.
 #[test]
 fn two_copies_of_one_file_keep_their_ids_and_their_links() {
     use crate::archetype_registry::ArchetypeRegistry;
@@ -664,16 +631,6 @@ fn two_copies_of_one_file_keep_their_ids_and_their_links() {
 }
 
 /// 🔴 Every change to the set of loaded scenes moves the epoch.
-///
-/// A renderer's caches key on continuity — what moved since last frame,
-/// what nobody asked for, which ring scrolled out. All of them assume
-/// the world persists and only part of it changed. Replacing the world
-/// breaks that assumption silently: **despawning is not moving**, so the
-/// outgoing scene's shadow pages stayed resident and were sampled as the
-/// incoming scene's occlusion (#971).
-///
-/// Held by a test because every one of these is a separate code path,
-/// and the one that gets forgotten is the one nobody was thinking about.
 #[test]
 fn every_scene_change_moves_the_epoch() {
     let first = write_scene("epoch_a", &[1, 2]);
@@ -710,11 +667,6 @@ fn every_scene_change_moves_the_epoch() {
 }
 
 /// ⚠️ And an ordinary edit does **not**.
-///
-/// The epoch voids every cached page, so spending one on something that
-/// happens continuously would be the invalidation storm this is meant to
-/// avoid — the shape that reached a driver hang in UE5 after level
-/// streaming. Only the set of scenes moves it.
 #[test]
 fn editing_a_scene_leaves_the_epoch_alone() {
     let path = write_scene("epoch_edit", &[7]);
@@ -734,17 +686,6 @@ fn editing_a_scene_leaves_the_epoch_alone() {
 }
 
 /// A scratch scene's contents are never written into somebody else's file.
-///
-/// 🔴 The rule the editor's "New scene" gesture rests on: a scene nobody
-/// saved by name, and everything in it, is LOST rather than folded into
-/// whatever file was saved. Losing it is the preferred failure — the
-/// alternative is work appearing inside a file the user did not choose,
-/// which nothing on screen would say.
-///
-/// Note what makes it hold: membership. `adopt_unowned` hands the active
-/// scene every entity with NO `SceneMember`, and an entity authored into
-/// a scratch scene has one. That is the whole distance between "lost"
-/// and "silently merged", so it is worth a test of its own.
 #[test]
 fn a_scratch_scene_is_never_folded_into_a_saved_one() {
     use crate::scene::SceneDocument;

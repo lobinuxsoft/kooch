@@ -1,10 +1,5 @@
-//! #737 — a field's doc comment reaches the Inspector.
-//!
-//! The information was always there. It sat in the source, where nobody
-//! authoring a scene reads it, while the Inspector showed a name and a
-//! number. These tests pin the harvest, because the failure mode is
-//! silent: a derive that stops collecting docs produces empty tooltips,
-//! and an empty tooltip looks exactly like a field nobody documented.
+//! The information was always there. It sat in the source, where nobody authoring a scene reads it,
+//! while the Inspector showed a name and a number.
 
 use kooch_ecs::directional_light::DirectionalLight;
 use kooch_ecs::point_light::PointLight;
@@ -52,10 +47,9 @@ fn the_two_intensities_say_which_unit_they_are_in() {
     );
 }
 
-/// `gizmos/lights.rs` chose half-angles when it drew the cone and wrote
-/// down that the lighting work would either honour the convention or
-/// draw a cone half the width it lights. The tooltip is where an author
-/// finds out which one it was.
+/// `gizmos/lights.rs` chose half-angles when it drew the cone and wrote down that the lighting work
+/// would either honour the convention or draw a cone half the width it lights. The tooltip is where
+/// an author finds out which one it was.
 #[test]
 fn the_spot_cone_angles_say_they_are_half_angles() {
     let inner = doc_of(&SpotLight::default(), "inner_angle");

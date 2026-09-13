@@ -10,9 +10,6 @@ use crate::entity::Entity;
 pub trait Component: Send + Sync + 'static {}
 
 /// Type-erased interface for component storages.
-///
-/// Used by [`ComponentRegistry`](super::ComponentRegistry) to operate on
-/// heterogeneous storages without knowing the concrete component type.
 pub(crate) trait AnyStorage: Send + Sync + 'static {
     /// Removes the component for `entity`, if present.
     fn remove_entity(&mut self, entity: Entity);

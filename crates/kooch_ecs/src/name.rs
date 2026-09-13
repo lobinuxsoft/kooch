@@ -1,7 +1,4 @@
 //! Name component — human-readable entity label.
-//!
-//! Built-in component used by the editor to display entity names
-//! in the hierarchy and inspector panels.
 
 use crate::component::Component;
 
@@ -10,9 +7,6 @@ use crate::component::Component;
 use crate::Reflect;
 
 /// Human-readable name for an entity.
-///
-/// The editor displays this in the World panel instead of the raw
-/// `index:generation` when present and non-empty.
 #[derive(Debug, Clone, Default, Reflect)]
 #[reflect(inspector = "hidden")]
 pub struct Name {

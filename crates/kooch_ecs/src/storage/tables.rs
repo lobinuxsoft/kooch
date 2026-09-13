@@ -20,23 +20,6 @@ impl TableId {
 }
 
 /// Every [`Table`] in a world, addressed by [`TableId`].
-///
-/// # One table per component set, and why that is not one per archetype
-///
-/// A table is looked up by the **set of components it stores**, and two
-/// callers asking for the same set get the same id. Today that is the same
-/// thing as one table per archetype, because every component is stored in
-/// a table.
-///
-/// 🎯 It stops being the same thing the moment a component opts into
-/// sparse-set storage (stage 7 of #891): two archetypes that differ *only*
-/// in a sparse-set component must then share one table, so that gaining or
-/// losing that component **does not move the row**. That is the entire
-/// payoff of the sparse-set kind, and it only works if the table's
-/// identity was never the archetype's identity.
-///
-/// So the lookup is by component set from the start. Building it the other
-/// way would work today and would have to be undone later.
 pub struct Tables {
     tables: Vec<Table>,
     /// Sorted component set → the table serving it.
@@ -70,18 +53,7 @@ impl Tables {
         self.tables.is_empty()
     }
 
-    /// The table serving `components`, creating it if this is the first
-    /// time that set is asked for.
-    ///
-    /// The order of `components` does not matter: the set is sorted before
-    /// it is looked up, so `[A, B]` and `[B, A]` are one table and not two.
-    ///
-    /// # Panics
-    ///
-    /// If a component is not registered. A table needs the concrete type to
-    /// build its column, and only the registry still knows it — an
-    /// unregistered component here is a bug upstream, not a recoverable
-    /// state.
+    /// The table serving `components`, creating it if this is the first time that set is asked for.
     pub fn get_or_insert(
         &mut self,
         registry: &ComponentRegistry,
@@ -111,11 +83,6 @@ impl Tables {
     }
 
     /// The table serving `components`, **without creating one**.
-    ///
-    /// The read side of [`Self::get_or_insert`]: a query walks archetypes
-    /// and must not mint a table as a side effect of looking. `None` means
-    /// nothing has been stored for that set yet, which during the
-    /// migration of #891 is the normal answer.
     pub fn find(&self, components: &[StorageId]) -> Option<TableId> {
         let mut key: Vec<StorageId> = components.to_vec();
         key.sort_unstable();
@@ -135,21 +102,8 @@ impl Tables {
         self.tables.get_mut(id.index())
     }
 
-    /// Moves a row from one table to another, returning where it landed and
-    /// the entity dragged into the hole it left.
-    ///
-    /// The two tables are borrowed mutably at once, which a plain `Vec`
-    /// cannot hand out — hence the split.
-    ///
-    /// 🔴 See [`Table::move_row_to`]: the destination is left mid-write for
-    /// any component it holds and the source does not. The caller pushes
-    /// those, because they are typed and this layer is not.
-    ///
-    /// # Panics
-    ///
-    /// If either id is unknown, or if `from` and `to` are the same table —
-    /// moving a row onto itself is a caller bug, not a no-op worth
-    /// swallowing.
+    /// Moves a row from one table to another, returning where it landed and the entity dragged into
+    /// the hole it left.
     pub fn move_row(
         &mut self,
         from: TableId,

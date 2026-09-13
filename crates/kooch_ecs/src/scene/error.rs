@@ -18,34 +18,14 @@ pub enum SceneError {
     /// A reflection operation failed.
     Reflect(ReflectError),
     /// A field still held a live entity handle when the file was written.
-    ///
-    /// An index and a generation are reassigned on the next load, so a
-    /// saved one points at whatever occupies that slot. Reaching here means
-    /// the save path did not resolve the reference to a `PersistentId`, and
-    /// refusing is the difference between a failed save and a scene that
-    /// loads with its references pointing at arbitrary entities.
     UnresolvedReference {
         entity: String,
         component: String,
         field: String,
     },
     /// Asked to instance a document that is not a single tree.
-    ///
-    /// Instancing something *as a unit* means one entity to place, parent
-    /// and transform. N loose roots have no such entity, so there is
-    /// nothing for the caller to be handed and nothing for a transform to
-    /// apply to. Godot enforces the same rule on a `PackedScene`.
-    ///
-    /// A prefab captured with
-    /// [`from_ecs_subtree`](super::document::SceneDocument::from_ecs_subtree)
-    /// has exactly one root by construction; reaching here means a
-    /// hand-written or multi-root scene was instanced instead.
     NotASingleRoot { roots: usize },
     /// Asked to spawn a prefab with no `AssetServer` to resolve it.
-    ///
-    /// A headless tool or a hand-built `Resources` that never installed the
-    /// asset plugin. Said out loud rather than treated as "prefab missing",
-    /// which would send the caller looking for a file that is fine.
     NoAssetServer,
     /// The prefab could not be loaded: unregistered guid, missing file, or
     /// contents that would not parse.
@@ -54,11 +34,6 @@ pub enum SceneError {
         detail: String,
     },
     /// The file was written but its `.meta` sidecar was not.
-    ///
-    /// Reported as a failure even though the bytes are on disk: without an
-    /// identity the scan does not register the file, so it is invisible to
-    /// asset pickers and cannot be spawned. A prefab nothing can reference
-    /// is not a saved prefab.
     AssetIdentity { detail: String },
 }
 

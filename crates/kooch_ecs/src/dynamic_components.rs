@@ -1,33 +1,9 @@
 //! Storage for components whose Rust type this binary does not know.
-//!
-//! A scene references components by fully-qualified type name. Whether
-//! that name resolves to a real type depends on *which binary* opened
-//! the scene: a project's own editor build knows its gameplay
-//! components, the standalone hub never will, and neither can be fixed
-//! by reflection — Rust resolves types at compile time.
-//!
-//! Rather than fail the load (and discard the data on the next save),
-//! unresolved components are parked here verbatim and written back out
-//! untouched. A scene therefore survives a round-trip through a binary
-//! that only understands half of it, which is what makes it safe to
-//! open any project from the hub.
-//!
-//! This is also the substrate the remote editor client mirrors into:
-//! every project component is "unknown" to it by construction.
-//!
-//! Storage is SoA — entries are appended on load, scanned on save, and
-//! rarely mutated in between, so parallel arrays beat a map of owned
-//! rows. Type names are interned because a scene typically has few
-//! distinct unknown types spread over many entities.
 
 use crate::entity::Entity;
 use crate::reflect::ReflectValue;
 
 /// Components parked by type name because no Rust type matched.
-///
-/// Lives as a resource. Entries are keyed by [`Entity`], so they follow
-/// the entity across a save/load cycle without needing a component slot
-/// in an archetype.
 #[derive(Debug, Default, Clone)]
 pub struct DynamicComponents {
     /// Owning entity, one per entry.
@@ -47,10 +23,6 @@ impl DynamicComponents {
     }
 
     /// Parks a component under `entity`.
-    ///
-    /// Replaces the fields if this entity already carries a component of
-    /// the same type, so a repeated load is idempotent rather than
-    /// accumulating duplicates.
     pub fn insert(&mut self, entity: Entity, type_name: &str, fields: Vec<(String, ReflectValue)>) {
         let name_index = self.intern(type_name);
         match self.position(entity, name_index) {
@@ -81,18 +53,11 @@ impl DynamicComponents {
     }
 
     /// Every distinct type name parked in the store.
-    ///
-    /// Lets a name-keyed consumer (the editor's component interner) see
-    /// types no local registry knows about.
     pub fn type_names(&self) -> impl Iterator<Item = &str> {
         self.names.iter().map(String::as_str)
     }
 
     /// Overwrites one field of a parked component.
-    ///
-    /// Returns `false` when the entity has no such component, or the
-    /// component has no such field — a parked component has no schema of
-    /// its own, so fields are never created on the fly.
     pub fn set_field(
         &mut self,
         entity: Entity,
@@ -176,12 +141,7 @@ impl DynamicComponents {
             .position(|(e, n)| *e == entity && *n == name_index)
     }
 
-    /// Retains entries whose entity satisfies `keep`, holding the
-    /// parallel arrays in step.
-    ///
-    /// The mask is materialised first: `Vec::retain` cannot drive three
-    /// arrays at once, and re-evaluating `keep` per array would desync
-    /// them the moment it is not a pure function of the entity.
+    /// Retains entries whose entity satisfies `keep`, holding the parallel arrays in step.
     fn retain(&mut self, keep: impl Fn(Entity) -> bool) {
         let mask: Vec<bool> = self.entities.iter().map(|e| keep(*e)).collect();
         retain_masked(&mut self.entities, &mask);

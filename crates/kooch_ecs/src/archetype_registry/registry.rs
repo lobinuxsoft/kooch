@@ -7,22 +7,12 @@ use crate::entity::Entity;
 use crate::storage::{TableId, TableRow, Tables};
 
 /// Central registry of all archetypes and entity-archetype mappings.
-///
-/// Maintains a transition cache so that repeated add/remove component
-/// operations resolve in O(1) after the first occurrence.
 pub struct ArchetypeRegistry {
     /// All known archetypes.
     archetypes: HashMap<ArchetypeId, Archetype>,
     /// Entity → where its components live.
     entity_archetype: HashMap<Entity, ArchetypeId>,
-    /// Entity → the table row holding its values, for entities that have
-    /// been placed in one.
-    ///
-    /// ⚠️ Separate from `entity_archetype` **only while the migration of
-    /// #891 is in flight**: today most entities are in an archetype and
-    /// their values are still in `ComponentStorage<T>`, so they have an
-    /// archetype and no row. When the last insert path moves (stage 5c-2)
-    /// the two collapse into one map.
+    /// Entity → the table row holding its values, for entities that have been placed in one.
     entity_rows: HashMap<Entity, TableRow>,
     /// Cache: `(from_archetype, +component_type)` → `to_archetype`.
     add_transitions: HashMap<(ArchetypeId, TypeId), ArchetypeId>,
@@ -64,36 +54,6 @@ impl ArchetypeRegistry {
     }
 
     /// The table serving `archetype`'s component set, built on first ask.
-    ///
-    /// Returns `None` if the archetype is unknown.
-    ///
-    /// # Why this is a lookup and not a field on `Archetype`
-    ///
-    /// Both ids are functions of the **same component set**:
-    /// `ArchetypeId::from_components` hashes the types, and
-    /// [`Tables::get_or_insert`] keys on their [`StorageId`]s. Storing the
-    /// table on the archetype would mean handing a `&ComponentRegistry` to
-    /// every one of the 38 places that create or transition an archetype,
-    /// none of which cares about storage — and a column cannot be built
-    /// without the concrete type, so the registry has to be *somewhere*.
-    ///
-    /// It is asked for where a value is actually written, which already
-    /// holds both registries.
-    ///
-    /// ⚠️ **And it is deliberately not cached.** [`Tables::get_or_insert`]
-    /// already dedupes by component set, so a cache here would change no
-    /// observable behaviour — it would only save recomputing a short
-    /// `Vec<StorageId>`, an amount nobody has measured, at the price of a
-    /// second structure that can drift from the first. If a capture ever
-    /// says this lookup matters, cache it then, with the number.
-    ///
-    /// # Panics
-    ///
-    /// If a component of the archetype is not registered. Reaching a table
-    /// for a component nothing ever registered is a bug upstream — the
-    /// insert path registers before it transitions.
-    ///
-    /// [`StorageId`]: crate::component::StorageId
     pub fn table_of(
         &mut self,
         archetype: ArchetypeId,
@@ -136,9 +96,6 @@ impl ArchetypeRegistry {
     }
 
     /// Moves an entity into the given archetype.
-    ///
-    /// If the entity was already in a different archetype, it is removed
-    /// from the old one first.
     pub fn register_entity(&mut self, entity: Entity, archetype_id: ArchetypeId) {
         if let Some(old_id) = self.entity_archetype.get(&entity).copied() {
             if old_id == archetype_id {
@@ -179,10 +136,6 @@ impl ArchetypeRegistry {
     }
 
     /// The table serving `archetype`, **without creating one**.
-    ///
-    /// What a query uses: looking must not mint a table. `None` while
-    /// nothing has been stored for that archetype yet, which during the
-    /// migration of #891 is the normal answer for most of them.
     pub fn table_for(
         &self,
         archetype: ArchetypeId,
@@ -198,14 +151,7 @@ impl ArchetypeRegistry {
         self.tables.find(&ids)
     }
 
-    /// Registers `entity` in `archetype` **and** claims it a row in that
-    /// archetype's table.
-    ///
-    /// 🔴 The caller must then push one value into every column of the
-    /// table, because those values are typed and this layer is not. Until
-    /// it does, the table's `rows_agree` is false.
-    ///
-    /// Returns the row, or `None` if the archetype is unknown.
+    /// Registers `entity` in `archetype` **and** claims it a row in that archetype's table.
     pub fn place(
         &mut self,
         entity: Entity,
@@ -219,17 +165,8 @@ impl ArchetypeRegistry {
         Some(row)
     }
 
-    /// Moves `entity` into `archetype`, carrying the values both archetypes
-    /// hold and destroying the ones it is losing.
-    ///
-    /// Returns the row it landed in — **mid-write** for any component the
-    /// destination has and the source did not, which the caller fills.
-    ///
-    /// 🔴 This is where the displaced entity gets fixed. A row move pulls
-    /// the last row of the source table into the hole, so a **second**
-    /// entity — one that asked for nothing and changed no components —
-    /// lands somewhere new. Its row is updated here, because nowhere else
-    /// knows it happened.
+    /// Moves `entity` into `archetype`, carrying the values both archetypes hold and destroying the
+    /// ones it is losing.
     pub fn relocate(
         &mut self,
         entity: Entity,
@@ -244,10 +181,9 @@ impl ArchetypeRegistry {
         let target = self.table_of(archetype, components)?;
 
         if source == target {
-            // The same set of stored components: the row does not move,
-            // only the archetype the entity is filed under. Today that can
-            // only be the archetype it already had; it becomes reachable
-            // when a component opts out of table storage.
+            // The same set of stored components: the row does not move, only the archetype the
+            // entity is filed under. Today that can only be the archetype it already had; it
+            // becomes reachable when a component opts out of table storage.
             self.register_entity(entity, archetype);
             return Some(row);
         }
@@ -261,11 +197,7 @@ impl ArchetypeRegistry {
         Some(landed)
     }
 
-    /// Removes `entity` from its table, destroying its values, and from the
-    /// archetype index.
-    ///
-    /// Returns `false` if it held no row. The entity displaced by the
-    /// removal is fixed here, for the same reason as in [`Self::relocate`].
+    /// Removes `entity` from its table, destroying its values, and from the archetype index.
     pub fn evict(&mut self, entity: Entity, components: &ComponentRegistry) -> bool {
         let Some(row) = self.entity_rows.remove(&entity) else {
             self.unregister_entity(entity);
@@ -351,12 +283,6 @@ impl ArchetypeRegistry {
     }
 
     /// Reorders every archetype's entities to follow `order`.
-    ///
-    /// Used when restoring a snapshot: rebuilding an entity walks it
-    /// through a chain of archetypes, and where it lands in each one
-    /// depends on the order components happened to be added — which is
-    /// not the order the world had. This puts the observable iteration
-    /// order back.
     pub fn reorder_entities(&mut self, order: &[Entity]) {
         let rank: std::collections::HashMap<Entity, usize> =
             order.iter().enumerate().map(|(i, e)| (*e, i)).collect();
@@ -370,11 +296,8 @@ impl ArchetypeRegistry {
         self.archetypes.len()
     }
 
-    /// Removes empty archetypes (except `EMPTY`) and invalidates
-    /// transition cache entries that reference them.
-    ///
-    /// Call periodically or after batch entity operations to avoid
-    /// unbounded archetype accumulation.
+    /// Removes empty archetypes (except `EMPTY`) and invalidates transition cache entries that
+    /// reference them.
     pub fn gc_empty_archetypes(&mut self) -> usize {
         let to_remove: Vec<ArchetypeId> = self
             .archetypes

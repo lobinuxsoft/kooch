@@ -4,49 +4,15 @@ use std::alloc::{self, Layout};
 use std::ptr::NonNull;
 
 /// Every value of one component type, packed end to end.
-///
-/// Type-erased so the storage layer can hold columns of many different
-/// component types in one structure without a generic parameter reaching
-/// all the way up. The type is recovered by the caller, which is why every
-/// read and write here is `unsafe`.
-///
-/// # What it is for
-///
-/// A row index addresses the same entity across every column of a table,
-/// so a query over three components is three contiguous walks in lockstep
-/// — no hashing, no pointer chasing. That is the whole point of #891, and
-/// this is the piece that makes it possible.
-///
-/// # What it deliberately does not have
-///
-/// **Change-detection ticks.** Bevy's equivalent carries `added_ticks`,
-/// `changed_ticks` and more, because Bevy has change detection. This
-/// engine does not, and porting the ticks would be shipping a feature on
-/// the way past. See #891.
-///
-/// # Safety contract
-///
-/// A column has exactly one item type, fixed at construction by
-/// [`Column::of`]. Every `T` handed to [`Column::push`], [`Column::get`]
-/// and [`Column::get_mut`] must be that same type. Nothing here checks it
-/// in release builds — the debug assertions compare layouts, which catches
-/// the common mistake but not two distinct types that happen to agree.
 pub struct Column {
-    /// Dangling **but aligned for the item type** while nothing is
-    /// allocated. `NonNull::dangling()` would not do: it is aligned for
-    /// `u8`, and a zero-sized item with a larger alignment would then be
-    /// read from a misaligned address.
+    /// Dangling **but aligned for the item type** while nothing is allocated. `NonNull::dangling()`
+    /// would not do: it is aligned for `u8`, and a zero-sized item with a larger alignment would
+    /// then be read from a misaligned address.
     data: NonNull<u8>,
     len: usize,
     /// Always 0 for a zero-sized item, which never allocates.
     capacity: usize,
     /// Bytes from one item to the next.
-    ///
-    /// This is `size_of::<T>()`, and it needs no padding step: Rust
-    /// guarantees a type's size is already a multiple of its alignment,
-    /// so consecutive items are aligned by construction. A padding call
-    /// here would be provably dead — and a test asserting it would be a
-    /// test that cannot fail.
     stride: usize,
     align: usize,
     /// `None` when the item type has no destructor, so the common case
@@ -67,12 +33,6 @@ impl Column {
         let align = layout.align();
         Self {
             // A pointer with no provenance, at the item's own alignment.
-            //
-            // 🔴 NOT `align as *mut u8`. An integer-to-pointer cast claims
-            // provenance it never had, and Miri rejects it outright under
-            // strict provenance — which is how this line was found. The
-            // address is all a never-dereferenced dangling pointer needs,
-            // and a zero-sized read needs no provenance either.
             data: NonNull::new(std::ptr::without_provenance_mut(align))
                 .expect("an alignment is never zero"),
             len: 0,
@@ -104,10 +64,6 @@ impl Column {
     }
 
     /// Appends `value`, returning the row it landed in.
-    ///
-    /// # Safety
-    ///
-    /// `T` must be the type this column was built for.
     pub unsafe fn push<T>(&mut self, value: T) -> usize {
         debug_assert_eq!(Layout::new::<T>().align(), self.align, "wrong item type");
         debug_assert_eq!(Layout::new::<T>().size(), self.stride, "wrong item type");
@@ -121,10 +77,6 @@ impl Column {
     }
 
     /// The value at `row`, or `None` if the row is past the end.
-    ///
-    /// # Safety
-    ///
-    /// `T` must be the type this column was built for.
     pub unsafe fn get<T>(&self, row: usize) -> Option<&T> {
         if row >= self.len {
             return None;
@@ -134,10 +86,6 @@ impl Column {
     }
 
     /// The value at `row`, mutably.
-    ///
-    /// # Safety
-    ///
-    /// `T` must be the type this column was built for.
     pub unsafe fn get_mut<T>(&mut self, row: usize) -> Option<&mut T> {
         if row >= self.len {
             return None;
@@ -147,20 +95,7 @@ impl Column {
         Some(unsafe { &mut *self.row_ptr(row).cast::<T>() })
     }
 
-    /// The value at `row` as a raw pointer, **without forming a reference
-    /// to the column**.
-    ///
-    /// 🔴 This exists because casting a `&Column` to `*mut Column` and
-    /// writing through it is undefined behaviour — Miri rejects the retag,
-    /// and it is right to. The pointer returned here derives its provenance
-    /// from the column's own allocation, not from the shared borrow, so
-    /// writing through it is sound.
-    ///
-    /// # Safety
-    ///
-    /// `T` must be the type this column was built for, and the caller must
-    /// guarantee no other reference to this row is live — the query's
-    /// borrow tracker is what does that upstream.
+    /// The value at `row` as a raw pointer, **without forming a reference to the column**.
     pub unsafe fn value_ptr<T>(&self, row: usize) -> Option<*mut T> {
         if row >= self.len {
             return None;
@@ -169,37 +104,12 @@ impl Column {
     }
 
     /// Drops the item at `row` and moves the last item into its place.
-    ///
-    /// 🔴 **The row that was last is now `row`.** Whoever tracks which
-    /// entity lives in which row has to be told, and this type cannot tell
-    /// them because it does not know about entities — the table above it
-    /// does. Forgetting it is how an entity ends up reading another
-    /// entity's components with nothing failing.
-    ///
-    /// # Panics
-    ///
-    /// If `row` is past the end.
     pub fn swap_remove(&mut self, row: usize) {
         self.vacate(row, true);
     }
 
-    /// Moves the value at `row` into `dst`, appending it there, and vacates
-    /// the row here **without running its destructor**.
-    ///
-    /// Returns the row it landed in.
-    ///
-    /// 🔴 The destructor is the whole subtlety. The value was *moved*, so
-    /// there is exactly one copy of it and it now lives in `dst`. Running
-    /// the destructor here as well would be a double free — the classic
-    /// way a migration between two containers corrupts a heap.
-    ///
-    /// # Safety
-    ///
-    /// `dst` must hold the same item type as this column.
-    ///
-    /// # Panics
-    ///
-    /// If `row` is past the end.
+    /// Moves the value at `row` into `dst`, appending it there, and vacates the row here **without
+    /// running its destructor**.
     pub unsafe fn move_row_to(&mut self, row: usize, dst: &mut Column) -> usize {
         assert!(row < self.len, "row {row} is past the end ({})", self.len);
         debug_assert_eq!(self.stride, dst.stride, "columns hold different types");
@@ -219,9 +129,6 @@ impl Column {
     }
 
     /// Frees `row`, pulling the last row into it.
-    ///
-    /// `run_drop` is false only when the value has been moved elsewhere and
-    /// its single remaining copy is somebody else's to destroy.
     fn vacate(&mut self, row: usize, run_drop: bool) {
         assert!(row < self.len, "row {row} is past the end ({})", self.len);
         let last = self.len - 1;
@@ -306,10 +213,6 @@ impl Drop for Column {
 }
 
 /// The monomorphised destructor a column stores when its item needs one.
-///
-/// # Safety
-///
-/// `ptr` must point to a live `T`.
 unsafe fn drop_in_place<T>(ptr: *mut u8) {
     // SAFETY: guaranteed by the caller.
     unsafe { std::ptr::drop_in_place(ptr.cast::<T>()) };

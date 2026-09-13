@@ -1,16 +1,4 @@
 //! kooch_ecs — GPU-driven Entity Component System
-//!
-//! Provides generational entity IDs with GPU alive-mask synchronisation
-//! and dense component storage with lazy GPU buffer backing.
-//!
-//! - [`Entity`] — lightweight `(index, generation)` handle.
-//! - [`EntityAllocator`] — spawn / despawn with FIFO slot recycling.
-//! - [`ComponentRegistry`] — type-erased registry of component storages.
-//! - [`ComponentStorage`] — CPU-only `HashMap`-backed component storage.
-//! - [`Archetype`] — entity group sharing the same component set.
-//! - [`ArchetypeRegistry`] — archetype index with transition caching.
-//! - [`Query`] — type-safe queries with runtime borrow checking.
-//! - [`EcsPlugin`] — one-liner integration into [`App`](kooch_core::app::App).
 
 // Allow the derive macro to use `::kooch_ecs::reflect::` paths from any crate.
 extern crate self as kooch_ecs;
@@ -44,11 +32,9 @@ pub mod scene_member;
 pub mod sky_renderer;
 pub mod spot_light;
 pub mod storage;
-// 🔴 NOT behind `testing`, despite the name. The name is the serialised
-// type path of what lives here (`kooch_ecs::testing::spin::Spin`) and a
-// scene resolves a component by that string, so renaming the module
-// would drop `Spin` from every entity that has one, silently. See the
-// module's own header.
+// 🔴 NOT behind `testing`, despite the name. The name is the serialised type path of what lives here
+// (`kooch_ecs::testing::spin::Spin`) and a scene resolves a component by that string, so renaming
+// the module would drop `Spin` from every entity that has one, silently.
 pub mod testing;
 pub mod transform;
 pub mod world_snapshot;

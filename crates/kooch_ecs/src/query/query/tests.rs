@@ -310,12 +310,8 @@ fn for_each_works() {
     assert_eq!(sum, 30);
 }
 
-/// Two `&mut` of **different** components in one query is fine — the
-/// tracker counts borrows per component type, not per query.
-///
-/// Worth pinning because the natural assumption is the opposite, and
-/// acting on it produces two queries and a manual join where one query
-/// would do.
+/// Two `&mut` of **different** components in one query is fine — the tracker counts borrows per
+/// component type, not per query.
 #[test]
 fn one_query_can_hold_two_mutable_components() {
     let mut resources = setup();
@@ -350,11 +346,9 @@ fn the_same_component_cannot_be_held_mutably_twice() {
     let _second = Query::<&mut Health>::new(&resources);
 }
 
-/// Eight is the arity ceiling: `impl_world_query_tuple!` is instantiated
-/// up to `H` (`fetch.rs`). All eight may be `&mut` — the tracker counts
-/// per component type, so distinct types never conflict no matter how
-/// many. `Entity` and filters cost nothing here; `Entity` occupies a slot,
-/// `With`/`Without` live in the second parameter.
+/// Eight is the arity ceiling: `impl_world_query_tuple!` is instantiated up to `H` (`fetch.rs`).
+/// All eight may be `&mut` — the tracker counts per component type, so distinct types never
+/// conflict no matter how many.
 #[test]
 fn eight_mutable_components_fit_in_one_query() {
     #[derive(Debug)]
@@ -429,19 +423,11 @@ mod columns {
 
     use super::*;
 
-    /// Puts `entity` in an archetype holding `Health`, with the value in
-    /// the **column and nowhere else**: the per-type map is cleared after
-    /// the row is filled.
-    ///
-    /// 🔴 That is what makes this test worth writing. If the value were in
-    /// both, a pass would prove nothing — the fallback would answer and
-    /// look identical. With the map empty, only the column can.
+    /// Puts `entity` in an archetype holding `Health`, with the value in the **column and nowhere
+    /// else**: the per-type map is cleared after the row is filled.
     fn only_in_a_column(resources: &mut Resources, entity: Entity, value: u32) {
-        // Taken out and put back: `place` wants the component registry by
-        // shared reference and the archetype registry by exclusive one, and
-        // `Resources` cannot hand out both at once. The real insert path
-        // does not have this problem — it already receives the two as
-        // separate parameters.
+        // Taken out and put back: `place` wants the component registry by shared reference and the
+        // archetype registry by exclusive one, and `Resources` cannot hand out both at once.
         let mut components = resources.remove::<ComponentRegistry>().unwrap();
         components.register_cpu::<Health>();
         let health = components.storage_id(&TypeId::of::<Health>()).unwrap();

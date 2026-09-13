@@ -1,7 +1,4 @@
 //! The `Reflect` derive over `Entity` and `Option<Entity>` fields.
-//!
-//! These cover the contract the scene paths rely on: a live component
-//! always reflects `EntityRef::Live`, and never accepts anything else.
 
 use crate::entity::Entity;
 use crate::persistent_id::EntityGuid;
@@ -159,10 +156,9 @@ fn an_entity_ref_field_round_trips_a_live_reference() {
     );
 }
 
-/// The difference that makes this shape worth having: an `Entity` field
-/// rejects an unresolved reference because it has nowhere to put one.
-/// Losing it would drop the link every time the target's scene is not
-/// resident, which under world-cell streaming is ordinary.
+/// The difference that makes this shape worth having: an `Entity` field rejects an unresolved
+/// reference because it has nowhere to put one. Losing it would drop the link every time the
+/// target's scene is not resident, which under world-cell streaming is ordinary.
 #[test]
 fn an_entity_ref_field_keeps_an_unresolved_reference() {
     let mut link = Link::default();

@@ -9,9 +9,6 @@ use crate::reflect::Reflect;
 use super::command::{Command, InsertFn};
 
 /// Builder for spawning a new entity with components.
-///
-/// Component insertions are committed to the command queue when this
-/// builder is dropped (or when [`id`](EntityBuilder::id) is called).
 pub struct EntityBuilder<'a> {
     pub(super) entity: Entity,
     pub(super) inserts: Vec<InsertFn>,

@@ -96,11 +96,8 @@ fn sync_scene_to_ecs_rebuilds_entities() {
 
 // -- AssetRef round-trip ---------------------------------------------
 
-/// End-to-end: spawn an entity with both AssetRef fields populated,
-/// snapshot the world to a `SceneDocument`, save to RON, load it
-/// back, and sync into a fresh world. Both GUIDs must survive the
-/// round-trip — otherwise scenes that reference engine assets
-/// silently lose their bindings on reload.
+/// End-to-end: spawn an entity with both AssetRef fields populated, snapshot the world to a
+/// `SceneDocument`, save to RON, load it back, and sync into a fresh world.
 #[test]
 fn assetref_fields_round_trip_through_scene_save_load() {
     use kooch_core::Guid;
@@ -200,12 +197,6 @@ fn assetref_none_round_trip() {
 }
 
 // -- Unknown components ------------------------------------------------
-//
-// Which component types resolve depends on which binary opened the
-// scene: a project's own editor build knows its gameplay components,
-// the standalone hub never will. An unresolved name must therefore cost
-// nothing — not the load, not the neighbouring components, and above
-// all not the data itself on the next save.
 
 /// A scene naming a type this binary has no Rust type for must still
 /// load, and the components around it must survive.
@@ -359,14 +350,7 @@ fn parked_components_are_cleared_between_loads() {
     );
 }
 
-/// Entity names are not unique, and the scene format used to resolve
-/// parents by name.
-///
-/// A scene with several meshes called "Mesh" is ordinary — TEST3 ships five.
-/// Resolving a parent through a `HashMap<String, Entity>` collapses them onto
-/// one key, so every child ends up under whichever one was inserted last:
-/// the hierarchy is silently rebuilt wrong on load, attached to the wrong
-/// entity. Indices are unique; names never were.
+/// Entity names are not unique, and the scene format used to resolve parents by name.
 #[test]
 fn duplicate_names_do_not_confuse_the_hierarchy() {
     use crate::hierarchy::Parent;
@@ -498,10 +482,9 @@ fn a_round_trip_keeps_the_hierarchy_when_names_collide() {
 
     // Save, then load into the same world.
     let document = SceneDocument::from_ecs(&mut resources);
-    // Found by the link itself, not by name — the whole point is that names
-    // do not identify anything. Since #607 the link is an ordinary
-    // component field holding an entity reference, not an out-of-band
-    // index into the document.
+    // Found by the link itself, not by name — the whole point is that names do not identify
+    // anything. Since #607 the link is an ordinary component field holding an entity reference, not
+    // an out-of-band index into the document.
     let child_desc = document
         .entities
         .iter()
@@ -535,10 +518,6 @@ fn a_round_trip_keeps_the_hierarchy_when_names_collide() {
 }
 
 /// A scene naming a type this binary has no Rust type for has to SAY so.
-///
-/// The rename to Kóoch moved every `type_name` from `ome_*` to `kooch_*`,
-/// so every saved scene named types that no longer existed. Nothing said
-/// so — it was caught by noticing things were missing (#719).
 #[test]
 fn an_unknown_type_warns_once() {
     let mut resources = setup_resources();
@@ -584,9 +563,6 @@ fn an_unknown_type_warns_once() {
 }
 
 /// The line names the file it read, not the document's `name`.
-///
-/// Every scene the editor creates carries `name: "Untitled Scene"`, so a
-/// complaint keyed on it names nothing at all.
 #[test]
 fn the_warning_names_the_file() {
     let mut resources = setup_resources();
@@ -620,9 +596,6 @@ fn the_warning_names_the_file() {
 }
 
 /// Two loads warn twice.
-///
-/// Deduplicating for the life of the process would mean fixing the scene
-/// and reloading looks exactly like never having warned at all.
 #[test]
 fn a_second_load_warns_again() {
     let mut resources = setup_resources();
@@ -655,10 +628,6 @@ fn a_second_load_warns_again() {
 }
 
 /// A field the component no longer has must not take the scene down.
-///
-/// The engine's policy is to break the data and fix it by hand rather than
-/// write migrations. Aborting here would empty the world instead — step one
-/// of the load already despawned it — which makes the policy unusable.
 #[test]
 fn a_dropped_field_keeps_loading() {
     let mut resources = setup_resources();

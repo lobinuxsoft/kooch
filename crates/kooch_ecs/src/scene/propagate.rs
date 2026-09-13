@@ -1,46 +1,4 @@
 //! Pushing a changed prefab out to the instances of it.
-//!
-//! Engine logic rather than editor logic, because the *project* is what
-//! loads a scene and a scene has to catch up with its prefabs the moment
-//! it opens. Leaving this in the editor would have meant waiting for the
-//! mirror to arrive before knowing what to do.
-//!
-//! # The point of the whole feature
-//!
-//! With a dozen instances placed by hand, changing the prefab and
-//! re-placing all twelve is work with no result — so nobody does it. They
-//! edit the twelve by hand, and one ends up different. This is what makes
-//! the change reach them.
-//!
-//! # Why these writes are not `SetField`
-//!
-//! Every `SetField` on an instance is recorded as an override — that is
-//! how the editor knows what the user made different. Propagating through
-//! `SetField` would mark every field it touched, so the first propagation
-//! would pin the whole instance and it would never follow the prefab
-//! again. Exactly backwards.
-//!
-//! So propagation carries its own writes to their destination: straight
-//! into the registry locally, and as protocol calls in remote mode, both
-//! bypassing the action layer that records.
-//!
-//! # Components appear and disappear with the prefab
-//!
-//! Adding a component to a prefab puts it on the instances; removing it
-//! takes it off. Removing was held back at first as too destructive, and
-//! that was the wrong call — a prefab whose instances keep a component it
-//! no longer has is not a link, it is a link that works in one direction
-//! and surprises you in the other.
-//!
-//! What makes it safe is that presence is recorded like any other
-//! override. A component the user added to *this* instance is theirs and
-//! is never deleted; one they took off stays off. So the destructive case
-//! — losing something configured by hand — cannot happen, because
-//! anything configured by hand is marked as such.
-//!
-//! A new child entity is still deferred: it has to be positioned relative
-//! to whatever the instance became, and there is no answer that is right
-//! often enough.
 
 use super::SceneDocument;
 use crate::entity::Entity;
@@ -65,27 +23,16 @@ pub struct PlannedWrite {
     pub component: String,
     pub field: String,
     pub value: ReflectValue,
-    /// Whether the entity has to grow the component before the field can
-    /// be written.
-    ///
-    /// Carried on the write rather than kept as a separate list so the two
-    /// cannot be applied out of order — a field written before its
-    /// component exists is silently dropped.
+    /// Whether the entity has to grow the component before the field can be written.
     pub add_component: bool,
 }
 
 /// Works out everything that should change when `prefab` is saved.
-///
-/// Computed rather than applied so the caller decides how the writes
-/// reach the world — the editor's own registry, or the project's over the
-/// wire. Both need the same answer, and it depends on the mirror either
-/// way.
 pub fn plan(resources: &Resources, prefab: Guid) -> (Vec<PlannedWrite>, Vec<PlannedRemoval>) {
     let Some(document) = cached_document(resources, prefab) else {
-        // Every step below is silent on failure, and a silent propagation
-        // is indistinguishable from one that decided there was nothing to
-        // do. Said out loud so the next report is about a stage rather
-        // than about "it does not work".
+        // Every step below is silent on failure, and a silent propagation is indistinguishable from
+        // one that decided there was nothing to do. Said out loud so the next report is about a
+        // stage rather than about "it does not work".
         tracing::warn!(target: "kooch_ecs::prefab", %prefab, "no cached document; nothing to propagate");
         return (Vec::new(), Vec::new());
     };
@@ -103,20 +50,15 @@ pub fn plan(resources: &Resources, prefab: Guid) -> (Vec<PlannedWrite>, Vec<Plan
     for (root, instance) in instances {
         for (entity, index) in members_of(resources, root) {
             let Some(described) = document.entities.get(index) else {
-                // The prefab lost an entity this instance still has. Its
-                // fields simply stop being propagated; removing it is a
-                // structural change and those are deliberately out of
+                // The prefab lost an entity this instance still has. Its fields simply stop being
+                // propagated; removing it is a structural change and those are deliberately out of
                 // scope.
                 continue;
             };
             for component in &described.components {
-                // A component the prefab grew since this instance was
-                // placed. The instance has to grow it too, or the change
-                // reaches every instance except as the one thing people
+                // A component the prefab grew since this instance was placed. The instance has to
+                // grow it too, or the change reaches every instance except as the one thing people
                 // most often change about a prefab.
-                // A component the user took off this instance stays off.
-                // Restoring it on the next save would make removing one
-                // impossible to keep.
                 if instance.owns_component(index, &component.type_name) {
                     continue;
                 }
@@ -181,24 +123,6 @@ pub fn plan(resources: &Resources, prefab: Guid) -> (Vec<PlannedWrite>, Vec<Plan
 }
 
 /// Components that hold the instance together rather than describing it.
-///
-/// Stripping these would cut an instance loose from its prefab and orphan
-/// its children, which no prefab edit should ever do.
-///
-/// 🔴 `SceneMember` is on this list for a reason that is easy to miss: it
-/// is *never* written to a prefab file. It is derived on load and holds
-/// which scene an entity belongs to. So the comparison above — live
-/// components against the ones the prefab describes — sees it on every
-/// instance, finds it in no document, and calls it debris.
-///
-/// It stripped scene membership from every prefab-derived entity on the
-/// first propagation pass. In `many_lights` that was 181 of 185 entities
-/// dropping out of their scene and into "Unsaved" (#955), and nothing
-/// failed: they were tagged correctly at load and quietly untagged a
-/// moment later. Saving would then have written four entities.
-///
-/// The same argument as `Parent`, one level up. `Parent` holds an entity
-/// to its parent; this holds it to its scene.
 fn is_bookkeeping(type_name: &str) -> bool {
     matches!(
         type_name.rsplit("::").next().unwrap_or(type_name),
@@ -208,9 +132,8 @@ fn is_bookkeeping(type_name: &str) -> bool {
             | "Children"
             | "GlobalTransform"
             | "SceneMember"
-            // Where an instance sits among its siblings is the scene's
-            // business, not the prefab's — a prefab has no siblings.
-            // Propagating over it would reshuffle every instance of a
+            // Where an instance sits among its siblings is the scene's business, not the prefab's —
+            // a prefab has no siblings. Propagating over it would reshuffle every instance of a
             // prefab the moment somebody edited it (#961).
             | "Order"
     )
@@ -240,20 +163,6 @@ fn live_components(resources: &Resources, entity: Entity) -> Vec<String> {
 }
 
 /// Brings every instance in the world up to date with its prefab.
-///
-/// # Why loading a scene has to do this
-///
-/// A scene file holds its instances in full — see #611 for why that is
-/// deliberate — so a prefab edited while the scene was closed leaves stale
-/// copies in it. Unity does not have this problem because it does not
-/// store the instance at all: a `PrefabInstance` there is a reference plus
-/// a list of modifications, merged in at load. There is nothing to update
-/// because nothing was written.
-///
-/// Running propagation at load reaches the same place from the other
-/// direction, and keeps what writing them in full buys: a scene that opens
-/// correctly when the prefab file is missing, and no ordering dependency
-/// between scenes and prefabs.
 pub fn refresh_all(resources: &mut Resources) {
     let mut sources: Vec<Guid> = Vec::new();
     {
@@ -281,9 +190,6 @@ pub fn refresh_all(resources: &mut Resources) {
 }
 
 /// Applies a plan to the editor's own world.
-///
-/// The local half. In remote mode the project owns the world and the same
-/// plan goes over the wire instead — see `remote_edit`.
 pub fn apply(resources: &mut Resources, writes: &[PlannedWrite], removals: &[PlannedRemoval]) {
     // Removals first: a component the prefab dropped and re-added under
     // another name would otherwise be added and then taken straight off.
@@ -335,10 +241,6 @@ fn has_component(resources: &Resources, entity: Entity, type_name: &str) -> bool
 }
 
 /// The prefab's document as the editor currently holds it.
-///
-/// From the cache rather than the file: the cache is what was just saved,
-/// and it is also what `spawn_prefab` reads, so propagation and the next
-/// spawn agree.
 fn cached_document(resources: &Resources, prefab: Guid) -> Option<SceneDocument> {
     // Guid to path to handle: the server caches by path, and the database
     // is what maps identity to one.
@@ -382,9 +284,6 @@ fn members_of(resources: &Resources, root: Entity) -> Vec<(Entity, usize)> {
 }
 
 /// Stores an instance's override set locally.
-///
-/// The remote path sends this as a `SetField` instead — which is safe
-/// because the recorder skips `PrefabInstance` for exactly this reason.
 pub fn write_overrides(resources: &mut Resources, root: Entity, overrides: &str) {
     let type_id = resources
         .get::<crate::component::ComponentRegistry>()
@@ -406,16 +305,8 @@ pub fn write_overrides(resources: &mut Resources, root: Entity, overrides: &str)
 // Revert
 // ---------------------------------------------------------------------------
 
-/// Drops overrides on the instance `entity` belongs to, and plans the
-/// writes that put the prefab's values back.
-///
-/// `component` narrows it to one type; `None` reverts the instance.
-///
-/// Returns the new override set for the root alongside the writes, because
-/// both have to be applied: dropping the record without restoring the
-/// values leaves the instance looking overridden-free while still showing
-/// the user's numbers, and restoring without dropping means the next
-/// propagation puts them back.
+/// Drops overrides on the instance `entity` belongs to, and plans the writes that put the prefab's
+/// values back.
 pub fn plan_revert(
     resources: &Resources,
     entity: Entity,

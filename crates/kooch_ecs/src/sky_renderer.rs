@@ -1,15 +1,4 @@
 //! Sky renderer component.
-//!
-//! Tags an entity as a sky / background source for the scene. The render
-//! pipeline iterates entities with `SkyRenderer`, filters by `active`,
-//! and picks the highest-`priority` one as the sky for the frame.
-//!
-//! Multiple `SkyRenderer` entities may coexist in a scene (presets,
-//! day/night variants) but only one renders per frame per camera.
-//!
-//! Parameters are stored inline on the component for MVP. When the asset
-//! handle system lands (see tracking issue), a `material: String` field
-//! pointing to a `.sky_material` asset will replace the inline fields.
 
 use glam::Vec3;
 
@@ -19,30 +8,6 @@ use crate::component::Component;
 use crate::Reflect;
 
 /// Component that marks an entity as a sky background source.
-///
-/// Sky pipeline: procedural vertical gradient (horizon → zenith) with
-/// optional volumetric clouds rendered as a slab between `cloud_height`
-/// and `cloud_height + cloud_thickness`. Clouds use a fragment-only
-/// ray-march with hash-based noise + FBM, Beer-Lambert absorption, and
-/// Henyey-Greenstein phase for sun in-scattering.
-///
-/// Set `cloud_coverage = 0.0` to disable clouds entirely (the sky
-/// renders as a pure gradient).
-///
-/// # Default
-///
-/// - `active`: true
-/// - `priority`: 0
-/// - `top_color`: light blue `(0.5, 0.7, 1.0)`
-/// - `bottom_color`: dark blue `(0.1, 0.2, 0.4)`
-/// - `sun_direction`: up-forward `(0.3, 0.7, -0.5)` (normalized in-shader)
-/// - `sun_color`: warm white `(1.0, 0.95, 0.85)`
-/// - `cloud_coverage`: 0.45 (medium overcast)
-/// - `cloud_density`: 0.8
-/// - `cloud_height`: 80.0 (world units above origin)
-/// - `cloud_thickness`: 60.0
-/// - `wind_direction`: `(1.0, 0.0, 0.3)`
-/// - `wind_speed`: 2.0 (world units per second)
 #[derive(Debug, Clone, Copy, Reflect)]
 #[reflect(category = "Rendering")]
 pub struct SkyRenderer {

@@ -40,15 +40,6 @@ use super::document::SceneDocument;
 use super::error::SceneError;
 
 /// Reads a `.prefab` file into a [`SceneDocument`].
-///
-/// A prefab and a scene are the same document in the same format; only the
-/// extension differs, and it names an invariant — a prefab has exactly one
-/// root. Registering a loader for it is what gives prefabs a [`Guid`], so a
-/// component field can reference one and [`spawn`] can find it without a
-/// path.
-///
-/// It is also the cache: `Assets<SceneDocument>` holds the parsed document,
-/// so stamping out a hundred copies re-reads nothing.
 pub struct PrefabLoader;
 
 impl AssetLoader<SceneDocument> for PrefabLoader {
@@ -64,25 +55,11 @@ impl AssetLoader<SceneDocument> for PrefabLoader {
 }
 
 /// Registers [`PrefabLoader`] on `server`.
-///
-/// A free function rather than something `EcsPlugin` does, because the
-/// `AssetServer` is built by the plugin that owns assets and a plugin
-/// reaching into a resource another plugin may not have inserted yet is an
-/// ordering bug waiting to happen.
 pub fn register_loader(server: &mut AssetServer) {
     server.register_loader::<SceneDocument, _>(PrefabLoader);
 }
 
 /// Writes `document` to `path` and gives it an asset identity.
-///
-/// The identity is the point. `AssetDatabase`'s scan registers a file only
-/// if a `.meta` sits beside it — it never invents one — so a prefab saved
-/// without this is a file the picker cannot list and [`spawn`] cannot find.
-/// Writing it here means the identity is created by the act that creates
-/// the asset, rather than by whoever happens to load it first.
-///
-/// Re-saving an existing prefab keeps its [`Guid`], so every component
-/// already pointing at it still does.
 pub fn save(document: &SceneDocument, path: &std::path::Path) -> Result<Guid, SceneError> {
     document.save(path)?;
     let meta =
@@ -94,45 +71,18 @@ pub fn save(document: &SceneDocument, path: &std::path::Path) -> Result<Guid, Sc
 }
 
 /// Spawns the prefab registered under `prefab`, returning its root entity.
-///
-/// This is the runtime entry point — what a project's own spawner calls.
-///
-/// # Why there is no scene parameter
-///
-/// [`instantiate`](super::sync::instantiate) takes the scene an instance
-/// becomes a member of, which is what saving needs to know. A bullet spawned
-/// mid-frame is never saved, and asking a game to name a scene to spawn one
-/// would be asking about a concept it has no reason to hold. The active
-/// scene is used when there is one.
-///
-/// # Cost
-///
-/// The first call for a given prefab reads and parses the file; every one
-/// after that is a lookup in `Assets<SceneDocument>` plus the spawn itself.
-/// Spawning is proportional to the prefab's entity count, not its file size.
 pub fn spawn(prefab: Guid, resources: &mut Resources) -> Result<crate::entity::Entity, SceneError> {
     spawn_members(prefab, resources).map(|(root, _)| root)
 }
 
-/// Spawns a prefab and hands back its root **and** every entity it built,
-/// in document order.
-///
-/// What the editor uses: linking an instance to its prefab needs to know
-/// which live entity is which entity of the document, in both directions.
-/// A game spawning bullets wants [`spawn`], which throws that away.
+/// Spawns a prefab and hands back its root **and** every entity it built, in document order.
 pub fn spawn_members(
     prefab: Guid,
     resources: &mut Resources,
 ) -> Result<(crate::entity::Entity, Vec<crate::entity::Entity>), SceneError> {
-    // 🔴 Only correct when somebody is *there* to answer. A scene load
-    // lifts the `SceneManager` out of `Resources` to call
-    // `SceneManager::load`, so an instance built during a load asks an
-    // empty room and gets a fresh random `Guid` — a scene that exists
-    // nowhere, one per instance. `many_lights` produced 36 of them, and
-    // the 144 entities carrying them dropped out of the panel (#955).
-    //
-    // A caller that knows which scene it is building into must say so:
-    // [`spawn_members_into`].
+    // 🔴 Only correct when somebody is *there* to answer. A scene load lifts the `SceneManager` out
+    // of `Resources` to call `SceneManager::load`, so an instance built during a load asks an empty
+    // room and gets a fresh random `Guid` — a scene that exists nowhere, one per instance.
     let into = resources
         .get::<crate::scene_manager::SceneManager>()
         .and_then(|scenes| scenes.active_id())
@@ -141,10 +91,6 @@ pub fn spawn_members(
 }
 
 /// [`spawn_members`], into a scene the caller names.
-///
-/// The load path uses this: the document being spawned knows its own id,
-/// and passing it beats asking a resource that has been lifted out for
-/// the duration of the very call that needs it.
 pub fn spawn_members_into(
     prefab: Guid,
     resources: &mut Resources,

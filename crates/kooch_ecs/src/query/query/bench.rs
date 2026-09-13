@@ -1,15 +1,4 @@
 //! What a query actually costs today, so #891 stops being an argument.
-//!
-//! `#[ignore]`d: it is a measurement, not an assertion, and a timing that
-//! fails CI on a busy runner teaches nobody anything. Run it with
-//! `cargo test -p kooch_ecs --lib query_cost -- --ignored --nocapture`.
-//!
-//! 🔴 It bounds the ceiling and nothing more. A microbenchmark on a warm
-//! cache with one archetype is the **friendliest** case the HashMap will
-//! ever see: no archetype churn, no competing memory traffic, every entry
-//! recently touched. If the number is small here it cannot be large in a
-//! frame; if it is large here, a frame capture is the next step and not
-//! the last word.
 
 use std::time::Instant;
 

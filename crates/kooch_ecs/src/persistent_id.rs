@@ -1,34 +1,4 @@
 //! Stable entity identity that survives a save/load round trip.
-//!
-//! An [`Entity`] is a runtime handle: an index plus a generation, both
-//! reassigned freely once the entity dies. That is the right shape for a
-//! handle and the wrong shape for a file — a scene saved on Tuesday and
-//! loaded on Wednesday hands out different indices, so anything that wrote
-//! down an `Entity` now points somewhere else.
-//!
-//! Assets solved this already: `ReflectValue::AssetRef` addresses an asset
-//! by [`Guid`](kooch_core::Guid), never by a live handle. [`PersistentId`] is
-//! the same idea one level down.
-//!
-//! # Why ids are scene-local
-//!
-//! An [`EntityGuid`] is unique within its scene, not globally. That is what
-//! lets the same scene be instantiated more than once — load a station
-//! module twice and each copy remaps its ids independently, instead of both
-//! copies claiming the same identity. Unity does this with
-//! `SceneLoadFlags.NewInstance`, Unreal with Level Instances; a globally
-//! unique id would make "entity X of scene Y" stop meaning anything the
-//! moment scene Y is loaded twice.
-//!
-//! Cross-scene references carry the scene's own [`Guid`] alongside the
-//! entity's id — see [`EntityRef`](crate::reflect::EntityRef).
-//!
-//! # Why the component is opt-in
-//!
-//! Only entities something actually points at carry a [`PersistentId`]. The
-//! save path assigns one on demand when it writes a reference, so authors
-//! never add it by hand. A procedurally generated galaxy should not pay
-//! eight bytes and a map entry per entity that nothing references.
 
 use std::num::NonZeroU64;
 
@@ -68,9 +38,6 @@ impl std::fmt::Display for EntityGuid {
 }
 
 /// Marks an entity as referenceable across a save/load boundary.
-///
-/// Present only on entities something points at — see the module docs for
-/// why this is opt-in rather than universal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PersistentId {
     pub id: EntityGuid,
@@ -84,12 +51,8 @@ impl PersistentId {
 
 impl Component for PersistentId {}
 
-/// Reflected so the id travels in a scene file as an ordinary component,
-/// rather than as another special case beside `parent_index`.
-///
-/// Read-only in the inspector: the id is what every reference in the
-/// scene resolves through, so editing it by hand would silently redirect
-/// or orphan all of them.
+/// Reflected so the id travels in a scene file as an ordinary component, rather than as another
+/// special case beside `parent_index`.
 impl Reflect for PersistentId {
     fn reflect_fields(&self) -> &'static [FieldMeta] {
         static FIELDS: &[FieldMeta] = &[FieldMeta {
@@ -153,11 +116,6 @@ every reference in the project is concerned.",
 }
 
 /// Hands out [`EntityGuid`]s for one scene.
-///
-/// A counter rather than a random source, so that re-saving a scene
-/// produces a clean diff instead of rewriting every id. The counter is
-/// persisted with the scene: resetting it between sessions would reissue
-/// ids that existing references already use.
 #[derive(Debug, Clone)]
 pub struct PersistentIdAllocator {
     next: u64,

@@ -156,11 +156,6 @@ fn restore_brings_back_parked_components() {
 }
 
 /// Pressing stop must not empty the scenes.
-///
-/// `SceneMember` used to be unreflected, so the capture could not see it
-/// — but the restore's `clear_world` strips components by entity,
-/// reflected or not. Every entity therefore came back with no scene, and
-/// the whole authored world fell into "not in any scene yet".
 #[test]
 fn a_restore_keeps_the_scene_tags() {
     let mut resources = ecs();

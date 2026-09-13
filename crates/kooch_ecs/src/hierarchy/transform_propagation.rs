@@ -12,10 +12,6 @@ use super::global_transform::GlobalTransform;
 use super::parent::Parent;
 
 /// Propagates transforms top-down through the hierarchy.
-///
-/// Computes `GlobalTransform` for all entities with `Transform`:
-/// - Roots (no `Parent`): `GlobalTransform = Transform::to_matrix()`
-/// - Children: `GlobalTransform = parent.GlobalTransform * local.to_matrix()`
 pub fn transform_propagation_system(resources: &mut kooch_core::resource::Resources) {
     use crate::component::ComponentRegistry;
     use crate::transform::Transform;

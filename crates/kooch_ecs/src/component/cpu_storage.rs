@@ -1,7 +1,4 @@
 //! CPU-only component storage backed by a `HashMap`.
-//!
-//! [`ComponentStorage<T>`] is for components that never touch the GPU
-//! (e.g. inventory, AI state, metadata).
 
 use std::any::Any;
 use std::collections::HashMap;

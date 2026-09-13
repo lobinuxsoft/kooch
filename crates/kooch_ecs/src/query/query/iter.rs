@@ -14,12 +14,6 @@ pub struct QueryIter<'w, 'q, Q: WorldQuery, F: QueryFilter> {
     pub(super) fetch: &'q Q::Fetch<'w>,
     pub(super) archetypes: &'q [&'w Archetype],
     /// The table behind each archetype, parallel to `archetypes`.
-    ///
-    /// 🔴 Threaded through even though every entry is `None` today. This
-    /// iterator and `for_each` must read the same place: if one followed
-    /// the column and the other did not, an entity whose values had moved
-    /// would be visible to half the engine and absent from the other half,
-    /// with nothing failing. See #891.
     pub(super) tables: &'q [Option<&'w Table>],
     pub(super) registry: &'w ArchetypeRegistry,
     pub(super) archetype_idx: usize,

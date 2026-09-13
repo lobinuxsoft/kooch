@@ -1,18 +1,10 @@
 //! Runtime access tracking for component queries.
-//!
-//! [`AccessTracker`] provides RefCell-like borrow checking at the storage
-//! level, allowing multiple queries to coexist safely as long as they don't
-//! create conflicting mutable borrows on the same component type.
 
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
 /// Tracks active borrows on component storages at runtime.
-///
-/// Similar to `RefCell` but per-TypeId: allows multiple shared borrows OR
-/// one exclusive borrow per component type. Uses `RwLock` for auto-registration
-/// of new component types on first access.
 pub struct AccessTracker {
     borrows: std::sync::RwLock<HashMap<TypeId, AtomicIsize>>,
 }
@@ -39,10 +31,6 @@ impl AccessTracker {
     }
 
     /// Acquires a shared (read) borrow on a component type.
-    ///
-    /// # Panics
-    ///
-    /// Panics if there is an active mutable borrow on the same type.
     pub fn borrow_read(&self, type_id: TypeId) {
         self.ensure_registered(type_id);
         let borrows = self.borrows.read().unwrap();
@@ -56,10 +44,6 @@ impl AccessTracker {
     }
 
     /// Releases a shared (read) borrow on a component type.
-    ///
-    /// Returns `false` if there was no active read borrow (type not registered
-    /// or not borrowed). This allows callers to release without tracking whether
-    /// they acquired the borrow.
     pub fn release_read(&self, type_id: TypeId) -> bool {
         let borrows = self.borrows.read().unwrap();
         if let Some(atomic) = borrows.get(&type_id) {
@@ -73,10 +57,6 @@ impl AccessTracker {
     }
 
     /// Acquires an exclusive (write) borrow on a component type.
-    ///
-    /// # Panics
-    ///
-    /// Panics if there is any active borrow (read or write) on the same type.
     pub fn borrow_write(&self, type_id: TypeId) {
         self.ensure_registered(type_id);
         let borrows = self.borrows.read().unwrap();
