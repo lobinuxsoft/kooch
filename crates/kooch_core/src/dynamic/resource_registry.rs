@@ -1,17 +1,9 @@
 //! Maps canonical resource names to [`TypeId`] for FFI access.
-//!
-//! Dynamic plugins identify resources by string name (e.g. `"kooch_core::Time"`).
-//! The engine registers known resources at startup so the bridge can resolve
-//! names to `TypeId` for raw pointer access.
 
 use std::any::TypeId;
 use std::collections::HashMap;
 
 /// Maps resource name strings to their `TypeId`.
-///
-/// Inserted into [`Resources`](crate::resource::Resources) by the dynamic
-/// plugin loader. Bridge functions look up types here when a plugin requests
-/// a resource by name.
 pub struct ResourceRegistry {
     map: HashMap<String, TypeId>,
 }

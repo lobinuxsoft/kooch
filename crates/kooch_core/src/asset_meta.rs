@@ -30,30 +30,12 @@ pub struct AssetMeta {
     /// Stable identifier for this asset. Survives renames and moves as
     /// long as the `.meta` file follows the source.
     pub guid: Guid,
-    /// Concrete asset type the loader produced — `type_name::<T>()`
-    /// from the loader registration. Optional because:
-    /// 1. Sidecars created before this field existed must keep
-    ///    parsing (back-compat with PR2 fixtures).
-    /// 2. The directory scanner only reads `.meta` and does not
-    ///    actually load the asset; type knowledge arrives the first
-    ///    time `AssetServer::load::<T>` runs against the path.
-    /// `AssetServer::load` back-fills the field whenever it finds an
-    /// existing sidecar without one, so the steady state is always
-    /// `Some(type_name)`.
+    /// Concrete asset type the loader produced — `type_name::<T>()` from the loader registration.
+    /// Optional because: 1. Sidecars created before this field existed must keep parsing
+    /// (back-compat with PR2 fixtures). 2.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset_type: Option<String>,
     /// Per-type import settings, verbatim.
-    ///
-    /// Kept as an opaque table because what belongs in it is the
-    /// loader's business and not this crate's: a texture says whether
-    /// it wants a mip chain, a mesh would say what its units are.
-    /// [`LoadContext::import`](crate::asset_loader::LoadContext::import)
-    /// hands it to whoever owns the type.
-    ///
-    /// 🔴 Absent means "the engine's default", NOT "everything off".
-    /// A sidecar written before this field existed keeps parsing and
-    /// keeps behaving the way it did — which is the same rule
-    /// `asset_type` follows above, for the same reason.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub import: Option<toml::Table>,
 }
@@ -136,10 +118,8 @@ impl From<toml::ser::Error> for AssetMetaError {
     }
 }
 
-/// Returns the sidecar path for `asset_path` — same directory, same
-/// stem, with the extension chain extended by `.meta`.
-///
-/// `assets/meshes/suzanne.glb` → `assets/meshes/suzanne.glb.meta`.
+/// Returns the sidecar path for `asset_path` — same directory, same stem, with the extension chain
+/// extended by `.meta`.
 pub fn meta_path_for(asset_path: &Path) -> PathBuf {
     let mut buf = asset_path.as_os_str().to_owned();
     buf.push(".meta");
@@ -176,17 +156,7 @@ pub fn read_or_create(asset_path: &Path) -> Result<AssetMeta, AssetMetaError> {
     Ok(meta)
 }
 
-/// Type-aware variant of [`read_or_create`]. Same flow with three
-/// extra guarantees:
-///
-/// - Sidecars created here always carry `asset_type = type_name`.
-/// - Sidecars that already exist but lack `asset_type` get the field
-///   back-filled and rewritten to disk.
-/// - Sidecars whose existing `asset_type` differs from `type_name`
-///   are left as-is and returned untouched — the caller decides
-///   whether to treat the mismatch as an error (typically yes for
-///   `AssetServer::load::<T>` because `T` ought to match the file's
-///   recorded type).
+/// Type-aware variant of [`read_or_create`]. Same flow with three extra guarantees.
 pub fn read_or_create_typed(
     asset_path: &Path,
     type_name: &str,

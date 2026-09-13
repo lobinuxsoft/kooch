@@ -4,12 +4,7 @@ fn entry(buffer: &LogBuffer, message: &str) {
     buffer.push(Level::INFO, "test".to_owned(), message.to_owned());
 }
 
-/// Runs `emit` with only this buffer's layer installed, and returns
-/// what reached the buffer.
-///
-/// A local subscriber rather than the global one: these run in
-/// parallel with every other test in the crate, and a global default
-/// can only be set once per process.
+/// Runs `emit` with only this buffer's layer installed, and returns what reached the buffer.
 fn through_the_layer(emit: impl FnOnce()) -> Vec<LogEntry> {
     use tracing_subscriber::layer::SubscriberExt as _;
 
@@ -20,11 +15,6 @@ fn through_the_layer(emit: impl FnOnce()) -> Vec<LogEntry> {
 }
 
 /// egui's own complaints must not land in the panel egui is drawing.
-///
-/// The complaint is about a widget whose rect stayed and whose id
-/// changed — which is what a scrolling list does when a line arrives.
-/// Showing it adds a line, which scrolls the list, which produces the
-/// next complaint: one core, forever (#656).
 #[test]
 fn egui_never_reaches_the_panel() {
     let entries = through_the_layer(|| {
@@ -51,10 +41,9 @@ fn a_crate_merely_named_after_egui_still_logs() {
     assert_eq!(entries.len(), 1, "an unrelated crate was muted");
 }
 
-/// Everything arriving through the `log` bridge shares the metadata
-/// target `"log"`. Without reading `log.target` the panel's filter
-/// sees one undifferentiated emitter — and the mute above would never
-/// match, because egui logs through exactly that bridge.
+/// Everything arriving through the `log` bridge shares the metadata target `"log"`. Without reading
+/// `log.target` the panel's filter sees one undifferentiated emitter — and the mute above would
+/// never match, because egui logs through exactly that bridge.
 #[test]
 fn the_bridge_target_is_the_one_recorded() {
     let entries = through_the_layer(|| {

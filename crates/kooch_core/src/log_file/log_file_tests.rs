@@ -25,11 +25,6 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 /// 🔴 The line the whole module exists for.
-///
-/// A `panic!` message does not go through `tracing` — the standard
-/// library writes it straight to stderr. A file fed only by a tracing
-/// layer would hold every ordinary event and not the one that says why
-/// the game stopped, which is exactly the state #963 was diagnosed in.
 #[test]
 fn a_panic_reaches_the_log() {
     let dir = scratch("panic");
@@ -52,10 +47,6 @@ fn a_panic_reaches_the_log() {
 }
 
 /// ⚠️ The previous run is kept.
-///
-/// A crash is diagnosed on the *next* launch: someone runs it, it dies,
-/// they run it again to watch — and that second run would otherwise
-/// overwrite the evidence from the first.
 #[test]
 fn the_previous_run_is_not_overwritten() {
     let dir = scratch("rotate");
@@ -107,13 +98,6 @@ fn an_unwritable_place_is_not_fatal() {
 }
 
 /// And the hook that is actually installed does it, not a stand-in.
-///
-/// 🔴 The test above writes the report by hand, which proves the file
-/// takes bytes and nothing about `log_panics`. This one installs the
-/// real hook and panics for real.
-///
-/// ⚠️ The previous hook is put back before returning: leaving a global
-/// hook installed would follow every later test in this binary.
 #[test]
 fn the_installed_hook_catches_a_real_panic() {
     let dir = scratch("realpanic");

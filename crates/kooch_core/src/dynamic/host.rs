@@ -1,9 +1,4 @@
 //! The engine's side of the plugin API.
-//!
-//! [`EngineHost`] implements [`Engine`] over the real `Resources` and
-//! `Schedule`. It is handed to a plugin as `&mut dyn Engine` and borrows
-//! for exactly as long as the call — no raw pointers, no context struct
-//! outliving what it points at.
 
 use kooch_plugin_api::component::{ComponentSchema, RegisterError};
 use kooch_plugin_api::engine_api::{Engine, PluginSystem};
@@ -17,10 +12,6 @@ use super::bridges::{ComponentBridge, EntityBridge};
 use super::plugin_data::PluginData;
 
 /// Translates a plugin's stage into the engine's.
-///
-/// Exhaustive on purpose: adding a stage to either side without the
-/// other fails the build here rather than running a plugin's system at
-/// the wrong point in the frame.
 pub(crate) const fn map_stage(stage: PluginStage) -> Stage {
     match stage {
         PluginStage::Startup => Stage::Startup,
@@ -41,10 +32,6 @@ pub(crate) const fn map_stage(stage: PluginStage) -> Stage {
 }
 
 /// What a plugin talks to.
-///
-/// The schedule is only present while the plugin is being built —
-/// registering a system mid-frame would mutate the schedule that is
-/// running, so a system that tries is refused with a log line instead.
 pub struct EngineHost<'a> {
     resources: &'a mut Resources,
     schedule: Option<&'a mut Schedule>,

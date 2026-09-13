@@ -482,10 +482,9 @@ fn a_file_that_stopped_parsing_leaves_the_loaded_asset_alone() {
 
 #[test]
 fn a_written_file_becomes_findable_by_guid_without_a_rescan() {
-    // The half of the problem a reload cannot solve: nothing has loaded a
-    // file that was just created, so there is nothing to refresh. What it
-    // needs is an entry in the database, and the tree scan only runs when
-    // the active project changes.
+    // The half of the problem a reload cannot solve: nothing has loaded a file that was just
+    // created, so there is nothing to refresh. What it needs is an entry in the database, and the
+    // tree scan only runs when the active project changes.
     use crate::asset_loader::asset_written;
 
     let mut resources = Resources::new();

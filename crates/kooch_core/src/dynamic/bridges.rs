@@ -1,10 +1,4 @@
 //! Hooks the ECS installs so plugins can reach it.
-//!
-//! `kooch_core` does not depend on `kooch_ecs`, so the operations a plugin
-//! needs — spawning an entity, declaring a component type — arrive as
-//! resources holding closures that `kooch_ecs` fills in. Absent, the
-//! corresponding call fails with a reason rather than silently doing
-//! nothing.
 
 use kooch_plugin_api::component::{ComponentSchema, RegisterError};
 
@@ -38,10 +32,6 @@ impl EntityBridge {
 }
 
 /// Component-type registration, installed by the ECS.
-///
-/// A plugin's component types do not exist in this binary, so they are
-/// registered by name and field list rather than by Rust type — the same
-/// form `DynamicComponents` already stores them in.
 pub struct ComponentBridge {
     register_fn:
         Box<dyn Fn(&mut Resources, &ComponentSchema) -> Result<(), RegisterError> + Send + Sync>,

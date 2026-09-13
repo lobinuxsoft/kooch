@@ -1,7 +1,4 @@
 //! Execution stages for the game loop.
-//!
-//! Systems are organized into stages that run in a specific order each frame.
-//! Some stages (Physics, PostPhysics) run multiple times per frame with fixed timestep.
 
 /// Execution stage for systems.
 ///

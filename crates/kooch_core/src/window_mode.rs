@@ -44,40 +44,14 @@ pub enum WindowMode {
     #[default]
     Windowed,
     /// The same size, without the title bar or the border.
-    ///
-    /// 🔴 Not the same as [`Self::Fullscreen`], which is the mistake the
-    /// name invites: this one still occupies `width x height`. It is
-    /// what a game uses to draw its own chrome.
     Borderless,
     /// Covering the monitor at the monitor's **current** mode.
-    ///
-    /// No mode change, so no black screen on alt-tab and no resolution
-    /// left wrong when the process dies — which is why every recent game
-    /// defaults to this rather than to exclusive.
     Fullscreen,
-    /// Covering the monitor after asking it to **change mode** to
-    /// [`Resolution`].
-    ///
-    /// The only way to alter the output resolution from inside a
-    /// process, and the only mode that is not available everywhere:
-    /// **winit ignores it on Wayland** and says so in a log line
-    /// (`wayland/window/mod.rs`, twice). Windows and X11 implement it,
-    /// and Windows is a target, which is why it exists here.
-    ///
-    /// 🔴 A request that cannot be honoured is degraded to
-    /// [`Self::Fullscreen`] by [`effective`] rather than left to winit,
-    /// whose behaviour on Wayland is to warn and change nothing — which
-    /// leaves the window exactly as it was and reads as the setting
-    /// being broken.
+    /// Covering the monitor after asking it to **change mode** to [`Resolution`].
     Exclusive,
 }
 
 /// A resolution the game asks the display for.
-///
-/// Used two ways, because "resolution" means two things: in
-/// [`WindowMode::Windowed`] and [`WindowMode::Borderless`] it is the
-/// window's inner size, and in [`WindowMode::Exclusive`] it is the
-/// display mode to switch to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Resolution {
     pub width: u32,
@@ -88,14 +62,7 @@ pub struct Resolution {
     pub refresh_mhz: u32,
 }
 
-/// What the platform will actually do, published by `kooch_window` once
-/// the window exists.
-///
-/// A game's options menu is built from this rather than from a constant:
-/// the list belongs to the player's monitor, not to the machine the
-/// project was authored on, and `exclusive` is false on Wayland — where
-/// offering a resolution dropdown that changes nothing is worse than
-/// offering none.
+/// What the platform will actually do, published by `kooch_window` once the window exists.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DisplayModes {
     /// Every mode the current monitor reports, deduplicated and sorted
@@ -105,13 +72,7 @@ pub struct DisplayModes {
     pub exclusive: bool,
 }
 
-/// The mode that will actually be applied, given what the platform can
-/// do.
-///
-/// Separated from the applier so the downgrade is testable without a
-/// window, and so it happens once rather than being rediscovered every
-/// frame: a request left un-downgraded never matches the window's state,
-/// and the applier would retry it sixty times a second.
+/// The mode that will actually be applied, given what the platform can do.
 pub fn effective(wanted: WindowMode, exclusive_supported: bool) -> WindowMode {
     match wanted {
         WindowMode::Exclusive if !exclusive_supported => WindowMode::Fullscreen,
@@ -119,17 +80,8 @@ pub fn effective(wanted: WindowMode, exclusive_supported: bool) -> WindowMode {
     }
 }
 
-/// Picks the display mode an [`WindowMode::Exclusive`] request should
-/// use, or `None` when the monitor has nothing of that size.
-///
-/// 🔴 **The size has to match exactly.** Falling back to a nearby
-/// resolution would change what the player sees without saying so, and
-/// the honest answer to "this monitor cannot do 1600x900" is to stay at
-/// borderless fullscreen rather than to pick 1440x900 quietly.
-///
-/// Among modes of the right size: the one closest to `wanted`'s refresh
-/// when it asks for one, and the highest otherwise — a resolution list
-/// with no refresh column means "the best this size can do".
+/// Picks the display mode an [`WindowMode::Exclusive`] request should use, or `None` when the
+/// monitor has nothing of that size.
 pub fn best_mode(modes: &[Resolution], wanted: Resolution) -> Option<Resolution> {
     modes
         .iter()
@@ -143,12 +95,6 @@ pub fn best_mode(modes: &[Resolution], wanted: Resolution) -> Option<Resolution>
 
 impl WindowMode {
     /// The `.rendersettings` number, with `KOOCH_WINDOW_MODE` on top.
-    ///
-    /// 🔴 The numbers are serialised into user projects and are
-    /// therefore append-only, the same rule `upscale` carries.
-    /// Anything unrecognised is [`Self::Windowed`]: a file from a newer
-    /// engine must open in the mode that is always available rather than
-    /// take the display.
     pub fn from_asset(value: u32) -> Self {
         Self::resolve(
             match value {
@@ -161,12 +107,8 @@ impl WindowMode {
         )
     }
 
-    /// The precedence rule, apart from the read, so a test can exercise
-    /// it without touching the process environment.
-    ///
-    /// The variable wins, for the reason `kooch_render::quality` gives
-    /// at length: a measurement run must get what it asked for whichever
-    /// project happens to be open.
+    /// The precedence rule, apart from the read, so a test can exercise it without touching the
+    /// process environment.
     fn resolve(asset: Self, over: Option<Self>) -> Self {
         over.unwrap_or(asset)
     }
@@ -177,10 +119,6 @@ impl WindowMode {
     }
 
     /// Whether the window keeps its title bar and border.
-    ///
-    /// A fullscreen window is undecorated by definition, and saying so
-    /// here rather than at the call site keeps the two answers from
-    /// disagreeing.
     pub fn decorated(self) -> bool {
         matches!(self, Self::Windowed)
     }
@@ -200,9 +138,6 @@ pub fn mode_override() -> Option<WindowMode> {
 }
 
 /// Reads the variable, so the rule is testable without an environment.
-///
-/// Anything unrecognised is `None` rather than a guess: a typo must not
-/// take the display, and must not silently override the author either.
 pub(crate) fn mode_from(raw: Option<&str>) -> Option<WindowMode> {
     match raw.map(str::trim) {
         Some("windowed") => Some(WindowMode::Windowed),

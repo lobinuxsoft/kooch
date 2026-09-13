@@ -12,22 +12,6 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// Type-erased registry of loaders + path-cache resource.
-///
-/// Insert as a `Resource` at engine startup. Game code calls
-/// [`AssetServer::load`] which:
-///
-/// 1. Looks up the loader registered for `T` (by `TypeId`).
-/// 2. Reads the file from disk (sync for now — async lands later).
-/// 3. Validates the extension is one the loader claims.
-/// 4. Hands bytes to the loader and inserts the result into `Assets<T>`.
-/// 5. Caches `(TypeId, path) -> handle` so subsequent loads of the same
-///    asset return the same `Handle<T>` (deduplication).
-///
-/// # Determinism
-///
-/// `AssetServer` is single-threaded by design — it owns sync I/O. When a
-/// streaming layer arrives, it will ride on top with its own thread pool
-/// and call `AssetServer` from the main thread to commit results.
 pub struct AssetServer {
     loaders: HashMap<TypeId, Box<dyn UntypedLoader>>,
     cache: HashMap<(TypeId, PathBuf), slotmap::DefaultKey>,
@@ -61,12 +45,8 @@ impl AssetServer {
         self.asset_root.as_deref()
     }
 
-    /// Registers a loader for asset type `T`. Replaces any prior loader
-    /// for the same type silently — last-write-wins.
-    ///
-    /// Each `T` has at most one registered loader; multi-loader-per-type
-    /// (different extensions handled by different loaders) is deferred —
-    /// most concrete loaders advertise multiple extensions internally.
+    /// Registers a loader for asset type `T`. Replaces any prior loader for the same type silently
+    /// — last-write-wins.
     pub fn register_loader<T, L>(&mut self, loader: L)
     where
         T: Asset,
@@ -84,14 +64,7 @@ impl AssetServer {
         self.loaders.contains_key(&TypeId::of::<T>())
     }
 
-    /// Every `(extension, asset type name)` pair any registered loader
-    /// claims.
-    ///
-    /// What the asset database uses to decide whether a file it has
-    /// never seen is an asset. Derived from the loaders rather than
-    /// listed anywhere: a list would be a second place to add an asset
-    /// type, and the day someone forgot it the type would load fine and
-    /// be invisible in the editor.
+    /// Every `(extension, asset type name)` pair any registered loader claims.
     pub fn known_extensions(&self) -> Vec<(&'static str, &'static str)> {
         self.loaders
             .values()
@@ -110,21 +83,8 @@ impl AssetServer {
             .unwrap_or(&[])
     }
 
-    /// Loads an asset of type `T` from disk, inserts it into the matching
-    /// `Assets<T>` resource, and returns its handle.
-    ///
-    /// Subsequent loads of the same path return the cached handle without
-    /// re-reading the file.
-    ///
-    /// # Errors
-    ///
-    /// - [`AssetError::NoLoaderForType`] when no loader is registered.
-    /// - [`AssetError::UnsupportedExtension`] when the path's extension
-    ///   isn't in the loader's claim list.
-    /// - [`AssetError::Io`] when the file cannot be read.
-    /// - [`AssetError::MissingAssetStorage`] when `Assets<T>` is not in
-    ///   `resources`.
-    /// - [`AssetError::Loader`] for parser failures.
+    /// Loads an asset of type `T` from disk, inserts it into the matching `Assets<T>` resource, and
+    /// returns its handle.
     pub fn load<T: Asset>(
         &mut self,
         path: impl AsRef<Path>,
@@ -136,13 +96,8 @@ impl AssetServer {
             return Ok(Handle::<T>::from_key(*key));
         }
 
-        // First-time load: ensure the asset has a `.meta` sidecar (one
-        // is generated on the spot if missing) and register the
-        // resulting GUID in the `AssetDatabase` resource if it exists.
-        // The type-aware path back-fills `asset_type` whenever an
-        // existing sidecar predates the field. Failures here only emit
-        // warnings — a missing or malformed sidecar must not block
-        // byte-level loading.
+        // First-time load: ensure the asset has a `.meta` sidecar (one is generated on the spot if
+        // missing) and register the resulting GUID in the `AssetDatabase` resource if it exists.
         Self::ensure_guid_identity(&path, resources, type_name::<T>());
 
         let loader = self
@@ -150,15 +105,7 @@ impl AssetServer {
             .get(&TypeId::of::<T>())
             .ok_or_else(|| AssetError::NoLoaderForType(type_name::<T>()))?;
 
-        // Match the file name's lowercased basename against every
-        // suffix the loader claims. Single-segment extensions
-        // (`"glb"`, `"png"`) match `Path::extension`; compound
-        // extensions (`"tar.gz"`-shaped, which no format uses today
-        // — a type is named by one segment) match the trailing
-        // segment of the file name. Both cases compare as a
-        // suffix of the lowercased name with a `.` separator
-        // prepended, so `"glb"` does not accidentally match
-        // `foo.fxglb`.
+        // Match the file name's lowercased basename against every suffix the loader claims.
         let file_name_lower = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -178,10 +125,9 @@ impl AssetServer {
         }
 
         let bytes = self.packs.read_or_disk(&path)?;
-        // The sidecar is read for its `[import]` table, and its absence
-        // is not an error: a file with no `.meta` yet — one dropped into
-        // the folder a moment ago — still loads, on the engine's
-        // defaults.
+        // The sidecar is read for its `[import]` table, and its absence is not an error: a file
+        // with no `.meta` yet — one dropped into the folder a moment ago — still loads, on the
+        // engine's defaults.
         let meta = asset_meta::read_meta(&path).ok();
         let mut ctx =
             LoadContext::with_import(&path, meta.as_ref().and_then(|m| m.import.as_ref()));
@@ -202,25 +148,9 @@ impl AssetServer {
         Ok(handle)
     }
 
-    /// Loads an asset of type `T` referenced by [`Guid`]. The
-    /// [`AssetDatabase`] resource must hold an entry for the GUID
-    /// (typically populated by [`AssetDatabase::scan_directory`] at
-    /// startup, or by a prior [`AssetServer::load`] call that triggered
-    /// `.meta` registration).
-    ///
-    /// Internally resolves `guid → path` and delegates to
-    /// [`AssetServer::load`], which means the per-path cache short-
-    /// circuits repeat calls — `load_by_guid` of an already-loaded
-    /// asset returns the cached handle without re-reading bytes.
-    ///
-    /// # Errors
-    ///
-    /// - [`AssetError::MissingAssetStorage`] when no `AssetDatabase`
-    ///   resource is present.
-    /// - [`AssetError::UnknownGuid`] when the database has no entry
-    ///   for `guid`.
-    /// - Any error [`AssetServer::load`] would surface (loader
-    ///   missing, bytes unreadable, etc.).
+    /// Loads an asset of type `T` referenced by [`Guid`]. The [`AssetDatabase`] resource must hold
+    /// an entry for the GUID (typically populated by [`AssetDatabase::scan_directory`] at startup,
+    /// or by a prior [`AssetServer::load`] call that triggered `.meta` registration).
     pub fn load_by_guid<T: Asset>(
         &mut self,
         guid: Guid,
@@ -236,20 +166,7 @@ impl AssetServer {
         self.load::<T>(path, resources)
     }
 
-    /// The asset's bytes, from a mounted pack or from disk, with no
-    /// loader involved.
-    ///
-    /// # Why this is public
-    ///
-    /// A consumer sometimes wants the *file*, not the type a loader
-    /// makes of it. The collision-mesh bridge is the case that forced
-    /// it: it needs positions and indices out of a `.glb`, and going
-    /// through the meshlet loader to get them builds a full LOD chain —
-    /// nearly three seconds for a 76k-vertex mesh — that it then decodes
-    /// straight back to triangles and throws away.
-    ///
-    /// Packs before disk, exactly as loading does, so a shipped game
-    /// reads what it shipped with.
+    /// The asset's bytes, from a mounted pack or from disk, with no loader involved.
     pub fn read_bytes(&mut self, path: impl AsRef<Path>) -> AssetResult<Vec<u8>> {
         let path = self.resolve_path(path.as_ref());
         self.packs.read_or_disk(&path)
@@ -271,49 +188,14 @@ impl AssetServer {
         self.cache.clear();
     }
 
-    /// Forgets the cached handle for one path, so the next load re-reads
-    /// it from disk.
-    ///
-    /// Targeted rather than [`Self::clear_cache`] because one file
-    /// changing is not a reason to make every other asset load again.
+    /// Forgets the cached handle for one path, so the next load re-reads it from disk.
     pub fn forget<T: Asset>(&mut self, path: impl AsRef<Path>) {
         let path = self.resolve_path(path.as_ref());
         self.cache.remove(&(TypeId::of::<T>(), path));
     }
 
-    /// Re-reads `path` from disk and overwrites the assets already loaded
-    /// from it, keeping their handles valid. Returns how many were
-    /// refreshed.
-    ///
-    /// # Why not `forget` + `load`
-    ///
-    /// [`Self::forget`] drops the cache entry so the *next* load re-reads
-    /// the file — but that load calls `Assets::insert`, which mints a new
-    /// key. Everything already holding a `Handle<T>` (a component field,
-    /// an `AssetRef`, a live instance) goes on resolving to the copy from
-    /// before the edit. The file would be re-read and nothing on screen
-    /// would change. Writing over the existing slot is what makes the
-    /// edit visible, and it is why this is a server method rather than
-    /// something each caller assembles.
-    ///
-    /// # Not knowing the type is the point
-    ///
-    /// The caller is a save handler or a message off the wire; all it has
-    /// is a path. The cache is keyed by `(TypeId, path)`, so every type
-    /// that ever loaded this file is found here and refreshed — a path
-    /// loaded under two types refreshes both.
-    ///
-    /// A path nothing ever loaded returns `Ok(0)`: not an error, just
-    /// nothing cached to update. Handles whose slot has since been
-    /// removed are dropped from the cache rather than reported.
-    ///
-    /// # Errors
-    ///
-    /// - [`AssetError::Io`] when the file cannot be read.
-    /// - [`AssetError::Loader`] when it no longer parses. The previous
-    ///   asset stays in place — a broken save does not blank what is
-    ///   loaded — and types refreshed before the failure keep their new
-    ///   contents.
+    /// Re-reads `path` from disk and overwrites the assets already loaded from it, keeping their
+    /// handles valid. Returns how many were refreshed.
     pub fn reload_path(
         &mut self,
         path: impl AsRef<Path>,
@@ -359,12 +241,9 @@ impl AssetServer {
         Ok(reloaded)
     }
 
-    /// Guarantees that `path` has a `.meta` sidecar with a stable
-    /// [`Guid`] and the recorded `asset_type` set to `type_name`, and
-    /// that, if an `AssetDatabase` resource is present, the resulting
-    /// `(guid, path, type_name)` triple is registered. Best-effort:
-    /// missing source file is a no-op; sidecar I/O errors are logged
-    /// but not surfaced (callers care about asset bytes, not metadata).
+    /// Guarantees that `path` has a `.meta` sidecar with a stable [`Guid`] and the recorded
+    /// `asset_type` set to `type_name`, and that, if an `AssetDatabase` resource is present, the
+    /// resulting `(guid, path, type_name)` triple is registered.
     fn ensure_guid_identity(path: &Path, resources: &mut Resources, type_name: &'static str) {
         if !path.exists() {
             return;
@@ -387,12 +266,7 @@ impl AssetServer {
         let mtime = std::fs::metadata(path)
             .and_then(|m| m.modified())
             .unwrap_or(SystemTime::UNIX_EPOCH);
-        // The sidecar's recorded type wins. If the loader was the
-        // first to assign one, `read_or_create_typed` already
-        // back-filled it; if a previous load with a different `T`
-        // wrote a different type, we honour that here and the
-        // caller's `Assets<T>` insert downstream will fail loudly
-        // (downcast mismatch) rather than us silently relabel.
+        // The sidecar's recorded type wins.
         db.register(
             meta.guid,
             AssetEntry {
@@ -401,18 +275,13 @@ impl AssetServer {
                 type_name: meta.asset_type.clone(),
             },
         );
-        // Re-entrant safety: if the entry already existed under the
-        // same GUID with no type yet (scanned at startup before any
-        // `load::<T>`), `register` keeps the freshly-typed entry; if
-        // it already had a type, the new entry's type matches what
-        // the sidecar carries.
+        // Re-entrant safety: if the entry already existed under the same GUID with no type yet
+        // (scanned at startup before any `load::<T>`), `register` keeps the freshly-typed entry; if
+        // it already had a type, the new entry's type matches what the sidecar carries.
     }
 
-    /// Resolves a caller-provided path against the configured asset
-    /// root. Absolute paths bypass the root and pass through unchanged;
-    /// relative paths are joined onto `asset_root`. Public so other
-    /// systems (scene loaders, asset pickers) can mirror the same
-    /// resolution rule when looking up entries in `AssetDatabase`.
+    /// Resolves a caller-provided path against the configured asset root. Absolute paths bypass the
+    /// root and pass through unchanged; relative paths are joined onto `asset_root`.
     pub fn resolve_path(&self, path: &Path) -> PathBuf {
         if path.is_absolute() {
             path.to_path_buf()
@@ -423,13 +292,8 @@ impl AssetServer {
         }
     }
 
-    /// Mounts a `.kpack` over `root`, so assets under that directory come
-    /// out of the pack instead of the filesystem (#758).
-    ///
-    /// Returns how many entries it holds. Called by a shipped game at
-    /// startup, and by the editor when it verifies a build; nothing
-    /// mounts one during ordinary development, where the disk is what
-    /// makes editing an asset show up without a repack.
+    /// Mounts a `.kpack` over `root`, so assets under that directory come out of the pack instead
+    /// of the filesystem (#758).
     pub fn mount_pack(
         &mut self,
         root: impl Into<PathBuf>,
@@ -456,18 +320,11 @@ impl AssetServer {
     }
 
     /// Every path the mounted packs hold, as the engine names them.
-    ///
-    /// What [`scan_packs`](super::scan_packs) walks: a packaged game has
-    /// no directory to scan, so the pack's index is the directory.
     pub fn packed_paths(&self) -> Vec<PathBuf> {
         self.packs.paths()
     }
 
-    /// Reads `path` out of a mounted pack, or `None` when no pack holds
-    /// it.
-    ///
-    /// Never falls back to the disk, unlike loading: the caller is asking
-    /// what the *pack* contains.
+    /// Reads `path` out of a mounted pack, or `None` when no pack holds it.
     pub fn read_packed(&mut self, path: &Path) -> Option<Vec<u8>> {
         self.packs.read_packed(path)
     }

@@ -1,16 +1,4 @@
 //! Buffer pool with power-of-two bucketing for buffer reuse.
-//!
-//! Temporary GPU buffers (e.g. per-frame staging or scratch buffers) are
-//! expensive to allocate. [`BufferPool`] recycles them using size buckets
-//! rounded up to the next power of two (minimum 256 bytes).
-//!
-//! # When to consider `gpu-allocator`
-//!
-//! This pool is a simple free-list. Replace it with a sub-allocator like
-//! [`gpu-allocator`](https://crates.io/crates/gpu-allocator) when:
-//! - The engine needs hundreds of short-lived buffers per frame.
-//! - Memory fragmentation becomes measurable.
-//! - You need memory type control (e.g. dedicated vs shared heaps).
 
 use std::collections::HashMap;
 
@@ -53,9 +41,6 @@ impl BufferPool {
 
     #[cfg(test)]
     /// Returns a buffer to the pool for future reuse.
-    ///
-    /// `size` must be the **original requested size** (not the bucket size) —
-    /// the pool will round it to the correct bucket internally.
     pub fn return_buffer(&mut self, buffer: Buffer, size: u64, usage: BufferUsages) {
         let bucket = bucket_size(size);
         let key = (bucket, usage);
@@ -75,7 +60,7 @@ impl BufferPool {
 }
 
 /// Rounds `size` up to the next power of two, with a minimum of
-/// [`MIN_BUCKET_SIZE`] (256 bytes).
+/// `MIN_BUCKET_SIZE` (256 bytes).
 pub fn bucket_size(size: u64) -> u64 {
     let min = size.max(MIN_BUCKET_SIZE);
     min.next_power_of_two()

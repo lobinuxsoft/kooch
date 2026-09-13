@@ -1,8 +1,4 @@
 //! Game loop runners.
-//!
-//! A runner takes ownership of the `App` and controls the main loop.
-//! The default runner implements "Fix Your Timestep" with fixed physics
-//! and variable rendering.
 
 use crate::app::App;
 use crate::event::{AppExit, Events};
@@ -10,10 +6,6 @@ use crate::frame_pacing::{FramePace, FrameRequest, FrameWaker};
 use crate::time::Time;
 
 /// A function that takes ownership of the app and runs it.
-///
-/// Runners control the main game loop. The default runner implements
-/// fixed timestep physics. Window-based apps (like winit) typically
-/// override this to integrate with the platform event loop.
 pub type Runner = fn(App);
 
 /// Default runner implementing "Fix Your Timestep" game loop.
@@ -86,14 +78,6 @@ pub fn default_runner(mut app: App) {
 }
 
 /// Parks the loop for as long as this frame said the next one could wait.
-///
-/// A missing [`FrameRequest`] means the app never opted into idling, so
-/// this returns immediately and the loop spins as before.
-///
-/// Without a [`FrameWaker`] there is nothing that could interrupt a
-/// sleep, so a `Wait` would never end — it degrades to spinning rather
-/// than hanging. The waker is inserted by `App::new`, so that is a
-/// hand-built `App`, not the normal path.
 fn sleep_until_the_next_frame_is_wanted(app: &mut App, waker: Option<&FrameWaker>) {
     let Some(pace) = app
         .resources

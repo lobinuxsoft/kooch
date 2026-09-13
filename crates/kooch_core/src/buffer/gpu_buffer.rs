@@ -1,14 +1,4 @@
 //! Typed GPU buffer abstraction with Vec-like semantics.
-//!
-//! [`GpuBuffer<T>`] wraps a `wgpu::Buffer` and tracks `len` / `capacity`
-//! in elements of type `T` (which must be [`Pod`] for safe byte reinterpretation).
-//!
-//! # Alignment
-//!
-//! `wgpu::Queue::write_buffer` requires offsets aligned to
-//! [`COPY_BUFFER_ALIGNMENT`](wgpu::COPY_BUFFER_ALIGNMENT) (4 bytes).
-//! Types smaller than 4 bytes will work for full writes, but
-//! `write_offset` callers must ensure alignment themselves.
 
 use std::marker::PhantomData;
 
@@ -16,12 +6,6 @@ use bytemuck::Pod;
 use wgpu::{Buffer, BufferDescriptor, BufferUsages, Device, Queue};
 
 /// A typed GPU buffer that tracks element count and capacity.
-///
-/// Behaves conceptually like `Vec<T>` on the GPU: it has a `capacity`
-/// (allocated element slots) and a `len` (elements actually written).
-///
-/// This is a **pure GPU** buffer — no CPU shadow copy is maintained.
-/// For CPU readback, use [`StagingBuffer`](super::StagingBuffer).
 pub struct GpuBuffer<T: Pod> {
     buffer: Buffer,
     len: u64,
@@ -34,9 +18,6 @@ impl<T: Pod> GpuBuffer<T> {
     const ELEM_SIZE: u64 = std::mem::size_of::<T>() as u64;
 
     /// Creates an empty buffer with room for `capacity` elements.
-    ///
-    /// The buffer is allocated on the GPU but contains no valid data
-    /// (`len` starts at 0).
     pub fn with_capacity(device: &Device, label: &str, capacity: u64, usage: BufferUsages) -> Self {
         let byte_size = capacity * Self::ELEM_SIZE;
 
@@ -80,10 +61,6 @@ impl<T: Pod> GpuBuffer<T> {
     }
 
     /// Overwrites the entire buffer contents and updates `len`.
-    ///
-    /// If `data.len() > capacity`, this is a **silent truncation** — only
-    /// `capacity` elements are written. Prefer calling [`grow`](Self::grow)
-    /// first if you need more space.
     pub fn write(&mut self, queue: &Queue, data: &[T]) {
         let count = (data.len() as u64).min(self.capacity);
         let bytes = bytemuck::cast_slice(&data[..count as usize]);
@@ -92,10 +69,6 @@ impl<T: Pod> GpuBuffer<T> {
     }
 
     /// Writes `data` starting at element `offset` without changing `len`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `offset + data.len()` exceeds `capacity`.
     pub fn write_offset(&self, queue: &Queue, offset: u64, data: &[T]) {
         assert!(
             offset + data.len() as u64 <= self.capacity,
@@ -109,12 +82,6 @@ impl<T: Pod> GpuBuffer<T> {
     }
 
     /// Reallocates the buffer with `new_capacity` elements.
-    ///
-    /// **Does not preserve GPU-side data.** The old buffer is dropped and
-    /// a fresh one is created. `len` is reset to 0.
-    ///
-    /// The caller re-uploads its data after growing — the buffer does not
-    /// preserve contents across a resize.
     pub fn grow(&mut self, device: &Device, label: &str, new_capacity: u64) {
         if new_capacity <= self.capacity {
             return;

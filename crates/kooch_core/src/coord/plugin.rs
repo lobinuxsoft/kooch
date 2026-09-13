@@ -5,13 +5,9 @@ use crate::app::App;
 use crate::coord::ActiveOrigin;
 use crate::plugin::Plugin;
 
-/// Inserts [`ActiveOrigin`] (default = [`ActiveOrigin::ZERO`]) at app
-/// startup. Add this plugin once near the bottom of `MinimalPlugins` /
-/// `DefaultPlugins`; consumers (render pipelines, debug HUDs, etc.)
-/// fetch the resource by `Resources::get::<ActiveOrigin>()`.
-///
-/// The rebase system that mutates [`ActiveOrigin`] in response to
-/// player movement is filed as a follow-up to issue #50.
+/// Inserts [`ActiveOrigin`] (default = [`ActiveOrigin::ZERO`]) at app startup. Add this plugin once
+/// near the bottom of `MinimalPlugins` / `DefaultPlugins`; consumers (render pipelines, debug HUDs,
+/// etc.) fetch the resource by `Resources::get::<ActiveOrigin>()`.
 pub struct OriginPlugin;
 
 impl Plugin for OriginPlugin {

@@ -1,17 +1,10 @@
 //! Axis-aligned bounding box primitive.
-//!
-//! Lives in `kooch_core` so every consumer — world streaming, voxel
-//! storage, physics — composes against the same type with no conversion
-//! glue. It was in the BVH crate until that crate was removed; the type
-//! itself is plain geometry and never belonged to the acceleration
-//! structure that happened to host it.
 
 use glam::Vec3;
 
-/// Axis-aligned bounding box in f32. The simulation frame is
-/// camera-relative once the hierarchical-coords system is wired in
-/// (issue #50, merged via PR #314), so f32 has full precision near the
-/// active origin — far chunks are unloaded before they leave it.
+/// Axis-aligned bounding box in f32. The simulation frame is camera-relative once the
+/// hierarchical-coords system is wired in (issue #50, merged via PR #314), so f32 has full
+/// precision near the active origin — far chunks are unloaded before they leave it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Aabb {
     pub min: Vec3,

@@ -80,10 +80,9 @@ mod resolutions {
         ]
     }
 
-    /// 🔴 Winit warns and changes nothing when Wayland is handed an
-    /// exclusive request, which leaves the window as it was and reads as
-    /// the setting being broken. Degrading here means the player gets
-    /// the closest thing that works.
+    /// 🔴 Winit warns and changes nothing when Wayland is handed an exclusive request, which leaves
+    /// the window as it was and reads as the setting being broken. Degrading here means the player
+    /// gets the closest thing that works.
     #[test]
     fn wayland_gets_borderless_instead() {
         assert_eq!(

@@ -1,13 +1,4 @@
 //! Does dropping the loader actually unmap the library?
-//!
-//! The whole reload design turns on this. If `dlclose` is a no-op here —
-//! and on glibc it often is, for a library with TLS or one another
-//! library still depends on — then "unload" is a word for something that
-//! did not happen, and the next load maps a *second* copy while the
-//! first keeps running.
-//!
-//! Measured against a real `.so`, because this is not a property of our
-//! code: it is a property of the dynamic loader on this machine.
 
 #![cfg(feature = "dynamic")]
 
@@ -70,17 +61,8 @@ fn unload_trace() {
     println!("after both      {}", mapped("example_plugin"));
 }
 
-/// The same question against a **project's** library rather than the
-/// 5 MB example: `KOOCH_UNLOAD_LIB=/path/to/libgame.so`.
-///
-/// 🔴 Size and dependency count are exactly what make `dlclose` refuse.
-/// glibc keeps a library mapped when another loaded object still depends
-/// on it, and a project's `.so` links the whole engine — so the small
-/// case proving clean says nothing about the real one.
-///
-/// Opened with `libloading` directly, not through `PluginLoader`: the
-/// stamp would refuse a library built against another engine version,
-/// and mapping is the only thing being measured.
+/// The same question against a **project's** library rather than the 5 MB example:
+/// `KOOCH_UNLOAD_LIB=/path/to/libgame.so`.
 #[test]
 #[ignore = "measurement"]
 fn project_unload_trace() {

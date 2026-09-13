@@ -11,10 +11,6 @@ use super::features::{optional_features, required_engine_features};
 use super::limits::elevated_compute_limits;
 
 /// Central GPU context holding all wgpu state.
-///
-/// Created during window initialization and stored as a [`Resource`](crate::resource::Resources).
-/// Provides access to the GPU device, queue, surface, and configuration needed
-/// for rendering and compute operations.
 pub struct GpuContext {
     instance: Instance,
     adapter: Adapter,
@@ -33,11 +29,6 @@ pub struct GpuContext {
 
 impl GpuContext {
     /// Creates a new GPU context for the given surface target.
-    ///
-    /// Accepts any type that implements `Into<SurfaceTarget<'static>>`, such as
-    /// `Arc<winit::Window>`. This keeps kooch_core free of windowing dependencies.
-    ///
-    /// Uses `pollster::block_on` internally since the engine is synchronous.
     pub fn new(
         target: impl Into<SurfaceTarget<'static>>,
         width: u32,
@@ -156,18 +147,8 @@ impl GpuContext {
         self.surface_config.present_mode == mode_for(true)
     }
 
-    /// Switches vsync on or off, reconfiguring the surface when the mode
-    /// actually changes. Returns whether it reconfigured.
-    ///
-    /// 🔴 Guarded on the current mode rather than called unconditionally.
-    /// `configure` rebuilds the swapchain — it drops every image the
-    /// surface holds — so doing it once a frame because a resource says
-    /// the same thing it said last frame would rebuild it sixty times a
-    /// second.
-    ///
-    /// Safe to call between frames, which is where its only caller runs.
-    /// The same is true of [`Self::resize`], which does the same thing
-    /// for a different field.
+    /// Switches vsync on or off, reconfiguring the surface when the mode actually changes. Returns
+    /// whether it reconfigured.
     pub fn set_vsync(&mut self, vsync: bool) -> bool {
         let wanted = mode_for(vsync);
         if self.surface_config.present_mode == wanted {
@@ -252,10 +233,6 @@ impl GpuContext {
     }
 
     /// Returns the shared pipeline cache, if one was created for this adapter.
-    ///
-    /// `None` on adapters that lack [`wgpu::Features::PIPELINE_CACHE`] (Metal,
-    /// GL, WebGPU). Callers passing this into pipeline descriptors should fall
-    /// back to `cache: None` in that case — both paths are correct.
     #[inline]
     pub fn pipeline_cache(&self) -> Option<&PipelineCache> {
         self.pipeline_cache.as_ref()
@@ -273,65 +250,6 @@ impl Drop for GpuContext {
 }
 
 /// How frames are presented. Vsync unless `KOOCH_PRESENT_MODE=novsync`.
-///
-/// # Why this needs to be switchable
-///
-/// With vsync on, a frame takes 16.67 ms at 60 Hz whatever the engine
-/// does, because most of that number is waiting for the vblank. That
-/// makes the frame-time readout useless for optimisation work: removing
-/// 7.5 ms of real CPU work changed the HUD by nothing, since the time
-/// simply moved from working to waiting (#691).
-///
-/// Vsync stays the default — it is what anyone editing or playing wants,
-/// and an uncapped editor burns a GPU to draw frames nobody sees. The
-/// variable exists so that measuring is possible at all.
-///
-/// `AutoNoVsync` rather than `Immediate`: it falls back to whatever the
-/// surface actually supports instead of failing on a driver that has no
-/// immediate mode.
-/// How many frames the swapchain may have in flight.
-/// `KOOCH_FRAME_LATENCY` overrides it, clamped to 1..=3.
-///
-/// # The measurement this existed for, and what it came back with
-///
-/// A 1165-frame capture on the OneXFly (#814) has the same GPU work
-/// produce two different frames: 167 frames turned 33.5 ms of GPU into a
-/// 34.7 ms frame, and 80 turned 34.7 ms into a 69.4 ms frame. Identical
-/// load, and the bad outcome **exactly double**.
-///
-/// The explanation written here used to be a swapchain of two images:
-/// under FIFO the compositor holds one while the GPU draws into the
-/// other, so `get_current_texture` waits out the compositor's whole turn
-/// instead of overlapping with it.
-///
-/// ❌ **Measured on the device, and it is wrong.** Three 30-second
-/// captures of one binary, one variable each:
-///
-/// | | latency 2 | latency 3 | `novsync` |
-/// |---|---|---|---|
-/// | frame/GPU p80 | 1.98 | 1.99 | 1.94 |
-/// | frame/GPU p90 | 2.49 | 2.50 | 2.21 |
-///
-/// A third image does not move the ratio by a hundredth, and neither
-/// does leaving FIFO. Two things this leaves behind:
-///
-/// - **An acquire of ~35 ms against a GPU of ~35 ms is not a defect.**
-///   Being GPU-bound means the CPU waits somewhere, and it waits here.
-///   What is unexplained is only the tail — frames where the wait grows
-///   by 50 ms while our GPU work grows by 2.
-/// - **A present mode is close to decorative when a compositor owns the
-///   display.** These captures run under gamescope, which composites on
-///   the same GPU on its own schedule and is invisible to our scopes:
-///   they time *our* passes. Whatever is left lives outside this
-///   process, and no environment variable on this side will find it.
-///
-/// # Why 2 is still the default
-///
-/// Because a third image costs a frame of input lag — at 34 ms per frame
-/// that is 34 ms of extra lag on a handheld, which is not a rounding
-/// error — and it now has a measurement saying it buys nothing. Holding
-/// the default while the mechanism was only plausible turned out to be
-/// the right call: the lag would have been paid for no return.
 fn frame_latency() -> u32 {
     let raw = std::env::var("KOOCH_FRAME_LATENCY").ok();
     let latency = latency_from(raw.as_deref());
@@ -342,10 +260,6 @@ fn frame_latency() -> u32 {
 }
 
 /// Reads the variable, so the rule is testable without an environment.
-///
-/// Anything unparseable keeps the default: a typo in a measurement run
-/// must not silently change what is being measured, and a panic here
-/// would take the window with it.
 pub(super) fn latency_from(raw: Option<&str>) -> u32 {
     raw.and_then(|v| v.trim().parse::<u32>().ok())
         .map(|latency| latency.clamp(1, 3))
@@ -357,10 +271,6 @@ fn present_mode() -> wgpu::PresentMode {
 }
 
 /// The present mode a surface gets for `vsync`.
-///
-/// `AutoNoVsync` rather than `Immediate`, and `AutoVsync` rather than
-/// `Fifo`: the `Auto` pair falls back to whatever the surface actually
-/// supports instead of failing on a driver that lacks the exact mode.
 fn mode_for(vsync: bool) -> wgpu::PresentMode {
     match vsync {
         true => wgpu::PresentMode::AutoVsync,
@@ -368,14 +278,8 @@ fn mode_for(vsync: bool) -> wgpu::PresentMode {
     }
 }
 
-/// `KOOCH_PRESENT_MODE`, read once. `None` means the variable said
-/// nothing, which is what lets the project's own setting stand.
-///
-/// 🔴 **`vsync` is a recognised value and not a no-op**, which it would
-/// have been while this returned a mode rather than an opinion. Once
-/// `.rendersettings` can turn vsync off, a run that needs it back on has
-/// to be able to say so — and "unset" cannot mean that, because unset is
-/// also what every ordinary launch looks like.
+/// `KOOCH_PRESENT_MODE`, read once. `None` means the variable said nothing, which is what lets the
+/// project's own setting stand.
 pub fn vsync_override() -> Option<bool> {
     static VSYNC: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
     *VSYNC.get_or_init(|| {
@@ -391,10 +295,6 @@ pub fn vsync_override() -> Option<bool> {
 }
 
 /// Reads the variable, so the rule is testable without an environment.
-///
-/// Anything unrecognised is `None` rather than a guess: a typo during a
-/// measurement run must not silently decide how frames are presented,
-/// and must not silently override the author's choice either.
 pub(super) fn vsync_from(raw: Option<&str>) -> Option<bool> {
     match raw.map(str::trim) {
         Some("novsync") => Some(false),
@@ -404,21 +304,6 @@ pub(super) fn vsync_from(raw: Option<&str>) -> Option<bool> {
 }
 
 /// The adapter the engine can actually run on.
-///
-/// # 🔴 Why asking for "the best one" is not enough
-///
-/// `request_adapter` answers with the most powerful adapter, not the
-/// most capable one, and those differ. Under Proton the same Radeon
-/// 890M is visible **twice**: once through Vulkan and once through DX12,
-/// which is vkd3d translating to Vulkan underneath. DX12 wins the
-/// preference and does not expose `SHADER_F16`, so the engine's feature
-/// assert killed the game 571 ms after launch — on a machine whose GPU
-/// supports every feature it needs, through the other door (#963).
-///
-/// So: take the preferred adapter when it suits, and otherwise look for
-/// one that does before giving up. The order is deliberate — a desktop
-/// with an integrated and a discrete GPU keeps getting the discrete one,
-/// because the preferred adapter is tried first and almost always fits.
 fn pick_adapter(
     instance: &Instance,
     surface: &wgpu::Surface<'static>,

@@ -51,10 +51,9 @@ impl AssetDatabase {
         self.by_path.iter().map(|(p, g)| (p.as_path(), *g))
     }
 
-    /// Iterates `(Guid, &AssetEntry)` pairs whose `type_name` matches
-    /// `name`. Used by the inspector's asset picker to populate the
-    /// dropdown for a typed `AssetRef` field. Order is unspecified —
-    /// callers that need a stable presentation should collect + sort.
+    /// Iterates `(Guid, &AssetEntry)` pairs whose `type_name` matches `name`. Used by the
+    /// inspector's asset picker to populate the dropdown for a typed `AssetRef` field. Order is
+    /// unspecified — callers that need a stable presentation should collect + sort.
     pub fn entries_of_type<'a>(
         &'a self,
         name: &'a str,
@@ -65,24 +64,8 @@ impl AssetDatabase {
             .map(|(guid, entry)| (*guid, entry))
     }
 
-    /// Registers `(guid, path)` with the database. Idempotent on the
-    /// path↔GUID mapping; returns `true` if a brand-new entry was
-    /// added.
-    ///
-    /// If `path` was previously registered under a *different* GUID
-    /// (e.g. its `.meta` was rewritten), the previous binding is
-    /// replaced and the old GUID's entry is removed; this keeps the
-    /// bidirectional map consistent.
-    ///
-    /// When the path↔GUID pair already exists, the stored entry's
-    /// **`type_name` and `mtime` are upgraded if the incoming entry
-    /// carries fresher data**:
-    /// - `type_name`: prefer `Some` over `None` (initial scans see
-    ///   sidecars before any `load::<T>` and leave the type unknown;
-    ///   the first typed load fills it in — we must not lose that).
-    /// - `mtime`: take the newer timestamp.
-    /// The `path` itself is immutable for an existing entry and is
-    /// not overwritten.
+    /// Registers `(guid, path)` with the database. Idempotent on the path↔GUID mapping; returns
+    /// `true` if a brand-new entry was added.
     pub fn register(&mut self, guid: Guid, entry: AssetEntry) -> bool {
         if let Some(existing_guid) = self.by_path.get(&entry.path).copied() {
             if existing_guid == guid {
@@ -104,42 +87,20 @@ impl AssetDatabase {
         true
     }
 
-    /// Removes the entry for `path` from both maps, returning its GUID
-    /// if it was registered. Used by editor asset operations (delete,
-    /// rename, move) to drop stale bindings — `scan_directory` only adds
-    /// and updates, it never prunes, so callers that remove or move
-    /// files on disk must unregister the old path themselves.
+    /// Removes the entry for `path` from both maps, returning its GUID if it was registered.
     pub fn remove_path(&mut self, path: &Path) -> Option<Guid> {
         let guid = self.by_path.remove(path)?;
         self.by_guid.remove(&guid);
         Some(guid)
     }
 
-    /// Recursively scans `root`, reading every `<file>.meta` sidecar
-    /// it finds, and registers the resulting GUIDs.
-    ///
-    /// `.meta` files whose source asset is missing become orphans
-    /// (counted in [`ScanReport::orphans`], logged at WARN, not
-    /// registered). Existing entries with matching `(path, guid)`
-    /// count as duplicates and are skipped.
+    /// Recursively scans `root`, reading every `<file>.meta` sidecar it finds, and registers the
+    /// resulting GUIDs.
     pub fn scan_directory(&mut self, root: &Path) -> Result<ScanReport, AssetDatabaseError> {
         self.scan_directory_adopting(root, &[])
     }
 
-    /// Scans, and **adopts** files with no `.meta` whose extension a
-    /// registered loader claims.
-    ///
-    /// `known` comes from [`AssetServer::known_extensions`], so the set
-    /// of adoptable types is whatever the binary can actually load —
-    /// never a list anyone maintains.
-    ///
-    /// Without this, a file written by hand or by a script is invisible
-    /// to the editor forever: the browser shows what the database
-    /// registered, the database registers what has a `.meta`, and the
-    /// `.meta` is written when something loads the file. Nothing breaks
-    /// that circle from outside.
-    ///
-    /// [`AssetServer::known_extensions`]: crate::asset_loader::AssetServer::known_extensions
+    /// Scans, and **adopts** files with no `.meta` whose extension a registered loader claims.
     pub fn scan_directory_adopting(
         &mut self,
         root: &Path,

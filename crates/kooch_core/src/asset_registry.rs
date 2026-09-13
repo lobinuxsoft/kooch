@@ -37,10 +37,6 @@ use crate::asset_loader::AssetServer;
 use crate::resource::Resources;
 
 /// One asset type's installation, collected at link time.
-///
-/// Built by [`register_asset!`](crate::register_asset), never by hand:
-/// the macro is what guarantees the two function pointers agree about
-/// which type they are for.
 pub struct AssetTypeRegistration {
     /// `std::any::type_name::<T>()`, for diagnostics. A function rather
     /// than the string itself because `type_name` is not a `const fn`,

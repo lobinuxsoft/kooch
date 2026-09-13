@@ -1,36 +1,4 @@
 //! The one thing that happens when a file that is an asset gets written.
-//!
-//! # Why this is not a file watcher
-//!
-//! Watching the tree means asking the filesystem, every so often, whether
-//! anything changed — a question the editor already knows the answer to,
-//! because the editor is what wrote the file. Polling turns a fact into a
-//! guess, pays for it every frame, and still arrives late.
-//!
-//! So the trigger is the save itself. Whoever writes an asset says so,
-//! once, and that is the only moment any of this runs. There is no
-//! background scan and no per-frame cost.
-//!
-//! It also sidesteps a trap specific to how this project is stored: the
-//! repository lives on an NTFS mount through FUSE, where inotify is
-//! unreliable and mtime resolution is coarse enough that two saves in the
-//! same second can look identical. A watcher would have been subtly
-//! broken on the machine it was developed on.
-//!
-//! # The two halves
-//!
-//! A save is either the first time a file exists or an edit to one that
-//! already did, and those need different things:
-//!
-//! - **New file** — nothing has loaded it, so there is nothing to
-//!   refresh. What it needs is an identity in the [`AssetDatabase`], or
-//!   it stays invisible to every picker and every lookup by guid.
-//! - **Edited file** — it already has an identity; what it needs is for
-//!   the copies already in memory to stop being the old bytes.
-//!
-//! Both are done here, in that order, because a caller cannot generally
-//! tell which case it is in — and asking it to is how one of the two gets
-//! forgotten.
 
 use std::path::Path;
 
@@ -52,13 +20,8 @@ pub struct Written {
     pub reloaded: usize,
 }
 
-/// Registers `path`'s identity and refreshes anything already loaded from
-/// it. Call after writing a file the project treats as an asset.
-///
-/// Best-effort by design: a file with no `.meta` beside it still gets its
-/// loaded copies refreshed, and a file that no longer parses keeps its
-/// previous contents in memory. Neither is worth failing a save that has
-/// already hit the disk.
+/// Registers `path`'s identity and refreshes anything already loaded from it. Call after writing a
+/// file the project treats as an asset.
 pub fn asset_written(path: &Path, resources: &mut Resources) -> Written {
     let mut written = Written::default();
 
@@ -67,9 +30,8 @@ pub fn asset_written(path: &Path, resources: &mut Resources) -> Written {
     // from the *next* save onwards.
     if let Ok(meta) = asset_meta::read_meta(path) {
         written.guid = Some(meta.guid);
-        // Bumped here rather than by each caller: a consumer that
-        // derives something from this asset — a block's generated mesh,
-        // its collider — has no other way to notice, because a reload
+        // Bumped here rather than by each caller: a consumer that derives something from this asset
+        // — a block's generated mesh, its collider — has no other way to notice, because a reload
         // overwrites the value under the existing handle on purpose.
         if let Some(mut reloaded) = resources.remove::<super::ReloadedAssets>() {
             reloaded.bump(meta.guid);

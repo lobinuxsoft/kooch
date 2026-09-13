@@ -1,25 +1,4 @@
 //! Populating the [`AssetDatabase`] from a mounted pack (#758).
-//!
-//! # 🔴 Why mounting is not enough
-//!
-//! The server reading through a pack answers "give me these bytes". It
-//! does not answer "which file is GUID `abc`", and that is the question a
-//! scene asks about every asset it references.
-//!
-//! In a project that answer comes from
-//! [`scan_directory_adopting`](crate::asset_database::AssetDatabase::scan_directory_adopting),
-//! which walks the **filesystem** and reads the `.meta` beside each file.
-//! A packaged game has no such directory: the assets and their sidecars
-//! are inside the pack. So the scan happens over the pack's own index,
-//! and the sidecars are read out of the pack.
-//!
-//! Without this the game mounts a pack, resolves nothing, and spawns a
-//! scene of entities whose meshes and materials are all missing — with
-//! the pack working perfectly the whole time.
-//!
-//! ⚠️ This is why `.meta` files are packed at all. They are not
-//! incidental: they are the index from GUID to path, and a packer that
-//! left them out would produce exactly the failure above.
 
 use crate::asset_database::{AssetDatabase, AssetEntry};
 
@@ -31,10 +10,6 @@ pub struct PackScan {
     /// Assets registered with a GUID.
     pub registered: usize,
     /// Entries with no sidecar beside them.
-    ///
-    /// Not an error on its own — a pack may carry files nothing
-    /// references by GUID — but all of them being orphans means the
-    /// sidecars did not travel.
     pub orphans: usize,
 }
 
@@ -87,10 +62,9 @@ pub fn scan_packs(server: &mut AssetServer, database: &mut AssetDatabase) -> Pac
         orphans = scan.orphans,
         "asset pack scan complete",
     );
-    // 🔴 Everything orphaned means the sidecars did not travel, and the
-    // symptom is a scene that spawns entities with nothing on them. Said
-    // here because nothing downstream can tell the difference between
-    // "no GUIDs" and "no assets".
+    // 🔴 Everything orphaned means the sidecars did not travel, and the symptom is a scene that
+    // spawns entities with nothing on them. Said here because nothing downstream can tell the
+    // difference between "no GUIDs" and "no assets".
     if scan.registered == 0 && scan.orphans > 0 {
         tracing::error!(
             target: "kooch_core::assets",

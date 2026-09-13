@@ -1,14 +1,4 @@
 //! What is scheduled, published where a system can read it.
-//!
-//! [`Schedule`](super::Schedule) lives on the `App`, not in `Resources`,
-//! so a panel — which is itself a system — cannot reach it. The catalog
-//! is the schedule's own description of itself, copied into `Resources`
-//! once every plugin has been built.
-//!
-//! ⚠️ A snapshot, not a live view. Everything the engine and a project
-//! schedule is added before `App::run`, which is where this is written;
-//! a system added after that will not appear until something calls
-//! [`App::publish_systems`](crate::app::App::publish_systems) again.
 
 use super::identity::{SystemKey, SystemSource, short_name};
 use crate::stage::Stage;

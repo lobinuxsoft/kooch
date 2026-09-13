@@ -78,10 +78,9 @@ fn stages_run_in_order() {
     assert_eq!(*recorded, vec!["First", "Update", "Last"]);
 }
 
-/// The fixed loop runs between `Update` and `PostUpdate`. Transform
-/// propagation lives in `PostUpdate` and the GPU upload in `GpuSync`, so
-/// anything the solver writes has to reach them in the same frame —
-/// stepping after `GpuSync` would render the previous simulation.
+/// The fixed loop runs between `Update` and `PostUpdate`. Transform propagation lives in
+/// `PostUpdate` and the GPU upload in `GpuSync`, so anything the solver writes has to reach them in
+/// the same frame — stepping after `GpuSync` would render the previous simulation.
 #[test]
 fn fixed_stages_run_between_update_and_post_update() {
     let mut schedule = Schedule::new();
@@ -317,18 +316,6 @@ fn cpu_systems_still_run_when_gpu_systems_skipped() {
 }
 
 /// Two systems get two scopes, and one system keeps the one it got.
-///
-/// 🔴 This is the defect the whole design exists to avoid, and it is
-/// invisible without a test: `puffin` keys a scope by CALL SITE, so the
-/// obvious implementation — one `profiling::scope!` inside the dispatch
-/// loop — compiles, runs, produces a flamegraph, and files every system
-/// in the process under whichever one ran first. Nothing errors. The
-/// picture is simply wrong, and it is wrong in the direction of looking
-/// right.
-///
-/// Reusing the id on the second call is the other half: registering per
-/// frame would grow puffin's scope table without bound for the lifetime
-/// of the process.
 #[cfg(feature = "cpu-profiler")]
 #[test]
 fn each_system_gets_its_own_scope() {
@@ -446,9 +433,8 @@ fn the_run_order_holds_every_stage_once() {
     );
 }
 
-/// 🔴 The trap this list exists for. `Stage`'s own ordering puts
-/// `Physics = 8` after `Gpu = 7`, but a frame runs the fixed stages
-/// between `Update` and `PostUpdate` — so iterating the `BTreeMap` or
+/// 🔴 The trap this list exists for. `Stage`'s own ordering puts `Physics = 8` after `Gpu = 7`, but
+/// a frame runs the fixed stages between `Update` and `PostUpdate` — so iterating the `BTreeMap` or
 /// `Stage::ALL` lists physics somewhere it never runs.
 #[test]
 fn the_fixed_stages_run_inside_the_frame() {

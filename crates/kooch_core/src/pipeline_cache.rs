@@ -1,18 +1,4 @@
 //! Pipeline cache persistence (audit §H.2).
-//!
-//! Persists a blob produced by [`wgpu::PipelineCache::get_data`] to disk and
-//! reloads it on next launch so driver-level shader compilation work is reused
-//! across runs. 100–500 ms savings per pipeline on cold start (AMD RADV, DX12).
-//!
-//! Cache key: `hash((adapter_info.name, adapter_info.driver_info, engine_version))`.
-//! On driver update the hash changes and the previous blob is abandoned, so
-//! stale IR is never handed to a driver that might reject it.
-//!
-//! Backends:
-//! - Vulkan (`VkPipelineCache`): supported.
-//! - DX12 (`ID3D12PipelineLibrary`): supported.
-//! - Metal / GL / WebGPU: [`wgpu::Features::PIPELINE_CACHE`] absent → `load`
-//!   returns `None`, the engine runs as before.
 
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -24,9 +10,6 @@ use wgpu::{Adapter, Device, PipelineCache, PipelineCacheDescriptor};
 const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Returns the directory where pipeline cache blobs are stored.
-///
-/// Linux: `$XDG_CACHE_HOME/kooch/pipeline_cache` or `$HOME/.cache/kooch/pipeline_cache`.
-/// Windows: `%LOCALAPPDATA%/kooch/pipeline_cache`.
 fn cache_dir() -> Option<PathBuf> {
     if let Some(xdg) = std::env::var_os("XDG_CACHE_HOME") {
         return Some(PathBuf::from(xdg).join("kooch").join("pipeline_cache"));
@@ -67,11 +50,8 @@ pub fn load(device: &Device, adapter: &Adapter) -> Option<PipelineCache> {
     let path = cache_path(adapter)?;
     let data = fs::read(&path).ok();
 
-    // `fallback: true` makes the driver reject a stale/corrupt blob and return
-    // an empty cache instead of producing undefined behavior. `unsafe` is
-    // mandated by the wgpu API because the caller asserts the blob came from
-    // a prior `get_data` on matching hardware/driver — our hash key ensures
-    // that within a single adapter+driver+engine tuple.
+    // `fallback: true` makes the driver reject a stale/corrupt blob and return an empty cache
+    // instead of producing undefined behavior.
     let cache = unsafe {
         device.create_pipeline_cache(&PipelineCacheDescriptor {
             label: Some("kooch_pipeline_cache"),

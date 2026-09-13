@@ -1,35 +1,4 @@
 //! A bounded log the editor can show.
-//!
-//! Everything the engine says goes to stdout, which is invisible unless it
-//! was started from a terminal — and a project opened from the launcher was
-//! not. So the same events go into a buffer the editor reads, in memory,
-//! bounded, with no file involved.
-//!
-//! # One sink, not two
-//!
-//! This is a `tracing` layer beside the stdout one rather than a second
-//! reporting channel. Anything already written with `tracing::info!` arrives
-//! here for free — including the child process output the editor forwards as
-//! `[game] ...`, which is how a running project's log reaches the panel
-//! without any plumbing of its own.
-//!
-//! A parallel channel would drift: someone would log to one and not the
-//! other, and the panel would disagree with the terminal about what
-//! happened.
-//!
-//! # Why egui does not reach the panel
-//!
-//! Showing a line changes what the panel shows. For every other emitter
-//! that is fine; for the UI library drawing the panel it is a loop. egui
-//! complains when a widget keeps its rectangle but changes id — which is
-//! exactly what a scrolling list does when a line arrives, since the row
-//! at a given height is now a *different* row. The complaint is a log
-//! line, it lands in the panel, the panel scrolls, and the next frame
-//! complains again. Measured: one core, indefinitely, on an editor
-//! nobody was touching (#656, #641).
-//!
-//! So `egui*` is muted **here only**. It still goes to stdout, where
-//! reading it does not change it.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -40,11 +9,6 @@ use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
 
 /// How many lines are kept.
-///
-/// A session's worth of `info` at a few lines a second, and small enough
-/// that the panel stays scrollable. Old lines are dropped rather than
-/// growing without bound: a log that eats memory for the length of a
-/// session is one that gets switched off.
 const CAPACITY: usize = 2000;
 
 /// One line.
@@ -58,12 +22,6 @@ pub struct LogEntry {
     pub target: String,
     pub message: String,
     /// Whether a hosted project said this rather than the editor.
-    ///
-    /// A field rather than a prefix on the message. It used to be sniffed
-    /// from a `[game] ` prefix, which meant a project's line could not be
-    /// filtered by its own level — everything forwarded arrived as an
-    /// `info` from the forwarding module, whatever the project had
-    /// actually logged.
     pub from_project: bool,
 }
 
@@ -75,15 +33,6 @@ impl LogEntry {
 }
 
 /// Removes ANSI escape sequences from a line.
-///
-/// The engine no longer colourises into a pipe, but a child process is
-/// arbitrary: cargo, a script, anything a project spawns. Whoever renders
-/// these has no terminal to interpret them, so an escape that survives is
-/// drawn as glyphs — `\x1b[2m` arriving in the editor's Console as boxes is
-/// how this was found.
-///
-/// Handles CSI sequences (`ESC [ ... letter`), which is what colour uses.
-/// Anything else is left alone rather than guessed at.
 pub fn strip_ansi(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut chars = line.chars();
@@ -116,10 +65,6 @@ struct Inner {
     entries: VecDeque<LogEntry>,
     next_seq: u64,
     /// Lines dropped to stay under [`CAPACITY`].
-    ///
-    /// Counted rather than silently forgotten: a panel that says "showing
-    /// the last 2000 of 9400" is honest, and one that just shows 2000 looks
-    /// like nothing else happened.
     dropped: u64,
 }
 
@@ -128,12 +73,7 @@ impl LogBuffer {
         Self::default()
     }
 
-    /// Records a line a hosted project logged, with the level and target
-    /// it logged it at.
-    ///
-    /// Not routed through `tracing`: doing that would re-stamp the line
-    /// with the forwarder's level and module, which is what made a
-    /// project's warnings indistinguishable from its chatter.
+    /// Records a line a hosted project logged, with the level and target it logged it at.
     pub fn push_project(
         &self,
         level: Level,
@@ -169,15 +109,6 @@ impl LogBuffer {
     }
 
     /// Copies the entries out, oldest first.
-    ///
-    /// A copy rather than a borrow: the panel draws inside the egui pass
-    /// while systems on other threads are still logging, and holding the
-    /// lock across a frame would let a log line block a repaint.
-    ///
-    /// **Every call clones every line.** A viewer redrawing at 60 fps wants
-    /// [`entries_after`](Self::entries_after) instead — that is what
-    /// [`seq`](LogEntry::seq) is for, and copying two thousand lines to
-    /// find out that none of them changed is what it exists to avoid.
     pub fn snapshot(&self) -> Vec<LogEntry> {
         self.inner
             .lock()
@@ -186,9 +117,6 @@ impl LogBuffer {
     }
 
     /// The lines newer than `seq`, oldest first.
-    ///
-    /// What a viewer holding its own copy needs: on a quiet frame this
-    /// clones nothing, and on a busy one it clones what actually arrived.
     pub fn entries_after(&self, seq: u64) -> Vec<LogEntry> {
         self.inner
             .lock()
@@ -209,13 +137,7 @@ impl LogBuffer {
             .unwrap_or_default()
     }
 
-    /// The sequence numbers still held, as `(oldest, newest)`. `None` when
-    /// the log is empty.
-    ///
-    /// A viewer compares these against its own copy: a newest that moved
-    /// means there is something to fetch, and an oldest that moved past
-    /// what it holds means lines were dropped — or the log was cleared,
-    /// which is the same discovery.
+    /// The sequence numbers still held, as `(oldest, newest)`. `None` when the log is empty.
     pub fn seq_range(&self) -> Option<(u64, u64)> {
         self.inner
             .lock()
@@ -242,9 +164,6 @@ impl LogBuffer {
     }
 
     /// Forgets everything, including the dropped count.
-    ///
-    /// What a Clear button does: after it, "showing the last N of N" is
-    /// true again.
     pub fn clear(&self) {
         if let Ok(mut inner) = self.inner.lock() {
             inner.entries.clear();
@@ -274,12 +193,9 @@ impl<S: Subscriber> Layer<S> for LogBufferLayer {
         let mut visitor = MessageVisitor::default();
         event.record(&mut visitor);
 
-        // A crate logging through the `log` crate arrives via the tracing
-        // bridge, whose metadata target is the literal `"log"` for every
-        // one of them — the real one travels as a `log.target` field. Use
-        // it when it is there, or the panel's own filter sees a single
-        // undifferentiated target and every mute would have to be by
-        // message text.
+        // A crate logging through the `log` crate arrives via the tracing bridge, whose metadata
+        // target is the literal `"log"` for every one of them — the real one travels as a
+        // `log.target` field.
         let target = visitor
             .log_target
             .take()
@@ -298,9 +214,6 @@ impl<S: Subscriber> Layer<S> for LogBufferLayer {
 }
 
 /// Renders an event's fields into one line.
-///
-/// The `message` field is the line; the rest are appended as `key=value`,
-/// which is what the stdout formatter does and what makes the two agree.
 #[derive(Default)]
 struct MessageVisitor {
     message: String,
@@ -320,13 +233,7 @@ impl MessageVisitor {
 }
 
 impl MessageVisitor {
-    /// Files a non-message field, keeping the bridge's bookkeeping out of
-    /// the line.
-    ///
-    /// `log.target` becomes the entry's target; `log.module_path`,
-    /// `log.file` and `log.line` are dropped. They say the same thing as
-    /// the target and made every bridged line three times its length —
-    /// which, in a panel, is three times the scrolling.
+    /// Files a non-message field, keeping the bridge's bookkeeping out of the line.
     fn field(&mut self, name: &str, value: String) {
         match name {
             // Recorded as a string by the bridge, but a `Debug` capture

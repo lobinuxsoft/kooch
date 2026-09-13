@@ -33,10 +33,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 const WORKGROUP_SIZE: u32 = 64;
 
 /// Compute pipeline that adds two `f32` arrays element-wise.
-///
-/// Accepts raw `&Device` / `&Queue` references so it can be used both inside
-/// the engine (via [`GpuContext`](crate::gpu::GpuContext)) and in standalone
-/// headless examples.
 pub struct VectorAddCompute {
     pipeline: ComputePipeline,
     bind_group_layout: BindGroupLayout,
@@ -44,10 +40,6 @@ pub struct VectorAddCompute {
 
 impl VectorAddCompute {
     /// Creates the shader module, bind group layout, and compute pipeline.
-    ///
-    /// Pass `pipeline_cache` from [`GpuContext::pipeline_cache`](crate::gpu::GpuContext::pipeline_cache)
-    /// to share the engine-wide driver cache. `None` is valid on backends
-    /// without [`wgpu::Features::PIPELINE_CACHE`].
     pub fn new(device: &Device, pipeline_cache: Option<&wgpu::PipelineCache>) -> Self {
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("vector_add_shader"),
@@ -112,10 +104,6 @@ impl VectorAddCompute {
     }
 
     /// Dispatches the compute shader over `count` elements.
-    ///
-    /// `input_a`, `input_b` and `output` must be GPU buffers of at least
-    /// `count * 4` bytes each. The caller is responsible for creating a
-    /// staging buffer and copying the result back to CPU if needed.
     pub fn dispatch(
         &self,
         device: &Device,
