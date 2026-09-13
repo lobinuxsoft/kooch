@@ -31,15 +31,8 @@
 
 use crate::engine_api::Engine;
 
-/// A dynamically loaded plugin.
-///
-/// # Reloading
-///
-/// **A plugin owns no state that has to survive a reload.** The library
-/// is unloaded and replaced, and anything living in its statics goes
-/// with it; state that must persist belongs to the host, through
-/// [`Engine::set_data`]. Every project that has built this arrives at
-/// the same rule, and it is not one the type system can enforce.
+/// A dynamically loaded plugin. **It owns no state that must survive a reload**; persistent state
+/// belongs to the host via [`Engine::set_data`].
 pub trait KoochPlugin: Send + Sync {
     /// Name for logs and diagnostics.
     fn name(&self) -> &str;
@@ -53,18 +46,9 @@ pub trait KoochPlugin: Send + Sync {
     fn cleanup(&mut self) {}
 }
 
-/// Signature of the constructor a plugin exports as `kooch_create_plugin`.
-///
-/// `Box<dyn KoochPlugin>` is not FFI-safe in the general case, which is
-/// precisely why [`version::check`](crate::version::check) runs first:
-/// it refuses to load anything not built by the same compiler against
-/// the same API version, and that agreement is the condition under
-/// which handing a Rust trait object across the boundary is sound.
-// The compiler is right that a fat pointer is not FFI-safe in general,
-// and that warning is exactly what the build stamp answers: the symbol
-// is never called until the loader has proven both sides came from the
-// same compiler and the same API version. Silenced here, once, with the
-// reason attached — rather than left to fire at every call site.
+/// Signature of the `kooch_create_plugin` constructor. Not FFI-safe in general, which is why the
+/// [`BuildStamp`](crate::version::BuildStamp) check proves one compiler and API first.
+// Silenced once: the build stamp is what makes this fat pointer sound.
 #[allow(improper_ctypes_definitions)]
 pub type CreatePluginFn = unsafe extern "C" fn() -> Box<dyn KoochPlugin>;
 
@@ -74,11 +58,8 @@ pub const CREATE_SYMBOL: &[u8] = b"kooch_create_plugin";
 /// Symbol name of the build stamp the loader verifies first.
 pub const STAMP_SYMBOL: &[u8] = b"kooch_plugin_build_stamp";
 
-/// Exports a plugin type as a loadable library.
-///
-/// Emits both symbols the loader needs: the build stamp it checks before
-/// anything else, and the constructor it calls once the stamp matched.
-/// The type must implement [`Default`].
+/// Exports a plugin type as a loadable library: the build stamp the loader checks first, and the
+/// constructor it calls after. The type must implement [`Default`].
 #[macro_export]
 macro_rules! export_plugin {
     ($ty:ty) => {

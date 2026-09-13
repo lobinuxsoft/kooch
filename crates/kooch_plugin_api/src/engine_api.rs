@@ -1,41 +1,23 @@
-//! What a plugin can ask the engine to do.
-//!
-//! [`Engine`] is an ordinary Rust trait. The plugin is a `dylib` built
-//! by the same compiler as the host, so a trait object crosses the
-//! boundary as itself — no function-pointer table, no `*mut c_void`, no
-//! stable-ABI layer.
-//!
-//! That compiler agreement is the whole contract, and it is checked
-//! before any of this is called: see [`version`](crate::version).
+//! What a plugin can ask the engine to do: [`Engine`] is a plain trait object, sound because both
+//! sides share a compiler, which [`version`](crate::version) checks first.
 
 use crate::component::{ComponentSchema, RegisterError};
 use crate::types::Stage;
 
-/// A system a plugin registers, run by the engine each frame.
-///
-/// It receives the same [`Engine`] handle the plugin got at build time,
-/// so a system can spawn, log and read plugin data without capturing
-/// anything the engine cannot see.
+/// A plugin system, run each frame with the same [`Engine`] handle the plugin got at build time.
 pub type PluginSystem = Box<dyn FnMut(&mut dyn Engine) + Send + Sync>;
 
-/// The engine services available to a plugin.
-///
-/// Implemented by the host, passed to [`KoochPlugin`](crate::KoochPlugin) as
-/// `&mut dyn Engine`. A plugin never constructs one.
+/// The engine services available to a plugin, passed to [`KoochPlugin`](crate::KoochPlugin) as
+/// `&mut dyn Engine`.
 pub trait Engine {
-    /// Spawns an entity and returns its packed handle.
-    ///
-    /// See [`pack_entity`](crate::types::pack_entity) for the layout.
-    /// Returns `None` if the host has no entity allocator.
+    /// Spawns an entity and returns its packed handle (see
+    /// [`pack_entity`](crate::types::pack_entity)); `None` without an entity allocator.
     fn spawn_entity(&mut self) -> Option<u64>;
 
     /// Despawns an entity. `false` if the handle was already stale.
     fn despawn_entity(&mut self, entity: u64) -> bool;
 
-    /// Declares a component type this plugin owns.
-    ///
-    /// The engine cannot name the plugin's Rust types, so it stores them
-    /// by the schema's `type_name` — which is why that name has to stay
+    /// Declares a component type this plugin owns, stored by the schema's `type_name` — hence
     /// stable across rebuilds.
     fn register_component(&mut self, schema: ComponentSchema) -> Result<(), RegisterError>;
 
@@ -45,12 +27,8 @@ pub trait Engine {
     /// Writes a line to the engine's log.
     fn log(&self, message: &str);
 
-    /// Stores bytes under `key`, owned by the host.
-    ///
-    /// This is how a plugin keeps state across a reload: the library is
-    /// unloaded and rebuilt, but anything parked here belongs to the
-    /// host and survives. State held in the plugin's own statics does
-    /// not — it goes away with the library.
+    /// Stores bytes under `key`, owned by the host — how plugin state survives a reload that
+    /// discards the library's statics.
     fn set_data(&mut self, key: &str, data: &[u8]);
 
     /// Reads back what [`set_data`](Engine::set_data) stored.

@@ -1,11 +1,5 @@
-/// 🔴 The case this variant exists for, and the one that used to be
-/// silent: same API, same compiler, different engine. The plugin
-/// links and reads every shared structure at whatever layout it was
-/// compiled with.
-///
-/// It stopped being hypothetical when the engine started being
-/// vendored into projects (#754) — the editor's copy and a project's
-/// copy are two directories that can drift.
+/// 🔴 Same API, same compiler, different engine: the plugin links and misreads shared layouts — real
+/// since engines are vendored into projects (#754).
 #[test]
 fn a_plugin_from_another_engine_version_is_refused() {
     let stale = super::BuildStamp {

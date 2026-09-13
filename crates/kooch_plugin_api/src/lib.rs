@@ -1,32 +1,6 @@
-//! Plugin API for Kooch — the only crate a plugin depends on.
-//!
-//! A plugin is a Rust `dylib` the engine loads at run time. It defines:
-//!
-//! - [`KoochPlugin`] — the trait a plugin implements
-//! - [`Engine`] — what a plugin can ask the engine to do
-//! - [`component`] — describing component types the engine cannot name
-//! - [`types`] — stages and entity handles
-//! - [`version`] — the build stamp that makes the whole thing sound
-//!
-//! # Why plain Rust types
-//!
-//! Plugin and engine are built by the same compiler, in the same
-//! workspace, moments apart. Under that condition Rust types are
-//! compatible across the boundary, so the API is ordinary Rust: traits,
-//! `String`, `Vec`, `Box<dyn Fn>`. No function-pointer tables, no
-//! `*mut c_void`, no stable-ABI dependency.
-//!
-//! **That condition is the entire contract, so it is verified rather
-//! than assumed.** Every plugin exports a [`BuildStamp`](version::BuildStamp)
-//! recording its API version and the exact compiler that produced it,
-//! and the loader compares it before calling anything else. A mismatch
-//! is a refusal with a message naming which half is wrong.
-//!
-//! This is deliberately not a stable ABI. A plugin is not something a
-//! third party compiles once and ships against future engine versions —
-//! it is your project's code, rebuilt alongside the engine. Buying ABI
-//! stability would cost a dependency and a layer of indirection to solve
-//! a problem this design does not have.
+//! Plugin API — the only crate a plugin depends on. A plugin is a Rust `dylib` built by the same
+//! compiler as the engine, so the API is plain Rust; the loader verifies that with a
+//! [`BuildStamp`] before calling anything.
 //!
 //! # Project setup
 //!
@@ -38,13 +12,8 @@
 //! kooch_plugin_api = { path = "..." }
 //! ```
 //!
-//! `dylib`, not `cdylib`: a `cdylib` exposes a C interface and cannot
-//! carry Rust types. The `rlib` alongside it keeps ordinary consumers
-//! building.
-//!
-//! Both sides must be built with `-C prefer-dynamic`, or each ends up
-//! with its own copy of `std` and of the engine's globals — including
-//! the log subscriber, which would silently swallow the plugin's output.
+//! `dylib`, not `cdylib`, which cannot carry Rust types. Build both sides with `-C prefer-dynamic`,
+//! or each gets its own `std` and log subscriber.
 //!
 //! # Writing one
 //!
@@ -70,9 +39,8 @@
 //!
 //! # The one rule
 //!
-//! **A plugin owns no state that must survive a reload.** The library is
-//! unloaded and replaced; its statics go with it. Anything that has to
-//! persist belongs to the host, via [`Engine::set_data`].
+//! **A plugin owns no state that must survive a reload** — anything persistent belongs to the host,
+//! via [`Engine::set_data`].
 
 pub mod component;
 pub mod engine_api;
