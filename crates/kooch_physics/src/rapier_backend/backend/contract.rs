@@ -1,8 +1,4 @@
-//! The [`PhysicsBackend`] implementation.
-//!
-//! One file because Rust does not allow an `impl Trait for Type` to be
-//! spread across several. It reads in the order the trait declares:
-//! stepping and gravity, bodies, colliders, joints, events, then queries.
+//! The [`PhysicsBackend`] impl, one file since an `impl` cannot split; in trait order.
 
 use glam::{Quat, Vec3};
 use rapier3d::prelude::*;
@@ -55,11 +51,8 @@ impl PhysicsBackend for RapierBackend {
             BodyKind::Kinematic => RigidBodyType::KinematicPositionBased,
             BodyKind::Static => RigidBodyType::Fixed,
         };
-        // `additional_mass_properties`, not `additional_mass`: the latter
-        // is *added* to whatever the colliders' density implies, so the
-        // authored number would mean a different weight for every shape.
-        // With massless colliders this is the body's entire mass
-        // properties, and it is exactly what the author typed.
+        // `additional_mass_properties`, not `additional_mass`, which adds to collider density; with
+        // massless colliders this is exactly the authored mass.
         let rb = RigidBodyBuilder::new(body_type)
             .pose(Pose::from_parts(desc.position, desc.rotation))
             .additional_mass_properties(mass_properties_for(
@@ -89,10 +82,8 @@ impl PhysicsBackend for RapierBackend {
             }
             Err(error) => warn_refused(&desc.shape, &error),
         }
-        // Rapier defers this to the next step. The editor authors a world
-        // it does not simulate, so without it every mass and centre of
-        // mass read before pressing Play is stale — and a physics debug
-        // view (#563) would draw the wrong point.
+        // Rapier defers this to the next step; the editor never steps, so mass reads (and #563's
+        // view) would be stale.
         self.recompute_mass_properties(rb_handle);
         let handle = self.handles.insert(rb_handle);
         self.body_lookup.insert(rb_handle, handle);
@@ -184,11 +175,8 @@ impl PhysicsBackend for RapierBackend {
             return;
         };
         let pose = Pose::from_parts(position, rotation);
-        // A kinematic body driven by `set_position` teleports: the solver
-        // sees no motion, so it passes through dynamic bodies instead of
-        // pushing them. `set_next_kinematic_position` makes the step
-        // derive a velocity from the delta, which is what "kinematic
-        // bodies push dynamics out of the way" actually means.
+        // Kinematic bodies move by `set_next_kinematic_position`, so the step derives velocity and
+        // pushes dynamics instead of teleporting through them.
         match body.body_type() {
             RigidBodyType::KinematicPositionBased | RigidBodyType::KinematicVelocityBased => {
                 body.set_next_kinematic_position(pose)

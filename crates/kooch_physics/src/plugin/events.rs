@@ -1,16 +1,6 @@
-//! Turning the solver's reports into engine events about entities.
-//!
-//! The backend speaks in [`BodyHandle`]; nothing above this seam should
-//! have to. These are the types gameplay reads, and they carry [`Entity`].
-//!
-//! # Why draining is its own system
-//!
-//! Rapier calls its handler from inside `step`, holding the world mutably.
-//! A listener that despawned the thing it collided with would be mutating
-//! the set being iterated. So the step collects and this drains afterwards,
-//! in [`Stage::PostPhysics`] — by which point the solver has let go.
-//!
-//! [`Stage::PostPhysics`]: kooch_core::stage::Stage::PostPhysics
+//! Solver reports as entity events for gameplay. Drained in
+//! [`Stage::PostPhysics`](kooch_core::stage::Stage::PostPhysics), after `step` releases the world a
+//! listener might mutate.
 
 use kooch_core::event::Events;
 use kooch_core::resource::Resources;
@@ -18,19 +8,13 @@ use kooch_ecs::entity::Entity;
 
 use super::world::PhysicsWorld;
 
-/// Two entities started touching.
-///
-/// Fires once, on the frame contact begins. A listener that wants "is
-/// touching right now" should track it from these and
-/// [`CollisionStopped`], because the solver does not repeat itself.
+/// Two entities started touching, once; track "touching now" with [`CollisionStopped`], since the
+/// solver does not repeat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CollisionStarted {
     pub a: Entity,
     pub b: Entity,
-    /// Whether this was a sensor overlap rather than a solid contact.
-    ///
-    /// A sensor has no contact manifold behind it, so a listener wanting a
-    /// contact point needs to know not to look.
+    /// A sensor overlap, with no contact manifold behind it.
     pub sensor: bool,
 }
 
@@ -54,11 +38,7 @@ pub struct ContactForce {
     pub max_force_magnitude: f32,
 }
 
-/// A joint tore off under load.
-///
-/// #560 built the breaking and had nowhere to report it; this is the
-/// nowhere filled in. `joint` is the entity carrying the `Joint` component,
-/// which is the one an author recognises.
+/// A joint tore off under load (#560); `joint` is the entity carrying the `Joint`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct JointBroke {
     pub joint: Entity,
@@ -68,11 +48,8 @@ pub struct JointBroke {
     pub impulse: f32,
 }
 
-/// Drains the solver's reports into the engine's event buffers.
-///
-/// Runs after the step, for the reason in the module docs. Registered in
-/// [`Stage::PostPhysics`](kooch_core::stage::Stage::PostPhysics) alongside
-/// writeback, and gated on play like the rest of gameplay.
+/// Drains solver reports into event buffers in
+/// [`Stage::PostPhysics`](kooch_core::stage::Stage::PostPhysics), gated on play.
 pub(super) fn drain_physics_events(resources: &mut Resources) {
     let Some(mut world) = resources.remove::<PhysicsWorld>() else {
         return;
@@ -124,20 +101,8 @@ pub(super) fn drain_physics_events(resources: &mut Resources) {
     }
 }
 
-/// Says a collision happened, so it is visible without writing a listener.
-///
-/// # Why a sensor is louder than a contact
-///
-/// A trigger firing is a gameplay event: something is meant to react, and
-/// "did my trigger fire" is a question with no other way to answer it — the
-/// body passes through and nothing moves. Solid contacts are constant by
-/// comparison; a scene at rest still generates them, and a stack of crates
-/// would bury everything else.
-///
-/// So sensors are `info` and contacts are `debug`. Both are gated by
-/// `RUST_LOG` like anything else, and neither is a substitute for a
-/// listener — this exists so that a scene can be understood before anyone
-/// writes one.
+/// Logs a collision so a scene is understandable before any listener: sensors at `info` (a trigger
+/// is gameplay, and passes through silently), contacts at `debug` (a resting stack floods).
 fn report(a: Entity, b: Entity, started: bool, sensor: bool) {
     match (sensor, started) {
         (true, true) => tracing::info!(
@@ -167,30 +132,19 @@ fn report(a: Entity, b: Entity, started: bool, sensor: bool) {
     }
 }
 
-/// Sends an event if the app registered its buffer.
-///
-/// A host that never called `add_event` gets silence rather than a panic:
-/// physics is usable without anyone listening.
+/// Sends if the app registered the buffer; without `add_event`, silence, not a panic.
 fn send<E: Send + Sync + 'static>(resources: &mut Resources, event: E) {
     if let Some(events) = resources.get_mut::<Events<E>>() {
         events.send(event);
     }
 }
 
-/// Whether physics saw the app playing last frame.
-///
-/// There is no stop *event* to listen for — [`Playing`] is a flag someone
-/// flips — so the transition has to be noticed by remembering. Kept inside
-/// the physics plugin because nothing else needs to care.
-///
-/// [`Playing`]: kooch_core::run_state::Playing
+/// Whether physics saw play last frame: [`Playing`](kooch_core::run_state::Playing) is a flag, so
+/// stopping is noticed by remembering.
 #[derive(Debug, Default)]
 pub(super) struct WasPlaying(pub(super) bool);
 
-/// Clears the event buffers on the frame play stops.
-///
-/// Runs unconditionally, unlike the drain: a system gated on play cannot
-/// see play end.
+/// Clears event buffers when play stops; ungated, since a play-gated system cannot see play end.
 pub(super) fn physics_lifecycle_system(resources: &mut Resources) {
     let playing = kooch_core::run_state::Playing::is_playing(resources);
     let was = resources
@@ -211,12 +165,8 @@ pub(super) fn physics_lifecycle_system(resources: &mut Resources) {
     clear_physics_events(resources);
 }
 
-/// Clears every physics event buffer.
-///
-/// A collision from a play session that has ended must not be delivered to
-/// the next one. Both halves matter: the backend's queues are drained *and*
-/// the engine's buffers cleared, because an event already translated is
-/// still an event about a world that no longer exists.
+/// Clears backend queues and engine buffers, so a finished session's collisions never reach the
+/// next.
 pub(super) fn clear_physics_events(resources: &mut Resources) {
     if let Some(mut world) = resources.remove::<PhysicsWorld>() {
         let _ = world.backend_mut().take_collision_events();

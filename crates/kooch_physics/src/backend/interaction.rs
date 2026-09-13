@@ -1,29 +1,9 @@
-//! What a collider notices, what notices it, and what it reports.
-//!
-//! Separate from [`SurfaceMaterial`](super::SurfaceMaterial), which is
-//! about the physics of a surface. This is about *participation*: whether a
-//! pair is considered at all, whether it pushes or only reports, and
-//! whether the engine hears about it.
-//!
-//! Until #561 none of it existed. `step` was handed `&()` for its event
-//! handler, so nothing in the engine could learn that two things had
-//! touched — physics could push objects around but could not drive
-//! gameplay.
+//! Participation, separate from [`SurfaceMaterial`](super::SurfaceMaterial): whether a pair is
+//! considered, whether it pushes or only reports, and whether the engine hears (#561).
 
-/// A membership-and-filter pair, the shape rapier uses for both collision
-/// and solver filtering.
-///
-/// A pair interacts when each side's `memberships` intersects the other
-/// side's `filter`. Both directions have to agree, which is the part that
-/// catches people out: putting a projectile in a group the wall does not
-/// filter for is not enough if the projectile does not filter for the
-/// wall's group either.
-///
-/// # Default
-///
-/// In every group, filtering for every group — so everything interacts
-/// with everything, which is what a scene does before anyone opts into
-/// filtering.
+/// Memberships and filter, rapier's shape for collision and solver filtering: a pair interacts only
+/// when **each** side's memberships meet the other's filter. Default: every group, everything
+/// interacts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InteractionMask {
     /// Which groups this collider belongs to.
@@ -51,50 +31,30 @@ impl InteractionMask {
         filter: 0,
     };
 
-    /// Whether two masks interact, by rapier's rule.
-    ///
-    /// Reimplemented here rather than asked of rapier because the sync
-    /// layer and the Inspector both want to answer "will these two ever
-    /// touch" without a physics world to ask — and because a rule this
-    /// short is clearer stated than deferred.
+    /// Rapier's rule, restated so the sync layer and Inspector can answer "will these touch"
+    /// without a physics world.
     pub fn interacts_with(self, other: Self) -> bool {
         self.memberships & other.filter != 0 && other.memberships & self.filter != 0
     }
 }
 
-/// How a collider participates, beyond its geometry and its surface.
-///
-/// # Default
-///
-/// Solid, silent, and interacting with everything — rapier's own defaults.
-/// Notably `ActiveEvents` starts empty there, which is why the engine heard
-/// nothing until #561: events are opt-in per collider, so the cost is
-/// proportional to what the game actually listens for.
+/// How a collider participates beyond geometry and surface. Default is rapier's: solid, silent, all
+/// groups — events are opt-in per collider, so cost follows what the game listens for.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ColliderInteraction {
     /// Which pairs are considered at all.
     pub collision_groups: InteractionMask,
-    /// Which of the considered pairs actually push each other.
-    ///
-    /// The distinction is the whole point of having two: a projectile that
-    /// should *detect* a wall without being stopped by it belongs to the
-    /// wall's collision groups and not its solver groups.
+    /// Which considered pairs push: a projectile that detects a wall without stopping shares its
+    /// collision groups, not its solver groups.
     pub solver_groups: InteractionMask,
-    /// Report overlap and never solve contacts — a trigger volume.
-    ///
-    /// A sensor is not a collider that happens to be ignored. Rapier
-    /// computes no contact manifold for it at all, which is why a sensor's
-    /// collision event carries no contact information.
+    /// Report overlap, never solve — a trigger. Rapier computes no manifold for it, so its events
+    /// carry no contact data.
     pub sensor: bool,
     /// Raise an event when this collider starts or stops touching
     /// something.
     pub collision_events: bool,
-    /// Raise an event when contact force exceeds
-    /// [`contact_force_threshold`](Self::contact_force_threshold).
-    ///
-    /// This is what separates "brushed against a wall" from "hit it hard
-    /// enough to take damage" without walking contact manifolds every
-    /// frame.
+    /// Raise an event above [`contact_force_threshold`](Self::contact_force_threshold) — "hit hard
+    /// enough to hurt" without walking manifolds every frame.
     pub contact_force_events: bool,
     /// The force above which a contact is worth reporting.
     pub contact_force_threshold: f32,

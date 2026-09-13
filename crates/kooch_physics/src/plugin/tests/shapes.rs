@@ -1,9 +1,5 @@
-//! The shapes #137 added, doing their job in a running simulation.
-//!
-//! One test per line of the issue's acceptance list. Asserted against
-//! resting heights and body counts rather than against contact manifolds:
-//! what an author needs is that the thing lands where it looks like it
-//! should, and the manifold is rapier's business.
+//! #137's shapes in a running simulation, asserted by resting heights and body counts rather than
+//! manifolds.
 
 /// Any entity — these tests are about the shape, not about who owns it.
 fn any_entity() -> kooch_ecs::Entity {
@@ -16,10 +12,7 @@ use crate::components::{
     SHAPE_CONVEX_HULL, SHAPE_HALF_SPACE, SHAPE_SPHERE, SHAPE_TRIMESH, SHAPE_VOXELIZED_MESH,
 };
 
-/// A unit cube's corners and triangles, centred on the origin.
-///
-/// Small enough to read, and closed — a hull needs volume and a trimesh
-/// needs manifold triangles.
+/// A closed unit cube, for hulls and trimeshes.
 fn unit_cube() -> ColliderMesh {
     let vertices = vec![
         Vec3::new(-0.5, -0.5, -0.5),
@@ -243,13 +236,7 @@ fn a_flat_hull_leaves_no_collider() {
     );
 }
 
-/// Every shape a scene can hold has to survive being written and read
-/// back, mesh-derived ones included — the GUID is the only thing standing
-/// in for geometry that cannot be typed.
-///
-/// Every *discriminant*, not every dropdown entry: five shapes lost their
-/// label and kept their number, and a scene authored with one before that
-/// still has to load.
+/// Every discriminant survives a scene round trip, mesh-derived and unlabelled ones included.
 #[test]
 fn every_shape_round_trips_through_a_scene() {
     use crate::components::SHAPE_VOXELIZED_MESH;

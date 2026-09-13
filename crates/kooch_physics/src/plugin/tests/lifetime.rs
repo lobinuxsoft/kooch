@@ -114,12 +114,7 @@ fn changing_the_authored_shape_rebuilds_the_body() {
     );
 }
 
-/// The bug this file's `scale` field exists for: a collider that ignored
-/// `Transform.scale` worked at the authored size and nowhere else. Scale a
-/// cube up with the gizmo and the mesh grew while the collider stayed
-/// small — physics that looks broken "depending on the size".
-///
-/// A box scales exactly, per axis.
+/// A collider follows `Transform.scale`: a box scales exactly per axis.
 #[test]
 fn a_scaled_cuboid_collider_grows_with_its_transform() {
     let mut resources = world();

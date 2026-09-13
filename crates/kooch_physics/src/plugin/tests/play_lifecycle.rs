@@ -3,14 +3,8 @@
 
 use super::*;
 
-/// Acceptance: "Stop restores it exactly where it was, and it does not
-/// keep drifting afterwards."
-///
-/// `WorldSnapshot` knows nothing about Rapier. What makes this work is
-/// that `SolverBody` is unreflected: the restore wipes it, so the next
-/// sync finds an entity with a `PhysicsBody` and no body, retires the stale
-/// slot and builds a fresh one from the restored `Transform`. The ECS
-/// stays the single source of truth — option A in the issue.
+/// Stop restores the body exactly: `SolverBody` is unreflected, so the restore wipes it and the
+/// next sync rebuilds from the restored `Transform`.
 #[test]
 fn stop_rebuilds_the_physics_world_from_the_restored_ecs() {
     let mut resources = world();

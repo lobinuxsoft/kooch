@@ -1,29 +1,13 @@
-//! Asking the world a question without moving anything.
-//!
-//! A ray is the query everyone reaches for and the one that is wrong most
-//! often. It is a line of zero width: it slips between two crates that a
-//! body could never fit through, it finds the lip of a step instead of the
-//! step, and it misses a thin wall that a fast projectile would hit. What
-//! a character actually does is move a *shape*, so the honest question is
-//! about a shape.
-//!
-//! Every type here is glam and [`BodyHandle`], the same rule the rest of
-//! the backend follows: rapier's own query results never cross this line.
+//! Queries that move nothing. Rays are zero-width and often wrong for a moving body, which moves a
+//! shape. Glam and [`BodyHandle`] only; rapier's results never cross.
 
 use glam::Vec3;
 
 use super::BodyHandle;
 use super::interaction::InteractionMask;
 
-/// Which bodies a query is allowed to see.
-///
-/// Filtering here rather than in the caller is not only tidier: the
-/// pipeline skips a rejected collider before testing it, so a query that
-/// excludes its own body does less work than one that finds itself and
-/// throws the answer away. Post-filtering also gets the common case
-/// wrong — a character casting downward hits *itself* first, and
-/// discarding only the nearest hit still misses the second collider on
-/// the same body.
+/// Which bodies a query sees — filtered in the pipeline, which skips rejects before testing;
+/// post-filtering misses a body's second collider after discarding the first.
 #[derive(Debug, Clone, Copy)]
 pub struct QueryFilter {
     /// Skip this body and every collider it owns.
@@ -33,11 +17,7 @@ pub struct QueryFilter {
     /// Groups the query belongs to and will interact with, read the same
     /// way a collider's own [`InteractionMask`] is.
     pub groups: InteractionMask,
-    /// Skip colliders that only report overlaps.
-    ///
-    /// A trigger volume is not a floor and not a wall. On by default,
-    /// because a query that stops at a checkpoint marker is a bug in
-    /// every caller that has ever written one.
+    /// Skip overlap-only colliders; on by default, since a query stopping at a checkpoint is a bug.
     pub skip_sensors: bool,
 }
 
@@ -76,12 +56,8 @@ pub struct ShapeHit {
     /// World-space surface normal there — the slope of the ground, or the
     /// face of the wall.
     pub normal: Vec3,
-    /// The cast began already touching.
-    ///
-    /// `t` is then zero and `normal` points the way out rather than
-    /// describing a surface the shape ran into. Worth branching on: a
-    /// controller that treats it as an ordinary contact will push itself
-    /// further into whatever it is stuck in.
+    /// The cast began touching: `t` is zero and `normal` points out. Treat it as a contact and a
+    /// controller digs in.
     pub penetrating: bool,
 }
 
@@ -92,19 +68,12 @@ pub struct PointHit {
     pub body: BodyHandle,
     /// World-space nearest point on it.
     pub point: Vec3,
-    /// The queried point was inside that body.
-    ///
-    /// `point` is then still the nearest surface point, which is what
-    /// makes this useful for pushing something back out.
+    /// The point was inside the body; `point` is still the nearest surface, for pushing out.
     pub inside: bool,
 }
 
-/// A shape placed in the world, for the queries that take one.
-///
-/// Bundled rather than passed as three parameters: a sweep already needs
-/// a direction, a distance and a filter, and six positional arguments is
-/// where call sites start swapping two `Vec3`s without the compiler
-/// noticing.
+/// A placed shape for queries — bundled so six positional arguments cannot swap two `Vec3`s
+/// silently.
 #[derive(Debug, Clone, Copy)]
 pub struct ShapeAt<'a> {
     /// What to place. Mesh-derived shapes must already carry their

@@ -18,36 +18,19 @@ pub enum BodyKind {
     Static,
 }
 
-/// Construction descriptor handed to [`add_body`].
-///
-/// Cloned rather than copied: [`CollisionShape`] owns its points once a
-/// collider is mesh-derived, and a descriptor that copies a level's
-/// trimesh by accident is not a descriptor anyone can afford.
-///
-/// [`add_body`]: super::PhysicsBackend::add_body
+/// Descriptor for [`PhysicsBackend::add_body`](super::PhysicsBackend::add_body). `Clone`, not
+/// `Copy`: a mesh-derived [`CollisionShape`] owns its points, and copying a level's trimesh by
+/// accident is unaffordable.
 #[derive(Debug, Clone)]
 pub struct BodyDesc {
     pub kind: BodyKind,
     pub shape: CollisionShape,
-    /// The body's **whole** mass in kg. Ignored for [`BodyKind::Static`]
-    /// and [`BodyKind::Kinematic`].
-    ///
-    /// Whole, not additional: shapes contribute collision and no mass, so
-    /// this is exactly what the body weighs however many colliders it
-    /// carries. A backend that let the shapes add to it would make the
-    /// number mean something different for every collider, which is the
-    /// bug #618 was filed about.
-    ///
-    /// The inertia tensor is still derived from [`shape`](Self::shape) —
-    /// scaled to this mass — because a body has to resist rotation like
-    /// something of its size, and a mass with no geometry behind it has no
-    /// tensor at all.
+    /// The body's **whole** mass in kg, ignored for static and kinematic bodies. Shapes add no
+    /// mass, so it means the same however many colliders there are (#618); inertia still comes from
+    /// [`shape`](Self::shape), scaled to it.
     pub mass: f32,
-    /// Where the centre of mass sits in body-local space, or `None` to use
-    /// the shape's own centre.
-    ///
-    /// A vehicle wants its centre of mass low or it rolls in every corner,
-    /// and no arrangement of collision shapes says that as directly.
+    /// Centre of mass in body-local space, `None` for the shape's — a vehicle wants it low or it
+    /// rolls in every corner.
     pub center_of_mass: Option<Vec3>,
     /// What the body's own shape does on contact.
     pub material: SurfaceMaterial,
@@ -60,12 +43,8 @@ pub struct BodyDesc {
     pub gravity_scale: f32,
     pub position: Vec3,
     pub rotation: Quat,
-    /// The shape's centre relative to the body, in body-local space.
-    ///
-    /// A plain vector rather than a backend pose type: the trait is the
-    /// contract, and a GPU backend later has to be able to honour the same
-    /// descriptor. Rapier models this as the collider's
-    /// `position_wrt_parent`.
+    /// The shape's centre in body-local space, a plain vector so a GPU backend can honour the same
+    /// descriptor (Rapier's `position_wrt_parent`).
     pub shape_offset: Vec3,
 }
 
@@ -107,18 +86,14 @@ impl BodyDesc {
 }
 
 slotmap::new_key_type! {
-    /// Opaque handle issued by the backend for each body it owns.
-    /// Cheap to copy (16 B), comparable, hashable. Stale handles
-    /// (after `remove_body`) yield `None` from getters thanks to
-    /// slotmap's generation counter.
+    /// Opaque, 16 B handle per body; a stale handle yields `None` through slotmap's generation
+    /// counter.
     pub struct BodyHandle;
 }
 
 slotmap::new_key_type! {
-    /// Opaque handle for one shape attached to a body.
-    ///
-    /// Separate from [`BodyHandle`] because a body owns several: removing
-    /// a child entity's collider must not take the body with it.
+    /// Handle for one shape on a body — separate from [`BodyHandle`], since removing a child's
+    /// collider must not remove the body.
     pub struct ColliderHandle;
 }
 

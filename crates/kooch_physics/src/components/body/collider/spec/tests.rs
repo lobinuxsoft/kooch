@@ -127,12 +127,8 @@ fn an_unknown_shape_falls_back() {
     ));
 }
 
-/// 🔴 Every shape that ASKS for a mesh has to be able to build one.
-///
-/// `SHAPE_OWN_MESH` was added to `MESH_DERIVED` — so the walk fetched
-/// its geometry — and never added to `from_mesh`, which falls through
-/// to `_ => None`. The mesh arrived and was dropped on the last line,
-/// and the block drew without colliding.
+/// 🔴 Every shape that asks for a mesh can build one: `SHAPE_OWN_MESH` was in `MESH_DERIVED` but
+/// fell to `_ => None`, and blocks drew without colliding.
 #[test]
 fn every_mesh_derived_shape_builds_something() {
     use crate::backend::{ColliderMesh, ColliderMeshCache};

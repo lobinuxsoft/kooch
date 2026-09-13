@@ -1,9 +1,5 @@
-//! Public trait + descriptor types for the physics subsystem.
-//!
-//! Game code consumes [`PhysicsBackend`]. Concrete backends
-//! ([`crate::RapierBackend`] today, `WgrapierBackend` when GPU lands)
-//! implement it. All public types use glam — no nalgebra in the API
-//! surface, even when the backend uses it internally.
+//! The physics trait and descriptors. Game code uses [`PhysicsBackend`], implemented by
+//! [`crate::RapierBackend`]; the API is glam only.
 
 mod body;
 mod debug;
@@ -29,20 +25,8 @@ pub use shape::{CollisionShape, ConvexPart, MIN_EXTENT};
 
 use glam::{Quat, Vec3};
 
-/// Engine-facing physics interface.
-///
-/// Backends are stored as a [`Resource`](kooch_core::resource::Resources)
-/// boxed behind this trait. Systems call methods directly; no enum
-/// dispatch on backend kind in hot paths.
-///
-/// # Lifecycle
-///
-/// 1. Engine inserts a backend at startup
-///    (`resources.insert(Box::new(RapierBackend::new()) as Box<dyn PhysicsBackend>)`).
-/// 2. Per frame: ECS `add/remove_body` syncs lifetime, `set_transform`
-///    pushes kinematic poses, `step(dt)` advances simulation,
-///    `get_transform` pulls dynamic poses back to ECS.
-/// 3. On shutdown: dropping the resource releases everything.
+/// Engine-facing physics interface, stored boxed as a resource with no enum dispatch. Per frame:
+/// sync `add/remove_body`, push kinematic poses, `step(dt)`, pull dynamic poses.
 pub trait PhysicsBackend: Send + Sync + 'static {
     /// Advances the simulation by `dt` seconds.
     fn step(&mut self, dt: f32);
@@ -50,12 +34,8 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// The uniform acceleration applied to every dynamic body.
     fn gravity(&self) -> Vec3;
 
-    /// Sets the uniform acceleration applied to every dynamic body.
-    ///
-    /// On the trait rather than the concrete backend because every solver
-    /// has one, and because gravity *fields* need to switch it off: a
-    /// planet pulling towards its centre plus a world vector pulling down
-    /// gives a diagonal, and the author placed one planet.
+    /// Uniform acceleration on every dynamic body — on the trait so gravity fields can turn it off,
+    /// or a planet's pull plus world down gives a diagonal.
     fn set_gravity(&mut self, gravity: Vec3);
 
     /// Inserts a body, returns its handle. Handles are stable across
@@ -66,25 +46,9 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// return `None` from getters and silently no-op for setters.
     fn remove_body(&mut self, handle: BodyHandle);
 
-    /// Adds another collision shape to an existing body.
-    ///
-    /// This is how a hierarchy becomes physics: a child entity carrying a
-    /// `Collider` but no `PhysicsBody` of its own contributes its shape to
-    /// the nearest ancestor that has one. The result is **one** body with
-    /// several shapes, which is what Unity calls a compound collider and
-    /// Unreal calls welding.
-    ///
-    /// The alternative — one body per collider, held together by the
-    /// transform hierarchy — is the thing no engine supports, because the
-    /// solver and the hierarchy would both own the pose. Two bodies that
-    /// both simulate want [`add_joint`](Self::add_joint) instead.
-    ///
-    /// `offset` and `rotation` place the shape in the body's local space.
-    /// `material` is the shape's own — a child contributing a collider
-    /// brings its own friction, because an ice patch welded to a crate is
-    /// still ice.
-    ///
-    /// Returns `None` for a stale body handle.
+    /// Adds a shape to a body: a child `Collider` without `PhysicsBody` joins the nearest ancestor
+    /// (compound collider); two simulating bodies want [`add_joint`](Self::add_joint). `material`
+    /// is the shape's own; `None` if stale.
     fn attach_collider(
         &mut self,
         body: BodyHandle,
@@ -117,28 +81,16 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// move. For kinematic bodies this is the standard way to drive them.
     fn set_transform(&mut self, handle: BodyHandle, position: Vec3, rotation: Quat);
 
-    /// What the body actually weighs, in kg. `None` for a stale handle.
-    ///
-    /// Worth asking rather than assuming: the descriptor says what was
-    /// requested, and this says what the solver built. #618 was filed
-    /// because those two had silently drifted apart.
+    /// What the body actually weighs in kg, `None` if stale — the descriptor is the request, this
+    /// is what was built (#618).
     fn mass(&self, handle: BodyHandle) -> Option<f32>;
 
-    /// Whether the solver has put this body to sleep. `None` for a stale
-    /// handle.
-    ///
-    /// Worth asking before applying anything per-step. A resting body is
-    /// excluded from the island solver, and waking it every step to hand
-    /// it a force it does not need turns a settled scene into one that
-    /// simulates forever — which is what a custom gravity field did until
-    /// it learned to ask this.
+    /// Whether the body sleeps, `None` if stale. Ask before applying per-step forces: waking
+    /// resting bodies keeps the scene simulating forever.
     fn is_sleeping(&self, handle: BodyHandle) -> Option<bool>;
 
-    /// The body's centre of mass, in body-local space. `None` for a stale
-    /// handle.
-    ///
-    /// The thing a compound body surprises authors with, and what a
-    /// physics debug view has to draw (#563).
+    /// Centre of mass in body space, `None` if stale — what surprises authors of compound bodies,
+    /// and what a debug view draws (#563).
     fn center_of_mass(&self, handle: BodyHandle) -> Option<Vec3>;
 
     /// Linear velocity in world space. `None` for stale handles or
@@ -148,71 +100,25 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// Sets linear velocity for dynamic bodies. No-op otherwise.
     fn set_linear_velocity(&mut self, handle: BodyHandle, velocity: Vec3);
 
-    /// Angular velocity in radians per second, about each world axis.
-    /// `None` for stale handles.
-    ///
-    /// The counterpart of [`linear_velocity`](Self::linear_velocity),
-    /// which existed alone. Spin is not derivable from anything else the
-    /// trait exposes, so without this "is angular damping working" is a
-    /// question with no way to ask it.
+    /// Angular velocity in rad/s per world axis, `None` if stale — without it "is angular damping
+    /// working" cannot be asked.
     fn angular_velocity(&self, handle: BodyHandle) -> Option<Vec3>;
 
     /// Sets angular velocity for dynamic bodies. No-op otherwise.
     fn set_angular_velocity(&mut self, handle: BodyHandle, velocity: Vec3);
 
-    /// Applies an instantaneous change in momentum.
-    ///
-    /// An impulse rather than a force, for anything that varies per step.
-    /// Rapier's forces persist until they are reset, so a force reapplied
-    /// every step accumulates — and resetting to avoid that would erase
-    /// whatever else had been applied. An impulse of `mass × acceleration
-    /// × dt` is exactly the same push over one step and composes with
-    /// everything around it.
-    ///
-    /// `wake` decides whether the body is roused to receive it. **Pass
-    /// `false` for anything applied every step.** Waking a body resets its
-    /// sleep timer, so a per-step impulse that wakes what it touches stops
-    /// the scene from ever settling — the body cannot reach sleep, because
-    /// the thing checking on it keeps knocking. That is not a slow path,
-    /// it is the whole scene solving forever.
-    ///
-    /// A sleeping body given an impulse with `wake: false` accumulates the
-    /// velocity without being simulated, so callers that skip sleeping
-    /// bodies should skip them outright rather than pass `false` and hope.
-    ///
-    /// No-op for stale handles and non-dynamic bodies.
+    /// Instantaneous momentum change — impulses, since rapier's forces persist and accumulate.
+    /// **`wake: false` for per-step pushes**, or bodies never sleep. No-op for stale or non-dynamic
+    /// bodies.
     fn apply_impulse(&mut self, handle: BodyHandle, impulse: Vec3, wake: bool);
 
-    /// Applies an instantaneous change in *angular* momentum.
-    ///
-    /// The rotational twin of [`apply_impulse`](Self::apply_impulse), and
-    /// everything said there about impulses versus forces, and about
-    /// `wake`, applies unchanged.
-    ///
-    /// # Why a rolling body wants this and not a push
-    ///
-    /// A ball driven by a linear impulse is *slid* along the ground and
-    /// spun only by the friction that catches up with it. It skids before
-    /// it rolls, it accelerates differently on ice than on stone for a
-    /// reason nobody authored, and it keeps sliding when you let go.
-    ///
-    /// A torque spins it, and the same friction turns that spin into
-    /// motion. That is what rolling is, and the contact does the work
-    /// instead of fighting it. Impulses stay for the things that really
-    /// are instantaneous pushes — a jump, a blast, a bat.
-    ///
-    /// The vector is an axis scaled by magnitude, in newton-metre-seconds,
-    /// world space.
-    ///
-    /// No-op for stale handles and non-dynamic bodies.
+    /// The angular twin of [`apply_impulse`](Self::apply_impulse), same `wake` rules. A ball driven
+    /// by linear impulses skids; a torque spins it and friction turns spin into rolling.
+    /// Axis × magnitude in N·m·s, world space; no-op for stale or non-dynamic bodies.
     fn apply_torque_impulse(&mut self, handle: BodyHandle, torque: Vec3, wake: bool);
 
-    /// Constrains two bodies to each other.
-    ///
-    /// Returns `None` when either body handle is stale, or when the
-    /// descriptor asks for something the backend cannot build — an
-    /// articulated joint closing a loop, most usefully. A `None` is a
-    /// refusal the caller can report, not a silent no-op.
+    /// Constrains two bodies; `None` for a stale handle or a joint the backend cannot build (an
+    /// articulated loop) — a refusal to report.
     fn add_joint(&mut self, desc: JointDesc) -> Option<JointHandle>;
 
     /// Removes a joint. Both bodies survive, unconstrained. Idempotent for
@@ -222,22 +128,12 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// Number of live joints, impulse and articulated together.
     fn joint_count(&self) -> usize;
 
-    /// Magnitude of the impulse the solver applied to hold a joint together
-    /// on the last step. `None` for a stale handle.
-    ///
-    /// This is the load on the constraint, and it is what
+    /// Impulse holding the joint on the last step, `None` if stale — what
     /// [`JointDesc::break_impulse`] is compared against.
     fn joint_impulse(&self, handle: JointHandle) -> Option<f32>;
 
-    /// Drains the collisions the last [`step`](Self::step) reported.
-    ///
-    /// Draining rather than peeking: a caller that reads every frame sees
-    /// each event once, and a caller that never reads does not accumulate
-    /// forever. The same contract as
-    /// [`take_broken_joints`](Self::take_broken_joints).
-    ///
-    /// Only colliders that asked for them produce any — see
-    /// [`ColliderInteraction::collision_events`].
+    /// Drains the last [`step`](Self::step)'s collisions, so each is seen once and unread ones do
+    /// not pile up. Only colliders with [`ColliderInteraction::collision_events`] produce any.
     fn take_collision_events(&mut self) -> Vec<CollisionEvent> {
         Vec::new()
     }
@@ -247,11 +143,7 @@ pub trait PhysicsBackend: Send + Sync + 'static {
         Vec::new()
     }
 
-    /// Drains the joints that broke during the last [`step`](Self::step).
-    ///
-    /// Draining rather than peeking, so a caller that reads it every frame
-    /// sees each break exactly once and a caller that never reads it does
-    /// not accumulate forever.
+    /// Drains joints broken in the last [`step`](Self::step) — each seen once, none accumulating.
     fn take_broken_joints(&mut self) -> Vec<BrokenJoint>;
 
     /// Casts a ray and returns the closest hit, if any. `dir` is expected
@@ -259,16 +151,8 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     fn query_ray(&self, origin: Vec3, dir: Vec3, max_t: f32, filter: QueryFilter)
     -> Option<RayHit>;
 
-    /// Every hit along a ray, for something that pierces.
-    ///
-    /// Handed to a callback rather than collected: this runs per frame
-    /// per shooter, and a `Vec` per call is an allocation per shot.
-    /// Returning `false` stops the walk.
-    ///
-    /// **Unordered.** The pipeline walks its acceleration structure, not
-    /// the ray, so hits arrive in whatever order the tree holds them.
-    /// A caller that needs nearest-first sorts what it kept, which is
-    /// cheaper than sorting what it discarded.
+    /// Every hit along a ray, to a callback (a `Vec` per shot is an allocation per shot); `false`
+    /// stops. **Unordered** — the tree decides; sort what you keep.
     fn query_ray_all(
         &self,
         origin: Vec3,
@@ -278,17 +162,8 @@ pub trait PhysicsBackend: Send + Sync + 'static {
         out: &mut dyn FnMut(RayHit) -> bool,
     );
 
-    /// Sweeps a shape along `dir` and returns the first thing it meets —
-    /// a *shape cast*.
-    ///
-    /// The query a ray cannot answer. A ray is a line of zero width: it
-    /// slips between two crates a body could never fit through, finds the
-    /// lip of a step rather than the step, and misses the thin wall a
-    /// fast projectile would hit. Sweeping the shape that is actually
-    /// moving is what a character controller tests a move with, and what
-    /// stops something quick from tunnelling.
-    ///
-    /// `dir` need not be normalised; `max_t` is measured in its lengths.
+    /// Sweeps a shape along `dir`, returning the first hit: a zero-width ray slips through gaps a
+    /// body cannot and misses thin walls. `dir` need not be normalised; `max_t` is in its lengths.
     fn query_sweep(
         &self,
         shape: ShapeAt<'_>,
@@ -297,19 +172,11 @@ pub trait PhysicsBackend: Send + Sync + 'static {
         filter: QueryFilter,
     ) -> Option<ShapeHit>;
 
-    /// The nearest point on the nearest body, within `max_distance`.
-    ///
-    /// Also answers whether the queried point is *inside* something,
-    /// which is how a body that spawned in a wall finds its way out.
+    /// Nearest point on the nearest body within `max_distance`, and whether the point is inside it.
     fn query_point(&self, point: Vec3, max_distance: f32, filter: QueryFilter) -> Option<PointHit>;
 
-    /// Every body a shape overlaps where it stands, moving nothing.
-    ///
-    /// An explosion radius, a selection box, "who is standing in this
-    /// room". Callback for the same reason [`query_ray_all`] takes one,
-    /// and returning `false` stops the walk.
-    ///
-    /// [`query_ray_all`]: Self::query_ray_all
+    /// Every body a shape overlaps where it stands — explosions, selection boxes. Callback as
+    /// [`query_ray_all`](Self::query_ray_all); `false` stops.
     fn query_overlaps(
         &self,
         shape: ShapeAt<'_>,
@@ -317,16 +184,7 @@ pub trait PhysicsBackend: Send + Sync + 'static {
         out: &mut dyn FnMut(BodyHandle) -> bool,
     );
 
-    /// Appends line segments describing the solver's own state — see
-    /// [`DebugLine`].
-    ///
-    /// Appends rather than returns, so a caller drawing every frame reuses
-    /// one buffer instead of allocating a fresh `Vec` sixty times a
-    /// second.
-    ///
-    /// Defaults to producing nothing. A backend that cannot introspect
-    /// itself should say nothing rather than invent an approximation: the
-    /// overlay exists to report ground truth, and a plausible drawing of a
-    /// state the solver is not in is worse than an empty viewport.
+    /// Appends segments describing the solver's state ([`DebugLine`]) into a reused buffer.
+    /// Defaults to nothing: a backend that cannot introspect must not invent a plausible picture.
     fn debug_lines(&self, _categories: DebugCategories, _out: &mut Vec<DebugLine>) {}
 }

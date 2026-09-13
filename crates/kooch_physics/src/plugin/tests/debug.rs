@@ -1,9 +1,5 @@
-//! The debug overlay against a real world, not a mocked one.
-//!
-//! The unit tests next to the adapter cover the colour maths and the flag
-//! mapping. These check the thing that actually matters: that asking the
-//! solver to describe itself produces geometry where the solver has
-//! something to say, and nothing where it does not.
+//! The debug overlay against a real world: geometry where the solver has something to say, nothing
+//! where it doesn't.
 
 use super::*;
 

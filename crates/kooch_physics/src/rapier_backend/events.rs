@@ -1,17 +1,6 @@
-//! Collecting rapier's events during a step, for delivery after it.
-//!
-//! # Why a mutex over a plain `Vec`
-//!
-//! Rapier's [`EventHandler`] takes `&self`, and requires `Send + Sync`: it
-//! is called from inside the step, potentially from the solver's worker
-//! threads. So a collector needs interior mutability that is also `Sync`.
-//!
-//! Rapier's own `ChannelEventCollector` solves this with crossbeam
-//! channels. A [`Mutex<Vec<_>>`] does the same job without another
-//! dependency, and the contention is a handful of pushes per step against a
-//! lock nothing else wants.
-//!
-//! [`EventHandler`]: rapier3d::prelude::EventHandler
+//! Collects rapier events during a step. [`EventHandler`](rapier3d::prelude::EventHandler) takes
+//! `&self`, `Send + Sync`, from worker threads; a [`Mutex<Vec<_>>`] does crossbeam's job without
+//! the dependency.
 
 use std::sync::Mutex;
 
@@ -20,13 +9,8 @@ use rapier3d::prelude::{
     CollisionEventFlags, ContactPair, EventHandler, RigidBodyHandle, RigidBodySet,
 };
 
-/// What one step reported, in rapier's own terms.
-///
-/// Kept in rapier handles here and translated to [`BodyHandle`] on drain:
-/// the translation needs the backend's mapping, and the handler runs where
-/// the backend is already borrowed by the step.
-///
-/// [`BodyHandle`]: crate::backend::BodyHandle
+/// One step's reports in rapier handles, translated to [`BodyHandle`](crate::backend::BodyHandle)
+/// on drain, where the mapping is borrowable.
 #[derive(Default)]
 pub(super) struct EventCollector {
     collisions: Mutex<Vec<RawCollision>>,
@@ -48,11 +32,8 @@ pub(super) struct RawForce {
 }
 
 impl EventCollector {
-    /// Takes everything collected since the last drain.
-    ///
-    /// A poisoned lock is treated as empty rather than propagated: a panic
-    /// in a solver worker is already being reported, and turning it into a
-    /// second panic inside the drain buries the first.
+    /// Takes everything collected; a poisoned lock reads empty rather than burying the worker's
+    /// panic under a second.
     pub(super) fn drain_collisions(&self) -> Vec<RawCollision> {
         self.collisions
             .lock()
@@ -121,10 +102,7 @@ fn peak_force(pair: &ContactPair) -> f32 {
         .fold(0.0f32, f32::max)
 }
 
-/// Which rigid body owns a collider, if any.
-///
-/// A sensor with no parent body is legal — a static trigger volume authored
-/// without a `PhysicsBody` — and produces `None` rather than an error.
+/// The rigid body owning a collider; `None` for a parentless static trigger.
 pub(super) fn parent_of(
     colliders: &ColliderSet,
     collider: RapierColliderHandle,

@@ -1,38 +1,12 @@
-//! Joints — two bodies held together by a constraint.
-//!
-//! A compound collider ([`attach_collider`]) covers "one body, several
-//! shapes". A joint covers the other half: *two* bodies that both simulate,
-//! kept in a fixed relationship by the solver. Doors, ragdolls, suspension,
-//! robotic arms and rope bridges are all this.
-//!
-//! # The one axis limits and motors act on
-//!
-//! Rapier addresses limits and motors per degree of freedom, and a
-//! spherical joint has three angular ones. Exposing all six per joint would
-//! be six times the Inspector surface for a case that almost never comes
-//! up, so a [`JointDesc`] carries **one** limit and **one** motor, applied
-//! to the joint's *primary free axis*:
-//!
-//! | Kind | Primary axis |
-//! |---|---|
-//! | [`JointKind::Revolute`], [`JointKind::Spherical`], [`JointKind::Generic`] | the angular axis |
-//! | [`JointKind::Prismatic`], [`JointKind::PinSlot`] | the linear axis |
-//! | [`JointKind::Fixed`], [`JointKind::Rope`], [`JointKind::Spring`] | none — both are ignored |
-//!
-//! A ragdoll shoulder wanting a swing *cone* rather than a hinge range is
-//! the case this does not cover; it wants three motors, and it can have
-//! them when something asks for it.
-//!
-//! [`attach_collider`]: super::PhysicsBackend::attach_collider
+//! Two simulating bodies held by a constraint. A [`JointDesc`] has one limit and one motor on the
+//! primary free axis: angular for revolute/spherical/generic, linear for prismatic/pin-slot, none
+//! for fixed/rope/spring.
 
 use glam::Vec3;
 
 use super::body::BodyHandle;
 
-/// Which constraint the joint applies.
-///
-/// Every variant maps onto a Rapier joint builder of the same name, so the
-/// set is exactly what the solver offers rather than a curated subset.
+/// Which constraint applies; every variant maps to the Rapier builder of the same name.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum JointKind {
     /// Welds both bodies: all six degrees of freedom removed.
@@ -53,20 +27,11 @@ pub enum JointKind {
         stiffness: f32,
         damping: f32,
     },
-    /// Translation along `axis` plus rotation about it — a cylindrical
-    /// joint. Cams, slotted linkages, a bolt in an oversized hole.
-    ///
-    /// Rapier names this one only in 2D; in 3D the backend spells it out
-    /// through rapier's generic joint, because "pin slot" in a plane and
-    /// "cylindrical" in space are the same four locked degrees of freedom
-    /// counted differently.
+    /// Translation along `axis` plus rotation about it — a cylindrical joint. Rapier names it only
+    /// in 2D, so the backend spells it through the generic joint.
     PinSlot { axis: Vec3 },
-    /// An arbitrary set of locked degrees of freedom, for the shapes the
-    /// named kinds do not cover.
-    ///
-    /// `locked_axes` is Rapier's `JointAxesMask`: bits 0–2 are the linear
-    /// X/Y/Z axes, bits 3–5 the angular ones. This is the escape hatch, not
-    /// the thing an author reaches for first.
+    /// Arbitrary locked degrees of freedom, Rapier's `JointAxesMask`: bits 0–2 linear X/Y/Z, 3–5
+    /// angular. The escape hatch.
     Generic { locked_axes: u8 },
 }
 
@@ -82,12 +47,8 @@ pub enum MotorModel {
     ForceBased,
 }
 
-/// A motor driving the joint's primary free axis.
-///
-/// Position and velocity targets are not exclusive: Rapier's motor solves
-/// both terms together, so a non-zero `stiffness` with a zero
-/// `target_velocity` is a spring to `target_position`, and a zero
-/// `stiffness` with a non-zero `target_velocity` is a free-running drive.
+/// A motor on the primary free axis. Rapier solves position and velocity together: stiffness with
+/// zero velocity is a spring, velocity with zero stiffness a drive.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct JointMotor {
     pub model: MotorModel,
@@ -119,12 +80,8 @@ impl Default for JointMotor {
 }
 
 impl JointMotor {
-    /// Whether this motor has any effect at all.
-    ///
-    /// Both coefficients zero means the motor contributes nothing to the
-    /// solve, so the backend can skip configuring it — and, more usefully,
-    /// an author who enabled the motor and left the defaults gets a warning
-    /// instead of a joint that mysteriously does nothing.
+    /// Whether the motor does anything; both coefficients zero is skipped, and the author who
+    /// enabled it gets a warning.
     pub fn is_effective(&self) -> bool {
         self.stiffness != 0.0 || self.damping != 0.0
     }
@@ -151,29 +108,14 @@ pub struct JointDesc {
     pub limits: Option<[f32; 2]>,
     /// Motor on the primary free axis. `None` leaves the axis passive.
     pub motor: Option<JointMotor>,
-    /// Solve this as a reduced-coordinate articulation rather than as an
-    /// impulse constraint.
-    ///
-    /// A real trade-off, not an implementation detail: an impulse joint is
-    /// cheap and drifts slightly under load; a multibody joint cannot drift
-    /// because the stretched configuration is not representable, and costs
-    /// more per joint. A chain that must not stretch — a robotic arm, an
-    /// articulated vehicle — wants this. Rapier also refuses to build a
-    /// multibody containing a cycle, so a closed loop must stay on impulse
-    /// joints.
+    /// Solve as a reduced-coordinate multibody: it cannot drift and costs more per joint — for
+    /// chains that must not stretch. Rapier rejects cycles, so closed loops stay on impulse joints.
     pub articulated: bool,
-    /// Whether the two jointed bodies still collide with each other.
-    ///
-    /// Off by default, because the common case is two parts that overlap at
-    /// the joint: a door leaf inside its frame collides with it forever if
-    /// this is on.
+    /// Whether the jointed bodies still collide; off, since a door leaf overlaps its frame at the
+    /// hinge.
     pub contacts_enabled: bool,
-    /// Impulse magnitude above which the joint breaks, or non-finite for
-    /// "never breaks".
-    ///
-    /// Rapier has no breaking of its own — this is the engine reading the
-    /// impulse the solver already computed and removing the constraint when
-    /// it is exceeded. Reading the solver's output is not a second solver.
+    /// Impulse above which the joint breaks, non-finite for never. The engine reads the solver's
+    /// impulse; Rapier has no breaking.
     pub break_impulse: f32,
 }
 
@@ -203,33 +145,22 @@ impl JointDesc {
 }
 
 impl JointKind {
-    /// Whether this kind has an axis for a limit or a motor to act on.
-    ///
-    /// A fixed joint has no free axis; a rope's length and a spring's rest
-    /// length already *are* its constraint. The Inspector hides both
-    /// controls for these, and the sync pass declines to pass them, so the
-    /// rule is stated once and enforced on both sides of the seam.
+    /// Whether this kind has an axis to limit or drive — the rule the Inspector and sync pass both
+    /// enforce.
     pub fn has_primary_axis(&self) -> bool {
         !matches!(self, Self::Fixed | Self::Rope { .. } | Self::Spring { .. })
     }
 }
 
 slotmap::new_key_type! {
-    /// Opaque handle for one joint the backend owns.
-    ///
-    /// Its own key type rather than a reuse of [`BodyHandle`] for the usual
-    /// reason: removing a joint must not be expressible as removing a body,
-    /// and the type system is where that is cheapest to enforce.
+    /// Handle for one joint, its own key type so removing a joint cannot be written as removing a
+    /// body.
     pub struct JointHandle;
 }
 
-/// A joint that broke during a step, reported by [`take_broken_joints`].
-///
-/// Carries the bodies rather than only the handle because the handle is
-/// already dead by the time anyone reads this — the joint was removed. What
-/// a caller wants to know is *what came apart*.
-///
-/// [`take_broken_joints`]: super::PhysicsBackend::take_broken_joints
+/// A joint that broke during a step, from
+/// [`PhysicsBackend::take_broken_joints`](super::PhysicsBackend::take_broken_joints); it names the
+/// bodies, since the joint's handle is already dead.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BrokenJoint {
     pub joint: JointHandle,

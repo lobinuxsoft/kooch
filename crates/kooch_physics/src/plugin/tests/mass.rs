@@ -1,8 +1,4 @@
-//! Mass properties: what a body weighs, and where its mass sits.
-//!
-//! #618 was filed as "a compound body's centre of mass is in the middle
-//! and it looks slow". Half of that was correct physics; the other half
-//! was a units bug nobody had noticed — `mass` did not mean kilograms.
+//! Mass properties: weight and where it sits (#618).
 
 use super::*;
 
@@ -88,10 +84,7 @@ fn attach_child_collider(resources: &mut Resources, parent: Entity, offset: Vec3
     child
 }
 
-/// The units bug at the heart of #618: rapier's `additional_mass` is
-/// *added* to the mass a collider's volume implies, so the authored number
-/// meant a different weight for every shape. A two-metre sphere authored
-/// at 1 kg weighed thirty-four.
+/// `mass` means kilograms: rapier's `additional_mass` made a 1 kg two-metre sphere weigh 34 (#618).
 #[test]
 fn a_body_weighs_exactly_what_was_authored_whatever_its_shape() {
     for radius in [0.1, 0.5, 2.0] {
@@ -178,10 +171,7 @@ fn an_explicit_centre_of_mass_is_honoured() {
     );
 }
 
-/// `density` is authoring input for the Inspector's Calculate mass button
-/// and nothing else reads it. If it reached the spec, editing it would
-/// retire the body — dropping its velocity mid-play for a number the
-/// solver never sees.
+/// `density` never reaches the spec, or editing it retires the body and drops its velocity.
 #[test]
 fn editing_the_density_does_not_rebuild_the_body() {
     let mut resources = world();

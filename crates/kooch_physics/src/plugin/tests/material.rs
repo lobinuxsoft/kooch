@@ -1,9 +1,5 @@
-//! Friction, bounce and damping doing what the numbers say.
-//!
-//! Asserted against each other rather than against absolute distances.
-//! What an author needs is "more friction stops it sooner"; the exact
-//! stopping distance is a property of rapier's solver and would make these
-//! tests fail on a version bump for no reason anyone cares about.
+//! Friction, bounce and damping compared against each other, not absolute distances that change
+//! with rapier versions.
 
 use super::*;
 
@@ -157,12 +153,8 @@ fn more_restitution_bounces_higher() {
     );
 }
 
-/// Acceptance: "angular damping brings a spun body to rest."
-///
-/// Measured as the angular velocity that survives, which is the quantity
-/// damping acts on. Accumulated rotation would be wrong twice over: a
-/// quaternion angle wraps, and a body that has already stopped keeps
-/// whatever angle it stopped at.
+/// Angular damping brings a spun body to rest, measured as surviving angular velocity — accumulated
+/// angle wraps.
 #[test]
 fn angular_damping_stops_a_spin() {
     fn spin_left(angular_damping: f32) -> f32 {

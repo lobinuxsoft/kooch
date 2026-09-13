@@ -239,12 +239,8 @@ fn a_body_can_carry_several_shapes() {
     assert_eq!(backend.body_count(), 1);
 }
 
-/// A child entity contributing a collider can be rotated relative to the
-/// body. Dropping that would silently axis-align every attached shape.
-///
-/// Probed with a ray rather than by reading the shape back: the rotation
-/// only matters because it changes what the shape occupies, and a ray is
-/// the observable form of that.
+/// A rotated child collider stays rotated, probed with a ray because occupancy is what rotation
+/// changes.
 #[test]
 fn an_attached_shape_keeps_its_rotation() {
     /// Fires at a point that a Y-aligned capsule cannot reach, but one

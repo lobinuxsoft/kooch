@@ -1,28 +1,5 @@
-//! Reconciling authored [`Joint`] components with the solver's joints.
-//!
-//! # Why joints are not addressed by a slot component
-//!
-//! Bodies are: a [`SolverBody`] carries the slot, because both directions
-//! of the mapping are walked every frame — sync asks "does this entity have
-//! a body", writeback asks "which entity owns this body". A joint has no
-//! writeback. Nothing reads a joint back onto the ECS, so the reverse
-//! direction never happens and the component would be bookkeeping nobody
-//! queries.
-//!
-//! What is left is entity → joint, once per frame, over a set far smaller
-//! than the body set. A map is the honest shape for that.
-//!
-//! # How a joint knows to rebuild
-//!
-//! Not by comparing itself to the solver, but by remembering the two
-//! [`BodyHandle`]s it was built from. A body handle changes whenever its
-//! body is rebuilt — an Inspector edit, a scale change, and crucially a
-//! stop, which drops every [`SolverBody`] and rebuilds the world from the
-//! restored ECS. So "my bodies' handles moved" already means everything
-//! "the play session ended" would have to mean, and the joint set follows
-//! the body set without a second lifecycle to keep in step.
-//!
-//! [`SolverBody`]: super::world::SolverBody
+//! Reconciles authored [`Joint`]s with an entity → joint map (nothing reads joints back). A joint
+//! rebuilds when its [`BodyHandle`]s change, which already covers edits and stop.
 
 use std::collections::{HashMap, HashSet};
 
@@ -45,21 +22,11 @@ struct JointSlot {
     /// The bodies it was built from. These moving means the bodies were
     /// rebuilt, and a joint into a dead handle holds nothing.
     bodies: (BodyHandle, BodyHandle),
-    /// The entities those bodies belong to.
-    ///
-    /// Kept rather than re-derived from [`Self::spec`], because a broken
-    /// joint has to name them and the spec holds references, which resolve
-    /// to entities only while their targets are loaded. A joint the solver
-    /// built had both; that fact should not have to be rediscovered at
-    /// report time, where failing would be unreportable.
+    /// The bodies' entities, kept because a broken joint must name them and the spec's references
+    /// only resolve while loaded.
     targets: (Entity, Entity),
-    /// The live joint, or `None` when the backend refused to build it or
-    /// it broke under load.
-    ///
-    /// `None` is deliberately sticky: a joint that broke must not come back
-    /// the next frame, and the spec has not changed, so nothing here asks
-    /// for it. Pressing stop rebuilds the bodies, which moves the handles,
-    /// which rebuilds the joint.
+    /// The live joint, `None` when refused or broken — sticky, so a broken joint stays broken until
+    /// stop rebuilds the bodies.
     joint: Option<JointHandle>,
 }
 
@@ -111,22 +78,16 @@ struct Authored {
     targets: Option<(Entity, Entity)>,
 }
 
-/// Reconciles the solver's joints with the authored [`Joint`] components.
-///
-/// Runs after bodies are reconciled, and for the same reason bodies are
-/// reconciled every frame rather than on play: a scene loaded in the editor
-/// should already hold together.
+/// Reconciles joints after bodies, every frame, so a scene loaded in the editor already holds
+/// together.
 pub(super) fn sync_joints(resources: &Resources, world: &mut PhysicsWorld) {
     let authored = read_authored(resources, world);
     retire_stale_joints(world, &authored);
     build_missing_joints(world, &authored);
 }
 
-/// Reads the authored joints, resolving both entity references to bodies.
-///
-/// Deterministic order for the same reason body creation is: joint
-/// insertion order is observable in the solver, and component storage is a
-/// hash map whose iteration order varies between runs.
+/// Authored joints with both references resolved, in deterministic order: insertion order is
+/// observable and storage is a hash map.
 fn read_authored(resources: &Resources, world: &PhysicsWorld) -> Vec<Authored> {
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Vec::new();
@@ -220,13 +181,8 @@ fn build_missing_joints(world: &mut PhysicsWorld, authored: &[Authored]) {
     }
 }
 
-/// Says once that a joint names something it cannot reach.
-///
-/// Not an error: a reference into a scene that is not resident is the
-/// normal state under streaming, and a joint whose partner has not spawned
-/// yet has to wait rather than be dropped. It is still worth saying,
-/// because the other cause — an entity named in the Inspector that has no
-/// `PhysicsBody` — looks identical from here and is a genuine mistake.
+/// Warns once about an unreachable reference: normal while streaming, but also what an entity
+/// without `PhysicsBody` looks like.
 fn warn_unresolved(world: &mut PhysicsWorld, entry: &Authored) {
     if !world.joints_mut().warned.insert(entry.entity) {
         return;
@@ -260,11 +216,8 @@ fn desc_for(spec: &Joint, (body_a, body_b): (BodyHandle, BodyHandle)) -> JointDe
     }
 }
 
-/// Removes the joints that broke during the last step.
-///
-/// The slot stays, with no joint in it: the component is still authored, so
-/// forgetting the slot would have the next sync build the joint again and
-/// break it again, forever. See [`JointSlot::joint`].
+/// Removes broken joints but keeps the slot, or the next sync rebuilds and breaks it forever. See
+/// [`JointSlot::joint`].
 pub(super) fn collect_broken_joints(world: &mut PhysicsWorld) {
     let broken = world.backend_mut().take_broken_joints();
     if broken.is_empty() {

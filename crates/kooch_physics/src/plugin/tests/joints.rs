@@ -281,13 +281,7 @@ fn a_fixed_joint_holds_a_body_up_against_gravity() {
     );
 }
 
-/// Acceptance: "A door hinged with a revolute joint swings and stops at its
-/// limits."
-///
-/// Asserted against an unlimited control rather than against rapier's
-/// zero-angle convention: what the author cares about is that the limit
-/// stops the door sooner than no limit would, and that it stops near the
-/// value they typed.
+/// A limited revolute door stops sooner than an unlimited one, near the typed limit.
 #[test]
 fn a_hinged_door_swings_and_stops_at_its_limit() {
     fn swing(limits: Option<f32>) -> f32 {
@@ -303,10 +297,8 @@ fn a_hinged_door_swings_and_stops_at_its_limit() {
                 // A horizontal hinge, so gravity has a torque about it and
                 // the door actually swings.
                 axis: Vec3::Z,
-                // Both anchors land on the same world point, half a metre
-                // from the door's centre of mass — a hinge through the
-                // centre has no lever arm, and the door would just sit
-                // there however free the joint is.
+                // Anchors half a metre from the centre of mass: a hinge through it has no lever
+                // arm.
                 anchor_a: Vec3::new(1.0, 0.0, 0.0),
                 anchor_b: Vec3::new(-0.5, 0.0, 0.0),
                 limits_enabled: limits.is_some(),
@@ -428,10 +420,7 @@ fn a_motorised_hinge_drives_a_wheel() {
     );
 }
 
-/// Acceptance: "Breaking a joint above its threshold detaches the body."
-///
-/// A 1 kg body under gravity loads its joint with about 0.16 N·s per 60 Hz
-/// step, so a threshold well under that breaks on the first loaded step.
+/// A joint breaks above its threshold: 1 kg loads ~0.16 N·s per 60 Hz step.
 #[test]
 fn a_joint_breaks_above_its_threshold_and_stays_broken() {
     let mut resources = world();
@@ -498,10 +487,8 @@ fn a_joint_below_its_threshold_holds() {
     assert!(position(&resources, load).y > 8.0, "the load fell anyway");
 }
 
-/// Stopping drops every `SolverBody`, so the world is rebuilt from the
-/// restored ECS. The joints have to come back with it — including one that
-/// broke during the session, which is the whole reason the registry keys on
-/// body handles rather than on a flag it would have to clear by hand.
+/// Stop rebuilds bodies, and joints return — including broken ones, since the registry keys on body
+/// handles.
 #[test]
 fn stopping_rebuilds_a_joint_that_broke_while_playing() {
     let mut resources = world();
@@ -537,10 +524,7 @@ fn stopping_rebuilds_a_joint_that_broke_while_playing() {
     );
 }
 
-/// A Joint added from the component menu names no bodies at all. It has
-/// to warn and do nothing — the behaviour #655 established was correct
-/// and must survive the move to `EntityRef`, which is what let the
-/// component be added in the first place.
+/// A menu-added Joint naming no bodies warns and does nothing (#655).
 #[test]
 fn a_joint_naming_no_bodies_builds_nothing() {
     let mut resources = world();

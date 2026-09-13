@@ -1,10 +1,6 @@
-//! [`Collider`] — the shape an entity presents to the solver, and how
-//! that surface behaves on contact.
-//!
-//! Same discriminant rule as [`PhysicsBody`](super::PhysicsBody): `shape` is
-//! a `u32` with a choice set, because reflection cannot express an enum.
-//! The choice set, and which fields each shape reads, live in
-//! [`shapes`]; the surface and filtering vocabularies live in [`groups`].
+//! [`Collider`]: the shape an entity presents and how its surface behaves. `shape` is a
+//! discriminant ([`PhysicsBody`](super::PhysicsBody)); choices live in [`shapes`], surface and
+//! filtering in [`groups`].
 
 mod groups;
 mod shapes;
@@ -38,22 +34,9 @@ use crate::backend::{
     ColliderInteraction, ColliderMeshCache, CollisionShape, InteractionMask, SurfaceMaterial,
 };
 
-/// The collision geometry attached to a body.
-///
-/// Named for what it becomes rather than for its geometry: a collider is
-/// eventually geometry *plus* material and filtering (friction,
-/// restitution, sensor flag, collision groups — #137), while
-/// [`CollisionShape`] stays the pure geometry the backend consumes.
-///
-/// Only the fields belonging to the selected `shape` are read, and only
-/// those are *shown* — see the `*_WHEN` conditions above. The rest keep
-/// whatever they were, so switching shape back and forth does not lose the
-/// other variant's parameters. Hiding is display only: every field is
-/// still stored, still serialised, still round-trips through a scene.
-///
-/// # Default
-///
-/// A unit sphere.
+/// Collision geometry plus material and filtering (#137); [`CollisionShape`] stays pure geometry.
+/// Only the selected shape's fields are read and shown; the rest keep their values. Default: a unit
+/// sphere.
 #[derive(Debug, Clone, Copy, Reflect)]
 #[reflect(category = "Physics")]
 pub struct Collider {
@@ -69,18 +52,10 @@ pub struct Collider {
     /// Half the length along Y, excluding a capsule's caps.
     #[reflect(shown_when = HALF_HEIGHT_WHEN)]
     pub half_height: f32,
-    /// How far the rounded cylinder's rim is filleted.
-    ///
-    /// A sharp rim gives the solver one contact point to resolve, and a
-    /// wheel or a barrel rolling over a box edge catches on it. The
-    /// fillet costs nothing and is what stops the snag.
+    /// Rim fillet of the rounded cylinder — a sharp rim catches on box edges.
     #[reflect(shown_when = BORDER_RADIUS_WHEN)]
     pub border_radius: f32,
-    /// Which way the half-space's solid side faces away from.
-    ///
-    /// Normalised when the shape is built, and defaulted to up when it
-    /// has no direction to give — a plane with no side is one rapier
-    /// cannot build and the author cannot see.
+    /// Direction the half-space's solid side faces away from; normalised at build, up when zero.
     #[reflect(shown_when = NORMAL_WHEN)]
     pub normal: Vec3,
     /// First corner of a segment or a triangle, in the shape's local
@@ -93,38 +68,22 @@ pub struct Collider {
     /// Third corner of a triangle.
     #[reflect(shown_when = POINT_C_WHEN)]
     pub point_c: Vec3,
-    /// The mesh a mesh-derived shape is built from.
-    ///
-    /// A hull, a decomposition or a trimesh cannot be typed in, so they
-    /// name a mesh and something outside physics resolves it — see
-    /// [`ColliderMeshCache`]. Usually the same mesh the entity draws, and
-    /// deliberately not assumed to be: colliding against a simplified
-    /// stand-in is the whole point of authoring it separately.
+    /// The mesh a hull, decomposition or trimesh is built from, resolved outside physics
+    /// ([`ColliderMeshCache`]) — often a simplified stand-in, not the drawn mesh.
     #[reflect(shown_when = MESH_WHEN)]
     #[reflect(asset = "kooch_render::meshlet::asset::MeshletMesh")]
     pub mesh: Option<Guid>,
-    /// Edge length of one voxel cell.
-    ///
-    /// The cost knob: halving it multiplies the cell count by eight, and
-    /// the voxel shape only beats a trimesh while it stays coarse.
+    /// Voxel edge length: halving it is 8× the cells, and voxels only beat a trimesh while coarse.
     #[reflect(shown_when = VOXEL_SIZE_WHEN)]
     pub voxel_size: f32,
-    /// Fill the voxelised mesh's interior, not only its shell.
-    ///
-    /// A shell is what a hollow prop wants; a body dropped *inside* a
-    /// shell passes straight out through the other side.
+    /// Fill the interior, not only the shell — a body inside a shell passes straight out.
     #[reflect(shown_when = VOXEL_SOLID_WHEN)]
     pub voxel_solid: bool,
     /// Resistance to sliding. 0 is frictionless; 1 is about rubber on dry
     /// tarmac. Above 1 is legal and useful for gameplay.
     pub friction: f32,
-    /// How this collider's friction combines with the other one's. One of
-    /// the `COMBINE_*` constants.
-    ///
-    /// **The pushier claim wins.** Rapier resolves a pair by taking the
-    /// higher of the two discriminants, so a collider on Average against
-    /// one on Max gets Max. A rule is less "how my surface behaves" than
-    /// "how I insist on being combined".
+    /// How friction combines, a `COMBINE_*` constant. **The pushier claim wins**: rapier takes the
+    /// higher discriminant.
     #[reflect(choices = COMBINE_CHOICES)]
     pub friction_rule: u32,
     /// Bounce. 0 absorbs the impact; 1 returns it, so a ball comes back to
@@ -134,56 +93,33 @@ pub struct Collider {
     /// max-wins resolution as `friction_rule`.
     #[reflect(choices = COMBINE_CHOICES)]
     pub restitution_rule: u32,
-    /// Report overlap and never push — a trigger volume.
-    ///
-    /// A sensor is not a collider that gets ignored: rapier computes no
-    /// contact manifold for it at all, so its events carry no contact
-    /// information. Checkpoints, damage zones, detection ranges.
+    /// Report overlap, never push — checkpoints, damage zones. No manifold, so no contact data.
     pub sensor: bool,
-    /// Raise an event when this collider starts or stops touching
-    /// something.
-    ///
-    /// Off by default, and that is the design rather than an oversight:
-    /// events are opt-in per collider in rapier, so a scene pays only for
-    /// what it listens to.
+    /// Event on touch start and stop; off, since rapier's events are opt-in and a scene pays for
+    /// what it hears.
     pub collision_events: bool,
-    /// Raise an event when contact force exceeds
-    /// `contact_force_threshold`.
-    ///
-    /// This is what tells "brushed the wall" from "hit it hard enough to
-    /// take damage" without inspecting contacts every frame.
+    /// Event above `contact_force_threshold` — "hit hard enough" without per-frame contact
+    /// inspection.
     pub contact_force_events: bool,
     /// The force, in newtons, above which a contact is worth reporting.
     #[reflect(shown_when = CONTACT_FORCE_WHEN)]
     pub contact_force_threshold: f32,
-    /// Which groups this collider belongs to.
-    ///
-    /// A pair is considered only when each side's memberships intersect the
-    /// other's filter — **both** directions, so being in a group the other
-    /// side looks for is not enough on its own.
+    /// Groups this collider belongs to; a pair needs **both** sides' memberships to meet the
+    /// other's filter.
     #[reflect(bits = GROUP_BITS)]
     pub collision_memberships: u32,
     /// Which groups this collider will collide with.
     #[reflect(bits = GROUP_BITS)]
     pub collision_filter: u32,
-    /// Which groups this collider is *solved* against, out of those it
-    /// collides with.
-    ///
-    /// The pair of masks is the point: a projectile that should detect a
-    /// wall without being stopped by it shares the wall's collision groups
-    /// and not its solver groups.
+    /// Groups it is solved against, of those it collides with — detect a wall without being stopped
+    /// by it.
     #[reflect(bits = GROUP_BITS)]
     pub solver_memberships: u32,
     /// Which groups this collider will be pushed by.
     #[reflect(bits = GROUP_BITS)]
     pub solver_filter: u32,
-    /// The shape's centre, in the entity's local space.
-    ///
-    /// Moves the geometry inside the body without moving the body. A
-    /// model whose pivot is not at its centre of volume needs this: a
-    /// character pivoted at the feet wants its capsule half a body up, and
-    /// a door pivoted on the hinge wants its box beside it rather than
-    /// around it.
+    /// Shape centre in local space, moving geometry without the body — a feet-pivoted character's
+    /// capsule sits half a body up.
     pub center: Vec3,
 }
 
@@ -259,16 +195,9 @@ impl Collider {
         }
     }
 
-    /// The authored identity of this collider's geometry.
-    ///
-    /// POD and comparable, so the sync pass can decide "the shape
-    /// changed" without resolving a mesh or hashing a point cloud.
-    /// `meshes` supplies the epoch that makes a mesh *arriving* count as
-    /// a change; `None` reads as "nothing has answered yet".
-    /// The spec for this collider on `entity`.
-    ///
-    /// Takes the entity because a generated mesh is addressed by the one
-    /// that owns it — see [`MeshKey`](crate::backend::MeshKey).
+    /// This collider's POD spec on `entity`, comparable without resolving a mesh; `meshes` supplies
+    /// the epoch that makes an arriving mesh a change. Takes the entity, since generated meshes are
+    /// addressed by it ([`MeshKey`](crate::backend::MeshKey)).
     pub fn shape_spec(
         &self,
         entity: kooch_ecs::entity::Entity,
@@ -294,11 +223,8 @@ impl Collider {
         }
     }
 
-    /// How this collider's geometry is addressed.
-    ///
-    /// An own-mesh shape ignores the `mesh` field entirely: its
-    /// geometry belongs to the entity, and reading a GUID there would
-    /// send a walk after a file that does not exist.
+    /// How the geometry is addressed; own-mesh shapes ignore `mesh`, which would chase a
+    /// nonexistent file.
     fn mesh_key(&self, entity: kooch_ecs::entity::Entity) -> Option<crate::backend::MeshKey> {
         match is_own_mesh(self.shape) {
             true => Some(crate::backend::MeshKey::Owned(entity)),

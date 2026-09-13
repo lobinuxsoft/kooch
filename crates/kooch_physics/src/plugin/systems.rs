@@ -50,20 +50,8 @@ struct Authored {
     rotation: Quat,
 }
 
-/// Reconciles the backend's bodies with the authored components.
-///
-/// Runs every frame, playing or not: the body set mirrors the ECS while
-/// authoring too, so a scene loaded in the editor is immediately ready to
-/// simulate and immediately answerable to scene queries.
-///
-/// Three passes, in order:
-///
-/// 1. **Retire** — slots whose entity no longer claims them (despawned,
-///    lost its `PhysicsBody`, or came back from a stop without the runtime
-///    component) and slots whose spec no longer matches the Inspector.
-/// 2. **Create** — entities with a `PhysicsBody` and no live slot.
-/// 3. **Push** — authored poses into the solver: every body while
-///    authoring, kinematic bodies always.
+/// Reconciles backend bodies with authored components every frame, so an editor scene is ready to
+/// simulate and query. Retire stale or changed slots, create missing bodies, push authored poses.
 pub fn physics_sync_system(resources: &mut Resources) {
     let Some(mut world) = resources.remove::<PhysicsWorld>() else {
         return;
@@ -82,10 +70,7 @@ pub fn physics_sync_system(resources: &mut Resources) {
     // nothing is a genuine orphan.
     let orphans = find_orphans(resources, &world);
     push_authored_poses(&mut world, &authored, playing);
-    // After the bodies exist: a joint resolves its two entity references
-    // through the slots this pass just wrote, so running it first would
-    // leave every joint in a scene's first frame waiting on bodies that
-    // are about to appear.
+    // After bodies exist: joints resolve their references through the slots just written.
     super::joints::sync_joints(resources, &mut world);
 
     resources.insert(world);
@@ -139,10 +124,8 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
         })
         .unwrap_or_default();
 
-    // Component storage is a hash map, so its iteration order varies
-    // between runs. Body creation order is observable in the solver's
-    // output, so fix it to entity order — otherwise two runs of the same
-    // scene diverge for no reason anyone can see.
+    // Entity order, not hash order: creation order is observable in the solver, and runs would
+    // diverge.
     authored.sort_unstable_by_key(|a| (a.entity.index(), a.entity.generation()));
 
     Some(authored)
@@ -178,10 +161,7 @@ fn collider_or_default(
 
 /// Frees slots nothing claims any more, and slots whose spec went stale.
 fn retire_stale_slots(world: &mut PhysicsWorld, authored: &[Authored]) {
-    // A slot survives only if the entity that owns it still declares a
-    // body with the same spec. Everything else — despawns, removed
-    // components, a stop that wiped the runtime component, an Inspector
-    // edit that changed the shape — retires it.
+    // A slot survives only if its entity still declares a body with the same spec.
     let mut keep = vec![false; world.capacity()];
     for entry in authored {
         let Some(slot) = entry.claimed else { continue };
@@ -211,14 +191,8 @@ fn create_missing_bodies(
         {
             continue;
         }
-        // Resolved here, not in the per-frame read: a trimesh cloned and
-        // scaled for every body every frame is a level's worth of
-        // triangles sixty times a second, to answer a question the spec
-        // already answered by value.
-        //
-        // No geometry yet means the mesh has not arrived. Skipped rather
-        // than built from a stand-in — the spec carries the cache's
-        // epoch, so this entity comes back the frame it lands.
+        // Resolved here, not per frame: cloning trimeshes every frame answers what the spec already
+        // answers. No mesh yet: skipped, returning when the epoch moves.
         let Some(shape) = entry.spec.resolve(resources.get::<ColliderMeshCache>()) else {
             continue;
         };
@@ -229,10 +203,8 @@ fn create_missing_bodies(
             entry.position,
             entry.rotation,
         );
-        // Shapes inherited from descendants join the body it just built.
-        // Attached here rather than in `world.insert` because they are
-        // gathered from the ECS, and `PhysicsWorld` deliberately knows
-        // nothing about entities beyond the one that owns each slot.
+        // Inherited shapes join the new body here; `PhysicsWorld` knows nothing of entities beyond
+        // slot owners.
         world.attach_all(
             slot,
             &entry.attachments,
@@ -261,12 +233,8 @@ fn create_missing_bodies(
     gained
 }
 
-/// Pushes authored poses into the solver.
-///
-/// While authoring, every body follows its `Transform` — dragging a gizmo
-/// has to move the collider, or the next Play starts from a world the
-/// solver has never seen. While playing, only kinematic bodies do; the
-/// solver owns dynamic poses and pushing them would fight it.
+/// Pushes authored poses: all bodies while authoring, so gizmo drags move colliders; only kinematic
+/// ones while playing.
 fn push_authored_poses(world: &mut PhysicsWorld, authored: &[Authored], playing: bool) {
     for entry in authored {
         if playing && !entry.spec.is_kinematic() {
@@ -290,10 +258,7 @@ fn push_authored_poses(world: &mut PhysicsWorld, authored: &[Authored], playing:
     }
 }
 
-/// Moves entities between archetypes after the component churn.
-///
-/// Without this the component sits in storage but no archetype lists it,
-/// so every query iterating by archetype misses it.
+/// Moves entities between archetypes after component churn, or archetype queries miss them.
 fn sync_archetypes(resources: &mut Resources, gained: &[Entity], orphans: &[Entity]) {
     if !orphans.is_empty() {
         if let Some(registry) = resources.get_mut::<ComponentRegistry>()
@@ -325,13 +290,8 @@ fn sync_archetypes(resources: &mut Resources, gained: &[Entity], orphans: &[Enti
     }
 }
 
-/// Advances the simulation by one fixed step.
-///
-/// Registered in [`Stage::Physics`], which the runner runs once per whole
-/// step accumulated in [`Time`] — so the step size never depends on the
-/// frame rate.
-///
-/// [`Stage::Physics`]: kooch_core::stage::Stage::Physics
+/// One fixed step, run by [`Stage::Physics`](kooch_core::stage::Stage::Physics) per whole step
+/// accumulated in [`Time`], independent of frame rate.
 pub fn physics_step_system(resources: &mut Resources) {
     let dt = resources
         .get::<Time>()
@@ -345,11 +305,7 @@ pub fn physics_step_system(resources: &mut Resources) {
     }
 }
 
-/// Copies solver poses back onto `Transform`.
-///
-/// Dynamic bodies only: a static body never moves, and a kinematic one is
-/// driven *from* its `Transform`, so writing back would erase the frame's
-/// authored motion.
+/// Copies solver poses to `Transform` for dynamic bodies only: kinematic ones are driven from it.
 pub fn physics_writeback_system(resources: &mut Resources) {
     let Some(world) = resources.remove::<PhysicsWorld>() else {
         return;

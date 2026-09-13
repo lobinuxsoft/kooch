@@ -1,26 +1,6 @@
-//! What the solver reports back.
-//!
-//! # Collected during the step, delivered after it
-//!
-//! Rapier calls its event handler from inside `step`, while it holds the
-//! whole world mutably. Gameplay cannot run there — a system that wanted to
-//! despawn the thing it just collided with would be asking to mutate the
-//! set being iterated. So the handler only *collects*, and the events are
-//! drained afterwards.
-//!
-//! That ordering is not an implementation detail to tidy away later. It is
-//! the difference between "a pickup disappears when touched" working and
-//! deadlocking.
-//!
-//! # Bodies, not colliders
-//!
-//! Rapier reports collider pairs. These carry [`BodyHandle`], because a
-//! compound body's third shape touching a wall is *the body* touching the
-//! wall as far as gameplay is concerned, and a consumer that had to
-//! resolve shapes back to owners would do it in every listener.
-//!
-//! The plugin layer turns these into `Entity`-carrying engine events, so
-//! nothing above the seam ever sees a handle of either kind.
+//! Solver reports, collected in `step` and drained after, since rapier holds the world mutably
+//! there. They carry [`BodyHandle`], not colliders: a compound body's shape touching is the body
+//! touching.
 
 use super::body::BodyHandle;
 
@@ -32,12 +12,8 @@ pub struct CollisionEvent {
     /// `true` for the frame they began touching, `false` for the frame
     /// they stopped.
     pub started: bool,
-    /// Whether this came from a sensor overlap rather than a solid
-    /// contact.
-    ///
-    /// Worth carrying: a sensor event has no contact information behind it
-    /// — rapier computes no manifold for a sensor — so a listener that
-    /// wanted a contact point needs to know not to ask.
+    /// A sensor overlap rather than a solid contact — rapier computes no manifold for sensors, so
+    /// there is no contact point to ask for.
     pub sensor: bool,
 }
 
