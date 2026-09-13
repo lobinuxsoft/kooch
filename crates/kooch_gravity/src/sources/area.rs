@@ -5,25 +5,9 @@ use glam::Vec3;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 
-/// A field with its own direction, inside a box.
-///
-/// The level with its own down: a corridor that runs up a wall, a room
-/// that flips over. The box is centred on the entity and rotates with it,
-/// so `direction` is given in the entity's local space and turning the
-/// entity turns the field.
-///
-/// This is a region you are *inside*. For a solid you stand on the outside
-/// of, whose direction changes around it, see [`super::BoxGravity`].
-///
-/// # The entity's scale does not resize this
-///
-/// `half_extents` and `falloff` are metres. The box turns with the
-/// entity and moves with it, and that is all a transform does to a
-/// field.
-///
-/// # Default
-///
-/// Earth-strength, downward, in a 10 m cube.
+/// A field with its own direction inside a box — a corridor up a wall, a room that flips.
+/// `direction` is local, so turning the entity turns the field.
+/// Metres, unscaled; defaults to Earth-strength down in a 10 m cube.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Physics")]
 pub struct AreaGravity {
@@ -33,10 +17,8 @@ pub struct AreaGravity {
     pub strength: f32,
     /// Half-extents of the affected box, in metres.
     pub half_extents: Vec3,
-    /// How far outside the box the field fades to nothing, in metres.
-    ///
-    /// Without it a body crossing the boundary changes direction between
-    /// one step and the next, which reads as a jolt. Zero for a hard edge.
+    /// How far outside the box the field fades to nothing, in metres, so crossing the edge is not a
+    /// jolt. Zero for a hard edge.
     pub falloff: f32,
 }
 
@@ -54,11 +36,8 @@ impl Default for AreaGravity {
 impl Component for AreaGravity {}
 
 impl AreaGravity {
-    /// The acceleration this source applies at a point already expressed
-    /// in the source's local space.
-    ///
-    /// Local space because the box rotates with the entity: converting the
-    /// point once is cheaper and clearer than rotating the box.
+    /// The acceleration at a point already in the source's local space, since the box rotates with
+    /// the entity.
     pub fn acceleration_at_local(&self, local_point: Vec3) -> Vec3 {
         let Some(direction) = self.direction.try_normalize() else {
             return Vec3::ZERO;

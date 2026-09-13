@@ -1,9 +1,5 @@
-//! Gravity fields against a real solver: #624's acceptance list.
-//!
-//! An integration test rather than unit tests over the maths, because the
-//! thing worth checking is that a body *falls the right way* — the maths
-//! being right and the impulse reaching the solver are two different
-//! claims, and only the second one is new.
+//! Gravity fields against a real solver, #624's acceptance list: a body falling the right way, not
+//! just the maths.
 
 use glam::Vec3;
 
@@ -243,10 +239,8 @@ fn a_scene_without_sources_is_untouched() {
     );
 }
 
-/// Phase A still applies in phase B. Rapier's own gravity is off while a
-/// source exists, so its `gravity_scale` multiplies nothing — the field
-/// system has to honour the multiplier itself or it would silently stop
-/// working the moment anyone added a planet.
+/// Rapier's gravity is off while a source exists, so the field system has to honour `gravity_scale`
+/// itself.
 #[test]
 fn the_per_body_scale_still_applies_to_fields() {
     fn fall(gravity_scale: f32) -> f32 {
@@ -425,16 +419,8 @@ fn a_box_source_rotates_with_its_entity() {
     );
 }
 
-/// A resting body has to be allowed to fall asleep.
-///
-/// Rapier excludes a sleeping body from the island solver — that is how a
-/// scene of settled crates costs nothing. A field that hands every dynamic
-/// body an impulse every step, waking it to do so, turns off sleeping for
-/// the whole world: the CPU then simulates a pile of boxes that have not
-/// moved in a minute, forever.
-///
-/// The world vector never had this problem, because rapier's own gravity
-/// does not wake anything. Matching that is the point.
+/// A resting body must be allowed to sleep: a field waking every body every step would simulate
+/// settled crates forever, which the world vector never did.
 #[test]
 fn a_settled_body_still_falls_asleep() {
     let mut resources = world();
@@ -489,12 +475,7 @@ fn a_settled_body_still_falls_asleep() {
     );
 }
 
-/// …but a field that changes has to reach what has already settled.
-///
-/// The counterweight to the test above. Never waking anything is cheap and
-/// wrong: switching a gravity zone on, or moving a planet, would leave the
-/// crates already lying there asleep and floating. So the step that sees a
-/// changed field wakes what it pulls on, and only that step.
+/// …but a field that changes has to wake what it pulls on — only on the step that sees the change.
 #[test]
 fn a_moved_source_wakes_what_it_pulls_on() {
     let mut resources = world();
@@ -710,11 +691,7 @@ fn the_dominant_source_ignores_the_weaker() {
     );
 }
 
-/// A field's space is rigid, so its extents are metres: scaling the
-/// entity places the source without resizing what it reaches.
-///
-/// The gizmo test is not enough. It pins what is *drawn*, and the whole
-/// failure being closed here was a drawing and a field that disagreed.
+/// A field's space is rigid, so its extents are metres; a gizmo test alone pins only what is drawn.
 #[test]
 fn scaling_a_source_does_not_resize_it() {
     fn pull_at(scale: f32, height: f32) -> f32 {

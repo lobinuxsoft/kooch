@@ -107,10 +107,8 @@ fn full_rounding_makes_a_sphere() {
         range: 0.0,
         ..Default::default()
     };
-    // Over the corner diagonal, a cube would still pull along the
-    // diagonal — but so does a sphere, so probe somewhere they differ:
-    // over a face, a cube pulls straight down and a sphere pulls at the
-    // centre, which from here is the same. Use an oblique point.
+    // Cube and sphere agree over the diagonal and over a face centre, so probe an oblique point
+    // where they differ.
     let probe = Vec3::new(4.0, 20.0, 0.0);
     let accel = field.acceleration_at_local(probe);
     assert!(
