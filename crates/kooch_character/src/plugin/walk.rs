@@ -8,11 +8,7 @@ use kooch_ecs::entity::Entity;
 
 use crate::walk::Walk;
 
-/// Each character's goal velocity, carried between steps.
-///
-/// State rather than a component: it is the controller's working
-/// memory, not something a scene authors, and a serialised field nobody
-/// should edit is one somebody will.
+/// Each character's goal velocity between steps — controller state, not an authored component.
 #[derive(Default)]
 pub struct WalkGoals {
     goals: HashMap<Entity, Vec3>,
@@ -20,11 +16,8 @@ pub struct WalkGoals {
 }
 
 impl WalkGoals {
-    /// Advances one character's goal and returns it.
-    ///
-    /// The goal moves at `acceleration`, so the stick is followed at a
-    /// fixed rate rather than instantly. Whatever chases the goal then
-    /// has its own ceiling.
+    /// Advances one character's goal at `acceleration` and returns it, so the stick is followed at
+    /// a fixed rate.
     pub fn chase(&mut self, entity: Entity, wanted: Vec3, acceleration: f32, dt: f32) -> Vec3 {
         let goal = self.goals.entry(entity).or_insert(Vec3::ZERO);
         *goal = towards(*goal, wanted, acceleration * dt);
@@ -36,22 +29,14 @@ impl WalkGoals {
         self.goals.get(&entity).copied()
     }
 
-    /// Puts a character's goal where its velocity already is.
-    ///
-    /// What a body in the air does every step, so it lands chasing
-    /// reality: a goal left over from before the jump would be spent on
-    /// the landing frame as a shove in whatever direction it had.
+    /// Puts a character's goal at its current velocity — every air step, so a landing does not
+    /// spend a stale goal as a shove.
     pub fn hold(&mut self, entity: Entity, velocity: Vec3) {
         self.goals.insert(entity, velocity);
     }
 
-    /// The acceleration a character actually got, from the velocity it
-    /// actually has.
-    ///
-    /// Not the force applied: a body shoving a wall is given the full
-    /// `max_force` and goes nowhere, and a lean drawn from that tips the
-    /// character over at 29 degrees and leaves it there. A lean is a
-    /// response to changing speed, so it has to be measured from speed.
+    /// The acceleration a character actually got, from its velocity — a body shoving a wall gets
+    /// full force and no speed, and leaned 29° from it.
     pub fn gained(&mut self, entity: Entity, velocity: Vec3, dt: f32) -> Vec3 {
         let last = self.seen.insert(entity, velocity).unwrap_or(velocity);
         match dt > 0.0 {
@@ -86,13 +71,8 @@ fn towards(from: Vec3, to: Vec3, limit: f32) -> Vec3 {
     from + delta / distance * limit
 }
 
-/// The acceleration that would take `velocity` to `goal` this step,
-/// capped.
-///
-/// Uncapped this is a teleport: `(goal - velocity) / dt` is whatever it
-/// takes, and at 60 Hz that is 60× the shortfall. The cap is what makes
-/// it a character rather than a constraint, and what stops it shoving a
-/// heavy crate across the room.
+/// The acceleration that would reach `goal` this step, capped — uncapped it is a teleport, and the
+/// cap stops it shoving heavy crates.
 pub fn needed(goal: Vec3, velocity: Vec3, max_force: f32, dt: f32) -> Vec3 {
     if dt <= 0.0 {
         return Vec3::ZERO;
@@ -104,25 +84,16 @@ pub fn needed(goal: Vec3, velocity: Vec3, max_force: f32, dt: f32) -> Vec3 {
     }
 }
 
-/// What the character is asking for, in the plane it walks in.
-///
-/// The throttle is the length of the steering, clamped: a stick pushed
-/// past its own corner must not walk faster diagonally.
+/// What the character asks for in its walking plane, throttle clamped so a diagonal stick is not
+/// faster.
 pub fn goal(steering: Vec3, up: Vec3, walk: &Walk) -> Vec3 {
     let flat = steering - up * steering.dot(up);
     let throttle = flat.length().min(1.0);
     flat.normalize_or_zero() * walk.max_speed * throttle
 }
 
-/// Steering in the air, where there is nothing to push against.
-///
-/// The goal-velocity chase is wrong here and reads as it: it brakes
-/// towards zero, so letting go of the stick mid-jump stops the
-/// character dead in the air. Momentum is what a jump *is*.
-///
-/// So the air only ever adds, in the direction being asked for, and
-/// never past the speed the body arrived with — steerable, and unable
-/// to turn into thrust.
+/// Steering in the air only adds, towards the stick and never past the arrival speed — the ground
+/// chase would stop a jump dead in mid-air.
 pub fn drift(steering: Vec3, velocity: Vec3, up: Vec3, walk: &Walk, dt: f32) -> Vec3 {
     let flat = steering - up * steering.dot(up);
     let Some(direction) = flat.try_normalize() else {
@@ -142,11 +113,7 @@ pub fn drift(steering: Vec3, velocity: Vec3, up: Vec3, walk: &Walk, dt: f32) -> 
     (after.normalize_or_zero() * ceiling - velocity) / dt
 }
 
-/// A push with the part heading into a wall taken out.
-///
-/// `normal` points from the surface back at the character, so a push
-/// into it is the negative part. Only that part goes: steering *along*
-/// a wall is how a character rounds a corner.
+/// A push with the part into a wall removed; steering along it is how a character rounds a corner.
 pub fn alongside(push: Vec3, wall: Option<Vec3>) -> Vec3 {
     let Some(normal) = wall.and_then(|normal| normal.try_normalize()) else {
         return push;

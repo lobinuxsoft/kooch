@@ -3,14 +3,8 @@
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 
-/// Jumping, as a launch speed rather than an impulse.
-///
-/// # Why a speed and not a force
-///
-/// `impulse` divided by mass is what decides the height, so an impulse
-/// makes a heavy character jump lower for no reason a designer asked
-/// for. `speed` is metres per second straight up, and `speed² / 2g` is
-/// the height — a number that can be aimed at.
+/// Jumping as a launch speed, not an impulse: an impulse jumps a heavy character lower, while
+/// `speed² / 2g` is a height a designer can aim at.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Physics")]
 pub struct Jump {
@@ -20,22 +14,13 @@ pub struct Jump {
     /// Launch speed along the local up, in m/s. The height that buys is
     /// `speed² / 2g`.
     pub speed: f32,
-    /// How many more jumps are allowed with nothing underneath.
-    ///
-    /// `0` is a single jump, `1` a double. Refilled the moment the
-    /// character is standing again.
+    /// How many more jumps are allowed with nothing underneath — `0` single, `1` double — refilled
+    /// on landing.
     pub air_jumps: u32,
-    /// How long after walking off a ledge a jump still counts as a
-    /// ground jump, in seconds.
-    ///
-    /// Nobody presses the button on the frame they meant to. Without
-    /// this a jump taken at the lip of a platform is simply eaten, and
-    /// it reads as the controls dropping inputs.
+    /// Coyote time: seconds after leaving a ledge a jump still counts, so a press at the lip is not
+    /// eaten.
     pub coyote: f32,
-    /// How long before landing a jump still counts, in seconds.
-    ///
-    /// The other half of the same forgiveness: pressed a moment early,
-    /// it fires on the frame the ground arrives instead of being lost.
+    /// Jump buffer: seconds before landing a press still counts, firing when the ground arrives.
     pub buffer: f32,
 }
 
@@ -54,12 +39,8 @@ impl Default for Jump {
 
 impl Component for Jump {}
 
-/// Jumping off a wall, for a character that has one to push against.
-///
-/// Separate from [`Jump`] because it is a different move: it takes the
-/// button in a state where a jump would otherwise be refused, and it
-/// sends the character *away* from something rather than up. A project
-/// that does not want it does not add the component.
+/// Jumping off a wall — a separate component because it takes the button when a jump would be
+/// refused and sends the character away, not up.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Physics")]
 pub struct WallJump {
@@ -68,10 +49,7 @@ pub struct WallJump {
     pub push: f32,
     /// Speed along the local up, in m/s.
     pub climb: f32,
-    /// Whether it also refills the air jumps.
-    ///
-    /// Off, a wall is a place to rest; on, a wall chain is unlimited
-    /// height. Both are games, so it is a switch rather than a rule.
+    /// Whether it also refills the air jumps: off, a wall is a rest; on, wall chains climb forever.
     pub refills: bool,
 }
 

@@ -1,9 +1,4 @@
-//! #94's acceptance list, against a real solver.
-//!
-//! Unit tests can say the spring arithmetic is right. Only this can say
-//! a character *stands* — the maths being correct and the impulse
-//! reaching a body that then holds its height are different claims, and
-//! the second is the one that has ever been wrong.
+//! #94's acceptance list against a real solver: only this shows a character actually stands.
 
 use glam::Vec3;
 
@@ -115,12 +110,8 @@ fn position(resources: &Resources, entity: Entity) -> Vec3 {
         .expect("no transform")
 }
 
-/// The frame the gravity and character plugins schedule between them.
-///
-/// The character system runs *after* gravity and before the step, which
-/// is the order the plugins register: the spring fights this step's
-/// gravity, and fighting last step's is a character that sinks whenever
-/// the field changes.
+/// The frame the gravity and character plugins schedule: the character after gravity and before the
+/// step, so the spring fights this step's gravity.
 fn simulate(resources: &mut Resources, steps: u32) {
     for _ in 0..steps {
         plugin::reconcile_world_gravity_for_test(resources);
@@ -587,10 +578,7 @@ fn it_faces_where_it_walks() {
     );
 }
 
-/// Acceptance: a jump leaves the floor. The spring's own damping fights
-/// the launch the frame after it starts — 18 damping against 5 m/s is
-/// 90 m/s² of "come back" — so without letting go while rising, the
-/// character never gets off the ground.
+/// Acceptance: a jump leaves the floor, which needs the spring to let go while rising.
 #[test]
 fn a_jump_leaves_the_ground() {
     let mut resources = world();
@@ -671,12 +659,8 @@ fn walked(resources: &mut Resources, hero: Entity, steered: Vec3, steps: u32) ->
     Vec3::new(velocity.x, 0.0, velocity.z).length()
 }
 
-/// Acceptance: it stops when you let go.
-///
-/// A floating capsule never touches the floor, so it has no friction at
-/// all. Pushing in a direction and stopping at top speed leaves nothing
-/// to slow it down — the character coasts for ever. Asking for a
-/// velocity makes stopping the same term as starting.
+/// Acceptance: it stops when you let go — a frictionless capsule needs stopping to be the same term
+/// as starting.
 #[test]
 fn it_stops_when_you_let_go() {
     let mut resources = world();
@@ -729,11 +713,7 @@ fn a_standing_character_does_not_drift() {
     assert!(across < 0.1, "it drifted {across} m");
 }
 
-/// Acceptance: letting go mid-jump keeps the momentum.
-///
-/// The goal-velocity chase brakes towards zero, so on the ground
-/// releasing the stick stops the character — which is the point. In the
-/// air it stopped it dead in mid-flight, which is not a jump.
+/// Acceptance: letting go mid-jump keeps the momentum, where the ground chase would stop it dead.
 #[test]
 fn a_jump_keeps_its_momentum() {
     let mut resources = world();
@@ -764,9 +744,6 @@ fn a_jump_keeps_its_momentum() {
 }
 
 /// It stays upright against the field, on a ramp as anywhere else.
-///
-/// Standing perpendicular to every surface swings the body as the
-/// ground changes and tips it sideways on a slope it is only crossing.
 #[test]
 fn a_ramp_does_not_tip_it() {
     let mut resources = world();
@@ -798,12 +775,8 @@ fn a_ramp_does_not_tip_it() {
     );
 }
 
-/// Acceptance: walking up a ramp is not leaving the ground.
-///
-/// The rise test used to read the speed along the field, where climbing
-/// a 25 degree ramp at 6 m/s reads as 2.5 — five times the threshold.
-/// The character looked like it was already jumping, so the spring let
-/// go and `standing` went false: you could not jump on a slope.
+/// Acceptance: walking up a ramp is not leaving the ground — measured along the field, 6 m/s up 25°
+/// read as a jump.
 #[test]
 fn a_climb_is_still_standing() {
     let mut resources = world();
@@ -835,13 +808,8 @@ fn a_climb_is_still_standing() {
     assert!(refused < 10, "lost the ground {refused} frames out of 180");
 }
 
-/// Acceptance: a slope too steep to walk takes the character back down.
-///
-/// The spring cancels gravity, so holding the body up against a surface
-/// it has already refused to walk carried it straight to the top —
-/// climbing a cliff by standing on it. A step's riser gives the *same*
-/// contact normal, which is why this is decided by looking for a ledge
-/// rather than by the normal alone.
+/// Acceptance: a slope too steep to walk takes the character back down; a riser's matching normal
+/// is why a ledge decides it.
 #[test]
 fn a_steep_slope_slides() {
     let mut resources = world();
@@ -877,11 +845,7 @@ fn a_steep_slope_slides() {
     );
 }
 
-/// Acceptance: the wall a character is pressed against has a name.
-///
-/// Without it a wall slide, a wall jump and a shoulder animation each
-/// cast their own probe — three chances to disagree about whether there
-/// is a wall, which is the mistake `Grounded` was made to stop.
+/// Acceptance: the wall a character is pressed against has one shared answer.
 #[test]
 fn a_wall_is_reported() {
     let mut resources = world();
@@ -958,12 +922,8 @@ fn slide_profile() {
     }
 }
 
-/// Acceptance: shoving a wall does not tip the character over.
-///
-/// The lean used to be drawn from the force applied. A body pressed
-/// against a wall is given the whole `max_force` and goes nowhere, so it
-/// leaned `atan(max_force / g) * lean` — 29 degrees — and stayed there
-/// as long as the stick was held.
+/// Acceptance: shoving a wall does not tip the character over — a lean from applied force held it
+/// at 29°.
 #[test]
 fn a_wall_does_not_tip_it() {
     let mut resources = world();
@@ -1238,11 +1198,7 @@ fn wall_trace() {
     }
 }
 
-/// Acceptance: it stays on the wall after arriving at speed.
-///
-/// The solver pushes the capsule back out of whatever it hits, and with
-/// the air push deliberately not aimed into the wall there is nothing to
-/// bring it back — the character bounced off and drifted away mid-slide.
+/// Acceptance: it stays on the wall after arriving at speed, instead of bouncing off mid-slide.
 #[test]
 fn a_wall_holds_it() {
     let mut resources = world();
@@ -1305,10 +1261,8 @@ fn thrown(resources: &mut Resources, run: WallRun, speed: f32, steer: Vec3) -> E
     if let Some(world) = resources.get_mut::<PhysicsWorld>() {
         world.set_linear_velocity(body, Vec3::new(2.0, 0.0, speed));
     }
-    // The side probes see the wall from further away than the character
-    // starts, so the entry was judged on the spawn frame — at rest, and
-    // refused before this test had given it any speed. A player arrives
-    // already moving; this makes the harness do the same.
+    // The side probes see the wall from the spawn point, so give the body speed first — a player
+    // arrives already moving.
     if let Some(runs) = resources.get_mut::<kooch_character::plugin::run::Runs>() {
         runs.landed(hero);
     }
@@ -1350,14 +1304,8 @@ fn ran(speed: f32) -> bool {
         .is_some()
 }
 
-/// Arriving slowly is not a run. Without the entry speed a wall run is
-/// a cling with extra steps.
-///
-/// Asks the run's own clock rather than measuring the fall: a body
-/// pressed to a wall keeps some of rapier's friction whatever the
-/// colliders say, and it happens to slow a fall by about as much as the
-/// run does — so the drop cannot tell the two apart, and this claim is
-/// about the entry speed.
+/// Arriving slowly is not a run. Asks the run's own clock: residual wall friction slows a fall
+/// about as much as a run does.
 #[test]
 fn a_slow_arrival_does_not_run() {
     assert!(ran(9.0), "should have started a run at speed");
@@ -1476,11 +1424,8 @@ fn entry_trace() {
     }
 }
 
-/// Acceptance: it keeps hold of the wall it is running along.
-///
-/// The forward probe looks where the character is *going*, and once a
-/// run is under way that is along the wall rather than at it — so the
-/// wall dropped out every few frames and took the run with it.
+/// Acceptance: it keeps hold of the wall it is running along, which a forward-only probe lost every
+/// few frames.
 #[test]
 fn a_run_keeps_the_wall() {
     let mut resources = world();
@@ -1526,14 +1471,8 @@ fn a_run_banks_the_body() {
     );
 }
 
-/// Measurement: the whole shape of a jump, in seconds and metres.
-///
-/// Reported as *"el salto parece que flota en el aire"*, which is a
-/// feeling until it is a number. Prints time to the apex, the apex, the
-/// fall, and the total — because "floaty" is about **time**, not height,
-/// and the two are set by different knobs.
-///
-/// Run with `--ignored --nocapture`.
+/// Measurement: a jump's time to apex, apex, fall and total — floaty is about time, not height. Run
+/// with `--ignored --nocapture`.
 #[test]
 #[ignore = "measurement"]
 fn jump_profile() {
@@ -1581,10 +1520,8 @@ fn jump_profile() {
     println!("fall        {:.3} s", land - rise);
     println!("airborne    {land:.3} s");
     println!();
-    // 🔴 The comparison that names the cause. A parabola is symmetric:
-    // falling back from the apex under the same gravity takes the time
-    // it took to rise. Anything beyond that is something holding the
-    // character up on the way down.
+    // 🔴 A parabola is symmetric: a fall slower than the rise means something is holding the
+    // character up.
     let free = (2.0 * (highest - resting) / 9.81).sqrt();
     println!("free fall from that apex would be {free:.3} s");
     println!(
