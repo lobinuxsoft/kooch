@@ -1,14 +1,6 @@
-//! [`ShapeSpec`] — a collider's geometry as plain old data, and the one
-//! place that turns it into a [`CollisionShape`].
-//!
-//! # Why the spec exists at all
-//!
-//! The sync pass rebuilds a body when its authored shape changes, and it
-//! decides that by comparing what it built against what the Inspector
-//! says. Comparing resolved geometry would mean holding a level's trimesh
-//! per body and diffing it every frame. This is the same information in
-//! thirteen `Copy` fields — including `mesh_epoch`, which is what makes a
-//! mesh *arriving* register as a change rather than as silence.
+//! [`ShapeSpec`]: a collider's geometry as thirteen `Copy` fields, and the one place it becomes a
+//! [`CollisionShape`] — comparing resolved geometry would diff a trimesh per body per frame.
+//! `mesh_epoch` makes an arriving mesh a change.
 
 use glam::Vec3;
 
@@ -32,25 +24,15 @@ pub struct ShapeSpec {
     pub point_c: Vec3,
     pub voxel_size: f32,
     pub voxel_solid: bool,
-    /// Where the geometry comes from — an asset, or this entity itself.
-    ///
-    /// 🔴 Not a bare `Guid`. A generated mesh has no file, and naming
-    /// one in a field that means "a mesh on disk" is what had two
-    /// separate walks feeding a `.block` to a glTF parser.
+    /// Where the geometry comes from. 🔴 Not a bare `Guid`: a generated mesh has no file.
     pub mesh: Option<crate::backend::MeshKey>,
     /// What [`ColliderMeshCache::epoch`] said when this spec was read.
     pub mesh_epoch: u64,
 }
 
 impl ShapeSpec {
-    /// The geometry, or `None` when a mesh-derived shape has no mesh yet.
-    ///
-    /// Degenerate numbers are clamped rather than rejected: a field
-    /// mid-edit passes through zero on the way to the value the author is
-    /// typing, and a zero-radius shape makes the solver produce NaNs that
-    /// outlive the typo. A *missing mesh* is the opposite case and stays
-    /// `None` — substituting a unit sphere for a level's collision would
-    /// be a floor nobody authored, in a place nobody looks.
+    /// The geometry, or `None` while a mesh shape waits. Degenerate numbers are clamped (edits pass
+    /// through zero); a missing mesh is not replaced by a sphere nobody authored.
     pub fn resolve(&self, meshes: Option<&ColliderMeshCache>) -> Option<CollisionShape> {
         if is_mesh_derived(self.shape) {
             return self.from_mesh(self.mesh_data(meshes)?);
@@ -63,11 +45,8 @@ impl ShapeSpec {
         is_mesh_derived(self.shape) && self.mesh_data(meshes).is_none()
     }
 
-    /// The shapes built from typed numbers alone.
-    ///
-    /// An unknown discriminant falls back to a sphere: a scene authored
-    /// in a newer editor loads and collides with something, rather than
-    /// dropping its colliders on the floor.
+    /// Shapes from typed numbers; unknown discriminants fall back to a sphere so newer scenes still
+    /// collide.
     fn analytic(&self) -> CollisionShape {
         let radius = self.radius.max(MIN_EXTENT);
         let half_height = self.half_height.max(MIN_EXTENT);
@@ -117,11 +96,7 @@ impl ShapeSpec {
         }
     }
 
-    /// The shapes built from that mesh's points.
-    ///
-    /// `None` where the mesh cannot supply what the shape needs — a
-    /// decomposition or a trimesh with no triangles, most often a point
-    /// cloud that was only ever meant to feed a hull.
+    /// Shapes from the mesh's points; `None` when it cannot supply them, often a hull-only cloud.
     fn from_mesh(&self, mesh: &ColliderMesh) -> Option<CollisionShape> {
         let size = self.voxel_size.max(MIN_EXTENT);
         let shape = match self.shape {
@@ -141,10 +116,7 @@ impl ShapeSpec {
                 vertices: mesh.vertices.clone(),
                 indices: non_empty(&mesh.indices)?.to_vec(),
             },
-            // Triangles the entity generated for itself. The same
-            // shape a trimesh builds — what differs is where the
-            // geometry came from, and that was already decided by the
-            // time this runs.
+            // The entity's own triangles, built as a trimesh — only the source differs.
             SHAPE_OWN_MESH => CollisionShape::TriMesh {
                 vertices: mesh.vertices.clone(),
                 indices: non_empty(&mesh.indices)?.to_vec(),

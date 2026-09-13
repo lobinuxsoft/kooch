@@ -1,16 +1,6 @@
-//! [`RapierBackend`] — CPU rigid body solver via Rapier3D 0.22.
-//!
-//! Owns the Rapier pipeline + body / collider sets. Maps engine
-//! [`BodyHandle`]s (slotmap keys) to Rapier's internal handles. All public
-//! API uses glam types; nalgebra conversions are confined to this module.
-//!
-//! # Defaults
-//!
-//! - Gravity: `(0, -9.81, 0)`. Override via [`RapierBackend::set_gravity`].
-//! - Integration parameters: Rapier defaults (60 Hz hint, default solver
-//!   iterations, CCD enabled per-body but on-demand).
-//! - Friction / restitution coefficients: authored per collider, see
-//!   [`SurfaceMaterial`](crate::backend::SurfaceMaterial).
+//! [`RapierBackend`]: the CPU solver on Rapier3D 0.34, mapping engine [`BodyHandle`](crate::backend::BodyHandle)s (slotmap
+//! keys) to Rapier's handles. Gravity `(0, -9.81, 0)`; Rapier's integration defaults; surfaces per
+//! collider ([`SurfaceMaterial`](crate::backend::SurfaceMaterial)).
 
 mod backend;
 mod conv;

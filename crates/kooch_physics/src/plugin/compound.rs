@@ -1,23 +1,6 @@
-//! Gathering a body's extra shapes from its descendants.
-//!
-//! A child entity carrying a [`Collider`] but no [`PhysicsBody`] of its own
-//! contributes its shape to the nearest ancestor that has one. The result
-//! is one body with several shapes — Unity calls it a compound collider,
-//! Unreal calls it welding.
-//!
-//! # Why not one body per collider
-//!
-//! Because then the solver and the transform hierarchy would both own the
-//! child's pose, and no engine supports that. Unity tells you to put a
-//! single Rigidbody on the root; Unreal welds simulated children into the
-//! parent and its own tracker notes that bodies detach when both simulate;
-//! Godot has had "allow a PhysicsBody to follow a moving parent" open for
-//! years. The way out is to stop having two bodies.
-//!
-//! A descendant that *does* carry its own [`PhysicsBody`] is left alone — it
-//! is an independent body, and joining two bodies is what a
-//! [`Joint`](crate::components::Joint) is for. It also ends the walk:
-//! entities under it belong to that body, not to this one.
+//! A child [`Collider`] without [`PhysicsBody`] joins the nearest ancestor body — solver and
+//! hierarchy cannot both own a pose. A descendant with its own [`PhysicsBody`] is independent and
+//! ends the walk.
 
 use glam::{Quat, Vec3};
 use kooch_core::resource::Resources;
@@ -28,20 +11,13 @@ use kooch_ecs::hierarchy::{Children, GlobalTransform};
 use crate::backend::{ColliderInteraction, ColliderMeshCache, CollisionShape, SurfaceMaterial};
 use crate::components::{Collider, PhysicsBody, ShapeSpec};
 
-/// One shape contributed by a descendant, in the body's local space.
-///
-/// Carries the *authored* geometry, never the resolved kind. This is
-/// gathered once per frame for every body in the scene, and resolving
-/// here would clone every child's point cloud sixty times a second to
-/// answer a question [`digest`] answers from `Copy` fields.
+/// A descendant's shape in body space, authored not resolved: gathered every frame, and [`digest`]
+/// compares `Copy` fields.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Attachment {
     pub spec: ShapeSpec,
-    /// The child's scale, relative to the body.
-    ///
-    /// Folded in when the shape is resolved rather than now — but kept
-    /// in the digest, because a child scaled in place changes its shape
-    /// while its offset and rotation stay put.
+    /// The child's scale relative to the body, in the digest since it changes shape with pose
+    /// unchanged.
     pub scale: Vec3,
     pub offset: Vec3,
     pub rotation: Quat,
@@ -54,22 +30,15 @@ pub(super) struct Attachment {
 }
 
 impl Attachment {
-    /// The geometry this contributes, at its own scale.
-    ///
-    /// `None` while a mesh-derived child waits for its mesh. Its epoch is
-    /// in the digest, so the body rebuilds — and picks the shape up — the
-    /// moment the mesh lands.
+    /// Geometry at its own scale; `None` while a mesh waits — its epoch rebuilds the body when it
+    /// lands.
     pub fn shape(&self, meshes: Option<&ColliderMeshCache>) -> Option<CollisionShape> {
         Some(self.spec.resolve(meshes)?.scaled(self.scale))
     }
 }
 
-/// Collects the shapes a body inherits from its descendants.
-///
-/// Walks children depth-first, stopping at any entity with its own
-/// [`PhysicsBody`]. Poses are expressed relative to `root` by composing
-/// through [`GlobalTransform`], so a child's own parent chain is honoured
-/// however deep it goes.
+/// Shapes a body inherits: depth-first, stopping at any [`PhysicsBody`], poses composed through
+/// [`GlobalTransform`] relative to `root`.
 pub(super) fn attachments_for(resources: &Resources, root: Entity) -> Vec<Attachment> {
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Vec::new();
@@ -139,13 +108,8 @@ pub(super) fn attachments_for(resources: &Resources, root: Entity) -> Vec<Attach
     found
 }
 
-/// A stable digest of a body's attachments.
-///
-/// Lives in [`BodySpec`](super::world::BodySpec) so the existing
-/// retire-and-rebuild pass notices when a child's collider is added,
-/// removed, moved or resized — the same way it already notices a scale
-/// change on the body itself. Keeps the spec plain-old-data instead of
-/// growing a `Vec`.
+/// A stable digest of the attachments, in [`BodySpec`](super::world::BodySpec) so a child
+/// collider's change retires the body like a scale change, keeping the spec POD.
 pub(super) fn digest(attachments: &[Attachment]) -> u64 {
     use std::hash::{Hash, Hasher};
 
@@ -194,10 +158,7 @@ pub(super) fn digest(attachments: &[Attachment]) -> u64 {
     hasher.finish()
 }
 
-/// A shape's authored identity, hashed field by field.
-///
-/// Floats have no `Hash`; their bits do, and bit equality is the right
-/// test here — a shape that moved by one ulp did move.
+/// Hashes float bits: a shape moved by one ulp did move.
 fn hash_spec(spec: &ShapeSpec, hasher: &mut impl std::hash::Hasher) {
     use std::hash::Hash;
 
@@ -224,16 +185,8 @@ fn hash_spec(spec: &ShapeSpec, hasher: &mut impl std::hash::Hasher) {
     spec.mesh_epoch.hash(hasher);
 }
 
-/// Warns that a body nested under another will not follow its parent.
-///
-/// This is the configuration no engine supports, and saying so is the
-/// engine's job — silently simulating it somewhere the author did not
-/// expect is worse than refusing. Godot warns on the node for the same
-/// reason.
-///
-/// Only dynamic bodies are worth warning about. A static or kinematic
-/// child is author-driven anyway, so "the solver ignores your parent" is
-/// not news: nothing was going to move it but the author.
+/// Warns that a nested dynamic body will not follow its parent, as Godot does; static and kinematic
+/// children are author-driven anyway.
 fn warn_nested_body(entity: Entity, body: &PhysicsBody) {
     use crate::backend::BodyKind;
 

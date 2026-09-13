@@ -1,19 +1,6 @@
-//! [`ColliderMeshCache`] — the vertices a mesh-derived collider is built
-//! from, and nothing about where they came from.
-//!
-//! # The bridge points this way on purpose
-//!
-//! A collider authored as "use that mesh" names a [`Guid`]. Resolving one
-//! means an asset database, which means the renderer — and physics
-//! depending on the renderer would tie [`PhysicsBackend`] to wgpu, which
-//! is the one thing the trait exists to avoid.
-//!
-//! So the cache is *defined* here and *filled* from outside, by a system
-//! in a crate that can already see meshes. Physics reads plain points and
-//! never asks who put them there. That also makes it testable without an
-//! asset server: insert the triangles by hand.
-//!
-//! [`PhysicsBackend`]: super::PhysicsBackend
+//! [`ColliderMeshCache`]: plain vertices for mesh-derived colliders, defined here and filled by a
+//! crate that can see meshes — resolving a [`Guid`] would tie
+//! [`PhysicsBackend`](super::PhysicsBackend) to wgpu. Testable by inserting triangles by hand.
 
 use std::collections::HashMap;
 
@@ -24,35 +11,17 @@ use super::MeshKey;
 
 use super::shape::ConvexPart;
 
-/// A mesh, as physics sees it — with whatever reductions of it have
-/// already been paid for.
-///
-/// # Why the reductions live here
-///
-/// `hull` is 387 points where `vertices` is 76 038, and a body's shape is
-/// rebuilt whenever its spec changes — a scale drag, a friction edit.
-/// Deriving the hull each time means qhull over the large set every
-/// rebuild, and scaling it means cloning the large set every frame.
-/// Reduced once, both become the small set.
+/// A mesh as physics sees it, with reductions already paid for: a 387-point `hull` against 76 038
+/// `vertices`, so rebuilds on every scale drag don't rerun qhull or clone the large set.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ColliderMesh {
     pub vertices: Vec<Vec3>,
-    /// Triangles, as indices into `vertices`.
-    ///
-    /// Empty for a point cloud that only ever feeds a convex hull, which
-    /// needs no topology.
+    /// Triangles as indices into `vertices`; empty for a cloud that only feeds a hull.
     pub indices: Vec<[u32; 3]>,
-    /// The convex hull of `vertices`, or empty when nobody has asked.
-    ///
-    /// Computed on demand: a collider that only ever wants the triangles
-    /// should not pay for a hull it will not use. Carries its faces, so
-    /// the backend never re-derives what qhull already produced.
+    /// The convex hull with its faces, or empty when nobody asked — computed on demand.
     pub hull: ConvexPart,
-    /// Convex pieces, when the source was authored as several.
-    ///
-    /// Non-empty only for a **baked** decomposition — a `.glb` holding
-    /// one primitive per piece. Its presence is what lets a concave
-    /// collider skip VHACD, which is seconds rather than milliseconds.
+    /// Baked convex pieces from a `.glb`, one primitive each — their presence skips VHACD, seconds
+    /// instead of milliseconds.
     pub parts: Vec<ConvexPart>,
 }
 
@@ -62,12 +31,8 @@ impl ColliderMesh {
         self.vertices.is_empty() && self.parts.is_empty()
     }
 
-    /// The piece a convex hull should be built from: the reduced one when
-    /// it exists, the raw cloud until it does.
-    ///
-    /// Falling back rather than waiting — the hull of the full cloud is
-    /// the same hull, just dearer, so a body built the frame before the
-    /// reduction lands is correct and gets cheaper on its next rebuild.
+    /// The reduced hull when it exists, else the raw cloud — the same hull, dearer, and the next
+    /// rebuild gets cheaper.
     pub fn hull_or_vertices(&self) -> ConvexPart {
         match self.hull.is_empty() {
             true => ConvexPart::loose(self.vertices.clone()),
@@ -108,10 +73,7 @@ impl ColliderMeshCache {
             .insert(guid, (self.next_epoch, Entry::Ready(mesh)));
     }
 
-    /// Publishes the reduced hull for a mesh already in the cache.
-    ///
-    /// Bumps the epoch like any other answer, so a body built from the
-    /// full cloud is retired and rebuilt from the small one.
+    /// Publishes a reduced hull, bumping the epoch so bodies built from the full cloud rebuild.
     pub fn insert_hull(&mut self, key: impl Into<MeshKey>, hull: ConvexPart) {
         let guid = key.into();
         let Some((epoch, Entry::Ready(mesh))) = self.entries.get_mut(&guid) else {
@@ -128,11 +90,8 @@ impl ColliderMeshCache {
         matches!(self.entries.get(&guid), Some((_, Entry::Ready(mesh))) if mesh.hull.is_empty())
     }
 
-    /// Records that this GUID will not resolve.
-    ///
-    /// Idempotent by design: the filler runs every frame and must not
-    /// bump the epoch — and so rebuild every body — for a failure that
-    /// has not changed.
+    /// Records a GUID that will not resolve. Idempotent: the filler runs every frame and must not
+    /// rebuild every body.
     pub fn fail(&mut self, key: impl Into<MeshKey>) {
         let guid = key.into();
         if matches!(self.entries.get(&guid), Some((_, Entry::Failed))) {
@@ -151,10 +110,7 @@ impl ColliderMeshCache {
         }
     }
 
-    /// How many times this GUID's answer has changed, engine-wide.
-    ///
-    /// `0` for a GUID nobody has answered for yet, which is what makes an
-    /// unresolved collider distinguishable from a resolved one in a
+    /// How often this GUID's answer changed; `0` means unanswered, distinguishing it in a
     /// [`ShapeSpec`](crate::components::ShapeSpec).
     pub fn epoch(&self, key: impl Into<MeshKey>) -> u64 {
         let guid = key.into();
@@ -179,11 +135,8 @@ impl ColliderMeshCache {
         self.entries.is_empty()
     }
 
-    /// Drops every entry.
-    ///
-    /// The epoch deliberately keeps counting: a GUID cleared and
-    /// refilled with the same mesh must still read as a change, or a body
-    /// built from the old data never rebuilds.
+    /// Drops every entry but keeps the epoch counting, or a refilled GUID never rebuilds its
+    /// bodies.
     pub fn clear(&mut self) {
         self.entries.clear();
     }

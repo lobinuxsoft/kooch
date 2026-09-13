@@ -1,39 +1,10 @@
-//! Line segments describing what the solver actually holds.
-//!
-//! # Why this exists when colliders are already drawn
-//!
-//! The editor's `ColliderVisualizer` draws a collider from its ECS
-//! components, folding scale the same way the physics does. That is the
-//! right tool for "does this shape wrap my model", and it is the common
-//! case.
-//!
-//! It cannot answer the other question. Drawing the components is the same
-//! arithmetic done twice: if the sync layer never built the body, or built
-//! it from a stale spec, or the solver moved it somewhere the ECS has not
-//! heard about, the gizmo shows the shape that *should* exist and says
-//! nothing about the one that does. **When those two disagree, the
-//! disagreement is the bug**, and only one of them can report it.
-//!
-//! So this is deliberately not a second collider outline. It is the
-//! solver's own account of itself: contacts, centres of mass, joint
-//! anchors, broad-phase bounds, and which bodies it has stopped
-//! simulating. None of that is derivable from the components at all.
-//!
-//! # Line segments, not draw calls
-//!
-//! The backend produces geometry and never renders. Rapier's
-//! `DebugRenderPipeline` walks the world and hands over pairs of points —
-//! already tessellated, so a sphere arrives as segments rather than a
-//! centre and a radius — and something else decides what to do with them.
-//! That keeps the physics crate free of any opinion about rendering, and
-//! keeps rapier's types out of [`PhysicsBackend`](super::PhysicsBackend).
+//! The solver's own state as segments — contacts, centres of mass, anchors, bounds, sleep. The
+//! collider gizmo draws components; a disagreement is the sync bug. Geometry only, rapier types
+//! stay out of [`PhysicsBackend`](super::PhysicsBackend).
 
 use glam::Vec3;
 
-/// One segment of the debug overlay, in world space.
-///
-/// Colour is linear RGB, already resolved from whatever the backend used
-/// internally. A consumer pushes these straight into a line renderer.
+/// One world-space overlay segment, linear RGB, ready for a line renderer.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DebugLine {
     pub start: Vec3,
@@ -41,24 +12,12 @@ pub struct DebugLine {
     pub color: Vec3,
 }
 
-/// Which parts of the solver to describe.
-///
-/// Separate switches rather than one flag because they answer different
-/// questions and cost different amounts: contacts are cheap and usually
-/// what you want, collider shapes are the expensive one and are mostly
-/// redundant with the component gizmo.
-///
-/// # Default
-///
-/// Everything off. The overlay is a tool, and a tool that is on by default
-/// is clutter — the walk is per-frame CPU work proportional to shape count
-/// times tessellation, so an unused overlay should cost exactly nothing.
+/// Which parts of the solver to describe — separate switches, since contacts are cheap and shapes
+/// expensive. All off by default: the walk costs CPU per shape per frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DebugCategories {
-    /// Collider outlines **as the solver holds them**, which is the point:
-    /// compared against the component gizmo, a mismatch is a sync bug.
-    /// Off by default because the component gizmo already covers the
-    /// ordinary case, and this is the expensive category.
+    /// Collider outlines as the solver holds them; off by default, as the expensive category the
+    /// component gizmo mostly covers.
     pub collider_shapes: bool,
     /// Where bodies are actually touching. The question "is friction doing
     /// this" is unanswerable without it.
@@ -86,11 +45,7 @@ impl DebugCategories {
         }
     }
 
-    /// Whether anything at all is switched on.
-    ///
-    /// The caller checks this before asking, so a disabled overlay does not
-    /// even reach the backend — "costs nothing when off" has to mean the
-    /// walk never happens, not that it happens and returns nothing.
+    /// Whether anything is on; checked before asking, so a disabled overlay never walks.
     pub fn any(&self) -> bool {
         self.collider_shapes
             || self.contacts

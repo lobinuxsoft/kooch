@@ -27,7 +27,7 @@ use crate::rapier_backend::RapierBackend;
 ///
 /// Inserts a [`PhysicsWorld`] wrapping a [`RapierBackend`], registers the
 /// authored components so they show up in the Inspector, and schedules
-/// the three systems described in [`systems`].
+/// the three systems described in `systems`.
 ///
 /// # Example
 ///
@@ -67,12 +67,8 @@ impl PhysicsPlugin {
         self
     }
 
-    /// Sets the world's unit of length, in metres.
-    ///
-    /// Leave it at 1 for a metre-scale world. A planet-scale world that
-    /// authors in kilometres must say so, or every solver tolerance is
-    /// three orders of magnitude too tight and stacks jitter for reasons
-    /// that look nothing like a units problem.
+    /// The world's unit of length in metres; a kilometre world at 1 gets tolerances 1000× too tight
+    /// and jittering stacks.
     pub fn with_length_unit(mut self, metres: f32) -> Self {
         self.length_unit = metres;
         self
@@ -100,17 +96,8 @@ fn register_components(resources: &mut kooch_core::resource::Resources) {
     }
 }
 
-/// The physics components, with no simulation behind them.
-///
-/// For a host that has to *author* physics without running it: the editor
-/// needs [`PhysicsBody`] and [`Collider`] reflected so they appear in the
-/// add-component menu and the Inspector, but it must not stand up a
-/// second solver. In remote mode its ECS is a mirror of a project that
-/// owns the real physics world, and a local Rapier world full of mirrored
-/// entities would be a second source of truth that simulates nothing.
-///
-/// Apps that want the simulation add [`PhysicsPlugin`], which includes
-/// this.
+/// Physics components reflected without a solver — for the editor, whose remote ECS mirrors a
+/// project owning the real world. [`PhysicsPlugin`] includes it.
 pub struct PhysicsComponentsPlugin;
 
 impl Plugin for PhysicsComponentsPlugin {
@@ -132,11 +119,8 @@ impl Plugin for PhysicsPlugin {
         app.add_plugin(PhysicsComponentsPlugin);
         app.insert_resource(PhysicsWorld::new(Box::new(self.backend())));
 
-        // Sync runs unconditionally: the body set mirrors the ECS while
-        // authoring too. Stepping and writeback are gameplay.
-        // Before the sync, and ungated: a system gated on play cannot see
-        // play end, and an event about a world that no longer exists must
-        // not reach the next session.
+        // Lifecycle before sync, ungated: a play-gated system cannot see play end. Sync runs always
+        // (bodies mirror the ECS while authoring); step and writeback are gameplay.
         app.add_system(Stage::PreUpdate, events::physics_lifecycle_system);
         app.add_system(Stage::PreUpdate, physics_sync_system);
         app.add_system(Stage::Physics, run_if_playing(physics_step_system));

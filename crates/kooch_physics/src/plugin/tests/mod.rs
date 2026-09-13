@@ -1,11 +1,5 @@
-//! Acceptance tests for the ECS↔solver bridge (#139).
-//!
-//! Each test maps to one line of the issue's acceptance list, plus the
-//! interaction the issue flags as unconsidered: what `WorldSnapshot`'s
-//! restore does to a solver that does not know it exists.
-//!
-//! This module is the shared harness; the assertions live in the
-//! submodules below.
+//! The ECS↔solver bridge's acceptance harness (#139), including what a `WorldSnapshot` restore does
+//! to the solver; assertions live in the submodules.
 
 mod compound;
 mod configuration;

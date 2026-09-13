@@ -88,11 +88,7 @@ fn ground(resources: &mut Resources, half_y: f32) -> Entity {
 // Sensors
 // ---------------------------------------------------------------------------
 
-/// Acceptance: "a sensor volume reports enter and exit with the right
-/// entity."
-///
-/// The entity half is asserted here; enter-and-exit as a pair is the next
-/// test, which watches one body fall the whole way through.
+/// A sensor reports enter and exit with the right entity; the pair is the next test.
 #[test]
 fn a_sensor_reports_the_right_entities() {
     let mut resources = listening_world();
@@ -366,11 +362,7 @@ fn disjoint_collision_groups_pass_through() {
     );
 }
 
-/// Acceptance: "a projectile with matching collision groups but disjoint
-/// solver groups detects a wall without being stopped."
-///
-/// This is the pair of masks earning its keep: one decides whether the pair
-/// is looked at, the other whether it pushes.
+/// Matching collision groups with disjoint solver groups detect a wall without stopping.
 #[test]
 fn matching_collision_groups_with_disjoint_solver_groups_detect_without_stopping() {
     let mut resources = listening_world();

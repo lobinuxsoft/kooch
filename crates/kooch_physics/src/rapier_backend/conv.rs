@@ -8,13 +8,8 @@ use crate::backend::{
 
 use super::shapes::{ShapeError, shape_builder};
 
-/// Builds the Rapier collider for an engine shape.
-///
-/// Since Rapier 0.32 the math types *are* glam's, so this module no
-/// longer translates vectors or quaternions — only shapes, which have no
-/// engine-side equivalent.
-/// `offset` becomes the collider's position relative to its parent body,
-/// which is how rapier expresses a shape that is not centred on the body.
+/// Builds the Rapier collider for an engine shape; `offset` becomes its position relative to the
+/// body. Since Rapier 0.32 the math types are glam, so only shapes need translating.
 pub(super) fn collider_for(
     shape: &CollisionShape,
     offset: Vec3,
@@ -28,11 +23,7 @@ pub(super) fn collider_for(
     )
 }
 
-/// Same, with a rotation in the body's local space.
-///
-/// A compound shape needs one: a child entity contributing its collider
-/// can be rotated relative to the body, and dropping that would silently
-/// axis-align every attached shape.
+/// The same with a body-local rotation, or attached child shapes silently axis-align.
 pub(super) fn collider_for_pose(
     shape: &CollisionShape,
     offset: Vec3,
@@ -47,10 +38,7 @@ pub(super) fn collider_for_pose(
     )
 }
 
-/// Applies the filtering, the sensor flag and the event opt-ins.
-///
-/// `ActiveEvents` starts empty in rapier, so a collider that does not ask
-/// generates nothing — which is why the engine heard silence until #561.
+/// Applies filtering, sensor and event opt-ins; `ActiveEvents` starts empty in rapier (#561).
 fn with_interaction(builder: ColliderBuilder, interaction: ColliderInteraction) -> ColliderBuilder {
     let mut events = ActiveEvents::empty();
     events.set(ActiveEvents::COLLISION_EVENTS, interaction.collision_events);
@@ -66,12 +54,8 @@ fn with_interaction(builder: ColliderBuilder, interaction: ColliderInteraction) 
         .solver_groups(groups(interaction.solver_groups))
 }
 
-/// Our mask, as rapier's.
-///
-/// `And` is the test mode rapier 0.34 added and the one
-/// [`InteractionMask::interacts_with`] documents: both sides have to agree.
-/// `Or` would let a one-sided claim through, which is the behaviour that
-/// makes filtering bugs impossible to reason about.
+/// Our mask as rapier's, in `And` mode (0.34): both sides must agree, as
+/// [`InteractionMask::interacts_with`] says.
 pub(super) fn groups(mask: InteractionMask) -> InteractionGroups {
     InteractionGroups::new(
         Group::from_bits_truncate(mask.memberships),
@@ -80,11 +64,7 @@ pub(super) fn groups(mask: InteractionMask) -> InteractionGroups {
     )
 }
 
-/// Applies the surface coefficients to a builder.
-///
-/// Applied here rather than per call site so no path can forget them and
-/// silently fall back to rapier's defaults — which is the state #623 was
-/// filed about.
+/// Applies surface coefficients in one place, so no path falls back to rapier's defaults (#623).
 fn with_material(builder: ColliderBuilder, material: SurfaceMaterial) -> ColliderBuilder {
     let material = material.sanitised();
     builder
@@ -105,36 +85,15 @@ fn combine_rule(rule: CombineRule) -> CoefficientCombineRule {
     }
 }
 
-/// The un-built builder, so the offset and the density are applied in one
-/// place.
-///
-/// Every collider is built massless. Mass belongs to the body — see
-/// [`BodyDesc::mass`](crate::backend::BodyDesc::mass) for why the shapes
-/// do not get a say. A density left at rapier's default would make a body
-/// weigh its authored mass *plus* its volume, which is exactly the units
-/// bug #618 exists to close.
+/// The builder with offset and density in one place. Colliders are massless — mass is the body's
+/// ([`BodyDesc::mass`](crate::backend::BodyDesc::mass)) — or bodies weigh mass plus volume (#618).
 fn builder_for(shape: &CollisionShape) -> Result<ColliderBuilder, ShapeError> {
     Ok(shape_builder(shape)?.density(0.0))
 }
 
-/// The mass properties a body of `mass` kg shaped like `shape` has.
-///
-/// The shape is measured at unit density and then *scaled* to the authored
-/// mass, so the tensor keeps the shape's proportions — a long thin capsule
-/// still resists rolling differently from tumbling — while the mass is
-/// exactly what the author typed.
-///
-/// # A hollow shape still needs a tensor
-///
-/// A trimesh, a plane and a polyline all measure to zero inertia, and
-/// `set_mass(m, true)` scales zero to zero — leaving a body that takes
-/// infinite angular acceleration from any torque. Those fall back to the
-/// ball that encloses them, which is wrong in the way every engine is
-/// wrong here and finite in the way that matters.
-///
-/// Clamped away from zero for the same reason a dimension is: a mass field
-/// mid-edit passes through zero on the way to the value the author means,
-/// and the NaNs it would produce outlive the typo.
+/// Mass properties of a `mass` kg body shaped like `shape`: measured at unit density and scaled,
+/// keeping proportions. Zero-inertia shapes (trimesh, plane) fall back to their enclosing ball;
+/// mass is clamped from zero.
 pub(super) fn mass_properties_for(
     shape: &CollisionShape,
     mass: f32,
@@ -170,11 +129,8 @@ fn usable(mprops: &MassProperties) -> bool {
             .all(|i| *i > 0.0 && i.is_finite())
 }
 
-/// The radius of a ball around the shape, or one metre when there is no
-/// shape to measure.
-///
-/// An infinite half-space measures infinite, so the AABB is clamped: the
-/// number only has to be finite and roughly the size of the thing.
+/// Radius of a ball around the shape, 1 m without one; the AABB is clamped, since half-spaces
+/// measure infinite.
 fn enclosing_radius(collider: Option<&Collider>) -> f32 {
     const FALLBACK: f32 = 1.0;
     const CEILING: f32 = 1.0e4;

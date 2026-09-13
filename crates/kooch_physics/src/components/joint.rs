@@ -1,8 +1,5 @@
-//! [`Joint`] — two bodies held together by the solver.
-//!
-//! See the [module docs](super) for why the joint type is a `u32`
-//! discriminant rather than an enum, and [`crate::backend`]'s joint
-//! documentation for why limits and motors act on a single axis.
+//! [`Joint`]: two bodies held by the solver. See [module docs](super) for the `u32` discriminant,
+//! and [`crate::backend`] for single-axis limits and motors.
 
 use glam::Vec3;
 
@@ -83,11 +80,7 @@ pub static MOTOR_MODEL_CHOICES: &[FieldChoice] = &[
     },
 ];
 
-/// Which kinds read `axis`: the ones with a principal direction.
-///
-/// Beside the `JOINT_*` constants on purpose — someone adding a kind is
-/// already editing here, and a condition kept in another file is a
-/// condition that goes stale.
+/// Kinds that read `axis`, beside the `JOINT_*` constants so adding a kind updates it.
 pub static AXIS_WHEN: FieldCondition = FieldCondition {
     field: "kind",
     values: &[
@@ -115,11 +108,8 @@ pub static LOCKED_AXES_WHEN: FieldCondition = FieldCondition {
     values: &[JOINT_GENERIC as i64],
 };
 
-/// Which kinds have an axis to limit or drive.
-///
-/// A fixed joint has no free axis; a rope's length and a spring's rest
-/// length already *are* its constraint. Showing a limit range on those
-/// would imply it does something.
+/// Kinds with an axis to limit or drive; fixed, rope and spring would show controls that do
+/// nothing.
 pub static FREE_AXIS_WHEN: FieldCondition = FieldCondition {
     field: "kind",
     values: &[
@@ -131,23 +121,9 @@ pub static FREE_AXIS_WHEN: FieldCondition = FieldCondition {
     ],
 };
 
-/// Constrains two bodies to each other.
-///
-/// # Why the joint names both bodies
-///
-/// A joint could have lived on one of the bodies, naming only the other —
-/// that is what Unity's `connectedBody` does. It costs a body the ability
-/// to be in two joints at once, because a component appears once per
-/// entity, and a ragdoll pelvis is in four. Naming both bodies puts the
-/// joint on whatever entity the author likes, including an empty one, and
-/// a body can be in as many as the scene has.
-///
-/// # Default
-///
-/// A fixed joint between nothing and nothing: unanchored, unlimited,
-/// unmotorised, impulse-solved and unbreakable. It does nothing until both
-/// bodies are named, which is the right behaviour for a component that was
-/// just added from the menu.
+/// Constrains two bodies, naming both so a body can be in several joints — a ragdoll pelvis is in
+/// four — unlike Unity's `connectedBody`. Default: a fixed joint between nothing, inert until both
+/// are named.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Physics")]
 pub struct Joint {
@@ -217,20 +193,10 @@ pub struct Joint {
     /// Ceiling on the motor's output. Zero or below means unlimited.
     #[reflect(shown_when = FREE_AXIS_WHEN)]
     pub motor_max_force: f32,
-    /// Solve as a reduced-coordinate articulation rather than an impulse
-    /// constraint.
-    ///
-    /// A real trade-off, not an implementation detail: an impulse joint is
-    /// cheap and drifts slightly under load; an articulated one cannot
-    /// drift, because the stretched configuration is not representable, and
-    /// costs more per joint. A chain that must not stretch wants this. A
-    /// closed loop cannot use it — a multibody is a tree.
+    /// Solve as an articulation: no drift, more cost per joint, for chains that must not stretch. A
+    /// multibody is a tree, so no loops.
     pub articulated: bool,
-    /// Whether the two jointed bodies still collide with each other.
-    ///
-    /// Off by default, because the common case is two parts that overlap at
-    /// the joint: a door leaf inside its frame would collide with it
-    /// forever.
+    /// Whether the jointed bodies still collide; off, since a door overlaps its frame.
     pub contacts_enabled: bool,
     /// Let the joint tear off above `break_impulse`.
     pub breakable: bool,
@@ -280,11 +246,8 @@ impl Default for Joint {
 impl Component for Joint {}
 
 impl Joint {
-    /// The backend constraint these flat fields describe.
-    ///
-    /// An unknown discriminant falls back to fixed rather than failing: a
-    /// scene authored by a newer editor stays loadable, and a weld is the
-    /// least surprising thing for a joint whose type nobody recognises.
+    /// The backend constraint these fields describe; unknown discriminants fall back to fixed,
+    /// keeping newer scenes loadable.
     pub fn joint_kind(&self) -> JointKind {
         match self.kind {
             JOINT_REVOLUTE => JointKind::Revolute { axis: self.axis },

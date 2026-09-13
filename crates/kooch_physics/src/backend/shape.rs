@@ -1,52 +1,16 @@
-//! [`CollisionShape`] — the geometry a body presents to the solver.
-//!
-//! # Plain glam, never a backend type
-//!
-//! Every variant carries `f32`, `Vec3`, `IVec3` or a `Vec` of those. No
-//! `SharedShape`, no `TriMeshFlags`, and — the one worth stating — **no
-//! asset handle**. A mesh-derived shape carries its points, because a
-//! `Guid` here would drag the renderer in behind it and tie the physics
-//! trait to wgpu. The bridge runs the other way: [`ColliderMeshCache`]
-//! is defined here and filled by whoever can already see meshes.
-//!
-//! [`ColliderMeshCache`]: super::ColliderMeshCache
-//!
-//! # Why this is not `Copy`
-//!
-//! It was, while the vocabulary was three primitives. A convex hull is a
-//! point cloud, and a level's trimesh is hundreds of thousands of
-//! triangles — copying either on a whim is not something a per-frame path
-//! should be able to do by accident. The sync pass builds one per body
-//! per *rebuild*, not per frame; see [`ShapeSpec`](crate::components::ShapeSpec)
-//! for the cheap POD identity it compares instead.
+//! [`CollisionShape`]: plain glam geometry, never a backend type or asset handle — mesh shapes
+//! carry points via [`ColliderMeshCache`](super::ColliderMeshCache). Not `Copy`, since hulls and
+//! trimeshes are large.
 
 use glam::{IVec3, Vec3};
 
-/// Smallest dimension a shape is built with.
-///
-/// A field mid-edit in the Inspector passes through zero on the way to
-/// the value the author means, and a zero-radius shape makes the solver
-/// produce NaNs that outlive the typo.
+/// Smallest built dimension: an Inspector edit through zero would make the solver produce NaNs that
+/// outlive the typo.
 pub const MIN_EXTENT: f32 = 1e-4;
 
-/// A convex piece: its points, and the faces that prove they are one.
-///
-/// # Why the faces are worth carrying
-///
-/// `ColliderBuilder::convex_hull` runs qhull every time a body is built —
-/// 162 µs on a 226-point hull in release, 570 µs in debug, to produce the
-/// same 226 points it was given. Once something convex is known to be
-/// convex, that pass buys nothing.
-///
-/// So `faces` is a claim: **these points are already a convex hull, and
-/// this is its topology.** Present, the backend builds the polyhedron
-/// directly. Absent, it hulls the points.
-///
-/// 🔴 The claim is trusted, not checked — verifying convexity is a pass
-/// over every face against every point. It is only ever made by the two
-/// places that can honestly make it: qhull's own output, and an asset the
-/// engine baked and marked as such in its sidecar. A mesh an artist
-/// authored is hulled.
+/// Convex points with the faces that prove it. qhull costs 162 µs for a 226-point hull just to
+/// return it, so `faces` claims the hull is done and the backend builds directly.
+/// 🔴 Trusted, not checked — made only by qhull's output or an engine-baked asset.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ConvexPart {
     pub points: Vec<Vec3>,
@@ -72,11 +36,7 @@ impl ConvexPart {
         self.points.is_empty()
     }
 
-    /// The same piece at a scale.
-    ///
-    /// The faces survive: scaling by a positive diagonal maps a convex
-    /// hull to a convex hull with the same combinatorics, so the topology
-    /// that was true stays true.
+    /// The piece scaled; a positive diagonal scale keeps a hull convex with the same faces.
     pub fn scaled(&self, scale: Vec3) -> Self {
         Self {
             points: scaled_points(&self.points, scale),
@@ -98,11 +58,7 @@ pub enum CollisionShape {
     Capsule { radius: f32, half_height: f32 },
     /// Cylinder along local Y, flat caps.
     Cylinder { radius: f32, half_height: f32 },
-    /// Cylinder with its rim rounded off by `border_radius`.
-    ///
-    /// The cheap fillet that stops a wheel or a barrel snagging on a box
-    /// edge — a sharp rim gives the solver a single contact point to
-    /// resolve, and it catches.
+    /// Cylinder with a rounded rim, so wheels and barrels don't snag on box edges.
     RoundCylinder {
         radius: f32,
         half_height: f32,
@@ -110,74 +66,42 @@ pub enum CollisionShape {
     },
     /// Cone along local Y, apex up.
     Cone { radius: f32, half_height: f32 },
-    /// Infinite plane through the body's origin, solid on the side
-    /// `normal` points away from.
-    ///
-    /// The one-line ground: a test scene stops needing a cuboid big
-    /// enough to never be walked off, which is a shape whose only job was
-    /// to be large.
+    /// Infinite plane through the origin, solid opposite `normal` — a ground without a huge cuboid.
     HalfSpace { normal: Vec3 },
     /// Line between two local-space points. No volume.
     Segment { a: Vec3, b: Vec3 },
     /// Single triangle. No volume.
     Triangle { a: Vec3, b: Vec3, c: Vec3 },
-    /// The convex hull of a point cloud.
-    ///
-    /// The standard answer for a dynamic prop whose visual mesh is too
-    /// heavy to collide against: convex, so it has volume and an inertia
-    /// tensor, and cheap for the narrowphase.
+    /// Convex hull of a point cloud: volume, inertia and a cheap narrowphase for dynamic props.
     ConvexHull { part: ConvexPart },
-    /// A concave mesh approximated by a set of convex parts.
-    ///
-    /// What a single hull cannot do: keep a concavity a designer is
-    /// relying on. Expensive to build — this is a bake, not a per-frame
-    /// operation.
+    /// A concave mesh as convex parts, keeping concavities — a bake, not per frame.
     ConvexDecomposition {
         vertices: Vec<Vec3>,
         indices: Vec<[u32; 3]>,
     },
-    /// The triangles themselves.
-    ///
-    /// Correct for static level geometry and wrong for anything dynamic:
-    /// no volume, no inertia, and ghost collisions where a body slides
-    /// across a shared edge.
+    /// The triangles: right for static level geometry, wrong for dynamic — no volume, no inertia,
+    /// ghost edge collisions.
     TriMesh {
         vertices: Vec<Vec3>,
         indices: Vec<[u32; 3]>,
     },
     /// A connected run of segments. No volume.
     Polyline { vertices: Vec<Vec3> },
-    /// A height grid on the XZ plane, column-major, `rows × cols`.
-    ///
-    /// Flat plus its dimensions rather than a nested `Vec`, because that
-    /// is the layout the backend wants and a jagged grid should be
-    /// unrepresentable.
+    /// XZ height grid, column-major `rows × cols`, flat so a jagged grid is unrepresentable.
     Heightfield {
         heights: Vec<f32>,
         rows: u32,
         cols: u32,
         scale: Vec3,
     },
-    /// A sparse grid of solid cells.
-    ///
-    /// Rapier is the only general-purpose solver shipping this, and it
-    /// matters here more than elsewhere: it collides against the voxels
-    /// directly, so it is smaller than a baked trimesh and has no seam
-    /// ghost-collisions. The shape terraforming needs.
+    /// Sparse solid cells, collided directly — smaller than a baked trimesh with no seam ghosts;
+    /// what terraforming needs.
     Voxels { size: Vec3, cells: Vec<IVec3> },
-    /// Several convex pieces under one collider.
-    ///
-    /// What a baked convex decomposition loads as. Distinct from
-    /// [`ConvexDecomposition`](Self::ConvexDecomposition), which hands
-    /// the backend a concave mesh and asks it to *find* the pieces —
-    /// VHACD, and seconds of it. Once they are found they are data, and
-    /// this is the shape that consumes them.
+    /// Several convex pieces under one collider — how a baked decomposition loads;
+    /// [`ConvexDecomposition`](Self::ConvexDecomposition) instead asks VHACD to find them.
     Compound { parts: Vec<ConvexPart> },
-    /// A mesh the backend voxelises at build time.
-    ///
-    /// Separate from [`Voxels`](Self::Voxels) because the voxelisation is
-    /// the backend's — asking the engine to rasterise a mesh into cells
-    /// would be reimplementing what parry already ships.
+    /// A mesh voxelised by the backend at build time — parry already ships it, unlike
+    /// [`Voxels`](Self::Voxels).
     VoxelizedMesh {
         vertices: Vec<Vec3>,
         indices: Vec<[u32; 3]>,
@@ -188,10 +112,8 @@ pub enum CollisionShape {
 }
 
 impl CollisionShape {
-    /// The cells a point cloud occupies on a grid of `size`.
-    ///
-    /// Deduplicated and sorted, so the same cloud always produces the
-    /// same shape — cell order is observable in the solver.
+    /// Cells a point cloud occupies, deduplicated and sorted: cell order is observable in the
+    /// solver.
     pub fn voxels_from_points(size: Vec3, points: &[Vec3]) -> Self {
         let size = size.max(Vec3::splat(MIN_EXTENT));
         let mut cells: Vec<IVec3> = points
@@ -226,12 +148,8 @@ impl CollisionShape {
         }
     }
 
-    /// How far this shape extends below its own origin, along local Y.
-    ///
-    /// `None` for the shapes that have no answer without their point
-    /// cloud, and for the unbounded ones. A character controller is what
-    /// asks: its ride height is measured from the origin and has to clear
-    /// this, or the spring asks for a height the geometry cannot occupy.
+    /// How far the shape extends below its origin on local Y — a controller's ride height must
+    /// clear it. `None` for cloud and unbounded shapes.
     pub fn reach(&self) -> Option<f32> {
         match self {
             Self::Sphere { radius } => Some(*radius),
@@ -252,21 +170,9 @@ impl CollisionShape {
         }
     }
 
-    /// This shape at a `Transform` scale.
-    ///
-    /// Rapier's shapes take no scale — they are built from dimensions —
-    /// so scaling happens where the shape is built, and a scale change
-    /// rebuilds it.
-    ///
-    /// # Why the round shapes are approximations
-    ///
-    /// Only a box and a point cloud scale exactly. A non-uniformly scaled
-    /// sphere is an ellipsoid and rapier has no ellipsoid, so the round
-    /// shapes follow the convention every engine uses: a sphere takes the
-    /// largest axis, because a collider smaller than what you can see is
-    /// the one that reads as a physics bug; the Y-aligned shapes take
-    /// their radius from the horizontal axes, so scaling on Y makes them
-    /// taller rather than fatter.
+    /// This shape at a `Transform` scale; rapier shapes take none, so scale rebuilds them. Only
+    /// boxes and clouds scale exactly: spheres take the largest axis, Y-aligned shapes the
+    /// horizontal ones for radius.
     pub fn scaled(&self, scale: Vec3) -> Self {
         let s = scale.abs();
         let flat = s.x.max(s.z);
@@ -329,10 +235,8 @@ impl CollisionShape {
                 vertices: scaled_points(vertices, s),
                 indices: indices.clone(),
             },
-            // Each piece scales on its own. The union of the scaled
-            // pieces is the scaled union, so this stays a decomposition
-            // of the same solid — which is why a baked one survives the
-            // scale gizmo without VHACD running again.
+            // Each piece scales alone; the scaled union is still a decomposition, so no VHACD
+            // rerun.
             Self::Compound { parts } => Self::Compound {
                 parts: parts.iter().map(|part| part.scaled(s)).collect(),
             },
@@ -358,10 +262,8 @@ impl CollisionShape {
                 size: (*size * s).max(Vec3::splat(MIN_EXTENT)),
                 cells: cells.clone(),
             },
-            // The cell size grows with the largest axis: a finer grid over
-            // scaled-up geometry costs cells cubically, and the voxel
-            // shape's whole reason to exist is being cheaper than the
-            // trimesh it came from.
+            // Cell size grows with the largest axis, or cells grow cubically past the trimesh they
+            // replace.
             Self::VoxelizedMesh {
                 vertices,
                 indices,
@@ -386,11 +288,7 @@ fn scaled_points(points: &[Vec3], scale: Vec3) -> Vec<Vec3> {
     points.iter().map(|point| *point * scale).collect()
 }
 
-/// `normal`, normalised, or up when it has no direction to give.
-///
-/// A zero normal is a plane with no side, which rapier cannot build and
-/// the author cannot see. Falling back to a floor is the recoverable
-/// reading of a half-authored field.
+/// `normal` normalised, or up when zero: a plane with no side cannot be built or seen.
 fn unit_or_up(normal: Vec3) -> Vec3 {
     normal.try_normalize().unwrap_or(Vec3::Y)
 }

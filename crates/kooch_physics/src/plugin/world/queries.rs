@@ -1,10 +1,5 @@
-//! Asking the world a question, from the vocabulary a system speaks.
-//!
-//! The backend answers in [`BodyHandle`]s and takes its own filter type;
-//! a system holds a [`SolverBody`] and has no way to name either. These
-//! wrappers are that translation, and [`PhysicsWorld::without`] is the
-//! one that matters — "everything but me" is the most common filter
-//! there is and could not otherwise be built by the code that needs it.
+//! Queries in a system's vocabulary: [`SolverBody`] in, not [`BodyHandle`].
+//! [`PhysicsWorld::without`] matters most — "everything but me".
 
 use glam::Vec3;
 
@@ -13,25 +8,14 @@ use crate::backend::{BodyHandle, PointHit, QueryFilter, RayHit, ShapeAt, ShapeHi
 use super::{PhysicsWorld, SolverBody};
 
 impl PhysicsWorld {
-    /// First thing a ray meets, or `None` for empty space.
-    ///
-    /// `direction` need not be normalised; `max_distance` is measured in
-    /// its lengths. Not tied to a body — it is here so that asking the
-    /// world a question does not require finding the backend first.
+    /// First ray hit, `None` for empty space; `direction` unnormalised, `max_distance` in its
+    /// lengths.
     pub fn raycast(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<RayHit> {
         self.raycast_where(origin, direction, max_distance, QueryFilter::ALL)
     }
 
-    /// A filter blind to one body, named the way game code names bodies.
-    ///
-    /// [`QueryFilter::excluding`] takes a [`BodyHandle`], which is the
-    /// backend's vocabulary and deliberately not reachable from a system.
-    /// Without this the most common filter there is — "everything but
-    /// me" — could not be built by the code that needs it most.
-    ///
-    /// A stale [`SolverBody`] gives an unfiltered query rather than a
-    /// blind one: seeing too much is recoverable, and silently seeing
-    /// nothing is a character standing on air.
+    /// A filter blind to one body, since [`QueryFilter::excluding`] takes an unreachable
+    /// [`BodyHandle`]. A stale body gives an unfiltered query: seeing too much is recoverable.
     pub fn without(&self, body: SolverBody) -> QueryFilter {
         match self.handle(body.slot()) {
             Some(handle) => QueryFilter::excluding(handle),
@@ -39,11 +23,8 @@ impl PhysicsWorld {
         }
     }
 
-    /// The same, seeing only what a filter allows.
-    ///
-    /// A body probing its own surroundings wants
-    /// [`QueryFilter::excluding`] itself: a downward ray from a
-    /// character's centre finds the character first, every time.
+    /// The same through a filter; a body probing its surroundings excludes itself, or a downward
+    /// ray finds it first.
     pub fn raycast_where(
         &self,
         origin: Vec3,
@@ -55,11 +36,7 @@ impl PhysicsWorld {
             .query_ray(origin, direction, max_distance, filter)
     }
 
-    /// Sweeps a shape and returns the first thing it meets.
-    ///
-    /// What a character controller tests a move with: a ray is a line of
-    /// zero width and will slip between two crates a body cannot fit
-    /// through.
+    /// Sweeps a shape to its first hit — a character controller's move test.
     pub fn sweep(
         &self,
         shape: ShapeAt<'_>,

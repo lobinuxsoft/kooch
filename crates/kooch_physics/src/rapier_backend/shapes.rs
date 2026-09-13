@@ -1,19 +1,6 @@
-//! Engine geometry, as rapier geometry.
-//!
-//! The only place in the crate that knows both vocabularies, and the
-//! reason [`CollisionShape`] can grow a variant without anything outside
-//! this file learning a rapier type.
-//!
-//! # A shape that cannot be built says so
-//!
-//! Three of rapier's constructors can refuse: a convex hull of collinear
-//! points has no volume, a trimesh can be degenerate, and a voxel set can
-//! come out empty. Rapier answers `None` or an `Err`, and the tempting
-//! move is to substitute a small ball so the call site keeps its
-//! signature — which produces a collider nobody authored, in a place
-//! nobody looks. So this returns the refusal, and the backend logs it and
-//! builds the body without that shape: a body that visibly does not
-//! collide is a bug report, and a secret ball is not.
+//! Engine geometry as rapier geometry, the only place knowing both. A shape rapier refuses
+//! (collinear hull, degenerate trimesh, empty voxels) returns the refusal: the body builds without
+//! it and logs, never a secret ball.
 
 use rapier3d::parry::transformation::voxelization::FillMode;
 use rapier3d::parry::utils::Array2;
@@ -143,11 +130,7 @@ fn non_empty(points: &[Vec3]) -> Result<(), ShapeError> {
     }
 }
 
-/// Whether the interior is solid or only the surface shell is.
-///
-/// A shell is what a hollow prop wants and what a body dropped *inside*
-/// the shape passes straight through; the flood fill is the default
-/// everywhere else.
+/// Solid interior or shell; shells let a body inside pass through, so fill is the default.
 fn fill_mode(solid: bool) -> FillMode {
     match solid {
         true => FillMode::FloodFill {
@@ -157,11 +140,7 @@ fn fill_mode(solid: bool) -> FillMode {
     }
 }
 
-/// One convex piece, hulled only when nobody has vouched for its faces.
-///
-/// The fast path is not an optimisation with a caveat — it is the whole
-/// reason a baked collider is worth having. See [`ConvexPart`] for who is
-/// allowed to make the claim.
+/// One convex piece, hulled only when nobody vouched for its faces ([`ConvexPart`]).
 fn convex(part: &ConvexPart) -> Result<ColliderBuilder, ShapeError> {
     non_empty(&part.points)?;
     match part.is_hulled() {
@@ -171,12 +150,7 @@ fn convex(part: &ConvexPart) -> Result<ColliderBuilder, ShapeError> {
     }
 }
 
-/// One collider from several convex pieces, each at the body's origin.
-///
-/// The pieces already carry their own positions — they are point sets in
-/// the same space — so every pose is the identity. Rapier wants the pair
-/// anyway, because a compound is the general shape and this is its
-/// degenerate, useful case.
+/// One collider from convex pieces, each already in body space, so every pose is identity.
 fn compound(parts: &[ConvexPart]) -> Result<ColliderBuilder, ShapeError> {
     if parts.is_empty() {
         return Err(ShapeError::NoGeometry);
@@ -192,40 +166,23 @@ fn compound(parts: &[ConvexPart]) -> Result<ColliderBuilder, ShapeError> {
     Ok(ColliderBuilder::compound(shapes))
 }
 
-/// The convex hull of a point cloud, as points and triangles.
-///
-/// The reduction is the whole point: 76 038 vertices of a dragon come
-/// back as 387. Everything downstream — the per-frame scale, the
-/// narrowphase, a gizmo outline — then works on the small set instead of
-/// re-deriving it from the large one. The triangles are what an exporter
-/// needs to write the hull out as a mesh.
-///
-/// `None` when the points have no volume, which is the same refusal
-/// [`shape_builder`] gives for a hull it cannot build.
+/// A cloud's convex hull as points and triangles — a 76 038-vertex dragon becomes 387. `None`
+/// without volume, as `shape_builder` refuses.
 pub fn hull_of(points: &[Vec3]) -> Option<(Vec<Vec3>, Vec<[u32; 3]>)> {
     if points.len() < 4 {
         return None;
     }
     let (hull, faces) = rapier3d::parry::transformation::convex_hull(points);
-    // Checked on the way out, not only on the way in: parry answers a
-    // collinear or coplanar cloud with something, and a "hull" of four
-    // points and no closed face is a collider nothing can hit. A
-    // tetrahedron is the smallest thing that encloses a volume.
+    // Checked on output too: parry returns something for coplanar clouds; a tetrahedron is the
+    // smallest volume.
     match hull.len() >= 4 && faces.len() >= 4 {
         true => Some((hull, faces)),
         false => None,
     }
 }
 
-/// A concave mesh, split into convex pieces.
-///
-/// VHACD, and it is not cheap: 1.35 s for a 2k-vertex Suzanne in debug,
-/// 2.58 s for a 76k dragon. That is why the result is worth baking into
-/// an asset rather than deriving whenever a body is built.
-///
-/// Each piece comes back as its own point cloud, which is what
-/// [`CollisionShape::Compound`] takes and what one primitive of an
-/// exported `.glb` holds.
+/// A concave mesh split by VHACD — 1.35 s for Suzanne, 2.58 s for a 76k dragon, hence baking.
+/// Pieces come back as clouds for [`CollisionShape::Compound`].
 pub fn decompose(vertices: &[Vec3], indices: &[[u32; 3]]) -> Vec<Vec<Vec3>> {
     use rapier3d::parry::transformation::vhacd::{VHACD, VHACDParameters};
 
@@ -242,11 +199,7 @@ pub fn decompose(vertices: &[Vec3], indices: &[[u32; 3]]) -> Vec<Vec<Vec3>> {
         .collect()
 }
 
-/// The height grid, checked against its own dimensions.
-///
-/// `Array2::new` asserts the length matches, and an assert inside the
-/// solver is a panic with no author-facing cause. Checked here so a
-/// mis-sized grid is a refusal with a name.
+/// The height grid checked against its dimensions, since `Array2::new` asserts inside the solver.
 fn heightfield(
     heights: &[f32],
     rows: u32,
@@ -263,11 +216,7 @@ fn heightfield(
     ))
 }
 
-/// Says which shape the solver would not take, and why.
-///
-/// At `error` rather than `warn`: nothing downstream compensates, so the
-/// body is in the scene and collides with nothing until someone changes
-/// the authored data.
+/// Logs a refused shape at `error`: nothing compensates, and the body collides with nothing.
 pub(super) fn warn_refused(shape: &CollisionShape, error: &ShapeError) {
     tracing::error!(
         target: "kooch_physics::shape",

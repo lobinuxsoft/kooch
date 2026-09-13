@@ -1,9 +1,5 @@
-//! The scene queries, translated both ways.
-//!
-//! Kept apart from the trait impl because it is the one place that has to
-//! speak both vocabularies at once — engine filters and glam on one side,
-//! rapier's pipeline and parry's hit records on the other — and mixing it
-//! into the contract would bury that seam.
+//! Scene queries translated both ways, kept apart from the contract as the seam between engine and
+//! parry vocabularies.
 
 use glam::Vec3;
 use rapier3d::geometry::ColliderHandle as RapierColliderHandle;
@@ -19,13 +15,8 @@ use super::super::shapes::shape_builder;
 use super::RapierBackend;
 
 impl RapierBackend {
-    /// A query pipeline narrowed by an engine filter.
-    ///
-    /// Since 0.34 this is a view borrowed from the broad-phase BVH rather
-    /// than a mirror kept in sync by hand, so it always sees the current
-    /// colliders with no `update` call to forget after a spawn or a
-    /// teleport — which is what lets the editor query a world nobody is
-    /// stepping.
+    /// A query pipeline narrowed by a filter — since 0.34 a view of the broad-phase BVH, current
+    /// without an `update`.
     fn pipeline(&self, filter: EngineFilter) -> QueryPipeline<'_> {
         let mut rapier = QueryFilter::default().groups(groups(filter.groups));
         if let Some(body) = filter.exclude
@@ -116,13 +107,8 @@ impl RapierBackend {
             self.pipeline(filter)
                 .cast_shape(&pose, dir, builder.shape.as_ref(), options)?;
 
-        // Shape *one* is the world: the pipeline casts the composite of
-        // every collider against the shape handed in, so `witness1` and
-        // `normal1` describe the surface that was hit, and shape one's
-        // frame is world space. `normal2` is its negation in the swept
-        // shape's frame — pointing into the wall, which reads plausible
-        // and is wrong. Rapier's own character controller compares
-        // `normal1` against world up for the same reason.
+        // Shape one is the world, so `witness1` and `normal1` describe the hit surface; `normal2`
+        // points into the wall. Rapier's controller uses `normal1` too.
         Some(ShapeHit {
             body: self.body_of(collider)?,
             t: hit.time_of_impact,
@@ -158,11 +144,8 @@ impl RapierBackend {
             return;
         };
         let pose = Pose::from_parts(shape.origin, shape.rotation);
-        // Collected first: the iterator borrows the pipeline, which
-        // borrows `self`, and the callback may want to ask another
-        // question. One `Vec` per call is the cost of that, and an
-        // overlap query is not a per-frame-per-agent path the way a
-        // sweep is.
+        // Collected first: the iterator borrows `self` and the callback may query again; overlaps
+        // are not per-agent-per-frame.
         let hits: Vec<RapierColliderHandle> = self
             .pipeline(filter)
             .intersect_shape(pose, builder.shape.as_ref())

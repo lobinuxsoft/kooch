@@ -1,8 +1,4 @@
-//! Translating a [`JointDesc`] into the Rapier joint it describes.
-//!
-//! Every [`JointKind`] has a Rapier builder of the same name, so this is a
-//! mapping rather than a construction: the engine exposes what the solver
-//! already offers.
+//! [`JointDesc`] → the Rapier joint; every [`JointKind`] has a builder of the same name.
 
 use rapier3d::dynamics::{
     FixedJointBuilder, GenericJointBuilder, ImpulseJointHandle, JointAxesMask, JointAxis,
@@ -13,11 +9,8 @@ use rapier3d::prelude::GenericJoint;
 
 use crate::backend::{BodyHandle, JointDesc, JointKind, JointMotor, MotorModel};
 
-/// Which of Rapier's two joint sets holds a joint.
-///
-/// The families are not interchangeable at removal time — each set has its
-/// own handle type and its own `remove` — so the choice made at build time
-/// has to be remembered rather than re-derived.
+/// Which Rapier joint set holds a joint — each removes with its own handle, so the choice is
+/// remembered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum JointRef {
     Impulse(ImpulseJointHandle),
@@ -34,11 +27,7 @@ pub(super) struct JointEntry {
     pub break_impulse: f32,
 }
 
-/// Builds the Rapier joint a descriptor asks for.
-///
-/// Anchors are applied here rather than per branch so no kind can forget
-/// them — a joint anchored at both origins when the author asked otherwise
-/// is a bug that looks like a solver problem.
+/// Builds the joint with anchors applied once, so no kind forgets them.
 pub(super) fn generic_joint_for(desc: &JointDesc) -> GenericJoint {
     let mut joint: GenericJoint = match desc.kind {
         JointKind::Fixed => FixedJointBuilder::new().build().into(),
@@ -80,14 +69,8 @@ pub(super) fn generic_joint_for(desc: &JointDesc) -> GenericJoint {
     joint
 }
 
-/// Slide along an axis plus spin about it — a cylindrical joint.
-///
-/// Rapier ships `PinSlotJointBuilder` for 2D only: there, "pin slot" means
-/// one free translation and the single rotation a plane has. The 3D
-/// equivalent has no named builder, so it is spelled out through rapier's
-/// own generic joint — the five-line definition of the joint, not a
-/// reimplementation of one. Free axes are `LIN_X` and `ANG_X`, both along
-/// the joint frame's axis.
+/// Cylindrical joint: Rapier's `PinSlotJointBuilder` is 2D only, so the generic joint frees `LIN_X`
+/// and `ANG_X` along the axis.
 fn pin_slot(axis: glam::Vec3) -> GenericJoint {
     let axis = safe_axis(axis);
     GenericJointBuilder::new(
@@ -122,12 +105,8 @@ fn apply_motor(joint: &mut GenericJoint, axis: JointAxis, motor: &JointMotor) {
     }
 }
 
-/// The single axis limits and motors act on — see [`crate::backend`]'s
-/// joint documentation for why there is only one.
-///
-/// `None` for the kinds that have nothing to limit or drive: a fixed joint
-/// has no free axis, and a rope's length and a spring's rest length are
-/// already its constraint.
+/// The single axis limits and motors act on (see [`crate::backend`]); `None` for fixed, rope and
+/// spring.
 pub(super) fn primary_axis(kind: &JointKind) -> Option<JointAxis> {
     match kind {
         JointKind::Revolute { .. } | JointKind::Spherical | JointKind::Generic { .. } => {
@@ -138,26 +117,13 @@ pub(super) fn primary_axis(kind: &JointKind) -> Option<JointAxis> {
     }
 }
 
-/// A usable axis for a hinge or a slider.
-///
-/// A zero or denormal axis makes rapier build a degenerate frame whose
-/// output is NaN, and a NaN in the solver outlives the frame that produced
-/// it. An author mid-edit in the Inspector passes through zero on the way
-/// to the value they meant, so the fallback is Y — up, which is the axis
-/// most hinges use anyway.
+/// A usable hinge or slider axis: zero builds a NaN frame, so an edit through zero falls back to Y.
 fn safe_axis(axis: glam::Vec3) -> glam::Vec3 {
     axis.try_normalize().unwrap_or(glam::Vec3::Y)
 }
 
-/// The magnitude of the linear impulse holding a joint together.
-///
-/// Linear only, deliberately. Rapier reports six components — three of
-/// force, three of torque — and a norm over all six adds newton-seconds to
-/// newton-metre-seconds, producing a number no author can reason about.
-/// "The pull it takes to tear this apart" is a quantity with a unit, and it
-/// is the one a breaking threshold is written against. A separate torque
-/// threshold is what a joint failing in bending would want, and it can have
-/// one when something asks.
+/// Linear impulse magnitude only: a norm over force and torque mixes units no author can read, and
+/// breaking thresholds are pulls.
 pub(super) fn linear_impulse(impulses: &[f32; 6]) -> f32 {
     glam::Vec3::from_slice(&impulses[..3]).length()
 }

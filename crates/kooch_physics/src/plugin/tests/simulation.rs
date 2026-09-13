@@ -32,10 +32,7 @@ fn the_simulation_is_inert_while_authoring() {
     );
 }
 
-/// Acceptance: "Stepping is frame-rate independent: same result at 30 and
-/// 144 fps." The step size comes from `Time::fixed_delta`, so a slow frame
-/// runs more steps rather than one bigger step — a second of simulated
-/// time is a second either way.
+/// Same result at 30 and 144 fps: `Time::fixed_delta` runs more steps, not bigger ones.
 #[test]
 fn stepping_is_frame_rate_independent() {
     fn fall_after_one_second(hz: f64) -> f32 {

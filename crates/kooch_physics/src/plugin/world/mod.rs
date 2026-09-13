@@ -1,24 +1,6 @@
-//! [`PhysicsWorld`] — the ECS↔backend body mapping, and the [`SolverBody`]
-//! component that addresses it.
-//!
-//! # Why a slot index and not a `HashMap<Entity, BodyHandle>`
-//!
-//! The obvious mapping is a hash map either way round. Both directions
-//! are needed every frame — spawn sync walks entities and asks "does this
-//! one have a body", writeback walks bodies and asks "which entity does
-//! this belong to" — and a hash map makes each of those a pointer chase
-//! per element.
-//!
-//! Instead the world keeps parallel arrays indexed by a dense `u32` slot,
-//! and the entity carries that slot as a plain POD component. Entity →
-//! slot is a component lookup; slot → entity is an array index. Both
-//! passes are linear walks over contiguous memory.
-//!
-//! The sync layer itself is not optional: Rapier owns its `RigidBodySet`
-//! and `ColliderSet`, so the solver's state cannot live *in* the
-//! archetypes the way an ECS-native engine would put it. That is the
-//! price of the trait — and the trait is what lets a GPU solver replace
-//! Rapier later without touching a single authored scene.
+//! [`PhysicsWorld`] maps entities to backend bodies by dense `u32` slots on the POD [`SolverBody`]:
+//! array walks both ways. It exists because Rapier owns its sets; the trait lets a solver swap
+//! without scene changes.
 
 mod queries;
 
@@ -33,16 +15,9 @@ use crate::backend::{
 };
 use crate::components::{Collider, PhysicsBody, ShapeSpec};
 
-/// The physics body an entity owns, as a slot into [`PhysicsWorld`].
-///
-/// Runtime state, not authored data: it is deliberately *not* reflected,
-/// so it never reaches a scene file, the Inspector, or a
-/// [`WorldSnapshot`]. Pressing stop therefore drops it along with the
-/// rest of the play session, and the next sync rebuilds the physics world
-/// from the restored ECS — one source of truth, no divergence between the
-/// solver and the entities.
-///
-/// [`WorldSnapshot`]: kooch_ecs::world_snapshot::WorldSnapshot
+/// An entity's body as a slot into [`PhysicsWorld`]. Unreflected runtime state: never in scenes or
+/// [`WorldSnapshot`](kooch_ecs::world_snapshot::WorldSnapshot), so stop drops it and sync rebuilds
+/// from the ECS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SolverBody(u32);
 
@@ -60,71 +35,35 @@ impl SolverBody {
     }
 }
 
-/// The authored intent a body was built from.
-///
-/// Kept per slot so the sync pass can tell "this entity already has the
-/// right body" from "this entity's body no longer matches what the
-/// Inspector says", without asking the backend to describe itself.
+/// The authored intent a body was built from, so sync spots mismatches without asking the backend.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BodySpec {
     kind: u32,
     mass: f32,
-    /// The authored geometry, as plain old data.
-    ///
-    /// The spec rather than the shape: a mesh-derived collider resolves
-    /// to hundreds of thousands of triangles, and this is compared every
-    /// frame. It carries the mesh's epoch, so a mesh arriving after the
-    /// body was built still reads as a change.
+    /// The geometry spec, not the shape — compared every frame, carrying the mesh epoch.
     shape: ShapeSpec,
-    /// The shape's authored centre, in the entity's local space.
-    ///
-    /// In the spec because it is baked into the collider when built: an
-    /// offset edited in the Inspector has to *replace* the collider, and
-    /// the sync pass decides that by comparing specs.
+    /// Shape centre, baked at build, so an Inspector edit must replace the collider.
     center: Vec3,
-    /// The entity's `Transform` scale, folded into the shape dimensions.
-    ///
-    /// Rapier's shapes take no scale — they are built from dimensions —
-    /// so scaling has to happen where the shape is built, and a scale
-    /// change has to *rebuild* it. Which is why this belongs in the spec:
-    /// the sync pass compares specs to decide what to rebuild, so dragging
-    /// the scale gizmo lands here and retires the old body.
+    /// `Transform` scale folded into dimensions: rapier shapes take no scale, so a scale drag
+    /// retires the body.
     scale: Vec3,
-    /// Digest of the shapes this body inherits from its descendants.
-    ///
-    /// A digest rather than the shapes themselves, so the spec stays
-    /// plain-old-data and comparable by value. Adding, moving, resizing or
-    /// deleting a child's collider changes it, and the sync pass rebuilds
-    /// the body for the same reason it does on a scale change: rapier
-    /// bakes shapes at build time.
+    /// Digest of inherited shapes, keeping the spec POD; any child collider change rebuilds the
+    /// body.
     attachments: u64,
-    /// The body's own surface, and how quickly it loses motion.
-    ///
-    /// In the spec for the same reason the shape is: rapier bakes both into
-    /// the collider and the body at build time, so an Inspector edit has to
-    /// retire and rebuild. Unlike `PhysicsBody::density`, the simulation
-    /// genuinely reads these.
+    /// Surface and damping, baked by rapier at build, so edits rebuild; unlike `density`, the
+    /// simulation reads them.
     material: SurfaceMaterial,
     interaction: ColliderInteraction,
     damping: Damping,
     /// In the spec because rapier bakes it into the body at build time.
     gravity_scale: f32,
-    /// The authored centre of mass, or `None` for the collider's own.
-    ///
-    /// In the spec because rapier bakes mass properties into the body at
-    /// build time, the same as shapes. `PhysicsBody::density` deliberately is
-    /// *not* here: nothing in the simulation reads it, so a density edit
-    /// must not retire a body and drop its velocity mid-play.
+    /// Authored centre of mass, baked at build. `density` is deliberately absent, so editing it
+    /// never drops a body's velocity.
     center_of_mass: Option<Vec3>,
 }
 
 impl BodySpec {
-    /// Reads the spec off the authored components.
-    ///
-    /// `scale` is the entity's `Transform` scale. Ignoring it was the bug
-    /// that made colliders "work at some sizes and not others": the mesh
-    /// grew with the gizmo and the collider stayed at its authored
-    /// dimensions.
+    /// Reads the spec off the components; ignoring `scale` made colliders "work at some sizes".
     pub fn new(
         body: &PhysicsBody,
         collider: &Collider,
@@ -159,12 +98,8 @@ impl BodySpec {
         }
     }
 
-    /// The geometry this body would be built from, at its authored scale.
-    ///
-    /// `None` while a mesh-derived collider is waiting for its mesh. The
-    /// sync pass reads that as "not yet" and tries again next frame,
-    /// which the epoch in the spec makes cheap: nothing rebuilds until
-    /// the answer actually changes.
+    /// The geometry at authored scale; `None` while a mesh waits, retried cheaply thanks to the
+    /// epoch.
     pub fn resolve(&self, meshes: Option<&ColliderMeshCache>) -> Option<CollisionShape> {
         Some(self.shape.resolve(meshes)?.scaled(self.scale))
     }
@@ -174,11 +109,7 @@ impl BodySpec {
         self.shape.awaits_mesh(meshes)
     }
 
-    /// The descriptor that builds this body at a given pose.
-    ///
-    /// Takes the resolved shape rather than resolving one: the sync pass
-    /// already has it, and resolving twice would clone a level's trimesh
-    /// for nothing.
+    /// The build descriptor at a pose, taking the already-resolved shape.
     pub fn desc(&self, shape: CollisionShape, position: Vec3, rotation: Quat) -> BodyDesc {
         let s = self.scale.abs();
         BodyDesc {
@@ -200,10 +131,7 @@ impl BodySpec {
             gravity_scale: self.gravity_scale,
             position,
             rotation,
-            // Body-local, and deliberately *not* pre-rotated: rapier
-            // composes the body's pose on top of the collider's
-            // `position_wrt_parent`, so rotating here would apply the
-            // body's rotation twice.
+            // Body-local, not pre-rotated: rapier composes the body pose on `position_wrt_parent`.
             shape_offset: self.center * s,
         }
     }
@@ -226,11 +154,8 @@ struct Slot {
     spec: BodySpec,
 }
 
-/// The physics backend plus the mapping between its bodies and entities.
-///
-/// Slots are never compacted, so a [`SolverBody`] stays valid for the
-/// life of its body. Freed slots go on a free list and are reused, which
-/// keeps the arrays dense without invalidating anyone's index.
+/// The backend plus the body ↔ entity mapping. Slots never compact; freed ones are reused, so
+/// indices stay valid.
 pub struct PhysicsWorld {
     backend: Box<dyn PhysicsBackend>,
     slots: Vec<Slot>,
@@ -356,12 +281,7 @@ impl PhysicsWorld {
             .map(|s| s.handle)
     }
 
-    /// The entity owning a backend body.
-    ///
-    /// A linear walk, deliberately: this runs once per reported event, and
-    /// events are opt-in per collider, so the set is small by construction.
-    /// An index here would be a third mapping to keep in step for a cost
-    /// nobody has measured.
+    /// The entity owning a body — a linear walk, once per opt-in event.
     pub fn entity_of(&self, handle: BodyHandle) -> Option<Entity> {
         self.slots
             .iter()
@@ -379,39 +299,11 @@ impl PhysicsWorld {
     }
 }
 
-/// Acting on a body from gameplay, without meeting the solver.
-///
-/// Everything below takes the [`SolverBody`] a system already has from
-/// its query. Reaching the same effect through the parts underneath —
-/// `world.handle(body.slot())` for a [`BodyHandle`], then
-/// [`backend_mut`](PhysicsWorld::backend_mut) for the trait that owns the
-/// operation — means three concepts (`slot`, handle, backend) that a
-/// gameplay system has no reason to know exist.
-///
-/// The lower-level path stays public and unchanged: a solver-side pass
-/// works in handles because that is its currency, and this is not a wall
-/// around it.
-///
-/// Each returns `Option`, or is a no-op, when the body is not live. A
-/// slot outlives its body by design — [`SolverBody`] is not reflected,
-/// so pressing stop drops it while the world is rebuilt — and asking
-/// about a body that is gone is ordinary, not an error.
+/// Gameplay operations on a [`SolverBody`], hiding slot, handle and backend; the lower-level path
+/// stays public. A body that is gone returns `None` or does nothing — ordinary after stop.
 impl PhysicsWorld {
-    /// Pushes a body, in newton-seconds.
-    ///
-    /// Always wakes it: a sleeping body is an optimisation the solver
-    /// chose, and an impulse that leaves it asleep is an impulse that did
-    /// nothing. Anything wanting the other behaviour is working at the
-    /// solver's level and can say so through [`backend_mut`].
-    ///
-    /// [`backend_mut`]: PhysicsWorld::backend_mut
-    /// Spins a body — the rotational twin of
-    /// [`apply_impulse`](Self::apply_impulse).
-    ///
-    /// What a rolling body wants. A linear impulse *slides* a ball and
-    /// lets friction spin it up late; a torque spins it and lets the same
-    /// friction carry it, which is what rolling is. Keep impulses for the
-    /// pushes that really are instantaneous — a jump, a blast.
+    /// Spins a body — the twin of [`apply_impulse`](Self::apply_impulse), what a rolling ball
+    /// wants: torque spins it and friction carries it.
     pub fn apply_torque_impulse(&mut self, body: SolverBody, torque: Vec3) {
         let Some(handle) = self.handle(body.slot()) else {
             return;
@@ -420,6 +312,8 @@ impl PhysicsWorld {
             .apply_torque_impulse(handle, torque, true);
     }
 
+    /// Pushes a body in N·s, always waking it — an impulse left asleep did nothing; the
+    /// solver-level path is [`backend_mut`](PhysicsWorld::backend_mut).
     pub fn apply_impulse(&mut self, body: SolverBody, impulse: Vec3) {
         let Some(handle) = self.handle(body.slot()) else {
             return;
@@ -432,12 +326,8 @@ impl PhysicsWorld {
         self.backend().linear_velocity(self.handle(body.slot())?)
     }
 
-    /// Sets a body's velocity outright.
-    ///
-    /// Prefer [`apply_impulse`](PhysicsWorld::apply_impulse) for anything
-    /// the simulation should argue with: assigning velocity overrides
-    /// whatever the solver worked out this step, so a slope, a bounce or
-    /// a collision resolved in the same frame is simply discarded.
+    /// Sets velocity outright, discarding this step's slope, bounce or collision; prefer
+    /// [`apply_impulse`](PhysicsWorld::apply_impulse).
     pub fn set_linear_velocity(&mut self, body: SolverBody, velocity: Vec3) {
         let Some(handle) = self.handle(body.slot()) else {
             return;
@@ -445,15 +335,8 @@ impl PhysicsWorld {
         self.backend_mut().set_linear_velocity(handle, velocity);
     }
 
-    /// Turns a body outright, leaving it where it is.
-    ///
-    /// For an orientation that is authored rather than simulated — a
-    /// character faces where the player is steering, and no torque can
-    /// promise that without the inertia tensor the backend does not
-    /// expose. Pair it with
-    /// [`set_angular_velocity`](Self::set_angular_velocity): the solver
-    /// keeps whatever spin it had and will turn the body back out of the
-    /// pose on the very next step.
+    /// Turns a body in place for authored orientation (a character facing the steering). Pair with
+    /// [`set_angular_velocity`](Self::set_angular_velocity), or leftover spin turns it back.
     pub fn set_rotation(&mut self, body: SolverBody, rotation: Quat) {
         let Some(handle) = self.handle(body.slot()) else {
             return;
@@ -464,11 +347,8 @@ impl PhysicsWorld {
         self.backend_mut().set_transform(handle, position, rotation);
     }
 
-    /// Sets how fast a body spins, in rad/s.
-    ///
-    /// The angular twin of
-    /// [`set_linear_velocity`](Self::set_linear_velocity), and the same
-    /// warning applies.
+    /// Spin in rad/s, the twin of [`set_linear_velocity`](Self::set_linear_velocity), with the same
+    /// warning.
     pub fn set_angular_velocity(&mut self, body: SolverBody, velocity: Vec3) {
         let Some(handle) = self.handle(body.slot()) else {
             return;
@@ -481,21 +361,12 @@ impl PhysicsWorld {
         self.backend().angular_velocity(self.handle(body.slot())?)
     }
 
-    /// Where a body is, and how it is oriented, according to the solver.
-    ///
-    /// The authored `Transform` is what the scene says; this is what the
-    /// simulation currently believes, which for a dynamic body is the one
-    /// that moves.
+    /// Position and rotation according to the solver — what moves for a dynamic body.
     pub fn transform(&self, body: SolverBody) -> Option<(Vec3, Quat)> {
         self.backend().get_transform(self.handle(body.slot())?)
     }
 
-    /// This body's mass, for turning an acceleration into an impulse.
-    ///
-    /// A spring is written as an acceleration — that is the unit its
-    /// stiffness is tuned in — and the solver takes momentum, so
-    /// somebody has to multiply. Without this every caller reaches for
-    /// the backend to do it.
+    /// Mass, for turning a spring's acceleration into the solver's impulse.
     pub fn mass(&self, body: SolverBody) -> Option<f32> {
         self.backend().mass(self.handle(body.slot())?)
     }
@@ -507,16 +378,8 @@ impl PhysicsWorld {
 }
 
 impl PhysicsWorld {
-    /// Adds a body's inherited shapes to the body in `slot`.
-    ///
-    /// Handles are not kept: an attachment only changes as part of a spec
-    /// change, and a spec change retires the whole body — which takes its
-    /// shapes with it. Tracking them individually would buy nothing and
-    /// give two places to forget.
-    ///
-    /// Visible only inside the plugin, because `Attachment` is: a `pub`
-    /// signature naming a type nobody outside can name is a function that
-    /// advertises itself and cannot be called.
+    /// Adds inherited shapes to the body in `slot`, untracked: they change only with a spec change,
+    /// which retires the body. `pub(super)` because `Attachment` is.
     pub(super) fn attach_all(
         &mut self,
         slot: u32,

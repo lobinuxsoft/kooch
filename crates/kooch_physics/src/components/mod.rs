@@ -1,32 +1,6 @@
-//! ECS components describing an entity's physical intent.
-//!
-//! These say *what* an entity is physically — a dynamic body, a sphere
-//! of radius 0.5, a hinge between two of them — never *how* it is
-//! simulated. Nothing here mentions the backend, so swapping the solver
-//! (wgrapier, when GPU rigid bodies land) is a change inside
-//! [`crate::rapier_backend`], not a rewrite of every scene ever authored.
-//!
-//! # Why flat fields instead of enums
-//!
-//! Reflection has no enum representation — [`ReflectValue`] covers
-//! scalars, vectors and asset references — so a variant is a `u32`
-//! discriminant with labelled `choices`, and the parameters of every
-//! variant sit side by side. The alternative was blocking physics on a
-//! reflection feature; the shape of the data is the same either way, and
-//! each component resolves it back to a typed backend enum at the seam —
-//! [`Collider::collision_shape`], [`Joint::joint_kind`].
-//!
-//! The one thing a flat field cannot hold is a mesh, so the shapes built
-//! from one name a [`Guid`](kooch_core::Guid) and something outside
-//! physics resolves it — see
-//! [`ColliderMeshCache`](crate::backend::ColliderMeshCache).
-//!
-//! Only the fields belonging to the selected variant are *shown*, via
-//! `FieldCondition`. Hiding is display only: every field is still stored,
-//! still serialised, still round-trips through a scene, so switching
-//! variant back and forth never loses the other one's parameters.
-//!
-//! [`ReflectValue`]: kooch_ecs::reflect::ReflectValue
+//! Physical intent, never simulation details. Reflection has no enums
+//! ([`ReflectValue`](kooch_ecs::reflect::ReflectValue)), so variants are `u32` choices with flat
+//! fields, resolved to typed enums at the seam; hiding is display only.
 
 mod body;
 mod joint;

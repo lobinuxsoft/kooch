@@ -1,25 +1,9 @@
-//! How a surface behaves on contact: friction and bounce.
-//!
-//! Until #623 none of this was authorable. Every collider the engine built
-//! took rapier's defaults — 0.5 friction, no bounce — chosen by nobody, and
-//! every body took zero damping. A scene could behave in a way no one had
-//! asked for and no one could change.
+//! How a surface behaves on contact — authorable since #623; before, every collider took rapier's
+//! defaults, chosen by nobody.
 
-/// How two colliders' coefficients combine into the one the solver uses.
-///
-/// # The rule is not negotiated
-///
-/// Rapier resolves a pair with `rule1.max(rule2)` over the discriminants,
-/// so the *higher* variant wins outright: a collider asking for
-/// [`Average`](Self::Average) against one asking for [`Max`](Self::Max)
-/// gets `Max`, because `Max` is 3 and `Average` is 0.
-///
-/// That is worth knowing before authoring anything. A rule is not a
-/// property of a surface so much as a claim about how it wants to be
-/// combined, and the pushier claim wins. Leaving everything on `Average`
-/// and setting one special surface to `Multiply` therefore affects every
-/// pair that surface touches — which is usually the intent, but it is not
-/// what "my collider's setting" sounds like.
+/// How two colliders' coefficients combine. Rapier takes the higher discriminant, so the pushier
+/// rule wins: [`Average`](Self::Average) against [`Max`](Self::Max) gets `Max`, for every pair that
+/// surface touches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CombineRule {
     /// The mean. Rapier's default and the ordinary choice.
@@ -35,18 +19,8 @@ pub enum CombineRule {
     ClampedSum,
 }
 
-/// What a collider's surface does on contact.
-///
-/// Separate from [`CollisionShape`](super::CollisionShape) because
-/// geometry and surface are independent: the same box is ice or rubber
-/// depending on this, and a shape has no opinion about either.
-///
-/// # Default
-///
-/// Rapier's own — half friction, no bounce, averaged. Those defaults are
-/// the sane ones and #623 did not change them; the point was that they
-/// were invisible and unchangeable, so a scene behaved in a way nobody had
-/// chosen.
+/// A collider's surface on contact, separate from [`CollisionShape`](super::CollisionShape): the
+/// same box is ice or rubber. Defaults are rapier's — half friction, no bounce, averaged.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SurfaceMaterial {
     /// Resistance to sliding. 0 is frictionless; 1 is roughly rubber on
@@ -71,13 +45,8 @@ impl Default for SurfaceMaterial {
 }
 
 impl SurfaceMaterial {
-    /// Clamps the coefficients into the range the solver can use.
-    ///
-    /// A negative friction or restitution is not a slipperier surface, it
-    /// is a solver that pushes bodies together on separation. A field
-    /// mid-edit in the Inspector passes through negative on the way to a
-    /// value the author means, so this is the same treatment collider
-    /// dimensions get.
+    /// Clamps coefficients into the solver's range: negative values push bodies together, and an
+    /// Inspector edit passes through them.
     pub fn sanitised(self) -> Self {
         Self {
             friction: self.friction.max(0.0),
@@ -87,17 +56,8 @@ impl SurfaceMaterial {
     }
 }
 
-/// How quickly a body loses motion to nothing in particular.
-///
-/// Not friction: damping applies with no contact at all, which is what
-/// makes it the right tool for "this should feel like it is moving through
-/// air" and the wrong one for "this should slide less on ice".
-///
-/// # Default
-///
-/// Zero on both, rapier's own — a body in a vacuum keeps its motion. This
-/// matters for #618's diagnosis: "the body rotates sluggishly" could not
-/// have been damping, because nothing was damping it.
+/// Motion lost with no contact — air, not ice. Zero on both by default, as rapier; #618's sluggish
+/// rotation was not damping.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Damping {
     pub linear: f32,

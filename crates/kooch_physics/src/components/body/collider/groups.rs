@@ -40,18 +40,8 @@ pub static COMBINE_CHOICES: &[FieldChoice] = &[
     },
 ];
 
-/// The collision groups, named.
-///
-/// Sixteen of rapier's thirty-two bits, named generically because the
-/// engine does not know what a project's layers mean. A game renames them
-/// by shipping its own labels; what matters here is that the Inspector
-/// shows *boxes* rather than a number, because a filtering mistake written
-/// as an integer fails silently — two things pass through each other and
-/// nothing says why.
-///
-/// The remaining sixteen are deliberately unnamed rather than absent: the
-/// widget preserves bits it does not know about, so a project using the
-/// high half by hand keeps it across an edit.
+/// Sixteen of rapier's 32 group bits, named generically so the Inspector shows boxes — a filtering
+/// mistake as an integer fails silently. Unnamed high bits are preserved across edits.
 pub static GROUP_BITS: &[FieldChoice] = &[
     FieldChoice {
         label: "Group 1",

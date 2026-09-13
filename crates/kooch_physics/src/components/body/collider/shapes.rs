@@ -1,16 +1,5 @@
-//! The `shape` discriminant, its labels, and which fields each one reads.
-//!
-//! Reflection has no enum representation, so the shape is a `u32` with a
-//! choice set and every variant's parameters side by side. Hiding is
-//! display only: a field the current shape ignores is still stored, still
-//! serialised, still round-trips — so switching shape back and forth does
-//! not lose the other variant's numbers.
-//!
-//! # The numbers are permanent
-//!
-//! A scene stores the discriminant, not the label. Renumbering an
-//! existing shape silently turns every authored capsule into something
-//! else, so new shapes only ever append.
+//! The `shape` discriminant, labels and per-shape fields. Hiding is display only. Scenes store the
+//! number, so shapes only append — renumbering turns authored capsules into something else.
 
 use kooch_ecs::reflect::{FieldChoice, FieldCondition};
 
@@ -44,35 +33,12 @@ pub const SHAPE_POLYLINE: u32 = 12;
 pub const SHAPE_VOXELS: u32 = 13;
 /// The source mesh, voxelised at build time.
 pub const SHAPE_VOXELIZED_MESH: u32 = 14;
-/// Triangles this entity generated for itself, with no file behind them.
-///
-/// What a block uses. The `mesh` field is not read: the geometry is
-/// addressed by the entity that owns it, because it belongs to that one
-/// entity and changes while somebody drags it.
+/// Triangles the entity generated itself, as blocks use; `mesh` is not read.
 pub const SHAPE_OWN_MESH: u32 = 15;
 
-/// Labels for the `shape` dropdown in the Inspector.
-///
-/// # Fewer entries than there are shapes
-///
-/// A discriminant is permanent — a scene stores the number — but a
-/// *label* is only a claim that something is worth reaching for.
-/// `Segment`, `Triangle`, `Polyline`, `Voxels` and `VoxelizedMesh` build,
-/// collide and are tested, and none of them is the answer to a question
-/// an author actually has. Offering them made the list a quiz.
-///
-/// So they keep their numbers and lose their labels, the same treatment
-/// `Heightfield` already had: a scene authored with one still loads,
-/// still resolves and still shows its fields, and nothing new picks one
-/// up by accident.
-///
-/// # Why these words
-///
-/// The vocabulary a developer arriving from Unity or Unreal already has.
-/// "Convex" and "complex" are what both call the same two things, and
-/// the trade is in the label rather than in a tooltip nobody opens: one
-/// hull is cheap and fills hollows, several keep them, and the exact
-/// mesh has no volume so it cannot move.
+/// Dropdown labels, fewer than shapes: `Segment`, `Triangle`, `Polyline`, `Voxels` and
+/// `VoxelizedMesh` still load and work but answer no author question. Words from Unity and Unreal,
+/// with the trade in the label.
 pub static SHAPE_CHOICES: &[FieldChoice] = &[
     FieldChoice {
         label: "Sphere",
@@ -116,16 +82,8 @@ pub static SHAPE_CHOICES: &[FieldChoice] = &[
     },
 ];
 
-/// The shapes built from a mesh asset rather than from typed numbers.
-///
-/// Wider than [`SHAPE_CHOICES`]: the shapes that lost their label still
-/// need their mesh resolved, or a scene authored with one loads a
-/// collider that never appears.
-///
-/// One list, used by both the Inspector condition and
-/// [`ShapeSpec`](super::ShapeSpec) — a second copy is a copy that goes
-/// stale, and the two disagreeing means a field the author cannot see
-/// deciding what the solver collides against.
+/// Shapes built from a mesh asset — wider than [`SHAPE_CHOICES`], so unlabelled ones still resolve.
+/// One list for the Inspector and [`ShapeSpec`](super::ShapeSpec).
 pub const MESH_DERIVED: &[u32] = &[
     SHAPE_OWN_MESH,
     SHAPE_CONVEX_HULL,
@@ -177,11 +135,7 @@ pub static NORMAL_WHEN: FieldCondition = FieldCondition {
     values: &[SHAPE_HALF_SPACE as i64],
 };
 
-/// Which shapes read `point_a` and `point_b`.
-///
-/// Unreachable from the dropdown now, and kept so a scene that already
-/// holds a segment stays editable rather than showing a shape whose
-/// numbers are hidden.
+/// Shapes that read `point_a`/`point_b`; unlisted now, kept editable for existing scenes.
 pub static ENDPOINTS_WHEN: FieldCondition = FieldCondition {
     field: "shape",
     values: &[SHAPE_SEGMENT as i64, SHAPE_TRIANGLE as i64],
@@ -223,12 +177,8 @@ pub fn is_mesh_derived(shape: u32) -> bool {
     MESH_DERIVED.contains(&shape)
 }
 
-/// Whether this discriminant reads its geometry from the entity rather
-/// than from an asset.
-///
-/// 🔴 The `mesh` GUID is not consulted for these. Pointing that field
-/// at a generated mesh is what had two separate walks feeding a
-/// `.block` to a glTF parser.
+/// Whether a discriminant's geometry is the entity's own. 🔴 `mesh` is not consulted, or a `.block`
+/// reaches the glTF parser.
 pub fn is_own_mesh(shape: u32) -> bool {
     shape == SHAPE_OWN_MESH
 }

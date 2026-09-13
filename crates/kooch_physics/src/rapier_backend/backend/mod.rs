@@ -1,11 +1,5 @@
-//! The Rapier backend: its state, and how it meets the engine's contract.
-//!
-//! Split by that distinction rather than by method count. This file is
-//! *what the backend is* — the pipeline state it owns, the knobs it
-//! exposes, and the private helpers that keep Rapier's bookkeeping
-//! consistent. [`contract`] is *how it satisfies* [`PhysicsBackend`],
-//! which Rust requires to live in a single `impl` block and therefore a
-//! single file.
+//! The Rapier backend's state and helpers; [`contract`] is its [`PhysicsBackend`] impl, which must
+//! be one `impl` block.
 
 mod contract;
 mod queries;
@@ -20,12 +14,8 @@ use crate::backend::{BodyHandle, BrokenJoint, ColliderHandle, JointHandle, Physi
 use super::events::{EventCollector, parent_of};
 use super::joints::{JointEntry, JointRef, linear_impulse};
 
-/// Rapier-backed [`PhysicsBackend`].
-///
-/// Stores its own Rapier pipeline state plus a slotmap mapping engine
-/// [`BodyHandle`]s to `(RigidBodyHandle, ColliderHandle)` pairs. Handles
-/// are stable across `step` calls; `remove_body` evicts both Rapier-side
-/// and slotmap-side entries.
+/// Rapier-backed [`PhysicsBackend`]: its pipeline state plus a slotmap from [`BodyHandle`] to
+/// Rapier handles, stable across steps.
 pub struct RapierBackend {
     // Visible to the sibling `debug` module, which walks them to describe
     // the world; private to everything else.
@@ -51,10 +41,7 @@ pub struct RapierBackend {
     /// What the last step reported. Filled from inside `step`, drained
     /// afterwards — see [`super::events`].
     collector: EventCollector,
-    /// Rapier body → engine body, so an event does not cost a linear scan
-    /// of every body to answer "whose collider was that".
-    ///
-    /// `query_ray` used to do exactly that scan; it uses this now too.
+    /// Rapier body → engine body, so events and `query_ray` avoid scanning every body.
     body_lookup: std::collections::HashMap<RigidBodyHandle, BodyHandle>,
 }
 
@@ -91,14 +78,8 @@ impl RapierBackend {
         self.gravity
     }
 
-    /// Sets the world's unit of length, in metres.
-    ///
-    /// The solver's internal tolerances — contact slop, linear sleep
-    /// thresholds, prediction distance — are all expressed as fractions
-    /// of this. A planet-scale world working in kilometres with the
-    /// default 1 m gets tolerances a thousand times too tight, which
-    /// shows up as jitter that reads like a solver bug rather than a
-    /// units mistake.
+    /// The world's length unit in metres; solver tolerances scale with it, and a km world at 1 m
+    /// jitters like a solver bug.
     pub fn set_length_unit(&mut self, metres: f32) {
         self.integration_parameters.length_unit = metres.max(f32::EPSILON);
     }
@@ -108,11 +89,7 @@ impl RapierBackend {
         self.integration_parameters.length_unit
     }
 
-    /// Sets the number of solver iterations per step.
-    ///
-    /// More iterations buy stiffer stacks and less penetration for
-    /// linear cost. Clamped to at least 1 — zero would leave contacts
-    /// entirely unresolved.
+    /// Solver iterations per step: stiffer stacks for linear cost, at least 1.
     pub fn set_solver_iterations(&mut self, iterations: usize) {
         self.integration_parameters.num_solver_iterations = iterations.max(1);
     }
@@ -122,16 +99,8 @@ impl RapierBackend {
         self.integration_parameters.num_solver_iterations
     }
 
-    /// Publishes a collider's AABB into the broad-phase BVH.
-    ///
-    /// Scene queries read that BVH directly, and the broad-phase only
-    /// fills it while stepping — so without this a body spawned or
-    /// teleported since the last step is invisible to a raycast. Tools
-    /// query a world they are not simulating (click-to-pick in the
-    /// editor), so "visible only after a step" is not good enough.
-    ///
-    /// Goes through `set_aabb` rather than a broad-phase update so the
-    /// modified-collider bookkeeping `step` depends on is left alone.
+    /// Publishes a collider's AABB so queries see bodies spawned or moved since the last step — the
+    /// editor queries a world it never steps. `set_aabb` leaves `step`'s bookkeeping alone.
     fn publish_aabb(&mut self, collider: RapierColliderHandle) {
         let Some(aabb) = self.colliders.get(collider).map(|c| c.compute_aabb()) else {
             return;
@@ -171,17 +140,8 @@ impl RapierBackend {
         Some((*self.body_lookup.get(&a)?, *self.body_lookup.get(&b)?))
     }
 
-    /// Removes the joints the last step overloaded.
-    ///
-    /// Rapier has no breaking of its own — it reports the impulse it
-    /// applied to hold each joint together, and this compares that against
-    /// the author's threshold. Reading the solver's own output and removing
-    /// a constraint is not a second solver; nothing here computes a force.
-    ///
-    /// Impulse joints only. A multibody joint is solved in reduced
-    /// coordinates, where the constraint impulse is not a quantity that
-    /// exists to be read — [`add_joint`](PhysicsBackend::add_joint) warns
-    /// rather than pretending otherwise.
+    /// Removes joints whose solver impulse exceeds the author's threshold — reading output, not a
+    /// second solver. Impulse joints only; multibody impulses do not exist to read.
     fn break_overloaded_joints(&mut self) {
         // Collected first: removing a joint borrows the set mutably, and
         // breaking is rare enough that the allocation never happens on the
@@ -214,13 +174,8 @@ impl RapierBackend {
         }
     }
 
-    /// Drops the bookkeeping for joints attached to a body rapier is about
-    /// to remove.
-    ///
-    /// Rapier removes the joints themselves; what it cannot do is retire
-    /// the engine-side handles that addressed them, and a
-    /// [`JointHandle`] outliving its joint is how a later `remove_joint`
-    /// would reach into the set with a handle rapier has reissued.
+    /// Retires engine handles of joints on a body rapier removes, or a later `remove_joint` hits a
+    /// reissued handle.
     fn forget_joints_of(&mut self, body: BodyHandle) {
         self.joint_handles
             .retain(|_, entry| entry.body_a != body && entry.body_b != body);
