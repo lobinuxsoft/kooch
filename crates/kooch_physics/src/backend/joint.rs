@@ -195,25 +195,6 @@ impl JointDesc {
         }
     }
 
-    /// Anchors the joint on both bodies.
-    pub fn with_anchors(mut self, anchor_a: Vec3, anchor_b: Vec3) -> Self {
-        self.anchor_a = anchor_a;
-        self.anchor_b = anchor_b;
-        self
-    }
-
-    /// Bounds the primary free axis.
-    pub fn with_limits(mut self, min: f32, max: f32) -> Self {
-        self.limits = Some([min, max]);
-        self
-    }
-
-    /// Drives the primary free axis.
-    pub fn with_motor(mut self, motor: JointMotor) -> Self {
-        self.motor = Some(motor);
-        self
-    }
-
     /// Whether this joint's kind reads [`limits`](Self::limits) and
     /// [`motor`](Self::motor) at all — see the module docs.
     pub fn has_primary_axis(&self) -> bool {

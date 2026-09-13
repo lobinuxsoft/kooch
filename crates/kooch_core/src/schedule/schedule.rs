@@ -329,16 +329,6 @@ impl Schedule {
             .count() as u32;
         SystemKey { nth, ..candidate }
     }
-
-    /// Returns `true` if startup has already completed.
-    pub fn is_startup_complete(&self) -> bool {
-        self.startup_complete
-    }
-
-    /// Resets startup flag (useful for testing).
-    pub fn reset_startup(&mut self) {
-        self.startup_complete = false;
-    }
 }
 
 /// The stages a frame runs, in the order it runs them.

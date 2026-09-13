@@ -96,10 +96,6 @@ pub(crate) enum InputMapAction {
         action: usize,
         control_type: ControlType,
     },
-    /// Start listening for an input to put on this binding.
-    BeginRebind(BindingAddress),
-    /// Stop listening without changing anything.
-    CancelRebind,
     /// Replace what this binding reads.
     Rebind {
         at: BindingAddress,

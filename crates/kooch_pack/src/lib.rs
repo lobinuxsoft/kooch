@@ -61,28 +61,12 @@ pub use read::Pack;
 pub use split::{SHARES, SHARES_ENV, SplitKey, key_from_shares, shares_for_build};
 pub use write::PackWriter;
 
-/// 🔴 There is no magic constant.
-///
-/// A pack starts with eight bytes derived from its key
-/// ([`PackKey::tag`]), not with `KOOCHPK`. A magic string is a sign
-/// saying what the file is and which tool to write against it; derived,
-/// the file is bytes to anyone without the key and still verifiable by
-/// anyone with it.
-///
-/// The cost, stated because it is real: "this is not a pack" and "wrong
-/// key" stop being distinguishable — telling them apart is exactly what
-/// is being removed.
-pub const TAG_LEN: usize = 8;
-
 /// Layout version. Bumped when the header or an entry changes shape; a
 /// reader refuses anything it does not know rather than guessing.
 ///
 /// Left in the clear, unlike the tag: it is what lets a pack from a newer
 /// editor produce *that* error instead of looking like a wrong key.
 pub const FORMAT_VERSION: u16 = 1;
-
-/// Extension a pack carries.
-pub const PACK_EXTENSION: &str = "kpack";
 
 /// Bytes of AES-GCM nonce, per entry.
 const NONCE_LEN: usize = 12;

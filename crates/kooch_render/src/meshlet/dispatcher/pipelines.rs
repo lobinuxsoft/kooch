@@ -91,36 +91,11 @@ impl MeshletCullPipelines {
         &self.debug_bgl
     }
 
-    /// Bind group layout for the Hi-Z 2-pass entry's group(0) — the
-    /// 4-binding `cull_bgl` plus `culled_meshlets` (4) and
-    /// `culled_count` (5).
-    pub fn extended_cull_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.extended_cull_bgl
-    }
-
-    /// Bind group layout for the Hi-Z 2-pass entry's group(2) — the
-    /// 2-binding `scene_bgl` plus the `HiZParams` UBO at 2 and the
-    /// pyramid texture at 3.
-    pub fn scene_with_hi_z_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.scene_with_hi_z_bgl
-    }
-
-    /// Bind group layout describing the cull shader's group(0).
-    /// Re-exported so future passes can extend it.
-    pub fn cull_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.cull_bgl
-    }
-
     /// Bind group layout describing the meshlet pool's group(1) — the
     /// rasterizer reuses the exact same handle so the cull and draw
     /// passes agree on storage-buffer slot numbering.
     pub fn meshlet_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.meshlet_bgl
-    }
-
-    /// Bind group layout for the Hi-Z test (group 1 of `cs_cull_hi_z`).
-    pub fn hi_z_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.hi_z_bgl
     }
 
     /// Bind group layout for the scene-wide cull (group 2 of
@@ -138,12 +113,5 @@ impl MeshletCullPipelines {
     /// the rasterizer + deferred shaders use the full layout.
     pub fn pool_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.pool_bgl
-    }
-
-    /// Bind group layout for the 2-pass cull's per-group err buffer
-    /// (group 3 of `cs_lod_compute_group_max_err` /
-    /// `cs_cull_scene_pool_atomic`).
-    pub fn group_err_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.group_err_bgl
     }
 }

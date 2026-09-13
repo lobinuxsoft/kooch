@@ -50,8 +50,6 @@ const RANK_OCCUPANCY: u64 = 40;
 const OCCUPANCY_WORDS: u64 = 128;
 /// Froxels the bitmap covers; mirrors `OCCUPANCY_MAX` in the shader.
 const OCCUPANCY_MAX: u32 = 4096;
-/// First word of the per-froxel depth slab — Olsson's explicit bounds.
-const RANK_DEPTH: u64 = 168;
 /// Two words a froxel.
 const DEPTH_WORDS: u64 = 8192;
 

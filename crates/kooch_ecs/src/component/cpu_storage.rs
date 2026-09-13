@@ -90,10 +90,6 @@ impl<T: Component> AnyStorage for ComponentStorage<T> {
         self
     }
 
-    fn contains_entity(&self, entity: Entity) -> bool {
-        self.data.contains_key(&entity)
-    }
-
     fn get_ptr(&self, entity: Entity) -> Option<*const u8> {
         self.data.get(&entity).map(|v| v as *const T as *const u8)
     }

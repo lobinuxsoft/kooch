@@ -16,7 +16,9 @@ static ALONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// one failing test must not turn the rest into a second failure that
 /// hides it.
 fn alone() -> std::sync::MutexGuard<'static, ()> {
-    ALONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    ALONE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// 🔴 A fresh `SceneManager` already holds one untitled scene, and that

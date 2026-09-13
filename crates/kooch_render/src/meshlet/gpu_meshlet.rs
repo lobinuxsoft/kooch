@@ -48,11 +48,6 @@ impl GpuMeshletMesh {
     pub fn vertex_bytes(&self) -> u64 {
         self.vertex_count as u64 * std::mem::size_of::<MeshVertex>() as u64
     }
-
-    /// Bytes used by the descriptor stream.
-    pub fn descriptor_bytes(&self) -> u64 {
-        self.meshlet_count as u64 * MeshletDescriptor::SIZE as u64
-    }
 }
 
 impl MeshletMesh {

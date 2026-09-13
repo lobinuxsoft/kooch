@@ -88,14 +88,6 @@ impl MeshInstance {
         }
     }
 
-    /// Convenience: instance with the LOD selector overridden to
-    /// emit only meshlets at `level`. Used by the editor's side-by-
-    /// side LOD inspector to render each chain layer in isolation.
-    pub fn with_lod_force_level(mut self, level: i32) -> Self {
-        self.lod_force_level = level;
-        self
-    }
-
     pub fn transform_mat4(&self) -> Mat4 {
         Mat4::from_cols_array_2d(&self.transform)
     }

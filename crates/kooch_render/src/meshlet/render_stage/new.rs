@@ -144,12 +144,6 @@ impl MeshletRenderStage {
         std::mem::swap(&mut view.hiz_prev, &mut view.hiz_curr);
     }
 
-    /// Read-only access to the pyramid pass A samples this frame.
-    /// `None` until the SPD orchestrator (#486) allocates them.
-    pub fn hi_z_prev(&self) -> Option<&HiZ> {
-        self.views[self.primary].hiz_prev.as_ref()
-    }
-
     /// Read-only access to the pyramid pass B samples (= the one
     /// rebuilt from this frame's depth between cull A and cull B).
     /// `None` until the SPD orchestrator (#486) allocates them.
@@ -211,15 +205,6 @@ impl MeshletRenderStage {
         self.gpu_timers.last_frame_ms()
     }
 
-    /// The shadow atlas this stage drew into, if it has one.
-    ///
-    /// For tests and for a future debug view (#743): the atlas answers
-    /// "did the pass record this occluder" directly, where the shaded
-    /// frame answers it through the whole sampling path.
-    pub fn shadow_atlas_texture(&self) -> Option<&wgpu::Texture> {
-        self.shadows.as_ref().map(|s| s.atlas_texture())
-    }
-
     /// The point-light cube array, for the same reason as the atlas
     /// above: a test that reads the map answers "is the occluder in
     /// there" without going through the sampling path, the filter, the
@@ -230,10 +215,6 @@ impl MeshletRenderStage {
 
     pub fn pipeline(&self) -> &MeshletPipeline {
         &self.pipeline
-    }
-
-    pub fn pipeline_mut(&mut self) -> &mut MeshletPipeline {
-        &mut self.pipeline
     }
 
     /// Read-only access to the cull dispatcher. Mainly here so

@@ -62,11 +62,6 @@ impl SystemToggles {
         self.off.contains(key)
     }
 
-    /// Switches everything back on.
-    pub fn enable_all(&mut self) {
-        self.off.clear();
-    }
-
     /// Every system currently switched off.
     pub fn disabled(&self) -> impl Iterator<Item = &SystemKey> {
         self.off.iter()

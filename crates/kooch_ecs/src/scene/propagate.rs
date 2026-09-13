@@ -334,22 +334,6 @@ fn has_component(resources: &Resources, entity: Entity, type_name: &str) -> bool
     registry.reflect_get_fields(&type_id, entity).is_some()
 }
 
-/// Grows `entity` by a default-constructed component, archetype included.
-fn add_component(resources: &mut Resources, entity: Entity, type_id: std::any::TypeId) {
-    let inserted = resources
-        .get_mut::<crate::component::ComponentRegistry>()
-        .is_some_and(|registry| registry.insert_default_reflected(&type_id, entity));
-    if !inserted {
-        return;
-    }
-    if let Some(archetypes) = resources.get_mut::<crate::archetype_registry::ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let next = archetypes.archetype_after_add_dynamic(current, type_id);
-        archetypes.register_entity(entity, next);
-    }
-}
-
 /// The prefab's document as the editor currently holds it.
 ///
 /// From the cache rather than the file: the cache is what was just saved,

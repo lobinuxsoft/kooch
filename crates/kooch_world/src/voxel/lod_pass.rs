@@ -143,31 +143,6 @@ impl SparseLodPass {
         self.metrics.record(device, encoder, grid);
     }
 
-    /// Convenience overload — runs [`record`] with the
-    /// `DEFAULT_LOD_DISTANCE_THRESHOLDS` and [`DEFAULT_MARGIN`]. Most
-    /// production call sites use the defaults; tuning happens at
-    /// telemetry time, not per-frame.
-    pub fn record_with_defaults(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        grid: &SparseGrid,
-        sampler_bg: &wgpu::BindGroup,
-        active_origin: Vec3,
-    ) {
-        self.record(
-            device,
-            queue,
-            encoder,
-            grid,
-            sampler_bg,
-            active_origin,
-            DEFAULT_LOD_DISTANCE_THRESHOLDS,
-            DEFAULT_MARGIN,
-        );
-    }
-
     /// Sampler bind group layout shared by classify + populate. The
     /// caller must build their sampler bind group against this layout
     /// (or one structurally equal to it).
@@ -175,17 +150,11 @@ impl SparseLodPass {
         self.classify.sampler_bind_group_layout()
     }
 
-    pub fn chunk_lod_pass(&self) -> &ChunkLodPass {
-        &self.chunk_lod
-    }
     pub fn classify_pass(&self) -> &ClassifyPass {
         &self.classify
     }
     pub fn populate_pass(&self) -> &PopulatePass {
         &self.populate
-    }
-    pub fn downsample_pass(&self) -> &DownsamplePass {
-        &self.downsample
     }
     pub fn metrics_pass(&self) -> &MetricsPass {
         &self.metrics

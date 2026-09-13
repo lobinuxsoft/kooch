@@ -238,12 +238,6 @@ impl MeshletCull {
         self.rejects = rejects;
     }
 
-    /// Whether the reject buffer is worth clearing. See
-    /// [`Self::set_rejects`].
-    pub(super) fn reads_rejects(&self) -> bool {
-        self.rejects
-    }
-
     pub fn ensure_group_capacity(&mut self, device: &wgpu::Device, required: u32) {
         if required <= self.group_capacity {
             return;
@@ -399,14 +393,6 @@ impl MeshletCull {
     /// args' `instance_count` slot.
     pub fn visible_count_buffer(&self) -> &wgpu::Buffer {
         &self.visible_count
-    }
-
-    /// Pass-A reject queue for the Hi-Z 2-pass cull (#445). Each
-    /// element is a `(instance_id << 16) | global_meshlet_idx` packed
-    /// just like `visible_meshlets`. Pass B re-tests every entry up
-    /// to `culled_count` against the freshly-built pyramid.
-    pub fn culled_meshlets_buffer(&self) -> &wgpu::Buffer {
-        &self.culled_meshlets
     }
 
     /// Atomic counter for `culled_meshlets`. Doubles as the pass-B

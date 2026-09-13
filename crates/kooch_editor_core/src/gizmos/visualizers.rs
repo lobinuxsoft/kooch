@@ -12,8 +12,6 @@ use kooch_gizmos::{Gizmos, Visualizer};
 const FRUSTUM_COLOR: Vec3 = Vec3::new(0.4, 0.8, 1.0);
 const ORTHO_COLOR: Vec3 = Vec3::new(0.6, 0.85, 1.0);
 
-const DIRLIGHT_ARROW_LENGTH: f32 = 2.0;
-
 /// Aspect ratio used to draw camera frustums. The viewport's actual
 /// aspect is not exposed to visualizers in v1 — a fixed 16:9 keeps the
 /// frustum shape readable. Future work: read the live aspect from the

@@ -159,10 +159,6 @@ pub const ROOT_CELLS: u32 = ROOT_DIM * ROOT_DIM * ROOT_DIM;
 /// Voxels per allocated subgrid's data interior (`SUBGRID_DIM³`).
 pub const SUBGRID_VOXELS: u32 = SUBGRID_DIM * SUBGRID_DIM * SUBGRID_DIM;
 
-/// Total voxels per allocated subgrid tile in the atlas, including
-/// the 1-voxel skirt per face (`SUBGRID_TILE_DIM³ = 4913`).
-pub const SUBGRID_TILE_VOXELS: u32 = SUBGRID_TILE_DIM * SUBGRID_TILE_DIM * SUBGRID_TILE_DIM;
-
 /// Default subgrid pool capacity per chunk. See module-level
 /// `# Capacity` for the sizing rationale.
 pub const MAX_SUBGRIDS_DEFAULT: u32 = MAX_SUBGRIDS_PER_ATLAS;

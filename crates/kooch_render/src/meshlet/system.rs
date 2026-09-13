@@ -54,10 +54,6 @@ impl MeshletPipeline {
         &self.pool
     }
 
-    pub fn pool_mut(&mut self) -> &mut GlobalMeshPool {
-        &mut self.pool
-    }
-
     pub fn registered_count(&self) -> u32 {
         self.registry.len() as u32
     }

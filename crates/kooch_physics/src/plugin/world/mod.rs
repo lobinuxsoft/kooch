@@ -543,20 +543,3 @@ impl PhysicsWorld {
         }
     }
 }
-
-/// The collider's geometry at a `Transform` scale, or `None` while a
-/// mesh-derived shape is waiting for its mesh.
-///
-/// Shared by the body's own shape and by the ones its descendants
-/// contribute, so a compound child scales the same way the body does.
-/// The per-shape rules live on [`CollisionShape::scaled`], which is also
-/// what the collider gizmo mirrors — if those two ever disagree the
-/// outline shows a shape the solver is not using.
-pub(super) fn scaled_shape(
-    collider: &Collider,
-    entity: kooch_ecs::entity::Entity,
-    scale: Vec3,
-    meshes: Option<&ColliderMeshCache>,
-) -> Option<CollisionShape> {
-    Some(collider.collision_shape(entity, meshes)?.scaled(scale))
-}

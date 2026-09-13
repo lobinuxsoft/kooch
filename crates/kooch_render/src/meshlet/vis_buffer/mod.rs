@@ -171,20 +171,6 @@ impl MeshletVisRasterizer {
         }
     }
 
-    pub fn camera_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.camera_bgl
-    }
-
-    pub fn visible_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.visible_bgl
-    }
-
-    /// Bind-group layout for the scene path's `group(3)` — a single
-    /// read-only storage buffer of `MeshInstance` records.
-    pub fn instances_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.instances_bgl
-    }
-
     /// Records one indirect-draw render pass that writes the
     /// visibility buffer. `vbuf_view` must reference an R32Uint texture
     /// matching [`VISIBILITY_BUFFER_FORMAT`]. `clear_id` is the value

@@ -248,12 +248,4 @@ impl GpuClusters {
             self.readback.submit(slot);
         }
     }
-
-    /// What the GPU reported the last time a readback landed. Reported
-    /// by the editor's stats overlay so "the grid overflowed" is
-    /// something a person can see rather than something that shows up as
-    /// missing light.
-    pub fn last_draw(&self) -> Option<ClusterDraw> {
-        self.readback.last()
-    }
 }

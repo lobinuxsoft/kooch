@@ -60,12 +60,6 @@ impl MockInputBackend {
         }
     }
 
-    pub fn release_mouse(&mut self, button: MouseButton) {
-        if self.pressed_mouse.remove(&button) {
-            self.queued_events.push(InputEvent::MouseReleased(button));
-        }
-    }
-
     pub fn move_mouse_to(&mut self, position: Vec2) {
         let delta = position - self.mouse_position;
         self.mouse_position = position;

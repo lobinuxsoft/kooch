@@ -273,11 +273,6 @@ impl App {
         &self.schedule
     }
 
-    /// Returns a mutable reference to the schedule.
-    pub fn schedule_mut(&mut self) -> &mut Schedule {
-        &mut self.schedule
-    }
-
     /// Sends an event.
     ///
     /// Panics if the event type hasn't been registered with `add_event`.

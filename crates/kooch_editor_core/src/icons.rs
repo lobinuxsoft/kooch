@@ -33,9 +33,6 @@ pub const ARROWS_OUT_CARDINAL: &str = "\u{e0a4}";
 /// Arrows-clockwise — rotate tool (two curved arrows forming a cycle).
 pub const ARROWS_CLOCKWISE: &str = "\u{e094}";
 
-/// Arrows-out — scale tool (4 diagonal corner arrows pointing outward).
-pub const ARROWS_OUT: &str = "\u{e0a2}";
-
 /// Arrows-out-simple — alternative scale icon (cleaner two-arrow style).
 pub const ARROWS_OUT_SIMPLE: &str = "\u{e0a6}";
 

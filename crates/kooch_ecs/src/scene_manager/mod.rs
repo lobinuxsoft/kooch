@@ -237,14 +237,6 @@ impl SceneManager {
         }
     }
 
-    /// Forgets every open scene and starts a fresh unsaved one.
-    ///
-    /// Does not touch the ECS. There is still a scene afterwards — see
-    /// [`Self::new`].
-    pub fn clear_current(&mut self) {
-        *self = Self::new();
-    }
-
     pub fn is_dirty(&self) -> bool {
         self.active().is_some_and(|scene| scene.dirty)
     }

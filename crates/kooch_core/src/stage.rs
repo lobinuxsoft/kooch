@@ -86,25 +86,6 @@ impl Stage {
         Stage::Last,
     ];
 
-    /// Stages that run once per frame (non-fixed timestep).
-    pub const FRAME_STAGES: [Stage; 12] = [
-        Stage::First,
-        Stage::Input,
-        Stage::PreUpdate,
-        Stage::Update,
-        Stage::PostUpdate,
-        Stage::GpuSync,
-        Stage::Gpu,
-        Stage::PreRender,
-        Stage::Render,
-        Stage::PostRender,
-        Stage::Last,
-        Stage::Startup, // Included for completeness but only runs once
-    ];
-
-    /// Stages that run with fixed timestep (may run multiple times per frame).
-    pub const FIXED_STAGES: [Stage; 2] = [Stage::Physics, Stage::PostPhysics];
-
     /// Returns `true` if this stage uses fixed timestep.
     #[inline]
     pub const fn is_fixed(self) -> bool {

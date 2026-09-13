@@ -205,12 +205,6 @@ impl ActionMap {
         }
     }
 
-    /// Sets the priority. Higher sits on top.
-    pub fn with_priority(mut self, priority: i32) -> Self {
-        self.priority = priority;
-        self
-    }
-
     pub fn add(mut self, action: Action) -> Self {
         self.actions.push(action);
         self
@@ -227,17 +221,6 @@ impl ActionMap {
         for action in &mut self.actions {
             action.ensure_id(&map_name);
         }
-    }
-
-    /// The index of the action with this id.
-    ///
-    /// What a stored reference resolves through — by identity, so a
-    /// rename in the panel changes nothing here.
-    pub fn resolve_ref(&self, id: kooch_core::Guid) -> Option<ActionId> {
-        self.actions
-            .iter()
-            .position(|action| action.id == id)
-            .map(|index| ActionId(index as u32))
     }
 
     /// The id for a name, or `None` if this map has no such action.

@@ -86,11 +86,6 @@ impl Time {
         self.fixed_delta = Duration::from_secs_f64(1.0 / hz);
     }
 
-    /// Sets the fixed timestep duration directly.
-    pub fn set_fixed_delta(&mut self, delta: Duration) {
-        self.fixed_delta = delta;
-    }
-
     /// Updates timing for a new frame.
     ///
     /// Returns the number of fixed timestep updates that should run this frame.
@@ -172,12 +167,6 @@ impl Time {
         self.delta.as_secs_f32()
     }
 
-    /// Time elapsed since the previous frame in seconds (f64).
-    #[inline]
-    pub fn delta_secs_f64(&self) -> f64 {
-        self.delta.as_secs_f64()
-    }
-
     /// Total time elapsed since application startup.
     #[inline]
     pub fn elapsed(&self) -> Duration {
@@ -188,12 +177,6 @@ impl Time {
     #[inline]
     pub fn elapsed_secs(&self) -> f32 {
         self.elapsed.as_secs_f32()
-    }
-
-    /// Total time elapsed since startup in seconds (f64).
-    #[inline]
-    pub fn elapsed_secs_f64(&self) -> f64 {
-        self.elapsed.as_secs_f64()
     }
 
     /// Fixed timestep duration for physics updates.

@@ -71,12 +71,3 @@ fn accessor_set_field_on_cpu_storage() {
 
     assert_eq!(storage.get(e).unwrap().hp, 75);
 }
-
-#[test]
-fn accessor_default_value() {
-    let accessor = TypedReflectAccessor::<Health>::new_cpu();
-    let boxed = accessor.default_value();
-    let health = boxed.downcast::<Health>().unwrap();
-    assert_eq!(health.hp, 100);
-    assert_eq!(health.max_hp, 100);
-}

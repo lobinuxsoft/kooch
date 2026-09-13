@@ -106,12 +106,6 @@ impl VisualizerRegistry {
         self.entries.contains_key(&TypeId::of::<C>())
     }
 
-    /// Returns `true` if a visualizer is registered for the given
-    /// `TypeId`. Used by the editor's gizmo system.
-    pub fn has_type(&self, type_id: TypeId) -> bool {
-        self.entries.contains_key(&type_id)
-    }
-
     /// Invokes the registered visualizer for `type_id` against `entity`.
     /// No-op if no visualizer is registered or the entity does not
     /// have the component.

@@ -110,13 +110,6 @@ impl ChunkManager {
         self.listeners.push(listener);
     }
 
-    /// Drain chunks evicted by the most recent `process_queues` pass.
-    /// Caller mirrors the eviction into the GPU pool via
-    /// `KoochAccel::remove_chunk`.
-    pub fn drain_pending_unloads(&mut self) -> Vec<ChunkId> {
-        std::mem::take(&mut self.pending_unloads)
-    }
-
     /// Request that the chunk be loaded. Idempotent: requesting an
     /// already-active chunk is a no-op. Duplicate queued requests
     /// dedup at process time.

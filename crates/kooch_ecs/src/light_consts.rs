@@ -68,16 +68,8 @@ pub mod lux {
 /// module docs. [`ROOM_LIGHT_NO_GI`] is the one calibrated for this
 /// renderer rather than for reality.
 pub mod lumens {
-    /// A candle.
-    pub const CANDLE: f32 = 12.0;
     /// A 9 W LED bulb — a normal household lamp.
     pub const LED_BULB_9W: f32 = 800.0;
-    /// A 100 W incandescent bulb.
-    pub const INCANDESCENT_100W: f32 = 1_600.0;
-    /// A bright shop or garage fixture.
-    pub const SHOP_LIGHT: f32 = 5_000.0;
-    /// A car headlight on high beam.
-    pub const CAR_HEADLIGHT: f32 = 20_000.0;
     /// 🔴 **Not a real bulb.** What a room light has to emit to read as a
     /// room light with direct lighting only — roughly forty times a real
     /// 9 W LED, standing in for the bounces this renderer does not

@@ -255,24 +255,6 @@ impl AssetServer {
         self.packs.read_or_disk(&path)
     }
 
-    /// Same, for an asset addressed by [`Guid`].
-    pub fn read_bytes_by_guid(
-        &mut self,
-        guid: Guid,
-        resources: &Resources,
-    ) -> AssetResult<Vec<u8>> {
-        let db = resources
-            .get::<AssetDatabase>()
-            .ok_or(AssetError::MissingAssetStorage("AssetDatabase"))?;
-        let path = db
-            .entry(guid)
-            .ok_or(AssetError::UnknownGuid(guid))?
-            .path
-            .clone();
-        drop(db);
-        self.read_bytes(path)
-    }
-
     /// Returns the cached handle for `path` if `T` was loaded already,
     /// otherwise `None`. Does NOT trigger a load — read-only lookup.
     pub fn get_cached<T: Asset>(&self, path: impl AsRef<Path>) -> Option<Handle<T>> {
