@@ -1,7 +1,4 @@
-//! Tests for [`crate::voxel::free_list`] — split out so the impl
-//! file stays under the no-monolithic threshold. The two GPU
-//! dispatch tests share helpers ([`build_kernel`], [`storage_entry`])
-//! to keep boilerplate from compounding.
+//! GPU dispatch tests share [`build_kernel`] and [`storage_entry`].
 
 use super::CountersInit;
 use crate::voxel::{
@@ -155,10 +152,8 @@ fn init_writes_identity_permutation_and_counters() {
     );
 }
 
-/// End-to-end: pop every available index in parallel, verify the
-/// popped set is exactly `0..max_subgrids` (no duplicates, no
-/// misses), then push every index back and verify the counters
-/// return to baseline.
+/// Pops every index in parallel — exactly `0..max_subgrids`, no duplicates — then pushes them back
+/// to the baseline counters.
 #[test]
 fn pop_then_push_round_trip_exhausts_and_restores_pool() {
     let Some((device, queue)) = test_device::try_acquire() else {

@@ -1,53 +1,5 @@
-//! Populate pass — allocate one subgrid from the per-LOD free-list
-//! pool per marked root cell (output of the classify pass) and fill
-//! the LOD's atlas tile with sampler values, all in a single GPU
-//! dispatch.
-//!
-//! Compose with [`super::ClassifyPass::record`] within the same
-//! command encoder (or an earlier submission of the same chunk):
-//! populate consumes `needs_indices[lod_idx][0..needs_count[lod_idx]]`
-//! written by classify and is undefined behaviour without that
-//! producer.
-//!
-//! # S7 — per-LOD pipelines
-//!
-//! [`PopulatePass`] holds [`LOD_COUNT`] (= 4) populate compute
-//! pipelines plus one populate-finalize pipeline. Each populate
-//! pipeline pins atlas-geometry overrides (`POPULATE_SUBGRID_DIM`,
-//! `POPULATE_TILE_DIM`, `POPULATE_TILE_VOXELS`,
-//! `POPULATE_ATLAS_TILES_X`) per the LOD's `LodConfig`. The
-//! finalize pipeline is shared across LODs — its only override
-//! (`FINALIZE_WORKGROUP_SIZE = 1u`) reflects "1 workgroup per marked
-//! cell" which holds at every LOD.
-//!
-//! [`record`] runs (`populate_finalize`, `populate`) for the chosen
-//! LOD; the orchestrator records all four LODs' populate-finalize
-//! before any populate dispatch so the GPU can pipeline the chain
-//! `chunk_lod → classify[0..3] → populate_finalize[0..3] →
-//! populate[0..3] → downsample[0..2]` inside one queue submission.
-//!
-//! # Approach D — single-pass populate-and-allocate with SLM coordination
-//!
-//! 1 workgroup per marked cell, 256 threads collaborating on the
-//! tile's `tile_voxels` voxels. Thread 0 pops one subgrid index off
-//! the per-LOD atomic free list, broadcasts via `var<workgroup>`
-//! after a `workgroupBarrier`, and the rest of the workgroup samples
-//! the SDF in parallel. Thread 0 writes
-//! `root_indices_lod[cell_idx] = subgrid_idx` last, after a second
-//! barrier, so the pool writes happen-before the root pointer
-//! publishes them.
-//!
-//! # Caller invariant
-//!
-//! [`PopulatePass::record`] requires that
-//! [`super::ClassifyPass::record`] has run earlier in this same
-//! `encoder` (or in a previously-submitted command buffer for `grid`)
-//! at the matching `lod_idx`. Populate reads
-//! `grid.needs_indices_buffer(lod_idx)` and
-//! `grid.needs_count_buffer(lod_idx)` written by classify; without
-//! that producer the pass dispatches over stale or zeroed data.
-//!
-//! [`LOD_COUNT`]: super::LOD_COUNT
+//! Populate: per marked cell thread 0 pops a subgrid, 256 threads sample the SDF, and the root
+//! pointer publishes last. [`PopulatePass::record`] needs [`super::ClassifyPass::record`] first.
 
 mod bindings;
 
@@ -83,10 +35,8 @@ struct PopulateUniform {
     bounds_max: [f32; 4],
 }
 
-/// Compiled per-LOD populate pipelines + the shared finalize
-/// pipeline. One instance is enough for any number of [`SparseGrid`]s
-/// sharing the same sampler — bind groups are rebuilt per
-/// [`record`] call.
+/// Pipelines only; bind groups are rebuilt per record, so one instance serves every [`SparseGrid`]
+/// sharing a sampler.
 pub struct PopulatePass {
     populate_pipelines: [wgpu::ComputePipeline; LOD_COUNT as usize],
     populate_bgl: wgpu::BindGroupLayout,
@@ -97,10 +47,8 @@ pub struct PopulatePass {
 }
 
 impl PopulatePass {
-    /// Build the per-LOD populate pipelines + the finalize pipeline.
-    /// `sampler_wgsl` is concatenated between the freelist helpers
-    /// and the populate body; `sampler_bgl_entries` is used as the
-    /// second bind group layout, `@group(1)`.
+    /// `sampler_wgsl` goes between the freelist helpers and the populate body;
+    /// `sampler_bgl_entries` is `@group(1)`.
     pub fn new(
         device: &wgpu::Device,
         sampler_wgsl: &str,
@@ -194,28 +142,14 @@ impl PopulatePass {
     }
 
     /// Bind group layout the caller must use when assembling the
-    /// sampler bind group passed to [`record`].
+    /// sampler bind group passed to [`Self::record`].
     pub fn sampler_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.sampler_bgl
     }
 
-    /// Record the populate-finalize + populate compute passes for
-    /// `lod_idx` into `encoder`.
-    ///
-    /// **Caller invariant:** [`super::ClassifyPass::record`] must have
-    /// run earlier in this same `encoder` (or in a previously-submitted
-    /// command buffer for `grid`) at the same `lod_idx`. Populate
-    /// reads `grid.needs_indices_buffer(lod_idx)` and
-    /// `grid.needs_count_buffer(lod_idx)` written by classify; without
-    /// that producer the pass dispatches over stale or zeroed data.
-    ///
-    /// Encoder ordering inside this call:
-    ///
-    /// 1. `finalize_main` dispatch — derive
-    ///    `[needs_count[lod_idx], 1, 1]` into
-    ///    `populate_indirect_args_buffer[lod_idx]`.
-    /// 2. `populate_main` indirect dispatch — one workgroup per marked
-    ///    cell, 256 threads cooperating on the LOD's atlas tile voxels.
+    /// Records populate-finalize, then populate indirect, for `lod_idx`.
+    /// [`super::ClassifyPass::record`] must have run at the same LOD, or it dispatches over stale
+    /// data.
     pub fn record(
         &self,
         device: &wgpu::Device,

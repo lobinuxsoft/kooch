@@ -1,12 +1,5 @@
-//! Bind group layout entries for the populate + populate-finalize
-//! compute pipelines. Split out so `populate.rs` stays focused on the
-//! pass struct + record logic — the BGL boilerplate dominates length
-//! without dominating substance.
-//!
-//! Binding numbers must mirror `sparse_populate.wgsl` (5..=9) and the
-//! freelist helpers (`sparse_freelist.wgsl`, bindings 0 and 1). The
-//! finalize layout mirrors classify's finalize — same shader, same
-//! bindings, only the `FINALIZE_WORKGROUP_SIZE` override differs.
+//! Bind group layouts for populate and its finalize. Numbers mirror `sparse_populate.wgsl` (5..=9)
+//! and the freelist helpers (0, 1); finalize matches classify's but for its override.
 
 /// Bind group layout entries for the populate pass `@group(0)`.
 pub(super) const POPULATE_BGL_ENTRIES: [wgpu::BindGroupLayoutEntry; 7] = [

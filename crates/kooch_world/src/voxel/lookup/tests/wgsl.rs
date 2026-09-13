@@ -1,7 +1,5 @@
-//! CPU/naga checks for the lookup WGSL — parse + validate the body
-//! against both layout shapes consumers will use, plus a defensive
-//! grep guarding the host-side mirrors of the WGSL constants. No GPU
-//! required.
+//! Naga parse and validation of the lookup under both layouts, plus the host mirrors of its
+//! constants. No GPU.
 
 use super::super::{
     LOOKUP_BODY_WGSL, LOOKUP_DEFAULT_GROUP, LOOKUP_DEFAULT_MASK_BINDING,
@@ -68,10 +66,7 @@ fn lookup_wgsl_constants_match_host() {
     assert!(LOOKUP_BODY_WGSL.contains("LOOKUP_EMPTY_ROOT_SENTINEL: u32 = 0xFFFFFFFFu"),);
     assert!(LOOKUP_BODY_WGSL.contains("LOOKUP_ALLOC_FAILED_SENTINEL: u32 = 0xFFFFFFFEu"),);
 
-    // `LOOKUP_ROOT_DIM` and the atlas tile counts ride the feature
-    // flag — they are prepended by `lookup_wgsl(..)` rather than
-    // baked into the raw body, so the assertion runs against the
-    // helper's output instead.
+    // Those constants are prepended by `lookup_wgsl`, not baked into the body, so check its output.
     let assembled = lookup_wgsl(
         LOOKUP_DEFAULT_GROUP,
         LOOKUP_DEFAULT_ROOT_BINDING,

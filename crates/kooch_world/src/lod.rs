@@ -1,9 +1,4 @@
-//! LOD ring configuration — engine-wide chunk-loading radii by LOD level.
-//!
-//! Centralises the answer to "for chunks at LOD `N`, how close to a
-//! focus must they be to load?" so all focuses share one ground truth.
-//! Per-focus overrides can layer on top later (separate issue) when
-//! gameplay demands it; for the warmup the global table is enough.
+//! Chunk-loading radii by LOD, one table every focus shares.
 
 /// One LOD ring: chunks at this LOD level load if any active focus is
 /// within `radius_meters` of them.
@@ -13,22 +8,8 @@ pub struct LodRing {
     pub radius_meters: f32,
 }
 
-/// Engine-wide LOD ring table.
-///
-/// **Default = single ring × 256 m** — conservative for editor /
-/// scene-authoring work. Picked so the current cache-gated activation
-/// (PR #318) doesn't spike on first-seen or boundary cross. Each
-/// recompute touches at most ~5³ = 125 cells.
-///
-/// **Per-game gameplay config is opt-in**: a planet-scale game wants
-/// 4 rings at 512 m / 2 km / 8 km / 32 km (the original aspirational
-/// default), but those produce frame spikes until the streaming
-/// performance roadmap lands (#327 epic — incremental delta in #319,
-/// async loading in #322, GPU-driven in #325). When PHASE 1 of #327
-/// merges, the default can grow back to multi-LOD without hitches.
-///
-/// Override per-game by inserting a custom `LodRingConfig` resource
-/// before the streaming plugin's first tick.
+/// Engine-wide LOD ring table. The default, one ring × 256 m, suits editing; a planet-scale game
+/// inserts its own before the streaming plugin's first tick.
 #[derive(Debug, Clone)]
 pub struct LodRingConfig {
     pub rings: Vec<LodRing>,
@@ -53,11 +34,6 @@ impl Default for LodRingConfig {
             }],
         }
     }
-
-    // Gameplay-grade aspirational config (kept here as a reference
-    // for when the streaming-performance roadmap (#327) catches up).
-    // Restore as the default after #319 incremental delta + #322
-    // async loading land.
 }
 
 impl LodRingConfig {}

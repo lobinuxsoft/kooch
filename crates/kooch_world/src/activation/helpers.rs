@@ -2,18 +2,8 @@ use glam::{DVec3, IVec3};
 
 use crate::chunk::{BASE_CHUNK_SIZE_METERS, ChunkId};
 
-/// Enumerate every chunk at `lod` whose AABB intersects the sphere
-/// `(center, radius)`. Iterates the bounding-box grid with **per-axis
-/// early-out**: the squared distance from `center` to the closest
-/// point of the current axis slab is accumulated outer → inner, so
-/// whole `(y, z)` slices and whole `z` columns are skipped without
-/// touching their cells.
-///
-/// Reduces the cell count tested from the cube bounding box (≈8r³ /
-/// chunk³) to roughly the inscribed sphere (≈⁴⁄₃πr³ / chunk³) — about
-/// 50 % fewer evaluations in the limit. The exact AABB-vs-sphere test
-/// inside the inner loop stays identical, so the result set is
-/// byte-identical to the old brute-force version.
+/// Every chunk at `lod` whose AABB meets the sphere, with per-axis early-out so whole slabs and
+/// columns are skipped — about half the tests of the bounding cube, same result set.
 pub(super) fn chunks_within_sphere(center: DVec3, radius: f64, lod: u8) -> Vec<ChunkId> {
     let chunk_size = BASE_CHUNK_SIZE_METERS * (1u64 << lod) as f64;
     let radius_sq = radius * radius;

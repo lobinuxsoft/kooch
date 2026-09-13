@@ -1,16 +1,5 @@
-//! Integration test (CPU-only) — confirms the streaming pipeline is live
-//! end-to-end when an entity carries `StreamingFocus` + `GlobalTransform`.
-//!
-//! Mirrors the editor's runtime wiring without touching any GPU surface:
-//! the editor adds `WorldStreamingPlugin` then `EditorPlugin` spawns the
-//! camera with `StreamingFocus::default()`. This test asserts that the
-//! activation system queues at least one chunk load when those two
-//! pieces are present.
-//!
-//! Regression target: prior to issue #362 the editor loaded
-//! `WorldStreamingPlugin` but no entity carried a focus, so the
-//! activation system short-circuited to a no-op and the chunk pool
-//! stayed cold regardless of camera position.
+//! An entity with `StreamingFocus` and `GlobalTransform` queues chunk loads, as the editor wires it
+//! — before #362 nothing carried a focus and the pool stayed cold.
 
 use glam::Mat4;
 

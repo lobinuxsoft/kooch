@@ -1,45 +1,19 @@
-//! Opaque [`SdfSampler`] trait — pluggable SDF source for the sparse
-//! pipeline (issue #136 S3 onward).
-//!
-//! The classify / populate compute passes do not know whether the SDF
-//! they are sampling is an analytic primitive, a baked impostor, a
-//! procedural function, a voxelised mesh, or an RPN delta tree. They
-//! call `sample_sdf(p: vec3<f32>) -> f32`, which is provided by the
-//! sampler fragment the pass concatenates ahead of its own shader
-//! source.
-//!
-//! # Bind group convention
-//!
-//! Sampler bindings live in **`@group(1)`**. The sparse pipeline
-//! reserves `@group(0)` for its own outputs (root indices, needs
-//! buffers, classify uniform). Implementations declare their bindings
-//! starting at `@group(1) @binding(0)` and report them via
-//! [`SdfSampler::bind_group_layout_entries`] /
-//! [`SdfSampler::bind_group_entries`] using the same binding numbers.
-//!
-//! # Concrete implementations
-//!
-//! [`AnalyticSphereSampler`] is the trivial reference implementation —
-//! ships an analytic sphere SDF for the classify-pass tests and serves
-//! as the worked example for downstream samplers.
+//! [`SdfSampler`]: the SDF source the passes call as `sample_sdf(p) -> f32`, blind to what is
+//! behind it. Its bindings live in `@group(1)`; `@group(0)` is the pipeline's.
+//! [`AnalyticSphereSampler`] is the reference implementation.
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 
-/// Pluggable SDF source. See module-level docs for the bind group
-/// convention; implementations are free to use any GPU resources they
-/// want as long as the WGSL fragment they emit defines exactly one
-/// `fn sample_sdf(p: vec3<f32>) -> f32`.
+/// Any GPU resources, provided the WGSL fragment defines exactly one `fn sample_sdf(p: vec3<f32>)
+/// -> f32`.
 pub trait SdfSampler {
     /// WGSL fragment defining `fn sample_sdf(p: vec3<f32>) -> f32` plus
     /// any `@group(1)` binding declarations the function reads.
     /// Concatenated ahead of the pass shader source via `format!`.
     fn wgsl_source(&self) -> &str;
 
-    /// Bind group layout entries describing the resources `wgsl_source`
-    /// declares. Binding numbers are sampler-local (always within
-    /// `@group(1)`); the host wires them as the second bind group on
-    /// the pipeline layout.
+    /// Layout entries for what `wgsl_source` declares, numbered within `@group(1)`.
     fn bind_group_layout_entries(&self) -> Vec<wgpu::BindGroupLayoutEntry>;
 
     /// Bind group entries matching the layout above. Returns `'a`-
@@ -56,10 +30,7 @@ struct AnalyticSphereUniform {
     center_radius: [f32; 4],
 }
 
-/// WGSL fragment for [`AnalyticSphereSampler`]. Defines
-/// `fn sample_sdf` plus the single uniform binding the function reads.
-/// `pub` so tests in sibling modules can splice it without round-
-/// tripping through the trait.
+/// WGSL for [`AnalyticSphereSampler`]; `pub` so sibling tests splice it without the trait.
 pub const ANALYTIC_SPHERE_WGSL: &str = r#"
 struct AnalyticSphere {
     center_radius: vec4<f32>,

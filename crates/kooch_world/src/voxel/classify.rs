@@ -1,29 +1,5 @@
-//! Classify pass — flag root cells whose centres fall within one
-//! cell-diagonal of the sampled SDF surface (single-sample Lipschitz
-//! cone test). One pipeline per LOD; each pipeline is gated on the
-//! corresponding bit of `chunk_lod_mask`, so only LODs the chunk
-//! activates do real work.
-//!
-//! GPU-driven: 1 SDF eval per root cell, 4096 evals per chunk, 64
-//! workgroups × 64 threads. Output is an indirect-ready compaction
-//! consumed by [`super::PopulatePass`] without a CPU readback in the
-//! hot loop.
-//!
-//! # S7 — per-LOD pipelines
-//!
-//! [`ClassifyPass`] holds [`LOD_COUNT`] (= 4) compute pipelines, one
-//! per LOD. Each pipeline pins the `CLASSIFY_LOD_IDX` WGSL override
-//! to its level so the in-shader `chunk_lod_mask & (1 << lod)` test
-//! folds to a constant. Bind groups are built per-record call against
-//! the LOD's per-LOD `root_indices`, `needs_indices`, and `needs_count`
-//! buffers.
-//!
-//! No finalize pass lives in this module any more — the indirect-args
-//! derivation moved to [`super::PopulatePass`]'s populate-finalize so
-//! the cascade's 16-pass chain stays tight (chunk_lod → classify[0..3]
-//! → populate_finalize[0..3] → populate[0..3] → downsample[0..2]).
-//!
-//! [`LOD_COUNT`]: super::LOD_COUNT
+//! Classify: flags root cells near the SDF surface, compacted for [`super::PopulatePass`] without
+//! readback. One pipeline per LOD folds the mask test; the orchestrator runs LOD 0 only.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -66,12 +42,8 @@ pub struct ClassifyPass {
 }
 
 impl ClassifyPass {
-    /// Build the per-LOD classify pipelines against `sampler_wgsl`
-    /// (concatenated ahead of [`CLASSIFY_WGSL`]) and `sampler_bgl_entries`
-    /// (used as the second bind group layout, `@group(1)`).
-    ///
-    /// Each LOD's pipeline pins `CLASSIFY_LOD_IDX` to the LOD index so
-    /// the in-shader `1u << CLASSIFY_LOD_IDX` test folds to a constant.
+    /// Builds one pipeline per LOD from `sampler_wgsl` (prepended to [`CLASSIFY_WGSL`]) and the
+    /// sampler's `@group(1)` layout.
     pub fn new(
         device: &wgpu::Device,
         sampler_wgsl: &str,
@@ -132,29 +104,15 @@ impl ClassifyPass {
     }
 
     /// Bind group layout the caller must use when assembling the
-    /// sampler bind group passed to [`record`]. Same structural shape
-    /// as `sampler_bgl_entries` from [`new`].
+    /// sampler bind group passed to [`Self::record`]. Same structural shape
+    /// as `sampler_bgl_entries` from [`Self::new`].
     pub fn sampler_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.sampler_bgl
     }
 
-    /// Record a classify dispatch for one LOD into `encoder`.
-    ///
-    /// Encoder ordering inside this call:
-    ///
-    /// 1. `clear` `needs_count[lod_idx]` to 0 (via queue write).
-    /// 2. `classify_main` dispatch — 64 workgroups × 64 threads.
-    ///
-    /// `queue.write_buffer` for the uniform happens before the encoder
-    /// commands run (wgpu serialises queue writes ahead of submitted
-    /// command buffers within the same submission).
-    ///
-    /// Caller invariant: the chunk_lod_mask buffer must have been
-    /// written by [`super::ChunkLodPass::record`] earlier in the same
-    /// encoder (or in a previous submission). If the LOD's bit is
-    /// unset, the dispatch becomes a no-op and `needs_count[lod_idx]`
-    /// stays at 0 — the populate pass at this LOD then dispatches over
-    /// zero workgroups, harmlessly.
+    /// Clears `needs_count[lod_idx]` and dispatches classify for one LOD. Needs
+    /// [`super::ChunkLodPass::record`] first; with the LOD's bit unset it writes nothing and
+    /// populate dispatches zero workgroups.
     pub fn record(
         &self,
         device: &wgpu::Device,
@@ -225,10 +183,8 @@ impl ClassifyPass {
     }
 }
 
-/// Bind group layout entries for the classify pass `@group(0)`. Same
-/// binding numbers used in `sparse_classify.wgsl`. S7 added binding 5
-/// (`chunk_lod_mask`) so the in-shader gating reads the per-chunk LOD
-/// activity bitmask.
+/// `@group(0)` entries, numbered as in `sparse_classify.wgsl`; binding 5 is `chunk_lod_mask` for
+/// the in-shader gating.
 const CLASSIFY_BGL_ENTRIES: [wgpu::BindGroupLayoutEntry; 5] = [
     // root_indices read-only
     wgpu::BindGroupLayoutEntry {

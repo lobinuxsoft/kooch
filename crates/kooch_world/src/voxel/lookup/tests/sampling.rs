@@ -11,25 +11,15 @@ use crate::voxel::{
 };
 use glam::Vec3;
 
-/// Sphere radius the lookup tests probe. With `large-root-grid` the
-/// grid quadruples in cell count per axis (32³ vs 16³) so the same
-/// sphere shell intersects ~13× more cells. Scaling the radius down
-/// keeps the marked-cell count under the 1024-slot freelist used by
-/// these tests, so atomicAdd allocation never races against pool
-/// exhaustion and `subgrid_idx` stays deterministic across runs.
+/// Smaller with `large-root-grid`, whose 32³ grid meets ~13× more cells, keeping allocation under
+/// 1024 slots and indices deterministic.
 #[cfg(not(feature = "large-root-grid"))]
 const TEST_SPHERE_RADIUS: f32 = 16.0;
 #[cfg(feature = "large-root-grid")]
 const TEST_SPHERE_RADIUS: f32 = 8.0;
 
-/// Tolerance for sampler-to-lookup comparisons. The pool atlas is
-/// `r16float`: the IEEE 754 half precision quantum at value `x` is
-/// `x * 2^-10 ≈ x * 1e-3`, so a fixed absolute ε under-estimates
-/// permissible error by a factor of `|expected|` when SDF values
-/// scale with chunk size. We therefore match the f16 quantum
-/// pattern: relative `1e-3 × |expected|`, with a `1e-3` absolute
-/// floor so values near the surface (where the SDF passes through
-/// zero) still get a reasonable bound.
+/// f16's quantum scales with the value, so tolerance is `1e-3 × |expected|` with a `1e-3` floor for
+/// values near the surface.
 fn f16_lookup_tolerance(expected: f32) -> f32 {
     (expected.abs() * 1.0e-3).max(1.0e-3)
 }
@@ -62,10 +52,8 @@ fn lookup_at_voxel_corners_returns_pool_values() {
 
     let extent = bounds.max - bounds.min;
     let cell_size = extent / (ROOT_DIM as f32);
-    // Deterministic per-cell voxel sampling — 50 voxels chosen via a
-    // cheap LCG over (cell_idx, slot). Reproducible without pulling
-    // in `rand`, and avoids the corner-most voxels (which the shader
-    // clamps and which therefore tell us the least).
+    // 50 voxels per cell from a cheap LCG — reproducible without `rand`, skipping corners the
+    // shader clamps.
     let mut probe_positions: Vec<Vec3> = Vec::new();
     let mut probe_meta: Vec<(usize, u32)> = Vec::new();
     for &cell_idx in &allocated_cells {
@@ -84,12 +72,8 @@ fn lookup_at_voxel_corners_returns_pool_values() {
     }
 
     let run = run_lookup_probes(&device, &queue, &sampler, bounds, 1024, &probe_positions);
-    // Post-S6 the pool is `r16float` so we no longer compare against a
-    // host readback of the texel; instead probe the analytic CPU
-    // sampler at the same world position. At voxel-corner positions
-    // (integer `local_voxel`) the trilinear filter collapses to a
-    // single texel, so the lookup output equals the populate-write
-    // value modulo f16 quantisation.
+    // At a voxel corner trilinear collapses to one texel, so the lookup equals the analytic sampler
+    // within f16 quantisation.
     for (i, &(cell_idx, _voxel_linear)) in probe_meta.iter().enumerate() {
         let subgrid_idx = run.root_indices[cell_idx];
         assert!(subgrid_idx < 1024, "cell {cell_idx} should be allocated");
@@ -155,11 +139,8 @@ fn lookup_in_empty_cell_returns_far_sentinel() {
         eprintln!("skipping lookup_in_empty_cell_returns_far_sentinel: no GPU");
         return;
     };
-    // Sphere parked at the low corner — radius small enough that the
-    // far corner of the chunk has no surface anywhere near it. Cell
-    // (15, 15, 15) at world centre `Vec3::splat(60)` is therefore
-    // empty, and lookup at `Vec3::splat(56)` (centre of that cell) is
-    // expected to return `2 * cell_size = 8.0`.
+    // A small sphere at the low corner leaves cell (15, 15, 15) empty, so a lookup at its centre
+    // returns `2 * cell_size = 8.0`.
     let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(8.0), 4.0);
     let bounds = test_bounds();
     let probe = Vec3::splat(56.0);
@@ -198,21 +179,15 @@ fn lookup_out_of_bounds_returns_far_sentinel() {
 
 #[test]
 fn lookup_with_target_voxel_size_selects_correct_lod() {
-    // Probe at a position with two different `target_voxel_size`s
-    // covering distinct LODs. Both must return surface-coherent values
-    // within the LOD's quantisation tolerance — LOD 0 is the finest
-    // (0.25 voxel pitch), LOD 2 is 4× coarser (1.0 voxel pitch).
+    // The same point at LOD 0 (0.25 pitch) and LOD 2 (1.0) must both agree with the surface within
+    // each LOD's quantisation.
     let Some((device, queue)) = test_device::try_acquire() else {
         eprintln!("skipping lookup_with_target_voxel_size_selects_correct_lod: no GPU");
         return;
     };
     let sampler = AnalyticSphereSampler::new(&device, Vec3::splat(32.0), TEST_SPHERE_RADIUS);
     let bounds = test_bounds();
-    // Probe well inside the chunk so all LOD samples land in
-    // populated cells. Default-feature uses radius 16 → probe 8
-    // units from centre lands just inside the surface; with the
-    // smaller `large-root-grid` sphere (radius 8) the probe shifts
-    // to 4 units from centre to keep the same surface adjacency.
+    // Just inside the surface: 8 units from centre, 4 with the smaller `large-root-grid` sphere.
     #[cfg(not(feature = "large-root-grid"))]
     let probe = Vec3::splat(24.0);
     #[cfg(feature = "large-root-grid")]

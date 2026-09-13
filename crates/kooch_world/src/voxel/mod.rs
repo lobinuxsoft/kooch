@@ -91,10 +91,8 @@ pub use metrics::{METRICS_WGSL, Metrics, MetricsPass};
 pub use populate::{POPULATE_WGSL, POPULATE_WORKGROUP_SIZE, PopulatePass};
 pub use sampler::{ANALYTIC_SPHERE_WGSL, AnalyticSphereSampler, SdfSampler};
 
-/// Source of `shaders/sparse_freelist.wgsl` — atomic free-list pop /
-/// push helpers shared by the allocate (#S4) and free (#S7) compute
-/// shaders. Consumer pipelines concat this string ahead of their own
-/// shader source.
+/// Atomic free-list pop and push, concatenated ahead of a consumer's shader; populate pops, and no
+/// production pass pushes yet.
 pub const SPARSE_FREELIST_WGSL: &str = include_str!("../../shaders/sparse_freelist.wgsl");
 
 #[cfg(test)]
@@ -103,39 +101,23 @@ pub const SPARSE_FREELIST_WGSL: &str = include_str!("../../shaders/sparse_freeli
 /// `alloc_failed_count`, two padding slots.
 pub const FREELIST_COUNTERS_SIZE: u64 = 16;
 
-/// Side length (in cells) of the root grid. Each chunk owns one root
-/// grid, addressing `ROOT_CELLS = ROOT_DIM³` subgrid slots.
-///
-/// With `large-root-grid` enabled, scales to `32` (`32³ = 32768` root
-/// cells) per AC4 of #136 / issue #347.
+/// Root grid side in cells, `ROOT_CELLS = ROOT_DIM³`; `32` with `large-root-grid` (#347).
 #[cfg(not(feature = "large-root-grid"))]
 pub const ROOT_DIM: u32 = 16;
 /// See default-feature variant above.
 #[cfg(feature = "large-root-grid")]
 pub const ROOT_DIM: u32 = 32;
 
-/// Side length (in voxels) of one subgrid's data interior. Voxels at
-/// integer coords `(vx, vy, vz)` with `vx,vy,vz ∈ [0, SUBGRID_DIM)`
-/// live at world position `cell_min + (vx,vy,vz) / SUBGRID_DIM *
-/// cell_size`. The pool atlas reserves one extra "skirt" voxel per
-/// face for HW-trilinear continuity (see `SUBGRID_TILE_DIM`).
+/// Voxels per subgrid axis, at `cell_min + v / SUBGRID_DIM * cell_size`; the atlas adds a skirt
+/// voxel (see `SUBGRID_TILE_DIM`).
 pub const SUBGRID_DIM: u32 = 16;
 
-/// Side length (in voxels) of one tile in the pool atlas, including
-/// the 1-voxel skirt past `SUBGRID_DIM` on each face. Lookup samples
-/// sit on voxel centres `[0.5, 1.5, ..., SUBGRID_TILE_DIM - 0.5]` of
-/// each tile; the skirt voxel at index `SUBGRID_DIM` carries the
-/// neighbouring cell's corner sample so the HW trilinear filter
-/// reconstructs a C0-continuous SDF across subgrid boundaries
-/// without a cross-tile bind dance.
+/// Tile side including the 1-voxel skirt, which holds the neighbouring cell's corner so hardware
+/// trilinear stays C0-continuous across subgrids.
 pub const SUBGRID_TILE_DIM: u32 = 17;
 
-/// Atlas tile counts along each axis. Default `Y = 1` because RDNA
-/// 2 / 4 `texture_3d` LDS bandwidth favours wide-shallow over deep
-/// stacks for this access pattern. With `large-root-grid` Y bumps to
-/// 2 so the atlas holds 2048 tiles (matching the 2× root-cell count
-/// at 5% sparsity headroom) without doubling the X/Z extent — that
-/// would have busted the per-axis dimension budget at higher LODs.
+/// Atlas tiles per axis. Wide-shallow suits RDNA 2/4 `texture_3d` access; `large-root-grid` doubles
+/// Y rather than X/Z, which would break the per-axis limit at higher LODs.
 pub const ATLAS_TILES_X: u32 = 32;
 #[cfg(not(feature = "large-root-grid"))]
 pub const ATLAS_TILES_Y: u32 = 1;
@@ -165,16 +147,11 @@ pub const SUBGRID_VOXELS: u32 = SUBGRID_DIM * SUBGRID_DIM * SUBGRID_DIM;
 /// `# Capacity` for the sizing rationale.
 pub const MAX_SUBGRIDS_DEFAULT: u32 = MAX_SUBGRIDS_PER_ATLAS;
 
-/// `root_indices` value meaning "no subgrid allocated for this cell".
-/// The lookup shader returns `FAR_FROM_SURFACE` for empty cells so
-/// `min(empty, x) ≈ x` keeps the raymarch identity-element invariant
-/// (matches the `+1e10` plane sentinel from #115 PR-4).
+/// No subgrid for this cell; the lookup returns `FAR_FROM_SURFACE` so `min(empty, x) ≈ x`.
 pub const EMPTY_ROOT_SENTINEL: u32 = 0xFFFFFFFF;
 
-/// `root_indices` value meaning "allocation requested but the pool was
-/// exhausted". Distinguished from `EMPTY_ROOT_SENTINEL` so diagnostics
-/// can flag pool-exhaustion bugs without confusing them with regular
-/// empty cells.
+/// Allocation requested but the pool was exhausted — distinct from empty so diagnostics can flag
+/// it.
 pub const ALLOC_FAILED_SENTINEL: u32 = 0xFFFFFFFE;
 
 /// Sentinel SDF value returned for empty / out-of-bounds samples. Same
@@ -200,15 +177,8 @@ pub(crate) mod test_device {
     static SHARED: OnceLock<Option<(wgpu::Device, wgpu::Queue)>> = OnceLock::new();
 
     #[cfg(test)]
-    /// Acquire a wgpu device + queue for unit tests. Returns `None`
-    /// when no GPU is available so the test can skip itself rather
-    /// than fail (CI without a display falls into this path).
-    ///
-    /// Requests `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` so the
-    /// `texture_storage_3d<r16float, write>` subgrid pool atlas (S6)
-    /// is usable. Adapters without that feature get treated as
-    /// "no GPU" and the test skips — same behaviour CI without a
-    /// display already gets.
+    /// A device for unit tests, or `None` so the test skips without a GPU. Needs
+    /// `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` for the `r16float` storage atlas.
     pub fn try_acquire() -> Option<(wgpu::Device, wgpu::Queue)> {
         SHARED
             .get_or_init(|| {

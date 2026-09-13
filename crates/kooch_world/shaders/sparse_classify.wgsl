@@ -1,36 +1,6 @@
-// Sparse classify pass — flag every root cell whose centre lies within
-// one cell-diagonal of the sampled SDF surface (single-sample Lipschitz
-// cone test). Run as ⌈ROOT_CELLS / 64⌉ workgroups × 64 threads = 64
-// workgroups for the default 4096 root cells.
-//
-// `sample_sdf(p: vec3<f32>) -> f32` and `@group(1)` bindings are
-// supplied by the host-prepended sampler fragment. This shader is
-// opaque to the sampler implementation — it does not bind any sampler
-// resources directly.
-//
-// # S7 — per-LOD gating
-//
-// The LOD index this pipeline classifies for is passed as the
-// pipeline-overridable `CLASSIFY_LOD_IDX` constant. Each cell is
-// gated on `chunk_lod_mask & (1 << CLASSIFY_LOD_IDX)`: if bit
-// `CLASSIFY_LOD_IDX` is unset for this chunk, the workgroup
-// early-returns and writes nothing. The actual cone test, the
-// bookkeeping atomic, and the writes to needs_indices /
-// needs_count are otherwise identical across LODs — the root grid
-// resolution is LOD-independent.
-//
-// Output is an indirect-ready compaction so the populate pass
-// (S4) can `dispatch_workgroups_indirect` over only the marked cells
-// without a CPU readback in the hot loop:
-//
-//   classify_needs_indices[0..n] = cell_idx of each marked cell
-//   classify_needs_count          = n
-//
-// The companion `sparse_classify_finalize.wgsl` derives the
-// `[ceil_div(n, FINALIZE_WORKGROUP_SIZE), 1, 1]` indirect-args triple
-// from `classify_needs_count`. Populate pins `FINALIZE_WORKGROUP_SIZE`
-// to `1` (1 workgroup per marked cell); other consumers pin their
-// own divisor.
+// Flags root cells within one cell-diagonal of the SDF surface (Lipschitz cone), gated on bit
+// `CLASSIFY_LOD_IDX` of the mask; the output is an indirect-ready compaction, so populate needs no
+// readback.
 
 const CLASSIFY_EMPTY_ROOT_SENTINEL: u32 = 0xFFFFFFFFu;
 const CLASSIFY_ALLOC_FAILED_SENTINEL: u32 = 0xFFFFFFFEu;
@@ -77,12 +47,8 @@ fn classify_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    // Skip cells whose root entry already points to a real subgrid
-    // index. `EMPTY_ROOT_SENTINEL` (unallocated) and
-    // `ALLOC_FAILED_SENTINEL` (pool was exhausted last pass) both fall
-    // through and get re-classified — re-running classify must be
-    // idempotent against allocate, and must give failed allocations
-    // another chance once the pool drains.
+    // Empty and failed cells both re-classify: classify must stay idempotent against allocate, and
+    // a failed allocation gets another chance once the pool drains.
     let existing = classify_root_indices[cell_idx];
     if (existing < CLASSIFY_ROOT_CELLS) {
         return;

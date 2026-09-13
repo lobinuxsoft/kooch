@@ -1,16 +1,6 @@
-//! Tests for [`crate::voxel::metrics`]. CPU/naga checks for the
-//! shader + struct sizing, plus a GPU end-to-end that runs the full
-//! cascade and verifies post-cascade metrics match the canonical
-//! invariants enforced by the b18f4aa fix-up:
-//!
-//! - `active_subgrids[0] == needs_count_lod0` (LOD 0 is the only
-//!   producer).
-//! - `active_subgrids[i > 0] == 0` (downsample copies idx, never pops
-//!   the higher-LOD freelists).
-//! - `alloc_count_total == active_subgrids[0]` (one pop per marked
-//!   cell at LOD 0; no frees in the canonical chain).
-//! - `free_count_total == 0`.
-//! - `vram_bytes` matches the constexpr [`LOD_LEVELS`] sum.
+//! After a full cascade: LOD 0 active equals `needs_count`, higher LODs are 0 (downsample copies
+//! indices), alloc total equals LOD 0 active, no frees, and `vram_bytes` matches
+//! [`LOD_LEVELS`](crate::voxel::LOD_LEVELS).
 
 use super::{METRICS_WGSL, Metrics, MetricsPass};
 use crate::voxel::{

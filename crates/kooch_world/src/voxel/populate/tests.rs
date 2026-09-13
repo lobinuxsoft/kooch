@@ -1,26 +1,6 @@
-//! Tests for [`crate::voxel::populate`] — kept in their own file so
-//! the impl module stays under the no-monolithic threshold. GPU tests
-//! gate on [`test_device::try_acquire`] and skip when no adapter is
-//! available, matching the convention in `classify/tests.rs` and
-//! `free_list/tests.rs`.
-//!
-//! The asserted invariants split three ways:
-//!
-//! - **Shader-only**: `populate_concat_parses_and_validates` runs naga
-//!   parse + validate on the exact concatenation
-//!   `freelist + sampler + populate` the pipeline compiles, so a
-//!   copy-paste regression in any of the three fragments fails fast
-//!   without needing a GPU.
-//! - **Allocator**: `populate_allocates_subgrid_per_marked_cell`,
-//!   `populate_decrements_free_top_by_marked_count`,
-//!   `populate_handles_pool_exhaustion`, and
-//!   `populate_idempotent_with_classify` cover the freelist contract
-//!   end-to-end through populate.
-//! - **Voxel-content semantics** is verified end-to-end by the lookup
-//!   tests post-S6 (S6 migrated the pool to a `r16float` texture
-//!   atlas; reading values back through the host needs `f16` decoding
-//!   we punt on, since `lookup_at_voxel_corners_returns_pool_values`
-//!   already proves populate's writes are coherent with the sampler).
+//! Shader concatenation is validated without a GPU; the allocator contract is tested end-to-end
+//! through populate. Voxel values are left to the lookup tests, which avoid decoding f16 on the
+//! host.
 
 use super::{FINALIZE_WGSL, POPULATE_WGSL, POPULATE_WORKGROUP_SIZE, PopulatePass};
 use crate::voxel::{
@@ -28,12 +8,8 @@ use crate::voxel::{
     DEFAULT_MARGIN, LOD_COUNT, SPARSE_FREELIST_WGSL, SdfSampler, SparseGrid, test_device,
 };
 
-/// Sphere radius the populate / lookup tests probe. With the
-/// `large-root-grid` feature the root grid quadruples in cell count
-/// per axis (32³ vs 16³), so the same sphere shell intersects ~13×
-/// more cells. Keeping the marked-cell count under the 1024-slot
-/// freelist (so allocation never races against pool exhaustion in
-/// invariants tests) needs the radius to scale down accordingly.
+/// Smaller with `large-root-grid`, whose 32³ grid meets ~13× more cells, keeping allocation under
+/// the 1024-slot freelist.
 #[cfg(not(feature = "large-root-grid"))]
 const TEST_SPHERE_RADIUS: f32 = 16.0;
 #[cfg(feature = "large-root-grid")]
@@ -173,10 +149,8 @@ fn populate_finalize_with_override_validates() {
 
 #[test]
 fn populate_wgsl_constants_match_host() {
-    // Workgroup size stays a `const` — wgpu does not allow overriding
-    // `@workgroup_size`. Root dim was promoted to an `override` for
-    // the `large-root-grid` feature; the WGSL default reflects the
-    // no-feature build.
+    // `@workgroup_size` cannot be overridden in wgpu, so it stays a `const`; root dim is an
+    // `override` for `large-root-grid`.
     assert!(POPULATE_WGSL.contains(&format!(
         "POPULATE_WORKGROUP_SIZE: u32 = {POPULATE_WORKGROUP_SIZE}u",
     )),);

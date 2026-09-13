@@ -1,21 +1,5 @@
-//! Chunk-LOD selection pass — picks which LODs are active for each
-//! chunk based on its distance to a global "active origin" (player
-//! position) and writes the resulting bitmask into
-//! `grid.chunk_lod_mask_buffer()`.
-//!
-//! # Output
-//!
-//! `chunk_lod_mask: u32` (single chunk today, `array<u32>` once
-//! multi-chunk lands per #313). Bit `i` set ⇒ LOD `i` is active.
-//! Bit 0 is always set — the downsample cascade reads LOD 0 as the
-//! source for every higher LOD, so LOD 0 must always be populated.
-//!
-//! # Encoder ordering
-//!
-//! `ChunkLodPass::record` runs first in the cascade — every
-//! downstream pipeline (classify, populate, downsample) reads
-//! `chunk_lod_mask` and depends on it being up-to-date for this
-//! frame's active origin.
+//! Writes each chunk's active-LOD bitmask by distance to the active origin. Runs first, since every
+//! pass reads it; bit 0 is always set because downsample sources from LOD 0.
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
@@ -26,15 +10,8 @@ use super::SparseGrid;
 /// WGSL source of the chunk-LOD compute pass.
 pub const CHUNK_LOD_WGSL: &str = include_str!("../../shaders/sparse_chunk_lod.wgsl");
 
-/// Default LOD distance thresholds (metres).
-///
-/// - `[0]` = 100 m  → boundary between LOD 0 and LOD 1
-/// - `[1]` = 500 m  → boundary between LOD 1 and LOD 2
-/// - `[2]` = 2000 m → boundary between LOD 2 and LOD 3
-///
-/// Tuned for the planet-scale viewing distance regime: LOD 0
-/// (finest) for the player's immediate ~100 m bubble, LOD 3
-/// (coarsest) for everything beyond 2 km.
+/// LOD boundaries in metres (0→1, 1→2, 2→3): the finest LOD for the ~100 m around the player, the
+/// coarsest past 2 km.
 pub const DEFAULT_LOD_DISTANCE_THRESHOLDS: [f32; 3] = [100.0, 500.0, 2000.0];
 
 /// Uniform mirror of WGSL `ChunkLodUniform`. 48 B std140 (three
@@ -48,7 +25,7 @@ struct ChunkLodUniform {
 }
 
 /// Compiled chunk-LOD pipeline. One instance is enough per frame —
-/// the bind group is rebuilt per [`record`] call so the pass is
+/// the bind group is rebuilt per [`Self::record`] call so the pass is
 /// grid-agnostic.
 pub struct ChunkLodPass {
     pipeline: wgpu::ComputePipeline,
@@ -93,12 +70,8 @@ impl ChunkLodPass {
         }
     }
 
-    /// Stage the per-frame uniform and dispatch the chunk-LOD compute
-    /// pass. `active_origin` is the world-space position relative to
-    /// which LOD distances are measured (player / camera). `bounds`
-    /// is `grid.bounds()` — the chunk centre is derived from it.
-    /// `thresholds` is `(lod0_to_1, lod1_to_2, lod2_to_3)` distances
-    /// in world units.
+    /// Stages the uniform and dispatches: distances measured from `active_origin`, the chunk centre
+    /// from `bounds`, `thresholds` in world units.
     pub fn record(
         &self,
         device: &wgpu::Device,

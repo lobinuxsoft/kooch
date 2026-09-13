@@ -1,26 +1,6 @@
-//! Downsample cascade — fills LODs 1..=3 by box-filtering the
-//! preceding LOD. One pipeline per cascade pair, dispatched indirect
-//! over LOD 0's `populate_indirect_args` (so each cascade sees one
-//! workgroup per cell that classify marked at LOD 0 — the only LOD
-//! the orchestrator runs classify + populate on, since the marked
-//! cell set is LOD-independent).
-//!
-//! See `shaders/sparse_downsample.wgsl` for the box-filter math and
-//! the skirt-clamp invariant. This module is the host-side
-//! orchestration: pipeline construction with per-cascade overrides
-//! plus bind-group assembly.
-//!
-//! # Caller invariant
-//!
-//! [`DownsamplePass::record_cascade`] requires that
-//! [`super::PopulatePass::record`] (or its `record_finalize` +
-//! `record_populate` halves) has run for the source LOD earlier in
-//! the same encoder. The cascade reads
-//! `grid.populate_indirect_args_buffer(lod_src)` (already populated
-//! by populate-finalize), `grid.needs_indices_buffer(lod_src)`,
-//! `grid.needs_count_buffer(lod_src)`, and
-//! `grid.subgrid_pool_view(lod_src)` (already filled by the LOD's
-//! populate stage).
+//! Fills LODs 1..=3 by box-filtering the previous one over LOD 0's indirect args.
+//! [`DownsamplePass::record_cascade`] needs [`super::PopulatePass::record`] for the source LOD
+//! first.
 
 use super::{LOD_LEVELS, SparseGrid};
 
@@ -36,7 +16,7 @@ pub const DOWNSAMPLE_WORKGROUP_SIZE: u32 = 64;
 
 /// Compiled per-cascade downsample pipelines plus the shared bind
 /// group layout. One instance is enough per device — bind groups are
-/// rebuilt per [`record_cascade`] call.
+/// rebuilt per [`Self::record_cascade`] call.
 pub struct DownsamplePass {
     pipelines: [wgpu::ComputePipeline; CASCADE_COUNT],
     bgl: wgpu::BindGroupLayout,
@@ -95,13 +75,8 @@ impl DownsamplePass {
         Self { pipelines, bgl }
     }
 
-    /// Record the cascade `cascade_idx` (`0` = LOD 0→1, `1` = LOD
-    /// 1→2, `2` = LOD 2→3) into `encoder`. All cascades share the
-    /// same dispatch shape (`populate_indirect_args[0]` =
-    /// `[needs_count_lod0, 1, 1]`) and the same `needs_indices` /
-    /// `needs_count` source — LOD 0's, since the marked cell set is
-    /// LOD-independent and only LOD 0 actually runs classify in the
-    /// canonical cascade.
+    /// Records cascade `cascade_idx` (0 = LOD 0→1 … 2 = 2→3). Every cascade shares LOD 0's dispatch
+    /// shape and `needs_*` buffers, the only LOD that runs classify.
     pub fn record_cascade(
         &self,
         device: &wgpu::Device,
@@ -149,10 +124,7 @@ impl DownsamplePass {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(grid.subgrid_pool_view(lod_dst)),
                 },
-                // needs_indices / needs_count come from LOD 0
-                // regardless of cascade — the canonical cascade only
-                // runs classify at LOD 0, and the marked cell set is
-                // LOD-independent.
+                // LOD 0's, whatever the cascade: only LOD 0 runs classify.
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: grid.needs_indices_buffer(0).as_entire_binding(),

@@ -1,7 +1,4 @@
-//! Tests for [`crate::voxel::grid`] — kept in their own file so the
-//! impl module stays under the no-monolithic threshold. GPU tests
-//! gate on [`test_device::try_acquire`] and skip when no adapter is
-//! available, matching the convention in the other sparse submodules.
+//! GPU tests skip through [`test_device::try_acquire`] when no adapter is available.
 
 use super::*;
 use crate::voxel::{
@@ -90,10 +87,8 @@ fn atlas_constants_consistent() {
     assert_eq!(ATLAS_DIM_Z, super::super::ATLAS_TILES_Z * SUBGRID_TILE_DIM);
     assert_eq!(SUBGRID_TILE_DIM, SUBGRID_DIM + 1);
 
-    // Total cascade VRAM. AC1 (#136) caps default at 15 MB / chunk;
-    // AC4 (#347) caps the `large-root-grid` build at 100 MB / chunk.
-    // Lod-level test `total_atlas_vram_under_*` covers the strict
-    // budget — the floor here just guarantees we built four atlases.
+    // Only proves four atlases were built; the VRAM caps (15 MB, 100 MB with `large-root-grid`) are
+    // tested in `lod`.
     let total: u64 = LOD_LEVELS
         .iter()
         .map(|lod| {

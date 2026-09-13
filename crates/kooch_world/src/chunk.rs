@@ -1,16 +1,5 @@
-//! Chunk types — identity, state, per-chunk data.
-//!
-//! A chunk is a fixed-size cubic region of the world identified by a
-//! 3D grid index plus a level of detail. The grid is rectangular for
-//! simplicity; a sphere-surface wrapper (cubed-sphere quadtree) sits on
-//! top of these types as a separate addressing layer when planets land,
-//! without rewriting any of the streaming machinery.
-//!
-//! Heavy per-chunk fields (sparse SDF baseline, RPN delta tree, BVH)
-//! intentionally do NOT live in [`ChunkData`] — they belong to #136
-//! (sparse storage), #307 (RPN tree, already merged), and #115 (BVH).
-//! This module owns the minimal envelope the streaming subsystem
-//! manages.
+//! Chunk identity and state: a fixed cubic region addressed by grid index and LOD. Heavy per-chunk
+//! data is keyed by [`ChunkId`] in its owner's storage, keeping this envelope small.
 
 use glam::{DVec3, IVec3, Vec3};
 use kooch_core::Aabb;
@@ -21,17 +10,11 @@ use kooch_core::coord::{ActiveOrigin, UniverseCoord};
 /// (and quadruples the surface, octuples the volume covered).
 pub const BASE_CHUNK_SIZE_METERS: f64 = 64.0;
 
-/// Highest LOD level the API supports without overflowing the size
-/// computation. At level 12 a chunk side is 64 × 4096 = 262 km, which
-/// covers an Earth-radius planet in ~23 chunks per axis — far past any
-/// practical LOD ring.
+/// Highest LOD before the size computation overflows: 64 × 4096 = 262 km a side, past any practical
+/// ring.
 pub const MAX_LOD_LEVEL: u8 = 12;
 
-/// Identifier of a chunk in the world spatial grid.
-///
-/// Equality requires both `coords` AND `level`: the same grid index at
-/// two different levels names two different chunks (covering
-/// overlapping volumes at different resolutions).
+/// Equality needs both `coords` and `level`: one index at two levels names two overlapping chunks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ChunkId {
     /// Grid index along each axis. The chunk's lower corner sits at
@@ -65,10 +48,8 @@ impl ChunkId {
         UniverseCoord::from_dvec3(world)
     }
 
-    /// Axis-aligned bounding box of this chunk in the simulation frame
-    /// (relative to [`ActiveOrigin`]). f32 is safe here because loaded
-    /// chunks are by construction near the active origin — far chunks
-    /// are unloaded before they leave f32 precision.
+    /// AABB relative to [`ActiveOrigin`]; f32 is safe because far chunks unload before they leave
+    /// its precision.
     pub fn bounds(&self, origin: &ActiveOrigin) -> Aabb {
         let world = self.world_origin();
         let delta = origin.coord().delta_to(&world);
@@ -78,12 +59,8 @@ impl ChunkId {
     }
 }
 
-/// Lifecycle state of a chunk in memory.
-///
-/// State transitions: `Unloaded → Loading → Loaded → Unloading → Unloaded`.
-/// Loading / Unloading are kept as explicit states even though no async
-/// loader exists yet — once one lands (#54 follow-up issue) the
-/// transitions stay valid without API churn.
+/// `Unloaded → Loading → Loaded → Unloading → Unloaded`; the middle states exist before an async
+/// loader does, so one lands without API churn.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ChunkState {
     /// Not present in memory.
@@ -97,12 +74,8 @@ pub enum ChunkState {
     Unloading,
 }
 
-/// Per-chunk envelope managed by the streaming subsystem.
-///
-/// Heavy data (sparse SDF baseline, RPN delta tree, BVH) is owned by
-/// other crates / issues and keyed by [`ChunkId`] in their own storage.
-/// This struct stays small so the active-chunks `HashMap` is cheap to
-/// iterate per frame.
+/// Heavy data lives elsewhere keyed by [`ChunkId`], so the active-chunks map stays cheap to iterate
+/// per frame.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChunkData {
     pub id: ChunkId,
