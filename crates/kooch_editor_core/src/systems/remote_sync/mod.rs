@@ -1,15 +1,4 @@
 //! Drives the remote session each frame.
-//!
-//! This is what makes remote mode *visible*: it advances the connect
-//! handshake, re-pulls the project's entity snapshot on a cadence, and
-//! feeds it to [`RemoteMirror`](crate::remote_mirror::RemoteMirror),
-//! which rebuilds it in the editor's own ECS. Every downstream
-//! consumer — World panel, Inspector, viewport render — then works
-//! against that ECS with the ordinary local machinery, unaware the data
-//! came off a socket.
-//!
-//! Edits travel the other way, through
-//! [`remote_edit`](crate::actions) — never by mutating the mirror.
 
 use std::time::{Duration, Instant};
 
@@ -20,18 +9,6 @@ use crate::perf::{EditorPerfStats, RemoteSyncStats};
 use crate::remote_session::{ConnectionState, RemoteSession, RemoteState};
 
 /// Time between snapshot pulls while the project sits paused.
-///
-/// The project owns the world and may mutate it behind the editor's
-/// back, so the mirror is a poll, not a subscription. Twice a second
-/// keeps the editor responsive to outside change without spending a
-/// synchronous round-trip per frame.
-///
-/// This used to be "every thirtieth frame", which was the same thing
-/// only for as long as frames arrived at a fixed rate. Since #656 an
-/// idle editor draws roughly four frames a second, and thirty of those
-/// is seven and a half seconds — the mirror would have looked frozen.
-/// A cadence is a duration; counting frames was always a stand-in for
-/// one.
 const REFRESH_INTERVAL_IDLE: Duration = Duration::from_millis(500);
 
 /// Cadence bookkeeping for [`remote_sync_system`].
@@ -58,16 +35,7 @@ impl Default for RemoteSyncState {
 }
 
 impl RemoteSyncState {
-    /// Asks for a pull on the next frame instead of at the next tick of
-    /// the cadence.
-    ///
-    /// 🔴 An edit the editor *just sent* is not "outside change the
-    /// project might have made" — it is a change the editor is waiting
-    /// to see. Without this it waits out the poll: up to half a second
-    /// where the world has already gone back and the screen has not,
-    /// which reads exactly like a Ctrl+Z that was ignored. It is why the
-    /// chord "needed two presses" — the second one was the first one
-    /// arriving, plus a second step undone.
+    /// Asks for a pull on the next frame instead of at the next tick of the cadence.
     pub(crate) fn invalidate(&mut self) {
         self.last_pull = None;
     }
@@ -135,10 +103,9 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
             if !sync.failure_reported {
                 sync.failure_reported = true;
                 tracing::error!("remote project exited — use Rebuild to relaunch it");
-                // Tear the mirror down. Left standing it would look
-                // editable while every edit went nowhere, and a Save
-                // would write an empty scene: mirrored entities are
-                // ephemeral, so they are excluded from the document.
+                // Tear the mirror down. Left standing it would look editable while every edit went
+                // nowhere, and a Save would write an empty scene: mirrored entities are ephemeral,
+                // so they are excluded from the document.
                 *playing = false;
                 // Otherwise the pump keeps knocking on a socket nobody
                 // answers, once every backoff, forever.
@@ -154,15 +121,8 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
     // project frame slice per pull and only play mode reads it (#1014).
     session.set_pulling(*playing);
 
-    // A gizmo drag is an edit the project has not been told about yet —
-    // it only goes over the wire when the user lets go. Applying the
-    // poll on top of it overwrites the in-progress pose with the
-    // project's older one, so the handle snaps back mid-drag; worse, the
-    // drag-end no-op guard then reads before == after and drops the edit
-    // entirely. The drag owns the local Transform until it ends.
-    // `just_connected` still gets through: that is the mirror's very
-    // first apply, and there is nothing to select — let alone drag —
-    // before it has run.
+    // A gizmo drag is an edit the project has not been told about yet — it only goes over the wire
+    // when the user lets go.
     if drag_in_flight(resources) && !just_connected {
         // Restart the cadence so the frame after release does not
         // immediately apply the snapshot we just skipped.
@@ -170,17 +130,15 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
         return;
     }
 
-    // `None` on the handshake frame: the snapshot came from
-    // `poll_ready`, so there is no refresh of ours to time — and that
-    // snapshot starts the clock, so the first pull of our own is a full
+    // `None` on the handshake frame: the snapshot came from `poll_ready`, so there is no refresh of
+    // ours to time — and that snapshot starts the clock, so the first pull of our own is a full
     // interval away rather than one frame later.
     let mut refresh = None;
     if just_connected {
         sync.last_pull = Some(Instant::now());
     } else {
-        // Gameplay moves things every tick, so a paused-mode cadence
-        // would render as a slideshow. The cost is one round-trip per
-        // frame over a local socket; the mirror diffs in place, so a
+        // Gameplay moves things every tick, so a paused-mode cadence would render as a slideshow.
+        // The cost is one round-trip per frame over a local socket; the mirror diffs in place, so a
         // pull that changes nothing structural is just field writes.
         let due = *playing
             || sync
@@ -190,22 +148,12 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
             return;
         }
         let started = Instant::now();
-        // 🔴 While playing the editor cannot edit, so it does not need
-        // the world — it needs what moved (#1012). `refresh` makes the
-        // host reflect every field of every component of every entity
-        // into strings before it diffs: 38.9 ms of a 46 ms frame on
-        // `dense.scene`, waited for on this thread. The cheap pull reads
-        // one column and compares floats.
-        //
-        // `None` is the host declining: its entity set changed, so a
-        // transform diff would describe a world this does not have. The
-        // full pull runs on that frame and the cheap one resumes.
+        // 🔴 While playing the editor cannot edit, so it does not need the world — it needs what
+        // moved (#1012).
         let moved = if *playing {
-            // 🔴 Not a round trip. The pump pulled this while the
-            // previous frame was drawing, so this reads an inbox
-            // (#1014). Waiting for it here was 9.5 ms of a 17.3 ms
-            // frame — sequential with the render, so it landed on the
-            // frame time in full.
+            // 🔴 Not a round trip. The pump pulled this while the previous frame was drawing, so
+            // this reads an inbox (#1014). Waiting for it here was 9.5 ms of a 17.3 ms frame —
+            // sequential with the render, so it landed on the frame time in full.
             profiling::scope!("remote: take moved");
             session.refresh_moved()
         } else {
@@ -235,13 +183,9 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
         sync.last_pull = Some(Instant::now());
     }
 
-    // Applying a snapshot walks every entity — about 7.5 ms on 610 of
-    // them, more than the pull costs now that the pull is a diff. When
-    // the project reported nothing new there is nothing to walk for, so
-    // the mirror keeps what it has and the frame keeps the time (#691).
-    //
-    // `just_connected` is exempt: the handshake's snapshot has never
-    // been applied, and the mirror on that frame is empty.
+    // Applying a snapshot walks every entity — about 7.5 ms on 610 of them, more than the pull
+    // costs now that the pull is a diff. When the project reported nothing new there is nothing to
+    // walk for, so the mirror keeps what it has and the frame keeps the time (#691).
     let applying = Instant::now();
     let mirror_time = if just_connected || session.changed_last_refresh() {
         profiling::scope!("remote: apply");
@@ -257,11 +201,6 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
 }
 
 /// Selects what the project just created, once the mirror can name it.
-///
-/// Nothing happens until *every* id resolves: a paste of three entities
-/// selects three, not the first one to arrive. Ids that never turn up
-/// are dropped with the rest — a creation the project refused should not
-/// leave the editor waiting for it forever.
 fn take_selection(
     resources: &mut Resources,
     mirror: &crate::remote_mirror::RemoteMirror,
@@ -289,12 +228,6 @@ fn take_selection(
 }
 
 /// Folds this pull's cost into [`EditorPerfStats`] (#645).
-///
-/// The refresh timing is the editor's own wall clock; the transport /
-/// decode split comes off the client, which recorded it during that
-/// same call. On the handshake frame there is no refresh of ours to
-/// report, so the previous sample's numbers are carried rather than
-/// overwritten with a zero that would read as "free".
 fn record_stats(
     resources: &mut Resources,
     session: &RemoteSession,
@@ -325,13 +258,6 @@ fn record_stats(
 }
 
 /// Whether the user is mid-drag on a transform handle.
-///
-/// Read off [`HandleSet`] rather than tracked separately: the handle set
-/// already owns the `Idle → Hover → Drag` state machine, and a second
-/// copy of "is the user dragging" would be one more thing to keep in
-/// step. Absent in local mode tests and before the first frame, which
-/// reads as "not dragging" — the safe answer, since the mirror is a
-/// no-op without a session anyway.
 fn drag_in_flight(resources: &Resources) -> bool {
     resources
         .get::<HandleSet>()

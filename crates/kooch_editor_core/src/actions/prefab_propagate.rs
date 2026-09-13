@@ -1,15 +1,4 @@
 //! The editor's side of prefab propagation: when to ask for it.
-//!
-//! The rule itself — which field of which entity takes which value, and
-//! what an override protects — is engine logic and lives in
-//! [`kooch_ecs::scene::propagate`]. A scene has to catch up with its prefabs
-//! the moment it *loads*, and the project is what loads it; leaving the
-//! rule here would have meant waiting for the mirror before knowing what
-//! to do.
-//!
-//! What is left here is the queue: a prefab saved while an action is being
-//! handled cannot propagate inline, so it is noted and drained on the next
-//! pass.
 
 use kooch_core::Guid;
 use kooch_core::resource::Resources;
@@ -19,10 +8,6 @@ pub(crate) use kooch_ecs::scene::propagate::{
 };
 
 /// Prefabs whose instances have not caught up with the file yet.
-///
-/// A set rather than a single guid: saving two prefabs in one frame has to
-/// propagate both, and re-saving one before the drain has run must not
-/// queue it twice.
 #[derive(Default)]
 pub(crate) struct PendingPropagation(std::collections::HashSet<Guid>);
 
@@ -41,11 +26,6 @@ impl PendingPropagation {
 }
 
 /// Whether any prefab is waiting to reach its instances.
-///
-/// Asked by the caller that skips action handling on idle frames.
-/// Propagation is queued while an action is being handled and drained on
-/// the next pass, so a queue that only drains when the user happens to do
-/// something else is a queue that does not drain.
 pub(crate) fn anything_queued(resources: &Resources) -> bool {
     let propagation = resources
         .get::<PendingPropagation>()

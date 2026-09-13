@@ -67,10 +67,6 @@ fn example_library() -> std::path::PathBuf {
 }
 
 /// A scratch project whose `target/debug` holds a real, loadable library.
-///
-/// A copy rather than the workspace's own: the swap unmaps what it
-/// loaded, and pointing two tests at one file is how they start
-/// depending on each other's order.
 fn plugin_project(name: &str) -> Option<(std::path::PathBuf, Resources)> {
     let source = example_library();
     if !source.exists() {
@@ -111,15 +107,6 @@ fn declares(resources: &Resources, type_name: &str) -> bool {
 }
 
 /// Whether the example plugin loaded, printing why when it did not.
-///
-/// 🔴 Skipped rather than failed, and only here. The build stamp carries
-/// the engine version, which moves on **every merged PR**, so a plugin
-/// built an hour ago is refused by a workspace that has bumped since —
-/// a red that says nothing about the code under test. A suite that is
-/// red for an unrelated reason is one people stop reading.
-///
-/// A genuine break in loading still fails loudly, in
-/// `kooch_core/tests/plugin_loading.rs`, which exists for that.
 fn loaded(resources: &mut Resources, root: &Path) -> bool {
     if load_project_plugin(resources, root, "example_plugin") > 0 {
         return true;
@@ -137,10 +124,9 @@ fn skipped() {
     );
 }
 
-/// 🔴 The whole feature: unload and load run in sequence and the types
-/// come back. Before this, `unload_project_plugins` had no callers at
-/// all and a code change reached the editor only by reopening the
-/// project.
+/// 🔴 The whole feature: unload and load run in sequence and the types come back. Before this,
+/// `unload_project_plugins` had no callers at all and a code change reached the editor only by
+/// reopening the project.
 #[test]
 fn a_reload_swaps_the_library() {
     let Some((root, mut resources)) = plugin_project("swap") else {

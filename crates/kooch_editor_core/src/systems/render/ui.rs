@@ -27,14 +27,7 @@ pub(super) struct ToolbarInfo {
     pub(super) can_redo: bool,
     /// Whether Ctrl+V has anything to paste.
     pub(super) clipboard_has_entities: bool,
-    /// The document a Ctrl+Z would reach, resolved from the focus the
-    /// dock reported *last* frame.
-    ///
-    /// One frame behind by construction: the panels write their focus
-    /// while they draw, and this is read before they do. It costs
-    /// nothing a person can produce — a click and a chord in the same
-    /// sixteen milliseconds — and it buys one answer shared by the menu,
-    /// the toolbar and the keyboard rather than three that can disagree.
+    /// The document a Ctrl+Z would reach, resolved from the focus the dock reported *last* frame.
     pub(super) document: Option<crate::history::Document>,
     pub(super) undo_desc: Option<String>,
     pub(super) redo_desc: Option<String>,
@@ -52,11 +45,7 @@ pub(super) struct ToolbarInfo {
     pub(super) scripts_behind: bool,
 }
 
-/// Handles to the viewport resource consumed by the UI: a read-only
-/// texture id for drawing, slots where the View panel writes the
-/// desired backing texture size and the captured input delta for the
-/// frame, and a read-only snapshot of the camera controller used for
-/// sensitivity reads inside the egui closure.
+/// Handles to the viewport resource consumed by the UI.
 pub(super) struct ViewportUi<'a> {
     pub(super) texture_id: egui::TextureId,
     pub(super) request: &'a mut Option<(u32, u32)>,
@@ -113,16 +102,8 @@ pub(super) fn run_editor_ui(
     build: &crate::panels::build::BuildPanel,
     editor_camera_rotation: Option<glam::Quat>,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
-    // 🔴 One frame boundary per editor frame, and it has to be exactly
-    // here. puffin builds its flamegraph out of the scopes that closed
-    // between two `new_frame` calls; called twice a frame the graph is
-    // two half-frames, and never called it grows one unbounded frame
-    // that never renders. Free when the feature is off — the whole block
-    // is compiled out.
-    // ⚠️ Guarded by the recording flag, not only by the feature. A frame
-    // boundary while stopped would keep rotating buffers for a history
-    // nobody asked for, and "stopped" has to mean the profiler is doing
-    // nothing rather than doing less.
+    // 🔴 One frame boundary per editor frame, and it has to be exactly here. puffin builds its
+    // flamegraph out of the scopes that closed between two `new_frame` calls.
     #[cfg(feature = "profiling")]
     if puffin::are_scopes_on() {
         puffin::GlobalProfiler::lock().new_frame();
@@ -320,10 +301,9 @@ pub(super) fn run_editor_ui(
                 perf_stats,
             };
 
-            // While the project is still building, the world these panels
-            // edit has not arrived. `apply_actions` already refuses those
-            // edits, but a dock that looks live and silently swallows
-            // clicks reads as a broken editor rather than a busy one.
+            // While the project is still building, the world these panels edit has not arrived.
+            // `apply_actions` already refuses those edits, but a dock that looks live and silently
+            // swallows clicks reads as a broken editor rather than a busy one.
             let editable = toolbar.remote != Some(ConnectionState::Connecting);
             let dock_rect = ui.available_rect_before_wrap();
 
@@ -335,10 +315,9 @@ pub(super) fn run_editor_ui(
                 shade_out(ui, dock_rect);
             }
 
-            // After the dock, never before: the chords are gated on which
-            // panel has focus, and the dock is what decides that. Read
-            // above the dock they answered with last frame's focus, which
-            // is how a shortcut ends up working only on the second press.
+            // After the dock, never before: the chords are gated on which panel has focus, and the
+            // dock is what decides that. Read above the dock they answered with last frame's focus,
+            // which is how a shortcut ends up working only on the second press.
             crate::shortcuts::gather(
                 ui,
                 overlay.focused_tab,
@@ -364,10 +343,9 @@ pub(super) fn run_editor_ui(
         }
     });
 
-    // Selection arbitration — the Inspector renders one thing. Picking
-    // an asset this frame drops the entity selection; picking an entity
-    // drops the asset selection. Keeps entity + asset selection mutually
-    // exclusive without threading either into the other's panel.
+    // Selection arbitration — the Inspector renders one thing. Picking an asset this frame drops
+    // the entity selection; picking an entity drops the asset selection. Keeps entity + asset
+    // selection mutually exclusive without threading either into the other's panel.
     if selected_asset != asset_before && selected_asset.is_some() {
         selected.clear();
     }
@@ -401,11 +379,6 @@ fn forward_launch_actions(launch_actions: Vec<LaunchAction>, actions: &mut Vec<E
 }
 
 /// Says that a project is being built, and what it is building.
-///
-/// Opening a project compiles it — twenty-two seconds on this session's
-/// own log — and until it answers the dock is furniture. A spinner is the
-/// part that matters: motion is what distinguishes "working" from "hung",
-/// which a static icon cannot do however well labelled.
 fn draw_connecting_banner(ui: &mut egui::Ui, output: &[String]) {
     let frame = egui::Frame::group(ui.style()).fill(egui::Color32::from_rgb(48, 40, 16));
     frame.show(ui, |ui| {
@@ -452,44 +425,6 @@ fn draw_connecting_banner(ui: &mut egui::Ui, output: &[String]) {
 }
 
 /// Covers `rect` with a layer that dims it and swallows the pointer.
-///
-/// `add_enabled_ui` around the dock was the obvious try and does nothing:
-/// `egui_dock` renders each tab body into a `UiBuilder` carrying its own
-/// `layer_id` (`leaf.rs:316`), and a parent `Ui`'s disabled flag does not
-/// reach a new layer. So the panels stayed live and clickable while the
-/// banner above them said the project was still building.
-///
-/// A foreground layer needs no cooperation from anything underneath: it is
-/// above every dock layer, and a response sensing clicks and drags over
-/// the whole rect means nothing below ever sees them.
-///
-/// Deliberately only the dock's rect. The menu bar keeps Cancel, Close and
-/// Clean Project, and the banner keeps its Copy — those are how a user
-/// gets out of a build that never finishes.
-/// Asks before replacing an existing prefab file.
-///
-/// # Why this is asked rather than avoided
-///
-/// Saving a prefab again after editing the entity is how a prefab is
-/// iterated on, so the file has to be replaced. Suffixing instead — the
-/// previous behaviour — never destroyed anything and made that impossible,
-/// leaving `Enemy_1`, `Enemy_2`, `Enemy_3` behind and no updated `Enemy`.
-///
-/// So the destructive thing is the correct thing, and a prompt is what
-/// makes it safe. A modal rather than an inline confirmation because it is
-/// answering for a file the user cannot see from here.
-/// Says the engine this editor ships is not the one the project builds
-/// against, and lets the user decide.
-///
-/// 🔴 A window and not a `Modal`, unlike its neighbour above. Replacing a
-/// prefab is a question about the action you just took, so it blocks
-/// until answered; this is a question about the machine, asked while
-/// somebody is opening a project to do something else entirely. Blocking
-/// on it would mean the editor demands an answer about its toolchain
-/// before letting anyone look at a scene.
-///
-/// The wording carries the cost, because the cost is the whole reason
-/// this is a question: installing makes the next build a full one.
 fn draw_engine_notice(
     ui: &egui::Ui,
     status: &crate::engine_vendor::EngineStatus,
@@ -499,10 +434,9 @@ fn draw_engine_notice(
     egui::Window::new(format!("{} Engine", icons::PACKAGE))
         .collapsible(false)
         .resizable(false)
-        // Centred, not tucked into a corner. It is a question about
-        // whether the next build takes minutes; in the bottom right it
-        // read as a notification to ignore, which on a 4K screen is a
-        // long way from where anyone is looking.
+        // Centred, not tucked into a corner. It is a question about whether the next build takes
+        // minutes; in the bottom right it read as a notification to ignore, which on a 4K screen is
+        // a long way from where anyone is looking.
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ui.ctx(), |ui| {
             ui.set_max_width(380.0);
@@ -515,10 +449,9 @@ fn draw_engine_notice(
             }
 
             match status.difference {
-                // 🔴 The version cannot tell these apart, so the text
-                // has to. Same number on both sides and a real
-                // difference is the normal state while the engine
-                // itself is being worked on.
+                // 🔴 The version cannot tell these apart, so the text has to. Same number on both
+                // sides and a real difference is the normal state while the engine itself is being
+                // worked on.
                 crate::engine_vendor::Difference::Rebuilt => ui.weak(
                     "Installing replaces it. The next build of this project is a full \
                      rebuild, and anything already compiled against the old engine is \

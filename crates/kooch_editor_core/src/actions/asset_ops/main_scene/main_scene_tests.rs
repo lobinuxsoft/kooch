@@ -2,10 +2,9 @@ use std::path::{Path, PathBuf};
 
 use super::relative_to_root;
 
-/// 🔴 The one the whole feature rests on. An absolute path in the
-/// manifest works on the machine that clicked and nowhere else — and the
-/// failure arrives as a game that opens an empty scene, on somebody
-/// else's computer, with nothing in the log pointing here.
+/// 🔴 The one the whole feature rests on. An absolute path in the manifest works on the machine that
+/// clicked and nowhere else — and the failure arrives as a game that opens an empty scene, on
+/// somebody else's computer, with nothing in the log pointing here.
 #[test]
 fn a_scene_is_stored_relative_to_the_project() {
     let root = Path::new("/home/someone/projects/game");

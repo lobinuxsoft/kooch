@@ -8,13 +8,7 @@ use super::choices::{draw_bitmask, draw_choice_dropdown};
 use super::entity_picker::draw_entity_picker;
 use crate::state::EntityDisplayInfo;
 
-/// Everything a widget needs about the field it is drawing, other than
-/// the value itself.
-///
-/// A struct rather than a parameter list: the reference picker needs the
-/// scene's entities and the field's `requires` hint, and eight positional
-/// arguments threaded through three call sites is how the next one gets
-/// passed in the wrong order.
+/// Everything a widget needs about the field it is drawing, other than the value itself.
 pub(in crate::panels::inspector) struct FieldContext<'a> {
     /// Field name. Also the colour-field and asset-path heuristic's input.
     pub name: &'a str,
@@ -32,9 +26,8 @@ pub(in crate::panels::inspector) struct FieldContext<'a> {
     /// `FieldMeta::requires`: a component the reference's target must
     /// carry, or `""` for no constraint.
     pub requires: &'a str,
-    /// Bounds and granularity for a numeric field. `Some` draws a
-    /// SLIDER over the interval instead of an unbounded drag — see
-    /// [`kooch_ecs::reflect::FieldMeta::range`] for why the bound
+    /// Bounds and granularity for a numeric field. `Some` draws a SLIDER over the interval instead
+    /// of an unbounded drag — see [`kooch_ecs::reflect::FieldMeta::range`] for why the bound
     /// matters more than the widget.
     pub range: Option<&'static kooch_ecs::reflect::FieldRange>,
 }
@@ -133,10 +126,9 @@ pub(in crate::panels::inspector) fn draw_value_widget(
             let mut val = v.clone();
             let mut changed = false;
             if let Some((label, exts)) = asset_filter_for(field_name) {
-                // Asset path field: file picker is the ONLY way to set
-                // the value (no manual editing — too error-prone). The
-                // path itself is shown as a truncating label with the
-                // full path on hover.
+                // Asset path field: file picker is the ONLY way to set the value (no manual editing
+                // — too error-prone). The path itself is shown as a truncating label with the full
+                // path on hover.
                 ui.horizontal(|ui| {
                     if ui
                         .button("\u{1f4c1}")
@@ -145,9 +137,8 @@ pub(in crate::panels::inspector) fn draw_value_widget(
                     {
                         let mut dialog = rfd::FileDialog::new().set_title(format!("Pick {label}"));
                         if !exts.is_empty() {
-                            // Include the extension list in the filter label
-                            // so the native dialog's "file type" dropdown is
-                            // self-documenting — the GTK/KDE dropdown only
+                            // Include the extension list in the filter label so the native dialog's
+                            // "file type" dropdown is self-documenting — the GTK/KDE dropdown only
                             // shows the label, not the underlying ext list.
                             let exts_display = exts
                                 .iter()
@@ -324,12 +315,7 @@ pub(in crate::panels::inspector) fn draw_value_widget(
     }
 }
 
-/// A slider over a declared interval, for whichever numeric kind the
-/// field holds.
-///
-/// Returns `None` for a non-numeric value so the caller falls through to
-/// the ordinary widget — a range on a `String` is a mistake in the
-/// declaration, and drawing nothing would hide it.
+/// A slider over a declared interval, for whichever numeric kind the field holds.
 fn draw_ranged(
     ui: &mut egui::Ui,
     value: &ReflectValue,

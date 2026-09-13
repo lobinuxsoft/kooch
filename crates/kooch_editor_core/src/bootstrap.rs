@@ -1,11 +1,4 @@
 //! Reusable editor entry point.
-//!
-//! Both the standalone `kooch_editor` launcher and a generated project (in
-//! its editor build) boot the editor through here, so the plugin set
-//! lives in one place. The editor owns the window surface (egui overlay +
-//! an offscreen scene target), so it must NOT be combined with
-//! `RenderPlugin` / `DefaultPlugins` — those present to the same surface
-//! and conflict at `Stage::Render`.
 
 use kooch_core::prelude::*;
 use kooch_ecs::EcsPlugin;
@@ -17,12 +10,6 @@ use crate::EditorPlugin;
 use crate::project_state::ProjectState;
 
 /// The window's title: the editor, its version, and the open project.
-///
-/// One function rather than a `format!` at each of the three sites that
-/// set this. The version belongs here because the title bar and the task
-/// switcher are where it is legible without opening anything, and
-/// because "which editor is running" is the question a stale vendored
-/// engine makes someone ask.
 pub fn window_title(project: Option<&str>) -> String {
     let version = crate::engine_vendor::editor_engine_version();
     match project {
@@ -54,10 +41,9 @@ pub fn run_editor_with<P: Plugin + 'static>(project: P) {
         title: window_title(None),
         width: 1280,
         height: 720,
-        // 🔴 The editor adds the asset plugin that publishes a project's
-        // `.rendersettings`, so a project whose `window_mode` says
-        // fullscreen would take the EDITOR full screen. That setting
-        // describes the game's window; this one is the tool's.
+        // 🔴 The editor adds the asset plugin that publishes a project's `.rendersettings`, so a
+        // project whose `window_mode` says fullscreen would take the EDITOR full screen. That
+        // setting describes the game's window; this one is the tool's.
         applies_window_mode: false,
     });
     app.add_plugin(EcsPlugin);
@@ -66,17 +52,15 @@ pub fn run_editor_with<P: Plugin + 'static>(project: P) {
     app.add_plugin(AssetPlugin::new().with_root(engine_root().join("assets")));
     app.add_plugin(WorldStreamingPlugin);
     app.add_plugin(EditorPlugin);
-    // After EditorPlugin on purpose: both register a raw-event handler in
-    // Startup, and the first one registered gets first refusal on a
-    // keystroke. egui has to be able to keep what a focused text field
-    // typed, or naming an entity would also drive the player (#710).
+    // After EditorPlugin on purpose: both register a raw-event handler in Startup, and the first
+    // one registered gets first refusal on a keystroke. egui has to be able to keep what a focused
+    // text field typed, or naming an entity would also drive the player (#710).
     app.add_plugin(kooch_input::InputPlugin);
     app.add_plugin(project);
     app.add_system(Stage::Startup, set_engine_root);
-    // 🔴 After `set_engine_root`, and that is why it is registered here
-    // rather than inside `EditorPlugin`: systems in a stage run in the
-    // order they were added, the plugin's `build` ran before this line,
-    // and this one needs the root that line resolves.
+    // 🔴 After `set_engine_root`, and that is why it is registered here rather than inside
+    // `EditorPlugin`: systems in a stage run in the order they were added, the plugin's `build` ran
+    // before this line, and this one needs the root that line resolves.
     app.add_system(Stage::Startup, install_own_engine);
     app.run();
 }
@@ -87,15 +71,7 @@ impl Plugin for NoProjectPlugin {
     fn build(&self, _app: &mut App) {}
 }
 
-/// Resolves the engine's asset root at runtime, in order:
-///
-/// 1. `KOOCH_ENGINE_ROOT` env var if set.
-/// 2. The executable's directory, if it has a sibling `assets/`.
-/// 3. The first ancestor of the executable containing `assets/` (dev
-///    layout, and for a project build resolves to the project itself).
-/// 4. Compile-time `CARGO_MANIFEST_DIR` walk (this crate → repo root).
-///
-/// Panics if none resolve — the editor cannot run without an asset root.
+/// Resolves the engine's asset root at runtime, in order.
 fn engine_root() -> std::path::PathBuf {
     if let Ok(env) = std::env::var("KOOCH_ENGINE_ROOT") {
         let p = std::path::PathBuf::from(env);
@@ -133,34 +109,17 @@ fn engine_root() -> std::path::PathBuf {
     );
 }
 
-/// Startup system that records the engine root on `ProjectState` (so
-/// `create_project` can generate valid `Cargo.toml` paths) and honours
-/// `KOOCH_EDITOR_AUTO_OPEN` for headless / smoke runs.
-/// Puts the engine this editor ships on the machine, at startup.
-///
-/// 🔴 Every other call to `ensure_current` is behind an action on a
-/// PROJECT — opening one, creating one, pressing **Use**. So an editor
-/// that opened and sat on the launcher installed nothing, and the
-/// version it ships existed nowhere until somebody opened a project.
-/// That reads as "the editor does not install the engine", because from
-/// outside it is indistinguishable from it.
-///
-/// Materialising the engine and MOVING a project onto it stay different
-/// questions: this writes `~/.local/share/kooch/<this version>/engine`
-/// and touches no project's manifest.
-///
-/// Costs nothing when it is already there — `ensure_current_in` compares
-/// a stamp of the source tree and returns early — so it runs on every
-/// launch rather than being guarded by a flag that could go stale.
+/// Startup system that records the engine root on `ProjectState` (so `create_project` can generate
+/// valid `Cargo.toml` paths) and honours `KOOCH_EDITOR_AUTO_OPEN` for headless / smoke runs. Puts
+/// the engine this editor ships on the machine, at startup.
 fn install_own_engine(resources: &mut Resources) {
     let source = resources
         .get::<ProjectState>()
         .and_then(|ps| crate::engine_vendor::vendor_source(ps.engine_root.as_deref()));
     if source.is_none() {
-        // A binary copied somewhere without its `engine/` beside it, and
-        // not run from the engine's own tree. Nothing to install FROM,
-        // which is a different problem and one `package_editor` exists
-        // to prevent.
+        // A binary copied somewhere without its `engine/` beside it, and not run from the engine's
+        // own tree. Nothing to install FROM, which is a different problem and one `package_editor`
+        // exists to prevent.
         tracing::warn!(
             "no engine source found; this editor cannot hand a project an engine to build \
              against — see examples/package_editor.rs",
@@ -199,20 +158,6 @@ fn set_engine_root(resources: &mut Resources) {
 }
 
 /// Opens the project exactly as clicking Open Project does.
-///
-/// # It used to do something else, and that was the bug
-///
-/// This called `ProjectState::open_project` directly — the low-level method
-/// — which skips both halves of what opening a project means:
-/// `SceneSource::RemoteMirror` and `start_remote_session`. So a project
-/// opened through this variable got the read-only in-process path: no
-/// running project, no gameplay, and a Play button that shelled out to a
-/// second window instead of simulating in the viewport.
-///
-/// Which made this variable a liar. It is documented for smoke runs, and a
-/// smoke run has to exercise what an author exercises — otherwise it
-/// confirms a world nobody uses. Going through the action means there is
-/// one path, and it is the one clicking takes.
 fn auto_open_project(resources: &mut Resources, path: &std::path::Path) {
     tracing::info!(path = %path.display(), "KOOCH_EDITOR_AUTO_OPEN: opening project");
     // A throwaway stack: opening a project is not an undoable edit, and
@@ -227,13 +172,8 @@ fn auto_open_project(resources: &mut Resources, path: &std::path::Path) {
     );
 }
 
-/// Forces winit onto XWayland on Linux by clearing `WAYLAND_DISPLAY`
-/// before the event loop is built.
-///
-/// Workaround for egui's IBus+Wayland IME bug (egui #7485, fixed upstream
-/// in #7983 / egui 0.35+): on native Wayland a `TextEdit` accepts only
-/// one character before dropping input. XWayland is unaffected. Opt back
-/// into native Wayland with `KOOCH_FORCE_WAYLAND=1`.
+/// Forces winit onto XWayland on Linux by clearing `WAYLAND_DISPLAY` before the event loop is
+/// built.
 fn force_x11_backend_if_needed() {
     if !cfg!(target_os = "linux") {
         return;

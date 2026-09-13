@@ -7,10 +7,6 @@ use kooch_gravity::PlaneGravity;
 use super::{EDGE, FIELD, arrow};
 
 /// How wide a patch of an unbounded plane to draw.
-///
-/// Any number here is a lie — the plane does not stop. It is a fixed size
-/// so the *vertical* spacing, which is the part that means something, is
-/// what changes when the author edits the component.
 const PATCH: f32 = 8.0;
 
 #[derive(Default)]

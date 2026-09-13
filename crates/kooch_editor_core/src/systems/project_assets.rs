@@ -1,20 +1,5 @@
-//! `scan_project_assets_system` — keeps the active project's
-//! `<root>/assets/` tree mirrored into the editor-wide
-//! `AssetDatabase`.
-//!
-//! Runs every frame at `Stage::PreUpdate`. Compares the current
-//! `ProjectState.active_project` path against
-//! [`LastScannedProject`]; if it differs, scans
-//! `<project>/assets/` into the database and triggers the typed
-//! eager-import pass so newly-found `.glb` / `.material`
-//! / `.png` files appear in the inspector picker tagged
-//! `[project]` at the next frame.
-//!
-//! Project closure (active_project → None) does NOT evict
-//! database entries: a GUID assigned by the previous project is
-//! still valid; closing a project just means the editor cannot
-//! resolve those bytes anymore. Eviction lands when an actual
-//! workflow demands it.
+//! `scan_project_assets_system` — keeps the active project's `<root>/assets/` tree mirrored into
+//! the editor-wide `AssetDatabase`.
 
 use std::path::PathBuf;
 
@@ -52,11 +37,9 @@ pub fn scan_project_assets_system(resources: &mut Resources) {
     if let Some(root) = current.as_ref() {
         let assets_root = root.join("assets");
         if assets_root.exists() {
-            // Run the database scan first so eager-import can see
-            // every existing sidecar and skip ones it does not need
-            // to re-create.
-            // What this binary can load, so a `.rendersettings` or any
-            // other hand-written asset registers on the first scan.
+            // Run the database scan first so eager-import can see every existing sidecar and skip
+            // ones it does not need to re-create. What this binary can load, so a `.rendersettings`
+            // or any other hand-written asset registers on the first scan.
             let known = resources
                 .get::<kooch_core::asset_loader::AssetServer>()
                 .map(|server| server.known_extensions())
@@ -92,11 +75,9 @@ pub fn scan_project_assets_system(resources: &mut Resources) {
                     "project asset scan complete",
                 );
             }
-            // eager_import_with walks the project's assets/ tree and
-            // loads every file with a recognised typed extension —
-            // generating fresh sidecars where missing and back-filling
-            // `asset_type` on legacy ones. The picker sees the
-            // entries tagged [project] on the next frame.
+            // eager_import_with walks the project's assets/ tree and loads every file with a
+            // recognised typed extension — generating fresh sidecars where missing and back-filling
+            // `asset_type` on legacy ones.
             eager_import_with(resources, &assets_root);
         } else {
             tracing::debug!(
@@ -121,11 +102,9 @@ pub fn scan_project_assets_system(resources: &mut Resources) {
     }
 }
 
-/// PreUpdate system: if the active project's `src/main.rs` has been
-/// deleted, regenerate the entrypoint + `registrations.rs` (scanning
-/// every `.rs` under `src/`). Only fires when `src/` exists and
-/// `main.rs` is missing, so it never fights a user editing an existing
-/// `main.rs`.
+/// PreUpdate system: if the active project's `src/main.rs` has been deleted, regenerate the
+/// entrypoint + `registrations.rs` (scanning every `.rs` under `src/`). Only fires when `src/`
+/// exists and `main.rs` is missing, so it never fights a user editing an existing `main.rs`.
 pub fn ensure_main_exists_system(resources: &mut Resources) {
     let regenerate = resources
         .get::<ProjectState>()

@@ -1,9 +1,4 @@
 //! Game panel — the scene through the gameplay camera.
-//!
-//! Deliberately bare next to the View panel: no handle toolbar, no
-//! debug-mode dropdown, no gizmo toggles. Those are authoring controls,
-//! and this panel exists to answer "what does the player see". Anything
-//! drawn here that the player would not see makes the answer wrong.
 
 /// Draws the game image with the perf sidebar over it, or says why
 /// there is nothing to draw.
@@ -56,11 +51,8 @@ pub(crate) fn draw_game_content(
     }
 
     if available.x >= 1.0 && available.y >= 1.0 {
-        // Godot's viewport grammar: a View menu in the top-left
-        // deciding which overlays draw, and everything it enables
-        // STACKING as semi-transparent cards in a right-hand column —
-        // frame time, information, and any section of the performance
-        // readout, each dismissible from its own ✕.
+        // Godot's viewport grammar: a View menu in the top-left deciding which overlays draw, and
+        // everything it enables STACKING as semi-transparent cards in a right-hand column.
         view_menu(ui, panel_origin, hud_visibility);
         overlay_stack(
             ui,
@@ -149,10 +141,9 @@ fn overlay_stack(
         origin + egui::vec2(available.x - WIDTH - 10.0, 10.0),
         egui::vec2(WIDTH, (available.y - 20.0).max(0.0)),
     );
-    // Align::Min, deliberately: a Max (right-aligned) cross axis leaks
-    // into every row of every card and renders "✕ Debug" instead of
-    // "Debug … ✕". The column already sits at the right edge because
-    // its RECT does; the content inside reads left-to-right.
+    // Align::Min, deliberately: a Max (right-aligned) cross axis leaks into every row of every card
+    // and renders "✕ Debug" instead of "Debug … ✕". The column already sits at the right edge
+    // because its RECT does; the content inside reads left-to-right.
     let mut column = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(rect)
@@ -183,12 +174,6 @@ fn overlay_stack(
 }
 
 /// Godot's frame-time card: four green numbers.
-///
-/// 🔴 `Frame` is FIRST and the others are its parts. It used to open
-/// on `CPU Time`, which is the render system alone — so a frame
-/// spending forty of its fifty milliseconds in `remote_sync_system`
-/// reported 7.66 ms and looked healthy. Whatever the top line says is
-/// what gets optimised, so the top line has to be the frame.
 fn frame_time_card(ui: &mut egui::Ui, perf: &crate::perf::EditorPerfStats) {
     let green = egui::Color32::from_rgb(140, 220, 130);
     let amber = egui::Color32::from_rgb(240, 200, 110);

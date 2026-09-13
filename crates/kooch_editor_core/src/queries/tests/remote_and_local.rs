@@ -114,10 +114,9 @@ fn connected_with_schema(port: u16, components: &[(&str, Option<&str>)]) -> Remo
     state
 }
 
-/// The point of the whole change: with a project connected, the menu
-/// lists the *project's* components — including ones this binary has no
-/// Rust type for. Asking the editor's own registry answers with whatever
-/// the editor was compiled with and omits everything the project defines.
+/// The point of the whole change: with a project connected, the menu lists the *project's*
+/// components — including ones this binary has no Rust type for. Asking the editor's own registry
+/// answers with whatever the editor was compiled with and omits everything the project defines.
 #[test]
 fn the_menu_lists_the_projects_components_not_the_editors() {
     let mut resources = mirrored_world();

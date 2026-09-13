@@ -1,18 +1,4 @@
 //! Producing a game from a project (#758).
-//!
-//! The editor could play a project and compile it by hand, and had no way
-//! to *make a build* — which is the one thing an editor exists to do that
-//! a text editor and cargo do not do together.
-//!
-//! - [`preset`] — `.buildpreset`, what "a build" means for one target.
-//!   A reflected asset, so the Inspector edits it with no editor code.
-//! - [`key`] — the key a project's packs are sealed with, deliberately
-//!   outside the preset and outside version control.
-//! - [`compile`] — running cargo for a preset, and packaging what
-//!   comes out.
-//! - [`package`] — laying out the folder a player receives: the
-//!   executable, its scenes, and one asset pack merged from the two
-//!   trees the editor keeps apart.
 
 pub mod compile;
 /// - [`dlss`] — the two obligations a build with NVIDIA's upscaler
@@ -32,20 +18,12 @@ pub use platform::Platform;
 pub use preset::{BUILD_PRESET_EXTENSION, BuildPreset, BuildPresetLoader};
 
 /// The editor's build state: the running job and what it has said.
-///
-/// A resource rather than panel state, because a build outlives the
-/// frame that started it and has to keep going while the Build tab is
-/// not even visible.
 #[derive(Default)]
 pub struct BuildState {
     /// The running job, or the finished one — kept after it ends so the
     /// panel can go on showing where the output landed.
     pub job: Option<BuildJob>,
     /// Everything cargo has said this run.
-    ///
-    /// Held here rather than drained into the Console: a build's output
-    /// is long, mostly `Compiling`, and burying the project's own logs
-    /// under it is how the Console stops being useful.
     pub log: Vec<String>,
 }
 

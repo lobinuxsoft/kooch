@@ -1,6 +1,5 @@
-//! Egui-side input capture: runs **inside** the egui closure and
-//! snapshots viewport drag deltas, scroll, modifiers, fly-mode keys,
-//! the focus keystroke, and the gizmo-mode hotkeys into a
+//! Egui-side input capture: runs **inside** the egui closure and snapshots viewport drag deltas,
+//! scroll, modifiers, fly-mode keys, the focus keystroke, and the gizmo-mode hotkeys into a
 //! [`ViewportInputDelta`].
 
 use glam::Vec2;
@@ -11,16 +10,6 @@ use crate::editor_camera::fly::FlyKeys;
 use super::{HandleModeRequest, ViewportInputDelta};
 
 /// Reads egui input within the View panel and returns a delta snapshot.
-///
-/// Called inside the egui closure with the response of the viewport
-/// image (which must have been allocated with `Sense::click_and_drag()`).
-///
-/// Modifiers and behaviour follow the issue spec:
-/// - **MMB drag** → orbit
-/// - **Shift + MMB drag** → pan
-/// - **Mouse wheel** (only when hovered) → zoom
-/// - **RMB hold** → fly mode (mouse delta is look, WASD/QE translate)
-/// - **F** (only when hovered) → focus on selection
 pub fn collect_viewport_input(
     response: &egui::Response,
     ui: &egui::Ui,
@@ -31,12 +20,6 @@ pub fn collect_viewport_input(
     delta.lmb_clicked = response.clicked();
 
     // Keys need focus, the pointer needs only hover.
-    //
-    // Hover alone was the gate, and it is right for the wheel and for a
-    // drag — pointing at a panel is how you address it. It is wrong for
-    // keys: a pointer resting over the viewport while the user types a name
-    // in the Inspector made every `d` both a letter and a step sideways
-    // (#661).
     let keys_here = focused && response.hovered();
 
     let modifiers = ui.input(|i| i.modifiers);
@@ -59,11 +42,6 @@ pub fn collect_viewport_input(
     }
 
     // --- Right-mouse hold → fly mode --------------------------------------
-    //
-    // Fly mode stays active for the whole duration RMB is held *after*
-    // being pressed inside the viewport. Using `is_pointer_button_down_on`
-    // + the global RMB-held query (rather than `dragged_by`) means WASD
-    // works on the first frame even before any mouse motion.
     delta.fly_active = response.is_pointer_button_down_on()
         && ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
 
@@ -87,17 +65,13 @@ pub fn collect_viewport_input(
     // --- F key → focus on selection --------------------------------------
     if keys_here {
         delta.focus_pressed = ui.input(|i| i.key_pressed(egui::Key::F));
-        // 🔴 Shift+E, because plain E is the rotate handle and asking
-        // one key to mean two things made every extrude also switch
-        // mode. Shift is what Blender and ProBuilder both put in front
-        // of a variant of a letter that is already taken.
+        // 🔴 Shift+E, because plain E is the rotate handle and asking one key to mean two things
+        // made every extrude also switch mode. Shift is what Blender and ProBuilder both put in
+        // front of a variant of a letter that is already taken.
         delta.extrude_pressed = ui.input(|i| i.key_pressed(egui::Key::E) && i.modifiers.shift);
     }
 
     // --- W / E / R → handle mode switch ----------------------------------
-    //
-    // Suppressed during fly mode so the WASD camera movement keys don't
-    // accidentally toggle the gizmo mode each time they're tapped.
     if keys_here && !modifiers.any() && !delta.fly_active {
         delta.mode_request = ui.input(|i| {
             if i.key_pressed(egui::Key::W) {
@@ -113,10 +87,6 @@ pub fn collect_viewport_input(
     }
 
     // --- 1 / 2 / 3 / 4 → what a click selects inside a block --------------
-    //
-    // Numbered in the order the toolbar shows them, not Blender's
-    // 1/2/3, because the row of icons is on screen and the key that
-    // disagrees with what you are looking at is the one you mistype.
     if keys_here && !modifiers.any() && !delta.fly_active {
         delta.element_request = ui.input(|i| {
             crate::block_edit::ElementMode::ALL
@@ -151,10 +121,9 @@ pub fn collect_viewport_input(
     delta.lmb_pressed = pressed && response.hovered();
     delta.lmb_held = held;
 
-    // Keyboard modifiers — captured globally (no hover gate) because
-    // the user may start a drag, then press Ctrl after the cursor
-    // wandered out of the strict hover bounds. egui still reports the
-    // modifier state correctly throughout.
+    // Keyboard modifiers — captured globally (no hover gate) because the user may start a drag,
+    // then press Ctrl after the cursor wandered out of the strict hover bounds. egui still reports
+    // the modifier state correctly throughout.
     delta.ctrl_held = modifiers.ctrl || modifiers.command;
     delta.shift_held = modifiers.shift;
     delta.alt_held = modifiers.alt;

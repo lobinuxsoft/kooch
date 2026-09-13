@@ -97,10 +97,9 @@ impl Visualizer<Block> for BlockVisualizer {
                     let Some(corners) = mesh.face(*face as usize) else {
                         continue;
                     };
-                    // Drawn in world space: the gizmo batch has no
-                    // per-entity transform, and a face painted in local
-                    // space would sit at the origin for every block that
-                    // is not there.
+                    // Drawn in world space: the gizmo batch has no per-entity transform, and a face
+                    // painted in local space would sit at the origin for every block that is not
+                    // there.
                     let world: Vec<Vec3> = corners.iter().map(|corner| to_world(*corner)).collect();
 
                     // A fan, because the face is convex and `filled_quad`
@@ -114,9 +113,8 @@ impl Visualizer<Block> for BlockVisualizer {
                             SELECTED,
                         );
                     }
-                    // The outline is what makes a face read as *one* face
-                    // rather than as a bright patch — two coplanar
-                    // neighbours selected together are otherwise
+                    // The outline is what makes a face read as *one* face rather than as a bright
+                    // patch — two coplanar neighbours selected together are otherwise
                     // indistinguishable from one.
                     for step in 0..world.len() {
                         gizmos.line(world[step], world[(step + 1) % world.len()], OUTLINE);

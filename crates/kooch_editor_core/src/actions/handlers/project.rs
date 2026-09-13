@@ -63,16 +63,14 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
             if let Some(root) = ps.active_project.as_ref().map(|p| p.root_path.clone()) {
                 let crate_name = crate::project::sanitize_crate_name(&title);
                 crate::actions::migrate_to_library(&root, &crate_name);
-                // Then split authoring out of the game build (#558).
-                // After the library migration, not before: this adds a
-                // second `[[bin]]`, and the one above is what stops cargo
+                // Then split authoring out of the game build (#558). After the library migration,
+                // not before: this adds a second `[[bin]]`, and the one above is what stops cargo
                 // inferring the first from `src/main.rs`.
                 crate::actions::split_authoring(&root, &crate_name);
 
-                // Then load it, if it has been built. Writing lib.rs does
-                // not produce a .so — that needs a compile — so the first
-                // open after a migration finds nothing and says so rather
-                // than leaving the menu quietly short.
+                // Then load it, if it has been built. Writing lib.rs does not produce a .so — that
+                // needs a compile — so the first open after a migration finds nothing and says so
+                // rather than leaving the menu quietly short.
                 let gained =
                     crate::project_plugin::load_project_plugin(resources, &root, &crate_name);
                 if gained > 0 {
@@ -107,20 +105,8 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
     resources.insert(ps);
 }
 
-/// Opens a project in remote mode: the project's own binary owns the ECS
-/// and the editor becomes a client of it.
-///
-/// The scene is deliberately **not** loaded locally — this binary has no
-/// Rust types for the project's components, so a local load would park
-/// half of every entity. The project loads its own scene at boot and the
-/// mirror pulls it in once connected.
-/// Rebuilds the project and reconnects to the fresh binary.
-///
-/// The only way to pick up code the project did not have when it
-/// started: Rust is compiled ahead of time, so a new component or system
-/// needs a rebuild, and the running process cannot grow one. Also the
-/// way back from a session that died — the launch is a `cargo run`, so
-/// it recompiles and relaunches in one step.
+/// Opens a project in remote mode: the project's own binary owns the ECS and the editor becomes a
+/// client of it.
 
 pub(super) fn handle_create_project(
     resources: &mut Resources,
@@ -149,16 +135,8 @@ pub(super) fn handle_create_project(
                 }
                 ps.show_new_project_form = false;
             }
-            // Open it the way Open Project opens one, rather than handing
-            // control to the new project's own embedded editor and
-            // exiting.
-            //
-            // `spawn_launcher` did the latter, which meant creating a
-            // project killed the window it was created from: the Hub's
-            // recents list, its dock layout and its output all went with
-            // it, and what came back was a *different* editor binary than
-            // the one Open Project gives you. Two actions that land in the
-            // same place should get there the same way.
+            // Open it the way Open Project opens one, rather than handing control to the new
+            // project's own embedded editor and exiting.
             handle_open_project(resources, &root);
         }
         Err(e) => {
@@ -171,13 +149,6 @@ pub(super) fn handle_create_project(
 }
 
 /// Runs `cargo clean` on the open project.
-///
-/// The session goes down first, and that is not politeness. The editor
-/// has the project's `dylib` mapped and its `--remote` binary is running,
-/// both out of `target/`; cleaning underneath them leaves a session whose
-/// executable no longer exists and a reload that cannot find its library.
-/// Disconnecting makes the state after the clean the same as the state
-/// before a first build, which is a state everything already handles.
 pub(super) fn handle_clean_project(resources: &mut Resources) {
     let Some(root) = resources
         .get::<ProjectState>()
@@ -216,10 +187,6 @@ pub(super) fn handle_clean_project(resources: &mut Resources) {
 }
 
 /// Bytes under `path`, or zero if it is missing or unreadable.
-///
-/// Only used to report what a clean reclaimed, so an unreadable entry is
-/// skipped rather than escalated: a number that is slightly low is better
-/// than refusing to clean over a permission on one file.
 fn directory_size(path: &std::path::Path) -> u64 {
     let Ok(entries) = std::fs::read_dir(path) else {
         return 0;
@@ -239,13 +206,9 @@ pub(super) fn handle_close_project(resources: &mut Resources, undo_stack: &mut U
     // and its mirrored entities are ephemeral so the sweep skips them.
     disconnect_remote(resources);
 
-    // Respect the ephemeral marker registry — editor-owned entities
-    // (camera, gizmo helpers, …) carry an `EditorOnly`-style marker
-    // and must survive the close so the next project open finds
-    // them already spawned. `spawn_editor_camera_system` is a Stage::
-    // Startup one-shot; without this filter the close path despawned
-    // the camera and reopening the project left the viewport with
-    // only the project's gameplay camera, no editor controls.
+    // Respect the ephemeral marker registry — editor-owned entities (camera, gizmo helpers, …)
+    // carry an `EditorOnly`-style marker and must survive the close so the next project open finds
+    // them already spawned.
     let ephemeral = resources
         .get::<EphemeralComponents>()
         .cloned()
@@ -275,9 +238,8 @@ pub(super) fn handle_close_project(resources: &mut Resources, undo_stack: &mut U
 
     if let Some(overlay) = resources.get_mut::<EditorOverlay>() {
         overlay.selected_entities.clear();
-        // Pins name entities from the world that just went away. Entity
-        // ids are generational, so a stale one cannot match a new
-        // entity — but keeping them would grow the set for the life of
+        // Pins name entities from the world that just went away. Entity ids are generational, so a
+        // stale one cannot match a new entity — but keeping them would grow the set for the life of
         // the session with ids nothing will ever draw.
         overlay.pinned_gizmos.clear();
         overlay.last_clicked_index = None;

@@ -1,9 +1,4 @@
 //! How far a delete is allowed to reach (#815).
-//!
-//! Project assets stay permanent — no dialog, no trash, no undo. The
-//! engine's own are refused, because a scene referencing one holds no
-//! copy of it: removing it breaks every project on the machine sharing
-//! the install, not the one that is open.
 
 use std::path::{Path, PathBuf};
 
@@ -88,10 +83,9 @@ fn a_project_folder_still_deletes() {
     );
 }
 
-/// 🔴 An editor built from a project resolves its engine root to that
-/// same project. Asking the engine first would make every asset in it
-/// undeletable — the guard would look like it worked, and nothing in the
-/// project could be removed again.
+/// 🔴 An editor built from a project resolves its engine root to that same project. Asking the
+/// engine first would make every asset in it undeletable — the guard would look like it worked, and
+/// nothing in the project could be removed again.
 #[test]
 fn a_project_that_is_its_own_engine_deletes() {
     let (project, _, _) = roots("kooch_815_same_root");

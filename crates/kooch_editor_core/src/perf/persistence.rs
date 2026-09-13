@@ -1,16 +1,4 @@
 //! Where the viewport overlay choices survive a restart.
-//!
-//! A per-user file rather than project state, and its OWN file rather
-//! than a field inside `editor_layout.ron`, for the same reason gizmo
-//! visibility has one: the layout is rewritten whenever a panel moves,
-//! and folding an unrelated setting into it would mean a dragged
-//! splitter and an overlay toggle sharing one write path — and one
-//! corrupt file losing both.
-//!
-//! The transient fields of [`HudVisibility`] — `panel_visible`, which
-//! flickers every frame, and `system_section`, which the panel
-//! re-asserts — are `#[serde(skip)]`: what persists is what the user
-//! chose in the View menu, not what the frame happened to be doing.
 
 use kooch_core::resource::Resources;
 

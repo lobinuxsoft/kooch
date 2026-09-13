@@ -1,31 +1,4 @@
 //! [`GizmoVisibility`] — which gizmos draw, by category and by component.
-//!
-//! # What this replaces
-//!
-//! A visualizer used to draw only while its Inspector header was expanded.
-//! For a camera frustum that was tolerable; for a collider it was a trap —
-//! you select the body, see no outline, and conclude the gizmo is broken.
-//! It also coupled display to unrelated UI state: whether a header happens
-//! to be open decided whether you could see the geometry, and expanding a
-//! header is a reading gesture, not a "show me the shape" gesture.
-//!
-//! # Why the other half is not optional
-//!
-//! Making everything always-visible without a way to hide it trades one
-//! annoyance for a worse one: a scene with a hundred selected bodies is a
-//! wall of green. So visibility is explicit, three levels deep — global,
-//! per category, per component — because "hide all physics" and "hide only
-//! the sensors" are both things you want.
-//!
-//! # Absent means visible
-//!
-//! Nothing is enumerated up front. A category or component with no entry
-//! draws, so a visualizer added later needs no registration here and no
-//! migration of anyone's saved settings. Only an explicit *off* is stored.
-//!
-//! Split three ways: the model of what is visible, where that survives a
-//! restart, and the menu that edits it. The renderer only reads the
-//! first.
 
 mod menu;
 mod persistence;
@@ -38,10 +11,6 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 /// Which gizmo groups are hidden.
-///
-/// Stores only the exceptions — see the module docs on why absent means
-/// visible. Serialised alongside the dock layout, so it is a per-project
-/// preference rather than something to re-set every launch.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GizmoVisibility {
     /// Master switch. `false` hides everything without disturbing the
@@ -50,10 +19,6 @@ pub struct GizmoVisibility {
     #[serde(default = "enabled")]
     pub enabled: bool,
     /// The world grid on the ground plane.
-    ///
-    /// Here rather than in a settings file of its own: this is already
-    /// the one place that answers "what draws", and a second would
-    /// drift from it.
     #[serde(default = "enabled")]
     pub grid: bool,
     /// Categories the user turned off, by their reflected name
@@ -61,9 +26,6 @@ pub struct GizmoVisibility {
     #[serde(default)]
     hidden_categories: HashSet<String>,
     /// Individual components turned off, by full type name.
-    ///
-    /// Type *names* rather than `TypeId`s because this is persisted, and a
-    /// `TypeId` is only meaningful inside the process that produced it.
     #[serde(default)]
     hidden_components: HashSet<String>,
 }
@@ -86,11 +48,6 @@ impl GizmoVisibility {
     }
 
     /// Whether a component's gizmo should draw.
-    ///
-    /// `category` is the component's reflected category, if it has one.
-    /// An uncategorised component can only be hidden individually — there
-    /// is no "Uncategorised" group to switch off, because a component
-    /// landing there is usually an oversight rather than a choice.
     pub fn draws(&self, type_name: &str, category: Option<&str>) -> bool {
         if !self.enabled {
             return false;
@@ -110,10 +67,6 @@ impl GizmoVisibility {
     }
 
     /// Whether a component is on, ignoring its category.
-    ///
-    /// The panel needs this to render a checkbox that reflects the
-    /// component's *own* state: a component inside a hidden category is
-    /// not drawn, but its own switch is still whatever the user left it.
     pub fn component_visible(&self, type_name: &str) -> bool {
         !self.hidden_components.contains(type_name)
     }
@@ -150,13 +103,7 @@ impl GizmoVisibility {
     }
 }
 
-/// One row for the Gizmos panel: a registered visualizer's component,
-/// grouped under its category.
-///
-/// Built from the [`VisualizerRegistry`] rather than a hand-maintained
-/// list, so a visualizer added later appears with no change here.
-///
-/// [`VisualizerRegistry`]: kooch_gizmos::VisualizerRegistry
+/// One row for the Gizmos panel: a registered visualizer's component, grouped under its category.
 #[derive(Debug, Clone)]
 pub struct GizmoGroup {
     /// Reflected category, or `None` for a component without one.
@@ -166,9 +113,6 @@ pub struct GizmoGroup {
 }
 
 /// Groups the registered visualizers by reflected category.
-///
-/// Takes the registry's types plus a resolver rather than `Resources`, so
-/// the grouping is testable without standing up an ECS.
 pub fn group_visualizers<I>(types: I) -> Vec<GizmoGroup>
 where
     I: IntoIterator<Item = (TypeId, String, Option<String>)>,

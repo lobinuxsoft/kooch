@@ -1,17 +1,4 @@
 //! Folder-tree model + rendering for the Asset Browser.
-//!
-//! Mirrors the on-disk project tree (Unity / Godot style): each source
-//! root ("Project" = the crate root, "Engine" = shipped assets) is a
-//! top-level node, folders nest below it, and every file is a leaf.
-//! Files with a registered `.meta` are typed assets (single-click →
-//! Inspector); the rest are plain files. Double-clicking any file opens
-//! it in an external IDE with the project as the workspace, so Rust
-//! source and `Cargo.toml` are editable. Writable (project) roots also
-//! expose a right-click menu and inline rename.
-//!
-//! Split by what each part does to the tree — build it, draw it, act on
-//! it, name it, decorate it — with the shared context and the entry
-//! point here because every submodule needs them.
 
 mod menus;
 mod model;
@@ -36,12 +23,6 @@ pub(in crate::panels) use model::{FolderNode, PendingCreate, RenameState};
 pub(crate) use nav::AssetNav;
 
 /// What drawing the tree needs.
-///
-/// Deliberately without the selection. The renderer's only job regarding
-/// it is to move the cursor; what that selects is derived from the cursor
-/// once, by the panel, so there is a single writer — see
-/// [`AssetNav::take_cursor_move`]. Handing the selection down here is what
-/// let a click and an arrow key disagree about which row was selected.
 pub(crate) struct RenderCtx<'a> {
     pub needle: &'a str,
     pub actions: &'a mut Vec<EditorAction>,
@@ -54,21 +35,12 @@ pub(crate) struct RenderCtx<'a> {
     /// applies whatever the keyboard asked for on the way past.
     pub nav: &'a mut AssetNav,
     /// Whether the project already has a `.rendersettings`.
-    ///
-    /// Read from the catalog rather than the database: the menu draws
-    /// from what the panel already has in hand, and reaching into
-    /// `Resources` from a context menu is how a draw ends up owning a
-    /// lookup that belongs to the frame.
     pub has_settings: bool,
     /// The open project's root, for deciding whether a folder is one the
     /// editor scans. `None` when no project is open, which makes every
     /// folder [`FolderRole::Other`].
     pub project_root: Option<&'a Path>,
     /// The scene the project opens with, absolute (#808).
-    ///
-    /// Resolved once by the panel rather than per row: it comes from the
-    /// manifest, every leaf compares against it, and reading it per file
-    /// would be a lookup inside a draw.
     pub main_scene: Option<&'a Path>,
 }
 

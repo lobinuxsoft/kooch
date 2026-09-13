@@ -20,9 +20,8 @@ fn layout_path_resolves_under_config_dir() {
 
 #[test]
 fn load_layout_returns_none_for_missing_file() {
-    // Override config dir is platform-dependent; we just verify no panic
-    // when the file probably doesn't exist (most CI environments).
-    // If a real layout file exists from a prior run we just skip — the
-    // function is deterministic w.r.t. the current filesystem.
+    // Override config dir is platform-dependent; we just verify no panic when the file probably
+    // doesn't exist (most CI environments). If a real layout file exists from a prior run we just
+    // skip — the function is deterministic w.r.t. the current filesystem.
     let _ = load_layout();
 }

@@ -1,16 +1,4 @@
-//! The World panel's filter: narrow two thousand rows to the ones being
-//! looked for.
-//!
-//! # 🔴 By COMPONENT, not only by name
-//!
-//! A name box answers *"where is the thing I called Sun"*. It cannot
-//! answer *"how many directional lights are in this scene"* — and that
-//! is the question that cost a day and a half of shadow debugging, with
-//! the answer sitting in row 2156 of a list nobody can read (#1001).
-//!
-//! The type menu carries a COUNT beside every name for the same reason.
-//! `DirectionalLight (2)` states the fault without anyone having to
-//! filter by it: the number is the finding, the filter is the follow-up.
+//! The World panel's filter: narrow two thousand rows to the ones being looked for.
 
 use std::collections::BTreeMap;
 
@@ -20,12 +8,6 @@ use crate::state::EntityDisplayInfo;
 use super::entity_row::display_name_for;
 
 /// What the panel is currently narrowed to.
-///
-/// 🔴 Kept in egui's TEMP store, not the persisted one — deliberately
-/// unlike the group open/closed flags next to it. A collapsed group is
-/// visible as a collapsed group; a filter is invisible except by the
-/// rows it removed, so one that survived a restart would be a panel
-/// quietly lying about what the scene contains.
 #[derive(Clone, Default)]
 pub(super) struct WorldFilter {
     /// Case-insensitive substring of the entity's name.
@@ -67,13 +49,7 @@ impl WorldFilter {
     }
 }
 
-/// Every component type present in the world, with how many entities
-/// carry it.
-///
-/// Built from the ENTITIES rather than from the type registry: a menu of
-/// everything registered is a menu of two hundred types the scene does
-/// not contain, and the count — the half that answers a question on its
-/// own — only exists for what is really there.
+/// Every component type present in the world, with how many entities carry it.
 fn present_types(entities: &[EntityDisplayInfo]) -> BTreeMap<&str, usize> {
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     for info in entities {

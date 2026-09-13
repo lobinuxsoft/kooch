@@ -1,42 +1,8 @@
 //! Fetching NVIDIA's DLSS SDK, which the engine may not ship.
-//!
-//! # 🔴 Why a button and not a dependency
-//!
-//! The SDK's licence is explicit in both directions. It forbids
-//! redistributing it — *"you may not distribute or sublicense the SDK as
-//! a stand-alone product"* — so an editor that carried a copy, or served
-//! one from a mirror of ours, would be doing exactly that. And it is
-//! accepted **by use**: *"By using the SDK, you affirm that you have
-//! reached the legal age of majority, you accept the terms of this
-//! license."*
-//!
-//! So this fetches from **NVIDIA and nowhere else**, and only after the
-//! person at the keyboard has said they accept those terms. A button
-//! that downloaded on the first click would be accepting a licence on
-//! somebody's behalf, which is not a thing an editor gets to do.
-//!
-//! # What ships with a game is not this
-//!
-//! The SDK is headers and a static library, used while compiling. What a
-//! game distributes is the **runtime** — one `.so` or `.dll` — plus the
-//! copyright text from section 9.5 of the SDK's programming guide. The
-//! same licence that forbids the first permits the second: *"Distribute
-//! any software and materials within the SDK … as incorporated in object
-//! code format into a software application."*
-//!
-//! # And it does not enable DLSS
-//!
-//! Nothing in this engine calls DLSS yet. This puts the SDK where a
-//! build could find it; the backend behind `UpscaleTechnique` is #536 and
-//! is not this.
 
 use std::path::{Path, PathBuf};
 
 /// The version `dlss_wgpu` 4.0.0 is built against.
-///
-/// 🔴 Pinned, not "latest". The crate's own version chart lines up
-/// `dlss_wgpu 4.0.0` with SDK `v310.5.3` and wgpu 29 — which is the wgpu
-/// this engine uses. A newer SDK is a different row of that table.
 pub const VERSION: &str = "310.5.3";
 
 /// The tag that `VERSION` names in NVIDIA's repository.
@@ -55,11 +21,6 @@ pub fn sdk_dir() -> Option<PathBuf> {
 }
 
 /// Whether `dir` holds a usable SDK.
-///
-/// Checks what the BUILD needs rather than that the directory exists: an
-/// interrupted clone leaves a directory, and `dlss_wgpu`'s build script
-/// wants `include/` for bindgen and the static library it links. The
-/// runtime is checked too because that is what a game ships.
 pub fn is_installed(dir: &Path) -> bool {
     dir.join("include/nvsdk_ngx_helpers.h").is_file()
         && dir.join("lib/Linux_x86_64/libnvsdk_ngx.a").is_file()
@@ -74,9 +35,6 @@ pub fn runtime_path(dir: &Path) -> PathBuf {
 }
 
 /// The runtime a build for `triple` ships, inside `dir`.
-///
-/// Empty means this machine, which is the only case where the host's own
-/// name is the right answer.
 pub fn runtime_for(dir: &Path, platform: crate::build::Platform) -> PathBuf {
     match platform {
         crate::build::Platform::Windows => dir.join("lib/Windows_x86_64/rel/nvngx_dlss.dll"),
@@ -90,9 +48,6 @@ pub fn notices_path(dir: &Path) -> PathBuf {
 }
 
 /// The clone, as arguments.
-///
-/// `--depth 1` because the history is not wanted and the checkout is
-/// large; `-b TAG` because the version is pinned to the crate.
 pub fn clone_args(dest: &Path) -> Vec<String> {
     vec![
         "clone".to_owned(),
@@ -133,11 +88,6 @@ impl SdkState {
 }
 
 /// The fetch, and the acceptance that has to precede it.
-///
-/// 🔴 The `accepted` flag is not a formality and not ours to default to
-/// true. NVIDIA's licence is accepted by USE, so the moment this editor
-/// puts the SDK on the disk somebody has accepted it — and it must be
-/// the person at the keyboard, having been shown where the terms are.
 #[derive(Debug, Default)]
 pub struct SdkInstall {
     pub state: Option<SdkState>,
@@ -145,10 +95,6 @@ pub struct SdkInstall {
     /// retry is a second deliberate act.
     pub accepted: bool,
     /// Where the fetch thread leaves its answer.
-    ///
-    /// `Arc<Mutex<..>>` rather than a channel because this lives in
-    /// `Resources`, which requires `Sync`, and `mpsc::Receiver` is not —
-    /// the same shape `PlayState` uses for the output it collects.
     progress: Option<std::sync::Arc<std::sync::Mutex<Option<Result<PathBuf, String>>>>>,
 }
 
@@ -207,11 +153,6 @@ impl SdkInstall {
 }
 
 /// Clones, then checks what arrived is usable.
-///
-/// ⚠️ A clone that exits 0 is not proof: a partial checkout, a tag that
-/// moved, a layout NVIDIA changed. The directory is verified against what
-/// the build actually needs and removed when it does not hold it, so a
-/// broken attempt cannot look installed.
 fn clone_into(dir: &Path) -> Result<PathBuf, String> {
     if let Some(parent) = dir.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;

@@ -4,10 +4,9 @@ use crate::drag_drop::DraggedComponent;
 use crate::icons;
 use crate::state::ComponentTypeInfo;
 
-/// Content of the "Components" tab — lists all registered component
-/// types. Each row is a drag source: dragging a row onto a World
-/// entity row or into the Inspector adds that component to the drop
-/// target. See #209.
+/// Content of the "Components" tab — lists all registered component types. Each row is a drag
+/// source: dragging a row onto a World entity row or into the Inspector adds that component to the
+/// drop target. See #209.
 pub(crate) fn draw_components_content(ui: &mut egui::Ui, component_types: &[ComponentTypeInfo]) {
     let reflected = component_types.iter().filter(|c| c.has_reflection).count();
     ui.label(format!(

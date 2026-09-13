@@ -19,10 +19,9 @@ impl Visualizer<GlobalGravity> for GlobalGravityVisualizer {
         };
         let origin = transform.matrix.to_scale_rotation_translation().2;
 
-        // World space on purpose, and there is a test that pins it:
-        // `acceleration` is a world vector, so turning the entity must not
-        // turn the field. Deriving the arrows from the entity's basis would
-        // be the obvious thing and would quietly make the component lie.
+        // World space on purpose, and there is a test that pins it: `acceleration` is a world
+        // vector, so turning the entity must not turn the field. Deriving the arrows from the
+        // entity's basis would be the obvious thing and would quietly make the component lie.
         let (a, b) = direction.any_orthonormal_pair();
         const SPREAD: f32 = 0.8;
         for offset in [

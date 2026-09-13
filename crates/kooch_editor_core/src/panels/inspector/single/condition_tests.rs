@@ -76,9 +76,8 @@ fn the_shape_selector_and_centre_always_show() {
     }
 }
 
-/// Hiding is display only. Every field is still reflected, so it is
-/// still stored, still serialised, and still survives a scene
-/// round-trip — the reason the storage keeps all variants side by side
+/// Hiding is display only. Every field is still reflected, so it is still stored, still serialised,
+/// and still survives a scene round-trip — the reason the storage keeps all variants side by side
 /// in the first place.
 #[test]
 fn hidden_fields_are_still_stored_and_reflected() {
@@ -103,23 +102,8 @@ fn hidden_fields_are_still_stored_and_reflected() {
     );
 }
 
-/// A `bool` works as a discriminant, and the shadow settings show only
-/// the knobs the selected technique reads.
-///
-/// # 🔴 Two defects, one test
-///
-/// `integer_value` handled every integer width and **not `Bool`**, and
-/// the failure was silent in the worst direction: an unreadable
-/// discriminant reads as `None`, `FieldCondition::is_met(None)` reads as
-/// SHOWN, so a `shown_when` pointing at a toggle hid nothing, ever. The
-/// absent-field case is meant to look like a typo — an unsupported TYPE
-/// looked like a working rule.
-///
-/// The other half is what the rule says. Which fields survive the switch
-/// was read out of the code, not guessed: `shadow_cascade_texels` sizes
-/// every layer of the shared atlas including the spot lights',
-/// `point_shadows` is the cube budget the local lights still use, and
-/// `shadows_enabled` returns the shading fully lit before either branch.
+/// A `bool` works as a discriminant, and the shadow settings show only the knobs the selected
+/// technique reads.
 #[test]
 fn the_shadow_knobs_follow_the_technique() {
     use kooch_render::settings::RenderSettings;
@@ -163,18 +147,7 @@ fn the_shadow_knobs_follow_the_technique() {
         assert!(has(&pages, field), "{field} is missing with pages on");
         assert!(!has(&cascades, field), "{field} shows with pages off");
     }
-    // 🔴 Inert with the pages on, and hidden for it. The virtual shadow
-    // map REPLACES the cascades rather than blending with them —
-    // `inti_shadow` returns to `inti_page_shadow` before it picks one —
-    // and the cube path is skipped wholesale: `draw_cascades` is
-    // `cascades_enabled && !virtual_pages`, the point and spot caster
-    // lists come back empty, and `classic_shadow_alloc` shrinks the
-    // classic atlas to 256 texels and one cube of 16.
-    //
-    // `shadow_cascade_texels` and `point_shadows` were in the list below
-    // — asserted visible in BOTH modes — until 89c5e71e hid them on
-    // purpose and left this test asserting the old answer. They size an
-    // atlas nothing draws into and nothing samples.
+    // 🔴 Inert with the pages on, and hidden for it.
     for field in [
         "shadow_distance",
         "sun_softness",

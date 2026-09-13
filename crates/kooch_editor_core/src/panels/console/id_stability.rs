@@ -1,15 +1,4 @@
 //! The Console's rows have to keep their ids as lines arrive.
-//!
-//! A row's widgets took automatic ids, which egui hands out by order of
-//! creation. [`draw_message`](super::render) emits a *variable* number of
-//! them — one per text run plus two per `key=value` pair — so a row whose
-//! content changes shifts the ids of every row after it.
-//!
-//! Rows are a fixed height, so nothing moves on screen. Same rect, new id,
-//! which is precisely what egui complains about (#641). And because each
-//! complaint is itself logged, it becomes another line, which shifts the
-//! rows again: the warning feeds itself. That is why one bad frame
-//! produced three hundred of them.
 
 use kooch_core::LogBuffer;
 use tracing::Level;
@@ -46,10 +35,9 @@ fn console_rows_keep_their_ids_as_lines_arrive() {
         .unwrap_or_else(|e| e.into_inner());
 
     let buffer = LogBuffer::new();
-    // Far more lines than fit, so `show_rows` actually virtualises and the
-    // visible window moves as the tail arrives. With a log that fits on
-    // screen nothing scrolls, and nothing scrolling is not the reported
-    // case.
+    // Far more lines than fit, so `show_rows` actually virtualises and the visible window moves as
+    // the tail arrives. With a log that fits on screen nothing scrolls, and nothing scrolling is
+    // not the reported case.
     fill(&buffer, 0, 400);
     let mut state = ConsoleState::default();
 
@@ -95,17 +83,8 @@ fn console_rows_are_stable_when_nothing_arrives() {
     );
 }
 
-/// The reported gesture, at last: the mouse **over** the panel while the
-/// log scrolls, with the clock running.
-///
-/// Three things the earlier tests left out, each of which alone makes the
-/// bug impossible:
-///
-/// 1. **A pointer.** A `ScrollArea`'s bar widens on hover, animated.
-/// 2. **A wheel.** Rows leave the visible window at the top and bottom,
-///    which is where the user says it happens.
-/// 3. **A clock.** egui's animations run on `stable_dt`; with time frozen
-///    the bar never animates and the layout never wobbles.
+/// The reported gesture, at last: the mouse **over** the panel while the log scrolls, with the
+/// clock running.
 #[test]
 fn scrolling_under_the_mouse_keeps_the_row_ids() {
     use crate::panels::id_stability_probe::{Frame, drawing_with};
@@ -148,12 +127,6 @@ fn scrolling_under_the_mouse_keeps_the_row_ids() {
 }
 
 /// The same gesture, but inside a dock — which is where the editor draws.
-///
-/// Every test above puts the panel in a bare `CentralPanel`. The editor
-/// puts it in `egui_dock`, and the reported log carries rects that only a
-/// dock produces: a 28x28 tab and a 250x646 panel frame. That is the one
-/// structural difference between the reproductions that pass and the
-/// editor that does not.
 #[test]
 fn scrolling_inside_a_dock_keeps_the_row_ids() {
     use crate::panels::id_stability_probe::{Frame, drawing_with};

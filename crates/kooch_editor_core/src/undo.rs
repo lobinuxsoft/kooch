@@ -1,12 +1,4 @@
 //! Undo/redo system using the command pattern.
-//!
-//! Each undoable editor operation is wrapped in an [`EditorCommand`] that
-//! captures before-state on construction. The [`UndoStack`] resource holds
-//! the command history and provides `undo()`/`redo()` operations.
-//!
-//! Concrete commands live under [`commands`]; the parent module
-//! re-exports them so callers see a flat namespace
-//! (`crate::undo::SpawnCommand`, etc).
 
 mod commands;
 #[cfg(test)]

@@ -1,23 +1,4 @@
 //! What the Console holds between frames, and why it holds anything.
-//!
-//! # The panel keeps its own copy of the log
-//!
-//! It used to call `LogBuffer::snapshot()` inside the draw, which clones
-//! every line — two thousand entries, two `String`s each — **every frame**,
-//! then filtered them twice (once to count, once to draw), lowercasing
-//! three strings per entry per pass. A panel nobody was looking at cost
-//! nothing; the one with the log open cost tens of thousands of
-//! allocations a frame, and the cost grew as the log filled.
-//!
-//! [`LogEntry::seq`] existed for exactly this and was going unused. The
-//! panel now holds its own `Vec` and asks only for what arrived since the
-//! last line it has.
-//!
-//! # And its own filtered view
-//!
-//! Recomputed when the log or the filter settings change, not per frame.
-//! The list is `usize` indices rather than cloned entries: the copy above
-//! is the only one.
 
 use kooch_core::{LogBuffer, LogEntry};
 
@@ -47,20 +28,9 @@ pub(crate) struct ConsoleState {
     built_for: Option<FilterKey>,
     /// How many lines the log had dropped when last read.
     dropped: u64,
-    /// Which visible row the keyboard is on, as an index into
-    /// [`visible`](Self::visible).
-    ///
-    /// `None` until a key or a click puts it somewhere. Stored as a
-    /// position in the *filtered* list rather than an entry sequence: the
-    /// arrows move through what is on screen, and a line the filter hides
-    /// is not somewhere the cursor can be.
+    /// Which visible row the keyboard is on, as an index into [`visible`](Self::visible).
     cursor: Option<usize>,
     /// Set when the cursor moves, so the view scrolls to follow it.
-    ///
-    /// Without this the cursor moved and nothing happened on screen:
-    /// `show_rows` only builds the rows in view, so a cursor one row past
-    /// the edge was never drawn and never scrolled to. Moving something
-    /// invisible is indistinguishable from the key not arriving.
     scroll_to_cursor: bool,
 }
 
@@ -94,9 +64,6 @@ impl Default for ConsoleState {
 
 impl ConsoleState {
     /// Whether an entry passes the current filters.
-    ///
-    /// `needle` is the filter already lowercased, because lowercasing it
-    /// per entry was most of what this function used to do.
     pub(crate) fn shows_with(&self, entry: &LogEntry, needle: &str) -> bool {
         if !self.levels.shows(entry.level) {
             return false;
@@ -111,10 +78,6 @@ impl ConsoleState {
     }
 
     /// Whether an entry passes, lowercasing the filter as it goes.
-    ///
-    /// For callers with one entry to check. The drawing path uses
-    /// [`shows_with`](Self::shows_with) so the filter is folded once for
-    /// the whole pass instead of once per line.
     pub(crate) fn shows(&self, entry: &LogEntry) -> bool {
         self.shows_with(entry, &self.filter.to_lowercase())
     }
@@ -165,23 +128,16 @@ impl ConsoleState {
         &self.entries
     }
 
-    /// How many lines the buffer has dropped.
-    /// The highlighted row, clamped to what is currently visible.
-    ///
-    /// Clamped on read rather than on write, because the filter can shrink
-    /// the list under a cursor that was valid when it was set.
+    /// How many lines the buffer has dropped. The highlighted row, clamped to what is currently
+    /// visible.
     pub(crate) fn cursor(&self) -> Option<usize> {
         self.cursor
             .filter(|_| !self.visible.is_empty())
             .map(|row| row.min(self.visible.len() - 1))
     }
 
-    /// Moves the cursor by `delta` rows, clamped, starting from the last
-    /// row when nothing is highlighted yet.
-    ///
-    /// Starting at the end is deliberate: a log is read from the bottom,
-    /// so the first press of Up should offer the newest line rather than
-    /// the oldest one thousands of rows above.
+    /// Moves the cursor by `delta` rows, clamped, starting from the last row when nothing is
+    /// highlighted yet.
     pub(crate) fn move_cursor(&mut self, delta: isize) {
         if self.visible.is_empty() {
             self.cursor = None;
@@ -211,9 +167,6 @@ impl ConsoleState {
     }
 
     /// Forgets where the cursor was.
-    ///
-    /// Called when the panel loses focus: a highlighted line that the
-    /// arrows no longer move is a lie about where the keyboard is.
     pub(crate) fn clear_cursor(&mut self) {
         self.cursor = None;
     }
@@ -263,11 +216,6 @@ impl ConsoleState {
 }
 
 /// Case-insensitive substring search that allocates nothing.
-///
-/// ASCII case folding: log targets are module paths and messages are
-/// English, and the allocation this replaces was per line per frame. A
-/// non-ASCII letter matches case-sensitively, which is a smaller surprise
-/// than a console that stutters.
 fn contains_ignore_case(haystack: &str, needle_lower: &str) -> bool {
     if needle_lower.is_empty() {
         return true;

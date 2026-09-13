@@ -1,19 +1,4 @@
-//! The floating capsule's numbers, which are all invisible until
-//! something falls through the floor.
-//!
-//! A collider that is the wrong size shows up the moment anything rests
-//! on it. A character controller has no surface of its own: the ride
-//! height is a gap that is *supposed* to be empty, the probe is a sweep
-//! that leaves no trace, and the slope limit is the difference between a
-//! ramp and a wall with nothing between them.
-//!
-//! # The one mistake this exists to catch
-//!
-//! `ride_height` is measured from the body's origin, so it has to clear
-//! the collider's own reach downward — otherwise the spring asks for a
-//! height the geometry cannot occupy and the capsule quietly rests on
-//! the floor instead of floating. That is a number-versus-number
-//! comparison nobody makes in their head, and it is drawn in amber.
+//! The floating capsule's numbers, which are all invisible until something falls through the floor.
 
 use glam::{Mat3, Vec3};
 
@@ -75,10 +60,6 @@ impl Visualizer<CharacterController> for CharacterVisualizer {
 }
 
 /// How far the sibling collider hangs below the origin, scaled.
-///
-/// `None` when there is no collider, or when its shape is a point cloud
-/// the cache has not answered for — drawing a reach of zero would say
-/// "any ride height clears this", which is the lie this exists to stop.
 fn reach(entity: Entity, transform: &GlobalTransform, resources: &Resources) -> Option<f32> {
     let collider = *Query::<&Collider>::new(resources).get(entity)?;
     let meshes = resources.get::<ColliderMeshCache>();
@@ -124,12 +105,7 @@ fn draw_at(
         gizmos.wire_circle(rest, u, v, radius * 1.4, REFUSED);
     }
 
-    // The collider's own floor. Above the rest disc it is the clearance
-    // the character walks with; below it, the ride height is asking for
-    // a height the geometry is already occupying and the capsule rests
-    // on the ground instead of floating — the one mistake this whole
-    // gizmo exists to catch, and it is invisible in the Inspector
-    // because the two numbers live on different components.
+    // The collider's own floor.
     if let Some(reach) = reach {
         let sole = origin - up * reach;
         let sunk = reach >= controller.ride_height;

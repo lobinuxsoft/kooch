@@ -1,8 +1,4 @@
 //! Reading back what a visualizer drew.
-//!
-//! Shared by every gizmo family rather than living inside one: a
-//! visualizer's whole output is line segments, and every test here asks
-//! the same three questions of them.
 
 use glam::{Mat4, Vec3};
 

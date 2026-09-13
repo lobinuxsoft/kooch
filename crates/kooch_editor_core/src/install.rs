@@ -1,28 +1,4 @@
 //! Installing what a machine is missing, from the editor.
-//!
-//! # 🔴 This restarts the computer, and that is the point
-//!
-//! On an image-based distribution a package writes a new image, and the
-//! new image is not the running one until a reboot. So an install that
-//! stops short of restarting has not finished — the editor would report
-//! success and the next build would fail exactly as before.
-//!
-//! [`preflight`](crate::preflight) used to say this was "not something
-//! an editor may do behind a dialog", and it was right about the dialog.
-//! What changed is not the risk but where the decision sits: the owner
-//! of this engine asked for it, and it happens **in front of** a dialog
-//! that names the command, names the restart, and refuses while there is
-//! unsaved work.
-//!
-//! # What it will not do
-//!
-//! - **Run with unsaved scenes open.** A restart with a dirty scene is
-//!   the editor destroying the author's work to save them a paste.
-//! - **Install Rust.** `rustup` installs into the invoking user's home;
-//!   through a privileged helper it would put a toolchain in root's, and
-//!   the user's shell would still find nothing.
-//! - **Escalate silently.** `pkexec` puts the authentication where the
-//!   system puts it, which is the desktop's own prompt and not ours.
 
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
@@ -62,9 +38,6 @@ impl std::fmt::Display for Refusal {
 }
 
 /// Whether an install may start right now.
-///
-/// Separated from running it so the button can be disabled with the
-/// reason showing, rather than offered and then refused.
 pub fn refusal(resources: &Resources, report: &Report) -> Option<Refusal> {
     if report.packages().is_none() {
         return Some(match report.installer {
@@ -80,9 +53,6 @@ pub fn refusal(resources: &Resources, report: &Report) -> Option<Refusal> {
 }
 
 /// The privileged command that installs `packages` here.
-///
-/// `pkexec` on Linux, which raises the desktop's own authentication
-/// dialog. `winget` on Windows elevates itself.
 pub fn privileged(installer: Installer, packages: &str) -> Option<Vec<String>> {
     let owned = |parts: &[&str]| Some(parts.iter().map(|s| (*s).to_owned()).collect());
     match installer {
@@ -112,11 +82,6 @@ pub struct Progress {
 }
 
 /// A running install, and everything it has said so far.
-///
-/// 🔴 Spawned and polled, never waited on. `rpm-ostree install` writes a
-/// whole image and takes **minutes**; blocking the frame on it froze the
-/// editor with no window, no spinner and no output — indistinguishable
-/// from a crash, and reported as one.
 pub struct Installing {
     child: Child,
     output: Arc<Mutex<Vec<String>>>,
@@ -130,9 +95,6 @@ pub struct Installing {
 
 impl Installing {
     /// Drains what the child has said and notices when it exits.
-    ///
-    /// Returns `true` on the frame it finishes, so the caller can act
-    /// once rather than every frame after.
     pub fn poll(&mut self) -> bool {
         if let Ok(mut buffered) = self.output.lock() {
             self.lines.append(&mut buffered);
@@ -156,10 +118,6 @@ impl Installing {
     }
 
     /// What the window needs, owned.
-    ///
-    /// A snapshot rather than a borrow: this holds a `Child`, and the UI
-    /// runs with `Resources` borrowed elsewhere. The lines are few and
-    /// copying them once a frame costs nothing measurable.
     pub fn progress(&self) -> Progress {
         Progress {
             status: self.status(),
@@ -216,9 +174,6 @@ pub fn start(resources: &mut Resources, report: &Report) -> Result<(), Refusal> 
 }
 
 /// Drains the installer's output and restarts when it succeeds.
-///
-/// Registered in `PreUpdate`. Does nothing at all until something starts
-/// an install.
 pub fn poll_install_system(resources: &mut Resources) {
     let Some(mut installing) = resources.remove::<Installing>() else {
         return;
@@ -233,10 +188,9 @@ pub fn poll_install_system(resources: &mut Resources) {
         return;
     }
     if !succeeded {
-        // 🔴 No restart. A failed install followed by a reboot is a
-        // machine that comes back up no better and a user who watched it
-        // happen for nothing — and on an atomic system the failure is
-        // routinely "that package does not exist", which a reboot hides.
+        // 🔴 No restart. A failed install followed by a reboot is a machine that comes back up no
+        // better and a user who watched it happen for nothing — and on an atomic system the failure
+        // is routinely "that package does not exist", which a reboot hides.
         tracing::error!("the install did not finish — nothing was restarted");
         return;
     }
@@ -252,10 +206,6 @@ pub fn poll_install_system(resources: &mut Resources) {
 }
 
 /// Spawns reader threads that drain the child into the shared buffer.
-///
-/// The same shape the launcher uses: `rpm-ostree` reports progress on
-/// stdout and its refusals on stderr, and both belong in one stream in
-/// the order they happened.
 fn read_into(child: &mut Child, output: &Arc<Mutex<Vec<String>>>) {
     let mut drain = |stream: Option<Box<dyn std::io::Read + Send>>| {
         let Some(stream) = stream else { return };

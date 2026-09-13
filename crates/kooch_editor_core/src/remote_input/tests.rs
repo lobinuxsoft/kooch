@@ -19,13 +19,6 @@ fn nothing_is_sent_while_the_project_is_not_playing() {
 }
 
 /// Playing is no longer enough on its own.
-///
-/// This test used to assert the opposite, and was right until the
-/// Game panel existed: back then playing meant the whole editor was
-/// the game. Now the game has a panel, and a key only reaches it
-/// once that panel is the one you clicked. Without a `GameView` in
-/// resources — which is every headless test — nothing is focused, so
-/// nothing is sent.
 #[test]
 fn playing_alone_does_not_send_without_the_game_panel_focused() {
     let mut resources = Resources::new();

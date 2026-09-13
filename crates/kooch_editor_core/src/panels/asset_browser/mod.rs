@@ -1,16 +1,5 @@
-//! Asset Browser panel — a folder tree over the project's (and the
-//! shipped engine's) `assets/` directories, Unity / Godot style.
-//!
-//! Selecting an asset drives the **Inspector** (which renders its import
-//! settings / editable parameters — see
-//! [`crate::panels::inspector::asset_view`]). Dropping OS files onto the
-//! panel copies them into the selected project folder and re-imports, so
-//! they appear in the tree and in the material texture pickers.
-//!
-//! Only *typed* entries appear — an asset with no `.meta` `asset_type`
-//! (never touched by a typed `load::<T>`) is skipped upstream in
-//! [`AssetCatalogEntry::collect_from_database`], because there is no
-//! type to file it under.
+//! Asset Browser panel — a folder tree over the project's (and the shipped engine's) `assets/`
+//! directories, Unity / Godot style.
 
 mod tree;
 
@@ -72,10 +61,9 @@ pub(crate) fn draw_asset_browser_content(
         return;
     }
 
-    // Handle a file drop that landed over this panel BEFORE the tree
-    // render, so `actions` stays available afterwards for the tree's own
-    // context-menu emissions. `dropped_files` is global, so gate on the
-    // pointer being inside the panel rect.
+    // Handle a file drop that landed over this panel BEFORE the tree render, so `actions` stays
+    // available afterwards for the tree's own context-menu emissions. `dropped_files` is global, so
+    // gate on the pointer being inside the panel rect.
     let dropped: Vec<PathBuf> = ui.ctx().input(|i| {
         i.raw
             .dropped_files
@@ -108,10 +96,9 @@ pub(crate) fn draw_asset_browser_content(
     }
 
     egui::ScrollArea::vertical()
-        // Width comes from the panel, not from the longest file name.
-        // Left to shrink, the whole tree — rows, drop targets and all —
-        // ends wherever the text does, and the rest of the panel does
-        // nothing when clicked.
+        // Width comes from the panel, not from the longest file name. Left to shrink, the whole
+        // tree — rows, drop targets and all — ends wherever the text does, and the rest of the
+        // panel does nothing when clicked.
         .auto_shrink([false, true])
         .id_salt("asset_browser_grid")
         .show(ui, |ui| {
@@ -142,10 +129,9 @@ pub(crate) fn draw_asset_browser_content(
             }
         });
 
-    // The single writer. The cursor was moved above by whichever hand the
-    // user used, and this is where — and the only place — that becomes a
-    // selection. Placed after the tree so it reads the rows just drawn
-    // rather than last frame's.
+    // The single writer. The cursor was moved above by whichever hand the user used, and this is
+    // where — and the only place — that becomes a selection. Placed after the tree so it reads the
+    // rows just drawn rather than last frame's.
     if let Some(row) = nav.take_cursor_move() {
         match row.is_folder {
             true => {
@@ -189,15 +175,7 @@ fn import_destination(
     current_folder: Option<&Path>,
     project_root: Option<&Path>,
 ) -> Option<PathBuf> {
-    // 🔴 Always inside `assets/`, and the selected folder only when it
-    // already is. A dropped texture used to land in whatever folder was
-    // selected — or in the **project root** when none was, beside
-    // `Cargo.toml`, where nothing registers it, no build carries it, and
-    // the Asset Browser still lists it as though it were an asset.
-    //
-    // The same rule the "New …" menu enforces (#765), applied to the
-    // other way a file enters a project. A rule that holds for one
-    // entrance and not the other is not a rule.
+    // 🔴 Always inside `assets/`, and the selected folder only when it already is.
     let assets = project_root?.join("assets");
     match current_folder {
         Some(dir) if dir.starts_with(&assets) => Some(dir.to_path_buf()),
@@ -236,14 +214,6 @@ fn draw_drop_banner(ui: &mut egui::Ui, project_root: Option<&Path>, dest: Option
 }
 
 /// Whether the project already holds a `.rendersettings`.
-///
-/// By type and not by extension, because that is how the renderer finds
-/// it (`apply_render_settings_system`) — an entry the catalog does not
-/// type is one the renderer will not read either, and the menu has to
-/// agree with what actually takes effect.
-///
-/// Scoped to the project: the engine ships assets too, and one of those
-/// must not stop a project from authoring its own.
 fn has_render_settings(catalog: &[AssetCatalogEntry], project_root: Option<&Path>) -> bool {
     let wanted = std::any::type_name::<kooch_render::settings::RenderSettings>();
     catalog.iter().any(|entry| {
@@ -260,10 +230,6 @@ fn entries_under<'a>(catalog: &'a [AssetCatalogEntry], root: &Path) -> Vec<&'a A
 }
 
 /// Moves the cursor through the tree, and acts on the row it lands on.
-///
-/// Reads the rows the renderer recorded last frame — see `tree::nav` for
-/// why the list comes from there rather than from a second walk. Only
-/// reached when this panel has focus (#661).
 fn handle_keyboard(ui: &egui::Ui, nav: &mut tree::AssetNav, actions: &mut Vec<EditorAction>) {
     // Cleared every frame: a scroll request is for the frame after the key,
     // and leaving it set would fight the scrollbar for as long as the
@@ -308,13 +274,9 @@ fn handle_keyboard(ui: &egui::Ui, nav: &mut tree::AssetNav, actions: &mut Vec<Ed
         nav.to_edge(true);
     }
 
-    // Enter used to *commit* the cursor — make it the create target, or
-    // send it to the Inspector. Both of those now happen the moment the
-    // cursor moves, so all that is left is the one thing Enter does that
-    // moving a cursor does not: open the file, same as a double-click.
-    // No longer conditional on a project root being known: the handler
-    // resolves the workspace, and a file under the engine tree is worth
-    // opening too.
+    // Enter used to *commit* the cursor — make it the create target, or send it to the Inspector.
+    // Both of those now happen the moment the cursor moves, so all that is left is the one thing
+    // Enter does that moving a cursor does not: open the file, same as a double-click.
     if enter
         && let Some(row) = nav.current()
         && !row.is_folder
@@ -326,9 +288,6 @@ fn handle_keyboard(ui: &egui::Ui, nav: &mut tree::AssetNav, actions: &mut Vec<Ed
 }
 
 /// The registered asset at `path`, if there is one.
-///
-/// Read from the `.meta` beside the file rather than from the catalog:
-/// the catalog is keyed by guid, and the keyboard only knows a path.
 fn asset_guid_at(path: &Path) -> Option<Guid> {
     // `read_meta`, not `read_or_create`: navigating past a plain file must
     // not write a `.meta` beside it.

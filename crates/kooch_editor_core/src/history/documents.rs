@@ -1,27 +1,4 @@
 //! Undo for everything that is not the scene.
-//!
-//! # Snapshots, not inverses
-//!
-//! The world's history keeps inverse *edits*, because the world is large
-//! and lives in another process — copying it per keystroke is not on the
-//! table. A prefab, an input map and a material are none of those
-//! things: each is a small value that already knows how to serialise
-//! itself, and the whole document fits in the space one inverse edit
-//! would take.
-//!
-//! So these keep the document as it was, and undo puts it back. That is
-//! what Unity and Unreal do for everything (they serialise the object
-//! into the transaction), and it buys the property that matters here:
-//! **there is no per-edit inverse code to forget an arm of.** A new kind
-//! of edit to a prefab is undoable the day it is written, without
-//! touching this file.
-//!
-//! # What that costs
-//!
-//! Memory, in principle: a hundred copies of a document. In practice a
-//! prefab is a few kilobytes of RON and the merge rule means a drag is
-//! one snapshot rather than sixty. If a document ever gets big enough
-//! for this to matter, it is the document that needs looking at.
 
 use std::collections::HashMap;
 
@@ -108,15 +85,6 @@ impl DocumentHistories {
 }
 
 /// Files the document's current state before an edit changes it.
-///
-/// Called at the top of every handler that mutates a document — one
-/// line, before the mutation, which is the only place the previous state
-/// still exists.
-///
-/// A `key` that matches the step already on top merges into it: the
-/// older snapshot is the one an undo wants, so the new one is *dropped*
-/// rather than pushed. That is the whole of the coalescing rule, and it
-/// is free here in a way it is not for an inverse-based history.
 pub(crate) fn record(
     resources: &mut Resources,
     document: &Document,
@@ -160,10 +128,6 @@ pub(crate) fn record(
 }
 
 /// Takes one step in a document's history.
-///
-/// Symmetric by construction: the current state goes onto the opposite
-/// stack as it is replaced, so redo is undo run the other way and
-/// neither direction has code of its own.
 pub(crate) fn step(resources: &mut Resources, document: &Document, undo: bool) -> bool {
     let Some(current) = capture(resources, document) else {
         return false;
@@ -219,10 +183,6 @@ fn capture(resources: &mut Resources, document: &Document) -> Option<DocumentSta
 }
 
 /// Materials first, then anything with a reflected registration.
-///
-/// Two paths because materials predate `register_reflected_asset!` and
-/// have their own action; the Inspector draws them through a dedicated
-/// panel, so they never arrive as reflected fields.
 fn capture_asset(resources: &mut Resources, guid: Guid) -> Option<DocumentState> {
     if let Some(material) = material_of(resources, guid) {
         return Some(DocumentState::Material(material));

@@ -1,40 +1,15 @@
-//! Asset-path detection: name-based heuristic that maps `String`
-//! reflected fields like `mesh_path` / `texture_handle` to a file
-//! picker dialog filter — plus the typed [`AssetCatalogEntry`] the
-//! `ReflectValue::AssetRef` widget consumes when rendering its
-//! `AssetDatabase`-backed dropdown.
-//!
-//! Format choices favour open standards with no licensing friction and
-//! formats the engine actually plans to support:
-//! - **Mesh**: glTF 2.0 only. Khronos open spec, supports animation,
-//!   skeletons, materials, scenes — drops the legacy `.obj`.
-//! - **Texture**: LDR (PNG, JPEG), GPU compressed (KTX2), HDR (EXR,
-//!   Radiance HDR). Drops `.tga` — legacy with no real advantage.
-//! - **Audio**: Xiph (Vorbis, FLAC) plus PCM `.wav`. Drops `.mp3`
-//!   because `kira` gates it behind a feature flag and the historical
-//!   patent baggage adds zero value when Vorbis covers the same niche.
-//! - **Material**: RON only. Same format as `.scene`, handles
-//!   nested structures cleanly. Drops TOML.
-//!
-//! `extensions` is empty when the kind is recognised but no specific
-//! filter applies (generic `*_path` / `*_file` fields). The dialog will
-//! still show the file picker, just without a type filter.
-//!
-//! Bridge until the asset handle system (#184) makes this explicit via
-//! typed handles.
+//! Asset-path detection: name-based heuristic that maps `String` reflected fields like `mesh_path`
+//! / `texture_handle` to a file picker dialog filter — plus the typed [`AssetCatalogEntry`] the
+//! `ReflectValue::AssetRef` widget consumes when rendering its `AssetDatabase`-backed dropdown.
 
 use std::path::{Path, PathBuf};
 
 use kooch_core::Guid;
 use kooch_core::asset_database::AssetDatabase;
 
-/// Origin of an asset relative to the project / engine boundary.
-/// Drives the inspector picker's `[engine]` / `[project]` tag so
-/// users can spot at a glance whether they are referencing a
-/// shipped engine asset (Suzanne, default sky textures) or a
-/// project-local one. Falls back to `Other` when neither root
-/// matches — useful for assets the editor surfaces from a third
-/// location.
+/// Origin of an asset relative to the project / engine boundary. Drives the inspector picker's
+/// `[engine]` / `[project]` tag so users can spot at a glance whether they are referencing a
+/// shipped engine asset (Suzanne, default sky textures) or a project-local one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AssetSource {
     Engine,
@@ -53,11 +28,6 @@ impl AssetSource {
 }
 
 /// Snapshot of one `AssetDatabase` entry exposed to the inspector.
-///
-/// Pre-collected per frame because the inspector renders inside the
-/// egui callback closure, which cannot freely borrow the
-/// `&Resources` that owns the database. Cheap to clone (small
-/// strings); the catalog rebuild happens once per frame.
 #[derive(Clone, Debug)]
 pub(crate) struct AssetCatalogEntry {
     pub guid: Guid,
@@ -78,15 +48,9 @@ pub(crate) struct AssetCatalogEntry {
 }
 
 impl AssetCatalogEntry {
-    /// Collects every typed entry from `db`. Untyped entries
-    /// (sidecars whose `asset_type` is `None`) are skipped — the
-    /// inspector picker has no way to filter them, so listing them
-    /// would leak unfiltered noise into every typed dropdown.
-    ///
-    /// `engine_root` and `project_root` are the asset directories
-    /// the host knows about (typically `<engine>/assets` and
-    /// `<project>/assets`). Either may be `None`; entries whose
-    /// path matches neither are tagged `AssetSource::Other`.
+    /// Collects every typed entry from `db`. Untyped entries (sidecars whose `asset_type` is
+    /// `None`) are skipped — the inspector picker has no way to filter them, so listing them would
+    /// leak unfiltered noise into every typed dropdown.
     pub(crate) fn collect_from_database(
         db: &AssetDatabase,
         engine_root: Option<&Path>,
@@ -119,10 +83,8 @@ impl AssetCatalogEntry {
                 type_name,
             });
         }
-        // Stable presentation: engine first, then project, then
-        // others; alphabetical within each group. The picker user
-        // expects the same asset to land in the same row across
-        // frames.
+        // Stable presentation: engine first, then project, then others; alphabetical within each
+        // group. The picker user expects the same asset to land in the same row across frames.
         out.sort_by(|a, b| {
             (a.source as u8, a.display_name.as_str())
                 .cmp(&(b.source as u8, b.display_name.as_str()))

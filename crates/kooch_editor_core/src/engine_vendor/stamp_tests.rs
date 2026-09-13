@@ -26,10 +26,9 @@ fn tmp(name: &str) -> PathBuf {
     dir
 }
 
-/// 🔴 The property the whole mechanism rests on. The stamp is written
-/// from the *source* and later read from the *copy*, so if those two
-/// hashed differently every open would re-materialise — the engine would
-/// be re-copied forever and never report itself current.
+/// 🔴 The property the whole mechanism rests on. The stamp is written from the *source* and later
+/// read from the *copy*, so if those two hashed differently every open would re-materialise — the
+/// engine would be re-copied forever and never report itself current.
 #[test]
 fn a_copy_hashes_the_same_as_its_source() {
     let dir = tmp("copy_equals_source");
@@ -180,9 +179,8 @@ fn leftovers_from_an_interrupted_swap_are_repaired() {
     assert!(!stale.exists());
 }
 
-/// 🔴 A version this editor does not ship is not stale, it is somebody
-/// else's. Comparing it against the source in hand would find a
-/// difference every time and overwrite the engine a pinned project
+/// 🔴 A version this editor does not ship is not stale, it is somebody else's. Comparing it against
+/// the source in hand would find a difference every time and overwrite the engine a pinned project
 /// builds against.
 #[test]
 fn another_version_is_never_replaced() {

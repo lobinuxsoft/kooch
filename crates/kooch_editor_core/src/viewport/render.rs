@@ -1,15 +1,4 @@
 //! Viewport render orchestration.
-//!
-//! Post-pivot 2026-05-02 (Plan C): mesh-only render. SDF raymarch pass
-//! removed; voxel + DC pipeline (Phase 2.5) will feed mesh chunks into
-//! the meshlet stage when ready.
-//!
-//! Passes share one encoder and the offscreen target, in this order:
-//! 1. **Sky pass** (optional) — runs when an active `SkyRenderer` entity
-//!    exists. Clears color + depth and draws the procedural sky.
-//! 2. **Meshlet blit** — composites the meshlet stage's color output
-//!    (cull + visibility raster + deferred shade) onto the viewport.
-//! 3. **Gizmo passes** — line + mesh gizmos, always on top.
 
 use kooch_core::gpu::GpuContext;
 use kooch_core::resource::Resources;
@@ -43,10 +32,9 @@ pub(crate) fn render_viewport(
     project_loaded: bool,
     meshlet: MeshletPathInputs<'_>,
 ) {
-    // The meshlet stage submits its own command buffer (cull + raster
-    // + deferred). Order matters: the blit pass we record below reads
-    // the stage's color view, so the stage's submit must complete
-    // first on the queue.
+    // The meshlet stage submits its own command buffer (cull + raster + deferred). Order matters:
+    // the blit pass we record below reads the stage's color view, so the stage's submit must
+    // complete first on the queue.
     let frame_stats = if project_loaded {
         meshlet.stage.resize(gpu.device(), target.size());
         meshlet
@@ -77,10 +65,9 @@ pub(crate) fn render_viewport(
             label: Some("viewport_encoder"),
         });
 
-    // #785 — the same `sky` scope the game reports, so a capture taken
-    // in the editor names the same pass. It is the one that measured
-    // 39.6 ms of a 71.6 ms frame on the handheld, and the reason to
-    // have it here is that this is where the project is being authored.
+    // in the editor names the same pass. It is the one that measured 39.6 ms of a 71.6 ms frame on
+    // the handheld, and the reason to have it here is that this is where the project is being
+    // authored.
     let scopes = resources.get::<kooch_core::gpu::GpuScopes>();
     let sky_query = scopes.map(|s| s.begin("sky", &mut encoder));
 
@@ -118,17 +105,9 @@ pub(crate) fn render_viewport(
         scopes.end(&mut encoder, query);
     }
 
-    // Pass 2: Meshlet blit composite — only when this frame actually
-    // produced meshlet output. Gating on `gpu_mesh_count > 0` was
-    // wrong: that counts assets registered in the pool (which
-    // persist after entities are despawned), not the live ECS
-    // instances that drove a real submit. Once an asset was
-    // registered, the blit kept copying the stage's color view —
-    // which the meshlet stage intentionally does NOT clear when it
-    // skips on zero instances — leaving a ghost of the last
-    // rendered frame on top of the sky. `instances_uploaded` is
-    // the per-frame truth: > 0 iff the meshlet pipeline ran a real
-    // dispatch this frame.
+    // Pass 2: Meshlet blit composite — only when this frame actually produced meshlet output.
+    // Gating on `gpu_mesh_count > 0` was wrong: that counts assets registered in the pool (which
+    // persist after entities are despawned), not the live ECS instances that drove a real submit.
     if project_loaded && frame_stats.instances_uploaded > 0 {
         meshlet.blit.blit(
             gpu.device(),
@@ -205,17 +184,6 @@ pub(super) fn clear_to_black(
 }
 
 /// The View panel's camera: the editor's own, always.
-///
-/// It used to be "highest priority active camera", which worked only
-/// because the editor camera ships at priority 1000 and because Play
-/// switched it off so a gameplay camera could win. Both of those were
-/// load-bearing accidents. The editor camera *belongs* to this panel —
-/// the gameplay camera has the Game panel now (#592) — so the panel asks
-/// for it by identity and Play no longer moves anybody's view.
-///
-/// Falls back to the highest-priority camera when there is no editor
-/// camera at all, which is the pre-project state: better a frame from
-/// some camera than a black panel with no explanation.
 fn view_camera(resources: &Resources) -> Option<kooch_render::ViewCamera> {
     use crate::editor_camera::markers::EditorCamera;
     use kooch_ecs::perspective_camera::PerspectiveCamera;

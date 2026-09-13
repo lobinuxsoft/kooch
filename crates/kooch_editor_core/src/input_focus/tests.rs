@@ -11,11 +11,9 @@ fn the_focused_panel_owns_input() {
 
 #[test]
 fn play_state_is_not_part_of_the_rule() {
-    // Deliberately absent from the signature. The Game panel gets
-    // input because it is focused, not because something is running;
-    // the View keeps its camera while the game plays beside it.
-    // Anyone reintroducing play state here has to change the
-    // signature, which is the point.
+    // Deliberately absent from the signature. The Game panel gets input because it is focused, not
+    // because something is running; the View keeps its camera while the game plays beside it.
+    // Anyone reintroducing play state here has to change the signature, which is the point.
     assert_eq!(
         resolve(Some(EditorTab::View), false),
         InputOwner::ViewCamera
@@ -36,12 +34,6 @@ fn a_focused_text_field_takes_the_keyboard_from_everyone() {
 }
 
 /// The parameter is `text_edit_focused`, not "some widget has focus".
-///
-/// Reading it the loose way is what broke the View: the editor opens
-/// with a widget focused, so the camera had no keyboard until the
-/// first Play click moved that focus. The name here is the guard —
-/// a caller passing `egui_wants_keyboard_input` is passing the wrong
-/// question, and the name says so at the call site.
 #[test]
 fn only_a_text_field_takes_it_not_any_focused_widget() {
     assert_eq!(

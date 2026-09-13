@@ -52,15 +52,6 @@ fn standing_inside_a_box_still_picks_it() {
 }
 
 /// The whole reason the ray is transformed instead of the box.
-///
-/// Rotated 45° about Y, the unit box becomes a diamond in the xz
-/// plane — |x| + |z| <= 0.707 — while its world-space AABB is the
-/// square ±0.707. The corner of that square is empty space, so it has
-/// to be aimed at directly: a ray straight down through (0.6, 0.6)
-/// lands in the square but outside the diamond.
-///
-/// Aiming along -Z instead would prove nothing. Both boxes span the
-/// same ±0.707 in x, so every such ray agrees.
 #[test]
 fn a_rotated_box_is_tested_as_itself_not_as_its_world_bounds() {
     let rotated = Mat4::from_rotation_y(std::f32::consts::FRAC_PI_4);

@@ -1,16 +1,5 @@
-//! Asset inspector — the Inspector panel's view when an *asset* (rather
-//! than an entity) is selected in the Asset Browser.
-//!
-//! Shows *import settings* for baked assets (meshes, textures) — a
-//! texture's mip chain is editable here and writes the asset's `.meta`
-//! — and editable *input parameters* for authored assets (materials:
-//! colours, scalars, texture slots). Material edits are emitted as
-//! [`EditorAction::EditMaterial`], which writes the change back to the
-//! asset's `.ron`.
-//!
-//! [`AssetDetail`] is a per-frame snapshot resolved by
-//! [`crate::systems::asset_detail::gather_asset_detail`] from the
-//! selected asset's data, so this module never touches `Resources`.
+//! Asset inspector — the Inspector panel's view when an *asset* (rather than an entity) is selected
+//! in the Asset Browser.
 
 use glam::Vec3;
 
@@ -36,20 +25,9 @@ pub(crate) enum AssetDetail {
     /// Decoded image — read-only import stats.
     Image(ImageImportInfo),
     /// A prefab, editable as the entities it describes.
-    ///
-    /// Carries the document as it currently stands in
-    /// `Assets<SceneDocument>` — which is where edits land — rather than
-    /// what is on disk. The two differ exactly while there are unsaved
-    /// changes, which is what the Save button is for.
     Prefab(Box<PrefabDetail>),
-    /// Any asset registered with `register_reflected_asset!`, drawn
-    /// through the same grid components use (#744).
-    ///
-    /// The hand-written variants above still win where they exist: they
-    /// do more than field editing — texture pickers, import stats, a
-    /// prefab's entity tree. This is what turns "no import settings"
-    /// into "editable" for every type that never gets a bespoke view,
-    /// which is every type nobody remembers to add one for.
+    /// Any asset registered with `register_reflected_asset!`, drawn through the same grid
+    /// components use (#744).
     Reflected {
         type_name: String,
         fields: Vec<(String, kooch_ecs::reflect::ReflectValue)>,
@@ -60,16 +38,8 @@ pub(crate) enum AssetDetail {
 }
 
 /// A prefab, resolved against this binary's registry and ready to draw.
-///
-/// Resolution happens in the snapshot rather than in the panel for the
-/// same reason `EntityDisplayInfo` does: a panel draws with `&mut Ui` and
-/// has no world, and the registry is in one.
 pub(crate) struct PrefabDetail {
     /// Set while the cached document differs from the file.
-    ///
-    /// Shown rather than inferred: the edits are already live for anything
-    /// spawning this prefab, so the only thing that says the file is behind
-    /// is the editor saying so.
     pub dirty: bool,
     pub entities: Vec<PrefabEntityView>,
 }
@@ -94,10 +64,9 @@ pub(crate) struct PrefabComponentView {
     pub type_name: String,
     pub short_name: String,
     pub fields: Vec<(String, ReflectValue)>,
-    /// `None` for a component this binary has no Rust type for. Such a
-    /// component is parked verbatim and round-trips intact; showing it as
-    /// un-editable is the truth, and hiding it would make saving look like
-    /// it dropped data.
+    /// `None` for a component this binary has no Rust type for. Such a component is parked verbatim
+    /// and round-trips intact; showing it as un-editable is the truth, and hiding it would make
+    /// saving look like it dropped data.
     pub resolved: Option<ResolvedComponent>,
 }
 
@@ -124,11 +93,6 @@ pub(crate) struct MeshImportInfo {
 }
 
 /// What a baked collision mesh remembers about its source.
-///
-/// The whole reason a derived asset is not a silent trap: change the
-/// source and the bake keeps its own GUID, nothing fails, and the prop
-/// collides with the shape it had last week. This is what lets the
-/// Inspector say so.
 pub(crate) struct BakedFrom {
     /// `"hull"` or `"parts"`.
     pub kind: String,
@@ -147,9 +111,8 @@ pub(crate) struct ImageImportInfo {
     pub bytes: usize,
     /// The `[import]` table's answer, or the engine's default.
     pub import: kooch_render::texture::ImageImport,
-    /// How many levels the chain has when it is on — shown because
-    /// "mipmaps" is an abstraction and "11 levels" is a fact about this
-    /// texture, and because a 1x1 image getting one level is the
+    /// How many levels the chain has when it is on — shown because "mipmaps" is an abstraction and
+    /// "11 levels" is a fact about this texture, and because a 1x1 image getting one level is the
     /// explanation for a checkbox that appears to do nothing.
     pub levels: u32,
 }
@@ -322,12 +285,8 @@ fn draw_material_editor(
     });
 }
 
-/// One texture slot row backed by the shared typed asset picker. Returns
-/// `true` when the assignment changed this frame.
-///
-/// The picker salts its widget id only by asset type, so three
-/// same-type (`Image`) slots would collide — [`egui::Ui::push_id`] gives
-/// each row its own id namespace to keep them distinct.
+/// One texture slot row backed by the shared typed asset picker. Returns `true` when the assignment
+/// changed this frame.
 fn texture_row(
     ui: &mut egui::Ui,
     label: &str,
@@ -413,14 +372,6 @@ fn draw_baked_origin(ui: &mut egui::Ui, baked: &BakedFrom) {
 }
 
 /// The two collision meshes this mesh can be baked into.
-///
-/// Written into the open project, never beside the source: the engine's
-/// own assets are read-only, and its meshes get their colliders baked
-/// into the engine the way its primitives are.
-///
-/// A face budget rather than always the exact hull, because the exact
-/// hull of an organic mesh is a few hundred planes and the narrowphase
-/// pays for every one. Zero keeps it exact, which is the honest default.
 fn draw_collider_bake(ui: &mut egui::Ui, guid: Guid, actions: &mut Vec<EditorAction>) {
     ui.weak("Collision mesh");
     let max_faces = ui.data_mut(|d| *d.get_temp_mut_or(BAKE_FACES_ID.with(guid), 0u32));
@@ -489,10 +440,6 @@ fn draw_collider_bake(ui: &mut egui::Ui, guid: Guid, actions: &mut Vec<EditorAct
 }
 
 /// Where the face budget lives between frames.
-///
-/// Per GUID, so switching assets does not carry one mesh's budget onto
-/// another — and deliberately not persisted: it is a knob for the bake
-/// about to happen, not a property of the asset.
 const BAKE_FACES_ID: egui::Id = egui::Id::NULL;
 
 fn draw_image_import(
@@ -543,15 +490,6 @@ fn kv(ui: &mut egui::Ui, key: &str, value: &str) {
 }
 
 /// Any reflected asset, drawn with the component grid (#744).
-///
-/// # The synthetic entity and component id
-///
-/// `draw_reflected_fields` takes both, and an asset has neither. Its own
-/// documentation already provides for this — *"a caller with no entity
-/// passes a synthetic one"* — and the prefab inspector does the same.
-/// Both are derived from the guid so two assets never share egui state
-/// or a euler-cache entry, and the generation is one no live entity
-/// carries.
 #[allow(clippy::too_many_arguments)]
 fn draw_reflected_asset(
     ui: &mut egui::Ui,
@@ -591,11 +529,9 @@ fn draw_reflected_asset(
         entities,
     );
 
-    // One write per gesture, not per frame. A slider reports a change
-    // every frame it is dragged; persisting each one writes the file,
-    // reads it back and round-trips to the running project — 29 times
-    // for one drag, measured in #728. While the pointer is down the
-    // in-memory copy is enough and the viewport follows it.
+    // One write per gesture, not per frame. A slider reports a change every frame it is dragged;
+    // persisting each one writes the file, reads it back and round-trips to the running project —
+    // 29 times for one drag, measured in #728.
     let commit = !ui.ctx().input(|i| i.pointer.any_down());
     for (field, value) in edits {
         actions.push(EditorAction::EditAssetField {

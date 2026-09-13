@@ -1,9 +1,5 @@
-//! "Spawn" dropdown menu in the World panel toolbar — one entry per
-//! commonly-spawned entity archetype.
-//!
-//! Anything with more than one variant gets a submenu: `Cameras`,
-//! `3D Object`, `Lights`. The cameras were loose at the top level until
-//! a third one arrived and made the inconsistency obvious.
+//! "Spawn" dropdown menu in the World panel toolbar — one entry per commonly-spawned entity
+//! archetype.
 
 use std::any::TypeId;
 
@@ -20,9 +16,6 @@ use crate::actions::EditorAction;
 use crate::icons;
 
 /// Title-cases a primitive's asset stem for display: `cube` → `Cube`.
-///
-/// The stem is the filename, so it has to stay lowercase; the menu entry
-/// is what a person reads.
 fn display_name(stem: &str) -> String {
     let mut chars = stem.chars();
     match chars.next() {
@@ -32,14 +25,6 @@ fn display_name(stem: &str) -> String {
 }
 
 /// The spawn entries, shared by every menu that offers them.
-///
-/// 🔴 One list, four callers: the panel's empty space, a scene header,
-/// a row's "New Child" and its "New in This Scene". There used to be a
-/// fifth — a toolbar button — and the reason it is gone is the reason
-/// this function exists: a second list of the same commands is a list
-/// that drifts, and the one that drifts is always the one fewer people
-/// use (#591). Every one of these menus names a place, which a toolbar
-/// button standing above the list never could.
 pub(super) fn spawn_entries(
     ui: &mut egui::Ui,
     actions: &mut Vec<EditorAction>,

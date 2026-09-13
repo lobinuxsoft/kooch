@@ -1,14 +1,4 @@
 //! The Copy buttons depend on a Cargo feature, and nothing else notices.
-//!
-//! `egui-winit`'s `clipboard` feature gates the whole body of
-//! `Clipboard::set_text`. Turned off, it compiles to an empty function:
-//! `handle_platform_output` hands it the text, it returns, and the system
-//! clipboard is never touched. No error, no log line, no failing test —
-//! the Console's Copy button simply does nothing, which is how it shipped.
-//!
-//! Nothing in the codebase can catch that. There is no symbol to call and
-//! no result to check; the code is absent. So this reads the manifest
-//! instead, which is where the mistake would be made.
 
 use std::path::Path;
 
@@ -58,10 +48,9 @@ fn the_wayland_clipboard_backend_is_linked() {
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output();
 
-    // A sandbox with no registry cannot answer, and that is not this test
-    // failing. But "the package is not there" *is* — and cargo reports
-    // both by failing, so the two have to be told apart. Treating the
-    // first as the second is how a guard turns into decoration.
+    // A sandbox with no registry cannot answer, and that is not this test failing. But "the package
+    // is not there" *is* — and cargo reports both by failing, so the two have to be told apart.
+    // Treating the first as the second is how a guard turns into decoration.
     let Ok(output) = output else {
         eprintln!("skipped: cargo tree could not be run");
         return;

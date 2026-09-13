@@ -14,13 +14,8 @@ use crate::undo::{
 
 use super::EditorAction;
 
-/// Resolves a portable [`ComponentId`] to the local `TypeId` the undo
-/// commands and reflection registry operate on.
-///
-/// Returns `None` when this binary has no Rust type for the component —
-/// e.g. the standalone hub asked to mutate a project's own component.
-/// The action is dropped rather than misapplied; in the remote design
-/// the project's server process handles it instead.
+/// Resolves a portable [`ComponentId`] to the local `TypeId` the undo commands and reflection
+/// registry operate on.
 fn resolve_component(resources: &Resources, component: ComponentId) -> Option<TypeId> {
     let name = resources.get::<ComponentNames>()?.name(component)?;
     // No warning when this misses: a plugin-declared component has no

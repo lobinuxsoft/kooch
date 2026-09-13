@@ -48,14 +48,6 @@ pub(super) fn handle_import_assets(
 }
 
 /// Rewrites a texture's `[import]` table and queues the re-upload.
-///
-/// Three steps, and the third is the one that is easy to leave out: the
-/// sidecar is written, the loaded `Image` is dropped so the next read
-/// comes from disk, and the GPU pool is told to forget the texture. A
-/// mip chain is levels allocated when the texture is created and no API
-/// adds one afterwards — without the eviction the file would be correct,
-/// the asset would be correct, and the picture would keep sampling the
-/// texture uploaded at startup until the project was reopened.
 pub(super) fn handle_set_image_import(
     resources: &mut Resources,
     guid: Guid,
@@ -105,23 +97,6 @@ pub(super) fn handle_set_image_import(
 }
 
 /// Applies a Material asset edit.
-///
-/// Two speeds, because a slider produces one of these per frame:
-///
-/// - **Not committed** — overwrite the local `Assets<Material>` and stop.
-///   The viewport follows the drag and nothing touches the disk.
-/// - **Committed** — write the `.ron`, then let [`asset_saved`] refresh
-///   from it and tell the project.
-///
-/// The live update used to be unconditional, and the write with it. That
-/// worked in this window and nowhere else: the project runs in its own
-/// process with its own `Assets<Material>` and nothing told it, so
-/// editing a material while connected changed the Inspector and left the
-/// running game rendering the old one. Committing writes first and
-/// refreshes from disk, which keeps one direction of travel — the file is
-/// the material, and both processes read it the same way.
-///
-/// [`asset_saved`]: crate::actions::handlers::asset_saved
 pub(super) fn handle_edit_material(
     resources: &mut Resources,
     guid: Guid,
@@ -136,10 +111,9 @@ pub(super) fn handle_edit_material(
         return;
     };
 
-    // Before the edit, and on the preview too: the preview is the first
-    // frame of a drag, so recording only on commit would snapshot the
-    // value the drag already reached. The merge key is what keeps the
-    // rest of the drag from filing sixty more.
+    // Before the edit, and on the preview too: the preview is the first frame of a drag, so
+    // recording only on commit would snapshot the value the drag already reached. The merge key is
+    // what keeps the rest of the drag from filing sixty more.
     crate::history::documents::record(
         resources,
         &crate::history::Document::Asset(guid),
@@ -156,10 +130,6 @@ pub(super) fn handle_edit_material(
 }
 
 /// Puts a material into the world *and* onto disk.
-///
-/// The write is what an undo has to reach: a committed edit wrote the
-/// file, so restoring only the in-memory copy would leave the value the
-/// user undid sitting in the asset both processes read.
 pub(crate) fn write_material(resources: &mut Resources, guid: Guid, material: &Material) {
     let Some(path) = resources
         .get::<AssetDatabase>()
@@ -209,21 +179,6 @@ fn preview_material(resources: &mut Resources, guid: Guid, material: &Material) 
 }
 
 /// Writes one field of any reflected asset (#744).
-///
-/// The generic counterpart to [`handle_edit_material`], and the same
-/// two-speed shape:
-///
-/// - **Live** — set the field on the in-memory asset. The viewport
-///   follows the drag and nothing touches the disk.
-/// - **Committed** — write the file, then let [`asset_saved`] refresh
-///   from it and tell the running project.
-///
-/// Committing writes the file *first* and refreshes from it, keeping one
-/// direction of travel: the file is the asset, and both processes read
-/// it the same way. Skipping that is how editing a material used to
-/// change the Inspector and leave the running game rendering the old one.
-///
-/// [`asset_saved`]: crate::actions::handlers::asset_saved
 pub(super) fn handle_edit_asset_field(
     resources: &mut Resources,
     guid: Guid,
@@ -268,9 +223,6 @@ pub(super) fn handle_edit_asset_field(
 }
 
 /// Serialises a reflected asset to its file and refreshes from it.
-///
-/// Shared with the undo path, which has to persist for the same reason
-/// the commit does — the file is the asset.
 pub(crate) fn persist_asset(
     resources: &mut Resources,
     guid: Guid,
@@ -281,13 +233,7 @@ pub(crate) fn persist_asset(
         tracing::error!(guid = %guid, "failed to serialise the asset; not persisted");
         return;
     };
-    // 🔴 A write that changes nothing is not a write. The Inspector
-    // reports an edit every frame for some widgets even with the pointer
-    // up, and each one landed here: a file write on the project disk —
-    // NTFS over FUSE — plus a synchronous round trip telling the project
-    // to re-read it, sixty times a second, with the same bytes every
-    // time. Comparing against what is already there is a page-cache read
-    // and settles it for every widget at once, whichever one misreports.
+    // 🔴 A write that changes nothing is not a write.
     if !needs_write(path, &text) {
         return;
     }
@@ -299,9 +245,6 @@ pub(crate) fn persist_asset(
 }
 
 /// Whether `text` differs from what `path` already holds.
-///
-/// A missing or unreadable file needs the write: the caller's job is to
-/// make the file say `text`, and "cannot tell" is not "already right".
 pub(crate) fn needs_write(path: &std::path::Path, text: &str) -> bool {
     !std::fs::read_to_string(path).is_ok_and(|on_disk| on_disk == text)
 }

@@ -1,12 +1,4 @@
 //! Inspector warnings for physics configurations Rapier cannot honour.
-//!
-//! The project's rule is to implement what Rapier offers and **warn** for
-//! what it does not, rather than building around the solver. A warning is
-//! only useful where the author is looking, though, and that is the
-//! Inspector — not the log.
-//!
-//! Godot does the same thing on the node; these are the two cases #612
-//! turned up.
 
 use kooch_ecs::entity::Entity;
 
@@ -79,9 +71,6 @@ impl PhysicsWarning {
 }
 
 /// Which warnings apply to `entity`.
-///
-/// Reads the display snapshot rather than the ECS: the Inspector runs
-/// inside the egui pass, where `Resources` is already borrowed.
 pub(super) fn warnings_for(entity: Entity, entities: &[EntityDisplayInfo]) -> Vec<PhysicsWarning> {
     let Some(info) = entities.iter().find(|e| e.entity == entity) else {
         return Vec::new();
@@ -103,10 +92,6 @@ pub(super) fn warnings_for(entity: Entity, entities: &[EntityDisplayInfo]) -> Ve
 }
 
 /// The joint mistakes an author cannot see from the panel.
-///
-/// Both are configurations the solver accepts and then quietly ignores,
-/// which is the worst kind: the joint is built, nothing errors, and the
-/// behaviour is simply absent.
 fn joint_warnings(info: &EntityDisplayInfo) -> Vec<PhysicsWarning> {
     let Some(fields) = info
         .components
@@ -163,10 +148,6 @@ fn has_collider(info: &EntityDisplayInfo) -> bool {
 }
 
 /// Whether the entity carries a `PhysicsBody` whose kind is dynamic.
-///
-/// Static and kinematic bodies are deliberately not warned about: they
-/// are author-driven anyway, so "the solver ignores your parent" is not
-/// news about them.
 fn is_dynamic_body(info: &EntityDisplayInfo) -> bool {
     use kooch_ecs::reflect::ReflectValue;
 
@@ -185,10 +166,6 @@ fn is_dynamic_body(info: &EntityDisplayInfo) -> bool {
 }
 
 /// Walks up the parent chain looking for another `PhysicsBody`.
-///
-/// Bounded by the number of entities: a cycle in the hierarchy would
-/// otherwise hang the UI thread, and the Inspector is the wrong place to
-/// discover one.
 fn has_body_ancestor(info: &EntityDisplayInfo, entities: &[EntityDisplayInfo]) -> bool {
     let mut current = info.parent;
     for _ in 0..entities.len() {
@@ -207,9 +184,6 @@ fn has_body_ancestor(info: &EntityDisplayInfo, entities: &[EntityDisplayInfo]) -
 }
 
 /// Whether the entity's world matrix carries shear.
-///
-/// Uses the same detector and epsilon the Transform readout already uses
-/// for #214, so the two cannot disagree about the same matrix.
 fn is_sheared(info: &EntityDisplayInfo) -> bool {
     use kooch_ecs::reflect::ReflectValue;
 

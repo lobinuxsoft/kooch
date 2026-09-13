@@ -1,9 +1,5 @@
-//! File-system asset operations behind the Asset Browser context menu:
-//! create folder / material, rename, duplicate, delete, reveal.
-//!
-//! Each mutates the project's `assets/` tree on disk and, where needed,
-//! drops stale [`AssetDatabase`] bindings and forces a re-scan so the
-//! browser + pickers reflect the change next frame. None are undoable.
+//! File-system asset operations behind the Asset Browser context menu: create folder / material,
+//! rename, duplicate, delete, reveal.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -58,11 +54,9 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
             }
         }
         EditorAction::RegisterScripts => {
-            // A click is a question, and all three outcomes used to look
-            // identical from the other side of it: nothing happened.
-            // `Unchanged` is both the common answer and the confusing
-            // one — most edits are to a body or a field, and this file
-            // names neither.
+            // A click is a question, and all three outcomes used to look identical from the other
+            // side of it: nothing happened. `Unchanged` is both the common answer and the confusing
+            // one — most edits are to a body or a field, and this file names neither.
             if super::codegen::register_scripts(resources) == super::codegen::SyncOutcome::Unchanged
             {
                 tracing::info!(
@@ -162,10 +156,9 @@ fn create_file(resources: &mut Resources, folder: &Path, name: &str, kind: NewFi
             return;
         }
         NewFileKind::RenderSettings => {
-            // Through the same save-and-register path a material takes,
-            // not a bare write: `apply_render_settings_system` finds this
-            // by *type*, so a file with no `.meta` is a file the renderer
-            // never reads — authored, saved, and inert (#759).
+            // Through the same save-and-register path a material takes, not a bare write:
+            // `apply_render_settings_system` finds this by *type*, so a file with no `.meta` is a
+            // file the renderer never reads — authored, saved, and inert (#759).
             let file = unique_target(
                 folder,
                 OsStr::new(&format!(
@@ -266,21 +259,7 @@ fn to_snake_case(name: &str) -> String {
     out.trim_matches('_').to_owned()
 }
 
-/// Opens `file` in an external IDE, with the crate root that owns it as
-/// the workspace folder.
-///
-/// Tried in order: the command configured in Settings, `$KOOCH_IDE`,
-/// `codium` / `code` on the PATH, and finally **whatever the desktop
-/// says opens a source file** — which is the one that works on a system
-/// where the IDE is installed by Flatpak, Homebrew or an AppImage and is
-/// therefore not on our PATH at all.
-///
-/// # Why `xdg-open` is no longer the fallback
-///
-/// It was, and it is worse than failing: `xdg-open <file>` opens the file
-/// with **no workspace**, and `xdg-open <folder>` opens the **file
-/// manager**, since that is a directory's default handler. Both look like
-/// success, which is exactly why the missing workspace went unnoticed.
+/// Opens `file` in an external IDE, with the crate root that owns it as the workspace folder.
 fn open_in_ide(resources: &Resources, file: &Path) {
     let root = workspace_for(resources, file);
     let root = root.as_deref().unwrap_or_else(|| {
@@ -320,12 +299,8 @@ fn open_in_ide(resources: &Resources, file: &Path) {
     }
 }
 
-/// The crate root a file belongs to: the project's, or the engine's for
-/// something under the read-only engine assets.
-///
-/// **The project root, not its `assets/` folder** — a workspace without
-/// `Cargo.toml` or `src/` is not the project, and opening one is the bug
-/// this function exists to prevent.
+/// The crate root a file belongs to: the project's, or the engine's for something under the
+/// read-only engine assets.
 fn workspace_for(resources: &Resources, file: &Path) -> Option<PathBuf> {
     let state = resources.get::<crate::project_state::ProjectState>()?;
     if let Some(project) = state.active_project.as_ref()
@@ -407,18 +382,6 @@ fn create_material(resources: &mut Resources, folder: &Path, name: &str) {
 }
 
 /// Writes a new asset file and gives it an identity.
-///
-/// The two steps after the write are what separate an asset from a file
-/// that merely exists, and both are easy to leave out — which is how a
-/// capability gets built and stays unreachable, the pattern #744 was:
-///
-/// - **Re-scan**, so eager import writes a `.meta` with a fresh GUID and
-///   registers it as a typed asset. The whole tree, because this is the
-///   one case with no `.meta` to register *from* — the scan is what
-///   creates it.
-/// - **Tell the project**, because the re-scan is this process only, and
-///   an asset the running project never heard of cannot be assigned to
-///   anything over there.
 fn write_asset(resources: &mut Resources, file: &Path, text: &str, what: &str) {
     match std::fs::write(file, text) {
         Ok(()) => asset_created(resources, file, what),
@@ -429,26 +392,6 @@ fn write_asset(resources: &mut Resources, file: &Path, text: &str, what: &str) {
 }
 
 /// The half of [`write_asset`] that is not the write.
-///
-/// 🔴 A file on disk with a `.meta` beside it is **not yet an asset**.
-/// The pickers read `AssetDatabase`, which lives in memory, and the full
-/// scan only re-runs when the active project changes — so a file created
-/// mid-session is authored, saved, and invisible to everything that
-/// would reference it until the project is reopened.
-///
-/// Two calls, because there are two places that do not know:
-/// [`force_rescan`] so the eager import sees it next frame, and
-/// `asset_saved` so **the running project** is told. A kind that writes
-/// itself by some other route — an input action goes through
-/// `save_action` — still has to come back through here. Same lesson as
-/// #759, which fixed render settings and left the path beside it.
-/// Writes a fresh cube into the project's blocks folder and answers
-/// with where it went and what it is called.
-///
-/// One implementation for both spawn paths. The local command and the
-/// remote one were about to write this twice, and two places that decide
-/// what a new block *is* drift — the same failure the vendor's
-/// `#[cfg(test)]` predicate had.
 pub(crate) fn new_block_asset(resources: &mut Resources) -> Option<(PathBuf, kooch_core::Guid)> {
     let folder = resources
         .get::<crate::project_state::ProjectState>()?
@@ -489,11 +432,6 @@ pub(crate) fn new_block_asset(resources: &mut Resources) -> Option<(PathBuf, koo
 }
 
 /// Writes an asset, mints its identity, and answers with the GUID.
-///
-/// 🔴 The identity is minted here rather than left to the rescan. A
-/// rescan is a request the caller cannot wait for, and a component that
-/// must point at this file needs the GUID on this frame — without it a
-/// spawned block carries an empty `source` and draws nothing.
 pub(crate) fn write_asset_guid(
     resources: &mut Resources,
     file: &Path,
@@ -509,15 +447,7 @@ pub(crate) fn write_asset_guid(
         return None;
     }
 
-    // 🔴 Typed here, not left to whatever loads it first. An untyped
-    // entry looks exactly like a mesh nobody has read yet, so the
-    // collider walk fed a `.block` to the glTF parser — and a failed
-    // collider mesh is cached FOREVER, so the body never collided even
-    // once the real entry arrived a frame later.
-    //
-    // It also makes a new asset appear in the inspector's picker, which
-    // filters the catalogue by type: a freshly created material was
-    // invisible in the dropdown until something loaded it.
+    // 🔴 Typed here, not left to whatever loads it first.
     let mut meta = AssetMeta::new();
     meta.asset_type = Some(asset_type.to_owned());
     if let Err(e) = write_meta(file, &meta) {
@@ -604,17 +534,9 @@ fn duplicate_asset(resources: &mut Resources, path: &Path) {
     let dest = unique_target(parent, name);
     match std::fs::copy(path, &dest) {
         Ok(_) => {
-            // The `.meta` is never copied — two files sharing a guid are
-            // two files claiming one identity — but the copy still needs
-            // one of its own, and it is given here rather than left to the
-            // rescan's eager import.
-            //
-            // Eager import decides by extension from a fixed list, so it
-            // knew nothing about `.prefab`: a duplicated prefab got no
-            // identity at all, which made it unselectable, uninspectable
-            // and unspawnable. Every asset type added later would have
-            // broken the same way. Deriving the copy's type from the
-            // source's own sidecar works for all of them.
+            // The `.meta` is never copied — two files sharing a guid are two files claiming one
+            // identity — but the copy still needs one of its own, and it is given here rather than
+            // left to the rescan's eager import.
             duplicate_identity(resources, path, &dest);
             tracing::info!(from = %path.display(), to = %dest.display(), "asset duplicated");
             force_rescan(resources);
@@ -624,10 +546,6 @@ fn duplicate_asset(resources: &mut Resources, path: &Path) {
 }
 
 /// Gives a freshly copied asset an identity of its own.
-///
-/// A fresh guid carrying the *source's* type: the copy is a distinct asset
-/// holding the same kind of thing. Does nothing when the source had no
-/// identity — a plain file copied in the browser is still a plain file.
 fn duplicate_identity(resources: &mut Resources, source: &Path, dest: &Path) {
     let Ok(source_meta) = kooch_core::asset_meta::read_meta(source) else {
         return;
@@ -745,10 +663,6 @@ fn meta_path(p: &Path) -> PathBuf {
 }
 
 /// Starts a build from the preset `guid` names (#758).
-///
-/// Reads the preset from the asset server rather than taking a copy: it
-/// is edited in the Inspector, which writes the file, and building with
-/// a stale copy is a build whose settings are not the ones on screen.
 fn start_build(resources: &mut Resources, guid: kooch_core::Guid) {
     if resources
         .get::<crate::build::BuildState>()
@@ -843,11 +757,6 @@ mod delete_tests;
 mod settings_tests;
 
 /// Reads an `.inputmap` and hands it to the panel.
-///
-/// Read here rather than through the asset server on purpose: the panel
-/// edits this copy, and a draw that re-read the loaded asset every frame
-/// would make the edited map and the loaded map two values of the same
-/// thing. Saving writes back and the server picks it up on reload.
 fn open_input_map(resources: &mut Resources, path: &std::path::Path) {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
@@ -921,18 +830,8 @@ fn processors_of(
 }
 
 /// Applies one edit to the open map, in memory.
-///
-/// Nothing here writes a file. That is `SaveInputMap`, and the split is
-/// the same one a prefab has: the document is the thing being edited, the
-/// file is where it is eventually put.
 
-/// What an input-map edit is called in the history, and whether it
-/// continues the one before it.
-///
-/// `None` for the ones that are not edits at all — selecting a binding,
-/// arming a rebind, saving. A history entry for "I clicked on it" is a
-/// Ctrl+Z that appears to do nothing, which is worse than one that
-/// misses.
+/// What an input-map edit is called in the history, and whether it continues the one before it.
 fn undoable_step(
     edit: &crate::panels::input_map::InputMapAction,
 ) -> Option<(&'static str, Option<crate::history::MergeKey>)> {
@@ -1188,10 +1087,9 @@ fn save_input_map(resources: &mut Resources) {
     else {
         return;
     };
-    // A standalone action is unwrapped from the map of one it was opened
-    // into, so the file keeps the shape it had.
-    // Through `save_action` rather than a bare write: a file that reached
-    // disk without its `.meta` is one nothing can reference.
+    // A standalone action is unwrapped from the map of one it was opened into, so the file keeps
+    // the shape it had. Through `save_action` rather than a bare write: a file that reached disk
+    // without its `.meta` is one nothing can reference.
     let written = match map.actions.first() {
         Some(action) => kooch_input::actions::save_action(action, &path),
         None => Err("the action was deleted; nothing to save".to_owned()),

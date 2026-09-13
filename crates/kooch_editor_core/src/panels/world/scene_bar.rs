@@ -1,8 +1,4 @@
 //! The row of open scenes above the entity list.
-//!
-//! With one scene the World panel was the scene. With several, the panel
-//! has to say which scenes are open, which one new entities land in, and
-//! offer a way to close one without closing the others.
 
 use crate::actions::EditorAction;
 use crate::icons;

@@ -1,8 +1,4 @@
 //! Gimbal-safe Quat editing with Local/World display toggle (#202, #205).
-//!
-//! Caches Euler state per `(entity, type_id, field, mode)` so crossing
-//! ±90° on any axis does not snap the others — the failure mode of a
-//! naive per-frame Quat→Euler→Quat round-trip.
 
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -17,30 +13,14 @@ use crate::state::{EulerCacheKey, RotationDisplayMode};
 
 use super::{EULER_CACHE_EPS, RotationContext};
 
-/// Identifies the specific `Transform.rotation` field, which is the
-/// only Quat with a meaningful world-space interpretation.
-///
-/// `None` for a component this binary has no Rust type for — one
-/// declared by a project's plugin. Such a component is never
-/// `Transform`, which is the engine's own, so the answer is no.
+/// Identifies the specific `Transform.rotation` field, which is the only Quat with a meaningful
+/// world-space interpretation.
 pub(super) fn is_transform_rotation(type_id: Option<TypeId>, field_name: &str) -> bool {
     type_id == Some(TypeId::of::<Transform>()) && field_name == "rotation"
 }
 
-/// Renders a Quat field as XYZ Euler degrees with a persistent cache so
-/// crossing ±90° on any axis does not snap the other two (gimbal lock
-/// from a per-frame Quat→Euler→Quat round-trip). See #202.
-///
-/// When `context.mode == World` and `context.self_global` is available,
-/// the field is displayed in world space; user edits are converted back
-/// to local space via `parent_global.inverse()` before being returned.
-/// The returned `ReflectValue::Quat` is always the local rotation so the
-/// Transform storage never changes representation. See #205.
-///
-/// The cache is refreshed only when the displayed quaternion (local or
-/// world depending on mode) differs from the reconstruction of the
-/// cached Euler within [`EULER_CACHE_EPS`], i.e. when the rotation was
-/// modified externally (scripting, undo, physics).
+/// Renders a Quat field as XYZ Euler degrees with a persistent cache so crossing ±90° on any axis
+/// does not snap the other two (gimbal lock from a per-frame Quat→Euler→Quat round-trip). See #202.
 pub(super) fn draw_quat_with_cache(
     ui: &mut egui::Ui,
     entity: Entity,

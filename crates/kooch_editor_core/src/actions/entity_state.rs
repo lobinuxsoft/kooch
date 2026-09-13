@@ -1,31 +1,4 @@
 //! An entity, reduced to what it takes to build it again.
-//!
-//! # Why one type for three features
-//!
-//! Copy/paste, undoing a despawn and duplicating an entity are the same
-//! question asked three times: *what is on this entity, and how do I put
-//! it somewhere else?* Each of them used to answer it on its own —
-//! `DuplicateCommand` walks the archetype, `remote_edit::duplicate` walks
-//! the registry, and undo captured per-command snapshots — which is three
-//! places to forget the same component.
-//!
-//! So the answer lives here, and it is a plain value: component names and
-//! reflected field values, nothing borrowed from the world it came from.
-//! That is what lets a clipboard survive the entity being deleted and an
-//! undo step survive the mirror refreshing.
-//!
-//! # What is deliberately not in it
-//!
-//! **Children.** A capture is one entity. Copying a subtree is a
-//! different feature with its own questions (what happens to references
-//! *between* the copied entities), and pretending to support it by
-//! capturing children without remapping those references would produce
-//! copies pointing at the originals.
-//!
-//! **The editor's own components.** [`MirrorEntity`] marks a row as
-//! belonging to the mirror and [`Parent`] is carried separately — sending
-//! either to the project is at best a warning in its log and at worst a
-//! second entity claiming to be a mirror of the first.
 
 use kooch_core::resource::Resources;
 use kooch_ecs::component::ComponentRegistry;
@@ -35,10 +8,6 @@ use kooch_ecs::hierarchy::Parent;
 use kooch_ecs::reflect::ReflectValue;
 
 /// One component and every reflected field value it holds.
-///
-/// Keyed by type **name**, not `TypeId`: the project on the other end of
-/// the wire keys components by name, and a component this editor binary
-/// has no Rust type for has no `TypeId` here at all.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ComponentState {
     pub name: String,
@@ -55,22 +24,12 @@ pub(crate) struct EntityState {
 }
 
 /// The type names never captured, whatever the entity is carrying.
-///
-/// `Parent` because hierarchy travels as its own field on both sides of
-/// the wire, and `MirrorEntity` because it is this editor's bookkeeping —
-/// see the module docs.
 fn is_editor_only(type_name: &str) -> bool {
     type_name == std::any::type_name::<Parent>()
         || type_name == std::any::type_name::<crate::remote_mirror::MirrorEntity>()
 }
 
 /// Reads `entity` out of the world into a value.
-///
-/// Covers both halves of what an entity can be carrying: components this
-/// binary has a type for, read through the reflect registry, and
-/// components only the project knows, parked in [`DynamicComponents`].
-/// A capture that skipped the parked ones would silently drop exactly the
-/// components the user wrote themselves.
 pub(crate) fn capture(resources: &Resources, entity: Entity) -> EntityState {
     let mut components = Vec::new();
 
@@ -108,9 +67,6 @@ pub(crate) fn capture(resources: &Resources, entity: Entity) -> EntityState {
 }
 
 /// Reads one named component off `entity`, or `None` if it has none.
-///
-/// The narrow half of [`capture`], for an undo step that only has to put
-/// a single component back.
 pub(crate) fn capture_component(
     resources: &Resources,
     entity: Entity,
@@ -148,49 +104,15 @@ fn name_of(components: &[ComponentState]) -> Option<String> {
 }
 
 /// Names a copy after its source: `Player` → `Player Copy`.
-///
-/// One suffix, not a counter. Three copies called `Player Copy` are
-/// honest about being three copies; `Player Copy 3` claims an ordering
-/// the editor does not maintain once any of them is deleted.
 pub(crate) fn copy_name(state: &EntityState) -> Option<String> {
     state.name.as_ref().map(|name| format!("{name} Copy"))
 }
 
 /// The same entity, named as a copy — in its `Name` component too.
-///
-/// 🔴 The name is written **twice** when a copy is built: once as the
-/// argument to `spawn`, and once again as the captured `Name.value`
-/// among the component values. They have to agree, and the captured one
-/// lands second. Restoring the source's components verbatim after
-/// spawning "Player Copy" writes "Player" back over it — which is what
-/// remote Duplicate did until this existed, and why the copies were
-/// indistinguishable from their sources in the World panel.
 pub(crate) fn as_copy(state: &EntityState) -> EntityState {
     let name = copy_name(state);
     let mut copy = state.clone();
     // 🔴 A copy carries what the entity IS, never who it BELONGS TO.
-    //
-    // `capture` takes every reflected component, and three of them are
-    // what `propagate::is_bookkeeping` calls bookkeeping — they name
-    // something outside the entity, and none of those names survives
-    // being duplicated:
-    //
-    // - `SceneMember` named the scene the copy came OUT of, and
-    //   restoring it wrote that scene over wherever the paste had just
-    //   placed the entity. Which file a copy lands in is the paste's
-    //   decision, and only the paste's.
-    // - `PrefabMember` named the ORIGINAL's instance root. 🔴 That one
-    //   did not merely misplace the copy, it deleted it: `capture` in
-    //   `scene/document.rs` skips any entity whose `PrefabMember.root`
-    //   is not itself, because the rest of an instance comes back from
-    //   the prefab. So the copy was visible in the editor, saved without
-    //   complaint, and was absent from the file — which is exactly what
-    //   was reported.
-    // - `PrefabInstance` is a REFERENCE to a prefab, and a reference is
-    //   not something a clipboard can duplicate: a second instance has
-    //   to be instantiated, not copied field by field. The copy keeps
-    //   the values it had and loses the link. ⚠️ "Paste as a new
-    //   instance" is a real feature and this is not it.
     for bookkeeping in [
         std::any::type_name::<kooch_ecs::SceneMember>(),
         std::any::type_name::<kooch_ecs::prefab_instance::PrefabMember>(),
@@ -216,9 +138,6 @@ pub(crate) fn as_copy(state: &EntityState) -> EntityState {
 }
 
 /// Writes `state` onto an entity that already exists, in the local world.
-///
-/// Used by paste and by undoing a despawn: both allocate the entity
-/// through the ECS and then need its components put back.
 pub(crate) fn restore_local(resources: &mut Resources, entity: Entity, state: &EntityState) {
     for component in &state.components {
         let Some(type_id) = resources

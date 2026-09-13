@@ -1,30 +1,6 @@
 //! Phosphor icon constants for the editor UI.
-//!
-//! Uses unicode codepoints from the Phosphor Icons Regular font,
-//! embedded via `include_bytes!` in the font setup.
-//!
-//! # Check a codepoint before adding one
-//!
-//! Eleven of the first thirty here were wrong: `FOLDER_OPEN` drew a flag,
-//! `COPY` a compass rose, `GEAR` a funnel, `ROCKET` a registered-trademark
-//! sign. Nothing catches it — a wrong codepoint is a valid glyph, so it
-//! renders something, and only a person looking at it notices.
-//!
-//! The authoritative mapping is `egui-phosphor`'s
-//! [`src/variants/regular.rs`](https://github.com/amPerl/egui-phosphor).
-//! Copy the value from there rather than reading it off an icon gallery,
-//! which numbers them differently.
-//!
-//! `PLAY` and `STOP` are deliberately *not* Phosphor: they are the Unicode
-//! geometric shapes, drawn by the text font.
 
 /// Game-controller — an input map asset, and anything about bindings.
-///
-/// Verified twice, the way the note above asks: the codepoint comes from
-/// `egui-phosphor`'s `regular.rs`, and the glyph was confirmed present in
-/// the `Phosphor.ttf` this crate embeds — a valid codepoint missing from
-/// *this* font renders as a blank box, which is the same failure as a
-/// wrong one.
 pub const GAME_CONTROLLER: &str = "\u{e26e}";
 
 /// Arrows-out-cardinal — translate / move tool (4 cardinal arrows from center).
@@ -72,10 +48,9 @@ pub const X: &str = "\u{e4f6}";
 /// Puzzle piece icon — used for components.
 pub const PUZZLE_PIECE: &str = "\u{e596}";
 
-/// A prefab. Deliberately *not* `PUZZLE_PIECE`, which already means
-/// "component" in the Components panel, the Archetypes panel and every
-/// Inspector section header — a prefab is not one of those, and a shared
-/// glyph is a claim that it is.
+/// A prefab. Deliberately *not* `PUZZLE_PIECE`, which already means "component" in the Components
+/// panel, the Archetypes panel and every Inspector section header — a prefab is not one of those,
+/// and a shared glyph is a claim that it is.
 pub const PACKAGE: &str = "\u{e390}";
 
 /// Magnifying glass icon — used for search.

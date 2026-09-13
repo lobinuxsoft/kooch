@@ -1,40 +1,4 @@
 //! Where the editor's CPU frame actually goes (#691).
-//!
-//! # Why measuring by subtraction stopped working
-//!
-//! The frame had exactly two numbers: `cpu_frame_ms` for the whole
-//! render system, and the remote section for the snapshot pull. That was
-//! enough while one suspect dominated. It stopped being enough the
-//! moment the obvious costs were paid off: the pull went from 32 ms to
-//! 4.7 ms, the mirror to 0.00 ms, and what remained was ten milliseconds
-//! attributable to nothing in particular.
-//!
-//! Subtracting the known costs from the total and reasoning about the
-//! remainder produced three hypotheses and one hit. The cull sizing was
-//! arithmetically damning and worth 0.076 ms. Vsync was refuted outright.
-//! Only the panels were real, and they were found by having the user
-//! collapse them — an experiment, not an inference.
-//!
-//! # What this measures, and what it deliberately does not
-//!
-//! Six stages of the render system, plus the gizmo batch that runs
-//! before it. Each is a wall-clock span around work that already existed
-//! as a distinct step, so nothing was restructured to be measurable.
-//!
-//! [`FrameBreakdown::residual_ms`] is the point of the whole module: the
-//! part of `cpu_frame_ms` that the six stages do not account for. A
-//! residual near zero means the stages describe the frame and the
-//! largest one is the thing to fix. A large residual means the split is
-//! in the wrong place and the next stage boundary belongs inside
-//! whatever the six are missing. Either answer is worth having; only the
-//! second is invisible without this.
-//!
-//! **The gizmo batch is not part of the residual arithmetic.** It runs
-//! in `Stage::PreRender`, outside the span `cpu_frame_ms` covers, and
-//! folding it in would make the stages sum past their own total. It is
-//! reported beside them because it is per-frame editor cost that scales
-//! with the scene and was previously invisible — as is the snapshot
-//! pull, for the same reason and in its own section.
 
 use std::time::Instant;
 
@@ -48,13 +12,6 @@ pub(crate) fn ms_since(start: Instant) -> f32 {
 }
 
 /// What the gather stage spends its time on.
-///
-/// Gather turned out to be the cost that does not care what is on
-/// screen: collapsing every panel took the UI pass from 9.2 ms to 3.1 ms
-/// and left gather at 5.6 ms both times. It builds the same snapshot of
-/// the world whether or not anything is looking at it, so it is the one
-/// number that a person cannot avoid by closing a panel — which is why
-/// it gets a split of its own rather than a guess.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct GatherStages {
     /// Resolving every registered component name to a stable id, before
@@ -81,11 +38,6 @@ impl GatherStages {
 }
 
 /// The render system's own stages, in the order the frame runs them.
-///
-/// Filled in as a local across the render function and handed over once,
-/// rather than written field by field into the Resource: a per-stage
-/// `resources.get_mut` would be six map lookups on the timing path,
-/// measuring itself.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct RenderStages {
     /// Building the frame's read-only view of the world for the UI:
@@ -137,12 +89,6 @@ impl RenderStages {
 
 impl FrameBreakdown {
     /// The part of `cpu_frame_ms` no stage claims.
-    ///
-    /// Clamped at zero rather than allowed to go negative. The two spans
-    /// are read from separate `Instant`s and the stages are strictly
-    /// inside the total, so a negative value can only be float noise on
-    /// a sub-microsecond difference — and a HUD reading `-0.00 ms`
-    /// invites a hunt for a bug that is not there.
     pub fn residual_ms(&self, cpu_frame_ms: f32) -> f32 {
         (cpu_frame_ms - self.render.total_ms()).max(0.0)
     }

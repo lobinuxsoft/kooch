@@ -1,16 +1,4 @@
 //! The remote sink of the dual-sink edit dispatch.
-//!
-//! In local mode an [`EditorAction`] mutates the editor's own ECS. In
-//! remote mode the ECS is a mirror of a project that owns the real state,
-//! so the same action is routed over the wire instead — the mirror then
-//! catches up on the next refresh. This is the *only* place the two modes
-//! diverge: panels, DTOs and the viewport are identical either way.
-//!
-//! Translation resolves the editor's local identities back to the
-//! project's: a mirrored [`Entity`] to its remote
-//! [`EntityId`](kooch_remote::protocol::EntityId) via the mirror, and a
-//! [`ComponentId`] to its type name via the interner — the same name the
-//! server keys components by.
 
 use kooch_core::resource::Resources;
 use kooch_ecs::component::ComponentNames;
@@ -19,21 +7,9 @@ use crate::actions::EditorAction;
 use crate::remote_session::RemoteState;
 
 /// Attempts to handle `action` over the wire.
-///
-/// Returns `true` when the action is an ECS edit that was routed to the
-/// server (or dropped because it cannot be, e.g. an unresolved entity) —
-/// the caller must not also apply it locally. Returns `false` for actions
-/// that remote mode does not own (project management, editor settings),
-/// which the caller handles through the normal local path.
-///
-/// The caller guarantees a connected session before calling.
 pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool {
-    // Undo/Redo travel as inverses of the edits already sent — the local
-    // command stack describes the mirror, which the next refresh
-    // overwrites. See [`crate::actions::remote_undo`].
-    //
-    // Only the scene's, though: a prefab and an input map are documents
-    // this side owns, and their histories never touch the wire.
+    // Undo/Redo travel as inverses of the edits already sent — the local command stack describes
+    // the mirror, which the next refresh overwrites. See [`crate::actions::remote_undo`].
     if let EditorAction::Undo(document) | EditorAction::Redo(document) = action
         && document.is_world()
     {
@@ -41,26 +17,16 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
         return true;
     }
 
-    // Spawning a mesh is the one edit that cannot be reduced to a single
-    // protocol call: the editor has to load the asset to learn its GUID,
-    // and loading mutates the `AssetServer`, which `send` cannot do from
-    // an immutable world. Handled here, before `classify`.
+    // Spawning a mesh is the one edit that cannot be reduced to a single protocol call: the editor
+    // has to load the asset to learn its GUID, and loading mutates the `AssetServer`, which `send`
+    // cannot do from an immutable world. Handled here, before `classify`.
     if let EditorAction::SpawnMesh { path, name } = action {
         spawn_mesh(resources, path, name);
         return true;
     }
 
-    // And a block, for the same reason twice over: it writes an asset
-    // and resolves its GUID, both of which need a mutable world.
-    //
-    // 🔴 Without this it fell through `classify` to `apply_non_ecs_action`,
-    // which does not know it either — so the menu entry did nothing at
-    // all, in silence. Exactly the failure `spawn_mesh` above was
-    // written to fix.
-    // A block's shape is an asset both processes read, not a wire edit:
-    // the drag already applied it and wrote the file. All that is left
-    // is putting it in the history, which in remote mode is the only
-    // one Ctrl+Z reaches.
+    // And a block, for the same reason twice over: it writes an asset and resolves its GUID, both
+    // of which need a mutable world.
     if let EditorAction::BlockEdit { source, before, .. } = action {
         crate::actions::remote_undo::record_step(
             resources,
@@ -82,10 +48,9 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     // the project, toggling power profiles all act on the editor, not the
     // remote world.
     let Some(edit) = classify(action, resources) else {
-        // 🔴 A world edit that reaches here is a bug, not a local
-        // action. It falls through to `apply_non_ecs_action`, which
-        // does not know it either, and the gesture does nothing at all
-        // — which is how SpawnBlock and BlockEdit each shipped broken.
+        // 🔴 A world edit that reaches here is a bug, not a local action. It falls through to
+        // `apply_non_ecs_action`, which does not know it either, and the gesture does nothing at
+        // all — which is how SpawnBlock and BlockEdit each shipped broken.
         if action.is_a_world_edit() {
             tracing::error!(
                 target: "kooch_editor_core::remote_edit",
@@ -102,10 +67,9 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     };
     let playing = matches!(edit, Edit::SetPlaying(playing) if playing);
     let is_play_toggle = matches!(edit, Edit::SetPlaying(_));
-    // 🔴 The panel draws the CACHED list, and the cache is only pulled
-    // once per connection. Without a re-read the project switches the
-    // system off and the checkbox springs straight back, which reads as
-    // the toggle not working at all (#982).
+    // 🔴 The panel draws the CACHED list, and the cache is only pulled once per connection. Without
+    // a re-read the project switches the system off and the checkbox springs straight back, which
+    // reads as the toggle not working at all (#982).
     let is_system_toggle = matches!(edit, Edit::SetSystemEnabled { .. });
 
     // Recomputed before the send, which consumes `edit`. Deterministic —
@@ -154,10 +118,9 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     resources.insert(state);
 
     if sent {
-        // Selecting what was just made — but only for a creation the user
-        // asked for. Undoing a despawn also creates, and stealing the
-        // selection there would fight whatever they had selected when
-        // they pressed Ctrl+Z.
+        // Selecting what was just made — but only for a creation the user asked for. Undoing a
+        // despawn also creates, and stealing the selection there would fight whatever they had
+        // selected when they pressed Ctrl+Z.
         if selects_what_it_makes(action)
             && !created.is_empty()
             && let Some(state) = resources.get_mut::<RemoteState>()
@@ -170,10 +133,9 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
         pull_soon(resources);
     }
 
-    // The project wrote the file; this side has to be told it exists, or
-    // the Inspector cannot find what the user just made until the editor
-    // restarts. Done here rather than in `send`, which holds the world
-    // immutably so it can borrow the session alongside it.
+    // The project wrote the file; this side has to be told it exists, or the Inspector cannot find
+    // what the user just made until the editor restarts. Done here rather than in `send`, which
+    // holds the world immutably so it can borrow the session alongside it.
     if let Some(path) = saved_prefab.filter(|_| sent) {
         crate::actions::handlers::asset_saved(resources, &path);
         // The project wrote bytes this side's cache has never seen.
@@ -183,10 +145,6 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
 }
 
 /// Whether the entities this action creates should end up selected.
-///
-/// Every editor does this and the reason is the same in all of them: you
-/// duplicate a thing in order to move it, and a copy that lands
-/// unselected in a list of six hundred is a copy you have to go and find.
 fn selects_what_it_makes(action: &EditorAction) -> bool {
     matches!(
         action,
@@ -208,17 +166,6 @@ pub(super) fn pull_soon(resources: &mut Resources) {
 }
 
 /// Builds a mesh-bound entity on the project's side.
-///
-/// The editor resolves the asset locally — both processes see the same
-/// filesystem, so the GUID it gets is the GUID the project will resolve —
-/// then assembles the entity out of calls the protocol already has:
-/// `spawn` for the entity and its `Name`, `add_component` for `Transform`
-/// and `MeshRenderer`, and `set_field` to write the mesh reference.
-/// `MeshRenderer.mesh` is reflected as a typed `AssetRef`, so it goes over
-/// the wire like any other field.
-///
-/// Failures are logged with the path that caused them. The bug this
-/// replaces was the silence: a menu entry that did nothing at all.
 fn spawn_mesh(resources: &mut Resources, path: &std::path::Path, name: &str) {
     const TARGET: &str = "kooch_editor_core::remote_edit::spawn_mesh";
 
@@ -280,15 +227,6 @@ fn spawn_mesh(resources: &mut Resources, path: &std::path::Path, name: &str) {
 }
 
 /// Builds a block on the project's side.
-///
-/// Same shape as [`spawn_mesh`]: the editor writes the asset and
-/// resolves its GUID locally — both processes read the same filesystem —
-/// then assembles the entity out of calls the protocol already has.
-///
-/// Only `Block.source` is written. `MeshRenderer.mesh` and
-/// `Collider.mesh` are `sync_blocks`'s answer on the project's side, and
-/// sending them from here would be a second place deciding what a block
-/// draws.
 fn spawn_block(resources: &mut Resources) {
     const TARGET: &str = "kooch_editor_core::remote_edit::spawn_block";
     use crate::undo::prototype_material;
@@ -323,10 +261,9 @@ fn spawn_block(resources: &mut Resources) {
     let types = std::iter::once(transform_ty).chain(block_components.map(|(_, name)| name));
     for ty in types {
         if let Err(e) = client.add_component(entity, ty) {
-            // 🔴 The likeliest cause is a project built without the
-            // `blockmesh` feature: the component exists in this editor
-            // and not over there, and "add_component failed" on its own
-            // sends you looking at the wire.
+            // 🔴 The likeliest cause is a project built without the `blockmesh` feature: the
+            // component exists in this editor and not over there, and "add_component failed" on its
+            // own sends you looking at the wire.
             tracing::warn!(
                 target: TARGET, component = ty, error = %e,
                 "add_component failed — a project that does not enable \
@@ -427,13 +364,7 @@ fn resolve_mesh_asset(
     guid.map(|guid| (guid, std::any::type_name::<MeshletMesh>().to_owned()))
 }
 
-/// Copies an entity on the project side, out of what the mirror already
-/// knows.
-///
-/// The editor holds every reflected component and its current values for
-/// the mirrored source, so no protocol method is needed: it decomposes
-/// into spawn + `add_component` + `set_field`, which is what [`build`]
-/// does for every entity the editor creates remotely.
+/// Copies an entity on the project side, out of what the mirror already knows.
 fn duplicate(
     entity: kooch_ecs::entity::Entity,
     client: &kooch_remote::RemoteClient,
@@ -459,14 +390,6 @@ fn duplicate(
 }
 
 /// Builds one entity on the project out of a captured state.
-///
-/// The one place an entity is created remotely from values: duplicate,
-/// paste and undoing a despawn all land here, so a component that fails
-/// to travel fails the same way for all three.
-///
-/// Fields that fail to apply are logged and skipped rather than aborting.
-/// A half-copied entity the user can see and fix beats an entity that was
-/// never created because one opaque field would not travel.
 pub(super) fn build(
     client: &kooch_remote::RemoteClient,
     mirror: &crate::remote_mirror::RemoteMirror,
@@ -532,32 +455,13 @@ enum Edit<'a> {
     },
     Despawn(kooch_ecs::entity::Entity),
     /// Reparent, or unparent with `None`.
-    ///
-    /// Its own protocol method rather than a `SetField` on `Parent`, whose
-    /// `reflect_set` is read-only: an entity handle is not a reflectable
-    /// value. Before this the action fell through to the local path, mutated
-    /// the *mirror*, and silently reverted on the next refresh (#595).
     Reparent {
         entity: kooch_ecs::entity::Entity,
         new_parent: Option<kooch_ecs::entity::Entity>,
     },
     /// Copy an entity on the project side.
-    ///
-    /// No protocol method needed: the editor already holds every component's
-    /// values for the source entity in the mirror, so this decomposes into
-    /// spawn + add_component + set_field. Before this it was claimed by
-    /// nobody at all and dropped in silence (#595).
     Duplicate(kooch_ecs::entity::Entity),
     /// Build entities out of the editor's clipboard.
-    ///
-    /// Carries the values rather than the source entities: what was
-    /// copied is a value, and it still pastes after the entity it came
-    /// from has been deleted — or after the project it came from was
-    /// restarted.
-    ///
-    /// Owned, unlike its neighbours: the values come from the clipboard
-    /// resource, and the borrow of `Resources` that reads it ends before
-    /// the send that needs the session out of the same `Resources`.
     Paste {
         /// Where the copies land. Named for the same reason
         /// [`Edit::Spawn`]'s is: a paste into a scene somebody
@@ -574,10 +478,6 @@ enum Edit<'a> {
     Spawn {
         name: Option<String>,
         /// Component types the action asked for beyond the base ones.
-        ///
-        /// Dropped before this existed, which is why a light spawned
-        /// remotely arrived with a `Name` and nothing else — no
-        /// `Transform`, no light component.
         extra: Vec<std::any::TypeId>,
         /// Where it goes — the scene, and what it hangs off.
         into: crate::actions::SpawnTarget,
@@ -598,11 +498,6 @@ enum Edit<'a> {
     /// Throw away one scene's edits on the project and read it back.
     RevertOneScene(kooch_core::Guid),
     /// Write one named scene of the project's open set to a file.
-    ///
-    /// `as_new` asks for a path; otherwise the scene is written back to
-    /// where the project says it came from. The path is resolved from the
-    /// mirrored open set, which is the project's own answer — the editor
-    /// has no scenes of its own while one is connected.
     SaveOneScene {
         scene: kooch_core::Guid,
         as_new: bool,
@@ -644,20 +539,11 @@ enum Edit<'a> {
         enabled: bool,
     },
     /// Push a saved prefab's values into every instance the project holds.
-    ///
-    /// Carries the writes rather than a guid: working out *which* fields
-    /// go where needs the mirror, the prefab's cached document and each
-    /// instance's override set, all of which live on this side.
     PropagatePrefab(
         Vec<crate::actions::prefab_propagate::PlannedWrite>,
         Vec<crate::actions::prefab_propagate::PlannedRemoval>,
     ),
     /// Drop an instance's overrides and put the prefab's values back.
-    ///
-    /// The new override set travels with the writes: applying one without
-    /// the other leaves the instance either showing the user's numbers
-    /// while claiming to be clean, or clean until the next propagation
-    /// puts them back.
     RevertToPrefab {
         root: kooch_ecs::entity::Entity,
         overrides: String,
@@ -665,13 +551,7 @@ enum Edit<'a> {
     },
 }
 
-/// Reduces an action to an [`Edit`], or `None` if remote mode does not
-/// own it.
-///
-/// Takes the world because a couple of actions cannot be reduced without
-/// reading it: a viewport drop names a place on screen, and the camera that
-/// turns it into a world position lives here. `dispatch` is past that point
-/// — it has the wire and nothing else.
+/// Reduces an action to an [`Edit`], or `None` if remote mode does not own it.
 fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<'a>> {
     match action {
         EditorAction::SetField {
@@ -734,10 +614,9 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
         // project's own scene file.
         EditorAction::SaveScene => Some(Edit::SaveScene),
         EditorAction::OpenScene { path } => Some(Edit::LoadScene { path: path.clone() }),
-        // Same reason as scene I/O: the world being captured is the
-        // project's, and the mirror is a view of it. Writing the mirror
-        // would save a partly-parked copy — every component this editor
-        // binary has no type for is a name and a bag of fields here.
+        // Same reason as scene I/O: the world being captured is the project's, and the mirror is a
+        // view of it. Writing the mirror would save a partly-parked copy — every component this
+        // editor binary has no type for is a name and a bag of fields here.
         EditorAction::SavePrefab { entity, dest, .. } => Some(Edit::SavePrefab {
             entity: *entity,
             dest: dest.clone(),
@@ -778,13 +657,7 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
         }),
         EditorAction::Play => Some(Edit::SetPlaying(true)),
         EditorAction::Stop => Some(Edit::SetPlaying(false)),
-        // The wire protocol has one scene, so none of these have anything
-        // to send. Additive loading is refused outright while mirroring
-        // rather than handled here: entities loaded on this side do not
-        // exist in the project, so they are invisible in the game and
-        // every edit to them is dropped for not being in the mirror.
-        // Listed rather than left to the catch-all so the audit in #596
-        // keeps meaning something.
+        // The wire protocol has one scene, so none of these have anything to send.
         EditorAction::SaveOpenScene(scene) => Some(Edit::SaveOneScene {
             scene: *scene,
             as_new: false,
@@ -806,12 +679,7 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
         EditorAction::OpenSceneAdditive { path } => {
             Some(Edit::LoadSceneAdditive { path: path.clone() })
         }
-        // 🔴 Both act on the OPEN SET, which is the project's. The panel
-        // lists the project's scenes — `gather_scenes` prefers
-        // `remote_scenes` — so acting on the editor's own manager asked
-        // it to close a scene it had never heard of, and it said so:
-        // *"asked to close scene …, which is not open"*. The gesture and
-        // its target were in different processes.
+        // 🔴 Both act on the OPEN SET, which is the project's.
         EditorAction::CloseScene(scene) => Some(Edit::CloseScene(*scene)),
         EditorAction::SetActiveScene(scene) => Some(Edit::SetActiveScene(*scene)),
         // Not something remote mode owns (project mgmt, settings, …).
@@ -820,10 +688,6 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
 }
 
 /// The file the caller named, or one asked for now.
-///
-/// The dialog runs on the EDITOR side even for a project-side load: the
-/// project has no window to put a file picker in, and the path it is
-/// handed is a path on the shared filesystem either way.
 fn named_or_asked(
     resources: &Resources,
     path: Option<std::path::PathBuf>,
@@ -835,11 +699,6 @@ fn named_or_asked(
 }
 
 /// Sends a propagation plan to the project as ordinary protocol calls.
-///
-/// Not as `EditorAction`s: an edit on an instance is recorded as an
-/// override, so routing propagation through the action layer would pin
-/// every field it touched and the instance would stop following the
-/// prefab. A protocol call has no such side effect.
 fn push_writes(
     client: &kooch_remote::RemoteClient,
     writes: &[crate::actions::prefab_propagate::PlannedWrite],
@@ -872,16 +731,7 @@ fn push_writes(
     Ok(())
 }
 
-/// Translates a value's entity references from mirror handles to the ones
-/// the project uses.
-///
-/// The mirror's entities are the editor's own; the project has its own
-/// handles for the same entities, and every method that names an entity
-/// goes through `remote_of` for exactly this reason. A reference *inside*
-/// a value needs it too — sent as-is, the picker would point a joint at
-/// whatever the project happens to have at that index.
-///
-/// Anything else passes through untouched.
+/// Translates a value's entity references from mirror handles to the ones the project uses.
 pub(super) fn to_remote_value(
     value: kooch_ecs::reflect::ReflectValue,
     mirror: &crate::remote_mirror::RemoteMirror,
@@ -905,11 +755,6 @@ pub(super) fn to_remote_value(
 }
 
 /// Sends one [`Edit`] to the project's server.
-///
-/// `created` collects the ids of entities the edit brought into being.
-/// An out-parameter rather than a return value because only four of the
-/// twenty arms create anything, and threading `Vec::new()` through the
-/// other sixteen would say nothing sixteen times.
 fn send(
     edit: Edit<'_>,
     session: &crate::remote_session::RemoteSession,
@@ -970,13 +815,9 @@ fn send(
         }
         Edit::MoveToScene { entity, scene } => {
             let id = remote(entity)?;
-            // Already there for anything that belongs to a scene, and an
-            // error here is not a failure: the set below is the edit,
-            // and it needs the component to exist however it got there.
-            // 🔴 The FULL path. `resolve_component` looks the name up in
-            // the registry, which keys by `std::any::type_name` — a short
-            // name comes back `UnknownComponent` and the whole edit is
-            // dropped.
+            // Already there for anything that belongs to a scene, and an error here is not a
+            // failure: the set below is the edit, and it needs the component to exist however it
+            // got there. 🔴 The FULL path.
             let member = std::any::type_name::<kooch_ecs::SceneMember>();
             if let Err(e) = client.add_component(id, member) {
                 tracing::debug!(
@@ -1000,9 +841,8 @@ fn send(
             let scene = match into {
                 crate::actions::SpawnTarget::Active => None,
                 crate::actions::SpawnTarget::Scene(id) => Some(id),
-                // Not reachable from the panel — nothing offers "paste
-                // as a child of" — and the mirror has no scene lookup to
-                // answer it with. Treated as the active scene rather
+                // Not reachable from the panel — nothing offers "paste as a child of" — and the
+                // mirror has no scene lookup to answer it with. Treated as the active scene rather
                 // than invented.
                 crate::actions::SpawnTarget::ChildOf(_) => None,
                 crate::actions::SpawnTarget::NewScene => Some(client.new_scene().map_err(map_err)?),
@@ -1022,21 +862,16 @@ fn send(
             extra,
             into,
         } => {
-            // Asked for, not inferred. A menu opened on a scene or an
-            // entity that is not the active one means *there*, and a
-            // spawn that lands in the active scene instead shows up as a
+            // Asked for, not inferred. A menu opened on a scene or an entity that is not the active
+            // one means *there*, and a spawn that lands in the active scene instead shows up as a
             // row in the wrong group with nothing saying why.
-            //
-            // A parent already names the scene, so only one of the two is
-            // ever sent.
             let (scene, parent) = match into {
                 crate::actions::SpawnTarget::Active => (None, None),
                 crate::actions::SpawnTarget::Scene(id) => (Some(id), None),
                 crate::actions::SpawnTarget::ChildOf(local) => (None, remote(local).ok()),
-                // Two calls, not a flag on the spawn. The project owns
-                // the open set, so creating a scene is its answer to
-                // give — and the id it hands back is what the entity is
-                // then authored into.
+                // Two calls, not a flag on the spawn. The project owns the open set, so creating a
+                // scene is its answer to give — and the id it hands back is what the entity is then
+                // authored into.
                 crate::actions::SpawnTarget::NewScene => {
                     (Some(client.new_scene().map_err(map_err)?), None)
                 }
@@ -1045,10 +880,9 @@ fn send(
                 .spawn(entity_name.as_deref(), scene, parent)
                 .map_err(map_err)?;
             created.push(entity);
-            // Remote `spawn` creates only `Name`, while the local path adds
-            // Name + Transform + extras. Everything past the name has to be
-            // asked for explicitly, or the entity arrives inert — a light
-            // with no Transform has no position and no direction.
+            // Remote `spawn` creates only `Name`, while the local path adds Name + Transform +
+            // extras. Everything past the name has to be asked for explicitly, or the entity
+            // arrives inert — a light with no Transform has no position and no direction.
             let transform = std::any::type_name::<kooch_ecs::transform::Transform>();
             client.add_component(entity, transform).map_err(map_err)?;
 
@@ -1159,11 +993,9 @@ fn send(
         Edit::SetSystemEnabled { name, nth, enabled } => client
             .set_system_enabled(&name, nth, enabled)
             .map_err(map_err),
-        // Sent as ordinary field writes, but *not* as `EditorAction`s: an
-        // edit on an instance is recorded as an override, so routing
-        // propagation through the action layer would pin every field it
-        // touched and the instance would stop following the prefab. The
-        // protocol call has no such side effect.
+        // Sent as ordinary field writes, but *not* as `EditorAction`s: an edit on an instance is
+        // recorded as an override, so routing propagation through the action layer would pin every
+        // field it touched and the instance would stop following the prefab.
         Edit::RevertToPrefab {
             root,
             overrides,
@@ -1216,10 +1048,9 @@ fn send(
                 .instantiate_prefab(&path.to_string_lossy())
                 .map_err(map_err)?;
             created.push(root);
-            // Placing the instance is a `SetField` on the root that just
-            // came back, rather than a parameter on the call. It reuses the
-            // path that already knows how to write a reflected field, and
-            // keeps spatial types out of the wire format.
+            // Placing the instance is a `SetField` on the root that just came back, rather than a
+            // parameter on the call. It reuses the path that already knows how to write a reflected
+            // field, and keeps spatial types out of the wire format.
             let Some(at) = at else {
                 return Ok(());
             };

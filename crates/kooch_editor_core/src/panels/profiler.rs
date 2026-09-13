@@ -1,25 +1,4 @@
 //! The profiler panel (#785) — where the frame actually goes.
-//!
-//! # Two sources, and only one of them is the point
-//!
-//! [`local`] reads **this process**: the editor, on this machine, plugged
-//! in. It is what shipped first and it answers questions about the
-//! editor.
-//!
-//! [`remote`] reads a **game** over TCP, which is the measurement the
-//! whole graphics roadmap is waiting on — 72 FPS at 10 W on the OneXFly
-//! is 13.9 ms per frame, and nothing measured on a desktop says anything
-//! about it. The game opens the socket (`kooch::profiler`); this end
-//! connects to it.
-//!
-//! # Why this file is thin
-//!
-//! Because the profiler was **adopted, not written**. The flamegraph, the
-//! timeline, the frame history, the scope statistics and the play/pause
-//! control all come from `puffin_egui`, and the transport is
-//! `puffin_http`. What is here is the source selector, a capture that
-//! survives the session, and saying something useful when the feature is
-//! off.
 
 use egui::Ui;
 
@@ -104,18 +83,13 @@ pub(crate) static SNAPSHOT_COUNTDOWN: std::sync::atomic::AtomicU32 =
 /// which just moves the same silent cliff somewhere less obvious.
 #[cfg(feature = "profiling")]
 pub fn keep_all_frames(view: &mut puffin::FrameView) {
-    // 🔴 Re-applied rather than set once: `puffin_http::Client` assigns
-    // `*frame_view.lock() = FrameView::default()` on every (re)connect,
-    // which puts the 1000 back. A capture that survived a dropped
-    // connection would otherwise lose its names at the reconnect.
+    // 🔴 Re-applied rather than set once: `puffin_http::Client` assigns `*frame_view.lock() =
+    // FrameView::default()` on every (re)connect, which puts the 1000 back. A capture that survived
+    // a dropped connection would otherwise lose its names at the reconnect.
     view.set_max_recent(usize::MAX);
 }
 
 /// Which process the panel is showing.
-///
-/// A plain atomic rather than editor state: the panel is drawn from a
-/// free function with no state of its own, and the two sources each own
-/// theirs already.
 #[cfg(feature = "profiling")]
 static SHOW_REMOTE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 

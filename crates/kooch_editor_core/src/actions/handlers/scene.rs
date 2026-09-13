@@ -21,10 +21,6 @@ pub(super) fn handle_save_scene(resources: &mut Resources) {
 }
 
 /// Saves one named open scene.
-///
-/// `as_new` asks for a path; otherwise the scene is written back to the
-/// file it came from, and only a scene that has never been saved falls
-/// through to the dialog — there is nothing else it could be written to.
 pub(super) fn handle_save_open_scene(
     resources: &mut Resources,
     id: kooch_core::Guid,
@@ -45,9 +41,6 @@ pub(super) fn handle_save_open_scene(
 }
 
 /// Throws away one scene's edits and reads it back from its file.
-///
-/// The undo stack is cleared: its entries name entities that were just
-/// despawned, so undoing one would resurrect nothing.
 pub(super) fn handle_revert_open_scene(
     resources: &mut Resources,
     id: kooch_core::Guid,
@@ -63,10 +56,6 @@ pub(super) fn handle_revert_open_scene(
 }
 
 /// Replaces the world with a scene.
-///
-/// `named` is the file when the caller already had one — an Assets panel
-/// row is a path, and raising a dialog for the file just clicked is the
-/// same fault as having no way to name it.
 pub(super) fn handle_open_scene(
     resources: &mut Resources,
     undo_stack: &mut UndoStack,
@@ -89,18 +78,12 @@ pub(super) fn handle_open_scene(
 }
 
 /// Opens a scene beside the ones already loaded.
-///
-/// The undo stack is left alone: nothing that was already open changed,
-/// so the history of edits to those scenes is still valid. A replacing
-/// load clears it because the entities those edits name are gone.
 pub(super) fn handle_open_scene_additive(
     resources: &mut Resources,
     named: Option<std::path::PathBuf>,
 ) {
     // 🔴 The connected case is no longer refused here — it is ROUTED, to
-    // `Method::LoadSceneAdditive`, so the scene arrives where the world
-    // lives. Reaching this function while connected now means the route
-    // was not taken, which is a bug rather than a mode.
+    // `Method::LoadSceneAdditive`, so the scene arrives where the world lives.
     if resources
         .get::<crate::remote_session::RemoteState>()
         .is_some_and(|state| state.is_connected())
@@ -126,9 +109,6 @@ pub(super) fn handle_open_scene_additive(
 }
 
 /// Closes one scene, despawning only its entities.
-///
-/// The undo stack is cleared: entries naming entities that just went away
-/// would resurrect nothing on undo.
 pub(super) fn handle_close_scene(resources: &mut Resources, id: kooch_core::Guid) {
     if close_scene(resources, id) {
         tracing::info!("scene {id} closed");

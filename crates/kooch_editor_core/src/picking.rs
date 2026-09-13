@@ -1,24 +1,4 @@
 //! Selecting an entity by clicking it in the viewport.
-//!
-//! # What is picked, and what is not
-//!
-//! Anything with a **visible** `MeshRenderer` — the same `visible` flag the
-//! render pass reads, so what you can click is exactly what you can see. An
-//! entity hidden in the Inspector is not silently clickable.
-//!
-//! Lights, cameras and empties are not picked. They have no geometry; what
-//! they draw is a gizmo icon, and clicking those means intersecting the
-//! icons rather than the world. That is a different feature and pretending
-//! otherwise would make an empty un-clickable *and* look broken.
-//!
-//! # Bounding boxes, not triangles
-//!
-//! The test is against each mesh's local-space AABB. Triangle-exact picking
-//! means walking meshlets on the CPU or a GPU id-buffer readback — the
-//! second is the right answer eventually and the first is the wrong one
-//! always. An AABB picks the wrong entity only where two boxes overlap and
-//! the nearer one is mostly empty, and it costs one slab test per visible
-//! entity.
 
 use std::collections::HashMap;
 
@@ -33,10 +13,6 @@ use kooch_ecs::query::Query;
 use kooch_render::meshlet::MeshletMesh;
 
 /// The entity under `cursor`, or `None` if the click hit nothing.
-///
-/// `cursor` and `viewport_size` are in egui's coordinates — pixels from the
-/// viewport's top-left, Y down — the same as
-/// [`crate::viewport_pick`] takes.
 pub(crate) fn entity_at(
     resources: &mut Resources,
     cursor: Vec2,
@@ -100,14 +76,9 @@ fn visible_meshes(resources: &Resources) -> Vec<(Entity, Guid, Mat4)> {
 }
 
 /// The mesh's local-space bounds.
-///
-/// `load_by_guid` rather than a read-only lookup: a mesh being drawn is
-/// already loaded, so this is a cache hit, and a mesh that is *not* loaded
-/// has no bounds to test against anyway.
 fn local_bounds(resources: &mut Resources, mesh: Guid) -> Option<Aabb> {
-    // 🔴 A generated mesh first, because it has no file to load. A
-    // block's renderer names the GUID of the `.block` it was generated
-    // from, and asking the server for that produced nothing — so a
+    // 🔴 A generated mesh first, because it has no file to load. A block's renderer names the GUID
+    // of the `.block` it was generated from, and asking the server for that produced nothing — so a
     // block was never a candidate and could not be clicked at all.
     if let Some(bounds) = block_bounds(resources, mesh) {
         return Some(bounds);
@@ -127,10 +98,6 @@ fn local_bounds(resources: &mut Resources, mesh: Guid) -> Option<Aabb> {
 }
 
 /// The world-space box `entity`'s visual mesh occupies.
-///
-/// What F frames onto. Answers `None` for an entity with no mesh — a
-/// spawn point has a place but no size, and inventing one would frame
-/// a box nobody can see.
 pub(crate) fn entity_bounds(resources: &mut Resources, entity: Entity) -> Option<(Vec3, Vec3)> {
     let (mesh, to_world) = visible_meshes(resources)
         .into_iter()
@@ -169,10 +136,6 @@ pub(crate) fn entity_bounds(resources: &mut Resources, entity: Entity) -> Option
 }
 
 /// The bounds of a block's authoring mesh, if this GUID names one.
-///
-/// Read from the mesh the editor already holds rather than from disk:
-/// the file lags a drag by one release, and a block picked against its
-/// saved shape is one you cannot click where you can see it.
 fn block_bounds(resources: &Resources, mesh: Guid) -> Option<Aabb> {
     let handle = resources
         .get::<kooch_blockmesh::BuiltBlocks>()?
@@ -193,19 +156,6 @@ fn block_bounds(resources: &Resources, mesh: Guid) -> Option<Aabb> {
 }
 
 /// Distance along the world ray at which it enters `aabb`, or `None`.
-///
-/// # Why the ray goes to the box rather than the box to the world
-///
-/// A rotated entity's world-space AABB is the box *around* its rotated box,
-/// which is bigger — sometimes much bigger — and would let a click in empty
-/// space next to a diagonal object select it. Transforming the ray into the
-/// entity's local space tests the real box, and handles non-uniform scale
-/// for free.
-///
-/// The local direction is deliberately **not** re-normalised: leaving it
-/// scaled keeps `t` measured in the world's units, so distances from
-/// differently-scaled entities are comparable and the nearest one really is
-/// the nearest.
 fn hit_distance(aabb: Aabb, to_world: Mat4, origin: Vec3, direction: Vec3) -> Option<f32> {
     let to_local = to_world.inverse();
     if !to_local.is_finite() {

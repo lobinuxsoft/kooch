@@ -1,19 +1,10 @@
 //! Where gizmo visibility survives a restart.
-//!
-//! A per-user file rather than project state: which gizmos you keep on is
-//! a preference about how you work, not something a scene should carry to
-//! whoever opens it next.
 
 use kooch_core::resource::Resources;
 
 use super::GizmoVisibility;
 
 /// Where the choices live, next to the dock layout.
-///
-/// Its own file rather than a field inside `editor_layout.ron`: the layout
-/// is rewritten whenever a panel moves, and folding an unrelated setting
-/// into it would mean a dragged splitter and a hidden gizmo group sharing
-/// one write path — and one corrupt file losing both.
 pub(crate) fn visibility_path() -> Option<std::path::PathBuf> {
     dirs::config_dir().map(|dir| dir.join("kooch").join("gizmo_visibility.ron"))
 }

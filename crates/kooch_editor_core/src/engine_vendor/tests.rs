@@ -47,9 +47,8 @@ fn the_vendored_engine_has_what_a_build_needs() {
     assert!(dest.join("crates/kooch_core/src/lib.rs").is_file());
 }
 
-/// 🔴 The check that keeps this feature from being a disaster. A
-/// missed `target/` turns "8 MB of source" into a copy of somebody's
-/// entire build directory, and the nested one is the easy miss: a
+/// 🔴 The check that keeps this feature from being a disaster. A missed `target/` turns "8 MB of
+/// source" into a copy of somebody's entire build directory, and the nested one is the easy miss: a
 /// workspace member built standalone has its own.
 #[test]
 fn no_build_output_is_copied_at_any_depth() {
@@ -67,27 +66,7 @@ fn no_build_output_is_copied_at_any_depth() {
     );
 }
 
-/// The engine's mesh library goes across whole — primitives AND the
-/// sample models.
-///
-/// # 🔴 This test used to assert the opposite
-///
-/// It was `assets_are_the_ones_a_game_runs_on_not_the_demos`, on the
-/// argument that `assets/meshes/` is 5.3 MB and 5.2 MB of it is samples
-/// (`dragon.glb` at 4 MB, `suzanne.glb` at 1.3), so a project should get
-/// only what it runs on.
-///
-/// That is the wrong trade here, and the reason is how a scene names a
-/// mesh: by ASSET ID, not by path. A scene built in this editor against
-/// the engine's dragon has no way to say so other than that id, so
-/// dropping the model from the vendored copy does not make the project
-/// smaller — it makes the mesh unresolvable in a build, silently, the
-/// way an unregistered component silently loses its entities. The
-/// engine's library is part of what this editor offers, and it has to be
-/// there for any project made with it.
-///
-/// Five megabytes is the price of that, and it is the cheap side of the
-/// trade.
+/// The engine's mesh library goes across whole — primitives AND the sample models.
 #[test]
 fn the_mesh_library_ships_whole() {
     let dir = tmp("assets");
@@ -176,10 +155,9 @@ fn an_existing_engine_is_left_alone() {
     assert!(marker.is_file(), "an existing engine was re-copied");
 }
 
-/// 🔴 An interrupted copy must not leave a half-written directory
-/// that passes for an engine — it would never be repaired, and
-/// every project on the machine would fail to build against it.
-/// The copy stages beside the destination and is renamed in.
+/// 🔴 An interrupted copy must not leave a half-written directory that passes for an engine — it
+/// would never be repaired, and every project on the machine would fail to build against it. The
+/// copy stages beside the destination and is renamed in.
 #[test]
 fn a_materialised_engine_appears_atomically() {
     let dir = tmp("atomic");
@@ -215,13 +193,8 @@ fn without_source_there_is_no_engine_and_no_path() {
     assert_eq!(path, None);
 }
 
-/// 🔴 The rule this whole arrangement serves: **no test code leaves
-/// the engine repo.** Vendors the real engine tree — not a fixture —
-/// and asserts nothing test-shaped survives.
-///
-/// A fixture would only prove the filter matches what the fixture
-/// contains. The engine has 237 test modules and a `tests/` directory
-/// per crate; this reads those.
+/// 🔴 The rule this whole arrangement serves: **no test code leaves the engine repo.** Vendors the
+/// real engine tree — not a fixture — and asserts nothing test-shaped survives.
 #[test]
 fn the_vendored_engine_contains_no_test_code() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -254,10 +227,9 @@ fn the_vendored_engine_contains_no_test_code() {
                 continue;
             }
             let text = fs::read_to_string(&path).unwrap_or_default();
-            // `mod tests;` is a declaration, and `#[cfg(test)]` removes
-            // it before Rust resolves the module — it compiles to
-            // nothing. A `#[test]` or an inline `mod tests {` is the
-            // real thing.
+            // `mod tests;` is a declaration, and `#[cfg(test)]` removes it before Rust resolves the
+            // module — it compiles to nothing. A `#[test]` or an inline `mod tests {` is the real
+            // thing.
             if text.contains("#[test]") || text.contains("mod tests {") {
                 offenders.push(format!("{} (contains test code)", path.display()));
             }
@@ -272,12 +244,8 @@ fn the_vendored_engine_contains_no_test_code() {
     );
 }
 
-/// 🔴 The licence is not optional and not a courtesy copy: the
-/// facade compiles it in with `include_str!`, so a materialised
-/// engine missing it fails to build. This asserts the vendor
-/// carries it by name, and `reach_tests` independently asserts that
-/// anything the source `include_str!`s is vendored — two different
-/// reasons for the same file to be there.
+/// 🔴 The licence is not optional and not a courtesy copy: the facade compiles it in with
+/// `include_str!`, so a materialised engine missing it fails to build.
 #[test]
 fn the_licence_travels_with_the_engine() {
     let dir = tmp("licence");
@@ -318,13 +286,9 @@ fn a_directory_that_is_not_the_engine_is_refused_before_writing() {
     assert!(!project.join(VENDOR_DIR).exists(), "wrote before checking");
 }
 
-/// 🔴 A test that writes into the developer's real `~/.local/share` is
-/// not a test, it is a side effect — and this one is worse than untidy:
-/// `is_engine_source` accepts what it leaves behind, so the editor
-/// reports the engine up to date and never materialises the real one.
-///
-/// Without the override, `shared_engine_dir` refuses to answer under
-/// `cfg(test)` rather than handing back a real path.
+/// 🔴 A test that writes into the developer's real `~/.local/share` is not a test, it is a side
+/// effect — and this one is worse than untidy: `is_engine_source` accepts what it leaves behind, so
+/// the editor reports the engine up to date and never materialises the real one.
 #[test]
 fn tests_cannot_reach_the_real_data_directory() {
     let _env = super::ENGINE_HOME_LOCK.lock().expect("env lock");
@@ -346,11 +310,9 @@ fn tests_cannot_reach_the_real_data_directory() {
     unsafe { std::env::remove_var("KOOCH_ENGINE_HOME") };
 }
 
-/// 🔴 An editor may only materialise the engine it ships. Asked for a
-/// version it does not have, it must NOT write its own source into a
-/// directory named after the other one — that puts an engine on disk
-/// under a name that is not its own, and everything downstream trusts
-/// the name.
+/// 🔴 An editor may only materialise the engine it ships. Asked for a version it does not have, it
+/// must NOT write its own source into a directory named after the other one — that puts an engine
+/// on disk under a name that is not its own, and everything downstream trusts the name.
 #[test]
 fn an_editor_never_materialises_a_version_it_does_not_have() {
     let _env = super::ENGINE_HOME_LOCK.lock().expect("env lock");
@@ -382,17 +344,7 @@ fn an_editor_never_materialises_a_version_it_does_not_have() {
 /// updates.
 #[test]
 fn a_version_already_on_the_machine_is_honoured() {
-    // 🔴 The same lock the two tests above take. `KOOCH_ENGINE_HOME` is
-    // process-wide, and cargo's test harness is not single-threaded: one
-    // test removing the variable while this one reads it makes
-    // `ensure_current` resolve against a directory that is not there, and
-    // the failure is `Io(NotFound)` from a line that never touches the
-    // filesystem itself. Intermittent, and it only shows up in the full
-    // suite — it passes alone and under `--test-threads=1`.
-    //
-    // Same bug as `KOOCH_PACK_KEY`, whose fix took the lock in all seven
-    // tests of its module including the ones that never set the variable.
-    // This module stopped at two of seven.
+    // 🔴 The same lock the two tests above take.
     let _env = super::ENGINE_HOME_LOCK.lock().expect("env lock");
     let dir = tmp("honour_existing");
     let (engine, home) = (dir.join("editor_src"), dir.join("home"));
@@ -411,18 +363,6 @@ fn a_version_already_on_the_machine_is_honoured() {
 }
 
 /// 🔴 Install has to move the project onto **this editor's** version.
-///
-/// `ensure_current` honours a project's own version when that engine is
-/// already on the machine (`engine_vendor.rs:314`) — deliberately, so a
-/// project pinned to an older engine keeps building. But Install asked
-/// for exactly that version, so with 0.1.0 already on disk and the
-/// editor shipping 0.2.0 the call returned `UpToDate` pointing at the
-/// *old* directory: the button installed nothing, reported nothing, and
-/// the prompt came straight back. Meanwhile it promises "Installing
-/// moves the project onto it".
-///
-/// Verified failing: ask with `project_version` and the returned path is
-/// the 0.1.0 directory that was already there.
 #[test]
 fn install_moves_the_project_to_the_editors_version() {
     let _env = super::ENGINE_HOME_LOCK.lock().expect("env lock");
@@ -461,16 +401,7 @@ fn install_moves_the_project_to_the_editors_version() {
     unsafe { std::env::remove_var("KOOCH_ENGINE_HOME") };
 }
 
-/// 🔴 Honouring a project's pin must not mean the editor's own engine
-/// is never installed. Opening a project pinned to an older version
-/// that the machine already has used to return early before
-/// materialising anything, so the version the editor actually ships
-/// existed nowhere on disk until somebody pressed **Use** in the
-/// launcher — which read as "the editor does not install the new
-/// engine".
-///
-/// Installing it and MOVING a project onto it are different questions.
-/// Only the second is the user's call.
+/// 🔴 Honouring a project's pin must not mean the editor's own engine is never installed.
 #[test]
 fn the_editors_engine_installs_anyway() {
     let _env = super::ENGINE_HOME_LOCK.lock().expect("env lock");

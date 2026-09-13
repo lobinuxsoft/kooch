@@ -68,26 +68,16 @@ fn a_selection_far_down_the_list_scrolls_into_view() {
     });
 
     let (offset, row, pitch) = offset.expect("a row 900 places down is not on screen");
-    // Centred on the row the entity actually landed on, with twenty
-    // visible, measured in the pitch `show_rows` uses — height *plus*
-    // item spacing.
-    //
-    // 🔴 The row index is read back rather than assumed to be 900. The
-    // list carries group headers and notes now, so "the 900th entity" and
-    // "the 900th row" are different numbers, and a test that hardcodes
-    // one of them is measuring the layout instead of the scrolling.
+    // Centred on the row the entity actually landed on, with twenty visible, measured in the pitch
+    // `show_rows` uses — height *plus* item spacing.
     assert!(
         (offset - (row as f32 - 9.5) * pitch).abs() < 1.0,
         "expected row {row} centred, got offset {offset} at pitch {pitch}",
     );
 }
 
-/// The half of the exchange no other test covered: every test here
-/// wrote the visible range itself, so deleting the line that records
-/// it left them all green while the list scrolled on every click.
-///
-/// Which is what happened — a refactor took the write and left the
-/// read, and the suite said nothing.
+/// The half of the exchange no other test covered: every test here wrote the visible range itself,
+/// so deleting the line that records it left them all green while the list scrolled on every click.
 #[test]
 fn the_panel_records_the_range_it_drew() {
     let mut entities: Vec<_> = (0..500).map(|i| entity_info(i, None)).collect();
@@ -121,14 +111,8 @@ fn the_panel_records_the_range_it_drew() {
     assert!(end <= 500, "the range cannot exceed the rows");
 }
 
-/// The offset has to be measured in the same unit `show_rows`
-/// divides by, or it is right at row ten and sixty rows off at row
-/// 460 — which is what shipped and what a person saw immediately.
-///
-/// Pinned against `egui`'s own arithmetic
-/// (`scroll_area.rs`: `row_height_sans_spacing + spacing.y`) rather
-/// than a number copied here, so an upstream change to it fails this
-/// instead of silently drifting the list.
+/// The offset has to be measured in the same unit `show_rows` divides by, or it is right at row ten
+/// and sixty rows off at row 460 — which is what shipped and what a person saw immediately.
 #[test]
 fn the_offset_is_in_the_unit_show_rows_reads() {
     with_ui(|ui| {
@@ -208,14 +192,6 @@ fn a_selection_inside_a_collapsed_group_is_revealed() {
 }
 
 /// A single scene still gets a root of its own.
-///
-/// 🔴 It used to be skipped, on the argument that "every row would sit
-/// under the same one". That was true right up until a second scene
-/// could be opened beside it: without a root per scene, two scenes'
-/// entities land in one column with nothing saying which is which, no
-/// place to offer closing one, and no answer to which scene a Spawn
-/// belongs to. The root is what makes additive open a thing that can
-/// exist, so it is there even when there is only one.
 #[test]
 fn a_single_scene_still_gets_a_root() {
     let id = kooch_core::Guid::new_v4();
@@ -252,10 +228,9 @@ fn entities_without_a_scene_get_their_own_group() {
     assert_eq!(listed, 10, "an orphan went missing");
 }
 
-/// The point of building the list from the open flags: a collapsed
-/// group's entities are *absent*, not skipped. Skipping them one at a
-/// time would leave the cost proportional to the whole world, which
-/// is what collapsing is supposed to avoid.
+/// The point of building the list from the open flags: a collapsed group's entities are *absent*,
+/// not skipped. Skipping them one at a time would leave the cost proportional to the whole world,
+/// which is what collapsing is supposed to avoid.
 #[test]
 fn a_collapsed_group_contributes_only_its_header() {
     let a = kooch_core::Guid::new_v4();
@@ -318,23 +293,7 @@ fn an_entity_in_no_scene_is_still_reachable() {
     );
 }
 
-/// `show_rows` names its parameter `row_height_sans_spacing` and adds
-/// `item_spacing.y` itself. A height that already includes it makes
-/// egui reserve two gaps per row while each row leaves one — four
-/// pixels of empty panel per row, growing with the panel because the
-/// number of visible rows does (#708).
-///
-/// # This restates the formula, deliberately
-///
-/// Measuring a drawn row cannot catch it: the cursor advances by the
-/// widget's size plus the spacing, so height and advance scale
-/// together and the assertion holds either way. That is exactly what
-/// the first attempt at this test did, and it passed with the bug
-/// reinstated.
-///
-/// What is being pinned is not the formula but that **nothing is
-/// added to it** — so the formula has to appear here for the addition
-/// to be visible.
+/// `show_rows` names its parameter `row_height_sans_spacing` and adds `item_spacing.y` itself.
 #[test]
 fn the_row_height_excludes_the_spacing_show_rows_adds() {
     with_ui(|ui| {
@@ -351,19 +310,9 @@ fn the_row_height_excludes_the_spacing_show_rows_adds() {
     });
 }
 
-/// The one invariant virtualization rests on. `show_rows` places every
-/// row from an index times this pitch without drawing the rows above,
-/// so a row that advances the cursor by anything else puts the whole
-/// list out of step with the scrollbar — and clicks land on a
-/// neighbour.
-///
-/// # Against the pitch, not the height
-///
-/// This compared the cursor's advance to `row_height` and passed,
-/// which is how the bug in #708 survived being tested: the advance
-/// includes `item_spacing.y`, so the test was asserting that the
-/// height *is* the pitch — and `row_height` obliged by including the
-/// spacing, leaving egui to add a second one.
+/// The one invariant virtualization rests on. `show_rows` places every row from an index times this
+/// pitch without drawing the rows above, so a row that advances the cursor by anything else puts
+/// the whole list out of step with the scrollbar — and clicks land on a neighbour.
 #[test]
 fn a_row_advances_the_cursor_by_exactly_one_pitch() {
     let entities = vec![entity_info(0, None)];
@@ -440,12 +389,6 @@ fn a_very_long_name_does_not_make_its_row_taller() {
 }
 
 /// One entity with a child, for the collapse tests.
-///
-/// ⚠️ `base` is not decoration. The open flags are persisted per ENTITY,
-/// and egui's store outlives one `build_rows`, so two rigs sharing entity
-/// ids in the same `with_ui` share their expanded state — the second
-/// reads whatever the first left behind. That is a real property of the
-/// panel and it made this file's first draft pass for the wrong reason.
 fn parent_and_child(scene: kooch_core::Guid, prefab: bool, base: u32) -> Vec<EntityDisplayInfo> {
     let mut parent = entity_info(base, Some(scene));
     let mut child = entity_info(base + 1, Some(scene));
@@ -463,14 +406,7 @@ fn entity_rows(rows: &[WorldRow]) -> usize {
         .count()
 }
 
-/// A collapsed parent's children are *absent* from the list, not skipped
-/// while drawing.
-///
-/// 🔴 That is the whole point of building the rows from the open flags.
-/// Skipping them one at a time leaves the cost proportional to the whole
-/// world, which is exactly what collapsing exists to avoid — and with 36
-/// prefab instances of five entities each, the difference is 36 rows
-/// against 180.
+/// A collapsed parent's children are *absent* from the list, not skipped while drawing.
 #[test]
 fn a_collapsed_parent_hides_its_subtree() {
     let id = kooch_core::Guid::new_v4();
@@ -492,11 +428,6 @@ fn a_collapsed_parent_hides_its_subtree() {
 }
 
 /// A prefab instance starts collapsed; anything else starts open.
-///
-/// 🔴 An instance is a unit — its members are the prefab's business, not
-/// the scene's. A hand-built hierarchy is the opposite: somebody put
-/// those children there on purpose, and starting closed would hide their
-/// own work from them.
 #[test]
 fn a_prefab_instance_starts_collapsed() {
     let id = kooch_core::Guid::new_v4();
@@ -515,13 +446,7 @@ fn a_prefab_instance_starts_collapsed() {
     assert_eq!(instance_rows, 1, "a prefab instance started open");
 }
 
-/// The default is decided for the instance's ROOT, not for every entity
-/// it owns.
-///
-/// `is_prefab_instance` is true for all five entities of an instance, so
-/// reading it alone would start the pivot inside it collapsed as well —
-/// and a user who expands the instance would find its insides still
-/// folded, one click at a time, for no stated reason.
+/// The default is decided for the instance's ROOT, not for every entity it owns.
 #[test]
 fn only_the_instances_root_starts_collapsed() {
     let id = kooch_core::Guid::new_v4();
@@ -548,14 +473,6 @@ fn only_the_instances_root_starts_collapsed() {
 }
 
 /// A selection inside a collapsed prefab instance gets a row to land on.
-///
-/// 🔴 Two things used to hide it, and both arrived with the tree. The
-/// group reveal bailed on a single scene — right while a lone scene drew
-/// no header, wrong the moment every scene got a root — and it only ever
-/// opened the group, never the collapsed parents inside it. A prefab
-/// instance starts collapsed, so duplicating one of its children put the
-/// new entity in a subtree with no rows at all: selected, and nowhere on
-/// screen (#706).
 #[test]
 fn a_reveal_opens_collapsed_ancestors() {
     let id = kooch_core::Guid::new_v4();
@@ -579,11 +496,6 @@ fn a_reveal_opens_collapsed_ancestors() {
 }
 
 /// A scene's row offers Save; the "Unsaved" pseudo-group does not.
-///
-/// The group holding entities that belong to no scene is not a file, so
-/// there is nowhere for it to be saved to — and offering it would write
-/// its entities into whichever scene happened to be active, which is the
-/// note under that header, not a menu item.
 #[test]
 fn only_a_scene_row_can_be_saved() {
     let id = kooch_core::Guid::new_v4();
@@ -597,10 +509,6 @@ fn only_a_scene_row_can_be_saved() {
 }
 
 /// The unsaved marker leads the name.
-///
-/// The entity count sits between the name and the end of the line, so a
-/// trailing marker is separated from what it describes by a number that
-/// changes — and a column of scenes is read down its left edge.
 #[test]
 fn the_dirty_marker_leads_the_name() {
     let id = kooch_core::Guid::new_v4();
@@ -619,10 +527,6 @@ fn the_dirty_marker_leads_the_name() {
 }
 
 /// Every entity row sits one level deeper than the scene above it.
-///
-/// 🔴 Drawn at its own hierarchy depth, a root entity started in the same
-/// column as its scene's header — so a scene with four roots read as five
-/// scenes, and the one thing the tree exists to say went missing.
 #[test]
 fn an_entity_is_indented_under_its_scene() {
     use super::entity_row::indent_levels;
@@ -639,10 +543,6 @@ fn an_entity_is_indented_under_its_scene() {
 }
 
 /// Dropping onto a collapsed entity opens the chain above it.
-///
-/// 🔴 Without this the dragged entity *vanishes*: the reparent works and
-/// its row lands inside a subtree that is not listed. Nothing says where
-/// it went, and the obvious reading is that the drag deleted it.
 #[test]
 fn a_drop_target_opens_up_to_its_root() {
     let id = kooch_core::Guid::new_v4();
@@ -678,10 +578,6 @@ fn a_drop_target_opens_up_to_its_root() {
 }
 
 /// A scene with no file offers no "Discard Changes".
-///
-/// There is nothing to revert *to*, and despawning its entities would
-/// delete work rather than undo it — the one thing discard must never be
-/// mistaken for.
 #[test]
 fn an_unsaved_scene_cannot_discard() {
     let id = kooch_core::Guid::new_v4();
@@ -844,11 +740,6 @@ fn no_match_says_so() {
 }
 
 /// 🔴 A range spans what is on SCREEN, not what is in the display list.
-///
-/// Filtering 2000 entities down to three and shift-picking the first and
-/// the last used to select every entity lying between them — which is
-/// the opposite of what filtering is for. Same fault under a collapsed
-/// parent, which quietly took its hidden children.
 #[test]
 fn a_shift_range_stays_inside_the_filter() {
     use super::entity_row::listed_range;

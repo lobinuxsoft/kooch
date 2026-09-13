@@ -1,21 +1,5 @@
-//! Connects to a running game's puffin server, records, and writes a
-//! `.puffin` — the editor's "Save capture" button without the editor.
-//!
-//! The panel is the only other client, and it needs a person watching
-//! for the right moment to press Save. That is fine for one capture and
-//! bad for the thing captures are actually for: an A/B needs *two*
-//! runs of the same route, and a click at the wrong moment silently
-//! makes them incomparable.
-//!
-//! Read the result with the `read_capture` example. This writes the
-//! file and does not analyse it — a scratchpad script that summed
-//! scopes without descending the tree once produced an issue built on a
-//! false premise, and the fix was to leave the reading to the tool that
-//! models parents.
-//!
-//! Run with:
-//!   cargo run -p kooch_editor_core --features profiling \
-//!     --example capture_remote -- 192.168.0.36:8585 out.puffin --seconds 30
+//! Connects to a running game's puffin server, records, and writes a `.puffin` — the editor's "Save
+//! capture" button without the editor.
 
 use std::time::{Duration, Instant};
 
@@ -33,9 +17,8 @@ fn parse_args() -> Result<Args, String> {
     let mut seconds = 30;
     let mut min_frames = 0;
     while let Some(flag) = raw.next() {
-        // 🔴 The value comes off the same iterator. Peeking at
-        // `env::args()` instead leaves it here, and the next turn of the
-        // loop reads the number as the next flag — which is exactly what
+        // 🔴 The value comes off the same iterator. Peeking at `env::args()` instead leaves it here,
+        // and the next turn of the loop reads the number as the next flag — which is exactly what
         // this did on its first run.
         let mut number = || -> Result<u64, String> {
             raw.next()

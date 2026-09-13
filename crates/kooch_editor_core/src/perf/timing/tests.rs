@@ -50,11 +50,6 @@ fn record_cpu_frame_ms_writes_elapsed() {
 }
 
 /// 🔴 The frame is the whole frame, not the render system.
-///
-/// This exists because the HUD reported 7.66 ms on a frame that took
-/// 50.9, with forty of them in `remote_sync_system` — outside the span
-/// `cpu_frame_ms` covers. Nothing was wrong with `cpu_frame_ms`; it was
-/// the only number on screen.
 #[test]
 fn the_frame_outlives_the_render_system() {
     let mut resources = Resources::new();

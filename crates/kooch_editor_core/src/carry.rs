@@ -1,29 +1,4 @@
 //! Holding the world across a restart of the project.
-//!
-//! # What is lost without it
-//!
-//! In remote mode the world belongs to the project's process. Rebuild &
-//! Run kills that process and starts a new one, which opens its main
-//! scene from disk — so everything the author had done since the last
-//! save was gone, and the scene they were looking at was replaced by
-//! whichever one the project starts with.
-//!
-//! That is a rebuild costing work, which makes the button expensive
-//! enough to avoid — and it is the button that picks up a code change.
-//!
-//! # Why through a file
-//!
-//! The wire has exactly one way to put a scene into the project:
-//! `LoadScene { path }`. There is no method that carries a document, so
-//! the live world goes to a holding file and comes back by the same road
-//! every other scene takes. Nothing new had to be added to the protocol.
-//!
-//! # 🔴 What comes back is still unsaved
-//!
-//! The restored scene is re-pointed at the file it came from and left
-//! **dirty**, because it is: it holds edits that file does not. Marking
-//! it clean would be the editor claiming the author's work was written
-//! out when a rebuild is exactly when it was not.
 
 use std::path::PathBuf;
 
@@ -66,9 +41,6 @@ fn holding() -> PathBuf {
 }
 
 /// Writes every open scene out and remembers where each belongs.
-///
-/// Call before tearing the session down. Returns how many were held —
-/// zero is the ordinary answer with nothing open, and not a failure.
 pub fn capture(resources: &mut Resources) -> usize {
     let Some(manager) = resources.get::<kooch_ecs::SceneManager>() else {
         return 0;
@@ -114,10 +86,6 @@ pub fn capture(resources: &mut Resources) -> usize {
 }
 
 /// What to do about a held world this frame.
-///
-/// Drained by `apply_actions`, which is where queued work becomes
-/// dispatched work. Returns nothing until the project answers again —
-/// loading into a process that is still compiling would go nowhere.
 pub(crate) fn resume(resources: &mut Resources) -> Vec<EditorAction> {
     let Some(carried) = resources.get::<CarriedWorld>() else {
         return Vec::new();

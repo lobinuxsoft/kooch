@@ -1,12 +1,4 @@
-//! Where a newly built entity goes: which scene it belongs to, and what
-//! it hangs off.
-//!
-//! 🔴 Shared rather than owned by [`super::spawn`], because an entity
-//! that belongs to no scene is not a spawn-only failure. It shows up
-//! under "Unsaved" and is adopted by whichever scene happened to be
-//! active at the next save — which is not what a menu opened on a
-//! different one asked for, whether the entity came from a Spawn or from
-//! a Paste.
+//! Where a newly built entity goes: which scene it belongs to, and what it hangs off.
 
 use std::any::TypeId;
 
@@ -18,15 +10,6 @@ use kooch_ecs::entity::Entity;
 use crate::actions::SpawnTarget;
 
 /// The scene a target names, creating one if that is what it asks for.
-///
-/// 🔴 Call this ONCE per gesture, not once per entity. `NewScene` makes
-/// a scene every time it is asked, so resolving it inside a loop over a
-/// clipboard of five entities produces five scenes holding one entity
-/// each — which is the shape of a paste nobody wanted.
-///
-/// [`SpawnTarget::ChildOf`] is absent on purpose: reparenting is an edit
-/// to the entity, not a lookup, so it stays with the caller that has one
-/// to reparent. Use [`scene_of`] on the parent afterwards.
 pub(super) fn resolve_scene(
     resources: &mut Resources,
     into: SpawnTarget,

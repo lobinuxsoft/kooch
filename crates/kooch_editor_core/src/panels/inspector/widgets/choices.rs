@@ -125,9 +125,6 @@ pub(super) fn draw_choice_dropdown(
 }
 
 /// Looks up the `bits` slice for a field by name.
-///
-/// Empty means "not a bitmask", the same way an empty `choices` means "not
-/// a dropdown".
 pub(crate) fn bits_for(
     field_metas: Option<&'static [FieldMeta]>,
     name: &str,
@@ -139,30 +136,6 @@ pub(crate) fn bits_for(
 }
 
 /// Renders an integer field as a compact grid of toggles.
-///
-/// A checkbox per bit stacked vertically is what this was first, and with
-/// sixteen bits across four mask fields it filled the Inspector with
-/// sixty-four rows of the word "Group". The grid is the same information in
-/// three rows: the number on the face, the full name on hover, and set or
-/// unset legible at a glance across the whole mask — which is the thing a
-/// filter is read for.
-///
-/// Unity and Unreal both use a grid for layer masks. Worth matching rather
-/// than inventing, because it is the one part of collision filtering people
-/// already know how to look at.
-///
-/// Bits outside the named set are preserved rather than cleared: a mask
-/// authored by a newer editor, or by hand, must survive a visit to this
-/// widget untouched.
-///
-/// # `field_name` is not decoration
-///
-/// egui derives a widget's id from its label. `Collider` has four mask
-/// fields sharing one set of bit names, so without a scope per field the
-/// same sixteen ids appear four times in one panel — and egui reported it,
-/// sixty-five times a run: `Widget rect ... changed id between passes`.
-/// Colliding ids do not merely warn; they send clicks to whichever widget
-/// claimed the id, which reads as the whole Inspector ignoring the mouse.
 pub(crate) fn draw_bitmask(
     ui: &mut egui::Ui,
     value: &ReflectValue,
@@ -215,12 +188,8 @@ pub(crate) fn draw_bitmask(
     (next != current).then(|| reflect_value_from_i64(value, next))?
 }
 
-/// What goes on a cell: the trailing number if the label ends in one, so
-/// "Group 12" reads as "12" and the grid stays a grid.
-///
-/// Anything else is truncated rather than dropped — a project renaming its
-/// layers should get something on the face, and the full name is on hover
-/// either way.
+/// What goes on a cell: the trailing number if the label ends in one, so "Group 12" reads as "12"
+/// and the grid stays a grid.
 fn short_label(label: &'static str) -> String {
     match label.rsplit(' ').next() {
         Some(tail) if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) => {
@@ -250,9 +219,6 @@ pub(crate) fn requires_for(field_metas: Option<&'static [FieldMeta]>, name: &str
 }
 
 /// The numeric bounds declared for one field, if any.
-///
-/// Mirrors [`choices_for`]: the metadata is per component and the
-/// widget is drawn per field, so the lookup happens where the value is.
 pub(crate) fn range_for(
     field_metas: Option<&'static [FieldMeta]>,
     name: &str,
