@@ -3,110 +3,41 @@
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 
-/// A body held above the ground by a spring instead of resting on it.
-///
-/// Attach beside a `PhysicsBody` (dynamic) and a `Collider`. The collider
-/// is the character's shape; this only describes how it is held up.
-///
-/// # Default
-///
-/// Tuned for a capsule about two metres tall floating a quarter of a
-/// metre, which is a person who can walk up a kerb without noticing.
+/// A body held above the ground by a spring instead of resting on it — beside a dynamic
+/// `PhysicsBody` and a `Collider`, which is its shape. Tuned for a two-metre capsule floating a
+/// quarter metre.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Physics")]
 pub struct CharacterController {
     /// How high the body's **origin** rides above the ground, in metres.
-    ///
-    /// The one number that decides how a character feels, and the one
-    /// nothing else in the editor draws.
-    ///
-    /// # It must clear the collider
-    ///
-    /// Measured from the origin, not from the capsule's feet, because
-    /// the controller does not know where its feet are — the collider
-    /// could be any shape, offset any way. So this has to exceed the
-    /// collider's own reach below the origin, or the spring is asking
-    /// for a height the geometry cannot occupy and the capsule simply
-    /// rests on the floor instead of floating.
-    ///
-    /// For a capsule of radius `r` and half-height `h`, that reach is
-    /// `r + h`. The gizmo draws both, so a value that cannot be reached
-    /// is visible rather than something to work out.
-    ///
-    /// The clearance it buys is also the step height: a step shorter
-    /// than the gap is climbed by the spring alone, with no code that
-    /// knows what a step is.
+    /// It must exceed the collider's reach below the origin (`r + h` for a capsule), or the capsule
+    /// rests on the floor; the gap is also the step height.
     pub ride_height: f32,
-    /// How far below the body to look for ground, in metres.
-    ///
-    /// Must exceed `ride_height`, or the probe ends before the rest
-    /// position and the character can never find the floor it is
-    /// standing on. Past `ride_height` the extra is how far it can drop
-    /// before it counts as falling.
+    /// How far below the body to look for ground, in metres; past `ride_height`, how far it can
+    /// drop before it counts as falling.
     pub probe: f32,
-    /// Radius of the sphere that does the looking.
-    ///
-    /// Wants to be near the character's own radius. A sphere much
-    /// smaller behaves like the ray this is not, and finds the gap
-    /// between two floor tiles.
+    /// Radius of the probing sphere, near the character's own — much smaller finds the gap between
+    /// floor tiles.
     pub probe_radius: f32,
     /// How hard the spring pulls the body back to `ride_height`, as an
     /// acceleration per metre of error.
     pub stiffness: f32,
-    /// How strongly the spring resists vertical speed.
-    ///
-    /// This is the feel dial. Critical damping is `2·sqrt(stiffness)`;
-    /// the fraction of it you choose is what a landing looks like. At
-    /// the full value the character arrives dead, with no dip and no
-    /// recovery — correct, and it reads as a body with no weight. Around
-    /// a third of it dips once and comes back up, which is the landing
-    /// people mean when they say a character has weight.
-    ///
-    /// Too little and it never settles; too much and it sinks into a
-    /// step instead of rising over it.
+    /// How strongly the spring resists vertical speed — the landing dial. Critical is
+    /// `2·sqrt(stiffness)`; about a third of it dips once and recovers, which reads as weight.
     pub damping: f32,
-    /// How quickly the body turns to stand on the local up and face
-    /// where it is steered, in turns per second towards the target.
-    ///
-    /// The orientation is set rather than torqued. Correcting a rotation
-    /// with a torque needs the inertia tensor, which the backend does
-    /// not expose, so an angular spring here could only ever be tuned by
-    /// feel — and it was, badly: a value that settled on flat ground
-    /// wallowed on a planet. A character's orientation is authored, not
-    /// simulated.
-    ///
-    /// The cost is that it no longer spins when something hits it. For a
-    /// character that is the point.
+    /// How quickly the body turns to stand on the local up and face its steering, in turns per
+    /// second. Set, not torqued: without the inertia tensor an angular spring could only be tuned
+    /// by feel.
     pub turn_speed: f32,
-    /// Steepest ground that still counts as standing, in degrees.
-    ///
-    /// Above it the surface is a wall. The sweep still finds it and
-    /// [`Grounded`] still reports its normal, so an animation can see
-    /// it — but the spring does not hold the body up against it. It
-    /// would have to cancel gravity to do so, and a slope the controller
-    /// has already refused to walk would carry the character to the top
-    /// of it.
-    ///
-    /// [`Grounded`]: crate::Grounded
+    /// Steepest ground that still counts as standing, in degrees. Steeper is a wall:
+    /// [`Grounded`](crate::Grounded) reports it, but the spring does not hold the body up against
+    /// it.
     pub max_slope: f32,
-    /// The tallest obstruction that counts as a step rather than a
-    /// wall, in metres.
-    ///
-    /// # Why this exists at all
-    ///
-    /// A step's riser and a wall give the *same* contact normal —
-    /// `[-1, 0, 0]` either way — so refusing to hold the body up against
-    /// steep surfaces refuses steps too, and the character stops being
-    /// able to climb one. The difference is not the normal, it is
-    /// whether there is ground to arrive at: a second probe looks for a
-    /// ledge this far above the contact, and finding one is what makes
-    /// it a step.
+    /// The tallest obstruction that counts as a step, in metres. A riser and a wall share a normal,
+    /// so a step is one with a ledge found this far above the contact.
     pub step_height: f32,
-    /// How far ahead to look for a wall, in metres.
-    ///
-    /// Written to [`Touching`](crate::Touching). Wants to be a little
-    /// more than the character's own radius, or the probe ends inside
-    /// the capsule and never reaches anything.
+    /// How far ahead to look for a wall, in metres, written to [`Touching`](crate::Touching) — a
+    /// little more than the character's radius.
     pub reach: f32,
 }
 

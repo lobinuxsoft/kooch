@@ -42,22 +42,13 @@ struct Planned {
     sprint: Sprint,
     /// Whether this character is interested in walls at all.
     walls: bool,
-    /// How far to bank while running a wall, and which way, or `None`
-    /// for a character that is not on one.
-    ///
-    /// Read from the run the *previous* step decided on, because the run
-    /// is decided after this pass. A frame of lag on a lean nobody can
-    /// see is cheaper than a second pass to remove it.
+    /// How far to bank while running a wall, and which way, or `None` — from the previous step's
+    /// run, a frame of lag nobody sees.
     bank: Option<(Vec3, f32)>,
 }
 
-/// Rising faster than this and the spring lets go, in m/s.
-///
-/// Without it a jump is fought by its own damping the frame after it
-/// starts — at 18 damping a 5 m/s launch is met with 90 m/s² of "come
-/// back", and the character never leaves the floor. Above the threshold
-/// the body is simply in the air, and gravity is the only thing acting
-/// on it.
+/// Rising faster than this, in m/s, the spring lets go — otherwise its damping fights a jump (at
+/// 18, a 5 m/s launch meets 90 m/s² back).
 const RISING: f32 = 0.5;
 
 /// Sweeps for ground, holds the body at its ride height, keeps it
@@ -214,19 +205,15 @@ fn hold_one(
         .map(|under| under.footing.stands())
         .unwrap_or(false);
 
-    // Where it is steering, or where it is going when nothing is asked:
-    // a body pressed against a wall has almost no velocity into it,
-    // which is exactly when a wall slide needs to know the wall is
-    // there.
+    // Where it is steering, or going when nothing is asked: a body pressed to a wall barely moves
+    // into it, exactly when a slide needs to see it.
     let velocity = world.linear_velocity(plan.body).unwrap_or(Vec3::ZERO);
     let along = match plan.facing.length_squared() > 1e-6 {
         true => plan.facing,
         false => velocity,
     };
-    // Ahead and to both sides, and only for a character that authored a
-    // `Touching` to receive it. Looking only where it is going never
-    // finds the wall it is running *along*, which is the one thing a
-    // wall run is about.
+    // Ahead and to both sides, only for a character that has a `Touching` — looking ahead never
+    // finds the wall being run along.
     let found = plan
         .walls
         .then(|| sense::beside(world, controller, plan.position, along, plan.up, filter))
@@ -260,11 +247,8 @@ fn hold_one(
     };
     let gap = (plan.position - under.point).dot(plan.up);
 
-    // Too steep to walk, with nothing to arrive at. Holding the body up
-    // here is a character that climbs a cliff: the spring cancels
-    // gravity, so a slope it has already refused to walk carries it to
-    // the top. Reported so an animation can see it, and left to gravity
-    // so it slides back down.
+    // Too steep with nothing to arrive at: reported for animation and left to gravity, or the
+    // spring would carry the character up a cliff.
     if !under.footing.holds() {
         return (
             Grounded {
@@ -277,11 +261,8 @@ fn hold_one(
     }
 
     let velocity = world.linear_velocity(plan.body).unwrap_or(Vec3::ZERO);
-    // Measured along the surface, not along the field. Walking up a ramp
-    // is motion *across* the ground and reads as zero here, where
-    // against the field it reads as most of the walking speed — which
-    // is why a character on a slope could not jump: it looked like it
-    // was already leaving.
+    // Measured along the surface, not the field: walking up a ramp read as leaving the ground, so a
+    // character on a slope could not jump.
     let leaving = velocity.dot(under.normal.normalize_or(plan.up));
     // Leaving the ground under its own power. The spring would spend the
     // next frames pulling it straight back down, which is a jump that
@@ -298,21 +279,11 @@ fn hold_one(
     }
     let speed = velocity.dot(plan.up);
 
-    // The spring pulls both ways. Only pushing would let the character
-    // sail off the top of every bump instead of following the ground
-    // down the far side, which is the whole reason this is a spring and
-    // not a floor.
-    //
-    // Measured to the contact point rather than from the sweep's own
-    // distance: on a slope the sphere stops early and `t` understates
-    // the gap, which would make the spring shove the character off
-    // every ramp it walked onto.
+    // The spring pulls both ways, so the character follows the ground down a bump. Measured to the
+    // contact point: on a slope the sweep's `t` understates the gap.
     let error = controller.ride_height - gap;
-    // Gravity is cancelled before the spring is asked for anything.
-    // Without it the spring has to *lean* to hold the body up — it
-    // settles wherever `error · stiffness` happens to equal `g`, so the
-    // rest height is never the height in the Inspector, and it changes
-    // with every planet the character walks onto.
+    // Gravity is cancelled first, or the spring leans to hold the body and the rest height drifts
+    // with every planet.
     let acceleration = plan.weight + error * controller.stiffness - speed * controller.damping;
     if let Some(mass) = world.mass(plan.body) {
         world.apply_impulse(plan.body, plan.up * acceleration * mass * dt);
@@ -360,12 +331,8 @@ fn walk_one(
         false => {
             goals.hold(plan.entity, across);
             let push = walk::drift(plan.facing, across, plan.up, &steps, dt);
-            // Never into a wall. Shoving one in mid-air buys nothing
-            // except the contact friction that comes with it, and that
-            // alone holds a character against a wall at 0.8 m/s^2 of
-            // fall — sticking to every surface it touches, with no
-            // mechanic asking for it. Sliding down a wall is
-            // `WallSlide`'s to decide, deliberately.
+            // Never into a wall: the contact friction alone holds a character at 0.8 m/s² of fall —
+            // sliding is `WallSlide`'s call.
             walk::alongside(push, wall)
         }
     };
@@ -375,19 +342,11 @@ fn walk_one(
     }
 }
 
-/// Stands the body on the local up, facing where it is steered.
-///
-/// Set rather than torqued, and the angular velocity zeroed with it: the
-/// solver would otherwise keep whatever spin it had and turn the body
-/// straight back out of the pose. See
-/// [`turn_speed`](CharacterController::turn_speed) for why a character's
-/// orientation is authored.
+/// Stands the body on the local up, facing its steering — set with angular velocity zeroed, or the
+/// solver spins it back out of the pose.
 fn turn_one(world: &mut PhysicsWorld, plan: &Planned, gained: Vec3, dt: f32) {
     let lean = plan.walk.map(|steps| steps.lean).unwrap_or(0.0);
-    // Upright against the field, not against the ground. Standing
-    // perpendicular to every ramp reads worse than standing straight:
-    // the body swings as the surface changes and a slope the character
-    // is only crossing tips it sideways.
+    // Upright against the field, not the ground, so crossing a ramp does not tip the body sideways.
     let up = turn::leaned(plan.up, gained, plan.weight, lean);
     // Banked towards the wall while running one. Upright, a character
     // running along a wall reads as one hovering beside it.

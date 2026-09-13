@@ -60,16 +60,8 @@ pub fn along(velocity: Vec3, normal: Vec3, up: Vec3) -> Vec3 {
     flat - normal * flat.dot(normal)
 }
 
-/// Whether a run starts or carries on.
-///
-/// `state` is `None` on the first step against a wall — the only step
-/// on which the entry speed is asked about. Answering it every frame
-/// let a character arrive at walking pace and *steer* itself up to
-/// running speed against the wall, which is a cling that eventually
-/// becomes a run rather than a run.
-///
-/// `Refused` is sticky for the same reason the clock is: a wall answered
-/// once stays answered until the character leaves it or lands.
+/// Whether a run starts or carries on. Entry speed is asked only on the first step, or a slow
+/// arrival could steer itself up to a run; `Refused` sticks until the character leaves or lands.
 pub fn carry(state: Option<Run>, speed: f32, run: &WallRun, dt: f32) -> Run {
     let spent = match state {
         Some(Run::Refused) => return Run::Refused,
@@ -85,11 +77,8 @@ pub fn carry(state: Option<Run>, speed: f32, run: &WallRun, dt: f32) -> Run {
     }
 }
 
-/// How the body sits while running: tilted from `up` towards the wall.
-///
-/// Upright, a character running along a wall reads as one hovering
-/// beside it. `normal` points from the wall back at the character, so
-/// banking towards the wall is leaning away from the normal.
+/// How the body sits while running: tilted from `up` towards the wall, away from `normal` — upright
+/// reads as hovering beside it.
 pub fn banked(up: Vec3, normal: Vec3, bank: f32) -> Vec3 {
     let Some(up) = up.try_normalize() else {
         return up;

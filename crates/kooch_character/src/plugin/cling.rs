@@ -1,8 +1,5 @@
-//! Slowing a fall down a wall, and spending wall and air jumps.
-//!
-//! Both read what the sense pass already found. Neither casts: a
-//! mechanic that probes for itself is a mechanic that can disagree with
-//! `Grounded` about whether the character is in the air.
+//! Slowing a fall down a wall and spending wall and air jumps, from what the sense pass found —
+//! never a probe of its own.
 
 use glam::Vec3;
 
@@ -175,10 +172,8 @@ fn cling(world: &mut PhysicsWorld, one: &Asked, slide: &WallSlide, dt: f32) {
     };
     let mut held = velocity;
 
-    // The bounce, dropped. Arriving at speed the solver pushes the
-    // capsule back out, and with the air push deliberately not aimed
-    // into the wall there is nothing to bring it back: the character
-    // rebounds and drifts off mid-slide.
+    // The bounce, dropped: the solver pushes the capsule back out and nothing aims it back, so it
+    // would drift off mid-slide.
     let out = held.dot(one.normal_or(Vec3::ZERO));
     if out > 0.0 {
         held -= one.normal_or(Vec3::ZERO) * out;
@@ -195,21 +190,16 @@ fn cling(world: &mut PhysicsWorld, one: &Asked, slide: &WallSlide, dt: f32) {
     world.set_linear_velocity(one.body, held);
 }
 
-/// Sets the velocity a jump asks for, keeping what is across it.
-///
-/// Set rather than added: a jump taken while already falling would
-/// otherwise be worth less than one taken at rest, and a player cannot
-/// see their own vertical speed to allow for it.
+/// Sets the velocity a jump asks for, keeping what is across it — set, not added, so jumping while
+/// falling is worth the same.
 fn launch(world: &mut PhysicsWorld, one: &Asked, leap: Leap) {
     let Some(velocity) = world.linear_velocity(one.body) else {
         return;
     };
     let launched = match leap {
         Leap::Ground(up) => velocity - one.up * velocity.dot(one.up) + up,
-        // The speed *along* the wall is kept and the speed *into* it is
-        // not. Keeping everything would spend most of the push undoing
-        // the run at the wall; keeping nothing throws away the run
-        // along it, which on a wall run is the whole point.
+        // Speed along the wall is kept, speed into it is not — keeping everything spends the push
+        // undoing the run.
         Leap::Wall(away) => match one.wall {
             Some(normal) => run::along(velocity, normal, one.up) + away,
             None => away,

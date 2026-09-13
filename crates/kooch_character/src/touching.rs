@@ -5,16 +5,9 @@ use glam::Vec3;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 
-/// What the character is pressed against, ahead of it.
-///
-/// The horizontal twin of [`Grounded`](crate::Grounded), written by the
-/// same pass and for the same reason: a wall slide, a wall jump, a
-/// shoulder animation and a footstep sound all ask the same question,
-/// and four systems each casting their own probe is four chances to
-/// disagree about whether there is a wall.
-///
-/// A wall here is *something too steep to walk on, within reach*. It is
-/// not a claim that the character is stuck to it.
+/// What the character is pressed against, ahead — the horizontal twin of
+/// [`Grounded`](crate::Grounded), written by the same pass. Too steep to walk and within reach, not
+/// stuck to it.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Reflect)]
 #[reflect(category = "Physics")]
 pub struct Touching {

@@ -1,9 +1,5 @@
-//! What is under the character, and what is in front of it.
-//!
-//! One place casts, everybody reads. Two systems each asking the world
-//! the same question is two systems that can disagree about the answer,
-//! and this project has already paid for that once: a jump and a walk
-//! cast their own ground rays and both were wrong in the same way.
+//! What is under the character and in front of it. One place casts, everybody reads: a jump and a
+//! walk that cast their own rays were once both wrong.
 
 use glam::Vec3;
 
@@ -81,13 +77,8 @@ pub fn under(
     })
 }
 
-/// Whether there is walkable ground within `step_height` just past a
-/// surface too steep to walk.
-///
-/// Dropped from above and just beyond the contact, so a step's tread is
-/// found and more of the same ramp is not. The offset is the probe's own
-/// radius: any less and the ray comes back down the near side of the
-/// riser it is trying to see over.
+/// Whether walkable ground lies within `step_height` just past a too-steep surface, probed from
+/// above one radius beyond the contact so the riser's near side is not found.
 fn ledge(
     world: &PhysicsWorld,
     controller: &CharacterController,
@@ -108,16 +99,8 @@ fn ledge(
     }
 }
 
-/// Sweeps for the nearest wall ahead or to either side.
-///
-/// Three sweeps, and the sides are not optional. A probe that only looks
-/// where the character is going never finds the wall it is running
-/// *along* — which is the one thing a wall run is about, and it meant a
-/// character steering parallel to a wall never saw it at all.
-///
-/// `along` is where the character is steering rather than where it is
-/// moving: a body pressed against a wall has almost no velocity into it,
-/// which is exactly when a wall slide needs to know the wall is there.
+/// Sweeps for the nearest wall ahead and to both sides — ahead alone never finds a wall being run
+/// along — steered by intent, since a pressed body barely moves into the wall.
 pub fn beside(
     world: &PhysicsWorld,
     controller: &CharacterController,

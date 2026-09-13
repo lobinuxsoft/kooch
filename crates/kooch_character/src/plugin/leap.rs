@@ -1,9 +1,4 @@
-//! Spending a jump, once the sense pass has said what is available.
-//!
-//! Reads [`Grounded`] and [`Touching`]; casts nothing. The forgiveness
-//! windows are the whole reason this is not two lines: a jump is
-//! allowed slightly after leaving the ground and slightly before
-//! arriving, and both timers live here.
+//! Spending a jump from what the sense pass found, with the coyote and buffer timers.
 
 use std::collections::HashMap;
 
@@ -22,12 +17,8 @@ pub struct Tally {
     pub asked: Option<f32>,
     /// Air jumps spent since the last time it stood on something.
     pub spent: u32,
-    /// Seconds since it pushed off a wall, or `None` for never.
-    ///
-    /// A wall slide holds the character on, and the frame after a wall
-    /// jump the wall is still right there — so the hold would cancel the
-    /// jump it just made. This is how long it is left alone to get
-    /// clear.
+    /// Seconds since it pushed off a wall, or `None` — how long the slide leaves it alone, since
+    /// the wall is still right there.
     pub since_wall: Option<f32>,
 }
 
@@ -51,11 +42,8 @@ impl Tallies {
     }
 }
 
-/// How long after pushing off a wall the slide leaves the character
-/// alone, in seconds.
-///
-/// Long enough to clear the wall's own reach, short enough that a
-/// deliberate return to it still catches.
+/// How long after a wall jump the slide leaves the character alone, in seconds: enough to clear the
+/// wall, short enough to catch a return.
 pub const CLEARING: f32 = 0.25;
 
 /// What a jump turns into, if anything.

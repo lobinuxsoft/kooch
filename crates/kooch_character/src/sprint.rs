@@ -3,16 +3,8 @@
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 
-/// Running: [`Walk`](crate::Walk) with its numbers scaled while
-/// `wanted` is set.
-///
-/// # Why this has no system of its own
-///
-/// It applies no force. Everything a sprint does, walking already does
-/// — it only does it faster — so a separate system would have to
-/// duplicate the goal, the chase and the cap to change two numbers.
-/// A mechanic that adds a *term* gets a system; one that scales an
-/// existing term is a modifier, and this is one.
+/// Running: [`Walk`](crate::Walk) with its numbers scaled while `wanted` is set — a modifier on an
+/// existing term, so no system of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Physics")]
 pub struct Sprint {
@@ -21,11 +13,8 @@ pub struct Sprint {
     pub wanted: bool,
     /// What the top speed is multiplied by.
     pub speed: f32,
-    /// And the acceleration, separately.
-    ///
-    /// Left at `1` a sprint takes as long to reach a higher speed as
-    /// walking took to reach a lower one, which reads as sluggish. Above
-    /// it the character snaps to running.
+    /// And the acceleration, separately — at `1` a higher speed takes as long to reach and reads
+    /// sluggish.
     pub eagerness: f32,
 }
 
