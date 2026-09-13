@@ -1,11 +1,5 @@
-// Pass 1 of 4: which slices of the grid each light reaches (#780).
-//
-// One invocation per light. It writes one work item per (light, slice)
-// pair and bumps the rasterizer's instance count, so the raster pass
-// that follows is dispatched from the GPU's own answer rather than from
-// a count the CPU guessed a frame ago.
-//
-// Concatenated after `cluster_common.wgsl`.
+// Pass 1 of 4 (#780): one work item per (light, slice) and the raster's instance count, so the
+// raster dispatches from the GPU's answer, not a stale CPU guess. After `cluster_common.wgsl`.
 
 @group(0) @binding(0) var<uniform> cluster_view: ClusterView;
 @group(0) @binding(1) var<storage, read> cluster_lights: array<ClusterLight>;
@@ -44,13 +38,8 @@ fn z_slice_main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// Appends one work item, and reports rather than truncates when the list
-// is full.
-//
-// 🔴 The counter is bumped before the capacity test, so the CPU learns
-// the real number and can grow the buffer. Bumping it only on success
-// would make an overflowing frame indistinguishable from one that fit —
-// lights silently missing from cells, and nothing anywhere saying so.
+// Appends a work item. 🔴 The counter rises before the capacity test, so an overflowing frame is
+// visible to the CPU instead of silently dropping lights.
 fn write_slice(object_index: u32, object_type: u32, z_slice: u32) {
     let slot = atomicAdd(&cluster_draw.wanted, 1u);
     if (slot >= cluster_view.counts.y) {
@@ -61,14 +50,8 @@ fn write_slice(object_index: u32, object_type: u32, z_slice: u32) {
     cluster_slices[slot].z_slice = z_slice;
 }
 
-// Turns the uncapped count into draw arguments.
-//
-// One invocation, dispatched after the pass above has finished, because
-// there is no barrier across workgroups: the clamp has to see the final
-// total, and the only thing that guarantees that is a separate dispatch.
-// Without it an overflowing frame would draw instances whose work items
-// were never written — garbage cells, from a buffer that reports itself
-// as fine.
+// Uncapped count → draw arguments, in its own dispatch: no barrier crosses workgroups, and the
+// clamp must see the final total or the raster draws unwritten items.
 @compute @workgroup_size(1, 1, 1)
 fn finalize_main() {
     cluster_draw.instance_count = min(

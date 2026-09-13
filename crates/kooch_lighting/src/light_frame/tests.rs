@@ -204,10 +204,7 @@ fn a_despawned_light_is_skipped() {
     assert!(!frame.lights().entities.contains(&doomed));
 }
 
-/// 🔴 The walk is shared by every view of a frame, and each view makes its
-/// own cube selection — so `assign_point_slots` runs more than once over
-/// the same lights. A lamp the previous view picked must not still be
-/// holding that view's slot, or it samples a cube drawn for somebody else.
+/// 🔴 Every view reruns `assign_point_slots`; a lamp must not keep a previous view's slot.
 #[test]
 fn a_second_selection_replaces_the_first() {
     use kooch_ecs::entity::Entity as E;

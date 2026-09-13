@@ -3,15 +3,8 @@ use glam::{Quat, Vec3};
 
 #[test]
 fn size_matches_shader() {
-    // `inti_pbr.wgsl`'s IntiLight: vec3+f32, vec3+f32, vec3+u32,
-    // f32, f32, u32, u32, f32, then three pad scalars — 80 B under
-    // std430's vec3-aligns-to-16 rule. A mismatch here is the whole
-    // struct read at the wrong stride.
-    //
-    // 🔴 The padding is why this is 80 and not 68: WGSL rounds the
-    // struct up to its own alignment, Rust does not. Dropping the pad
-    // fields would leave Rust writing at 68 and the shader reading at
-    // 80, and every light past the first would be garbage.
+    // `IntiLight`: vec3+f32, vec3+f32, vec3+u32, f32, f32, u32, u32, f32, three pads = 80 B. 🔴 WGSL
+    // rounds up to 80 and Rust would not without the pads.
     assert_eq!(std::mem::size_of::<GpuLight>(), 80);
     assert_eq!(std::mem::align_of::<GpuLight>(), 4);
 }

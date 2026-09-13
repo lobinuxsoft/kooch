@@ -1,9 +1,4 @@
-//! The ECS walk, against a real component + archetype registry.
-//!
-//! The interesting failures here are not arithmetic — they are a light
-//! that exists and does not reach the buffer. Every assertion below is
-//! some version of "the thing on screen and the thing in the Inspector
-//! are the same thing".
+//! The ECS walk against a real registry: failures are lights that exist and never reach the buffer.
 
 use std::any::TypeId;
 
@@ -23,10 +18,7 @@ use kooch_ecs::spot_light::SpotLight;
 
 use kooch_lighting::{LIGHT_KIND_DIRECTIONAL, LIGHT_KIND_POINT, LIGHT_KIND_SPOT, LightFrame};
 
-/// The walk, as every test here reaches it now.
-///
-/// It used to be `extract_lights`, next to a second walk in the shadow
-/// stage that read the same archetypes again. There is one walk.
+/// The walk, through [`kooch_lighting::LightFrame`].
 fn extract_lights(resources: &Resources) -> kooch_lighting::ExtractedLights {
     let frame = LightFrame::extract(resources);
     frame.lights().clone()
@@ -166,11 +158,8 @@ fn an_empty_world_extracts_nothing_rather_than_panicking() {
     assert!(extract_lights(&world()).lights.is_empty());
 }
 
-/// The single-light debug view (#743) addresses a light by its slot in
-/// the buffer, and the only thing that decides that slot is the order
-/// this walk happens to run in. If a slot ever stops naming the entity
-/// it was resolved from, the view isolates a different light than the
-/// one selected and looks like a shading bug.
+/// The single-light view (#743) addresses by slot, which walk order decides; a slot must keep
+/// naming its entity.
 #[test]
 fn a_slot_names_the_entity_it_came_from() {
     let mut r = world();
@@ -223,13 +212,8 @@ fn an_inactive_light_has_no_slot() {
     assert!(extracted.slot_of(off).is_none());
 }
 
-/// The smoke test that found this: two lights in a scene were switched
-/// off, the single-light view rendered magenta for both, and magenta was
-/// also what selecting a crate produced. Same pixel, two different
-/// fixes — tick a checkbox, or select something else.
-///
-/// A view built to stop two causes from looking alike does not get to
-/// introduce a third pair, so an inactive light says it is inactive.
+/// An inactive light says so: it rendered the same magenta as selecting a crate, with a different
+/// fix.
 #[test]
 fn an_inactive_light_says_so_instead_of_saying_nothing() {
     let mut r = world();
@@ -291,11 +275,7 @@ fn every_light_kind_reports_when_switched_off() {
     }
 }
 
-/// 🔴 `SpotLight::outer_angle` is in DEGREES and is a half-angle. The
-/// shadow frustum is built in radians, and 45 taken for radians is a
-/// 2578° cone: it clamps to the widest frustum allowed and produces a
-/// map covering a hemisphere for a light that lights a doorway. Nothing
-/// about that looks like a unit bug on screen.
+/// 🔴 `outer_angle` is a half-angle in degrees; read as radians it becomes a hemisphere-wide map.
 #[test]
 fn a_spots_shadow_angle_is_converted_to_radians() {
     let mut r = world();
@@ -344,14 +324,8 @@ fn only_casting_spots_get_a_shadow_source() {
     );
 }
 
-/// 🔴 The froxel grid does not cluster directional lights — they reach
-/// every cell — so the shading loop walks the first `directional_count`
-/// entries linearly and takes the rest from its cell.
-///
-/// That is only correct while they are a **prefix**. If a point light
-/// ever lands before a directional one, the linear walk lights the wrong
-/// light and the sun goes missing from the clustered half: a scene lit
-/// by lamps with no daylight, and nothing anywhere reporting it.
+/// 🔴 Directional lights must be a prefix, or the linear walk lights a lamp and the sun vanishes
+/// from the clustered half.
 #[test]
 fn directional_lights_are_a_prefix() {
     // Spawned deliberately out of order: a point, then a directional,

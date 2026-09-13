@@ -1,25 +1,6 @@
-// Passes 2 and 4 of 4: which lights actually touch each cell (#780).
-//
-// 🔴 This is a rasterizer, not a compute shader, and that is the part
-// everyone's mental model of clustering gets wrong. The grid is WxHxD;
-// the pass runs on a WxH viewport and draws each work item — one light
-// in one Z slice — as a screen-aligned quad covering the cells that
-// light's bounding sphere can reach. One fragment invocation is then
-// exactly one (cell, light) pair, scheduled by the hardware that exists
-// to schedule quads. Colour writes are off: the output is the storage
-// buffers.
-//
-// It runs TWICE, with `{{CLUSTER_POPULATE}}` substituted false then
-// true: once to count how many lights land in each cell, and once to
-// write them now that each cell knows where its run starts.
-//
-// 🔴 Both runs must reach the same verdict for every pair. A count that
-// disagrees with the populate either overflows a cell's run into its
-// neighbour's or leaves a hole, and nothing in the pipeline can detect
-// it — there is no compiler keeping the two in step, only the fact that
-// they are literally the same source.
-//
-// Concatenated after `cluster_common.wgsl`.
+// Passes 2 and 4 (#780): a rasterizer, one quad per (light, slice), so a fragment is one (cell,
+// light) pair. 🔴 Runs twice via `{{CLUSTER_POPULATE}}` — count, then write — and only sharing this
+// source keeps both verdicts equal.
 
 const POPULATE: bool = {{CLUSTER_POPULATE}};
 
@@ -82,10 +63,8 @@ fn fragment_main(varyings: Varyings) -> @location(0) vec4<f32> {
     let work = cluster_slices[varyings.slice_index];
     let cell = vec3<u32>(vec2<u32>(floor(varyings.position.xy)), work.z_slice);
 
-    // The quad is the sphere's screen-space bounding box, which is
-    // generous: it covers cells the sphere's projection touches but the
-    // sphere itself never reaches, and every one of those would cost a
-    // light in the shading loop. This is the test that throws them out.
+    // The quad is the sphere's screen bounds, generous; this test drops cells the sphere never
+    // reaches, each of which would cost a light when shading.
     let aabb = cluster_cell_bounds(cluster_view, cell);
     let center = (aabb.max + aabb.min) * 0.5;
     let half = (aabb.max - aabb.min) * 0.5;
@@ -123,10 +102,8 @@ fn sphere_hits_aabb(
     return dot(delta, delta) <= sphere_radius * sphere_radius;
 }
 
-// Cone against the cell's bounding sphere — Bart Wronski's test.
-//
-// Three ways a cone can miss: the cell is off to the side of the cone's
-// angle, past its tip, or behind its apex.
+// Cone against the cell's bounding sphere (Bart Wronski): it misses off to the side, past the tip,
+// or behind the apex.
 fn cone_misses_cell(
     light_index: u32,
     cell_center: vec3<f32>,
@@ -134,27 +111,13 @@ fn cone_misses_cell(
     sphere_center: vec3<f32>,
 ) -> bool {
     let light = cluster_lights[light_index];
-    // 🔴 The axis points BACK along the light, not along it. The offset
-    // below runs from the cell to the light, so a cell inside the cone
-    // has to come out with a POSITIVE `along` — and with the direction
-    // the light shines in, every such cell reads as negative and is
-    // thrown out by `back_miss`. The symptom is a scene lit only where
-    // the light is not pointing.
-    //
-    // ⚠️ Bevy does the same flip, and their variable for it is named
-    // `world_light_direction` right after being assigned the negation of
-    // what they called the reverse. Reading the name rather than the
-    // maths is how this was wrong the first time.
+    // 🔴 The axis points back along the light: the offset runs cell → light, so a lit cell must come
+    // out positive. Bevy's `world_light_direction` is the negated value, despite the name — reading
+    // the name made this wrong once.
     let axis = normalize((cluster_view.view_from_world * vec4<f32>(-light.direction, 0.0)).xyz);
 
-    // The cone's half-angle, recovered from the falloff MAD the shading
-    // model already stores: `saturate(cos * scale + offset)` reaches
-    // zero at the outer angle, so `cos_outer = -offset / scale`.
-    //
-    // ⚠️ Bevy sends a tangent for this and rebuilds the direction from
-    // two components — both are consequences of their light record
-    // having no room, not of the maths. Ours carries the direction and
-    // the MAD already.
+    // Half-angle recovered from the stored MAD: `saturate(cos * scale + offset)` is zero at the
+    // outer angle, so `cos_outer = -offset / scale`.
     let cos_outer = clamp(-light.spot_offset / max(light.spot_scale, 1e-6), -1.0, 1.0);
     let sin_outer = sqrt(max(1.0 - cos_outer * cos_outer, 0.0));
 
@@ -181,13 +144,8 @@ fn count_object(cell: u32, object_type: u32) {
     }
 }
 
-// Populate pass: claim the next slot of this cell's run for this type
-// and write the index there.
-//
-// The run's layout is the type order itself — points, then spots, then
-// probes, volumes, decals — so a type's base is the cell's offset plus
-// the counts of every type before it. That is what lets the shading loop
-// walk one type as a plain range with no test inside it.
+// Populate: claims the next slot of this type's range. The run is laid out in type order, so the
+// shading loop walks one type as a plain range.
 fn write_index(cell: u32, object_type: u32, object_index: u32) {
     let base = atomicLoad(&cluster_cells[cell].offset);
     var slot = 0xffffffffu;

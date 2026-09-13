@@ -1,32 +1,6 @@
-//! **Clustering** — the froxel grid that turns *pixels × every light*
-//! into *pixels × the lights that reach this cell* (#780).
-//!
-//! # Why this exists
-//!
-//! Until this landed, `inti_shade` looped over every light in the scene
-//! for every pixel on screen. Measured on the OneXFly, that loop was the
-//! frame: `raster + shade` scaled worse than linearly with resolution
-//! because each new pixel paid for the whole light list again, shadow
-//! samples included.
-//!
-//! # What it is
-//!
-//! The view frustum is diced into a grid of cells, logarithmic along the
-//! view axis, and each cell is given the list of lights whose volume
-//! reaches it. Shading looks up its own cell and walks that list.
-//!
-//! 🔴 **The grid is not a light structure.** Reflection probes,
-//! irradiance volumes and decals are all bound to a region of space in
-//! exactly the same way, and each cell's record has a range reserved for
-//! them from the start. It is also the structure virtual shadow maps
-//! (#477) mark pages with, and the one volumetric fog (#731) integrates
-//! through. Building it once is the point.
-//!
-//! # The shape of a frame
-//!
-//! [`GpuClusters::update`] sizes the buffers and writes the view
-//! uniform; [`GpuClusters::record`] records the four passes; the shading
-//! pass reads the two buffers through Inti's bind group.
+//! Clustering (#780): pixels × lights reaching a cell, not every light — the full loop was the
+//! OneXFly frame. Cells reserve ranges beyond lights (VSM, fog). [`GpuClusters::update`] sizes,
+//! [`GpuClusters::record`] records.
 
 mod buffers;
 mod grid;
@@ -45,14 +19,8 @@ use buffers::ClusterBuffers;
 use passes::ClusterPasses;
 use readback::ClusterReadback;
 
-/// What the grid needs to know about the camera it is being built for.
-///
-/// One struct rather than four arguments because every caller has all
-/// four together, and because a path that has only a position — a
-/// headless test, a pass with no projection — says so by using
-/// [`Self::unclustered`] rather than by passing an identity matrix that
-/// would silently cluster the scene against a camera that does not
-/// exist.
+/// What the grid needs about its camera; a position-only caller uses [`Self::unclustered`] instead
+/// of an identity matrix that clusters a nonexistent camera.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ClusterCamera {
     pub position: glam::Vec3,
@@ -118,16 +86,8 @@ impl GpuClusters {
         &self.grid
     }
 
-    /// What the busiest cell held, and the mean over the cells that held
-    /// anything (#820).
-    ///
-    /// `None` until the first readback lands — a frame or two in, which
-    /// is what an async readback costs and is why this is a debug
-    /// readout rather than anything the frame depends on.
-    ///
-    /// The mean divides the index list's length by the filled cells, so
-    /// it describes the cells that exist instead of being halved by the
-    /// empty part of the grid.
+    /// The busiest cell's count and the mean over filled cells (#820); `None` until the async
+    /// readback lands, a frame or two in.
     pub fn occupancy(&self) -> Option<(u32, f32)> {
         let draw = self.readback.last()?;
         let filled = draw.filled_cells.max(1);
@@ -139,20 +99,13 @@ impl GpuClusters {
         &self.buffers.cells
     }
 
-    /// The shared index list, for Inti's bind group.
-    /// The per-frame view uniform, so a pass outside this module can
-    /// use `cluster_common.wgsl`'s helpers against the **same** record
-    /// the grid was built from.
-    ///
-    /// 🔴 Handing out the buffer rather than the numbers is the point:
-    /// `cluster_z_slice` already exists in three copies and the file
-    /// says why. A fourth reader that rebuilt the record from its own
-    /// matrices would be a fourth chance to disagree with the grid about
-    /// which cell a fragment is in.
+    /// The per-frame view uniform, handed out so outside passes use the grid's own record — a
+    /// fourth copy of the slice maths is a fourth way to disagree.
     pub fn view_uniform(&self) -> &wgpu::Buffer {
         &self.buffers.view
     }
 
+    /// The shared index list, for Inti's bind group.
     pub fn indices(&self) -> &wgpu::Buffer {
         &self.buffers.indices
     }
@@ -164,13 +117,8 @@ impl GpuClusters {
         self.buffers.index_capacity
     }
 
-    /// Sizes the grid for this view and writes everything the passes
-    /// read. Returns `true` when a buffer Inti's bind group names was
-    /// replaced, which means that bind group has to be rebuilt.
-    ///
-    /// Call **before** the frame's encoder exists: growing a buffer
-    /// replaces it, and a replaced buffer must not be one a recorded
-    /// pass already references.
+    /// Sizes the grid and writes what the passes read; `true` when Inti's bind group must rebuild.
+    /// Call before the encoder exists.
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -183,11 +131,8 @@ impl GpuClusters {
         lights: &wgpu::Buffer,
         light_count: u32,
     ) -> bool {
-        // Last frame's copy is asked for here rather than right after
-        // its submit: `map_async` needs the encoder carrying the copy to
-        // have been submitted, and being one frame into the next one is
-        // the cheapest proof of that there is. It also keeps the render
-        // path from having to call anything after its submit.
+        // Last frame's copy is mapped now: `map_async` needs its encoder submitted, and a frame
+        // later is the cheapest proof.
         self.submit_readback();
         self.readback.drain_ready();
         self.grid = ClusterGrid::new(settings, viewport);

@@ -4,16 +4,8 @@
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
-/// Hemisphere ambient — the stand-in for image-based lighting until
-/// #450 lands a real probe.
-///
-/// Not cosmetic. With no ambient term a metal has no environment to
-/// reflect, so every metallic surface not facing a light renders pure
-/// black: correct for the model, and indistinguishable from a bug to
-/// whoever is looking at it.
-///
-/// Insert one into [`Resources`](kooch_core::resource::Resources) to
-/// override; absent, the default below is used.
+/// Hemisphere ambient standing in for IBL (#450) — without it a metal away from lights is black.
+/// Insert one into [`Resources`](kooch_core::resource::Resources) to override.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct AmbientLight {
     /// Linear RGB arriving from world up.
@@ -37,45 +29,25 @@ impl Default for AmbientLight {
     }
 }
 
-/// Camera exposure, in the photographic EV100 scale.
-///
-/// The lights carry physical units — a `DirectionalLight` defaults to
-/// 10 000 lux — so without an exposure step every channel clips to
-/// white and the shading model looks broken rather than unexposed.
-/// This is the fixed stand-in; #254 owns auto exposure, which stops
-/// being cosmetic at planetary scale where a sunlit surface and the
-/// night side differ by orders of magnitude.
-///
-/// # Prefer [`PhysicalCamera`]
-///
-/// `EV100 = 9.7` is a correct number and an unusable control: nothing
-/// about it says which way is brighter or how much a step is worth.
-/// `f/16, 1/125 s, ISO 100` says the same thing to anyone who has held
-/// a camera. [`PhysicalCamera::ev100`] converts.
+/// Exposure in EV100: lights carry physical units (a sun is 10 000 lux), so without it everything
+/// clips. Auto exposure is #254. Prefer [`PhysicalCamera`], whose settings say which way is
+/// brighter.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Exposure {
     pub ev100: f32,
 }
 
 impl Default for Exposure {
-    /// Whatever [`PhysicalCamera::default`] works out to — one source of
-    /// truth rather than a bare number that has to be kept in step with
-    /// the camera settings that are supposed to explain it.
-    ///
-    /// It lands near 9.9, which is close to Bevy's 9.7. Theirs is not
-    /// "sunny 16" despite how it is often described; they calibrated it
-    /// to match Blender's implicit exposure. A quarter of a stop apart
-    /// means a scene authored against their numbers reads the same here.
+    /// [`PhysicalCamera::default`]'s value, about 9.9 — near Bevy's 9.7, which matches Blender's
+    /// implicit exposure.
     fn default() -> Self {
         Self::from_physical(PhysicalCamera::default())
     }
 }
 
 impl Exposure {
-    /// The multiplier the shader applies to radiance before tonemapping.
-    ///
-    /// `1 / (2^EV100 × 1.2)`: the 1.2 is the standard reflected-light
-    /// meter calibration constant, not a fudge factor.
+    /// Radiance multiplier before tonemapping: `1 / (2^EV100 × 1.2)`, the standard meter
+    /// calibration constant.
     pub fn multiplier(&self) -> f32 {
         1.0 / (2.0f32.powf(self.ev100) * 1.2)
     }
@@ -88,18 +60,8 @@ impl Exposure {
     }
 }
 
-/// A real camera's settings, as the way to say how bright the scene
-/// should look.
-///
-/// Aperture, shutter and ISO are three numbers a person can reason
-/// about — open the aperture, get more light — where EV100 is one number
-/// that reasons about nothing. Bevy added the same thing in 0.13 for the
-/// same reason.
-///
-/// This is the honest half of the fix for physical light units being
-/// unusable. The other halves are auto exposure (#254) and global
-/// illumination (#450); until those, an author who finds the scene too
-/// dark has a control that behaves the way they expect.
+/// Exposure as aperture, shutter and ISO — controls a person can reason about, as Bevy 0.13 added —
+/// until auto exposure (#254) and GI (#450).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PhysicalCamera {
     /// f-stop. Lower is a wider aperture and a brighter image: f/1.4
@@ -114,13 +76,8 @@ pub struct PhysicalCamera {
 }
 
 impl Default for PhysicalCamera {
-    /// f/2.8 at 1/125 s, ISO 100 — EV100 ≈ 9.9.
-    ///
-    /// A middle setting rather than a real situation: bright enough that
-    /// a default `DirectionalLight` does not clip and dim enough that a
-    /// punctual light is visible. Neither of those is a photographic
-    /// fact; they are what this renderer needs while it has no global
-    /// illumination, and the presets below are the real situations.
+    /// f/2.8, 1/125 s, ISO 100 (EV100 ≈ 9.9): a default sun does not clip and punctual lights show.
+    /// A renderer need, not a real situation — see the presets.
     fn default() -> Self {
         Self {
             aperture_f_stops: 2.8,
@@ -131,12 +88,8 @@ impl Default for PhysicalCamera {
 }
 
 impl PhysicalCamera {
-    /// Bright sun outdoors: f/16, 1/125 s, ISO 100 — "sunny 16",
-    /// EV100 ≈ 15.
-    ///
-    /// Pair it with `lux::DIRECT_SUNLIGHT` on the directional light.
-    /// Used with a 10 000 lux default sun, the scene comes out dark,
-    /// which is correct: 10 000 lux is ambient daylight, not sun.
+    /// Sunny 16: f/16, 1/125 s, ISO 100 (EV100 ≈ 15). Pair with `lux::DIRECT_SUNLIGHT`; the 10 000
+    /// lux default is daylight, not sun.
     pub fn sunny() -> Self {
         Self {
             aperture_f_stops: 16.0,
@@ -146,12 +99,8 @@ impl PhysicalCamera {
     }
 
     #[cfg(test)]
-    /// Indoors under artificial light: f/1.0, 1/125 s, ISO 100 —
-    /// EV100 ≈ 7. The same settings Bevy's lighting example uses.
-    ///
-    /// About eight stops brighter than [`Self::sunny`], which is roughly
-    /// the gap between a sunlit exterior and a lit room — the gap that
-    /// makes a physically-correct bulb look like nothing.
+    /// Indoors: f/1.0, 1/125 s, ISO 100 (EV100 ≈ 7), as Bevy's lighting example — eight stops above
+    /// [`Self::sunny`].
     pub fn indoor() -> Self {
         Self {
             aperture_f_stops: 1.0,
@@ -160,11 +109,8 @@ impl PhysicalCamera {
         }
     }
 
-    /// The equivalent EV100.
-    ///
-    /// `log2(N² / t) - log2(S / 100)`, the standard photographic
-    /// relation: aperture and shutter set the exposure, sensitivity
-    /// shifts the scale it is measured against.
+    /// `log2(N² / t) - log2(S / 100)`: aperture and shutter set exposure, sensitivity shifts its
+    /// scale.
     pub fn ev100(&self) -> f32 {
         let n = self.aperture_f_stops.max(1e-3);
         let t = self.shutter_speed_s.max(1e-9);
@@ -180,14 +126,8 @@ impl PhysicalCamera {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct GpuCascade {
     pub view_proj: [[f32; 4]; 4],
-    /// Which layer of the shadow array this cascade rendered into.
-    ///
-    /// Replaced a `uv_scale_bias` that packed this cascade's quadrant of
-    /// a single atlas texture. The atlas existed on the belief that a
-    /// dynamic index into several shadow maps needed binding arrays; it
-    /// does not — `texture_depth_2d_array` is one binding and one
-    /// sampler, and the layer is an ordinary argument to
-    /// `textureSampleCompareLevel`. Bevy has always done it this way.
+    /// The shadow array layer — dynamic indexing needs no binding arrays, just
+    /// `texture_depth_2d_array`, as Bevy.
     pub layer: u32,
     /// 🔴 Three scalars on the WGSL side too, never a `vec3<u32>`: that
     /// aligns to 16 and grows every cascade by 16 bytes, which surfaces
@@ -195,66 +135,31 @@ pub struct GpuCascade {
     pub _pad_layer: [u32; 3],
     pub far_depth: f32,
     pub texel_world_size: f32,
-    /// World units the `[0,1]` depth range spans, so the shader can turn
-    /// a difference between two stored depths into metres. PCSS's
-    /// penumbra is proportional to that distance, and a ratio with no
-    /// scale is only usable through a constant that is wrong in three
-    /// cascades out of four.
+    /// World units spanned by [0, 1] depth, so PCSS can measure its gap in metres.
     pub depth_extent: f32,
     pub _pad0: f32,
 }
 
-/// How many shadow-casting spot lights one frame can carry (#777).
-///
-/// Four, because each one costs a layer of the shadow array and a cull
-/// of its own — 2048² at `Depth32Float` is 16 MiB per spot. It is a
-/// budget, not a limit of the technique: raising it is this constant and
-/// a larger texture, and 13.9 ms at 10 W is what decides when.
-///
-/// Lights past the fourth still light the scene, they just do not cast.
-/// Dropping the light itself would be a worse failure than dropping its
-/// shadow, and a far more confusing one.
+/// Casting spot lights per frame (#777): each is a 2048² `Depth32Float` layer (16 MiB) and a cull.
+/// A budget; spots past it still light, just without shadows.
 pub const MAX_SPOT_SHADOWS: usize = 4;
 
 /// How many cascades the frame carries. Fixed because the count is baked
 /// into the atlas layout — changing it is a texture change.
 pub const FRAME_CASCADE_COUNT: usize = 4;
 
-/// How many point lights can cast at once (#778).
-///
-/// Four, and the number is decided by **memory**, not by the technique.
-/// A cube is six faces, so at the 512² this engine renders them at
-/// (`Depth32Float`) each casting point light is 6 MiB — against 16 MiB
-/// for a single 2048² cascade layer. Four of them add 24 MiB to a shadow
-/// budget that is already 128 MiB.
-///
-/// ⚠️ The `max_texture_array_layers` ceiling of 256 would allow 42, and
-/// that number is a red herring: 42 lights at this face size is 252 MiB
-/// of depth, on a handheld sharing its memory with the rest of the
-/// frame. Memory runs out first, by a wide margin.
-///
-/// Lights past the fourth still light the scene, they just do not cast —
-/// same failure as [`MAX_SPOT_SHADOWS`], and see #778 on why the order
-/// they are chosen in has to be deliberate rather than whatever the
-/// query returned.
+/// Point lights casting at once (#778, raised by #849): each cube is six 512² `Depth32Float` faces,
+/// 6 MiB, so memory decides the number. Past it a light still lights without casting; which lights
+/// cast is ranked.
 pub const MAX_POINT_SHADOWS: usize = 32;
 
-/// What the shading model needs to sample one point light's cube (#778).
-///
-/// Sixteen bytes, and no matrix: `textureSampleCompareLevel` on a cube
-/// array takes a **direction**, so the whole transform is a subtraction
-/// from the light's position, which the shader already does.
+/// What shading needs per point cube (#778): 16 B and no matrix, since cube sampling takes a
+/// direction.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct GpuPointShadow {
-    /// The near plane the six faces were rendered with.
-    ///
-    /// 🔴 This is the whole depth reconstruction. Bevy sends the
-    /// lower-right 2×2 of the face projection and computes
-    /// `depth = zw.x / zw.y`; with an infinite reverse-Z projection
-    /// (ADR 0002) that collapses to `near / major_axis_magnitude`, so
-    /// one scalar replaces their four. It is the same identity
-    /// `depth_ndc_to_view_z` rests on.
+    /// 🔴 The whole depth reconstruction: with infinite reverse-Z (ADR 0002) Bevy's `zw.x / zw.y` is
+    /// `near / major_axis`.
     pub near: f32,
     /// Shadow-texel size **per metre of distance from the light**, the
     /// way a spot's is — a cube face is a 90° perspective, so this is
@@ -266,14 +171,9 @@ pub struct GpuPointShadow {
     pub _pad0: f32,
 }
 
-/// Mirror of `IntiFrame` in `inti_pbr.wgsl`. 928 bytes.
-///
-/// `camera_position` rides here rather than in the shared camera UBO
-/// because that UBO is pinned at 64 B by two bind-group layouts, and
-/// widening it would ripple through paths this work has no business
-/// touching. It also makes this struct the one per-view thing in an
-/// otherwise per-frame binding — see [`crate::GpuLights::write_frame`]
-/// for why that is safe with more than one view.
+/// Mirror of `IntiFrame` in `inti_pbr.wgsl`, size pinned in `frame/tests.rs`. `camera_position` is
+/// here because the camera UBO is pinned at 64 B; per-view data in a shared binding is safe because
+/// each view submits its own encoder.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct IntiFrame {
@@ -283,78 +183,27 @@ pub struct IntiFrame {
     pub exposure: f32,
     pub camera_position: [f32; 3],
     pub ambient_intensity: f32,
-    /// Unit vector down the view axis. Only the cascades use it, and
-    /// they need the axis rather than the radial direction: a radial
-    /// distance makes every cascade boundary a sphere, which crosses in
-    /// the corners of the screen before the centre.
+    /// Unit view axis for the cascades, whose boundaries must be planes, not radial spheres.
     pub camera_forward: [f32; 3],
     pub _pad_forward: f32,
     pub cascades: [GpuCascade; FRAME_CASCADE_COUNT],
-    /// One per shadow-casting spot light, in the same record the
-    /// cascades use (#777).
-    ///
-    /// The same type on purpose: `inti_shadow_coords` already divides by
-    /// `w`, which an orthographic cascade does not need and a spot's
-    /// perspective does — the comment there has said "a spot light's,
-    /// later" since #476. Reusing it means the bias, the Castano filter
-    /// and the border clamp are the ones already ported from Bevy rather
-    /// than a second copy that can drift from them.
-    ///
-    /// ⚠️ Bevy does NOT send a matrix here: it rebuilds the spot's basis
-    /// in the shader from the light's direction and cone angle, because
-    /// its light record has nowhere to put one. That is a constraint of
-    /// their layout, not a better algorithm, and porting it would mean a
-    /// second sampling path beside the one already ported.
+    /// One per casting spot (#777) in the cascade record: `inti_shadow_coords` already divides by
+    /// `w`, so bias, Castano and clamp are shared. Bevy rebuilds the basis in the shader only
+    /// because its record has no room.
     pub spot_shadows: [GpuCascade; MAX_SPOT_SHADOWS],
     /// How many entries of `spot_shadows` are live this frame.
     pub spot_shadow_count: u32,
-    /// How many entries of `point_shadows` are live this frame.
-    ///
-    /// Rides in one of the three pad words the spot count left, the way
-    /// `debug_light` rides in this struct's tail — a count is a word and
-    /// there was a word.
+    /// Live `point_shadows` entries, riding a pad word the spot count left.
     pub point_shadow_count: u32,
-    /// Irradiance below which a light pays for the diffuse layer only
-    /// (#821).
-    ///
-    /// The specular layer is the expensive half — GGX `D`,
-    /// height-correlated Smith `V`, Schlick `F`, the multiscatter fit,
-    /// and the representative point when the light has a radius — and a
-    /// light reaching this pixel with a fraction of the frame's exposure
-    /// spends all of it on a highlight nobody can see. With 15 lights
-    /// per pixel, that is 15 of them.
-    ///
-    /// **0.0 keeps every light on the full model**, which is what every
-    /// frame did before this existed.
+    /// Irradiance below which a light pays diffuse only (#821) — the specular half is the expensive
+    /// one, wasted on invisible highlights. **0.0 keeps the full model.**
     pub specular_floor: f32,
-    /// How many of a froxel's punctual lights a pixel may evaluate, or
-    /// **0 for all of them** — which is what every frame does.
-    ///
-    /// 🔴 A measuring instrument, not a feature. Three experiments have
-    /// now made each light cheaper — the arithmetic (#821, 10 %), the
-    /// storage fetch (#824, 6.6 %), the grid's over-listing (#820,
-    /// nothing to win) — and the frame did not move. The one variable
-    /// none of them touched is *how many* lights a pixel evaluates, and
-    /// #820 measured that twelve to fifteen genuinely reach the surface,
-    /// so clustering cannot remove them by definition.
-    ///
-    /// Truncating the walk is not a technique anybody would ship: it
-    /// drops real light and the picture goes dark where the lights
-    /// overlap. What it answers is whether the cost is proportional to
-    /// that count — which decides #825 against #826, before either is
-    /// built.
-    ///
-    /// Directional lights are not counted. They are the buffer's prefix
-    /// and are not in the grid, so leaving them alone keeps the
-    /// experiment about the froxel's lights and nothing else.
+    /// How many of a froxel's punctual lights a pixel evaluates; **0 = all**. 🔴 A measuring
+    /// instrument: it drops real light, but answers whether cost follows the 12–15 lights that
+    /// reach a pixel (#820), deciding #825 vs #826. Directional lights uncounted.
     pub light_limit: u32,
-    /// One per shadow-casting point light (#778).
-    ///
-    /// 🔴 A different record from the spots', and the difference is the
-    /// point of it: a cube map is sampled by DIRECTION, so there is no
-    /// matrix to send and no uv to transform. What is left is the three
-    /// scalars below. Reusing `GpuCascade` here would ship a 64-byte
-    /// matrix per light that nothing reads, four times over.
+    /// One per casting point light (#778) — its own record, since a cube is sampled by direction
+    /// and `GpuCascade`'s matrix would be dead weight.
     pub point_shadows: [GpuPointShadow; MAX_POINT_SHADOWS],
     /// 0 when nothing casts, or the atlas has not been rendered. The
     /// dummy atlas bound in that case reads as fully lit anyway; the
@@ -363,86 +212,43 @@ pub struct IntiFrame {
     /// Fraction of a split distance over which one cascade fades into
     /// the next.
     pub cascade_blend: f32,
-    /// Tangent of the sun's angular RADIUS — how much wider a shadow
-    /// gets per metre between blocker and receiver.
-    ///
-    /// An angle rather than a width, because that is what a light
-    /// infinitely far away has. A width in world units would have to
-    /// mean a width *at some distance*, and no code path was ever going
-    /// to agree on which.
+    /// Tangent of the sun's angular radius — shadow widening per metre of gap; an angle because the
+    /// sun is infinitely far.
     pub sun_softness: f32,
-    /// Which light the single-light debug view isolates (#743), as an
-    /// index into the light buffer. Anything `>= light_count` means
-    /// "none selected", including the [`NO_DEBUG_LIGHT`] default.
-    ///
-    /// It rides in what used to be this struct's tail padding, so the
-    /// view costs no binding, no buffer and not one byte — which matters
-    /// because there is no seventh bind group to put one in, and Inti's
-    /// group is already full.
+    /// The single-light view's buffer index (#743), `>= light_count` for none (see
+    /// [`NO_DEBUG_LIGHT`]); in former tail padding, since Inti's group is full.
     pub debug_light: u32,
-    /// The third row of the view matrix, so a fragment can turn its
-    /// world position into a view-space depth with one dot product.
-    ///
-    /// A row rather than the matrix: the only thing shading needs from
-    /// the camera's orientation is which slice of the froxel grid it is
-    /// in, and that is `z` alone. The other three rows would be 48 bytes
-    /// nothing reads.
+    /// The view matrix's third row: shading needs only view z, for the froxel slice.
     pub view_z_row: [f32; 4],
     /// xyz = the grid's dimensions, w = their product.
     pub cluster_dimensions: [u32; 4],
     /// xy = grid cells per pixel, zw = the logarithmic slice constants.
     pub cluster_factors: [f32; 4],
-    /// How many indices the list holds, for the loop to clamp against.
-    ///
-    /// A frame whose lighting overflowed the list leaves later cells
-    /// pointing past the end of it. Clamping renders those cells under-lit
-    /// rather than reading whatever a stale index happens to name.
+    /// Index-list length for the loop to clamp against; an overflowed frame renders under-lit, not
+    /// garbage.
     pub cluster_capacity: u32,
-    /// Directional lights, which the grid does not cluster: they reach
-    /// every cell, so listing them per cell would say nothing. They are
-    /// the first `directional_count` entries of the light buffer and the
-    /// shader walks them linearly.
+    /// Directional lights, unclustered: the first `directional_count` buffer entries, walked
+    /// linearly.
     pub directional_count: u32,
     /// 0 while no grid has been built — an unclustered frame walks every
     /// light the way it did before #780, which is what the headless
     /// tests and any path with no camera matrices do.
     pub clustered: u32,
-    /// Count at which `MeshletDebugMode::LightsPerPixel` reads full red
-    /// (#817). Rides in the word the cluster flag left, the way
-    /// `debug_light` rides in this struct's tail.
-    ///
-    /// A uniform rather than a shader constant because the useful top of
-    /// scale is a property of the scene: the value that separates a busy
-    /// froxel from a quiet one in a hundred-light stress test washes
-    /// every pixel red in a room with four lamps. Zero reads as
-    /// [`LIGHTS_HOT_DEFAULT`] rather than dividing by nothing.
+    /// Count at which `LightsPerPixel` reads full red (#817) — a uniform, since a useful top
+    /// depends on the scene. Zero reads as [`LIGHTS_HOT_DEFAULT`].
     pub debug_lights_hot: u32,
-    /// To 16. `debug_lights_hot` closed the previous group of four, so a
-    /// fifth scalar opens a new one — see `IntiLight`'s three scalars
-    /// for the same trap in the other direction.
-    ///
-    /// Four words rather than three since #826's `light_samples` came
-    /// out. Padding rather than a smaller struct: WGSL has to agree word
-    /// for word, and a spare group of four is what the next scalar wants.
+    /// To 16: `debug_lights_hot` closed a group of four. Four pad words since #826's
+    /// `light_samples` left, ready for the next scalar.
     pub _pad_samples: [u32; 4],
 }
 
-/// Top of scale the lights-per-pixel view starts at.
-///
-/// Sixteen because a count the eye can quarter reads as a count. It is a
-/// starting point and not a limit — the editor's control moves it, and
-/// the whole reason it moves is that the right value is whatever makes
-/// the picture stop being flat.
+/// Initial top of scale for the lights-per-pixel view: sixteen quarters readably; the editor moves
+/// it.
 pub const LIGHTS_HOT_DEFAULT: u32 = 16;
 
-/// Irradiance below which a light skips its specular layer (#821), as a
-/// [`Resource`](kooch_core::resource::Resources).
-///
-/// `0.0` — the default — keeps every light on the full model, so a
-/// project that never sets it renders exactly as before. It is a
-/// resource rather than a constant because the useful value is a
-/// property of the scene's exposure and light intensities, and the only
-/// way to find it is to sweep it while watching the picture.
+/// Irradiance below which a light skips specular (#821), as a
+/// [`Resource`](kooch_core::resource::Resources). `0.0` renders as before; the value is found by
+/// sweeping.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SpecularFloor(pub f32);
 
@@ -452,21 +258,9 @@ impl Default for SpecularFloor {
     }
 }
 
-/// `KOOCH_SPECULAR_FLOOR=<lux>`, read once.
-///
-/// 🔴 An environment variable and not only an editor control, because
-/// **the editor is not where this can be measured**. On a desktop GPU
-/// the whole raster pass is 0.12 ms and switching every specular layer
-/// off moves it by 0.001 — there is no bottleneck to remove. The frame
-/// this exists for is a game on the OneXFly, launched over SSH, with no
-/// editor in the process at all.
-///
-/// The same reasoning as `KOOCH_CLUSTERING`, learned the same way: a
-/// knob that only exists in the editor is a knob that cannot be swept
-/// on the machine whose numbers decide anything.
-///
-/// Unparseable keeps the default: a typo during a measurement run must
-/// not silently change what is being measured.
+/// `KOOCH_SPECULAR_FLOOR=<lux>`, read once. 🔴 An environment variable because it can only be
+/// measured on the OneXFly over SSH — the desktop raster pass is 0.12 ms. Unparseable keeps the
+/// default.
 fn floor_from_environment() -> f32 {
     static FLOOR: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
     *FLOOR.get_or_init(|| {
@@ -489,15 +283,8 @@ fn floor_from_environment() -> f32 {
     })
 }
 
-/// How many of a froxel's punctual lights a pixel evaluates, as a
-/// [`Resource`](kooch_core::resource::Resources). `0` — the default —
-/// evaluates all of them.
-///
-/// See [`IntiFrame::light_limit`] for what it is for. Like
-/// `KOOCH_CLUSTERING` and `KOOCH_SPECULAR_FLOOR` it is an environment
-/// variable, and for the third time for the same reason: the editor is
-/// not where this can be measured. The desktop raster pass is 0.12 ms;
-/// there is no bottleneck there to remove.
+/// Punctual lights per pixel as a [`Resource`](kooch_core::resource::Resources), `0` = all; see
+/// [`IntiFrame::light_limit`]. An environment variable too, since only the handheld can measure it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct LightLimit(pub u32);
 
@@ -507,10 +294,8 @@ impl Default for LightLimit {
     }
 }
 
-/// `KOOCH_LIGHT_LIMIT=<n>`, read once.
-///
-/// Unparseable or negative keeps the default of "all": a typo during a
-/// measurement run must not silently change what is being measured.
+/// `KOOCH_LIGHT_LIMIT=<n>`, read once; unparseable or negative keeps "all" so a typo cannot change
+/// a measurement.
 fn limit_from_environment() -> u32 {
     static LIMIT: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     *LIMIT.get_or_init(|| {
@@ -534,11 +319,8 @@ fn limit_from_environment() -> u32 {
     })
 }
 
-/// Top of scale for `MeshletDebugMode::LightsPerPixel`, as a
-/// [`Resource`](kooch_core::resource::Resources) the editor writes.
-///
-/// The same shape as [`DebugLight`]: a view's parameter belongs beside
-/// the view, not threaded through the render stage.
+/// Top of scale for `LightsPerPixel`, a [`Resource`](kooch_core::resource::Resources) the editor
+/// writes, like [`DebugLight`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct LightsHot(pub u32);
 
@@ -552,16 +334,8 @@ impl Default for LightsHot {
 /// the light count reads the same way; this one is the deliberate value.
 pub const NO_DEBUG_LIGHT: u32 = u32::MAX;
 
-/// Which light `MeshletDebugMode::SingleLight` isolates (#743).
-///
-/// A [`Resource`](kooch_core::resource::Resources) the editor writes
-/// from the World panel's selection, rather than a control of its own:
-/// "one light at a time" is what selecting a light already means, and a
-/// second list of lights to pick from is a second thing to keep in step
-/// with the scene.
-///
-/// `None` — or an entity that is not an active light — renders magenta.
-/// The two are the same answer to the viewer and neither is a failure.
+/// The light `SingleLight` isolates (#743), written by the editor from the World panel selection.
+/// `None` or a non-light renders magenta.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct DebugLight(pub Option<kooch_ecs::entity::Entity>);
 
@@ -609,11 +383,7 @@ impl IntiFrame {
         self
     }
 
-    /// Points shading at the grid this view was clustered with (#780).
-    ///
-    /// Absent, `clustered` stays 0 and the shading loop walks every
-    /// light — which is what it did before the grid existed, and what a
-    /// path with no camera matrices still does.
+    /// Points shading at this view's grid (#780); absent, the loop walks every light.
     pub fn with_clusters(mut self, grid: &crate::ClusterGrid, view: Mat4, capacity: u32) -> Self {
         let dims = grid.dimensions;
         self.view_z_row = view.row(2).to_array();
@@ -636,14 +406,8 @@ impl IntiFrame {
         self
     }
 
-    /// Sets the lights-per-pixel view's top of scale (#817).
-    ///
-    /// Clamped to at least one: a top of zero would divide the count by
-    /// nothing and paint the whole screen the ramp's hot end, which is
-    /// indistinguishable from the answer that means the grid is off.
-    /// Sets the irradiance below which a light skips its specular
-    /// layer (#821). Clamped at zero: a negative floor would mean
-    /// nothing, and zero already means "never skip".
+    /// Irradiance below which a light skips specular (#821), clamped at zero, which already means
+    /// never skip.
     pub fn with_specular_floor(mut self, floor: f32) -> Self {
         self.specular_floor = floor.max(0.0);
         self
@@ -656,6 +420,8 @@ impl IntiFrame {
         self
     }
 
+    /// Sets the lights-per-pixel view's top of scale (#817), at least one: zero would paint the
+    /// whole screen hot.
     pub fn with_lights_hot(mut self, hot: u32) -> Self {
         self.debug_lights_hot = hot.max(1);
         self
@@ -694,12 +460,8 @@ impl IntiFrame {
         self
     }
 
-    /// Attaches the spot lights' shadow maps (#777).
-    ///
-    /// Separate from [`Self::with_shadows`], which turns
-    /// `shadows_enabled` on: that flag gates the CASCADE sampling, and a
-    /// scene can have a spot casting with no sun at all. A spot reads
-    /// its own record and its own count, so it needs no flag.
+    /// Attaches spot shadow maps (#777), separate from [`Self::with_shadows`]: that flag gates
+    /// cascades, and a spot can cast with no sun.
     pub fn with_spot_shadows(
         mut self,
         spot_shadows: [GpuCascade; MAX_SPOT_SHADOWS],
@@ -723,14 +485,8 @@ impl IntiFrame {
     }
 }
 
-/// Everything the frame needs to sample shadows, as one value.
-///
-/// The producer is `kooch_render` — placing cascades needs the meshlet
-/// pipeline's atlas, and this crate sits below it. Grouped rather than
-/// passed as three parameters because they are only ever correct
-/// together: cascades from one camera with the forward axis of another
-/// puts every cascade boundary in the wrong place, and three loose
-/// arguments is how that happens.
+/// Everything the frame samples shadows with, produced by `kooch_render`. One value, because
+/// cascades from one camera with another's axis misplace every boundary.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct FrameShadows {
     /// Unit vector down the view axis, for the cascade selector.
@@ -740,14 +496,8 @@ pub struct FrameShadows {
     pub blend: f32,
     /// Tangent of the sun's angular radius. See [`IntiFrame::sun_softness`].
     pub sun_softness: f32,
-    /// 🔴 Whether the CASCADES are real.
-    ///
-    /// False when nothing directional casts and the frame exists only
-    /// for spot lights (#777). The cascades still carry numbers — they
-    /// were fitted to a stand-in direction so the pass has something
-    /// coherent to not draw — and a directional light that does not cast
-    /// would otherwise sample them and be shadowed by a sun that is not
-    /// there.
+    /// 🔴 Whether cascades are real: false when only spots cast, where cascades are fitted to a
+    /// stand-in direction a non-casting sun must not sample.
     pub cascades_enabled: bool,
     /// One per shadow-casting spot light (#777).
     pub spot_shadows: [GpuCascade; MAX_SPOT_SHADOWS],
@@ -757,25 +507,13 @@ pub struct FrameShadows {
     pub point_shadows: [GpuPointShadow; MAX_POINT_SHADOWS],
     /// How many of `point_shadows` are live.
     pub point_shadow_count: u32,
-    /// Which entity each live cube belongs to, in slot order.
-    ///
-    /// 🔴 Carried rather than recomputed. The slot a point light gets is
-    /// its rank by distance to the camera, so the light buffer's walk
-    /// order and the slot order are different orders — and the two
-    /// places that need the mapping would have to sort identically, from
-    /// the same camera, forever. One of them ranks; this array is the
-    /// answer travelling to the other.
+    /// The entity per live cube, in slot order. 🔴 Carried, not recomputed: slots are ranked by
+    /// importance, not walk order, and two rankings would drift.
     pub point_entities: [kooch_ecs::entity::Entity; MAX_POINT_SHADOWS],
 }
 
-/// Tangent of the sun's angular radius, by default.
-///
-/// The real sun subtends about half a degree, so the honest value is
-/// 0.0047 — and at that width PCSS is indistinguishable from PCF and
-/// costs eight extra taps to prove it. 0.03 is roughly a three-degree
-/// sun: about seven centimetres of penumbra per metre of gap, which is
-/// what makes a shadow read as attached at its base and soft where it
-/// is not. Every film and game widens it, for this reason.
+/// Default sun softness: the real 0.0047 looks like PCF at eight taps' cost; 0.03, a three-degree
+/// sun, gives ~7 cm of penumbra per metre — attached at the base, soft further out.
 pub const DEFAULT_SUN_SOFTNESS: f32 = 0.03;
 
 #[cfg(test)]

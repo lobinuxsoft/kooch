@@ -85,12 +85,8 @@ impl ClusterReadback {
         }
     }
 
-    /// Copies the draw record into a free slot, if there is one.
-    ///
-    /// `None` back from the acquire means every slot is still in flight,
-    /// and the frame simply skips the readback — the cached record is
-    /// one more frame old, which is the same kind of stale it already
-    /// was.
+    /// Copies the draw record into a free slot; with all in flight the frame skips and the cached
+    /// record ages a frame.
     pub fn record_copy(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -113,10 +109,8 @@ impl ClusterReadback {
                 if result.is_ok() {
                     *state.lock().unwrap() = SlotState::Ready;
                 }
-                // A map error is device-loss territory. Leaving the slot
-                // in flight means later frames skip it and keep using
-                // the cached record, rather than panicking in a callback
-                // on the wgpu driver thread.
+                // A map error is device loss; the slot stays in flight rather than panicking on the
+                // driver thread.
             });
     }
 

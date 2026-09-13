@@ -1,55 +1,30 @@
 use super::*;
 
-/// 🔴 A uniform whose Rust size drifts from its WGSL mirror is not a
-/// compile error anywhere: it surfaces as `min_binding_size` refusing
-/// the pipeline, which reads as a bindings bug. It is how the `vec3<u32>`
-/// pad that grew every cascade by 16 bytes was found, and only because
-/// this number is written down.
+/// 🔴 A Rust/WGSL size drift is no compile error, only `min_binding_size` refusing the pipeline.
 #[test]
 fn frame_size_matches_shader() {
-    // 64 of header, four 96-byte cascades, 16 of tail, then #777's four
-    // 96-byte spot-shadow records and their own 16 of count and pad, and
-    // #778's four 16-byte point records.
-    //
-    // The point records cost 64 and not 80: their count took one of the
-    // three words the spot count left padding, so the tail is the same
-    // tail.
+    // 64 of header, four 96 B cascades, 16 of tail, four 96 B spot records with 16 of count, then
+    // the point records, whose count took a spot pad word.
     const HEADER: usize = 64;
     const CASCADES: usize = 4 * 96;
     const TAIL: usize = 16;
     const SPOT_SHADOWS: usize = MAX_SPOT_SHADOWS * 96;
     const SPOT_TAIL: usize = 16;
     const POINT_SHADOWS: usize = MAX_POINT_SHADOWS * 16;
-    // #780's froxel grid: the view matrix's third row, the grid's
-    // dimensions, its factors, and four words of counts and flags.
-    //
-    // ⚠️ It starts at a 16-byte boundary because everything before it
-    // ends on one. A `[f32; 4]` in Rust aligns to 4 and a `vec4<f32>` in
-    // WGSL to 16, so a field of odd size inserted above this point moves
-    // the two apart without either side complaining.
+    // The grid's (#780) row, dimensions, factors and four words. ⚠️ Starts on a 16 B boundary;
+    // `[f32; 4]` aligns to 4 in Rust but `vec4` to 16 in WGSL.
     const CLUSTERS: usize = 4 * 16;
-    // #826's sample count. A whole 16 for one word, because the four
-    // that preceded it — `cluster_capacity`, `directional_count`,
-    // `clustered`, `debug_lights_hot` — closed their group exactly. The
-    // next scalar opens a new one and pays for its three empty
-    // neighbours; there was no padding left to ride in, the way
-    // `debug_light` and `light_limit` each did.
+    // #826's sample count: a whole 16 for one word, since the previous four closed their group.
     const SAMPLES: usize = 16;
     assert_eq!(
         std::mem::size_of::<IntiFrame>(),
         HEADER + CASCADES + TAIL + SPOT_SHADOWS + SPOT_TAIL + POINT_SHADOWS + CLUSTERS + SAMPLES,
     );
-    // The literal, so a layout change is noticed and not merely
-    // recomputed by the sum above. It moves with `MAX_POINT_SHADOWS`:
-    // 1008 at a budget of 4, 1456 at 32 (#849). Nothing else in this
-    // struct is allowed to move it silently.
+    // The literal, so a layout change is noticed: 1008 at 4 point shadows, 1456 at 32 (#849).
     assert_eq!(std::mem::size_of::<IntiFrame>(), 1456);
 }
 
-/// std140/std430 require an array's element stride to be a multiple
-/// of 16. At 92 or 100 bytes every cascade after the first would be
-/// read from the middle of the previous one, and the symptom is
-/// shadows in the wrong place rather than a validation error.
+/// Array strides must be multiples of 16, or every cascade after the first is read mid-record.
 #[test]
 fn cascade_stride_is_sixteen_byte_aligned() {
     assert_eq!(std::mem::size_of::<GpuCascade>(), 96);
@@ -78,11 +53,8 @@ fn a_degenerate_forward_falls_back_rather_than_producing_nan() {
 
 #[test]
 fn default_exposure_brings_a_default_sun_into_range() {
-    // 10 000 lux × exposure, through a Lambertian white surface
-    // facing the light, must land near 1.0 rather than clipping by
-    // an order of magnitude. This is the assertion that catches
-    // "the whole scene is a white rectangle" before a smoke test
-    // has to.
+    // 10 000 lux on a white Lambertian surface through the default exposure must land near 1.0, not
+    // a white rectangle.
     let peak = 10_000.0 * Exposure::default().multiplier() / std::f32::consts::PI;
     assert!(
         (0.5..8.0).contains(&peak),

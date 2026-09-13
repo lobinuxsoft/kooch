@@ -6,23 +6,16 @@ use glam::{Mat4, Vec2};
 
 use super::grid::ClusterGrid;
 
-/// Indices the list holds before it has to grow.
-///
-/// Bevy starts at the same number. A cell's run is as long as the lights
-/// that reach it, so the total is a property of how the scene is lit,
-/// not of how many lights it has — which is why it is measured rather
-/// than derived.
+/// Initial index capacity, as Bevy; the total depends on how the scene is lit, so it is measured,
+/// not derived.
 pub(super) const INITIAL_INDEX_CAPACITY: u32 = 65_536;
 
 /// Vertices the rasterizer draws per work item: two triangles, with no
 /// vertex buffer behind them.
 pub(super) const QUAD_VERTICES: u32 = 6;
 
-/// What every clustering pass knows about the view and the grid.
-///
-/// Mirrors `ClusterView` in `cluster_common.wgsl`. Nothing checks the
-/// correspondence at compile time — [`super::tests`] is what stands in
-/// for the missing compiler.
+/// What every clustering pass knows about the view; mirrors `ClusterView`, pinned by
+/// `cluster/tests.rs`.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct ClusterViewUniform {
@@ -42,10 +35,7 @@ pub struct ClusterViewUniform {
 }
 
 impl ClusterViewUniform {
-    /// Builds the uniform for one view.
-    ///
-    /// `view` is the camera's world-to-view matrix and `proj` its
-    /// projection.
+    /// The uniform for one view: `view` world-to-view, `proj` the projection.
     pub fn new(grid: &ClusterGrid, view: Mat4, proj: Mat4, viewport: Vec2, lights: u32) -> Self {
         let dims = grid.dimensions;
         // The camera's scale, inverted, so a world radius becomes a view
@@ -83,12 +73,8 @@ impl ClusterViewUniform {
     }
 }
 
-/// The draw arguments the rasterizer runs from, and the two numbers the
-/// CPU reads back to size the buffers.
-///
-/// Mirrors `ClusterDraw`. The first four words are
-/// `wgpu::util::DrawIndirectArgs` at offset zero, which is what
-/// `draw_indirect` requires.
+/// Draw arguments plus the CPU readback; mirrors `ClusterDraw`, `DrawIndirectArgs` at offset zero
+/// for `draw_indirect`.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct ClusterDraw {
@@ -100,12 +86,8 @@ pub struct ClusterDraw {
     pub wanted: u32,
     /// Indices the grid needs, uncapped.
     pub index_size: u32,
-    /// Lights in the busiest cell of the grid (#820).
-    ///
-    /// The number the lights-per-pixel view (#817) can only be bisected
-    /// for by eye, which does not separate 32 from 45. It rides home in
-    /// the record that already makes the trip, so it costs one
-    /// `atomicMax` in a pass that is already visiting every cell.
+    /// Lights in the busiest cell (#820) — the view (#817) cannot tell 32 from 45 by eye; one
+    /// `atomicMax` in a pass already visiting every cell.
     pub peak_cell: u32,
     /// Cells holding at least one light, so the mean is over the cells
     /// that exist rather than over the empty half of the grid.
@@ -172,13 +154,8 @@ impl ClusterBuffers {
         }
     }
 
-    /// Grows whatever no longer fits, and reports whether anything was
-    /// replaced — a replaced buffer means the bind groups that named it
-    /// are stale.
-    ///
-    /// Never shrinks. A scene oscillating around a boundary would
-    /// otherwise reallocate every frame, and the memory involved is
-    /// kilobytes.
+    /// Grows what no longer fits and reports replacement, so stale bind groups rebuild. Never
+    /// shrinks: kilobytes, and shrinking thrashes at boundaries.
     pub fn ensure_capacity(&mut self, device: &wgpu::Device, cells: u32, work: u32) -> bool {
         let mut rebuilt = false;
         if cells > self.cell_capacity {
@@ -196,11 +173,7 @@ impl ClusterBuffers {
         rebuilt
     }
 
-    /// Grows the index list to `needed`, reporting whether it was
-    /// replaced.
-    ///
-    /// Separate from [`Self::ensure_capacity`] because the number comes
-    /// from the GPU a frame or two late, not from the scene walk.
+    /// Grows the index list; separate because the number arrives from the GPU a frame or two late.
     pub fn ensure_indices(&mut self, device: &wgpu::Device, needed: u32) -> bool {
         if needed <= self.index_capacity {
             return false;
@@ -224,10 +197,8 @@ fn cell_buffer(device: &wgpu::Device, label: &str, capacity: u32) -> wgpu::Buffe
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(label),
         size: capacity.max(1) as u64 * CELL_SIZE,
-        // COPY_DST because the counting pass accumulates into it, so it
-        // has to start at zero every frame — which `clear_buffer` does
-        // without a shader. COPY_SRC so a test, or anyone diagnosing a
-        // scene lit by nothing, can read the grid back.
+        // COPY_DST to clear to zero each frame; COPY_SRC to read the grid back in tests or
+        // diagnosis.
         usage: wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::COPY_DST
             | wgpu::BufferUsages::COPY_SRC,

@@ -1,10 +1,5 @@
-//! The froxel grid, against a real device (#780).
-//!
-//! What these assert is the thing the shading loop cannot check for
-//! itself: that a light which reaches a pixel is in that pixel's cell,
-//! and that the two rasterizer passes agree about it. A grid that comes
-//! out empty renders a scene lit by nothing but ambient — which looks
-//! like a lighting bug, three layers away from here.
+//! The froxel grid on a real device (#780): a light reaching a pixel is in its cell, and both
+//! raster passes agree. An empty grid renders ambient-only, three layers from here.
 
 use glam::{Mat4, Vec3};
 
@@ -219,13 +214,8 @@ fn a_light_behind_the_camera_lands_nowhere() {
     assert_eq!(occupied(&cells), 0);
 }
 
-/// 🔴 The assertion #780 turns on: what the count pass counted is what
-/// the populate pass wrote.
-///
-/// The two are the same source compiled twice, and nothing else in the
-/// pipeline can notice when they disagree — a cell would either overflow
-/// its run into its neighbour's or leave a hole in it, and both render
-/// as lighting that is subtly wrong.
+/// 🔴 What the count pass counted is what populate wrote — the same source twice, which nothing else
+/// checks.
 #[test]
 fn the_counts_and_the_indices_agree() {
     let Some((device, queue)) = device() else {
@@ -280,10 +270,7 @@ fn a_distant_light_does_not_fill_the_grid() {
     );
 }
 
-/// A spot light gets a second, tighter test than a point: its sphere is
-/// its range, and the cone inside that sphere is most of what the grid
-/// saves. The test is that the cone does not cull away the cells it
-/// actually lights.
+/// A spot's cone test must not cull cells it lights.
 #[test]
 fn a_spot_reaches_the_cells_in_its_cone() {
     let Some((device, queue)) = device() else {
@@ -329,13 +316,8 @@ fn add_spot(resources: &mut Resources, position: Vec3, range: f32) {
     resources.insert(commands);
 }
 
-/// 🔴 The assertion that matters to a pixel.
-///
-/// "Some cell holds the light" is not the property shading depends on:
-/// what it needs is that the cell **this fragment lands in** holds the
-/// lights that reach it. A grid can be full and still miss the one cell
-/// being looked at — which renders as a surface lit by ambient alone,
-/// with a light sitting right on top of it.
+/// 🔴 The cell this fragment lands in holds the light — a full grid can still miss the one being
+/// looked at.
 #[test]
 fn the_cell_a_lit_point_falls_in_holds_the_light() {
     let Some((device, queue)) = device() else {
@@ -384,13 +366,8 @@ fn cell_of_with(world: Vec3, cam: ClusterCamera) -> usize {
     ((xy.y as u32 * dims.x + xy.x as u32) * dims.z + z) as usize
 }
 
-/// The `spot_shadows` scene, at the level of the grid.
-///
-/// That suite renders a cube over a floor with one spot and measures the
-/// floor. It went dark the day clustering landed, which said the grid
-/// was missing the very cell being measured — and none of the tests
-/// above could see it, because they all used a camera looking straight
-/// down its own axis.
+/// The `spot_shadows` scene at grid level: its floor went dark when clustering landed, invisible to
+/// cameras looking down their own axis.
 #[test]
 fn the_spot_shadows_scene_lights_its_floor() {
     let Some((device, queue)) = device() else {

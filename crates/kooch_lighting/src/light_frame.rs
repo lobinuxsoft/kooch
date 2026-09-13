@@ -12,29 +12,9 @@ use kooch_ecs::spot_light::SpotLight;
 use crate::extract::{ExtractedLights, PointShadowSource, SpotShadowSource};
 use crate::gpu_light::GpuLight;
 
-/// Every light of one frame, from **one** walk of each archetype.
-///
-/// # Why this type exists
-///
-/// The light archetypes used to be walked twice per frame: once by
-/// `extract_lights` for the GPU buffer, and again by the shadow stage for
-/// its sources. Three times in the editor, which renders two views through
-/// one stage. Every walk read the same components and applied a narrower
-/// filter to them.
-///
-/// 🔴 **And the duplication was never about speed.** `extract_lights` says
-/// why in its own doc: *"One walk produces both, because two that disagreed
-/// would isolate the wrong light in the debug view and nothing would report
-/// it."* A second walk agrees with the first only while nobody adds a
-/// condition to one of them, and **nothing fails when they drift**. The
-/// spot walk had already been merged for exactly that reason; this
-/// finishes the job.
-///
-/// # Lifetime
-///
-/// Built once per frame and **borrowed**, never stored. Nothing here
-/// outlives the frame it describes, so a `Vec<Entity>` in it cannot name a
-/// despawned entity — which a value parked in `Resources` could.
+/// Every light of one frame from one walk per archetype — two walks agree only until someone edits
+/// one, and nothing fails when they drift.
+/// Built per frame and borrowed, never stored, so its entities cannot be despawned ones.
 pub struct LightFrame {
     lights: ExtractedLights,
     sun: Option<glam::Vec3>,
@@ -43,12 +23,8 @@ pub struct LightFrame {
 }
 
 impl LightFrame {
-    /// Walks each light archetype once and derives everything from it.
-    ///
-    /// ⚠️ Entities the allocator no longer considers alive are skipped.
-    /// Despawn is **deferred** — `EntityAllocator::despawn` queues into
-    /// `pending_despawn` — so between a despawn and the next sync an
-    /// archetype can still list an entity that is gone.
+    /// Walks each light archetype once. ⚠️ Skips entities the allocator considers dead: despawn is
+    /// deferred.
     pub fn extract(resources: &Resources) -> Self {
         let alive = resources.get::<EntityAllocator>();
         let live = |entity: Entity| alive.is_none_or(|alloc| alloc.is_alive(entity));
@@ -64,10 +40,7 @@ impl LightFrame {
                 if !live(entity) || !light.active {
                     return;
                 }
-                // The first shadow-casting sun, in walk order. The atlas
-                // holds four cascades of one light and there is no bind
-                // group left for a second — a limitation stated rather
-                // than discovered.
+                // The first casting sun: the atlas holds four cascades of one light.
                 if sun.is_none() && light.cast_shadows {
                     sun = Some(crate::gpu_light::forward(transform.matrix));
                 }
@@ -103,10 +76,7 @@ impl LightFrame {
             },
         );
 
-        // 🔴 A spot's shadow slot is handed out DURING the walk, and its
-        // source is recorded in the same breath. The budget is applied
-        // here and only here: two places deciding which spots fit would
-        // light a spot with another spot's map.
+        // 🔴 Spot slots are assigned during the walk, with the budget applied only here.
         let mut next_slot = 0u32;
         Query::<(&SpotLight, &GlobalTransform)>::new(resources).for_each_entity(
             |entity, (light, transform)| {
@@ -174,11 +144,8 @@ impl LightFrame {
         &self.point_shadows
     }
 
-    /// The casting point lights, ranked by what a cube spent on them would
-    /// show from `camera`, best first and cut to `limit`.
-    ///
-    /// Ranking lives here rather than in the walk because it is the only
-    /// part that depends on where anyone is standing.
+    /// Casting point lights ranked by what a cube would show from `camera`, best first, cut to
+    /// `limit` — here, since only ranking depends on position.
     pub fn ranked_points(&self, camera: glam::Vec3, limit: usize) -> Vec<PointShadowSource> {
         let mut out = self.point_shadows.clone();
         for source in &mut out {
