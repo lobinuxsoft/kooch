@@ -4,9 +4,7 @@
 //! cargo run --release -p kooch_pack --example measure -- assets /tmp/out.kpack
 //! ```
 //!
-//! An example rather than a test: the numbers depend on what it is
-//! pointed at, and a test that asserted a ratio would be asserting the
-//! contents of somebody's `assets/`.
+//! An example, not a test: the numbers depend on the directory it is pointed at.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;

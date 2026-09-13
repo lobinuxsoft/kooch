@@ -114,10 +114,8 @@ fn something_too_short_is_not_a_pack() {
     assert!(matches!(open(b"", &key), Err(PackError::NotAPack)));
 }
 
-/// 🔴 The tag is derived, so a long enough file that is not a pack is
-/// indistinguishable from a pack under the wrong key — deliberately.
-/// Telling those apart is exactly what a magic string does, and what was
-/// removed.
+/// 🔴 A non-pack and a pack under the wrong key are deliberately indistinguishable: that distinction
+/// is what a magic string would give away.
 #[test]
 fn a_long_file_that_is_not_a_pack_looks_like_a_wrong_key() {
     let key = PackKey::generate();

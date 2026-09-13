@@ -39,10 +39,8 @@ fn generated_keys_differ() {
     assert_ne!(PackKey::generate(), PackKey::generate());
 }
 
-/// 🔴 One key, two jobs is how a public value ends up related to a
-/// secret one: the tag sits in the clear at byte 0 of every pack, and the
-/// data key encrypts. Domain separation is what keeps the first from
-/// saying anything about the second.
+/// 🔴 Domain separation: the tag sits in the clear at byte 0 of every pack, so it must say nothing
+/// about the data key.
 #[test]
 fn the_tag_and_the_data_key_differ() {
     let key = PackKey::generate();

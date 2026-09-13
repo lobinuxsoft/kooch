@@ -1,8 +1,5 @@
-//! Building a pack.
-//!
-//! Entries are written as they arrive and the index goes last, so packing
-//! never holds more than one file in memory — a project's `assets/` is
-//! the one thing in a build that has no upper bound.
+//! Building a pack: entries are written as they arrive and the index last, so packing holds one
+//! file in memory at a time.
 
 use std::collections::BTreeSet;
 use std::io::{Seek, SeekFrom, Write};
@@ -19,11 +16,8 @@ const ALREADY_COMPRESSED: [&str; 9] = [
     "png", "jpg", "jpeg", "webp", "ktx2", "basis", "ogg", "mp3", "kpack",
 ];
 
-/// Writes a `.kpack`.
-///
-/// Consumes itself on [`finish`](Self::finish): a pack without its index
-/// is unreadable, and a writer that could be dropped half-way would make
-/// that a runtime problem instead of a compile-time one.
+/// Writes a `.kpack`, consumed by [`finish`](Self::finish) so a pack cannot be left without its
+/// index.
 pub struct PackWriter<W: Write + Seek> {
     out: W,
     cipher: Aes256Gcm,
@@ -51,15 +45,8 @@ impl<W: Write + Seek> PackWriter<W> {
         })
     }
 
-    /// Adds `bytes` under `name`.
-    ///
-    /// `name` is normalised to `/` separators, so a pack built on Windows
-    /// reads the same everywhere.
-    ///
-    /// Adding the same name twice is refused rather than silently keeping
-    /// the last: a duplicate means the caller merged two trees that
-    /// collide, and finding out at read time — where one of them has
-    /// simply vanished — is how a missing texture becomes an afternoon.
+    /// Adds `bytes` under `name`, normalised to `/` separators. A duplicate name is refused: it
+    /// means two colliding trees, and one would silently vanish.
     pub fn add(&mut self, name: &str, bytes: &[u8]) -> Result<(), PackError> {
         let name = normalise(name);
         if !self.names.insert(name.clone()) {
@@ -148,12 +135,8 @@ impl<W: Write + Seek> PackWriter<W> {
     }
 }
 
-/// magic(8) + version(2) + count(4) + index_offset(8) + index_len(8) +
-/// index_nonce(12).
-///
-/// 🔴 `count` is a `u32`, not the `u16` vach uses: 65 535 entries is a
-/// ceiling a real project walks into, and a container that silently
-/// cannot describe a big game is worse than one that is a little larger.
+/// magic(8) + version(2) + count(4) + index_offset(8) + index_len(8) + index_nonce(12). 🔴 `count`
+/// is `u32`: a `u16` cap is one a real project walks into.
 pub(crate) const HEADER_LEN: usize = 8 + 2 + 4 + 8 + 8 + NONCE_LEN;
 
 /// `\` to `/`, and no leading separator.

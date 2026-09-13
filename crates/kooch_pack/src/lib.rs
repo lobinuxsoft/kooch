@@ -1,8 +1,5 @@
-//! `.kpack` — the container a shipped game reads its assets out of (#758).
-//!
-//! One file beside the executable holding every asset the game
-//! references, each entry compressed with **zstd** and encrypted with
-//! **AES-256-GCM**.
+//! `.kpack` — the container a shipped game reads its assets from (#758): one file of entries, each
+//! zstd-compressed and AES-256-GCM encrypted.
 //!
 //! ```text
 //! dist/
@@ -11,45 +8,9 @@
 //!   assets.kpack        this
 //! ```
 //!
-//! # ⚠️ What this is not
-//!
-//! **The key has to be inside the binary for the binary to open the pack,
-//! so an attacker has it too.** Godot does the same thing and
-//! `godot-key-extract` pulls the key out of their executables; their own
-//! documentation calls it a deterrent rather than protection.
-//!
-//! What it buys is real but bounded: stealing the assets goes from
-//! *dragging a `.glb` into Blender* to *pulling the key out of a binary
-//! and understanding this format*. That filters almost everyone. It does
-//! not filter someone determined, and nothing does.
-//!
-//! # Why the parts are what they are
-//!
-//! - **zstd**, because it wins ratio and decompression speed at the same
-//!   time: level 19 approaches LZMA's ratio and decompresses about ten
-//!   times faster. Packing happens once and slowly; reading happens
-//!   always. `lz4` compresses too poorly and `brotli` decompresses slower
-//!   for the same ratio.
-//! - **AES-256-GCM**, because it is *authenticated*. A pack somebody
-//!   edited fails to open and says so, rather than handing the game
-//!   plausible rubbish that surfaces later as a crash in a mesh loader.
-//! - **Compress, then encrypt.** The other order compresses nothing:
-//!   ciphertext has no structure left to find.
-//! - **Per entry, with its own nonce.** Encrypting the file as one blob
-//!   would mean decrypting 500 MB to read one texture.
-//! - **The index is encrypted too**, so the list of file names — which is
-//!   most of what a game is about — is not readable from the outside.
-//!
-//! # Why the container is ours
-//!
-//! [`vach`](https://github.com/zeskeertwee/vach) is the crate for exactly
-//! this, MIT, modelled on Godot's `.pck`. It was read before this was
-//! written and not adopted: its own README lists encryption as *"yet to
-//! be implemented"*, its last release was a year ago, and its `CAPACITY`
-//! field is a `u16` — 65 535 entries, a ceiling a real game walks into.
-//!
-//! What is left after taking compression and cryptography from crates is
-//! an index and some offsets, which is what this module is.
+//! ⚠️ A deterrent, not protection: the key has to be in the binary, so an attacker has it too (as
+//! with Godot's `.pck`).
+//! Not `vach`: it lacks encryption and caps entries at `u16`.
 
 mod key;
 mod read;
@@ -61,21 +22,15 @@ pub use read::Pack;
 pub use split::{SHARES, SHARES_ENV, SplitKey, key_from_shares, shares_for_build};
 pub use write::PackWriter;
 
-/// Layout version. Bumped when the header or an entry changes shape; a
-/// reader refuses anything it does not know rather than guessing.
-///
-/// Left in the clear, unlike the tag: it is what lets a pack from a newer
-/// editor produce *that* error instead of looking like a wrong key.
+/// Layout version: a reader refuses one it does not know. Left in the clear so a newer pack reports
+/// that, not a wrong key.
 pub const FORMAT_VERSION: u16 = 1;
 
 /// Bytes of AES-GCM nonce, per entry.
 const NONCE_LEN: usize = 12;
 
-/// zstd level used when packing.
-///
-/// 19, not 22: the last three levels cost several times the packing time
-/// for about a percent of ratio, and packing is something a person waits
-/// through. Decompression speed does not depend on the level.
+/// zstd level for packing: 19, not 22 — the last levels cost several times the time for about 1%
+/// ratio, and decompression speed does not depend on it.
 const ZSTD_LEVEL: i32 = 19;
 
 /// Anything that can go wrong reading or writing a pack.
@@ -86,10 +41,8 @@ pub enum PackError {
     NotAPack,
     /// Written by a newer format than this build knows.
     Version(u16),
-    /// The key is wrong, or the pack was modified.
-    ///
-    /// One variant for both on purpose: AES-GCM cannot tell them apart,
-    /// and pretending otherwise would be a guess in an error message.
+    /// The key is wrong, or the pack was modified — one variant because AES-GCM cannot tell them
+    /// apart.
     Corrupt,
     /// No entry under that name.
     NotFound(String),
@@ -122,11 +75,8 @@ impl From<std::io::Error> for PackError {
     }
 }
 
-/// One file inside a pack, as the index describes it.
-///
-/// `stored_len` and `plain_len` are both kept: the first is what to read
-/// off disk, the second is what to allocate before decompressing. Without
-/// the second, every read grows a buffer as it goes.
+/// One file inside a pack, as the index describes it: `stored_len` to read off disk, `plain_len` to
+/// allocate before decompressing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     /// Path relative to the pack's root, always with `/` separators, so a
@@ -138,10 +88,7 @@ pub struct Entry {
     pub stored_len: u64,
     /// How many bytes come back out.
     pub plain_len: u64,
-    /// Whether the payload went through zstd.
-    ///
-    /// Not everything does: a `.png` is already compressed, and zstd on
-    /// top costs time to make it very slightly bigger.
+    /// Whether the payload went through zstd; already-compressed files like `.png` skip it.
     pub compressed: bool,
     /// This entry's AES-GCM nonce.
     pub nonce: [u8; NONCE_LEN],
