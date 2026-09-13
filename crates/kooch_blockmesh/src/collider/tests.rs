@@ -11,10 +11,8 @@ fn a_cuboid_collides_as_twelve_triangles() {
 
 #[test]
 fn a_collider_keeps_corners_welded() {
-    // Strictly fewer corners than the mesh drawn from the same block: a
-    // seam the solver can catch on is the whole reason this is not the
-    // render mesh. Counting indices would not notice — a split mesh
-    // still addresses every vertex it has.
+    // Fewer corners than the render mesh: welding is the point, and an index count would not notice
+    // a split mesh.
     let block = BlockMesh::cuboid(Vec3::splat(0.5));
     let collider = block.to_collider();
     assert_eq!(collider.vertices.len(), block.positions().len());

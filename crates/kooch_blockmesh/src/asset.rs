@@ -6,14 +6,8 @@ use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext
 
 use crate::BlockMesh;
 
-/// What a block mesh file is called.
-///
-/// 🔴 Its own extension, not `.ron`. RON is the *format*, and
-/// `Material` already claims that extension — two loaders registered
-/// for `ron` meant the asset scan typed a block as a material, the
-/// inspector drew it with a base colour, and nothing could load it as
-/// what it is. `.inputaction` and `.buildpreset` are RON inside for the
-/// same reason and named after the thing, not the syntax.
+/// What a block mesh file is called. Its own extension, not `.ron`: `Material` claims `ron`, and
+/// sharing it typed blocks as materials (#1075).
 pub const BLOCK_MESH_EXTENSION: &str = "block";
 
 /// Reads `BlockMesh` assets from RON, the same authoring format

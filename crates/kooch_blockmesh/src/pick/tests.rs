@@ -87,10 +87,8 @@ fn an_empty_mesh_is_never_hit() {
     assert!(face_at(&BlockMesh::default(), Vec3::Z * 3.0, -Vec3::Z).is_none());
 }
 
-/// A camera 4 m down +Z looking back at the origin, 800x600.
-///
-/// Reverse-Z infinite, the same projection the viewport builds, so the
-/// `w` these tests rank by is the one the editor ranks by.
+/// A camera 4 m down +Z looking at the origin, 800x600, with the viewport's reverse-Z infinite
+/// projection.
 fn screen() -> Screen {
     let eye = Vec3::new(0.0, 0.0, 4.0);
     let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
@@ -176,10 +174,8 @@ fn a_cursor_inside_a_face_misses_every_edge() {
 
 #[test]
 fn a_mirrored_ghost_is_not_hit() {
-    // 🔴 The eye sits inside the cube, so four corners are behind it.
-    // Dividing by their negative `w` mirrors them through the centre —
-    // corner (0.5, 0.5, -0.5) lands at pixel (1166, 1166), 700 px from
-    // the nearest real one. A cursor there must find nothing.
+    // 🔴 The eye is inside the cube, so a negative `w` mirrors corner (0.5, 0.5, -0.5) to pixel
+    // (1166, 1166). A cursor there must find nothing.
     let mesh = cube();
     let screen = Screen {
         clip: kooch_render::projection::perspective_infinite_rh_reverse_z(

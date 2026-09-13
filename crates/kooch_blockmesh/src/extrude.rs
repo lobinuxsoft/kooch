@@ -17,33 +17,9 @@ pub struct Extruded {
 }
 
 impl BlockMesh {
-    /// Pulls `faces` along `by` and stitches walls to the boundary.
-    ///
-    /// # Contiguous faces move as one piece
-    ///
-    /// Extruding one face is easy. The real case is several — a 2×3
-    /// patch of floor pulled up is **one wall, not six pillars** — and
-    /// that is what the boundary is for: an edge used twice inside the
-    /// selection is interior and gets no wall; used once, it is the rim.
-    ///
-    /// A selection in two disconnected pieces extrudes as two pieces in
-    /// one call, because each has its own rim.
-    ///
-    /// # Which corners are duplicated
-    ///
-    /// Only the ones the surface has to keep: a corner on the rim, or
-    /// one an unselected face still uses. A corner entirely inside the
-    /// patch is simply moved — duplicating it would leave the original
-    /// belonging to nothing, which is a hole the renderer draws through.
-    ///
-    /// # Winding
-    ///
-    /// A wall is `[a, b, b', a']` for a rim edge `a → b` taken in its
-    /// own face's order, which puts its normal away from the volume.
-    /// Not derived from a normal: a face dragged flat has no reliable
-    /// one, and the winding is already known.
-    ///
-    /// Answers `None` when `faces` names nothing that exists.
+    /// Pulls `faces` along `by` and stitches walls to the rim; `None` when `faces` names nothing.
+    /// Contiguous faces move as one piece: an edge used twice in the selection is interior, used
+    /// once it is the rim.
     pub fn extrude(&mut self, faces: &[u32], by: Vec3) -> Option<Extruded> {
         let selected: Vec<u32> = faces
             .iter()
@@ -101,17 +77,9 @@ impl BlockMesh {
         })
     }
 
-    /// The direction a selection extrudes along by default: the
-    /// average of its faces' normals, times `distance`.
-    ///
-    /// 🔴 Averaged, not per face. Extruding a curved patch along each
-    /// face's own normal tears it into a fan of disconnected pieces —
-    /// the faces diverge, and the walls between them have nowhere to
-    /// meet. One direction keeps the patch a patch.
-    ///
-    /// `None` when nothing is selected, or when the normals cancel:
-    /// two opposite faces have no shared "out", and picking one of them
-    /// would extrude half the selection backwards.
+    /// The default extrude direction: the faces' averaged normal, times `distance`.
+    /// 🔴 Averaged, not per face — per-face normals tear a curved patch apart. `None` when nothing
+    /// is selected or the normals cancel.
     pub fn extrude_direction(&self, faces: &[u32], distance: f32) -> Option<Vec3> {
         let mut total = Vec3::ZERO;
         let mut counted = 0;
@@ -131,12 +99,8 @@ impl BlockMesh {
         (average.length() > 1e-4).then(|| average.normalize() * distance)
     }
 
-    /// The rim of the selection: `(face, step)` for every edge used by
-    /// exactly one selected face.
-    ///
-    /// Named by the face and the step inside it rather than by the edge,
-    /// because the wall's winding comes from that face's order and an
-    /// edge index has forgotten it.
+    /// The selection's rim: `(face, step)` for every edge used by exactly one selected face. Named
+    /// by face and step because the wall's winding comes from that face's order.
     fn rim_edges(&self, adjacency: &Adjacency, selected: &[u32]) -> Vec<(u32, usize)> {
         let mut uses: HashMap<u32, u32> = HashMap::new();
         for face in selected {
@@ -162,11 +126,8 @@ impl BlockMesh {
         rim
     }
 
-    /// Corners that need a copy left behind.
-    ///
-    /// A rim endpoint always, because the wall is stitched between the
-    /// old and the new. And any corner an unselected face still uses,
-    /// or moving it would drag that face along.
+    /// Corners that need a copy left behind: every rim endpoint, and any corner an unselected face
+    /// still uses.
     fn corners_to_split(
         &self,
         adjacency: &Adjacency,
