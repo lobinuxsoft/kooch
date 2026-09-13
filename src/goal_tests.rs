@@ -1,13 +1,5 @@
-//! Can a project write "you touched the goal"?
-//!
-//! Only through the **prelude**, deliberately. Every type here was
-//! reachable all along at `kooch::kooch_physics::plugin::…`, which is to
-//! say: only if you already knew it existed. Reaching past the facade
-//! would test the thing that was never broken and miss the one that was
-//! (#1065).
-//!
-//! A goal, a checkpoint and a death plane are one mechanism — a sensor
-//! that reports an overlap — so this covers all three.
+//! Can a project write "you touched the goal"? Only through the prelude, deliberately (#1065). A
+//! goal, checkpoint and death plane are one mechanism: a sensor reporting overlap.
 
 use crate::prelude::*;
 
@@ -23,11 +15,8 @@ fn reached(resources: &Resources, goal: Entity) -> bool {
         })
 }
 
-/// 🔴 The whole issue: this file compiles.
-///
-/// `CollisionStarted` could not be named from a project, so a level
-/// could not have an end. The character has walked, sprinted, jumped and
-/// wall-run since #94 with nothing able to react to any of it.
+/// 🔴 This file compiling is the point: `CollisionStarted` could not be named from a project, so a
+/// level could not end.
 #[test]
 fn a_goal_can_be_written_from_the_prelude() {
     let mut resources = Resources::new();

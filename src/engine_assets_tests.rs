@@ -1,10 +1,5 @@
-//! The assets the engine ships with, checked as data.
-//!
-//! Everything under `assets/` is loaded by GUID at runtime, and a GUID
-//! is a string in two files that have to agree. Nothing in the type
-//! system connects them: a material pointing at a GUID no texture
-//! carries loads perfectly and renders untextured, which looks like a
-//! material that was authored flat.
+//! The engine's shipped assets checked as data: GUIDs must agree across files, and a material
+//! pointing at a missing texture renders flat without error.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -41,13 +36,8 @@ fn guid_of(meta: &Path) -> Option<String> {
     Some(table.get("guid")?.as_str()?.to_owned())
 }
 
-/// 🔴 Two assets with the same GUID are one asset, and which one wins
-/// depends on the order a directory scan happened to return.
-///
-/// The engine's own assets are generated in batches — 78 textures and 78
-/// materials arrived in a single commit — and a generator that reuses an
-/// identifier produces exactly this. It is silent: the project loads,
-/// and one of the two is simply never reachable.
+/// 🔴 Duplicate GUIDs make one asset unreachable, chosen by scan order — the failure a batch
+/// generator produces.
 #[test]
 fn no_two_assets_share_a_guid() {
     let mut seen: HashMap<String, PathBuf> = HashMap::new();
@@ -68,11 +58,7 @@ fn no_two_assets_share_a_guid() {
     }
 }
 
-/// Every asset file has its identity card beside it.
-///
-/// A file with no `.meta` is not registered by the scanner and cannot be
-/// referenced by a scene — it is present on disk and absent from the
-/// engine, which is the confusing half of missing.
+/// Every asset has its `.meta`, or the scanner never registers it and scenes cannot reference it.
 #[test]
 fn every_asset_has_a_meta() {
     for path in every_file() {
@@ -89,14 +75,8 @@ fn every_asset_has_a_meta() {
     }
 }
 
-/// 🔴 Every texture a shipped material points at is a texture that
-/// ships.
-///
-/// This is the one that catches a generator bug. The material's `albedo`
-/// is a GUID written into a `.ron` by hand or by a script, and the only
-/// thing that makes it correct is that some `.meta` elsewhere carries the
-/// same string. Get it wrong and the material renders with the 1×1 white
-/// fallback — flat, plausible, and traced back to the wrong place.
+/// 🔴 Every texture a shipped material names ships — or it renders with the 1×1 white fallback,
+/// traced to the wrong place.
 #[test]
 fn every_material_texture_exists() {
     let mut texture_guids: Vec<String> = Vec::new();

@@ -1,30 +1,6 @@
-//! [`ColliderMeshPlugin`] — the system that fills
-//! [`ColliderMeshCache`](kooch_physics::ColliderMeshCache).
-//!
-//! # Why it lives in the facade
-//!
-//! It is the one job that needs both halves: `Collider.mesh` is a GUID,
-//! resolving one means the asset database, and the asset database means
-//! `kooch_render`. Physics must not depend on the renderer — that would
-//! tie [`PhysicsBackend`] to wgpu and make the trait unswappable — and
-//! the renderer has no business knowing what a collider is. This crate
-//! already sees both, and is the only one that should.
-//!
-//! # It reads the file, not the render asset
-//!
-//! The obvious implementation asks the `AssetServer` for a `MeshletMesh`
-//! and decodes its LOD 0 back into triangles. It is also nearly three
-//! seconds of wasted work for a 76k-vertex mesh, measured in debug:
-//! building the meshlet LOD chain costs 2.9 s, and every one of the 4832
-//! meshlets it produces is thrown away by the decode on the next line.
-//! Parsing the `.glb` for positions and indices is 36 ms.
-//!
-//! In a windowed game the renderer builds those meshlets anyway and the
-//! collider would ride along for free. The editor's host is the case that
-//! matters: it simulates and draws nothing, so the whole chain is waste —
-//! as is a collision proxy that is never rendered.
-//!
-//! [`PhysicsBackend`]: kooch_physics::PhysicsBackend
+//! [`ColliderMeshPlugin`] fills [`ColliderMeshCache`](kooch_physics::ColliderMeshCache) here, where
+//! assets and physics meet, keeping [`PhysicsBackend`](kooch_physics::PhysicsBackend) off wgpu. It
+//! parses the `.glb` (36 ms for 76k vertices), not a `MeshletMesh` whose LOD chain costs 2.9 s.
 
 use std::path::{Path, PathBuf};
 
@@ -41,22 +17,13 @@ use kooch_physics::components::{Collider, SHAPE_CONVEX_HULL, is_mesh_derived};
 use kooch_physics::{ColliderMesh, ColliderMeshCache, ConvexPart, hull_of};
 use kooch_render::mesh::{parse_mesh_bytes_full, parse_mesh_parts};
 
-/// The `[import]` key a baked collision asset carries, and the value that
-/// means "each primitive is one convex piece".
-///
-/// In the sidecar rather than inferred from the primitive count: an
-/// ordinary artist mesh is often several primitives, one per material,
-/// and reading those as convex pieces would silently turn one prop into
-/// a handful of overlapping hulls.
+/// The `[import]` key a baked collision asset carries; in the sidecar, since artist meshes have one
+/// primitive per material, not per convex piece.
 pub const COLLISION_KEY: &str = "collision";
 pub const COLLISION_PARTS: &str = "parts";
 pub const COLLISION_HULL: &str = "hull";
-/// A decimated copy of the source's triangles.
-///
-/// 🔴 Deliberately **not** one of the values that earns the trusted-faces
-/// path. A simplified mesh is still a mesh — concave, open, whatever the
-/// source was — and handing rapier its triangles as a convex polyhedron
-/// would be a shape with no relation to what anyone authored.
+/// A decimated copy of the triangles. 🔴 Not trusted as convex faces: a simplified mesh is still
+/// concave or open.
 pub const COLLISION_MESH: &str = "mesh";
 
 /// Resolves the meshes mesh-derived colliders name.
@@ -64,10 +31,8 @@ pub struct ColliderMeshPlugin;
 
 impl Plugin for ColliderMeshPlugin {
     fn build(&self, app: &mut App) {
-        // `PreUpdate`, alongside the physics sync it feeds. Landing a
-        // frame late is not a race: the cache's epoch is in every body's
-        // spec, so a mesh arriving after the body was authored retires it
-        // and the next frame rebuilds with the geometry.
+        // `PreUpdate`, beside the physics sync; a frame late is fine, since the cache epoch in each
+        // body's spec rebuilds it.
         app.add_system(Stage::PreUpdate, fill_collider_meshes);
     }
 
@@ -80,20 +45,13 @@ impl Plugin for ColliderMeshPlugin {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Wanted {
     guid: Guid,
-    /// Whether anything asks for the convex hull of this mesh.
-    ///
-    /// Tracked separately because reducing one costs 33 ms on a 76k
-    /// mesh, and a collider that only ever wants the triangles should
-    /// not pay for a hull it will not use.
+    /// Whether anyone wants the hull — reducing costs 33 ms on 76k vertices, wasted on
+    /// triangle-only colliders.
     hull: bool,
 }
 
-/// Loads the mesh behind every mesh-derived collider that has no answer,
-/// and reduces the hull of every one that wants it.
-///
-/// Asked once per GUID, not once per frame: an answer — including a
-/// failure — is kept, so a scene where a hundred crates share one
-/// collision mesh does one load.
+/// Loads the mesh behind each unanswered collider and reduces wanted hulls. Once per GUID, failures
+/// kept, so a hundred crates sharing a mesh load once.
 pub fn fill_collider_meshes(resources: &mut Resources) {
     for want in unanswered(resources) {
         if !answered(resources, want.guid) {
@@ -114,11 +72,8 @@ pub fn fill_collider_meshes(resources: &mut Resources) {
     }
 }
 
-/// Replaces a mesh's point cloud with its convex hull, once.
-///
-/// 76 038 points become 387, and the faces come back with them — so the
-/// backend builds the polyhedron straight from qhull's own output rather
-/// than asking qhull for it again on every body build.
+/// Replaces a cloud with its convex hull once — 76 038 points become 387, with qhull's faces, so
+/// body builds skip qhull.
 fn reduce_hull(resources: &mut Resources, guid: Guid) {
     let Some(cache) = resources.get::<ColliderMeshCache>() else {
         return;
@@ -178,10 +133,7 @@ fn unanswered(resources: &Resources) -> Vec<Wanted> {
     wanted
 }
 
-/// The mesh behind a GUID, or `None` when it will not resolve.
-///
-/// Says why at `warn` — a collider that never appears is otherwise a body
-/// that silently is not there, and the GUID is the only clue.
+/// The mesh behind a GUID, or `None`, warning why: otherwise the body silently does not collide.
 fn load_mesh(resources: &mut Resources, guid: Guid) -> Option<ColliderMesh> {
     let path = path_of(resources, guid)?;
     let bytes = read_bytes(resources, &path, guid)?;
@@ -280,15 +232,8 @@ fn read_bytes(resources: &mut Resources, path: &Path, guid: Guid) -> Option<Vec<
     }
 }
 
-/// What this asset's sidecar says it was baked as, if anything.
-///
-/// The line between "trust this topology" and "hull these points". Only
-/// the engine's own bake and the editor's button write this key, so a
-/// mesh an artist authored — or one edited by hand after the marker was
-/// removed — is hulled like any other.
-///
-/// A missing or unreadable sidecar reads as "ordinary mesh", which is the
-/// answer that keeps every asset authored before this existed working.
+/// What the sidecar says this asset was baked as — the line between trusting topology and hulling.
+/// Only the engine's bake and the editor's button write it; missing reads as an ordinary mesh.
 fn baked_kind(path: &Path) -> Option<&'static str> {
     let value = asset_meta::read_meta(path)
         .ok()?

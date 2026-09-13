@@ -43,10 +43,7 @@ fn a_development_build_carries_no_key() {
     assert!(shipped_pack().is_none());
 }
 
-/// A stray `.kpack` in a project directory must not take over a
-/// development run, and a key with no pack has nothing to open. Both
-/// halves are required, and the test above proves the first is absent
-/// here — so this asserts the pair, not either.
+/// Pack and key are both required; the test above proves the key absent, so this asserts the pair.
 #[test]
 fn a_pack_alone_is_not_a_shipped_game() {
     let beside = std::env::current_exe()

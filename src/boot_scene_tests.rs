@@ -1,9 +1,5 @@
-//! Where a game looks for its scene when nobody told it.
-//!
-//! 🔴 Resolved against the working directory alone, a released game
-//! opened by double-click starts **empty and silent**: the desktop leaves
-//! the cwd at the user's home, the file is looked for there, and the
-//! scene sitting beside the executable is never asked about.
+//! Where a game looks for its scene unprompted. 🔴 Against the cwd alone a double-clicked game
+//! starts empty: the desktop leaves the cwd at home, never beside the executable.
 
 use std::path::Path;
 
@@ -78,12 +74,8 @@ fn a_packaged_layout_is_found_from_anywhere() {
     let _ = std::fs::remove_dir_all(&dist);
 }
 
-/// The relative path is shared with the editor, which writes the scene
-/// there when it creates a project. Two constants would drift, and the
-/// symptom is a game that ships a scene nothing looks for.
-///
-/// 🔴 Under `assets/` since #758: everything a game needs at runtime is
-/// one tree, so packaging walks one place.
+/// The relative path is shared with the editor that writes the scene; two constants would drift.
+/// Under `assets/` since #758, so packaging walks one tree.
 #[test]
 fn the_layout_is_one_constant() {
     assert_eq!(
@@ -93,12 +85,8 @@ fn the_layout_is_one_constant() {
     assert!(DEFAULT_SCENE_REL_PATH.starts_with("assets/"));
 }
 
-/// 🔴 The case #808 exists for: a project whose starting scene is not
-/// called `default.scene`.
-///
-/// Before this, `main_scene` was a field nothing read — the game opened
-/// the convention path whatever the manifest said, so a project like this
-/// shipped a build that started somewhere else, or empty, with no error.
+/// 🔴 #808: a starting scene not called `default.scene` — `main_scene` used to be read by nothing,
+/// so such a build started elsewhere or empty.
 #[test]
 fn the_manifest_names_the_scene() {
     let dist = temp_dir("kooch_boot_named");
@@ -115,10 +103,8 @@ fn the_manifest_names_the_scene() {
     let _ = std::fs::remove_dir_all(&dist);
 }
 
-/// ⚠️ Both forms look plausible and only one resolves. Projects on disk
-/// carry the short one — `roll-a-ball` did — and the failure was silent
-/// on both sides: the editor's guard skipped the load, and the game never
-/// looked at the field at all.
+/// ⚠️ Both forms look plausible and only one resolves; `roll-a-ball` carried the short one and
+/// failed silently on both sides.
 #[test]
 fn the_short_form_still_resolves() {
     let dist = temp_dir("kooch_boot_short");
@@ -135,11 +121,8 @@ fn the_short_form_still_resolves() {
     let _ = std::fs::remove_dir_all(&dist);
 }
 
-/// A directory with no manifest is not the same as one whose manifest is
-/// silent: the first means "keep looking", the second means "the project
-/// said nothing, use the convention". Collapsing them would make a game
-/// read the manifest of whatever project the working directory happened
-/// to be.
+/// No manifest means keep looking; a silent manifest means use the convention — merged, a game
+/// would read whatever project the cwd happened to be.
 #[test]
 fn silence_and_absence_are_different_answers() {
     let empty = temp_dir("kooch_boot_absent");
