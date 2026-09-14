@@ -30,7 +30,7 @@ impl Default for AmbientLight {
 }
 
 /// Exposure in EV100: lights carry physical units (a sun is 10 000 lux), so without it everything
-/// clips. Auto exposure is #254. Prefer [`PhysicalCamera`], whose settings say which way is
+/// clips. Auto exposure is #484. Prefer [`PhysicalCamera`], whose settings say which way is
 /// brighter.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Exposure {
@@ -61,7 +61,7 @@ impl Exposure {
 }
 
 /// Exposure as aperture, shutter and ISO — controls a person can reason about, as Bevy 0.13 added —
-/// until auto exposure (#254) and GI (#450).
+/// until auto exposure (#484) and GI (#450).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PhysicalCamera {
     /// f-stop. Lower is a wider aperture and a brighter image: f/1.4
