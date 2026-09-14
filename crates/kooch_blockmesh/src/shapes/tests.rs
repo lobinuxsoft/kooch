@@ -72,8 +72,8 @@ fn degenerate_parameters_still_close() {
         },
         Shape::Arch {
             segments: 0,
-            radius: 0.0,
-            thickness: 0.0,
+            inner: 0.0,
+            outer: -1.0,
             depth: 0.0,
         },
         Shape::Cylinder {

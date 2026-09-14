@@ -139,10 +139,10 @@ pub struct BlockShape {
     pub segments: u32,
     /// Radius of the arch's opening.
     #[reflect(shown_when = ARCH_WHEN)]
-    pub opening: f32,
-    /// Thickness of the arch's wall.
+    pub inner: f32,
+    /// Radius of the arch's outside, kept above `inner`.
     #[reflect(shown_when = ARCH_WHEN)]
-    pub wall: f32,
+    pub outer: f32,
     /// Depth of the arch or the door frame.
     #[reflect(shown_when = DEPTH_WHEN)]
     pub depth: f32,
@@ -192,8 +192,8 @@ impl Default for BlockShape {
             rise: 1.0,
             run: 2.0,
             segments: 8,
-            opening: 1.0,
-            wall: 0.25,
+            inner: 1.0,
+            outer: 1.25,
             depth: 0.5,
             door_width: 1.0,
             door_height: 2.1,
@@ -244,13 +244,12 @@ impl From<Shape> for BlockShape {
             }
             Shape::Arch {
                 segments,
-                radius,
-                thickness,
+                inner,
+                outer,
                 depth,
             } => {
                 out.kind = KIND_ARCH;
-                (out.segments, out.opening, out.wall, out.depth) =
-                    (segments, radius, thickness, depth);
+                (out.segments, out.inner, out.outer, out.depth) = (segments, inner, outer, depth);
             }
             Shape::Cylinder {
                 sides,
@@ -325,8 +324,8 @@ impl BlockShape {
             },
             KIND_ARCH => Shape::Arch {
                 segments: self.segments,
-                radius: self.opening,
-                thickness: self.wall,
+                inner: self.inner,
+                outer: self.outer,
                 depth: self.depth,
             },
             KIND_CYLINDER => Shape::Cylinder {

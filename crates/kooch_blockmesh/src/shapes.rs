@@ -29,11 +29,11 @@ pub enum Shape {
     },
     /// The stairs' footprint as one slope, a blockout stand-in for them.
     Ramp { width: f32, rise: f32, run: f32 },
-    /// A half ring standing on its feet: `radius` is the opening, `thickness` the wall.
+    /// A half ring standing on its feet, between an `inner` and an `outer` radius.
     Arch {
         segments: u32,
-        radius: f32,
-        thickness: f32,
+        inner: f32,
+        outer: f32,
         depth: f32,
     },
     /// A prism with `sides` faces around.
@@ -83,8 +83,8 @@ impl Shape {
         },
         Shape::Arch {
             segments: 8,
-            radius: 1.0,
-            thickness: 0.25,
+            inner: 1.0,
+            outer: 1.25,
             depth: 0.5,
         },
         Shape::Cylinder {
@@ -145,10 +145,10 @@ impl Shape {
             Shape::Ramp { width, rise, run } => ramp(&mut out, width, rise, run),
             Shape::Arch {
                 segments,
-                radius,
-                thickness,
+                inner,
+                outer,
                 depth,
-            } => arch(&mut out, segments.max(1), radius, thickness, depth),
+            } => arch(&mut out, segments.max(1), inner, outer, depth),
             Shape::Cylinder {
                 sides,
                 radius,
@@ -233,9 +233,9 @@ fn ramp(out: &mut Builder, width: f32, rise: f32, run: f32) {
     out.face(&[at(-w, f, b), at(-w, k, b), at(-w, k, t)]);
 }
 
-fn arch(out: &mut Builder, segments: u32, radius: f32, thickness: f32, depth: f32) {
-    let inner = radius.max(MIN_SIZE);
-    let outer = inner + thickness.max(MIN_SIZE);
+fn arch(out: &mut Builder, segments: u32, inner: f32, outer: f32, depth: f32) {
+    let inner = inner.max(MIN_SIZE);
+    let outer = outer.max(inner + MIN_SIZE);
     let hz = depth.max(MIN_SIZE) / 2.0;
     let lift = -outer / 2.0;
     let ring = |j: u32, r: f32, z: f32| {
