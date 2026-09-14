@@ -33,3 +33,30 @@ fn an_unknown_kind_is_a_cube() {
     };
     assert!(matches!(block.shape(), Shape::Cube { .. }));
 }
+
+/// The default pivot is the base: a spawned block stands on the grid.
+#[test]
+fn the_default_pivot_is_the_base() {
+    let mesh = BlockShape::from(Shape::DEFAULTS[1]).build();
+    let min_y = mesh
+        .positions()
+        .iter()
+        .map(|p| p.y)
+        .fold(f32::INFINITY, f32::min);
+    assert!(min_y.abs() < 1.0e-4, "base at {min_y}");
+}
+
+/// A lower corner as the pivot puts every corner of the box at or above and beside the origin.
+#[test]
+fn a_corner_pivot_puts_the_box_at_the_origin() {
+    let block = BlockShape {
+        pivot: glam::Vec3::NEG_ONE,
+        ..BlockShape::from(Shape::DEFAULTS[3])
+    };
+    let mesh = block.build();
+    let min = mesh
+        .positions()
+        .iter()
+        .fold(glam::Vec3::INFINITY, |m, p| m.min(*p));
+    assert!(min.abs().max_element() < 1.0e-4, "min corner at {min}");
+}

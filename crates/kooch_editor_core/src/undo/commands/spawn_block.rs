@@ -97,7 +97,7 @@ impl SpawnBlockCommand {
                 &TypeId::of::<kooch_ecs::Name>(),
                 entity,
                 "value",
-                ReflectValue::String("Block".to_owned()),
+                ReflectValue::String(self.shape.label().to_owned()),
             );
         }
 

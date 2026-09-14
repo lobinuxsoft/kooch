@@ -416,7 +416,7 @@ pub(crate) fn new_block_asset(
             kooch_blockmesh::BLOCK_MESH_EXTENSION
         )),
     );
-    let mesh = shape.build();
+    let mesh = kooch_blockmesh::BlockShape::from(shape).build();
     let text = match ron::ser::to_string_pretty(&mesh, ron::ser::PrettyConfig::default()) {
         Ok(text) => text,
         Err(error) => {

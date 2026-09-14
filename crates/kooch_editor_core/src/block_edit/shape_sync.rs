@@ -34,7 +34,7 @@ pub(crate) fn sync_block_shapes(resources: &mut Resources) {
             .insert(entity, shape)
             .is_some_and(|last| last != shape)
         {
-            let mesh = shape.shape().build();
+            let mesh = shape.build();
             if super::set_shape(resources, source, &mesh) {
                 super::announce(resources, source);
                 super::save(resources, entity);

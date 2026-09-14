@@ -243,7 +243,7 @@ fn spawn_block(resources: &mut Resources, shape: kooch_blockmesh::Shape) {
     };
     let client = session.client();
 
-    let entity = match client.spawn(Some("Block"), None, None) {
+    let entity = match client.spawn(Some(shape.label()), None, None) {
         Ok(entity) => entity,
         Err(e) => {
             tracing::warn!(target: TARGET, error = %e, "remote spawn failed");

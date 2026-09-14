@@ -94,6 +94,9 @@ pub struct BlockShape {
     /// Which shape to generate. One of the `KIND_*` constants.
     #[reflect(choices = KIND_CHOICES)]
     pub kind: u32,
+    /// Where the entity's origin sits in the shape's bounding box, each axis from -1 to 1:
+    /// `(0, -1, 0)` is the centre of the base, `(-1, -1, -1)` a lower corner.
+    pub pivot: Vec3,
     /// Box size along each axis.
     #[reflect(shown_when = SIZE_WHEN)]
     pub size: Vec3,
@@ -148,6 +151,8 @@ impl Default for BlockShape {
     fn default() -> Self {
         Self {
             kind: KIND_CUBE,
+            // The base, so a spawned block stands on the grid rather than sinking half into it.
+            pivot: Vec3::new(0.0, -1.0, 0.0),
             size: Vec3::ONE,
             steps: 4,
             width: 1.0,
@@ -228,6 +233,24 @@ impl From<Shape> for BlockShape {
 }
 
 impl BlockShape {
+    /// The mesh these fields describe, moved so `pivot` lands on the origin.
+    pub fn build(&self) -> crate::BlockMesh {
+        let mut mesh = self.shape().build();
+        let Some(first) = mesh.positions.first().copied() else {
+            return mesh;
+        };
+        let (min, max) = mesh
+            .positions
+            .iter()
+            .fold((first, first), |(min, max), p| (min.min(*p), max.max(*p)));
+        let centre = (min + max) / 2.0;
+        let point = centre + (max - min) / 2.0 * self.pivot.clamp(Vec3::NEG_ONE, Vec3::ONE);
+        for position in &mut mesh.positions {
+            *position -= point;
+        }
+        mesh
+    }
+
     /// The shape these fields describe; an unknown kind falls back to a cube so a newer scene
     /// still loads.
     pub fn shape(&self) -> Shape {
