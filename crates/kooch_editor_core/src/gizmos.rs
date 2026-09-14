@@ -11,6 +11,7 @@ mod grounded;
 #[cfg(test)]
 pub(crate) mod harness;
 mod physics_debug;
+pub(crate) mod shape_handles;
 
 pub(crate) use physics_debug::PhysicsDebugOverlay;
 mod lights;
@@ -72,6 +73,8 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     // A collider is authored as numbers and is otherwise invisible; the outline is the only way to
     // see whether the shape wraps the model. Which faces of a block are selected.
     registry.register::<kooch_blockmesh::Block, block::BlockVisualizer>();
+    // A shaped block's parameters, dragged rather than typed (#1150).
+    registry.register::<kooch_blockmesh::BlockShape, shape_handles::ShapeHandleVisualizer>();
     registry.register::<kooch_physics::components::Collider, collider::ColliderVisualizer>();
     // Where the author put the centre of mass. Only the authored one —
     // the solver's own is in the project's process, which is #634.

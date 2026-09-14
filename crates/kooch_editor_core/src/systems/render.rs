@@ -621,17 +621,27 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         let selected_snapshot: Vec<_> = overlay.selected_entities.iter().copied().collect();
         let rotation_mode = overlay.rotation_display_mode;
         let snap = overlay.snap_settings;
-        let handle_active = crate::gizmos::apply_handle_input(
+        // Before the transform handles: a shape handle sits on the block, inside the reach of the
+        // move arrows, and the more specific handle takes the click.
+        let shape_active = crate::gizmos::shape_handles::apply_shape_handles(
             delta,
             resources,
             &selected_snapshot,
-            rotation_mode,
             snap,
-            &mut overlay.gizmo_drag_start,
-            &mut overlay.shape_drag_start,
             &mut actions,
-            overlay.element_mode,
         );
+        let handle_active = shape_active
+            || crate::gizmos::apply_handle_input(
+                delta,
+                resources,
+                &selected_snapshot,
+                rotation_mode,
+                snap,
+                &mut overlay.gizmo_drag_start,
+                &mut overlay.shape_drag_start,
+                &mut actions,
+                overlay.element_mode,
+            );
         if !handle_active {
             // Clicking picks only when a gizmo did not take the click:
             // a handle sits *over* the thing it moves, so picking first
