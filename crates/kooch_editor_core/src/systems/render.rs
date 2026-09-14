@@ -584,6 +584,14 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             .is_some_and(|state| state.playing),
     );
 
+    // A shape parameter edited in the Inspector reshapes its block this frame.
+    if !resources
+        .get::<crate::remote_session::RemoteState>()
+        .is_some_and(|state| state.playing)
+    {
+        crate::block_edit::shape_sync::sync_block_shapes(resources);
+    }
+
     // E with faces selected: pull them out. Before the handle, because
     // the same key asks for the rotate mode and only one of the two can
     // be what was meant.
@@ -603,6 +611,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                 before: Box::new(before),
                 after: Box::new(after),
             });
+            if let Some(bake) = crate::block_edit::shape_sync::bake(resources, entity) {
+                actions.push(bake);
+            }
         }
     }
 

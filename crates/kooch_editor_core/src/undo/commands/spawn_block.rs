@@ -76,6 +76,7 @@ impl SpawnBlockCommand {
 
         let mut types = named_types(resources, &["Name", "Transform"]);
         types.extend(kooch_blockmesh::block_components().map(|(type_id, _)| type_id));
+        types.push(TypeId::of::<kooch_blockmesh::BlockShape>());
 
         for type_id in &types {
             let inserted = resources
@@ -128,6 +129,14 @@ impl SpawnBlockCommand {
             && let Some(block) = storage.get_mut(entity)
         {
             block.source = Some(guid);
+        }
+
+        // The parameters stay on the block, so the Inspector can reshape it until it is edited by hand.
+        if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+            && let Some(storage) = registry.get_cpu_mut::<kooch_blockmesh::BlockShape>()
+            && let Some(shape) = storage.get_mut(entity)
+        {
+            *shape = kooch_blockmesh::BlockShape::from(self.shape);
         }
 
         self.place(resources, entity);

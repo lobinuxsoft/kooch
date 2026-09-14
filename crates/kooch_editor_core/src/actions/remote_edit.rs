@@ -273,6 +273,17 @@ fn spawn_block(resources: &mut Resources, shape: kooch_blockmesh::Shape) {
         }
     }
 
+    // The parameters stay on the block for the Inspector. The menu spawns defaults, so `kind` is
+    // the only field that differs (`defaults_differ_only_in_kind`).
+    let shape_ty = std::any::type_name::<kooch_blockmesh::BlockShape>();
+    let kind = kooch_ecs::reflect::ReflectValue::U32(kooch_blockmesh::BlockShape::from(shape).kind);
+    if let Err(e) = client
+        .add_component(entity, shape_ty)
+        .and_then(|()| client.set_field(entity, shape_ty, "kind", kind))
+    {
+        tracing::warn!(target: TARGET, error = %e, "could not give the block its shape");
+    }
+
     let value = kooch_ecs::reflect::ReflectValue::AssetRef {
         guid: Some(guid),
         asset_type: std::any::type_name::<kooch_blockmesh::BlockMesh>().to_owned(),

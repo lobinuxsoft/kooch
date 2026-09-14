@@ -140,110 +140,19 @@ pub(super) fn spawn_entries(
     }
 }
 
-/// One entry per block shape, each holding the parameters it will spawn with (#1106). Kept in egui
-/// memory, so a staircase tuned once stays tuned for the session.
+/// One entry per block shape, spawned with its defaults. The parameters live on the block's
+/// `BlockShape`, so they are tuned in the Inspector and seen in the scene as they change (#1106).
 fn block_menu(
     ui: &mut egui::Ui,
     actions: &mut Vec<EditorAction>,
     into: crate::actions::SpawnTarget,
 ) {
     ui.menu_button(format!("{} Block", icons::CUBE), |ui| {
-        let id = ui.make_persistent_id("block_shapes");
-        let mut shapes: Vec<kooch_blockmesh::Shape> = ui
-            .data_mut(|data| data.get_temp(id))
-            .unwrap_or_else(|| kooch_blockmesh::Shape::DEFAULTS.to_vec());
-        for shape in &mut shapes {
-            ui.menu_button(shape.label(), |ui| {
-                shape_fields(ui, shape);
-                ui.separator();
-                if ui.button("Spawn").clicked() {
-                    actions.push(EditorAction::SpawnBlock {
-                        into,
-                        shape: *shape,
-                    });
-                    ui.close();
-                }
-            });
+        for shape in kooch_blockmesh::Shape::DEFAULTS {
+            if ui.button(shape.label()).clicked() {
+                actions.push(EditorAction::SpawnBlock { into, shape });
+                ui.close();
+            }
         }
-        ui.data_mut(|data| data.insert_temp(id, shapes));
     });
-}
-
-/// The parameters of one shape, as drag fields.
-fn shape_fields(ui: &mut egui::Ui, shape: &mut kooch_blockmesh::Shape) {
-    use kooch_blockmesh::Shape;
-    let count = |ui: &mut egui::Ui, label: &str, value: &mut u32, min: u32| {
-        ui.horizontal(|ui| {
-            ui.label(label);
-            ui.add(egui::DragValue::new(value).range(min..=128));
-        });
-    };
-    let length = |ui: &mut egui::Ui, label: &str, value: &mut f32| {
-        ui.horizontal(|ui| {
-            ui.label(label);
-            ui.add(
-                egui::DragValue::new(value)
-                    .speed(0.05)
-                    .range(0.01..=1000.0)
-                    .suffix(" m"),
-            );
-        });
-    };
-    match shape {
-        Shape::Cube { size } => {
-            length(ui, "X", &mut size.x);
-            length(ui, "Y", &mut size.y);
-            length(ui, "Z", &mut size.z);
-        }
-        Shape::Stairs {
-            steps,
-            width,
-            rise,
-            run,
-        } => {
-            count(ui, "Steps", steps, 1);
-            length(ui, "Width", width);
-            length(ui, "Rise", rise);
-            length(ui, "Run", run);
-        }
-        Shape::Ramp { width, rise, run } => {
-            length(ui, "Width", width);
-            length(ui, "Rise", rise);
-            length(ui, "Run", run);
-        }
-        Shape::Arch {
-            segments,
-            radius,
-            thickness,
-            depth,
-        } => {
-            count(ui, "Segments", segments, 1);
-            length(ui, "Radius", radius);
-            length(ui, "Thickness", thickness);
-            length(ui, "Depth", depth);
-        }
-        Shape::Cylinder {
-            sides,
-            radius,
-            height,
-        }
-        | Shape::Cone {
-            sides,
-            radius,
-            height,
-        } => {
-            count(ui, "Sides", sides, 3);
-            length(ui, "Radius", radius);
-            length(ui, "Height", height);
-        }
-        Shape::Plane {
-            subdivisions,
-            size,
-            thickness,
-        } => {
-            count(ui, "Subdivisions", subdivisions, 1);
-            length(ui, "Size", size);
-            length(ui, "Thickness", thickness);
-        }
-    }
 }
