@@ -157,6 +157,28 @@ pub(crate) fn apply_click(
     }
 }
 
+/// What a click in element mode lands on.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ElementClick {
+    /// An element of the edited block, or a miss that stays with it.
+    Element,
+    /// Another entity's geometry: select it and keep the element mode.
+    Switch(Entity),
+}
+
+/// 🔴 A miss is not empty space since vertex and edge picking have a 12 px reach (#1118): a click
+/// that hits no element but lands on another entity selects that entity.
+pub(crate) fn resolve_click(
+    editing: Entity,
+    element: Option<u32>,
+    hit: Option<Entity>,
+) -> ElementClick {
+    match (element, hit) {
+        (None, Some(other)) if other != editing => ElementClick::Switch(other),
+        _ => ElementClick::Element,
+    }
+}
+
 /// Drops the face selection when nothing should be editing faces.
 pub(crate) fn drop_selection_unless_editing(
     resources: &mut Resources,

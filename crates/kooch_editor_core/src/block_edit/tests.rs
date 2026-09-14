@@ -97,6 +97,33 @@ fn a_ctrl_click_on_nothing_keeps_it() {
     assert_eq!(selection.elements, vec![2]);
 }
 
+/// 🔴 #1118: missing every element but landing on another block selects it.
+#[test]
+fn a_miss_on_another_entity_switches() {
+    let click = super::resolve_click(entity(1), None, Some(entity(2)));
+    assert_eq!(click, super::ElementClick::Switch(entity(2)));
+}
+
+/// A miss on empty space, or on the edited block itself, stays with the block.
+#[test]
+fn a_miss_on_nothing_stays() {
+    assert_eq!(
+        super::resolve_click(entity(1), None, None),
+        super::ElementClick::Element
+    );
+    assert_eq!(
+        super::resolve_click(entity(1), None, Some(entity(1))),
+        super::ElementClick::Element
+    );
+}
+
+/// An element hit wins over whatever entity is behind it.
+#[test]
+fn an_element_hit_stays() {
+    let click = super::resolve_click(entity(1), Some(3), Some(entity(2)));
+    assert_eq!(click, super::ElementClick::Element);
+}
+
 /// 🔴 Object mode stops the geometry being edited.
 #[test]
 fn object_mode_is_not_face_mode() {
