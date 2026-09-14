@@ -18,6 +18,15 @@ pub(crate) fn entity_at(
     cursor: Vec2,
     viewport_size: Vec2,
 ) -> Option<Entity> {
+    entity_hit_at(resources, cursor, viewport_size).map(|(entity, _)| entity)
+}
+
+/// The entity under `cursor` and how far along the cursor ray it was struck, in world units.
+pub(crate) fn entity_hit_at(
+    resources: &mut Resources,
+    cursor: Vec2,
+    viewport_size: Vec2,
+) -> Option<(Entity, f32)> {
     let (camera, transform) = crate::gizmos::active_camera(resources)?;
     let ray = kooch_render::projection::viewport_cursor_to_ray(
         cursor,
@@ -46,14 +55,46 @@ pub(crate) fn entity_at(
         let Some(aabb) = aabb else {
             continue;
         };
-        let Some(distance) = hit_distance(aabb, to_world, ray.origin, ray.direction) else {
+        let Some(mut distance) = hit_distance(aabb, to_world, ray.origin, ray.direction) else {
             continue;
         };
+        // 🔴 A block's box is not its shape (#1118): a hollow or L-shaped block's box swallows
+        // whatever stands inside it, so its triangles decide.
+        if let Some(exact) = block_hit(resources, mesh, to_world, ray.origin, ray.direction) {
+            let Some(exact) = exact else {
+                continue;
+            };
+            distance = exact;
+        }
         if nearest.is_none_or(|(best, _)| distance < best) {
             nearest = Some((distance, entity));
         }
     }
-    nearest.map(|(_, entity)| entity)
+    nearest.map(|(distance, entity)| (entity, distance))
+}
+
+/// The ray's distance to a block's triangles: `None` when `mesh` is not a block, `Some(None)`
+/// when the ray misses it.
+fn block_hit(
+    resources: &Resources,
+    mesh: Guid,
+    to_world: Mat4,
+    origin: Vec3,
+    direction: Vec3,
+) -> Option<Option<f32>> {
+    let handle = resources
+        .get::<kooch_blockmesh::BuiltBlocks>()?
+        .handle(mesh)?;
+    let assets = resources.get::<kooch_core::assets::Assets<kooch_blockmesh::BlockMesh>>()?;
+    let block = assets.get(handle)?;
+    let to_local = to_world.inverse();
+    if !to_local.is_finite() {
+        return Some(None);
+    }
+    // Unnormalised local direction, so `t` stays comparable with the world-space box distances.
+    let origin = to_local.transform_point3(origin);
+    let direction = to_local.transform_vector3(direction);
+    Some(kooch_blockmesh::face_at(block, origin, direction).map(|hit| hit.distance))
 }
 
 /// Every entity the render pass would draw, with its mesh and its world

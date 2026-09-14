@@ -825,12 +825,15 @@ fn apply_viewport_click(
             delta.viewport_size,
             overlay.element_mode,
         );
-        let hit = match element {
-            Some(_) => None,
-            None => crate::picking::entity_at(resources, cursor, delta.viewport_size),
+        let hit = crate::picking::entity_hit_at(resources, cursor, delta.viewport_size);
+        let block = match element {
+            Some(_) => {
+                crate::block_edit::block_distance(resources, entity, cursor, delta.viewport_size)
+            }
+            None => None,
         };
         if let crate::block_edit::ElementClick::Switch(other) =
-            crate::block_edit::resolve_click(entity, element, hit)
+            crate::block_edit::resolve_click(entity, element, hit, block)
         {
             if let Some(mut selection) = resources.get_mut::<crate::block_edit::BlockSelection>() {
                 selection.clear();

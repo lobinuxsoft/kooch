@@ -166,17 +166,52 @@ pub(crate) enum ElementClick {
     Switch(Entity),
 }
 
-/// 🔴 A miss is not empty space since vertex and edge picking have a 12 px reach (#1118): a click
-/// that hits no element but lands on another entity selects that entity.
+/// 🔴 #1118: another entity wins when no element was hit, or when it is nearer along the cursor
+/// ray than the edited block — a 12 px vertex or edge pick ignores what covers it.
+/// `hit` is the nearest entity and its distance; `block` is the edited block's distance.
 pub(crate) fn resolve_click(
     editing: Entity,
     element: Option<u32>,
-    hit: Option<Entity>,
+    hit: Option<(Entity, f32)>,
+    block: Option<f32>,
 ) -> ElementClick {
-    match (element, hit) {
-        (None, Some(other)) if other != editing => ElementClick::Switch(other),
+    match (hit, element, block) {
+        (Some((other, _)), None, _) if other != editing => ElementClick::Switch(other),
+        (Some((other, distance)), Some(_), Some(block)) if other != editing && distance < block => {
+            ElementClick::Switch(other)
+        }
         _ => ElementClick::Element,
     }
+}
+
+/// How far along the cursor ray `entity`'s block is struck, in world units.
+pub(crate) fn block_distance(
+    resources: &Resources,
+    entity: Entity,
+    cursor: Vec2,
+    viewport_size: Vec2,
+) -> Option<f32> {
+    let mesh = mesh_of(resources, entity)?;
+    let to_world = resources
+        .get::<ComponentRegistry>()?
+        .get_cpu::<GlobalTransform>()?
+        .get(entity)?
+        .matrix;
+    let to_local = to_world.inverse();
+    if !to_local.is_finite() {
+        return None;
+    }
+    let (camera, camera_transform) = crate::gizmos::active_camera(resources)?;
+    let ray = kooch_render::projection::viewport_cursor_to_ray(
+        cursor,
+        viewport_size,
+        camera_transform.matrix,
+        camera.fov.to_radians(),
+        camera.near,
+    )?;
+    let origin = to_local.transform_point3(ray.origin);
+    let direction = to_local.transform_vector3(ray.direction);
+    kooch_blockmesh::face_at(&mesh, origin, direction).map(|hit| hit.distance)
 }
 
 /// Drops the face selection when nothing should be editing faces.
