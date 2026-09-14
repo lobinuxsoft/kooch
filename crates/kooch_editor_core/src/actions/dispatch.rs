@@ -45,7 +45,9 @@ pub(super) fn action_to_command(
             name.clone(),
             *into,
         ))),
-        EditorAction::SpawnBlock { into } => Some(Box::new(SpawnBlockCommand::new(*into))),
+        EditorAction::SpawnBlock { into, shape } => {
+            Some(Box::new(SpawnBlockCommand::new(*into, *shape)))
+        }
         EditorAction::BlockEdit {
             entity,
             source,

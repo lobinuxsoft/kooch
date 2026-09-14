@@ -573,5 +573,7 @@ pub(crate) fn mesh_of(resources: &Resources, entity: Entity) -> Option<BlockMesh
     resources.get::<Assets<BlockMesh>>()?.get(handle).cloned()
 }
 
+pub(crate) mod shape_sync;
+
 #[cfg(test)]
 mod tests;

@@ -102,10 +102,7 @@ pub(super) fn spawn_entries(
         // Its own entry rather than a row under "3D Object": those are
         // baked `.glb` files that cannot be edited, and this is the one
         // shape the editor can still change afterwards (#946).
-        if ui.button(format!("{} Block", icons::CUBE)).clicked() {
-            actions.push(EditorAction::SpawnBlock { into });
-            ui.close();
-        }
+        block_menu(ui, actions, into);
         if ui.button("Sky").clicked() {
             actions.push(EditorAction::Spawn {
                 into,
@@ -141,4 +138,21 @@ pub(super) fn spawn_entries(
             }
         });
     }
+}
+
+/// One entry per block shape, spawned with its defaults. The parameters live on the block's
+/// `BlockShape`, so they are tuned in the Inspector and seen in the scene as they change (#1106).
+fn block_menu(
+    ui: &mut egui::Ui,
+    actions: &mut Vec<EditorAction>,
+    into: crate::actions::SpawnTarget,
+) {
+    ui.menu_button(format!("{} Block", icons::CUBE), |ui| {
+        for shape in kooch_blockmesh::Shape::DEFAULTS {
+            if ui.button(shape.label()).clicked() {
+                actions.push(EditorAction::SpawnBlock { into, shape });
+                ui.close();
+            }
+        }
+    });
 }

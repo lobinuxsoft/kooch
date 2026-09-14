@@ -1013,6 +1013,7 @@ fn every_unclassified_world_edit_is_routed() {
             "SpawnBlock",
             EditorAction::SpawnBlock {
                 into: SpawnTarget::Active,
+                shape: kooch_blockmesh::Shape::DEFAULTS[0],
             },
         ),
         (

@@ -392,7 +392,10 @@ fn write_asset(resources: &mut Resources, file: &Path, text: &str, what: &str) {
 }
 
 /// The half of [`write_asset`] that is not the write.
-pub(crate) fn new_block_asset(resources: &mut Resources) -> Option<(PathBuf, kooch_core::Guid)> {
+pub(crate) fn new_block_asset(
+    resources: &mut Resources,
+    shape: kooch_blockmesh::Shape,
+) -> Option<(PathBuf, kooch_core::Guid)> {
     let folder = resources
         .get::<crate::project_state::ProjectState>()?
         .active_project
@@ -407,16 +410,17 @@ pub(crate) fn new_block_asset(resources: &mut Resources) -> Option<(PathBuf, koo
 
     let file = unique_target(
         &folder,
-        OsStr::new(&format!("Block.{}", kooch_blockmesh::BLOCK_MESH_EXTENSION)),
+        OsStr::new(&format!(
+            "{}.{}",
+            shape.label(),
+            kooch_blockmesh::BLOCK_MESH_EXTENSION
+        )),
     );
-    // A cube, because a block tool that starts from nothing has nothing
-    // to drag. One metre: a step and a half for the character, and a
-    // unit against the snap grid.
-    let cube = kooch_blockmesh::BlockMesh::cuboid(glam::Vec3::splat(0.5));
-    let text = match ron::ser::to_string_pretty(&cube, ron::ser::PrettyConfig::default()) {
+    let mesh = kooch_blockmesh::BlockShape::from(shape).build();
+    let text = match ron::ser::to_string_pretty(&mesh, ron::ser::PrettyConfig::default()) {
         Ok(text) => text,
         Err(error) => {
-            tracing::error!(%error, "cannot serialise a cube");
+            tracing::error!(%error, shape = shape.label(), "cannot serialise a block shape");
             return None;
         }
     };

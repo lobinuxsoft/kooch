@@ -390,6 +390,10 @@ pub(crate) fn apply_handle_input(
                 before: Box::new(before),
                 after: Box::new(after),
             });
+            // Edited by hand: the parameters no longer describe this geometry.
+            if let Some(bake) = crate::block_edit::shape_sync::bake(resources, target) {
+                actions.push(bake);
+            }
         }
     }
 

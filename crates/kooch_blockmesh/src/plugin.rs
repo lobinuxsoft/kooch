@@ -6,7 +6,7 @@ use kooch_core::resource::Resources;
 use kooch_core::stage::Stage;
 use kooch_ecs::component::ComponentRegistry;
 
-use crate::{Block, BuiltBlocks, sync_blocks};
+use crate::{Block, BlockShape, BuiltBlocks, sync_blocks};
 
 /// Registers [`Block`] and keeps every block's mesh and collider in step
 /// with its source.
@@ -17,6 +17,7 @@ impl Plugin for BlockPlugin {
         app.add_system(Stage::Startup, |resources: &mut Resources| {
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                 registry.register_cpu_reflected::<Block>();
+                registry.register_cpu_reflected::<BlockShape>();
             }
             resources.insert(BuiltBlocks::default());
         });

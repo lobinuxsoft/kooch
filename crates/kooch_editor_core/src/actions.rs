@@ -80,10 +80,11 @@ pub(crate) enum EditorAction {
         path: PathBuf,
         name: String,
     },
-    /// Spawn a block: writes a fresh `.blockmesh.ron` holding a cube into the project's assets and
-    /// spawns an entity pointing at it.
+    /// Spawn a block: writes a fresh `.block` holding `shape` into the project's assets and spawns
+    /// an entity pointing at it.
     SpawnBlock {
         into: SpawnTarget,
+        shape: kooch_blockmesh::Shape,
     },
     /// One block's shape, before and after an edit.
     BlockEdit {

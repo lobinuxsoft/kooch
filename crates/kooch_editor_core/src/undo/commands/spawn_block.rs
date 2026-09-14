@@ -18,6 +18,7 @@ use crate::undo::EditorCommand;
 
 pub(crate) struct SpawnBlockCommand {
     into: crate::actions::SpawnTarget,
+    shape: kooch_blockmesh::Shape,
     /// Entity allocated on first execute, reused on redo.
     entity: Option<Entity>,
     /// The source written on first execute. Kept so redo points at the
@@ -29,9 +30,10 @@ pub(crate) struct SpawnBlockCommand {
 }
 
 impl SpawnBlockCommand {
-    pub fn new(into: crate::actions::SpawnTarget) -> Self {
+    pub fn new(into: crate::actions::SpawnTarget, shape: kooch_blockmesh::Shape) -> Self {
         Self {
             into,
+            shape,
             entity: None,
             source: None,
             path: None,
@@ -39,12 +41,12 @@ impl SpawnBlockCommand {
         }
     }
 
-    /// Writes the cube and registers it, once. Redo reuses the answer.
+    /// Writes the shape and registers it, once. Redo reuses the answer.
     fn ensure_source(&mut self, resources: &mut Resources) -> Option<Guid> {
         if let Some(guid) = self.source {
             return Some(guid);
         }
-        let (file, guid) = crate::actions::asset_ops::new_block_asset(resources)?;
+        let (file, guid) = crate::actions::asset_ops::new_block_asset(resources, self.shape)?;
         self.path = Some(file);
         self.source = Some(guid);
         Some(guid)
@@ -74,6 +76,7 @@ impl SpawnBlockCommand {
 
         let mut types = named_types(resources, &["Name", "Transform"]);
         types.extend(kooch_blockmesh::block_components().map(|(type_id, _)| type_id));
+        types.push(TypeId::of::<kooch_blockmesh::BlockShape>());
 
         for type_id in &types {
             let inserted = resources
@@ -94,7 +97,7 @@ impl SpawnBlockCommand {
                 &TypeId::of::<kooch_ecs::Name>(),
                 entity,
                 "value",
-                ReflectValue::String("Block".to_owned()),
+                ReflectValue::String(self.shape.label().to_owned()),
             );
         }
 
@@ -126,6 +129,14 @@ impl SpawnBlockCommand {
             && let Some(block) = storage.get_mut(entity)
         {
             block.source = Some(guid);
+        }
+
+        // The parameters stay on the block, so the Inspector can reshape it until it is edited by hand.
+        if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+            && let Some(storage) = registry.get_cpu_mut::<kooch_blockmesh::BlockShape>()
+            && let Some(shape) = storage.get_mut(entity)
+        {
+            *shape = kooch_blockmesh::BlockShape::from(self.shape);
         }
 
         self.place(resources, entity);

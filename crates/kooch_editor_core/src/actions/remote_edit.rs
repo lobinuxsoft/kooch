@@ -39,8 +39,8 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
         return true;
     }
 
-    if let EditorAction::SpawnBlock { .. } = action {
-        spawn_block(resources);
+    if let EditorAction::SpawnBlock { shape, .. } = action {
+        spawn_block(resources, *shape);
         return true;
     }
 
@@ -227,11 +227,11 @@ fn spawn_mesh(resources: &mut Resources, path: &std::path::Path, name: &str) {
 }
 
 /// Builds a block on the project's side.
-fn spawn_block(resources: &mut Resources) {
+fn spawn_block(resources: &mut Resources, shape: kooch_blockmesh::Shape) {
     const TARGET: &str = "kooch_editor_core::remote_edit::spawn_block";
     use crate::undo::prototype_material;
 
-    let Some((path, guid)) = crate::actions::asset_ops::new_block_asset(resources) else {
+    let Some((path, guid)) = crate::actions::asset_ops::new_block_asset(resources, shape) else {
         return;
     };
 
@@ -243,7 +243,7 @@ fn spawn_block(resources: &mut Resources) {
     };
     let client = session.client();
 
-    let entity = match client.spawn(Some("Block"), None, None) {
+    let entity = match client.spawn(Some(shape.label()), None, None) {
         Ok(entity) => entity,
         Err(e) => {
             tracing::warn!(target: TARGET, error = %e, "remote spawn failed");
@@ -271,6 +271,17 @@ fn spawn_block(resources: &mut Resources) {
             );
             return;
         }
+    }
+
+    // The parameters stay on the block for the Inspector. The menu spawns defaults, so `kind` is
+    // the only field that differs (`defaults_differ_only_in_kind`).
+    let shape_ty = std::any::type_name::<kooch_blockmesh::BlockShape>();
+    let kind = kooch_ecs::reflect::ReflectValue::U32(kooch_blockmesh::BlockShape::from(shape).kind);
+    if let Err(e) = client
+        .add_component(entity, shape_ty)
+        .and_then(|()| client.set_field(entity, shape_ty, "kind", kind))
+    {
+        tracing::warn!(target: TARGET, error = %e, "could not give the block its shape");
     }
 
     let value = kooch_ecs::reflect::ReflectValue::AssetRef {
