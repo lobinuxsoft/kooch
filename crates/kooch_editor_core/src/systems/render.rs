@@ -812,9 +812,8 @@ fn apply_viewport_click(
         return;
     };
 
-    // 🔴 Element mode first, and it never falls through to entity picking. A click that missed the
-    // face is a click on empty space beside the block you are editing — selecting whatever entity
-    // is behind it would throw the block out of the inspector mid-edit.
+    // Element mode first. A miss falls through to entity picking only when it lands on another
+    // entity, so clicking past the edited block onto empty space keeps it in the inspector.
     if overlay.element_mode.edits_elements()
         && let [entity] = overlay.selected_entities.as_slice()
     {
@@ -826,6 +825,23 @@ fn apply_viewport_click(
             delta.viewport_size,
             overlay.element_mode,
         );
+        let hit = crate::picking::entity_hit_at(resources, cursor, delta.viewport_size);
+        let block = match element {
+            Some(_) => {
+                crate::block_edit::block_distance(resources, entity, cursor, delta.viewport_size)
+            }
+            None => None,
+        };
+        if let crate::block_edit::ElementClick::Switch(other) =
+            crate::block_edit::resolve_click(entity, element, hit, block)
+        {
+            if let Some(mut selection) = resources.get_mut::<crate::block_edit::BlockSelection>() {
+                selection.clear();
+            }
+            overlay.selected_entities.clear();
+            overlay.selected_entities.push(other);
+            return;
+        }
         if let Some(mut selection) = resources.remove::<crate::block_edit::BlockSelection>() {
             crate::block_edit::apply_click(&mut selection, entity, element, delta.ctrl_held);
             resources.insert(selection);
