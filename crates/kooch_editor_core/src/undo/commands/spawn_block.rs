@@ -18,6 +18,7 @@ use crate::undo::EditorCommand;
 
 pub(crate) struct SpawnBlockCommand {
     into: crate::actions::SpawnTarget,
+    shape: kooch_blockmesh::Shape,
     /// Entity allocated on first execute, reused on redo.
     entity: Option<Entity>,
     /// The source written on first execute. Kept so redo points at the
@@ -29,9 +30,10 @@ pub(crate) struct SpawnBlockCommand {
 }
 
 impl SpawnBlockCommand {
-    pub fn new(into: crate::actions::SpawnTarget) -> Self {
+    pub fn new(into: crate::actions::SpawnTarget, shape: kooch_blockmesh::Shape) -> Self {
         Self {
             into,
+            shape,
             entity: None,
             source: None,
             path: None,
@@ -39,12 +41,12 @@ impl SpawnBlockCommand {
         }
     }
 
-    /// Writes the cube and registers it, once. Redo reuses the answer.
+    /// Writes the shape and registers it, once. Redo reuses the answer.
     fn ensure_source(&mut self, resources: &mut Resources) -> Option<Guid> {
         if let Some(guid) = self.source {
             return Some(guid);
         }
-        let (file, guid) = crate::actions::asset_ops::new_block_asset(resources)?;
+        let (file, guid) = crate::actions::asset_ops::new_block_asset(resources, self.shape)?;
         self.path = Some(file);
         self.source = Some(guid);
         Some(guid)

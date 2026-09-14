@@ -72,7 +72,6 @@ impl BlockMesh {
         }
     }
 
-    #[cfg(test)]
     /// Builds a mesh from shared positions and faces given as corner index lists. `None` when a
     /// face names a missing position or has fewer than three corners.
     pub fn from_faces(positions: Vec<Vec3>, faces: &[Vec<u32>]) -> Option<Self> {

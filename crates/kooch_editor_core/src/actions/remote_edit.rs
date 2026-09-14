@@ -39,8 +39,8 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
         return true;
     }
 
-    if let EditorAction::SpawnBlock { .. } = action {
-        spawn_block(resources);
+    if let EditorAction::SpawnBlock { shape, .. } = action {
+        spawn_block(resources, *shape);
         return true;
     }
 
@@ -227,11 +227,11 @@ fn spawn_mesh(resources: &mut Resources, path: &std::path::Path, name: &str) {
 }
 
 /// Builds a block on the project's side.
-fn spawn_block(resources: &mut Resources) {
+fn spawn_block(resources: &mut Resources, shape: kooch_blockmesh::Shape) {
     const TARGET: &str = "kooch_editor_core::remote_edit::spawn_block";
     use crate::undo::prototype_material;
 
-    let Some((path, guid)) = crate::actions::asset_ops::new_block_asset(resources) else {
+    let Some((path, guid)) = crate::actions::asset_ops::new_block_asset(resources, shape) else {
         return;
     };
 
