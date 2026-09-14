@@ -22,6 +22,10 @@ pub enum Shape {
         width: f32,
         rise: f32,
         run: f32,
+        /// Degrees the flight turns: 0 is straight, a full turn or more is a spiral.
+        turn: f32,
+        /// Inner radius of a turning flight.
+        core: f32,
     },
     /// The stairs' footprint as one slope, a blockout stand-in for them.
     Ramp { width: f32, rise: f32, run: f32 },
@@ -50,17 +54,27 @@ pub enum Shape {
         size: f32,
         thickness: f32,
     },
+    /// A rectangular door frame: the opening is `width` by `height`, bordered by `frame` on the
+    /// sides and top, so resizing the opening leaves the border as it is.
+    Door {
+        width: f32,
+        height: f32,
+        frame: f32,
+        depth: f32,
+    },
 }
 
 impl Shape {
     /// Every shape with the parameters it spawns with unless changed.
-    pub const DEFAULTS: [Shape; 7] = [
+    pub const DEFAULTS: [Shape; 8] = [
         Shape::Cube { size: Vec3::ONE },
         Shape::Stairs {
             steps: 4,
             width: 1.0,
             rise: 1.0,
             run: 2.0,
+            turn: 0.0,
+            core: 0.5,
         },
         Shape::Ramp {
             width: 1.0,
@@ -88,6 +102,12 @@ impl Shape {
             size: 4.0,
             thickness: 0.1,
         },
+        Shape::Door {
+            width: 1.0,
+            height: 2.1,
+            frame: 0.2,
+            depth: 0.5,
+        },
     ];
 
     /// The name shown in the menu and given to the asset file.
@@ -100,6 +120,7 @@ impl Shape {
             Shape::Cylinder { .. } => "Cylinder",
             Shape::Cone { .. } => "Cone",
             Shape::Plane { .. } => "Plane",
+            Shape::Door { .. } => "Door",
         }
     }
 
@@ -115,7 +136,12 @@ impl Shape {
                 width,
                 rise,
                 run,
-            } => stairs(&mut out, steps.max(1), width, rise, run),
+                turn,
+                core,
+            } => match turn.abs() < 1.0e-3 {
+                true => stairs(&mut out, steps.max(1), width, rise, run),
+                false => turning_stairs(&mut out, steps.max(1), width, rise, turn, core),
+            },
             Shape::Ramp { width, rise, run } => ramp(&mut out, width, rise, run),
             Shape::Arch {
                 segments,
@@ -138,6 +164,12 @@ impl Shape {
                 size,
                 thickness,
             } => plane(&mut out, subdivisions.max(1), size, thickness),
+            Shape::Door {
+                width,
+                height,
+                frame,
+                depth,
+            } => door(&mut out, width, height, frame, depth),
         }
         out.finish()
     }
@@ -297,6 +329,162 @@ fn plane(out: &mut Builder, subdivisions: u32, size: f32, thickness: f32) {
     }
 }
 
+/// Steps around a vertical axis. Below a full turn each step is a column down to the floor; from a
+/// full turn up the columns would pass through the steps beneath, so each step floats as a wedge.
+fn turning_stairs(out: &mut Builder, steps: u32, width: f32, rise: f32, turn: f32, core: f32) {
+    let sweep = turn.to_radians();
+    // Under 45 degrees a step, so every column stays convex and its chords stay near the arc.
+    let steps = steps.max((sweep.abs() / (PI / 4.0)).ceil() as u32);
+    let inner = core.max(MIN_SIZE);
+    let outer = inner + width.max(MIN_SIZE);
+    let lift = rise.max(MIN_SIZE) / steps as f32;
+    let floating = sweep.abs() >= 2.0 * PI - 1.0e-3;
+    let at = |angle: f32, r: f32, y: f32| Vec3::new(r * angle.cos(), y, r * angle.sin());
+    for i in 0..steps {
+        let a0 = sweep * i as f32 / steps as f32;
+        let a1 = sweep * (i + 1) as f32 / steps as f32;
+        let (lo, hi) = (lift * i as f32, lift * (i + 1) as f32);
+        let base = if floating { lo } else { 0.0 };
+        let inside = at((a0 + a1) / 2.0, (inner + outer) / 2.0, (base + hi) / 2.0);
+        // Floating wedges are closed on their own and welded to nothing.
+        let mut wedge = Builder::default();
+        let target = if floating { &mut wedge } else { &mut *out };
+        target.face_away(
+            &[
+                at(a0, inner, hi),
+                at(a0, outer, hi),
+                at(a1, outer, hi),
+                at(a1, inner, hi),
+            ],
+            inside,
+        );
+        target.face_away(
+            &[
+                at(a0, inner, lo),
+                at(a0, outer, lo),
+                at(a0, outer, hi),
+                at(a0, inner, hi),
+            ],
+            inside,
+        );
+        target.face_away(
+            &[
+                at(a0, inner, base),
+                at(a1, inner, base),
+                at(a1, outer, base),
+                at(a0, outer, base),
+            ],
+            inside,
+        );
+        for r in [inner, outer] {
+            // 🔴 The previous column's top corner on this one's front edge, or they meet in a T.
+            let mut wall = vec![
+                at(a0, r, base),
+                at(a1, r, base),
+                at(a1, r, hi),
+                at(a0, r, hi),
+            ];
+            if !floating && i > 0 {
+                wall.push(at(a0, r, lo));
+            }
+            target.face_away(&wall, inside);
+        }
+        if floating || i + 1 == steps {
+            target.face_away(
+                &[
+                    at(a1, inner, base),
+                    at(a1, outer, base),
+                    at(a1, outer, hi),
+                    at(a1, inner, hi),
+                ],
+                inside,
+            );
+        }
+        if floating {
+            out.append(wedge);
+        }
+    }
+}
+
+fn door(out: &mut Builder, width: f32, height: f32, frame: f32, depth: f32) {
+    let w = width.max(MIN_SIZE) / 2.0;
+    let h = height.max(MIN_SIZE);
+    let t = frame.max(MIN_SIZE);
+    let d = depth.max(MIN_SIZE) / 2.0;
+    let (x, top) = (w + t, h + t);
+    let p = Vec3::new;
+    let left = p(-(w + t / 2.0), top / 2.0, 0.0);
+    let right = p(w + t / 2.0, top / 2.0, 0.0);
+    let lintel = p(0.0, h + t / 2.0, 0.0);
+    for z in [d, -d] {
+        out.face_away(
+            &[
+                p(-x, 0.0, z),
+                p(-w, 0.0, z),
+                p(-w, h, z),
+                p(-w, top, z),
+                p(-x, top, z),
+            ],
+            left,
+        );
+        out.face_away(
+            &[
+                p(w, 0.0, z),
+                p(x, 0.0, z),
+                p(x, top, z),
+                p(w, top, z),
+                p(w, h, z),
+            ],
+            right,
+        );
+        out.face_away(
+            &[p(-w, h, z), p(w, h, z), p(w, top, z), p(-w, top, z)],
+            lintel,
+        );
+    }
+    out.face_away(
+        &[p(-x, 0.0, d), p(-x, 0.0, -d), p(-x, top, -d), p(-x, top, d)],
+        left,
+    );
+    out.face_away(
+        &[p(x, 0.0, d), p(x, 0.0, -d), p(x, top, -d), p(x, top, d)],
+        right,
+    );
+    out.face_away(
+        &[
+            p(-x, top, d),
+            p(-w, top, d),
+            p(w, top, d),
+            p(x, top, d),
+            p(x, top, -d),
+            p(w, top, -d),
+            p(-w, top, -d),
+            p(-x, top, -d),
+        ],
+        lintel,
+    );
+    out.face_away(
+        &[p(-x, 0.0, d), p(-w, 0.0, d), p(-w, 0.0, -d), p(-x, 0.0, -d)],
+        left,
+    );
+    out.face_away(
+        &[p(w, 0.0, d), p(x, 0.0, d), p(x, 0.0, -d), p(w, 0.0, -d)],
+        right,
+    );
+    out.face_away(
+        &[p(-w, 0.0, d), p(-w, h, d), p(-w, h, -d), p(-w, 0.0, -d)],
+        left,
+    );
+    out.face_away(
+        &[p(w, 0.0, d), p(w, h, d), p(w, h, -d), p(w, 0.0, -d)],
+        right,
+    );
+    out.face_away(
+        &[p(-w, h, d), p(w, h, d), p(w, h, -d), p(-w, h, -d)],
+        lintel,
+    );
+}
+
 /// Collects faces by position, welding corners that land on the same point so neighbouring faces
 /// share them — an unwelded seam is an open edge.
 #[derive(Default)]
@@ -320,6 +508,36 @@ impl Builder {
     fn face(&mut self, points: &[Vec3]) {
         let face = points.iter().map(|point| self.corner(*point)).collect();
         self.faces.push(face);
+    }
+
+    /// Adds a face wound so its normal points away from `inside`, a point within the convex piece
+    /// the face bounds — for shapes whose winding is easier to derive than to write out.
+    fn face_away(&mut self, points: &[Vec3], inside: Vec3) {
+        let mut normal = Vec3::ZERO;
+        for (index, current) in points.iter().enumerate() {
+            let next = points[(index + 1) % points.len()];
+            normal += (*current - next).cross(*current + next);
+        }
+        let centre = points.iter().copied().sum::<Vec3>() / points.len() as f32;
+        match normal.dot(centre - inside) < 0.0 {
+            true => {
+                let reversed: Vec<Vec3> = points.iter().rev().copied().collect();
+                self.face(&reversed);
+            }
+            false => self.face(points),
+        }
+    }
+
+    /// Adds another builder's faces without welding them to these.
+    fn append(&mut self, other: Builder) {
+        let offset = self.positions.len() as u32;
+        self.positions.extend(other.positions);
+        self.faces.extend(
+            other
+                .faces
+                .into_iter()
+                .map(|face| face.into_iter().map(|corner| corner + offset).collect()),
+        );
     }
 
     fn finish(self) -> BlockMesh {

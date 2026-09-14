@@ -22,6 +22,8 @@ pub const KIND_CYLINDER: u32 = 4;
 pub const KIND_CONE: u32 = 5;
 /// A floor slab.
 pub const KIND_PLANE: u32 = 6;
+/// A rectangular door frame.
+pub const KIND_DOOR: u32 = 7;
 
 /// Labels for the `kind` dropdown, in the order of [`Shape::DEFAULTS`].
 pub static KIND_CHOICES: &[FieldChoice] = &[
@@ -53,6 +55,10 @@ pub static KIND_CHOICES: &[FieldChoice] = &[
         label: "Plane",
         value: KIND_PLANE as i64,
     },
+    FieldChoice {
+        label: "Door",
+        value: KIND_DOOR as i64,
+    },
 ];
 
 /// Kinds that read `size`.
@@ -80,6 +86,16 @@ pub static ROUND_WHEN: FieldCondition = FieldCondition {
     field: "kind",
     values: &[KIND_CYLINDER as i64, KIND_CONE as i64],
 };
+/// Kinds that read `depth`.
+pub static DEPTH_WHEN: FieldCondition = FieldCondition {
+    field: "kind",
+    values: &[KIND_ARCH as i64, KIND_DOOR as i64],
+};
+/// Kinds that read the door's fields.
+pub static DOOR_WHEN: FieldCondition = FieldCondition {
+    field: "kind",
+    values: &[KIND_DOOR as i64],
+};
 /// Kinds that read the plane's fields.
 pub static PLANE_WHEN: FieldCondition = FieldCondition {
     field: "kind",
@@ -103,6 +119,12 @@ pub struct BlockShape {
     /// How many steps the stairs have.
     #[reflect(shown_when = STEPS_WHEN)]
     pub steps: u32,
+    /// Degrees the stairs turn: 0 is straight, a full turn or more is a spiral.
+    #[reflect(shown_when = STEPS_WHEN)]
+    pub turn: f32,
+    /// Inner radius of turning stairs; straight ones ignore it.
+    #[reflect(shown_when = STEPS_WHEN)]
+    pub core: f32,
     /// Width across the slope.
     #[reflect(shown_when = SLOPE_WHEN)]
     pub width: f32,
@@ -121,9 +143,18 @@ pub struct BlockShape {
     /// Thickness of the arch's wall.
     #[reflect(shown_when = ARCH_WHEN)]
     pub wall: f32,
-    /// Depth of the arch.
-    #[reflect(shown_when = ARCH_WHEN)]
+    /// Depth of the arch or the door frame.
+    #[reflect(shown_when = DEPTH_WHEN)]
     pub depth: f32,
+    /// Width of the door's opening.
+    #[reflect(shown_when = DOOR_WHEN)]
+    pub door_width: f32,
+    /// Height of the door's opening.
+    #[reflect(shown_when = DOOR_WHEN)]
+    pub door_height: f32,
+    /// Thickness of the frame around the opening.
+    #[reflect(shown_when = DOOR_WHEN)]
+    pub frame: f32,
     /// Faces around a cylinder or cone.
     #[reflect(shown_when = ROUND_WHEN)]
     pub sides: u32,
@@ -155,6 +186,8 @@ impl Default for BlockShape {
             pivot: Vec3::new(0.0, -1.0, 0.0),
             size: Vec3::ONE,
             steps: 4,
+            turn: 0.0,
+            core: 0.5,
             width: 1.0,
             rise: 1.0,
             run: 2.0,
@@ -162,6 +195,9 @@ impl Default for BlockShape {
             opening: 1.0,
             wall: 0.25,
             depth: 0.5,
+            door_width: 1.0,
+            door_height: 2.1,
+            frame: 0.2,
             sides: 16,
             radius: 0.5,
             height: 1.0,
@@ -185,9 +221,22 @@ impl From<Shape> for BlockShape {
                 width,
                 rise,
                 run,
+                turn,
+                core,
             } => {
                 out.kind = KIND_STAIRS;
                 (out.steps, out.width, out.rise, out.run) = (steps, width, rise, run);
+                (out.turn, out.core) = (turn, core);
+            }
+            Shape::Door {
+                width,
+                height,
+                frame,
+                depth,
+            } => {
+                out.kind = KIND_DOOR;
+                (out.door_width, out.door_height, out.frame, out.depth) =
+                    (width, height, frame, depth);
             }
             Shape::Ramp { width, rise, run } => {
                 out.kind = KIND_RAMP;
@@ -260,6 +309,14 @@ impl BlockShape {
                 width: self.width,
                 rise: self.rise,
                 run: self.run,
+                turn: self.turn,
+                core: self.core,
+            },
+            KIND_DOOR => Shape::Door {
+                width: self.door_width,
+                height: self.door_height,
+                frame: self.frame,
+                depth: self.depth,
             },
             KIND_RAMP => Shape::Ramp {
                 width: self.width,
