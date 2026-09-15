@@ -1,6 +1,6 @@
 use kooch_core::resource::Resources;
 
-use super::{CarriedWorld, Phase, capture, resume};
+use super::{CarriedWorld, Phase, capture, hold, resume};
 
 /// Serialises the tests that touch the holding directory.
 static ALONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -23,7 +23,7 @@ fn an_untitled_scene_is_held() {
     let mut resources = Resources::new();
     resources.insert(kooch_ecs::SceneManager::new());
 
-    let held = capture(&mut resources);
+    let held = hold(&mut resources);
 
     assert_eq!(held, 1, "the untitled scene was left behind");
     let carried = resources.get::<CarriedWorld>().expect("a carry");
@@ -40,7 +40,25 @@ fn an_untitled_scene_is_held() {
 #[test]
 fn no_manager_holds_nothing() {
     let mut resources = Resources::new();
+    assert_eq!(hold(&mut resources), 0);
+}
+
+/// 🔴 From the #1158 smoke test (#1163): Rebuild & Run before the project connected held the editor's
+/// empty untitled scene, and resuming it wiped the scene the new process had opened.
+#[test]
+fn a_disconnected_editor_holds_nothing() {
+    let _alone = alone();
+    let _ = std::fs::remove_dir_all(super::holding());
+    let mut resources = Resources::new();
+    resources.insert(kooch_ecs::SceneManager::new());
+    resources.insert(crate::remote_session::RemoteState::new());
+
     assert_eq!(capture(&mut resources), 0);
+    assert!(
+        resources.get::<CarriedWorld>().is_none(),
+        "a carry was armed"
+    );
+    assert!(!super::holding().exists(), "a holding file was written");
 }
 
 /// 🔴 Loading into a project that is still compiling goes nowhere, and
