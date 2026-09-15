@@ -57,6 +57,7 @@ pub(crate) mod remote_input;
 pub mod remote_mirror;
 pub mod remote_session;
 pub mod script_sync;
+pub mod shader_sync;
 
 /// 🔴 A profiling build with the per-system scopes compiled out is not a build that fails — it is a
 /// build whose captures look exactly like the ones from before the scopes existed.
@@ -129,6 +130,7 @@ impl Plugin for EditorPlugin {
         // Idle until someone presses Build (#758).
         app.insert_resource(build::BuildState::default());
         app.insert_resource(script_sync::ScriptSync::default());
+        app.insert_resource(shader_sync::ShaderSync::default());
         app.insert_resource(code_reload::CodeReload::default());
         app.insert_resource(input_focus::InputFocus::default());
         // Remote mode starts inert: no session means the editor drives
@@ -184,6 +186,7 @@ impl Plugin for EditorPlugin {
         // A system written in an external editor used to reach no
         // registration and no log line — it simply never ran.
         app.add_system(Stage::PreUpdate, script_sync::sync_scripts_system);
+        app.add_system(Stage::PreUpdate, shader_sync::sync_shaders_system);
         // 🔴 After it, and that ordering is the point: the source poll
         // says the build fell behind, this says it caught up. Reloading
         // first would clear a notice the same frame that raised it.

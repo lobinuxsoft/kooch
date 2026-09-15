@@ -110,6 +110,7 @@ pub(super) fn create_edit(
             CreateKind::Material => EditorAction::CreateMaterial {
                 folder: parent,
                 name,
+                shader: None,
             },
             CreateKind::File(kind) => EditorAction::CreateFile {
                 folder: parent,
@@ -135,5 +136,6 @@ pub(super) fn create_hint(kind: CreateKind) -> &'static str {
         CreateKind::File(NewFileKind::RenderSettings) => "Settings name (e.g. project)…",
         CreateKind::File(NewFileKind::BuildPreset) => "Preset name (e.g. Windows release)…",
         CreateKind::File(NewFileKind::BlockMesh) => "Block name (e.g. Wall)…",
+        CreateKind::File(NewFileKind::Shader) => "Shader name (e.g. Toon)…",
     }
 }

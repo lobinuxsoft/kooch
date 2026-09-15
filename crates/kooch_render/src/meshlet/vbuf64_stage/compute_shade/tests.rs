@@ -1,5 +1,42 @@
 use super::*;
 
+/// 🔴 Naga validates a shader alone; only wgpu checks it against the layout. Both shading paths,
+/// with the default surface and a custom one, built on a real device.
+#[test]
+fn both_paths_build_a_custom_surface() {
+    let instance = wgpu::Instance::default();
+    let Ok(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+    else {
+        return;
+    };
+    let features = kooch_core::gpu::vbuf64_features();
+    if !adapter.features().contains(features) {
+        return;
+    }
+    let (device, _queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: None,
+        required_features: features,
+        required_limits: adapter.limits(),
+        ..Default::default()
+    }))
+    .expect("device");
+    let red = "fn surface(input: SurfaceInput) -> SurfaceOutput {
+        var out: SurfaceOutput;
+        out.base_color = vec3<f32>(1.0, 0.0, 0.0);
+        out.normal = normalize(input.world_normal);
+        out.roughness = 0.5;
+        return out;
+    }";
+    crate::meshlet::validate_surface(red).unwrap();
+
+    let meshlet_bgl = crate::meshlet::meshlet_bind_group_layout(&device);
+    let compute = ComputeShading::new(&device, &meshlet_bgl);
+    build_pipeline(&device, &compute.layout, red, false);
+    build_pipeline(&device, &compute.layout, red, true);
+    super::super::two_pass::MaterialTwoPass::new(&device, &meshlet_bgl);
+}
+
 /// 🔴 An unset variable has to read as `None`, not as `Some(false)`.
 #[test]
 fn an_unset_variable_says_nothing() {
@@ -38,7 +75,5 @@ fn the_spellings_a_measurement_run_would_use_all_work() {
 #[test]
 fn the_colour_target_sits_past_the_contact_shadow_bindings() {
     assert!(COLOR_OUT_BINDING > MATERIAL_PASS_CONTACT_DEPTH_BINDING);
-    assert!(
-        MATERIAL_PBR_COMPUTE_BODY.contains(&format!("@group(0) @binding({COLOR_OUT_BINDING})"))
-    );
+    assert!(MATERIAL_COMPUTE_FRAME.contains(&format!("@group(0) @binding({COLOR_OUT_BINDING})")));
 }

@@ -4,6 +4,7 @@ mod asset;
 mod asset_picker;
 mod choices;
 mod entity_picker;
+mod search_combo;
 mod value_widget;
 
 pub(crate) use self::asset::{AssetCatalogEntry, AssetSource};

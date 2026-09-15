@@ -41,6 +41,9 @@ pub struct Material {
     /// texture, which is the point.
     #[serde(default)]
     pub uv_offset: [f32; 2],
+    /// The `.shader` this material shades with. `None` → the engine's PBR surface.
+    #[serde(default)]
+    pub shader: Option<Guid>,
 }
 
 impl Material {
@@ -57,6 +60,7 @@ impl Material {
             metal_roughness: None,
             uv_scale: default_uv_scale(),
             uv_offset: [0.0, 0.0],
+            shader: None,
         }
     }
 
@@ -111,6 +115,7 @@ impl Default for Material {
             metal_roughness: None,
             uv_scale: default_uv_scale(),
             uv_offset: [0.0, 0.0],
+            shader: None,
         }
     }
 }

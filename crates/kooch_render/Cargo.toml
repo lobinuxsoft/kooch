@@ -8,6 +8,8 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# Validates a `.shader` before a pipeline is built from it (#1157). The same naga wgpu links.
+naga = { version = "29", features = ["wgsl-in"] }
 kooch_core.workspace = true
 kooch_ecs.workspace = true
 # Inti — the shading model and its GPU light records. A renderer
@@ -65,7 +67,6 @@ dlss = ["dep:dlss_wgpu", "kooch_core/dlss"]
 dlss-debug-overlay = ["dlss", "dlss_wgpu/debug_overlay"]
 
 [dev-dependencies]
-naga = { version = "29", features = ["wgsl-in"] }
 pollster.workspace = true
 # Reading back what the GPU scopes reported (#785). Only the test needs
 # to name puffin: the engine reaches it through `kooch_core`.

@@ -10,6 +10,13 @@ fn the_extension_names_the_type() {
     assert!(!MaterialLoader.extensions().contains(&"ron"));
 }
 
+/// 🔴 Every `.material` written before shaders existed keeps the default surface.
+#[test]
+fn a_missing_shader_is_default() {
+    let material: Material = ron::from_str("(base_color: (1.0, 0.0, 0.0, 1.0))").unwrap();
+    assert_eq!(material.shader, None);
+}
+
 #[test]
 fn default_matches_legacy_white_diffuse() {
     let m = Material::default();

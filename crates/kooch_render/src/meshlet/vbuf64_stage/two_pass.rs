@@ -8,9 +8,12 @@ use crate::material::MaterialPipeline;
 use crate::meshlet::dispatcher::MeshletCull;
 use crate::meshlet::scene::MeshletScene;
 use crate::meshlet::{
-    MATERIAL_DEPTH_FORMAT, MATERIAL_PASS_CONTACT_DEPTH_BINDING, MATERIAL_PASS_CONTACT_UBO_BINDING,
-    MATERIAL_PBR_DEFAULT_BODY, RESOLVE_MATERIAL_DEPTH_SHADER, compose_material_shader,
+    DEFAULT_SURFACE_SHADER, MATERIAL_DEPTH_FORMAT, MATERIAL_FRAGMENT_FRAME,
+    MATERIAL_PASS_CONTACT_DEPTH_BINDING, MATERIAL_PASS_CONTACT_UBO_BINDING,
+    RESOLVE_MATERIAL_DEPTH_SHADER, compose_material_shader,
 };
+
+use super::shader_cache::ShaderPipelines;
 
 use super::{CameraUbo, DEFERRED_COLOR_FORMAT, ScreenUbo, VBUF64_FORMAT};
 
@@ -18,18 +21,19 @@ use super::{CameraUbo, DEFERRED_COLOR_FORMAT, ScreenUbo, VBUF64_FORMAT};
 /// Matches `MaterialPipeline::DEFAULT_CAPACITY`.
 const MAX_SHADING_SLOTS: u32 = 256;
 
-/// Pass 2's pipeline, in one of its two variants.
+/// Pass 2's pipeline for one surface, in one of its two variants.
 fn build_shading_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
+    surface: &str,
     debug: bool,
 ) -> wgpu::RenderPipeline {
-    let src = compose_material_shader(MATERIAL_PBR_DEFAULT_BODY, debug);
+    let src = compose_material_shader(MATERIAL_FRAGMENT_FRAME, surface, debug);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(if debug {
-            "material_pbr_default_shader_debug"
+            "material_fragment_shader_debug"
         } else {
-            "material_pbr_default_shader"
+            "material_fragment_shader"
         }),
         source: wgpu::ShaderSource::Wgsl(src.into()),
     });
@@ -78,6 +82,8 @@ pub(super) struct MaterialTwoPass {
     /// Kept so the debug pipeline can be built later against the exact
     /// layout the production one uses.
     shading_layout: wgpu::PipelineLayout,
+    /// Materials with a `.shader` of their own (#1157).
+    custom: ShaderPipelines<wgpu::RenderPipeline>,
     frame_bgl: wgpu::BindGroupLayout,
     materials_bgl: wgpu::BindGroupLayout,
     scene_bgl: wgpu::BindGroupLayout,
@@ -250,7 +256,8 @@ impl MaterialTwoPass {
             ],
             immediate_size: 0,
         });
-        let shading_pipeline = build_shading_pipeline(device, &shading_layout, false);
+        let shading_pipeline =
+            build_shading_pipeline(device, &shading_layout, DEFAULT_SURFACE_SHADER, false);
 
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
         let screen_stride = align.max(std::mem::size_of::<ScreenUbo>() as u64);
@@ -280,6 +287,7 @@ impl MaterialTwoPass {
             shading_pipeline,
             shading_pipeline_debug: std::sync::OnceLock::new(),
             shading_layout,
+            custom: ShaderPipelines::new(),
             frame_bgl,
             materials_bgl,
             scene_bgl,
@@ -297,8 +305,9 @@ impl MaterialTwoPass {
         if debug_mode == 0 {
             return &self.shading_pipeline;
         }
-        self.shading_pipeline_debug
-            .get_or_init(|| build_shading_pipeline(device, &self.shading_layout, true))
+        self.shading_pipeline_debug.get_or_init(|| {
+            build_shading_pipeline(device, &self.shading_layout, DEFAULT_SURFACE_SHADER, true)
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -485,7 +494,19 @@ impl MaterialTwoPass {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(shading_pipeline);
+            let custom = material_pipeline
+                .slot_surface(slot)
+                .and_then(|(guid, surface)| {
+                    self.custom.get(guid, surface, debug_mode != 0, |source| {
+                        build_shading_pipeline(
+                            device,
+                            &self.shading_layout,
+                            source,
+                            debug_mode != 0,
+                        )
+                    })
+                });
+            pass.set_pipeline(custom.as_ref().unwrap_or(shading_pipeline));
             let offset = (slot as u64 * self.screen_stride) as u32;
             pass.set_bind_group(0, &frame_bg, &[offset]);
             pass.set_bind_group(1, meshlet_bg, &[]);

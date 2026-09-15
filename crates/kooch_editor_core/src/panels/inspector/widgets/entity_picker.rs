@@ -31,39 +31,25 @@ pub(crate) fn draw_entity_picker(
     };
 
     let mut new_value: Option<ReflectValue> = None;
-    let search_id = ui.id().with(("entity_picker_search", salt));
 
-    let combo = egui::ComboBox::from_id_salt(("entity_picker", salt))
-        .selected_text(selected_text)
-        .show_ui(ui, |ui| {
-            // Everything below runs only while the popup is open. In an immediate-mode UI the cost
-            // of a panel's draw is paid every frame it is visible, and filtering a scene's entities
-            // is not something to pay for a closed dropdown.
-            let mut query: String = ui
-                .ctx()
-                .data(|d| d.get_temp::<String>(search_id))
-                .unwrap_or_default();
-            let search = ui.add(
-                egui::TextEdit::singleline(&mut query)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("\u{1f50d} Search…"),
-            );
-            if search.changed() {
-                ui.ctx()
-                    .data_mut(|d| d.insert_temp(search_id, query.clone()));
+    // The list runs only while the popup is open: filtering a scene's entities is not something to
+    // pay for a closed dropdown every frame.
+    let slot = super::search_combo::search_combo(
+        ui,
+        ("entity_picker", salt),
+        selected_text,
+        |ui, needle| {
+            if ui.selectable_label(current.is_none(), "(None)").clicked() {
+                if current.is_some() {
+                    new_value = Some(ReflectValue::EntityRef(None));
+                }
+                ui.close();
             }
 
-            ui.separator();
-
-            if ui.selectable_label(current.is_none(), "(None)").clicked() && current.is_some() {
-                new_value = Some(ReflectValue::EntityRef(None));
-            }
-
-            let needle = query.trim().to_lowercase();
             let mut shown = 0usize;
             for info in entities.iter().filter(|i| accepts(i, requires)) {
                 let label = label_for(info);
-                if !needle.is_empty() && !label.to_lowercase().contains(&needle) {
+                if !needle.is_empty() && !label.to_lowercase().contains(needle) {
                     continue;
                 }
                 shown += 1;
@@ -71,8 +57,11 @@ pub(crate) fn draw_entity_picker(
                 let resp = ui
                     .selectable_label(selected, label)
                     .on_hover_text(handle_of(info.entity));
-                if !selected && resp.clicked() {
-                    new_value = Some(assign(info.entity));
+                if resp.clicked() {
+                    if !selected {
+                        new_value = Some(assign(info.entity));
+                    }
+                    ui.close();
                 }
             }
             if shown == 0 {
@@ -81,11 +70,11 @@ pub(crate) fn draw_entity_picker(
                     false => ui.weak(format!("(no entity carries a {requires})")),
                 };
             }
-        });
+        },
+    );
 
     // Drop target: an entity dragged out of the World panel, which sets a bare `Entity` as its
     // payload — the same one reparenting uses.
-    let slot = combo.response;
     if let Some(hovered) = slot.dnd_hover_payload::<Entity>() {
         let dropped = *hovered;
         let info = entities.iter().find(|i| i.entity == dropped);

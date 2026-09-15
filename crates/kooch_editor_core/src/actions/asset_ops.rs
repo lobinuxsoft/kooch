@@ -22,7 +22,11 @@ use crate::systems::LastScannedProject;
 pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) -> bool {
     match action {
         EditorAction::CreateFolder { parent, name } => create_folder(parent, name),
-        EditorAction::CreateMaterial { folder, name } => create_material(resources, folder, name),
+        EditorAction::CreateMaterial {
+            folder,
+            name,
+            shader,
+        } => create_material(resources, folder, name, *shader),
         EditorAction::RenameAsset { path, new_name } => rename_asset(resources, path, new_name),
         EditorAction::RenameFolder { path, new_name } => rename_folder(resources, path, new_name),
         EditorAction::DuplicateAsset { path } => duplicate_asset(resources, path),
@@ -141,6 +145,22 @@ fn create_file(resources: &mut Resources, folder: &Path, name: &str, kind: NewFi
                 }
                 Err(e) => tracing::error!(error = %e, "failed to serialise block mesh"),
             }
+            return;
+        }
+        NewFileKind::Shader => {
+            let file = unique_target(
+                folder,
+                OsStr::new(&format!(
+                    "{name}.{}",
+                    kooch_render::material::SHADER_EXTENSION
+                )),
+            );
+            write_asset(
+                resources,
+                &file,
+                kooch_render::material::DEFAULT_SURFACE_SHADER,
+                "shader",
+            );
             return;
         }
         NewFileKind::BuildPreset => {
@@ -362,7 +382,12 @@ fn create_folder(parent: &Path, name: &str) {
     }
 }
 
-fn create_material(resources: &mut Resources, folder: &Path, name: &str) {
+fn create_material(
+    resources: &mut Resources,
+    folder: &Path,
+    name: &str,
+    shader: Option<kooch_core::Guid>,
+) {
     let file = unique_target(
         folder,
         OsStr::new(&format!(
@@ -370,14 +395,17 @@ fn create_material(resources: &mut Resources, folder: &Path, name: &str) {
             kooch_render::material::MATERIAL_EXTENSION
         )),
     );
-    let text =
-        match ron::ser::to_string_pretty(&Material::default(), ron::ser::PrettyConfig::default()) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::error!(error = %e, "failed to serialise new material");
-                return;
-            }
-        };
+    let material = Material {
+        shader,
+        ..Material::default()
+    };
+    let text = match ron::ser::to_string_pretty(&material, ron::ser::PrettyConfig::default()) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to serialise new material");
+            return;
+        }
+    };
     write_asset(resources, &file, &text, "material");
 }
 

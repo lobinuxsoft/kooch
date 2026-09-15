@@ -66,6 +66,26 @@ fn both_paths_render_the_same() {
     assert_same_image(&fragment, &compute, "floor under a grid of point lights");
 }
 
+/// 🔴 From the smoke test of #1157: tile-sized holes wherever materials meet. Several frames, since
+/// the holes moved between them.
+#[test]
+fn mixed_materials_match_every_frame() {
+    let Some(mut rig) = common::lit_scene::rig_mixed(4) else {
+        eprintln!("no adapter with the 64-bit texture-atomic bundle; skipping");
+        return;
+    };
+
+    let fragment = render(&mut rig, false);
+    for frame in 0..4 {
+        let compute = render(&mut rig, true);
+        assert_same_image(
+            &fragment,
+            &compute,
+            &format!("mixed materials, frame {frame}"),
+        );
+    }
+}
+
 /// The fallback the workgroup cache promises, on the path that is simplest to reach on purpose:
 /// with no grid there is no cell to cache, and the compute pass must shade from the light buffer
 /// exactly as the fragment path does.

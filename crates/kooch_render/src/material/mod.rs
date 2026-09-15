@@ -2,13 +2,17 @@
 
 mod asset;
 mod pipeline;
+pub mod shader;
 mod texture_pool;
 
+/// What a new `.shader` starts as.
+pub use crate::meshlet::DEFAULT_SURFACE_SHADER;
 pub use asset::{MATERIAL_EXTENSION, Material, MaterialLoader, MaterialParseError};
 pub use pipeline::{
     DEFAULT_CAPACITY as MATERIAL_POOL_DEFAULT_CAPACITY, FALLBACK_MATERIAL_ID, MATERIAL_TYPE_NAME,
-    MaterialPipeline, TextureReimports,
+    MaterialPipeline, SurfaceSource, TextureReimports,
 };
+pub use shader::{SHADER_EXTENSION, SHADER_TYPE_NAME, Shader, ShaderKind, ShaderLoader};
 pub use texture_pool::{MaterialTexturePool, TextureSlot};
 
 use bytemuck::{Pod, Zeroable};
