@@ -13,7 +13,7 @@ pub(crate) fn search_combo(
     let id = egui::Id::new(&id_salt);
     let search_id = ui.id().with((id, "search"));
     let list_height = ui.spacing().combo_height;
-    egui::ComboBox::from_id_salt(id)
+    let response = egui::ComboBox::from_id_salt(id)
         .selected_text(selected_text)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         // The list scrolls on its own; the popup never does, so the header cannot scroll away.
@@ -34,11 +34,27 @@ pub(crate) fn search_combo(
             }
             ui.separator();
             let needle = query.trim().to_lowercase();
-            egui::ScrollArea::vertical()
+            // 🔴 The unfiltered list's height, held while filtering: a popup that shrinks to its
+            // matches keeps that size after the query is cleared.
+            let height_id = search_id.with("height");
+            let held = ui.ctx().data(|d| d.get_temp::<f32>(height_id));
+            let shown = egui::ScrollArea::vertical()
                 .id_salt((id, "list"))
                 .max_height(list_height)
                 .auto_shrink([false, true])
-                .show(ui, |ui| list(ui, &needle));
+                .show(ui, |ui| {
+                    ui.set_min_height(held.unwrap_or(0.0).min(list_height));
+                    list(ui, &needle);
+                });
+            if needle.is_empty() {
+                let height = shown.content_size.y.min(list_height);
+                ui.ctx().data_mut(|d| d.insert_temp(height_id, height));
+            }
         })
-        .response
+        .response;
+    // Every opening starts unfiltered, so the first frame it draws is the one that sizes it.
+    if !egui::ComboBox::is_open(ui.ctx(), response.id) {
+        ui.ctx().data_mut(|d| d.remove::<String>(search_id));
+    }
+    response
 }
