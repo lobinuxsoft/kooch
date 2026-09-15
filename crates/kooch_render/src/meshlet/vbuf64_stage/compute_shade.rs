@@ -7,9 +7,11 @@ use crate::material::{MaterialPipeline, MaterialTexturePool};
 use crate::meshlet::dispatcher::MeshletCull;
 use crate::meshlet::scene::MeshletScene;
 use crate::meshlet::{
-    MATERIAL_PASS_CONTACT_DEPTH_BINDING, MATERIAL_PASS_CONTACT_UBO_BINDING,
-    MATERIAL_PBR_COMPUTE_BODY, SHADING_TILE_SIZE, compose_material_shader,
+    DEFAULT_SURFACE_SHADER, MATERIAL_COMPUTE_FRAME, MATERIAL_PASS_CONTACT_DEPTH_BINDING,
+    MATERIAL_PASS_CONTACT_UBO_BINDING, SHADING_TILE_SIZE, compose_material_shader,
 };
+
+use super::shader_cache::ShaderPipelines;
 
 use super::upsample::SHADED_ID_FORMAT;
 use super::{CameraUbo, ScreenUbo, ShadingRate, VBUF64_FORMAT};
@@ -59,14 +61,15 @@ fn parse_enabled(raw: Option<&str>) -> Option<bool> {
 fn build_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
+    surface: &str,
     debug: bool,
 ) -> wgpu::ComputePipeline {
-    let src = compose_material_shader(MATERIAL_PBR_COMPUTE_BODY, debug);
+    let src = compose_material_shader(MATERIAL_COMPUTE_FRAME, surface, debug);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(if debug {
-            "material_pbr_compute_shader_debug"
+            "material_compute_shader_debug"
         } else {
-            "material_pbr_compute_shader"
+            "material_compute_shader"
         }),
         source: wgpu::ShaderSource::Wgsl(src.into()),
     });
@@ -87,6 +90,8 @@ pub(super) struct ComputeShading {
     /// compiles neither this nor a byte of what is inside it.
     pipeline_debug: std::sync::OnceLock<wgpu::ComputePipeline>,
     layout: wgpu::PipelineLayout,
+    /// Materials with a `.shader` of their own (#1157).
+    custom: ShaderPipelines<wgpu::ComputePipeline>,
     frame_bgl: wgpu::BindGroupLayout,
     materials_bgl: wgpu::BindGroupLayout,
     scene_bgl: wgpu::BindGroupLayout,
@@ -199,7 +204,7 @@ impl ComputeShading {
             ],
             immediate_size: 0,
         });
-        let pipeline = build_pipeline(device, &layout, false);
+        let pipeline = build_pipeline(device, &layout, DEFAULT_SURFACE_SHADER, false);
 
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
         let screen_stride = align.max(std::mem::size_of::<ScreenUbo>() as u64);
@@ -226,6 +231,7 @@ impl ComputeShading {
             pipeline,
             pipeline_debug: std::sync::OnceLock::new(),
             layout,
+            custom: ShaderPipelines::new(),
             frame_bgl,
             materials_bgl,
             scene_bgl,
@@ -241,7 +247,7 @@ impl ComputeShading {
             return &self.pipeline;
         }
         self.pipeline_debug
-            .get_or_init(|| build_pipeline(device, &self.layout, true))
+            .get_or_init(|| build_pipeline(device, &self.layout, DEFAULT_SURFACE_SHADER, true))
     }
 
     /// One dispatch per registered shading slot, each over the whole shaded target in 16x16 tiles.
@@ -394,7 +400,6 @@ impl ComputeShading {
             label: Some("compute_shading_pass"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(pipeline);
         pass.set_bind_group(1, meshlet_bg, &[]);
         pass.set_bind_group(2, &materials_bg, &[]);
         pass.set_bind_group(3, &scene_bg, &[]);
@@ -405,6 +410,14 @@ impl ComputeShading {
             let offset = (slot as u64 * self.screen_stride) as u32;
             pass.set_bind_group(0, &frame_bg, &[offset]);
             pass.set_bind_group(4, &texture_bg, &[]);
+            let custom = material_pipeline
+                .slot_surface(slot)
+                .and_then(|(guid, surface)| {
+                    self.custom.get(guid, surface, debug_mode != 0, |source| {
+                        build_pipeline(device, &self.layout, source, debug_mode != 0)
+                    })
+                });
+            pass.set_pipeline(custom.as_ref().unwrap_or(pipeline));
             pass.dispatch_workgroups(tiles_x, tiles_y, 1);
         }
     }

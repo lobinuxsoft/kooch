@@ -225,7 +225,7 @@ centroid of every triangle the moment a point light needed a distance.
 >
 > `KOOCH_SHADING_PAD=<n>` appends `n` sweeps whose `material_id` matches
 > no instance. The frame is bit-identical — every store in
-> `material_pbr_compute.wgsl` is inside the branch that never fires — so
+> `material_frame_compute.wgsl` is inside the branch that never fires — so
 > the only thing an A/B across it measures is what an idle sweep costs.
 >
 > **Measured on the OneXFly at 1920x1080, 2026-08-20: 178 µs a sweep**

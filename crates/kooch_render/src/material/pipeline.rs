@@ -5,12 +5,20 @@ use std::collections::{HashMap, HashSet};
 
 use kooch_core::Guid;
 use kooch_core::asset_database::AssetDatabase;
-use kooch_core::asset_loader::AssetServer;
+use kooch_core::asset_loader::{AssetServer, ReloadedAssets};
 use kooch_core::assets::Assets;
 use kooch_core::resource::Resources;
 
-use super::{Material, MaterialParams, MaterialPool, MaterialTexturePool};
+use super::{Material, MaterialParams, MaterialPool, MaterialTexturePool, Shader};
 use crate::texture::Image;
+
+/// A surface shader's source as the render last saw it.
+#[derive(Clone, Debug)]
+pub struct SurfaceSource {
+    /// [`ReloadedAssets`]' revision the source was copied at.
+    pub revision: u64,
+    pub source: std::sync::Arc<str>,
+}
 
 /// Textures whose `.meta` changed and have to be uploaded again.
 #[derive(Debug, Default)]
@@ -48,6 +56,10 @@ pub struct MaterialPipeline {
     /// (parallel to the GPU pool slots). Slot 0 is the fallback's all-`None`. The render path reads
     /// this to build each material pass's bind group via [`MaterialTexturePool`].
     slot_textures: Vec<[Option<Guid>; 3]>,
+    /// Per-slot `.shader`, parallel to `slot_textures`. `None` is the default surface.
+    slot_shaders: Vec<Option<Guid>>,
+    /// Every shader a registered material names, as last loaded.
+    surfaces: HashMap<Guid, SurfaceSource>,
     /// Index of the next free slot to hand out. Starts at 1 because
     /// slot 0 is the white-diffuse fallback.
     next_slot: u32,
@@ -76,6 +88,8 @@ impl MaterialPipeline {
             texture_pool,
             registry: HashMap::new(),
             slot_textures,
+            slot_shaders: vec![None],
+            surfaces: HashMap::new(),
             next_slot: 1,
             capacity,
         }
@@ -144,6 +158,7 @@ impl MaterialPipeline {
         if let Some(&slot) = self.registry.get(&guid) {
             self.pool.write(queue, slot, &params);
             self.slot_textures[slot as usize] = refs;
+            self.slot_shaders[slot as usize] = material.shader;
             tracing::debug!(
                 target: "kooch_render::material::sync",
                 guid = %guid,
@@ -171,6 +186,7 @@ impl MaterialPipeline {
             "slot_textures must stay parallel to sequential slot allocation",
         );
         self.slot_textures.push(refs);
+        self.slot_shaders.push(material.shader);
         tracing::debug!(
             target: "kooch_render::material::sync",
             guid = %guid,
@@ -194,6 +210,13 @@ impl MaterialPipeline {
             .get(slot as usize)
             .copied()
             .unwrap_or([None; 3])
+    }
+
+    /// The custom surface a slot shades with, or `None` for the default one — including a slot
+    /// whose shader has not loaded.
+    pub fn slot_surface(&self, slot: u32) -> Option<(Guid, &SurfaceSource)> {
+        let guid = (*self.slot_shaders.get(slot as usize)?)?;
+        self.surfaces.get(&guid).map(|surface| (guid, surface))
     }
 
     /// Range of shading slots (`0..next_slot`) the two-pass path issues a per-material fragment
@@ -279,9 +302,68 @@ impl MaterialPipeline {
         // the materials, so the render path finds a populated texture
         // pool the moment a slot appears.
         self.sync_textures(device, queue, &snapshots, resources);
+        self.sync_surfaces(&snapshots, resources);
 
         for (guid, mat) in snapshots {
             self.register(queue, guid, &mat);
+        }
+    }
+
+    /// Loads every shader the materials name and copies a source out whenever its revision moved,
+    /// which is what tells the render to rebuild that shader's pipelines.
+    fn sync_surfaces(&mut self, snapshots: &[(Guid, Material)], resources: &mut Resources) {
+        let named: HashSet<Guid> = snapshots.iter().filter_map(|(_, m)| m.shader).collect();
+        self.surfaces.retain(|guid, _| named.contains(guid));
+        if named.is_empty() {
+            return;
+        }
+        let Some(mut server) = resources.remove::<AssetServer>() else {
+            return;
+        };
+        let handles: Vec<_> = named
+            .into_iter()
+            .filter_map(
+                |guid| match server.load_by_guid::<Shader>(guid, resources) {
+                    Ok(handle) => Some((guid, handle)),
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "kooch_render::material::sync",
+                            guid = %guid,
+                            error = %e,
+                            "failed to load shader; its materials use the default surface",
+                        );
+                        None
+                    }
+                },
+            )
+            .collect();
+        resources.insert(server);
+
+        let (Some(shaders), reloaded) = (
+            resources.get::<Assets<Shader>>(),
+            resources.get::<ReloadedAssets>(),
+        ) else {
+            return;
+        };
+        for (guid, handle) in handles {
+            let revision = reloaded.map_or(0, |r| r.revision(guid));
+            if self
+                .surfaces
+                .get(&guid)
+                .is_some_and(|s| s.revision == revision)
+            {
+                continue;
+            }
+            let Some(shader) = shaders.get(handle) else {
+                continue;
+            };
+            self.surfaces.insert(
+                guid,
+                SurfaceSource {
+                    revision,
+                    source: shader.source.as_str().into(),
+                },
+            );
         }
     }
 

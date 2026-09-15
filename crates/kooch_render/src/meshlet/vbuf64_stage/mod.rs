@@ -10,6 +10,7 @@ mod jitter;
 mod motion;
 mod raster;
 mod sgsr2;
+mod shader_cache;
 mod shading_pad;
 mod shading_rate;
 mod sharpen;

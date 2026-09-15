@@ -296,10 +296,12 @@ pub(crate) enum EditorAction {
         parent: PathBuf,
         name: String,
     },
-    /// Create a new default `Material` asset `<folder>/<name>.ron`.
+    /// Create a new default `Material` asset `<folder>/<name>.material`, shading with `shader` when
+    /// one is given.
     CreateMaterial {
         folder: PathBuf,
         name: String,
+        shader: Option<kooch_core::Guid>,
     },
     /// Rename an asset file (and its `.meta` sidecar) to `new_name`,
     /// preserving the GUID so references survive.
@@ -398,6 +400,8 @@ pub(crate) enum NewFileKind {
     BlockMesh,
     /// How the project looks: exposure, ambient, shadows (#744).
     RenderSettings,
+    /// A surface shader, starting as a copy of the engine's PBR one (#1157).
+    Shader,
 }
 
 /// Where a newly spawned entity goes.

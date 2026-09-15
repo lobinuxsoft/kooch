@@ -77,6 +77,14 @@ pub(super) fn folder_menu(
         start(CreateKind::Material);
         ui.close();
     }
+    if entry(
+        ui,
+        format!("{} New Shader", icons::FADERS),
+        FolderRole::Assets,
+    ) {
+        start(CreateKind::File(NewFileKind::Shader));
+        ui.close();
+    }
     // Scripts are code and go under `src/`; a scene and an input map are assets and go under
     // `assets/`.
     ui.menu_button(format!("{} New Script", icons::PLUS), |ui| {
@@ -249,6 +257,24 @@ pub(super) fn leaf_menu(
         }
         ui.close();
     }
+    // Registered shaders only: the material names the shader by its guid.
+    if let Some((guid, _)) = &leaf.asset
+        && is_shader(&leaf.path)
+        && writable
+        && ui
+            .button(format!("{} Create Material", icons::FADERS))
+            .on_hover_text("A new material beside this shader, shading with it")
+            .clicked()
+    {
+        if let (Some(folder), Some(name)) = (leaf.path.parent(), leaf.path.file_stem()) {
+            actions.push(EditorAction::CreateMaterial {
+                folder: folder.to_path_buf(),
+                name: name.to_string_lossy().into_owned(),
+                shader: Some(*guid),
+            });
+        }
+        ui.close();
+    }
     if ui.button("Open in IDE").clicked() {
         actions.push(EditorAction::OpenInIde {
             file: leaf.path.clone(),
@@ -311,6 +337,12 @@ pub(super) fn leaf_menu(
 /// Whether "Set as Main Scene" belongs on this file's menu (#808).
 pub(super) fn offers_main_scene(path: &Path, writable: bool) -> bool {
     writable && is_scene(path)
+}
+
+/// Whether this file is a `.shader`.
+pub(super) fn is_shader(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext == kooch_render::material::SHADER_EXTENSION)
 }
 
 /// Whether this file is a scene rather than a prefab.

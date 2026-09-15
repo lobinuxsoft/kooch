@@ -6,7 +6,7 @@ use glam::Vec3;
 use kooch_core::Guid;
 use kooch_ecs::component::ComponentId;
 use kooch_ecs::reflect::{FieldMeta, ReflectValue};
-use kooch_render::material::Material;
+use kooch_render::material::{Material, SHADER_TYPE_NAME};
 
 use super::prefab_view;
 use super::{AssetCatalogEntry, draw_asset_picker};
@@ -199,6 +199,22 @@ fn draw_material_editor(
     // — the value stopped moving before the button came up — so it is a
     // second signal rather than a kind of `changed`.
     let mut released = false;
+
+    ui.horizontal(|ui| {
+        ui.label("Shader").on_hover_text(
+            "The .shader this material shades with. (None) is the engine's PBR surface",
+        );
+        let picked = ui
+            .push_id("shader", |ui| {
+                draw_asset_picker(ui, edited.shader, SHADER_TYPE_NAME, catalog)
+            })
+            .inner;
+        if let Some(ReflectValue::AssetRef { guid, .. }) = picked {
+            edited.shader = guid;
+            changed = true;
+        }
+    });
+    ui.separator();
 
     egui::Grid::new(("material_editor", guid))
         .num_columns(2)

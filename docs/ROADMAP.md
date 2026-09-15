@@ -3168,7 +3168,7 @@ number is weeks old and the intervening work was aimed at it.
 
 `KOOCH_SHADING_PAD=n` appends *n* full-screen shading sweeps whose
 `material_id` matches no instance. Every store in
-`material_pbr_compute.wgsl` is inside a branch that never fires for them,
+`material_frame_compute.wgsl` is inside a branch that never fires for them,
 so the frame is **bit-identical** — verified by MD5 over the rendered
 pixels of both shading paths at pad 0, 7 and 250 — and the only variable
 between two runs is how many times the screen is swept.

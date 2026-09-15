@@ -1,15 +1,4 @@
-// material_pbr_compute.wgsl — the compute shading body (#824).
-
-struct MaterialParams {
-    base_color: vec4<f32>,
-    // x metallic, y roughness, z emissive, w pad.
-    metallic_roughness_emissive_pad: vec4<f32>,
-    texture_indices: vec4<u32>,
-    // xy tiling, zw offset. See `MaterialParams` in `material/mod.rs`: this struct is declared here
-    // and in two other shaders, and a test reads all three because a field added to two of them
-    // fails silently rather than at compile time.
-    uv_scale_offset: vec4<f32>,
-}
+// material_frame_compute.wgsl — the compute shading frame (#824) around a surface shader (#1157).
 
 // Group 0 holds the vbuf (0), camera (1), screen (2) and the contact shadow's UBO (3) + depth (4) —
 // all declared by the concatenated prefix. The shading targets are this path's own, and the first
@@ -20,13 +9,6 @@ struct MaterialParams {
 // full-resolution vbuf to decide which samples a pixel is allowed to blend, which is what keeps
 // silhouettes sharp when the lighting is not. Written only at half rate.
 @group(0) @binding(6) var shaded_ids: texture_storage_2d<r32uint, write>;
-
-@group(2) @binding(0) var<storage, read> materials: array<MaterialParams>;
-
-@group(4) @binding(0) var albedo_tex: texture_2d<f32>;
-@group(4) @binding(1) var normal_tex: texture_2d<f32>;
-@group(4) @binding(2) var metal_rough_tex: texture_2d<f32>;
-@group(4) @binding(3) var material_sampler: sampler;
 
 // Tile edge in pixels. 16x16 = 256 threads, one wavefront's worth of work per lane on AMD at wave32
 // and the size every tiled-deferred reference lands on. It is also small enough that a tile usually
@@ -256,31 +238,17 @@ fn cs_shade_tile(
 
     // Phase 3 — shade.
     if (mine) {
-        let mat = materials[screen.material_id];
-
-        // 🔴 The DERIVATIVES scale with the coordinate, and forgetting that is the trap.
-        let uv = surf.uv * mat.uv_scale_offset.xy + mat.uv_scale_offset.zw;
-        // 🔴 The mip bias rides on the SAME multiply (#881). A bias is `lod += b`, and `lod` is
-        // `log2(footprint)`, so scaling the footprint by `exp2(b)` is the bias exactly — no `log2`
-        // per pixel and no sampler feature, which wgpu does not expose anyway.
-        let derivative_scale = mat.uv_scale_offset.xy * screen.mip_bias_scale;
-        let ddx_uv = surf.ddx_uv * derivative_scale;
-        let ddy_uv = surf.ddy_uv * derivative_scale;
-        let albedo = textureSampleGrad(
-            albedo_tex, material_sampler, uv, ddx_uv, ddy_uv);
-        let base = albedo.rgb * mat.base_color.rgb;
-
-        let n_ts = textureSampleGrad(
-            normal_tex, material_sampler, uv, ddx_uv, ddy_uv).xyz * 2.0 - 1.0;
-        let n = normalize(surf.world_normal);
-        let t = normalize(surf.world_tangent.xyz);
-        let b = cross(n, t) * surf.world_tangent.w;
-        let world_n = normalize(mat3x3<f32>(t, b, n) * n_ts);
+        let shaded = surface(surface_input(surf, frag_coord));
 
         var rgb: vec3<f32>;
         // The debug views (#743). `inti_debug_is_view` is a literal `false` in a production
         // pipeline, so this branch and every view behind it are gone before register allocation.
         if (screen.debug_mode == DEBUG_TEXTURE_MIP_LEVEL) {
+            // The albedo map's level as the default surface samples it, whatever this shader does.
+            let mat = materials[screen.material_id];
+            let derivative_scale = mat.uv_scale_offset.xy * screen.mip_bias_scale;
+            let ddx_uv = surf.ddx_uv * derivative_scale;
+            let ddy_uv = surf.ddy_uv * derivative_scale;
             let dims = vec2<f32>(textureDimensions(albedo_tex, 0));
             if (dims.x <= 1.0 && dims.y <= 1.0) {
                 // The 1x1 fallback: no albedo map, so no chain to pick
@@ -290,28 +258,23 @@ fn cs_shade_tile(
                 rgb = debug_mip_colour(debug_mip_level(dims, ddx_uv, ddy_uv));
             }
         } else if (inti_debug_is_view(screen.debug_mode)) {
-            rgb = inti_debug_view(screen.debug_mode, surf.world_position, world_n, frag_coord);
+            rgb = inti_debug_view(screen.debug_mode, surf.world_position, shaded.normal, frag_coord);
         } else {
-            let mr = textureSampleGrad(
-                metal_rough_tex, material_sampler, uv, ddx_uv, ddy_uv);
-            let metallic = mat.metallic_roughness_emissive_pad.x * mr.b;
-            let roughness = mat.metallic_roughness_emissive_pad.y * mr.g;
-
             var radiance: vec3<f32>;
             if (tile_overflow == 0u && clustered) {
                 let my = my_cell - lo;
                 let c = (my.x * dims.y + my.y) * dims.z + my.z;
-                    radiance = shade_from_tile(
-                        surf.world_position, world_n, base, metallic, roughness,
-                        frag_coord, surf.flags, tile_cell_start[c], tile_cell_len[c]);
+                radiance = shade_from_tile(
+                    surf.world_position, shaded.normal, shaded.base_color, shaded.metallic,
+                    shaded.roughness, frag_coord, surf.flags, tile_cell_start[c], tile_cell_len[c]);
             } else {
                 // The fallback the caps promise: straight to the storage
                 // buffer, the same call the fragment path makes.
                 radiance = inti_shade(
-                    surf.world_position, world_n, base, metallic, roughness,
-                    frag_coord, surf.flags);
+                    surf.world_position, shaded.normal, shaded.base_color, shaded.metallic,
+                    shaded.roughness, frag_coord, surf.flags);
             }
-            radiance += base * mat.metallic_roughness_emissive_pad.z;
+            radiance += shaded.emissive;
             // 🔴 Linear radiance out, NOT a picture (#732). The tonemap is its own pass now, because
             // temporal anti-aliasing blends this frame with the last and an average of two
             // ACES-tonemapped values is not the tonemap of their average.

@@ -9,7 +9,7 @@ use kooch_core::plugin::Plugin;
 use kooch_core::resource::Resources;
 use kooch_core::stage::Stage;
 
-use crate::material::{Material, MaterialLoader, MaterialPipeline};
+use crate::material::{Material, MaterialLoader, MaterialPipeline, Shader, ShaderLoader};
 use crate::mesh::{GltfMeshLoader, Mesh};
 use crate::meshlet::{MeshletMesh, MeshletMeshLoader};
 use crate::texture::{Image, ImageLoader};
@@ -153,6 +153,7 @@ impl Plugin for AssetPlugin {
         server.register_loader::<MeshletMesh, _>(MeshletMeshLoader);
         server.register_loader::<Image, _>(ImageLoader::srgb());
         server.register_loader::<Material, _>(MaterialLoader);
+        server.register_loader::<Shader, _>(ShaderLoader);
         // Registered here rather than by `EcsPlugin`, which owns the type: the server is built in
         // this function, and a plugin reaching for a resource another plugin may not have inserted
         // yet is an ordering bug waiting to happen.
@@ -226,6 +227,7 @@ impl Plugin for AssetPlugin {
         app.insert_resource(Assets::<MeshletMesh>::new());
         app.insert_resource(Assets::<Image>::new());
         app.insert_resource(Assets::<Material>::new());
+        app.insert_resource(Assets::<Shader>::new());
         // The store the prefab loader fills, and the cache `spawn_prefab` reads. `load_by_guid`
         // requires it to exist rather than creating it, so without this every prefab load failed
         // with `MissingAssetStorage` and the Inspector sat on "Loading asset…" forever.

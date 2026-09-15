@@ -152,7 +152,7 @@ fn both_paths_honour_the_light_limit() {
 /// The compute body lives in `kooch_render`, which depends on this
 /// crate — so it is read from the file rather than imported.
 fn kooch_render_compute_body() -> &'static str {
-    include_str!("../../kooch_render/shaders/material_pbr_compute.wgsl")
+    include_str!("../../kooch_render/shaders/material_frame_compute.wgsl")
 }
 
 /// 🔴 What the old ranking got wrong. Sorted by distance, the dim lamp

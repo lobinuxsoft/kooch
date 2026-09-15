@@ -50,7 +50,7 @@
 //! four other things moving: the pack, the `AssetDatabase`, the texture
 //! pool, and the picture itself. Padding the slot range moves **one**
 //! thing. A padded slot's `material_id` matches no instance, so `mine`
-//! is never set and every store in `material_pbr_compute.wgsl` is inside
+//! is never set and every store in `material_frame_compute.wgsl` is inside
 //! that branch — the frame is bit-identical and the only difference is
 //! the sweeps.
 //!

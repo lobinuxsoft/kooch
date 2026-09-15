@@ -34,9 +34,8 @@ fn new_packs_scalars_correctly() {
 /// 🔴 The layout is declared four times and checked nowhere.
 #[test]
 fn every_shader_agrees_on_the_material_layout() {
-    const SHADERS: [&str; 3] = [
-        include_str!("../../shaders/material_pbr_compute.wgsl"),
-        include_str!("../../shaders/material_pbr_default.wgsl"),
+    const SHADERS: [&str; 2] = [
+        include_str!("../../shaders/material_surface.wgsl"),
         include_str!("../../shaders/meshlet_deferred.wgsl"),
     ];
     // Rust's own, in declaration order.
@@ -104,12 +103,12 @@ fn the_default_transform_is_the_identity() {
 fn tiling_scales_the_derivatives_too() {
     for (name, source) in [
         (
-            "material_pbr_compute",
-            include_str!("../../shaders/material_pbr_compute.wgsl"),
+            "material_frame_compute",
+            include_str!("../../shaders/material_frame_compute.wgsl"),
         ),
         (
-            "material_pbr_default",
-            include_str!("../../shaders/material_pbr_default.wgsl"),
+            "material_surface_default",
+            include_str!("../../shaders/material_surface_default.wgsl"),
         ),
     ] {
         let line = |prefix: &str| -> String {

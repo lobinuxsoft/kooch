@@ -38,7 +38,5 @@ fn the_spellings_a_measurement_run_would_use_all_work() {
 #[test]
 fn the_colour_target_sits_past_the_contact_shadow_bindings() {
     assert!(COLOR_OUT_BINDING > MATERIAL_PASS_CONTACT_DEPTH_BINDING);
-    assert!(
-        MATERIAL_PBR_COMPUTE_BODY.contains(&format!("@group(0) @binding({COLOR_OUT_BINDING})"))
-    );
+    assert!(MATERIAL_COMPUTE_FRAME.contains(&format!("@group(0) @binding({COLOR_OUT_BINDING})")));
 }
