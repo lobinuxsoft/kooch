@@ -8,9 +8,8 @@ use crate::material::MaterialPipeline;
 use crate::meshlet::dispatcher::MeshletCull;
 use crate::meshlet::scene::MeshletScene;
 use crate::meshlet::{
-    DEFAULT_SURFACE_SHADER, MATERIAL_DEPTH_FORMAT, MATERIAL_FRAGMENT_FRAME,
-    MATERIAL_PASS_CONTACT_DEPTH_BINDING, MATERIAL_PASS_CONTACT_UBO_BINDING,
-    RESOLVE_MATERIAL_DEPTH_SHADER, compose_material_shader,
+    MATERIAL_DEPTH_FORMAT, MATERIAL_FRAGMENT_FRAME, MATERIAL_PASS_CONTACT_DEPTH_BINDING,
+    MATERIAL_PASS_CONTACT_UBO_BINDING, RESOLVE_MATERIAL_DEPTH_SHADER, compose_material_shader,
 };
 
 use super::shader_cache::ShaderPipelines;
@@ -257,8 +256,14 @@ impl MaterialTwoPass {
             ],
             immediate_size: 0,
         });
-        let shading_pipeline =
-            build_shading_pipeline(device, &shading_layout, "", DEFAULT_SURFACE_SHADER, false);
+        let default = crate::material::Shader::default_surface();
+        let shading_pipeline = build_shading_pipeline(
+            device,
+            &shading_layout,
+            &default.params_wgsl(),
+            &default.source,
+            false,
+        );
 
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
         let screen_stride = align.max(std::mem::size_of::<ScreenUbo>() as u64);
@@ -307,11 +312,12 @@ impl MaterialTwoPass {
             return &self.shading_pipeline;
         }
         self.shading_pipeline_debug.get_or_init(|| {
+            let default = crate::material::Shader::default_surface();
             build_shading_pipeline(
                 device,
                 &self.shading_layout,
-                "",
-                DEFAULT_SURFACE_SHADER,
+                &default.params_wgsl(),
+                &default.source,
                 true,
             )
         })

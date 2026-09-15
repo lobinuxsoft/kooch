@@ -1,14 +1,16 @@
 //! `Shader` — the surface function a material shades with (#1157), and the parameters it declares
 //! (#1158).
 //!
-//! The header plays the part of Shader Forge's `Properties` block: plain comments the compiler
-//! ignores and the editor reads, so the file stays valid WGSL with nothing generated inside it.
+//! Parameters are plain WGSL, as close to an HLSL `cbuffer` and `Texture2D` as WGSL allows; hints
+//! in a trailing comment only change how the editor shows a field.
 //!
 //! ```wgsl
 //! // kind: surface
-//! // param tint: color = (1, 0.5, 0.2, 1)
-//! // param strength: float = 1.0 range(0, 4)
-//! // param detail: texture = white
+//! struct SurfaceParams {
+//!     tint: vec4<f32>,   // @color @default(1, 0.5, 0.2, 1)
+//!     strength: f32,     // @range(0, 4) @default(1)
+//! }
+//! var detail: texture_2d<f32>;   // @default(white)
 //! ```
 
 use std::fmt;
@@ -47,50 +49,53 @@ impl ShaderKind {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Shader {
     pub kind: ShaderKind,
+    /// The author's source with texture bindings filled in, line for line.
     pub source: String,
     /// In declaration order, which is also the packing order.
     pub params: Vec<ShaderParam>,
 }
 
 impl Shader {
-    /// Reads the header: the leading comment lines, where a file that names no kind is a surface.
+    /// Reads the kind from the leading comments (none means a surface) and the parameters from
+    /// the code.
     pub fn parse(source: &str) -> Result<Self, ShaderParseError> {
         let header = source
             .lines()
             .map(str::trim)
-            .enumerate()
-            .take_while(|(_, line)| line.is_empty() || line.starts_with("//"));
+            .take_while(|line| line.is_empty() || line.starts_with("//"));
         let mut kind = ShaderKind::default();
-        let mut params = Vec::new();
-        for (index, line) in header {
-            let Some(directive) = line.strip_prefix("//").map(str::trim) else {
-                continue;
-            };
-            if let Some(name) = directive.strip_prefix("kind:") {
+        for line in header {
+            if let Some(name) = line
+                .strip_prefix("//")
+                .and_then(|l| l.trim().strip_prefix("kind:"))
+            {
                 let name = name.trim();
                 kind = ShaderKind::parse(name)
                     .ok_or_else(|| ShaderParseError::Kind(name.to_owned()))?;
-            } else if let Some(declaration) = directive.strip_prefix("param ") {
-                let param = params::parse(declaration, &params).map_err(|message| {
-                    ShaderParseError::Param {
-                        line: index + 1,
-                        message,
-                    }
-                })?;
-                params.push(param);
             }
         }
+        let read = params::read(source)
+            .map_err(|(line, message)| ShaderParseError::Param { line, message })?;
         Ok(Self {
             kind,
-            source: source.to_owned(),
-            params,
+            source: read.source,
+            params: read.params,
         })
     }
 
-    /// The WGSL the engine composes ahead of the body: `SurfaceParams`, `surface_params` and a
-    /// `sample_<name>` per texture.
+    /// The WGSL the engine composes ahead of the source: `surface_params` and
+    /// `surface_texture_dims`.
     pub fn params_wgsl(&self) -> String {
-        params::wgsl(&self.params)
+        params::generated(&self.params)
+    }
+
+    /// The engine's PBR surface, parsed once.
+    pub fn default_surface() -> &'static Self {
+        static DEFAULT: std::sync::OnceLock<Shader> = std::sync::OnceLock::new();
+        DEFAULT.get_or_init(|| {
+            Self::parse(crate::meshlet::DEFAULT_SURFACE_SHADER)
+                .expect("the engine's surface parses")
+        })
     }
 }
 
@@ -115,7 +120,7 @@ impl AssetLoader<Shader> for ShaderLoader {
 pub enum ShaderParseError {
     Utf8(std::str::Utf8Error),
     Kind(String),
-    /// A `// param` line that does not parse, or one past the budget.
+    /// A parameter declaration that does not parse, or one past the budget.
     Param {
         line: usize,
         message: String,

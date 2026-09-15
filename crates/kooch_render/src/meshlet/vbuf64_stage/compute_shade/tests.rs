@@ -28,23 +28,38 @@ fn both_paths_build_a_custom_surface() {
         out.roughness = 0.5;
         return out;
     }";
-    crate::meshlet::validate_surface("", red).unwrap();
+    let red = crate::material::Shader::parse(red).unwrap();
+    crate::meshlet::validate_surface(&red.params_wgsl(), &red.source).unwrap();
 
     let meshlet_bgl = crate::meshlet::meshlet_bind_group_layout(&device);
     let compute = ComputeShading::new(&device, &meshlet_bgl);
-    build_pipeline(&device, &compute.layout, "", red, false);
-    build_pipeline(&device, &compute.layout, "", red, true);
+    build_pipeline(
+        &device,
+        &compute.layout,
+        &red.params_wgsl(),
+        &red.source,
+        false,
+    );
+    build_pipeline(
+        &device,
+        &compute.layout,
+        &red.params_wgsl(),
+        &red.source,
+        true,
+    );
     // 🔴 The template reads `material_values` and binds all four textures: the bindings a shader
     // with no parameters never touches, and naga never checks against the layout.
     let template = crate::material::Shader::parse(crate::meshlet::NEW_SURFACE_SHADER).unwrap();
     let wgsl = template.params_wgsl();
     build_pipeline(&device, &compute.layout, &wgsl, &template.source, false);
-    // Into the header: a `// param` after the first line of code is code, not a declaration.
-    let fourth = format!("// param extra: texture\n{}", template.source);
+    let fourth = crate::meshlet::NEW_SURFACE_SHADER.replace(
+        "var metal_roughness: texture_2d<f32>;",
+        "var metal_roughness: texture_2d<f32>;\nvar extra: texture_2d<f32>;",
+    );
     let fourth = crate::material::Shader::parse(&fourth).unwrap();
     let body = fourth.source.replace(
         "out.emissive = base * p.emissive;",
-        "out.emissive = sample_extra(input, uv, p.uv_scale).rgb * p.emissive;",
+        "out.emissive = sample_surface(extra, input, uv, p.uv_scale).rgb * p.emissive;",
     );
     build_pipeline(
         &device,

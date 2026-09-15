@@ -7,8 +7,8 @@ use crate::material::{MaterialPipeline, MaterialTexturePool};
 use crate::meshlet::dispatcher::MeshletCull;
 use crate::meshlet::scene::MeshletScene;
 use crate::meshlet::{
-    DEFAULT_SURFACE_SHADER, MATERIAL_COMPUTE_FRAME, MATERIAL_PASS_CONTACT_DEPTH_BINDING,
-    MATERIAL_PASS_CONTACT_UBO_BINDING, SHADING_TILE_SIZE, compose_material_shader,
+    MATERIAL_COMPUTE_FRAME, MATERIAL_PASS_CONTACT_DEPTH_BINDING, MATERIAL_PASS_CONTACT_UBO_BINDING,
+    SHADING_TILE_SIZE, compose_material_shader,
 };
 
 use super::shader_cache::ShaderPipelines;
@@ -211,7 +211,14 @@ impl ComputeShading {
             ],
             immediate_size: 0,
         });
-        let pipeline = build_pipeline(device, &layout, "", DEFAULT_SURFACE_SHADER, false);
+        let default = crate::material::Shader::default_surface();
+        let pipeline = build_pipeline(
+            device,
+            &layout,
+            &default.params_wgsl(),
+            &default.source,
+            false,
+        );
 
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
         let screen_stride = align.max(std::mem::size_of::<ScreenUbo>() as u64);
@@ -254,8 +261,16 @@ impl ComputeShading {
         if debug_mode == 0 {
             return &self.pipeline;
         }
-        self.pipeline_debug
-            .get_or_init(|| build_pipeline(device, &self.layout, "", DEFAULT_SURFACE_SHADER, true))
+        self.pipeline_debug.get_or_init(|| {
+            let default = crate::material::Shader::default_surface();
+            build_pipeline(
+                device,
+                &self.layout,
+                &default.params_wgsl(),
+                &default.source,
+                true,
+            )
+        })
     }
 
     /// One indirect dispatch per shading slot, over the 16x16 tiles that slot covers.

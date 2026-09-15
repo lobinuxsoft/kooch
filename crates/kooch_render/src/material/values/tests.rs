@@ -3,11 +3,12 @@ use crate::material::Shader;
 
 fn toon() -> Shader {
     Shader::parse(
-        "// kind: surface\n\
-         // param tint: color = (1, 0.5, 0.2, 1)\n\
-         // param strength: float = 2 range(0, 4)\n\
-         // param detail: texture = normal\n\
-         // param offset: vec2\n",
+        "struct SurfaceParams {
+            tint: vec4<f32>,  // @color @default(1, 0.5, 0.2, 1)
+            strength: f32,    // @range(0, 4) @default(2)
+            offset: vec2<f32>,
+        }
+        var detail: texture_2d<f32>;  // @default(normal)",
     )
     .unwrap()
 }

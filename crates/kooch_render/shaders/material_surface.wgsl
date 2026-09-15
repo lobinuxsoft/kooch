@@ -14,12 +14,9 @@ struct MaterialParams {
 // A shader's declared scalars, `MAX_PARAM_SCALARS` per material; read through `surface_params` (#1158).
 @group(2) @binding(1) var<storage, read> material_values: array<f32>;
 
-@group(4) @binding(0) var albedo_tex: texture_2d<f32>;
-@group(4) @binding(1) var normal_tex: texture_2d<f32>;
-@group(4) @binding(2) var metal_rough_tex: texture_2d<f32>;
+// Group 4's textures are the surface's own `var name: texture_2d<f32>;` declarations, bound by the
+// engine in declaration order (#1158).
 @group(4) @binding(3) var material_sampler: sampler;
-// A shader's fourth texture parameter.
-@group(4) @binding(4) var extra_tex: texture_2d<f32>;
 
 /// The reconstructed surface point a shader shades.
 struct SurfaceInput {
@@ -46,6 +43,13 @@ struct SurfaceOutput {
     roughness: f32,
     // Radiance added after lighting.
     emissive: vec3<f32>,
+}
+
+/// Samples one of the surface's textures at `uv`, with the analytical derivatives scaled by
+/// whatever tiles `uv` — `scale` — and the mip bias.
+fn sample_surface(tex: texture_2d<f32>, input: SurfaceInput, uv: vec2<f32>, scale: vec2<f32>) -> vec4<f32> {
+    let d = scale * input.mip_bias_scale;
+    return textureSampleGrad(tex, material_sampler, uv, input.ddx_uv * d, input.ddy_uv * d);
 }
 
 fn surface_input(surf: VertexOutput, frag_coord: vec2<f32>) -> SurfaceInput {

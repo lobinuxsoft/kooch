@@ -93,12 +93,8 @@ pub fn validate_surface(params: &str, surface: &str) -> Result<(), String> {
             .map(|l| format!("line {}: ", (l.line_number as usize).saturating_sub(before)))
             .unwrap_or_default()
     };
-    // A binding or entry point the layout lacks would fail inside wgpu instead.
-    let shape = |module: &naga::Module| {
-        let bound = module.global_variables.iter();
-        let bound = bound.filter(|(_, g)| g.binding.is_some()).count();
-        (bound, module.entry_points.len())
-    };
+    // Bindings are checked when the shader is read; an entry point of its own would fail in wgpu.
+    let reference = crate::material::Shader::default_surface();
     for frame in [MATERIAL_FRAGMENT_FRAME, MATERIAL_COMPUTE_FRAME] {
         let composed = compose_material_shader(frame, params, surface, false);
         let module = naga::front::wgsl::parse_str(&composed)
@@ -112,15 +108,12 @@ pub fn validate_surface(params: &str, surface: &str) -> Result<(), String> {
             let location = e.spans().next().map(|(span, _)| span.location(&composed));
             format!("{}{}", at(location), e.as_inner())
         })?;
-        let reference = compose_material_shader(frame, "", DEFAULT_SURFACE_SHADER, false);
-        let reference =
-            naga::front::wgsl::parse_str(&reference).map_err(|e| e.message().to_owned())?;
-        if shape(&module) != shape(&reference) {
-            return Err(
-                "a surface shader declares no bindings or entry points of its own — \
-                        use the material's textures and `materials[input.material_id]`"
-                    .to_owned(),
-            );
+        let expected =
+            compose_material_shader(frame, &reference.params_wgsl(), &reference.source, false);
+        let expected =
+            naga::front::wgsl::parse_str(&expected).map_err(|e| e.message().to_owned())?;
+        if module.entry_points.len() != expected.entry_points.len() {
+            return Err("a surface shader declares no entry points of its own".to_owned());
         }
     }
     Ok(())

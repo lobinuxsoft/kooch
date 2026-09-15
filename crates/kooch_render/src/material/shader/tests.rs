@@ -27,16 +27,19 @@ fn only_leading_comments_count() {
     assert_eq!(shader.kind, ShaderKind::Surface);
 }
 
+const TOON: &str = "\
+struct SurfaceParams {
+    tint: vec4<f32>,   // @color @default(1, 0.5, 0.2, 1)
+    strength: f32,     // @range(0, 4) @default(2)
+    uv: vec2f,
+}
+var albedo: texture_2d<f32>;
+var mask: texture_2d<f32>;   // @default(black)
+";
+
 #[test]
 fn params_take_offsets_in_order() {
-    let shader = Shader::parse(
-        "// param tint: color = (1, 0.5, 0.2, 1)\n\
-         // param strength: float = 2 range(0, 4)\n\
-         // param albedo: texture\n\
-         // param uv: vec2 = (1, 1)\n\
-         // param mask: texture = black\n",
-    )
-    .unwrap();
+    let shader = Shader::parse(TOON).unwrap();
     let offsets: Vec<(&str, u32)> = shader
         .params
         .iter()
@@ -47,53 +50,96 @@ fn params_take_offsets_in_order() {
         [
             ("tint", 0),
             ("strength", 4),
-            ("albedo", 0),
             ("uv", 5),
+            ("albedo", 0),
             ("mask", 1)
         ]
     );
+    assert_eq!(shader.params[0].kind, ParamKind::Color);
     assert_eq!(shader.params[1].range, Some([0.0, 4.0]));
+    assert_eq!(shader.params[2].kind, ParamKind::Vec2);
     assert_eq!(shader.params[4].texture, TextureDefault::Black);
+}
+
+/// Without hints a parameter still exists: zero, unbounded, a vector.
+#[test]
+fn hints_are_optional() {
+    let shader = Shader::parse("struct SurfaceParams { tint: vec4<f32> }").unwrap();
+    assert_eq!(shader.params[0].kind, ParamKind::Vec4);
+    assert_eq!(shader.params[0].default, [0.0; 4]);
+}
+
+/// The engine fills in the bindings on the author's own lines, so line numbers do not move.
+#[test]
+fn textures_get_bindings_in_place() {
+    let shader = Shader::parse(TOON).unwrap();
+    let lines: Vec<&str> = shader.source.lines().collect();
+    assert_eq!(lines.len(), TOON.lines().count());
+    assert!(
+        lines[5].starts_with("@group(4) @binding(0) var albedo"),
+        "{}",
+        lines[5]
+    );
+    assert!(
+        lines[6].starts_with("@group(4) @binding(1) var mask"),
+        "{}",
+        lines[6]
+    );
 }
 
 /// One number fills every component, as `vec3<f32>(1.0)` does.
 #[test]
 fn a_single_default_splats() {
-    let shader = Shader::parse("// param c: vec3 = 0.25").unwrap();
+    let shader =
+        Shader::parse("struct SurfaceParams {\n c: vec3<f32>, // @default(0.25)\n}").unwrap();
     assert_eq!(shader.params[0].default, [0.25, 0.25, 0.25, 0.0]);
 }
 
 #[test]
 fn a_bad_param_names_its_line() {
-    let error = Shader::parse("// kind: surface\n// param 2x: float").unwrap_err();
-    assert!(error.to_string().starts_with("line 2: "), "{error}");
+    let error =
+        Shader::parse("// kind: surface\nstruct SurfaceParams {\n  x: u32,\n}").unwrap_err();
+    assert!(error.to_string().starts_with("line 3: "), "{error}");
+}
+
+#[test]
+fn color_needs_a_vec4() {
+    assert!(Shader::parse("struct SurfaceParams { c: vec3<f32> } // @color").is_err());
 }
 
 #[test]
 fn the_scalar_budget_holds() {
-    let header = (0..5)
-        .map(|i| format!("// param c{i}: vec4\n"))
+    let fields = (0..5)
+        .map(|i| format!("  c{i}: vec4<f32>,\n"))
         .collect::<String>();
+    let source = format!("struct SurfaceParams {{\n{fields}}}");
     assert!(matches!(
-        Shader::parse(&header),
-        Err(ShaderParseError::Param { line: 5, .. })
+        Shader::parse(&source),
+        Err(ShaderParseError::Param { line: 6, .. })
     ));
 }
 
 #[test]
 fn the_texture_budget_holds() {
-    let header = (0..5)
-        .map(|i| format!("// param t{i}: texture\n"))
+    let source = (0..5)
+        .map(|i| format!("var t{i}: texture_2d<f32>;\n"))
         .collect::<String>();
     assert!(matches!(
-        Shader::parse(&header),
+        Shader::parse(&source),
         Err(ShaderParseError::Param { line: 5, .. })
     ));
 }
 
 #[test]
 fn a_duplicate_param_fails() {
-    assert!(Shader::parse("// param a: float\n// param a: vec2").is_err());
+    assert!(Shader::parse("struct SurfaceParams { a: f32 }\nvar a: texture_2d<f32>;").is_err());
+}
+
+/// Bindings are the engine's: one written by hand could collide with the layout.
+#[test]
+fn a_surface_cannot_bind() {
+    let error = Shader::parse("@group(4) @binding(9) var extra: texture_2d<f32>;").unwrap_err();
+    assert!(error.to_string().starts_with("line 1: "), "{error}");
 }
 
 /// The Inspector filters its picker by the name the `.meta` records, which is the Rust type's.
@@ -102,8 +148,12 @@ fn the_type_name_is_the_types() {
     assert_eq!(SHADER_TYPE_NAME, std::any::type_name::<Shader>());
 }
 
+/// The engine's surface declares its three maps as textures and no scalars.
 #[test]
 fn the_default_surface_parses() {
-    let shader = Shader::parse(crate::meshlet::DEFAULT_SURFACE_SHADER).unwrap();
+    let shader = Shader::default_surface();
     assert_eq!(shader.kind, ShaderKind::Surface);
+    let names: Vec<&str> = shader.params.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["albedo_tex", "normal_tex", "metal_rough_tex"]);
+    assert_eq!(shader.params[1].texture, TextureDefault::Normal);
 }

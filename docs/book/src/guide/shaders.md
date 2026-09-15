@@ -35,45 +35,54 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 `SurfaceOutput` is what Inti lights: `base_color`, a world-space `normal`, `metallic`, `roughness`
 and `emissive`.
 
-A surface can read the material's parameters with `materials[input.material_id]` and sample its
-three maps — `albedo_tex`, `normal_tex`, `metal_rough_tex` — through `material_sampler`. Sample
-with `textureSampleGrad` and the analytical derivatives multiplied by `mip_bias_scale`: a
-visibility buffer has no screen-space derivatives to give `textureSample`.
+A surface can read the engine's material fields with `materials[input.material_id]`, or declare its
+own (below). Sample with `sample_surface`, or `textureSampleGrad` and the analytical derivatives
+multiplied by `mip_bias_scale`: a visibility buffer has no screen-space derivatives to give
+`textureSample`.
 
 A surface declares no bindings and no entry points of its own. The same function runs in both
 shading paths, fragment and compute, and each wraps it in its own frame.
 
 ## Parameters
 
-A shader declares the fields its materials edit in the header, the way Shader Forge's `Properties`
-block does: plain comments, so the file stays valid WGSL. A material on that shader shows exactly
-these fields in the Inspector; the engine's built-in ones come back when it returns to `(None)`.
+A shader's parameters are plain WGSL, the closest WGSL gets to an HLSL `cbuffer` and `Texture2D`:
+the members of `struct SurfaceParams` are the material's fields, and each `var name: texture_2d<f32>;`
+is one of its textures. The engine assigns the bindings — a surface never writes `@group` or
+`@binding`. A material on that shader shows exactly these fields in the Inspector; the engine's
+built-in ones come back when it returns to `(None)`.
 
 ```wgsl
 // kind: surface
-// param tint: color = (1, 0.5, 0.2, 1)
-// param strength: float = 1.0 range(0, 4)
-// param uv_scale: vec2 = (1, 1)
-// param detail: texture = white
+struct SurfaceParams {
+    tint: vec4<f32>,       // @color @default(1, 0.5, 0.2, 1)
+    strength: f32,         // @range(0, 4) @default(1)
+    uv_scale: vec2<f32>,   // @default(1, 1)
+}
+
+var detail: texture_2d<f32>;   // @default(white)
 
 fn surface(input: SurfaceInput) -> SurfaceOutput {
     let p = surface_params(input.material_id);
     let uv = input.uv * p.uv_scale;
-    let detail = sample_detail(input, uv, p.uv_scale);
+    let d = sample_surface(detail, input, uv, p.uv_scale);
     // …
 }
 ```
 
-| Kind | Default | Reads as |
-|---|---|---|
-| `float` | `= 0.5`, optional `range(lo, hi)` for a slider | `p.name: f32` |
-| `vec2`, `vec3`, `vec4` | `= (x, y, …)`, or one number for all | `p.name` |
-| `color` | `= (r, g, b, a)` | `p.name: vec4<f32>` |
-| `texture` | `white`, `black` or `normal` | `sample_name(input, uv, scale)` |
+Members are `f32`, `vec2<f32>`, `vec3<f32>` or `vec4<f32>`. The comment after a declaration is
+optional and only changes how the editor shows the field; the shader compiles the same without it:
 
-`sample_<name>` scales the analytical derivatives by `scale` and the mip bias, so pass whatever
-tiles `uv`. Budget per material: **16 scalars** and **4 textures**; a header past it fails to load
-with the line that crossed it.
+| Hint | On | Does |
+|---|---|---|
+| `@color` | `vec4<f32>` | a colour picker instead of four numbers |
+| `@range(lo, hi)` | `f32` | a slider |
+| `@default(...)` | any member | the starting value; one number fills every component |
+| `@default(white \| black \| normal)` | a texture | what it samples while unassigned |
+
+Without hints a member starts at zero and a texture at white. `sample_surface(texture, input, uv,
+scale)` samples with the analytical derivatives scaled by `scale` and the mip bias, so pass
+whatever tiles `uv`. Budget per material: **16 scalars** and **4 textures**; past it the shader
+fails to load and names the line.
 
 Values are stored on the material by name. Switching a material to another shader keeps the values
 both declare and drops the rest; undo brings them back. New Shader starts from a PBR surface written
