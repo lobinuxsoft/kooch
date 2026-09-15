@@ -1,7 +1,7 @@
 //! Hot reload for `.shader` files, which are written by an IDE rather than by the editor (#1157).
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use kooch_core::asset_database::AssetDatabase;
@@ -61,6 +61,42 @@ pub fn sync_shaders_system(resources: &mut Resources) {
     for path in changed {
         crate::actions::handlers::asset_saved(resources, &path);
         tracing::info!(path = %path.display(), "shader reloaded");
+    }
+}
+
+/// Writes `.kooch/shaders/kooch_surface.wgsl` — what `#import kooch::surface` stands for — and, when
+/// the project has no VS Code settings yet, a `.vscode/settings.json` that points wgsl-analyzer at it.
+pub(crate) fn write_surface_api(root: &Path) {
+    let dir = root.join(".kooch").join("shaders");
+    let api = dir.join("kooch_surface.wgsl");
+    let current = std::fs::read_to_string(&api).ok();
+    if current.as_deref() != Some(kooch_render::material::SURFACE_API) {
+        let written = std::fs::create_dir_all(&dir)
+            .and_then(|()| std::fs::write(&api, kooch_render::material::SURFACE_API));
+        if let Err(error) = written {
+            tracing::warn!(path = %api.display(), %error, "could not write the shader API for editors");
+            return;
+        }
+    }
+
+    // The author's own settings are theirs: only a project without any gets these.
+    let vscode = root.join(".vscode");
+    let settings = vscode.join("settings.json");
+    if settings.exists() {
+        return;
+    }
+    let url = format!("file://{}", api.display()).replace(' ', "%20");
+    let text = format!(
+        "{{\n  \"files.associations\": {{ \"*.shader\": \"wgsl\" }},\n  \
+         \"wgsl-analyzer.customImports\": {{ \"kooch::surface\": \"{url}\" }}\n}}\n"
+    );
+    match std::fs::create_dir_all(&vscode).and_then(|()| std::fs::write(&settings, text)) {
+        Ok(()) => {
+            tracing::info!(path = %settings.display(), "VS Code settings written for .shader files")
+        }
+        Err(error) => {
+            tracing::warn!(path = %settings.display(), %error, "could not write VS Code settings")
+        }
     }
 }
 

@@ -7,7 +7,7 @@ mod texture_pool;
 mod values;
 
 /// The engine's surface, and what a new `.shader` starts as.
-pub use crate::meshlet::{DEFAULT_SURFACE_SHADER, NEW_SURFACE_SHADER};
+pub use crate::meshlet::{DEFAULT_SURFACE_SHADER, NEW_SURFACE_SHADER, SURFACE_API};
 pub use asset::{MATERIAL_EXTENSION, Material, MaterialLoader, MaterialParseError};
 pub use pipeline::{
     DEFAULT_CAPACITY as MATERIAL_POOL_DEFAULT_CAPACITY, FALLBACK_MATERIAL_ID, MATERIAL_TYPE_NAME,

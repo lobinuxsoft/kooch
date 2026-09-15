@@ -24,8 +24,11 @@ pub const MATERIAL_FRAGMENT_FRAME: &str =
 /// workgroup memory once (#824). Entry point: `cs_shade_tile`.
 pub const MATERIAL_COMPUTE_FRAME: &str = include_str!("../../shaders/material_frame_compute.wgsl");
 
-/// The contract between frames and surface shaders: material bindings, `SurfaceInput` and
-/// `SurfaceOutput` (#1157).
+/// What a surface can use — material bindings, `SurfaceInput`, `SurfaceOutput`, `sample_surface` —
+/// and what `#import kooch::surface` stands for. The editor writes it out for wgsl-analyzer.
+pub const SURFACE_API: &str = include_str!("../../shaders/kooch_surface.wgsl");
+
+/// The engine's half of the contract: `surface_input`, which the frames call (#1157).
 pub const MATERIAL_SURFACE_PRELUDE: &str = include_str!("../../shaders/material_surface.wgsl");
 
 /// What New Shader writes: a PBR surface over its own declared parameters (#1158).
@@ -72,6 +75,7 @@ pub fn compose_material_shader(frame: &str, params: &str, surface: &str, debug: 
         &contact,
         &inti,
         debug_views,
+        SURFACE_API,
         MATERIAL_SURFACE_PRELUDE,
         params,
         surface,
