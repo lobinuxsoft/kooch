@@ -11,10 +11,11 @@ struct MaterialParams {
 }
 
 @group(2) @binding(0) var<storage, read> materials: array<MaterialParams>;
+// A shader's declared scalars, `MAX_PARAM_SCALARS` per material; read through `surface_params` (#1158).
+@group(2) @binding(1) var<storage, read> material_values: array<f32>;
 
-@group(4) @binding(0) var albedo_tex: texture_2d<f32>;
-@group(4) @binding(1) var normal_tex: texture_2d<f32>;
-@group(4) @binding(2) var metal_rough_tex: texture_2d<f32>;
+// Group 4's textures are the surface's own `var name: texture_2d<f32>;` declarations, bound by the
+// engine in declaration order (#1158).
 @group(4) @binding(3) var material_sampler: sampler;
 
 /// The reconstructed surface point a shader shades.
@@ -29,6 +30,8 @@ struct SurfaceInput {
     // `exp2(mip_bias)`; multiply the derivatives by it before sampling (#881).
     mip_bias_scale: f32,
     frag_coord: vec2<f32>,
+    // World space; `camera_position - world_position` points at the viewer.
+    camera_position: vec3<f32>,
     // Index into `materials`.
     material_id: u32,
 }
@@ -44,6 +47,13 @@ struct SurfaceOutput {
     emissive: vec3<f32>,
 }
 
+/// Samples one of the surface's textures at `uv`, with the analytical derivatives scaled by
+/// whatever tiles `uv` — `scale` — and the mip bias.
+fn sample_surface(tex: texture_2d<f32>, input: SurfaceInput, uv: vec2<f32>, scale: vec2<f32>) -> vec4<f32> {
+    let d = scale * input.mip_bias_scale;
+    return textureSampleGrad(tex, material_sampler, uv, input.ddx_uv * d, input.ddy_uv * d);
+}
+
 fn surface_input(surf: VertexOutput, frag_coord: vec2<f32>) -> SurfaceInput {
     var input: SurfaceInput;
     input.world_position = surf.world_position;
@@ -54,6 +64,7 @@ fn surface_input(surf: VertexOutput, frag_coord: vec2<f32>) -> SurfaceInput {
     input.ddy_uv = surf.ddy_uv;
     input.mip_bias_scale = screen.mip_bias_scale;
     input.frag_coord = frag_coord;
+    input.camera_position = inti.camera_position;
     input.material_id = screen.material_id;
     return input;
 }

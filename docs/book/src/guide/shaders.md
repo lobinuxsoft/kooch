@@ -31,17 +31,99 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 ```
 
 `SurfaceInput` carries the reconstructed point: `world_position`, `world_normal`, `world_tangent`,
-`uv`, the analytical `ddx_uv` / `ddy_uv`, `mip_bias_scale`, `frag_coord` and `material_id`.
+`uv`, the analytical `ddx_uv` / `ddy_uv`, `mip_bias_scale`, `frag_coord`, `camera_position` and
+`material_id`.
 `SurfaceOutput` is what Inti lights: `base_color`, a world-space `normal`, `metallic`, `roughness`
 and `emissive`.
 
-A surface can read the material's parameters with `materials[input.material_id]` and sample its
-three maps — `albedo_tex`, `normal_tex`, `metal_rough_tex` — through `material_sampler`. Sample
-with `textureSampleGrad` and the analytical derivatives multiplied by `mip_bias_scale`: a
-visibility buffer has no screen-space derivatives to give `textureSample`.
+A surface can read the engine's material fields with `materials[input.material_id]`, or declare its
+own (below). Sample with `sample_surface`, or `textureSampleGrad` and the analytical derivatives
+multiplied by `mip_bias_scale`: a visibility buffer has no screen-space derivatives to give
+`textureSample`.
 
 A surface declares no bindings and no entry points of its own. The same function runs in both
 shading paths, fragment and compute, and each wraps it in its own frame.
+
+## Parameters
+
+A shader's parameters are plain WGSL, the closest WGSL gets to an HLSL `cbuffer` and `Texture2D`:
+the members of `struct SurfaceParams` are the material's fields, each `var name: texture_2d<f32>;`
+is one of its textures, and `const SURFACE_DEFAULTS` is what a new material starts with. The engine
+assigns the bindings — a surface never writes `@group` or `@binding`. A material on that shader
+shows exactly these fields in the Inspector; the engine's built-in ones come back when it returns
+to `(None)`.
+
+```wgsl
+// kind: surface
+struct SurfaceParams {
+    tint: vec4<f32>,       // @color
+    strength: f32,         // @range(0, 4)
+    uv_scale: vec2<f32>,
+}
+
+const SURFACE_DEFAULTS = SurfaceParams(vec4(1.0, 0.5, 0.2, 1.0), 1.0, vec2(1.0));
+
+var detail: texture_2d<f32>;   // @default(white)
+
+fn surface(input: SurfaceInput) -> SurfaceOutput {
+    let p = surface_params(input.material_id);
+    let uv = input.uv * p.uv_scale;
+    let d = sample_surface(detail, input, uv, p.uv_scale);
+    // …
+}
+```
+
+Members are `f32`, `vec2<f32>`, `vec3<f32>` or `vec4<f32>`. `SURFACE_DEFAULTS` is an ordinary WGSL
+constant — naga evaluates it, so `vec3(0.25)` or an arithmetic expression works — and without it
+every member starts at zero. The comment after a declaration is optional and only changes how the
+editor shows the field:
+
+| Hint | On | Does |
+|---|---|---|
+| `@color` | `vec4<f32>` | a colour picker instead of four numbers |
+| `@range(lo, hi)` | `f32` | a slider |
+| `@default(white \| black \| normal)` | a texture | what it samples while unassigned — WGSL gives a texture no starting value |
+
+`sample_surface(texture, input, uv, scale)` samples with the analytical derivatives scaled by
+`scale` and the mip bias, so pass whatever tiles `uv`. Budget per material: **16 scalars** and
+**4 textures**; past it the shader fails to load and names the line.
+
+Values are stored on the material by name. Switching a material to another shader keeps the values
+both declare and drops the rest; undo brings them back. New Shader starts from a PBR surface written
+against its own parameters.
+
+### Editing `.shader` files in an IDE
+
+No IDE can check a `.shader` completely: it reads one file and cannot see what the engine composes
+around a surface, so `SurfaceInput`, `surface_params` and everything built on them look undefined.
+The fix in every IDE is the same — read `.shader` as WGSL, and turn off the diagnostics that hinge
+on the missing part. The editor's Console is the authority on whether a shader compiles.
+
+#### VS Code
+
+Install [wgsl-analyzer](https://marketplace.visualstudio.com/items?itemName=wgsl-analyzer.wgsl-analyzer).
+Opening a project adds these to `.vscode/settings.json`, creating it if absent. Keys you already set
+keep their values; a file with comments is left untouched and the Console says so, and then these go
+in by hand:
+
+```json
+{
+  "files.associations": { "*.shader": "wgsl" },
+  "wgsl-analyzer.diagnostics.typeErrors": false,
+  "wgsl-analyzer.diagnostics.nagaParsingErrors": false,
+  "wgsl-analyzer.inlayHints.typeHints": false
+}
+```
+
+#### Other IDEs
+
+Not configured by the editor yet. Associate the extension with WGSL, then pass the same three
+wgsl-analyzer settings through the IDE's language-server configuration:
+
+- **Zed** — `.zed/settings.json`: `"file_types": { "WGSL": ["shader"] }`.
+- **Helix** — `.helix/languages.toml`: a `[[language]]` entry with `name = "wgsl"` and
+  `file-types = ["wgsl", "shader"]`. Helix replaces the list rather than extending it, so the
+  built-in `wgsl` has to be repeated.
 
 ## When a save does not compile
 

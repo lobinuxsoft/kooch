@@ -28,6 +28,9 @@ pub const MATERIAL_COMPUTE_FRAME: &str = include_str!("../../shaders/material_fr
 /// `SurfaceOutput` (#1157).
 pub const MATERIAL_SURFACE_PRELUDE: &str = include_str!("../../shaders/material_surface.wgsl");
 
+/// What New Shader writes: a PBR surface over its own declared parameters (#1158).
+pub const NEW_SURFACE_SHADER: &str = include_str!("../../shaders/material_surface_template.wgsl");
+
 /// The engine's PBR surface, used by every material without a shader of its own.
 pub const DEFAULT_SURFACE_SHADER: &str =
     include_str!("../../shaders/material_surface_default.wgsl");
@@ -50,8 +53,9 @@ pub const MATERIAL_PASS_CONTACT_DEPTH_BINDING: u32 = 4;
 
 /// Composes a complete material shader: the visibility-buffer resolve helpers, the contact-shadow
 /// march, the Inti shading model, the debug views (or the stub that removes them), the surface
-/// contract, the surface body, then the frame. Stands in for a WGSL `#import`.
-pub fn compose_material_shader(frame: &str, surface: &str, debug: bool) -> String {
+/// contract, the code generated from the shader's parameters, the surface body, then the frame.
+/// Stands in for a WGSL `#import`.
+pub fn compose_material_shader(frame: &str, params: &str, surface: &str, debug: bool) -> String {
     let contact = crate::contact_shadow::contact_shadow_shader(
         MATERIAL_PASS_CONTACT_UBO_BINDING,
         MATERIAL_PASS_CONTACT_DEPTH_BINDING,
@@ -69,6 +73,7 @@ pub fn compose_material_shader(frame: &str, surface: &str, debug: bool) -> Strin
         &inti,
         debug_views,
         MATERIAL_SURFACE_PRELUDE,
+        params,
         surface,
         frame,
     ]
@@ -77,22 +82,21 @@ pub fn compose_material_shader(frame: &str, surface: &str, debug: bool) -> Strin
 
 /// Checks a surface shader against both frames before any pipeline is built from it, so a broken
 /// edit is a message rather than a wgpu validation panic. Line numbers are the surface file's own.
-pub fn validate_surface(surface: &str) -> Result<(), String> {
+pub fn validate_surface(params: &str, surface: &str) -> Result<(), String> {
     // Everything composed ahead of the surface, so a message points into the file the author has.
-    let before = compose_material_shader("", "", false).lines().count() - 1;
+    let before = compose_material_shader("", params, "", false)
+        .lines()
+        .count()
+        - 1;
     let at = |location: Option<naga::SourceLocation>| {
         location
             .map(|l| format!("line {}: ", (l.line_number as usize).saturating_sub(before)))
             .unwrap_or_default()
     };
-    // A binding or entry point the layout lacks would fail inside wgpu instead.
-    let shape = |module: &naga::Module| {
-        let bound = module.global_variables.iter();
-        let bound = bound.filter(|(_, g)| g.binding.is_some()).count();
-        (bound, module.entry_points.len())
-    };
+    // Bindings are checked when the shader is read; an entry point of its own would fail in wgpu.
+    let reference = crate::material::Shader::default_surface();
     for frame in [MATERIAL_FRAGMENT_FRAME, MATERIAL_COMPUTE_FRAME] {
-        let composed = compose_material_shader(frame, surface, false);
+        let composed = compose_material_shader(frame, params, surface, false);
         let module = naga::front::wgsl::parse_str(&composed)
             .map_err(|e| format!("{}{}", at(e.location(&composed)), e.message()))?;
         naga::valid::Validator::new(
@@ -104,15 +108,12 @@ pub fn validate_surface(surface: &str) -> Result<(), String> {
             let location = e.spans().next().map(|(span, _)| span.location(&composed));
             format!("{}{}", at(location), e.as_inner())
         })?;
-        let reference = compose_material_shader(frame, DEFAULT_SURFACE_SHADER, false);
-        let reference =
-            naga::front::wgsl::parse_str(&reference).map_err(|e| e.message().to_owned())?;
-        if shape(&module) != shape(&reference) {
-            return Err(
-                "a surface shader declares no bindings or entry points of its own — \
-                        use the material's textures and `materials[input.material_id]`"
-                    .to_owned(),
-            );
+        let expected =
+            compose_material_shader(frame, &reference.params_wgsl(), &reference.source, false);
+        let expected =
+            naga::front::wgsl::parse_str(&expected).map_err(|e| e.message().to_owned())?;
+        if module.entry_points.len() != expected.entry_points.len() {
+            return Err("a surface shader declares no entry points of its own".to_owned());
         }
     }
     Ok(())

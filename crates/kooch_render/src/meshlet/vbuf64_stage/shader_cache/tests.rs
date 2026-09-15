@@ -1,12 +1,20 @@
 use std::cell::Cell;
 
 use super::*;
+use crate::material::Shader;
 use crate::meshlet::DEFAULT_SURFACE_SHADER;
 
 fn source(revision: u64, text: &str) -> SurfaceSource {
+    // A text that does not read as a shader still reaches the cache, the way a stale revision does.
+    let shader = Shader::parse(text).unwrap_or_else(|_| Shader {
+        source: text.to_owned(),
+        ..Shader::parse("").unwrap()
+    });
     SurfaceSource {
         revision,
-        source: text.into(),
+        params_wgsl: shader.params_wgsl().into(),
+        params: shader.params.clone().into(),
+        source: shader.source.into(),
     }
 }
 

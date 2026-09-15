@@ -7,8 +7,8 @@ use crate::material::{MaterialPipeline, MaterialTexturePool};
 use crate::meshlet::dispatcher::MeshletCull;
 use crate::meshlet::scene::MeshletScene;
 use crate::meshlet::{
-    DEFAULT_SURFACE_SHADER, MATERIAL_COMPUTE_FRAME, MATERIAL_PASS_CONTACT_DEPTH_BINDING,
-    MATERIAL_PASS_CONTACT_UBO_BINDING, SHADING_TILE_SIZE, compose_material_shader,
+    MATERIAL_COMPUTE_FRAME, MATERIAL_PASS_CONTACT_DEPTH_BINDING, MATERIAL_PASS_CONTACT_UBO_BINDING,
+    SHADING_TILE_SIZE, compose_material_shader,
 };
 
 use super::shader_cache::ShaderPipelines;
@@ -65,10 +65,11 @@ fn parse_enabled(raw: Option<&str>) -> Option<bool> {
 fn build_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
+    params: &str,
     surface: &str,
     debug: bool,
 ) -> wgpu::ComputePipeline {
-    let src = compose_material_shader(MATERIAL_COMPUTE_FRAME, surface, debug);
+    let src = compose_material_shader(MATERIAL_COMPUTE_FRAME, params, surface, debug);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(if debug {
             "material_compute_shader_debug"
@@ -189,7 +190,7 @@ impl ComputeShading {
         });
         let materials_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("compute_shading_materials_bgl"),
-            entries: &[storage_read(0)],
+            entries: &[storage_read(0), storage_read(1)],
         });
         let scene_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("compute_shading_scene_bgl"),
@@ -210,7 +211,14 @@ impl ComputeShading {
             ],
             immediate_size: 0,
         });
-        let pipeline = build_pipeline(device, &layout, DEFAULT_SURFACE_SHADER, false);
+        let default = crate::material::Shader::default_surface();
+        let pipeline = build_pipeline(
+            device,
+            &layout,
+            &default.params_wgsl(),
+            &default.source,
+            false,
+        );
 
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
         let screen_stride = align.max(std::mem::size_of::<ScreenUbo>() as u64);
@@ -253,8 +261,16 @@ impl ComputeShading {
         if debug_mode == 0 {
             return &self.pipeline;
         }
-        self.pipeline_debug
-            .get_or_init(|| build_pipeline(device, &self.layout, DEFAULT_SURFACE_SHADER, true))
+        self.pipeline_debug.get_or_init(|| {
+            let default = crate::material::Shader::default_surface();
+            build_pipeline(
+                device,
+                &self.layout,
+                &default.params_wgsl(),
+                &default.source,
+                true,
+            )
+        })
     }
 
     /// One indirect dispatch per shading slot, over the 16x16 tiles that slot covers.
@@ -401,10 +417,16 @@ impl ComputeShading {
         let materials_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("compute_shading_materials_bg"),
             layout: &self.materials_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: material_pipeline.pool().buffer().as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: material_pipeline.pool().buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: material_pipeline.pool().values().as_entire_binding(),
+                },
+            ],
         });
         let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("compute_shading_scene_bg"),
@@ -432,15 +454,21 @@ impl ComputeShading {
         pass.set_bind_group(5, lights_bg, &[]);
         for slot in slots {
             let refs = material_pipeline.slot_texture_refs(slot);
-            let texture_bg = texture_pool.material_bind_group(device, refs[0], refs[1], refs[2]);
+            let texture_bg = texture_pool.material_bind_group(device, &refs);
             let offset = (slot as u64 * self.screen_stride) as u32;
             pass.set_bind_group(0, &frame_bg, &[offset]);
             pass.set_bind_group(4, &texture_bg, &[]);
             let custom = material_pipeline
                 .slot_surface(slot)
                 .and_then(|(guid, surface)| {
-                    self.custom.get(guid, surface, debug_mode != 0, |source| {
-                        build_pipeline(device, &self.layout, source, debug_mode != 0)
+                    self.custom.get(guid, surface, debug_mode != 0, |surface| {
+                        build_pipeline(
+                            device,
+                            &self.layout,
+                            &surface.params_wgsl,
+                            &surface.source,
+                            debug_mode != 0,
+                        )
                     })
                 });
             pass.set_pipeline(custom.as_ref().unwrap_or(pipeline));

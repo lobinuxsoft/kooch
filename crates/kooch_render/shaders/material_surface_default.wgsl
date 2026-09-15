@@ -1,6 +1,10 @@
 // kind: surface
 // The engine's PBR surface: albedo, tangent-space normal map, packed metal/roughness.
 
+var albedo_tex: texture_2d<f32>;        // @default(white)
+var normal_tex: texture_2d<f32>;        // @default(normal)
+var metal_rough_tex: texture_2d<f32>;   // @default(white)
+
 fn surface(input: SurfaceInput) -> SurfaceOutput {
     let mat = materials[input.material_id];
 

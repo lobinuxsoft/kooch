@@ -9,7 +9,10 @@ use kooch_core::asset_loader::{AssetServer, ReloadedAssets};
 use kooch_core::assets::Assets;
 use kooch_core::resource::Resources;
 
-use super::{Material, MaterialParams, MaterialPool, MaterialTexturePool, Shader};
+use super::{
+    MAX_PARAM_TEXTURES, Material, MaterialParams, MaterialPool, MaterialTexturePool, PackedParams,
+    ParamValue, Shader, ShaderParam, TextureRef,
+};
 use crate::texture::Image;
 
 /// A surface shader's source as the render last saw it.
@@ -18,6 +21,10 @@ pub struct SurfaceSource {
     /// [`ReloadedAssets`]' revision the source was copied at.
     pub revision: u64,
     pub source: std::sync::Arc<str>,
+    /// The declared parameters, in packing order.
+    pub params: std::sync::Arc<[ShaderParam]>,
+    /// The WGSL generated from `params`, composed ahead of `source`.
+    pub params_wgsl: std::sync::Arc<str>,
 }
 
 /// Textures whose `.meta` changed and have to be uploaded again.
@@ -52,10 +59,9 @@ pub struct MaterialPipeline {
     /// two-pass material shader. Populated during sync alongside `pool`.
     texture_pool: MaterialTexturePool,
     registry: HashMap<Guid, u32>,
-    /// Per-slot texture GUID triple `[albedo, normal, metal_roughness]`, indexed by material slot
-    /// (parallel to the GPU pool slots). Slot 0 is the fallback's all-`None`. The render path reads
-    /// this to build each material pass's bind group via [`MaterialTexturePool`].
-    slot_textures: Vec<[Option<Guid>; 3]>,
+    /// Per-slot textures in group-4 order, parallel to the GPU pool slots: the PBR maps, or a custom
+    /// shader's declared textures. The render builds each material's bind group from it.
+    slot_textures: Vec<[TextureRef; MAX_PARAM_TEXTURES as usize]>,
     /// Per-slot `.shader`, parallel to `slot_textures`. `None` is the default surface.
     slot_shaders: Vec<Option<Guid>>,
     /// Every shader a registered material names, as last loaded.
@@ -82,7 +88,7 @@ impl MaterialPipeline {
         let pool = MaterialPool::new(device, &initial);
         let texture_pool = MaterialTexturePool::new(device, queue);
         // Slot 0 = fallback material, references no textures.
-        let slot_textures = vec![[None; 3]];
+        let slot_textures = vec![PackedParams::default_surface(&Material::default()).textures];
         Self {
             pool,
             texture_pool,
@@ -154,9 +160,11 @@ impl MaterialPipeline {
     /// **upgrades the GPU contents** so live edits land without a new slot allocation.
     pub fn register(&mut self, queue: &wgpu::Queue, guid: Guid, material: &Material) -> u32 {
         let params = material.to_params();
-        let refs = [material.albedo, material.normal, material.metal_roughness];
+        let packed = self.pack(material);
+        let refs = packed.textures;
         if let Some(&slot) = self.registry.get(&guid) {
             self.pool.write(queue, slot, &params);
+            self.pool.write_values(queue, slot, &packed.values);
             self.slot_textures[slot as usize] = refs;
             self.slot_shaders[slot as usize] = material.shader;
             tracing::debug!(
@@ -179,6 +187,7 @@ impl MaterialPipeline {
         let slot = self.next_slot;
         self.next_slot += 1;
         self.pool.write(queue, slot, &params);
+        self.pool.write_values(queue, slot, &packed.values);
         self.registry.insert(guid, slot);
         debug_assert_eq!(
             self.slot_textures.len(),
@@ -197,19 +206,27 @@ impl MaterialPipeline {
         slot
     }
 
+    /// What `material` uploads: its shader's parameters when that shader is loaded, the PBR maps
+    /// otherwise — the same surface the render picks for it.
+    fn pack(&self, material: &Material) -> PackedParams {
+        match material.shader.and_then(|guid| self.surfaces.get(&guid)) {
+            Some(surface) => PackedParams::for_shader(material, &surface.params),
+            None => PackedParams::default_surface(material),
+        }
+    }
+
     /// Read-only handle to the texture pool, for building per-material
     /// bind groups in the two-pass render path.
     pub fn texture_pool(&self) -> &MaterialTexturePool {
         &self.texture_pool
     }
 
-    /// The `[albedo, normal, metal_roughness]` texture GUIDs a slot
-    /// references. Out-of-range or fallback slots return all-`None`.
-    pub fn slot_texture_refs(&self, slot: u32) -> [Option<Guid>; 3] {
+    /// The textures a slot binds, in group-4 order. Out-of-range slots bind the fallback's.
+    pub fn slot_texture_refs(&self, slot: u32) -> [TextureRef; MAX_PARAM_TEXTURES as usize] {
         self.slot_textures
             .get(slot as usize)
             .copied()
-            .unwrap_or([None; 3])
+            .unwrap_or(self.slot_textures[0])
     }
 
     /// The custom surface a slot shades with, or `None` for the default one — including a slot
@@ -362,6 +379,8 @@ impl MaterialPipeline {
                 SurfaceSource {
                     revision,
                     source: shader.source.as_str().into(),
+                    params: shader.params.clone().into(),
+                    params_wgsl: shader.params_wgsl().into(),
                 },
             );
         }
@@ -402,9 +421,14 @@ impl MaterialPipeline {
         let mut pending: Vec<Guid> = Vec::new();
         let mut seen: HashSet<Guid> = HashSet::new();
         for (_, mat) in snapshots {
+            let values = mat.values.values().filter_map(|value| match value {
+                ParamValue::Texture(guid) => *guid,
+                ParamValue::Number(_) => None,
+            });
             for guid in [mat.albedo, mat.normal, mat.metal_roughness]
                 .into_iter()
                 .flatten()
+                .chain(values)
             {
                 if !self.texture_pool.contains(guid) && seen.insert(guid) {
                     pending.push(guid);

@@ -34,7 +34,7 @@ impl<P: Clone> ShaderPipelines<P> {
         guid: Guid,
         surface: &SurfaceSource,
         debug: bool,
-        build: impl FnOnce(&str) -> P,
+        build: impl FnOnce(&SurfaceSource) -> P,
     ) -> Option<P> {
         let mut built = self.built.lock().unwrap_or_else(|e| e.into_inner());
         let entry = built.entry((guid, debug)).or_insert(Built {
@@ -43,8 +43,8 @@ impl<P: Clone> ShaderPipelines<P> {
         });
         if entry.revision != surface.revision {
             entry.revision = surface.revision;
-            match validate_surface(&surface.source) {
-                Ok(()) => entry.pipeline = Some(build(&surface.source)),
+            match validate_surface(&surface.params_wgsl, &surface.source) {
+                Ok(()) => entry.pipeline = Some(build(surface)),
                 Err(error) => tracing::error!(
                     target: "kooch_render::material::shader",
                     shader = %guid,

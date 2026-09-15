@@ -158,7 +158,7 @@ fn create_file(resources: &mut Resources, folder: &Path, name: &str, kind: NewFi
             write_asset(
                 resources,
                 &file,
-                kooch_render::material::DEFAULT_SURFACE_SHADER,
+                kooch_render::material::NEW_SURFACE_SHADER,
                 "shader",
             );
             return;

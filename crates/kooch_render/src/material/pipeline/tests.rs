@@ -113,13 +113,11 @@ fn register_records_texture_refs_per_slot() {
         .with_metal_roughness(mr);
     let slot = pipeline.register(&queue, Guid::new_v4(), &mat);
 
-    assert_eq!(
-        pipeline.slot_texture_refs(slot),
-        [Some(albedo), None, Some(mr)]
-    );
+    let guids = |slot| pipeline.slot_texture_refs(slot).map(|r| r.guid);
+    assert_eq!(guids(slot), [Some(albedo), None, Some(mr), None]);
     // Fallback slot 0 and out-of-range slots reference nothing.
-    assert_eq!(pipeline.slot_texture_refs(FALLBACK_MATERIAL_ID), [None; 3]);
-    assert_eq!(pipeline.slot_texture_refs(999), [None; 3]);
+    assert_eq!(guids(FALLBACK_MATERIAL_ID), [None; 4]);
+    assert_eq!(guids(999), [None; 4]);
     // Two shading passes to issue: fallback slot 0 + registered slot 1.
     assert_eq!(pipeline.shading_slots(), 0..2);
 }

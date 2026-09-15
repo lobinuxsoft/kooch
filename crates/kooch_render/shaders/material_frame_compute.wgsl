@@ -267,7 +267,7 @@ fn cs_shade_tile(
             let derivative_scale = mat.uv_scale_offset.xy * screen.mip_bias_scale;
             let ddx_uv = surf.ddx_uv * derivative_scale;
             let ddy_uv = surf.ddy_uv * derivative_scale;
-            let dims = vec2<f32>(textureDimensions(albedo_tex, 0));
+            let dims = surface_texture_dims();
             if (dims.x <= 1.0 && dims.y <= 1.0) {
                 // The 1x1 fallback: no albedo map, so no chain to pick
                 // from and nothing this view can say.

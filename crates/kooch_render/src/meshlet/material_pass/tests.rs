@@ -1,4 +1,17 @@
 use super::*;
+use crate::material::Shader;
+
+/// A frame around the engine's own surface.
+fn default_composed(frame: &str, debug: bool) -> String {
+    let surface = Shader::default_surface();
+    compose_material_shader(frame, &surface.params_wgsl(), &surface.source, debug)
+}
+
+/// Reads and validates a surface the way the render does.
+fn check(source: &str) -> Result<(), String> {
+    let shader = Shader::parse(source).map_err(|e| e.to_string())?;
+    validate_surface(&shader.params_wgsl(), &shader.source)
+}
 
 fn validate(source: &str, what: &str) {
     let module =
@@ -31,7 +44,7 @@ fn the_two_resolve_chunks_are_halves_of_one_shader() {
 
 #[test]
 fn composed_default_material_parses_and_validates() {
-    let composed = compose_material_shader(MATERIAL_FRAGMENT_FRAME, DEFAULT_SURFACE_SHADER, false);
+    let composed = default_composed(MATERIAL_FRAGMENT_FRAME, false);
     validate(&composed, "composed default material shader");
 }
 
@@ -40,19 +53,19 @@ fn composed_default_material_parses_and_validates() {
 /// invisible until then unless a test compiles it here.
 #[test]
 fn the_debug_variant_parses_and_validates() {
-    let composed = compose_material_shader(MATERIAL_FRAGMENT_FRAME, DEFAULT_SURFACE_SHADER, true);
+    let composed = default_composed(MATERIAL_FRAGMENT_FRAME, true);
     validate(&composed, "composed default material shader (debug)");
 }
 
 #[test]
 fn composed_compute_material_parses_and_validates() {
-    let composed = compose_material_shader(MATERIAL_COMPUTE_FRAME, DEFAULT_SURFACE_SHADER, false);
+    let composed = default_composed(MATERIAL_COMPUTE_FRAME, false);
     validate(&composed, "composed compute material shader");
 }
 
 #[test]
 fn the_compute_debug_variant_parses_and_validates() {
-    let composed = compose_material_shader(MATERIAL_COMPUTE_FRAME, DEFAULT_SURFACE_SHADER, true);
+    let composed = default_composed(MATERIAL_COMPUTE_FRAME, true);
     validate(&composed, "composed compute material shader (debug)");
 }
 
@@ -85,8 +98,7 @@ fn the_compute_path_caches_the_tile_lights() {
 /// 🔴 The reason the variants exist (#743).
 #[test]
 fn the_game_shader_carries_no_debug_view() {
-    let production =
-        compose_material_shader(MATERIAL_FRAGMENT_FRAME, DEFAULT_SURFACE_SHADER, false);
+    let production = default_composed(MATERIAL_FRAGMENT_FRAME, false);
     for symbol in [
         "inti_shadow_debug",
         "inti_contact_shadow_debug_view",
@@ -98,8 +110,7 @@ fn the_game_shader_carries_no_debug_view() {
         );
     }
     assert!(
-        compose_material_shader(MATERIAL_FRAGMENT_FRAME, DEFAULT_SURFACE_SHADER, true)
-            .contains("fn inti_shadow_debug("),
+        default_composed(MATERIAL_FRAGMENT_FRAME, true).contains("fn inti_shadow_debug("),
         "the debug variant is supposed to be the one that has them",
     );
 }
@@ -107,7 +118,7 @@ fn the_game_shader_carries_no_debug_view() {
 /// The shipped surface passes the same gate an author's does.
 #[test]
 fn the_default_surface_is_valid() {
-    validate_surface(DEFAULT_SURFACE_SHADER).unwrap();
+    check(DEFAULT_SURFACE_SHADER).unwrap();
 }
 
 /// A custom body composes into both frames: this one ignores its maps and paints red.
@@ -122,21 +133,78 @@ fn a_custom_surface_validates() {
         out.emissive = vec3<f32>(0.0);
         return out;
     }";
-    validate_surface(red).unwrap();
+    check(red).unwrap();
 }
 
 /// The line reported is the surface file's, not the composed shader's.
 #[test]
 fn a_broken_surface_names_its_line() {
     let broken = "fn surface(input: SurfaceInput) -> SurfaceOutput {\n    let x = ;\n}";
-    let error = validate_surface(broken).unwrap_err();
+    let error = check(broken).unwrap_err();
     assert!(error.starts_with("line 2: "), "{error}");
 }
 
-/// A binding of its own would not match the pipeline layout.
+/// New Shader's template: its header parses, its generated code and body validate on both frames.
 #[test]
-fn a_surface_cannot_bind() {
-    let bound =
-        format!("@group(4) @binding(9) var extra: texture_2d<f32>;\n{DEFAULT_SURFACE_SHADER}");
-    assert!(validate_surface(&bound).is_err());
+fn the_new_shader_template_is_valid() {
+    let shader = Shader::parse(NEW_SURFACE_SHADER).unwrap();
+    assert_eq!(shader.params.len(), 9);
+    check(NEW_SURFACE_SHADER).unwrap();
+}
+
+/// A declared scalar reads its own offset in `material_values`.
+#[test]
+fn params_generate_their_reads() {
+    let shader = Shader::parse("struct SurfaceParams { a: f32, b: vec2<f32> }").unwrap();
+    let wgsl = shader.params_wgsl();
+    assert!(wgsl.contains("p.a = material_values[base + 0u];"), "{wgsl}");
+    assert!(
+        wgsl.contains("p.b = vec2<f32>(material_values[base + 1u], material_values[base + 2u]);"),
+        "{wgsl}"
+    );
+}
+
+/// A surface with a texture and parameters, written like the docs show, validates on both frames.
+#[test]
+fn a_parameterised_surface_validates() {
+    check(
+        "struct SurfaceParams { tint: vec4<f32> } // @color
+        var detail: texture_2d<f32>;
+        fn surface(input: SurfaceInput) -> SurfaceOutput {
+            let p = surface_params(input.material_id);
+            var out: SurfaceOutput;
+            out.base_color = sample_surface(detail, input, input.uv, vec2(1.0)).rgb * p.tint.rgb;
+            out.normal = normalize(input.world_normal);
+            out.roughness = 0.5;
+            return out;
+        }",
+    )
+    .unwrap();
+}
+
+/// The rim-glow example from the Shaders guide: defaults, hints, a texture and the camera.
+#[test]
+fn the_rim_example_validates() {
+    check(
+        "struct SurfaceParams {
+            tint: vec4<f32>,        // @color
+            rim_color: vec4<f32>,   // @color
+            rim_power: f32,         // @range(0.5, 8)
+        }
+        const SURFACE_DEFAULTS = SurfaceParams(vec4(1.0), vec4(0.2, 0.8, 1.0, 1.0), 3.0);
+        var albedo: texture_2d<f32>;
+        fn surface(input: SurfaceInput) -> SurfaceOutput {
+            let p = surface_params(input.material_id);
+            let n = normalize(input.world_normal);
+            let to_camera = normalize(input.camera_position - input.world_position);
+            let rim = pow(1.0 - saturate(dot(n, to_camera)), p.rim_power);
+            var out: SurfaceOutput;
+            out.base_color = sample_surface(albedo, input, input.uv, vec2(1.0)).rgb * p.tint.rgb;
+            out.normal = n;
+            out.roughness = 0.6;
+            out.emissive = p.rim_color.rgb * rim;
+            return out;
+        }",
+    )
+    .unwrap();
 }
