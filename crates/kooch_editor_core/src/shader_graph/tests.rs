@@ -124,3 +124,13 @@ fn a_cycle_is_refused() {
         "the graph feeds a node into itself"
     );
 }
+
+/// What New Shader Graph writes: it renders like a material without touching a node.
+#[test]
+fn the_starter_graph_is_a_material() {
+    let source = generate(&starter()).unwrap();
+    let shader = Shader::parse(&source).unwrap();
+    let names: Vec<&str> = shader.params.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["base_color", "roughness", "albedo"]);
+    kooch_render::meshlet::validate_surface(&shader.params_wgsl(), &shader.source).unwrap();
+}

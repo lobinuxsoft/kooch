@@ -133,5 +133,57 @@ fn embed(graph: &Graph) -> Result<String, String> {
     Ok(format!("{MARKER}{ron}*/"))
 }
 
+/// What a new graph starts as: an albedo texture tinted by a colour, with roughness of its own —
+/// the shape of a material, so a fresh graph already renders like one.
+pub(crate) fn starter() -> Graph {
+    use egui::Pos2;
+    use egui_snarl::{InPinId, OutPinId};
+
+    let mut graph = Graph::new();
+    let uv = graph.insert_node(Pos2::new(40.0, 40.0), Node::Uv);
+    let albedo = graph.insert_node(
+        Pos2::new(220.0, 40.0),
+        Node::Texture {
+            name: "albedo".to_owned(),
+            fallback: "white".to_owned(),
+        },
+    );
+    let tint = graph.insert_node(
+        Pos2::new(220.0, 200.0),
+        Node::Param {
+            name: "base_color".to_owned(),
+            width: 4,
+            color: true,
+            default: [1.0; 4],
+        },
+    );
+    let roughness = graph.insert_node(
+        Pos2::new(220.0, 320.0),
+        Node::Param {
+            name: "roughness".to_owned(),
+            width: 1,
+            color: false,
+            default: [0.5, 0.0, 0.0, 0.0],
+        },
+    );
+    let tinted = graph.insert_node(Pos2::new(430.0, 100.0), Node::Multiply);
+    let output = graph.insert_node(Pos2::new(640.0, 140.0), Node::Output);
+    let mut wire = |from, to, input| {
+        graph.connect(
+            OutPinId {
+                node: from,
+                output: 0,
+            },
+            InPinId { node: to, input },
+        );
+    };
+    wire(uv, albedo, 0);
+    wire(albedo, tinted, 0);
+    wire(tint, tinted, 1);
+    wire(tinted, output, 0);
+    wire(roughness, output, 3);
+    graph
+}
+
 #[cfg(test)]
 mod tests;

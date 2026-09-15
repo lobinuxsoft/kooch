@@ -178,11 +178,7 @@ fn create_file(resources: &mut Resources, folder: &Path, name: &str, kind: NewFi
                     kooch_render::material::SHADER_EXTENSION
                 )),
             );
-            let mut graph = crate::shader_graph::Graph::new();
-            graph.insert_node(
-                egui::Pos2::new(240.0, 120.0),
-                crate::shader_graph::Node::Output,
-            );
+            let graph = crate::shader_graph::starter();
             match crate::shader_graph::generate(&graph) {
                 Ok(source) => write_asset(resources, &file, &source, "shader graph"),
                 Err(reason) => tracing::error!("a new graph does not generate a shader: {reason}"),
@@ -822,10 +818,12 @@ fn open_shader_graph(resources: &mut Resources, path: &std::path::Path) {
         return;
     };
     let Some(graph) = crate::shader_graph::extract(&source) else {
-        tracing::warn!(
+        // Written by hand, so there is nothing to draw: its text is the only view of it.
+        tracing::info!(
             file = %path.display(),
-            "this shader was written by hand; the graph tool has nothing to open",
+            "this shader was written by hand; opening it in the IDE instead",
         );
+        open_in_ide(resources, path);
         return;
     };
     resources.insert(crate::state::OpenShaderGraph {

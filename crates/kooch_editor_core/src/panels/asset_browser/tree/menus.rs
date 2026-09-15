@@ -77,20 +77,22 @@ pub(super) fn folder_menu(
         start(CreateKind::Material);
         ui.close();
     }
-    if entry(
-        ui,
-        format!("{} New Shader", icons::FADERS),
-        FolderRole::Assets,
-    ) {
-        start(CreateKind::File(NewFileKind::Shader));
-        ui.close();
-    }
+    // 🔴 The graph first, and by name: a project's shaders are authored as nodes, so nobody has to
+    // learn WGSL to make one. The hand-written entry below stays for the cases a graph cannot reach.
     if entry(
         ui,
         format!("{} New Shader Graph", icons::TREE_STRUCTURE),
         FolderRole::Assets,
     ) {
         start(CreateKind::File(NewFileKind::ShaderGraph));
+        ui.close();
+    }
+    if entry(
+        ui,
+        format!("{} New Shader (WGSL)", icons::FADERS),
+        FolderRole::Assets,
+    ) {
+        start(CreateKind::File(NewFileKind::Shader));
         ui.close();
     }
     // Scripts are code and go under `src/`; a scene and an input map are assets and go under

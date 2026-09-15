@@ -127,14 +127,18 @@ wgsl-analyzer settings through the IDE's language-server configuration:
 
 ## The shader graph
 
-A shader can be authored as nodes instead of code. **Asset Browser → right-click a folder → New
-Shader Graph** writes a `.shader` with an empty graph; double-clicking any `.shader` opens it in the
-**Shader Graph** panel.
+🔴 **A project's shaders are authored as nodes.** The graph writes the WGSL, so nobody has to learn a
+shading language to make a material. Hand-written `.shader` files keep working — the engine's own
+surface is one — and **New Shader (WGSL)** is still there for what a graph cannot reach yet.
 
-🔴 **The graph owns the file.** It rides in a block comment at the top — the way Shader Forge carries
+**Asset Browser → right-click a folder → New Shader Graph** writes a `.shader` whose graph is already
+a material: an albedo texture tinted by a colour, with a roughness of its own. Double-clicking a
+`.shader` opens it in the **Shader Graph** panel; one written by hand has no graph to draw, so it
+opens in the IDE instead.
+
+**The graph owns the file.** It rides in a block comment at the top — the way Shader Forge carries
 `/*SF_DATA;…*/` — and everything below it is generated: parameters, defaults, textures and the
-`surface` function. Saving the graph rewrites all of it, so edits made by hand there are lost. A
-shader written by hand carries no graph, and the panel says so rather than opening an empty one.
+`surface` function. Saving the graph rewrites all of it, so edits made by hand there are lost.
 
 Right-click the background to add a node, drag between pins to wire them, and press **Save** to write
 the shader. Every wire carries a `vec4<f32>`: unused components are zero, and each node reads the
