@@ -181,3 +181,30 @@ fn a_parameterised_surface_validates() {
     )
     .unwrap();
 }
+
+/// The rim-glow example from the Shaders guide: defaults, hints, a texture and the camera.
+#[test]
+fn the_rim_example_validates() {
+    check(
+        "struct SurfaceParams {
+            tint: vec4<f32>,        // @color
+            rim_color: vec4<f32>,   // @color
+            rim_power: f32,         // @range(0.5, 8)
+        }
+        const SURFACE_DEFAULTS = SurfaceParams(vec4(1.0), vec4(0.2, 0.8, 1.0, 1.0), 3.0);
+        var albedo: texture_2d<f32>;
+        fn surface(input: SurfaceInput) -> SurfaceOutput {
+            let p = surface_params(input.material_id);
+            let n = normalize(input.world_normal);
+            let to_camera = normalize(input.camera_position - input.world_position);
+            let rim = pow(1.0 - saturate(dot(n, to_camera)), p.rim_power);
+            var out: SurfaceOutput;
+            out.base_color = sample_surface(albedo, input, input.uv, vec2(1.0)).rgb * p.tint.rgb;
+            out.normal = n;
+            out.roughness = 0.6;
+            out.emissive = p.rim_color.rgb * rim;
+            return out;
+        }",
+    )
+    .unwrap();
+}

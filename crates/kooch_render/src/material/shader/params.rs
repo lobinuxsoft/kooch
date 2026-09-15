@@ -1,7 +1,8 @@
 //! A surface's parameters, read from its own WGSL (#1158): the members of `struct SurfaceParams`,
-//! like an HLSL `cbuffer`, and each `var name: texture_2d<f32>;`, like a `Texture2D`. A comment
-//! after a declaration may carry hints — `@color`, `@range(lo, hi)`, `@default(...)` — for the
-//! editor; the shader compiles the same without them.
+//! like an HLSL `cbuffer`, and each `var name: texture_2d<f32>;`, like a `Texture2D`. Starting
+//! values are WGSL too — `const SURFACE_DEFAULTS = SurfaceParams(...);`, evaluated by naga. A comment
+//! after a declaration may hint `@color` or `@range(lo, hi)` for the editor, and a texture's
+//! `@default(white|black|normal)`; the shader compiles the same without them.
 
 use std::fmt::Write;
 
@@ -84,6 +85,11 @@ pub(super) fn read(source: &str) -> Result<Read, (usize, String)> {
     let mut params: Vec<ShaderParam> = Vec::new();
     let mut lines = Vec::new();
     let mut in_struct = false;
+    // The declarations naga evaluates the defaults from, and the line the constant starts on.
+    let mut struct_text = String::new();
+    let mut defaults_text = String::new();
+    let mut defaults_line = 0;
+    let mut in_defaults = false;
     for (index, raw) in source.lines().enumerate() {
         let line = index + 1;
         let (code, comment) = match raw.split_once("//") {
@@ -104,7 +110,18 @@ pub(super) fn read(source: &str) -> Result<Read, (usize, String)> {
             code.strip_prefix("struct SurfaceParams")
                 .map(|rest| rest.split_once('{').map_or("", |(_, fields)| fields))
         };
+        if in_defaults || code.starts_with("const SURFACE_DEFAULTS") {
+            if !in_defaults {
+                defaults_line = line;
+            }
+            in_defaults = !code.contains(';');
+            let _ = writeln!(defaults_text, "{code}");
+            lines.push(raw.to_owned());
+            continue;
+        }
+
         if let Some(fields) = fields {
+            let _ = writeln!(struct_text, "{code}");
             in_struct = !fields.contains('}');
             let fields = fields.split('}').next().unwrap_or_default();
             for field in fields.split(',').map(str::trim).filter(|f| !f.is_empty()) {
@@ -136,10 +153,86 @@ pub(super) fn read(source: &str) -> Result<Read, (usize, String)> {
             "`struct SurfaceParams` is not closed".to_owned(),
         ));
     }
+    if !defaults_text.is_empty() {
+        let values = evaluate_defaults(&format!("{struct_text}\n{defaults_text}"))
+            .map_err(|e| (defaults_line, format!("SURFACE_DEFAULTS: {e}")))?;
+        let expected: u32 = params.iter().map(|p| p.kind.width()).sum();
+        if values.len() != expected as usize {
+            return Err((
+                defaults_line,
+                format!(
+                    "SURFACE_DEFAULTS holds {} numbers, SurfaceParams {expected}",
+                    values.len()
+                ),
+            ));
+        }
+        for param in params.iter_mut().filter(|p| p.kind != ParamKind::Texture) {
+            let at = param.offset as usize;
+            let width = param.kind.width() as usize;
+            param.default[..width].copy_from_slice(&values[at..at + width]);
+        }
+    }
     Ok(Read {
         source: lines.join("\n"),
         params,
     })
+}
+
+/// `SURFACE_DEFAULTS`' members flattened in declaration order, as naga evaluates the constant.
+fn evaluate_defaults(declarations: &str) -> Result<Vec<f32>, String> {
+    let module = naga::front::wgsl::parse_str(declarations).map_err(|e| e.message().to_owned())?;
+    let (_, constant) = module
+        .constants
+        .iter()
+        .find(|(_, c)| c.name.as_deref() == Some("SURFACE_DEFAULTS"))
+        .ok_or("not a constant")?;
+    let mut values = Vec::new();
+    flatten(&module, constant.init, &mut values)?;
+    Ok(values)
+}
+
+fn flatten(
+    module: &naga::Module,
+    expression: naga::Handle<naga::Expression>,
+    values: &mut Vec<f32>,
+) -> Result<(), String> {
+    use naga::{Expression, Literal};
+    match module.global_expressions[expression] {
+        Expression::Literal(literal) => values.push(match literal {
+            Literal::F32(v) => v,
+            Literal::AbstractFloat(v) => v as f32,
+            Literal::AbstractInt(v) => v as f32,
+            Literal::I32(v) => v as f32,
+            Literal::U32(v) => v as f32,
+            _ => return Err("a default is a number".to_owned()),
+        }),
+        Expression::Compose { ref components, .. } => {
+            for component in components {
+                flatten(module, *component, values)?;
+            }
+        }
+        Expression::Splat { size, value } => {
+            let mut one = Vec::new();
+            flatten(module, value, &mut one)?;
+            for _ in 0..size as usize {
+                values.extend_from_slice(&one);
+            }
+        }
+        Expression::ZeroValue(ty) => values.resize(values.len() + zeros(module, ty), 0.0),
+        _ => return Err("a default is a constant expression".to_owned()),
+    }
+    Ok(())
+}
+
+/// Scalars a zero value of `ty` spans.
+fn zeros(module: &naga::Module, ty: naga::Handle<naga::Type>) -> usize {
+    match module.types[ty].inner {
+        naga::TypeInner::Vector { size, .. } => size as usize,
+        naga::TypeInner::Struct { ref members, .. } => {
+            members.iter().map(|m| zeros(module, m.ty)).sum()
+        }
+        _ => 1,
+    }
 }
 
 /// One `name: type` member of `SurfaceParams`.
@@ -173,16 +266,12 @@ fn scalar(field: &str, hints: &str, before: &[ShaderParam]) -> Result<ShaderPara
         Some(_) => return Err(format!("`{name}`: @range needs f32")),
         None => None,
     };
-    let mut default = [0.0; 4];
-    if let Some(values) = hint(hints, "@default") {
-        let values = numbers(values)?;
-        if values.len() != 1 && values.len() != kind.width() as usize {
-            return Err(format!("`{name}`: @default takes {} numbers", kind.width()));
-        }
-        for (i, slot) in default.iter_mut().take(kind.width() as usize).enumerate() {
-            *slot = values.get(i).copied().unwrap_or(values[0]);
-        }
+    if hint(hints, "@default").is_some() {
+        return Err(format!(
+            "`{name}`: a starting value goes in `const SURFACE_DEFAULTS = SurfaceParams(...);`"
+        ));
     }
+    let default = [0.0; 4];
     let offset: u32 = before.iter().map(|p| p.kind.width()).sum();
     if offset + kind.width() > MAX_PARAM_SCALARS {
         return Err(format!("more than {MAX_PARAM_SCALARS} scalars"));

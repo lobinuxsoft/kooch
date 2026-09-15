@@ -29,12 +29,13 @@ fn only_leading_comments_count() {
 
 const TOON: &str = "\
 struct SurfaceParams {
-    tint: vec4<f32>,   // @color @default(1, 0.5, 0.2, 1)
-    strength: f32,     // @range(0, 4) @default(2)
+    tint: vec4<f32>,   // @color
+    strength: f32,     // @range(0, 4)
     uv: vec2f,
 }
 var albedo: texture_2d<f32>;
 var mask: texture_2d<f32>;   // @default(black)
+const SURFACE_DEFAULTS = SurfaceParams(vec4(1.0, 0.5, 0.2, 1.0), 2.0, vec2(3.0));
 ";
 
 #[test]
@@ -59,6 +60,39 @@ fn params_take_offsets_in_order() {
     assert_eq!(shader.params[1].range, Some([0.0, 4.0]));
     assert_eq!(shader.params[2].kind, ParamKind::Vec2);
     assert_eq!(shader.params[4].texture, TextureDefault::Black);
+    assert_eq!(shader.params[0].default, [1.0, 0.5, 0.2, 1.0]);
+    assert_eq!(shader.params[1].default[0], 2.0);
+    assert_eq!(&shader.params[2].default[..2], &[3.0, 3.0]);
+}
+
+/// A constant spread over lines, with a `vec3(0.25)` splat, is still read.
+#[test]
+fn defaults_span_lines() {
+    let shader = Shader::parse(
+        "struct SurfaceParams { c: vec3<f32>, k: f32 }\n\
+         const SURFACE_DEFAULTS = SurfaceParams(\n    vec3(0.25),\n    1,\n);",
+    )
+    .unwrap();
+    assert_eq!(shader.params[0].default, [0.25, 0.25, 0.25, 0.0]);
+    assert_eq!(shader.params[1].default[0], 1.0);
+}
+
+/// Starting values are code: a hint cannot stand in for them.
+#[test]
+fn a_default_hint_on_a_member_fails() {
+    assert!(Shader::parse("struct SurfaceParams { a: f32 } // @default(1)").is_err());
+}
+
+#[test]
+fn a_broken_constant_names_its_line() {
+    let error = Shader::parse(
+        "struct SurfaceParams { a: f32 }\nconst SURFACE_DEFAULTS = SurfaceParams(vec2(1.0));",
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().starts_with("line 2: SURFACE_DEFAULTS"),
+        "{error}"
+    );
 }
 
 /// Without hints a parameter still exists: zero, unbounded, a vector.
@@ -85,14 +119,6 @@ fn textures_get_bindings_in_place() {
         "{}",
         lines[6]
     );
-}
-
-/// One number fills every component, as `vec3<f32>(1.0)` does.
-#[test]
-fn a_single_default_splats() {
-    let shader =
-        Shader::parse("struct SurfaceParams {\n c: vec3<f32>, // @default(0.25)\n}").unwrap();
-    assert_eq!(shader.params[0].default, [0.25, 0.25, 0.25, 0.0]);
 }
 
 #[test]

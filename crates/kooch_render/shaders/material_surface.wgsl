@@ -30,6 +30,8 @@ struct SurfaceInput {
     // `exp2(mip_bias)`; multiply the derivatives by it before sampling (#881).
     mip_bias_scale: f32,
     frag_coord: vec2<f32>,
+    // World space; `camera_position - world_position` points at the viewer.
+    camera_position: vec3<f32>,
     // Index into `materials`.
     material_id: u32,
 }
@@ -62,6 +64,7 @@ fn surface_input(surf: VertexOutput, frag_coord: vec2<f32>) -> SurfaceInput {
     input.ddy_uv = surf.ddy_uv;
     input.mip_bias_scale = screen.mip_bias_scale;
     input.frag_coord = frag_coord;
+    input.camera_position = inti.camera_position;
     input.material_id = screen.material_id;
     return input;
 }

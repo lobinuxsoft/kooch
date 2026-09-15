@@ -31,7 +31,8 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 ```
 
 `SurfaceInput` carries the reconstructed point: `world_position`, `world_normal`, `world_tangent`,
-`uv`, the analytical `ddx_uv` / `ddy_uv`, `mip_bias_scale`, `frag_coord` and `material_id`.
+`uv`, the analytical `ddx_uv` / `ddy_uv`, `mip_bias_scale`, `frag_coord`, `camera_position` and
+`material_id`.
 `SurfaceOutput` is what Inti lights: `base_color`, a world-space `normal`, `metallic`, `roughness`
 and `emissive`.
 
@@ -46,18 +47,21 @@ shading paths, fragment and compute, and each wraps it in its own frame.
 ## Parameters
 
 A shader's parameters are plain WGSL, the closest WGSL gets to an HLSL `cbuffer` and `Texture2D`:
-the members of `struct SurfaceParams` are the material's fields, and each `var name: texture_2d<f32>;`
-is one of its textures. The engine assigns the bindings — a surface never writes `@group` or
-`@binding`. A material on that shader shows exactly these fields in the Inspector; the engine's
-built-in ones come back when it returns to `(None)`.
+the members of `struct SurfaceParams` are the material's fields, each `var name: texture_2d<f32>;`
+is one of its textures, and `const SURFACE_DEFAULTS` is what a new material starts with. The engine
+assigns the bindings — a surface never writes `@group` or `@binding`. A material on that shader
+shows exactly these fields in the Inspector; the engine's built-in ones come back when it returns
+to `(None)`.
 
 ```wgsl
 // kind: surface
 struct SurfaceParams {
-    tint: vec4<f32>,       // @color @default(1, 0.5, 0.2, 1)
-    strength: f32,         // @range(0, 4) @default(1)
-    uv_scale: vec2<f32>,   // @default(1, 1)
+    tint: vec4<f32>,       // @color
+    strength: f32,         // @range(0, 4)
+    uv_scale: vec2<f32>,
 }
+
+const SURFACE_DEFAULTS = SurfaceParams(vec4(1.0, 0.5, 0.2, 1.0), 1.0, vec2(1.0));
 
 var detail: texture_2d<f32>;   // @default(white)
 
@@ -69,24 +73,37 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 }
 ```
 
-Members are `f32`, `vec2<f32>`, `vec3<f32>` or `vec4<f32>`. The comment after a declaration is
-optional and only changes how the editor shows the field; the shader compiles the same without it:
+Members are `f32`, `vec2<f32>`, `vec3<f32>` or `vec4<f32>`. `SURFACE_DEFAULTS` is an ordinary WGSL
+constant — naga evaluates it, so `vec3(0.25)` or an arithmetic expression works — and without it
+every member starts at zero. The comment after a declaration is optional and only changes how the
+editor shows the field:
 
 | Hint | On | Does |
 |---|---|---|
 | `@color` | `vec4<f32>` | a colour picker instead of four numbers |
 | `@range(lo, hi)` | `f32` | a slider |
-| `@default(...)` | any member | the starting value; one number fills every component |
-| `@default(white \| black \| normal)` | a texture | what it samples while unassigned |
+| `@default(white \| black \| normal)` | a texture | what it samples while unassigned — WGSL gives a texture no starting value |
 
-Without hints a member starts at zero and a texture at white. `sample_surface(texture, input, uv,
-scale)` samples with the analytical derivatives scaled by `scale` and the mip bias, so pass
-whatever tiles `uv`. Budget per material: **16 scalars** and **4 textures**; past it the shader
-fails to load and names the line.
+`sample_surface(texture, input, uv, scale)` samples with the analytical derivatives scaled by
+`scale` and the mip bias, so pass whatever tiles `uv`. Budget per material: **16 scalars** and
+**4 textures**; past it the shader fails to load and names the line.
 
 Values are stored on the material by name. Switching a material to another shader keeps the values
 both declare and drops the rest; undo brings them back. New Shader starts from a PBR surface written
 against its own parameters.
+
+### Editing `.shader` files in VS Code
+
+Install [wgsl-analyzer](https://marketplace.visualstudio.com/items?itemName=wgsl-analyzer.wgsl-analyzer)
+and associate the extension in `settings.json`:
+
+```json
+"files.associations": { "*.shader": "wgsl" }
+```
+
+It highlights and checks the file, but it does not see what the engine composes around it, so
+`SurfaceInput`, `surface_params` and `sample_surface` read as undefined there. The editor's Console
+is the authority on whether a shader compiles.
 
 ## When a save does not compile
 
