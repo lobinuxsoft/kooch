@@ -27,10 +27,6 @@ members = [
 
 [workspace.package]
 version = "0.51.0"
-edition = "2024"
-license = "LicenseRef-Proprietary"
-repository = "https://github.com/lobinuxsoft/kooch"
-authors = ["lobinuxsoft"]
 
 [workspace.dependencies]
 # Profiling (#785). Adopted rather than written: the policy is never to
