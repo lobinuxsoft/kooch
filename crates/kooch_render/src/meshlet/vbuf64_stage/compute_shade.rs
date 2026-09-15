@@ -12,6 +12,7 @@ use crate::meshlet::{
 };
 
 use super::shader_cache::ShaderPipelines;
+use super::tile_bins::TileBins;
 
 use super::upsample::SHADED_ID_FORMAT;
 use super::{CameraUbo, ScreenUbo, ShadingRate, VBUF64_FORMAT};
@@ -30,6 +31,9 @@ const COLOR_OUT_BINDING: u32 = 5;
 /// reduced rate, bound always: a bind group layout cannot depend on a
 /// setting the player changes between frames.
 const SHADED_IDS_BINDING: u32 = 6;
+
+/// Group-0 binding of each material's tile list (#1157).
+const TILE_BINS_BINDING: u32 = 7;
 
 /// `KOOCH_COMPUTE_SHADING=on` (or `1`, or `true`), read once.
 pub(crate) fn enabled_by_environment() -> Option<bool> {
@@ -92,6 +96,7 @@ pub(super) struct ComputeShading {
     layout: wgpu::PipelineLayout,
     /// Materials with a `.shader` of their own (#1157).
     custom: ShaderPipelines<wgpu::ComputePipeline>,
+    bins: TileBins,
     frame_bgl: wgpu::BindGroupLayout,
     materials_bgl: wgpu::BindGroupLayout,
     scene_bgl: wgpu::BindGroupLayout,
@@ -179,6 +184,7 @@ impl ComputeShading {
                     },
                     count: None,
                 },
+                storage_read(TILE_BINS_BINDING),
             ],
         });
         let materials_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -232,6 +238,7 @@ impl ComputeShading {
             pipeline_debug: std::sync::OnceLock::new(),
             layout,
             custom: ShaderPipelines::new(),
+            bins: TileBins::new(device),
             frame_bgl,
             materials_bgl,
             scene_bgl,
@@ -250,7 +257,7 @@ impl ComputeShading {
             .get_or_init(|| build_pipeline(device, &self.layout, DEFAULT_SURFACE_SHADER, true))
     }
 
-    /// One dispatch per registered shading slot, each over the whole shaded target in 16x16 tiles.
+    /// One indirect dispatch per shading slot, over the 16x16 tiles that slot covers.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn shade(
         &self,
@@ -328,6 +335,27 @@ impl ComputeShading {
             multiview_mask: None,
         });
 
+        // The dispatch covers the shaded target, not the screen: at half
+        // rate that is a quarter of the threads, which is the entire
+        // point of #825.
+        let shaded_size = rate.target_size(screen_size);
+        let tiles = (
+            shaded_size.0.div_ceil(SHADING_TILE_SIZE),
+            shaded_size.1.div_ceil(SHADING_TILE_SIZE),
+        );
+        let binned = self.bins.bin(
+            device,
+            queue,
+            encoder,
+            vbuf_view,
+            cull.visible_meshlets_buffer(),
+            scene.instance_buffer(),
+            screen_size,
+            tiles,
+            rate.factor(),
+            slots.end,
+        );
+
         let frame_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("compute_shading_frame_bg"),
             layout: &self.frame_bgl,
@@ -364,6 +392,10 @@ impl ComputeShading {
                     binding: SHADED_IDS_BINDING,
                     resource: wgpu::BindingResource::TextureView(ids_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: TILE_BINS_BINDING,
+                    resource: binned.bins.as_entire_binding(),
+                },
             ],
         });
         let materials_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -389,12 +421,6 @@ impl ComputeShading {
             ],
         });
 
-        // The dispatch covers the shaded target, not the screen: at half
-        // rate that is a quarter of the threads, which is the entire
-        // point of #825.
-        let shaded_size = rate.target_size(screen_size);
-        let tiles_x = shaded_size.0.div_ceil(SHADING_TILE_SIZE);
-        let tiles_y = shaded_size.1.div_ceil(SHADING_TILE_SIZE);
         let texture_pool = material_pipeline.texture_pool();
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("compute_shading_pass"),
@@ -418,7 +444,8 @@ impl ComputeShading {
                     })
                 });
             pass.set_pipeline(custom.as_ref().unwrap_or(pipeline));
-            pass.dispatch_workgroups(tiles_x, tiles_y, 1);
+            // Only the tiles this material covers (#1157).
+            pass.dispatch_workgroups_indirect(&binned.args, u64::from(slot) * 12);
         }
     }
 }

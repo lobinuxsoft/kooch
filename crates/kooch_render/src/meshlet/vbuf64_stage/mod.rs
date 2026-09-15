@@ -15,6 +15,7 @@ mod shading_pad;
 mod shading_rate;
 mod sharpen;
 mod taa;
+mod tile_bins;
 mod tonemap;
 mod two_pass;
 mod upsample;

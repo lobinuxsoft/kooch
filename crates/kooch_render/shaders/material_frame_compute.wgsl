@@ -10,6 +10,11 @@
 // silhouettes sharp when the lighting is not. Written only at half rate.
 @group(0) @binding(6) var shaded_ids: texture_storage_2d<r32uint, write>;
 
+// Each material's tiles, laid out as `material_tile_bins.wgsl` writes them (#1157).
+@group(0) @binding(7) var<storage, read> tile_bins: array<u32>;
+const BIN_LIST: u32 = 259u;
+const BIN_ROW: u32 = 4096u;
+
 // Tile edge in pixels. 16x16 = 256 threads, one wavefront's worth of work per lane on AMD at wave32
 // and the size every tiled-deferred reference lands on. It is also small enough that a tile usually
 // sits inside one froxel column: at 1280x720 the grid's cells are ~75x80 px.
@@ -110,7 +115,8 @@ fn debug_mip_colour(lod: f32) -> vec3<f32> {
 
 @compute @workgroup_size(16, 16, 1)
 fn cs_shade_tile(
-    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_id) local: vec3<u32>,
     @builtin(local_invocation_index) lid: u32,
 ) {
     // 🔴 NO EARLY RETURN ANYWHERE ABOVE THE LAST BARRIER. A thread that leaves the function skips
@@ -127,7 +133,19 @@ fn cs_shade_tile(
 
     // The sample this thread owns, and the quad of pixels it stands for.
     // At full rate the quad is one pixel and `pixel == sample`.
-    let sample = gid.xy;
+    // The workgroup is an entry of this material's tile list, or the tile itself when the list
+    // overflowed and the dispatch covers the whole grid.
+    var tile = workgroup.xy;
+    var live = true;
+    if (tile_bins[0] == 0u) {
+        let first = tile_bins[2u + screen.material_id];
+        let count = tile_bins[3u + screen.material_id] - first;
+        let entry = workgroup.y * BIN_ROW + workgroup.x;
+        live = entry < count;
+        let index = tile_bins[BIN_LIST + first + select(0u, entry, live)];
+        tile = vec2<u32>(index % tile_bins[1], index / tile_bins[1]);
+    }
+    let sample = tile * TILE_SIZE + local.xy;
     let rate = screen.shading_rate;
     let origin = sample * rate;
 
@@ -139,7 +157,7 @@ fn cs_shade_tile(
     let quad = rate * rate;
     for (var q = 0u; q < quad; q = q + 1u) {
         let cand = origin + vec2<u32>(q % rate, q / rate);
-        if (cand.x < screen.size.x && cand.y < screen.size.y) {
+        if (live && cand.x < screen.size.x && cand.y < screen.size.y) {
             let packed = textureLoad(vbuf64, cand).x;
             // `packed >> 32 == 0` is the background sentinel under
             // reversed-Z, the same test `resolve_material_depth.wgsl`
