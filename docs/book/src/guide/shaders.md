@@ -92,10 +92,19 @@ Values are stored on the material by name. Switching a material to another shade
 both declare and drops the rest; undo brings them back. New Shader starts from a PBR surface written
 against its own parameters.
 
-### Editing `.shader` files in VS Code
+### Editing `.shader` files in an IDE
+
+No IDE can check a `.shader` completely: it reads one file and cannot see what the engine composes
+around a surface, so `SurfaceInput`, `surface_params` and everything built on them look undefined.
+The fix in every IDE is the same — read `.shader` as WGSL, and turn off the diagnostics that hinge
+on the missing part. The editor's Console is the authority on whether a shader compiles.
+
+#### VS Code
 
 Install [wgsl-analyzer](https://marketplace.visualstudio.com/items?itemName=wgsl-analyzer.wgsl-analyzer).
-Opening a project gives it — only if it has none — a `.vscode/settings.json`:
+Opening a project adds these to `.vscode/settings.json`, creating it if absent. Keys you already set
+keep their values; a file with comments is left untouched and the Console says so, and then these go
+in by hand:
 
 ```json
 {
@@ -106,11 +115,15 @@ Opening a project gives it — only if it has none — a `.vscode/settings.json`
 }
 ```
 
-The analyzer reads one file and cannot see what the engine composes around a surface, so with type
-errors on, `SurfaceInput`, `surface_params` and everything built on them read as undefined, and
-every `let` gets an `[error]` type hint. With those off it keeps highlighting and its own syntax
-errors. The editor's Console is the authority on whether a shader
-compiles.
+#### Other IDEs
+
+Not configured by the editor yet. Associate the extension with WGSL, then pass the same three
+wgsl-analyzer settings through the IDE's language-server configuration:
+
+- **Zed** — `.zed/settings.json`: `"file_types": { "WGSL": ["shader"] }`.
+- **Helix** — `.helix/languages.toml`: a `[[language]]` entry with `name = "wgsl"` and
+  `file-types = ["wgsl", "shader"]`. Helix replaces the list rather than extending it, so the
+  built-in `wgsl` has to be repeated.
 
 ## When a save does not compile
 

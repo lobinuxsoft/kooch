@@ -51,6 +51,7 @@ tracing.workspace = true
 rfd.workspace = true
 dirs.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 ron.workspace = true
 sysinfo.workspace = true
 
