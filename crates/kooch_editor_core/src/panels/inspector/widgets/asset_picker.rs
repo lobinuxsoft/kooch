@@ -28,37 +28,21 @@ pub(crate) fn draw_asset_picker(
     };
 
     let mut new_value: Option<ReflectValue> = None;
-    let search_id = ui.id().with(("asset_picker_search", asset_type));
 
-    let combo_response = egui::ComboBox::from_id_salt(("asset_picker", asset_type))
-        .selected_text(selected_text)
-        .show_ui(ui, |ui| {
-            // Search box — Unity-style. Persisted in egui memory so
-            // the query survives close-and-reopen of the same
-            // dropdown across frames.
-            let mut query: String = ui
-                .ctx()
-                .data(|d| d.get_temp::<String>(search_id))
-                .unwrap_or_default();
-            let search_resp = ui.add(
-                egui::TextEdit::singleline(&mut query)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("\u{1f50d} Search…"),
-            );
-            if search_resp.changed() {
-                ui.ctx()
-                    .data_mut(|d| d.insert_temp(search_id, query.clone()));
-            }
-
-            ui.separator();
-
-            // The "(None)" entry — clears the assignment. Always
-            // visible, never filtered out.
-            if ui.selectable_label(current.is_none(), "(None)").clicked() && current.is_some() {
-                new_value = Some(ReflectValue::AssetRef {
-                    guid: None,
-                    asset_type: asset_type.to_owned(),
-                });
+    let slot = super::search_combo::search_combo(
+        ui,
+        ("asset_picker", asset_type),
+        selected_text,
+        |ui, needle| {
+            // "(None)" clears the assignment, and is never filtered out.
+            if ui.selectable_label(current.is_none(), "(None)").clicked() {
+                if current.is_some() {
+                    new_value = Some(ReflectValue::AssetRef {
+                        guid: None,
+                        asset_type: asset_type.to_owned(),
+                    });
+                }
+                ui.close();
             }
 
             if filtered.is_empty() {
@@ -66,45 +50,42 @@ pub(crate) fn draw_asset_picker(
                 return;
             }
 
-            let needle = query.trim().to_lowercase();
             let matches_query = |entry: &AssetCatalogEntry| -> bool {
-                if needle.is_empty() {
-                    return true;
-                }
-                entry.display_name.to_lowercase().contains(&needle)
+                needle.is_empty()
+                    || entry.display_name.to_lowercase().contains(needle)
                     || entry
                         .path
                         .display()
                         .to_string()
                         .to_lowercase()
-                        .contains(&needle)
+                        .contains(needle)
             };
 
             let mut shown = 0usize;
-            for entry in &filtered {
-                if !matches_query(entry) {
-                    continue;
-                }
+            for entry in filtered.iter().filter(|e| matches_query(e)) {
                 let selected = current == Some(entry.guid);
-                let label = format!("{}  [{}]", entry.display_name, entry.source.label(),);
+                let label = format!("{}  [{}]", entry.display_name, entry.source.label());
                 let resp = ui
                     .selectable_label(selected, label)
                     .on_hover_text(entry.path.display().to_string());
-                if !selected && resp.clicked() {
-                    new_value = Some(ReflectValue::AssetRef {
-                        guid: Some(entry.guid),
-                        asset_type: asset_type.to_owned(),
-                    });
+                if resp.clicked() {
+                    if !selected {
+                        new_value = Some(ReflectValue::AssetRef {
+                            guid: Some(entry.guid),
+                            asset_type: asset_type.to_owned(),
+                        });
+                    }
+                    ui.close();
                 }
                 shown += 1;
             }
             if shown == 0 {
                 ui.weak("(no match)");
             }
-        });
+        },
+    );
     // Drop target: an asset dragged out of the Asset Browser. Only this slot's own type is
     // accepted, so a mesh dragged over a material field neither highlights nor assigns.
-    let slot = combo_response.response;
     if let Some(hovered) = slot.dnd_hover_payload::<DraggedAsset>()
         && hovered.type_name == asset_type
     {
