@@ -40,8 +40,23 @@ fn holding() -> PathBuf {
     std::env::temp_dir().join("kooch_carried_world")
 }
 
-/// Writes every open scene out and remembers where each belongs.
+/// Holds the world, if the editor is mirroring a live project.
+///
+/// 🔴 Disconnected, the editor's scenes are not the project's world but a fresh untitled one; held
+/// and resumed, it replaced the scene the new process had just opened with nothing (#1163).
 pub fn capture(resources: &mut Resources) -> usize {
+    let connected = resources
+        .get::<crate::remote_session::RemoteState>()
+        .is_some_and(|state| state.is_connected());
+    if !connected {
+        tracing::info!("the project is not connected, so there is no live world to hold");
+        return 0;
+    }
+    hold(resources)
+}
+
+/// Writes every open scene out and remembers where each belongs.
+fn hold(resources: &mut Resources) -> usize {
     let Some(manager) = resources.get::<kooch_ecs::SceneManager>() else {
         return 0;
     };
