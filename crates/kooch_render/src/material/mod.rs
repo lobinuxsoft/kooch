@@ -4,16 +4,21 @@ mod asset;
 mod pipeline;
 pub mod shader;
 mod texture_pool;
+mod values;
 
-/// What a new `.shader` starts as.
-pub use crate::meshlet::DEFAULT_SURFACE_SHADER;
+/// The engine's surface, and what a new `.shader` starts as.
+pub use crate::meshlet::{DEFAULT_SURFACE_SHADER, NEW_SURFACE_SHADER};
 pub use asset::{MATERIAL_EXTENSION, Material, MaterialLoader, MaterialParseError};
 pub use pipeline::{
     DEFAULT_CAPACITY as MATERIAL_POOL_DEFAULT_CAPACITY, FALLBACK_MATERIAL_ID, MATERIAL_TYPE_NAME,
     MaterialPipeline, SurfaceSource, TextureReimports,
 };
-pub use shader::{SHADER_EXTENSION, SHADER_TYPE_NAME, Shader, ShaderKind, ShaderLoader};
-pub use texture_pool::{MaterialTexturePool, TextureSlot};
+pub use shader::{
+    MAX_PARAM_SCALARS, MAX_PARAM_TEXTURES, ParamKind, SHADER_EXTENSION, SHADER_TYPE_NAME, Shader,
+    ShaderKind, ShaderLoader, ShaderParam, TextureDefault,
+};
+pub use texture_pool::MaterialTexturePool;
+pub use values::{PackedParams, ParamValue, ParamValues, TextureRef, retain_declared};
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
@@ -92,6 +97,8 @@ impl MaterialParams {
 /// assignment lands with bindless).
 pub struct MaterialPool {
     buffer: wgpu::Buffer,
+    /// Each slot's shader values, `MAX_PARAM_SCALARS` `f32`s per slot (#1158).
+    values: wgpu::Buffer,
     capacity: u32,
     bgl: wgpu::BindGroupLayout,
 }
@@ -111,8 +118,15 @@ impl MaterialPool {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
         let bgl = Self::bind_group_layout(device);
+        let values = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("material_values"),
+            size: materials.len() as u64 * u64::from(MAX_PARAM_SCALARS) * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         Self {
             buffer,
+            values,
             capacity: materials.len() as u32,
             bgl,
         }
@@ -151,6 +165,11 @@ impl MaterialPool {
         &self.buffer
     }
 
+    /// The shader values, bound beside [`Self::buffer`].
+    pub fn values(&self) -> &wgpu::Buffer {
+        &self.values
+    }
+
     pub fn capacity(&self) -> u32 {
         self.capacity
     }
@@ -165,6 +184,17 @@ impl MaterialPool {
     pub fn write(&self, queue: &wgpu::Queue, slot: u32, params: &MaterialParams) {
         let offset = slot as u64 * std::mem::size_of::<MaterialParams>() as u64;
         queue.write_buffer(&self.buffer, offset, bytemuck::bytes_of(params));
+    }
+
+    /// Updates a slot's shader values.
+    pub fn write_values(
+        &self,
+        queue: &wgpu::Queue,
+        slot: u32,
+        values: &[f32; MAX_PARAM_SCALARS as usize],
+    ) {
+        let offset = u64::from(slot) * u64::from(MAX_PARAM_SCALARS) * 4;
+        queue.write_buffer(&self.values, offset, bytemuck::cast_slice(values));
     }
 }
 

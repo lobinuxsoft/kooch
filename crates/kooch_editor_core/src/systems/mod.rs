@@ -1,6 +1,6 @@
 //! Editor systems — startup and per-frame render.
 
-mod asset_detail;
+pub(crate) mod asset_detail;
 mod pacing;
 mod present;
 mod project_assets;

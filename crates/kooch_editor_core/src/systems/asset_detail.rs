@@ -6,13 +6,13 @@ use kooch_core::asset_database::AssetDatabase;
 use kooch_core::asset_loader::AssetServer;
 use kooch_core::assets::Assets;
 use kooch_core::resource::Resources;
-use kooch_render::material::Material;
+use kooch_render::material::{Material, Shader, ShaderParam};
 use kooch_render::meshlet::MeshletMesh;
 use kooch_render::texture::{Image, ImageFormat};
 
 use crate::panels::inspector::{
-    AssetDetail, BakedFrom, ImageImportInfo, MeshImportInfo, PrefabComponentView, PrefabDetail,
-    PrefabEntityView, ResolvedComponent,
+    AssetDetail, BakedFrom, ImageImportInfo, MaterialShader, MeshImportInfo, PrefabComponentView,
+    PrefabDetail, PrefabEntityView, ResolvedComponent,
 };
 
 /// Builds the detail snapshot for `guid`, loading the asset on demand.
@@ -52,7 +52,26 @@ fn gather_reflected(type_name: &str, guid: Guid, resources: &mut Resources) -> O
 fn gather_material(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
     let handle = load_handle::<Material>(guid, resources)?;
     let mat = resources.get::<Assets<Material>>()?.get(handle)?.clone();
-    Some(AssetDetail::Material(mat))
+    let shader = match mat.shader {
+        None => MaterialShader::Default,
+        Some(shader) => match shader_params(shader, resources) {
+            Some(params) => MaterialShader::Declares(params),
+            None => MaterialShader::Unavailable,
+        },
+    };
+    Some(AssetDetail::Material(mat, shader))
+}
+
+/// The parameters `shader` declares, or `None` when it is missing or does not parse.
+pub(crate) fn shader_params(shader: Guid, resources: &mut Resources) -> Option<Vec<ShaderParam>> {
+    let handle = load_handle::<Shader>(shader, resources)?;
+    Some(
+        resources
+            .get::<Assets<Shader>>()?
+            .get(handle)?
+            .params
+            .clone(),
+    )
 }
 
 fn gather_mesh(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {

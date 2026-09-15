@@ -11,11 +11,15 @@ struct MaterialParams {
 }
 
 @group(2) @binding(0) var<storage, read> materials: array<MaterialParams>;
+// A shader's declared scalars, `MAX_PARAM_SCALARS` per material; read through `surface_params` (#1158).
+@group(2) @binding(1) var<storage, read> material_values: array<f32>;
 
 @group(4) @binding(0) var albedo_tex: texture_2d<f32>;
 @group(4) @binding(1) var normal_tex: texture_2d<f32>;
 @group(4) @binding(2) var metal_rough_tex: texture_2d<f32>;
 @group(4) @binding(3) var material_sampler: sampler;
+// A shader's fourth texture parameter.
+@group(4) @binding(4) var extra_tex: texture_2d<f32>;
 
 /// The reconstructed surface point a shader shades.
 struct SurfaceInput {

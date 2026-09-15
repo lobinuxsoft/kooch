@@ -6,7 +6,7 @@ use glam::Vec3;
 use kooch_core::Guid;
 use kooch_ecs::component::ComponentId;
 use kooch_ecs::reflect::{FieldMeta, ReflectValue};
-use kooch_render::material::{Material, SHADER_TYPE_NAME};
+use kooch_render::material::{Material, ParamKind, ParamValue, SHADER_TYPE_NAME, ShaderParam};
 
 use super::prefab_view;
 use super::{AssetCatalogEntry, draw_asset_picker};
@@ -18,8 +18,8 @@ const IMAGE_TYPE: &str = "kooch_render::texture::asset::Image";
 /// Per-frame data snapshot for the selected asset. Cloned out of the
 /// asset stores before the egui frame so the panel stays borrow-free.
 pub(crate) enum AssetDetail {
-    /// Authored material — editable.
-    Material(Material),
+    /// Authored material — editable — and what its shader declares.
+    Material(Material, MaterialShader),
     /// Baked mesh — read-only import stats.
     Mesh(MeshImportInfo),
     /// Decoded image — read-only import stats.
@@ -35,6 +35,16 @@ pub(crate) enum AssetDetail {
     },
     /// A typed asset with neither a dedicated view nor reflection.
     Unknown { type_name: String },
+}
+
+/// Which fields a material's Inspector shows.
+pub(crate) enum MaterialShader {
+    /// The engine's PBR surface: the built-in fields.
+    Default,
+    /// A custom shader: exactly the parameters it declares.
+    Declares(Vec<ShaderParam>),
+    /// Named, but missing or failing to parse.
+    Unavailable,
 }
 
 /// A prefab, resolved against this binary's registry and ready to draw.
@@ -144,8 +154,8 @@ pub(crate) fn draw_asset_inspector(
     egui::ScrollArea::vertical()
         .id_salt("asset_detail")
         .show(ui, |ui| match detail {
-            Some(AssetDetail::Material(mat)) => {
-                draw_material_editor(ui, entry.guid, mat, catalog, actions)
+            Some(AssetDetail::Material(mat, shader)) => {
+                draw_material_editor(ui, entry.guid, mat, shader, catalog, actions)
             }
             Some(AssetDetail::Prefab(detail)) => prefab_view::draw_prefab_inspector(
                 ui,
@@ -190,6 +200,7 @@ fn draw_material_editor(
     ui: &mut egui::Ui,
     guid: Guid,
     mat: &Material,
+    shader: &MaterialShader,
     catalog: &[AssetCatalogEntry],
     actions: &mut Vec<EditorAction>,
 ) {
@@ -216,6 +227,46 @@ fn draw_material_editor(
     });
     ui.separator();
 
+    match shader {
+        MaterialShader::Default => {
+            let (pbr_changed, pbr_released) = draw_pbr_fields(ui, guid, &mut edited, catalog);
+            changed |= pbr_changed;
+            released |= pbr_released;
+        }
+        MaterialShader::Declares(params) => {
+            let (param_changed, param_released) =
+                draw_shader_params(ui, guid, &mut edited, params, catalog);
+            changed |= param_changed;
+            released |= param_released;
+        }
+        MaterialShader::Unavailable => {
+            ui.weak("The shader is missing or does not parse — the Console says why.");
+        }
+    }
+
+    if !changed && !released {
+        return;
+    }
+    // A change with nothing held down is already final: typing a number,
+    // picking a texture, clicking a swatch. Only a drag needs the wait,
+    // and `released` is what ends it.
+    let held = ui.input(|input| input.pointer.any_down());
+    actions.push(EditorAction::EditMaterial {
+        guid,
+        material: edited,
+        commit: released || !held,
+    });
+}
+
+/// The engine surface's built-in fields. Returns (changed, drag released).
+fn draw_pbr_fields(
+    ui: &mut egui::Ui,
+    guid: Guid,
+    edited: &mut Material,
+    catalog: &[AssetCatalogEntry],
+) -> (bool, bool) {
+    let mut changed = false;
+    let mut released = false;
     egui::Grid::new(("material_editor", guid))
         .num_columns(2)
         .spacing([8.0, 4.0])
@@ -286,19 +337,83 @@ fn draw_material_editor(
     changed |= texture_row(ui, "Albedo", &mut edited.albedo, catalog);
     changed |= texture_row(ui, "Normal", &mut edited.normal, catalog);
     changed |= texture_row(ui, "Metal/Rough", &mut edited.metal_roughness, catalog);
+    (changed, released)
+}
 
-    if !changed && !released {
-        return;
+/// A custom shader's declared parameters, each at its value or its default. Returns (changed, drag
+/// released).
+fn draw_shader_params(
+    ui: &mut egui::Ui,
+    guid: Guid,
+    edited: &mut Material,
+    params: &[ShaderParam],
+    catalog: &[AssetCatalogEntry],
+) -> (bool, bool) {
+    if params.is_empty() {
+        ui.weak("This shader declares no parameters.");
+        return (false, false);
     }
-    // A change with nothing held down is already final: typing a number,
-    // picking a texture, clicking a swatch. Only a drag needs the wait,
-    // and `released` is what ends it.
-    let held = ui.input(|input| input.pointer.any_down());
-    actions.push(EditorAction::EditMaterial {
-        guid,
-        material: edited,
-        commit: released || !held,
-    });
+    let mut changed = false;
+    let mut released = false;
+    let mut track = |response: egui::Response| {
+        changed |= response.changed();
+        released |= response.drag_stopped();
+    };
+    let mut textures = Vec::new();
+    egui::Grid::new(("material_params", guid))
+        .num_columns(2)
+        .spacing([8.0, 4.0])
+        .show(ui, |ui| {
+            for param in params {
+                if param.kind == ParamKind::Texture {
+                    textures.push(param);
+                    continue;
+                }
+                let mut value = match edited.values.get(&param.name) {
+                    Some(ParamValue::Number(n)) => *n,
+                    _ => param.default,
+                };
+                ui.label(&param.name);
+                match (param.kind, param.range) {
+                    (ParamKind::Float, Some([lo, hi])) => {
+                        track(ui.add(egui::Slider::new(&mut value[0], lo..=hi)));
+                    }
+                    (ParamKind::Color, _) => {
+                        track(ui.color_edit_button_rgba_unmultiplied(&mut value));
+                    }
+                    (kind, _) => {
+                        ui.horizontal(|ui| {
+                            for component in value.iter_mut().take(kind.width() as usize) {
+                                track(ui.add(crate::numeric::drag(component).speed(0.01)));
+                            }
+                        });
+                    }
+                }
+                ui.end_row();
+                let stored = match edited.values.get(&param.name) {
+                    Some(ParamValue::Number(n)) => *n,
+                    _ => param.default,
+                };
+                if value != stored {
+                    edited
+                        .values
+                        .insert(param.name.clone(), ParamValue::Number(value));
+                }
+            }
+        });
+    for param in textures {
+        let mut texture = match edited.values.get(&param.name) {
+            Some(ParamValue::Texture(guid)) => *guid,
+            _ => None,
+        };
+        if texture_row(ui, &param.name, &mut texture, catalog) {
+            edited
+                .values
+                .insert(param.name.clone(), ParamValue::Texture(texture));
+            changed = true;
+        }
+    }
+    (changed, released)
 }
 
 /// One texture slot row backed by the shared typed asset picker. Returns `true` when the assignment

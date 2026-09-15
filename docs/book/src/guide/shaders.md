@@ -43,6 +43,42 @@ visibility buffer has no screen-space derivatives to give `textureSample`.
 A surface declares no bindings and no entry points of its own. The same function runs in both
 shading paths, fragment and compute, and each wraps it in its own frame.
 
+## Parameters
+
+A shader declares the fields its materials edit in the header, the way Shader Forge's `Properties`
+block does: plain comments, so the file stays valid WGSL. A material on that shader shows exactly
+these fields in the Inspector; the engine's built-in ones come back when it returns to `(None)`.
+
+```wgsl
+// kind: surface
+// param tint: color = (1, 0.5, 0.2, 1)
+// param strength: float = 1.0 range(0, 4)
+// param uv_scale: vec2 = (1, 1)
+// param detail: texture = white
+
+fn surface(input: SurfaceInput) -> SurfaceOutput {
+    let p = surface_params(input.material_id);
+    let uv = input.uv * p.uv_scale;
+    let detail = sample_detail(input, uv, p.uv_scale);
+    // …
+}
+```
+
+| Kind | Default | Reads as |
+|---|---|---|
+| `float` | `= 0.5`, optional `range(lo, hi)` for a slider | `p.name: f32` |
+| `vec2`, `vec3`, `vec4` | `= (x, y, …)`, or one number for all | `p.name` |
+| `color` | `= (r, g, b, a)` | `p.name: vec4<f32>` |
+| `texture` | `white`, `black` or `normal` | `sample_name(input, uv, scale)` |
+
+`sample_<name>` scales the analytical derivatives by `scale` and the mip bias, so pass whatever
+tiles `uv`. Budget per material: **16 scalars** and **4 textures**; a header past it fails to load
+with the line that crossed it.
+
+Values are stored on the material by name. Switching a material to another shader keeps the values
+both declare and drops the rest; undo brings them back. New Shader starts from a PBR surface written
+against its own parameters.
+
 ## When a save does not compile
 
 The engine checks the shader before building anything from it. A broken save keeps the last

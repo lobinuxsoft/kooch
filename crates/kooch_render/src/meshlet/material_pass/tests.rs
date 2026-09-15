@@ -31,7 +31,8 @@ fn the_two_resolve_chunks_are_halves_of_one_shader() {
 
 #[test]
 fn composed_default_material_parses_and_validates() {
-    let composed = compose_material_shader(MATERIAL_FRAGMENT_FRAME, DEFAULT_SURFACE_SHADER, false);
+    let composed =
+        compose_material_shader(MATERIAL_FRAGMENT_FRAME, "", DEFAULT_SURFACE_SHADER, false);
     validate(&composed, "composed default material shader");
 }
 
@@ -40,19 +41,22 @@ fn composed_default_material_parses_and_validates() {
 /// invisible until then unless a test compiles it here.
 #[test]
 fn the_debug_variant_parses_and_validates() {
-    let composed = compose_material_shader(MATERIAL_FRAGMENT_FRAME, DEFAULT_SURFACE_SHADER, true);
+    let composed =
+        compose_material_shader(MATERIAL_FRAGMENT_FRAME, "", DEFAULT_SURFACE_SHADER, true);
     validate(&composed, "composed default material shader (debug)");
 }
 
 #[test]
 fn composed_compute_material_parses_and_validates() {
-    let composed = compose_material_shader(MATERIAL_COMPUTE_FRAME, DEFAULT_SURFACE_SHADER, false);
+    let composed =
+        compose_material_shader(MATERIAL_COMPUTE_FRAME, "", DEFAULT_SURFACE_SHADER, false);
     validate(&composed, "composed compute material shader");
 }
 
 #[test]
 fn the_compute_debug_variant_parses_and_validates() {
-    let composed = compose_material_shader(MATERIAL_COMPUTE_FRAME, DEFAULT_SURFACE_SHADER, true);
+    let composed =
+        compose_material_shader(MATERIAL_COMPUTE_FRAME, "", DEFAULT_SURFACE_SHADER, true);
     validate(&composed, "composed compute material shader (debug)");
 }
 
@@ -86,7 +90,7 @@ fn the_compute_path_caches_the_tile_lights() {
 #[test]
 fn the_game_shader_carries_no_debug_view() {
     let production =
-        compose_material_shader(MATERIAL_FRAGMENT_FRAME, DEFAULT_SURFACE_SHADER, false);
+        compose_material_shader(MATERIAL_FRAGMENT_FRAME, "", DEFAULT_SURFACE_SHADER, false);
     for symbol in [
         "inti_shadow_debug",
         "inti_contact_shadow_debug_view",
@@ -98,7 +102,7 @@ fn the_game_shader_carries_no_debug_view() {
         );
     }
     assert!(
-        compose_material_shader(MATERIAL_FRAGMENT_FRAME, DEFAULT_SURFACE_SHADER, true)
+        compose_material_shader(MATERIAL_FRAGMENT_FRAME, "", DEFAULT_SURFACE_SHADER, true)
             .contains("fn inti_shadow_debug("),
         "the debug variant is supposed to be the one that has them",
     );
@@ -107,7 +111,7 @@ fn the_game_shader_carries_no_debug_view() {
 /// The shipped surface passes the same gate an author's does.
 #[test]
 fn the_default_surface_is_valid() {
-    validate_surface(DEFAULT_SURFACE_SHADER).unwrap();
+    validate_surface("", DEFAULT_SURFACE_SHADER).unwrap();
 }
 
 /// A custom body composes into both frames: this one ignores its maps and paints red.
@@ -122,14 +126,14 @@ fn a_custom_surface_validates() {
         out.emissive = vec3<f32>(0.0);
         return out;
     }";
-    validate_surface(red).unwrap();
+    validate_surface("", red).unwrap();
 }
 
 /// The line reported is the surface file's, not the composed shader's.
 #[test]
 fn a_broken_surface_names_its_line() {
     let broken = "fn surface(input: SurfaceInput) -> SurfaceOutput {\n    let x = ;\n}";
-    let error = validate_surface(broken).unwrap_err();
+    let error = validate_surface("", broken).unwrap_err();
     assert!(error.starts_with("line 2: "), "{error}");
 }
 
@@ -138,5 +142,25 @@ fn a_broken_surface_names_its_line() {
 fn a_surface_cannot_bind() {
     let bound =
         format!("@group(4) @binding(9) var extra: texture_2d<f32>;\n{DEFAULT_SURFACE_SHADER}");
-    assert!(validate_surface(&bound).is_err());
+    assert!(validate_surface("", &bound).is_err());
+}
+
+/// New Shader's template: its header parses, its generated code and body validate on both frames.
+#[test]
+fn the_new_shader_template_is_valid() {
+    let shader = crate::material::Shader::parse(NEW_SURFACE_SHADER).unwrap();
+    assert_eq!(shader.params.len(), 9);
+    validate_surface(&shader.params_wgsl(), &shader.source).unwrap();
+}
+
+/// A declared scalar reads its own offset in `material_values`.
+#[test]
+fn params_generate_their_reads() {
+    let shader = crate::material::Shader::parse("// param a: float\n// param b: vec2").unwrap();
+    let wgsl = shader.params_wgsl();
+    assert!(wgsl.contains("p.a = material_values[base + 0u];"), "{wgsl}");
+    assert!(
+        wgsl.contains("p.b = vec2<f32>(material_values[base + 1u], material_values[base + 2u]);"),
+        "{wgsl}"
+    );
 }

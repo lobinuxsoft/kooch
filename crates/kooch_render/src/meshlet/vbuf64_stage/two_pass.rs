@@ -25,10 +25,11 @@ const MAX_SHADING_SLOTS: u32 = 256;
 fn build_shading_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
+    params: &str,
     surface: &str,
     debug: bool,
 ) -> wgpu::RenderPipeline {
-    let src = compose_material_shader(MATERIAL_FRAGMENT_FRAME, surface, debug);
+    let src = compose_material_shader(MATERIAL_FRAGMENT_FRAME, params, surface, debug);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(if debug {
             "material_fragment_shader_debug"
@@ -193,7 +194,7 @@ impl MaterialTwoPass {
         // Pass-2 group 2: materials storage.
         let materials_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("material_two_pass_materials_bgl"),
-            entries: &[storage_read(0)],
+            entries: &[storage_read(0), storage_read(1)],
         });
 
         // Pass-2 group 3: visible_meshlets + instances.
@@ -257,7 +258,7 @@ impl MaterialTwoPass {
             immediate_size: 0,
         });
         let shading_pipeline =
-            build_shading_pipeline(device, &shading_layout, DEFAULT_SURFACE_SHADER, false);
+            build_shading_pipeline(device, &shading_layout, "", DEFAULT_SURFACE_SHADER, false);
 
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
         let screen_stride = align.max(std::mem::size_of::<ScreenUbo>() as u64);
@@ -306,7 +307,13 @@ impl MaterialTwoPass {
             return &self.shading_pipeline;
         }
         self.shading_pipeline_debug.get_or_init(|| {
-            build_shading_pipeline(device, &self.shading_layout, DEFAULT_SURFACE_SHADER, true)
+            build_shading_pipeline(
+                device,
+                &self.shading_layout,
+                "",
+                DEFAULT_SURFACE_SHADER,
+                true,
+            )
         })
     }
 
@@ -442,10 +449,16 @@ impl MaterialTwoPass {
         let materials_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("material_two_pass_materials_bg"),
             layout: &self.materials_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: material_pipeline.pool().buffer().as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: material_pipeline.pool().buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: material_pipeline.pool().values().as_entire_binding(),
+                },
+            ],
         });
         let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("material_two_pass_scene_bg"),
@@ -465,7 +478,7 @@ impl MaterialTwoPass {
         let texture_pool = material_pipeline.texture_pool();
         for (i, slot) in slots.enumerate() {
             let refs = material_pipeline.slot_texture_refs(slot);
-            let texture_bg = texture_pool.material_bind_group(device, refs[0], refs[1], refs[2]);
+            let texture_bg = texture_pool.material_bind_group(device, &refs);
             let color_load = if i == 0 {
                 wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
             } else {
@@ -497,11 +510,12 @@ impl MaterialTwoPass {
             let custom = material_pipeline
                 .slot_surface(slot)
                 .and_then(|(guid, surface)| {
-                    self.custom.get(guid, surface, debug_mode != 0, |source| {
+                    self.custom.get(guid, surface, debug_mode != 0, |surface| {
                         build_shading_pipeline(
                             device,
                             &self.shading_layout,
-                            source,
+                            &surface.params_wgsl,
+                            &surface.source,
                             debug_mode != 0,
                         )
                     })

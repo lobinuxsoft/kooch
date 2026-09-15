@@ -7,6 +7,7 @@ use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext
 use serde::{Deserialize, Serialize};
 
 use super::MaterialParams;
+use super::values::ParamValues;
 
 /// What a material file is called.
 pub const MATERIAL_EXTENSION: &str = "material";
@@ -44,6 +45,9 @@ pub struct Material {
     /// The `.shader` this material shades with. `None` → the engine's PBR surface.
     #[serde(default)]
     pub shader: Option<Guid>,
+    /// Values for `shader`'s declared parameters, by name (#1158). Absent ones use the default.
+    #[serde(default, skip_serializing_if = "ParamValues::is_empty")]
+    pub values: ParamValues,
 }
 
 impl Material {
@@ -61,6 +65,7 @@ impl Material {
             uv_scale: default_uv_scale(),
             uv_offset: [0.0, 0.0],
             shader: None,
+            values: ParamValues::new(),
         }
     }
 
@@ -116,6 +121,7 @@ impl Default for Material {
             uv_scale: default_uv_scale(),
             uv_offset: [0.0, 0.0],
             shader: None,
+            values: ParamValues::new(),
         }
     }
 }

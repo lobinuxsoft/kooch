@@ -7,6 +7,8 @@ fn source(revision: u64, text: &str) -> SurfaceSource {
     SurfaceSource {
         revision,
         source: text.into(),
+        params: Vec::new().into(),
+        params_wgsl: "".into(),
     }
 }
 

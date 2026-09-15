@@ -103,6 +103,7 @@ pub(super) fn handle_edit_material(
     material: &Material,
     commit: bool,
 ) {
+    let material = &keep_declared(resources, guid, material);
     let Some(path) = resources
         .get::<AssetDatabase>()
         .and_then(|db| db.entry(guid).map(|e| e.path.clone()))
@@ -127,6 +128,33 @@ pub(super) fn handle_edit_material(
     }
 
     persist_material(resources, guid, material, &path);
+}
+
+/// A shader switch keeps the values both shaders declare and drops the rest (#1158). Recorded like
+/// any edit, so undo brings the dropped values back.
+fn keep_declared(resources: &mut Resources, guid: Guid, edited: &Material) -> Material {
+    let mut edited = edited.clone();
+    let before = load_material(resources, guid).and_then(|m| m.shader);
+    if before == edited.shader {
+        return edited;
+    }
+    let declared = edited
+        .shader
+        .and_then(|shader| crate::systems::asset_detail::shader_params(shader, resources))
+        .unwrap_or_default();
+    kooch_render::material::retain_declared(&mut edited.values, &declared);
+    edited
+}
+
+/// The material as the world currently holds it.
+fn load_material(resources: &mut Resources, guid: Guid) -> Option<Material> {
+    let mut server = resources.remove::<AssetServer>()?;
+    let handle = server.load_by_guid::<Material>(guid, resources);
+    resources.insert(server);
+    resources
+        .get::<Assets<Material>>()?
+        .get(handle.ok()?)
+        .cloned()
 }
 
 /// Puts a material into the world *and* onto disk.

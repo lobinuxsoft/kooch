@@ -67,10 +67,15 @@ fn material_bind_group_builds_with_and_without_textures() {
         &checker(ImageFormat::Rgba8UnormSrgb),
     );
 
+    let slots = |albedo| {
+        let mut slots = [crate::material::TextureRef::default(); 4];
+        slots[0].guid = albedo;
+        slots
+    };
     // All-fallback (no maps) must build against the same layout.
-    let _bg_none = pool.material_bind_group(&device, None, None, None);
-    // Mixed: real albedo, fallback normal + metal_roughness.
-    let _bg_mixed = pool.material_bind_group(&device, Some(albedo), None, None);
+    let _bg_none = pool.material_bind_group(&device, &slots(None));
+    // Mixed: real albedo, fallbacks elsewhere.
+    let _bg_mixed = pool.material_bind_group(&device, &slots(Some(albedo)));
     // Unregistered GUID silently falls back.
-    let _bg_missing = pool.material_bind_group(&device, Some(Guid::new_v4()), None, None);
+    let _bg_missing = pool.material_bind_group(&device, &slots(Some(Guid::new_v4())));
 }

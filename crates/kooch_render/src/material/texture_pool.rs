@@ -5,19 +5,10 @@ use std::collections::HashMap;
 
 use kooch_core::Guid;
 
+use super::TextureDefault;
+use super::shader::MAX_PARAM_TEXTURES;
+use super::values::TextureRef;
 use crate::texture::{GpuTexture, Image, ImageFormat, Mipmapper};
-
-/// Which PBR channel a texture feeds. Selects the matching fallback and
-/// documents the expected color space at the call site.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TextureSlot {
-    /// Base color / albedo — sRGB.
-    Albedo,
-    /// Tangent-space normal map — linear.
-    Normal,
-    /// Packed metal (B) + roughness (G), glTF convention — linear.
-    MetalRoughness,
-}
 
 /// The hardware minimum, which means the feature is off.
 pub const NO_ANISOTROPY: u16 = 1;
@@ -25,9 +16,9 @@ pub const NO_ANISOTROPY: u16 = 1;
 /// GPU texture registry + per-material bind group factory.
 pub struct MaterialTexturePool {
     textures: HashMap<Guid, GpuTexture>,
-    fallback_albedo: GpuTexture,
+    fallback_white: GpuTexture,
+    fallback_black: GpuTexture,
     fallback_normal: GpuTexture,
-    fallback_metal_roughness: GpuTexture,
     sampler: wgpu::Sampler,
     anisotropy: u16,
     bgl: wgpu::BindGroupLayout,
@@ -37,24 +28,19 @@ pub struct MaterialTexturePool {
 }
 
 impl MaterialTexturePool {
-    /// Builds the pool with the three 1×1 fallbacks, a filtering sampler,
-    /// and the per-material bind group layout (3 textures + 1 sampler).
+    /// Builds the pool with the three 1×1 fallbacks, a filtering sampler, and the per-material bind
+    /// group layout (4 textures + 1 sampler). White and black read the same in sRGB and linear.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let fallback_albedo = GpuTexture::upload(
-            device,
-            queue,
-            &Image::solid_color([255, 255, 255, 255], ImageFormat::Rgba8UnormSrgb),
-        );
-        let fallback_normal = GpuTexture::upload(
-            device,
-            queue,
-            &Image::solid_color([128, 128, 255, 255], ImageFormat::Rgba8Unorm),
-        );
-        let fallback_metal_roughness = GpuTexture::upload(
-            device,
-            queue,
-            &Image::solid_color([255, 255, 255, 255], ImageFormat::Rgba8Unorm),
-        );
+        let solid = |rgba| {
+            GpuTexture::upload(
+                device,
+                queue,
+                &Image::solid_color(rgba, ImageFormat::Rgba8Unorm),
+            )
+        };
+        let fallback_white = solid([255, 255, 255, 255]);
+        let fallback_black = solid([0, 0, 0, 255]);
+        let fallback_normal = solid([128, 128, 255, 255]);
 
         let sampler = create_sampler(device, NO_ANISOTROPY);
 
@@ -62,9 +48,9 @@ impl MaterialTexturePool {
 
         Self {
             textures: HashMap::new(),
-            fallback_albedo,
+            fallback_white,
+            fallback_black,
             fallback_normal,
-            fallback_metal_roughness,
             mipmapper: Mipmapper::new(device),
             sampler,
             anisotropy: NO_ANISOTROPY,
@@ -72,8 +58,8 @@ impl MaterialTexturePool {
         }
     }
 
-    /// Per-material bind group layout: albedo(0), normal(1), metal_roughness(2) textures +
-    /// sampler(3).
+    /// Per-material bind group layout: albedo(0), normal(1), metal_roughness(2) textures, sampler(3)
+    /// and a shader's fourth texture(4).
     pub fn bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
         let texture_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
             binding,
@@ -97,6 +83,7 @@ impl MaterialTexturePool {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                texture_entry(4),
             ],
         })
     }
@@ -151,55 +138,42 @@ impl MaterialTexturePool {
         self.textures.is_empty()
     }
 
-    /// Resolves a texture view for `guid`, falling back to the slot's
-    /// identity texture when the GUID is `None` or unregistered.
-    fn view_or_fallback(&self, guid: Option<Guid>, slot: TextureSlot) -> &wgpu::TextureView {
-        let fallback = match slot {
-            TextureSlot::Albedo => &self.fallback_albedo,
-            TextureSlot::Normal => &self.fallback_normal,
-            TextureSlot::MetalRoughness => &self.fallback_metal_roughness,
+    /// The texture `slot` names, or its fallback when unassigned or not uploaded yet.
+    fn view_or_fallback(&self, slot: TextureRef) -> &wgpu::TextureView {
+        let fallback = match slot.fallback {
+            TextureDefault::White => &self.fallback_white,
+            TextureDefault::Black => &self.fallback_black,
+            TextureDefault::Normal => &self.fallback_normal,
         };
-        guid.and_then(|g| self.textures.get(&g))
+        slot.guid
+            .and_then(|g| self.textures.get(&g))
             .map(|t| &t.view)
             .unwrap_or(&fallback.view)
     }
 
-    /// Builds the per-material bind group. Any `None`/unregistered channel
-    /// binds its branch-free fallback, so the shader samples all three
-    /// unconditionally.
+    /// Builds the per-material bind group. Every slot binds something, so the shader samples all of
+    /// them unconditionally.
     pub fn material_bind_group(
         &self,
         device: &wgpu::Device,
-        albedo: Option<Guid>,
-        normal: Option<Guid>,
-        metal_roughness: Option<Guid>,
+        slots: &[TextureRef; MAX_PARAM_TEXTURES as usize],
     ) -> wgpu::BindGroup {
+        let texture = |binding: u32, slot: TextureRef| wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::TextureView(self.view_or_fallback(slot)),
+        };
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("material_texture_bg"),
             layout: &self.bgl,
             entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(
-                        self.view_or_fallback(albedo, TextureSlot::Albedo),
-                    ),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(
-                        self.view_or_fallback(normal, TextureSlot::Normal),
-                    ),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(
-                        self.view_or_fallback(metal_roughness, TextureSlot::MetalRoughness),
-                    ),
-                },
+                texture(0, slots[0]),
+                texture(1, slots[1]),
+                texture(2, slots[2]),
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
                 },
+                texture(4, slots[3]),
             ],
         })
     }

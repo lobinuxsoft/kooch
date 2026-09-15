@@ -10,6 +10,30 @@ fn the_extension_names_the_type() {
     assert!(!MaterialLoader.extensions().contains(&"ron"));
 }
 
+/// Shader values survive the file: what the Inspector wrote is what the next load reads.
+#[test]
+fn shader_values_round_trip() {
+    let mut material = Material::default();
+    let map = Guid::new_v4();
+    material.values.insert(
+        "tint".into(),
+        crate::material::ParamValue::Number([1.0, 0.5, 0.25, 1.0]),
+    );
+    material.values.insert(
+        "detail".into(),
+        crate::material::ParamValue::Texture(Some(map)),
+    );
+    let text = ron::ser::to_string_pretty(&material, ron::ser::PrettyConfig::default()).unwrap();
+    assert_eq!(ron::from_str::<Material>(&text).unwrap(), material);
+}
+
+/// A material with no values writes no `values` field, so existing files do not churn.
+#[test]
+fn empty_values_are_not_written() {
+    let text = ron::ser::to_string(&Material::default()).unwrap();
+    assert!(!text.contains("values"), "{text}");
+}
+
 /// 🔴 Every `.material` written before shaders existed keeps the default surface.
 #[test]
 fn a_missing_shader_is_default() {
