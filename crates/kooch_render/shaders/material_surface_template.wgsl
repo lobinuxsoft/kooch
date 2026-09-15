@@ -1,5 +1,4 @@
 // kind: surface
-#import kooch::surface
 
 // The material's fields: each member is one in the Inspector. Hints after `//` are optional.
 struct SurfaceParams {

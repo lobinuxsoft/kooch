@@ -55,8 +55,6 @@ to `(None)`.
 
 ```wgsl
 // kind: surface
-#import kooch::surface
-
 struct SurfaceParams {
     tint: vec4<f32>,       // @color
     strength: f32,         // @range(0, 4)
@@ -96,21 +94,16 @@ against its own parameters.
 
 ### Editing `.shader` files in VS Code
 
-Install [wgsl-analyzer](https://marketplace.visualstudio.com/items?itemName=wgsl-analyzer.wgsl-analyzer).
-Opening a project writes what `#import kooch::surface` stands for to `.kooch/shaders/kooch_surface.wgsl`,
-and — only if the project has none — a `.vscode/settings.json` that points wgsl-analyzer at it:
+Install [wgsl-analyzer](https://marketplace.visualstudio.com/items?itemName=wgsl-analyzer.wgsl-analyzer)
+and associate the extension in `settings.json`:
 
 ```json
-{
-  "files.associations": { "*.shader": "wgsl" },
-  "wgsl-analyzer.customImports": { "kooch::surface": "file:///path/to/project/.kooch/shaders/kooch_surface.wgsl" }
-}
+"files.associations": { "*.shader": "wgsl" }
 ```
 
-With `#import kooch::surface` at the top of the shader, `SurfaceInput`, `SurfaceOutput`,
-`sample_surface` and the material bindings resolve. `surface_params` does not: it is generated per
-shader from its `SurfaceParams`, so the analyzer marks it and what reads it. The editor's Console is
-the authority on whether a shader compiles.
+It highlights and checks the file, but it does not see what the engine composes around it, so
+`SurfaceInput`, `surface_params` and `sample_surface` read as undefined there. The editor's Console
+is the authority on whether a shader compiles.
 
 ## When a save does not compile
 

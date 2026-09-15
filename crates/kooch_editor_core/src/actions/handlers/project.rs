@@ -67,8 +67,6 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
                 // not before: this adds a second `[[bin]]`, and the one above is what stops cargo
                 // inferring the first from `src/main.rs`.
                 crate::actions::split_authoring(&root, &crate_name);
-                // What `#import kooch::surface` resolves to in an editor like VS Code (#1158).
-                crate::shader_sync::write_surface_api(&root);
 
                 // Then load it, if it has been built. Writing lib.rs does not produce a .so — that
                 // needs a compile — so the first open after a migration finds nothing and says so

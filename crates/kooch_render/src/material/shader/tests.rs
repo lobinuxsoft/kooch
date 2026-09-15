@@ -161,29 +161,6 @@ fn a_duplicate_param_fails() {
     assert!(Shader::parse("struct SurfaceParams { a: f32 }\nvar a: texture_2d<f32>;").is_err());
 }
 
-/// `#import kooch::surface` is for the editor's analyzer: blanked, so the next line keeps its number.
-#[test]
-fn the_import_is_blanked() {
-    let shader =
-        Shader::parse("// kind: surface\n#import kooch::surface\nvar a: texture_2d<f32>;").unwrap();
-    let lines: Vec<&str> = shader.source.lines().collect();
-    assert_eq!(lines[1], "");
-    assert!(
-        lines[2].starts_with("@group(4) @binding(0)"),
-        "{}",
-        lines[2]
-    );
-}
-
-#[test]
-fn an_unknown_import_fails() {
-    let error = Shader::parse("#import bevy_pbr::mesh_functions").unwrap_err();
-    assert!(
-        error.to_string().starts_with("line 1: unknown import"),
-        "{error}"
-    );
-}
-
 /// Bindings are the engine's: one written by hand could collide with the layout.
 #[test]
 fn a_surface_cannot_bind() {

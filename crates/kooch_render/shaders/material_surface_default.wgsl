@@ -1,5 +1,4 @@
 // kind: surface
-#import kooch::surface
 // The engine's PBR surface: albedo, tangent-space normal map, packed metal/roughness.
 
 var albedo_tex: texture_2d<f32>;        // @default(white)

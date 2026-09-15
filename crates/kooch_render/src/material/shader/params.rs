@@ -97,18 +97,6 @@ pub(super) fn read(source: &str) -> Result<Read, (usize, String)> {
             None => (raw, ""),
         };
         let code = code.trim();
-        // Not WGSL: the line wgsl-analyzer resolves through `customImports`. Blanked, so line
-        // numbers stay the author's.
-        if let Some(name) = code.strip_prefix("#import") {
-            if name.trim() != "kooch::surface" {
-                return Err((
-                    line,
-                    format!("unknown import `{}` (known: kooch::surface)", name.trim()),
-                ));
-            }
-            lines.push(String::new());
-            continue;
-        }
         if code.contains("@group") || code.contains("@binding") {
             return Err((
                 line,

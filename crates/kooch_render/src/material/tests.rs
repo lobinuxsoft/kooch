@@ -35,7 +35,7 @@ fn new_packs_scalars_correctly() {
 #[test]
 fn every_shader_agrees_on_the_material_layout() {
     const SHADERS: [&str; 2] = [
-        include_str!("../../shaders/kooch_surface.wgsl"),
+        include_str!("../../shaders/material_surface.wgsl"),
         include_str!("../../shaders/meshlet_deferred.wgsl"),
     ];
     // Rust's own, in declaration order.
