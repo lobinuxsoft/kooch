@@ -65,8 +65,8 @@ pub fn sync_shaders_system(resources: &mut Resources) {
 }
 
 /// Gives a project without VS Code settings a `.vscode/settings.json` that reads `.shader` as WGSL.
-/// wgsl-analyzer cannot see what the engine composes around a surface, so its type errors — every
-/// `SurfaceInput` — are off; syntax errors stay, and the Console is the authority.
+/// wgsl-analyzer cannot see what the engine composes around a surface, so what hinges on it is off:
+/// type errors, naga's unresolved names and `[error]` type hints. Its own syntax errors stay.
 pub(crate) fn write_vscode_settings(root: &Path) {
     let vscode = root.join(".vscode");
     let settings = vscode.join("settings.json");
@@ -75,7 +75,9 @@ pub(crate) fn write_vscode_settings(root: &Path) {
         return;
     }
     let text = "{\n  \"files.associations\": { \"*.shader\": \"wgsl\" },\n  \
-                \"wgsl-analyzer.diagnostics.typeErrors\": false\n}\n";
+                \"wgsl-analyzer.diagnostics.typeErrors\": false,\n  \
+                \"wgsl-analyzer.diagnostics.nagaParsingErrors\": false,\n  \
+                \"wgsl-analyzer.inlayHints.typeHints\": false\n}\n";
     match std::fs::create_dir_all(&vscode).and_then(|()| std::fs::write(&settings, text)) {
         Ok(()) => {
             tracing::info!(path = %settings.display(), "VS Code settings written for .shader files")

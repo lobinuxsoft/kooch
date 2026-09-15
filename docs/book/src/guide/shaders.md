@@ -100,13 +100,16 @@ Opening a project gives it — only if it has none — a `.vscode/settings.json`
 ```json
 {
   "files.associations": { "*.shader": "wgsl" },
-  "wgsl-analyzer.diagnostics.typeErrors": false
+  "wgsl-analyzer.diagnostics.typeErrors": false,
+  "wgsl-analyzer.diagnostics.nagaParsingErrors": false,
+  "wgsl-analyzer.inlayHints.typeHints": false
 }
 ```
 
 The analyzer reads one file and cannot see what the engine composes around a surface, so with type
-errors on, `SurfaceInput`, `surface_params` and everything built on them read as undefined. Off,
-it keeps highlighting and syntax errors. The editor's Console is the authority on whether a shader
+errors on, `SurfaceInput`, `surface_params` and everything built on them read as undefined, and
+every `let` gets an `[error]` type hint. With those off it keeps highlighting and its own syntax
+errors. The editor's Console is the authority on whether a shader
 compiles.
 
 ## When a save does not compile

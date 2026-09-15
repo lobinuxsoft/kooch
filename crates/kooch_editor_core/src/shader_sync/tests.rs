@@ -38,6 +38,9 @@ fn settings_are_written_once() {
         settings.contains("\"wgsl-analyzer.diagnostics.typeErrors\": false"),
         "{settings}"
     );
+    for key in ["nagaParsingErrors", "typeHints"] {
+        assert!(settings.contains(key), "{settings}");
+    }
     std::fs::remove_dir_all(root).unwrap();
 }
 
