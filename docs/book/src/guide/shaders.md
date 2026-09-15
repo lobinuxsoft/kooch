@@ -94,16 +94,20 @@ against its own parameters.
 
 ### Editing `.shader` files in VS Code
 
-Install [wgsl-analyzer](https://marketplace.visualstudio.com/items?itemName=wgsl-analyzer.wgsl-analyzer)
-and associate the extension in `settings.json`:
+Install [wgsl-analyzer](https://marketplace.visualstudio.com/items?itemName=wgsl-analyzer.wgsl-analyzer).
+Opening a project gives it — only if it has none — a `.vscode/settings.json`:
 
 ```json
-"files.associations": { "*.shader": "wgsl" }
+{
+  "files.associations": { "*.shader": "wgsl" },
+  "wgsl-analyzer.diagnostics.typeErrors": false
+}
 ```
 
-It highlights and checks the file, but it does not see what the engine composes around it, so
-`SurfaceInput`, `surface_params` and `sample_surface` read as undefined there. The editor's Console
-is the authority on whether a shader compiles.
+The analyzer reads one file and cannot see what the engine composes around a surface, so with type
+errors on, `SurfaceInput`, `surface_params` and everything built on them read as undefined. Off,
+it keeps highlighting and syntax errors. The editor's Console is the authority on whether a shader
+compiles.
 
 ## When a save does not compile
 

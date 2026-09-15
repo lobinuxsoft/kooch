@@ -1,7 +1,7 @@
 //! Hot reload for `.shader` files, which are written by an IDE rather than by the editor (#1157).
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use kooch_core::asset_database::AssetDatabase;
@@ -61,6 +61,28 @@ pub fn sync_shaders_system(resources: &mut Resources) {
     for path in changed {
         crate::actions::handlers::asset_saved(resources, &path);
         tracing::info!(path = %path.display(), "shader reloaded");
+    }
+}
+
+/// Gives a project without VS Code settings a `.vscode/settings.json` that reads `.shader` as WGSL.
+/// wgsl-analyzer cannot see what the engine composes around a surface, so its type errors — every
+/// `SurfaceInput` — are off; syntax errors stay, and the Console is the authority.
+pub(crate) fn write_vscode_settings(root: &Path) {
+    let vscode = root.join(".vscode");
+    let settings = vscode.join("settings.json");
+    // The author's own settings are theirs.
+    if settings.exists() {
+        return;
+    }
+    let text = "{\n  \"files.associations\": { \"*.shader\": \"wgsl\" },\n  \
+                \"wgsl-analyzer.diagnostics.typeErrors\": false\n}\n";
+    match std::fs::create_dir_all(&vscode).and_then(|()| std::fs::write(&settings, text)) {
+        Ok(()) => {
+            tracing::info!(path = %settings.display(), "VS Code settings written for .shader files")
+        }
+        Err(error) => {
+            tracing::warn!(path = %settings.display(), %error, "could not write VS Code settings")
+        }
     }
 }
 

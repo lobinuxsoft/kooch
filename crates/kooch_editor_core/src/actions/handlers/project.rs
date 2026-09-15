@@ -67,6 +67,8 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
                 // not before: this adds a second `[[bin]]`, and the one above is what stops cargo
                 // inferring the first from `src/main.rs`.
                 crate::actions::split_authoring(&root, &crate_name);
+                // So `.shader` files open as WGSL in VS Code (#1158).
+                crate::shader_sync::write_vscode_settings(&root);
 
                 // Then load it, if it has been built. Writing lib.rs does not produce a .so — that
                 // needs a compile — so the first open after a migration finds nothing and says so
