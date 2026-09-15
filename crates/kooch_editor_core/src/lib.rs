@@ -58,6 +58,7 @@ pub mod remote_mirror;
 pub mod remote_session;
 pub mod script_sync;
 pub mod shader_sync;
+pub(crate) mod shader_graph;
 
 /// 🔴 A profiling build with the per-system scopes compiled out is not a build that fails — it is a
 /// build whose captures look exactly like the ones from before the scopes existed.

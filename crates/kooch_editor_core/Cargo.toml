@@ -52,6 +52,7 @@ rfd.workspace = true
 dirs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+egui-snarl.workspace = true
 ron.workspace = true
 sysinfo.workspace = true
 

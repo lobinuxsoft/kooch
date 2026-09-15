@@ -36,6 +36,13 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
         EditorAction::SetMainScene { path } => set_main_scene(resources, path),
         EditorAction::OpenInIde { file } => open_in_ide(resources, file),
         EditorAction::OpenInputMap { path } => open_input_map(resources, path),
+        EditorAction::OpenShaderGraph { path } => open_shader_graph(resources, path),
+        EditorAction::SaveShaderGraph => save_shader_graph(resources),
+        EditorAction::ShaderGraphFocused => {
+            if let Some(open) = resources.get_mut::<crate::state::OpenShaderGraph>() {
+                open.focus_requested = false;
+            }
+        }
         EditorAction::EditInputMap(edit) => edit_input_map(resources, edit),
         EditorAction::SaveInputMap => save_input_map(resources),
         EditorAction::InputMapFocused => {
@@ -161,6 +168,25 @@ fn create_file(resources: &mut Resources, folder: &Path, name: &str, kind: NewFi
                 kooch_render::material::NEW_SURFACE_SHADER,
                 "shader",
             );
+            return;
+        }
+        NewFileKind::ShaderGraph => {
+            let file = unique_target(
+                folder,
+                OsStr::new(&format!(
+                    "{name}.{}",
+                    kooch_render::material::SHADER_EXTENSION
+                )),
+            );
+            let mut graph = crate::shader_graph::Graph::new();
+            graph.insert_node(
+                egui::Pos2::new(240.0, 120.0),
+                crate::shader_graph::Node::Output,
+            );
+            match crate::shader_graph::generate(&graph) {
+                Ok(source) => write_asset(resources, &file, &source, "shader graph"),
+                Err(reason) => tracing::error!("a new graph does not generate a shader: {reason}"),
+            }
             return;
         }
         NewFileKind::BuildPreset => {
@@ -789,6 +815,51 @@ mod delete_tests;
 mod settings_tests;
 
 /// Reads an `.inputmap` and hands it to the panel.
+/// Reads a generated `.shader` back into the Shader Graph panel (#1159).
+fn open_shader_graph(resources: &mut Resources, path: &std::path::Path) {
+    let Ok(source) = std::fs::read_to_string(path) else {
+        tracing::error!(file = %path.display(), "could not read the shader");
+        return;
+    };
+    let Some(graph) = crate::shader_graph::extract(&source) else {
+        tracing::warn!(
+            file = %path.display(),
+            "this shader was written by hand; the graph tool has nothing to open",
+        );
+        return;
+    };
+    resources.insert(crate::state::OpenShaderGraph {
+        path: path.to_path_buf(),
+        graph,
+        focus_requested: true,
+        dirty: false,
+    });
+}
+
+/// Generates the `.shader` from the open graph and writes it, so the render picks it up.
+fn save_shader_graph(resources: &mut Resources) {
+    let Some(open) = resources.get::<crate::state::OpenShaderGraph>() else {
+        return;
+    };
+    let (path, graph) = (open.path.clone(), open.graph.clone());
+    let source = match crate::shader_graph::generate(&graph) {
+        Ok(source) => source,
+        Err(reason) => {
+            tracing::error!("the graph does not generate a shader: {reason}");
+            return;
+        }
+    };
+    if let Err(error) = std::fs::write(&path, source) {
+        tracing::error!(file = %path.display(), %error, "could not write the shader");
+        return;
+    }
+    crate::actions::handlers::asset_saved(resources, &path);
+    if let Some(open) = resources.get_mut::<crate::state::OpenShaderGraph>() {
+        open.dirty = false;
+    }
+    tracing::info!(file = %path.display(), "shader written from its graph");
+}
+
 fn open_input_map(resources: &mut Resources, path: &std::path::Path) {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,

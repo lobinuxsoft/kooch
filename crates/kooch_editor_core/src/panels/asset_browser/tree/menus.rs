@@ -85,6 +85,14 @@ pub(super) fn folder_menu(
         start(CreateKind::File(NewFileKind::Shader));
         ui.close();
     }
+    if entry(
+        ui,
+        format!("{} New Shader Graph", icons::TREE_STRUCTURE),
+        FolderRole::Assets,
+    ) {
+        start(CreateKind::File(NewFileKind::ShaderGraph));
+        ui.close();
+    }
     // Scripts are code and go under `src/`; a scene and an input map are assets and go under
     // `assets/`.
     ui.menu_button(format!("{} New Script", icons::PLUS), |ui| {

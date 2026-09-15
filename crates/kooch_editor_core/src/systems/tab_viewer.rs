@@ -107,6 +107,8 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) asset_detail: Option<&'a AssetDetail>,
     /// The `.inputmap` open in the Input Map panel, if any.
     pub(crate) open_input_map: Option<&'a crate::state::OpenInputMap>,
+    /// The open shader graph, edited in place by the node panel (#1159).
+    pub(crate) open_shader_graph: Option<&'a mut crate::state::OpenShaderGraph>,
     /// Asset Browser folder selection — the drag-and-drop import target.
     pub(crate) current_folder: &'a mut Option<std::path::PathBuf>,
     /// Project / engine `assets/` roots, for the Asset Browser tree.
@@ -284,6 +286,43 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 *self.selected_asset,
                 self.asset_detail,
             ),
+            EditorTab::ShaderGraph => {
+                let path = self
+                    .open_shader_graph
+                    .as_ref()
+                    .map(|open| open.path.clone());
+                let dirty = self
+                    .open_shader_graph
+                    .as_ref()
+                    .is_some_and(|open| open.dirty);
+                let before = self
+                    .open_shader_graph
+                    .as_ref()
+                    .map(|open| open.graph.nodes().cloned().collect::<Vec<_>>());
+                let requested = crate::panels::shader_graph::draw_shader_graph_content(
+                    ui,
+                    crate::panels::shader_graph::ShaderGraphView {
+                        graph: self.open_shader_graph.as_mut().map(|open| &mut open.graph),
+                        path: path.as_deref(),
+                        dirty,
+                    },
+                );
+                // Anything the panel changed makes the file behind it stale.
+                if let Some(open) = self.open_shader_graph.as_mut()
+                    && before.is_some_and(|before| {
+                        before != open.graph.nodes().cloned().collect::<Vec<_>>()
+                    })
+                {
+                    open.dirty = true;
+                }
+                for request in requested {
+                    self.actions.push(match request {
+                        crate::panels::shader_graph::ShaderGraphAction::Save => {
+                            EditorAction::SaveShaderGraph
+                        }
+                    });
+                }
+            }
             EditorTab::Archetypes => draw_archetypes_content(ui, self.archetypes),
             // The map and the live values are not plumbed through yet —
             // the panel already says what to do with no map open, which

@@ -125,6 +125,33 @@ wgsl-analyzer settings through the IDE's language-server configuration:
   `file-types = ["wgsl", "shader"]`. Helix replaces the list rather than extending it, so the
   built-in `wgsl` has to be repeated.
 
+## The shader graph
+
+A shader can be authored as nodes instead of code. **Asset Browser → right-click a folder → New
+Shader Graph** writes a `.shader` with an empty graph; double-clicking any `.shader` opens it in the
+**Shader Graph** panel.
+
+🔴 **The graph owns the file.** It rides in a block comment at the top — the way Shader Forge carries
+`/*SF_DATA;…*/` — and everything below it is generated: parameters, defaults, textures and the
+`surface` function. Saving the graph rewrites all of it, so edits made by hand there are lost. A
+shader written by hand carries no graph, and the panel says so rather than opening an empty one.
+
+Right-click the background to add a node, drag between pins to wire them, and press **Save** to write
+the shader. Every wire carries a `vec4<f32>`: unused components are zero, and each node reads the
+components it needs, so any output plugs into any input.
+
+| Node | Gives |
+|---|---|
+| UV, World Normal, World Position, View Direction | the shaded point, from `SurfaceInput` |
+| Param | one member of `SurfaceParams`: its name, width, colour hint and starting value |
+| Texture | a `var name: texture_2d<f32>;` sampled at the uv it is given |
+| Constant | a value written into the shader rather than the material |
+| Add, Multiply, Mix, Dot, Power, Saturate | the arithmetic |
+| Surface Output | base colour, normal, metallic, roughness, emissive |
+
+An unconnected output keeps a usable default: the geometric normal, roughness `0.5`, and zero for the
+rest — so half a graph still renders.
+
 ## When a save does not compile
 
 The engine checks the shader before building anything from it. A broken save keeps the last

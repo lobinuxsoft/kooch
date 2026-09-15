@@ -37,6 +37,8 @@ pub(crate) enum EditorTab {
     Components,
     AssetBrowser,
     InputMap,
+    /// The shader graph, which owns the `.shader` it generates (#1159).
+    ShaderGraph,
     Console,
     /// Making a shipped game out of the project (#758).
     Build,
@@ -47,6 +49,20 @@ pub(crate) enum EditorTab {
     Performance,
     /// What runs each frame, and what is switched off (#982).
     Systems,
+}
+
+/// The `.shader` open in the Shader Graph panel, as its graph.
+///
+/// 🔴 The graph, not the file: the panel edits it and the file is generated from it on save. Cloned
+/// into the dock each frame, like the input map — `egui-snarl` edits the graph while it draws it.
+#[derive(Clone)]
+pub(crate) struct OpenShaderGraph {
+    pub path: std::path::PathBuf,
+    pub graph: crate::shader_graph::Graph,
+    /// Set when the panel should be brought to the front. Cleared by the dock once it has.
+    pub focus_requested: bool,
+    /// Whether the graph diverges from the file it was read from.
+    pub dirty: bool,
 }
 
 /// The `.inputmap` currently open in the Input Map panel.
@@ -89,6 +105,7 @@ pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::Console,
     EditorTab::AssetBrowser,
     EditorTab::InputMap,
+    EditorTab::ShaderGraph,
     EditorTab::Build,
     EditorTab::Profiler,
     EditorTab::Performance,
@@ -110,6 +127,7 @@ impl EditorTab {
             Self::Components => format!("{} Components", crate::icons::LIST_BULLETS),
             Self::AssetBrowser => format!("{} Assets", crate::icons::FOLDER_OPEN),
             Self::InputMap => format!("{} Input Map", crate::icons::SLIDERS),
+            Self::ShaderGraph => format!("{} Shader Graph", crate::icons::TREE_STRUCTURE),
             Self::Console => format!("{} Console", crate::icons::TERMINAL),
             Self::Build => format!("{} Build", crate::icons::PACKAGE),
             Self::Profiler => format!("{} Profiler", crate::icons::CHART_BAR),
