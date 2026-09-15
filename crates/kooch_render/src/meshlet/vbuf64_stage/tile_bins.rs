@@ -18,6 +18,25 @@ const HEADER: u64 = 3 + SLOTS;
 /// List entries per tile before binning gives up and every material covers the grid again.
 const ENTRIES_PER_TILE: u64 = 4;
 
+/// `KOOCH_TILE_BINS=off` (or `0`, `false`) forces the whole-grid fallback, for an A/B against the
+/// binned lists. Read once.
+fn binning_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let off = matches!(
+            std::env::var("KOOCH_TILE_BINS").ok().as_deref(),
+            Some("off" | "0" | "false")
+        );
+        if off {
+            tracing::info!(
+                target: "kooch_render::vbuf64_stage",
+                "KOOCH_TILE_BINS=off: every material dispatches over the whole tile grid",
+            );
+        }
+        !off
+    })
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct BinParams {
@@ -46,12 +65,9 @@ pub(super) struct Binned {
 
 pub(super) struct TileBins {
     classify: wgpu::ComputePipeline,
-    offsets: wgpu::ComputePipeline,
-    scatter: wgpu::ComputePipeline,
+    lists: wgpu::ComputePipeline,
     bgl: wgpu::BindGroupLayout,
     params: wgpu::Buffer,
-    counts: wgpu::Buffer,
-    cursor: wgpu::Buffer,
     args: wgpu::Buffer,
     grid: Mutex<Option<Grid>>,
 }
@@ -102,8 +118,6 @@ impl TileBins {
                 storage(4, false),
                 storage(5, false),
                 storage(6, false),
-                storage(7, false),
-                storage(8, false),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -132,16 +146,13 @@ impl TileBins {
         use wgpu::BufferUsages as U;
         Self {
             classify: pipeline("cs_classify"),
-            offsets: pipeline("cs_offsets"),
-            scatter: pipeline("cs_scatter"),
+            lists: pipeline("cs_lists"),
             bgl,
             params: buffer(
                 "material_tile_bins_params",
                 std::mem::size_of::<BinParams>() as u64,
                 U::UNIFORM | U::COPY_DST,
             ),
-            counts: buffer("material_tile_counts", SLOTS * 4, U::STORAGE | U::COPY_DST),
-            cursor: buffer("material_tile_cursor", SLOTS * 4, U::STORAGE),
             // COPY_SRC so a test can read what the GPU decided.
             args: buffer(
                 "material_tile_args",
@@ -195,11 +206,15 @@ impl TileBins {
                 tiles: [tiles.0, tiles.1],
                 shading_rate: rate,
                 slots: slots.min(SLOTS as u32),
-                capacity: count * ENTRIES_PER_TILE as u32,
+                // Zero overflows on the first covered tile, which is the fallback.
+                capacity: if binning_enabled() {
+                    count * ENTRIES_PER_TILE as u32
+                } else {
+                    0
+                },
                 _pad: 0,
             }),
         );
-        queue.write_buffer(&self.counts, 0, &[0; SLOTS as usize * 4]);
 
         let entries = [
             wgpu::BindingResource::TextureView(vbuf_view),
@@ -207,8 +222,6 @@ impl TileBins {
             instances.as_entire_binding(),
             self.params.as_entire_binding(),
             grid.bits.as_entire_binding(),
-            self.counts.as_entire_binding(),
-            self.cursor.as_entire_binding(),
             grid.bins.as_entire_binding(),
             self.args.as_entire_binding(),
         ];
@@ -233,10 +246,8 @@ impl TileBins {
         pass.set_bind_group(0, &bind_group, &[]);
         pass.set_pipeline(&self.classify);
         pass.dispatch_workgroups(tiles.0, tiles.1, 1);
-        pass.set_pipeline(&self.offsets);
+        pass.set_pipeline(&self.lists);
         pass.dispatch_workgroups(1, 1, 1);
-        pass.set_pipeline(&self.scatter);
-        pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
         drop(pass);
 
         Binned {

@@ -1,6 +1,9 @@
 // material_tile_bins.wgsl — the tiles each material covers, so compute shading dispatches a material
-// only over those (#1157), the way Nanite bins shading by material. Three entry points, run in order:
-// `cs_classify` over the tiles, `cs_offsets` once, `cs_scatter` over the tiles.
+// only over those (#1157), the way Nanite bins shading by material. Two entry points, run in order:
+// `cs_classify` over the tiles, then `cs_lists` once.
+//
+// 🔴 No atomics on buffers. RADV does not make them atomic: concurrent `atomicAdd`s on a shared
+// counter lost updates and left tile-sized holes. Every write here has exactly one writer.
 
 struct MeshInstance {
     transform: mat4x4<f32>,
@@ -28,6 +31,7 @@ struct BinParams {
 }
 
 const TILE_SIZE: u32 = 16u;
+const TILE_THREADS: u32 = 256u;
 const MAX_SLOTS: u32 = 256u;
 // One bit per slot.
 const WORDS: u32 = 8u;
@@ -41,11 +45,12 @@ const ROW: u32 = 4096u;
 @group(0) @binding(1) var<storage, read> visible_meshlets: array<u32>;
 @group(0) @binding(2) var<storage, read> instances: array<MeshInstance>;
 @group(0) @binding(3) var<uniform> params: BinParams;
-@group(0) @binding(4) var<storage, read_write> tile_bits: array<atomic<u32>>;
-@group(0) @binding(5) var<storage, read_write> counts: array<atomic<u32>, MAX_SLOTS>;
-@group(0) @binding(6) var<storage, read_write> cursor: array<atomic<u32>, MAX_SLOTS>;
-@group(0) @binding(7) var<storage, read_write> bins: array<u32>;
-@group(0) @binding(8) var<storage, read_write> args: array<u32>;
+@group(0) @binding(4) var<storage, read_write> tile_bits: array<u32>;
+@group(0) @binding(5) var<storage, read_write> bins: array<u32>;
+@group(0) @binding(6) var<storage, read_write> args: array<u32>;
+
+// Each thread's material, written only by that thread.
+var<workgroup> thread_slot: array<u32, TILE_THREADS>;
 
 // 🔴 The same representative the shading frame picks: the first covered pixel of the quad.
 @compute @workgroup_size(16, 16, 1)
@@ -54,13 +59,6 @@ fn cs_classify(
     @builtin(local_invocation_id) local: vec3<u32>,
     @builtin(local_invocation_index) lid: u32,
 ) {
-    // No early return above the last barrier: a thread that leaves skips its neighbours' barriers.
-    let base = (tile_id.y * params.tiles.x + tile_id.x) * WORDS;
-    if (lid < WORDS) {
-        atomicStore(&tile_bits[base + lid], 0u);
-    }
-    workgroupBarrier();
-
     let rate = params.shading_rate;
     let origin = (tile_id.xy * TILE_SIZE + local.xy) * rate;
     var slot = MAX_SLOTS;
@@ -75,28 +73,47 @@ fn cs_classify(
             }
         }
     }
-    if (slot < params.slots) {
-        atomicOr(&tile_bits[base + (slot >> 5u)], 1u << (slot & 31u));
-    }
+    thread_slot[lid] = slot;
+    // No early return above: a thread that leaves skips its neighbours' barrier.
     workgroupBarrier();
 
     if (lid == 0u) {
-        for (var w = 0u; w < WORDS; w = w + 1u) {
-            var bits = atomicLoad(&tile_bits[base + w]);
-            while (bits != 0u) {
-                atomicAdd(&counts[w * 32u + firstTrailingBit(bits)], 1u);
-                bits = bits & (bits - 1u);
+        var words: array<u32, WORDS>;
+        for (var t = 0u; t < TILE_THREADS; t = t + 1u) {
+            let s = thread_slot[t];
+            if (s < params.slots) {
+                words[s >> 5u] = words[s >> 5u] | (1u << (s & 31u));
             }
+        }
+        let base = (tile_id.y * params.tiles.x + tile_id.x) * WORDS;
+        for (var w = 0u; w < WORDS; w = w + 1u) {
+            tile_bits[base + w] = words[w];
         }
     }
 }
 
+// One invocation: counts, first entries, dispatch arguments, then the lists.
 @compute @workgroup_size(1)
-fn cs_offsets() {
+fn cs_lists() {
+    let tile_count = params.tiles.x * params.tiles.y;
+    var counts: array<u32, MAX_SLOTS>;
+    for (var tile = 0u; tile < tile_count; tile = tile + 1u) {
+        for (var w = 0u; w < WORDS; w = w + 1u) {
+            var bits = tile_bits[tile * WORDS + w];
+            while (bits != 0u) {
+                let s = w * 32u + firstTrailingBit(bits);
+                counts[s] = counts[s] + 1u;
+                bits = bits & (bits - 1u);
+            }
+        }
+    }
+
+    var first: array<u32, MAX_SLOTS>;
     var total = 0u;
     for (var s = 0u; s < MAX_SLOTS; s = s + 1u) {
+        first[s] = total;
         bins[2u + s] = total;
-        total = total + atomicLoad(&counts[s]);
+        total = total + counts[s];
     }
     bins[2u + MAX_SLOTS] = total;
     // Past capacity every covered material dispatches over the whole grid, as before binning.
@@ -104,8 +121,7 @@ fn cs_offsets() {
     bins[0] = select(0u, 1u, overflow);
     bins[1] = params.tiles.x;
     for (var s = 0u; s < MAX_SLOTS; s = s + 1u) {
-        atomicStore(&cursor[s], 0u);
-        let count = atomicLoad(&counts[s]);
+        let count = counts[s];
         var dispatch = vec3<u32>(0u, 1u, 1u);
         if (count > 0u && overflow) {
             dispatch = vec3<u32>(params.tiles, 1u);
@@ -116,22 +132,19 @@ fn cs_offsets() {
         args[s * 3u + 1u] = dispatch.y;
         args[s * 3u + 2u] = dispatch.z;
     }
-}
-
-@compute @workgroup_size(64)
-fn cs_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
-    let tile = id.x;
-    if (tile >= params.tiles.x * params.tiles.y || bins[0] != 0u) {
+    if (overflow) {
         return;
     }
-    for (var w = 0u; w < WORDS; w = w + 1u) {
-        var bits = atomicLoad(&tile_bits[tile * WORDS + w]);
-        while (bits != 0u) {
-            let slot = w * 32u + firstTrailingBit(bits);
-            // Returns the value before the add: each tile of a slot gets its own entry.
-            let at = atomicAdd(&cursor[slot], 1u);
-            bins[LIST + bins[2u + slot] + at] = tile;
-            bits = bits & (bits - 1u);
+
+    for (var tile = 0u; tile < tile_count; tile = tile + 1u) {
+        for (var w = 0u; w < WORDS; w = w + 1u) {
+            var bits = tile_bits[tile * WORDS + w];
+            while (bits != 0u) {
+                let s = w * 32u + firstTrailingBit(bits);
+                bins[LIST + first[s]] = tile;
+                first[s] = first[s] + 1u;
+                bits = bits & (bits - 1u);
+            }
         }
     }
 }

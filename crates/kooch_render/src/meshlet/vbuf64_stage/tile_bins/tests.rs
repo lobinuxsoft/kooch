@@ -58,14 +58,11 @@ fn read(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Ve
     bytemuck::cast_slice(&staging.slice(..).get_mapped_range()).to_vec()
 }
 
-/// 🔴 Two tiles: the left all material 1, the right material 1 with a row of material 2. Material 1
-/// dispatches over both tiles, material 2 over the right one only, and the fallback over none.
-#[test]
-fn each_material_gets_its_tiles() {
-    let Some((device, queue)) = device() else {
-        eprintln!("no adapter with the vbuf64 features; skipped");
-        return;
-    };
+/// Two tiles: the left all material 1, the right material 1 with a row of material 2.
+fn two_tiles(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (wgpu::Texture, wgpu::Buffer, wgpu::Buffer) {
     let (width, height) = (32u32, 16u32);
     let vbuf = device.create_texture(&wgpu::TextureDescriptor {
         label: None,
@@ -117,7 +114,19 @@ fn each_material_gets_its_tiles() {
     let mut instances = [0u32; 48];
     instances[17] = 1;
     instances[24 + 17] = 2;
-    let instances = storage(&instances);
+    (vbuf, visible_meshlets, storage(&instances))
+}
+
+/// Material 1 dispatches over both tiles, material 2 over the right one only, and the fallback over
+/// none.
+#[test]
+fn each_material_gets_its_tiles() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter with the vbuf64 features; skipped");
+        return;
+    };
+    let (width, height) = (32u32, 16u32);
+    let (vbuf, visible_meshlets, instances) = two_tiles(&device, &queue);
 
     let bins = TileBins::new(&device);
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -150,4 +159,166 @@ fn each_material_gets_its_tiles() {
     assert_eq!(list(1), vec![0, 1]);
     assert_eq!(list(2), vec![1]);
     assert_eq!(&args[0..9], &[0, 1, 1, 2, 1, 1, 1, 1, 1]);
+}
+
+/// 🔴 The editor bins more than once before a submit. Every binning has to start from zero, not
+/// from what the previous one counted.
+#[test]
+fn a_second_binning_starts_clean() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter with the vbuf64 features; skipped");
+        return;
+    };
+    let (vbuf, visible_meshlets, instances) = two_tiles(&device, &queue);
+    let view = vbuf.create_view(&Default::default());
+    let bins = TileBins::new(&device);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    let mut bin = |encoder: &mut wgpu::CommandEncoder| {
+        bins.bin(
+            &device,
+            &queue,
+            encoder,
+            &view,
+            &visible_meshlets,
+            &instances,
+            (32, 16),
+            (2, 1),
+            1,
+            3,
+        )
+    };
+    bin(&mut encoder);
+    let binned = bin(&mut encoder);
+    queue.submit([encoder.finish()]);
+
+    let words = read(&device, &queue, &binned.bins);
+    assert_eq!(&words[2..6], &[0, 0, 2, 3], "first entries of slots 0..3");
+    let args = read(&device, &queue, &binned.args);
+    assert_eq!(&args[0..9], &[0, 1, 1, 2, 1, 1, 1, 1, 1]);
+}
+
+/// 🔴 From the smoke test: tile-sized holes that moved every frame. A screen of tiles mixing
+/// materials, binned several times, has to match the lists a CPU builds from the same texels.
+#[test]
+fn a_busy_screen_bins_exactly() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no adapter with the vbuf64 features; skipped");
+        return;
+    };
+    let (tiles_x, tiles_y) = (40u32, 30u32);
+    let (width, height) = (tiles_x * 16, tiles_y * 16);
+    const INSTANCES: u32 = 64;
+    // Each tile mixes up to three instances, pixel by pixel.
+    let hash = |v: u32| {
+        v.wrapping_mul(2654435761)
+            .rotate_left(13)
+            .wrapping_mul(40503)
+    };
+    let instance_at = |x: u32, y: u32| {
+        let tile = (y / 16) * tiles_x + x / 16;
+        let pick = hash(x * 7 + y * 131) % 3;
+        (hash(tile) + pick) % INSTANCES
+    };
+    // Spread over every bit word, not just the first.
+    let material_of = |instance: u32| 1 + (instance * 37) % 255;
+
+    let mut texels = Vec::with_capacity((width * height) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            texels.push((1u64 << 32) | (u64::from(instance_at(x, y)) << 7));
+        }
+    }
+    let mut expected = vec![std::collections::BTreeSet::new(); 256];
+    for y in 0..height {
+        for x in 0..width {
+            let tile = (y / 16) * tiles_x + x / 16;
+            expected[material_of(instance_at(x, y)) as usize].insert(tile);
+        }
+    }
+
+    let vbuf = device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: VBUF64_FORMAT,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        vbuf.as_image_copy(),
+        bytemuck::cast_slice(&texels),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(width * 8),
+            rows_per_image: Some(height),
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    let storage = |words: &[u32]| {
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (words.len() * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buffer, 0, bytemuck::cast_slice(words));
+        buffer
+    };
+    let meshlets: Vec<u32> = (0..INSTANCES).map(|i| i << 16).collect();
+    let visible_meshlets = storage(&meshlets);
+    let mut instances = vec![0u32; 24 * INSTANCES as usize];
+    for i in 0..INSTANCES {
+        instances[24 * i as usize + 17] = material_of(i);
+    }
+    let instances = storage(&instances);
+    let view = vbuf.create_view(&Default::default());
+
+    let bins = TileBins::new(&device);
+    for frame in 0..5 {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let binned = bins.bin(
+            &device,
+            &queue,
+            &mut encoder,
+            &view,
+            &visible_meshlets,
+            &instances,
+            (width, height),
+            (tiles_x, tiles_y),
+            1,
+            256,
+        );
+        queue.submit([encoder.finish()]);
+        let words = read(&device, &queue, &binned.bins);
+        assert_eq!(words[0], 0, "frame {frame} overflowed");
+        for (slot, want) in expected.iter().enumerate() {
+            let (first, end) = (words[2 + slot] as usize, words[3 + slot] as usize);
+            let got: std::collections::BTreeSet<u32> = words
+                [HEADER as usize + first..HEADER as usize + end]
+                .iter()
+                .copied()
+                .collect();
+            assert_eq!(
+                end - first,
+                want.len(),
+                "frame {frame}: material {slot} has {} entries, expected {}",
+                end - first,
+                want.len()
+            );
+            assert_eq!(
+                &got, want,
+                "frame {frame}: material {slot} lists other tiles"
+            );
+        }
+    }
 }

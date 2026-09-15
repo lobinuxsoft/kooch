@@ -40,16 +40,22 @@ pub struct Rig {
 
 /// A floor, `lights x lights` point lights above it, and a camera looking down the length of it.
 pub fn rig(lights: u32, wall: bool) -> Option<Rig> {
-    build(lights, wall, false)
+    build(lights, wall, false, false)
+}
+
+/// The floor and wall on two materials, and a row of blocks on two more, so most tiles along their
+/// edges hold several materials (#1157).
+pub fn rig_mixed(lights: u32) -> Option<Rig> {
+    build(lights, true, false, true)
 }
 
 /// The same scene plus **one blue shadow-casting light**, and the shadow atlas switched on so it is
 /// given a slot.
 pub fn rig_with_caster(lights: u32) -> Option<Rig> {
-    build(lights, true, true)
+    build(lights, true, true, false)
 }
 
-fn build(lights: u32, wall: bool, caster: bool) -> Option<Rig> {
+fn build(lights: u32, wall: bool, caster: bool, mixed: bool) -> Option<Rig> {
     let (device, queue) = try_acquire_device_r64()?;
 
     let meshlet_mesh = build_default_meshlets(&build_cube_mesh()).expect("build meshlets");
@@ -70,13 +76,24 @@ fn build(lights: u32, wall: bool, caster: bool) -> Option<Rig> {
         ..Default::default()
     });
 
-    let mut materials = MaterialPipeline::with_capacity(&device, &queue, 4);
+    let mut materials = MaterialPipeline::with_capacity(&device, &queue, 8);
     let material_guid = Guid::new_v4();
     materials.register(
         &queue,
         material_guid,
         &Material::new([0.8, 0.8, 0.8, 1.0], 0.1, 0.4, 0.0),
     );
+    // Unused unless `mixed`: the other three looks, one per role.
+    let others = [
+        [0.9, 0.5, 0.1, 1.0],
+        [0.1, 0.8, 0.4, 1.0],
+        [0.2, 0.3, 0.9, 1.0],
+    ]
+    .map(|colour| {
+        let guid = Guid::new_v4();
+        materials.register(&queue, guid, &Material::new(colour, 0.0, 0.6, 0.0));
+        guid
+    });
     resources.insert(materials);
 
     // 🔴 `Vbuf64Support` defaults to *unsupported*, so a config built with `..Default::default()`
@@ -86,7 +103,7 @@ fn build(lights: u32, wall: bool, caster: bool) -> Option<Rig> {
         &device,
         MeshletRenderStageConfig {
             size: (SIZE, SIZE),
-            instance_capacity: 8,
+            instance_capacity: 16,
             meshlet_capacity: 1024,
             vbuf64: Vbuf64Support::detect(&device),
             // The R64 path asserts the density accumulator exists; the
@@ -98,12 +115,12 @@ fn build(lights: u32, wall: bool, caster: bool) -> Option<Rig> {
     stage.ensure_gpu_mesh(&device, mesh_guid, &meshlet_mesh);
 
     let mut commands = Commands::new();
-    let mut box_at = |resources: &mut Resources, matrix: Mat4| {
+    let mut box_at = |resources: &mut Resources, matrix: Mat4, material: Guid| {
         commands
             .spawn(resources)
             .insert(MeshRenderer {
                 mesh: Some(mesh_guid),
-                material: Some(material_guid),
+                material: Some(material),
                 visible: true,
                 ..Default::default()
             })
@@ -116,13 +133,25 @@ fn build(lights: u32, wall: bool, caster: bool) -> Option<Rig> {
         &mut resources,
         Mat4::from_translation(Vec3::new(0.0, -0.25, 0.0))
             * Mat4::from_scale(Vec3::new(20.0, 0.5, 20.0)),
+        material_guid,
     );
     if wall {
         box_at(
             &mut resources,
             Mat4::from_translation(Vec3::new(0.0, 1.5, -2.0))
                 * Mat4::from_scale(Vec3::new(6.0, 3.0, 0.4)),
+            if mixed { others[0] } else { material_guid },
         );
+    }
+    if mixed {
+        for i in 0..6 {
+            box_at(
+                &mut resources,
+                Mat4::from_translation(Vec3::new(i as f32 * 0.9 - 2.25, 0.3, 1.5))
+                    * Mat4::from_scale(Vec3::splat(0.6)),
+                others[1 + i % 2],
+            );
+        }
     }
 
     // A grid of short-range lights: several reach any given point, and
