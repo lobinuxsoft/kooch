@@ -14,14 +14,6 @@ const GREEN_OFFSET: &str = "vec2<f32>(19.1, 7.3)";
 const BLUE_OFFSET: &str = "vec2<f32>(-5.7, 31.4)";
 
 impl Body<'_> {
-    /// A `let` for `expr`, so a coordinate read several times is written once.
-    fn local(&mut self, expr: &str) -> String {
-        let name = format!("l{}", self.locals);
-        self.locals += 1;
-        self.lines.push_str(&format!("    let {name} = {expr};\n"));
-        name
-    }
-
     fn wired_in(&self, node: NodeId, input: usize) -> bool {
         self.wires.contains_key(&InPinId { node, input })
     }

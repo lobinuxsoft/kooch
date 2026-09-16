@@ -145,6 +145,14 @@ pub(crate) enum Node {
     Rotator,
     /// `uv * tiling + offset`.
     Tiling,
+    /// A coordinate as its distance from a centre and its angle around it: radial sweeps, dartboards.
+    PolarCoordinates,
+    /// Swirls a coordinate around a centre, more the further out.
+    Twirl,
+    /// Shears a coordinate around a centre, a spiral that grows with the square of the distance.
+    RadialShear,
+    /// Bulges a coordinate out from a centre, like a lens.
+    Spherize,
     /// Towards grey, by amount.
     Desaturate,
     /// Two colours combined the way an image editor does.
@@ -202,6 +210,8 @@ pub(crate) enum Category {
     Constant,
     Math,
     Vector,
+    /// Coordinates in, coordinates out: what moves, turns or warps a texture's uv.
+    Uv,
     Effect,
     Shape,
     Noise,
@@ -210,11 +220,12 @@ pub(crate) enum Category {
 
 impl Category {
     /// In menu order.
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 9] = [
         Self::Input,
         Self::Constant,
         Self::Math,
         Self::Vector,
+        Self::Uv,
         Self::Effect,
         Self::Shape,
         Self::Noise,
@@ -227,6 +238,7 @@ impl Category {
             Self::Constant => "Constants",
             Self::Math => "Math",
             Self::Vector => "Vector",
+            Self::Uv => "UV",
             Self::Effect => "Effects",
             Self::Shape => "Shapes",
             Self::Noise => "Noise",
@@ -327,6 +339,10 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::Panner,
         Node::Rotator,
         Node::Tiling,
+        Node::PolarCoordinates,
+        Node::Twirl,
+        Node::RadialShear,
+        Node::Spherize,
         Node::Desaturate,
         Node::Blend {
             mode: "multiply".to_owned(),

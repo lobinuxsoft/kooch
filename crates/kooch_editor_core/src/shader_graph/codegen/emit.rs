@@ -1,6 +1,7 @@
 //! One `let` per node, in dependency order: what each node is as a WGSL expression (#1159).
 
 mod noise;
+mod uv;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
@@ -29,6 +30,14 @@ impl Body<'_> {
     /// unconnected input reads as zero: half a graph still renders.
     fn input(&mut self, node: NodeId, input: usize) -> Result<String, String> {
         self.input_or(node, input, "vec4<f32>(0.0)")
+    }
+
+    /// A `let` for `expr`, so a value read several times is written once.
+    fn local(&mut self, expr: &str) -> String {
+        let name = format!("l{}", self.locals);
+        self.locals += 1;
+        let _ = writeln!(self.lines, "    let {name} = {expr};");
+        name
     }
 
     /// The same, with what an unconnected input reads as.
@@ -250,6 +259,9 @@ impl Body<'_> {
                 let (uv, tiling, offset) =
                     (argument(self, 0)?, argument(self, 1)?, argument(self, 2)?);
                 format!("vec4<f32>({uv}.xy * {tiling}.xy + {offset}.xy, 0.0, 0.0)")
+            }
+            Node::PolarCoordinates | Node::Twirl | Node::RadialShear | Node::Spherize => {
+                self.distortion(id, &node)?
             }
             Node::Desaturate => {
                 let (colour, amount) = (argument(self, 0)?, argument(self, 1)?);
