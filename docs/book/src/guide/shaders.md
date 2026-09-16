@@ -173,10 +173,14 @@ The menu groups the nodes the way the panels do:
   blend mode — is a dropdown, so a node stays about as wide as its title.
 - **Texture** writes a `var name: texture_2d<f32>;` and samples it at the uv it is given. **Unpack
   Normal** turns that sample into a world-space normal through the mesh's tangent frame.
-- **Time** is `x` seconds, `y` its sine, `z` its cosine, `w` a tenth of it — what **Panner** scrolls
-  a coordinate with.
-- A node that answers with several different things has an output pin for each — **Voronoi**, and
-  **Split**, which takes a vector apart into `x`, `y`, `z` and `w`. Every other node has one output.
+- **Time** is seconds, its sine, its cosine and a tenth of it, one pin each — the clock **Panner**
+  scrolls a coordinate with.
+- **Outputs come whole and in channels.** A colour — Texture, Color, Blend, Desaturate — has **RGBA**,
+  **RGB**, **R**, **G**, **B** and **A**; a position or direction has **XYZ**, **X**, **Y**, **Z**; UV
+  has **UV**, **U**, **V**; a vector has its whole and each component. The first pin is always the whole
+  value. **Time** comes apart only — *time*, *sine*, *cosine*, *tenth* — and so do **Voronoi** and
+  **Split**, because together those four numbers mean nothing. Maths, noises and shapes answer with one
+  value; **Split** takes any of them apart.
 - **Swizzle** reorders components (`xyzw` passes through, `xxxx` splashes the first, `yx` swaps), and
   **Combine** builds a vector from four numbers.
 - **Noise**: Value, Gradient (Perlin) and Simplex take an **octaves** input — left unconnected it is

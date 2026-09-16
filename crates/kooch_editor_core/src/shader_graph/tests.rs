@@ -437,9 +437,48 @@ fn every_output_is_its_own_value() {
     }
 }
 
-/// A node with one output hands over its value untouched.
+/// Pin 0 is the whole value; a colour's RGB drops alpha; a channel reads one component.
 #[test]
-fn a_single_output_is_the_value() {
+fn each_pin_reads_its_part() {
+    let texture = Node::Texture {
+        name: "albedo".to_owned(),
+        fallback: "white".to_owned(),
+        preview: None,
+    };
     assert_eq!(Node::Add.output_of("n3", 0), "n3");
+    assert_eq!(texture.output_of("n3", 0), "n3");
+    assert_eq!(texture.output_of("n3", 1), "vec4<f32>(n3.xyz, 0.0)");
+    assert_eq!(texture.output_of("n3", 5), "vec4<f32>(n3.w)");
     assert_eq!(Node::Voronoi.output_of("n3", 2), "vec4<f32>(n3.z)");
+}
+
+/// 🔴 Every pin of every node the menu offers generates a shader naga accepts. Each pin is its own
+/// expression, and `every_node_compiles` only ever wires the first.
+#[test]
+fn every_pin_compiles() {
+    for node in palette() {
+        for pin in 1..node.outputs().len() {
+            let name = format!("{} → {}", node.title(), node.outputs()[pin].0);
+            let mut graph = Graph::new();
+            let added = graph.insert_node(Pos2::ZERO, node.clone());
+            let output = graph.insert_node(Pos2::ZERO, Node::Output);
+            graph.connect(
+                OutPinId {
+                    node: added,
+                    output: pin,
+                },
+                InPinId {
+                    node: output,
+                    input: 0,
+                },
+            );
+
+            let source =
+                generate(&graph).unwrap_or_else(|why| panic!("{name} generates nothing: {why}"));
+            let shader =
+                Shader::parse(&source).unwrap_or_else(|why| panic!("{name} does not parse: {why}"));
+            kooch_render::meshlet::validate_surface(&shader.params_wgsl(), &shader.source)
+                .unwrap_or_else(|why| panic!("{name} does not compile: {why}"));
+        }
+    }
 }

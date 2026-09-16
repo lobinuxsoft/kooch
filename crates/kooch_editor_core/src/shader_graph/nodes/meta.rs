@@ -2,6 +2,68 @@
 
 use super::{Category, Node};
 
+/// What an output pin reads of its node's value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Pick {
+    /// All four components, as the node produced them.
+    Whole,
+    /// The first three, for a colour without its alpha.
+    Rgb,
+    /// One component, in every channel of the wire.
+    Channel(usize),
+}
+
+const WHOLE: &[(&str, Pick)] = &[("out", Pick::Whole)];
+const RGBA: &[(&str, Pick)] = &[
+    ("RGBA", Pick::Whole),
+    ("RGB", Pick::Rgb),
+    ("R", Pick::Channel(0)),
+    ("G", Pick::Channel(1)),
+    ("B", Pick::Channel(2)),
+    ("A", Pick::Channel(3)),
+];
+const XYZ: &[(&str, Pick)] = &[
+    ("XYZ", Pick::Whole),
+    ("X", Pick::Channel(0)),
+    ("Y", Pick::Channel(1)),
+    ("Z", Pick::Channel(2)),
+];
+const XYZW: &[(&str, Pick)] = &[
+    ("XYZW", Pick::Whole),
+    ("X", Pick::Channel(0)),
+    ("Y", Pick::Channel(1)),
+    ("Z", Pick::Channel(2)),
+    ("W", Pick::Channel(3)),
+];
+const XY: &[(&str, Pick)] = &[
+    ("XY", Pick::Whole),
+    ("X", Pick::Channel(0)),
+    ("Y", Pick::Channel(1)),
+];
+const UV: &[(&str, Pick)] = &[
+    ("UV", Pick::Whole),
+    ("U", Pick::Channel(0)),
+    ("V", Pick::Channel(1)),
+];
+const TIME: &[(&str, Pick)] = &[
+    ("time", Pick::Channel(0)),
+    ("sine", Pick::Channel(1)),
+    ("cosine", Pick::Channel(2)),
+    ("tenth", Pick::Channel(3)),
+];
+const VORONOI: &[(&str, Pick)] = &[
+    ("F1", Pick::Channel(0)),
+    ("F2", Pick::Channel(1)),
+    ("border", Pick::Channel(2)),
+    ("cell", Pick::Channel(3)),
+];
+const SPLIT: &[(&str, Pick)] = &[
+    ("x", Pick::Channel(0)),
+    ("y", Pick::Channel(1)),
+    ("z", Pick::Channel(2)),
+    ("w", Pick::Channel(3)),
+];
+
 impl Node {
     /// What the node is called in the panel.
     pub(crate) fn title(&self) -> String {
@@ -136,26 +198,48 @@ impl Node {
         !self.outputs().is_empty()
     }
 
-    /// Its output pins, named. Most nodes have one, the whole value. A node that answers with several
-    /// different things gives each its own pin, rather than packing them into the channels of one
-    /// wire where they end up read as a colour.
-    pub(crate) fn outputs(&self) -> &'static [&'static str] {
+    /// Its output pins, named, and what each reads of the node's value. Pin 0 is the whole value
+    /// wherever the whole means something, so a wire drawn before a node had channels still reads it;
+    /// then one pin per channel, as a colour or a vector is taken apart in Unity and Unreal.
+    pub(crate) fn outputs(&self) -> &'static [(&'static str, Pick)] {
         match self {
             Self::Output => &[],
-            Self::Voronoi => &["F1", "F2", "border", "cell"],
-            Self::Split => &["x", "y", "z", "w"],
-            _ => &["out"],
+            Self::Texture { .. }
+            | Self::Color { .. }
+            | Self::ConstColor(_)
+            | Self::Blend { .. }
+            | Self::Desaturate => RGBA,
+            Self::WorldPosition | Self::WorldNormal | Self::ViewDirection | Self::UnpackNormal => {
+                XYZ
+            }
+            Self::Uv => UV,
+            Self::Vector { width, .. } | Self::ConstVector { width, .. } => match width {
+                2 => XY,
+                3 => XYZ,
+                _ => XYZW,
+            },
+            Self::Constant(_) => XYZW,
+            // Packed into one wire these read as nonsense — a clock, its sine and its cosine are not
+            // a colour — so they come apart only.
+            Self::Time => TIME,
+            Self::Voronoi => VORONOI,
+            Self::Split => SPLIT,
+            _ => WHOLE,
         }
     }
 
-    /// What output pin `index` reads of the node's value, held in `value`. A single output is the
-    /// value itself; one of several is the component that pin names, in every channel.
+    /// What output pin `index` reads of the node's value, held in `value`.
     pub(crate) fn output_of(&self, value: &str, index: usize) -> String {
-        if self.outputs().len() < 2 {
-            return value.to_owned();
+        match self.outputs().get(index).map(|&(_, pick)| pick) {
+            None | Some(Pick::Whole) => value.to_owned(),
+            Some(Pick::Rgb) => format!("vec4<f32>({value}.xyz, 0.0)"),
+            Some(Pick::Channel(channel)) => {
+                format!(
+                    "vec4<f32>({value}.{})",
+                    ["x", "y", "z", "w"][channel.min(3)]
+                )
+            }
         }
-        let component = ["x", "y", "z", "w"][index.min(3)];
-        format!("vec4<f32>({value}.{component})")
     }
 
     /// Which submenu adds it.

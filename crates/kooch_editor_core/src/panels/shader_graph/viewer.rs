@@ -77,88 +77,99 @@ impl SnarlViewer<Node> for Viewer<'_> {
         let catalog = self.catalog;
         let output = pin.id.output;
         if let Some(node) = snarl.get_node_mut(pin.id.node) {
-            let label = node.outputs().get(output).copied().unwrap_or("out");
-            // A node with several outputs is edited on none of them: each pin is a name and a wire.
-            if node.outputs().len() > 1 {
+            let pins = node.outputs();
+            let label = pins.get(output).map_or("out", |&(name, _)| name);
+            // A node's fields sit beside its first output; every other pin is a name and a wire.
+            if output > 0 {
                 ui.label(label);
                 return PinInfo::circle();
             }
+            let named = pins.len() > 1;
             // 🔴 An output pin's row is laid out RIGHT TO LEFT by egui-snarl, so fields added one after
             // another landed in a row, and in reverse. A column of its own is what stacks them.
             // Capped as well as stacked: a top-down layout claims all the width it is offered, and
             // inside a snarl node that is everything up to the panel's edge.
             let column = egui::vec2(FIELD + 16.0, 0.0);
             let top_down = egui::Layout::top_down(egui::Align::Min);
-            ui.allocate_ui_with_layout(column, top_down, |ui| match node {
-                Node::Float {
-                    name,
-                    default,
-                    range,
-                } => number_editor(ui, name, default, range, false),
-                Node::Int {
-                    name,
-                    default,
-                    range,
-                } => number_editor(ui, name, default, range, true),
-                Node::Vector {
-                    name,
-                    width,
-                    default,
-                } => {
-                    name_field(ui, name);
-                    components(ui, &mut default[..(*width).clamp(2, 4) as usize]);
-                }
-                Node::Color { name, default } => {
-                    name_field(ui, name);
-                    ui.color_edit_button_rgba_unmultiplied(default);
-                }
-                Node::Texture {
-                    name,
-                    fallback,
-                    preview,
-                } => {
-                    name_field(ui, name);
-                    choice(ui, "fallback", fallback, &TEXTURE_FALLBACKS);
-                    // Seen in the preview only; a material still starts from `fallback`.
-                    ui.weak("preview");
-                    let picked = ui
-                        .push_id("preview", |ui| {
-                            crate::panels::inspector::draw_asset_picker(
-                                ui,
-                                *preview,
-                                crate::panels::inspector::IMAGE_TYPE,
-                                catalog,
-                            )
-                        })
-                        .inner;
-                    if let Some(kooch_ecs::reflect::ReflectValue::AssetRef { guid, .. }) = picked {
-                        *preview = guid;
+            ui.allocate_ui_with_layout(column, top_down, |ui| {
+                match node {
+                    Node::Float {
+                        name,
+                        default,
+                        range,
+                    } => number_editor(ui, name, default, range, false),
+                    Node::Int {
+                        name,
+                        default,
+                        range,
+                    } => number_editor(ui, name, default, range, true),
+                    Node::Vector {
+                        name,
+                        width,
+                        default,
+                    } => {
+                        name_field(ui, name);
+                        components(ui, &mut default[..(*width).clamp(2, 4) as usize]);
+                    }
+                    Node::Color { name, default } => {
+                        name_field(ui, name);
+                        ui.color_edit_button_rgba_unmultiplied(default);
+                    }
+                    Node::Texture {
+                        name,
+                        fallback,
+                        preview,
+                    } => {
+                        name_field(ui, name);
+                        choice(ui, "fallback", fallback, &TEXTURE_FALLBACKS);
+                        // Seen in the preview only; a material still starts from `fallback`.
+                        ui.weak("preview");
+                        let picked = ui
+                            .push_id("preview", |ui| {
+                                crate::panels::inspector::draw_asset_picker(
+                                    ui,
+                                    *preview,
+                                    crate::panels::inspector::IMAGE_TYPE,
+                                    catalog,
+                                )
+                            })
+                            .inner;
+                        if let Some(kooch_ecs::reflect::ReflectValue::AssetRef { guid, .. }) =
+                            picked
+                        {
+                            *preview = guid;
+                        }
+                    }
+                    Node::ConstFloat(value) => {
+                        ui.add(crate::numeric::drag(value).speed(0.01));
+                    }
+                    Node::ConstInt(value) => {
+                        ui.add(egui::DragValue::new(value).speed(1.0).fixed_decimals(0));
+                        *value = value.round();
+                    }
+                    Node::ConstVector { width, value } => {
+                        components(ui, &mut value[..(*width).clamp(2, 4) as usize]);
+                    }
+                    Node::Constant(value) => components(ui, value),
+                    Node::ConstColor(value) => {
+                        ui.color_edit_button_rgba_unmultiplied(value);
+                    }
+                    Node::Swizzle { pattern } => {
+                        ui.add(
+                            egui::TextEdit::singleline(pattern)
+                                .desired_width(FIELD)
+                                .hint_text("xyzw"),
+                        );
+                    }
+                    Node::Blend { mode } => choice(ui, "blend", mode, &BLEND_MODES),
+                    _ => {
+                        ui.label(label);
+                        return;
                     }
                 }
-                Node::ConstFloat(value) => {
-                    ui.add(crate::numeric::drag(value).speed(0.01));
-                }
-                Node::ConstInt(value) => {
-                    ui.add(egui::DragValue::new(value).speed(1.0).fixed_decimals(0));
-                    *value = value.round();
-                }
-                Node::ConstVector { width, value } => {
-                    components(ui, &mut value[..(*width).clamp(2, 4) as usize]);
-                }
-                Node::Constant(value) => components(ui, value),
-                Node::ConstColor(value) => {
-                    ui.color_edit_button_rgba_unmultiplied(value);
-                }
-                Node::Swizzle { pattern } => {
-                    ui.add(
-                        egui::TextEdit::singleline(pattern)
-                            .desired_width(FIELD)
-                            .hint_text("xyzw"),
-                    );
-                }
-                Node::Blend { mode } => choice(ui, "blend", mode, &BLEND_MODES),
-                _ => {
-                    ui.label("out");
+                // Fields first, then the name of the pin they sit beside, when it has siblings.
+                if named {
+                    ui.weak(label);
                 }
             });
         }
