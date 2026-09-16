@@ -159,7 +159,7 @@ The menu groups the nodes the way the panels do:
 | **Vector** | Dot, Cross, Normalize, Length, Distance, Reflect, Swizzle, Combine, Split |
 | **Effects** | Fresnel, Unpack Normal, Panner, Rotator, Tiling, Desaturate, Blend |
 | **Shapes** | Circle, Rectangle, Ring, Polygon, Checker |
-| **Noise** | Value Noise, Gradient Noise, Simplex Noise, White Noise, Voronoi |
+| **Noise** | Value Noise, Gradient Noise, Simplex Noise (fBm, turbulence, ridged), White Noise, Voronoi |
 | **Output** | Surface Output: base colour, normal, metallic, roughness, emissive |
 
 - **Float, Int, Vector 2/3/4 and Color** are the material's parameters — each one member of
@@ -179,15 +179,27 @@ The menu groups the nodes the way the panels do:
   **RGB**, **R**, **G**, **B** and **A**; a position or direction has **XYZ**, **X**, **Y**, **Z**; UV
   has **UV**, **U**, **V**; a vector has its whole and each component. The first pin is always the whole
   value. **Time** comes apart only — *time*, *sine*, *cosine*, *tenth* — and so do **Voronoi** and
-  **Split**, because together those four numbers mean nothing. Maths, noises and shapes answer with one
+  **Split**, because together those numbers mean nothing. Maths, noises and shapes answer with one
   value; **Split** takes any of them apart.
 - **Swizzle** reorders components (`xyzw` passes through, `xxxx` splashes the first, `yx` swaps), and
   **Combine** builds a vector from four numbers.
-- **Noise**: Value, Gradient (Perlin) and Simplex take an **octaves** input — left unconnected it is
-  one, plain noise; wire a number in and each extra octave adds detail at twice the frequency and half
-  the weight (fBm), still in 0..1. **White Noise** is one random value per cell. **Voronoi** has four outputs: **F1** the
-  distance to the nearest cell point, **F2** to the second nearest, **border** their difference (the
-  cell edges), and **cell** a random value per cell; **jitter** 0 is a regular grid, 1 fully random.
+- **Noise**: Value, Gradient (Perlin) and Simplex are one node with a **basis** dropdown and a
+  **fractal** one — **fbm** (smooth), **turbulence** (billowy) or **ridged** (sharp crests). Every
+  input can stay unconnected:
+  - **octaves** (1) — layers of detail, up to 8; **roughness** (0.5) — how much each layer keeps of
+    the last; **lacunarity** (2) — how much finer each layer is.
+  - **distortion** — warps the coordinate by the noise itself, for marble and smoke.
+  - **phase** — wire **Time** in and the noise changes where it stands instead of sliding away.
+  - Outputs: **value** in 0..1, and **color**, three unrelated samples for tinting.
+
+  Distortion, phase and color each cost extra samples, paid only while they are wired.
+- **White Noise** is one random value per cell.
+- **Voronoi** has a **metric** dropdown (euclidean round cells, manhattan diamonds, chebyshev
+  squares) and the inputs **randomness** (0 a regular grid, 1 fully random), **phase** (wire **Time**
+  in and the points circle), and **smoothness** (blends cells into each other). Outputs: **F1** the
+  distance to the nearest point, **F2** to the second, **border** the true distance to the cell edge
+  (a wider search, run only while wired), **cell** a random value per cell, and **position** the
+  nearest point.
 - **Shapes** read the uv square with its middle at `0.5`, and answer with a mask in every component.
 - A few nodes lean on a small WGSL function (`graph_noise`, `graph_rotate`, …). It is written into the
   file **only when a node asks for it**, so a generated shader carries nothing it does not use.
