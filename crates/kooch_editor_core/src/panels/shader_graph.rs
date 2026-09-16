@@ -6,6 +6,7 @@ use egui_snarl::ui::SnarlWidget;
 use crate::panels::inspector::AssetCatalogEntry;
 
 mod editors;
+mod pin;
 mod preview;
 mod viewer;
 

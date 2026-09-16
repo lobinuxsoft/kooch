@@ -54,10 +54,14 @@ fn pin_names_sit_beside_their_pins() {
     for (row, node) in nodes.iter().enumerate() {
         graph.insert_node(Pos2::new(0.0, 260.0 * row as f32), node.clone());
     }
-    let names: Vec<&str> = nodes
+    let outputs: Vec<&str> = nodes
         .iter()
         .flat_map(|node| node.outputs().iter().map(|&(name, _)| name))
         .filter(|name| *name != "RGBA")
+        .collect();
+    let inputs: Vec<&str> = nodes
+        .iter()
+        .flat_map(|node| node.inputs().iter().copied())
         .collect();
 
     let ctx = egui::Context::default();
@@ -93,46 +97,53 @@ fn pin_names_sit_beside_their_pins() {
         })
         .collect();
 
-    let mut seen = 0;
+    let mut drawn_names = Vec::new();
     for clipped in &shapes {
         let egui::Shape::Text(text) = &clipped.shape else {
             continue;
         };
         let name = text.galley.text();
-        if !names.contains(&name) {
+        let is_output = outputs.contains(&name);
+        if !is_output && !inputs.contains(&name) {
             continue;
         }
-        seen += 1;
         let drawn = Rect::from_min_size(text.pos, text.galley.size());
-        assert!(
-            clipped.clip_rect.expand(0.5).contains_rect(drawn),
-            "`{name}` is drawn outside its node: {drawn:?} against {:?}",
-            clipped.clip_rect,
-        );
-        // Its own pin is the output on its right; the input level with it on the left is not.
+        // Its own pin is level with it: on its right for an output, on its left for an input.
         let pin = pins
             .iter()
-            .filter(|pin| pin.x > drawn.center().x)
+            .filter(|pin| (pin.y - drawn.center().y).abs() < 2.0)
+            .filter(|pin| (pin.x > drawn.center().x) == is_output)
             .min_by(|a, b| {
-                (a.y - drawn.center().y)
+                (a.x - drawn.center().x)
                     .abs()
-                    .total_cmp(&(b.y - drawn.center().y).abs())
+                    .total_cmp(&(b.x - drawn.center().x).abs())
             })
-            .expect("a pin");
-        assert!(
-            (pin.y - drawn.center().y).abs() < 2.0,
-            "`{name}` is not level with a pin",
-        );
-        assert!(
-            drawn.right() < pin.x - 7.5,
-            "`{name}` runs into its pin: ends at {} with the pin at {}",
-            drawn.right(),
-            pin.x,
-        );
+            .unwrap_or_else(|| panic!("`{name}` is not level with a pin of its side: {drawn:?}"));
+        if is_output {
+            assert!(
+                drawn.right() < pin.x - 7.5,
+                "`{name}` runs into its pin: {drawn:?}, pin {pin:?}"
+            );
+        } else {
+            assert!(
+                drawn.left() > pin.x + 7.5,
+                "`{name}` runs into its pin: {drawn:?}, pin {pin:?}"
+            );
+        }
+        drawn_names.push((name.to_owned(), drawn));
     }
-    assert!(
-        seen >= names.len() - 1,
-        "only {seen} of {} names were drawn",
-        names.len()
+    assert_eq!(
+        drawn_names.len(),
+        outputs.len() + inputs.len(),
+        "not every name was drawn: {drawn_names:?}",
     );
+    // 🔴 The node has to grow to hold them: an input's name and an output's on one row must not meet.
+    for (i, (first, a)) in drawn_names.iter().enumerate() {
+        for (second, b) in &drawn_names[i + 1..] {
+            assert!(
+                !a.intersects(*b),
+                "`{first}` and `{second}` are drawn over each other"
+            );
+        }
+    }
 }

@@ -1,11 +1,12 @@
 //! How the nodes draw, connect and are edited inside egui-snarl (#1159).
 
 use egui::emath::TSTransform;
-use egui_snarl::ui::{PinInfo, SnarlViewer};
+use egui_snarl::ui::SnarlViewer;
 use egui_snarl::{InPin, NodeId, OutPin, Snarl};
 
 use super::editors::{FIELD, choice, components, name_field, number_editor};
 use super::framed;
+use super::pin::{NamedPin, Side, reserve};
 use crate::panels::inspector::AssetCatalogEntry;
 use crate::shader_graph::{BLEND_MODES, Category, Node, TEXTURE_FALLBACKS, palette};
 
@@ -63,8 +64,11 @@ impl SnarlViewer<Node> for Viewer<'_> {
             .get_node(pin.id.node)
             .and_then(|node| node.inputs().get(pin.id.input).copied())
             .unwrap_or("in");
-        ui.label(name);
-        PinInfo::circle()
+        reserve(ui, name);
+        NamedPin {
+            name: Some(name),
+            side: Side::Input,
+        }
     }
 
     fn show_output(
@@ -82,8 +86,11 @@ impl SnarlViewer<Node> for Viewer<'_> {
             // A node's fields sit beside its first output; every other pin is a name and a wire.
             // Every name sits against its pin, except beside a node's fields, where it goes under them.
             if output > 0 || !has_fields(node) {
-                pin_name(ui, label);
-                return PinInfo::circle();
+                reserve(ui, label);
+                return NamedPin {
+                    name: Some(label),
+                    side: Side::Output,
+                };
             }
             let named = pins.len() > 1;
             // 🔴 An output pin's row is laid out RIGHT TO LEFT by egui-snarl, so fields added one after
@@ -174,7 +181,10 @@ impl SnarlViewer<Node> for Viewer<'_> {
                 }
             });
         }
-        PinInfo::circle()
+        NamedPin {
+            name: None,
+            side: Side::Output,
+        }
     }
 
     /// One wire per input: a second one replaces the first, which is what every graph tool does.
@@ -227,33 +237,6 @@ impl SnarlViewer<Node> for Viewer<'_> {
             ui.close();
         }
     }
-}
-
-/// Just clear of the pin: its centre sits 6 points in from the node's clip and it is 7.5 across.
-const PIN_CLEARANCE: f32 = 12.0;
-
-/// A pin's name, ending just left of the pin.
-///
-/// 🔴 Placed by hand, measured headless. egui-snarl hands a row past the first a sliver of a rect at
-/// the node's right edge, sized from last frame's content: a label laid out in it landed on the pin's
-/// far side, outside the clip ("sine" at x 711 against a clip ending at 707), and each row drifted 15
-/// points further. The clip is the one edge that does not move with what is drawn.
-fn pin_name(ui: &mut egui::Ui, name: &str) {
-    let text = egui::WidgetText::from(name).into_galley(
-        ui,
-        Some(egui::TextWrapMode::Extend),
-        f32::INFINITY,
-        egui::TextStyle::Body,
-    );
-    let row = ui.max_rect();
-    let right = ui.clip_rect().right() - PIN_CLEARANCE;
-    // From the row's top: that is where egui-snarl centres the pin, whatever the row's height.
-    let at = egui::Rect::from_min_size(egui::pos2(right - text.size().x, row.top()), text.size());
-    // Painted, not laid out: any layout inside that row re-centres or re-flows the text against the
-    // sliver it was given. Allocated too, so the node grows to hold a name wider than it.
-    let colour = ui.visuals().text_color();
-    ui.painter().galley(at.min, text, colour);
-    ui.allocate_rect(at, egui::Sense::hover());
 }
 
 /// Whether a node draws fields of its own beside its first output.
