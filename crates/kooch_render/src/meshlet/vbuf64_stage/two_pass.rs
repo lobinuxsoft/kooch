@@ -341,6 +341,8 @@ impl MaterialTwoPass {
         view_proj: glam::Mat4,
         contact: &ContactShadowUbo,
         screen_size: (u32, u32),
+        // Seconds since the engine started, for a surface that moves (#1159).
+        time: f32,
         debug_mode: u32,
     ) {
         let shading_pipeline = self.pipeline_for(device, debug_mode);
@@ -376,7 +378,8 @@ impl MaterialTwoPass {
                     shading_rate: 1,
                     // No bias: this pass does not sample material textures.
                     mip_bias_scale: 1.0,
-                    _pad: [0; 2],
+                    time,
+                    _pad: [0; 1],
                 }),
             );
         }

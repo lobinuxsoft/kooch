@@ -160,6 +160,39 @@ fn a_cycle_is_refused() {
     );
 }
 
+/// 🔴 What the whole library rests on: every node the menu offers generates a shader naga accepts,
+/// with its inputs left unconnected — which is the state a node is in the moment it is dropped on
+/// the canvas, and the one a user sees first.
+#[test]
+fn every_node_compiles() {
+    for node in palette() {
+        if matches!(node, Node::Output) {
+            continue;
+        }
+        let name = node.title();
+        let mut graph = Graph::new();
+        let added = graph.insert_node(Pos2::ZERO, node);
+        let output = graph.insert_node(Pos2::ZERO, Node::Output);
+        graph.connect(
+            OutPinId {
+                node: added,
+                output: 0,
+            },
+            InPinId {
+                node: output,
+                input: 0,
+            },
+        );
+
+        let source =
+            generate(&graph).unwrap_or_else(|why| panic!("{name} generates nothing: {why}"));
+        let shader =
+            Shader::parse(&source).unwrap_or_else(|why| panic!("{name} does not parse: {why}"));
+        kooch_render::meshlet::validate_surface(&shader.params_wgsl(), &shader.source)
+            .unwrap_or_else(|why| panic!("{name} does not compile: {why}"));
+    }
+}
+
 /// What New Shader Graph writes: it renders like a material without touching a node.
 #[test]
 fn the_starter_graph_is_a_material() {

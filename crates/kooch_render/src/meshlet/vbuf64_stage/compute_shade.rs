@@ -295,6 +295,8 @@ impl ComputeShading {
         rate: ShadingRate,
         // `exp2(mip_bias)`; see `ScreenUbo::mip_bias_scale` (#881).
         mip_bias_scale: f32,
+        // Seconds since the engine started, for a surface that moves (#1159).
+        time: f32,
         debug_mode: u32,
     ) {
         let pipeline = self.pipeline_for(device, debug_mode);
@@ -326,7 +328,8 @@ impl ComputeShading {
                     debug_mode,
                     shading_rate: rate.factor(),
                     mip_bias_scale,
-                    _pad: [0; 2],
+                    time,
+                    _pad: [0; 1],
                 }),
             );
         }
