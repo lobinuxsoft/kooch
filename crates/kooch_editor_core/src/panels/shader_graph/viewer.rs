@@ -1,11 +1,12 @@
 //! How the nodes draw, connect and are edited inside egui-snarl (#1159).
 
 use egui::emath::TSTransform;
-use egui_snarl::ui::{PinInfo, SnarlViewer};
+use egui_snarl::ui::SnarlViewer;
 use egui_snarl::{InPin, NodeId, OutPin, Snarl};
 
 use super::editors::{FIELD, choice, components, name_field, number_editor};
 use super::framed;
+use super::pin::{NamedPin, Side, reserve};
 use crate::panels::inspector::AssetCatalogEntry;
 use crate::shader_graph::{BLEND_MODES, Category, Node, TEXTURE_FALLBACKS, palette};
 
@@ -63,8 +64,11 @@ impl SnarlViewer<Node> for Viewer<'_> {
             .get_node(pin.id.node)
             .and_then(|node| node.inputs().get(pin.id.input).copied())
             .unwrap_or("in");
-        ui.label(name);
-        PinInfo::circle()
+        reserve(ui, name);
+        NamedPin {
+            name: Some(name),
+            side: Side::Input,
+        }
     }
 
     fn show_output(
@@ -80,9 +84,13 @@ impl SnarlViewer<Node> for Viewer<'_> {
             let pins = node.outputs();
             let label = pins.get(output).map_or("out", |&(name, _)| name);
             // A node's fields sit beside its first output; every other pin is a name and a wire.
-            if output > 0 {
-                ui.label(label);
-                return PinInfo::circle();
+            // Every name sits against its pin, except beside a node's fields, where it goes under them.
+            if output > 0 || !has_fields(node) {
+                reserve(ui, label);
+                return NamedPin {
+                    name: Some(label),
+                    side: Side::Output,
+                };
             }
             let named = pins.len() > 1;
             // 🔴 An output pin's row is laid out RIGHT TO LEFT by egui-snarl, so fields added one after
@@ -173,7 +181,10 @@ impl SnarlViewer<Node> for Viewer<'_> {
                 }
             });
         }
-        PinInfo::circle()
+        NamedPin {
+            name: None,
+            side: Side::Output,
+        }
     }
 
     /// One wire per input: a second one replaces the first, which is what every graph tool does.
@@ -226,4 +237,23 @@ impl SnarlViewer<Node> for Viewer<'_> {
             ui.close();
         }
     }
+}
+
+/// Whether a node draws fields of its own beside its first output.
+fn has_fields(node: &Node) -> bool {
+    matches!(
+        node,
+        Node::Float { .. }
+            | Node::Int { .. }
+            | Node::Vector { .. }
+            | Node::Color { .. }
+            | Node::Texture { .. }
+            | Node::ConstFloat(_)
+            | Node::ConstInt(_)
+            | Node::ConstVector { .. }
+            | Node::Constant(_)
+            | Node::ConstColor(_)
+            | Node::Swizzle { .. }
+            | Node::Blend { .. }
+    )
 }
