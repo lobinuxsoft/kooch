@@ -157,7 +157,8 @@ The menu groups the nodes the way the panels do:
 | **Constants** | Float, Int, Vector 2, Vector 3, Vector 4, Color |
 | **Math** | Add, Subtract, Multiply, Divide, One Minus, Abs, Floor, Fract, Sine, Cosine, Min, Max, Clamp, Step, Smoothstep, Power, Saturate, Remap, Mix |
 | **Vector** | Dot, Cross, Normalize, Length, Distance, Reflect, Swizzle, Combine, Split |
-| **Effects** | Fresnel, Unpack Normal, Panner, Rotator, Tiling, Desaturate, Blend |
+| **UV** | Panner, Rotator, Tiling, Polar Coordinates, Twirl, Radial Shear, Spherize |
+| **Effects** | Fresnel, Unpack Normal, Desaturate, Blend |
 | **Shapes** | Circle, Rectangle, Ring, Polygon, Checker |
 | **Noise** | Value Noise, Gradient Noise, Simplex Noise (fBm, turbulence, ridged), White Noise, Voronoi |
 | **Output** | Surface Output: base colour, normal, metallic, roughness, emissive |
@@ -200,6 +201,13 @@ The menu groups the nodes the way the panels do:
   distance to the nearest point, **F2** to the second, **border** the true distance to the cell edge
   (a wider search, run only while wired), **cell** a random value per cell, and **position** the
   nearest point.
+- **UV** nodes take a coordinate and give one back, to feed a Texture, a noise or a shape. The four
+  distortions work around a **centre** and, left unwired, read the mesh's uv around its middle (0.5):
+  - **Polar Coordinates** gives **radius** (distance from the centre × 2 × *radial scale*) and
+    **angle** (0..1 around it × *length scale*): a gradient becomes a radial sweep, a checker a dartboard.
+  - **Twirl** swirls more the further out (*strength* 10 by default).
+  - **Radial Shear** and **Spherize** shear into a spiral or bulge like a lens (*strength* 10).
+  - **offset** moves the result.
 - **Shapes** read the uv square with its middle at `0.5`, and answer with a mask in every component.
 - A few nodes lean on a small WGSL function (`graph_noise`, `graph_rotate`, …). It is written into the
   file **only when a node asks for it**, so a generated shader carries nothing it does not use.
