@@ -138,6 +138,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .remove::<EditorOverlay>()
         .expect("EditorOverlay not found");
     let mut game_view = resources.remove::<GameView>();
+    let mut shader_preview = resources.remove::<crate::viewport::ShaderPreview>();
     let mut viewport = resources
         .remove::<ViewportTarget>()
         .expect("ViewportTarget not found");
@@ -302,6 +303,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
 
     let mut viewport_request: Option<(u32, u32)> = None;
     let mut game_request: Option<(u32, u32)> = None;
+    // Which shape the Shader Graph panel wants its preview on. `Some` only when that panel was
+    // drawn this frame, so a closed tab renders nothing (#1159).
+    let mut preview_request: Option<usize> = None;
     let mut input_owner = crate::input_focus::InputOwner::default();
     let mut viewport_input: Option<ViewportInputDelta> = None;
     let controller_snapshot = resources
@@ -463,6 +467,18 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                 .unwrap_or(egui::TextureId::default()),
             game_request: &mut game_request,
             game_has_camera: game_view.as_ref().map(|g| g.has_camera).unwrap_or(false),
+            preview_texture_id: shader_preview
+                .as_ref()
+                .map(|preview| preview.texture_id())
+                .unwrap_or_default(),
+            preview_primitive: shader_preview
+                .as_ref()
+                .map(|preview| preview.primitive())
+                .unwrap_or_default(),
+            preview_refusal: shader_preview
+                .as_ref()
+                .and_then(|preview| preview.refusal()),
+            preview_request: &mut preview_request,
             input_owner: &mut input_owner,
             input: &mut viewport_input,
             controller: &controller_snapshot,
@@ -734,6 +750,33 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         );
     }
 
+    // The Shader Graph's preview, gated the way the panels above are: `preview_request` is `Some`
+    // this frame iff that tab was drawn.
+    if let Some(index) = preview_request
+        && let Some(preview) = shader_preview.as_mut()
+    {
+        preview.show_primitive(gpu.device(), index);
+        let dt = resources
+            .get::<kooch_core::time::Time>()
+            .map(|time| time.delta_secs())
+            .unwrap_or(0.016);
+        // Generated fresh, and cheap: a graph is a few dozen nodes, and the pipeline behind it is
+        // rebuilt only when the WGSL it produces actually changes.
+        let shader = resources
+            .get::<crate::state::OpenShaderGraph>()
+            .and_then(|open| crate::shader_graph::generate(&open.graph).ok())
+            .and_then(|source| kooch_render::material::Shader::parse(&source).ok());
+        if let Some(shader) = shader {
+            preview.render(
+                &gpu,
+                &shader.params_wgsl(),
+                &shader.source,
+                &shader.params,
+                dt,
+            );
+        }
+    }
+
     stages.viewport_ms = crate::perf::ms_since(viewport_start);
 
     let present_start = std::time::Instant::now();
@@ -756,6 +799,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     resources.insert(viewport);
     if let Some(game) = game_view {
         resources.insert(game);
+    }
+    if let Some(preview) = shader_preview {
+        resources.insert(preview);
     }
     resources.insert(sky_pass);
     resources.insert(gizmo_renderer);

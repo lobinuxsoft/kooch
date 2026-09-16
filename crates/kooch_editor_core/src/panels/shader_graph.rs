@@ -16,6 +16,20 @@ pub(crate) struct ShaderGraphView<'a> {
     pub path: Option<&'a std::path::Path>,
     /// Whether the graph diverges from that file.
     pub dirty: bool,
+    /// The shader on a shape, beside the nodes that wrote it.
+    pub preview: PreviewView<'a>,
+}
+
+/// The preview column: what to draw, on what, and how to ask for something else.
+pub(crate) struct PreviewView<'a> {
+    pub texture: egui::TextureId,
+    /// Which of `Primitive::CANONICAL` is showing.
+    pub primitive: usize,
+    /// Why the shader did not build, if it did not.
+    pub refusal: Option<&'a str>,
+    /// The shape the panel wants next frame. `Some` also means the panel was drawn at all, which
+    /// is what keeps the preview from rendering behind a tab nobody opened.
+    pub request: &'a mut Option<usize>,
 }
 
 /// What the panel asks for.
@@ -35,6 +49,7 @@ pub(crate) fn draw_shader_graph_content(
         ui.label("Create one in the Asset Browser: New Shader Graph, or open a generated .shader.");
         return actions;
     };
+    draw_preview(ui, view.preview);
 
     ui.horizontal(|ui| {
         if let Some(path) = view.path {
@@ -84,6 +99,77 @@ pub(crate) fn draw_shader_graph_content(
         look_at(ui, at);
     }
     actions
+}
+
+/// The preview column: the shader on a shape, and which shape that is.
+fn draw_preview(ui: &mut egui::Ui, preview: PreviewView<'_>) {
+    const SIDE: f32 = 220.0;
+
+    // `Panel::right` rather than `SidePanel`: egui 0.35 folded the four side/top/bottom builders
+    // into one `Panel`, as `input_map` already found out.
+    egui::Panel::right("shader_graph_preview")
+        .resizable(false)
+        .default_size(SIDE)
+        .show(ui, |ui| {
+            ui.add_space(4.0);
+            egui::ComboBox::from_id_salt("shader_preview_shape")
+                .selected_text(shape_name(preview.primitive))
+                .show_ui(ui, |ui| {
+                    for (index, (name, _)) in
+                        kooch_render::mesh::Primitive::CANONICAL.iter().enumerate()
+                    {
+                        if ui
+                            .selectable_label(index == preview.primitive, display_name(name))
+                            .clicked()
+                        {
+                            *preview.request = Some(index);
+                        }
+                    }
+                });
+            ui.add_space(4.0);
+
+            let side = ui.available_width().min(SIDE);
+            ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                preview.texture,
+                egui::vec2(side, side),
+            )));
+
+            // 🔴 A graph is edited node by node, and most of those moments do not compile. The panel
+            // says so instead of showing the last shader that did, which would be a lie about what
+            // is on the canvas.
+            if let Some(why) = preview.refusal {
+                ui.colored_label(ui.visuals().error_fg_color, "This graph does not compile");
+                ui.label(egui::RichText::new(why).small());
+            }
+        });
+
+    // Asked for every frame the panel is drawn, so nothing renders behind a closed tab.
+    if preview.request.is_none() {
+        *preview.request = Some(preview.primitive);
+    }
+}
+
+fn shape_name(index: usize) -> String {
+    kooch_render::mesh::Primitive::CANONICAL
+        .get(index)
+        .map(|(name, _)| display_name(name))
+        .unwrap_or_default()
+}
+
+/// `uv_sphere` reads as "Uv Sphere" in a menu, not as a file name.
+fn display_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for (index, word) in name.split('_').enumerate() {
+        if index > 0 {
+            out.push(' ');
+        }
+        let mut chars = word.chars();
+        if let Some(first) = chars.next() {
+            out.extend(first.to_uppercase());
+            out.push_str(chars.as_str());
+        }
+    }
+    out
 }
 
 /// How far the panel moved since the last frame — what the view has to travel to stay with it.

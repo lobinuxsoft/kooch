@@ -43,6 +43,7 @@ egui.workspace = true
 egui-winit.workspace = true
 egui-wgpu.workspace = true
 glam.workspace = true
+bytemuck.workspace = true
 egui_dock.workspace = true
 exmex.workspace = true
 winit.workspace = true
