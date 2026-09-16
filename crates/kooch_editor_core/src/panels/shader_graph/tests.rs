@@ -32,7 +32,8 @@ fn a_small_graph_stays_actual_size() {
     assert_eq!(framed(bounds, panel()).scaling, 1.0);
 }
 
-/// 🔴 Every output's name is drawn inside its node and ends clear of its own pin. Measured headless:
+/// 🔴 Every output's name is drawn inside its node and ends clear of its own pin — the first one too,
+/// on a node with fields. Measured headless:
 /// egui-snarl gives a row past the first a sliver at the node's edge, and a name laid out in it landed
 /// outside the node's clip — "sine" at x 711 against a clip ending at 707 — each row 15 points further.
 #[test]
@@ -47,7 +48,19 @@ fn pin_names_sit_beside_their_pins() {
             preview: None,
         },
         Node::Time,
-        Node::Voronoi,
+        Node::VoronoiNoise {
+            metric: "euclidean".to_owned(),
+        },
+        // Not "value": the dropdown would read as the output of that name.
+        Node::FractalNoise {
+            basis: "gradient".to_owned(),
+            fractal: "fbm".to_owned(),
+        },
+        Node::Float {
+            name: "speed".to_owned(),
+            default: 1.0,
+            range: None,
+        },
         Node::WorldPosition,
     ];
     let mut graph = Graph::new();
@@ -57,7 +70,6 @@ fn pin_names_sit_beside_their_pins() {
     let outputs: Vec<&str> = nodes
         .iter()
         .flat_map(|node| node.outputs().iter().map(|&(name, _)| name))
-        .filter(|name| *name != "RGBA")
         .collect();
     let inputs: Vec<&str> = nodes
         .iter()
@@ -70,7 +82,7 @@ fn pin_names_sit_beside_their_pins() {
     for _ in 0..4 {
         frame = Some(ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 1100.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 2000.0))),
                 ..Default::default()
             },
             |ui| {

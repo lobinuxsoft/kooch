@@ -80,119 +80,118 @@ impl SnarlViewer<Node> for Viewer<'_> {
         ui: &mut egui::Ui,
         snarl: &mut Snarl<Node>,
     ) -> impl egui_snarl::ui::SnarlPin + 'static {
-        // A value node carries its own value, so the node itself is where it is edited.
-        let catalog = self.catalog;
         let output = pin.id.output;
-        if let Some(node) = snarl.get_node_mut(pin.id.node) {
-            let pins = node.outputs();
-            let label = pins.get(output).map_or("out", |&(name, _)| name);
-            // A node's fields sit beside its first output; every other pin is a name and a wire.
-            // Every name sits against its pin, except beside a node's fields, where it goes under them.
-            if output > 0 || !has_fields(node) {
-                reserve(ui, label);
-                return NamedPin {
-                    name: Some(label),
-                    side: Side::Output,
-                };
-            }
-            let named = pins.len() > 1;
-            // 🔴 An output pin's row is laid out RIGHT TO LEFT by egui-snarl, so fields added one after
-            // another landed in a row, and in reverse. A column of its own is what stacks them.
-            // Capped as well as stacked: a top-down layout claims all the width it is offered, and
-            // inside a snarl node that is everything up to the panel's edge.
-            let column = egui::vec2(FIELD + 16.0, 0.0);
-            let top_down = egui::Layout::top_down(egui::Align::Min);
-            ui.allocate_ui_with_layout(column, top_down, |ui| {
-                match node {
-                    Node::Float {
-                        name,
-                        default,
-                        range,
-                    } => number_editor(ui, name, default, range, false),
-                    Node::Int {
-                        name,
-                        default,
-                        range,
-                    } => number_editor(ui, name, default, range, true),
-                    Node::Vector {
-                        name,
-                        width,
-                        default,
-                    } => {
-                        name_field(ui, name);
-                        components(ui, &mut default[..(*width).clamp(2, 4) as usize]);
-                    }
-                    Node::Color { name, default } => {
-                        name_field(ui, name);
-                        ui.color_edit_button_rgba_unmultiplied(default);
-                    }
-                    Node::Texture {
-                        name,
-                        fallback,
-                        preview,
-                    } => {
-                        name_field(ui, name);
-                        choice(ui, "fallback", fallback, &TEXTURE_FALLBACKS);
-                        // Seen in the preview only; a material still starts from `fallback`.
-                        ui.weak("preview");
-                        let picked = ui
-                            .push_id("preview", |ui| {
-                                crate::panels::inspector::draw_asset_picker(
-                                    ui,
-                                    *preview,
-                                    crate::panels::inspector::IMAGE_TYPE,
-                                    catalog,
-                                )
-                            })
-                            .inner;
-                        if let Some(kooch_ecs::reflect::ReflectValue::AssetRef { guid, .. }) =
-                            picked
-                        {
-                            *preview = guid;
-                        }
-                    }
-                    Node::ConstFloat(value) => {
-                        ui.add(crate::numeric::drag(value).speed(0.01));
-                    }
-                    Node::ConstInt(value) => {
-                        ui.add(egui::DragValue::new(value).speed(1.0).fixed_decimals(0));
-                        *value = value.round();
-                    }
-                    Node::ConstVector { width, value } => {
-                        components(ui, &mut value[..(*width).clamp(2, 4) as usize]);
-                    }
-                    Node::Constant(value) => components(ui, value),
-                    Node::ConstColor(value) => {
-                        ui.color_edit_button_rgba_unmultiplied(value);
-                    }
-                    Node::Swizzle { pattern } => {
-                        ui.add(
-                            egui::TextEdit::singleline(pattern)
-                                .desired_width(FIELD)
-                                .hint_text("xyzw"),
-                        );
-                    }
-                    Node::Blend { mode } => choice(ui, "blend", mode, &BLEND_MODES),
-                    Node::FractalNoise { basis, fractal } => {
-                        choice(ui, "basis", basis, &NOISE_BASES);
-                        choice(ui, "fractal", fractal, &NOISE_FRACTALS);
-                    }
-                    Node::VoronoiNoise { metric } => choice(ui, "metric", metric, &VORONOI_METRICS),
-                    _ => {
-                        ui.label(label);
-                        return;
-                    }
-                }
-                // Fields first, then the name of the pin they sit beside, when it has siblings.
-                if named {
-                    ui.weak(label);
-                }
-            });
-        }
+        let name = snarl
+            .get_node(pin.id.node)
+            .and_then(|node| node.outputs().get(output))
+            .map_or("out", |&(name, _)| name);
+        reserve(ui, name);
         NamedPin {
-            name: None,
+            name: Some(name),
             side: Side::Output,
         }
+    }
+
+    // 🔴 Fields go under the pins, not beside the first output: beside it, that pin's name had to sit
+    // under the fields, level with nothing.
+    fn has_footer(&mut self, node: &Node) -> bool {
+        has_fields(node)
+    }
+
+    fn show_footer(
+        &mut self,
+        node: NodeId,
+        _inputs: &[InPin],
+        _outputs: &[OutPin],
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<Node>,
+    ) {
+        // A value node carries its own value, so the node itself is where it is edited.
+        let catalog = self.catalog;
+        let Some(node) = snarl.get_node_mut(node) else {
+            return;
+        };
+        // Capped: a top-down layout claims all the width it is offered, and inside a snarl node that
+        // is everything up to the panel's edge.
+        let column = egui::vec2(FIELD + 16.0, 0.0);
+        let top_down = egui::Layout::top_down(egui::Align::Min);
+        ui.allocate_ui_with_layout(column, top_down, |ui| {
+            match node {
+                Node::Float {
+                    name,
+                    default,
+                    range,
+                } => number_editor(ui, name, default, range, false),
+                Node::Int {
+                    name,
+                    default,
+                    range,
+                } => number_editor(ui, name, default, range, true),
+                Node::Vector {
+                    name,
+                    width,
+                    default,
+                } => {
+                    name_field(ui, name);
+                    components(ui, &mut default[..(*width).clamp(2, 4) as usize]);
+                }
+                Node::Color { name, default } => {
+                    name_field(ui, name);
+                    ui.color_edit_button_rgba_unmultiplied(default);
+                }
+                Node::Texture {
+                    name,
+                    fallback,
+                    preview,
+                } => {
+                    name_field(ui, name);
+                    choice(ui, "fallback", fallback, &TEXTURE_FALLBACKS);
+                    // Seen in the preview only; a material still starts from `fallback`.
+                    ui.weak("preview");
+                    let picked = ui
+                        .push_id("preview", |ui| {
+                            crate::panels::inspector::draw_asset_picker(
+                                ui,
+                                *preview,
+                                crate::panels::inspector::IMAGE_TYPE,
+                                catalog,
+                            )
+                        })
+                        .inner;
+                    if let Some(kooch_ecs::reflect::ReflectValue::AssetRef { guid, .. }) = picked {
+                        *preview = guid;
+                    }
+                }
+                Node::ConstFloat(value) => {
+                    ui.add(crate::numeric::drag(value).speed(0.01));
+                }
+                Node::ConstInt(value) => {
+                    ui.add(egui::DragValue::new(value).speed(1.0).fixed_decimals(0));
+                    *value = value.round();
+                }
+                Node::ConstVector { width, value } => {
+                    components(ui, &mut value[..(*width).clamp(2, 4) as usize]);
+                }
+                Node::Constant(value) => components(ui, value),
+                Node::ConstColor(value) => {
+                    ui.color_edit_button_rgba_unmultiplied(value);
+                }
+                Node::Swizzle { pattern } => {
+                    ui.add(
+                        egui::TextEdit::singleline(pattern)
+                            .desired_width(FIELD)
+                            .hint_text("xyzw"),
+                    );
+                }
+                Node::Blend { mode } => choice(ui, "blend", mode, &BLEND_MODES),
+                Node::FractalNoise { basis, fractal } => {
+                    choice(ui, "basis", basis, &NOISE_BASES);
+                    choice(ui, "fractal", fractal, &NOISE_FRACTALS);
+                }
+                Node::VoronoiNoise { metric } => choice(ui, "metric", metric, &VORONOI_METRICS),
+                _ => {}
+            }
+        });
     }
 
     /// One wire per input: a second one replaces the first, which is what every graph tool does.

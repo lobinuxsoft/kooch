@@ -169,7 +169,7 @@ The menu groups the nodes the way the panels do:
 - **Constants** are the same types written into the shader instead of the material: no name, nothing
   for the Inspector to show, just a value. An old graph's four-number `Constant` opens as a
   **Vector 4** with all four kept.
-- Nodes lay their fields out top to bottom, and a short list of choices — a texture's fallback, a
+- Nodes lay their fields out top to bottom, under their pins, and a short list of choices — a texture's fallback, a
   blend mode — is a dropdown, so a node stays about as wide as its title.
 - **Texture** writes a `var name: texture_2d<f32>;` and samples it at the uv it is given. **Unpack
   Normal** turns that sample into a world-space normal through the mesh's tangent frame.
@@ -196,7 +196,7 @@ The menu groups the nodes the way the panels do:
 - **White Noise** is one random value per cell.
 - **Voronoi** has a **metric** dropdown (euclidean round cells, manhattan diamonds, chebyshev
   squares) and the inputs **randomness** (0 a regular grid, 1 fully random), **phase** (wire **Time**
-  in and the points circle), and **smoothness** (blends cells into each other). Outputs: **F1** the
+  in and the points circle), and **smoothness** (0..1, rounds F1, F2 and the border alike). Outputs: **F1** the
   distance to the nearest point, **F2** to the second, **border** the true distance to the cell edge
   (a wider search, run only while wired), **cell** a random value per cell, and **position** the
   nearest point.
