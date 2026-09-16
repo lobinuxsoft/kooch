@@ -29,6 +29,7 @@ fn a_chain_lays_out_left_to_right() {
         Node::Texture {
             name: "albedo".to_owned(),
             fallback: "white".to_owned(),
+            preview: None,
         },
     );
     let output = graph.insert_node(Pos2::ZERO, Node::Output);
@@ -86,4 +87,61 @@ fn arranging_twice_changes_nothing() {
 
     assert!(arrange(&mut graph));
     assert!(!arrange(&mut graph), "the layout moved on a second pass");
+}
+
+/// 🔴 Counted from the end (user's call): a parameter wired straight into the output sits in the
+/// column beside it, not at the far left where the longest chain starts.
+#[test]
+fn a_short_branch_sits_by_the_output() {
+    let mut graph = Graph::new();
+    let uv = graph.insert_node(Pos2::ZERO, Node::Uv);
+    let texture = graph.insert_node(
+        Pos2::ZERO,
+        Node::Texture {
+            name: "albedo".to_owned(),
+            fallback: "white".to_owned(),
+            preview: None,
+        },
+    );
+    let tint = graph.insert_node(Pos2::ZERO, Node::Multiply);
+    let roughness = graph.insert_node(
+        Pos2::ZERO,
+        Node::Float {
+            name: "roughness".to_owned(),
+            default: 0.5,
+            range: None,
+        },
+    );
+    let output = graph.insert_node(Pos2::ZERO, Node::Output);
+    wire(&mut graph, uv, texture, 0);
+    wire(&mut graph, texture, tint, 0);
+    wire(&mut graph, tint, output, 0);
+    wire(&mut graph, roughness, output, 3);
+
+    arrange(&mut graph);
+
+    assert_eq!(
+        at(&graph, roughness).x,
+        at(&graph, tint).x,
+        "a direct input to the output was left at the start of the longest chain",
+    );
+    assert!(at(&graph, roughness).x < at(&graph, output).x);
+}
+
+/// Nodes in one column follow the pins they feed: base colour above roughness, however they were added.
+#[test]
+fn a_column_follows_the_pins() {
+    let mut graph = Graph::new();
+    let output = graph.insert_node(Pos2::ZERO, Node::Output);
+    let roughness = graph.insert_node(Pos2::ZERO, Node::ConstFloat(0.5));
+    let base = graph.insert_node(Pos2::ZERO, Node::ConstColor([1.0; 4]));
+    wire(&mut graph, roughness, output, 3);
+    wire(&mut graph, base, output, 0);
+
+    arrange(&mut graph);
+
+    assert!(
+        at(&graph, base).y < at(&graph, roughness).y,
+        "base colour's feeder was drawn below roughness's",
+    );
 }

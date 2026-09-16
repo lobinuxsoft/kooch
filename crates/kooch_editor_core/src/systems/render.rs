@@ -235,6 +235,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         game.target
             .resize_if_needed(gpu.device(), &mut overlay.renderer);
     }
+    if let Some(preview) = shader_preview.as_mut() {
+        preview.resize_if_needed(gpu.device(), &mut overlay.renderer);
+    }
 
     // 🔴 Which history the Edit menu describes follows which one a Ctrl+Z would reach. With a
     // project open that is the remote one — the local stack still holds commands, but they describe
@@ -305,7 +308,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut game_request: Option<(u32, u32)> = None;
     // Which shape the Shader Graph panel wants its preview on. `Some` only when that panel was
     // drawn this frame, so a closed tab renders nothing (#1159).
-    let mut preview_request: Option<usize> = None;
+    let mut preview_request: Option<crate::viewport::PreviewRequest> = None;
     let mut input_owner = crate::input_focus::InputOwner::default();
     let mut viewport_input: Option<ViewportInputDelta> = None;
     let controller_snapshot = resources
@@ -752,29 +755,52 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
 
     // The Shader Graph's preview, gated the way the panels above are: `preview_request` is `Some`
     // this frame iff that tab was drawn.
-    if let Some(index) = preview_request
+    if let Some(request) = preview_request
         && let Some(preview) = shader_preview.as_mut()
     {
-        preview.show_primitive(gpu.device(), index);
+        preview.show_primitive(gpu.device(), request.primitive);
+        if let Some(side) = request.size {
+            preview.request_size(side);
+        }
         let dt = resources
             .get::<kooch_core::time::Time>()
             .map(|time| time.delta_secs())
             .unwrap_or(0.016);
         // Generated fresh, and cheap: a graph is a few dozen nodes, and the pipeline behind it is
         // rebuilt only when the WGSL it produces actually changes.
-        let shader = resources
+        // 🔴 A graph that does not generate says so in the column. Dropped silently, the preview
+        // froze on the last image and every edit after that looked like it did nothing.
+        let generated = resources
             .get::<crate::state::OpenShaderGraph>()
-            .and_then(|open| crate::shader_graph::generate(&open.graph).ok())
-            .and_then(|source| kooch_render::material::Shader::parse(&source).ok());
+            .map(|open| crate::shader_graph::generate(&open.graph));
+        let shader = match generated {
+            Some(Ok(source)) => kooch_render::material::Shader::parse(&source).ok(),
+            Some(Err(why)) => {
+                preview.refuse(why);
+                None
+            }
+            None => None,
+        };
+        let images = preview_images(resources);
+        for (_, guid) in &images {
+            if let Some(image) = loaded_image(resources, *guid) {
+                preview.show_image(gpu.device(), gpu.queue(), *guid, &image);
+            }
+        }
         if let Some(shader) = shader {
             preview.render(
                 &gpu,
                 &shader.params_wgsl(),
                 &shader.source,
                 &shader.params,
+                &images,
                 dt,
             );
         }
+    }
+
+    if preview_request.is_none() {
+        crate::panels::shader_graph::forget_opening(&overlay.ctx);
     }
 
     stages.viewport_ms = crate::perf::ms_since(viewport_start);
@@ -1024,4 +1050,41 @@ fn focus_target(
     let radius = crate::picking::entity_bounds(resources, entity)
         .map(|(min, max)| radius_around(point, min, max));
     Some(FocusTarget { point, radius })
+}
+
+/// The image each texture node of the open graph is previewed with, by the parameter's name.
+fn preview_images(resources: &Resources) -> Vec<(String, kooch_core::Guid)> {
+    resources
+        .get::<crate::state::OpenShaderGraph>()
+        .map(|open| {
+            open.graph
+                .nodes()
+                .filter_map(|node| match node {
+                    crate::shader_graph::Node::Texture {
+                        name,
+                        preview: Some(guid),
+                        ..
+                    } => Some((name.clone(), *guid)),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Loads an image asset through the asset server, as the Inspector's asset detail does.
+fn loaded_image(
+    resources: &mut Resources,
+    guid: kooch_core::Guid,
+) -> Option<kooch_render::texture::Image> {
+    use kooch_core::asset_loader::AssetServer;
+    use kooch_render::texture::Image;
+
+    let mut server = resources.remove::<AssetServer>()?;
+    let handle = server.load_by_guid::<Image>(guid, resources).ok();
+    resources.insert(server);
+    resources
+        .get::<kooch_core::assets::Assets<Image>>()?
+        .get(handle?)
+        .cloned()
 }

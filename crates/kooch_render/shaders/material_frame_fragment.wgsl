@@ -39,7 +39,9 @@ fn fs_material(in: FsInput) -> @location(0) vec4<f32> {
         in.position.xy, surf.flags);
     // Emissive is radiance the surface produces rather than reflects, so
     // it joins before tonemapping and ignores every light in the scene.
-    radiance += shaded.emissive;
+    // 🔴 In display units: divided by the exposure the tonemap is about to apply, so 1.0 is the colour
+    // at full brightness whatever the camera's EV. Added raw it was 1.0 × ~0.0009 — invisible.
+    radiance += shaded.emissive / max(inti.exposure, 1e-8);
 
     return vec4<f32>(inti_tonemap(radiance), 1.0);
 }

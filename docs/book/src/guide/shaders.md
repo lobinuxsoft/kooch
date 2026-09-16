@@ -36,6 +36,10 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 `SurfaceOutput` is what Inti lights: `base_color`, a world-space `normal`, `metallic`, `roughness`
 and `emissive`.
 
+`emissive` is in **display units**: `1.0` shows the colour at full brightness whatever the camera's
+exposure, and above `1.0` it overdrives. The lights are physical, so an emissive added in their units
+would need thousands to be seen at all.
+
 A surface can read the engine's material fields with `materials[input.material_id]`, or declare its
 own (below). Sample with `sample_surface`, or `textureSampleGrad` and the analytical derivatives
 multiplied by `mip_bias_scale`: a visibility buffer has no screen-space derivatives to give
@@ -73,8 +77,8 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 }
 ```
 
-Members are `f32`, `vec2<f32>`, `vec3<f32>` or `vec4<f32>`. `SURFACE_DEFAULTS` is an ordinary WGSL
-constant — naga evaluates it, so `vec3(0.25)` or an arithmetic expression works — and without it
+Members are `f32`, `vec2<f32>`, `vec3<f32>` or `vec4<f32>`; a whole number is an `f32` hinted
+`@int`. `SURFACE_DEFAULTS` is an ordinary WGSL constant — naga evaluates it, so `vec3(0.25)` or an arithmetic expression works — and without it
 every member starts at zero. The comment after a declaration is optional and only changes how the
 editor shows the field:
 
@@ -82,10 +86,11 @@ editor shows the field:
 |---|---|---|
 | `@color` | `vec4<f32>` | a colour picker instead of four numbers |
 | `@range(lo, hi)` | `f32` | a slider |
+| `@int` | `f32` | whole steps — a stepped slider with `@range`, a stepped field without |
 | `@default(white \| black \| normal)` | a texture | what it samples while unassigned — WGSL gives a texture no starting value |
 
 `sample_surface(texture, input, uv, scale)` samples with the analytical derivatives scaled by
-`scale` and the mip bias, so pass whatever tiles `uv`. Budget per material: **16 scalars** and
+`scale` and the mip bias, so pass whatever tiles `uv`. Budget per material: **64 scalars** and
 **4 textures**; past it the shader fails to load and names the line.
 
 Values are stored on the material by name. Switching a material to another shader keeps the values
@@ -148,21 +153,41 @@ The menu groups the nodes the way the panels do:
 
 | Menu | Nodes |
 |---|---|
-| **Input** | UV, World Normal, World Position, View Direction, **Time**, Param, Texture, Constant |
+| **Input** | UV, World Normal, World Position, View Direction, **Time**, Float, Int, Vector 2, Vector 3, Vector 4, Color, Texture |
+| **Constants** | Float, Int, Vector 2, Vector 3, Vector 4, Color |
 | **Math** | Add, Subtract, Multiply, Divide, One Minus, Abs, Floor, Fract, Sine, Cosine, Min, Max, Clamp, Step, Smoothstep, Power, Saturate, Remap, Mix |
-| **Vector** | Dot, Cross, Normalize, Length, Distance, Reflect, Swizzle, Combine |
-| **Effects** | Fresnel, Unpack Normal, Panner, Rotator, Tiling, Desaturate, Blend, Noise |
+| **Vector** | Dot, Cross, Normalize, Length, Distance, Reflect, Swizzle, Combine, Split |
+| **Effects** | Fresnel, Unpack Normal, Panner, Rotator, Tiling, Desaturate, Blend |
 | **Shapes** | Circle, Rectangle, Ring, Polygon, Checker |
+| **Noise** | Value Noise, Gradient Noise, Simplex Noise, White Noise, Voronoi |
 | **Output** | Surface Output: base colour, normal, metallic, roughness, emissive |
 
-- **Param** is one member of `SurfaceParams` — its name, width, colour hint and starting value. The
-  colour hint is offered only at four wide, because that is what the engine reads it on.
+- **Float, Int, Vector 2/3/4 and Color** are the material's parameters — each one member of
+  `SurfaceParams`, with its name and starting value, edited in the node the way the material's
+  Inspector will show it: a slider when a Float or Int has a range, a colour picker for a Color.
+  Graphs from before these existed carry a single `Param` node; they open converted.
+- **Constants** are the same types written into the shader instead of the material: no name, nothing
+  for the Inspector to show, just a value. An old graph's four-number `Constant` opens as a
+  **Vector 4** with all four kept.
+- Nodes lay their fields out top to bottom, and a short list of choices — a texture's fallback, a
+  blend mode — is a dropdown, so a node stays about as wide as its title.
 - **Texture** writes a `var name: texture_2d<f32>;` and samples it at the uv it is given. **Unpack
   Normal** turns that sample into a world-space normal through the mesh's tangent frame.
-- **Time** is `x` seconds, `y` its sine, `z` its cosine, `w` a tenth of it — what **Panner** scrolls
-  a coordinate with.
+- **Time** is seconds, its sine, its cosine and a tenth of it, one pin each — the clock **Panner**
+  scrolls a coordinate with.
+- **Outputs come whole and in channels.** A colour — Texture, Color, Blend, Desaturate — has **RGBA**,
+  **RGB**, **R**, **G**, **B** and **A**; a position or direction has **XYZ**, **X**, **Y**, **Z**; UV
+  has **UV**, **U**, **V**; a vector has its whole and each component. The first pin is always the whole
+  value. **Time** comes apart only — *time*, *sine*, *cosine*, *tenth* — and so do **Voronoi** and
+  **Split**, because together those four numbers mean nothing. Maths, noises and shapes answer with one
+  value; **Split** takes any of them apart.
 - **Swizzle** reorders components (`xyzw` passes through, `xxxx` splashes the first, `yx` swaps), and
   **Combine** builds a vector from four numbers.
+- **Noise**: Value, Gradient (Perlin) and Simplex take an **octaves** input — left unconnected it is
+  one, plain noise; wire a number in and each extra octave adds detail at twice the frequency and half
+  the weight (fBm), still in 0..1. **White Noise** is one random value per cell. **Voronoi** has four outputs: **F1** the
+  distance to the nearest cell point, **F2** to the second nearest, **border** their difference (the
+  cell edges), and **cell** a random value per cell; **jitter** 0 is a regular grid, 1 fully random.
 - **Shapes** read the uv square with its middle at `0.5`, and answer with a mask in every component.
 - A few nodes lean on a small WGSL function (`graph_noise`, `graph_rotate`, …). It is written into the
   file **only when a node asks for it**, so a generated shader carries nothing it does not use.
@@ -184,8 +209,11 @@ The column on the right shows the shader **on a shape**, turning, updated as the
   pages or the visibility buffer behind it — which is why a preview costs a thumbnail, not a second
   viewport.
 - Parameters show the **starting values the shader declares** (`SURFACE_DEFAULTS`), not a material's:
-  what is being previewed is the shader, before anything has been assigned to it. Textures show
-  their fallback — `white`, `black` or `normal`.
+  what is being previewed is the shader, before anything has been assigned to it.
+- A **Texture** node's `preview` field picks an image to see it with, without a material. It is saved
+  with the graph, like where the nodes sit, and reaches neither the WGSL nor any material — those
+  still start from the node's fallback (`white`, `black` or `normal`).
+- Drag the column's edge to resize it; the image is re-rendered at the new size once you let go.
 - **Unpack Normal** works here because the preview builds a tangent frame per primitive; the engine's
   meshes carry none.
 - While the graph does not compile, the column says so and why, instead of going on showing the last
@@ -195,10 +223,15 @@ The column on the right shows the shader **on a shape**, turning, updated as the
 
 - **The view follows its panel.** Moving the window, or the panel inside the dock, leaves the graph
   where it was *relative to the panel* — not where it was on screen.
+- A graph **opens framed**: its window takes most of the screen, and the view is zoomed and centred on
+  every node. **Fit** frames it again at any time, and **Arrange** does so once it has laid the graph out.
 - **Minimap**, toggled in the toolbar: a box per node and a rectangle around what you are looking at.
   Click anywhere on it to send the view there.
-- **Arrange** lays the graph out left to right in layers, so whatever feeds a node sits to its left,
-  and orders each layer to keep the wires from crossing. It is the shape of Godot's `arrange_nodes`
+- **Arrange** lays the graph out in columns counted **back from the Surface Output**: a node sits one
+  column left of the furthest thing it feeds, so a parameter wired straight into the output stays
+  beside it. Each column follows the pins its nodes feed — what goes into base colour above what
+  goes into roughness — which is what keeps the wires from crossing. It is the shape of Godot's
+  `arrange_nodes` without its inner-shift pass, which earns its keep on graphs far larger than a shader's. It is the shape of Godot's `arrange_nodes`
   without its inner-shift pass, which earns its keep on graphs far larger than a shader's.
 - Dragging a node marks the file unsaved: where the nodes sit is part of what the `.shader` carries,
   so **Save** is what keeps a layout.

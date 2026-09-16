@@ -13,7 +13,7 @@ use super::{AssetCatalogEntry, draw_asset_picker};
 use crate::actions::{BakeKind, EditorAction};
 
 /// Canonical asset type name the texture pickers filter by.
-const IMAGE_TYPE: &str = "kooch_render::texture::asset::Image";
+pub(crate) const IMAGE_TYPE: &str = "kooch_render::texture::asset::Image";
 
 /// Per-frame data snapshot for the selected asset. Cloned out of the
 /// asset stores before the egui frame so the panel stays borrow-free.
@@ -377,6 +377,24 @@ fn draw_shader_params(
                 match (param.kind, param.range) {
                     (ParamKind::Float, Some([lo, hi])) => {
                         track(ui.add(egui::Slider::new(&mut value[0], lo..=hi)));
+                    }
+                    (ParamKind::Int, Some([lo, hi])) => {
+                        track(
+                            ui.add(
+                                egui::Slider::new(&mut value[0], lo..=hi)
+                                    .step_by(1.0)
+                                    .fixed_decimals(0),
+                            ),
+                        );
+                    }
+                    (ParamKind::Int, None) => {
+                        track(
+                            ui.add(
+                                egui::DragValue::new(&mut value[0])
+                                    .speed(1.0)
+                                    .fixed_decimals(0),
+                            ),
+                        );
                     }
                     (ParamKind::Color, _) => {
                         track(ui.color_edit_button_rgba_unmultiplied(&mut value));

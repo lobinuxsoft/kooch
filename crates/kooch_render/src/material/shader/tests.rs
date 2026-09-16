@@ -135,13 +135,14 @@ fn color_needs_a_vec4() {
 
 #[test]
 fn the_scalar_budget_holds() {
-    let fields = (0..5)
+    // Sixteen four-wide members fill the budget exactly; the seventeenth is refused, on its own line.
+    let fields = (0..17)
         .map(|i| format!("  c{i}: vec4<f32>,\n"))
         .collect::<String>();
     let source = format!("struct SurfaceParams {{\n{fields}}}");
     assert!(matches!(
         Shader::parse(&source),
-        Err(ShaderParseError::Param { line: 6, .. })
+        Err(ShaderParseError::Param { line: 18, .. })
     ));
 }
 
@@ -207,4 +208,20 @@ fn a_block_can_span_lines() {
     .unwrap();
     let names: Vec<&str> = shader.params.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(names, ["real"]);
+}
+
+/// A whole number is an `f32` hinted `@int`, and takes a range like a float does (#1170).
+#[test]
+fn an_int_param_has_a_range() {
+    let shader =
+        Shader::parse("struct SurfaceParams {\n    sides: f32,   // @int @range(3, 12)\n}\n")
+            .unwrap();
+    assert_eq!(shader.params[0].kind, ParamKind::Int);
+    assert_eq!(shader.params[0].range, Some([3.0, 12.0]));
+    assert_eq!(shader.params[0].kind.width(), 1);
+}
+
+#[test]
+fn an_int_needs_a_float() {
+    assert!(Shader::parse("struct SurfaceParams {\n    n: vec2<f32>,   // @int\n}\n").is_err());
 }

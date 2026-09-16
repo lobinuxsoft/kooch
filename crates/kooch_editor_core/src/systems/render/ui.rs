@@ -63,7 +63,7 @@ pub(super) struct ViewportUi<'a> {
     pub(super) preview_texture_id: egui::TextureId,
     pub(super) preview_primitive: usize,
     pub(super) preview_refusal: Option<&'a str>,
-    pub(super) preview_request: &'a mut Option<usize>,
+    pub(super) preview_request: &'a mut Option<crate::viewport::PreviewRequest>,
     pub(super) input_owner: &'a mut crate::input_focus::InputOwner,
 }
 
@@ -248,9 +248,18 @@ pub(super) fn run_editor_ui(
                     &overlay.dock_state,
                     &crate::state::EditorTab::ShaderGraph,
                 ) {
-                    overlay
+                    let surface = overlay
                         .dock_state
                         .add_window(vec![crate::state::EditorTab::ShaderGraph]);
+                    // A graph needs room: at egui's default size a window shows three nodes and
+                    // no preview. A share of the screen, so it fits whatever screen it opens on.
+                    let screen = ui.max_rect();
+                    let size = egui::vec2(screen.width() * 0.7, screen.height() * 0.75);
+                    if let Some(window) = overlay.dock_state.get_window_state_mut(surface) {
+                        window
+                            .set_size(size)
+                            .set_position(screen.center() - size / 2.0);
+                    }
                 }
                 actions.push(EditorAction::ShaderGraphFocused);
             }

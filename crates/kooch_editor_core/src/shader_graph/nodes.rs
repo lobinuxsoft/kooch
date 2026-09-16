@@ -7,6 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 
+mod meta;
+mod params;
+
 /// One node of a graph.
 ///
 /// 🔴 Serialised by name, so adding a variant keeps every graph already written readable.
@@ -23,7 +26,9 @@ pub(crate) enum Node {
     ViewDirection,
     /// Seconds since the engine started: `x` raw, `y` its sine, `z` its cosine, `w` a tenth of it.
     Time,
-    /// A number the material edits: one member of `SurfaceParams`.
+    /// A number the material edits, from before parameters were typed (#1170). Still read so graphs
+    /// written then open; `migrated` turns it into one of the typed nodes below, and the menu never
+    /// offers it.
     Param {
         name: String,
         /// How wide the member is, 1..=4.
@@ -32,14 +37,53 @@ pub(crate) enum Node {
         color: bool,
         default: [f32; 4],
     },
+    /// A float the material edits — a slider when it has a range.
+    Float {
+        name: String,
+        default: f32,
+        range: Option<[f32; 2]>,
+    },
+    /// A whole number the material edits: an `f32` hinted `@int`, stepped by one.
+    Int {
+        name: String,
+        default: f32,
+        range: Option<[f32; 2]>,
+    },
+    /// A vector the material edits, two to four wide.
+    Vector {
+        name: String,
+        width: u32,
+        default: [f32; 4],
+    },
+    /// A colour the material edits with a picker.
+    Color {
+        name: String,
+        default: [f32; 4],
+    },
     /// A texture the material assigns, sampled at `uv`.
     Texture {
         name: String,
         /// `white`, `black` or `normal` while unassigned.
         fallback: String,
+        /// An image to see the preview with. Rides in the graph like a node's position and reaches
+        /// neither the WGSL nor a material: which image a material samples is the material's call.
+        #[serde(default)]
+        preview: Option<kooch_core::Guid>,
     },
-    /// A value written into the graph rather than the material.
+    /// A value written into the graph, from before constants were typed. Read so old graphs open;
+    /// `migrated` turns it into a four-wide vector, and the menu never offers it.
     Constant([f32; 4]),
+    /// A number written into the shader rather than the material.
+    ConstFloat(f32),
+    /// A whole number written into the shader.
+    ConstInt(f32),
+    /// A vector written into the shader, two to four wide.
+    ConstVector {
+        width: u32,
+        value: [f32; 4],
+    },
+    /// A colour written into the shader.
+    ConstColor([f32; 4]),
 
     // -- Math -----------------------------------------------------------
     Add,
@@ -87,6 +131,8 @@ pub(crate) enum Node {
     },
     /// Four numbers into one vector, each read from its input's `x`.
     Combine,
+    /// One vector into its four components, one output each — the other half of `Combine`.
+    Split,
 
     // -- Effects --------------------------------------------------------
     /// Bright at grazing angles: the rim of a sphere. `pow(1 - dot(N, V), power)`.
@@ -106,8 +152,18 @@ pub(crate) enum Node {
         /// `multiply`, `screen`, `overlay`, `lighten` or `darken`.
         mode: String,
     },
-    /// Value noise over a coordinate, 0..1.
+    // -- Noise ----------------------------------------------------------
+    /// Value noise over a coordinate, 0..1. Named `Noise` because it was the first; the menu calls
+    /// it Value Noise.
     Noise,
+    /// Gradient (Perlin) noise, 0..1.
+    GradientNoise,
+    /// Simplex noise, 0..1.
+    SimplexNoise,
+    /// One random value per cell.
+    WhiteNoise,
+    /// Cellular noise: F1, F2, F2 - F1 and a random value per cell, in x, y, z and w.
+    Voronoi,
 
     // -- Shapes ---------------------------------------------------------
     /// A disc around the middle of the uv square.
@@ -130,196 +186,39 @@ pub(crate) enum Node {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Category {
     Input,
+    /// Values written into the shader: the same types as the parameters, fixed at authoring.
+    Constant,
     Math,
     Vector,
     Effect,
     Shape,
+    Noise,
     Output,
 }
 
 impl Category {
     /// In menu order.
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 8] = [
         Self::Input,
+        Self::Constant,
         Self::Math,
         Self::Vector,
         Self::Effect,
         Self::Shape,
+        Self::Noise,
         Self::Output,
     ];
 
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Input => "Input",
+            Self::Constant => "Constants",
             Self::Math => "Math",
             Self::Vector => "Vector",
             Self::Effect => "Effects",
             Self::Shape => "Shapes",
+            Self::Noise => "Noise",
             Self::Output => "Output",
-        }
-    }
-}
-
-impl Node {
-    /// What the node is called in the panel.
-    pub(crate) fn title(&self) -> String {
-        match self {
-            Self::Uv => "UV".to_owned(),
-            Self::WorldPosition => "World Position".to_owned(),
-            Self::WorldNormal => "World Normal".to_owned(),
-            Self::ViewDirection => "View Direction".to_owned(),
-            Self::Time => "Time".to_owned(),
-            Self::Param { name, .. } => format!("Param {name}"),
-            Self::Texture { name, .. } => format!("Texture {name}"),
-            Self::Constant(_) => "Constant".to_owned(),
-            Self::Add => "Add".to_owned(),
-            Self::Subtract => "Subtract".to_owned(),
-            Self::Multiply => "Multiply".to_owned(),
-            Self::Divide => "Divide".to_owned(),
-            Self::OneMinus => "One Minus".to_owned(),
-            Self::Abs => "Abs".to_owned(),
-            Self::Floor => "Floor".to_owned(),
-            Self::Fract => "Fract".to_owned(),
-            Self::Sine => "Sine".to_owned(),
-            Self::Cosine => "Cosine".to_owned(),
-            Self::Min => "Min".to_owned(),
-            Self::Max => "Max".to_owned(),
-            Self::Clamp => "Clamp".to_owned(),
-            Self::Step => "Step".to_owned(),
-            Self::Smoothstep => "Smoothstep".to_owned(),
-            Self::Power => "Power".to_owned(),
-            Self::Saturate => "Saturate".to_owned(),
-            Self::Remap => "Remap".to_owned(),
-            Self::Mix => "Mix".to_owned(),
-            Self::Dot => "Dot".to_owned(),
-            Self::Cross => "Cross".to_owned(),
-            Self::Normalize => "Normalize".to_owned(),
-            Self::Length => "Length".to_owned(),
-            Self::Distance => "Distance".to_owned(),
-            Self::Reflect => "Reflect".to_owned(),
-            Self::Swizzle { pattern } => format!("Swizzle {pattern}"),
-            Self::Combine => "Combine".to_owned(),
-            Self::Fresnel => "Fresnel".to_owned(),
-            Self::UnpackNormal => "Unpack Normal".to_owned(),
-            Self::Panner => "Panner".to_owned(),
-            Self::Rotator => "Rotator".to_owned(),
-            Self::Tiling => "Tiling".to_owned(),
-            Self::Desaturate => "Desaturate".to_owned(),
-            Self::Blend { mode } => format!("Blend {mode}"),
-            Self::Noise => "Noise".to_owned(),
-            Self::Circle => "Circle".to_owned(),
-            Self::Rectangle => "Rectangle".to_owned(),
-            Self::Ring => "Ring".to_owned(),
-            Self::Polygon => "Polygon".to_owned(),
-            Self::Checker => "Checker".to_owned(),
-            Self::Output => "Surface Output".to_owned(),
-        }
-    }
-
-    /// The inputs it takes, named for their pins.
-    pub(crate) fn inputs(&self) -> &'static [&'static str] {
-        match self {
-            Self::Uv
-            | Self::WorldPosition
-            | Self::WorldNormal
-            | Self::ViewDirection
-            | Self::Time
-            | Self::Param { .. }
-            | Self::Constant(_) => &[],
-            Self::Texture { .. } => &["uv"],
-            Self::Add | Self::Subtract | Self::Multiply | Self::Divide => &["a", "b"],
-            Self::OneMinus
-            | Self::Abs
-            | Self::Floor
-            | Self::Fract
-            | Self::Sine
-            | Self::Cosine
-            | Self::Saturate
-            | Self::Normalize
-            | Self::Length
-            | Self::Swizzle { .. } => &["value"],
-            Self::Min | Self::Max | Self::Power | Self::Dot | Self::Cross | Self::Distance => {
-                &["a", "b"]
-            }
-            Self::Clamp => &["value", "low", "high"],
-            Self::Step => &["edge", "value"],
-            Self::Smoothstep => &["low", "high", "value"],
-            Self::Remap => &["value", "from", "to"],
-            Self::Mix => &["a", "b", "t"],
-            Self::Reflect => &["incident", "normal"],
-            Self::Combine => &["x", "y", "z", "w"],
-            Self::Fresnel => &["power"],
-            Self::UnpackNormal => &["map"],
-            Self::Panner => &["uv", "speed"],
-            Self::Rotator => &["uv", "centre", "turns"],
-            Self::Tiling => &["uv", "tiling", "offset"],
-            Self::Desaturate => &["colour", "amount"],
-            Self::Blend { .. } => &["a", "b", "opacity"],
-            Self::Noise => &["uv", "scale"],
-            Self::Circle => &["uv", "radius", "softness"],
-            Self::Rectangle => &["uv", "size", "softness"],
-            Self::Ring => &["uv", "radius", "thickness"],
-            Self::Polygon => &["uv", "sides", "radius"],
-            Self::Checker => &["uv", "tiles"],
-            Self::Output => &["base color", "normal", "metallic", "roughness", "emissive"],
-        }
-    }
-
-    /// Whether it produces a value.
-    pub(crate) fn has_output(&self) -> bool {
-        !matches!(self, Self::Output)
-    }
-
-    /// Which submenu adds it.
-    pub(crate) fn category(&self) -> Category {
-        match self {
-            Self::Uv
-            | Self::WorldPosition
-            | Self::WorldNormal
-            | Self::ViewDirection
-            | Self::Time
-            | Self::Param { .. }
-            | Self::Texture { .. }
-            | Self::Constant(_) => Category::Input,
-            Self::Add
-            | Self::Subtract
-            | Self::Multiply
-            | Self::Divide
-            | Self::OneMinus
-            | Self::Abs
-            | Self::Floor
-            | Self::Fract
-            | Self::Sine
-            | Self::Cosine
-            | Self::Min
-            | Self::Max
-            | Self::Clamp
-            | Self::Step
-            | Self::Smoothstep
-            | Self::Power
-            | Self::Saturate
-            | Self::Remap
-            | Self::Mix => Category::Math,
-            Self::Dot
-            | Self::Cross
-            | Self::Normalize
-            | Self::Length
-            | Self::Distance
-            | Self::Reflect
-            | Self::Swizzle { .. }
-            | Self::Combine => Category::Vector,
-            Self::Fresnel
-            | Self::UnpackNormal
-            | Self::Panner
-            | Self::Rotator
-            | Self::Tiling
-            | Self::Desaturate
-            | Self::Blend { .. }
-            | Self::Noise => Category::Effect,
-            Self::Circle | Self::Rectangle | Self::Ring | Self::Polygon | Self::Checker => {
-                Category::Shape
-            }
-            Self::Output => Category::Output,
         }
     }
 }
@@ -332,17 +231,55 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::WorldNormal,
         Node::ViewDirection,
         Node::Time,
-        Node::Param {
-            name: "value".to_owned(),
-            width: 1,
-            color: false,
+        Node::Float {
+            name: "amount".to_owned(),
+            default: 0.5,
+            range: Some([0.0, 1.0]),
+        },
+        Node::Int {
+            name: "count".to_owned(),
+            default: 1.0,
+            range: None,
+        },
+        Node::Vector {
+            name: "offset".to_owned(),
+            width: 2,
             default: [0.0; 4],
+        },
+        Node::Vector {
+            name: "direction".to_owned(),
+            width: 3,
+            default: [0.0; 4],
+        },
+        Node::Vector {
+            name: "vector".to_owned(),
+            width: 4,
+            default: [0.0; 4],
+        },
+        Node::Color {
+            name: "tint".to_owned(),
+            default: [1.0; 4],
         },
         Node::Texture {
             name: "map".to_owned(),
             fallback: "white".to_owned(),
+            preview: None,
         },
-        Node::Constant([1.0; 4]),
+        Node::ConstFloat(1.0),
+        Node::ConstInt(1.0),
+        Node::ConstVector {
+            width: 2,
+            value: [0.0; 4],
+        },
+        Node::ConstVector {
+            width: 3,
+            value: [0.0; 4],
+        },
+        Node::ConstVector {
+            width: 4,
+            value: [0.0; 4],
+        },
+        Node::ConstColor([1.0; 4]),
         Node::Add,
         Node::Subtract,
         Node::Multiply,
@@ -372,6 +309,7 @@ pub(crate) fn palette() -> Vec<Node> {
             pattern: "xyzw".to_owned(),
         },
         Node::Combine,
+        Node::Split,
         Node::Fresnel,
         Node::UnpackNormal,
         Node::Panner,
@@ -382,6 +320,10 @@ pub(crate) fn palette() -> Vec<Node> {
             mode: "multiply".to_owned(),
         },
         Node::Noise,
+        Node::GradientNoise,
+        Node::SimplexNoise,
+        Node::WhiteNoise,
+        Node::Voronoi,
         Node::Circle,
         Node::Rectangle,
         Node::Ring,

@@ -81,7 +81,7 @@ fn fit(bounds: Rect, map: Rect) -> (f32, Vec2) {
 }
 
 /// What the graph occupies — nodes and their assumed size — with room around it.
-fn bounds(graph: &Graph) -> Option<Rect> {
+pub(crate) fn bounds(graph: &Graph) -> Option<Rect> {
     let mut bounds = Rect::NOTHING;
     for (_, pos, _) in graph.nodes_pos_ids() {
         bounds.extend_with(pos);

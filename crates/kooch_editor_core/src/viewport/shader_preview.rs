@@ -13,29 +13,30 @@ use kooch_render::material::{
     MAX_PARAM_SCALARS, MaterialParams, MaterialPool, MaterialTexturePool, ParamKind, ShaderParam,
     TextureRef,
 };
-use kooch_render::mesh::{Mesh, MeshVertex, Primitive};
+use kooch_render::mesh::Primitive;
 use kooch_render::meshlet::compose_preview_shader;
-use wgpu::util::DeviceExt;
 
 use crate::viewport::target::ViewportTarget;
 
-/// How big the preview renders. Fixed: it is a thumbnail of a shader, not a viewport, and a size
-/// that follows the panel would rebuild its textures on every drag of the splitter.
+mod mesh;
+
+use mesh::{PreviewMesh, PreviewVertex, default_primitive, upload};
+
+/// What the Shader Graph panel asks of the preview for the next frame.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PreviewRequest {
+    /// Which of `Primitive::CANONICAL` to show.
+    pub primitive: usize,
+    /// The target's side in pixels, once the column has settled — `None` while it is dragged.
+    pub size: Option<u32>,
+}
+
+/// What the preview starts at, before the column has reported a size. After that the target
+/// follows the column, re-created once a drag settles rather than on every frame of it.
 const SIZE: (u32, u32) = (320, 320);
 
 /// One turn every this many seconds, so a shader that depends on the view angle shows it.
 const TURN_SECONDS: f32 = 12.0;
-
-/// A vertex of the preview mesh. The engine's `MeshVertex` has no tangent, and a normal map cannot
-/// be previewed without one, so it is computed here and carried alongside.
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct PreviewVertex {
-    position: [f32; 3],
-    normal: [f32; 3],
-    uv: [f32; 2],
-    tangent: [f32; 4],
-}
 
 /// The uniforms the preview frame declares, one buffer each.
 #[repr(C)]
@@ -58,13 +59,6 @@ struct ScreenUbo {
 struct IntiUbo {
     camera_position: [f32; 3],
     _pad: f32,
-}
-
-/// The primitive currently uploaded.
-struct PreviewMesh {
-    vertices: wgpu::Buffer,
-    indices: wgpu::Buffer,
-    count: u32,
 }
 
 pub(crate) struct ShaderPreview {
@@ -227,9 +221,44 @@ impl ShaderPreview {
         self.primitive
     }
 
+    /// Shows why the graph produced no shader at all — past the parameter budget, say — instead of
+    /// leaving the last image up as if the graph were fine.
+    pub(crate) fn refuse(&mut self, why: String) {
+        self.refusal = Some(why);
+        self.pipeline = None;
+    }
+
     /// Why the shader did not build, if it did not.
     pub(crate) fn refusal(&self) -> Option<&str> {
         self.refusal.as_deref()
+    }
+
+    /// Asks for a square target of `side` pixels; applied by [`Self::resize_if_needed`].
+    pub(crate) fn request_size(&mut self, side: u32) {
+        self.target.request_size((side, side));
+    }
+
+    /// Re-creates the target when a new size was asked for — before the UI runs, so the texture id
+    /// the panel draws with stays valid for the whole frame.
+    pub(crate) fn resize_if_needed(
+        &mut self,
+        device: &wgpu::Device,
+        egui_renderer: &mut egui_wgpu::Renderer,
+    ) {
+        self.target.resize_if_needed(device, egui_renderer);
+    }
+
+    /// Uploads an image a texture node previews with, once per asset.
+    pub(crate) fn show_image(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        guid: kooch_core::Guid,
+        image: &kooch_render::texture::Image,
+    ) {
+        if !self.textures.contains(guid) {
+            self.textures.register(device, queue, guid, image);
+        }
     }
 
     /// Swaps the shape the shader is shown on.
@@ -250,6 +279,8 @@ impl ShaderPreview {
         params_wgsl: &str,
         source: &str,
         params: &[ShaderParam],
+        // Which image each texture parameter is previewed with, by name.
+        images: &[(String, kooch_core::Guid)],
         dt: f32,
     ) {
         let (device, queue) = (gpu.device(), gpu.queue());
@@ -295,8 +326,14 @@ impl ShaderPreview {
         let mut slots = [TextureRef::default(); 4];
         for param in params {
             if param.kind == ParamKind::Texture {
+                // An image that has not reached the pool yet samples the fallback rather than a hole.
+                let guid = images
+                    .iter()
+                    .find(|(name, _)| *name == param.name)
+                    .map(|(_, guid)| *guid)
+                    .filter(|guid| self.textures.contains(*guid));
                 slots[param.offset as usize] = TextureRef {
-                    guid: None,
+                    guid,
                     fallback: param.texture,
                 };
                 continue;
@@ -446,81 +483,3 @@ impl ShaderPreview {
         true
     }
 }
-
-/// Which primitive a preview opens on: the sphere, which is what a material is judged on.
-fn default_primitive() -> usize {
-    Primitive::CANONICAL
-        .iter()
-        .position(|(name, _)| *name == "sphere")
-        .unwrap_or(0)
-}
-
-/// Uploads a primitive, tangents and all.
-fn upload(device: &wgpu::Device, mesh: &Mesh) -> PreviewMesh {
-    let vertices = with_tangents(mesh);
-    PreviewMesh {
-        vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("shader_preview_vertices"),
-            contents: bytemuck::cast_slice(&vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        }),
-        indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("shader_preview_indices"),
-            contents: bytemuck::cast_slice(&mesh.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        }),
-        count: mesh.indices.len() as u32,
-    }
-}
-
-/// The tangent frame the engine's meshes do not carry, accumulated per triangle from the uv
-/// derivatives — the standard construction, and what **Unpack Normal** needs to mean anything here.
-fn with_tangents(mesh: &Mesh) -> Vec<PreviewVertex> {
-    let mut accumulated = vec![Vec3::ZERO; mesh.vertices.len()];
-    for triangle in mesh.indices.chunks_exact(3) {
-        let [a, b, c] = [triangle[0], triangle[1], triangle[2]].map(|i| i as usize);
-        let (va, vb, vc) = (&mesh.vertices[a], &mesh.vertices[b], &mesh.vertices[c]);
-        let edge1 = Vec3::from(vb.position) - Vec3::from(va.position);
-        let edge2 = Vec3::from(vc.position) - Vec3::from(va.position);
-        let duv1 = [vb.uv[0] - va.uv[0], vb.uv[1] - va.uv[1]];
-        let duv2 = [vc.uv[0] - va.uv[0], vc.uv[1] - va.uv[1]];
-        let determinant = duv1[0] * duv2[1] - duv2[0] * duv1[1];
-        // A degenerate uv triangle says nothing about which way the texture runs.
-        if determinant.abs() < 1e-12 {
-            continue;
-        }
-        let tangent = (edge1 * duv2[1] - edge2 * duv1[1]) / determinant;
-        for index in [a, b, c] {
-            accumulated[index] += tangent;
-        }
-    }
-
-    mesh.vertices
-        .iter()
-        .zip(accumulated)
-        .map(|(vertex, tangent)| {
-            let normal = Vec3::from(vertex.normal).normalize_or(Vec3::Y);
-            // Gram-Schmidt, so the tangent is square to the normal the shader will use.
-            let tangent = (tangent - normal * normal.dot(tangent)).normalize_or(any_square(normal));
-            PreviewVertex {
-                position: vertex.position,
-                normal: normal.to_array(),
-                uv: vertex.uv,
-                tangent: [tangent.x, tangent.y, tangent.z, 1.0],
-            }
-        })
-        .collect()
-}
-
-/// Any direction square to `normal`, for a vertex no triangle gave a tangent.
-fn any_square(normal: Vec3) -> Vec3 {
-    let axis = if normal.x.abs() < 0.9 {
-        Vec3::X
-    } else {
-        Vec3::Y
-    };
-    normal.cross(axis).normalize_or(Vec3::X)
-}
-
-#[cfg(test)]
-mod tests;
