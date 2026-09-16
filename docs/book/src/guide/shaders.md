@@ -170,6 +170,13 @@ The menu groups the nodes the way the panels do:
 - **Constants** are the same types written into the shader instead of the material: no name, nothing
   for the Inspector to show, just a value. An old graph's four-number `Constant` opens as a
   **Vector 4** with all four kept.
+- **Pins say what they take.** Each name ends in how many components it reads or gives — `speed (2)`,
+  `radius (1)`, `color (4)`; a pin with no number works component by component. Pins and wires are
+  coloured the way Unity Shader Graph colours them: **(1)** cyan, **(2)** green, **(3)** yellow,
+  **(4)** pink, any grey. A wire always connects — a number wired into a `(2)` pin fills `x` and
+  leaves `y` at zero.
+- **Rest the pointer** on a pin for what it is for and what it does unwired, on a node for what the
+  node does, or on a node in the Add menu before placing it. Node headers are tinted by category.
 - Nodes lay their fields out top to bottom, under their pins, and a short list of choices — a texture's fallback, a
   blend mode — is a dropdown, so a node stays about as wide as its title.
 - **Texture** writes a `var name: texture_2d<f32>;` and samples it at the uv it is given. **Unpack
