@@ -368,8 +368,11 @@ impl SnarlViewer<Node> for Viewer<'_> {
         snarl: &mut Snarl<Node>,
     ) -> impl egui_snarl::ui::SnarlPin + 'static {
         // A value node carries its own value, so the node itself is where it is edited.
+        let catalog = self.catalog;
         if let Some(node) = snarl.get_node_mut(pin.id.node) {
-            match node {
+            // 🔴 An output pin's row is laid out RIGHT TO LEFT by egui-snarl, so fields added one after
+            // another landed in a row, and in reverse. A column of its own is what stacks them.
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| match node {
                 Node::Float {
                     name,
                     default,
@@ -407,7 +410,7 @@ impl SnarlViewer<Node> for Viewer<'_> {
                                 ui,
                                 *preview,
                                 crate::panels::inspector::IMAGE_TYPE,
-                                self.catalog,
+                                catalog,
                             )
                         })
                         .inner;
@@ -440,7 +443,7 @@ impl SnarlViewer<Node> for Viewer<'_> {
                 _ => {
                     ui.label("out");
                 }
-            }
+            });
         }
         PinInfo::circle()
     }
