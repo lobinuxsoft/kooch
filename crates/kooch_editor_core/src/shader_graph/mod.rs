@@ -13,7 +13,10 @@ mod nodes;
 
 pub(crate) use arrange::{NODE_SIZE, arrange};
 pub(crate) use codegen::generate;
-pub(crate) use nodes::{BLEND_MODES, Category, Node, TEXTURE_FALLBACKS, palette};
+pub(crate) use nodes::{
+    BLEND_MODES, Category, NOISE_BASES, NOISE_COLOUR, NOISE_DISTORTION, NOISE_FRACTALS,
+    NOISE_PHASE, Node, TEXTURE_FALLBACKS, VORONOI_BORDER, VORONOI_METRICS, palette,
+};
 
 /// What the block comment holding a graph starts with.
 const MARKER: &str = "/*KOOCH_GRAPH;";

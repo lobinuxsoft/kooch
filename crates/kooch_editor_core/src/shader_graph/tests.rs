@@ -4,6 +4,8 @@ use kooch_render::material::Shader;
 
 use super::*;
 
+mod noise;
+
 /// A tint parameter times an albedo texture sampled at the mesh's uv, into base colour.
 fn tinted_texture() -> Graph {
     let mut graph = Graph::new();
@@ -402,7 +404,7 @@ fn every_noise_in_one_graph_compiles() {
 #[test]
 fn every_output_is_its_own_value() {
     for (node, expected) in [
-        (Node::Voronoi, ["x", "y", "z", "w"]),
+        (Node::Voronoi, ["f1", "f2", "edge", "cell"]),
         (Node::Split, ["x", "y", "z", "w"]),
     ] {
         let name = node.title();
@@ -449,7 +451,7 @@ fn each_pin_reads_its_part() {
     assert_eq!(texture.output_of("n3", 0), "n3");
     assert_eq!(texture.output_of("n3", 1), "vec4<f32>(n3.xyz, 0.0)");
     assert_eq!(texture.output_of("n3", 5), "vec4<f32>(n3.w)");
-    assert_eq!(Node::Voronoi.output_of("n3", 2), "vec4<f32>(n3.z)");
+    assert_eq!(Node::Voronoi.output_of("n3", 2), "vec4<f32>(n3.edge)");
 }
 
 /// 🔴 Every pin of every node the menu offers generates a shader naga accepts. Each pin is its own

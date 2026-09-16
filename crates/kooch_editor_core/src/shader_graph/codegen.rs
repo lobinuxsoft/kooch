@@ -30,6 +30,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         visiting: HashSet::new(),
         lines: String::new(),
         next: 0,
+        locals: 0,
     };
     // What an unconnected output falls back to. 🔴 Not zero for the normal: `normalize` of it is
     // NaN, which naga refuses outright.
