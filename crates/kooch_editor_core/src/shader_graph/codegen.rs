@@ -66,6 +66,12 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     let _ = writeln!(source, "    out.roughness = {}.x;", outputs[3]);
     let _ = writeln!(source, "    out.emissive = {}.rgb;", outputs[4]);
     let _ = writeln!(source, "    return out;\n}}");
+    // 🔴 The graph never writes a file the engine cannot read. A shader that fails to parse is
+    // written all the same, fails to reload, and leaves every reader — the Inspector above all —
+    // showing the parameters from before it, with nothing on screen saying why (#1159).
+    if let Err(error) = kooch_render::material::Shader::parse(&source) {
+        return Err(format!("{error}"));
+    }
     Ok(source)
 }
 
@@ -87,7 +93,13 @@ fn declarations(graph: &Graph) -> String {
             else {
                 continue;
             };
-            let hint = if *color { "  // @color" } else { "" };
+            // `@color` is a `vec4<f32>` hint and the engine refuses it on anything narrower, so a
+            // tick on a three-wide parameter is dropped rather than written out.
+            let hint = if *color && *width == 4 {
+                "  // @color"
+            } else {
+                ""
+            };
             let _ = writeln!(out, "    {name}: {},{hint}", wgsl_type(*width));
         }
         out.push_str("}\n\nconst SURFACE_DEFAULTS = SurfaceParams(\n");

@@ -54,6 +54,41 @@ fn a_graph_generates_a_valid_shader() {
         .expect("the generated shader compiles");
 }
 
+/// 🔴 From the #1159 smoke test: a colour tick on a three-wide parameter wrote `@color` on a
+/// `vec3<f32>`, which the engine refuses. The file was written anyway, failed to reload, and the
+/// Inspector went on listing the parameters from before it.
+#[test]
+fn a_narrow_color_param_parses() {
+    let mut graph = Graph::new();
+    let emissive = graph.insert_node(
+        Pos2::ZERO,
+        Node::Param {
+            name: "emissive".to_owned(),
+            width: 3,
+            color: true,
+            default: [1.0, 0.5, 0.25, 0.0],
+        },
+    );
+    let output = graph.insert_node(Pos2::ZERO, Node::Output);
+    graph.connect(
+        OutPinId {
+            node: emissive,
+            output: 0,
+        },
+        InPinId {
+            node: output,
+            input: 4,
+        },
+    );
+
+    let source = generate(&graph).expect("the graph generates a shader");
+    let shader = Shader::parse(&source).expect("the generated shader parses");
+
+    assert_eq!(shader.params[0].name, "emissive");
+    kooch_render::meshlet::validate_surface(&shader.params_wgsl(), &shader.source)
+        .expect("the generated shader compiles");
+}
+
 /// The graph rides in the file it generated and comes back out of it.
 #[test]
 fn the_graph_survives_its_own_file() {

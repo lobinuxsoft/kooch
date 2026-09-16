@@ -138,7 +138,12 @@ impl SnarlViewer<Node> for Viewer {
                     ui.horizontal(|ui| {
                         ui.add(egui::TextEdit::singleline(name).desired_width(70.0));
                         ui.add(egui::DragValue::new(width).range(1..=4).prefix("x"));
-                        ui.checkbox(color, "color");
+                        // Only four wide: the hint it writes is a `vec4<f32>` one, and it cannot
+                        // outlive a width the user narrowed under it.
+                        *color &= *width == 4;
+                        if *width == 4 {
+                            ui.checkbox(color, "color");
+                        }
                     });
                     ui.horizontal(|ui| {
                         for component in default.iter_mut().take(*width as usize) {
