@@ -211,8 +211,11 @@ The column on the right shows the shader **on a shape**, turning, updated as the
   every node. **Fit** frames it again at any time, and **Arrange** does so once it has laid the graph out.
 - **Minimap**, toggled in the toolbar: a box per node and a rectangle around what you are looking at.
   Click anywhere on it to send the view there.
-- **Arrange** lays the graph out left to right in layers, so whatever feeds a node sits to its left,
-  and orders each layer to keep the wires from crossing. It is the shape of Godot's `arrange_nodes`
+- **Arrange** lays the graph out in columns counted **back from the Surface Output**: a node sits one
+  column left of the furthest thing it feeds, so a parameter wired straight into the output stays
+  beside it. Each column follows the pins its nodes feed — what goes into base colour above what
+  goes into roughness — which is what keeps the wires from crossing. It is the shape of Godot's
+  `arrange_nodes` without its inner-shift pass, which earns its keep on graphs far larger than a shader's. It is the shape of Godot's `arrange_nodes`
   without its inner-shift pass, which earns its keep on graphs far larger than a shader's.
 - Dragging a node marks the file unsaved: where the nodes sit is part of what the `.shader` carries,
   so **Save** is what keeps a layout.

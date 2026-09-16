@@ -1,16 +1,17 @@
-//! Auto-arrange (#1167): the graph laid out left to right, in layers.
+//! Auto-arrange (#1167): the graph laid out in layers, from the Surface Output back.
 //!
-//! Godot's `GraphEditArranger` is the reference. It runs a full Sugiyama pass — layering, crossing
-//! minimisation, horizontal alignment, inner shifts, block placement. A shader graph is a small DAG
-//! flowing into one Surface Output, so the first two steps carry nearly all of it: layer by longest
-//! path, then order each layer by the median of what feeds it.
+//! Godot's `GraphEditArranger` is the reference: layering, crossing minimisation, horizontal
+//! alignment, inner shifts, block placement. A shader graph is a small DAG flowing into one output,
+//! so the first two steps carry nearly all of it — but counted **from the end** (user's call): a
+//! node's column is how far it is from what it ultimately feeds, so a parameter wired straight into
+//! the output sits beside it instead of at the far left with a wire across the whole graph.
 
 use std::collections::HashMap;
 
 use egui::{Pos2, Vec2};
 use egui_snarl::NodeId;
 
-use super::Graph;
+use super::{Graph, Node};
 
 /// What Godot leaves between nodes, both ways.
 const GAP: Vec2 = Vec2::new(100.0, 100.0);
@@ -22,23 +23,28 @@ const NODE: Vec2 = Vec2::new(240.0, 44.0);
 /// What one pin row adds to a node's height.
 const ROW: f32 = 28.0;
 
-/// Lays every node out in layers, left to right, and reports whether anything moved.
+/// What a node feeds: the node, and which of its input pins.
+type Consumers = HashMap<NodeId, Vec<(NodeId, usize)>>;
+
+/// Lays every node out in layers ending at the output, and reports whether anything moved.
 ///
 /// 🔴 A graph that feeds a node into itself is left exactly as it was: there is no longest path to
 /// layer it by, and the panel can hold a cycle the codegen would refuse.
 pub(crate) fn arrange(graph: &mut Graph) -> bool {
-    let Some(layers) = layers(graph) else {
+    let Some(ranks) = ranks(graph) else {
         return false;
     };
-    let ordered = ordered(graph, layers);
+    let columns = ordered(graph, ranks);
+    let last = columns.len().saturating_sub(1);
 
     let mut moved = false;
-    let mut x = 0.0;
-    for layer in &ordered {
-        let heights: Vec<f32> = layer.iter().map(|&id| height(graph, id)).collect();
-        let total: f32 = heights.iter().sum::<f32>() + GAP.y * (layer.len().max(1) - 1) as f32;
+    for (rank, column) in columns.iter().enumerate() {
+        // Rank 0 is the output's column, drawn furthest right.
+        let x = (last - rank) as f32 * (NODE.x + GAP.x);
+        let heights: Vec<f32> = column.iter().map(|&id| height(graph, id)).collect();
+        let total: f32 = heights.iter().sum::<f32>() + GAP.y * (column.len().max(1) - 1) as f32;
         let mut y = -total / 2.0;
-        for (&id, height) in layer.iter().zip(&heights) {
+        for (&id, height) in column.iter().zip(&heights) {
             let at = Pos2::new(x, y);
             if let Some(info) = graph.get_node_info_mut(id)
                 && info.pos != at
@@ -48,96 +54,107 @@ pub(crate) fn arrange(graph: &mut Graph) -> bool {
             }
             y += height + GAP.y;
         }
-        x += NODE.x + GAP.x;
     }
     moved
 }
 
-/// Which layer each node belongs to: one past the furthest thing that feeds it. `None` when the
-/// graph holds a cycle.
-fn layers(graph: &Graph) -> Option<HashMap<NodeId, usize>> {
-    let feeders = feeders(graph);
-    let mut layers = HashMap::new();
+/// How far each node is from the end of the graph: 0 for a node that feeds nothing — the output, or
+/// the end of a dangling branch — and one past the furthest of what it feeds otherwise. `None` on a
+/// cycle.
+fn ranks(graph: &Graph) -> Option<HashMap<NodeId, usize>> {
+    let consumers = consumers(graph);
+    let mut ranks = HashMap::new();
     for (id, _, _) in graph.nodes_pos_ids() {
-        depth(id, &feeders, &mut layers, &mut Vec::new())?;
+        rank(id, &consumers, &mut ranks, &mut Vec::new())?;
     }
-    Some(layers)
+    Some(ranks)
 }
 
-/// What feeds each node, by node id.
-fn feeders(graph: &Graph) -> HashMap<NodeId, Vec<NodeId>> {
-    let mut feeders: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+fn consumers(graph: &Graph) -> Consumers {
+    let mut consumers = Consumers::new();
     for (from, to) in graph.wires() {
-        feeders.entry(to.node).or_default().push(from.node);
+        consumers
+            .entry(from.node)
+            .or_default()
+            .push((to.node, to.input));
     }
-    feeders
+    consumers
 }
 
-/// The longest path from a node with nothing feeding it. `None` on a cycle.
-fn depth(
+fn rank(
     id: NodeId,
-    feeders: &HashMap<NodeId, Vec<NodeId>>,
+    consumers: &Consumers,
     known: &mut HashMap<NodeId, usize>,
     walking: &mut Vec<NodeId>,
 ) -> Option<usize> {
-    if let Some(&depth) = known.get(&id) {
-        return Some(depth);
+    if let Some(&rank) = known.get(&id) {
+        return Some(rank);
     }
     if walking.contains(&id) {
         return None;
     }
     walking.push(id);
-    let mut deepest = 0;
-    for &feeder in feeders.get(&id).into_iter().flatten() {
-        deepest = deepest.max(depth(feeder, feeders, known, walking)? + 1);
+    let mut furthest = 0;
+    for &(consumer, _) in consumers.get(&id).into_iter().flatten() {
+        furthest = furthest.max(rank(consumer, consumers, known, walking)? + 1);
     }
     walking.pop();
-    known.insert(id, deepest);
-    Some(deepest)
+    known.insert(id, furthest);
+    Some(furthest)
 }
 
-/// The nodes of each layer, ordered so wires cross as little as possible: each node sits at the
-/// median of what feeds it, which is the heuristic Godot's `_crossing_minimisation` splits on.
-fn ordered(graph: &Graph, layers: HashMap<NodeId, usize>) -> Vec<Vec<NodeId>> {
-    let feeders = feeders(graph);
-    let depth = layers.values().copied().max().unwrap_or(0);
-    let mut out: Vec<Vec<NodeId>> = vec![Vec::new(); depth + 1];
-    for (&id, &layer) in &layers {
-        out[layer].push(id);
+/// The nodes of each column, from the output's back, ordered so wires cross as little as possible.
+/// Each node sits at the median of the places it feeds — refined by **which pin**, so what feeds
+/// base colour lands above what feeds roughness, in the order the pins are drawn.
+fn ordered(graph: &Graph, ranks: HashMap<NodeId, usize>) -> Vec<Vec<NodeId>> {
+    let consumers = consumers(graph);
+    let deepest = ranks.values().copied().max().unwrap_or(0);
+    let mut columns: Vec<Vec<NodeId>> = vec![Vec::new(); deepest + 1];
+    for (&id, &rank) in &ranks {
+        columns[rank].push(id);
     }
-    // The first layer has nothing feeding it, so its order is whatever it was — sorted by id, which
-    // at least makes the result the same every time it runs.
-    out[0].sort_unstable_by_key(|id| id.0);
+    // The last column feeds nothing: the output first, then any dangling ends, by id so the result
+    // is the same every time it runs.
+    columns[0].sort_unstable_by_key(|id| {
+        let output = graph
+            .get_node(*id)
+            .is_some_and(|n| matches!(n, Node::Output));
+        (!output, id.0)
+    });
 
     let mut places: HashMap<NodeId, f32> = HashMap::new();
-    for (place, &id) in out[0].iter().enumerate() {
+    for (place, &id) in columns[0].iter().enumerate() {
         places.insert(id, place as f32);
     }
-    for layer in 1..=depth {
-        let mut keyed: Vec<(f32, NodeId)> = out[layer]
+    for rank in 1..=deepest {
+        let mut keyed: Vec<(f32, NodeId)> = columns[rank]
             .iter()
-            .map(|&id| (median(&feeders, &places, id), id))
+            .map(|&id| (median(graph, &consumers, &places, id), id))
             .collect();
         keyed.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.0.cmp(&b.1.0)));
-        out[layer] = keyed.iter().map(|&(_, id)| id).collect();
-        for (place, &id) in out[layer].iter().enumerate() {
+        columns[rank] = keyed.iter().map(|&(_, id)| id).collect();
+        for (place, &id) in columns[rank].iter().enumerate() {
             places.insert(id, place as f32);
         }
     }
-    out
+    columns
 }
 
-/// Where the things feeding `id` sit, on average. A node fed by nothing keeps to the top.
-fn median(
-    feeders: &HashMap<NodeId, Vec<NodeId>>,
-    places: &HashMap<NodeId, f32>,
-    id: NodeId,
-) -> f32 {
-    let mut known: Vec<f32> = feeders
+/// Where `id` feeds, as a single number: the median of each consumer's place plus how far down its
+/// pin list the wire lands.
+fn median(graph: &Graph, consumers: &Consumers, places: &HashMap<NodeId, f32>, id: NodeId) -> f32 {
+    let mut known: Vec<f32> = consumers
         .get(&id)
         .into_iter()
         .flatten()
-        .filter_map(|feeder| places.get(feeder).copied())
+        .filter_map(|&(consumer, pin)| {
+            let pins = graph
+                .get_node(consumer)
+                .map_or(1, |n| n.inputs().len().max(1));
+            places
+                .get(&consumer)
+                .map(|place| place + pin as f32 / (pins as f32 + 1.0))
+        })
         .collect();
     if known.is_empty() {
         return 0.0;
