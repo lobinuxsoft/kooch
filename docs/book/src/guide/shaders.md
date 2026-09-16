@@ -207,6 +207,8 @@ The column on the right shows the shader **on a shape**, turning, updated as the
 
 - **The view follows its panel.** Moving the window, or the panel inside the dock, leaves the graph
   where it was *relative to the panel* — not where it was on screen.
+- A graph **opens framed**: its window takes most of the screen, and the view is zoomed and centred on
+  every node. **Fit** frames it again at any time, and **Arrange** does so once it has laid the graph out.
 - **Minimap**, toggled in the toolbar: a box per node and a rectangle around what you are looking at.
   Click anywhere on it to send the view there.
 - **Arrange** lays the graph out left to right in layers, so whatever feeds a node sits to its left,

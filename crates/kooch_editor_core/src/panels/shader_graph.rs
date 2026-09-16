@@ -54,6 +54,7 @@ pub(crate) fn draw_shader_graph_content(
     };
     draw_preview(ui, view.preview);
 
+    let mut refit = false;
     ui.horizontal(|ui| {
         if let Some(path) = view.path {
             let name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -72,6 +73,14 @@ pub(crate) fn draw_shader_graph_content(
             .clicked()
         {
             arrange(graph);
+            refit = true;
+        }
+        if ui
+            .button("Fit")
+            .on_hover_text("Frame the whole graph in the panel")
+            .clicked()
+        {
+            refit = true;
         }
         let mut showing = minimap_shown(ui);
         if ui.checkbox(&mut showing, "Minimap").changed() {
@@ -85,7 +94,12 @@ pub(crate) fn draw_shader_graph_content(
     // re-anchors it never, so a panel that moved left its graph behind — off screen, with nothing
     // to do but pan blindly looking for it (#1167).
     let panel = ui.max_rect();
+    // Framed on the frames right after a graph opens, while its window settles on a size, and on request.
+    let fit = (refit || opening(ui, view.path))
+        .then(|| crate::panels::graph_minimap::bounds(graph))
+        .flatten();
     let mut viewer = Viewer {
+        fit,
         catalog: view.catalog,
         drift: drift(ui, panel),
         look_at: taken_look(ui),
@@ -107,6 +121,50 @@ pub(crate) fn draw_shader_graph_content(
 
 /// How wide a node's fields are. Narrow on purpose: a node reads as a column, not a long row.
 const FIELD: f32 = 110.0;
+
+/// The view that shows all of `bounds` centred in `panel`: zoomed out far enough to hold every node,
+/// never zoomed in past actual size.
+fn framed(bounds: egui::Rect, panel: egui::Rect) -> TSTransform {
+    let scaling = (panel.width() / bounds.width())
+        .min(panel.height() / bounds.height())
+        .clamp(0.2, 1.0);
+    TSTransform {
+        scaling,
+        translation: panel.center().to_vec2() - scaling * bounds.center().to_vec2(),
+    }
+}
+
+/// Whether this is one of the first frames showing the graph at `path`. The window a graph opens in
+/// takes a frame or two to settle on its size, and a view framed before that is framed wrong.
+fn opening(ui: &egui::Ui, path: Option<&std::path::Path>) -> bool {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut hasher);
+    let key = hasher.finish();
+    let (seen, frames) = ui
+        .ctx()
+        .data(|d| d.get_temp::<(u64, u8)>(opened_id()))
+        .unwrap_or((0, u8::MAX));
+    let frames = if seen == key {
+        frames.saturating_add(1)
+    } else {
+        0
+    };
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(opened_id(), (key, frames)));
+    frames < 3
+}
+
+fn opened_id() -> egui::Id {
+    egui::Id::new("shader_graph_opened")
+}
+
+/// Forgets which graph was on screen, so the next time the panel is drawn it frames the graph again —
+/// called on a frame the panel was not drawn at all.
+pub(crate) fn forget_opening(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove_temp::<(u64, u8)>(opened_id()));
+}
 
 /// A parameter's name, on a line of its own.
 fn name_field(ui: &mut egui::Ui, name: &mut String) {
@@ -310,6 +368,8 @@ fn taken_look(ui: &egui::Ui) -> Option<egui::Pos2> {
 
 /// How the nodes draw and connect.
 struct Viewer<'a> {
+    /// The whole graph's bounds, when the view should be framed around them this frame.
+    fit: Option<egui::Rect>,
     /// Every asset, for a texture node's preview image.
     catalog: &'a [AssetCatalogEntry],
     /// How far the panel moved since the last frame.
@@ -331,6 +391,9 @@ impl SnarlViewer<Node> for Viewer<'_> {
             // That point of the graph, under the middle of the panel.
             to_global.translation =
                 self.panel.center().to_vec2() - to_global.scaling * at.to_vec2();
+        }
+        if let Some(bounds) = self.fit {
+            *to_global = framed(bounds, self.panel);
         }
         self.transform = *to_global;
     }
@@ -372,7 +435,11 @@ impl SnarlViewer<Node> for Viewer<'_> {
         if let Some(node) = snarl.get_node_mut(pin.id.node) {
             // 🔴 An output pin's row is laid out RIGHT TO LEFT by egui-snarl, so fields added one after
             // another landed in a row, and in reverse. A column of its own is what stacks them.
-            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| match node {
+            // Capped as well as stacked: a top-down layout claims all the width it is offered, and
+            // inside a snarl node that is everything up to the panel's edge.
+            let column = egui::vec2(FIELD + 16.0, 0.0);
+            let top_down = egui::Layout::top_down(egui::Align::Min);
+            ui.allocate_ui_with_layout(column, top_down, |ui| match node {
                 Node::Float {
                     name,
                     default,
@@ -499,3 +566,6 @@ impl SnarlViewer<Node> for Viewer<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

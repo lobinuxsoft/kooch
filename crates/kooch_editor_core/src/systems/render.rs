@@ -790,6 +790,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         }
     }
 
+    if preview_request.is_none() {
+        crate::panels::shader_graph::forget_opening(&overlay.ctx);
+    }
+
     stages.viewport_ms = crate::perf::ms_since(viewport_start);
 
     let present_start = std::time::Instant::now();
