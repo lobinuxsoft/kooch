@@ -55,15 +55,41 @@ pub fn capture(resources: &mut Resources) -> usize {
     hold(resources)
 }
 
+/// How many entities `scene` holds.
+fn entity_count(resources: &Resources, scene: Guid) -> usize {
+    resources
+        .get::<kooch_ecs::component::ComponentRegistry>()
+        .and_then(|registry| registry.get_cpu::<kooch_ecs::SceneMember>())
+        .map(|storage| storage.iter().filter(|(_, m)| m.scene == scene).count())
+        .unwrap_or_default()
+}
+
 /// Writes every open scene out and remembers where each belongs.
 fn hold(resources: &mut Resources) -> usize {
     let Some(manager) = resources.get::<kooch_ecs::SceneManager>() else {
         return 0;
     };
-    let open: Vec<(Guid, Option<PathBuf>)> = manager
+    let listed: Vec<(Guid, Option<PathBuf>)> = manager
         .scenes()
         .iter()
         .map(|scene| (scene.id, scene.path.clone()))
+        .collect();
+    // 🔴 Only scenes that hold something. Connected, the editor's manager lists its own untitled
+    // scene and NOT the project's — the World panel reads the project's list over the wire instead
+    // — so holding what the manager has wrote out an empty scene and resumed it over the world the
+    // rebuilt project had just opened (#1163, which the connection gate alone did not close).
+    let open: Vec<(Guid, Option<PathBuf>)> = listed
+        .into_iter()
+        .filter(|(id, _)| {
+            let count = entity_count(resources, *id);
+            if count == 0 {
+                tracing::info!(
+                    %id,
+                    "an empty scene is not held: resuming it would replace the world with nothing",
+                );
+            }
+            count > 0
+        })
         .collect();
     if open.is_empty() {
         return 0;
