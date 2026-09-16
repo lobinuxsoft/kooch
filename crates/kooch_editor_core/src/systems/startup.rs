@@ -102,6 +102,11 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         &mut meshlet_stage,
     );
 
+    // The Shader Graph's preview (#1159). Not a view of the stage at all: it rasterises one
+    // primitive with the graph's own surface and lights it by itself.
+    let shader_preview =
+        crate::viewport::ShaderPreview::new(gpu.device(), gpu.queue(), &mut renderer, gpu.format());
+
     let overlay = EditorOverlay {
         element_mode: crate::block_edit::ElementMode::default(),
         shape_drag_start: None,
@@ -138,6 +143,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     resources.insert(MeshBatch::default());
     resources.insert(viewport);
     resources.insert(game_view);
+    resources.insert(shader_preview);
     // Beside the stage, because the stage's own asset sync is what drains it.
     resources.insert(kooch_render::meshlet::GeneratedMeshes::new());
     resources.insert(meshlet_stage);
