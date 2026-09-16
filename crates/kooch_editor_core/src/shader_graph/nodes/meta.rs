@@ -56,7 +56,11 @@ impl Node {
             Self::Tiling => "Tiling".to_owned(),
             Self::Desaturate => "Desaturate".to_owned(),
             Self::Blend { mode } => format!("Blend {mode}"),
-            Self::Noise => "Noise".to_owned(),
+            Self::Noise => "Value Noise".to_owned(),
+            Self::GradientNoise => "Gradient Noise".to_owned(),
+            Self::SimplexNoise => "Simplex Noise".to_owned(),
+            Self::WhiteNoise => "White Noise".to_owned(),
+            Self::Voronoi => "Voronoi".to_owned(),
             Self::Circle => "Circle".to_owned(),
             Self::Rectangle => "Rectangle".to_owned(),
             Self::Ring => "Ring".to_owned(),
@@ -113,7 +117,9 @@ impl Node {
             Self::Tiling => &["uv", "tiling", "offset"],
             Self::Desaturate => &["colour", "amount"],
             Self::Blend { .. } => &["a", "b", "opacity"],
-            Self::Noise => &["uv", "scale"],
+            Self::Noise | Self::GradientNoise | Self::SimplexNoise => &["uv", "scale", "octaves"],
+            Self::WhiteNoise => &["uv", "scale"],
+            Self::Voronoi => &["uv", "scale", "jitter"],
             Self::Circle => &["uv", "radius", "softness"],
             Self::Rectangle => &["uv", "size", "softness"],
             Self::Ring => &["uv", "radius", "thickness"],
@@ -180,12 +186,28 @@ impl Node {
             | Self::Rotator
             | Self::Tiling
             | Self::Desaturate
-            | Self::Blend { .. }
-            | Self::Noise => Category::Effect,
+            | Self::Blend { .. } => Category::Effect,
+            Self::Noise
+            | Self::GradientNoise
+            | Self::SimplexNoise
+            | Self::WhiteNoise
+            | Self::Voronoi => Category::Noise,
             Self::Circle | Self::Rectangle | Self::Ring | Self::Polygon | Self::Checker => {
                 Category::Shape
             }
             Self::Output => Category::Output,
         }
+    }
+
+    /// Whether it is one of the noises, which all share `graph_hash`.
+    pub(crate) fn is_noise(&self) -> bool {
+        matches!(
+            self,
+            Self::Noise
+                | Self::GradientNoise
+                | Self::SimplexNoise
+                | Self::WhiteNoise
+                | Self::Voronoi
+        )
     }
 }

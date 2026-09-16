@@ -150,8 +150,18 @@ pub(crate) enum Node {
         /// `multiply`, `screen`, `overlay`, `lighten` or `darken`.
         mode: String,
     },
-    /// Value noise over a coordinate, 0..1.
+    // -- Noise ----------------------------------------------------------
+    /// Value noise over a coordinate, 0..1. Named `Noise` because it was the first; the menu calls
+    /// it Value Noise.
     Noise,
+    /// Gradient (Perlin) noise, 0..1.
+    GradientNoise,
+    /// Simplex noise, 0..1.
+    SimplexNoise,
+    /// One random value per cell.
+    WhiteNoise,
+    /// Cellular noise: F1, F2, F2 - F1 and a random value per cell, in x, y, z and w.
+    Voronoi,
 
     // -- Shapes ---------------------------------------------------------
     /// A disc around the middle of the uv square.
@@ -180,18 +190,20 @@ pub(crate) enum Category {
     Vector,
     Effect,
     Shape,
+    Noise,
     Output,
 }
 
 impl Category {
     /// In menu order.
-    pub(crate) const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 8] = [
         Self::Input,
         Self::Constant,
         Self::Math,
         Self::Vector,
         Self::Effect,
         Self::Shape,
+        Self::Noise,
         Self::Output,
     ];
 
@@ -203,6 +215,7 @@ impl Category {
             Self::Vector => "Vector",
             Self::Effect => "Effects",
             Self::Shape => "Shapes",
+            Self::Noise => "Noise",
             Self::Output => "Output",
         }
     }
@@ -304,6 +317,10 @@ pub(crate) fn palette() -> Vec<Node> {
             mode: "multiply".to_owned(),
         },
         Node::Noise,
+        Node::GradientNoise,
+        Node::SimplexNoise,
+        Node::WhiteNoise,
+        Node::Voronoi,
         Node::Circle,
         Node::Rectangle,
         Node::Ring,

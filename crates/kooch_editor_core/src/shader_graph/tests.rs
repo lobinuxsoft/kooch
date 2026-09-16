@@ -356,3 +356,42 @@ fn a_constant_writes_its_type() {
         "a two-wide vector leaked the components it does not have",
     );
 }
+
+/// 🔴 Every noise reads `graph_hash`, and a graph using several must write it once: WGSL refuses a
+/// function declared twice. `every_node_compiles` builds one node per graph and cannot see this.
+#[test]
+fn every_noise_in_one_graph_compiles() {
+    let mut graph = Graph::new();
+    let output = graph.insert_node(Pos2::ZERO, Node::Output);
+    let noises = [
+        Node::Noise,
+        Node::GradientNoise,
+        Node::SimplexNoise,
+        Node::WhiteNoise,
+        Node::Voronoi,
+    ];
+    for (input, noise) in noises.into_iter().enumerate() {
+        let added = graph.insert_node(Pos2::ZERO, noise);
+        graph.connect(
+            OutPinId {
+                node: added,
+                output: 0,
+            },
+            InPinId {
+                node: output,
+                input,
+            },
+        );
+    }
+
+    let source = generate(&graph).unwrap();
+
+    assert_eq!(
+        source.matches("fn graph_hash(").count(),
+        1,
+        "the hash was written twice"
+    );
+    let shader = Shader::parse(&source).unwrap();
+    kooch_render::meshlet::validate_surface(&shader.params_wgsl(), &shader.source)
+        .expect("the noises compile together");
+}

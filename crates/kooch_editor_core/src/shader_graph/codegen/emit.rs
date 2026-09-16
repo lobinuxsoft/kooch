@@ -256,9 +256,26 @@ impl Body<'_> {
                 };
                 format!("mix({a}, {blended}, vec4<f32>(clamp({opacity}.x, 0.0, 1.0)))")
             }
-            Node::Noise => {
+            // `octaves` unconnected reads zero, which the helpers take as one: a noise dropped on the
+            // canvas is plain noise, and wiring a number in makes it fractal.
+            Node::Noise | Node::GradientNoise | Node::SimplexNoise => {
+                let (uv, scale, octaves) =
+                    (argument(self, 0)?, argument(self, 1)?, argument(self, 2)?);
+                let fbm = match &node {
+                    Node::GradientNoise => "graph_gradient_fbm",
+                    Node::SimplexNoise => "graph_simplex_fbm",
+                    _ => "graph_value_fbm",
+                };
+                format!("vec4<f32>({fbm}({uv}.xy * {scale}.x, {octaves}.x))")
+            }
+            Node::WhiteNoise => {
                 let (uv, scale) = (argument(self, 0)?, argument(self, 1)?);
-                format!("vec4<f32>(graph_noise({uv}.xy * {scale}.x))")
+                format!("vec4<f32>(graph_hash(floor({uv}.xy * {scale}.x)))")
+            }
+            Node::Voronoi => {
+                let (uv, scale, jitter) =
+                    (argument(self, 0)?, argument(self, 1)?, argument(self, 2)?);
+                format!("graph_voronoi({uv}.xy * {scale}.x, clamp({jitter}.x, 0.0, 1.0))")
             }
             Node::Circle => {
                 let (uv, radius, softness) =
