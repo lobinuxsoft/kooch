@@ -156,7 +156,7 @@ The menu groups the nodes the way the panels do:
 | **Input** | UV, World Normal, World Position, View Direction, **Time**, Float, Int, Vector 2, Vector 3, Vector 4, Color, Texture |
 | **Constants** | Float, Int, Vector 2, Vector 3, Vector 4, Color |
 | **Math** | Add, Subtract, Multiply, Divide, One Minus, Abs, Floor, Fract, Sine, Cosine, Min, Max, Clamp, Step, Smoothstep, Power, Saturate, Remap, Mix |
-| **Vector** | Dot, Cross, Normalize, Length, Distance, Reflect, Swizzle, Combine |
+| **Vector** | Dot, Cross, Normalize, Length, Distance, Reflect, Swizzle, Combine, Split |
 | **Effects** | Fresnel, Unpack Normal, Panner, Rotator, Tiling, Desaturate, Blend |
 | **Shapes** | Circle, Rectangle, Ring, Polygon, Checker |
 | **Noise** | Value Noise, Gradient Noise, Simplex Noise, White Noise, Voronoi |
@@ -175,14 +175,15 @@ The menu groups the nodes the way the panels do:
   Normal** turns that sample into a world-space normal through the mesh's tangent frame.
 - **Time** is `x` seconds, `y` its sine, `z` its cosine, `w` a tenth of it — what **Panner** scrolls
   a coordinate with.
+- A node that answers with several different things has an output pin for each — **Voronoi**, and
+  **Split**, which takes a vector apart into `x`, `y`, `z` and `w`. Every other node has one output.
 - **Swizzle** reorders components (`xyzw` passes through, `xxxx` splashes the first, `yx` swaps), and
   **Combine** builds a vector from four numbers.
 - **Noise**: Value, Gradient (Perlin) and Simplex take an **octaves** input — left unconnected it is
   one, plain noise; wire a number in and each extra octave adds detail at twice the frequency and half
-  the weight (fBm), still in 0..1. **White Noise** is one random value per cell. **Voronoi** answers
-  in four components: `x` the distance to the nearest cell point, `y` to the second nearest, `z` their
-  difference (the cell borders), `w` a random value per cell; **jitter** 0 is a regular grid, 1 fully
-  random.
+  the weight (fBm), still in 0..1. **White Noise** is one random value per cell. **Voronoi** has four outputs: **F1** the
+  distance to the nearest cell point, **F2** to the second nearest, **border** their difference (the
+  cell edges), and **cell** a random value per cell; **jitter** 0 is a regular grid, 1 fully random.
 - **Shapes** read the uv square with its middle at `0.5`, and answer with a mask in every component.
 - A few nodes lean on a small WGSL function (`graph_noise`, `graph_rotate`, …). It is written into the
   file **only when a node asks for it**, so a generated shader carries nothing it does not use.

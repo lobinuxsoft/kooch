@@ -131,6 +131,8 @@ pub(crate) enum Node {
     },
     /// Four numbers into one vector, each read from its input's `x`.
     Combine,
+    /// One vector into its four components, one output each — the other half of `Combine`.
+    Split,
 
     // -- Effects --------------------------------------------------------
     /// Bright at grazing angles: the rim of a sphere. `pow(1 - dot(N, V), power)`.
@@ -307,6 +309,7 @@ pub(crate) fn palette() -> Vec<Node> {
             pattern: "xyzw".to_owned(),
         },
         Node::Combine,
+        Node::Split,
         Node::Fresnel,
         Node::UnpackNormal,
         Node::Panner,

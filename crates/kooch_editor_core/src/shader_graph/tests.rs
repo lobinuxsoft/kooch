@@ -395,3 +395,51 @@ fn every_noise_in_one_graph_compiles() {
     kooch_render::meshlet::validate_surface(&shader.params_wgsl(), &shader.source)
         .expect("the noises compile together");
 }
+
+/// A node that answers with several things gives each its own pin, and each pin reads its own
+/// component — not the whole value packed into one wire, which a colour input reads as red, green
+/// and blue (#1170). Every output of Voronoi and Split is wired, which the one-pin test cannot do.
+#[test]
+fn every_output_is_its_own_value() {
+    for (node, expected) in [
+        (Node::Voronoi, ["x", "y", "z", "w"]),
+        (Node::Split, ["x", "y", "z", "w"]),
+    ] {
+        let name = node.title();
+        let mut graph = Graph::new();
+        let source_node = graph.insert_node(Pos2::ZERO, node);
+        let output = graph.insert_node(Pos2::ZERO, Node::Output);
+        // Four outputs into four of the output's five inputs: base colour, normal, metallic, roughness.
+        for pin in 0..4 {
+            graph.connect(
+                OutPinId {
+                    node: source_node,
+                    output: pin,
+                },
+                InPinId {
+                    node: output,
+                    input: pin,
+                },
+            );
+        }
+
+        let source = generate(&graph).unwrap_or_else(|why| panic!("{name}: {why}"));
+
+        for component in expected {
+            assert!(
+                source.contains(&format!("vec4<f32>(n0.{component})")),
+                "{name}'s {component} output is not read on its own:\n{source}",
+            );
+        }
+        let shader = Shader::parse(&source).unwrap();
+        kooch_render::meshlet::validate_surface(&shader.params_wgsl(), &shader.source)
+            .unwrap_or_else(|why| panic!("{name} does not compile: {why}"));
+    }
+}
+
+/// A node with one output hands over its value untouched.
+#[test]
+fn a_single_output_is_the_value() {
+    assert_eq!(Node::Add.output_of("n3", 0), "n3");
+    assert_eq!(Node::Voronoi.output_of("n3", 2), "vec4<f32>(n3.z)");
+}

@@ -49,6 +49,7 @@ impl Node {
             Self::Reflect => "Reflect".to_owned(),
             Self::Swizzle { pattern } => format!("Swizzle {pattern}"),
             Self::Combine => "Combine".to_owned(),
+            Self::Split => "Split".to_owned(),
             Self::Fresnel => "Fresnel".to_owned(),
             Self::UnpackNormal => "Unpack Normal".to_owned(),
             Self::Panner => "Panner".to_owned(),
@@ -110,6 +111,7 @@ impl Node {
             Self::Mix => &["a", "b", "t"],
             Self::Reflect => &["incident", "normal"],
             Self::Combine => &["x", "y", "z", "w"],
+            Self::Split => &["value"],
             Self::Fresnel => &["power"],
             Self::UnpackNormal => &["map"],
             Self::Panner => &["uv", "speed"],
@@ -131,7 +133,29 @@ impl Node {
 
     /// Whether it produces a value.
     pub(crate) fn has_output(&self) -> bool {
-        !matches!(self, Self::Output)
+        !self.outputs().is_empty()
+    }
+
+    /// Its output pins, named. Most nodes have one, the whole value. A node that answers with several
+    /// different things gives each its own pin, rather than packing them into the channels of one
+    /// wire where they end up read as a colour.
+    pub(crate) fn outputs(&self) -> &'static [&'static str] {
+        match self {
+            Self::Output => &[],
+            Self::Voronoi => &["F1", "F2", "border", "cell"],
+            Self::Split => &["x", "y", "z", "w"],
+            _ => &["out"],
+        }
+    }
+
+    /// What output pin `index` reads of the node's value, held in `value`. A single output is the
+    /// value itself; one of several is the component that pin names, in every channel.
+    pub(crate) fn output_of(&self, value: &str, index: usize) -> String {
+        if self.outputs().len() < 2 {
+            return value.to_owned();
+        }
+        let component = ["x", "y", "z", "w"][index.min(3)];
+        format!("vec4<f32>({value}.{component})")
     }
 
     /// Which submenu adds it.
@@ -179,7 +203,8 @@ impl Node {
             | Self::Distance
             | Self::Reflect
             | Self::Swizzle { .. }
-            | Self::Combine => Category::Vector,
+            | Self::Combine
+            | Self::Split => Category::Vector,
             Self::Fresnel
             | Self::UnpackNormal
             | Self::Panner

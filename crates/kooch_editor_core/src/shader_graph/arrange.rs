@@ -167,7 +167,7 @@ fn median(graph: &Graph, consumers: &Consumers, places: &HashMap<NodeId, f32>, i
 fn height(graph: &Graph, id: NodeId) -> f32 {
     let rows = graph
         .get_node(id)
-        .map(|node| node.inputs().len().max(usize::from(node.has_output())))
+        .map(|node| node.inputs().len().max(node.outputs().len()))
         .unwrap_or(1);
     NODE.y + ROW * rows as f32
 }

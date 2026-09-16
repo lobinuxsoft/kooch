@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-use egui_snarl::{InPinId, NodeId};
+use egui_snarl::{InPinId, NodeId, OutPinId};
 
 use super::{swizzled, vec4_literal};
 use crate::shader_graph::{Graph, Node};
@@ -12,7 +12,8 @@ use crate::shader_graph::{Graph, Node};
 pub(super) struct Body<'a> {
     pub(super) graph: &'a Graph,
     /// What feeds each input pin.
-    pub(super) wires: HashMap<InPinId, NodeId>,
+    /// What feeds each input pin: a node, and which of its outputs.
+    pub(super) wires: HashMap<InPinId, OutPinId>,
     pub(super) names: HashMap<NodeId, String>,
     pub(super) visiting: HashSet<NodeId>,
     pub(super) lines: String,
@@ -35,7 +36,14 @@ impl Body<'_> {
     ) -> Result<String, String> {
         let pin = InPinId { node, input };
         match self.wires.get(&pin).copied() {
-            Some(from) => self.emit(from),
+            Some(from) => {
+                let value = self.emit(from.node)?;
+                let node = self
+                    .graph
+                    .get_node(from.node)
+                    .ok_or("a wire points at a node that is gone")?;
+                Ok(node.output_of(&value, from.output))
+            }
             None => Ok(fallback.to_owned()),
         }
     }
@@ -191,6 +199,8 @@ impl Body<'_> {
                 let value = argument(self, 0)?;
                 swizzled(&value, pattern)?
             }
+            // The value passes through whole; each of its four outputs reads one component.
+            Node::Split => argument(self, 0)?,
             Node::Combine => {
                 let (x, y, z, w) = (
                     argument(self, 0)?,

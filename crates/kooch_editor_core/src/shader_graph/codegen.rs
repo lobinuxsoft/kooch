@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-use egui_snarl::{InPinId, NodeId};
+use egui_snarl::{InPinId, OutPinId};
 
 use super::{Graph, Node, embed};
 
@@ -22,7 +22,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         .map(|(id, _)| id)
         .ok_or("the graph has no Surface Output node")?;
 
-    let wires: HashMap<InPinId, NodeId> = graph.wires().map(|(from, to)| (to, from.node)).collect();
+    let wires: HashMap<InPinId, OutPinId> = graph.wires().map(|(from, to)| (to, from)).collect();
     let mut body = Body {
         graph,
         wires,

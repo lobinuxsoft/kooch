@@ -50,7 +50,7 @@ impl SnarlViewer<Node> for Viewer<'_> {
     }
 
     fn outputs(&mut self, node: &Node) -> usize {
-        usize::from(node.has_output())
+        node.outputs().len()
     }
 
     fn show_input(
@@ -75,7 +75,14 @@ impl SnarlViewer<Node> for Viewer<'_> {
     ) -> impl egui_snarl::ui::SnarlPin + 'static {
         // A value node carries its own value, so the node itself is where it is edited.
         let catalog = self.catalog;
+        let output = pin.id.output;
         if let Some(node) = snarl.get_node_mut(pin.id.node) {
+            let label = node.outputs().get(output).copied().unwrap_or("out");
+            // A node with several outputs is edited on none of them: each pin is a name and a wire.
+            if node.outputs().len() > 1 {
+                ui.label(label);
+                return PinInfo::circle();
+            }
             // 🔴 An output pin's row is laid out RIGHT TO LEFT by egui-snarl, so fields added one after
             // another landed in a row, and in reverse. A column of its own is what stacks them.
             // Capped as well as stacked: a top-down layout claims all the width it is offered, and
