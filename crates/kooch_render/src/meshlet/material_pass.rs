@@ -28,6 +28,10 @@ pub const MATERIAL_COMPUTE_FRAME: &str = include_str!("../../shaders/material_fr
 /// `SurfaceOutput` (#1157).
 pub const MATERIAL_SURFACE_PRELUDE: &str = include_str!("../../shaders/material_surface.wgsl");
 
+/// The Shader Graph preview's frame: one primitive, rasterised, lit by a key light of its own.
+/// Entry points: `vs_preview`, `fs_preview`.
+pub const MATERIAL_PREVIEW_FRAME: &str = include_str!("../../shaders/material_frame_preview.wgsl");
+
 /// What New Shader writes: a PBR surface over its own declared parameters (#1158).
 pub const NEW_SURFACE_SHADER: &str = include_str!("../../shaders/material_surface_template.wgsl");
 
@@ -78,6 +82,37 @@ pub fn compose_material_shader(frame: &str, params: &str, surface: &str, debug: 
         frame,
     ]
     .join("\n")
+}
+
+/// The preview's shader: the surface contract, the shader's own parameters, its body, and the
+/// preview frame — **without** Inti, the contact-shadow march or the visibility-buffer resolve.
+///
+/// 🔴 A preview lights its own primitive, so none of that has to exist for it to run. The frame
+/// declares the handful of things the contract reads (`screen`, `inti.camera_position`,
+/// `VertexOutput`) and the surface never knows the difference.
+pub fn compose_preview_shader(params: &str, surface: &str) -> String {
+    [
+        MATERIAL_SURFACE_PRELUDE,
+        params,
+        surface,
+        MATERIAL_PREVIEW_FRAME,
+    ]
+    .join("\n")
+}
+
+/// The same check for the preview's frame. A graph is edited node by node, and most of those
+/// moments are a shader that does not compile yet — which has to read as a message in the panel,
+/// never as a wgpu validation panic.
+pub fn validate_preview(params: &str, surface: &str) -> Result<(), String> {
+    let composed = compose_preview_shader(params, surface);
+    let module = naga::front::wgsl::parse_str(&composed).map_err(|e| e.message().to_owned())?;
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .map(|_| ())
+    .map_err(|e| e.as_inner().to_string())
 }
 
 /// Checks a surface shader against both frames before any pipeline is built from it, so a broken

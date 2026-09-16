@@ -7,6 +7,16 @@ fn default_composed(frame: &str, debug: bool) -> String {
     compose_material_shader(frame, &surface.params_wgsl(), &surface.source, debug)
 }
 
+/// 🔴 The Shader Graph's preview runs the SAME surface the scene runs, so the engine's own has to
+/// compile inside the preview frame — which carries none of Inti, the contact-shadow march or the
+/// visibility-buffer resolve (#1159).
+#[test]
+fn the_preview_frame_compiles() {
+    let surface = Shader::default_surface();
+    let composed = compose_preview_shader(&surface.params_wgsl(), &surface.source);
+    validate(&composed, "the preview frame");
+}
+
 /// Reads and validates a surface the way the render does.
 fn check(source: &str) -> Result<(), String> {
     let shader = Shader::parse(source).map_err(|e| e.to_string())?;
