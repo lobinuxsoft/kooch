@@ -69,10 +69,13 @@ pub(super) struct ScreenUbo {
     /// What the uv derivatives are multiplied by before the mip is chosen — `exp2(mip_bias)`, and
     /// 1.0 for no bias (#881).
     pub mip_bias_scale: f32,
+    /// Seconds since the engine started, for surfaces that move (#1159). In the padding the UBO
+    /// already carried, so a shader graph gets time without a binding of its own.
+    pub time: f32,
     /// To 32 bytes. The uniform is bound with a dynamic offset, and a
     /// size that is a multiple of 16 is the shape every backend agrees
     /// on without argument.
-    pub _pad: [u32; 2],
+    pub _pad: [u32; 1],
 }
 
 /// End-to-end atomic R64 visibility-buffer pipeline (clear + raster + deferred). Owns its own
@@ -499,6 +502,9 @@ impl Vbuf64Stage {
         unjittered_view_proj: glam::Mat4,
         contact: &crate::contact_shadow::ContactShadowUbo,
         debug_mode: u32,
+        // #1159 — seconds since the engine started, for a surface that moves. It rides in the
+        // padding the screen UBO already carried, so no binding changed to carry it.
+        time: f32,
         // #732 — the tonemap moved out of the shading shader, so the
         // scalar it used to read from the Inti uniform has to reach
         // the pass that applies it now.
@@ -600,6 +606,7 @@ impl Vbuf64Stage {
                     self.size,
                     self.shading_rate,
                     self.mip_bias_scale(),
+                    time,
                     debug_mode,
                 );
             } else if self.size != self.output_size {
@@ -624,6 +631,7 @@ impl Vbuf64Stage {
                     view_proj,
                     contact,
                     self.size,
+                    time,
                     debug_mode,
                 );
             }

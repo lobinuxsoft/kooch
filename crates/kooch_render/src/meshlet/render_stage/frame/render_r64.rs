@@ -175,6 +175,12 @@ impl MeshletRenderStage {
             .vbuf64_stage
             .as_ref()
             .expect("path selected only when vbuf64_stage is Some");
+        // #1159 — the clock a moving surface reads, taken once for the whole frame so every
+        // material's pass agrees on what time it is.
+        let time = resources
+            .get::<kooch_core::time::Time>()
+            .map(|t| t.elapsed_secs())
+            .unwrap_or_default();
         let frame_dlss_commands = {
             profiling::scope!("shade");
             let shade_query = scopes.map(|s| s.begin("shade", &mut encoder));
@@ -195,6 +201,7 @@ impl MeshletRenderStage {
                 unjittered_view_proj,
                 contact,
                 debug_mode.as_u32(),
+                time,
                 // #732 — the tonemap is its own pass now, so the scalar
                 // it used to read out of the Inti uniform is passed to
                 // the stage instead.

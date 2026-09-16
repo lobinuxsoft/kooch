@@ -18,7 +18,8 @@ struct ScreenUniforms {
     // `exp2(mip_bias)` — what the uv derivatives are scaled by before
     // the mip is chosen (#881). 1.0 means no bias. See `ScreenUbo`.
     mip_bias_scale: f32,
-    _pad1: u32,
+    // Seconds since the engine started (#1159), so a surface can move. See `ScreenUbo`.
+    time: f32,
     _pad2: u32,
 }
 

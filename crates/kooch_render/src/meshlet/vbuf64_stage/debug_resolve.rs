@@ -146,7 +146,9 @@ impl DebugResolve {
                 shading_rate: 1,
                 // No bias: this pass does not sample material textures.
                 mip_bias_scale: 1.0,
-                _pad: [0; 2],
+                // This pass runs no surface body, so nothing here reads the clock.
+                time: 0.0,
+                _pad: [0; 1],
             }),
         );
 
