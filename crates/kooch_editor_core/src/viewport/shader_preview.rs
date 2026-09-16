@@ -221,6 +221,13 @@ impl ShaderPreview {
         self.primitive
     }
 
+    /// Shows why the graph produced no shader at all — past the parameter budget, say — instead of
+    /// leaving the last image up as if the graph were fine.
+    pub(crate) fn refuse(&mut self, why: String) {
+        self.refusal = Some(why);
+        self.pipeline = None;
+    }
+
     /// Why the shader did not build, if it did not.
     pub(crate) fn refusal(&self) -> Option<&str> {
         self.refusal.as_deref()

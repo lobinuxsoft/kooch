@@ -6,8 +6,9 @@
 
 use std::fmt::Write;
 
-/// Scalars a material holds for its shader, packed into `material_values` (16 `f32` per slot).
-pub const MAX_PARAM_SCALARS: u32 = 16;
+/// Scalars a material holds for its shader, packed into `material_values`. 64 `f32` — sixteen colours —
+/// is 256 bytes a material slot; 16 was reached by one graph with three colours and a few floats.
+pub const MAX_PARAM_SCALARS: u32 = 64;
 
 /// Textures a material binds for its shader.
 pub const MAX_PARAM_TEXTURES: u32 = 4;

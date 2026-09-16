@@ -768,10 +768,19 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             .unwrap_or(0.016);
         // Generated fresh, and cheap: a graph is a few dozen nodes, and the pipeline behind it is
         // rebuilt only when the WGSL it produces actually changes.
-        let shader = resources
+        // 🔴 A graph that does not generate says so in the column. Dropped silently, the preview
+        // froze on the last image and every edit after that looked like it did nothing.
+        let generated = resources
             .get::<crate::state::OpenShaderGraph>()
-            .and_then(|open| crate::shader_graph::generate(&open.graph).ok())
-            .and_then(|source| kooch_render::material::Shader::parse(&source).ok());
+            .map(|open| crate::shader_graph::generate(&open.graph));
+        let shader = match generated {
+            Some(Ok(source)) => kooch_render::material::Shader::parse(&source).ok(),
+            Some(Err(why)) => {
+                preview.refuse(why);
+                None
+            }
+            None => None,
+        };
         let images = preview_images(resources);
         for (_, guid) in &images {
             if let Some(image) = loaded_image(resources, *guid) {

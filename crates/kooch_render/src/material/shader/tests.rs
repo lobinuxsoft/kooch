@@ -135,13 +135,14 @@ fn color_needs_a_vec4() {
 
 #[test]
 fn the_scalar_budget_holds() {
-    let fields = (0..5)
+    // Sixteen four-wide members fill the budget exactly; the seventeenth is refused, on its own line.
+    let fields = (0..17)
         .map(|i| format!("  c{i}: vec4<f32>,\n"))
         .collect::<String>();
     let source = format!("struct SurfaceParams {{\n{fields}}}");
     assert!(matches!(
         Shader::parse(&source),
-        Err(ShaderParseError::Param { line: 6, .. })
+        Err(ShaderParseError::Param { line: 18, .. })
     ));
 }
 

@@ -36,6 +36,10 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 `SurfaceOutput` is what Inti lights: `base_color`, a world-space `normal`, `metallic`, `roughness`
 and `emissive`.
 
+`emissive` is in **display units**: `1.0` shows the colour at full brightness whatever the camera's
+exposure, and above `1.0` it overdrives. The lights are physical, so an emissive added in their units
+would need thousands to be seen at all.
+
 A surface can read the engine's material fields with `materials[input.material_id]`, or declare its
 own (below). Sample with `sample_surface`, or `textureSampleGrad` and the analytical derivatives
 multiplied by `mip_bias_scale`: a visibility buffer has no screen-space derivatives to give
@@ -86,7 +90,7 @@ editor shows the field:
 | `@default(white \| black \| normal)` | a texture | what it samples while unassigned — WGSL gives a texture no starting value |
 
 `sample_surface(texture, input, uv, scale)` samples with the analytical derivatives scaled by
-`scale` and the mip bias, so pass whatever tiles `uv`. Budget per material: **16 scalars** and
+`scale` and the mip bias, so pass whatever tiles `uv`. Budget per material: **64 scalars** and
 **4 textures**; past it the shader fails to load and names the line.
 
 Values are stored on the material by name. Switching a material to another shader keeps the values

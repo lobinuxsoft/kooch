@@ -292,7 +292,8 @@ fn cs_shade_tile(
                     surf.world_position, shaded.normal, shaded.base_color, shaded.metallic,
                     shaded.roughness, frag_coord, surf.flags);
             }
-            radiance += shaded.emissive;
+            // Display units, as the fragment frame explains: 1.0 is full brightness at any exposure.
+            radiance += shaded.emissive / max(inti.exposure, 1e-8);
             // 🔴 Linear radiance out, NOT a picture (#732). The tonemap is its own pass now, because
             // temporal anti-aliasing blends this frame with the last and an average of two
             // ACES-tonemapped values is not the tonemap of their average.
