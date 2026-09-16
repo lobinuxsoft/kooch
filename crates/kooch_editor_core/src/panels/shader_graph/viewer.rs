@@ -6,11 +6,11 @@ use egui_snarl::{InPin, NodeId, OutPin, Snarl};
 
 use super::editors::{FIELD, choice, components, name_field, number_editor};
 use super::framed;
-use super::pin::{NamedPin, Side, reserve};
+use super::pin::{NamedPin, Side, label, reserve};
 use crate::panels::inspector::AssetCatalogEntry;
 use crate::shader_graph::{
     BLEND_MODES, Category, NOISE_BASES, NOISE_FRACTALS, Node, TEXTURE_FALLBACKS, VORONOI_METRICS,
-    palette,
+    Width, palette,
 };
 
 /// How the nodes draw and connect.
@@ -49,6 +49,38 @@ impl SnarlViewer<Node> for Viewer<'_> {
         node.title()
     }
 
+    /// Tinted by category, so a graph reads at a glance: inputs blue, noise violet, output red.
+    fn header_frame(
+        &mut self,
+        default: egui::Frame,
+        node: NodeId,
+        _inputs: &[InPin],
+        _outputs: &[OutPin],
+        snarl: &Snarl<Node>,
+    ) -> egui::Frame {
+        match snarl.get_node(node) {
+            Some(node) => default.fill(tint(node.category())),
+            None => default,
+        }
+    }
+
+    fn has_on_hover_popup(&mut self, _node: &Node) -> bool {
+        true
+    }
+
+    fn show_on_hover_popup(
+        &mut self,
+        node: NodeId,
+        _inputs: &[InPin],
+        _outputs: &[OutPin],
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<Node>,
+    ) {
+        if let Some(node) = snarl.get_node(node) {
+            ui.label(node.about());
+        }
+    }
+
     fn inputs(&mut self, node: &Node) -> usize {
         node.inputs().len()
     }
@@ -63,14 +95,21 @@ impl SnarlViewer<Node> for Viewer<'_> {
         ui: &mut egui::Ui,
         snarl: &mut Snarl<Node>,
     ) -> impl egui_snarl::ui::SnarlPin + 'static {
-        let name = snarl
+        let (name, (width, about)) = snarl
             .get_node(pin.id.node)
-            .and_then(|node| node.inputs().get(pin.id.input).copied())
-            .unwrap_or("in");
-        reserve(ui, name);
+            .and_then(|node| {
+                let name = node.inputs().get(pin.id.input)?;
+                Some((*name, *node.input_docs().get(pin.id.input)?))
+            })
+            .unwrap_or(("in", (Width::Any, "")));
+        let label = label(name, width);
+        reserve(ui, &label);
         NamedPin {
-            name: Some(name),
+            label,
             side: Side::Input,
+            width,
+            about,
+            id: egui::Id::new(("pin", pin.id)),
         }
     }
 
@@ -81,14 +120,18 @@ impl SnarlViewer<Node> for Viewer<'_> {
         snarl: &mut Snarl<Node>,
     ) -> impl egui_snarl::ui::SnarlPin + 'static {
         let output = pin.id.output;
-        let name = snarl
+        let (name, (width, about)) = snarl
             .get_node(pin.id.node)
-            .and_then(|node| node.outputs().get(output))
-            .map_or("out", |&(name, _)| name);
-        reserve(ui, name);
+            .and_then(|node| Some((node.outputs().get(output)?.0, node.output_doc(output))))
+            .unwrap_or(("out", (Width::Any, "")));
+        let label = label(name, width);
+        reserve(ui, &label);
         NamedPin {
-            name: Some(name),
+            label,
             side: Side::Output,
+            width,
+            about,
+            id: egui::Id::new(("pin", pin.id)),
         }
     }
 
@@ -215,7 +258,11 @@ impl SnarlViewer<Node> for Viewer<'_> {
                     .into_iter()
                     .filter(|node| node.category() == category)
                 {
-                    if ui.button(node.title()).clicked() {
+                    if ui
+                        .button(node.title())
+                        .on_hover_text(node.about())
+                        .clicked()
+                    {
                         snarl.insert_node(pos, node);
                         ui.close();
                     }
@@ -265,4 +312,20 @@ fn has_fields(node: &Node) -> bool {
             | Node::Swizzle { .. }
             | Node::Blend { .. }
     )
+}
+
+/// Dark enough for the title's light text on every one.
+fn tint(category: Category) -> egui::Color32 {
+    let [r, g, b] = match category {
+        Category::Input => [0x3A, 0x5A, 0x8C],
+        Category::Constant => [0x2F, 0x6F, 0x6F],
+        Category::Math => [0x4F, 0x5B, 0x66],
+        Category::Vector => [0x6B, 0x5B, 0x2E],
+        Category::Uv => [0x2E, 0x6B, 0x45],
+        Category::Effect => [0x6B, 0x3A, 0x6B],
+        Category::Shape => [0x7A, 0x4A, 0x2A],
+        Category::Noise => [0x5A, 0x4A, 0x7A],
+        Category::Output => [0x8C, 0x2F, 0x2F],
+    };
+    egui::Color32::from_rgb(r, g, b)
 }
