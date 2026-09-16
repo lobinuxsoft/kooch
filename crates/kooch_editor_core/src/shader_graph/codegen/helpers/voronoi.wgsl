@@ -1,7 +1,7 @@
 // Cellular (Voronoi) noise: one point per cell, `randomness` of the way from the cell's middle to a
 // random place, circling with `phase` so the cells can move.
 struct GraphVoronoi {
-    // Distance to the nearest point — smoothed into its neighbours by `smoothness`.
+    // Distance to the nearest point. Smoothness (0..1) rounds F1, F2 and the border alike.
     f1: f32,
     // Distance to the second nearest point.
     f2: f32,
@@ -23,23 +23,41 @@ fn graph_voronoi_point(cell: vec2<f32>, randomness: f32, phase: f32) -> vec2<f32
     return mix(vec2<f32>(0.5), 0.5 + 0.5 * sin(phase + 6.2831855 * graph_hash2(cell)), randomness);
 }
 
+// How far smoothness 1 blends: past it the 5x5 search is too narrow and the blend tears (measured).
+const GRAPH_VORONOI_BLEND: f32 = 0.12;
+
+// Smooth minimum over `distances` except `skipped`, around their true minimum `least`. Symmetric
+// (log-sum-exp): a running polynomial blend depends on cell order and tears where cells swap.
+fn graph_voronoi_blend(distances: ptr<function, array<f32, 25>>, skipped: i32, least: f32, k: f32) -> f32 {
+    var sum = 0.0;
+    for (var i = 0; i < 25; i = i + 1) {
+        if i != skipped {
+            sum = sum + exp(-((*distances)[i] - least) / k);
+        }
+    }
+    return least - k * log(max(sum, 1e-6));
+}
+
 fn graph_voronoi(uv: vec2<f32>, randomness: f32, phase: f32, smoothness: f32, metric: i32, edges: bool) -> GraphVoronoi {
     let cell = floor(uv);
     let f = fract(uv);
     var out: GraphVoronoi;
     out.f1 = 8.0;
     out.f2 = 8.0;
-    // Smooth minimum, after Inigo Quilez's blended Voronoi: at zero smoothness it is F1 exactly.
-    var blended = 8.0;
-    let k = max(smoothness, 0.00001);
+    var distances: array<f32, 25>;
+    var nearest_index = 0;
     var nearest = vec2<f32>(0.0);
     var nearest_cell = vec2<f32>(0.0);
-    for (var y = -1; y <= 1; y = y + 1) {
-        for (var x = -1; x <= 1; x = x + 1) {
+    // 5x5, not 3x3: a random point two cells away is sometimes the second nearest, and 3x3 got F2
+    // wrong often enough to speckle.
+    for (var y = -2; y <= 2; y = y + 1) {
+        for (var x = -2; x <= 2; x = x + 1) {
             let offset = vec2<f32>(f32(x), f32(y));
             let point = graph_voronoi_point(cell + offset, randomness, phase);
             let r = offset + point - f;
             let d = graph_voronoi_distance(r, metric);
+            let index = (y + 2) * 5 + x + 2;
+            distances[index] = d;
             if d < out.f1 {
                 out.f2 = out.f1;
                 out.f1 = d;
@@ -47,15 +65,13 @@ fn graph_voronoi(uv: vec2<f32>, randomness: f32, phase: f32, smoothness: f32, me
                 out.position = cell + offset + point;
                 nearest = r;
                 nearest_cell = offset;
+                nearest_index = index;
             } else if d < out.f2 {
                 out.f2 = d;
             }
-            let h = smoothstep(-1.0, 1.0, (blended - d) / k);
-            blended = mix(blended, d, h) - h * (1.0 - h) * k / (1.0 + 3.0 * k);
         }
     }
-    out.f1 = select(out.f1, blended, smoothness > 0.0);
-    // The true border distance takes a second, wider pass around the nearest cell — only when asked for.
+    // The true border distance takes a second pass around the nearest cell — only when asked for.
     if edges {
         var edge = 8.0;
         for (var y = -2; y <= 2; y = y + 1) {
@@ -69,6 +85,17 @@ fn graph_voronoi(uv: vec2<f32>, randomness: f32, phase: f32, smoothness: f32, me
             }
         }
         out.edge = edge;
+    }
+    let blend = clamp(smoothness, 0.0, 1.0);
+    if blend > 0.0 {
+        let k = blend * GRAPH_VORONOI_BLEND;
+        let f1 = graph_voronoi_blend(&distances, -1, out.f1, k);
+        let f2 = graph_voronoi_blend(&distances, nearest_index, out.f2, k);
+        // Bisector distances swap sets across a border, so their blend tears: half the blended gap
+        // does not, and at full smoothness it takes over.
+        out.edge = mix(out.edge, 0.5 * (f2 - f1), blend);
+        out.f1 = f1;
+        out.f2 = f2;
     }
     return out;
 }
