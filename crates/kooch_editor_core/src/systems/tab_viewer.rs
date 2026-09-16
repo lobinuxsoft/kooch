@@ -109,6 +109,11 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) open_input_map: Option<&'a crate::state::OpenInputMap>,
     /// The open shader graph, edited in place by the node panel (#1159).
     pub(crate) open_shader_graph: Option<&'a mut crate::state::OpenShaderGraph>,
+    /// The Shader Graph preview's texture, the shape it is showing, and why it is not showing one.
+    pub(crate) preview_texture_id: egui::TextureId,
+    pub(crate) preview_primitive: usize,
+    pub(crate) preview_refusal: Option<&'a str>,
+    pub(crate) preview_request: &'a mut Option<usize>,
     /// Asset Browser folder selection — the drag-and-drop import target.
     pub(crate) current_folder: &'a mut Option<std::path::PathBuf>,
     /// Project / engine `assets/` roots, for the Asset Browser tree.
@@ -305,6 +310,12 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                         graph: self.open_shader_graph.as_mut().map(|open| &mut open.graph),
                         path: path.as_deref(),
                         dirty,
+                        preview: crate::panels::shader_graph::PreviewView {
+                            texture: self.preview_texture_id,
+                            primitive: self.preview_primitive,
+                            refusal: self.preview_refusal,
+                            request: self.preview_request,
+                        },
                     },
                 );
                 // Anything the panel changed makes the file behind it stale.

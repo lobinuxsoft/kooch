@@ -172,6 +172,25 @@ rest — so half a graph still renders. Unconnected *inputs* read as zero, and e
 that zero is never a NaN: a divide by zero is zero, `normalize` of nothing points up, and two equal
 `smoothstep` edges are pushed apart.
 
+### The preview
+
+The column on the right shows the shader **on a shape**, turning, updated as the graph changes.
+
+- The shape is any of the engine's primitives — cube, sphere, capsule, cylinder, cone, quad — picked
+  from the dropdown above it. A gradient reads one way on a sphere and another on a quad, and a
+  shader is worth judging on the geometry it will actually run on.
+- It runs the **same `surface` function the scene runs**, from the same generated WGSL. What differs
+  is the frame around it: one primitive rasterised and one key light, with none of Inti, the shadow
+  pages or the visibility buffer behind it — which is why a preview costs a thumbnail, not a second
+  viewport.
+- Parameters show the **starting values the shader declares** (`SURFACE_DEFAULTS`), not a material's:
+  what is being previewed is the shader, before anything has been assigned to it. Textures show
+  their fallback — `white`, `black` or `normal`.
+- **Unpack Normal** works here because the preview builds a tangent frame per primitive; the engine's
+  meshes carry none.
+- While the graph does not compile, the column says so and why, instead of going on showing the last
+  version that did.
+
 ### Moving around
 
 - **The view follows its panel.** Moving the window, or the panel inside the dock, leaves the graph

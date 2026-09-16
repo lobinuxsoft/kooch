@@ -58,6 +58,12 @@ pub(super) struct ViewportUi<'a> {
     pub(super) game_texture_id: egui::TextureId,
     pub(super) game_request: &'a mut Option<(u32, u32)>,
     pub(super) game_has_camera: bool,
+    /// The Shader Graph preview (#1159): its texture, the shape it is on, and the shape the panel
+    /// asks for next.
+    pub(super) preview_texture_id: egui::TextureId,
+    pub(super) preview_primitive: usize,
+    pub(super) preview_refusal: Option<&'a str>,
+    pub(super) preview_request: &'a mut Option<usize>,
     pub(super) input_owner: &'a mut crate::input_focus::InputOwner,
 }
 
@@ -141,6 +147,10 @@ pub(super) fn run_editor_ui(
         game_texture_id,
         game_request,
         game_has_camera,
+        preview_texture_id,
+        preview_primitive,
+        preview_refusal,
+        preview_request,
         input_owner,
     } = viewport;
 
@@ -288,6 +298,10 @@ pub(super) fn run_editor_ui(
                 game_texture_id,
                 game_request,
                 game_has_camera,
+                preview_texture_id,
+                preview_primitive,
+                preview_refusal,
+                preview_request,
                 input_owner,
                 viewport_input: input,
                 editor_camera_controller: controller,
