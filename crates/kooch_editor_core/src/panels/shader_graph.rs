@@ -1,9 +1,12 @@
 //! Shader Graph panel — the nodes, and the file they write (#1159).
 
+use egui::emath::TSTransform;
 use egui_snarl::ui::{PinInfo, SnarlViewer, SnarlWidget};
 use egui_snarl::{InPin, NodeId, OutPin, Snarl};
 
-use crate::shader_graph::{BLEND_MODES, Category, Graph, Node, TEXTURE_FALLBACKS, palette};
+use crate::shader_graph::{
+    BLEND_MODES, Category, Graph, Node, TEXTURE_FALLBACKS, arrange, palette,
+};
 
 /// What the panel needs to draw one frame.
 pub(crate) struct ShaderGraphView<'a> {
@@ -45,20 +48,108 @@ pub(crate) fn draw_shader_graph_content(
         {
             actions.push(ShaderGraphAction::Save);
         }
+        if ui
+            .button("Arrange")
+            .on_hover_text("Lay the nodes out left to right, in layers")
+            .clicked()
+        {
+            arrange(graph);
+        }
+        let mut showing = minimap_shown(ui);
+        if ui.checkbox(&mut showing, "Minimap").changed() {
+            show_minimap(ui, showing);
+        }
         ui.weak("Right-click the background to add a node.");
     });
     ui.separator();
 
+    // 🔴 The graph follows its panel. `egui-snarl` keeps the view in GLOBAL screen coordinates and
+    // re-anchors it never, so a panel that moved left its graph behind — off screen, with nothing
+    // to do but pan blindly looking for it (#1167).
+    let panel = ui.max_rect();
+    let mut viewer = Viewer {
+        drift: drift(ui, panel),
+        look_at: taken_look(ui),
+        panel,
+        transform: TSTransform::IDENTITY,
+    };
+
     SnarlWidget::new()
         .id(egui::Id::new("shader_graph"))
-        .show(graph, &mut Viewer, ui);
+        .show(graph, &mut viewer, ui);
+
+    if minimap_shown(ui)
+        && let Some(at) = crate::panels::graph_minimap::draw(ui, panel, graph, viewer.transform)
+    {
+        look_at(ui, at);
+    }
     actions
 }
 
+/// How far the panel moved since the last frame — what the view has to travel to stay with it.
+fn drift(ui: &egui::Ui, panel: egui::Rect) -> egui::Vec2 {
+    let id = egui::Id::new("shader_graph_panel_rect");
+    let before = ui.ctx().data(|d| d.get_temp::<egui::Rect>(id));
+    ui.ctx().data_mut(|d| d.insert_temp(id, panel));
+    match before {
+        Some(before) if before.is_finite() && panel.is_finite() => panel.min - before.min,
+        _ => egui::Vec2::ZERO,
+    }
+}
+
+/// Whether the minimap is showing, and where the user asked to look. Both live in egui's own store:
+/// how a graph is being *viewed* is not part of the graph, and must never reach the file.
+fn minimap_shown(ui: &egui::Ui) -> bool {
+    ui.ctx()
+        .data(|d| d.get_temp::<bool>(egui::Id::new("shader_graph_minimap")))
+        .unwrap_or(true)
+}
+
+fn show_minimap(ui: &egui::Ui, showing: bool) {
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(egui::Id::new("shader_graph_minimap"), showing));
+}
+
+fn look_at(ui: &egui::Ui, at: egui::Pos2) {
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(egui::Id::new("shader_graph_look_at"), at));
+}
+
+/// Takes the pending jump, so it is applied once and not every frame after.
+fn taken_look(ui: &egui::Ui) -> Option<egui::Pos2> {
+    let id = egui::Id::new("shader_graph_look_at");
+    ui.ctx().data_mut(|d| {
+        let at = d.get_temp::<egui::Pos2>(id);
+        d.remove_temp::<egui::Pos2>(id);
+        at
+    })
+}
+
 /// How the nodes draw and connect.
-struct Viewer;
+struct Viewer {
+    /// How far the panel moved since the last frame.
+    drift: egui::Vec2,
+    /// Where the minimap asked to look, in graph space.
+    look_at: Option<egui::Pos2>,
+    /// The panel, for centring a jump.
+    panel: egui::Rect,
+    /// This frame's view transform, taken back out for the minimap to draw what is on screen.
+    transform: TSTransform,
+}
 
 impl SnarlViewer<Node> for Viewer {
+    /// The one hook that runs between the pan/zoom handling and the transform being stored, which
+    /// is the only place a view can be corrected from outside the widget.
+    fn current_transform(&mut self, to_global: &mut TSTransform, _snarl: &mut Snarl<Node>) {
+        to_global.translation += self.drift;
+        if let Some(at) = self.look_at {
+            // That point of the graph, under the middle of the panel.
+            to_global.translation =
+                self.panel.center().to_vec2() - to_global.scaling * at.to_vec2();
+        }
+        self.transform = *to_global;
+    }
+
     fn title(&mut self, node: &Node) -> String {
         node.title()
     }

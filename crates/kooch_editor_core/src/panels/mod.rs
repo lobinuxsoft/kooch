@@ -5,6 +5,7 @@ pub(crate) mod build;
 pub(crate) mod components;
 pub(crate) mod console;
 pub(crate) mod game;
+pub(crate) mod graph_minimap;
 pub(crate) mod input_map;
 pub(crate) mod inspector;
 pub(crate) mod performance;
