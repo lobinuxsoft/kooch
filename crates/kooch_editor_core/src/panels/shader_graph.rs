@@ -101,6 +101,65 @@ pub(crate) fn draw_shader_graph_content(
     actions
 }
 
+/// A float or a whole number: its name, an optional range, and its starting value — a slider inside
+/// the range, as the material's Inspector will draw it, and a drag field without one.
+fn number_editor(
+    ui: &mut egui::Ui,
+    name: &mut String,
+    default: &mut f32,
+    range: &mut Option<[f32; 2]>,
+    whole: bool,
+) {
+    let step = if whole { 1.0 } else { 0.01 };
+    let decimals = if whole { 0 } else { 2 };
+    ui.horizontal(|ui| {
+        ui.add(egui::TextEdit::singleline(name).desired_width(70.0));
+        let mut ranged = range.is_some();
+        if ui.checkbox(&mut ranged, "range").changed() {
+            *range = ranged.then_some([0.0, if whole { 10.0 } else { 1.0 }]);
+        }
+    });
+    if let Some([lo, hi]) = range.as_mut() {
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::DragValue::new(lo)
+                    .speed(step)
+                    .fixed_decimals(decimals)
+                    .prefix("min "),
+            );
+            ui.add(
+                egui::DragValue::new(hi)
+                    .speed(step)
+                    .fixed_decimals(decimals)
+                    .prefix("max "),
+            );
+        });
+        // 🔴 A range the wrong way round is a slider egui cannot draw; keep it ordered as it is typed.
+        if *hi < *lo {
+            *hi = *lo;
+        }
+    }
+    match *range {
+        Some([lo, hi]) => {
+            ui.add(
+                egui::Slider::new(default, lo..=hi)
+                    .step_by(if whole { 1.0 } else { 0.0 })
+                    .fixed_decimals(decimals),
+            );
+        }
+        None => {
+            ui.add(
+                egui::DragValue::new(default)
+                    .speed(step)
+                    .fixed_decimals(decimals),
+            );
+        }
+    }
+    if whole {
+        *default = default.round();
+    }
+}
+
 /// The preview column: the shader on a shape, and which shape that is.
 fn draw_preview(ui: &mut egui::Ui, preview: PreviewView<'_>) {
     const SIDE: f32 = 220.0;
@@ -278,26 +337,32 @@ impl SnarlViewer<Node> for Viewer {
                         }
                     });
                 }
-                Node::Param {
+                Node::Float {
+                    name,
+                    default,
+                    range,
+                } => number_editor(ui, name, default, range, false),
+                Node::Int {
+                    name,
+                    default,
+                    range,
+                } => number_editor(ui, name, default, range, true),
+                Node::Vector {
                     name,
                     width,
-                    color,
                     default,
                 } => {
-                    ui.horizontal(|ui| {
-                        ui.add(egui::TextEdit::singleline(name).desired_width(70.0));
-                        ui.add(egui::DragValue::new(width).range(1..=4).prefix("x"));
-                        // Only four wide: the hint it writes is a `vec4<f32>` one, and it cannot
-                        // outlive a width the user narrowed under it.
-                        *color &= *width == 4;
-                        if *width == 4 {
-                            ui.checkbox(color, "color");
-                        }
-                    });
+                    ui.add(egui::TextEdit::singleline(name).desired_width(90.0));
                     ui.horizontal(|ui| {
                         for component in default.iter_mut().take(*width as usize) {
                             ui.add(crate::numeric::drag(component).speed(0.01));
                         }
+                    });
+                }
+                Node::Color { name, default } => {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::TextEdit::singleline(name).desired_width(70.0));
+                        ui.color_edit_button_rgba_unmultiplied(default);
                     });
                 }
                 Node::Texture { name, fallback } => {

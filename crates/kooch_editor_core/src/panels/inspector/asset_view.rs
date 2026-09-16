@@ -378,6 +378,24 @@ fn draw_shader_params(
                     (ParamKind::Float, Some([lo, hi])) => {
                         track(ui.add(egui::Slider::new(&mut value[0], lo..=hi)));
                     }
+                    (ParamKind::Int, Some([lo, hi])) => {
+                        track(
+                            ui.add(
+                                egui::Slider::new(&mut value[0], lo..=hi)
+                                    .step_by(1.0)
+                                    .fixed_decimals(0),
+                            ),
+                        );
+                    }
+                    (ParamKind::Int, None) => {
+                        track(
+                            ui.add(
+                                egui::DragValue::new(&mut value[0])
+                                    .speed(1.0)
+                                    .fixed_decimals(0),
+                            ),
+                        );
+                    }
                     (ParamKind::Color, _) => {
                         track(ui.color_edit_button_rgba_unmultiplied(&mut value));
                     }

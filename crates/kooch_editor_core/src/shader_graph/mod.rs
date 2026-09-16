@@ -36,8 +36,15 @@ pub(crate) fn snapshot(graph: &Graph) -> Vec<(egui::Pos2, Node)> {
 pub(crate) fn extract(source: &str) -> Option<Graph> {
     let start = source.find(MARKER)? + MARKER.len();
     let end = start + source[start..].find("*/")?;
-    match ron::from_str(&source[start..end]) {
-        Ok(graph) => Some(graph),
+    match ron::from_str::<Graph>(&source[start..end]) {
+        Ok(mut graph) => {
+            // Graphs written before parameters were typed carry `Param`; they open as the typed
+            // nodes they mean, and the next save writes those (#1170).
+            for node in graph.nodes_mut() {
+                *node = std::mem::replace(node, Node::Output).migrated();
+            }
+            Some(graph)
+        }
         Err(error) => {
             tracing::warn!(%error, "a shader carries a graph this editor cannot read");
             None
@@ -78,20 +85,17 @@ pub(crate) fn starter() -> Graph {
     );
     let tint = graph.insert_node(
         Pos2::new(220.0, 200.0),
-        Node::Param {
+        Node::Color {
             name: "base_color".to_owned(),
-            width: 4,
-            color: true,
             default: [1.0; 4],
         },
     );
     let roughness = graph.insert_node(
         Pos2::new(220.0, 320.0),
-        Node::Param {
+        Node::Float {
             name: "roughness".to_owned(),
-            width: 1,
-            color: false,
-            default: [0.5, 0.0, 0.0, 0.0],
+            default: 0.5,
+            range: Some([0.0, 1.0]),
         },
     );
     let tinted = graph.insert_node(Pos2::new(430.0, 100.0), Node::Multiply);

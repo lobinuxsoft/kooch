@@ -208,3 +208,19 @@ fn a_block_can_span_lines() {
     let names: Vec<&str> = shader.params.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(names, ["real"]);
 }
+
+/// A whole number is an `f32` hinted `@int`, and takes a range like a float does (#1170).
+#[test]
+fn an_int_param_has_a_range() {
+    let shader =
+        Shader::parse("struct SurfaceParams {\n    sides: f32,   // @int @range(3, 12)\n}\n")
+            .unwrap();
+    assert_eq!(shader.params[0].kind, ParamKind::Int);
+    assert_eq!(shader.params[0].range, Some([3.0, 12.0]));
+    assert_eq!(shader.params[0].kind.width(), 1);
+}
+
+#[test]
+fn an_int_needs_a_float() {
+    assert!(Shader::parse("struct SurfaceParams {\n    n: vec2<f32>,   // @int\n}\n").is_err());
+}

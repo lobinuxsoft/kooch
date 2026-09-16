@@ -17,10 +17,8 @@ fn tinted_texture() -> Graph {
     );
     let tint = graph.insert_node(
         Pos2::ZERO,
-        Node::Param {
+        Node::Color {
             name: "tint".to_owned(),
-            width: 4,
-            color: true,
             default: [1.0, 0.5, 0.25, 1.0],
         },
     );
@@ -201,4 +199,96 @@ fn the_starter_graph_is_a_material() {
     let names: Vec<&str> = shader.params.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(names, ["base_color", "roughness", "albedo"]);
     kooch_render::meshlet::validate_surface(&shader.params_wgsl(), &shader.source).unwrap();
+}
+
+/// 🔴 Graphs written before #1170 carry `Param { width, color }` in their file. They must open as the
+/// typed nodes they mean — or every shader authored until then opens with its parameters gone.
+#[test]
+fn an_old_param_opens_typed() {
+    let migrate = |width, color| {
+        Node::Param {
+            name: "p".to_owned(),
+            width,
+            color,
+            default: [0.25; 4],
+        }
+        .migrated()
+    };
+    assert!(matches!(
+        migrate(1, false),
+        Node::Float {
+            default: 0.25,
+            range: None,
+            ..
+        }
+    ));
+    assert!(matches!(migrate(3, true), Node::Vector { width: 3, .. }));
+    assert!(matches!(migrate(4, true), Node::Color { .. }));
+    assert!(matches!(migrate(4, false), Node::Vector { width: 4, .. }));
+}
+
+/// And through the real door: an old file's graph comes back out of `extract` already typed.
+#[test]
+fn an_old_file_extracts_typed() {
+    let mut graph = Graph::new();
+    graph.insert_node(
+        Pos2::ZERO,
+        Node::Param {
+            name: "tint".to_owned(),
+            width: 4,
+            color: true,
+            default: [1.0; 4],
+        },
+    );
+    graph.insert_node(Pos2::ZERO, Node::Output);
+    let source = generate(&graph).unwrap();
+
+    let read = extract(&source).expect("the graph");
+
+    assert!(read.nodes().any(|n| matches!(n, Node::Color { .. })));
+    assert!(!read.nodes().any(|n| matches!(n, Node::Param { .. })));
+}
+
+/// Each typed node reaches the engine as the kind the Inspector draws: a slider, a stepped slider, a
+/// picker.
+#[test]
+fn typed_params_keep_their_editors() {
+    use kooch_render::material::ParamKind;
+
+    let mut graph = Graph::new();
+    for node in [
+        Node::Float {
+            name: "amount".to_owned(),
+            default: 0.5,
+            range: Some([0.0, 2.0]),
+        },
+        Node::Int {
+            name: "sides".to_owned(),
+            default: 6.0,
+            range: Some([3.0, 12.0]),
+        },
+        Node::Color {
+            name: "tint".to_owned(),
+            default: [1.0; 4],
+        },
+        Node::Vector {
+            name: "offset".to_owned(),
+            width: 2,
+            default: [0.0; 4],
+        },
+        Node::Output,
+    ] {
+        graph.insert_node(Pos2::ZERO, node);
+    }
+
+    let shader = Shader::parse(&generate(&graph).unwrap()).unwrap();
+    let kind = |name: &str| {
+        let param = shader.params.iter().find(|p| p.name == name).unwrap();
+        (param.kind, param.range)
+    };
+
+    assert_eq!(kind("amount"), (ParamKind::Float, Some([0.0, 2.0])));
+    assert_eq!(kind("sides"), (ParamKind::Int, Some([3.0, 12.0])));
+    assert_eq!(kind("tint"), (ParamKind::Color, None));
+    assert_eq!(kind("offset"), (ParamKind::Vec2, None));
 }

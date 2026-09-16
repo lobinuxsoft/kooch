@@ -91,6 +91,7 @@ pub fn retain_declared(values: &mut ParamValues, params: &[ShaderParam]) {
                     (ParamKind::Texture, ParamValue::Texture(_))
                         | (
                             ParamKind::Float
+                                | ParamKind::Int
                                 | ParamKind::Vec2
                                 | ParamKind::Vec3
                                 | ParamKind::Vec4

@@ -23,13 +23,38 @@ pub(crate) enum Node {
     ViewDirection,
     /// Seconds since the engine started: `x` raw, `y` its sine, `z` its cosine, `w` a tenth of it.
     Time,
-    /// A number the material edits: one member of `SurfaceParams`.
+    /// A number the material edits, from before parameters were typed (#1170). Still read so graphs
+    /// written then open; `migrated` turns it into one of the typed nodes below, and the menu never
+    /// offers it.
     Param {
         name: String,
         /// How wide the member is, 1..=4.
         width: u32,
         /// Drawn as a colour. Only at four wide — the hint the engine reads is a `vec4<f32>` one.
         color: bool,
+        default: [f32; 4],
+    },
+    /// A float the material edits — a slider when it has a range.
+    Float {
+        name: String,
+        default: f32,
+        range: Option<[f32; 2]>,
+    },
+    /// A whole number the material edits: an `f32` hinted `@int`, stepped by one.
+    Int {
+        name: String,
+        default: f32,
+        range: Option<[f32; 2]>,
+    },
+    /// A vector the material edits, two to four wide.
+    Vector {
+        name: String,
+        width: u32,
+        default: [f32; 4],
+    },
+    /// A colour the material edits with a picker.
+    Color {
+        name: String,
         default: [f32; 4],
     },
     /// A texture the material assigns, sampled at `uv`.
@@ -170,6 +195,10 @@ impl Node {
             Self::ViewDirection => "View Direction".to_owned(),
             Self::Time => "Time".to_owned(),
             Self::Param { name, .. } => format!("Param {name}"),
+            Self::Float { name, .. } => format!("Float {name}"),
+            Self::Int { name, .. } => format!("Int {name}"),
+            Self::Vector { name, width, .. } => format!("Vector {width} {name}"),
+            Self::Color { name, .. } => format!("Color {name}"),
             Self::Texture { name, .. } => format!("Texture {name}"),
             Self::Constant(_) => "Constant".to_owned(),
             Self::Add => "Add".to_owned(),
@@ -225,6 +254,10 @@ impl Node {
             | Self::ViewDirection
             | Self::Time
             | Self::Param { .. }
+            | Self::Float { .. }
+            | Self::Int { .. }
+            | Self::Vector { .. }
+            | Self::Color { .. }
             | Self::Constant(_) => &[],
             Self::Texture { .. } => &["uv"],
             Self::Add | Self::Subtract | Self::Multiply | Self::Divide => &["a", "b"],
@@ -279,6 +312,10 @@ impl Node {
             | Self::ViewDirection
             | Self::Time
             | Self::Param { .. }
+            | Self::Float { .. }
+            | Self::Int { .. }
+            | Self::Vector { .. }
+            | Self::Color { .. }
             | Self::Texture { .. }
             | Self::Constant(_) => Category::Input,
             Self::Add
@@ -332,11 +369,34 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::WorldNormal,
         Node::ViewDirection,
         Node::Time,
-        Node::Param {
-            name: "value".to_owned(),
-            width: 1,
-            color: false,
+        Node::Float {
+            name: "amount".to_owned(),
+            default: 0.5,
+            range: Some([0.0, 1.0]),
+        },
+        Node::Int {
+            name: "count".to_owned(),
+            default: 1.0,
+            range: None,
+        },
+        Node::Vector {
+            name: "offset".to_owned(),
+            width: 2,
             default: [0.0; 4],
+        },
+        Node::Vector {
+            name: "direction".to_owned(),
+            width: 3,
+            default: [0.0; 4],
+        },
+        Node::Vector {
+            name: "vector".to_owned(),
+            width: 4,
+            default: [0.0; 4],
+        },
+        Node::Color {
+            name: "tint".to_owned(),
+            default: [1.0; 4],
         },
         Node::Texture {
             name: "map".to_owned(),
@@ -396,3 +456,87 @@ pub(crate) const BLEND_MODES: [&str; 5] = ["multiply", "screen", "overlay", "lig
 
 /// What a `Texture` node falls back to while nothing is assigned.
 pub(crate) const TEXTURE_FALLBACKS: [&str; 3] = ["white", "black", "normal"];
+
+/// What a parameter node declares as a member of `SurfaceParams`, whatever kind of node it is.
+pub(crate) struct Declared<'a> {
+    pub name: &'a str,
+    pub width: u32,
+    pub default: [f32; 4],
+    /// What follows the member: `@color`, `@int`, `@range(lo, hi)`, or nothing.
+    pub hint: String,
+}
+
+impl Node {
+    /// The member this node declares, if it is a parameter.
+    pub(crate) fn declared(&self) -> Option<Declared<'_>> {
+        let range = |range: &Option<[f32; 2]>| {
+            range.map_or(String::new(), |[lo, hi]| format!("@range({lo}, {hi})"))
+        };
+        let (name, width, default, hint) = match self {
+            Self::Param {
+                name,
+                width,
+                color,
+                default,
+            } => {
+                // 🔴 Only at four wide: the engine refuses `@color` on anything narrower.
+                let hint = if *color && *width == 4 { "@color" } else { "" };
+                (name, (*width).clamp(1, 4), *default, hint.to_owned())
+            }
+            Self::Float {
+                name,
+                default,
+                range: bounds,
+            } => (name, 1, [*default, 0.0, 0.0, 0.0], range(bounds)),
+            Self::Int {
+                name,
+                default,
+                range: bounds,
+            } => (
+                name,
+                1,
+                [default.round(), 0.0, 0.0, 0.0],
+                format!("@int {}", range(bounds)).trim_end().to_owned(),
+            ),
+            Self::Vector {
+                name,
+                width,
+                default,
+            } => (name, (*width).clamp(2, 4), *default, String::new()),
+            Self::Color { name, default } => (name, 4, *default, "@color".to_owned()),
+            _ => return None,
+        };
+        Some(Declared {
+            name,
+            width,
+            default,
+            hint,
+        })
+    }
+
+    /// The typed node a pre-#1170 `Param` means, so an old graph opens as the new ones do.
+    pub(crate) fn migrated(self) -> Self {
+        let Self::Param {
+            name,
+            width,
+            color,
+            default,
+        } = self
+        else {
+            return self;
+        };
+        match width {
+            4 if color => Self::Color { name, default },
+            0 | 1 => Self::Float {
+                name,
+                default: default[0],
+                range: None,
+            },
+            width => Self::Vector {
+                name,
+                width: width.min(4),
+                default,
+            },
+        }
+    }
+}

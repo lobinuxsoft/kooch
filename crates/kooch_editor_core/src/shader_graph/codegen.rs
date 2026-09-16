@@ -53,10 +53,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         source,
         "fn surface(input: SurfaceInput) -> SurfaceOutput {{"
     );
-    if graph
-        .node_ids()
-        .any(|(_, n)| matches!(n, Node::Param { .. }))
-    {
+    if graph.node_ids().any(|(_, n)| n.declared().is_some()) {
         let _ = writeln!(source, "    let p = surface_params(input.material_id);");
     }
     source.push_str(&body.lines);
@@ -80,41 +77,27 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
 /// for, in the order the nodes were added.
 fn declarations(graph: &Graph) -> String {
     let mut out = String::new();
-    let params: Vec<&Node> = graph
+    let params: Vec<_> = graph
         .node_ids()
-        .map(|(_, node)| node)
-        .filter(|node| matches!(node, Node::Param { .. }))
+        .filter_map(|(_, node)| node.declared())
         .collect();
     if !params.is_empty() {
         out.push_str("struct SurfaceParams {\n");
-        for node in &params {
-            let Node::Param {
-                name, width, color, ..
-            } = node
-            else {
-                continue;
+        for param in &params {
+            let hint = match param.hint.as_str() {
+                "" => String::new(),
+                hint => format!("  // {hint}"),
             };
-            // `@color` is a `vec4<f32>` hint and the engine refuses it on anything narrower, so a
-            // tick on a three-wide parameter is dropped rather than written out.
-            let hint = if *color && *width == 4 {
-                "  // @color"
-            } else {
-                ""
-            };
-            let _ = writeln!(out, "    {name}: {},{hint}", wgsl_type(*width));
+            let _ = writeln!(out, "    {}: {},{hint}", param.name, wgsl_type(param.width));
         }
         out.push_str("}\n\nconst SURFACE_DEFAULTS = SurfaceParams(\n");
-        for node in &params {
-            let Node::Param {
-                name,
-                width,
-                default,
-                ..
-            } = node
-            else {
-                continue;
-            };
-            let _ = writeln!(out, "    {},  // {name}", literal(*width, *default));
+        for param in &params {
+            let _ = writeln!(
+                out,
+                "    {},  // {}",
+                literal(param.width, param.default),
+                param.name
+            );
         }
         out.push_str(");\n\n");
     }
@@ -326,12 +309,20 @@ impl Body<'_> {
             Node::ViewDirection => {
                 "vec4<f32>(normalize(input.camera_position - input.world_position), 0.0)".to_owned()
             }
-            Node::Param { name, width, .. } => match width {
-                1 => format!("vec4<f32>(p.{name}, 0.0, 0.0, 0.0)"),
-                2 => format!("vec4<f32>(p.{name}, 0.0, 0.0)"),
-                3 => format!("vec4<f32>(p.{name}, 0.0)"),
-                _ => format!("p.{name}"),
-            },
+            Node::Param { .. }
+            | Node::Float { .. }
+            | Node::Int { .. }
+            | Node::Vector { .. }
+            | Node::Color { .. } => {
+                let param = node.declared().ok_or("a parameter node declares nothing")?;
+                let name = param.name;
+                match param.width {
+                    1 => format!("vec4<f32>(p.{name}, 0.0, 0.0, 0.0)"),
+                    2 => format!("vec4<f32>(p.{name}, 0.0, 0.0)"),
+                    3 => format!("vec4<f32>(p.{name}, 0.0)"),
+                    _ => format!("p.{name}"),
+                }
+            }
             Node::Constant(value) => format!(
                 "vec4<f32>({})",
                 value

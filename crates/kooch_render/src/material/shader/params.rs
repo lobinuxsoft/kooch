@@ -19,6 +19,8 @@ const TEXTURE_BINDINGS: [u32; MAX_PARAM_TEXTURES as usize] = [0, 1, 2, 4];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParamKind {
     Float,
+    /// An `f32` hinted `@int`: stored as a float, edited in whole steps.
+    Int,
     Vec2,
     Vec3,
     Vec4,
@@ -31,7 +33,7 @@ impl ParamKind {
     /// Scalars it takes in `material_values`.
     pub fn width(self) -> u32 {
         match self {
-            Self::Float => 1,
+            Self::Float | Self::Int => 1,
             Self::Vec2 => 2,
             Self::Vec3 => 3,
             Self::Vec4 | Self::Color => 4,
@@ -41,7 +43,7 @@ impl ParamKind {
 
     fn wgsl(self) -> &'static str {
         match self {
-            Self::Float => "f32",
+            Self::Float | Self::Int => "f32",
             Self::Vec2 => "vec2<f32>",
             Self::Vec3 => "vec3<f32>",
             Self::Vec4 | Self::Color | Self::Texture => "vec4<f32>",
@@ -292,11 +294,21 @@ fn scalar(field: &str, hints: &str, before: &[ShaderParam]) -> Result<ShaderPara
         }
         kind = ParamKind::Color;
     }
+    // `@int` rather than `i32`: `material_values` is one `f32` array, and a whole number stored in
+    // it round-trips exactly well past any count a material would hold.
+    if hint(hints, "@int").is_some() {
+        if kind != ParamKind::Float {
+            return Err(format!("`{name}`: @int needs f32"));
+        }
+        kind = ParamKind::Int;
+    }
     let range = match hint(hints, "@range") {
-        Some(bounds) if kind == ParamKind::Float => match numbers(bounds)?[..] {
-            [lo, hi] => Some([lo, hi]),
-            _ => return Err(format!("`{name}`: @range takes two numbers")),
-        },
+        Some(bounds) if matches!(kind, ParamKind::Float | ParamKind::Int) => {
+            match numbers(bounds)?[..] {
+                [lo, hi] => Some([lo, hi]),
+                _ => return Err(format!("`{name}`: @range takes two numbers")),
+            }
+        }
         Some(_) => return Err(format!("`{name}`: @range needs f32")),
         None => None,
     };
