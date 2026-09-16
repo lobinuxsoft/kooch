@@ -76,6 +76,12 @@ pub(crate) struct ShaderPreview {
     mesh: PreviewMesh,
     pool: MaterialPool,
     textures: MaterialTexturePool,
+    /// 🔴 Ours rather than `MaterialPool::bind_group_layout`. That one belongs to the deferred
+    /// path: one binding, visible to COMPUTE only — and a *render* pipeline built on it is
+    /// invalid, which is exactly how this failed. The contract needs `materials` **and**
+    /// `material_values`, both read from the fragment stage.
+    materials_bgl: wgpu::BindGroupLayout,
+    materials_bg: wgpu::BindGroup,
     camera_buffer: wgpu::Buffer,
     screen_buffer: wgpu::Buffer,
     inti_buffer: wgpu::Buffer,
@@ -161,6 +167,36 @@ impl ShaderPreview {
             entries: &[],
         });
 
+        // Group 2, as the contract declares it: `materials` at 0 and `material_values` at 1.
+        let storage = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let materials_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("shader_preview_materials_bgl"),
+            entries: &[storage(0), storage(1)],
+        });
+        let materials_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shader_preview_materials_bg"),
+            layout: &materials_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: pool.buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: pool.values().as_entire_binding(),
+                },
+            ],
+        });
+
         Self {
             target,
             format,
@@ -168,6 +204,8 @@ impl ShaderPreview {
             mesh,
             pool,
             textures,
+            materials_bgl,
+            materials_bg,
             camera_buffer,
             screen_buffer,
             inti_buffer,
@@ -311,7 +349,7 @@ impl ShaderPreview {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &self.frame_bg, &[]);
             pass.set_bind_group(1, &self.empty_bg, &[]);
-            pass.set_bind_group(2, &self.pool.bind_group(device), &[]);
+            pass.set_bind_group(2, &self.materials_bg, &[]);
             pass.set_bind_group(3, &self.empty_bg, &[]);
             pass.set_bind_group(4, &texture_bg, &[]);
             pass.set_vertex_buffer(0, self.mesh.vertices.slice(..));
@@ -354,7 +392,7 @@ impl ShaderPreview {
             bind_group_layouts: &[
                 Some(&self.frame_bgl),
                 Some(&self.empty_bgl),
-                Some(self.pool.layout()),
+                Some(&self.materials_bgl),
                 Some(&self.empty_bgl),
                 Some(self.textures.layout()),
             ],
