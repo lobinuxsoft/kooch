@@ -298,7 +298,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 let before = self
                     .open_shader_graph
                     .as_ref()
-                    .map(|open| open.graph.nodes().cloned().collect::<Vec<_>>());
+                    .map(|open| crate::shader_graph::snapshot(&open.graph));
                 let requested = crate::panels::shader_graph::draw_shader_graph_content(
                     ui,
                     crate::panels::shader_graph::ShaderGraphView {
@@ -309,9 +309,8 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 );
                 // Anything the panel changed makes the file behind it stale.
                 if let Some(open) = self.open_shader_graph.as_mut()
-                    && before.is_some_and(|before| {
-                        before != open.graph.nodes().cloned().collect::<Vec<_>>()
-                    })
+                    && before
+                        .is_some_and(|before| before != crate::shader_graph::snapshot(&open.graph))
                 {
                     open.dirty = true;
                 }

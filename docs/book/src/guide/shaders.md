@@ -172,6 +172,18 @@ rest — so half a graph still renders. Unconnected *inputs* read as zero, and e
 that zero is never a NaN: a divide by zero is zero, `normalize` of nothing points up, and two equal
 `smoothstep` edges are pushed apart.
 
+### Moving around
+
+- **The view follows its panel.** Moving the window, or the panel inside the dock, leaves the graph
+  where it was *relative to the panel* — not where it was on screen.
+- **Minimap**, toggled in the toolbar: a box per node and a rectangle around what you are looking at.
+  Click anywhere on it to send the view there.
+- **Arrange** lays the graph out left to right in layers, so whatever feeds a node sits to its left,
+  and orders each layer to keep the wires from crossing. It is the shape of Godot's `arrange_nodes`
+  without its inner-shift pass, which earns its keep on graphs far larger than a shader's.
+- Dragging a node marks the file unsaved: where the nodes sit is part of what the `.shader` carries,
+  so **Save** is what keeps a layout.
+
 ### What the graph cannot do
 
 **One graph is one pass.** The visibility buffer holds one surface per pixel and each material's pass

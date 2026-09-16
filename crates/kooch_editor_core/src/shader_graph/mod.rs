@@ -7,9 +7,11 @@
 
 use egui_snarl::Snarl;
 
+mod arrange;
 mod codegen;
 mod nodes;
 
+pub(crate) use arrange::{NODE_SIZE, arrange};
 pub(crate) use codegen::generate;
 pub(crate) use nodes::{BLEND_MODES, Category, Node, TEXTURE_FALLBACKS, palette};
 
@@ -18,6 +20,17 @@ const MARKER: &str = "/*KOOCH_GRAPH;";
 
 /// A graph and where its nodes sit, as the panel holds it.
 pub(crate) type Graph = Snarl<Node>;
+
+/// Nodes **and where they sit**, for telling whether the panel changed anything.
+///
+/// 🔴 Dragging a node is an edit the file has to keep: comparing only the values let a whole
+/// re-layout be lost on close without a word about it (#1167).
+pub(crate) fn snapshot(graph: &Graph) -> Vec<(egui::Pos2, Node)> {
+    graph
+        .nodes_pos_ids()
+        .map(|(_, pos, node)| (pos, node.clone()))
+        .collect()
+}
 
 /// The graph carried by `source`, if it holds one.
 pub(crate) fn extract(source: &str) -> Option<Graph> {
