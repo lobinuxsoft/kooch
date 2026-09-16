@@ -63,7 +63,7 @@ pub(super) struct ViewportUi<'a> {
     pub(super) preview_texture_id: egui::TextureId,
     pub(super) preview_primitive: usize,
     pub(super) preview_refusal: Option<&'a str>,
-    pub(super) preview_request: &'a mut Option<usize>,
+    pub(super) preview_request: &'a mut Option<crate::viewport::PreviewRequest>,
     pub(super) input_owner: &'a mut crate::input_focus::InputOwner,
 }
 

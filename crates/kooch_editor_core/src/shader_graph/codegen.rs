@@ -102,7 +102,7 @@ fn declarations(graph: &Graph) -> String {
         out.push_str(");\n\n");
     }
     for (_, node) in graph.node_ids() {
-        if let Node::Texture { name, fallback } = node {
+        if let Node::Texture { name, fallback, .. } = node {
             let _ = writeln!(out, "var {name}: texture_2d<f32>;  // @default({fallback})");
         }
     }

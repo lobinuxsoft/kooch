@@ -13,6 +13,7 @@ fn tinted_texture() -> Graph {
         Node::Texture {
             name: "albedo".to_owned(),
             fallback: "white".to_owned(),
+            preview: None,
         },
     );
     let tint = graph.insert_node(
@@ -291,4 +292,23 @@ fn typed_params_keep_their_editors() {
     assert_eq!(kind("sides"), (ParamKind::Int, Some([3.0, 12.0])));
     assert_eq!(kind("tint"), (ParamKind::Color, None));
     assert_eq!(kind("offset"), (ParamKind::Vec2, None));
+}
+
+/// 🔴 Every graph written before #1170 has texture nodes with no `preview` field at all. It has to
+/// default rather than fail, or `extract` returns nothing and the file opens in the IDE instead.
+#[test]
+fn a_texture_without_preview_opens() {
+    let source = generate(&tinted_texture()).unwrap();
+    let old = source.replace(",preview:None", "");
+    assert_ne!(
+        old, source,
+        "the fixture no longer writes the field this test strips"
+    );
+
+    let read = extract(&old).expect("an old graph still opens");
+
+    assert!(
+        read.nodes()
+            .any(|n| matches!(n, Node::Texture { preview: None, .. }))
+    );
 }

@@ -19,8 +19,17 @@ use wgpu::util::DeviceExt;
 
 use crate::viewport::target::ViewportTarget;
 
-/// How big the preview renders. Fixed: it is a thumbnail of a shader, not a viewport, and a size
-/// that follows the panel would rebuild its textures on every drag of the splitter.
+/// What the Shader Graph panel asks of the preview for the next frame.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PreviewRequest {
+    /// Which of `Primitive::CANONICAL` to show.
+    pub primitive: usize,
+    /// The target's side in pixels, once the column has settled — `None` while it is dragged.
+    pub size: Option<u32>,
+}
+
+/// What the preview starts at, before the column has reported a size. After that the target
+/// follows the column, re-created once a drag settles rather than on every frame of it.
 const SIZE: (u32, u32) = (320, 320);
 
 /// One turn every this many seconds, so a shader that depends on the view angle shows it.
@@ -232,6 +241,34 @@ impl ShaderPreview {
         self.refusal.as_deref()
     }
 
+    /// Asks for a square target of `side` pixels; applied by [`Self::resize_if_needed`].
+    pub(crate) fn request_size(&mut self, side: u32) {
+        self.target.request_size((side, side));
+    }
+
+    /// Re-creates the target when a new size was asked for — before the UI runs, so the texture id
+    /// the panel draws with stays valid for the whole frame.
+    pub(crate) fn resize_if_needed(
+        &mut self,
+        device: &wgpu::Device,
+        egui_renderer: &mut egui_wgpu::Renderer,
+    ) {
+        self.target.resize_if_needed(device, egui_renderer);
+    }
+
+    /// Uploads an image a texture node previews with, once per asset.
+    pub(crate) fn show_image(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        guid: kooch_core::Guid,
+        image: &kooch_render::texture::Image,
+    ) {
+        if !self.textures.contains(guid) {
+            self.textures.register(device, queue, guid, image);
+        }
+    }
+
     /// Swaps the shape the shader is shown on.
     pub(crate) fn show_primitive(&mut self, device: &wgpu::Device, index: usize) {
         let index = index.min(Primitive::CANONICAL.len() - 1);
@@ -250,6 +287,8 @@ impl ShaderPreview {
         params_wgsl: &str,
         source: &str,
         params: &[ShaderParam],
+        // Which image each texture parameter is previewed with, by name.
+        images: &[(String, kooch_core::Guid)],
         dt: f32,
     ) {
         let (device, queue) = (gpu.device(), gpu.queue());
@@ -295,8 +334,14 @@ impl ShaderPreview {
         let mut slots = [TextureRef::default(); 4];
         for param in params {
             if param.kind == ParamKind::Texture {
+                // An image that has not reached the pool yet samples the fallback rather than a hole.
+                let guid = images
+                    .iter()
+                    .find(|(name, _)| *name == param.name)
+                    .map(|(_, guid)| *guid)
+                    .filter(|guid| self.textures.contains(*guid));
                 slots[param.offset as usize] = TextureRef {
-                    guid: None,
+                    guid,
                     fallback: param.texture,
                 };
                 continue;

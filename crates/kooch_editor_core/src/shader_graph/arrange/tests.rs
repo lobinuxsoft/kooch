@@ -29,6 +29,7 @@ fn a_chain_lays_out_left_to_right() {
         Node::Texture {
             name: "albedo".to_owned(),
             fallback: "white".to_owned(),
+            preview: None,
         },
     );
     let output = graph.insert_node(Pos2::ZERO, Node::Output);

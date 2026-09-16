@@ -73,8 +73,8 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 }
 ```
 
-Members are `f32`, `vec2<f32>`, `vec3<f32>` or `vec4<f32>`. `SURFACE_DEFAULTS` is an ordinary WGSL
-constant — naga evaluates it, so `vec3(0.25)` or an arithmetic expression works — and without it
+Members are `f32`, `vec2<f32>`, `vec3<f32>` or `vec4<f32>`; a whole number is an `f32` hinted
+`@int`. `SURFACE_DEFAULTS` is an ordinary WGSL constant — naga evaluates it, so `vec3(0.25)` or an arithmetic expression works — and without it
 every member starts at zero. The comment after a declaration is optional and only changes how the
 editor shows the field:
 
@@ -82,6 +82,7 @@ editor shows the field:
 |---|---|---|
 | `@color` | `vec4<f32>` | a colour picker instead of four numbers |
 | `@range(lo, hi)` | `f32` | a slider |
+| `@int` | `f32` | whole steps — a stepped slider with `@range`, a stepped field without |
 | `@default(white \| black \| normal)` | a texture | what it samples while unassigned — WGSL gives a texture no starting value |
 
 `sample_surface(texture, input, uv, scale)` samples with the analytical derivatives scaled by
@@ -148,15 +149,17 @@ The menu groups the nodes the way the panels do:
 
 | Menu | Nodes |
 |---|---|
-| **Input** | UV, World Normal, World Position, View Direction, **Time**, Param, Texture, Constant |
+| **Input** | UV, World Normal, World Position, View Direction, **Time**, Float, Int, Vector 2, Vector 3, Vector 4, Color, Texture, Constant |
 | **Math** | Add, Subtract, Multiply, Divide, One Minus, Abs, Floor, Fract, Sine, Cosine, Min, Max, Clamp, Step, Smoothstep, Power, Saturate, Remap, Mix |
 | **Vector** | Dot, Cross, Normalize, Length, Distance, Reflect, Swizzle, Combine |
 | **Effects** | Fresnel, Unpack Normal, Panner, Rotator, Tiling, Desaturate, Blend, Noise |
 | **Shapes** | Circle, Rectangle, Ring, Polygon, Checker |
 | **Output** | Surface Output: base colour, normal, metallic, roughness, emissive |
 
-- **Param** is one member of `SurfaceParams` — its name, width, colour hint and starting value. The
-  colour hint is offered only at four wide, because that is what the engine reads it on.
+- **Float, Int, Vector 2/3/4 and Color** are the material's parameters — each one member of
+  `SurfaceParams`, with its name and starting value, edited in the node the way the material's
+  Inspector will show it: a slider when a Float or Int has a range, a colour picker for a Color.
+  Graphs from before these existed carry a single `Param` node; they open converted.
 - **Texture** writes a `var name: texture_2d<f32>;` and samples it at the uv it is given. **Unpack
   Normal** turns that sample into a world-space normal through the mesh's tangent frame.
 - **Time** is `x` seconds, `y` its sine, `z` its cosine, `w` a tenth of it — what **Panner** scrolls
@@ -184,8 +187,11 @@ The column on the right shows the shader **on a shape**, turning, updated as the
   pages or the visibility buffer behind it — which is why a preview costs a thumbnail, not a second
   viewport.
 - Parameters show the **starting values the shader declares** (`SURFACE_DEFAULTS`), not a material's:
-  what is being previewed is the shader, before anything has been assigned to it. Textures show
-  their fallback — `white`, `black` or `normal`.
+  what is being previewed is the shader, before anything has been assigned to it.
+- A **Texture** node's `preview` field picks an image to see it with, without a material. It is saved
+  with the graph, like where the nodes sit, and reaches neither the WGSL nor any material — those
+  still start from the node's fallback (`white`, `black` or `normal`).
+- Drag the column's edge to resize it; the image is re-rendered at the new size once you let go.
 - **Unpack Normal** works here because the preview builds a tangent frame per primitive; the engine's
   meshes carry none.
 - While the graph does not compile, the column says so and why, instead of going on showing the last

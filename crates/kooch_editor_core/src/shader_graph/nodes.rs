@@ -62,6 +62,10 @@ pub(crate) enum Node {
         name: String,
         /// `white`, `black` or `normal` while unassigned.
         fallback: String,
+        /// An image to see the preview with. Rides in the graph like a node's position and reaches
+        /// neither the WGSL nor a material: which image a material samples is the material's call.
+        #[serde(default)]
+        preview: Option<kooch_core::Guid>,
     },
     /// A value written into the graph rather than the material.
     Constant([f32; 4]),
@@ -401,6 +405,7 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::Texture {
             name: "map".to_owned(),
             fallback: "white".to_owned(),
+            preview: None,
         },
         Node::Constant([1.0; 4]),
         Node::Add,

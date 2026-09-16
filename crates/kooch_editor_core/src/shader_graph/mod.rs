@@ -81,6 +81,7 @@ pub(crate) fn starter() -> Graph {
         Node::Texture {
             name: "albedo".to_owned(),
             fallback: "white".to_owned(),
+            preview: None,
         },
     );
     let tint = graph.insert_node(

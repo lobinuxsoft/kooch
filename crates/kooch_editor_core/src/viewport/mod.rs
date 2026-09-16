@@ -8,5 +8,5 @@ mod target;
 
 pub(crate) use game::{GameView, render_game_view};
 pub(crate) use render::render_viewport;
-pub(crate) use shader_preview::ShaderPreview;
+pub(crate) use shader_preview::{PreviewRequest, ShaderPreview};
 pub(crate) use target::ViewportTarget;

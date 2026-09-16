@@ -113,7 +113,7 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) preview_texture_id: egui::TextureId,
     pub(crate) preview_primitive: usize,
     pub(crate) preview_refusal: Option<&'a str>,
-    pub(crate) preview_request: &'a mut Option<usize>,
+    pub(crate) preview_request: &'a mut Option<crate::viewport::PreviewRequest>,
     /// Asset Browser folder selection — the drag-and-drop import target.
     pub(crate) current_folder: &'a mut Option<std::path::PathBuf>,
     /// Project / engine `assets/` roots, for the Asset Browser tree.
@@ -316,6 +316,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                             refusal: self.preview_refusal,
                             request: self.preview_request,
                         },
+                        catalog: self.asset_catalog,
                     },
                 );
                 // Anything the panel changed makes the file behind it stale.

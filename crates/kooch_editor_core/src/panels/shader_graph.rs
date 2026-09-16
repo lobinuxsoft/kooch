@@ -4,6 +4,7 @@ use egui::emath::TSTransform;
 use egui_snarl::ui::{PinInfo, SnarlViewer, SnarlWidget};
 use egui_snarl::{InPin, NodeId, OutPin, Snarl};
 
+use crate::panels::inspector::AssetCatalogEntry;
 use crate::shader_graph::{
     BLEND_MODES, Category, Graph, Node, TEXTURE_FALLBACKS, arrange, palette,
 };
@@ -18,6 +19,8 @@ pub(crate) struct ShaderGraphView<'a> {
     pub dirty: bool,
     /// The shader on a shape, beside the nodes that wrote it.
     pub preview: PreviewView<'a>,
+    /// Every asset, for a texture node to pick the image its preview samples.
+    pub catalog: &'a [AssetCatalogEntry],
 }
 
 /// The preview column: what to draw, on what, and how to ask for something else.
@@ -29,7 +32,7 @@ pub(crate) struct PreviewView<'a> {
     pub refusal: Option<&'a str>,
     /// The shape the panel wants next frame. `Some` also means the panel was drawn at all, which
     /// is what keeps the preview from rendering behind a tab nobody opened.
-    pub request: &'a mut Option<usize>,
+    pub request: &'a mut Option<crate::viewport::PreviewRequest>,
 }
 
 /// What the panel asks for.
@@ -83,6 +86,7 @@ pub(crate) fn draw_shader_graph_content(
     // to do but pan blindly looking for it (#1167).
     let panel = ui.max_rect();
     let mut viewer = Viewer {
+        catalog: view.catalog,
         drift: drift(ui, panel),
         look_at: taken_look(ui),
         panel,
@@ -166,9 +170,14 @@ fn draw_preview(ui: &mut egui::Ui, preview: PreviewView<'_>) {
 
     // `Panel::right` rather than `SidePanel`: egui 0.35 folded the four side/top/bottom builders
     // into one `Panel`, as `input_map` already found out.
+    let mut request = crate::viewport::PreviewRequest {
+        primitive: preview.primitive,
+        size: None,
+    };
     egui::Panel::right("shader_graph_preview")
-        .resizable(false)
+        .resizable(true)
         .default_size(SIDE)
+        .size_range(140.0..=640.0)
         .show(ui, |ui| {
             ui.add_space(4.0);
             egui::ComboBox::from_id_salt("shader_preview_shape")
@@ -181,17 +190,22 @@ fn draw_preview(ui: &mut egui::Ui, preview: PreviewView<'_>) {
                             .selectable_label(index == preview.primitive, display_name(name))
                             .clicked()
                         {
-                            *preview.request = Some(index);
+                            request.primitive = index;
                         }
                     }
                 });
             ui.add_space(4.0);
 
-            let side = ui.available_width().min(SIDE);
+            let side = ui.available_width();
             ui.add(egui::Image::new(egui::load::SizedTexture::new(
                 preview.texture,
                 egui::vec2(side, side),
             )));
+            // 🔴 Only once the column has settled. Every frame of a drag would drop and re-create the
+            // target's textures; until the button is released the last image is stretched instead.
+            if !ui.input(|input| input.pointer.any_down()) {
+                request.size = Some((side * ui.ctx().pixels_per_point()).round() as u32);
+            }
 
             // 🔴 A graph is edited node by node, and most of those moments do not compile. The panel
             // says so instead of showing the last shader that did, which would be a lie about what
@@ -203,9 +217,7 @@ fn draw_preview(ui: &mut egui::Ui, preview: PreviewView<'_>) {
         });
 
     // Asked for every frame the panel is drawn, so nothing renders behind a closed tab.
-    if preview.request.is_none() {
-        *preview.request = Some(preview.primitive);
-    }
+    *preview.request = Some(request);
 }
 
 fn shape_name(index: usize) -> String {
@@ -271,7 +283,9 @@ fn taken_look(ui: &egui::Ui) -> Option<egui::Pos2> {
 }
 
 /// How the nodes draw and connect.
-struct Viewer {
+struct Viewer<'a> {
+    /// Every asset, for a texture node's preview image.
+    catalog: &'a [AssetCatalogEntry],
     /// How far the panel moved since the last frame.
     drift: egui::Vec2,
     /// Where the minimap asked to look, in graph space.
@@ -282,7 +296,7 @@ struct Viewer {
     transform: TSTransform,
 }
 
-impl SnarlViewer<Node> for Viewer {
+impl SnarlViewer<Node> for Viewer<'_> {
     /// The one hook that runs between the pan/zoom handling and the transform being stored, which
     /// is the only place a view can be corrected from outside the widget.
     fn current_transform(&mut self, to_global: &mut TSTransform, _snarl: &mut Snarl<Node>) {
@@ -365,7 +379,11 @@ impl SnarlViewer<Node> for Viewer {
                         ui.color_edit_button_rgba_unmultiplied(default);
                     });
                 }
-                Node::Texture { name, fallback } => {
+                Node::Texture {
+                    name,
+                    fallback,
+                    preview,
+                } => {
                     ui.horizontal(|ui| {
                         ui.add(egui::TextEdit::singleline(name).desired_width(70.0));
                         for option in TEXTURE_FALLBACKS {
@@ -374,6 +392,8 @@ impl SnarlViewer<Node> for Viewer {
                             }
                         }
                     });
+                    // Seen in the preview only; a material still starts from `fallback`.
+                    crate::panels::inspector::texture_row(ui, "preview", preview, self.catalog);
                 }
                 Node::Swizzle { pattern } => {
                     ui.add(

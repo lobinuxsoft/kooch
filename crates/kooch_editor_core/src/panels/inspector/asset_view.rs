@@ -436,7 +436,7 @@ fn draw_shader_params(
 
 /// One texture slot row backed by the shared typed asset picker. Returns `true` when the assignment
 /// changed this frame.
-fn texture_row(
+pub(crate) fn texture_row(
     ui: &mut egui::Ui,
     label: &str,
     field: &mut Option<Guid>,
