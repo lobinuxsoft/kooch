@@ -67,8 +67,20 @@ pub(crate) enum Node {
         #[serde(default)]
         preview: Option<kooch_core::Guid>,
     },
-    /// A value written into the graph rather than the material.
+    /// A value written into the graph, from before constants were typed. Read so old graphs open;
+    /// `migrated` turns it into a four-wide vector, and the menu never offers it.
     Constant([f32; 4]),
+    /// A number written into the shader rather than the material.
+    ConstFloat(f32),
+    /// A whole number written into the shader.
+    ConstInt(f32),
+    /// A vector written into the shader, two to four wide.
+    ConstVector {
+        width: u32,
+        value: [f32; 4],
+    },
+    /// A colour written into the shader.
+    ConstColor([f32; 4]),
 
     // -- Math -----------------------------------------------------------
     Add,
@@ -159,6 +171,8 @@ pub(crate) enum Node {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Category {
     Input,
+    /// Values written into the shader: the same types as the parameters, fixed at authoring.
+    Constant,
     Math,
     Vector,
     Effect,
@@ -168,8 +182,9 @@ pub(crate) enum Category {
 
 impl Category {
     /// In menu order.
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::Input,
+        Self::Constant,
         Self::Math,
         Self::Vector,
         Self::Effect,
@@ -180,6 +195,7 @@ impl Category {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Input => "Input",
+            Self::Constant => "Constants",
             Self::Math => "Math",
             Self::Vector => "Vector",
             Self::Effect => "Effects",
@@ -205,6 +221,10 @@ impl Node {
             Self::Color { name, .. } => format!("Color {name}"),
             Self::Texture { name, .. } => format!("Texture {name}"),
             Self::Constant(_) => "Constant".to_owned(),
+            Self::ConstFloat(_) => "Float".to_owned(),
+            Self::ConstInt(_) => "Int".to_owned(),
+            Self::ConstVector { width, .. } => format!("Vector {width}"),
+            Self::ConstColor(_) => "Color".to_owned(),
             Self::Add => "Add".to_owned(),
             Self::Subtract => "Subtract".to_owned(),
             Self::Multiply => "Multiply".to_owned(),
@@ -262,7 +282,11 @@ impl Node {
             | Self::Int { .. }
             | Self::Vector { .. }
             | Self::Color { .. }
-            | Self::Constant(_) => &[],
+            | Self::Constant(_)
+            | Self::ConstFloat(_)
+            | Self::ConstInt(_)
+            | Self::ConstVector { .. }
+            | Self::ConstColor(_) => &[],
             Self::Texture { .. } => &["uv"],
             Self::Add | Self::Subtract | Self::Multiply | Self::Divide => &["a", "b"],
             Self::OneMinus
@@ -322,6 +346,10 @@ impl Node {
             | Self::Color { .. }
             | Self::Texture { .. }
             | Self::Constant(_) => Category::Input,
+            Self::ConstFloat(_)
+            | Self::ConstInt(_)
+            | Self::ConstVector { .. }
+            | Self::ConstColor(_) => Category::Constant,
             Self::Add
             | Self::Subtract
             | Self::Multiply
@@ -407,7 +435,21 @@ pub(crate) fn palette() -> Vec<Node> {
             fallback: "white".to_owned(),
             preview: None,
         },
-        Node::Constant([1.0; 4]),
+        Node::ConstFloat(1.0),
+        Node::ConstInt(1.0),
+        Node::ConstVector {
+            width: 2,
+            value: [0.0; 4],
+        },
+        Node::ConstVector {
+            width: 3,
+            value: [0.0; 4],
+        },
+        Node::ConstVector {
+            width: 4,
+            value: [0.0; 4],
+        },
+        Node::ConstColor([1.0; 4]),
         Node::Add,
         Node::Subtract,
         Node::Multiply,
@@ -521,27 +563,36 @@ impl Node {
 
     /// The typed node a pre-#1170 `Param` means, so an old graph opens as the new ones do.
     pub(crate) fn migrated(self) -> Self {
-        let Self::Param {
-            name,
-            width,
-            color,
-            default,
-        } = self
-        else {
-            return self;
-        };
-        match width {
-            4 if color => Self::Color { name, default },
-            0 | 1 => Self::Float {
+        match self {
+            Self::Param {
+                name,
+                color: true,
+                width: 4,
+                default,
+            } => Self::Color { name, default },
+            Self::Param {
+                name,
+                width: 0 | 1,
+                default,
+                ..
+            } => Self::Float {
                 name,
                 default: default[0],
                 range: None,
             },
-            width => Self::Vector {
+            Self::Param {
+                name,
+                width,
+                default,
+                ..
+            } => Self::Vector {
                 name,
                 width: width.min(4),
                 default,
             },
+            // All four components were always live, so the vector keeps all four.
+            Self::Constant(value) => Self::ConstVector { width: 4, value },
+            node => node,
         }
     }
 }

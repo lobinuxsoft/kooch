@@ -239,6 +239,12 @@ fn swizzled(value: &str, pattern: &str) -> Result<String, String> {
     })
 }
 
+/// Four numbers as a WGSL `vec4<f32>`, each written so it always reads as a float.
+fn vec4_literal(value: [f32; 4]) -> String {
+    let parts: Vec<String> = value.iter().map(|v| format!("{v:?}")).collect();
+    format!("vec4<f32>({})", parts.join(", "))
+}
+
 fn wgsl_type(width: u32) -> &'static str {
     match width {
         1 => "f32",
@@ -323,14 +329,15 @@ impl Body<'_> {
                     _ => format!("p.{name}"),
                 }
             }
-            Node::Constant(value) => format!(
-                "vec4<f32>({})",
-                value
-                    .iter()
-                    .map(|v| format!("{v:?}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
+            Node::Constant(value) | Node::ConstColor(value) => vec4_literal(*value),
+            Node::ConstFloat(value) => vec4_literal([*value, 0.0, 0.0, 0.0]),
+            Node::ConstInt(value) => vec4_literal([value.round(), 0.0, 0.0, 0.0]),
+            Node::ConstVector { width, value } => {
+                let mut kept = [0.0; 4];
+                let wide = (*width).clamp(2, 4) as usize;
+                kept[..wide].copy_from_slice(&value[..wide]);
+                vec4_literal(kept)
+            }
             Node::Texture { name, .. } => {
                 let uv = argument(self, 0)?;
                 format!("sample_surface({name}, input, {uv}.xy, vec2<f32>(1.0))")

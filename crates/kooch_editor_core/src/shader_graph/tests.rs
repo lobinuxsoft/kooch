@@ -312,3 +312,47 @@ fn a_texture_without_preview_opens() {
             .any(|n| matches!(n, Node::Texture { preview: None, .. }))
     );
 }
+
+/// Old graphs carry `Constant([f32; 4])`. All four components were always live, so it opens as a
+/// four-wide constant vector with every value kept (#1170).
+#[test]
+fn an_old_constant_opens_typed() {
+    assert!(matches!(
+        Node::Constant([1.0, 2.0, 3.0, 4.0]).migrated(),
+        Node::ConstVector {
+            width: 4,
+            value: [1.0, 2.0, 3.0, 4.0]
+        }
+    ));
+}
+
+/// A constant writes only the components its type has, and an int writes a whole number.
+#[test]
+fn a_constant_writes_its_type() {
+    let emitted = |node: Node| {
+        let mut graph = Graph::new();
+        let constant = graph.insert_node(Pos2::ZERO, node);
+        let output = graph.insert_node(Pos2::ZERO, Node::Output);
+        graph.connect(
+            OutPinId {
+                node: constant,
+                output: 0,
+            },
+            InPinId {
+                node: output,
+                input: 0,
+            },
+        );
+        generate(&graph).unwrap()
+    };
+
+    assert!(emitted(Node::ConstInt(2.6)).contains("vec4<f32>(3.0, 0.0, 0.0, 0.0)"));
+    assert!(
+        emitted(Node::ConstVector {
+            width: 2,
+            value: [1.0, 2.0, 9.0, 9.0]
+        })
+        .contains("vec4<f32>(1.0, 2.0, 0.0, 0.0)"),
+        "a two-wide vector leaked the components it does not have",
+    );
+}

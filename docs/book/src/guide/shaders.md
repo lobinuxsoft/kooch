@@ -149,7 +149,8 @@ The menu groups the nodes the way the panels do:
 
 | Menu | Nodes |
 |---|---|
-| **Input** | UV, World Normal, World Position, View Direction, **Time**, Float, Int, Vector 2, Vector 3, Vector 4, Color, Texture, Constant |
+| **Input** | UV, World Normal, World Position, View Direction, **Time**, Float, Int, Vector 2, Vector 3, Vector 4, Color, Texture |
+| **Constants** | Float, Int, Vector 2, Vector 3, Vector 4, Color |
 | **Math** | Add, Subtract, Multiply, Divide, One Minus, Abs, Floor, Fract, Sine, Cosine, Min, Max, Clamp, Step, Smoothstep, Power, Saturate, Remap, Mix |
 | **Vector** | Dot, Cross, Normalize, Length, Distance, Reflect, Swizzle, Combine |
 | **Effects** | Fresnel, Unpack Normal, Panner, Rotator, Tiling, Desaturate, Blend, Noise |
@@ -160,6 +161,11 @@ The menu groups the nodes the way the panels do:
   `SurfaceParams`, with its name and starting value, edited in the node the way the material's
   Inspector will show it: a slider when a Float or Int has a range, a colour picker for a Color.
   Graphs from before these existed carry a single `Param` node; they open converted.
+- **Constants** are the same types written into the shader instead of the material: no name, nothing
+  for the Inspector to show, just a value. An old graph's four-number `Constant` opens as a
+  **Vector 4** with all four kept.
+- Nodes lay their fields out top to bottom, and a short list of choices — a texture's fallback, a
+  blend mode — is a dropdown, so a node stays about as wide as its title.
 - **Texture** writes a `var name: texture_2d<f32>;` and samples it at the uv it is given. **Unpack
   Normal** turns that sample into a world-space normal through the mesh's tangent frame.
 - **Time** is `x` seconds, `y` its sine, `z` its cosine, `w` a tenth of it — what **Panner** scrolls

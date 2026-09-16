@@ -13,7 +13,7 @@ use super::{AssetCatalogEntry, draw_asset_picker};
 use crate::actions::{BakeKind, EditorAction};
 
 /// Canonical asset type name the texture pickers filter by.
-const IMAGE_TYPE: &str = "kooch_render::texture::asset::Image";
+pub(crate) const IMAGE_TYPE: &str = "kooch_render::texture::asset::Image";
 
 /// Per-frame data snapshot for the selected asset. Cloned out of the
 /// asset stores before the egui frame so the panel stays borrow-free.
@@ -436,7 +436,7 @@ fn draw_shader_params(
 
 /// One texture slot row backed by the shared typed asset picker. Returns `true` when the assignment
 /// changed this frame.
-pub(crate) fn texture_row(
+fn texture_row(
     ui: &mut egui::Ui,
     label: &str,
     field: &mut Option<Guid>,

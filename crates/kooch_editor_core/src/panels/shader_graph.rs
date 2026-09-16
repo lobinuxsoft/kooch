@@ -105,8 +105,41 @@ pub(crate) fn draw_shader_graph_content(
     actions
 }
 
-/// A float or a whole number: its name, an optional range, and its starting value — a slider inside
-/// the range, as the material's Inspector will draw it, and a drag field without one.
+/// How wide a node's fields are. Narrow on purpose: a node reads as a column, not a long row.
+const FIELD: f32 = 110.0;
+
+/// A parameter's name, on a line of its own.
+fn name_field(ui: &mut egui::Ui, name: &mut String) {
+    ui.add(egui::TextEdit::singleline(name).desired_width(FIELD));
+}
+
+/// One number per line, labelled by the component it is.
+fn components(ui: &mut egui::Ui, values: &mut [f32]) {
+    for (value, axis) in values.iter_mut().zip(["x", "y", "z", "w"]) {
+        ui.add(
+            crate::numeric::drag(value)
+                .speed(0.01)
+                .prefix(format!("{axis} ")),
+        );
+    }
+}
+
+/// One choice from a short list, as a dropdown: a row of buttons made every such node wide.
+fn choice(ui: &mut egui::Ui, id: &str, current: &mut String, options: &[&str]) {
+    egui::ComboBox::from_id_salt(id)
+        .width(FIELD)
+        .selected_text(current.as_str())
+        .show_ui(ui, |ui| {
+            for option in options {
+                if ui.selectable_label(current == option, *option).clicked() {
+                    *current = (*option).to_owned();
+                }
+            }
+        });
+}
+
+/// A float or a whole number, top to bottom: its name, whether it has a range, the range, and its
+/// starting value — a slider inside the range, as the material's Inspector will draw it.
 fn number_editor(
     ui: &mut egui::Ui,
     name: &mut String,
@@ -116,28 +149,20 @@ fn number_editor(
 ) {
     let step = if whole { 1.0 } else { 0.01 };
     let decimals = if whole { 0 } else { 2 };
-    ui.horizontal(|ui| {
-        ui.add(egui::TextEdit::singleline(name).desired_width(70.0));
-        let mut ranged = range.is_some();
-        if ui.checkbox(&mut ranged, "range").changed() {
-            *range = ranged.then_some([0.0, if whole { 10.0 } else { 1.0 }]);
-        }
-    });
+    name_field(ui, name);
+    let mut ranged = range.is_some();
+    if ui.checkbox(&mut ranged, "range").changed() {
+        *range = ranged.then_some([0.0, if whole { 10.0 } else { 1.0 }]);
+    }
     if let Some([lo, hi]) = range.as_mut() {
-        ui.horizontal(|ui| {
+        for (bound, label) in [(&mut *lo, "min "), (&mut *hi, "max ")] {
             ui.add(
-                egui::DragValue::new(lo)
+                egui::DragValue::new(bound)
                     .speed(step)
                     .fixed_decimals(decimals)
-                    .prefix("min "),
+                    .prefix(label),
             );
-            ui.add(
-                egui::DragValue::new(hi)
-                    .speed(step)
-                    .fixed_decimals(decimals)
-                    .prefix("max "),
-            );
-        });
+        }
         // 🔴 A range the wrong way round is a slider egui cannot draw; keep it ordered as it is typed.
         if *hi < *lo {
             *hi = *lo;
@@ -145,6 +170,7 @@ fn number_editor(
     }
     match *range {
         Some([lo, hi]) => {
+            ui.spacing_mut().slider_width = FIELD - 50.0;
             ui.add(
                 egui::Slider::new(default, lo..=hi)
                     .step_by(if whole { 1.0 } else { 0.0 })
@@ -344,13 +370,6 @@ impl SnarlViewer<Node> for Viewer<'_> {
         // A value node carries its own value, so the node itself is where it is edited.
         if let Some(node) = snarl.get_node_mut(pin.id.node) {
             match node {
-                Node::Constant(value) => {
-                    ui.horizontal(|ui| {
-                        for component in value.iter_mut() {
-                            ui.add(crate::numeric::drag(component).speed(0.01));
-                        }
-                    });
-                }
                 Node::Float {
                     name,
                     default,
@@ -366,51 +385,58 @@ impl SnarlViewer<Node> for Viewer<'_> {
                     width,
                     default,
                 } => {
-                    ui.add(egui::TextEdit::singleline(name).desired_width(90.0));
-                    ui.horizontal(|ui| {
-                        for component in default.iter_mut().take(*width as usize) {
-                            ui.add(crate::numeric::drag(component).speed(0.01));
-                        }
-                    });
+                    name_field(ui, name);
+                    components(ui, &mut default[..(*width).clamp(2, 4) as usize]);
                 }
                 Node::Color { name, default } => {
-                    ui.horizontal(|ui| {
-                        ui.add(egui::TextEdit::singleline(name).desired_width(70.0));
-                        ui.color_edit_button_rgba_unmultiplied(default);
-                    });
+                    name_field(ui, name);
+                    ui.color_edit_button_rgba_unmultiplied(default);
                 }
                 Node::Texture {
                     name,
                     fallback,
                     preview,
                 } => {
-                    ui.horizontal(|ui| {
-                        ui.add(egui::TextEdit::singleline(name).desired_width(70.0));
-                        for option in TEXTURE_FALLBACKS {
-                            if ui.selectable_label(fallback == option, option).clicked() {
-                                *fallback = option.to_owned();
-                            }
-                        }
-                    });
+                    name_field(ui, name);
+                    choice(ui, "fallback", fallback, &TEXTURE_FALLBACKS);
                     // Seen in the preview only; a material still starts from `fallback`.
-                    crate::panels::inspector::texture_row(ui, "preview", preview, self.catalog);
+                    ui.weak("preview");
+                    let picked = ui
+                        .push_id("preview", |ui| {
+                            crate::panels::inspector::draw_asset_picker(
+                                ui,
+                                *preview,
+                                crate::panels::inspector::IMAGE_TYPE,
+                                self.catalog,
+                            )
+                        })
+                        .inner;
+                    if let Some(kooch_ecs::reflect::ReflectValue::AssetRef { guid, .. }) = picked {
+                        *preview = guid;
+                    }
+                }
+                Node::ConstFloat(value) => {
+                    ui.add(crate::numeric::drag(value).speed(0.01));
+                }
+                Node::ConstInt(value) => {
+                    ui.add(egui::DragValue::new(value).speed(1.0).fixed_decimals(0));
+                    *value = value.round();
+                }
+                Node::ConstVector { width, value } => {
+                    components(ui, &mut value[..(*width).clamp(2, 4) as usize]);
+                }
+                Node::Constant(value) => components(ui, value),
+                Node::ConstColor(value) => {
+                    ui.color_edit_button_rgba_unmultiplied(value);
                 }
                 Node::Swizzle { pattern } => {
                     ui.add(
                         egui::TextEdit::singleline(pattern)
-                            .desired_width(50.0)
+                            .desired_width(FIELD)
                             .hint_text("xyzw"),
                     );
                 }
-                Node::Blend { mode } => {
-                    ui.horizontal(|ui| {
-                        for option in BLEND_MODES {
-                            if ui.selectable_label(mode == option, option).clicked() {
-                                *mode = option.to_owned();
-                            }
-                        }
-                    });
-                }
+                Node::Blend { mode } => choice(ui, "blend", mode, &BLEND_MODES),
                 _ => {
                     ui.label("out");
                 }
