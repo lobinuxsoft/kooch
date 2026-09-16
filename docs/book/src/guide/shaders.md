@@ -31,8 +31,8 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 ```
 
 `SurfaceInput` carries the reconstructed point: `world_position`, `world_normal`, `world_tangent`,
-`uv`, the analytical `ddx_uv` / `ddy_uv`, `mip_bias_scale`, `frag_coord`, `camera_position` and
-`material_id`.
+`uv`, the analytical `ddx_uv` / `ddy_uv`, `mip_bias_scale`, `frag_coord`, `camera_position`, `time`
+(seconds since the engine started, for a surface that moves) and `material_id`.
 `SurfaceOutput` is what Inti lights: `base_color`, a world-space `normal`, `metallic`, `roughness`
 and `emissive`.
 
@@ -144,17 +144,42 @@ Right-click the background to add a node, drag between pins to wire them, and pr
 the shader. Every wire carries a `vec4<f32>`: unused components are zero, and each node reads the
 components it needs, so any output plugs into any input.
 
-| Node | Gives |
+The menu groups the nodes the way the panels do:
+
+| Menu | Nodes |
 |---|---|
-| UV, World Normal, World Position, View Direction | the shaded point, from `SurfaceInput` |
-| Param | one member of `SurfaceParams`: its name, width, colour hint and starting value |
-| Texture | a `var name: texture_2d<f32>;` sampled at the uv it is given |
-| Constant | a value written into the shader rather than the material |
-| Add, Multiply, Mix, Dot, Power, Saturate | the arithmetic |
-| Surface Output | base colour, normal, metallic, roughness, emissive |
+| **Input** | UV, World Normal, World Position, View Direction, **Time**, Param, Texture, Constant |
+| **Math** | Add, Subtract, Multiply, Divide, One Minus, Abs, Floor, Fract, Sine, Cosine, Min, Max, Clamp, Step, Smoothstep, Power, Saturate, Remap, Mix |
+| **Vector** | Dot, Cross, Normalize, Length, Distance, Reflect, Swizzle, Combine |
+| **Effects** | Fresnel, Unpack Normal, Panner, Rotator, Tiling, Desaturate, Blend, Noise |
+| **Shapes** | Circle, Rectangle, Ring, Polygon, Checker |
+| **Output** | Surface Output: base colour, normal, metallic, roughness, emissive |
+
+- **Param** is one member of `SurfaceParams` — its name, width, colour hint and starting value. The
+  colour hint is offered only at four wide, because that is what the engine reads it on.
+- **Texture** writes a `var name: texture_2d<f32>;` and samples it at the uv it is given. **Unpack
+  Normal** turns that sample into a world-space normal through the mesh's tangent frame.
+- **Time** is `x` seconds, `y` its sine, `z` its cosine, `w` a tenth of it — what **Panner** scrolls
+  a coordinate with.
+- **Swizzle** reorders components (`xyzw` passes through, `xxxx` splashes the first, `yx` swaps), and
+  **Combine** builds a vector from four numbers.
+- **Shapes** read the uv square with its middle at `0.5`, and answer with a mask in every component.
+- A few nodes lean on a small WGSL function (`graph_noise`, `graph_rotate`, …). It is written into the
+  file **only when a node asks for it**, so a generated shader carries nothing it does not use.
 
 An unconnected output keeps a usable default: the geometric normal, roughness `0.5`, and zero for the
-rest — so half a graph still renders.
+rest — so half a graph still renders. Unconnected *inputs* read as zero, and every node is written so
+that zero is never a NaN: a divide by zero is zero, `normalize` of nothing points up, and two equal
+`smoothstep` edges are pushed apart.
+
+### What the graph cannot do
+
+**One graph is one pass.** The visibility buffer holds one surface per pixel and each material's pass
+runs against it, so there is no second pass of the same surface to add an outline or a shell with.
+Effects that genuinely need another pass belong to a shader **kind** rather than to the graph:
+transparency and refraction to the forward pass (#452), glow and screen distortion to post-process,
+grass and fur to compute-generated geometry. A rim light is the exception that fits today — that is
+what **Fresnel** is for.
 
 ## When a save does not compile
 

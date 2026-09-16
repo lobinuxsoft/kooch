@@ -6,100 +6,15 @@
 //! and the editor can tell which shaders it may open.
 
 use egui_snarl::Snarl;
-use serde::{Deserialize, Serialize};
 
 mod codegen;
+mod nodes;
 
 pub(crate) use codegen::generate;
+pub(crate) use nodes::{BLEND_MODES, Category, Node, TEXTURE_FALLBACKS, palette};
 
 /// What the block comment holding a graph starts with.
 const MARKER: &str = "/*KOOCH_GRAPH;";
-
-/// Every wire carries a `vec4<f32>`: unused components are zero, and a node reads the components it
-/// needs. One type means no casts, no coercion rules, and no wire a user cannot plug in.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum Node {
-    /// The mesh's uv, in `xy`.
-    Uv,
-    /// The shaded point, in world space.
-    WorldPosition,
-    /// The interpolated normal, in world space.
-    WorldNormal,
-    /// `camera_position - world_position`, normalised.
-    ViewDirection,
-    /// A number the material edits: one member of `SurfaceParams`.
-    Param {
-        name: String,
-        /// How wide the member is, 1..=4.
-        width: u32,
-        /// Drawn as a colour when it is four wide.
-        color: bool,
-        default: [f32; 4],
-    },
-    /// A texture the material assigns, sampled at `uv`.
-    Texture {
-        name: String,
-        /// `white`, `black` or `normal` while unassigned.
-        fallback: String,
-    },
-    /// A value written into the graph rather than the material.
-    Constant([f32; 4]),
-    Add,
-    Multiply,
-    /// `mix(a, b, t.x)`.
-    Mix,
-    /// `dot(a.xyz, b.xyz)`, in every component.
-    Dot,
-    /// `pow(max(a.x, 0), b.x)`.
-    Power,
-    Saturate,
-    /// What Inti lights: base colour, normal, metallic, roughness, emissive.
-    Output,
-}
-
-impl Node {
-    /// What the node is called in the panel.
-    pub(crate) fn title(&self) -> String {
-        match self {
-            Self::Uv => "UV".to_owned(),
-            Self::WorldPosition => "World Position".to_owned(),
-            Self::WorldNormal => "World Normal".to_owned(),
-            Self::ViewDirection => "View Direction".to_owned(),
-            Self::Param { name, .. } => format!("Param {name}"),
-            Self::Texture { name, .. } => format!("Texture {name}"),
-            Self::Constant(_) => "Constant".to_owned(),
-            Self::Add => "Add".to_owned(),
-            Self::Multiply => "Multiply".to_owned(),
-            Self::Mix => "Mix".to_owned(),
-            Self::Dot => "Dot".to_owned(),
-            Self::Power => "Power".to_owned(),
-            Self::Saturate => "Saturate".to_owned(),
-            Self::Output => "Surface Output".to_owned(),
-        }
-    }
-
-    /// The inputs it takes, named for their pins.
-    pub(crate) fn inputs(&self) -> &'static [&'static str] {
-        match self {
-            Self::Uv
-            | Self::WorldPosition
-            | Self::WorldNormal
-            | Self::ViewDirection
-            | Self::Param { .. }
-            | Self::Constant(_) => &[],
-            Self::Texture { .. } => &["uv"],
-            Self::Add | Self::Multiply | Self::Dot | Self::Power => &["a", "b"],
-            Self::Mix => &["a", "b", "t"],
-            Self::Saturate => &["value"],
-            Self::Output => &["base color", "normal", "metallic", "roughness", "emissive"],
-        }
-    }
-
-    /// Whether it produces a value.
-    pub(crate) fn has_output(&self) -> bool {
-        !matches!(self, Self::Output)
-    }
-}
 
 /// A graph and where its nodes sit, as the panel holds it.
 pub(crate) type Graph = Snarl<Node>;

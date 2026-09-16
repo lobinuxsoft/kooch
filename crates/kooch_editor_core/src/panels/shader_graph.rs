@@ -3,7 +3,7 @@
 use egui_snarl::ui::{PinInfo, SnarlViewer, SnarlWidget};
 use egui_snarl::{InPin, NodeId, OutPin, Snarl};
 
-use crate::shader_graph::{Graph, Node};
+use crate::shader_graph::{BLEND_MODES, Category, Graph, Node, TEXTURE_FALLBACKS, palette};
 
 /// What the panel needs to draw one frame.
 pub(crate) struct ShaderGraphView<'a> {
@@ -19,34 +19,6 @@ pub(crate) struct ShaderGraphView<'a> {
 pub(crate) enum ShaderGraphAction {
     /// Generate the shader and write it.
     Save,
-}
-
-/// Every node the first slice offers, in the order the menu lists them.
-fn palette() -> Vec<Node> {
-    vec![
-        Node::Uv,
-        Node::WorldNormal,
-        Node::WorldPosition,
-        Node::ViewDirection,
-        Node::Constant([1.0; 4]),
-        Node::Param {
-            name: "value".to_owned(),
-            width: 1,
-            color: false,
-            default: [0.0; 4],
-        },
-        Node::Texture {
-            name: "map".to_owned(),
-            fallback: "white".to_owned(),
-        },
-        Node::Add,
-        Node::Multiply,
-        Node::Mix,
-        Node::Dot,
-        Node::Power,
-        Node::Saturate,
-        Node::Output,
-    ]
 }
 
 /// Draws the panel. Returns what the user asked for.
@@ -154,9 +126,25 @@ impl SnarlViewer<Node> for Viewer {
                 Node::Texture { name, fallback } => {
                     ui.horizontal(|ui| {
                         ui.add(egui::TextEdit::singleline(name).desired_width(70.0));
-                        for option in ["white", "black", "normal"] {
+                        for option in TEXTURE_FALLBACKS {
                             if ui.selectable_label(fallback == option, option).clicked() {
                                 *fallback = option.to_owned();
+                            }
+                        }
+                    });
+                }
+                Node::Swizzle { pattern } => {
+                    ui.add(
+                        egui::TextEdit::singleline(pattern)
+                            .desired_width(50.0)
+                            .hint_text("xyzw"),
+                    );
+                }
+                Node::Blend { mode } => {
+                    ui.horizontal(|ui| {
+                        for option in BLEND_MODES {
+                            if ui.selectable_label(mode == option, option).clicked() {
+                                *mode = option.to_owned();
                             }
                         }
                     });
@@ -181,13 +169,21 @@ impl SnarlViewer<Node> for Viewer {
         true
     }
 
+    /// Grouped, because a flat list of forty nodes is a list nobody reads.
     fn show_graph_menu(&mut self, pos: egui::Pos2, ui: &mut egui::Ui, snarl: &mut Snarl<Node>) {
         ui.label("Add node");
-        for node in palette() {
-            if ui.button(node.title()).clicked() {
-                snarl.insert_node(pos, node);
-                ui.close();
-            }
+        for category in Category::ALL {
+            ui.menu_button(category.label(), |ui| {
+                for node in palette()
+                    .into_iter()
+                    .filter(|node| node.category() == category)
+                {
+                    if ui.button(node.title()).clicked() {
+                        snarl.insert_node(pos, node);
+                        ui.close();
+                    }
+                }
+            });
         }
     }
 
