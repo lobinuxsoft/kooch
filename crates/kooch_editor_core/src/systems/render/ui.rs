@@ -78,6 +78,7 @@ pub(super) fn run_editor_ui(
     asset_catalog: &[crate::panels::inspector::AssetCatalogEntry],
     asset_detail: Option<&crate::panels::inspector::AssetDetail>,
     open_input_map: Option<&crate::state::OpenInputMap>,
+    open_shader_graph: Option<&mut crate::state::OpenShaderGraph>,
     engine_assets_root: Option<&std::path::Path>,
     project_assets_root: Option<&std::path::Path>,
     meshlet_debug_mode: &mut MeshletDebugMode,
@@ -146,6 +147,9 @@ pub(super) fn run_editor_ui(
     // `run_ui` rather than `run`: egui 0.35 hands the closure a root `Ui`
     // instead of the `Context`, and panels are placed inside a `Ui` now
     // rather than onto a context (egui #5659, #7781, #7783).
+    // 🔴 Reborrowed rather than moved: the closure runs more than once, and `Option<&mut _>` is
+    // not `Copy`.
+    let mut open_shader_graph = open_shader_graph;
     let full_output = overlay.ctx.run_ui(raw_input, |ui| {
         if project_loaded {
             draw_menu_bar(
@@ -226,6 +230,20 @@ pub(super) fn run_editor_ui(
             // Opening an asset has to show it. A panel that loaded the
             // map behind a tab nobody switched to is indistinguishable
             // from one that did nothing.
+            if open_shader_graph
+                .as_ref()
+                .is_some_and(|open| open.focus_requested)
+            {
+                if !crate::state::dock_has_tab(
+                    &overlay.dock_state,
+                    &crate::state::EditorTab::ShaderGraph,
+                ) {
+                    overlay
+                        .dock_state
+                        .add_window(vec![crate::state::EditorTab::ShaderGraph]);
+                }
+                actions.push(EditorAction::ShaderGraphFocused);
+            }
             if open_input_map.is_some_and(|open| open.focus_requested) {
                 if !crate::state::dock_has_tab(
                     &overlay.dock_state,
@@ -284,6 +302,7 @@ pub(super) fn run_editor_ui(
                 selected_asset: &mut selected_asset,
                 asset_detail,
                 open_input_map,
+                open_shader_graph: open_shader_graph.as_deref_mut(),
                 current_folder: &mut current_folder,
                 clipboard_has_entities: toolbar.clipboard_has_entities,
                 engine_assets_root,

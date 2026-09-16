@@ -183,3 +183,28 @@ fn the_default_surface_parses() {
     assert_eq!(names, ["albedo_tex", "normal_tex", "metal_rough_tex"]);
     assert_eq!(shader.params[1].texture, TextureDefault::Normal);
 }
+
+/// 🔴 A `/* */` block is a comment, not code: the graph's own block lives in one (#1159), and what
+/// it holds must not read as a declaration.
+#[test]
+fn block_comments_are_not_code() {
+    let shader = Shader::parse(
+        "/*KOOCH_GRAPH;var mask: texture_2d<f32>; @group(4) @binding(9)*/\n\
+         struct SurfaceParams { a: f32 }\n\
+         var albedo: texture_2d<f32>; /* the only one */",
+    )
+    .unwrap();
+    let names: Vec<&str> = shader.params.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["a", "albedo"]);
+}
+
+/// A block that spans lines takes the lines with it.
+#[test]
+fn a_block_can_span_lines() {
+    let shader = Shader::parse(
+        "/*\nvar hidden: texture_2d<f32>;\nstruct SurfaceParams { b: f32 }\n*/\nvar real: texture_2d<f32>;",
+    )
+    .unwrap();
+    let names: Vec<&str> = shader.params.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["real"]);
+}

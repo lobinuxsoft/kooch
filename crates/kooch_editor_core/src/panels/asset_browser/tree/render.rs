@@ -208,7 +208,16 @@ pub(super) fn render_leaf(
             .is_some_and(|e| e.eq_ignore_ascii_case(kooch_input::actions::INPUT_ACTION_EXTENSION));
         // 🔴 A scene opens the scene. It used to go to the IDE as text, which is a true answer to
         // "what is this file" and never the one anybody double-clicking a level was asking.
-        ctx.actions.push(if super::menus::is_scene(&leaf.path) {
+        let is_shader = leaf
+            .path
+            .extension()
+            .is_some_and(|e| e == kooch_render::material::SHADER_EXTENSION);
+        ctx.actions.push(if is_shader {
+            // A generated shader opens in the graph; a hand-written one says so in the Console.
+            EditorAction::OpenShaderGraph {
+                path: leaf.path.clone(),
+            }
+        } else if super::menus::is_scene(&leaf.path) {
             EditorAction::OpenScene {
                 path: Some(leaf.path.clone()),
             }

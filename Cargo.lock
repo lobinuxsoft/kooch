@@ -1101,6 +1101,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-scale"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bf5f737c4a56134a0d42e07b916ac40f92f09dd339916e14387af691d52382b"
+dependencies = [
+ "egui",
+]
+
+[[package]]
+name = "egui-snarl"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2029cca1554d2434100fb51d1b93da8a647094269db2bfa243477fb5edd26a2f"
+dependencies = [
+ "ahash",
+ "egui",
+ "egui-scale",
+ "serde",
+ "slab",
+ "smallvec",
+]
+
+[[package]]
 name = "egui-wgpu"
 version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1378,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "example_plugin"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "kooch_plugin_api",
 ]
@@ -2343,7 +2366,7 @@ dependencies = [
 
 [[package]]
 name = "kooch"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",
@@ -2374,7 +2397,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_audio"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "glam 0.33.2",
  "kira",
@@ -2385,7 +2408,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_blockmesh"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "glam 0.33.2",
  "kooch_core",
@@ -2400,7 +2423,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_camera"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "glam 0.33.2",
  "kooch_core",
@@ -2411,7 +2434,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_character"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "glam 0.33.2",
  "kooch_core",
@@ -2423,7 +2446,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_core"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "bytemuck",
  "dlss_wgpu",
@@ -2449,7 +2472,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_ecs"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",
@@ -2466,7 +2489,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_ecs_macros"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2475,7 +2498,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_editor"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "kooch_core",
  "kooch_ecs",
@@ -2488,11 +2511,12 @@ dependencies = [
 
 [[package]]
 name = "kooch_editor_core"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "anyhow",
  "dirs",
  "egui",
+ "egui-snarl",
  "egui-wgpu",
  "egui-winit",
  "egui_dock",
@@ -2531,7 +2555,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_gizmos"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",
@@ -2544,7 +2568,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_gizmos_handles"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "glam 0.33.2",
  "kooch_gizmos",
@@ -2552,7 +2576,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_gravity"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",
@@ -2565,7 +2589,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_input"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "gilrs",
  "glam 0.33.2",
@@ -2580,7 +2604,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_lighting"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",
@@ -2594,7 +2618,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_pack"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "aes-gcm",
  "hkdf",
@@ -2606,7 +2630,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_physics"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "glam 0.33.2",
  "kooch_core",
@@ -2619,11 +2643,11 @@ dependencies = [
 
 [[package]]
 name = "kooch_plugin_api"
-version = "0.51.0"
+version = "0.52.0"
 
 [[package]]
 name = "kooch_remote"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "glam 0.33.2",
  "interprocess",
@@ -2636,7 +2660,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_render"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "base64 0.22.1",
  "bytemuck",
@@ -2662,7 +2686,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_window"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "image",
  "kooch_core",
@@ -2673,7 +2697,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_world"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",
@@ -4435,6 +4459,9 @@ name = "slab"
 version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2ae44ef20feb57a68b23d846850f861394c2e02dc425a50098ae8c90267589"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "slotmap"

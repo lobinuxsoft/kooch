@@ -90,12 +90,11 @@ pub(super) fn read(source: &str) -> Result<Read, (usize, String)> {
     let mut defaults_text = String::new();
     let mut defaults_line = 0;
     let mut in_defaults = false;
+    // A `/* */` run, which the graph's own block lives in (#1159).
+    let mut in_block = false;
     for (index, raw) in source.lines().enumerate() {
         let line = index + 1;
-        let (code, comment) = match raw.split_once("//") {
-            Some((code, comment)) => (code, comment),
-            None => (raw, ""),
-        };
+        let (code, comment) = split_comments(raw, &mut in_block);
         let code = code.trim();
         if code.contains("@group") || code.contains("@binding") {
             return Err((
@@ -125,7 +124,7 @@ pub(super) fn read(source: &str) -> Result<Read, (usize, String)> {
             in_struct = !fields.contains('}');
             let fields = fields.split('}').next().unwrap_or_default();
             for field in fields.split(',').map(str::trim).filter(|f| !f.is_empty()) {
-                let param = scalar(field, comment, &params).map_err(|e| (line, e))?;
+                let param = scalar(field, &comment, &params).map_err(|e| (line, e))?;
                 params.push(param);
             }
             lines.push(raw.to_owned());
@@ -135,7 +134,7 @@ pub(super) fn read(source: &str) -> Result<Read, (usize, String)> {
         if let Some(declaration) = code.strip_prefix("var ")
             && declaration.contains("texture_2d")
         {
-            let param = texture(declaration, comment, &params).map_err(|e| (line, e))?;
+            let param = texture(declaration, &comment, &params).map_err(|e| (line, e))?;
             let binding = TEXTURE_BINDINGS[param.offset as usize];
             let indent = &raw[..raw.len() - raw.trim_start().len()];
             lines.push(format!(
@@ -232,6 +231,41 @@ fn zeros(module: &naga::Module, ty: naga::Handle<naga::Type>) -> usize {
             members.iter().map(|m| zeros(module, m.ty)).sum()
         }
         _ => 1,
+    }
+}
+
+/// A line's code and its trailing `//` comment, with `/* */` runs removed. `in_block` carries a
+/// run across lines.
+fn split_comments(raw: &str, in_block: &mut bool) -> (String, String) {
+    let mut code = String::with_capacity(raw.len());
+    let mut rest = raw;
+    loop {
+        if *in_block {
+            match rest.find("*/") {
+                Some(end) => {
+                    *in_block = false;
+                    rest = &rest[end + 2..];
+                }
+                None => return (code, String::new()),
+            }
+        }
+        // Whichever comes first, and whether it opens a line comment or a block.
+        let next = match (rest.find("//"), rest.find("/*")) {
+            (Some(l), Some(b)) => Some((l.min(b), l < b)),
+            (Some(l), None) => Some((l, true)),
+            (None, Some(b)) => Some((b, false)),
+            (None, None) => None,
+        };
+        let Some((at, is_line)) = next else {
+            code.push_str(rest);
+            return (code, String::new());
+        };
+        code.push_str(&rest[..at]);
+        if is_line {
+            return (code, rest[at + 2..].to_owned());
+        }
+        *in_block = true;
+        rest = &rest[at + 2..];
     }
 }
 

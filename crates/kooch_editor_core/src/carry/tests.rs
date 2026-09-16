@@ -14,14 +14,71 @@ fn alone() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// 🔴 A fresh `SceneManager` already holds one untitled scene, and that is exactly the one worth
-/// carrying: it has no file to be read back from, so a rebuild that dropped it would lose
-/// everything in it with nothing on disk to recover from.
-#[test]
-fn an_untitled_scene_is_held() {
-    let _alone = alone();
+/// The pieces `hold` needs to find an entity and write it out.
+fn world() -> Resources {
     let mut resources = Resources::new();
+    resources.insert(kooch_ecs::allocator::EntityAllocator::new());
+    resources.insert(kooch_ecs::component::ComponentRegistry::new());
+    resources.insert(kooch_ecs::archetype_registry::ArchetypeRegistry::new());
+    resources.insert(kooch_ecs::query::AccessTracker::new());
+    resources.insert(kooch_ecs::commands::Commands::new());
+    resources.insert(kooch_ecs::dynamic_components::DynamicComponents::new());
+    resources
+}
+
+/// Spawns one entity authored in `scene`, archetype included.
+fn spawn_in(resources: &mut Resources, scene: kooch_core::Guid) {
+    use kooch_ecs::SceneMember;
+    use kooch_ecs::archetype_registry::ArchetypeRegistry;
+    use kooch_ecs::component::ComponentRegistry;
+
+    let mut commands = resources.remove::<kooch_ecs::commands::Commands>().unwrap();
+    let entity = commands.spawn(resources).id();
+    commands.apply(resources);
+    resources.insert(commands);
+
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.register_cpu_reflected::<SceneMember>();
+        if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
+            storage.insert(entity, SceneMember::new(scene));
+        }
+    }
+    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
+        && let Some(current) = archetypes.entity_archetype(entity)
+    {
+        let next =
+            archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<SceneMember>());
+        archetypes.register_entity(entity, next);
+    }
+}
+
+/// 🔴 The #1159 smoke test, and the second time #1163 has bitten: a fresh `SceneManager` holds an
+/// untitled scene that stays empty while a connected project's world is the one on screen, because
+/// the World panel reads the project's scenes over the wire and not this list. Held and resumed,
+/// that empty scene replaced the world the rebuilt project had just opened.
+#[test]
+fn an_empty_scene_is_not_held() {
+    let _alone = alone();
+    let _ = std::fs::remove_dir_all(super::holding());
+    let mut resources = world();
     resources.insert(kooch_ecs::SceneManager::new());
+
+    assert_eq!(hold(&mut resources), 0, "an empty scene was held");
+    assert!(
+        resources.get::<CarriedWorld>().is_none(),
+        "a carry was armed"
+    );
+}
+
+/// What the carry is for: a scene with work in it and no file to read it back from.
+#[test]
+fn a_populated_scene_is_held() {
+    let _alone = alone();
+    let mut resources = world();
+    let manager = kooch_ecs::SceneManager::new();
+    let scene = manager.scenes()[0].id;
+    resources.insert(manager);
+    spawn_in(&mut resources, scene);
 
     let held = hold(&mut resources);
 

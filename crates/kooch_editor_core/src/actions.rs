@@ -375,6 +375,14 @@ pub(crate) enum EditorAction {
     OpenInputMap {
         path: std::path::PathBuf,
     },
+    /// Read a generated `.shader` back into the Shader Graph panel (#1159).
+    OpenShaderGraph {
+        path: std::path::PathBuf,
+    },
+    /// Generate the `.shader` from the open graph and write it.
+    SaveShaderGraph,
+    /// The dock has brought the Shader Graph panel forward; stop asking.
+    ShaderGraphFocused,
     /// Build and package the project with one of its presets (#758).
     BuildProject(kooch_core::Guid),
     /// Stop the running build.
@@ -402,6 +410,8 @@ pub(crate) enum NewFileKind {
     RenderSettings,
     /// A surface shader, starting as a copy of the engine's PBR one (#1157).
     Shader,
+    /// A shader the node graph owns (#1159): an empty graph, and the shader it generates.
+    ShaderGraph,
 }
 
 /// Where a newly spawned entity goes.
@@ -500,7 +510,11 @@ impl EditorAction {
             | Self::OpenInputMap { .. }
             | Self::EditInputMap(_)
             | Self::SaveInputMap
-            | Self::InputMapFocused => false,
+            | Self::InputMapFocused
+            // The graph is a document this side owns, like the map above.
+            | Self::OpenShaderGraph { .. }
+            | Self::SaveShaderGraph
+            | Self::ShaderGraphFocused => false,
 
             // Only the scene's history needs the world. A prefab or an
             // input map is a document this side owns, and undoing an edit
@@ -604,6 +618,9 @@ impl EditorAction {
             | Self::EditInputMap(_)
             | Self::SaveInputMap
             | Self::InputMapFocused
+            | Self::OpenShaderGraph { .. }
+            | Self::SaveShaderGraph
+            | Self::ShaderGraphFocused
             | Self::SetIdeCommand { .. }
             | Self::SetLaunchEnv { .. }
             | Self::EditMaterial { .. }

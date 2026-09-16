@@ -26,7 +26,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.51.0"
+version = "0.52.0"
 edition = "2024"
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/lobinuxsoft/kooch"
@@ -106,6 +106,8 @@ egui-winit = { version = "0.35", default-features = false, features = [
 ] }
 egui-wgpu = "0.35"
 egui_dock = { version = "0.20", features = ["serde"] }
+# Node graphs for egui (#1159). MIT/Apache-2.0, on egui 0.35 like the rest; 0.12 moved to 0.36.
+egui-snarl = { version = "0.11", features = ["serde"] }
 # Arithmetic in numeric fields: `9/2` instead of 4.5. MIT/Apache, and its
 # two deps (regex, smallvec) were already in the tree.
 exmex = "0.21"

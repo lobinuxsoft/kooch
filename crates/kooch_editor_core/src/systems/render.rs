@@ -343,6 +343,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // pane needs the asset's contents, and resolving them requires mutable `Resources` (AssetServer
     // load).
     let open_input_map = resources.get::<crate::state::OpenInputMap>().cloned();
+    // 🔴 Cloned rather than borrowed: `egui-snarl` edits the graph while it draws it, and the
+    // closure below already holds `Resources`. What the panel changed is put back after the frame.
+    let mut open_shader_graph = resources.get::<crate::state::OpenShaderGraph>().cloned();
     let asset_detail = overlay
         .selected_asset
         .and_then(|guid| crate::systems::asset_detail::gather_asset_detail(guid, resources));
@@ -471,6 +474,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         &asset_catalog,
         asset_detail.as_ref(),
         open_input_map.as_ref(),
+        open_shader_graph.as_mut(),
         engine_root_owned.as_deref(),
         project_crate_root.as_deref(),
         &mut meshlet_debug_mode,
@@ -503,6 +507,11 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // #656 — egui's own answer to "does anything need redrawing", read
     // before `full_output` is handed to the presenter and consumed.
     let ui_repaint_delay = shortest_repaint_delay(&full_output);
+
+    // The graph the node panel edited: the dock had a copy of it, and this puts it back.
+    if let Some(open) = open_shader_graph {
+        resources.insert(open);
+    }
 
     // Put the choices back so the batch system and the save system see
     // whatever the dropdown just changed.
