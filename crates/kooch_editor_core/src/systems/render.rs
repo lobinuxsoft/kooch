@@ -686,6 +686,14 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
 
     let viewport_start = std::time::Instant::now();
 
+    // 🔴 Once per frame, ahead of BOTH views. This lived inside the View panel's pass, so a material
+    // edit reached the Game panel only when the View panel happened to be drawn — and a frame late
+    // when it was, since Game renders first (#1171). The Game panel is a second view of the SAME
+    // stage: everything they share is brought up to date here, by the frame, or by nobody.
+    if project_loaded && let Some(stage) = meshlet_stage.as_mut() {
+        stage.sync_assets_to_gpu(gpu.device(), gpu.queue(), resources);
+    }
+
     // The Game panel renders first: a second view of the same stage, through the gameplay camera.
     // Before the View panel's pass rather than after, so the two submits stay in a fixed order and
     // a frame capture always reads the same way.

@@ -36,10 +36,9 @@ pub(crate) fn render_viewport(
     // the blit pass we record below reads the stage's color view, so the stage's submit must
     // complete first on the queue.
     let frame_stats = if project_loaded {
+        // Only the resize: this view's size is its own. Bringing the shared pools up to date is the
+        // FRAME's job and happens once, ahead of both views — see `render_editor_frame` (#1171).
         meshlet.stage.resize(gpu.device(), target.size());
-        meshlet
-            .stage
-            .sync_assets_to_gpu(gpu.device(), gpu.queue(), resources);
         let camera = view_camera(resources).unwrap_or_default();
         let stats = meshlet.stage.render_with_assets_primary(
             gpu.device(),
