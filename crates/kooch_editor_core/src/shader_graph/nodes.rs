@@ -153,16 +153,28 @@ pub(crate) enum Node {
         mode: String,
     },
     // -- Noise ----------------------------------------------------------
-    /// Value noise over a coordinate, 0..1. Named `Noise` because it was the first; the menu calls
-    /// it Value Noise.
-    Noise,
-    /// Gradient (Perlin) noise, 0..1.
-    GradientNoise,
-    /// Simplex noise, 0..1.
-    SimplexNoise,
+    /// Fractal noise: a basis (value, gradient, simplex) summed over octaves as fBm, turbulence or
+    /// ridged, with roughness, lacunarity, distortion and a phase that animates it in place.
+    FractalNoise {
+        /// `value`, `gradient` or `simplex`.
+        basis: String,
+        /// `fbm`, `turbulence` or `ridged`.
+        fractal: String,
+    },
     /// One random value per cell.
     WhiteNoise,
-    /// Cellular noise: F1, F2, F2 - F1 and a random value per cell, in x, y, z and w.
+    /// Cellular noise with F1, F2, the border, a cell value and the point's position.
+    VoronoiNoise {
+        /// `euclidean`, `manhattan` or `chebyshev`.
+        metric: String,
+    },
+    /// Before #1170's noise controls: value noise. Read so old graphs open; migrated to `FractalNoise`.
+    Noise,
+    /// Old gradient noise, migrated to `FractalNoise`.
+    GradientNoise,
+    /// Old simplex noise, migrated to `FractalNoise`.
+    SimplexNoise,
+    /// Old Voronoi, migrated to `VoronoiNoise`.
     Voronoi,
 
     // -- Shapes ---------------------------------------------------------
@@ -319,11 +331,22 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::Blend {
             mode: "multiply".to_owned(),
         },
-        Node::Noise,
-        Node::GradientNoise,
-        Node::SimplexNoise,
+        Node::FractalNoise {
+            basis: "value".to_owned(),
+            fractal: "fbm".to_owned(),
+        },
+        Node::FractalNoise {
+            basis: "gradient".to_owned(),
+            fractal: "fbm".to_owned(),
+        },
+        Node::FractalNoise {
+            basis: "simplex".to_owned(),
+            fractal: "fbm".to_owned(),
+        },
         Node::WhiteNoise,
-        Node::Voronoi,
+        Node::VoronoiNoise {
+            metric: "euclidean".to_owned(),
+        },
         Node::Circle,
         Node::Rectangle,
         Node::Ring,
@@ -338,3 +361,24 @@ pub(crate) const BLEND_MODES: [&str; 5] = ["multiply", "screen", "overlay", "lig
 
 /// What a `Texture` node falls back to while nothing is assigned.
 pub(crate) const TEXTURE_FALLBACKS: [&str; 3] = ["white", "black", "normal"];
+
+/// A fractal noise's basis, as its dropdown offers it.
+pub(crate) const NOISE_BASES: [&str; 3] = ["value", "gradient", "simplex"];
+
+/// How a fractal noise sums its octaves, in the order the helpers number them.
+pub(crate) const NOISE_FRACTALS: [&str; 3] = ["fbm", "turbulence", "ridged"];
+
+/// How Voronoi measures distance, in the order the helper numbers them.
+pub(crate) const VORONOI_METRICS: [&str; 3] = ["euclidean", "manhattan", "chebyshev"];
+
+/// A fractal noise's distortion pin: reading it costs two more samples, so it is only read when wired.
+pub(crate) const NOISE_DISTORTION: usize = 5;
+
+/// A fractal noise's phase pin: wired, the noise is sampled in 3D and changes where it stands.
+pub(crate) const NOISE_PHASE: usize = 6;
+
+/// A fractal noise's colour output: three samples, taken only when this pin is wired.
+pub(crate) const NOISE_COLOUR: usize = 1;
+
+/// Voronoi's border output: a second, wider pass, run only when this pin is wired.
+pub(crate) const VORONOI_BORDER: usize = 2;

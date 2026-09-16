@@ -89,6 +89,21 @@ impl Node {
                 width: width.min(4),
                 default,
             },
+            // The noises before their controls existed: same pins in the same places, fBm.
+            Self::Noise | Self::GradientNoise | Self::SimplexNoise => {
+                let basis = match self {
+                    Self::GradientNoise => "gradient",
+                    Self::SimplexNoise => "simplex",
+                    _ => "value",
+                };
+                Self::FractalNoise {
+                    basis: basis.to_owned(),
+                    fractal: "fbm".to_owned(),
+                }
+            }
+            Self::Voronoi => Self::VoronoiNoise {
+                metric: "euclidean".to_owned(),
+            },
             // All four components were always live, so the vector keeps all four.
             Self::Constant(value) => Self::ConstVector { width: 4, value },
             node => node,

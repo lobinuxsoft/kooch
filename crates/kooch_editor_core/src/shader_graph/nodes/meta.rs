@@ -11,6 +11,12 @@ pub(crate) enum Pick {
     Rgb,
     /// One component, in every channel of the wire.
     Channel(usize),
+    /// The last three: the colour a fractal noise packs after its value.
+    Yzw,
+    /// A named field of a node whose value is a struct, in every channel.
+    Field(&'static str),
+    /// A two-wide named field of such a struct.
+    FieldXy(&'static str),
 }
 
 const WHOLE: &[(&str, Pick)] = &[("out", Pick::Whole)];
@@ -52,11 +58,14 @@ const TIME: &[(&str, Pick)] = &[
     ("tenth", Pick::Channel(3)),
 ];
 const VORONOI: &[(&str, Pick)] = &[
-    ("F1", Pick::Channel(0)),
-    ("F2", Pick::Channel(1)),
-    ("border", Pick::Channel(2)),
-    ("cell", Pick::Channel(3)),
+    ("F1", Pick::Field("f1")),
+    ("F2", Pick::Field("f2")),
+    ("border", Pick::Field("edge")),
+    ("cell", Pick::Field("cell")),
+    ("position", Pick::FieldXy("position")),
 ];
+/// A fractal noise packs its value in `x` and, when the colour pin is wired, a colour in `yzw`.
+const FRACTAL: &[(&str, Pick)] = &[("value", Pick::Channel(0)), ("color", Pick::Yzw)];
 const SPLIT: &[(&str, Pick)] = &[
     ("x", Pick::Channel(0)),
     ("y", Pick::Channel(1)),
@@ -119,11 +128,18 @@ impl Node {
             Self::Tiling => "Tiling".to_owned(),
             Self::Desaturate => "Desaturate".to_owned(),
             Self::Blend { mode } => format!("Blend {mode}"),
+            Self::FractalNoise { basis, .. } => {
+                let mut title = basis.clone();
+                if let Some(first) = title.get_mut(0..1) {
+                    first.make_ascii_uppercase();
+                }
+                format!("{title} Noise")
+            }
             Self::Noise => "Value Noise".to_owned(),
             Self::GradientNoise => "Gradient Noise".to_owned(),
             Self::SimplexNoise => "Simplex Noise".to_owned(),
             Self::WhiteNoise => "White Noise".to_owned(),
-            Self::Voronoi => "Voronoi".to_owned(),
+            Self::Voronoi | Self::VoronoiNoise { .. } => "Voronoi".to_owned(),
             Self::Circle => "Circle".to_owned(),
             Self::Rectangle => "Rectangle".to_owned(),
             Self::Ring => "Ring".to_owned(),
@@ -181,9 +197,22 @@ impl Node {
             Self::Tiling => &["uv", "tiling", "offset"],
             Self::Desaturate => &["colour", "amount"],
             Self::Blend { .. } => &["a", "b", "opacity"],
-            Self::Noise | Self::GradientNoise | Self::SimplexNoise => &["uv", "scale", "octaves"],
+            // 🔴 In this order: pins are wired by index, and an old noise's uv, scale and octaves are 0..2.
+            Self::FractalNoise { .. } | Self::Noise | Self::GradientNoise | Self::SimplexNoise => {
+                &[
+                    "uv",
+                    "scale",
+                    "octaves",
+                    "roughness",
+                    "lacunarity",
+                    "distortion",
+                    "phase",
+                ]
+            }
             Self::WhiteNoise => &["uv", "scale"],
-            Self::Voronoi => &["uv", "scale", "jitter"],
+            Self::VoronoiNoise { .. } | Self::Voronoi => {
+                &["uv", "scale", "randomness", "phase", "smoothness"]
+            }
             Self::Circle => &["uv", "radius", "softness"],
             Self::Rectangle => &["uv", "size", "softness"],
             Self::Ring => &["uv", "radius", "thickness"],
@@ -222,7 +251,10 @@ impl Node {
             // Packed into one wire these read as nonsense — a clock, its sine and its cosine are not
             // a colour — so they come apart only.
             Self::Time => TIME,
-            Self::Voronoi => VORONOI,
+            Self::Voronoi | Self::VoronoiNoise { .. } => VORONOI,
+            Self::FractalNoise { .. } | Self::Noise | Self::GradientNoise | Self::SimplexNoise => {
+                FRACTAL
+            }
             Self::Split => SPLIT,
             _ => WHOLE,
         }
@@ -233,6 +265,9 @@ impl Node {
         match self.outputs().get(index).map(|&(_, pick)| pick) {
             None | Some(Pick::Whole) => value.to_owned(),
             Some(Pick::Rgb) => format!("vec4<f32>({value}.xyz, 0.0)"),
+            Some(Pick::Yzw) => format!("vec4<f32>({value}.yzw, 0.0)"),
+            Some(Pick::Field(field)) => format!("vec4<f32>({value}.{field})"),
+            Some(Pick::FieldXy(field)) => format!("vec4<f32>({value}.{field}, 0.0, 0.0)"),
             Some(Pick::Channel(channel)) => {
                 format!(
                     "vec4<f32>({value}.{})",
@@ -296,7 +331,9 @@ impl Node {
             | Self::Tiling
             | Self::Desaturate
             | Self::Blend { .. } => Category::Effect,
-            Self::Noise
+            Self::FractalNoise { .. }
+            | Self::VoronoiNoise { .. }
+            | Self::Noise
             | Self::GradientNoise
             | Self::SimplexNoise
             | Self::WhiteNoise
@@ -312,7 +349,9 @@ impl Node {
     pub(crate) fn is_noise(&self) -> bool {
         matches!(
             self,
-            Self::Noise
+            Self::FractalNoise { .. }
+                | Self::VoronoiNoise { .. }
+                | Self::Noise
                 | Self::GradientNoise
                 | Self::SimplexNoise
                 | Self::WhiteNoise

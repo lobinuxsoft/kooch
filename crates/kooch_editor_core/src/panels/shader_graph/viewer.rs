@@ -8,7 +8,10 @@ use super::editors::{FIELD, choice, components, name_field, number_editor};
 use super::framed;
 use super::pin::{NamedPin, Side, reserve};
 use crate::panels::inspector::AssetCatalogEntry;
-use crate::shader_graph::{BLEND_MODES, Category, Node, TEXTURE_FALLBACKS, palette};
+use crate::shader_graph::{
+    BLEND_MODES, Category, NOISE_BASES, NOISE_FRACTALS, Node, TEXTURE_FALLBACKS, VORONOI_METRICS,
+    palette,
+};
 
 /// How the nodes draw and connect.
 pub(super) struct Viewer<'a> {
@@ -170,6 +173,11 @@ impl SnarlViewer<Node> for Viewer<'_> {
                         );
                     }
                     Node::Blend { mode } => choice(ui, "blend", mode, &BLEND_MODES),
+                    Node::FractalNoise { basis, fractal } => {
+                        choice(ui, "basis", basis, &NOISE_BASES);
+                        choice(ui, "fractal", fractal, &NOISE_FRACTALS);
+                    }
+                    Node::VoronoiNoise { metric } => choice(ui, "metric", metric, &VORONOI_METRICS),
                     _ => {
                         ui.label(label);
                         return;
@@ -244,6 +252,8 @@ fn has_fields(node: &Node) -> bool {
     matches!(
         node,
         Node::Float { .. }
+            | Node::FractalNoise { .. }
+            | Node::VoronoiNoise { .. }
             | Node::Int { .. }
             | Node::Vector { .. }
             | Node::Color { .. }

@@ -1,5 +1,7 @@
 //! One `let` per node, in dependency order: what each node is as a WGSL expression (#1159).
 
+mod noise;
+
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -18,6 +20,8 @@ pub(super) struct Body<'a> {
     pub(super) visiting: HashSet<NodeId>,
     pub(super) lines: String,
     pub(super) next: u32,
+    /// Intermediate `let`s a node writes before its own.
+    pub(super) locals: u32,
 }
 
 impl Body<'_> {
@@ -41,7 +45,9 @@ impl Body<'_> {
                 let node = self
                     .graph
                     .get_node(from.node)
-                    .ok_or("a wire points at a node that is gone")?;
+                    .ok_or("a wire points at a node that is gone")?
+                    .clone()
+                    .migrated();
                 Ok(node.output_of(&value, from.output))
             }
             None => Ok(fallback.to_owned()),
@@ -60,7 +66,8 @@ impl Body<'_> {
             .graph
             .get_node(id)
             .ok_or("a wire points at a node that is gone")?
-            .clone();
+            .clone()
+            .migrated();
         let mut argument = |body: &mut Self, input: usize| body.input(id, input);
         let value = match &node {
             Node::Uv => "vec4<f32>(input.uv, 0.0, 0.0)".to_owned(),
@@ -268,24 +275,14 @@ impl Body<'_> {
             }
             // `octaves` unconnected reads zero, which the helpers take as one: a noise dropped on the
             // canvas is plain noise, and wiring a number in makes it fractal.
-            Node::Noise | Node::GradientNoise | Node::SimplexNoise => {
-                let (uv, scale, octaves) =
-                    (argument(self, 0)?, argument(self, 1)?, argument(self, 2)?);
-                let fbm = match &node {
-                    Node::GradientNoise => "graph_gradient_fbm",
-                    Node::SimplexNoise => "graph_simplex_fbm",
-                    _ => "graph_value_fbm",
-                };
-                format!("vec4<f32>({fbm}({uv}.xy * {scale}.x, {octaves}.x))")
-            }
+            Node::FractalNoise { basis, fractal } => self.fractal_noise(id, basis, fractal)?,
             Node::WhiteNoise => {
                 let (uv, scale) = (argument(self, 0)?, argument(self, 1)?);
                 format!("vec4<f32>(graph_hash(floor({uv}.xy * {scale}.x)))")
             }
-            Node::Voronoi => {
-                let (uv, scale, jitter) =
-                    (argument(self, 0)?, argument(self, 1)?, argument(self, 2)?);
-                format!("graph_voronoi({uv}.xy * {scale}.x, clamp({jitter}.x, 0.0, 1.0))")
+            Node::VoronoiNoise { metric } => self.voronoi(id, metric)?,
+            Node::Noise | Node::GradientNoise | Node::SimplexNoise | Node::Voronoi => {
+                return Err("an old noise reached emission unmigrated".to_owned());
             }
             Node::Circle => {
                 let (uv, radius, softness) =
