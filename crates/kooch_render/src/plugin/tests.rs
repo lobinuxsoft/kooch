@@ -1,39 +1,90 @@
-/// The ordering the frame loop exists to get right, pinned against the source itself.
+use kooch_core::stage::Stage;
+
+/// The ordering the frame loop exists to get right, now a constraint rather than a call order.
 #[test]
-fn the_scene_is_submitted_before_the_image_is_asked_for() {
-    let source = include_str!("mod.rs");
-
-    let scene = source
-        .find("render_with_assets_primary(")
-        .expect("the frame loop still renders the scene");
-    let acquire = source
-        .find("get_current_texture()")
-        .expect("the frame loop still acquires a swapchain image");
-
+fn the_scene_runs_before_the_present() {
+    let names = render_systems();
+    let scene = position(&names, "render_meshlets_system");
+    let present = position(&names, "present_frame_system");
     assert!(
-        scene < acquire,
+        scene < present,
         "the swapchain image is acquired before the scene is submitted: the \
          meshlet stage draws into its own textures and needs no surface, so \
          acquiring first makes the CPU wait out the compositor before \
-         recording work the compositor has nothing to do with",
+         recording work the compositor has nothing to do with — {names:?}",
+    );
+    assert!(
+        position(&names, "prepare_frame_system") < scene,
+        "{names:?}"
     );
 }
 
-/// The counterpart, so the test above cannot pass by accident on a file
-/// that stopped acquiring or stopped rendering.
+/// What the ordering is for: a pass registered later, by name, lands between two engine systems
+/// (#392). Registration order alone would leave it last.
+#[test]
+fn a_late_pass_lands_between_them() {
+    use kooch_core::schedule::Order;
+
+    let mut app = plugged();
+    app.add_ordered(
+        Stage::Render,
+        Order::after("render_meshlets_system").and_before("present_frame_system"),
+        |_: &mut kooch_core::resource::Resources| {},
+    );
+
+    let names = names_of(&app);
+    let late = position(&names, "{{closure}}");
+    assert!(
+        position(&names, "render_meshlets_system") < late,
+        "{names:?}"
+    );
+    assert!(late < position(&names, "present_frame_system"), "{names:?}");
+}
+
+/// The counterpart, so the tests above cannot pass on a frame that stopped acquiring or stopped
+/// rendering. One of each, each in the system that owns it.
 #[test]
 fn the_frame_loop_still_does_both() {
-    let source = include_str!("mod.rs");
     assert_eq!(
-        source.matches("get_current_texture()").count(),
-        1,
-        "one acquire per frame, and one place to keep after the scene",
-    );
-    assert_eq!(
-        source.matches("render_with_assets_primary(").count(),
+        include_str!("meshlets.rs")
+            .matches("render_with_assets_primary(")
+            .count(),
         1,
         "one scene render per frame",
     );
+    assert_eq!(
+        include_str!("present.rs")
+            .matches("get_current_texture()")
+            .count(),
+        1,
+        "one acquire per frame, and one place to keep after the scene",
+    );
+}
+
+fn plugged() -> kooch_core::app::App {
+    let mut app = kooch_core::app::App::new();
+    kooch_core::plugin::Plugin::build(&super::RenderPlugin, &mut app);
+    app
+}
+
+fn names_of(app: &kooch_core::app::App) -> Vec<String> {
+    app.schedule()
+        .systems()
+        .iter()
+        .filter(|system| system.stage == Stage::Render)
+        .map(|system| system.short_name().to_owned())
+        .collect()
+}
+
+fn render_systems() -> Vec<String> {
+    names_of(&plugged())
+}
+
+fn position(names: &[String], wanted: &str) -> usize {
+    names
+        .iter()
+        .position(|name| name.contains(wanted))
+        .unwrap_or_else(|| panic!("{wanted} is not in {names:?}"))
 }
 
 /// 🔴 Absent means "no opinion", and the system must not invent one.
