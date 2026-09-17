@@ -84,7 +84,7 @@ pub(super) fn run_editor_ui(
     toolbar: &ToolbarInfo,
     viewport: ViewportUi<'_>,
     asset_catalog: &[crate::panels::inspector::AssetCatalogEntry],
-    asset_detail: Option<&crate::panels::inspector::AssetDetail>,
+    asset_detail: Option<&crate::panels::inspector::AssetSnapshot>,
     open_input_map: Option<&crate::state::OpenInputMap>,
     open_shader_graph: Option<&mut crate::state::OpenShaderGraph>,
     engine_assets_root: Option<&std::path::Path>,

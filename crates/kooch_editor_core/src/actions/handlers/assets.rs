@@ -103,14 +103,11 @@ pub(super) fn handle_edit_material(
     material: &Material,
     commit: bool,
 ) {
-    let material = &keep_declared(resources, guid, material);
-    let Some(path) = resources
-        .get::<AssetDatabase>()
-        .and_then(|db| db.entry(guid).map(|e| e.path.clone()))
-    else {
-        tracing::warn!(guid = %guid, "EditMaterial: no path in AssetDatabase; not persisted");
+    let Some(path) = material_path(resources, guid) else {
+        tracing::warn!(guid = %guid, "EditMaterial: not a material asset; not persisted");
         return;
     };
+    let material = &keep_declared(resources, guid, material);
 
     // Before the edit, and on the preview too: the preview is the first frame of a drag, so
     // recording only on commit would snapshot the value the drag already reached. The merge key is
@@ -159,14 +156,19 @@ fn load_material(resources: &mut Resources, guid: Guid) -> Option<Material> {
 
 /// Puts a material into the world *and* onto disk.
 pub(crate) fn write_material(resources: &mut Resources, guid: Guid, material: &Material) {
-    let Some(path) = resources
-        .get::<AssetDatabase>()
-        .and_then(|db| db.entry(guid).map(|e| e.path.clone()))
-    else {
+    let Some(path) = material_path(resources, guid) else {
         return;
     };
     preview_material(resources, guid, material);
     persist_material(resources, guid, material, &path);
+}
+
+/// The file behind `guid`, only when it is a material: a stale guid would otherwise write
+/// material RON over whatever asset it names (#1189).
+fn material_path(resources: &Resources, guid: Guid) -> Option<std::path::PathBuf> {
+    let entry = resources.get::<AssetDatabase>()?.entry(guid)?;
+    (entry.type_name.as_deref() == Some(kooch_render::material::MATERIAL_TYPE_NAME))
+        .then(|| entry.path.clone())
 }
 
 fn persist_material(
@@ -279,3 +281,6 @@ pub(crate) fn needs_write(path: &std::path::Path, text: &str) -> bool {
 
 #[cfg(test)]
 mod write_guard_tests;
+
+#[cfg(test)]
+mod material_path_tests;

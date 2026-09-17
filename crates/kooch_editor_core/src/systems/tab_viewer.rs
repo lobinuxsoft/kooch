@@ -19,7 +19,7 @@ use crate::panels::archetypes::draw_archetypes_content;
 use crate::panels::asset_browser::draw_asset_browser_content;
 use crate::panels::components::draw_components_content;
 use crate::panels::game::draw_game_content;
-use crate::panels::inspector::AssetDetail;
+use crate::panels::inspector::AssetSnapshot;
 use crate::panels::inspector::draw_inspector_content;
 use crate::panels::view::draw_view_content;
 use crate::panels::world::draw_world_content;
@@ -104,7 +104,7 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) build_selection: &'a mut Option<kooch_core::Guid>,
     /// Data snapshot for the selected asset, resolved before the frame.
     /// `None` when nothing is selected or the snapshot is still pending.
-    pub(crate) asset_detail: Option<&'a AssetDetail>,
+    pub(crate) asset_detail: Option<&'a AssetSnapshot>,
     /// The `.inputmap` open in the Input Map panel, if any.
     pub(crate) open_input_map: Option<&'a crate::state::OpenInputMap>,
     /// The open shader graph, edited in place by the node panel (#1159).

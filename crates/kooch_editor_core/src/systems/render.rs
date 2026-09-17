@@ -364,9 +364,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // 🔴 Cloned rather than borrowed: `egui-snarl` edits the graph while it draws it, and the
     // closure below already holds `Resources`. What the panel changed is put back after the frame.
     let mut open_shader_graph = resources.get::<crate::state::OpenShaderGraph>().cloned();
-    let asset_detail = overlay
-        .selected_asset
-        .and_then(|guid| crate::systems::asset_detail::gather_asset_detail(guid, resources));
+    let asset_detail = overlay.selected_asset.and_then(|guid| {
+        crate::systems::asset_detail::gather_asset_detail(guid, resources)
+            .map(|detail| crate::panels::inspector::AssetSnapshot { guid, detail })
+    });
     gather_stages.assets_ms = crate::perf::ms_since(assets_start);
 
     // Lifted out for the frame: the Gizmos dropdown mutates it, and the egui closure already holds
