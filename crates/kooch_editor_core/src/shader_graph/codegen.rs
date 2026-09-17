@@ -16,11 +16,11 @@ use helpers::helpers;
 
 /// The whole `.shader` a graph generates: header, parameters, body and the graph itself.
 pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
-    let output = graph
+    let (output, kind) = graph
         .node_ids()
-        .find(|(_, node)| matches!(node, Node::Output))
-        .map(|(id, _)| id)
-        .ok_or("the graph has no Surface Output node")?;
+        .find_map(|(id, node)| Some((id, node.output_kind()?.to_owned())))
+        .ok_or("the graph has no Output node")?;
+    let unlit = kind == "unlit";
 
     let wires: HashMap<InPinId, OutPinId> = graph.wires().map(|(from, to)| (to, from)).collect();
     let mut body = Body {
@@ -34,13 +34,17 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     };
     // What an unconnected output falls back to. 🔴 Not zero for the normal: `normalize` of it is
     // NaN, which naga refuses outright.
-    let fallbacks = [
-        "vec4<f32>(0.0)",
-        "vec4<f32>(normalize(input.world_normal), 0.0)",
-        "vec4<f32>(0.0)",
-        "vec4<f32>(0.5)",
-        "vec4<f32>(0.0)",
-    ];
+    let fallbacks: &[&str] = if unlit {
+        &["vec4<f32>(0.0)", "vec4<f32>(1.0)"]
+    } else {
+        &[
+            "vec4<f32>(0.0)",
+            "vec4<f32>(normalize(input.world_normal), 0.0)",
+            "vec4<f32>(0.0)",
+            "vec4<f32>(0.5)",
+            "vec4<f32>(0.0)",
+        ]
+    };
     let outputs: Vec<String> = fallbacks
         .iter()
         .enumerate()
@@ -48,7 +52,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         .collect::<Result<_, _>>()?;
 
     let mut source = String::new();
-    let _ = writeln!(source, "// kind: surface");
+    let _ = writeln!(source, "// kind: {kind}");
     let _ = writeln!(source, "{}", embed(graph)?);
     let _ = writeln!(
         source,
@@ -56,20 +60,27 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     );
     source.push_str(&declarations(graph));
     source.push_str(&helpers(graph));
-    let _ = writeln!(
-        source,
-        "fn surface(input: SurfaceInput) -> SurfaceOutput {{"
-    );
+    let (function, returns) = if unlit {
+        ("unlit", "UnlitOutput")
+    } else {
+        ("surface", "SurfaceOutput")
+    };
+    let _ = writeln!(source, "fn {function}(input: SurfaceInput) -> {returns} {{");
     if graph.node_ids().any(|(_, n)| n.declared().is_some()) {
         let _ = writeln!(source, "    let p = surface_params(input.material_id);");
     }
     source.push_str(&body.lines);
-    let _ = writeln!(source, "    var out: SurfaceOutput;");
-    let _ = writeln!(source, "    out.base_color = {}.rgb;", outputs[0]);
-    let _ = writeln!(source, "    out.normal = normalize({}.xyz);", outputs[1]);
-    let _ = writeln!(source, "    out.metallic = {}.x;", outputs[2]);
-    let _ = writeln!(source, "    out.roughness = {}.x;", outputs[3]);
-    let _ = writeln!(source, "    out.emissive = {}.rgb;", outputs[4]);
+    let _ = writeln!(source, "    var out: {returns};");
+    if unlit {
+        let _ = writeln!(source, "    out.color = {}.rgb;", outputs[0]);
+        let _ = writeln!(source, "    out.alpha = {}.x;", outputs[1]);
+    } else {
+        let _ = writeln!(source, "    out.base_color = {}.rgb;", outputs[0]);
+        let _ = writeln!(source, "    out.normal = normalize({}.xyz);", outputs[1]);
+        let _ = writeln!(source, "    out.metallic = {}.x;", outputs[2]);
+        let _ = writeln!(source, "    out.roughness = {}.x;", outputs[3]);
+        let _ = writeln!(source, "    out.emissive = {}.rgb;", outputs[4]);
+    }
     let _ = writeln!(source, "    return out;\n}}");
     // 🔴 The graph never writes a file the engine cannot read. A shader that fails to parse is
     // written all the same, fails to reload, and leaves every reader — the Inspector above all —

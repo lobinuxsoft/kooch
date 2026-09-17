@@ -1,6 +1,6 @@
 use egui::Pos2;
 use egui_snarl::{InPinId, OutPinId};
-use kooch_render::material::Shader;
+use kooch_render::material::{Shader, ShaderKind};
 
 use super::*;
 
@@ -27,7 +27,7 @@ fn tinted_texture() -> Graph {
         },
     );
     let multiply = graph.insert_node(Pos2::ZERO, Node::Multiply);
-    let output = graph.insert_node(Pos2::ZERO, Node::Output);
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
     let wire = |graph: &mut Graph, from, to, input| {
         graph.connect(
             OutPinId {
@@ -71,7 +71,7 @@ fn a_narrow_color_param_parses() {
             default: [1.0, 0.5, 0.25, 0.0],
         },
     );
-    let output = graph.insert_node(Pos2::ZERO, Node::Output);
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
     graph.connect(
         OutPinId {
             node: emissive,
@@ -116,7 +116,7 @@ fn a_handwritten_shader_carries_no_graph() {
 #[test]
 fn an_empty_output_still_compiles() {
     let mut graph = Graph::new();
-    graph.insert_node(Pos2::ZERO, Node::Output);
+    graph.insert_node(Pos2::ZERO, Node::surface_output());
     let source = generate(&graph).unwrap();
     let shader = Shader::parse(&source).unwrap();
     assert!(shader.params.is_empty());
@@ -135,7 +135,7 @@ fn a_graph_without_an_output_is_refused() {
 fn a_cycle_is_refused() {
     let mut graph = Graph::new();
     let add = graph.insert_node(Pos2::ZERO, Node::Add);
-    let output = graph.insert_node(Pos2::ZERO, Node::Output);
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
     graph.connect(
         OutPinId {
             node: add,
@@ -167,31 +167,44 @@ fn a_cycle_is_refused() {
 /// the canvas, and the one a user sees first.
 #[test]
 fn every_node_compiles() {
-    for node in palette() {
-        if matches!(node, Node::Output) {
-            continue;
-        }
-        let name = node.title();
-        let mut graph = Graph::new();
-        let added = graph.insert_node(Pos2::ZERO, node);
-        let output = graph.insert_node(Pos2::ZERO, Node::Output);
-        graph.connect(
-            OutPinId {
-                node: added,
-                output: 0,
-            },
-            InPinId {
-                node: output,
-                input: 0,
-            },
-        );
+    for kind in ShaderKind::NAMES {
+        for node in palette() {
+            if node.output_kind().is_some() {
+                continue;
+            }
+            let name = format!("{} into {kind}", node.title());
+            let mut graph = Graph::new();
+            let added = graph.insert_node(Pos2::ZERO, node);
+            let output = graph.insert_node(
+                Pos2::ZERO,
+                Node::ShaderOutput {
+                    kind: kind.to_owned(),
+                },
+            );
+            graph.connect(
+                OutPinId {
+                    node: added,
+                    output: 0,
+                },
+                InPinId {
+                    node: output,
+                    input: 0,
+                },
+            );
 
-        let source =
-            generate(&graph).unwrap_or_else(|why| panic!("{name} generates nothing: {why}"));
-        let shader =
-            Shader::parse(&source).unwrap_or_else(|why| panic!("{name} does not parse: {why}"));
-        kooch_render::meshlet::validate_surface(&shader.params_wgsl(), &shader.source)
-            .unwrap_or_else(|why| panic!("{name} does not compile: {why}"));
+            let source =
+                generate(&graph).unwrap_or_else(|why| panic!("{name} generates nothing: {why}"));
+            let shader =
+                Shader::parse(&source).unwrap_or_else(|why| panic!("{name} does not parse: {why}"));
+            assert_eq!(
+                source.lines().next(),
+                Some(format!("// kind: {kind}").as_str())
+            );
+            kooch_render::meshlet::validate_surface(&shader.params_wgsl(), &shader.source)
+                .unwrap_or_else(|why| panic!("{name} does not compile: {why}"));
+            kooch_render::meshlet::validate_preview(&shader.params_wgsl(), &shader.source)
+                .unwrap_or_else(|why| panic!("{name} does not preview: {why}"));
+        }
     }
 }
 
@@ -244,7 +257,7 @@ fn an_old_file_extracts_typed() {
             default: [1.0; 4],
         },
     );
-    graph.insert_node(Pos2::ZERO, Node::Output);
+    graph.insert_node(Pos2::ZERO, Node::surface_output());
     let source = generate(&graph).unwrap();
 
     let read = extract(&source).expect("the graph");
@@ -335,7 +348,7 @@ fn a_constant_writes_its_type() {
     let emitted = |node: Node| {
         let mut graph = Graph::new();
         let constant = graph.insert_node(Pos2::ZERO, node);
-        let output = graph.insert_node(Pos2::ZERO, Node::Output);
+        let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
         graph.connect(
             OutPinId {
                 node: constant,
@@ -365,7 +378,7 @@ fn a_constant_writes_its_type() {
 #[test]
 fn every_noise_in_one_graph_compiles() {
     let mut graph = Graph::new();
-    let output = graph.insert_node(Pos2::ZERO, Node::Output);
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
     let noises = [
         Node::Noise,
         Node::GradientNoise,
@@ -411,7 +424,7 @@ fn every_output_is_its_own_value() {
         let name = node.title();
         let mut graph = Graph::new();
         let source_node = graph.insert_node(Pos2::ZERO, node);
-        let output = graph.insert_node(Pos2::ZERO, Node::Output);
+        let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
         // Four outputs into four of the output's five inputs: base colour, normal, metallic, roughness.
         for pin in 0..4 {
             graph.connect(
@@ -464,7 +477,7 @@ fn every_pin_compiles() {
             let name = format!("{} → {}", node.title(), node.outputs()[pin].0);
             let mut graph = Graph::new();
             let added = graph.insert_node(Pos2::ZERO, node.clone());
-            let output = graph.insert_node(Pos2::ZERO, Node::Output);
+            let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
             graph.connect(
                 OutPinId {
                     node: added,
@@ -503,4 +516,10 @@ fn every_pin_is_documented() {
             assert!(!about.is_empty(), "{name}'s {pin} says nothing");
         }
     }
+}
+
+/// Graphs written before the Output node had a kind open as a surface (#1179).
+#[test]
+fn a_legacy_output_is_a_surface() {
+    assert_eq!(Node::Output.migrated(), Node::surface_output());
 }

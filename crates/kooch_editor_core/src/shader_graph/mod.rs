@@ -44,7 +44,7 @@ pub(crate) fn extract(source: &str) -> Option<Graph> {
             // Graphs written before parameters were typed carry `Param`; they open as the typed
             // nodes they mean, and the next save writes those (#1170).
             for node in graph.nodes_mut() {
-                *node = std::mem::replace(node, Node::Output).migrated();
+                *node = std::mem::replace(node, Node::Uv).migrated();
             }
             Some(graph)
         }
@@ -103,7 +103,7 @@ pub(crate) fn starter() -> Graph {
         },
     );
     let tinted = graph.insert_node(Pos2::new(430.0, 100.0), Node::Multiply);
-    let output = graph.insert_node(Pos2::new(640.0, 140.0), Node::Output);
+    let output = graph.insert_node(Pos2::new(640.0, 140.0), Node::surface_output());
     let mut wire = |from, to, input| {
         graph.connect(
             OutPinId {

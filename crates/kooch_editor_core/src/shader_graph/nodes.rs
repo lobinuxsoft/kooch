@@ -201,8 +201,13 @@ pub(crate) enum Node {
     Checker,
 
     // -- Output ---------------------------------------------------------
-    /// What Inti lights: base colour, normal, metallic, roughness, emissive.
+    /// A surface output from before the node had a kind; `migrated` turns it into a
+    /// `ShaderOutput`, and the menu never offers it.
     Output,
+    /// What the shader ends up as. `kind` is a `ShaderKind` name and picks the pins (#1179).
+    ShaderOutput {
+        kind: String,
+    },
 }
 
 /// Which submenu a node is added from.
@@ -371,7 +376,7 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::Ring,
         Node::Polygon,
         Node::Checker,
-        Node::Output,
+        Node::surface_output(),
     ]
 }
 

@@ -155,6 +155,13 @@ impl Node {
             Self::Polygon => "Polygon".to_owned(),
             Self::Checker => "Checker".to_owned(),
             Self::Output => "Surface Output".to_owned(),
+            Self::ShaderOutput { kind } => {
+                let mut title = kind.clone();
+                if let Some(first) = title.get_mut(0..1) {
+                    first.make_ascii_uppercase();
+                }
+                format!("{title} Output")
+            }
         }
     }
 
@@ -231,7 +238,26 @@ impl Node {
             Self::Ring => &["uv", "radius", "thickness"],
             Self::Polygon => &["uv", "sides", "radius"],
             Self::Checker => &["uv", "tiles"],
-            Self::Output => &["base color", "normal", "metallic", "roughness", "emissive"],
+            Self::ShaderOutput { kind } if kind == "unlit" => &["color", "alpha"],
+            Self::Output | Self::ShaderOutput { .. } => {
+                &["base color", "normal", "metallic", "roughness", "emissive"]
+            }
+        }
+    }
+
+    /// A surface `ShaderOutput`: what the menu offers and a new graph starts from.
+    pub(crate) fn surface_output() -> Self {
+        Self::ShaderOutput {
+            kind: "surface".to_owned(),
+        }
+    }
+
+    /// The shader kind an output node writes; `None` for every other node.
+    pub(crate) fn output_kind(&self) -> Option<&str> {
+        match self {
+            Self::Output => Some("surface"),
+            Self::ShaderOutput { kind } => Some(kind),
+            _ => None,
         }
     }
 
@@ -245,7 +271,7 @@ impl Node {
     /// then one pin per channel, as a colour or a vector is taken apart in Unity and Unreal.
     pub(crate) fn outputs(&self) -> &'static [(&'static str, Pick)] {
         match self {
-            Self::Output => &[],
+            Self::Output | Self::ShaderOutput { .. } => &[],
             Self::Texture { .. }
             | Self::Color { .. }
             | Self::ConstColor(_)
@@ -364,7 +390,7 @@ impl Node {
             Self::Circle | Self::Rectangle | Self::Ring | Self::Polygon | Self::Checker => {
                 Category::Shape
             }
-            Self::Output => Category::Output,
+            Self::Output | Self::ShaderOutput { .. } => Category::Output,
         }
     }
 

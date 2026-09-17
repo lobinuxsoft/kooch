@@ -324,7 +324,9 @@ impl Body<'_> {
                 let (uv, tiles) = (argument(self, 0)?, argument(self, 1)?);
                 format!("vec4<f32>(graph_checker({uv}.xy, {tiles}.xy))")
             }
-            Node::Output => return Err("the Surface Output node feeds nothing".to_owned()),
+            Node::Output | Node::ShaderOutput { .. } => {
+                return Err("the Output node feeds nothing".to_owned());
+            }
         };
         self.visiting.remove(&id);
         let name = format!("n{}", self.next);

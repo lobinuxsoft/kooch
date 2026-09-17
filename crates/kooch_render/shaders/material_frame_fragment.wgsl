@@ -34,9 +34,13 @@ fn fs_material(in: FsInput) -> @location(0) vec4<f32> {
             1.0);
     }
 
-    var radiance = inti_shade(
-        surf.world_position, shaded.normal, shaded.base_color, shaded.metallic, shaded.roughness,
-        in.position.xy, surf.flags);
+    // An unlit shader skips Inti, its shadows and the contact march: `SURFACE_UNLIT` is a constant.
+    var radiance = vec3<f32>(0.0);
+    if (!SURFACE_UNLIT) {
+        radiance = inti_shade(
+            surf.world_position, shaded.normal, shaded.base_color, shaded.metallic,
+            shaded.roughness, in.position.xy, surf.flags);
+    }
     // Emissive is radiance the surface produces rather than reflects, so
     // it joins before tonemapping and ignores every light in the scene.
     // 🔴 In display units: divided by the exposure the tonemap is about to apply, so 1.0 is the colour

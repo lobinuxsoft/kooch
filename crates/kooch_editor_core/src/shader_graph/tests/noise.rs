@@ -16,7 +16,7 @@ fn wired(node: Node, outputs: &[usize]) -> String {
     let mut graph = Graph::new();
     let inputs = node.inputs().len();
     let added = graph.insert_node(Pos2::ZERO, node);
-    let output = graph.insert_node(Pos2::ZERO, Node::Output);
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
     for input in 0..inputs {
         let constant = graph.insert_node(Pos2::ZERO, Node::ConstFloat(0.5 + input as f32));
         wire(&mut graph, constant, 0, added, input);
@@ -95,7 +95,7 @@ fn unwired_noise_controls_cost_nothing() {
             fractal: "ridged".to_owned(),
         },
     );
-    let output = graph.insert_node(Pos2::ZERO, Node::Output);
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
     wire(&mut graph, noise, 0, output, 0);
     let bare = generate(&graph).unwrap();
     let voronoi = wired(

@@ -48,6 +48,30 @@ multiplied by `mip_bias_scale`: a visibility buffer has no screen-space derivati
 A surface declares no bindings and no entry points of its own. The same function runs in both
 shading paths, fragment and compute, and each wraps it in its own frame.
 
+### Kinds
+
+The `// kind:` line picks what the file defines. With no line, it is a `surface`.
+
+| Kind | Defines | What the frame does with it |
+|---|---|---|
+| `surface` | `fn surface(input: SurfaceInput) -> SurfaceOutput` | Inti lights it: lights, shadows, contact march |
+| `unlit` | `fn unlit(input: SurfaceInput) -> UnlitOutput` | Shows `color` as it is, under any light and in shadow |
+
+```wgsl
+// kind: unlit
+
+fn unlit(input: SurfaceInput) -> UnlitOutput {
+    var out: UnlitOutput;
+    out.color = vec3<f32>(1.0, 0.0, 0.0);
+    out.alpha = 1.0;
+    return out;
+}
+```
+
+`color` is in the same display units as `emissive`: `1.0` is full brightness at any exposure. `alpha`
+is carried for transparent shaders (#452); opaque passes ignore it. An unlit shader assumes no sun,
+which is what a planet's distant impostor or an atmosphere card needs.
+
 ## Parameters
 
 A shader's parameters are plain WGSL, the closest WGSL gets to an HLSL `cbuffer` and `Texture2D`:
@@ -161,7 +185,7 @@ The menu groups the nodes the way the panels do:
 | **Effects** | Fresnel, Unpack Normal, Desaturate, Blend |
 | **Shapes** | Circle, Rectangle, Ring, Polygon, Checker |
 | **Noise** | Value Noise, Gradient Noise, Simplex Noise (fBm, turbulence, ridged), White Noise, Voronoi |
-| **Output** | Surface Output: base colour, normal, metallic, roughness, emissive |
+| **Output** | Output, with a **kind**: `surface` takes base colour, normal, metallic, roughness, emissive; `unlit` takes color and alpha |
 
 - **Float, Int, Vector 2/3/4 and Color** are the material's parameters — each one member of
   `SurfaceParams`, with its name and starting value, edited in the node the way the material's
@@ -254,7 +278,7 @@ The column on the right shows the shader **on a shape**, turning, updated as the
   every node. **Fit** frames it again at any time, and **Arrange** does so once it has laid the graph out.
 - **Minimap**, toggled in the toolbar: a box per node and a rectangle around what you are looking at.
   Click anywhere on it to send the view there.
-- **Arrange** lays the graph out in columns counted **back from the Surface Output**: a node sits one
+- **Arrange** lays the graph out in columns counted **back from the Output**: a node sits one
   column left of the furthest thing it feeds, so a parameter wired straight into the output stays
   beside it. Each column follows the pins its nodes feed — what goes into base colour above what
   goes into roughness — which is what keeps the wires from crossing. It is the shape of Godot's

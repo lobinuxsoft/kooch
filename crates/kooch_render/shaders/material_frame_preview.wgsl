@@ -85,6 +85,9 @@ fn fs_preview(in: VsOut) -> @location(0) vec4<f32> {
 
     let input = surface_input(surf, in.clip_position.xy);
     let shaded = surface(input);
+    if (SURFACE_UNLIT) {
+        return vec4<f32>(shaded.emissive, 1.0);
+    }
 
     let n = normalize(shaded.normal);
     let v = normalize(input.camera_position - input.world_position);

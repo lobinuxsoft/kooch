@@ -101,6 +101,7 @@ impl Node {
                     fractal: "fbm".to_owned(),
                 }
             }
+            Self::Output => Self::surface_output(),
             Self::Voronoi => Self::VoronoiNoise {
                 metric: "euclidean".to_owned(),
             },
