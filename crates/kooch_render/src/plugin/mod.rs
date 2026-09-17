@@ -10,7 +10,7 @@ pub use assets::AssetPlugin;
 
 use glam::Vec4;
 use kooch_core::app::App;
-use kooch_core::gpu::GpuContext;
+use kooch_core::gpu::{GpuContext, TargetDesc, TargetId, TargetPool};
 use kooch_core::plugin::Plugin;
 use kooch_core::resource::Resources;
 use kooch_core::schedule::Order;
@@ -84,52 +84,44 @@ fn wanted_vsync(asset: bool, over: Option<bool>) -> bool {
     over.unwrap_or(asset)
 }
 
-/// Surface-sized depth texture owned by the render plugin. Recreated when
-/// the swapchain size changes.
-struct GameDepth {
-    _texture: wgpu::Texture,
-    view: wgpu::TextureView,
+/// The surface-sized depth target, held from the pool (#392).
+pub(super) struct GameDepth {
+    target: TargetId,
     size: (u32, u32),
 }
 
 impl GameDepth {
-    fn new(device: &wgpu::Device, size: (u32, u32)) -> Self {
-        let (texture, view) = create_depth(device, size);
+    pub(super) fn new(device: &wgpu::Device, pool: &mut TargetPool, size: (u32, u32)) -> Self {
         Self {
-            _texture: texture,
-            view,
+            target: pool.acquire(device, "game_depth_texture", depth_desc(size)),
             size,
         }
     }
 
-    fn ensure(&mut self, device: &wgpu::Device, size: (u32, u32)) {
+    /// Swaps the target for one of the new size. The old one goes back to the pool, which is what
+    /// keeps a run of resizes from allocating a depth texture per resize.
+    pub(super) fn ensure(
+        &mut self,
+        device: &wgpu::Device,
+        pool: &mut TargetPool,
+        size: (u32, u32),
+    ) {
         if size == self.size {
             return;
         }
-        let (texture, view) = create_depth(device, size);
-        self._texture = texture;
-        self.view = view;
+        pool.release(self.target);
+        self.target = pool.acquire(device, "game_depth_texture", depth_desc(size));
         self.size = size;
+    }
+
+    pub(super) fn view(&self, pool: &TargetPool) -> Option<wgpu::TextureView> {
+        pool.view(self.target).cloned()
     }
 }
 
-fn create_depth(device: &wgpu::Device, size: (u32, u32)) -> (wgpu::Texture, wgpu::TextureView) {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("game_depth_texture"),
-        size: wgpu::Extent3d {
-            width: size.0.max(1),
-            height: size.1.max(1),
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: VIEWPORT_DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
-    });
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    (texture, view)
+fn depth_desc(size: (u32, u32)) -> TargetDesc {
+    TargetDesc::attachment(size, VIEWPORT_DEPTH_FORMAT)
+        .with_usage(wgpu::TextureUsages::RENDER_ATTACHMENT)
 }
 
 fn init_renderers(resources: &mut Resources) {
@@ -146,7 +138,8 @@ fn init_renderers(resources: &mut Resources) {
     let vbuf64 = Vbuf64Support::detect(gpu.device());
     let debug_caps = MeshletDebugCaps::detect(gpu.device());
     let sky_pass = SkyRenderPass::new(gpu.device(), gpu.format(), pipeline_cache);
-    let depth = GameDepth::new(gpu.device(), gpu.size());
+    let mut pool = TargetPool::default();
+    let depth = GameDepth::new(gpu.device(), &mut pool, gpu.size());
     let meshlet_stage = MeshletRenderStage::new(
         gpu.device(),
         MeshletRenderStageConfig {
@@ -170,6 +163,7 @@ fn init_renderers(resources: &mut Resources) {
     resources.insert(vbuf64);
     resources.insert(debug_caps);
     resources.insert(sky_pass);
+    resources.insert(pool);
     resources.insert(depth);
     resources.insert(meshlet_stage);
     resources.insert(meshlet_blit);
