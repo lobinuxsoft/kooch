@@ -118,6 +118,24 @@ does the game need" answerable at all:
 | `src/`    | components, systems, `main.rs`       | compiled in, not copied |
 | `.kooch/` | the pack key, local state            | never |
 
+## The engine features your scenes need
+
+A game build carries only the engine crates its `game` feature turns on: a shipped game carries nothing
+it does not use (#558). But a scene built in the editor can use components from a crate the game build
+leaves out. **Blocks** (`kooch/blockmesh`) are the usual case, because the editor always has them.
+
+🔴 Such a scene still loads — an unknown component is parked, not an error — so the game starts with
+those components missing: a level of blocks with no geometry and no collision. The only trace is a
+WARN in the game's `kooch.log`.
+
+The editor closes that gap in two places:
+- **On opening a project**, it reads every `.scene` under `assets/`. For each engine component whose
+  crate the `game` build does not enable, it adds the feature to `game` in `Cargo.toml` and logs
+  which scene needed it.
+- **On starting a build**, it runs the same check against the preset's features. If `Cargo.toml` has no
+  single-line `game = [...]` to add to, the build stops before cargo runs and names the scene, the
+  component and the feature to add.
+
 ## The asset pack
 
 With `pack_assets` on — the default — everything lands in a single

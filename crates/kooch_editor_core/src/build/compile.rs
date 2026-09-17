@@ -88,6 +88,18 @@ impl BuildJob {
         if let Some(problem) = super::dlss::missing_sdk(preset) {
             return Err(problem);
         }
+        // #1187 — a scene whose components the build leaves out loads with them silently missing. The
+        // manifest is fixed if it can be; if not, nothing ships that would start without its level.
+        let selected = super::dlss::normalise(preset.feature_list(), project_root);
+        if let Some(m) = super::scene_features::ensure(project_root, &selected).first() {
+            return Err(format!(
+                "{} uses {}, which this build leaves out — add \"kooch/{}\" to the `game` feature in \
+                 Cargo.toml",
+                m.scene.display(),
+                m.component,
+                m.feature,
+            ));
+        }
 
         let current = platforms.remove(0);
         let mut command = cargo_command(preset, current, project_root, crate_name);

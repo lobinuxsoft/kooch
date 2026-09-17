@@ -21,6 +21,8 @@ kooch_ecs = { workspace = true, features = ["dynamic"] }
 kooch_render.workspace = true
 # The block tool's authoring mesh (#946) — authored here, drawn here.
 kooch_blockmesh.workspace = true
+# Reading a project's [features] to know which engine crates its game build carries (#1187).
+toml.workspace = true
 kooch_lighting.workspace = true
 kooch_gizmos.workspace = true
 kooch_gizmos_handles.workspace = true

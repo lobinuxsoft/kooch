@@ -67,6 +67,8 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
                 // not before: this adds a second `[[bin]]`, and the one above is what stops cargo
                 // inferring the first from `src/main.rs`.
                 crate::actions::split_authoring(&root, &crate_name);
+                // And give the game build the engine crates its scenes use (#1187).
+                crate::build::scene_features::ensure(&root, &[]);
                 // So `.shader` files open as WGSL in VS Code (#1158).
                 crate::shader_sync::write_vscode_settings(&root);
 
