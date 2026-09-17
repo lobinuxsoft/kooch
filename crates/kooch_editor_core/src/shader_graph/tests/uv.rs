@@ -19,7 +19,7 @@ fn unwired_distortions_warp_mesh_uv() {
         let name = node.title();
         let mut graph = Graph::new();
         let added = graph.insert_node(Pos2::ZERO, node);
-        let output = graph.insert_node(Pos2::ZERO, Node::Output);
+        let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
         graph.connect(
             OutPinId {
                 node: added,

@@ -4,6 +4,8 @@ use egui::emath::TSTransform;
 use egui_snarl::ui::SnarlViewer;
 use egui_snarl::{InPin, NodeId, OutPin, Snarl};
 
+use kooch_render::material::ShaderKind;
+
 use super::editors::{FIELD, choice, components, name_field, number_editor};
 use super::framed;
 use super::pin::{NamedPin, Side, label, reserve};
@@ -143,15 +145,15 @@ impl SnarlViewer<Node> for Viewer<'_> {
 
     fn show_footer(
         &mut self,
-        node: NodeId,
-        _inputs: &[InPin],
+        id: NodeId,
+        inputs: &[InPin],
         _outputs: &[OutPin],
         ui: &mut egui::Ui,
         snarl: &mut Snarl<Node>,
     ) {
         // A value node carries its own value, so the node itself is where it is edited.
         let catalog = self.catalog;
-        let Some(node) = snarl.get_node_mut(node) else {
+        let Some(node) = snarl.get_node_mut(id) else {
             return;
         };
         // Capped: a top-down layout claims all the width it is offered, and inside a snarl node that
@@ -232,9 +234,17 @@ impl SnarlViewer<Node> for Viewer<'_> {
                     choice(ui, "fractal", fractal, &NOISE_FRACTALS);
                 }
                 Node::VoronoiNoise { metric } => choice(ui, "metric", metric, &VORONOI_METRICS),
+                Node::ShaderOutput { kind } => choice(ui, "kind", kind, &ShaderKind::NAMES),
                 _ => {}
             }
         });
+        // A kind with fewer pins drops the wires into the ones it no longer has.
+        let count = snarl.get_node(id).map_or(0, |n| n.inputs().len());
+        for pin in inputs.iter().filter(|pin| pin.id.input >= count) {
+            for &remote in &pin.remotes {
+                snarl.disconnect(remote, pin.id);
+            }
+        }
     }
 
     /// One wire per input: a second one replaces the first, which is what every graph tool does.
@@ -311,6 +321,7 @@ fn has_fields(node: &Node) -> bool {
             | Node::ConstColor(_)
             | Node::Swizzle { .. }
             | Node::Blend { .. }
+            | Node::ShaderOutput { .. }
     )
 }
 

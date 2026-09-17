@@ -112,7 +112,9 @@ impl Node {
             Self::Ring => "A circle with its middle cut out.",
             Self::Polygon => "A regular polygon.",
             Self::Checker => "A checkerboard.",
-            Self::Output => "What the surface ends up as.",
+            Self::Output | Self::ShaderOutput { .. } => {
+                "What the shader ends up as. Its kind picks what it takes."
+            }
         }
     }
 
@@ -258,7 +260,11 @@ impl Node {
                 (One, "The radius, in uv units."),
             ],
             Self::Checker => &[UV_ZERO, (Two, "How many squares: x across, y down.")],
-            Self::Output => &[
+            Self::ShaderOutput { kind } if kind == "unlit" => &[
+                (Three, "The final colour. No light or shadow changes it."),
+                (One, "Opacity, kept for transparent shaders. Unwired: 1."),
+            ],
+            Self::Output | Self::ShaderOutput { .. } => &[
                 (Three, "The colour of the surface."),
                 (Three, "The world-space normal. Unwired: the mesh's."),
                 (One, "0 dielectric, 1 metal."),

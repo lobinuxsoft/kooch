@@ -13,6 +13,12 @@ fn the_kind_line_is_read() {
 }
 
 #[test]
+fn the_unlit_kind_is_read() {
+    let shader = Shader::parse("// kind: unlit\nfn unlit() {}").unwrap();
+    assert_eq!(shader.kind, ShaderKind::Unlit);
+}
+
+#[test]
 fn an_unknown_kind_fails() {
     assert!(matches!(
         Shader::parse("// kind: particles\n"),

@@ -28,22 +28,49 @@ pub const SHADER_EXTENSION: &str = "shader";
 pub const SHADER_TYPE_NAME: &str = "kooch_render::material::shader::Shader";
 
 /// Which stage a shader plugs into, declared by a `// kind: <name>` line in its leading comments.
-/// Only surfaces exist yet; the rest of #784 adds kinds rather than a second asset.
+/// Every kind composes into the same frames; the kind's glue decides how they treat the result (#1178).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ShaderKind {
     /// Opaque shading on the visibility buffer: defines `fn surface(SurfaceInput) -> SurfaceOutput`.
     #[default]
     Surface,
+    /// A colour no light touches: defines `fn unlit(SurfaceInput) -> UnlitOutput` (#1179).
+    Unlit,
 }
 
 impl ShaderKind {
+    /// What a `// kind:` line names, in the order errors list them.
+    pub const NAMES: [&'static str; 2] = ["surface", "unlit"];
+
     fn parse(name: &str) -> Option<Self> {
         match name {
             "surface" => Some(Self::Surface),
+            "unlit" => Some(Self::Unlit),
             _ => None,
         }
     }
+
+    /// WGSL the frames read: `SURFACE_UNLIT`, and for an unlit shader the `surface` they call.
+    fn glue(self) -> &'static str {
+        match self {
+            Self::Surface => "const SURFACE_UNLIT: bool = false;\n",
+            Self::Unlit => UNLIT_GLUE,
+        }
+    }
 }
+
+/// An unlit colour rides in `emissive`, the one output the frames already add past the light.
+const UNLIT_GLUE: &str = "\
+const SURFACE_UNLIT: bool = true;
+fn surface(input: SurfaceInput) -> SurfaceOutput {
+    let unlit = unlit(input);
+    var out: SurfaceOutput;
+    out.normal = normalize(input.world_normal);
+    out.roughness = 1.0;
+    out.emissive = unlit.color;
+    return out;
+}
+";
 
 /// A WGSL body, the stage it belongs to and the parameters it declares.
 #[derive(Clone, Debug, PartialEq)]
@@ -83,10 +110,10 @@ impl Shader {
         })
     }
 
-    /// The WGSL the engine composes ahead of the source: `surface_params` and
+    /// The WGSL the engine composes ahead of the source: the kind's glue, `surface_params` and
     /// `surface_texture_dims`.
     pub fn params_wgsl(&self) -> String {
-        params::generated(&self.params)
+        format!("{}{}", self.kind.glue(), params::generated(&self.params))
     }
 
     /// The engine's PBR surface, parsed once.
@@ -131,7 +158,11 @@ impl fmt::Display for ShaderParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Utf8(e) => write!(f, "shader is not valid UTF-8: {e}"),
-            Self::Kind(name) => write!(f, "unknown shader kind `{name}` (known: surface)"),
+            Self::Kind(name) => write!(
+                f,
+                "unknown shader kind `{name}` (known: {})",
+                ShaderKind::NAMES.join(", ")
+            ),
             Self::Param { line, message } => write!(f, "line {line}: {message}"),
         }
     }

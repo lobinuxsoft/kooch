@@ -146,6 +146,25 @@ fn a_custom_surface_validates() {
     check(red).unwrap();
 }
 
+const UNLIT_RED: &str = "// kind: unlit
+fn unlit(input: SurfaceInput) -> UnlitOutput {
+    return UnlitOutput(vec3<f32>(1.0, 0.0, 0.0), 1.0);
+}";
+
+/// An unlit body composes into both frames and the preview.
+#[test]
+fn an_unlit_shader_validates() {
+    check(UNLIT_RED).unwrap();
+    let shader = Shader::parse(UNLIT_RED).unwrap();
+    validate_preview(&shader.params_wgsl(), &shader.source).unwrap();
+}
+
+/// The frames call `surface`; an unlit file only gets one from its kind line.
+#[test]
+fn an_unlit_body_needs_its_kind() {
+    assert!(check(UNLIT_RED.trim_start_matches("// kind: unlit\n")).is_err());
+}
+
 /// The line reported is the surface file's, not the composed shader's.
 #[test]
 fn a_broken_surface_names_its_line() {

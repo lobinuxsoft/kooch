@@ -32,7 +32,7 @@ fn a_chain_lays_out_left_to_right() {
             preview: None,
         },
     );
-    let output = graph.insert_node(Pos2::ZERO, Node::Output);
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
     wire(&mut graph, uv, texture, 0);
     wire(&mut graph, texture, output, 0);
 
@@ -82,7 +82,7 @@ fn a_shared_layer_does_not_overlap() {
 fn arranging_twice_changes_nothing() {
     let mut graph = Graph::new();
     let uv = graph.insert_node(Pos2::ZERO, Node::Uv);
-    let output = graph.insert_node(Pos2::ZERO, Node::Output);
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
     wire(&mut graph, uv, output, 0);
 
     assert!(arrange(&mut graph));
@@ -112,7 +112,7 @@ fn a_short_branch_sits_by_the_output() {
             range: None,
         },
     );
-    let output = graph.insert_node(Pos2::ZERO, Node::Output);
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
     wire(&mut graph, uv, texture, 0);
     wire(&mut graph, texture, tint, 0);
     wire(&mut graph, tint, output, 0);
@@ -132,7 +132,7 @@ fn a_short_branch_sits_by_the_output() {
 #[test]
 fn a_column_follows_the_pins() {
     let mut graph = Graph::new();
-    let output = graph.insert_node(Pos2::ZERO, Node::Output);
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
     let roughness = graph.insert_node(Pos2::ZERO, Node::ConstFloat(0.5));
     let base = graph.insert_node(Pos2::ZERO, Node::ConstColor([1.0; 4]));
     wire(&mut graph, roughness, output, 3);

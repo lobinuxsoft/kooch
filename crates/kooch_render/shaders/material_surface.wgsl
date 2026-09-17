@@ -49,6 +49,13 @@ struct SurfaceOutput {
     emissive: vec3<f32>,
 }
 
+/// What an unlit shader returns: the final colour, in the same units as `emissive`.
+struct UnlitOutput {
+    color: vec3<f32>,
+    // Carried for the transparent kind (#452); opaque passes ignore it.
+    alpha: f32,
+}
+
 /// Samples one of the surface's textures at `uv`, with the analytical derivatives scaled by
 /// whatever tiles `uv` — `scale` — and the mip bias.
 fn sample_surface(tex: texture_2d<f32>, input: SurfaceInput, uv: vec2<f32>, scale: vec2<f32>) -> vec4<f32> {

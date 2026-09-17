@@ -1,4 +1,4 @@
-//! Auto-arrange (#1167): the graph laid out in layers, from the Surface Output back.
+//! Auto-arrange (#1167): the graph laid out in layers, from the Output back.
 //!
 //! Godot's `GraphEditArranger` is the reference: layering, crossing minimisation, horizontal
 //! alignment, inner shifts, block placement. A shader graph is a small DAG flowing into one output,
@@ -118,7 +118,7 @@ fn ordered(graph: &Graph, ranks: HashMap<NodeId, usize>) -> Vec<Vec<NodeId>> {
     columns[0].sort_unstable_by_key(|id| {
         let output = graph
             .get_node(*id)
-            .is_some_and(|n| matches!(n, Node::Output));
+            .is_some_and(|n| n.output_kind().is_some());
         (!output, id.0)
     });
 

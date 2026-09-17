@@ -278,8 +278,10 @@ fn cs_shade_tile(
         } else if (inti_debug_is_view(screen.debug_mode)) {
             rgb = inti_debug_view(screen.debug_mode, surf.world_position, shaded.normal, frag_coord);
         } else {
-            var radiance: vec3<f32>;
-            if (tile_overflow == 0u && clustered) {
+            var radiance = vec3<f32>(0.0);
+            // An unlit shader skips Inti, its shadows and the contact march (#1179).
+            if (SURFACE_UNLIT) {
+            } else if (tile_overflow == 0u && clustered) {
                 let my = my_cell - lo;
                 let c = (my.x * dims.y + my.y) * dims.z + my.z;
                 radiance = shade_from_tile(
