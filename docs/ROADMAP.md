@@ -833,10 +833,10 @@ alone. Audited:
   is already reachable** for CPU systems.
 - `PluginSystem` gets `&mut dyn Engine` — spawn, despawn, register, add_system,
   log, set_data, get_data. **No device, no queue, no encoder.**
-- `GpuSystem::dispatch(&self, pass: &mut wgpu::ComputePass)` — a compute pass.
-  So **a compute shader is expressible and a post-process is not**.
-- `add_system` appends. Two plugins that both want to run late fight over load
-  order instead of declaring a constraint.
+- ~~`GpuSystem::dispatch` takes a compute pass, so a post-process is not
+  expressible~~ — it takes a `wgpu::CommandEncoder` now and opens its own passes.
+- ~~`add_system` appends, so two plugins that both want to run late fight over
+  load order~~ — `Order::before` / `Order::after` name a system instead.
 
 #392 is the door six written issues wait behind — #254, #33, #116, #484, plus
 #250/#784/#70 for shader authoring. It is not an isolated refactor.

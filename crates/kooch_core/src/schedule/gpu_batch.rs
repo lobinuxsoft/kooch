@@ -26,7 +26,7 @@ pub(super) fn run_gpu_batch(systems: &mut [AnySystem], resources: &mut Resources
         }
     }
 
-    // Dispatch phase — one encoder, one pass per system.
+    // Recording phase — one encoder, and each system opens the passes it needs.
     let mut encoder = gpu
         .device()
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -38,11 +38,11 @@ pub(super) fn run_gpu_batch(systems: &mut [AnySystem], resources: &mut Resources
         // its own to wrap — the scope covers what it records instead.
         let _scope = sys.scope();
         if let Some(gpu_sys) = sys.as_gpu() {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some(gpu_sys.name()),
-                timestamp_writes: None,
-            });
-            gpu_sys.dispatch(&mut pass);
+            // What the pass label used to carry: a system may open none, one or several passes, so
+            // the name belongs around the recording rather than on any one of them.
+            encoder.push_debug_group(gpu_sys.name());
+            gpu_sys.record(&mut encoder);
+            encoder.pop_debug_group();
         }
     }
 

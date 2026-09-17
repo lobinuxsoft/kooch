@@ -103,7 +103,8 @@ where
 ///         self.bind_group = Some(create_bind_group(device, instances));
 ///     }
 ///
-///     fn dispatch(&self, pass: &mut ComputePass) {
+///     fn record(&self, encoder: &mut CommandEncoder) {
+///         let mut pass = encoder.begin_compute_pass(&Default::default());
 ///         pass.set_pipeline(&self.pipeline);
 ///         pass.set_bind_group(0, self.bind_group.as_ref().unwrap(), &[]);
 ///         pass.dispatch_workgroups(256, 1, 1);
@@ -122,10 +123,12 @@ pub trait GpuSystem: Send + Sync + 'static {
     /// Per-frame preparation before dispatch.
     fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, resources: &Resources);
 
-    /// Record compute commands into the pass.
+    /// Records this system's work into the frame's encoder.
     ///
-    /// Set pipeline, bind groups, and dispatch workgroups here.
-    fn dispatch(&self, pass: &mut wgpu::ComputePass);
+    /// 🔴 An encoder, not a pass: a system opens the passes it needs — a compute pass, a render
+    /// pass into a target, or several — which is what makes a post-process expressible (#392).
+    /// The batch wraps the call in a debug group carrying [`name`](GpuSystem::name).
+    fn record(&self, encoder: &mut wgpu::CommandEncoder);
 
     /// Returns the system name for debugging and profiling.
     fn name(&self) -> &str;
