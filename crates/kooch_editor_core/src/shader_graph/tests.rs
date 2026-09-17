@@ -5,6 +5,7 @@ use kooch_render::material::Shader;
 use super::*;
 
 mod noise;
+mod uv;
 
 /// A tint parameter times an albedo texture sampled at the mesh's uv, into base colour.
 fn tinted_texture() -> Graph {

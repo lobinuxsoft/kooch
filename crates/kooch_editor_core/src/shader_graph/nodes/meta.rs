@@ -51,6 +51,11 @@ const UV: &[(&str, Pick)] = &[
     ("U", Pick::Channel(0)),
     ("V", Pick::Channel(1)),
 ];
+const POLAR: &[(&str, Pick)] = &[
+    ("polar", Pick::Whole),
+    ("radius", Pick::Channel(0)),
+    ("angle", Pick::Channel(1)),
+];
 const TIME: &[(&str, Pick)] = &[
     ("time", Pick::Channel(0)),
     ("sine", Pick::Channel(1)),
@@ -126,6 +131,10 @@ impl Node {
             Self::Panner => "Panner".to_owned(),
             Self::Rotator => "Rotator".to_owned(),
             Self::Tiling => "Tiling".to_owned(),
+            Self::PolarCoordinates => "Polar Coordinates".to_owned(),
+            Self::Twirl => "Twirl".to_owned(),
+            Self::RadialShear => "Radial Shear".to_owned(),
+            Self::Spherize => "Spherize".to_owned(),
             Self::Desaturate => "Desaturate".to_owned(),
             Self::Blend { mode } => format!("Blend {mode}"),
             Self::FractalNoise { basis, .. } => {
@@ -195,6 +204,10 @@ impl Node {
             Self::Panner => &["uv", "speed"],
             Self::Rotator => &["uv", "centre", "turns"],
             Self::Tiling => &["uv", "tiling", "offset"],
+            Self::PolarCoordinates => &["uv", "centre", "radial scale", "length scale"],
+            Self::Twirl | Self::RadialShear | Self::Spherize => {
+                &["uv", "centre", "strength", "offset"]
+            }
             Self::Desaturate => &["colour", "amount"],
             Self::Blend { .. } => &["a", "b", "opacity"],
             // 🔴 In this order: pins are wired by index, and an old noise's uv, scale and octaves are 0..2.
@@ -241,7 +254,14 @@ impl Node {
             Self::WorldPosition | Self::WorldNormal | Self::ViewDirection | Self::UnpackNormal => {
                 XYZ
             }
-            Self::Uv => UV,
+            Self::Uv
+            | Self::Panner
+            | Self::Rotator
+            | Self::Tiling
+            | Self::Twirl
+            | Self::RadialShear
+            | Self::Spherize => UV,
+            Self::PolarCoordinates => POLAR,
             Self::Vector { width, .. } | Self::ConstVector { width, .. } => match width {
                 2 => XY,
                 3 => XYZ,
@@ -324,13 +344,16 @@ impl Node {
             | Self::Swizzle { .. }
             | Self::Combine
             | Self::Split => Category::Vector,
-            Self::Fresnel
-            | Self::UnpackNormal
-            | Self::Panner
+            Self::Panner
             | Self::Rotator
             | Self::Tiling
-            | Self::Desaturate
-            | Self::Blend { .. } => Category::Effect,
+            | Self::PolarCoordinates
+            | Self::Twirl
+            | Self::RadialShear
+            | Self::Spherize => Category::Uv,
+            Self::Fresnel | Self::UnpackNormal | Self::Desaturate | Self::Blend { .. } => {
+                Category::Effect
+            }
             Self::FractalNoise { .. }
             | Self::VoronoiNoise { .. }
             | Self::Noise
