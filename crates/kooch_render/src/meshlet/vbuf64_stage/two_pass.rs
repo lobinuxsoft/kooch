@@ -344,6 +344,9 @@ impl MaterialTwoPass {
         // Seconds since the engine started, for a surface that moves (#1159).
         time: f32,
         debug_mode: u32,
+        // One scope per material, under the shading pass's (#1159).
+        scopes: Option<&kooch_core::gpu::GpuScopes>,
+        parent: Option<&kooch_core::gpu::GpuQuery>,
     ) {
         let shading_pipeline = self.pipeline_for(device, debug_mode);
 
@@ -488,6 +491,11 @@ impl MaterialTwoPass {
         for (i, slot) in slots.enumerate() {
             let refs = material_pipeline.slot_texture_refs(slot);
             let texture_bg = texture_pool.material_bind_group(device, &refs);
+            let shader = material_pipeline.slot_surface(slot).map(|(guid, _)| guid);
+            let query = scopes.map(|s| match parent {
+                Some(p) => s.begin_child(crate::meshlet::shader_scope(shader), encoder, p),
+                None => s.begin(crate::meshlet::shader_scope(shader), encoder),
+            });
             let color_load = if i == 0 {
                 wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
             } else {
@@ -538,6 +546,10 @@ impl MaterialTwoPass {
             pass.set_bind_group(4, &texture_bg, &[]);
             pass.set_bind_group(5, lights_bg, &[]);
             pass.draw(0..3, 0..1);
+            drop(pass);
+            if let (Some(scopes), Some(query)) = (scopes, query) {
+                scopes.end(encoder, query);
+            }
         }
     }
 }

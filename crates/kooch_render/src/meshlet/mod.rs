@@ -55,7 +55,7 @@ pub use material_pass::{
     MATERIAL_PASS_INTI_GROUP, MATERIAL_PREVIEW_FRAME, MATERIAL_SURFACE_PRELUDE, NEW_SURFACE_SHADER,
     RESOLVE_MATERIAL_DEPTH_SHADER, SHADING_TILE_SIZE, SURFACE_RECONSTRUCT_SHADER,
     VISIBILITY_BUFFER_RESOLVE_SHADER, compose_material_shader, compose_preview_shader,
-    validate_preview, validate_surface,
+    shader_scope, validate_preview, validate_surface,
 };
 pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshBounds, MeshDescriptor, MeshHandle};
 pub use reject_overlay::{MeshletRejectOverlay, RejectReason};

@@ -608,6 +608,8 @@ impl Vbuf64Stage {
                     self.mip_bias_scale(),
                     time,
                     debug_mode,
+                    scopes,
+                    query.as_ref(),
                 );
             } else if self.size != self.output_size {
                 // 🔴 The fragment path shades a render-sized material depth buffer onto the
@@ -633,6 +635,8 @@ impl Vbuf64Stage {
                     self.size,
                     time,
                     debug_mode,
+                    scopes,
+                    query.as_ref(),
                 );
             }
             if let (Some(scopes), Some(query)) = (scopes, query) {

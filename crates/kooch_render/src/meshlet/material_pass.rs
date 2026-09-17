@@ -59,6 +59,15 @@ pub const MATERIAL_PASS_CONTACT_DEPTH_BINDING: u32 = 4;
 /// march, the Inti shading model, the debug views (or the stub that removes them), the surface
 /// contract, the code generated from the shader's parameters, the surface body, then the frame.
 /// Stands in for a WGSL `#import`.
+/// The GPU scope a material's shading is timed under: one label per shader, so every material using
+/// it adds to the same number (#1159). `None` is the engine's built-in surface.
+pub fn shader_scope(shader: Option<kooch_core::Guid>) -> String {
+    match shader {
+        Some(guid) => format!("shader {guid}"),
+        None => "shader built-in".to_owned(),
+    }
+}
+
 pub fn compose_material_shader(frame: &str, params: &str, surface: &str, debug: bool) -> String {
     let contact = crate::contact_shadow::contact_shadow_shader(
         MATERIAL_PASS_CONTACT_UBO_BINDING,
