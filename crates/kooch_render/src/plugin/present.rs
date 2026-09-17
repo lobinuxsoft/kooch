@@ -2,7 +2,7 @@
 //! and the present (#392).
 
 use kooch_core::event::{AppExit, Events};
-use kooch_core::gpu::GpuContext;
+use kooch_core::gpu::{GpuContext, TargetPool};
 use kooch_core::resource::Resources;
 use kooch_core::time::Time;
 use wgpu::{CurrentSurfaceTexture, SurfaceTexture};
@@ -41,16 +41,34 @@ pub(super) fn present_frame_system(resources: &mut Resources) {
         resources.insert(blit);
         return;
     };
+    // Cloned out of the pool: the frame records with it while the pool goes on serving whoever else
+    // asks. A view is a handle, so this is a refcount rather than a texture.
+    let depth_view = resources
+        .get::<TargetPool>()
+        .and_then(|pool| depth.view(pool));
+    let Some(depth_view) = depth_view else {
+        resources.insert(gpu);
+        resources.insert(sky_pass);
+        resources.insert(stage);
+        resources.insert(blit);
+        resources.insert(depth);
+        return;
+    };
 
     let outcome = acquire_and_present(
         &gpu,
         &mut sky_pass,
         &stage,
         &blit,
-        &depth.view,
+        &depth_view,
         resources,
         &setup,
     );
+
+    // After the frame's last submit: a slot released this frame starts its retirement now.
+    if let Some(pool) = resources.get_mut::<TargetPool>() {
+        pool.end_frame();
+    }
 
     resources.insert(gpu);
     resources.insert(sky_pass);

@@ -1,7 +1,7 @@
 //! What the frame needs before anything is recorded: the surface's size, the depth target, the
 //! assets the meshlet stage reads, and which camera the scene is seen through (#392).
 
-use kooch_core::gpu::GpuContext;
+use kooch_core::gpu::{GpuContext, TargetPool};
 use kooch_core::resource::Resources;
 use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_ecs::perspective_camera::PerspectiveCamera;
@@ -27,11 +27,13 @@ pub(super) fn prepare_frame_system(resources: &mut Resources) {
     };
     let (w, h) = gpu.size();
 
+    let mut pool = resources.remove::<TargetPool>().unwrap_or_default();
     let mut depth = resources
         .remove::<GameDepth>()
-        .unwrap_or_else(|| GameDepth::new(gpu.device(), (w, h)));
-    depth.ensure(gpu.device(), (w, h));
+        .unwrap_or_else(|| GameDepth::new(gpu.device(), &mut pool, (w, h)));
+    depth.ensure(gpu.device(), &mut pool, (w, h));
     resources.insert(depth);
+    resources.insert(pool);
 
     if let Some(mut stage) = resources.remove::<MeshletRenderStage>() {
         stage.resize(gpu.device(), (w, h));
