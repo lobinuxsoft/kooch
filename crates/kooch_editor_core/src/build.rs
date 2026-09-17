@@ -9,6 +9,7 @@ pub mod mingw;
 pub mod package;
 pub mod platform;
 pub mod preset;
+pub mod scene_features;
 
 pub use compile::{BuildJob, BuildStatus};
 pub use key::project_key;

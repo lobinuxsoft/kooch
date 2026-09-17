@@ -51,6 +51,11 @@ def members() -> list[str]:
         sys.exit("no `members` array in Cargo.toml")
     paths = re.findall(r"\"([^\"]+)\"", block.group(1))
     names = []
+    # 🔴 The root package is a member without being listed: `kooch` was left at the old version in
+    # the lock on every bump, so each merge put a stale Cargo.lock on development.
+    root = re.search(r"^\[package\]\s*\nname\s*=\s*\"([^\"]+)\"", text, re.M)
+    if root:
+        names.append(root.group(1))
     for path in paths:
         manifest = ROOT / path / "Cargo.toml"
         name = re.search(r"^name\s*=\s*\"([^\"]+)\"", manifest.read_text(), re.M)
@@ -77,9 +82,9 @@ def write_manifest(new: str) -> None:
 def write_lockfile(old: str, new: str, names: list[str]) -> int:
     """Retag every workspace member in `Cargo.lock`. Returns how many moved.
 
-    Only a `[[package]]` block whose `name` is a member and whose version
-    is the *old* one is touched, so a third-party crate that happens to
-    share the version number is left alone.
+    Only a `[[package]]` block whose `name` is a member is touched, so a third-party crate is left
+    alone. 🔴 Whatever version it had: matching the *old* one only left an already stale entry stale
+    forever.
     """
     if not LOCKFILE.exists():
         return 0
@@ -88,7 +93,7 @@ def write_lockfile(old: str, new: str, names: list[str]) -> int:
 
     def retag(match: re.Match) -> str:
         nonlocal moved
-        if match.group("name") in names and match.group("version") == old:
+        if match.group("name") in names and match.group("version") != new:
             moved += 1
             return f'{match.group("head")}{new}"'
         return match.group(0)
@@ -179,12 +184,13 @@ def main() -> int:
         return 0
 
     new = args.exact if args.exact else bumped(current, args.bump)
-    if new == current:
+    if new != current:
+        write_manifest(new)
+    # Even at the right version: a lock left stale by an earlier merge is retagged here, not never.
+    moved = write_lockfile(current, new, members())
+    if new == current and moved == 0:
         print(f"already at {new}")
         return 0
-
-    write_manifest(new)
-    moved = write_lockfile(current, new, members())
     print(f"{current} -> {new} ({moved} lockfile entries)")
 
     if args.check:
