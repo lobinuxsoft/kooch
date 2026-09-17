@@ -69,6 +69,9 @@ pub struct GpuScopes {
     /// and it repeats every frame. Log it once.
     reported_error: bool,
     frame_ms: Option<f32>,
+    /// The last finished frame's milliseconds per label, summed over every scope that carries it:
+    /// what one shader cost across all the materials using it (#1159).
+    totals: std::collections::HashMap<String, f32>,
 }
 
 /// Handle for one open GPU scope, closed by [`GpuScopes::end`].
@@ -101,6 +104,7 @@ impl GpuScopes {
                 timestamp_period: queue.get_timestamp_period(),
                 reported_error: false,
                 frame_ms: None,
+                totals: std::collections::HashMap::new(),
             }),
             Err(err) => {
                 tracing::warn!(?err, "GPU scopes disabled: profiler creation failed");
@@ -142,6 +146,36 @@ impl GpuScopes {
         }
     }
 
+    /// Opens a scope inside a render or compute pass, nested in `parent`. Measures only with
+    /// `TIMESTAMP_QUERY_INSIDE_PASSES`; without it the scope still names the region in a capture.
+    #[must_use]
+    pub fn begin_in<R: wgpu_profiler::ProfilerCommandRecorder>(
+        &self,
+        label: impl Into<String>,
+        pass: &mut R,
+        parent: Option<&GpuQuery>,
+    ) -> GpuQuery {
+        let parent = parent.and_then(Option::as_ref);
+        Some(self.profiler.begin_query(label, pass).with_parent(parent))
+    }
+
+    /// Closes a scope opened by [`Self::begin_in`], on the same pass.
+    pub fn end_in<R: wgpu_profiler::ProfilerCommandRecorder>(&self, pass: &mut R, query: GpuQuery) {
+        if let Some(query) = query {
+            self.profiler.end_query(pass, query);
+        }
+    }
+
+    /// Milliseconds the scopes labelled `label` took in the last finished frame, summed.
+    pub fn scope_ms(&self, label: &str) -> Option<f32> {
+        self.totals.get(label).copied()
+    }
+
+    /// Every label of the last finished frame with its summed milliseconds.
+    pub fn totals(&self) -> impl Iterator<Item = (&str, f32)> {
+        self.totals.iter().map(|(label, ms)| (label.as_str(), *ms))
+    }
+
     /// Copies this frame's timestamps out of their query sets. Must be
     /// recorded on the last encoder of the frame, before its submit,
     /// and after every scope is closed.
@@ -166,6 +200,8 @@ impl GpuScopes {
         }
         if let Some(results) = self.profiler.process_finished_frame(self.timestamp_period) {
             self.frame_ms = Some(gpu_span_ms(&results));
+            self.totals.clear();
+            sum_by_label(&results, &mut self.totals);
             puffin_bridge::report(&results);
         }
     }
@@ -179,6 +215,21 @@ pub(crate) fn gpu_span_ms(results: &[wgpu_profiler::GpuTimerQueryResult]) -> f32
         .filter_map(|scope| scope.time.as_ref())
         .map(|span| (span.end - span.start) as f32 * 1000.0)
         .sum()
+}
+
+/// Adds each scope's milliseconds under its label, children included.
+#[cfg(feature = "gpu-profiler")]
+pub(crate) fn sum_by_label(
+    results: &[wgpu_profiler::GpuTimerQueryResult],
+    totals: &mut std::collections::HashMap<String, f32>,
+) {
+    for scope in results {
+        if let Some(span) = &scope.time {
+            let ms = (span.end - span.start) as f32 * 1000.0;
+            *totals.entry(scope.label.clone()).or_default() += ms;
+        }
+        sum_by_label(&scope.nested_queries, totals);
+    }
 }
 
 /// GPU scopes compiled out. Every method is present and does nothing,
@@ -210,6 +261,25 @@ impl GpuScopes {
     }
 
     pub fn end(&self, _encoder: &mut wgpu::CommandEncoder, _query: GpuQuery) {}
+
+    #[must_use]
+    pub fn begin_in<R>(
+        &self,
+        _label: impl Into<String>,
+        _pass: &mut R,
+        _parent: Option<&GpuQuery>,
+    ) -> GpuQuery {
+    }
+
+    pub fn end_in<R>(&self, _pass: &mut R, _query: GpuQuery) {}
+
+    pub fn scope_ms(&self, _label: &str) -> Option<f32> {
+        None
+    }
+
+    pub fn totals(&self) -> impl Iterator<Item = (&str, f32)> {
+        std::iter::empty()
+    }
 
     pub fn resolve(&mut self, _encoder: &mut wgpu::CommandEncoder) {}
 

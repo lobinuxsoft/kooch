@@ -63,6 +63,8 @@ pub(super) struct ViewportUi<'a> {
     pub(super) preview_texture_id: egui::TextureId,
     pub(super) preview_primitive: usize,
     pub(super) preview_refusal: Option<&'a str>,
+    /// Last finished frame's GPU milliseconds per shader scope (#1159).
+    pub(super) shader_costs: &'a [(String, f32)],
     pub(super) preview_request: &'a mut Option<crate::viewport::PreviewRequest>,
     pub(super) input_owner: &'a mut crate::input_focus::InputOwner,
 }
@@ -152,6 +154,7 @@ pub(super) fn run_editor_ui(
         preview_refusal,
         preview_request,
         input_owner,
+        shader_costs,
     } = viewport;
 
     // `run_ui` rather than `run`: egui 0.35 hands the closure a root `Ui`
@@ -310,6 +313,7 @@ pub(super) fn run_editor_ui(
                 preview_texture_id,
                 preview_primitive,
                 preview_refusal,
+                shader_costs,
                 preview_request,
                 input_owner,
                 viewport_input: input,

@@ -298,6 +298,9 @@ impl ComputeShading {
         // Seconds since the engine started, for a surface that moves (#1159).
         time: f32,
         debug_mode: u32,
+        // One scope per material, inside the shading pass (#1159).
+        scopes: Option<&kooch_core::gpu::GpuScopes>,
+        parent: Option<&kooch_core::gpu::GpuQuery>,
     ) {
         let pipeline = self.pipeline_for(device, debug_mode);
 
@@ -475,8 +478,14 @@ impl ComputeShading {
                     })
                 });
             pass.set_pipeline(custom.as_ref().unwrap_or(pipeline));
+            let shader = material_pipeline.slot_surface(slot).map(|(guid, _)| guid);
+            let query =
+                scopes.map(|s| s.begin_in(crate::meshlet::shader_scope(shader), &mut pass, parent));
             // Only the tiles this material covers (#1157).
             pass.dispatch_workgroups_indirect(&binned.args, u64::from(slot) * 12);
+            if let (Some(scopes), Some(query)) = (scopes, query) {
+                scopes.end_in(&mut pass, query);
+            }
         }
     }
 }

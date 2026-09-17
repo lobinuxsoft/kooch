@@ -6,6 +6,11 @@ use egui::Ui;
 mod local;
 #[cfg(feature = "profiling")]
 mod remote;
+mod shaders;
+
+pub(crate) use shaders::shader_cost;
+#[cfg(feature = "profiling")]
+pub use shaders::shader_costs_in;
 
 /// Frames left before re-asking puffin for the full scope snapshot.
 ///
@@ -94,7 +99,11 @@ pub fn keep_all_frames(view: &mut puffin::FrameView) {
 static SHOW_REMOTE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Draws the profiler, or the reason there is none.
-pub fn draw_profiler_content(ui: &mut Ui) {
+pub fn draw_profiler_content(
+    ui: &mut Ui,
+    catalog: &[crate::panels::inspector::AssetCatalogEntry],
+    shader_costs: &[(String, f32)],
+) {
     #[cfg(feature = "profiling")]
     {
         use std::sync::atomic::Ordering;
@@ -113,16 +122,18 @@ pub fn draw_profiler_content(ui: &mut Ui) {
         SHOW_REMOTE.store(remote_selected, Ordering::Relaxed);
         ui.separator();
 
+        // Each source's own shaders: the table under "A running game" is the game's, never this editor's.
         if remote_selected {
-            remote::draw(ui);
+            remote::draw(ui, catalog);
         } else {
+            shaders::draw(ui, &shaders::named_shader_costs(catalog, shader_costs));
             local::draw(ui);
         }
     }
 
     #[cfg(not(feature = "profiling"))]
     {
-        let _ = ui;
+        let _ = (catalog, shader_costs);
         ui.heading("This editor was built without its profiler");
         ui.add_space(8.0);
         ui.label(
