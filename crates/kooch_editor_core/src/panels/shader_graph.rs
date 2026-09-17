@@ -26,6 +26,8 @@ pub(crate) struct ShaderGraphView<'a> {
     pub preview: PreviewView<'a>,
     /// Every asset, for a texture node to pick the image its preview samples.
     pub catalog: &'a [AssetCatalogEntry],
+    /// What the saved shader cost the GPU last frame, across every material using it.
+    pub cost_ms: Option<f32>,
 }
 
 /// The preview column: what to draw, on what, and how to ask for something else.
@@ -91,6 +93,7 @@ pub(crate) fn draw_shader_graph_content(
         if ui.checkbox(&mut showing, "Minimap").changed() {
             show_minimap(ui, showing);
         }
+        cost(ui, graph, view.cost_ms);
         ui.weak("Right-click the background to add a node.");
     });
     ui.separator();
@@ -209,3 +212,16 @@ fn taken_look(ui: &egui::Ui) -> Option<egui::Pos2> {
 
 #[cfg(test)]
 mod tests;
+
+/// The graph's size and the saved shader's measured GPU time, against the handheld's frame.
+fn cost(ui: &mut egui::Ui, graph: &Graph, ms: Option<f32>) {
+    let nodes = graph.node_ids().count();
+    let time = ms.map_or_else(|| "— ms".to_owned(), |ms| format!("{ms:.2} ms"));
+    ui.label(format!("{nodes} nodes · {time} GPU"))
+        .on_hover_text(
+            "The last finished frame's GPU time shading this shader, summed over every material \
+         using it and every view drawing it — the Edit and Game views both count. Read it against \
+         a 13.9 ms handheld frame. It measures the saved file, not unsaved edits; \"—\" means \
+         nothing on screen uses it, or this GPU cannot time passes.",
+        );
+}

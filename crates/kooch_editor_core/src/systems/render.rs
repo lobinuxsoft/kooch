@@ -212,6 +212,17 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // 🔴 EVERY scope, not the meshlet chain. `meshlet_stats.gpu_frame_ms` times cull → raster →
     // shade for the main view and nothing else, so the shadow page passes were never in it: on
     // `dense.scene` the HUD read 0.55 ms while the pages took about nine.
+    // Each shader's share of the last finished GPU frame, for the graph's header and the profiler.
+    let shader_costs: Vec<(String, f32)> = resources
+        .get::<kooch_core::gpu::GpuScopes>()
+        .map(|scopes| {
+            scopes
+                .totals()
+                .filter(|(label, _)| label.starts_with("shader "))
+                .map(|(label, ms)| (label.to_owned(), ms))
+                .collect()
+        })
+        .unwrap_or_default();
     let gpu_ms = resources
         .get::<kooch_core::gpu::GpuScopes>()
         .and_then(|scopes| scopes.frame_ms())
@@ -483,6 +494,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                 .and_then(|preview| preview.refusal()),
             preview_request: &mut preview_request,
             input_owner: &mut input_owner,
+            shader_costs: &shader_costs,
             input: &mut viewport_input,
             controller: &controller_snapshot,
             handle_mode: resources

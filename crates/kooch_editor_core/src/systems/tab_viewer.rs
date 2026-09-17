@@ -113,6 +113,8 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) preview_texture_id: egui::TextureId,
     pub(crate) preview_primitive: usize,
     pub(crate) preview_refusal: Option<&'a str>,
+    /// GPU milliseconds per shader scope, from the last finished frame (#1159).
+    pub(crate) shader_costs: &'a [(String, f32)],
     pub(crate) preview_request: &'a mut Option<crate::viewport::PreviewRequest>,
     /// Asset Browser folder selection — the drag-and-drop import target.
     pub(crate) current_folder: &'a mut Option<std::path::PathBuf>,
@@ -304,6 +306,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                     .open_shader_graph
                     .as_ref()
                     .map(|open| crate::shader_graph::snapshot(&open.graph));
+                let cost_ms = path.as_deref().and_then(|path| self.shader_cost(path));
                 let requested = crate::panels::shader_graph::draw_shader_graph_content(
                     ui,
                     crate::panels::shader_graph::ShaderGraphView {
@@ -317,6 +320,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                             request: self.preview_request,
                         },
                         catalog: self.asset_catalog,
+                        cost_ms,
                     },
                 );
                 // Anything the panel changed makes the file behind it stale.
@@ -367,7 +371,9 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             EditorTab::Systems => {
                 crate::panels::systems::draw_systems_content(ui, self.systems, self.actions)
             }
-            EditorTab::Profiler => crate::panels::profiler::draw_profiler_content(ui),
+            EditorTab::Profiler => {
+                crate::panels::profiler::draw_profiler_content(ui, &self.named_shader_costs())
+            }
             EditorTab::Performance => crate::panels::performance::draw_performance_panel(
                 ui,
                 self.perf_stats,
@@ -406,5 +412,15 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
 
     fn closeable(&mut self, _tab: &mut Self::Tab) -> bool {
         true
+    }
+}
+
+impl EditorTabViewer<'_> {
+    fn shader_cost(&self, path: &std::path::Path) -> Option<f32> {
+        crate::panels::profiler::shader_cost(self.asset_catalog, self.shader_costs, path)
+    }
+
+    fn named_shader_costs(&self) -> Vec<(String, f32)> {
+        crate::panels::profiler::named_shader_costs(self.asset_catalog, self.shader_costs)
     }
 }

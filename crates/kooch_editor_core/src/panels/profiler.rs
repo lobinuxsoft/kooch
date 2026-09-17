@@ -6,6 +6,9 @@ use egui::Ui;
 mod local;
 #[cfg(feature = "profiling")]
 mod remote;
+mod shaders;
+
+pub(crate) use shaders::{named_shader_costs, shader_cost};
 
 /// Frames left before re-asking puffin for the full scope snapshot.
 ///
@@ -94,9 +97,10 @@ pub fn keep_all_frames(view: &mut puffin::FrameView) {
 static SHOW_REMOTE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Draws the profiler, or the reason there is none.
-pub fn draw_profiler_content(ui: &mut Ui) {
+pub fn draw_profiler_content(ui: &mut Ui, shader_costs: &[(String, f32)]) {
     #[cfg(feature = "profiling")]
     {
+        shaders::draw(ui, shader_costs);
         use std::sync::atomic::Ordering;
 
         let mut remote_selected = SHOW_REMOTE.load(Ordering::Relaxed);
@@ -122,7 +126,7 @@ pub fn draw_profiler_content(ui: &mut Ui) {
 
     #[cfg(not(feature = "profiling"))]
     {
-        let _ = ui;
+        let _ = shader_costs;
         ui.heading("This editor was built without its profiler");
         ui.add_space(8.0);
         ui.label(
