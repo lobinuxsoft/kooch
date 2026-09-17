@@ -31,6 +31,8 @@ fn timestamp_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     if !adapter.features().contains(wanted) {
         return None;
     }
+    // Inside passes too, where the adapter has it: the compute shading path times each material there.
+    let wanted = wanted | (adapter.features() & wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES);
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("gpu_scopes_test_device"),
         required_features: wanted,
@@ -213,4 +215,97 @@ fn an_unresolved_scope_is_skipped() {
         tid: std::thread::current().id(),
     };
     assert_eq!(gpu_span_ms(&[unresolved]), 0.0);
+}
+
+/// One shader's cost is every scope carrying its label, however deep: two materials using the same
+/// shader are two scopes nested in the shading pass, and the graph shows their sum (#1159).
+#[test]
+fn same_labels_sum_across_depths() {
+    let scope = |label: &str, start: f64, end: f64, nested| wgpu_profiler::GpuTimerQueryResult {
+        label: label.to_owned(),
+        pid: 0,
+        tid: std::thread::current().id(),
+        time: Some(start..end),
+        nested_queries: nested,
+    };
+    let results = vec![scope(
+        "shade",
+        0.0,
+        0.010,
+        vec![
+            scope("shader a", 0.0, 0.002, vec![]),
+            scope("shader b", 0.002, 0.005, vec![]),
+            scope("shader a", 0.005, 0.006, vec![]),
+        ],
+    )];
+
+    let mut totals = std::collections::HashMap::new();
+    sum_by_label(&results, &mut totals);
+
+    let a = totals["shader a"];
+    assert!((a - 3.0).abs() < 1e-3, "shader a: {a} ms");
+    assert!((totals["shader b"] - 3.0).abs() < 1e-3);
+    assert!((totals["shade"] - 10.0).abs() < 1e-3);
+}
+
+/// A scope opened inside a compute pass (one per material on the compute shading path) comes back
+/// with a time under its label. Skipped where the adapter cannot write timestamps inside passes.
+#[test]
+fn a_pass_scope_is_timed() {
+    let _guard = PUFFIN.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = timestamp_device() else {
+        eprintln!("skipped: no adapter with timestamp queries");
+        return;
+    };
+    if !device
+        .features()
+        .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES)
+    {
+        eprintln!("skipped: no timestamps inside passes");
+        return;
+    }
+    let mut scopes = GpuScopes::new(&device, &queue).expect("profiler settings are valid");
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("busy"),
+        source: wgpu::ShaderSource::Wgsl(
+            "@compute @workgroup_size(8) fn main() { var x = 0u; for (var i = 0u; i < 64u; i++) { x += i; } }"
+                .into(),
+        ),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("busy"),
+        layout: None,
+        module: &module,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+
+    for _ in 0..8 {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let parent = scopes.begin("shade", &mut encoder);
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            for _ in 0..2 {
+                let query = scopes.begin_in("shader a", &mut pass, Some(&parent));
+                pass.dispatch_workgroups(64, 64, 1);
+                scopes.end_in(&mut pass, query);
+            }
+        }
+        scopes.end(&mut encoder, parent);
+        scopes.resolve(&mut encoder);
+        queue.submit(Some(encoder.finish()));
+        let _ = device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(30)),
+        });
+        scopes.end_frame(&queue);
+    }
+
+    assert!(
+        scopes.scope_ms("shader a").is_some(),
+        "no time for the in-pass scope: {:?}",
+        scopes.totals().collect::<Vec<_>>()
+    );
 }
