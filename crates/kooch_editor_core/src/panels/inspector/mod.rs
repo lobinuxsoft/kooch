@@ -13,6 +13,8 @@ mod widgets;
 
 #[cfg(test)]
 mod id_stability;
+#[cfg(test)]
+mod snapshot_tests;
 
 use std::collections::{HashMap, HashSet};
 
@@ -35,6 +37,20 @@ pub(crate) use asset_view::{
     PrefabComponentView, PrefabDetail, PrefabEntityView, ResolvedComponent,
 };
 pub(crate) use widgets::{AssetCatalogEntry, AssetSource, draw_asset_picker};
+
+/// A detail snapshot and the asset it was gathered for. The selection can change during the
+/// frame, after the snapshot was taken; drawing it under another asset edits the wrong file (#1189).
+pub(crate) struct AssetSnapshot {
+    pub guid: Guid,
+    pub detail: AssetDetail,
+}
+
+impl AssetSnapshot {
+    /// The detail, only if it belongs to `guid`.
+    pub(crate) fn of(snapshot: Option<&Self>, guid: Guid) -> Option<&AssetDetail> {
+        snapshot.filter(|s| s.guid == guid).map(|s| &s.detail)
+    }
+}
 
 /// Threshold for considering a cached Euler still in sync with the
 /// underlying quaternion. Compared against `|dot(actual, reconstructed)|`
@@ -79,7 +95,7 @@ pub(crate) fn draw_inspector_content(
     rotation_display_mode: &mut RotationDisplayMode,
     asset_catalog: &[AssetCatalogEntry],
     selected_asset: Option<Guid>,
-    asset_detail: Option<&AssetDetail>,
+    asset_detail: Option<&AssetSnapshot>,
 ) {
     if focused {
         nav.handle_keyboard(ui);
@@ -96,7 +112,7 @@ pub(crate) fn draw_inspector_content(
         asset_view::draw_asset_inspector(
             ui,
             entry,
-            asset_detail,
+            AssetSnapshot::of(asset_detail, guid),
             asset_catalog,
             euler_cache,
             entities,
