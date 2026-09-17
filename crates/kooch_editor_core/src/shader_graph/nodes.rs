@@ -7,8 +7,11 @@
 
 use serde::{Deserialize, Serialize};
 
+mod docs;
 mod meta;
 mod params;
+
+pub(crate) use docs::Width;
 
 /// One node of a graph.
 ///

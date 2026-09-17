@@ -485,3 +485,22 @@ fn every_pin_compiles() {
         }
     }
 }
+
+/// Every pin the menu offers says how wide it is and what it is for, one entry per pin: a pin
+/// added without its line would show an empty tooltip, and one line out of step would explain the
+/// wrong pin.
+#[test]
+fn every_pin_is_documented() {
+    for node in palette() {
+        let name = node.title();
+        assert!(!node.about().is_empty(), "{name} says nothing");
+        assert_eq!(
+            node.input_docs().len(),
+            node.inputs().len(),
+            "{name}'s inputs and their docs are out of step"
+        );
+        for (pin, (_, about)) in node.inputs().iter().zip(node.input_docs()) {
+            assert!(!about.is_empty(), "{name}'s {pin} says nothing");
+        }
+    }
+}

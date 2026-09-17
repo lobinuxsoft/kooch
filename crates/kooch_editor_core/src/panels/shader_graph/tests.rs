@@ -67,13 +67,21 @@ fn pin_names_sit_beside_their_pins() {
     for (row, node) in nodes.iter().enumerate() {
         graph.insert_node(Pos2::new(0.0, 260.0 * row as f32), node.clone());
     }
-    let outputs: Vec<&str> = nodes
+    let outputs: Vec<String> = nodes
         .iter()
-        .flat_map(|node| node.outputs().iter().map(|&(name, _)| name))
+        .flat_map(|node| {
+            let node = node.clone();
+            (0..node.outputs().len())
+                .map(move |i| super::pin::label(node.outputs()[i].0, node.output_doc(i).0))
+        })
         .collect();
-    let inputs: Vec<&str> = nodes
+    let inputs: Vec<String> = nodes
         .iter()
-        .flat_map(|node| node.inputs().iter().copied())
+        .flat_map(|node| {
+            let node = node.clone();
+            (0..node.inputs().len())
+                .map(move |i| super::pin::label(node.inputs()[i], node.input_docs()[i].0))
+        })
         .collect();
 
     let ctx = egui::Context::default();
@@ -115,8 +123,8 @@ fn pin_names_sit_beside_their_pins() {
             continue;
         };
         let name = text.galley.text();
-        let is_output = outputs.contains(&name);
-        if !is_output && !inputs.contains(&name) {
+        let is_output = outputs.iter().any(|o| o == name);
+        if !is_output && !inputs.iter().any(|i| i == name) {
             continue;
         }
         let drawn = Rect::from_min_size(text.pos, text.galley.size());
@@ -158,4 +166,88 @@ fn pin_names_sit_beside_their_pins() {
             );
         }
     }
+}
+
+/// Resting the pointer on a pin explains it: what it reads and what for (#1159). The pin draws its
+/// own tooltip, since egui-snarl hands a pin nothing but a painter.
+#[test]
+fn a_resting_pointer_explains_pins() {
+    use crate::shader_graph::Node;
+    use egui_snarl::ui::SnarlWidget;
+
+    let mut graph = Graph::new();
+    graph.insert_node(Pos2::new(40.0, 40.0), Node::Panner);
+    let ctx = egui::Context::default();
+    let mut run = |time: f64, events: Vec<egui::Event>| {
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 1100.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let mut viewer = super::viewer::Viewer {
+                    fit: None,
+                    catalog: &[],
+                    drift: Vec2::ZERO,
+                    look_at: None,
+                    panel: ui.max_rect(),
+                    transform: TSTransform::IDENTITY,
+                };
+                SnarlWidget::new()
+                    .id(egui::Id::new("tooltips"))
+                    .show(&mut graph, &mut viewer, ui);
+            },
+        )
+    };
+    let texts = |frame: &egui::FullOutput| -> Vec<String> {
+        frame
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect()
+    };
+    let mut frame = run(0.0, vec![]);
+    for step in 1..4 {
+        frame = run(step as f64 * 0.1, vec![]);
+    }
+    // The speed pin: the second input, the lower of the two leftmost circles.
+    let circles: Vec<Pos2> = frame
+        .shapes
+        .iter()
+        .filter_map(|s| match &s.shape {
+            egui::Shape::Circle(c) => Some(c.center),
+            _ => None,
+        })
+        .collect();
+    let left = circles.iter().map(|c| c.x).fold(f32::INFINITY, f32::min);
+    let speed = circles
+        .iter()
+        .filter(|c| (c.x - left).abs() < 1.0)
+        .copied()
+        .max_by(|a, b| a.y.total_cmp(&b.y))
+        .expect("the panner draws its pins");
+    let about = "How far it moves per second: x along U, y along V.";
+
+    run(1.0, vec![egui::Event::PointerMoved(speed)]);
+    let moving = run(1.05, vec![]);
+    let mut rested = run(2.0, vec![]);
+    for step in 1..3 {
+        rested = run(2.0 + step as f64 * 0.1, vec![]);
+    }
+
+    assert!(
+        !texts(&moving).iter().any(|t| t == about),
+        "shown before the delay"
+    );
+    assert!(
+        texts(&rested).iter().any(|t| t == about),
+        "not explained: {:?}",
+        texts(&rested)
+    );
+    assert!(texts(&rested).iter().any(|t| t == "speed (2)"));
 }
