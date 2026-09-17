@@ -2,7 +2,7 @@
 //! sides share a compiler, which [`version`](crate::version) checks first.
 
 use crate::component::{ComponentSchema, RegisterError};
-use crate::types::Stage;
+use crate::types::{Order, Stage};
 
 /// A plugin system, run each frame with the same [`Engine`] handle the plugin got at build time.
 pub type PluginSystem = Box<dyn FnMut(&mut dyn Engine) + Send + Sync>;
@@ -23,6 +23,13 @@ pub trait Engine {
 
     /// Registers a system to run at `stage` every frame.
     fn add_system(&mut self, stage: Stage, system: PluginSystem);
+
+    /// Registers a system that runs where `order` puts it inside `stage` — how a plugin runs after
+    /// an engine pass without knowing which plugin loaded first (#392).
+    fn add_ordered(&mut self, stage: Stage, order: Order, system: PluginSystem) {
+        let _ = order;
+        self.add_system(stage, system);
+    }
 
     /// Writes a line to the engine's log.
     fn log(&self, message: &str);

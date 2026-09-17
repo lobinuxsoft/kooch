@@ -4,7 +4,7 @@ use crate::event::{AppExit, Events};
 use crate::plugin::{Plugin, PluginGroup};
 use crate::resource::Resources;
 use crate::runner::{Runner, default_runner};
-use crate::schedule::Schedule;
+use crate::schedule::{Order, Schedule};
 use crate::stage::Stage;
 use crate::system::{GpuSystem, System};
 
@@ -117,6 +117,15 @@ impl App {
         self
     }
 
+    /// Adds a closure that runs where `order` puts it inside the stage (#392).
+    pub fn add_ordered<F>(&mut self, stage: Stage, order: Order, system: F) -> &mut Self
+    where
+        F: FnMut(&mut Resources) + Send + Sync + 'static,
+    {
+        self.schedule.add_ordered(stage, order, system);
+        self
+    }
+
     /// Adds a struct implementing [`System`] at the specified stage.
     pub fn add_cpu_system(&mut self, stage: Stage, system: impl System) -> &mut Self {
         self.schedule.add_cpu_system(stage, system);
@@ -126,6 +135,28 @@ impl App {
     /// Adds a [`GpuSystem`] at the specified stage.
     pub fn add_gpu_system(&mut self, stage: Stage, system: impl GpuSystem) -> &mut Self {
         self.schedule.add_gpu_system(stage, system);
+        self
+    }
+
+    /// Adds a [`System`] that runs where `order` puts it.
+    pub fn add_cpu_ordered(
+        &mut self,
+        stage: Stage,
+        order: Order,
+        system: impl System,
+    ) -> &mut Self {
+        self.schedule.add_cpu_ordered(stage, order, system);
+        self
+    }
+
+    /// Adds a [`GpuSystem`] that runs where `order` puts it.
+    pub fn add_gpu_ordered(
+        &mut self,
+        stage: Stage,
+        order: Order,
+        system: impl GpuSystem,
+    ) -> &mut Self {
+        self.schedule.add_gpu_ordered(stage, order, system);
         self
     }
 

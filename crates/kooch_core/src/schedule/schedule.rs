@@ -8,6 +8,7 @@ use super::any_system::AnySystem;
 use super::catalog::{SystemCatalog, SystemRecord};
 use super::gpu_batch::run_gpu_batch;
 use super::identity::{SystemInfo, SystemKey, SystemSource};
+use super::order::{Order, sort};
 use super::toggles::SystemToggles;
 
 /// A system function that operates on resources.
@@ -62,32 +63,54 @@ impl Schedule {
     where
         F: FnMut(&mut Resources) + Send + Sync + 'static,
     {
+        self.add_ordered(stage, Order::default(), system);
+    }
+
+    /// Adds a closure that runs where `order` puts it (#392).
+    pub fn add_ordered<F>(&mut self, stage: Stage, order: Order, system: F)
+    where
+        F: FnMut(&mut Resources) + Send + Sync + 'static,
+    {
         let key = self.mint_key(std::any::type_name::<F>());
-        self.stages.entry(stage).or_default().push(AnySystem::cpu(
+        let system = AnySystem::cpu(
             Box::new(FunctionSystem::new(system)),
             self.attributing,
             key,
-        ));
+            order,
+        );
+        self.push(stage, system);
     }
 
     /// Adds a struct implementing [`System`] at the specified stage.
     pub fn add_cpu_system(&mut self, stage: Stage, system: impl System) {
+        self.add_cpu_ordered(stage, Order::default(), system);
+    }
+
+    /// Adds a [`System`] that runs where `order` puts it.
+    pub fn add_cpu_ordered(&mut self, stage: Stage, order: Order, system: impl System) {
         let key = self.mint_key(system.name());
-        self.stages.entry(stage).or_default().push(AnySystem::cpu(
-            Box::new(system),
-            self.attributing,
-            key,
-        ));
+        let system = AnySystem::cpu(Box::new(system), self.attributing, key, order);
+        self.push(stage, system);
     }
 
     /// Adds a [`GpuSystem`] at the specified stage.
     pub fn add_gpu_system(&mut self, stage: Stage, system: impl GpuSystem) {
+        self.add_gpu_ordered(stage, Order::default(), system);
+    }
+
+    /// Adds a [`GpuSystem`] that runs where `order` puts it.
+    pub fn add_gpu_ordered(&mut self, stage: Stage, order: Order, system: impl GpuSystem) {
         let key = self.mint_key(system.name());
-        self.stages.entry(stage).or_default().push(AnySystem::gpu(
-            Box::new(system),
-            self.attributing,
-            key,
-        ));
+        let system = AnySystem::gpu(Box::new(system), self.attributing, key, order);
+        self.push(stage, system);
+    }
+
+    /// Files a system under its stage and resolves the stage's order. Sorting here rather than per
+    /// frame: registration happens once, `run_stage` happens sixty times a second.
+    fn push(&mut self, stage: Stage, system: AnySystem) {
+        let systems = self.stages.entry(stage).or_default();
+        systems.push(system);
+        sort(systems, stage);
     }
 
     /// Runs all systems in the specified stage.

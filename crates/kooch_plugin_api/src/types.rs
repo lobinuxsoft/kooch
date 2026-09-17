@@ -76,3 +76,31 @@ pub const fn unpack_entity(handle: u64) -> (u32, u32) {
 
 #[cfg(test)]
 mod tests;
+
+/// Where a plugin's system runs inside its stage, by system name (#392). Mirrors
+/// `kooch_core::schedule::Order`; a name nothing answers to is dropped.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Order {
+    pub before: Vec<String>,
+    pub after: Vec<String>,
+}
+
+impl Order {
+    pub fn before(name: impl Into<String>) -> Self {
+        Self::default().and_before(name)
+    }
+
+    pub fn after(name: impl Into<String>) -> Self {
+        Self::default().and_after(name)
+    }
+
+    pub fn and_before(mut self, name: impl Into<String>) -> Self {
+        self.before.push(name.into());
+        self
+    }
+
+    pub fn and_after(mut self, name: impl Into<String>) -> Self {
+        self.after.push(name.into());
+        self
+    }
+}
