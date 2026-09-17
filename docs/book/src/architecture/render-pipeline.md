@@ -598,7 +598,10 @@ The decision not to revive it is not laziness. Bevy 0.19 **deleted their
 as an exclusive system and was single-threaded — the engine that made
 the pattern canonical retired it. Kóoch already has the replacement half
 written: `kooch_core`'s scheduler batches GPU systems into a shared
-encoder, and a system now says where it runs inside its stage:
+encoder — and a `GpuSystem` **records into that encoder**, opening the
+passes it needs (a compute pass, a render pass into a target, or
+several), wrapped in a debug group carrying its name. A system also says
+where it runs inside its stage:
 
 ```rust
 app.add_cpu_ordered(Stage::Render, Order::after("render_frame_system"), MyPass);
