@@ -2,10 +2,10 @@
 
 use kooch_plugin_api::component::{ComponentSchema, RegisterError};
 use kooch_plugin_api::engine_api::{Engine, PluginSystem};
-use kooch_plugin_api::types::Stage as PluginStage;
+use kooch_plugin_api::types::{Order as PluginOrder, Stage as PluginStage};
 
 use crate::resource::Resources;
-use crate::schedule::Schedule;
+use crate::schedule::{Order, Schedule};
 use crate::stage::Stage;
 
 use super::bridges::{ComponentBridge, EntityBridge};
@@ -100,14 +100,22 @@ impl Engine for EngineHost<'_> {
         result
     }
 
-    fn add_system(&mut self, stage: PluginStage, mut system: PluginSystem) {
+    fn add_system(&mut self, stage: PluginStage, system: PluginSystem) {
+        self.add_ordered(stage, PluginOrder::default(), system);
+    }
+
+    fn add_ordered(&mut self, stage: PluginStage, order: PluginOrder, mut system: PluginSystem) {
         let Some(schedule) = self.schedule.as_mut() else {
             tracing::error!(
                 "a plugin tried to add a system outside build(); the schedule is running"
             );
             return;
         };
-        schedule.add_system(map_stage(stage), move |resources: &mut Resources| {
+        let order = Order {
+            before: order.before,
+            after: order.after,
+        };
+        schedule.add_ordered(map_stage(stage), order, move |resources: &mut Resources| {
             let mut host = EngineHost::running(resources);
             system(&mut host);
         });

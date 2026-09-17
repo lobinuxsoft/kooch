@@ -589,15 +589,25 @@ What is genuinely still absent:
 
 ## Why there is no render graph
 
-There *was* one — `kooch_render::graph`, 497 lines, cycle detection and
+There *was* one — `kooch_render::graph`, 406 lines, cycle detection and
 topological sort — and **nothing ever instantiated it**. The real
-renderer was built beside it.
+renderer was built beside it, and the module is gone (#392).
 
 The decision not to revive it is not laziness. Bevy 0.19 **deleted their
 `RenderGraph`** and replaced it with ECS schedules, because the graph ran
 as an exclusive system and was single-threaded — the engine that made
 the pattern canonical retired it. Kóoch already has the replacement half
 written: `kooch_core`'s scheduler batches GPU systems into a shared
-encoder. What it needs is `before` / `after` ordering, not a second
-scheduler that looks official and is not
+encoder, and a system now says where it runs inside its stage:
+
+```rust
+app.add_cpu_ordered(Stage::Render, Order::after("render_frame_system"), MyPass);
+```
+
+`Order::before` / `Order::after` name a system — the same short name the
+Systems panel shows — because a plugin has no handle to a system the
+engine registered. A name nothing answers to is dropped (the plugin that
+owns it may not be loaded); a cycle is logged and the stage runs in
+registration order. A plugin gets the same thing through
+`Engine::add_ordered`
 ([#392](https://github.com/lobinuxsoft/kooch/issues/392)).

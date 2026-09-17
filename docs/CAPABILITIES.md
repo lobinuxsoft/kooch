@@ -23,7 +23,7 @@ was found by using the editor, never by reading the code.
   down why; the asset browser kept using `ui.selectable_label`.
 - `Query` — an entire archetype-matching query system — is used by tests
   and one file.
-- `RenderGraph` — 497 lines — is instantiated by nobody.
+- `RenderGraph` — 406 lines — was instantiated by nobody, and is deleted (#392).
 - `CollisionStarted` was emitted, resolved to entities and registered all
   along, and was not in the prelude — so a level could not have a goal, a
   checkpoint or a death plane. All three are one sensor (#1065).
@@ -80,7 +80,6 @@ are disjoint. Kóoch has the query half and not the scheduler half.
 
 | Capability | Where | Status | Notes |
 |---|---|---|---|
-| `RenderGraph`, `RenderNode`, `FnNode`, `NodeId` | `graph/` (497 lines) | **orphan** | DAG + cycle detection + topological sort (Kahn) + shared-encoder execution. PR-1 of #392. Its own module doc lists the follow-ups: *"migration of `SkyRenderPass` and the meshlet stage to graph nodes (separate PRs)"*. Those never happened, and the real renderer was built beside it. **Decide: migrate or delete.** Keeping an unused scheduler that looks authoritative is worse than either. |
 | Meshlet pipeline, Hi-Z, deferred, visibility buffer | `meshlet/`, `hi_z/` | connected | The renderer that actually runs. |
 | `surface_reconstruct.wgsl` | `shaders/` | connected (#441) | Barycentric world position / normal / uv / tangent, shared by both shading paths. Was the R64 path's alone; the R32 fallback averaged vertex normals and had no world position, which only stopped being invisible when a point light needed a distance. |
 | `MeshletDebugMode::Normals` | `meshlet/debug.rs` | connected (#441) | The old shading model, demoted to a dropdown entry. The discriminant is pinned by a test because two WGSL files compare against a literal `11u`. |
@@ -234,7 +233,6 @@ above reached something.
 
 | | Cost of leaving it | Where it goes |
 |---|---|---|
-| **`RenderGraph`** | 497 lines that *look* like the official way to add a pass, next to a renderer that does not use them. The next person to add a pass has to work out which one is real. | migrate the meshlet stage onto it, or delete it — #392 |
 | **Play standalone** | The only honest place to tune feel: remote Play costs a frame of latency. Reachable today only by leaving the editor and running `cargo run -- --game` with the env set by hand. | #720 |
 | **Interactive rebind** | The panel can bind through a picker, so this is polish rather than a hole — but `BeginRebind`/`CancelRebind` exist and nothing emits them, which reads as a feature. | emit them, or delete them |
 | **`MockInputBackend`** | Injecting input without hardware is what a cutscene, a tutorial and an automated gameplay test all need, and a game cannot reach it. | expose it through the prelude |

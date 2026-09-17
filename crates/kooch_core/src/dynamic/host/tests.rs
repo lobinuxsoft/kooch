@@ -137,3 +137,32 @@ fn spawning_goes_through_the_entity_bridge() {
     assert!(host.despawn_entity(42));
     assert!(!host.despawn_entity(1));
 }
+
+/// A plugin's constraint reaches the schedule: its system runs after the engine's, whichever
+/// registered first (#392).
+#[test]
+fn a_plugin_system_takes_its_place() {
+    struct Engine;
+    impl crate::system::System for Engine {
+        fn run(&mut self, _: &mut Resources) {}
+        fn name(&self) -> &str {
+            "engine_pass"
+        }
+    }
+
+    let mut resources = host_resources();
+    let mut schedule = Schedule::new();
+    {
+        let mut host = EngineHost::building(&mut resources, &mut schedule);
+        host.add_ordered(
+            PluginStage::Render,
+            PluginOrder::after("engine_pass"),
+            Box::new(|_| {}),
+        );
+    }
+    schedule.add_cpu_system(Stage::Render, Engine);
+
+    let systems = schedule.systems();
+    let names: Vec<&str> = systems.iter().map(|s| s.short_name()).collect();
+    assert_eq!(names.first(), Some(&"engine_pass"), "{names:?}");
+}

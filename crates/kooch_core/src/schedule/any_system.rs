@@ -1,4 +1,5 @@
 use super::identity::{SystemKey, SystemSource};
+use super::order::Order;
 use super::system_scope::{ScopeGuard, SystemScope};
 use crate::resource::Resources;
 use crate::system::{GpuSystem, System};
@@ -13,6 +14,8 @@ pub(super) struct AnySystem {
     /// What a toggle addresses it by. Built once at registration, so the
     /// per-frame check is a lookup rather than string work.
     key: SystemKey,
+    /// Where in its stage it runs (#392).
+    order: Order,
 }
 
 /// Either a CPU or GPU system.
@@ -22,22 +25,38 @@ pub(super) enum Kind {
 }
 
 impl AnySystem {
-    pub(super) fn cpu(system: Box<dyn System>, source: SystemSource, key: SystemKey) -> Self {
+    pub(super) fn cpu(
+        system: Box<dyn System>,
+        source: SystemSource,
+        key: SystemKey,
+        order: Order,
+    ) -> Self {
         Self {
             kind: Kind::Cpu(system),
             scope: SystemScope::default(),
             source,
             key,
+            order,
         }
     }
 
-    pub(super) fn gpu(system: Box<dyn GpuSystem>, source: SystemSource, key: SystemKey) -> Self {
+    pub(super) fn gpu(
+        system: Box<dyn GpuSystem>,
+        source: SystemSource,
+        key: SystemKey,
+        order: Order,
+    ) -> Self {
         Self {
             kind: Kind::Gpu(system),
             scope: SystemScope::default(),
             source,
             key,
+            order,
         }
+    }
+
+    pub(super) fn order(&self) -> &Order {
+        &self.order
     }
 
     pub(super) fn source(&self) -> SystemSource {

@@ -1,7 +1,6 @@
 //! kooch_render — renderers for kooch.
 
 pub mod contact_shadow;
-pub mod graph;
 pub mod hi_z;
 pub mod material;
 pub mod mesh;
@@ -23,7 +22,6 @@ pub mod view_camera;
 pub const VIEWPORT_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 pub use contact_shadow::{ContactShadowSettings, ContactShadowUbo, contact_shadow_shader};
-pub use graph::{FnNode, FrameInfo, GraphError, NodeId, RenderContext, RenderGraph, RenderNode};
 pub use hi_z::HiZ;
 pub use material::{MaterialParams, MaterialPool};
 pub use mesh::{Aabb, MeshVertex};
