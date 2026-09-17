@@ -2366,7 +2366,7 @@ dependencies = [
 
 [[package]]
 name = "kooch"
-version = "0.59.0"
+version = "0.60.0"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",
@@ -2549,6 +2549,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sysinfo",
+ "toml",
  "tracing",
  "wgpu",
  "winit",
