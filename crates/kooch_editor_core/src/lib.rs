@@ -38,7 +38,7 @@ pub(crate) mod panels;
 /// `puffin_http::Client` the panel drives and needs the same guard
 /// against a long capture discarding its own scope names.
 #[cfg(feature = "profiling")]
-pub use panels::profiler::keep_all_frames;
+pub use panels::profiler::{keep_all_frames, shader_costs_in};
 pub mod carry;
 pub mod code_reload;
 pub mod dlss_sdk;
@@ -57,8 +57,8 @@ pub(crate) mod remote_input;
 pub mod remote_mirror;
 pub mod remote_session;
 pub mod script_sync;
-pub mod shader_sync;
 pub(crate) mod shader_graph;
+pub mod shader_sync;
 
 /// 🔴 A profiling build with the per-system scopes compiled out is not a build that fails — it is a
 /// build whose captures look exactly like the ones from before the scopes existed.

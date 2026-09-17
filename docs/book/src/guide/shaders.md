@@ -293,6 +293,9 @@ the cost of a shader is every material using it added up:
 - The **Profiler** opens with **Shaders (GPU)**, every shader on screen by name, most expensive first,
   each as a share of the handheld's 13.9 ms frame.
 - The flamegraph shows them nested under the shading pass (`shade: fragment` or the compute path's).
+- **On the handheld**: with **A running game** selected, the table reads the frames the game sends over
+  the network, under the same names. A game built with the profiling preset carries the shader scopes;
+  run it on the OneXFly, connect, and the table is the handheld's, not the desktop's.
 
 What the number means:
 - **It is the last finished frame**, a few frames behind, because timestamps come back without

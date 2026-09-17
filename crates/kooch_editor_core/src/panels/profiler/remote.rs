@@ -34,7 +34,7 @@ impl Default for Remote {
 }
 
 /// Draws the connection controls and, once connected, the game's frames.
-pub(super) fn draw(ui: &mut Ui) {
+pub(super) fn draw(ui: &mut Ui, catalog: &[crate::panels::inspector::AssetCatalogEntry]) {
     let mut remote = REMOTE
         .get_or_init(Default::default)
         .lock()
@@ -110,6 +110,8 @@ pub(super) fn draw(ui: &mut Ui) {
         let mut frames = connection.frame_view();
         super::keep_all_frames(&mut frames);
         ui.separator();
+        let costs = super::shaders::shader_costs_in(&frames);
+        super::shaders::draw(ui, &super::shaders::named_shader_costs(catalog, &costs));
         ui.horizontal(|ui| {
             let stats = frames.stats();
             ui.label(format!(

@@ -371,9 +371,11 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             EditorTab::Systems => {
                 crate::panels::systems::draw_systems_content(ui, self.systems, self.actions)
             }
-            EditorTab::Profiler => {
-                crate::panels::profiler::draw_profiler_content(ui, &self.named_shader_costs())
-            }
+            EditorTab::Profiler => crate::panels::profiler::draw_profiler_content(
+                ui,
+                self.asset_catalog,
+                self.shader_costs,
+            ),
             EditorTab::Performance => crate::panels::performance::draw_performance_panel(
                 ui,
                 self.perf_stats,
@@ -418,9 +420,5 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
 impl EditorTabViewer<'_> {
     fn shader_cost(&self, path: &std::path::Path) -> Option<f32> {
         crate::panels::profiler::shader_cost(self.asset_catalog, self.shader_costs, path)
-    }
-
-    fn named_shader_costs(&self) -> Vec<(String, f32)> {
-        crate::panels::profiler::named_shader_costs(self.asset_catalog, self.shader_costs)
     }
 }

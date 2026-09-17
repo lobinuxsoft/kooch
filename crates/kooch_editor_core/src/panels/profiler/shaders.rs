@@ -74,5 +74,46 @@ pub(crate) fn named_shader_costs(
     named
 }
 
+/// The shader scopes of the latest frame a view holds, summed by label: what a game on the handheld
+/// sent over the network, read the way the local editor reads its own `GpuScopes`.
+#[cfg(feature = "profiling")]
+pub fn shader_costs_in(view: &puffin::FrameView) -> Vec<(String, f32)> {
+    let Some(unpacked) = view.latest_frame().and_then(|frame| frame.unpacked().ok()) else {
+        return Vec::new();
+    };
+    let mut totals: Vec<(String, f32)> = Vec::new();
+    for stream in unpacked.thread_streams.values() {
+        add_shader_scopes(view, &stream.stream, 0, &mut totals);
+    }
+    totals
+}
+
+/// 🔴 Recursive: a `Reader` walks one level of siblings, and the shader scopes are nested in the
+/// shading pass. Reading only the top level found none.
+#[cfg(feature = "profiling")]
+fn add_shader_scopes(
+    view: &puffin::FrameView,
+    stream: &puffin::Stream,
+    offset: u64,
+    totals: &mut Vec<(String, f32)>,
+) {
+    let Ok(reader) = puffin::Reader::with_offset(stream, offset) else {
+        return;
+    };
+    for scope in reader.flatten() {
+        if let Some(details) = view.scope_collection().fetch_by_id(&scope.id) {
+            let name = details.name();
+            if name.starts_with("shader ") {
+                let ms = scope.record.duration_ns as f32 / 1e6;
+                match totals.iter_mut().find(|(label, _)| label == name) {
+                    Some((_, total)) => *total += ms,
+                    None => totals.push((name.to_string(), ms)),
+                }
+            }
+        }
+        add_shader_scopes(view, stream, scope.child_begin_position, totals);
+    }
+}
+
 #[cfg(test)]
 mod tests;
