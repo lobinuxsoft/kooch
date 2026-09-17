@@ -471,6 +471,10 @@ scopes:
 - **`editor ui`** — what egui costs on the GPU, kept apart from the
   viewport passes. "Why is the editor slow" and "how expensive is my
   scene" are different questions and now have different rows.
+- **`shader <guid>`**, one per material inside the shading pass (#1159): on the fragment path around
+  each material's render pass, on the compute path inside the pass around its dispatch
+  (`GpuScopes::begin_in`). `GpuScopes::totals` sums them by label, so a shader's row is every
+  material using it; the Profiler's **Shaders (GPU)** table and the Shader Graph header read that.
 - ⚠️ **`sky`, `cull` and `raster + shade` appear twice per frame** — the
   View and Game viewports each render the scene, the same way the CPU
   scope `frame` does.
