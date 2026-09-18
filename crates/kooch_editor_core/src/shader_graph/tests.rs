@@ -200,6 +200,12 @@ fn every_node_compiles() {
                 source.lines().next(),
                 Some(format!("// kind: {kind}").as_str())
             );
+            // A post-process has a frame of its own, and no preview yet (#1201).
+            if kind == "post_process" {
+                kooch_render::meshlet::validate_post(&shader.params_wgsl(), &shader.source)
+                    .unwrap_or_else(|why| panic!("{name} does not compile: {why}"));
+                continue;
+            }
             kooch_render::meshlet::validate_surface(&shader.params_wgsl(), &shader.source)
                 .unwrap_or_else(|why| panic!("{name} does not compile: {why}"));
             kooch_render::meshlet::validate_preview(&shader.params_wgsl(), &shader.source)
@@ -522,4 +528,36 @@ fn every_pin_is_documented() {
 #[test]
 fn a_legacy_output_is_a_surface() {
     assert_eq!(Node::Output.migrated(), Node::surface_output());
+}
+
+/// 🔴 The Scene Color node is what a post-process is for, and it must not break a surface graph
+/// that happens to hold one: only a post-process frame declares `sample_scene` (#1201).
+#[test]
+fn scene_color_reads_only_in_post() {
+    let graph_with = |kind: &str| {
+        let mut graph = Graph::new();
+        let scene = graph.insert_node(Pos2::ZERO, Node::SceneColor);
+        let output = graph.insert_node(
+            Pos2::ZERO,
+            Node::ShaderOutput {
+                kind: kind.to_owned(),
+            },
+        );
+        graph.connect(
+            OutPinId {
+                node: scene,
+                output: 0,
+            },
+            InPinId {
+                node: output,
+                input: 0,
+            },
+        );
+        generate(&graph).unwrap()
+    };
+
+    let post = graph_with("post_process");
+    assert!(post.contains("sample_scene("), "{post}");
+    let surface = graph_with("surface");
+    assert!(!surface.contains("sample_scene("), "{surface}");
 }

@@ -28,6 +28,10 @@ pub const MATERIAL_COMPUTE_FRAME: &str = include_str!("../../shaders/material_fr
 /// `SurfaceOutput` (#1157).
 pub const MATERIAL_SURFACE_PRELUDE: &str = include_str!("../../shaders/material_surface.wgsl");
 
+/// The frame a post-process shader runs inside: one full-screen draw over the colour the camera
+/// produced (#1201). Entry points: `vs_fullscreen`, `fs_post`.
+pub const MATERIAL_POST_FRAME: &str = include_str!("../../shaders/material_frame_post.wgsl");
+
 /// The Shader Graph preview's frame: one primitive, rasterised, lit by a key light of its own.
 /// Entry points: `vs_preview`, `fs_preview`.
 pub const MATERIAL_PREVIEW_FRAME: &str = include_str!("../../shaders/material_frame_preview.wgsl");
@@ -107,6 +111,36 @@ pub fn compose_preview_shader(params: &str, surface: &str) -> String {
         MATERIAL_PREVIEW_FRAME,
     ]
     .join("\n")
+}
+
+/// A post-process shader's composition: the surface contract, the shader's parameters, its body and
+/// the post frame — no Inti, no visibility buffer. The frame hands it the scene instead.
+pub fn compose_post_shader(params: &str, post: &str) -> String {
+    [MATERIAL_SURFACE_PRELUDE, params, post, MATERIAL_POST_FRAME].join("\n")
+}
+
+/// Checks a post-process shader before a pipeline is built from it. Line numbers are the file's own.
+pub fn validate_post(params: &str, post: &str) -> Result<(), String> {
+    // How many lines sit ahead of the body, measured rather than counted: a message has to point
+    // into the file the author has, and the frame is composed after the body.
+    const MARK: &str = "//__body__";
+    let before = compose_post_shader(params, MARK)
+        .lines()
+        .position(|line| line == MARK)
+        .unwrap_or(0);
+    let composed = compose_post_shader(params, post);
+    let at = |line: usize| format!("line {}: ", line.saturating_sub(before));
+    let module = naga::front::wgsl::parse_str(&composed).map_err(|e| {
+        let line = e.location(&composed).map(|l| l.line_number as usize);
+        format!("{}{}", line.map(at).unwrap_or_default(), e.message())
+    })?;
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .map(|_| ())
+    .map_err(|e| e.as_inner().to_string())
 }
 
 /// The same check for the preview's frame. A graph is edited node by node, and most of those

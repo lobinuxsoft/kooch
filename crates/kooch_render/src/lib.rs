@@ -7,6 +7,7 @@ pub mod mesh;
 pub mod meshlet;
 pub mod perf;
 pub mod plugin;
+pub mod post_process;
 pub mod projection;
 pub mod quality;
 pub mod settings;

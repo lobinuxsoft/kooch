@@ -23,6 +23,9 @@ pub(super) struct Body<'a> {
     pub(super) next: u32,
     /// Intermediate `let`s a node writes before its own.
     pub(super) locals: u32,
+    /// Whether the body being written is a post-process, which is the only kind with a scene to
+    /// read (#1201).
+    pub(super) post: bool,
 }
 
 impl Body<'_> {
@@ -80,6 +83,15 @@ impl Body<'_> {
         let mut argument = |body: &mut Self, input: usize| body.input(id, input);
         let value = match &node {
             Node::Uv => "vec4<f32>(input.uv, 0.0, 0.0)".to_owned(),
+            Node::SceneColor => {
+                let uv = self.input_or(id, 0, "vec4<f32>(input.uv, 0.0, 0.0)")?;
+                match self.post {
+                    // Only a post-process frame has a scene to read; anywhere else the node is
+                    // black rather than a shader that will not compile.
+                    true => format!("sample_scene({uv}.xy)"),
+                    false => format!("vec4<f32>(0.0) * {uv}.x"),
+                }
+            }
             Node::WorldPosition => "vec4<f32>(input.world_position, 1.0)".to_owned(),
             Node::WorldNormal => "vec4<f32>(normalize(input.world_normal), 0.0)".to_owned(),
             Node::ViewDirection => {

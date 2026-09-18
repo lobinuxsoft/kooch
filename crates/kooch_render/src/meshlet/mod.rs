@@ -52,10 +52,11 @@ pub use loader::MeshletMeshLoader;
 pub use material_pass::{
     DEFAULT_SURFACE_SHADER, MATERIAL_COMPUTE_FRAME, MATERIAL_DEPTH_FORMAT, MATERIAL_FRAGMENT_FRAME,
     MATERIAL_PASS_CONTACT_DEPTH_BINDING, MATERIAL_PASS_CONTACT_UBO_BINDING,
-    MATERIAL_PASS_INTI_GROUP, MATERIAL_PREVIEW_FRAME, MATERIAL_SURFACE_PRELUDE, NEW_SURFACE_SHADER,
-    RESOLVE_MATERIAL_DEPTH_SHADER, SHADING_TILE_SIZE, SURFACE_RECONSTRUCT_SHADER,
-    VISIBILITY_BUFFER_RESOLVE_SHADER, compose_material_shader, compose_preview_shader,
-    shader_scope, validate_preview, validate_surface,
+    MATERIAL_PASS_INTI_GROUP, MATERIAL_POST_FRAME, MATERIAL_PREVIEW_FRAME,
+    MATERIAL_SURFACE_PRELUDE, NEW_SURFACE_SHADER, RESOLVE_MATERIAL_DEPTH_SHADER, SHADING_TILE_SIZE,
+    SURFACE_RECONSTRUCT_SHADER, VISIBILITY_BUFFER_RESOLVE_SHADER, compose_material_shader,
+    compose_post_shader, compose_preview_shader, shader_scope, validate_post, validate_preview,
+    validate_surface,
 };
 pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshBounds, MeshDescriptor, MeshHandle};
 pub use reject_overlay::{MeshletRejectOverlay, RejectReason};

@@ -21,6 +21,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         .find_map(|(id, node)| Some((id, node.output_kind()?.to_owned())))
         .ok_or("the graph has no Output node")?;
     let unlit = kind == "unlit";
+    let post = kind == "post_process";
 
     let wires: HashMap<InPinId, OutPinId> = graph.wires().map(|(from, to)| (to, from)).collect();
     let mut body = Body {
@@ -31,10 +32,11 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         lines: String::new(),
         next: 0,
         locals: 0,
+        post,
     };
     // What an unconnected output falls back to. 🔴 Not zero for the normal: `normalize` of it is
     // NaN, which naga refuses outright.
-    let fallbacks: &[&str] = if unlit {
+    let fallbacks: &[&str] = if unlit || post {
         &["vec4<f32>(0.0)", "vec4<f32>(1.0)"]
     } else {
         &[
@@ -60,16 +62,24 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     );
     source.push_str(&declarations(graph));
     source.push_str(&helpers(graph));
-    let (function, returns) = if unlit {
-        ("unlit", "UnlitOutput")
-    } else {
-        ("surface", "SurfaceOutput")
+    let (function, returns) = match (unlit, post) {
+        (true, _) => ("unlit", "UnlitOutput"),
+        (_, true) => ("post_process", "vec4<f32>"),
+        _ => ("surface", "SurfaceOutput"),
     };
     let _ = writeln!(source, "fn {function}(input: SurfaceInput) -> {returns} {{");
     if graph.node_ids().any(|(_, n)| n.declared().is_some()) {
         let _ = writeln!(source, "    let p = surface_params(input.material_id);");
     }
     source.push_str(&body.lines);
+    if post {
+        let _ = writeln!(
+            source,
+            "    return vec4<f32>({}.rgb, {}.x);\n}}",
+            outputs[0], outputs[1]
+        );
+        return finish(source);
+    }
     let _ = writeln!(source, "    var out: {returns};");
     if unlit {
         let _ = writeln!(source, "    out.color = {}.rgb;", outputs[0]);
@@ -82,13 +92,17 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         let _ = writeln!(source, "    out.emissive = {}.rgb;", outputs[4]);
     }
     let _ = writeln!(source, "    return out;\n}}");
-    // 🔴 The graph never writes a file the engine cannot read. A shader that fails to parse is
-    // written all the same, fails to reload, and leaves every reader — the Inspector above all —
-    // showing the parameters from before it, with nothing on screen saying why (#1159).
-    if let Err(error) = kooch_render::material::Shader::parse(&source) {
-        return Err(format!("{error}"));
+    finish(source)
+}
+
+/// 🔴 The graph never writes a file the engine cannot read. A shader that fails to parse is written
+/// all the same, fails to reload, and leaves every reader — the Inspector above all — showing the
+/// parameters from before it, with nothing on screen saying why (#1159).
+fn finish(source: String) -> Result<String, String> {
+    match kooch_render::material::Shader::parse(&source) {
+        Err(error) => Err(format!("{error}")),
+        Ok(_) => Ok(source),
     }
-    Ok(source)
 }
 
 /// `struct SurfaceParams`, `SURFACE_DEFAULTS` and the texture declarations the graph's nodes ask

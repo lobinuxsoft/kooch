@@ -83,6 +83,7 @@ impl Node {
     pub(crate) fn title(&self) -> String {
         match self {
             Self::Uv => "UV".to_owned(),
+            Self::SceneColor => "Scene Color".to_owned(),
             Self::WorldPosition => "World Position".to_owned(),
             Self::WorldNormal => "World Normal".to_owned(),
             Self::ViewDirection => "View Direction".to_owned(),
@@ -229,6 +230,7 @@ impl Node {
                     "phase",
                 ]
             }
+            Self::SceneColor => &["uv"],
             Self::WhiteNoise => &["uv", "scale"],
             Self::VoronoiNoise { .. } | Self::Voronoi => {
                 &["uv", "scale", "randomness", "phase", "smoothness"]
@@ -272,7 +274,8 @@ impl Node {
     pub(crate) fn outputs(&self) -> &'static [(&'static str, Pick)] {
         match self {
             Self::Output | Self::ShaderOutput { .. } => &[],
-            Self::Texture { .. }
+            Self::SceneColor
+            | Self::Texture { .. }
             | Self::Color { .. }
             | Self::ConstColor(_)
             | Self::Blend { .. }
@@ -337,6 +340,7 @@ impl Node {
             | Self::Vector { .. }
             | Self::Color { .. }
             | Self::Texture { .. }
+            | Self::SceneColor
             | Self::Constant(_) => Category::Input,
             Self::ConstFloat(_)
             | Self::ConstInt(_)
