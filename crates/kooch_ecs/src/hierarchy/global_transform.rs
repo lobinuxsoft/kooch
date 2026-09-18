@@ -72,6 +72,7 @@ propagation pass. Edit Transform instead.",
             shown_when: None,
             asset_type: "",
             requires: "",
+            fields: &[],
         }];
         FIELDS
     }

@@ -37,7 +37,7 @@ pub(crate) fn apply(
         .unwrap_or(0.0);
 
     if let Some(materials) = resources.get::<MaterialPipeline>() {
-        for material in stack {
+        for (material, weight) in stack {
             pass.apply(
                 PostFrame {
                     device: gpu.device(),
@@ -48,6 +48,7 @@ pub(crate) fn apply(
                     scene_view: target.view(),
                     size: target.size(),
                     time,
+                    weight,
                 },
                 materials,
                 material,
@@ -59,12 +60,18 @@ pub(crate) fn apply(
     resources.insert(pass);
 }
 
-/// The stack of the first enabled [`PostProcess`] in the scene, empty slots dropped.
-fn active_stack(resources: &Resources) -> Vec<Guid> {
-    let mut found: Option<Vec<Guid>> = None;
+/// The stack of the first enabled [`PostProcess`] in the scene, with each effect's weight. An
+/// effect that is off, weightless or empty is dropped here, so it costs nothing.
+fn active_stack(resources: &Resources) -> Vec<(Guid, f32)> {
+    let mut found: Option<Vec<(Guid, f32)>> = None;
     Query::<&PostProcess>::new(resources).for_each(|post| {
         if found.is_none() && post.enabled {
-            found = Some(post.materials.iter().flatten().copied().collect());
+            found = Some(
+                post.effects
+                    .iter()
+                    .filter_map(|effect| Some((effect.drawn()?, effect.weight)))
+                    .collect(),
+            );
         }
     });
     found.unwrap_or_default()

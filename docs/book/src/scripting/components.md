@@ -50,7 +50,7 @@ Each field's Rust type maps to a `FieldKind`, and the kind decides the widget:
 | `Vec<Option<Guid>>` + `#[reflect(asset = "…")]` | A list of asset pickers, with add, remove and move up / down |
 | `Option<EntityRef>` | Entity picker, and a drop target for a drag from the World panel |
 | `Entity`, `Option<Entity>` | Same widget, but see "Pointing at another entity" below |
-| A struct that also derives `Reflect` | Nested, drawn inline |
+| `Vec<T>`, where `T` derives `Reflect` and `Default` | A list of rows, one widget per field of `T`, with add, remove and move up / down |
 
 > **The maths types come from the prelude.** `Vec3`, `Quat` and `Mat4` are `glam` types, and
 > `kooch::prelude` re-exports them so a project never declares its own `glam` dependency —
@@ -62,8 +62,8 @@ Each field's Rust type maps to a `FieldKind`, and the kind decides the widget:
 > whoever is authoring the scene — there is no second place to write it and no second place
 > for it to go stale.
 
-Anything outside that list — `Vec<T>`, `HashMap<K, V>`, your own enums — is **not supported
-yet**. Recursive reflection for nested types and collections is
+Anything outside that list — a lone nested struct, `Vec<f32>`, `HashMap<K, V>`, your own enums —
+is **not supported yet**. Recursive reflection for nested types and collections is
 [#649](https://github.com/lobinuxsoft/kooch/issues/649). Until it lands, a field of an
 unsupported type needs `#[reflect(skip)]` or the derive will not compile.
 
@@ -96,6 +96,12 @@ pub struct Weapon {
     /// the rename would bring this back empty, and nothing would say so.
     #[reflect(asset = "Mesh", alias = "projectile_mesh")]
     pub ammo: Option<Guid>,
+
+    /// A list of structs. Each row draws `Wave`'s own fields, with their ranges and docs. Several
+    /// old names go in one alias, comma-separated. `bare` names the field a plain value on disk
+    /// fills, so a list that used to hold bare assets loads with one row per asset.
+    #[reflect(alias = "spawns, spawn", bare = "mesh")]
+    pub waves: Vec<Wave>,
 
     /// A dropdown of named values instead of a bare integer.
     #[reflect(choices = FIRE_MODE_CHOICES)]

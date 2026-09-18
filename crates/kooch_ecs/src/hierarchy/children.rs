@@ -30,6 +30,7 @@ editing this list.",
             shown_when: None,
             asset_type: "",
             requires: "",
+            fields: &[],
         }];
         FIELDS
     }

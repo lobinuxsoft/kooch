@@ -13,6 +13,8 @@ pub struct PostUniforms {
     pub resolution: [f32; 2],
     pub time: f32,
     pub material_id: u32,
+    /// How much of the effect mixes over what it read, 0..1 (#1209).
+    pub weight: f32,
 }
 
 #[repr(C)]
@@ -35,7 +37,8 @@ struct IntiUbo {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct ResolutionUbo {
     resolution: [f32; 2],
-    _pad: [f32; 2],
+    weight: f32,
+    _pad: f32,
 }
 
 /// One effect's uniforms. Per effect, not shared: a stack records several passes into one encoder,
@@ -169,7 +172,8 @@ impl Parts {
             0,
             bytemuck::bytes_of(&ResolutionUbo {
                 resolution: values.resolution,
-                _pad: [0.0; 2],
+                weight: values.weight.clamp(0.0, 1.0),
+                _pad: 0.0,
             }),
         );
     }

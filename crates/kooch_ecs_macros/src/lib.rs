@@ -15,6 +15,7 @@
 
 mod asset_list;
 mod attrs;
+mod struct_list;
 mod system_attr;
 mod type_mapping;
 mod unit_struct;
@@ -117,7 +118,11 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
         }
 
         let set_pattern = match crate::attrs::parse_field_alias(field) {
-            Ok(Some(alias)) => quote! { #field_name_str | #alias },
+            Ok(Some(aliases)) => {
+                // `alias = "a, b"`: a field renamed twice still reads both older names.
+                let aliases = aliases.split(',').map(str::trim);
+                quote! { #field_name_str #(| #aliases)* }
+            }
             Ok(None) => quote! { #field_name_str },
             Err(e) => return e,
         };
@@ -159,6 +164,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     requires: "",
                     doc: #field_doc,
                     group: #field_group,
+                    fields: &[],
                 }
             });
             get_arms.push(quote! {
@@ -219,6 +225,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     requires: #requires,
                     doc: #field_doc,
                     group: #field_group,
+                    fields: &[],
                 }
             });
 
@@ -272,6 +279,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     requires: "",
                     doc: #field_doc,
                     group: #field_group,
+                    fields: &[],
                 }
             });
 
@@ -345,6 +353,30 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             continue;
         }
 
+        // Any other `Vec<T>` is a list of reflected structs: `T` must derive `Reflect` and
+        // `Default`, and the compiler says so if it does not.
+        if let Some(element) = vec_inner(ty)
+            && type_mapping(element).is_none()
+        {
+            let bare = match crate::attrs::parse_field_bare(field) {
+                Ok(bare) => bare,
+                Err(e) => return e,
+            };
+            let (meta, get, set) = struct_list::struct_list(
+                field_name,
+                &field_name_str,
+                &set_pattern,
+                element,
+                bare.as_deref(),
+                &field_doc,
+                &field_group,
+            );
+            field_metas.push(meta);
+            get_arms.push(get);
+            set_arms.push(set);
+            continue;
+        }
+
         let Some((kind_variant, type_name_str, needs_clone)) = type_mapping(ty) else {
             return syn::Error::new_spanned(
                 ty,
@@ -398,6 +430,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 requires: "",
                 doc: #field_doc,
                 group: #field_group,
+                fields: &[],
             }
         });
 
@@ -447,12 +480,17 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
     });
 
     let expanded = quote! {
+        impl #name {
+            /// The reflected fields, as a constant so a list of this type can carry them (#1209).
+            #[doc(hidden)]
+            pub const REFLECT_FIELDS: &'static [::kooch_ecs::reflect::FieldMeta] = &[
+                #(#field_metas),*
+            ];
+        }
+
         impl ::kooch_ecs::reflect::Reflect for #name {
             fn reflect_fields(&self) -> &'static [::kooch_ecs::reflect::FieldMeta] {
-                static FIELDS: &[::kooch_ecs::reflect::FieldMeta] = &[
-                    #(#field_metas),*
-                ];
-                FIELDS
+                Self::REFLECT_FIELDS
             }
 
             fn reflect_get(&self, field: &str) -> Option<::kooch_ecs::reflect::ReflectValue> {

@@ -36,7 +36,7 @@ pub(crate) fn default_value(kind: FieldKind) -> ReflectValue {
         // A nested struct has no flat value to stand in for it. Zero is
         // wrong and empty is wrong; the Inspector shows it read-only
         // until reflection can express nesting (#649).
-        FieldKind::Nested => ReflectValue::String(String::new()),
+        FieldKind::Nested => ReflectValue::Struct(Vec::new()),
         // A plugin schema says a field is a list but not of what, so the only honest default is an
         // empty list of nothing in particular.
         FieldKind::List => ReflectValue::List {

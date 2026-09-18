@@ -25,6 +25,7 @@ impl Reflect for Health {
                 requires: "",
                 doc: "",
                 group: "",
+                fields: &[],
             },
             FieldMeta {
                 name: "max_hp",
@@ -38,6 +39,7 @@ impl Reflect for Health {
                 requires: "",
                 doc: "",
                 group: "",
+                fields: &[],
             },
         ];
         FIELDS
@@ -115,6 +117,7 @@ impl Reflect for Position {
                 requires: "",
                 doc: "",
                 group: "",
+                fields: &[],
             },
             FieldMeta {
                 name: "y",
@@ -128,6 +131,7 @@ impl Reflect for Position {
                 requires: "",
                 doc: "",
                 group: "",
+                fields: &[],
             },
             FieldMeta {
                 name: "z",
@@ -141,6 +145,7 @@ impl Reflect for Position {
                 requires: "",
                 doc: "",
                 group: "",
+                fields: &[],
             },
         ];
         FIELDS

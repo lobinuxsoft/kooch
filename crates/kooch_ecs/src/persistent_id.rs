@@ -69,6 +69,7 @@ every reference in the project is concerned.",
             shown_when: None,
             asset_type: "",
             requires: "",
+            fields: &[],
         }];
         FIELDS
     }

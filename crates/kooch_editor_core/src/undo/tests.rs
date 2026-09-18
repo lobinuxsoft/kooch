@@ -41,6 +41,7 @@ impl Reflect for Health {
                 requires: "",
                 doc: "",
                 group: "",
+                fields: &[],
             },
             FieldMeta {
                 name: "max_hp",
@@ -54,6 +55,7 @@ impl Reflect for Health {
                 requires: "",
                 doc: "",
                 group: "",
+                fields: &[],
             },
         ];
         FIELDS

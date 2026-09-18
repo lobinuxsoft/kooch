@@ -218,6 +218,17 @@ pub(crate) fn requires_for(field_metas: Option<&'static [FieldMeta]>, name: &str
         .unwrap_or("")
 }
 
+/// For a list of structs, the element's fields (#1209); `&[]` otherwise.
+pub(crate) fn fields_for(
+    field_metas: Option<&'static [FieldMeta]>,
+    name: &str,
+) -> &'static [FieldMeta] {
+    field_metas
+        .and_then(|metas| metas.iter().find(|m| m.name == name))
+        .map(|m| m.fields)
+        .unwrap_or(&[])
+}
+
 /// The numeric bounds declared for one field, if any.
 pub(crate) fn range_for(
     field_metas: Option<&'static [FieldMeta]>,

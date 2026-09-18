@@ -24,9 +24,10 @@ fn a_marker_has_no_fields() {
 fn all_lists_every_kind() {
     // Adding a variant without extending ALL leaves this stale, and
     // the engine-side parity test then fails loudly.
-    assert_eq!(FieldKind::ALL.len(), 20);
+    assert_eq!(FieldKind::ALL.len(), 21);
     assert_eq!(FieldKind::ALL[0], FieldKind::F32);
     assert_eq!(FieldKind::ALL[19], FieldKind::Nested);
+    assert_eq!(FieldKind::ALL[20], FieldKind::List);
 
     let mut seen = std::collections::HashSet::new();
     for kind in FieldKind::ALL {

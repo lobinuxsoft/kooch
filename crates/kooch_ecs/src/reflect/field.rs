@@ -33,6 +33,9 @@ pub struct FieldMeta {
     /// Heading this field is drawn under in the Inspector, from `#[reflect(group = "...")]`. `""`
     /// for a field that belongs to no group and is drawn before the first heading.
     pub group: &'static str,
+    /// For a list of structs, the element's fields, so a nested number keeps its range and doc
+    /// (#1209). `&[]` for every other field.
+    pub fields: &'static [FieldMeta],
 }
 
 /// Bounds and granularity for a numeric field — see [`FieldMeta::range`].
@@ -100,7 +103,7 @@ pub enum FieldKind {
     /// once saved. The inspector renders this as an entity picker / drop target rather than a text
     /// field.
     EntityRef,
-    /// Struct that also implements `Reflect`.
+    /// Struct that also implements `Reflect`; its value is [`ReflectValue::Struct`](super::ReflectValue::Struct).
     Nested,
     /// An ordered list; the value carries what each item is (#1201).
     List,

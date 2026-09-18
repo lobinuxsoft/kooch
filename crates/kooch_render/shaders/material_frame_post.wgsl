@@ -22,7 +22,9 @@ struct IntiFrame {
 struct PostUniforms {
     // Pixels, so a shader can work in them rather than in uv.
     resolution: vec2<f32>,
-    _pad: vec2<f32>,
+    // How much of the effect mixes over what it read, 0..1 (#1209).
+    weight: f32,
+    _pad: f32,
 }
 
 @group(0) @binding(0) var scene_color: texture_2d<f32>;
@@ -82,5 +84,7 @@ fn fs_post(in: PostVertex) -> @location(0) vec4<f32> {
     surf.material_id = screen.material_id;
     surf.flags = 0u;
 
-    return post_process(surface_input(surf, in.position.xy));
+    let effect = post_process(surface_input(surf, in.position.xy));
+    // Blended here rather than in each shader, so every effect has a weight without asking for one.
+    return mix(sample_scene(in.uv), effect, post.weight);
 }
