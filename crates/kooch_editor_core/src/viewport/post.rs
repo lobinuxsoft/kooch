@@ -13,17 +13,18 @@ use kooch_render::post_process::{PostFrame, PostPass};
 
 use super::target::ViewportTarget;
 
-/// Runs the scene's post-process over `target`. A no-op without the component, without a material,
-/// or with a material whose shader is not a post-process.
+/// Runs the scene's post-process stack over `target`, first to last: each effect reads what the one
+/// before it wrote. A no-op without the component or with an empty stack.
 pub(crate) fn apply(
     gpu: &GpuContext,
     encoder: &mut wgpu::CommandEncoder,
     target: &ViewportTarget,
     resources: &mut Resources,
 ) {
-    let Some(material) = active_material(resources) else {
+    let stack = active_stack(resources);
+    if stack.is_empty() {
         return;
-    };
+    }
     let mut pass = resources
         .remove::<PostPass>()
         .unwrap_or_else(|| PostPass::new(gpu.device(), target.format()));
@@ -36,35 +37,37 @@ pub(crate) fn apply(
         .unwrap_or(0.0);
 
     if let Some(materials) = resources.get::<MaterialPipeline>() {
-        pass.apply(
-            PostFrame {
-                device: gpu.device(),
-                queue: gpu.queue(),
-                encoder,
-                targets: &mut pool,
-                scene: target.color_texture(),
-                scene_view: target.view(),
-                size: target.size(),
-                time,
-            },
-            materials,
-            material,
-        );
+        for material in stack {
+            pass.apply(
+                PostFrame {
+                    device: gpu.device(),
+                    queue: gpu.queue(),
+                    encoder,
+                    targets: &mut pool,
+                    scene: target.color_texture(),
+                    scene_view: target.view(),
+                    size: target.size(),
+                    time,
+                },
+                materials,
+                material,
+            );
+        }
     }
 
     resources.insert(pool);
     resources.insert(pass);
 }
 
-/// The material of the first enabled [`PostProcess`] in the scene.
-fn active_material(resources: &Resources) -> Option<Guid> {
-    let mut found = None;
+/// The stack of the first enabled [`PostProcess`] in the scene, empty slots dropped.
+fn active_stack(resources: &Resources) -> Vec<Guid> {
+    let mut found: Option<Vec<Guid>> = None;
     Query::<&PostProcess>::new(resources).for_each(|post| {
         if found.is_none() && post.enabled {
-            found = post.material;
+            found = Some(post.materials.iter().flatten().copied().collect());
         }
     });
-    found
+    found.unwrap_or_default()
 }
 
 /// Why the post-process shader did not compile, for a panel to show.

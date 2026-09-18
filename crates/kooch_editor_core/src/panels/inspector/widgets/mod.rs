@@ -4,6 +4,7 @@ mod asset;
 mod asset_picker;
 mod choices;
 mod entity_picker;
+mod list;
 mod search_combo;
 mod value_widget;
 

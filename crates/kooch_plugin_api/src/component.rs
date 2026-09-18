@@ -46,6 +46,8 @@ pub enum FieldKind {
     EntityRef,
     /// Nested reflected struct.
     Nested,
+    /// An ordered list.
+    List,
 }
 
 impl FieldKind {
@@ -72,6 +74,7 @@ impl FieldKind {
         FieldKind::AssetRef,
         FieldKind::EntityRef,
         FieldKind::Nested,
+        FieldKind::List,
     ];
 }
 

@@ -58,6 +58,12 @@ pub(crate) fn parse_field_asset_type(field: &syn::Field) -> Result<Option<String
     parse_field_string(field, "asset")
 }
 
+/// Parses `#[reflect(alias = ...)]`: an older name `reflect_set` still accepts, so a scene saved
+/// before a rename keeps the value instead of dropping it.
+pub(crate) fn parse_field_alias(field: &syn::Field) -> Result<Option<String>, TokenStream> {
+    parse_field_string(field, "alias")
+}
+
 /// Parses `#[reflect(requires = ...)]` on an entity-reference field: the component its target must
 /// carry, used to filter and refuse picks.
 pub(crate) fn parse_field_requires(field: &syn::Field) -> Result<Option<String>, TokenStream> {
