@@ -131,7 +131,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     };
 
     let live = std::sync::Arc::clone(&overlay.windows.live);
-    crate::os_windows::install(std::sync::Arc::clone(&live));
+    crate::os_windows::install(&overlay.ctx, std::sync::Arc::clone(&live));
     let handler: Box<dyn RawEventHandler> = Box::new(EguiEventHandler {
         winit_state,
         live,

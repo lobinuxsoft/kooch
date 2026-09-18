@@ -54,3 +54,11 @@ fn a_saved_window_wins_over_dock() {
 fn a_title_drops_the_icon() {
     assert_eq!(title_of(EditorTab::Inspector), "Kóoch — Inspector");
 }
+
+/// A torn-off panel gets a native window, not a window drawn inside the main one.
+#[test]
+fn viewports_are_not_embedded() {
+    let ctx = egui::Context::default();
+    install(&ctx, SharedLive::default());
+    assert!(!ctx.embed_viewports());
+}

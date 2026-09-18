@@ -8,7 +8,10 @@ use crate::systems::tab_viewer::EditorTabViewer;
 
 /// Registers the pass egui calls for every immediate viewport. Once, at startup: egui keeps one
 /// renderer per thread.
-pub(crate) fn install(live: SharedLive) {
+pub(crate) fn install(ctx: &egui::Context, live: SharedLive) {
+    // 🔴 egui embeds viewports as windows inside the main one unless told otherwise; eframe turns
+    // this off on native, and a backend of our own has to as well.
+    ctx.set_embed_viewports(false);
     egui::Context::set_immediate_viewport_renderer(move |ctx, viewport| {
         run_nested(ctx, &live, viewport);
     });
