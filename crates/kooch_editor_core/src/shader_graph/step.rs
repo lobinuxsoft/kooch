@@ -18,6 +18,8 @@ pub(crate) enum GraphStep {
     Move,
     /// A value edited on one node. Dragging a number is many frames and one step.
     Edit(NodeId),
+    /// A group or a note moved, resized, retitled or retyped.
+    Annotate,
 }
 
 impl GraphStep {
@@ -30,6 +32,7 @@ impl GraphStep {
             GraphStep::Disconnect => "Disconnect",
             GraphStep::Move => "Move nodes",
             GraphStep::Edit(_) => "Edit value",
+            GraphStep::Annotate => "Edit group or note",
         }
     }
 
@@ -39,6 +42,7 @@ impl GraphStep {
         match self {
             GraphStep::Move => Some(MergeKey::of((path, "move"))),
             GraphStep::Edit(node) => Some(MergeKey::of((path, "edit", node.0))),
+            GraphStep::Annotate => Some(MergeKey::of((path, "annotate"))),
             _ => None,
         }
     }

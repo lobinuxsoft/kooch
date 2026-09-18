@@ -4,6 +4,7 @@
 use egui::emath::TSTransform;
 use egui::{Id, Key, Pos2, Rect, Vec2};
 
+use crate::shader_graph::annotations::Annotations;
 use crate::shader_graph::clipboard::{self, Clip};
 use crate::shader_graph::{Graph, NODE_SIZE};
 
@@ -51,6 +52,26 @@ pub(super) const BINDINGS: &[Binding] = &[
         does: "Frame the selection (Fit frames everything)",
     },
     Binding {
+        keys: "Ctrl+G",
+        does: "Group the selection",
+    },
+    Binding {
+        keys: "Drag a group's title",
+        does: "Move the group and the nodes in it",
+    },
+    Binding {
+        keys: "Drag a group's corner",
+        does: "Resize it",
+    },
+    Binding {
+        keys: "Right-click a group's title",
+        does: "Rename, recolour or delete it",
+    },
+    Binding {
+        keys: "Right-click a note",
+        does: "Edit or delete it",
+    },
+    Binding {
         keys: "Click a node",
         does: "Select it",
     },
@@ -76,7 +97,7 @@ pub(super) const BINDINGS: &[Binding] = &[
     },
     Binding {
         keys: "Right-click the background",
-        does: "Add a node",
+        does: "Add a node or a note",
     },
     Binding {
         keys: "Right-click a node",
@@ -89,6 +110,7 @@ pub(super) const BINDINGS: &[Binding] = &[
 pub(super) fn handle(
     ui: &egui::Ui,
     graph: &mut Graph,
+    annotations: &mut Annotations,
     snarl_id: Id,
     panel: Rect,
     to_screen: TSTransform,
@@ -109,10 +131,11 @@ pub(super) fn handle(
                 pressed(Key::D),
                 pressed(Key::Delete) || pressed(Key::Backspace),
                 pressed(Key::F),
+                pressed(Key::G),
             ],
         )
     });
-    let [copy, cut, paste, duplicate, delete, frame] = pressed;
+    let [copy, cut, paste, duplicate, delete, frame, group] = pressed;
 
     if command && (copy || cut) {
         if let Some(clip) = clipboard::copy(graph, &selected) {
@@ -142,6 +165,12 @@ pub(super) fn handle(
     }
     if !command && delete {
         clipboard::remove(graph, &selected);
+    }
+    if command
+        && group
+        && let Some(bounds) = selection_bounds(graph, &selected)
+    {
+        annotations.group(super::canvas::group_around(bounds));
     }
     if !command && frame {
         return selection_bounds(graph, &selected);

@@ -321,10 +321,36 @@ The column on the right shows the shader **on a shape**, turning, updated as the
   column left of the furthest thing it feeds, so a parameter wired straight into the output stays
   beside it. Each column follows the pins its nodes feed — what goes into base colour above what
   goes into roughness — which is what keeps the wires from crossing. It is the shape of Godot's
-  `arrange_nodes` without its inner-shift pass, which earns its keep on graphs far larger than a shader's. It is the shape of Godot's `arrange_nodes`
-  without its inner-shift pass, which earns its keep on graphs far larger than a shader's.
+  `arrange_nodes` without its inner-shift pass, which earns its keep on graphs far larger than a shader's.
 - Dragging a node marks the file unsaved: where the nodes sit is part of what the `.shader` carries,
   so **Save** is what keeps a layout.
+
+### Editing
+
+The **?** button in the toolbar lists every binding.
+
+- **Undo and redo:** Ctrl+Z, and Ctrl+Y or Ctrl+Shift+Z. The graph is a document of its own, so the
+  Edit menu names the step it would undo: *Move nodes*, *Connect*, *Edit value*. A drag or a number
+  being dragged is one step until the mouse is released. Undo puts the graph back in memory; the file
+  is still yours to **Save**.
+- **Selecting:** click a node. **Shift + drag** on the background box-selects, and Ctrl + Shift + drag
+  deselects. Dragging any selected node moves them all.
+- **Clipboard:** Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste the selected nodes **with the wires
+  between them**. A paste lands at the pointer, and Ctrl+D duplicates beside the original. The output
+  node is never copied, since a graph has one. A pasted parameter whose name is already declared is
+  renamed (`levels` becomes `levels_2`), because two parameters of one name would be one uniform.
+- **Delete** or **Backspace** removes the selection. **F** frames it.
+- **Groups:** Ctrl+G draws a titled frame around the selection. Drag its title to move it together
+  with the nodes inside, and drag its bottom-right corner to resize it. Right-click the title to
+  rename it, recolour it or delete it.
+- **Notes:** right-click the background, then **Add note**. Drag a note to move it, and right-click
+  it to edit its text or delete it.
+
+Groups and notes are saved in a block of their own at the end of the `.shader`, and codegen never
+reads them. A graph without any writes exactly the file it wrote before.
+
+A pasted selection is not selected afterwards, and there is no *select all*. egui-snarl 0.11 lets a
+panel read the selection but not set it.
 
 ### What the graph cannot do
 

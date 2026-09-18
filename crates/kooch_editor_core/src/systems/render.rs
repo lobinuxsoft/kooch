@@ -1045,7 +1045,12 @@ fn record_graph_edit(resources: &mut Resources, edited: &crate::state::OpenShade
     let Some(step) = resources
         .get::<crate::state::OpenShaderGraph>()
         .filter(|before| before.path == edited.path)
-        .and_then(|before| crate::shader_graph::change(&before.graph, &edited.graph))
+        .and_then(|before| {
+            crate::shader_graph::change(&before.graph, &edited.graph).or_else(|| {
+                (before.annotations != edited.annotations)
+                    .then_some(crate::shader_graph::GraphStep::Annotate)
+            })
+        })
     else {
         return;
     };

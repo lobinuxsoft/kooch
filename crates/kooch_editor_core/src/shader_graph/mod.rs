@@ -7,6 +7,7 @@
 
 use egui_snarl::Snarl;
 
+pub(crate) mod annotations;
 mod arrange;
 pub(crate) mod clipboard;
 mod codegen;
@@ -19,7 +20,7 @@ pub(crate) use nodes::{
     BLEND_MODES, Category, NOISE_BASES, NOISE_COLOUR, NOISE_DISTORTION, NOISE_FRACTALS,
     NOISE_PHASE, Node, TEXTURE_FALLBACKS, VORONOI_BORDER, VORONOI_METRICS, Width, palette,
 };
-pub(crate) use step::change;
+pub(crate) use step::{GraphStep, change};
 
 /// What the block comment holding a graph starts with.
 const MARKER: &str = "/*KOOCH_GRAPH;";

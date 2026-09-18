@@ -59,6 +59,8 @@ pub(crate) enum EditorTab {
 pub(crate) struct OpenShaderGraph {
     pub path: std::path::PathBuf,
     pub graph: crate::shader_graph::Graph,
+    /// Its groups and notes (#1211).
+    pub annotations: crate::shader_graph::annotations::Annotations,
     /// Set when the panel should be brought to the front. Cleared by the dock once it has.
     pub focus_requested: bool,
     /// Whether the graph diverges from the file it was read from.

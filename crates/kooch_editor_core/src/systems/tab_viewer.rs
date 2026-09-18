@@ -302,15 +302,22 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                     .open_shader_graph
                     .as_ref()
                     .is_some_and(|open| open.dirty);
-                let before = self
-                    .open_shader_graph
-                    .as_ref()
-                    .map(|open| crate::shader_graph::snapshot(&open.graph));
+                let before = self.open_shader_graph.as_ref().map(|open| {
+                    (
+                        crate::shader_graph::snapshot(&open.graph),
+                        open.annotations.clone(),
+                    )
+                });
                 let cost_ms = path.as_deref().and_then(|path| self.shader_cost(path));
+                let (graph, annotations) = match self.open_shader_graph.as_deref_mut() {
+                    Some(open) => (Some(&mut open.graph), Some(&mut open.annotations)),
+                    None => (None, None),
+                };
                 let requested = crate::panels::shader_graph::draw_shader_graph_content(
                     ui,
                     crate::panels::shader_graph::ShaderGraphView {
-                        graph: self.open_shader_graph.as_mut().map(|open| &mut open.graph),
+                        graph,
+                        annotations,
                         path: path.as_deref(),
                         dirty,
                         preview: crate::panels::shader_graph::PreviewView {
@@ -325,8 +332,10 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 );
                 // Anything the panel changed makes the file behind it stale.
                 if let Some(open) = self.open_shader_graph.as_mut()
-                    && before
-                        .is_some_and(|before| before != crate::shader_graph::snapshot(&open.graph))
+                    && before.is_some_and(|(graph, annotations)| {
+                        graph != crate::shader_graph::snapshot(&open.graph)
+                            || annotations != open.annotations
+                    })
                 {
                     open.dirty = true;
                 }

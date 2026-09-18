@@ -101,6 +101,7 @@ fn pin_names_sit_beside_their_pins() {
                     look_at: None,
                     panel: ui.max_rect(),
                     transform: TSTransform::IDENTITY,
+                    new_note: None,
                 };
                 SnarlWidget::new()
                     .id(egui::Id::new("pin_names"))
@@ -194,6 +195,7 @@ fn a_resting_pointer_explains_pins() {
                     look_at: None,
                     panel: ui.max_rect(),
                     transform: TSTransform::IDENTITY,
+                    new_note: None,
                 };
                 SnarlWidget::new()
                     .id(egui::Id::new("tooltips"))
@@ -251,4 +253,100 @@ fn a_resting_pointer_explains_pins() {
         texts(&rested)
     );
     assert!(texts(&rested).iter().any(|t| t == "speed (2)"));
+}
+
+/// 🔴 Dragging a group's title moves the group and the node inside it, through the real widget
+/// ordering: the canvas's handle has to win the pointer over the graph widget underneath.
+#[test]
+fn dragging_a_group_moves_its_nodes() {
+    use crate::shader_graph::Node;
+    use crate::shader_graph::annotations::Annotations;
+    use egui_snarl::ui::SnarlWidget;
+
+    let mut graph = Graph::new();
+    let node = graph.insert_node(Pos2::new(60.0, 80.0), Node::Floor);
+    let mut annotations = Annotations::default();
+    annotations.group(Rect::from_min_max(
+        Pos2::new(20.0, 20.0),
+        Pos2::new(400.0, 300.0),
+    ));
+    let ctx = egui::Context::default();
+    let seen = std::cell::Cell::new(TSTransform::IDENTITY);
+    // Where the group and the node are after each frame: the closure holds both mutably.
+    let placed = std::cell::Cell::new((Pos2::ZERO, Pos2::ZERO));
+    let mut run = |time: f64, events: Vec<egui::Event>| {
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 700.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let area = ui.available_rect_before_wrap();
+                let slot = super::canvas::reserve(ui);
+                let mut viewer = super::viewer::Viewer {
+                    fit: None,
+                    catalog: &[],
+                    drift: Vec2::ZERO,
+                    look_at: None,
+                    panel: area,
+                    transform: TSTransform::IDENTITY,
+                    new_note: None,
+                };
+                SnarlWidget::new().id(egui::Id::new("group_drag")).show(
+                    &mut graph,
+                    &mut viewer,
+                    ui,
+                );
+                seen.set(viewer.transform);
+                super::canvas::draw(
+                    ui,
+                    slot,
+                    area,
+                    &mut annotations,
+                    &mut graph,
+                    viewer.transform,
+                );
+                placed.set((
+                    annotations.groups[0].rect.min,
+                    graph.get_node_info(node).unwrap().pos,
+                ));
+            },
+        );
+    };
+    let press = |pos: Pos2, pressed: bool| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    run(0.0, vec![]);
+    // The widget opens zoomed and offset: where the title is on screen is its transform's call.
+    let to_screen = seen.get();
+    let title = to_screen * Pos2::new(100.0, 30.0);
+    let moved = Vec2::new(30.0, 10.0);
+    run(
+        0.1,
+        vec![egui::Event::PointerMoved(title), press(title, true)],
+    );
+    run(0.2, vec![egui::Event::PointerMoved(title + moved)]);
+    run(0.3, vec![press(title + moved, false)]);
+
+    assert_eq!(seen.get(), to_screen, "the widget panned: it took the drag");
+    let delta = moved / to_screen.scaling;
+    assert_eq!(
+        placed.get(),
+        (Pos2::new(20.0, 20.0) + delta, Pos2::new(60.0, 80.0) + delta)
+    );
+
+    // Off the group, the widget still gets the background: the handles' layer blocks nothing else.
+    let empty = Pos2::new(880.0, 680.0);
+    run(
+        0.4,
+        vec![egui::Event::PointerMoved(empty), press(empty, true)],
+    );
+    run(0.5, vec![egui::Event::PointerMoved(empty - moved)]);
+    run(0.6, vec![press(empty - moved, false)]);
+    assert_ne!(seen.get(), to_screen, "the background no longer pans");
 }

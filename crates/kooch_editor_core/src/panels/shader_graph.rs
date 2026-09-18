@@ -5,6 +5,7 @@ use egui_snarl::ui::SnarlWidget;
 
 use crate::panels::inspector::AssetCatalogEntry;
 
+mod canvas;
 mod editors;
 mod keys;
 mod pin;
@@ -19,6 +20,8 @@ use viewer::Viewer;
 pub(crate) struct ShaderGraphView<'a> {
     /// The open graph, edited in place: `egui-snarl` moves nodes and wires while it draws them.
     pub graph: Option<&'a mut Graph>,
+    /// Its groups and notes, edited in place beside it.
+    pub annotations: Option<&'a mut crate::shader_graph::annotations::Annotations>,
     /// The file it generates, for the header.
     pub path: Option<&'a std::path::Path>,
     /// Whether the graph diverges from that file.
@@ -55,7 +58,7 @@ pub(crate) fn draw_shader_graph_content(
     view: ShaderGraphView<'_>,
 ) -> Vec<ShaderGraphAction> {
     let mut actions = Vec::new();
-    let Some(graph) = view.graph else {
+    let (Some(graph), Some(annotations)) = (view.graph, view.annotations) else {
         ui.weak("No shader graph open.");
         ui.label("Create one in the Asset Browser: New Shader Graph, or open a generated .shader.");
         return actions;
@@ -116,11 +119,26 @@ pub(crate) fn draw_shader_graph_content(
         look_at: taken_look(ui),
         panel,
         transform: TSTransform::IDENTITY,
+        new_note: None,
     };
 
+    let area = ui.available_rect_before_wrap();
+    let backdrop = canvas::reserve(ui);
     let snarl_id = egui::Id::new("shader_graph");
-    SnarlWidget::new().id(snarl_id).show(graph, &mut viewer, ui);
-    if let Some(bounds) = keys::handle(ui, graph, snarl_id, panel, viewer.transform) {
+    // Transparent: the canvas paints the fill itself, underneath the groups.
+    let style = egui_snarl::ui::SnarlStyle {
+        bg_frame: Some(egui::Frame::canvas(ui.style()).fill(egui::Color32::TRANSPARENT)),
+        ..egui_snarl::ui::SnarlStyle::new()
+    };
+    SnarlWidget::new()
+        .id(snarl_id)
+        .style(style)
+        .show(graph, &mut viewer, ui);
+    canvas::draw(ui, backdrop, area, annotations, graph, viewer.transform);
+    if let Some(at) = viewer.new_note {
+        annotations.note(at);
+    }
+    if let Some(bounds) = keys::handle(ui, graph, annotations, snarl_id, panel, viewer.transform) {
         frame_next(ui, bounds);
     }
 

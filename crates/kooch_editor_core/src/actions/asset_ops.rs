@@ -829,6 +829,7 @@ fn open_shader_graph(resources: &mut Resources, path: &std::path::Path) {
     resources.insert(crate::state::OpenShaderGraph {
         path: path.to_path_buf(),
         graph,
+        annotations: crate::shader_graph::annotations::extract(&source),
         focus_requested: true,
         dirty: false,
     });
@@ -840,7 +841,10 @@ fn save_shader_graph(resources: &mut Resources) {
         return;
     };
     let (path, graph) = (open.path.clone(), open.graph.clone());
-    let source = match crate::shader_graph::generate(&graph) {
+    let annotations = open.annotations.clone();
+    let source = match crate::shader_graph::generate(&graph)
+        .and_then(|source| crate::shader_graph::annotations::embed(source, &annotations))
+    {
         Ok(source) => source,
         Err(reason) => {
             tracing::error!("the graph does not generate a shader: {reason}");
