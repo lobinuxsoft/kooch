@@ -118,7 +118,7 @@ pub(super) fn draw(
             // A group carried over a node must not look like that node being dropped into it.
             ui.ctx().data_mut(|d| d.insert_temp(group_drag_id(), true));
         }
-        moved.context_menu(|ui| {
+        editing_menu(&moved, |ui| {
             let group = &mut annotations.groups[index];
             ui.text_edit_singleline(&mut group.title);
             ui.horizontal(|ui| {
@@ -175,7 +175,7 @@ pub(super) fn draw(
         if body.dragged() {
             annotations.notes[index].pos += body.drag_delta() / scale;
         }
-        body.context_menu(|ui| {
+        editing_menu(&body, |ui| {
             ui.add(
                 egui::TextEdit::multiline(&mut annotations.notes[index].text)
                     .desired_width(annotations::NOTE_WIDTH),
@@ -249,6 +249,14 @@ fn drop_into_groups(
             annotations.join(index, &[node]);
         }
     }
+}
+
+/// A right-click menu that stays open while its fields are clicked into. egui's default closes on
+/// any click, inside included, which shut the menu before a title could be typed.
+fn editing_menu(response: &egui::Response, contents: impl FnOnce(&mut egui::Ui)) {
+    egui::Popup::context_menu(response)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(contents);
 }
 
 /// The group whose title is being edited in place, if any.

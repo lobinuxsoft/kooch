@@ -468,3 +468,42 @@ fn a_group_renames_in_place() {
     harness.run(vec![]);
     assert_eq!(harness.annotations.groups[0].title, "Group dither");
 }
+
+/// 🔴 Clicking into the right-click menu's title field keeps the menu open to type in.
+#[test]
+fn a_group_menu_stays_open() {
+    let mut harness = Harness::new();
+    let title = harness.to_screen * (harness.frame().left_top() + Vec2::new(40.0, 8.0));
+    let button = |pos, button, pressed| egui::Event::PointerButton {
+        pos,
+        button,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let secondary = egui::PointerButton::Secondary;
+    harness.run(vec![
+        egui::Event::PointerMoved(title),
+        button(title, secondary, true),
+    ]);
+    harness.run(vec![button(title, secondary, false)]);
+    harness.run(vec![]);
+    // The menu opens at the pointer; its first row is the title field.
+    let field = title + Vec2::new(40.0, 16.0);
+    let primary = egui::PointerButton::Primary;
+    harness.run(vec![
+        egui::Event::PointerMoved(field),
+        button(field, primary, true),
+    ]);
+    harness.run(vec![button(field, primary, false)]);
+    harness.run(vec![]);
+    harness.run(vec![egui::Event::Key {
+        key: egui::Key::End,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }]);
+    harness.run(vec![egui::Event::Text(" dither".to_owned())]);
+    harness.run(vec![]);
+    assert_eq!(harness.annotations.groups[0].title, "Group dither");
+}
