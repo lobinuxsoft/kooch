@@ -1112,8 +1112,6 @@ dependencies = [
 [[package]]
 name = "egui-snarl"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2029cca1554d2434100fb51d1b93da8a647094269db2bfa243477fb5edd26a2f"
 dependencies = [
  "ahash",
  "egui",
