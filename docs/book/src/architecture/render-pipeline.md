@@ -609,9 +609,11 @@ app.add_cpu_ordered(Stage::Render, Order::after("render_frame_system"), MyPass);
 
 Targets come from a pool: `TargetPool::acquire` hands back a target
 matching a `TargetDesc` — reused when a free one matches, created
-otherwise — and `release` puts it back after three frames, the wait Mesa
-radv needs from a texture a bind group may still name. Two views of one
-size cost one set of targets, and a run of resizes settles back to one.
+otherwise — and `release` makes it reusable at once. The pool never
+destroys a texture, so there is nothing for Mesa radv's in-flight rule to
+catch: reusing one is ordered by the queue like any other write. Two views
+of one size cost one set of targets, and a run of resizes settles back to
+one.
 A post-process asks the pool for somewhere to draw rather than owning a
 texture of its own.
 

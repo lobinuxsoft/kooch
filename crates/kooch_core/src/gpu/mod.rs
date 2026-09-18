@@ -31,4 +31,4 @@ pub use error::GpuError;
 pub use features::{all_required_features, engine_features, vbuf64_features};
 pub use limits::{MAX_WORKGROUPS_PER_DIM, tiled_workgroups};
 pub use profiler::{GpuQuery, GpuScopes};
-pub use targets::{RETIREMENT, TargetDesc, TargetId, TargetPool};
+pub use targets::{TargetDesc, TargetId, TargetPool};
