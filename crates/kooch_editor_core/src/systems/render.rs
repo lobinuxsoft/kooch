@@ -847,6 +847,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     stages.present_ms = crate::perf::ms_since(present_start);
 
     resources.insert(gpu);
+    // Once the frame is submitted: a view resized this frame lets go of its old targets here.
+    if let Some(pool) = resources.get_mut::<kooch_core::gpu::TargetPool>() {
+        pool.end_frame();
+    }
     // Read before the overlay goes back, applied after this frame's edits
     // — see `seal_histories`.
     let ended = overlay.ctx.input(|i| i.pointer.any_released());

@@ -55,3 +55,35 @@ fn every_frame_reuses_its_slots() {
     assert_eq!(slots.len(), 2, "one per viewport, whatever the frame count");
     assert_eq!(slots.free(), 2);
 }
+
+/// A size no pass asks for any more loses its target, and its index serves the next new one.
+#[test]
+fn an_unused_size_is_evicted() {
+    let mut slots = Slots::default();
+    let (first, _) = slots.claim(colour((64, 64)));
+    slots.release(first);
+    let mut evicted = Vec::new();
+    for _ in 0..=KEEP_FRAMES {
+        evicted.extend(slots.end_frame());
+    }
+    assert_eq!(evicted, [first]);
+    assert_eq!(slots.desc(first), None);
+
+    let (second, fresh) = slots.claim(colour((128, 128)));
+    assert_eq!((second, fresh), (first, Fresh::Created));
+    assert_eq!(slots.len(), 1);
+}
+
+/// A slot in use every frame, or held, is never evicted.
+#[test]
+fn a_used_slot_stays() {
+    let mut slots = Slots::default();
+    let (held, _) = slots.claim(colour((32, 32)));
+    let (reused, _) = slots.claim(colour((64, 64)));
+    for _ in 0..10 {
+        slots.release(reused);
+        assert!(slots.end_frame().is_empty());
+        slots.claim(colour((64, 64)));
+    }
+    assert!(slots.desc(held).is_some());
+}

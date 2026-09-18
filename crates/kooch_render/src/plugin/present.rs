@@ -71,6 +71,9 @@ pub(super) fn present_frame_system(resources: &mut Resources) {
     resources.insert(depth);
     resources.insert(stage);
     resources.insert(blit);
+    if let Some(pool) = resources.get_mut::<TargetPool>() {
+        pool.end_frame();
+    }
 
     match outcome {
         SurfaceOutcome::Presented | SurfaceOutcome::Skip => {}
