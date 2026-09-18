@@ -16,11 +16,11 @@ fn guid(n: u8) -> Guid {
 fn the_scene_panels_reach_the_scene() {
     let asset = Some((guid(7), AssetKind::Asset));
     assert_eq!(
-        resolve(Some(EditorTab::World), asset, None),
+        resolve(Some(EditorTab::World), asset, None, None),
         Some(Document::World),
     );
     assert_eq!(
-        resolve(Some(EditorTab::View), asset, None),
+        resolve(Some(EditorTab::View), asset, None, None),
         Some(Document::World),
     );
 }
@@ -34,6 +34,7 @@ fn the_inspector_follows_its_subject() {
         resolve(
             Some(EditorTab::Inspector),
             Some((guid(1), AssetKind::Prefab)),
+            None,
             None
         ),
         Some(Document::Prefab(guid(1))),
@@ -42,13 +43,14 @@ fn the_inspector_follows_its_subject() {
         resolve(
             Some(EditorTab::Inspector),
             Some((guid(2), AssetKind::Asset)),
+            None,
             None
         ),
         Some(Document::Asset(guid(2))),
     );
     // Nothing selected means an entity is: the Inspector shows the world.
     assert_eq!(
-        resolve(Some(EditorTab::Inspector), None, None),
+        resolve(Some(EditorTab::Inspector), None, None, None),
         Some(Document::World),
     );
 }
@@ -59,10 +61,21 @@ fn the_inspector_follows_its_subject() {
 fn the_input_map_needs_a_map() {
     let path = PathBuf::from("/p/assets/player.inputaction");
     assert_eq!(
-        resolve(Some(EditorTab::InputMap), None, Some(&path)),
+        resolve(Some(EditorTab::InputMap), None, Some(&path), None),
         Some(Document::InputMap(path.clone())),
     );
-    assert_eq!(resolve(Some(EditorTab::InputMap), None, None), None);
+    assert_eq!(resolve(Some(EditorTab::InputMap), None, None, None), None);
+}
+
+/// The graph it has open (#1211), and nothing when it has none.
+#[test]
+fn the_shader_graph_needs_a_graph() {
+    let path = PathBuf::from("/p/assets/ps1.shader");
+    assert_eq!(
+        resolve(Some(EditorTab::ShaderGraph), None, None, Some(&path)),
+        Some(Document::ShaderGraph(path.clone())),
+    );
+    assert_eq!(resolve(Some(EditorTab::ShaderGraph), None, None, None), None);
 }
 
 /// The panels whose edits are files, or aren't edits. Deliberately `None` rather than falling back
@@ -76,9 +89,9 @@ fn the_other_panels_reach_nothing() {
         EditorTab::Archetypes,
         EditorTab::Build,
     ] {
-        assert_eq!(resolve(Some(tab), None, None), None, "{tab:?}");
+        assert_eq!(resolve(Some(tab), None, None, None), None, "{tab:?}");
     }
-    assert_eq!(resolve(None, None, None), None);
+    assert_eq!(resolve(None, None, None, None), None);
 }
 
 /// Two prefabs are two histories. Keyed by guid, so the entry in one

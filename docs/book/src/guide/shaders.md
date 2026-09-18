@@ -321,10 +321,51 @@ The column on the right shows the shader **on a shape**, turning, updated as the
   column left of the furthest thing it feeds, so a parameter wired straight into the output stays
   beside it. Each column follows the pins its nodes feed — what goes into base colour above what
   goes into roughness — which is what keeps the wires from crossing. It is the shape of Godot's
-  `arrange_nodes` without its inner-shift pass, which earns its keep on graphs far larger than a shader's. It is the shape of Godot's `arrange_nodes`
-  without its inner-shift pass, which earns its keep on graphs far larger than a shader's.
+  `arrange_nodes` without its inner-shift pass, which earns its keep on graphs far larger than a shader's.
 - Dragging a node marks the file unsaved: where the nodes sit is part of what the `.shader` carries,
   so **Save** is what keeps a layout.
+
+### Editing
+
+The **?** button in the toolbar lists every binding.
+
+- **Undo and redo:** Ctrl+Z, and Ctrl+Y or Ctrl+Shift+Z. The graph is a document of its own, so the
+  Edit menu names the step it would undo: *Move nodes*, *Connect*, *Edit value*. A drag or a number
+  being dragged is one step until the mouse is released. Undo puts the graph back in memory; the file
+  is still yours to **Save**.
+- **Selecting:**
+  - Click a node to select it alone. Shift + click adds it to the selection, and Ctrl + click
+    takes it out.
+  - **Shift + drag** on the background box-selects, and Ctrl + Shift + drag deselects.
+  - Ctrl+A selects every node. Escape, or a click on the background, clears the selection.
+  - Dragging any selected node moves them all.
+- **Clipboard:**
+  - Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste the selected nodes **with the wires between
+    them**.
+  - A paste lands at the pointer, and Ctrl+D duplicates beside the original. Either way, what was
+    pasted comes out selected.
+  - The output node is never copied, since a graph has one.
+  - A pasted parameter whose name is already declared is renamed (`levels` becomes `levels_2`),
+    because two parameters of one name would be one uniform.
+- **Delete** or **Backspace** removes the selection. **F** frames it.
+- **Groups:** Ctrl+G groups the selection.
+  - A group's frame fits its nodes every frame, so it follows them as they move.
+  - Dragging the title moves the group's nodes, and only those. A frame carried over another node
+    never takes it in.
+  - Membership is explicit. Drop a dragged node inside a group and it joins; right-click a node and
+    choose **Remove from group** to take it out. A node is in one group at most.
+  - Double-click the title to rename the group in place. Right-click the title to rename it,
+    recolour it or **Ungroup** it. Ungrouping keeps the nodes.
+- **Notes:** right-click the background, then **Add note**. Drag a note to move it, and right-click
+  it to edit its text or delete it.
+
+Groups and notes are saved in a block of their own at the end of the `.shader`, and codegen never
+reads them. A graph without any writes exactly the file it wrote before.
+
+The graph widget is an in-tree fork of egui-snarl (`crates/egui_snarl`). The published crate
+selects with Shift only, cannot have its selection set, and does not expose node sizes.
+`crates/egui_snarl/KOOCH.md` lists every change made to it, and
+`.github/scripts/update_egui_snarl.py` moves the fork onto a newer upstream release.
 
 ### What the graph cannot do
 

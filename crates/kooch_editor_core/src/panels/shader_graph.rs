@@ -5,7 +5,9 @@ use egui_snarl::ui::SnarlWidget;
 
 use crate::panels::inspector::AssetCatalogEntry;
 
+mod canvas;
 mod editors;
+mod keys;
 mod pin;
 mod preview;
 mod viewer;
@@ -18,6 +20,8 @@ use viewer::Viewer;
 pub(crate) struct ShaderGraphView<'a> {
     /// The open graph, edited in place: `egui-snarl` moves nodes and wires while it draws them.
     pub graph: Option<&'a mut Graph>,
+    /// Its groups and notes, edited in place beside it.
+    pub annotations: Option<&'a mut crate::shader_graph::annotations::Annotations>,
     /// The file it generates, for the header.
     pub path: Option<&'a std::path::Path>,
     /// Whether the graph diverges from that file.
@@ -54,7 +58,7 @@ pub(crate) fn draw_shader_graph_content(
     view: ShaderGraphView<'_>,
 ) -> Vec<ShaderGraphAction> {
     let mut actions = Vec::new();
-    let Some(graph) = view.graph else {
+    let (Some(graph), Some(annotations)) = (view.graph, view.annotations) else {
         ui.weak("No shader graph open.");
         ui.label("Create one in the Asset Browser: New Shader Graph, or open a generated .shader.");
         return actions;
@@ -94,7 +98,8 @@ pub(crate) fn draw_shader_graph_content(
             show_minimap(ui, showing);
         }
         cost(ui, graph, view.cost_ms);
-        ui.weak("Right-click the background to add a node.");
+        shortcut_sheet(ui);
+        ui.weak("Right-click the background to add a node · Shift+drag to box-select.");
     });
     ui.separator();
 
@@ -105,7 +110,8 @@ pub(crate) fn draw_shader_graph_content(
     // Framed on the frames right after a graph opens, while its window settles on a size, and on request.
     let fit = (refit || opening(ui, view.path))
         .then(|| crate::panels::graph_minimap::bounds(graph))
-        .flatten();
+        .flatten()
+        .or_else(|| taken_frame(ui));
     let mut viewer = Viewer {
         fit,
         catalog: view.catalog,
@@ -113,11 +119,40 @@ pub(crate) fn draw_shader_graph_content(
         look_at: taken_look(ui),
         panel,
         transform: TSTransform::IDENTITY,
+        new_note: None,
+        ungroup: None,
     };
 
+    let area = ui.available_rect_before_wrap();
+    let backdrop = canvas::reserve(ui);
+    let snarl_id = egui::Id::new("shader_graph");
+    // Transparent: the canvas paints the fill itself, underneath the groups.
+    let style = egui_snarl::ui::SnarlStyle {
+        bg_frame: Some(egui::Frame::canvas(ui.style()).fill(egui::Color32::TRANSPARENT)),
+        ..egui_snarl::ui::SnarlStyle::new()
+    };
     SnarlWidget::new()
-        .id(egui::Id::new("shader_graph"))
+        .id(snarl_id)
+        .style(style)
         .show(graph, &mut viewer, ui);
+    canvas::draw(
+        ui,
+        backdrop,
+        area,
+        annotations,
+        graph,
+        snarl_id,
+        viewer.transform,
+    );
+    if let Some(at) = viewer.new_note {
+        annotations.note(at);
+    }
+    if let Some(node) = viewer.ungroup {
+        annotations.leave(&[node.0]);
+    }
+    if let Some(bounds) = keys::handle(ui, graph, annotations, snarl_id, panel, viewer.transform) {
+        frame_next(ui, bounds);
+    }
 
     if minimap_shown(ui)
         && let Some(at) = crate::panels::graph_minimap::draw(ui, panel, graph, viewer.transform)
@@ -193,6 +228,41 @@ fn minimap_shown(ui: &egui::Ui) -> bool {
 fn show_minimap(ui: &egui::Ui, showing: bool) {
     ui.ctx()
         .data_mut(|d| d.insert_temp(egui::Id::new("shader_graph_minimap"), showing));
+}
+
+/// Frames `bounds` on the next frame — F reads the selection after the view is already placed.
+fn frame_next(ui: &egui::Ui, bounds: egui::Rect) {
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(egui::Id::new("shader_graph_frame"), bounds));
+}
+
+fn taken_frame(ui: &egui::Ui) -> Option<egui::Rect> {
+    let id = egui::Id::new("shader_graph_frame");
+    ui.ctx().data_mut(|d| {
+        let bounds = d.get_temp::<egui::Rect>(id);
+        d.remove::<egui::Rect>(id);
+        bounds
+    })
+}
+
+/// The **?** button: every binding the graph answers to, in one place.
+fn shortcut_sheet(ui: &mut egui::Ui) {
+    ui.menu_button("?", |ui| {
+        ui.strong("Shader Graph shortcuts");
+        egui::Grid::new("shader_graph_shortcuts")
+            .num_columns(2)
+            .spacing([12.0, 4.0])
+            .striped(true)
+            .show(ui, |ui| {
+                for binding in keys::BINDINGS {
+                    ui.monospace(binding.keys);
+                    ui.label(binding.does);
+                    ui.end_row();
+                }
+            });
+    })
+    .response
+    .on_hover_text("Keyboard and mouse shortcuts");
 }
 
 fn look_at(ui: &egui::Ui, at: egui::Pos2) {

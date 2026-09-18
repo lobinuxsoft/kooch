@@ -101,6 +101,8 @@ fn pin_names_sit_beside_their_pins() {
                     look_at: None,
                     panel: ui.max_rect(),
                     transform: TSTransform::IDENTITY,
+                    new_note: None,
+                    ungroup: None,
                 };
                 SnarlWidget::new()
                     .id(egui::Id::new("pin_names"))
@@ -194,6 +196,8 @@ fn a_resting_pointer_explains_pins() {
                     look_at: None,
                     panel: ui.max_rect(),
                     transform: TSTransform::IDENTITY,
+                    new_note: None,
+                    ungroup: None,
                 };
                 SnarlWidget::new()
                     .id(egui::Id::new("tooltips"))
@@ -231,7 +235,8 @@ fn a_resting_pointer_explains_pins() {
         .copied()
         .max_by(|a, b| a.y.total_cmp(&b.y))
         .expect("the panner draws its pins");
-    let about = "How far it moves per second: x along U, y along V.";
+    let about = "How far it moves per second: x along U, y along V. Time is already applied — \
+                 wire a speed, not speed × Time.";
 
     run(1.0, vec![egui::Event::PointerMoved(speed)]);
     let moving = run(1.05, vec![]);
@@ -250,4 +255,216 @@ fn a_resting_pointer_explains_pins() {
         texts(&rested)
     );
     assert!(texts(&rested).iter().any(|t| t == "speed (2)"));
+}
+
+/// Runs the panel's widget and canvas frame by frame, as the panel does, and reads back what they
+/// did. The graph starts with a grouped node and a neighbour its frame overlaps.
+struct Harness {
+    ctx: egui::Context,
+    graph: Graph,
+    annotations: crate::shader_graph::annotations::Annotations,
+    member: egui_snarl::NodeId,
+    neighbour: egui_snarl::NodeId,
+    to_screen: TSTransform,
+    time: f64,
+}
+
+impl Harness {
+    const ID: &str = "harness";
+
+    fn new() -> Self {
+        use crate::shader_graph::Node;
+        let mut graph = Graph::new();
+        let member = graph.insert_node(Pos2::new(60.0, 80.0), Node::Floor);
+        let neighbour = graph.insert_node(Pos2::new(90.0, 150.0), Node::Fract);
+        let mut annotations = crate::shader_graph::annotations::Annotations::default();
+        annotations.group(&[member.0]);
+        let mut harness = Self {
+            ctx: egui::Context::default(),
+            graph,
+            annotations,
+            member,
+            neighbour,
+            to_screen: TSTransform::IDENTITY,
+            time: 0.0,
+        };
+        harness.run(vec![]);
+        harness.run(vec![]);
+        harness
+    }
+
+    fn run(&mut self, events: Vec<egui::Event>) {
+        use egui_snarl::ui::SnarlWidget;
+        self.time += 0.1;
+        let (graph, annotations, to_screen) =
+            (&mut self.graph, &mut self.annotations, &mut self.to_screen);
+        let _ = self.ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 700.0))),
+                time: Some(self.time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let area = ui.available_rect_before_wrap();
+                let slot = super::canvas::reserve(ui);
+                let mut viewer = super::viewer::Viewer {
+                    fit: None,
+                    catalog: &[],
+                    drift: Vec2::ZERO,
+                    look_at: None,
+                    panel: area,
+                    transform: TSTransform::IDENTITY,
+                    new_note: None,
+                    ungroup: None,
+                };
+                let id = egui::Id::new(Self::ID);
+                SnarlWidget::new().id(id).show(graph, &mut viewer, ui);
+                super::canvas::draw(ui, slot, area, annotations, graph, id, viewer.transform);
+                *to_screen = viewer.transform;
+            },
+        );
+    }
+
+    /// Presses at `at` (graph space), drags by `by` (screen pixels) and lets go.
+    fn drag(&mut self, at: Pos2, by: Vec2) {
+        let from = self.to_screen * at;
+        let press = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        self.run(vec![egui::Event::PointerMoved(from), press(from, true)]);
+        self.run(vec![egui::Event::PointerMoved(from + by * 0.5)]);
+        self.run(vec![egui::Event::PointerMoved(from + by)]);
+        self.run(vec![press(from + by, false)]);
+        self.run(vec![]);
+    }
+
+    fn click(&mut self, at: Pos2) {
+        let at = self.to_screen * at;
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        self.run(vec![egui::Event::PointerMoved(at), press(true)]);
+        self.run(vec![press(false)]);
+        self.run(vec![]);
+    }
+
+    fn rect(&self, node: egui_snarl::NodeId) -> Rect {
+        egui_snarl::ui::get_node_rects(egui::Id::new(Self::ID), &self.ctx)
+            .into_iter()
+            .find(|(id, _)| *id == node)
+            .map(|(_, rect)| rect)
+            .expect("the node was drawn")
+    }
+
+    fn frame(&self) -> Rect {
+        let rects = [self.member, self.neighbour]
+            .into_iter()
+            .map(|id| (id.0, self.rect(id)))
+            .collect();
+        crate::shader_graph::annotations::fit(
+            &self.annotations.groups[0],
+            &self.graph,
+            &rects,
+            super::canvas::HEADER,
+        )
+        .unwrap()
+    }
+
+    fn pos(&self, node: egui_snarl::NodeId) -> Pos2 {
+        self.graph.get_node_info(node).unwrap().pos
+    }
+}
+
+/// 🔴 A plain click selects a node alone; the published widget only selected with Shift.
+#[test]
+fn a_click_selects_a_node() {
+    let mut harness = Harness::new();
+    let title = harness.rect(harness.neighbour).center_top() + Vec2::new(0.0, 8.0);
+    harness.click(title);
+    assert_eq!(
+        egui_snarl::ui::get_selected_nodes(egui::Id::new(Harness::ID), &harness.ctx),
+        [harness.neighbour]
+    );
+}
+
+/// 🔴 Carrying a group over a node moves its member alone, and does not take the node in — even
+/// where the frame overlaps it. The frame's handle wins the pointer over the widget beneath it.
+#[test]
+fn a_group_carries_only_members() {
+    let mut harness = Harness::new();
+    let frame = harness.frame();
+    assert!(
+        frame.intersects(harness.rect(harness.neighbour)),
+        "the test needs an overlap"
+    );
+    let (member, neighbour) = (harness.pos(harness.member), harness.pos(harness.neighbour));
+    let to_screen = harness.to_screen;
+
+    harness.drag(
+        frame.left_top() + Vec2::new(20.0, 8.0),
+        Vec2::new(30.0, 10.0),
+    );
+
+    assert_eq!(
+        harness.to_screen, to_screen,
+        "the widget panned: it took the drag"
+    );
+    let delta = Vec2::new(30.0, 10.0) / to_screen.scaling;
+    assert_eq!(harness.pos(harness.member), member + delta);
+    assert_eq!(harness.pos(harness.neighbour), neighbour);
+    assert_eq!(harness.annotations.groups[0].members, [harness.member.0]);
+}
+
+/// Dropping a dragged node inside a group's frame makes it a member.
+#[test]
+fn a_dropped_node_joins() {
+    let mut harness = Harness::new();
+    let target = harness.frame().center();
+    let grab = harness.rect(harness.neighbour).center_top() + Vec2::new(0.0, 8.0);
+    let centre = harness.rect(harness.neighbour).center();
+    // Move the node so its centre lands on the frame's, then let go.
+    let by = (target - centre) * harness.to_screen.scaling;
+    harness.drag(grab, by);
+    assert!(
+        harness.annotations.groups[0]
+            .members
+            .contains(&harness.neighbour.0),
+        "{:?}",
+        harness.annotations.groups
+    );
+}
+
+/// Double-clicking a group's title edits it in place; Enter keeps what was typed.
+#[test]
+fn a_group_renames_in_place() {
+    let mut harness = Harness::new();
+    let title = harness.to_screen * (harness.frame().left_top() + Vec2::new(40.0, 8.0));
+    let button = |pressed| egui::Event::PointerButton {
+        pos: title,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    harness.run(vec![egui::Event::PointerMoved(title), button(true)]);
+    harness.run(vec![button(false)]);
+    harness.run(vec![button(true)]);
+    harness.run(vec![button(false)]);
+    harness.run(vec![]);
+    harness.run(vec![egui::Event::Text(" dither".to_owned())]);
+    harness.run(vec![egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }]);
+    harness.run(vec![]);
+    assert_eq!(harness.annotations.groups[0].title, "Group dither");
 }

@@ -262,6 +262,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             .get::<crate::state::OpenInputMap>()
             .map(|open| open.path.clone())
             .as_deref(),
+        resources
+            .get::<crate::state::OpenShaderGraph>()
+            .map(|open| open.path.clone())
+            .as_deref(),
     );
     let (can_undo, can_redo, undo_desc, redo_desc) = match document.as_ref() {
         // A document of its own, with a history of its own.
@@ -540,8 +544,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // before `full_output` is handed to the presenter and consumed.
     let ui_repaint_delay = shortest_repaint_delay(&full_output);
 
-    // The graph the node panel edited: the dock had a copy of it, and this puts it back.
+    // The graph the node panel edited: the dock had a copy of it, and this puts it back — after
+    // filing what it was, while the resource still holds it, so the edit can be undone (#1211).
     if let Some(open) = open_shader_graph {
+        record_graph_edit(resources, &open);
         resources.insert(open);
     }
 
@@ -1032,6 +1038,28 @@ fn asset_kind(
         true => crate::history::AssetKind::Prefab,
         false => crate::history::AssetKind::Asset,
     }
+}
+
+/// Files the open graph's previous state when the panel changed it this frame.
+fn record_graph_edit(resources: &mut Resources, edited: &crate::state::OpenShaderGraph) {
+    let Some(step) = resources
+        .get::<crate::state::OpenShaderGraph>()
+        .filter(|before| before.path == edited.path)
+        .and_then(|before| {
+            crate::shader_graph::change(&before.graph, &edited.graph).or_else(|| {
+                (before.annotations != edited.annotations)
+                    .then_some(crate::shader_graph::GraphStep::Annotate)
+            })
+        })
+    else {
+        return;
+    };
+    crate::history::documents::record(
+        resources,
+        &crate::history::Document::ShaderGraph(edited.path.clone()),
+        step.label(),
+        step.merge_key(&edited.path),
+    );
 }
 
 /// Closes the current run of edits in every history.

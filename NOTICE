@@ -131,3 +131,15 @@ unmodified.
 
 CC0 requires nothing, so this notice is the credit they ask for and do
 not require. **Kenney does not endorse Kóoch.**
+
+---
+
+## egui-snarl
+
+`crates/egui_snarl` is an in-tree fork of egui-snarl 0.11.0
+(<https://github.com/zakarumych/egui-snarl>), dual-licensed MIT OR Apache-2.0. Both licence texts are
+kept in that directory (`LICENSE-MIT`, `LICENSE-APACHE`), and `crates/egui_snarl/KOOCH.md` lists every
+change made to it.
+
+> Copyright (c) 2023 Zakarum
+

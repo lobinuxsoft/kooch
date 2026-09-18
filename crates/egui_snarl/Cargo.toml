@@ -1,0 +1,28 @@
+# In-tree fork of egui-snarl 0.11.0 (https://github.com/zakarumych/egui-snarl), MIT OR Apache-2.0.
+# Kept because the published widget lets a panel read its selection but not set it, and exposes no
+# node sizes — see KOOCH.md for every change made here.
+[package]
+name = "egui-snarl"
+version = "0.11.0"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zakarumych/egui-snarl"
+description = "Node-graphs for egui (Kóoch fork)"
+readme = "README.md"
+publish = false
+
+[features]
+serde = ["dep:serde", "egui/serde", "slab/serde"]
+
+[dependencies]
+ahash = { version = "0.8.12", default-features = false }
+egui.workspace = true
+slab = { version = "0.4" }
+serde = { workspace = true, features = ["derive"], optional = true }
+smallvec = { version = "1.15", features = ["const_new"] }
+egui-scale = { version = "0.5.0" }
+
+# Upstream's `egui-probe` derives stay in the source untouched; the feature is not carried here.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("egui-probe"))'] }

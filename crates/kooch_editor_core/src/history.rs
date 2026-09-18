@@ -26,6 +26,8 @@ pub(crate) enum Document {
     /// The input map open in its panel, keyed by file — the panel holds
     /// one at a time, and opening another must not inherit its undo.
     InputMap(PathBuf),
+    /// The shader graph open in its panel, keyed by file for the same reason (#1211).
+    ShaderGraph(PathBuf),
 }
 
 /// What kind of document an asset guid names.
@@ -40,6 +42,7 @@ pub(crate) fn resolve(
     focused_tab: Option<EditorTab>,
     selected_asset: Option<(Guid, AssetKind)>,
     input_map: Option<&Path>,
+    shader_graph: Option<&Path>,
 ) -> Option<Document> {
     match focused_tab? {
         // The two panels that show the scene. A selected asset does not
@@ -54,6 +57,9 @@ pub(crate) fn resolve(
             None => Some(Document::World),
         },
         EditorTab::InputMap => input_map.map(|path| Document::InputMap(path.to_path_buf())),
+        EditorTab::ShaderGraph => {
+            shader_graph.map(|path| Document::ShaderGraph(path.to_path_buf()))
+        }
         _ => None,
     }
 }
@@ -72,6 +78,7 @@ impl Document {
             Document::Prefab(_) => "this prefab",
             Document::Asset(_) => "this asset",
             Document::InputMap(_) => "this input map",
+            Document::ShaderGraph(_) => "this shader graph",
         }
     }
 }

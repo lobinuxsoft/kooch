@@ -176,7 +176,11 @@ impl Node {
             Self::UnpackNormal => &[(Three, "The normal map's colour.")],
             Self::Panner => &[
                 UV_ZERO,
-                (Two, "How far it moves per second: x along U, y along V."),
+                (
+                    Two,
+                    "How far it moves per second: x along U, y along V. Time is already applied — \
+                     wire a speed, not speed × Time.",
+                ),
             ],
             Self::Rotator => &[
                 UV_ZERO,

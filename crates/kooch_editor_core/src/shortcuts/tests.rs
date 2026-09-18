@@ -107,3 +107,34 @@ fn every_chord_is_distinct() {
         assert!(!a.tooltip().is_empty(), "{a:?} has no tooltip");
     }
 }
+
+fn input(key: egui::Key, modifiers: egui::Modifiers) -> egui::InputState {
+    let mut input = egui::InputState::default();
+    input.modifiers = modifiers;
+    input.events.push(egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    });
+    input
+}
+
+/// 🔴 Ctrl+Shift+Z is redo; undo refusing the shift is what keeps it from firing both.
+#[test]
+fn shift_z_is_redo() {
+    let shifted = input(
+        egui::Key::Z,
+        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+    );
+    assert!(pressed(EditChord::Redo, &shifted));
+    assert!(!pressed(EditChord::Undo, &shifted));
+    let plain = input(egui::Key::Z, egui::Modifiers::COMMAND);
+    assert!(pressed(EditChord::Undo, &plain));
+    assert!(!pressed(EditChord::Redo, &plain));
+    assert!(pressed(
+        EditChord::Redo,
+        &input(egui::Key::Y, egui::Modifiers::COMMAND)
+    ));
+}
