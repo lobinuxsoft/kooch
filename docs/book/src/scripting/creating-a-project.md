@@ -83,6 +83,18 @@ Not "the linker drops it" — cargo never compiles it.
 deserialised by type name, so the game needs the registry to load its own scenes. What
 leaves is the editor, the remote server and the plugin API.
 
+### Dependencies are optimised, your crate is not
+
+```toml
+[profile.dev.package."*"]
+opt-level = 3
+```
+
+The project the editor drives is a dev build. Unoptimised, the engine, the ECS and the physics
+solver run an order of magnitude slower. This line optimises every dependency, the engine
+included. They are built once and then cached, and your own crate stays at `opt-level = 0`, so a
+change to your code still recompiles fast. The first build after adding it takes longer.
+
 ### `main.rs` — the game, and nothing else
 
 ```rust
@@ -147,7 +159,9 @@ kooch::kooch_plugin_api::export_plugin!(ProjectPlugin);
 ## Opening an older project
 
 Projects made with earlier versions of the editor are migrated on open: the `dylib` crate
-type, the `dynamic` feature, and the `registrations` wiring are all added if missing. You do
+type, the `dynamic` feature, and the `registrations` wiring are all added if missing. Moving a project
+onto a newer engine also adds the optimised-dependencies profile, unless the manifest already has
+a `[profile.dev.package."*"]` of its own. You do
 not have to do anything, but the first build afterwards will be a full one.
 
 ## The compiler has to match
