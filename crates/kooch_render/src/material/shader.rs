@@ -36,16 +36,20 @@ pub enum ShaderKind {
     Surface,
     /// A colour no light touches: defines `fn unlit(SurfaceInput) -> UnlitOutput` (#1179).
     Unlit,
+    /// One full-screen draw over the frame the camera produced: defines
+    /// `fn post_process(SurfaceInput) -> vec4<f32>` and reads `sample_scene` (#1201).
+    PostProcess,
 }
 
 impl ShaderKind {
     /// What a `// kind:` line names, in the order errors list them.
-    pub const NAMES: [&'static str; 2] = ["surface", "unlit"];
+    pub const NAMES: [&'static str; 3] = ["surface", "unlit", "post_process"];
 
     fn parse(name: &str) -> Option<Self> {
         match name {
             "surface" => Some(Self::Surface),
             "unlit" => Some(Self::Unlit),
+            "post_process" => Some(Self::PostProcess),
             _ => None,
         }
     }
@@ -53,7 +57,8 @@ impl ShaderKind {
     /// WGSL the frames read: `SURFACE_UNLIT`, and for an unlit shader the `surface` they call.
     fn glue(self) -> &'static str {
         match self {
-            Self::Surface => "const SURFACE_UNLIT: bool = false;\n",
+            // A post-process has a frame of its own, so it needs no glue at all.
+            Self::Surface | Self::PostProcess => "const SURFACE_UNLIT: bool = false;\n",
             Self::Unlit => UNLIT_GLUE,
         }
     }

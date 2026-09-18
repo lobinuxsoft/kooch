@@ -29,6 +29,8 @@ pub(crate) enum Node {
     ViewDirection,
     /// Seconds since the engine started: `x` raw, `y` its sine, `z` its cosine, `w` a tenth of it.
     Time,
+    /// The frame the camera produced, read at a uv. Only a post-process shader has one (#1201).
+    SceneColor,
     /// A number the material edits, from before parameters were typed (#1170). Still read so graphs
     /// written then open; `migrated` turns it into one of the typed nodes below, and the menu never
     /// offers it.
@@ -263,6 +265,7 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::WorldNormal,
         Node::ViewDirection,
         Node::Time,
+        Node::SceneColor,
         Node::Float {
             name: "amount".to_owned(),
             default: 0.5,

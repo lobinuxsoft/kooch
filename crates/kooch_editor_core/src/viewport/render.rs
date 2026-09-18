@@ -118,7 +118,10 @@ pub(crate) fn render_viewport(
         );
     }
 
-    // Pass 3: Line gizmos (always-on-top, depth comparison `Always`,
+    // Pass 3: the scene's post-process, over what the camera rendered and under the gizmos (#1201).
+    super::post::apply(gpu, &mut encoder, target, resources);
+
+    // Pass 4: Line gizmos (always-on-top, depth comparison `Always`,
     // screen-space thick lines).
     if project_loaded {
         gizmo_renderer.render(

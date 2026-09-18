@@ -50,6 +50,7 @@ impl Node {
     pub(crate) fn about(&self) -> &'static str {
         match self {
             Self::Uv => "The mesh's texture coordinate.",
+            Self::SceneColor => "The frame the camera produced. Post-process shaders only.",
             Self::WorldPosition => "The shaded point, in world space.",
             Self::WorldNormal => "The surface's normal, in world space.",
             Self::ViewDirection => "From the surface towards the camera, normalised.",
@@ -260,6 +261,7 @@ impl Node {
                 (One, "The radius, in uv units."),
             ],
             Self::Checker => &[UV_ZERO, (Two, "How many squares: x across, y down.")],
+            Self::SceneColor => &[(Two, "Where to read the frame. Unwired: this pixel.")],
             Self::ShaderOutput { kind } if kind == "unlit" => &[
                 (Three, "The final colour. No light or shadow changes it."),
                 (One, "Opacity, kept for transparent shaders. Unwired: 1."),

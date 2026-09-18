@@ -410,6 +410,16 @@ impl ShaderPreview {
             return true;
         }
 
+        // A post-process has no primitive to sit on: it is drawn over the whole frame, so the
+        // viewport is its preview (#1201). Said plainly rather than as a compile error about a
+        // `sample_scene` the preview frame does not have.
+        if source.contains("fn post_process(") {
+            self.refusal =
+                Some("A post-process is previewed in the viewport. Assign it to a PostProcess component.".to_owned());
+            self.pipeline = None;
+            return false;
+        }
+
         // 🔴 Checked before it is handed to wgpu: a graph mid-edit produces WGSL that does not
         // compile, and a validation error there is a panic rather than a message.
         if let Err(why) = kooch_render::meshlet::validate_preview(params_wgsl, source) {

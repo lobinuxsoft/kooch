@@ -42,6 +42,15 @@ impl ViewportTarget {
         }
     }
 
+    /// The colour texture itself, for a pass that copies into it.
+    pub fn color_texture(&self) -> &wgpu::Texture {
+        &self.color_texture
+    }
+
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.format
+    }
+
     pub fn texture_id(&self) -> egui::TextureId {
         self.texture_id
     }
@@ -116,7 +125,11 @@ fn create_color(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        // COPY_DST for the post-process, which reads this texture and copies its result back
+        // (#1201). TEXTURE_BINDING is what lets it be read at all.
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());

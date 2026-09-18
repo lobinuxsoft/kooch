@@ -2,6 +2,7 @@
 //! View panel through `egui_wgpu::Renderer::register_native_texture`.
 
 pub(crate) mod game;
+pub(crate) mod post;
 pub(crate) mod render;
 pub(crate) mod shader_preview;
 mod target;
