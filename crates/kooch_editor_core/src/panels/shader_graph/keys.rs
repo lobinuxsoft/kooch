@@ -3,6 +3,7 @@
 
 use egui::emath::TSTransform;
 use egui::{Id, Key, Pos2, Rect, Vec2};
+use egui_snarl::NodeId;
 
 use crate::shader_graph::annotations::Annotations;
 use crate::shader_graph::clipboard::{self, Clip};
@@ -28,6 +29,38 @@ pub(super) const BINDINGS: &[Binding] = &[
         does: "Redo",
     },
     Binding {
+        keys: "Click a node",
+        does: "Select it alone",
+    },
+    Binding {
+        keys: "Shift+click a node",
+        does: "Add it to the selection",
+    },
+    Binding {
+        keys: "Ctrl+click a node",
+        does: "Take it out of the selection",
+    },
+    Binding {
+        keys: "Shift+drag the background",
+        does: "Box-select",
+    },
+    Binding {
+        keys: "Ctrl+Shift+drag the background",
+        does: "Box-deselect",
+    },
+    Binding {
+        keys: "Ctrl+A",
+        does: "Select every node",
+    },
+    Binding {
+        keys: "Escape · click the background",
+        does: "Clear the selection",
+    },
+    Binding {
+        keys: "Drag a node",
+        does: "Move the selection",
+    },
+    Binding {
         keys: "Ctrl+C",
         does: "Copy the selected nodes, with the wires between them",
     },
@@ -37,7 +70,7 @@ pub(super) const BINDINGS: &[Binding] = &[
     },
     Binding {
         keys: "Ctrl+V",
-        does: "Paste at the pointer",
+        does: "Paste at the pointer, selected",
     },
     Binding {
         keys: "Ctrl+D",
@@ -56,36 +89,28 @@ pub(super) const BINDINGS: &[Binding] = &[
         does: "Group the selection",
     },
     Binding {
-        keys: "Drag a group's title",
-        does: "Move the group and the nodes in it",
+        keys: "Drop a node inside a group",
+        does: "It joins the group",
     },
     Binding {
-        keys: "Drag a group's corner",
-        does: "Resize it",
+        keys: "Drag a group's title",
+        does: "Move the group's nodes",
     },
     Binding {
         keys: "Right-click a group's title",
-        does: "Rename, recolour or delete it",
+        does: "Rename, recolour or ungroup",
+    },
+    Binding {
+        keys: "Right-click a node",
+        does: "Remove it, or take it out of its group",
+    },
+    Binding {
+        keys: "Right-click the background",
+        does: "Add a node or a note",
     },
     Binding {
         keys: "Right-click a note",
         does: "Edit or delete it",
-    },
-    Binding {
-        keys: "Click a node",
-        does: "Select it",
-    },
-    Binding {
-        keys: "Shift+drag the background",
-        does: "Box-select",
-    },
-    Binding {
-        keys: "Ctrl+Shift+drag the background",
-        does: "Box-deselect",
-    },
-    Binding {
-        keys: "Drag a node",
-        does: "Move the selection",
     },
     Binding {
         keys: "Drag the background",
@@ -94,14 +119,6 @@ pub(super) const BINDINGS: &[Binding] = &[
     Binding {
         keys: "Scroll",
         does: "Zoom",
-    },
-    Binding {
-        keys: "Right-click the background",
-        does: "Add a node or a note",
-    },
-    Binding {
-        keys: "Right-click a node",
-        does: "Remove it",
     },
 ];
 
@@ -120,7 +137,7 @@ pub(super) fn handle(
         return None;
     }
     let selected = egui_snarl::ui::get_selected_nodes(snarl_id, ctx);
-    let (command, pressed) = ctx.input(|i| {
+    let (command, keys) = ctx.input(|i| {
         let pressed = |key| i.key_pressed(key);
         (
             i.modifiers.command,
@@ -132,10 +149,23 @@ pub(super) fn handle(
                 pressed(Key::Delete) || pressed(Key::Backspace),
                 pressed(Key::F),
                 pressed(Key::G),
+                pressed(Key::A),
+                pressed(Key::Escape),
             ],
         )
     });
-    let [copy, cut, paste, duplicate, delete, frame, group] = pressed;
+    let [
+        copy,
+        cut,
+        paste,
+        duplicate,
+        delete,
+        frame,
+        group,
+        all,
+        escape,
+    ] = keys;
+    let select = |nodes: Vec<NodeId>| egui_snarl::ui::set_selected_nodes(snarl_id, ctx, nodes);
 
     if command && (copy || cut) {
         if let Some(clip) = clipboard::copy(graph, &selected) {
@@ -152,7 +182,7 @@ pub(super) fn handle(
         let at = ctx
             .pointer_latest_pos()
             .map_or(Pos2::ZERO, |pos| to_screen.inverse() * pos);
-        clipboard::paste(graph, &clip, at);
+        select(clipboard::paste(graph, &clip, at));
     }
     if command
         && duplicate
@@ -161,16 +191,20 @@ pub(super) fn handle(
             clipboard::corner(graph, &selected),
         )
     {
-        clipboard::paste(graph, &clip, corner + DUPLICATE_OFFSET);
+        select(clipboard::paste(graph, &clip, corner + DUPLICATE_OFFSET));
     }
     if !command && delete {
         clipboard::remove(graph, &selected);
     }
-    if command
-        && group
-        && let Some(bounds) = selection_bounds(graph, &selected)
-    {
-        annotations.group(super::canvas::group_around(bounds));
+    if command && group {
+        let members: Vec<usize> = selected.iter().map(|id| id.0).collect();
+        annotations.group(&members);
+    }
+    if command && all {
+        select(graph.node_ids().map(|(id, _)| id).collect());
+    }
+    if escape {
+        select(Vec::new());
     }
     if !command && frame {
         return selection_bounds(graph, &selected);
@@ -192,7 +226,7 @@ fn clip_id() -> Id {
 }
 
 /// What the selected nodes cover, or `None` with nothing selected.
-fn selection_bounds(graph: &Graph, selected: &[egui_snarl::NodeId]) -> Option<Rect> {
+fn selection_bounds(graph: &Graph, selected: &[NodeId]) -> Option<Rect> {
     let mut bounds = Rect::NOTHING;
     for &id in selected {
         if let Some(info) = graph.get_node_info(id) {

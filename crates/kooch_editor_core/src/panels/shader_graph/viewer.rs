@@ -31,6 +31,8 @@ pub(super) struct Viewer<'a> {
     pub(super) transform: TSTransform,
     /// Where the menu asked for a note, in graph space; the panel adds it after the widget.
     pub(super) new_note: Option<egui::Pos2>,
+    /// A node its menu took out of its group; the panel applies it after the widget.
+    pub(super) ungroup: Option<NodeId>,
 }
 
 impl SnarlViewer<Node> for Viewer<'_> {
@@ -300,6 +302,10 @@ impl SnarlViewer<Node> for Viewer<'_> {
         ui: &mut egui::Ui,
         snarl: &mut Snarl<Node>,
     ) {
+        if ui.button("Remove from group").clicked() {
+            self.ungroup = Some(node);
+            ui.close();
+        }
         if ui
             .button(format!("{} Remove", crate::icons::TRASH))
             .clicked()

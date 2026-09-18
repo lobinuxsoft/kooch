@@ -116,7 +116,8 @@ pub trait SnarlViewer<T> {
         snarl: &mut Snarl<T>,
     ) {
         let _ = (inputs, outputs);
-        ui.label(self.title(&snarl[node]));
+        // Kóoch: not selectable, or the title takes the click that selects the node.
+        ui.add(egui::Label::new(self.title(&snarl[node])).selectable(false));
     }
 
     /// Returns number of input pins of the node.

@@ -19,11 +19,14 @@ pub(crate) struct Annotations {
     pub notes: Vec<Note>,
 }
 
-/// A titled frame behind nodes. Moving it moves the nodes it holds.
+/// A titled frame around the nodes that belong to it. It fits them every frame, so it follows
+/// them as they move; moving it moves them. Membership is explicit: a node joins by being dropped
+/// inside, or by being grouped with Ctrl+G — never by a frame passing over it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Group {
     pub title: String,
-    pub rect: Rect,
+    /// Node ids, as the graph numbers them.
+    pub members: Vec<usize>,
     pub color: [u8; 3],
 }
 
@@ -53,13 +56,55 @@ impl Annotations {
         self.groups.is_empty() && self.notes.is_empty()
     }
 
-    /// A group around `bounds`, titled for the user to rename.
-    pub(crate) fn group(&mut self, bounds: Rect) {
+    /// A group of `members`, titled for the user to rename. A node is in one group at most, so they
+    /// leave the ones they were in.
+    pub(crate) fn group(&mut self, members: &[usize]) {
+        if members.is_empty() {
+            return;
+        }
+        self.leave(members);
         self.groups.push(Group {
             title: "Group".to_owned(),
-            rect: bounds,
+            members: members.to_vec(),
             color: GROUP_COLORS[0],
         });
+    }
+
+    /// Takes `nodes` out of whatever group holds them. A group left empty goes with them.
+    pub(crate) fn leave(&mut self, nodes: &[usize]) {
+        for group in &mut self.groups {
+            group.members.retain(|member| !nodes.contains(member));
+        }
+        self.groups.retain(|group| !group.members.is_empty());
+    }
+
+    /// Puts `nodes` in group `index`, out of any other.
+    pub(crate) fn join(&mut self, index: usize, nodes: &[usize]) {
+        if index >= self.groups.len() {
+            return;
+        }
+        for (at, group) in self.groups.iter_mut().enumerate() {
+            if at == index {
+                for node in nodes {
+                    if !group.members.contains(node) {
+                        group.members.push(*node);
+                    }
+                }
+            } else {
+                group.members.retain(|member| !nodes.contains(member));
+            }
+        }
+        self.groups.retain(|group| !group.members.is_empty());
+    }
+
+    /// Drops members the graph no longer has — removed nodes — and the groups left empty.
+    pub(crate) fn prune(&mut self, graph: &Graph) {
+        for group in &mut self.groups {
+            group
+                .members
+                .retain(|&member| graph.get_node(egui_snarl::NodeId(member)).is_some());
+        }
+        self.groups.retain(|group| !group.members.is_empty());
     }
 
     pub(crate) fn note(&mut self, at: Pos2) {
@@ -71,27 +116,43 @@ impl Annotations {
     }
 }
 
-/// Moves group `index` by `delta`, and every node whose corner sits inside it.
-pub(crate) fn move_group(
-    annotations: &mut Annotations,
-    graph: &mut Graph,
-    index: usize,
-    delta: Vec2,
-) {
-    let Some(group) = annotations.groups.get_mut(index) else {
+/// Moves the members of group `index` by `delta`.
+pub(crate) fn move_group(annotations: &Annotations, graph: &mut Graph, index: usize, delta: Vec2) {
+    let Some(group) = annotations.groups.get(index) else {
         return;
     };
-    let inside: Vec<_> = graph
-        .nodes_pos_ids()
-        .filter(|(_, pos, _)| group.rect.contains(*pos))
-        .map(|(id, ..)| id)
-        .collect();
-    group.rect = group.rect.translate(delta);
-    for id in inside {
-        if let Some(info) = graph.get_node_info_mut(id) {
+    for &member in &group.members {
+        if let Some(info) = graph.get_node_info_mut(egui_snarl::NodeId(member)) {
             info.pos += delta;
         }
     }
+}
+
+/// The frame around group `index`'s members, from each node's drawn rect in `rects` — or its
+/// position and a typical size, for a node not drawn yet. Room for the title above, and margin.
+pub(crate) fn fit(
+    group: &Group,
+    graph: &Graph,
+    rects: &std::collections::HashMap<usize, Rect>,
+    header: f32,
+) -> Option<Rect> {
+    let mut bounds = Rect::NOTHING;
+    for &member in &group.members {
+        let rect = rects.get(&member).copied().or_else(|| {
+            let pos = graph.get_node_info(egui_snarl::NodeId(member))?.pos;
+            Some(Rect::from_min_size(pos, super::NODE_SIZE))
+        });
+        if let Some(rect) = rect {
+            bounds = bounds.union(rect);
+        }
+    }
+    const MARGIN: f32 = 16.0;
+    bounds.is_finite().then(|| {
+        Rect::from_min_max(
+            bounds.min - Vec2::new(MARGIN, MARGIN + header),
+            bounds.max + Vec2::splat(MARGIN),
+        )
+    })
 }
 
 /// `source` with the annotations appended, or unchanged when there are none.

@@ -7,17 +7,15 @@
 
 use egui::emath::TSTransform;
 use egui::layers::ShapeIdx;
-use egui::{Color32, FontId, Rect, Sense, Shape, Stroke, Vec2};
+use std::collections::HashMap;
+
+use egui::{Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 
 use crate::shader_graph::Graph;
 use crate::shader_graph::annotations::{self, Annotations, GROUP_COLORS};
 
 /// Height of a group's title bar, in graph units.
 pub(super) const HEADER: f32 = 28.0;
-/// A group is never resized smaller than this, in graph units.
-const MIN_GROUP: Vec2 = Vec2::new(120.0, 80.0);
-/// The corner that resizes a group, in screen pixels.
-const HANDLE: f32 = 14.0;
 
 /// Where the canvas will be painted, behind everything the graph widget adds after it.
 pub(super) fn reserve(ui: &egui::Ui) -> ShapeIdx {
@@ -31,6 +29,7 @@ pub(super) fn draw(
     area: Rect,
     annotations: &mut Annotations,
     graph: &mut Graph,
+    snarl_id: egui::Id,
     to_screen: TSTransform,
 ) {
     // The slot is on the panel's layer; the handles' child Ui paints on another.
@@ -49,10 +48,25 @@ pub(super) fn draw(
         ui.visuals().extreme_bg_color,
     )];
     let scale = to_screen.scaling;
-    let mut removed_group = None;
-    for index in 0..annotations.groups.len() {
-        let group = &annotations.groups[index];
-        let screen = to_screen * group.rect;
+
+    annotations.prune(graph);
+    let rects: HashMap<usize, Rect> = egui_snarl::ui::get_node_rects(snarl_id, ui.ctx())
+        .into_iter()
+        .map(|(id, rect)| (id.0, rect))
+        .collect();
+    let frames: Vec<Option<Rect>> = annotations
+        .groups
+        .iter()
+        .map(|group| annotations::fit(group, graph, &rects, HEADER))
+        .collect();
+    drop_into_groups(ui, annotations, graph, &frames, &rects);
+
+    let mut ungrouped = None;
+    for (index, frame) in frames.iter().enumerate() {
+        let (Some(frame), Some(group)) = (frame, annotations.groups.get(index)) else {
+            continue;
+        };
+        let screen = to_screen * *frame;
         let [r, g, b] = group.color;
         let header = Rect::from_min_size(screen.min, Vec2::new(screen.width(), HEADER * scale));
         shapes.push(Shape::rect_filled(
@@ -87,18 +101,8 @@ pub(super) fn draw(
             .on_hover_cursor(egui::CursorIcon::Grab);
         if moved.dragged() {
             annotations::move_group(annotations, graph, index, moved.drag_delta() / scale);
-        }
-        let corner = Rect::from_min_size(screen.max - Vec2::splat(HANDLE), Vec2::splat(HANDLE));
-        let resized = ui
-            .interact(
-                corner,
-                ui.id().with(("graph_group_size", index)),
-                Sense::drag(),
-            )
-            .on_hover_cursor(egui::CursorIcon::ResizeNwSe);
-        if resized.dragged() {
-            let rect = &mut annotations.groups[index].rect;
-            rect.max = (rect.max + resized.drag_delta() / scale).max(rect.min + MIN_GROUP);
+            // A group carried over a node must not look like that node being dropped into it.
+            ui.ctx().data_mut(|d| d.insert_temp(group_drag_id(), true));
         }
         moved.context_menu(|ui| {
             let group = &mut annotations.groups[index];
@@ -116,15 +120,16 @@ pub(super) fn draw(
                 }
             });
             if ui
-                .button(format!("{} Delete group", crate::icons::TRASH))
+                .button("Ungroup")
+                .on_hover_text("Remove the frame; its nodes stay where they are")
                 .clicked()
             {
-                removed_group = Some(index);
+                ungrouped = Some(index);
                 ui.close();
             }
         });
     }
-    if let Some(index) = removed_group {
+    if let Some(index) = ungrouped {
         annotations.groups.remove(index);
     }
 
@@ -177,7 +182,65 @@ pub(super) fn draw(
     painter.set(slot, Shape::Vec(shapes));
 }
 
-/// A group's rect for nodes covering `bounds`: room for its title bar above them.
-pub(super) fn group_around(bounds: Rect) -> Rect {
-    Rect::from_min_max(bounds.min - Vec2::new(0.0, HEADER), bounds.max)
+/// On the frame a node drag ends, the nodes it moved join the group they were dropped in — by their
+/// centre, and only when they are not in it already. Where the drag began is kept from the press.
+fn drop_into_groups(
+    ui: &egui::Ui,
+    annotations: &mut Annotations,
+    graph: &Graph,
+    frames: &[Option<Rect>],
+    rects: &HashMap<usize, Rect>,
+) {
+    let ctx = ui.ctx();
+    let (pressed, released) =
+        ctx.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_released()));
+    if pressed {
+        let start: Vec<(usize, Pos2)> = graph
+            .nodes_pos_ids()
+            .map(|(id, pos, _)| (id.0, pos))
+            .collect();
+        ctx.data_mut(|d| {
+            d.insert_temp(drag_start_id(), start);
+            d.insert_temp(group_drag_id(), false);
+        });
+    }
+    if !released {
+        return;
+    }
+    let start = ctx.data(|d| d.get_temp::<Vec<(usize, Pos2)>>(drag_start_id()));
+    let carried = ctx.data(|d| d.get_temp::<bool>(group_drag_id()).unwrap_or(false));
+    let Some(start) = start.filter(|_| !carried) else {
+        return;
+    };
+    for (node, before) in start {
+        let Some(pos) = graph
+            .get_node_info(egui_snarl::NodeId(node))
+            .map(|info| info.pos)
+        else {
+            continue;
+        };
+        if pos == before {
+            continue;
+        }
+        let centre = rects
+            .get(&node)
+            .map_or(pos + crate::shader_graph::NODE_SIZE / 2.0, |rect| {
+                rect.center()
+            });
+        let target = frames.iter().enumerate().find(|(index, frame)| {
+            frame.is_some_and(|frame| frame.contains(centre))
+                && !annotations.groups[*index].members.contains(&node)
+        });
+        if let Some((index, _)) = target {
+            annotations.join(index, &[node]);
+        }
+    }
+}
+
+fn drag_start_id() -> egui::Id {
+    egui::Id::new("shader_graph_drag_start")
+}
+
+fn group_drag_id() -> egui::Id {
+    egui::Id::new("shader_graph_group_drag")
 }

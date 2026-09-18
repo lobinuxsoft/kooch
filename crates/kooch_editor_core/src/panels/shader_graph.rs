@@ -120,6 +120,7 @@ pub(crate) fn draw_shader_graph_content(
         panel,
         transform: TSTransform::IDENTITY,
         new_note: None,
+        ungroup: None,
     };
 
     let area = ui.available_rect_before_wrap();
@@ -134,9 +135,20 @@ pub(crate) fn draw_shader_graph_content(
         .id(snarl_id)
         .style(style)
         .show(graph, &mut viewer, ui);
-    canvas::draw(ui, backdrop, area, annotations, graph, viewer.transform);
+    canvas::draw(
+        ui,
+        backdrop,
+        area,
+        annotations,
+        graph,
+        snarl_id,
+        viewer.transform,
+    );
     if let Some(at) = viewer.new_note {
         annotations.note(at);
+    }
+    if let Some(node) = viewer.ungroup {
+        annotations.leave(&[node.0]);
     }
     if let Some(bounds) = keys::handle(ui, graph, annotations, snarl_id, panel, viewer.transform) {
         frame_next(ui, bounds);

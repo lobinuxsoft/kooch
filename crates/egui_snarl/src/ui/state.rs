@@ -622,3 +622,25 @@ pub fn get_selected_nodes(id: Id, ctx: &Context) -> Vec<NodeId> {
     ctx.data(|d| d.get_temp::<SelectedNodes>(id).unwrap_or_default().0)
         .into_vec()
 }
+
+/// Kóoch: replaces the selection of the `SnarlWidget` with `id`, read by its next frame.
+pub fn set_selected_nodes(id: Id, ctx: &Context, nodes: impl IntoIterator<Item = NodeId>) {
+    SelectedNodes(nodes.into_iter().collect()).save(ctx, id);
+}
+
+/// Kóoch: every node's rect as the `SnarlWidget` with `id` last drew it, in graph space.
+#[derive(Clone, Default)]
+struct NodeRects(Vec<(NodeId, Rect)>);
+
+pub(crate) fn save_node_rects(id: Id, ctx: &Context, rects: Vec<(NodeId, Rect)>) {
+    ctx.data_mut(|d| d.insert_temp(id.with("kooch_node_rects"), NodeRects(rects)));
+}
+
+/// Kóoch: the rect each node took on the last frame of the `SnarlWidget` with `id`, in graph
+/// space — its real size, which depends on its pins and fields.
+#[must_use]
+pub fn get_node_rects(id: Id, ctx: &Context) -> Vec<(NodeId, Rect)> {
+    ctx.data(|d| d.get_temp::<NodeRects>(id.with("kooch_node_rects")))
+        .unwrap_or_default()
+        .0
+}

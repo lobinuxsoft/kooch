@@ -34,7 +34,7 @@ use self::{
 pub use self::{
     background_pattern::{BackgroundPattern, Grid},
     pin::{AnyPins, PinInfo, PinShape, PinWireInfo, SnarlPin},
-    state::get_selected_nodes,
+    state::{get_node_rects, get_selected_nodes, set_selected_nodes},
     viewer::SnarlViewer,
     wire::{WireLayer, WireStyle},
 };
@@ -1105,9 +1105,8 @@ where
             drag_released |= response.drag_released;
 
             nodes_bb = nodes_bb.union(response.final_rect);
-            if rect_selection_ended.is_some() {
-                node_rects.push((node_idx, response.final_rect));
-            }
+            // Kóoch: kept every frame, not only when a box selection ends, for `get_node_rects`.
+            node_rects.push((node_idx, response.final_rect));
         }
     }
 
@@ -1192,6 +1191,8 @@ where
         viewer.disconnect(&out_pin, &in_pin, snarl);
     }
 
+    state::save_node_rects(snarl_id, ui.ctx(), node_rects.clone());
+
     if let Some(select_rect) = rect_selection_ended {
         let select_nodes = node_rects.into_iter().filter_map(|(id, rect)| {
             let select = if style.get_select_rect_contained() {
@@ -1238,7 +1239,8 @@ where
         snarl_state.look_at(nodes_bb, ui_rect, min_scale, max_scale);
     }
 
-    if modifiers.command && snarl_resp.clicked_by(PointerButton::Primary) {
+    // Kóoch: any plain click on the background clears the selection; upstream needs Ctrl.
+    if snarl_resp.clicked_by(PointerButton::Primary) {
         snarl_state.deselect_all_nodes();
     }
 
@@ -1881,6 +1883,13 @@ where
             snarl_state.select_one_node(modifiers.command, node);
         } else if modifiers.command {
             snarl_state.deselect_one_node(node);
+        } else if r.clicked_by(PointerButton::Primary)
+            || (r.drag_started_by(PointerButton::Primary)
+                && !snarl_state.selected_nodes().contains(&node))
+        {
+            // Kóoch: a plain click selects the node alone, and dragging an unselected node selects
+            // it, as every node editor does. Upstream selects with Shift only.
+            snarl_state.select_one_node(true, node);
         }
     }
 
