@@ -102,6 +102,8 @@ pub enum FieldKind {
     EntityRef,
     /// Struct that also implements `Reflect`.
     Nested,
+    /// An ordered list; the value carries what each item is (#1201).
+    List,
 }
 
 /// Controls how the inspector displays a reflected component.

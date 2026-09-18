@@ -273,6 +273,7 @@ pub(in crate::panels::inspector) fn draw_value_widget(
         ReflectValue::EntityRef(reference) => {
             draw_entity_picker(ui, *reference, field.entities, field.requires, field_name)
         }
+        ReflectValue::List { items, element } => super::list::draw_list(ui, items, element, field),
         ReflectValue::Mat4(m) => {
             let (scale, rotation, translation) = m.to_scale_rotation_translation();
             let (ex, ey, ez) = rotation.to_euler(glam::EulerRot::XYZ);

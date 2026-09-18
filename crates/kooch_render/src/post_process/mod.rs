@@ -29,14 +29,20 @@ pub struct PostFrame<'a> {
     pub time: f32,
 }
 
-/// The slot, with the pipeline it built for the material it is showing.
+/// One effect of the stack: its pipeline, the shader revision it was built from, and its uniforms.
+struct Effect {
+    revision: u64,
+    pipeline: Option<wgpu::RenderPipeline>,
+    uniforms: pipeline::Uniforms,
+}
+
+/// The slot, with a pipeline per effect it has shown.
 pub struct PostPass {
     format: wgpu::TextureFormat,
     parts: pipeline::Parts,
-    /// The shader the pipeline was built from, by material slot and revision, so an edit rebuilds
-    /// and an unchanged frame does not.
-    built: Option<(u32, u64)>,
-    pipeline: Option<wgpu::RenderPipeline>,
+    /// By material slot. CPU-side coordination, looked up once per effect per frame; a stack is a
+    /// handful of entries, never a hot loop.
+    effects: std::collections::HashMap<u32, Effect>,
     /// Why the last build failed, for the panel to show.
     refusal: Option<String>,
 }
@@ -46,8 +52,7 @@ impl PostPass {
         Self {
             format,
             parts: pipeline::Parts::new(device),
-            built: None,
-            pipeline: None,
+            effects: std::collections::HashMap::new(),
             refusal: None,
         }
     }
@@ -76,7 +81,10 @@ impl PostPass {
         if !self.ensure_pipeline(frame.device, slot, surface) {
             return false;
         }
-        let Some(pipeline) = self.pipeline.as_ref() else {
+        let Some(effect) = self.effects.get(&slot) else {
+            return false;
+        };
+        let Some(pipeline) = effect.pipeline.as_ref() else {
             return false;
         };
 
@@ -93,15 +101,20 @@ impl PostPass {
 
         self.parts.write_uniforms(
             frame.queue,
+            &effect.uniforms,
             PostUniforms {
                 resolution: [frame.size.0 as f32, frame.size.1 as f32],
                 time: frame.time,
                 material_id: slot,
             },
         );
-        let groups = self
-            .parts
-            .bind_groups(frame.device, frame.scene_view, materials, slot);
+        let groups = self.parts.bind_groups(
+            frame.device,
+            &effect.uniforms,
+            frame.scene_view,
+            materials,
+            slot,
+        );
 
         {
             let mut pass = frame
@@ -144,37 +157,56 @@ impl PostPass {
         true
     }
 
-    /// Builds the pipeline for `surface` when it is not the one already built. `false` when the
-    /// shader is not a post-process or does not compile — the refusal is kept for the panel.
+    /// Builds the pipeline for `surface` when this effect has none for its revision. `false` when
+    /// the shader is not a post-process or does not compile — the refusal is kept for the panel.
     fn ensure_pipeline(
         &mut self,
         device: &wgpu::Device,
         slot: u32,
         surface: &SurfaceSource,
     ) -> bool {
-        if self.built == Some((slot, surface.revision)) {
-            return self.pipeline.is_some();
+        if let Some(effect) = self.effects.get(&slot)
+            && effect.revision == surface.revision
+        {
+            return effect.pipeline.is_some();
         }
-        self.built = Some((slot, surface.revision));
-        self.pipeline = None;
-        self.refusal = None;
+        let pipeline = self.build(device, surface);
+        let uniforms = match self.effects.remove(&slot) {
+            Some(effect) => effect.uniforms,
+            None => self.parts.uniforms(device),
+        };
+        let built = pipeline.is_some();
+        self.effects.insert(
+            slot,
+            Effect {
+                revision: surface.revision,
+                pipeline,
+                uniforms,
+            },
+        );
+        built
+    }
 
+    fn build(
+        &mut self,
+        device: &wgpu::Device,
+        surface: &SurfaceSource,
+    ) -> Option<wgpu::RenderPipeline> {
         if !surface.source.contains("fn post_process(") {
-            // Not a post-process shader: an ordinary material assigned here by mistake.
-            return false;
+            // Not a post-process shader: an ordinary material put in the stack by mistake.
+            return None;
         }
         // 🔴 Checked before a pipeline is built from it: a broken edit has to read as a message in
         // the panel, never as a wgpu validation panic.
         if let Err(why) = validate_post(&surface.params_wgsl, &surface.source) {
             self.refusal = Some(why);
-            return false;
+            return None;
         }
-        self.pipeline =
-            Some(
-                self.parts
-                    .build(device, self.format, &surface.params_wgsl, &surface.source),
-            );
-        true
+        self.refusal = None;
+        Some(
+            self.parts
+                .build(device, self.format, &surface.params_wgsl, &surface.source),
+        )
     }
 }
 

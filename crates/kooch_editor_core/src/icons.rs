@@ -92,6 +92,12 @@ pub const GEAR: &str = "\u{e270}";
 /// Arrow left icon — used for "Back" button.
 pub const ARROW_LEFT: &str = "\u{e058}";
 
+/// Arrow-up — move an item earlier in a list.
+pub const ARROW_UP: &str = "\u{e08e}";
+
+/// Arrow-down — move an item later in a list.
+pub const ARROW_DOWN: &str = "\u{e03e}";
+
 /// Rocket icon — used for launching projects.
 pub const ROCKET: &str = "\u{e3fc}";
 

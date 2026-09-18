@@ -13,6 +13,7 @@
 //! }
 //! ```
 
+mod asset_list;
 mod attrs;
 mod system_attr;
 mod type_mapping;
@@ -30,7 +31,7 @@ use crate::attrs::{
 };
 use crate::type_mapping::type_mapping;
 use crate::unit_struct::unit_struct_impl;
-use crate::util::{is_entity, is_entity_ref, option_inner};
+use crate::util::{is_entity, is_entity_ref, option_inner, vec_inner};
 
 /// Declares which frame stage a system binds into, and how.
 ///
@@ -115,12 +116,34 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             continue;
         }
 
+        let set_pattern = match crate::attrs::parse_field_alias(field) {
+            Ok(Some(alias)) => quote! { #field_name_str | #alias },
+            Ok(None) => quote! { #field_name_str },
+            Err(e) => return e,
+        };
+
         // `#[reflect(asset = ...)]` makes an `Option<Guid>` a typed asset reference
         // (`FieldKind::AssetRef`).
         let asset_type = match parse_field_asset_type(field) {
             Ok(opt) => opt,
             Err(e) => return e,
         };
+        if let Some(asset_type) = &asset_type
+            && vec_inner(&field.ty).and_then(option_inner).is_some()
+        {
+            let (meta, get, set) = asset_list::asset_list(
+                field_name,
+                &field_name_str,
+                &set_pattern,
+                asset_type,
+                &field_doc,
+                &field_group,
+            );
+            field_metas.push(meta);
+            get_arms.push(get);
+            set_arms.push(set);
+            continue;
+        }
         if let Some(asset_type) = asset_type {
             field_metas.push(quote! {
                 ::kooch_ecs::reflect::FieldMeta {
@@ -145,7 +168,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 }),
             });
             set_arms.push(quote! {
-                #field_name_str => match value {
+                #set_pattern => match value {
                     ::kooch_ecs::reflect::ReflectValue::AssetRef { guid, .. } => {
                         self.#field_name = guid;
                         Ok(())
@@ -206,7 +229,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             // Both reference states are accepted: a `Persistent` one means the target's scene is
             // not open — ordinary under world-cell streaming — and is kept to resolve later.
             set_arms.push(quote! {
-                #field_name_str => match value {
+                #set_pattern => match value {
                     ::kooch_ecs::reflect::ReflectValue::EntityRef(reference) => {
                         self.#field_name = reference;
                         Ok(())
@@ -310,7 +333,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 }
             };
             set_arms.push(quote! {
-                #field_name_str => match value {
+                #set_pattern => match value {
                     ::kooch_ecs::reflect::ReflectValue::EntityRef(reference) => #set_body,
                     other => Err(::kooch_ecs::reflect::ReflectError::TypeMismatch {
                         field: #field_name_str.into(),
@@ -391,7 +414,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
 
         // reflect_set arm.
         set_arms.push(quote! {
-            #field_name_str => match value {
+            #set_pattern => match value {
                 ::kooch_ecs::reflect::ReflectValue::#value_ident(v) => {
                     self.#field_name = v;
                     Ok(())

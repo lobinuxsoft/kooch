@@ -29,6 +29,24 @@ pub(crate) fn option_inner(ty: &Type) -> Option<&Type> {
     })
 }
 
+/// The `T` of a `Vec<T>`, or `None` for any other type.
+pub(crate) fn vec_inner(ty: &Type) -> Option<&Type> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    let segment = type_path.path.segments.last()?;
+    if segment.ident != "Vec" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    args.args.iter().find_map(|arg| match arg {
+        syn::GenericArgument::Type(inner) => Some(inner),
+        _ => None,
+    })
+}
+
 /// Whether a type names `Entity`, bare or behind a path.
 pub(crate) fn is_entity(ty: &Type) -> bool {
     last_type_segment(ty).is_some_and(|ident| ident == "Entity")

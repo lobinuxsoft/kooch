@@ -7,16 +7,17 @@ use crate::component::Component;
 #[allow(unused_imports)]
 use crate::Reflect;
 
-/// A material whose shader is `kind: post_process`, drawn over the finished frame.
+/// Materials whose shaders are `kind: post_process`, drawn over the finished frame in list order —
+/// each one reads what the one before it produced.
 ///
-/// 🔴 One per scene for now: the pass runs over the whole viewport, so two of them would need an
-/// order and a reason. Without the component, or without a material, the frame is untouched.
+/// 🔴 One stack per scene: the effects run over the whole viewport, so the order has to be in one
+/// place to be read at a glance. Without the component, or with it off, the frame is untouched.
 #[derive(Debug, Clone, Reflect)]
 #[reflect(category = "Rendering")]
 pub struct PostProcess {
-    /// The material to draw with. Its shader decides what the effect is.
-    #[reflect(asset = "kooch_render::material::asset::Material")]
-    pub material: Option<Guid>,
+    /// The effects, first to last. An empty slot is skipped.
+    #[reflect(asset = "kooch_render::material::asset::Material", alias = "material")]
+    pub materials: Vec<Option<Guid>>,
     /// Off leaves the frame as the camera rendered it, and costs nothing.
     pub enabled: bool,
 }
@@ -24,10 +25,13 @@ pub struct PostProcess {
 impl Default for PostProcess {
     fn default() -> Self {
         Self {
-            material: None,
+            materials: Vec::new(),
             enabled: true,
         }
     }
 }
 
 impl Component for PostProcess {}
+
+#[cfg(test)]
+mod tests;

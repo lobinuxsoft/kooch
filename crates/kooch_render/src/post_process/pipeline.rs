@@ -38,18 +38,23 @@ struct ResolutionUbo {
     _pad: [f32; 2],
 }
 
-/// Layouts, samplers and uniform buffers: everything a post-process pipeline needs that does not
-/// depend on which shader is showing.
+/// One effect's uniforms. Per effect, not shared: a stack records several passes into one encoder,
+/// and `write_buffer` lands before the submit, so a shared buffer would give every pass the last
+/// effect's values.
+pub(super) struct Uniforms {
+    screen: wgpu::Buffer,
+    inti: wgpu::Buffer,
+    resolution: wgpu::Buffer,
+}
+
+/// Layouts and samplers: everything a post-process pipeline needs that does not depend on which
+/// shader is showing.
 pub(super) struct Parts {
     frame_bgl: wgpu::BindGroupLayout,
-    empty_bgl: wgpu::BindGroupLayout,
     materials_bgl: wgpu::BindGroupLayout,
     texture_bgl: wgpu::BindGroupLayout,
     layout: wgpu::PipelineLayout,
     sampler: wgpu::Sampler,
-    screen: wgpu::Buffer,
-    inti: wgpu::Buffer,
-    resolution: wgpu::Buffer,
     empty_bg: wgpu::BindGroup,
 }
 
@@ -105,14 +110,6 @@ impl Parts {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let uniform_buffer = |label, size| {
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
-        };
         let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("post_process_empty_bg"),
             layout: &empty_bgl,
@@ -120,21 +117,38 @@ impl Parts {
         });
         Self {
             frame_bgl,
-            empty_bgl,
             materials_bgl,
             texture_bgl,
             layout,
             sampler,
-            screen: uniform_buffer("post_process_screen", 16),
-            inti: uniform_buffer("post_process_inti", 16),
-            resolution: uniform_buffer("post_process_resolution", 16),
             empty_bg,
         }
     }
 
-    pub(super) fn write_uniforms(&self, queue: &wgpu::Queue, values: PostUniforms) {
+    pub(super) fn uniforms(&self, device: &wgpu::Device) -> Uniforms {
+        let buffer = |label| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        Uniforms {
+            screen: buffer("post_process_screen"),
+            inti: buffer("post_process_inti"),
+            resolution: buffer("post_process_resolution"),
+        }
+    }
+
+    pub(super) fn write_uniforms(
+        &self,
+        queue: &wgpu::Queue,
+        uniforms: &Uniforms,
+        values: PostUniforms,
+    ) {
         queue.write_buffer(
-            &self.screen,
+            &uniforms.screen,
             0,
             bytemuck::bytes_of(&ScreenUbo {
                 material_id: values.material_id,
@@ -145,7 +159,7 @@ impl Parts {
             }),
         );
         queue.write_buffer(
-            &self.inti,
+            &uniforms.inti,
             0,
             bytemuck::bytes_of(&IntiUbo {
                 camera_position: [0.0; 3],
@@ -153,7 +167,7 @@ impl Parts {
             }),
         );
         queue.write_buffer(
-            &self.resolution,
+            &uniforms.resolution,
             0,
             bytemuck::bytes_of(&ResolutionUbo {
                 resolution: values.resolution,
@@ -166,6 +180,7 @@ impl Parts {
     pub(super) fn bind_groups(
         &self,
         device: &wgpu::Device,
+        uniforms: &Uniforms,
         scene: &wgpu::TextureView,
         materials: &MaterialPipeline,
         slot: u32,
@@ -182,9 +197,9 @@ impl Parts {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
                 },
-                self.screen.as_entire_binding().into_entry(2),
-                self.inti.as_entire_binding().into_entry(3),
-                self.resolution.as_entire_binding().into_entry(4),
+                uniforms.screen.as_entire_binding().into_entry(2),
+                uniforms.inti.as_entire_binding().into_entry(3),
+                uniforms.resolution.as_entire_binding().into_entry(4),
             ],
         });
         let materials_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -246,11 +261,6 @@ impl Parts {
             multiview_mask: None,
             cache: None,
         })
-    }
-
-    /// Kept so a rebuild after a format change is a compile error rather than a silent mismatch.
-    pub(super) fn empty_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.empty_bgl
     }
 }
 

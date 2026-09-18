@@ -47,6 +47,7 @@ Each field's Rust type maps to a `FieldKind`, and the kind decides the widget:
 | `Quat` | Euler angles, in degrees |
 | `Mat4` | Decomposed to translation / rotation / lossy scale, read-only |
 | `Option<Guid>` + `#[reflect(asset = "…")]` | Typed asset picker |
+| `Vec<Option<Guid>>` + `#[reflect(asset = "…")]` | A list of asset pickers, with add, remove and move up / down |
 | `Option<EntityRef>` | Entity picker, and a drop target for a drag from the World panel |
 | `Entity`, `Option<Entity>` | Same widget, but see "Pointing at another entity" below |
 | A struct that also derives `Reflect` | Nested, drawn inline |
@@ -90,6 +91,11 @@ pub struct Weapon {
     /// A typed asset picker instead of a raw Guid text field.
     #[reflect(asset = "Mesh")]
     pub projectile: Option<Guid>,
+
+    /// A renamed field keeps loading under its old name: without the alias, a scene saved before
+    /// the rename would bring this back empty, and nothing would say so.
+    #[reflect(asset = "Mesh", alias = "projectile_mesh")]
+    pub ammo: Option<Guid>,
 
     /// A dropdown of named values instead of a bare integer.
     #[reflect(choices = FIRE_MODE_CHOICES)]

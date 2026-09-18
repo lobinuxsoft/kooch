@@ -85,7 +85,10 @@ fn post_process(input: SurfaceInput) -> vec4<f32> {
 }
 ```
 
-To see it: put a **Post Process** component on an entity and assign a material using this shader.
+To see it: put a **Post Process** component on an entity and add a material using this shader to
+its **materials** list. The list is a stack: effects run top to bottom, each reading what the one
+above it produced, and the arrows reorder them. Each effect is one full-screen pass, so on a handheld
+a long stack is budget spent.
 It runs in the View panel, the Game panel and the game window alike, over the scene and **under**
 the gizmos. Without the component, or with it off, the frame costs what it cost before.
 

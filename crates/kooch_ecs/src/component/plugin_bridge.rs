@@ -30,6 +30,7 @@ pub(crate) const fn map_field_kind(kind: PluginFieldKind) -> FieldKind {
         PluginFieldKind::AssetRef => FieldKind::AssetRef,
         PluginFieldKind::EntityRef => FieldKind::EntityRef,
         PluginFieldKind::Nested => FieldKind::Nested,
+        PluginFieldKind::List => FieldKind::List,
     }
 }
 
@@ -56,6 +57,7 @@ pub const fn to_plugin_field_kind(kind: FieldKind) -> PluginFieldKind {
         FieldKind::AssetRef => PluginFieldKind::AssetRef,
         FieldKind::EntityRef => PluginFieldKind::EntityRef,
         FieldKind::Nested => PluginFieldKind::Nested,
+        FieldKind::List => PluginFieldKind::List,
     }
 }
 

@@ -40,6 +40,13 @@ pub enum ReflectValue {
     },
     /// Reference to another entity. `None` when the field points at nothing.
     EntityRef(Option<EntityRef>),
+    /// An ordered list (#1201). `element` is what a new item starts as, so an empty list still
+    /// knows what it holds — the Inspector's add button reads it, and so does the asset picker's
+    /// type filter.
+    List {
+        items: Vec<ReflectValue>,
+        element: Box<ReflectValue>,
+    },
 }
 
 impl ReflectValue {
@@ -65,6 +72,7 @@ impl ReflectValue {
             Self::Mat4(_) => FieldKind::Mat4,
             Self::AssetRef { .. } => FieldKind::AssetRef,
             Self::EntityRef(_) => FieldKind::EntityRef,
+            Self::List { .. } => FieldKind::List,
         }
     }
 }
@@ -95,6 +103,16 @@ impl fmt::Display for ReflectValue {
             },
             Self::EntityRef(Some(r)) => write!(f, "{r}"),
             Self::EntityRef(None) => write!(f, "(none)"),
+            Self::List { items, .. } => {
+                write!(f, "[")?;
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{item}")?;
+                }
+                write!(f, "]")
+            }
         }
     }
 }
