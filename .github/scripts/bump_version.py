@@ -44,7 +44,7 @@ def read_version() -> str:
 
 
 def members() -> list[str]:
-    """Workspace member crate names, read off the manifest's `members`."""
+    """Names of the members that take the workspace version, read off the manifest's `members`."""
     text = MANIFEST.read_text()
     block = re.search(r"members\s*=\s*\[(.*?)\]", text, re.DOTALL)
     if not block:
@@ -57,8 +57,11 @@ def members() -> list[str]:
     if root:
         names.append(root.group(1))
     for path in paths:
-        manifest = ROOT / path / "Cargo.toml"
-        name = re.search(r"^name\s*=\s*\"([^\"]+)\"", manifest.read_text(), re.M)
+        manifest = (ROOT / path / "Cargo.toml").read_text()
+        # A member with a version of its own (the egui-snarl fork) does not move with the engine.
+        if not re.search(r"^version\.workspace\s*=\s*true", manifest, re.M):
+            continue
+        name = re.search(r"^name\s*=\s*\"([^\"]+)\"", manifest, re.M)
         if name:
             names.append(name.group(1))
     return names
