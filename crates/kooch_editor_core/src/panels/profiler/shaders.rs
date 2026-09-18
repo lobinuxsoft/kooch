@@ -3,13 +3,16 @@
 
 use std::path::Path;
 
+#[cfg(feature = "profiling")]
 use egui::Ui;
 
 use crate::panels::inspector::AssetCatalogEntry;
 
 /// The handheld's frame, the budget every shader is read against.
+#[cfg(feature = "profiling")]
 const FRAME_MS: f32 = 13.9;
 
+#[cfg(feature = "profiling")]
 pub(super) fn draw(ui: &mut Ui, costs: &[(String, f32)]) {
     egui::CollapsingHeader::new("Shaders (GPU)")
         .default_open(true)
@@ -53,6 +56,7 @@ pub(crate) fn shader_cost(
 }
 
 /// The costs under their file names, most expensive first.
+#[cfg(any(test, feature = "profiling"))]
 pub(crate) fn named_shader_costs(
     catalog: &[AssetCatalogEntry],
     costs: &[(String, f32)],

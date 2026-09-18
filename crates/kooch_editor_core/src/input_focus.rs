@@ -42,7 +42,7 @@ impl InputFocus {
 }
 
 /// The rule itself, as a function of its inputs.
-pub fn resolve(focused_tab: Option<EditorTab>, text_edit_focused: bool) -> InputOwner {
+pub(crate) fn resolve(focused_tab: Option<EditorTab>, text_edit_focused: bool) -> InputOwner {
     if text_edit_focused {
         return InputOwner::None;
     }

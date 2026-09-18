@@ -6,8 +6,9 @@
 mod common;
 
 use common::try_acquire_device;
+use kooch_core::gpu::TargetPool;
 use kooch_core::resource::Resources;
-use kooch_core::system::GpuSystem;
+use kooch_core::system::{Frame, GpuSystem};
 
 const SIDE: u32 = 64;
 const ROW_BYTES: u32 = SIDE * 4;
@@ -22,7 +23,7 @@ impl GpuSystem for ClearPass {
 
     fn prepare(&mut self, _: &wgpu::Device, _: &wgpu::Queue, _: &Resources) {}
 
-    fn record(&self, encoder: &mut wgpu::CommandEncoder) {
+    fn record(&mut self, _: Frame<'_>, encoder: &mut wgpu::CommandEncoder) {
         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("clear_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -71,7 +72,7 @@ fn a_gpu_system_can_draw() {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    let system = ClearPass {
+    let mut system = ClearPass {
         view: target.create_view(&wgpu::TextureViewDescriptor::default()),
     };
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
@@ -82,7 +83,13 @@ fn a_gpu_system_can_draw() {
     });
 
     let mut encoder = device.create_command_encoder(&Default::default());
-    system.record(&mut encoder);
+    let mut targets = TargetPool::new(&device);
+    let frame = Frame {
+        device: &device,
+        queue: &queue,
+        targets: &mut targets,
+    };
+    system.record(frame, &mut encoder);
     encoder.copy_texture_to_buffer(
         target.as_image_copy(),
         wgpu::TexelCopyBufferInfo {

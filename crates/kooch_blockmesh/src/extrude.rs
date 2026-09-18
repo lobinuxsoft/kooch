@@ -135,7 +135,7 @@ impl BlockMesh {
         rim: &[(u32, usize)],
     ) -> Vec<u32> {
         let mut split: Vec<u32> = Vec::new();
-        let mut add = |corner: u32, split: &mut Vec<u32>| {
+        let add = |corner: u32, split: &mut Vec<u32>| {
             if !split.contains(&corner) {
                 split.push(corner);
             }

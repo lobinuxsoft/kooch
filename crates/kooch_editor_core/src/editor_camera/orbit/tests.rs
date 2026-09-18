@@ -68,7 +68,7 @@ fn fly_look_keeps_camera_position_fixed() {
     let initial_focus = Vec3::ZERO;
     let distance = (initial_position - initial_focus).length();
     // Build a rotation that looks from initial_position toward origin.
-    let view = glam::Mat4::look_at_rh(initial_position, initial_focus, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(initial_position, initial_focus, Vec3::Y);
     let initial_rotation = view.inverse().to_scale_rotation_translation().1;
 
     // Rotate by an arbitrary yaw + pitch in fly mode.
@@ -89,7 +89,7 @@ fn fly_look_with_zero_deltas_is_a_noop() {
     let pos = Vec3::new(2.0, 3.0, 4.0);
     let focus = Vec3::new(1.0, 0.0, 1.0);
     let distance = (pos - focus).length();
-    let view = glam::Mat4::look_at_rh(pos, focus, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(pos, focus, Vec3::Y);
     let rotation = view.inverse().to_scale_rotation_translation().1;
 
     let (new_rot, new_focus) = fly_look_pivot_camera(pos, rotation, distance, 0.0, 0.0);

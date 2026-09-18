@@ -7,7 +7,7 @@ use crate::view_camera::ViewCamera;
 
 use super::atlas::ShadowAtlas;
 use super::cascades::{CASCADE_BLEND_FRACTION, CASCADE_COUNT, Cascade, build_cascades};
-use super::cube::{DEFAULT_CUBE_SIZE, PointShadowCubes};
+use super::cube::PointShadowCubes;
 use super::point::PointShadowDraw;
 use super::raster::ShadowRasterizer;
 

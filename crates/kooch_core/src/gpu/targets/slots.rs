@@ -51,6 +51,7 @@ impl Slots {
     }
 
     /// How many slots nothing holds.
+    #[cfg(test)]
     pub(super) fn free(&self) -> usize {
         self.slots.iter().filter(|slot| !slot.held).count()
     }

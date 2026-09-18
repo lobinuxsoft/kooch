@@ -38,7 +38,7 @@ pub(crate) mod prefab_propagate;
 
 pub(crate) use self::asset_ops::main_scene_path;
 pub(crate) use self::codegen::{
-    SyncOutcome, initial_registrations, migrate_to_library, register_scripts, split_authoring,
+    initial_registrations, migrate_to_library, register_scripts, split_authoring,
 };
 
 /// What a collision bake produces.

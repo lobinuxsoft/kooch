@@ -55,7 +55,7 @@ pub fn build_meshlets_lod_chain(
     );
 
     let lod_zero_count = all_descriptors.len();
-    tracing::info!(
+    tracing::debug!(
         target: "kooch_render::meshlet::builder",
         lod_zero_count,
         "LOD chain build: starting"
@@ -275,7 +275,7 @@ pub fn build_meshlets_lod_chain(
             parents_emitted += parent_descs.len() as u32;
         }
 
-        tracing::info!(
+        tracing::debug!(
             target: "kooch_render::meshlet::builder",
             level = parent_lod_level,
             prev_count,
@@ -293,7 +293,7 @@ pub fn build_meshlets_lod_chain(
         );
 
         if !any_group_emitted_parent {
-            tracing::info!(
+            tracing::debug!(
                 target: "kooch_render::meshlet::builder",
                 level = parent_lod_level,
                 "LOD chain build: terminating — no group emitted parents"
@@ -314,7 +314,7 @@ pub fn build_meshlets_lod_chain(
         .map(|m| m.lod_level)
         .max()
         .unwrap_or(0);
-    tracing::info!(
+    tracing::debug!(
         target: "kooch_render::meshlet::builder",
         total_meshlets = all_descriptors.len(),
         total_roots,

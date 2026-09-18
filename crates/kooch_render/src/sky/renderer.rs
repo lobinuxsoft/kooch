@@ -1,11 +1,8 @@
 //! Sky render pipeline — procedural gradient + volumetric clouds.
 
 use bytemuck::{Pod, Zeroable};
-use glam::Mat4;
 use wgpu::util::DeviceExt;
 
-use kooch_ecs::PerspectiveCamera;
-use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_ecs::query::Query;
 use kooch_ecs::sky_renderer::SkyRenderer;
 

@@ -5,6 +5,7 @@ fn any_entity() -> kooch_ecs::Entity {
 use super::*;
 
 use crate::components::Collider;
+use kooch_core::Guid;
 
 fn mesh() -> ColliderMesh {
     ColliderMesh {

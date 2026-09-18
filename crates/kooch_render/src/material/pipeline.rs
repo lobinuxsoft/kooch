@@ -11,7 +11,7 @@ use kooch_core::resource::Resources;
 
 use super::{
     MAX_PARAM_TEXTURES, Material, MaterialParams, MaterialPool, MaterialTexturePool, PackedParams,
-    ParamValue, Shader, ShaderParam, TextureRef,
+    ParamValue, Shader, ShaderKind, ShaderParam, TextureRef,
 };
 use crate::texture::Image;
 
@@ -25,6 +25,8 @@ pub struct SurfaceSource {
     pub params: std::sync::Arc<[ShaderParam]>,
     /// The WGSL generated from `params`, composed ahead of `source`.
     pub params_wgsl: std::sync::Arc<str>,
+    /// Which pass builds it: a post-process never reaches the surface path.
+    pub kind: ShaderKind,
 }
 
 /// Textures whose `.meta` changed and have to be uploaded again.
@@ -381,6 +383,7 @@ impl MaterialPipeline {
                     source: shader.source.as_str().into(),
                     params: shader.params.clone().into(),
                     params_wgsl: shader.params_wgsl().into(),
+                    kind: shader.kind,
                 },
             );
         }

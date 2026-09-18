@@ -10,7 +10,21 @@ pub(crate) fn record(buffer: &LogBuffer, line: &str) {
         // Cargo's own output, or anything else on that pipe. Stripped
         // because a child is arbitrary and an escape that survives gets
         // drawn as glyphs.
-        None => buffer.push_project(Level::INFO, "cargo", kooch_core::strip_ansi(line)),
+        None => {
+            let line = kooch_core::strip_ansi(line);
+            buffer.push_project(cargo_level(&line), "cargo", line)
+        }
+    }
+}
+
+/// Progress lines are a few hundred per rebuild and say nothing once the build is done; they sit
+/// at DEBUG so the console keeps what went wrong and how it finished.
+fn cargo_level(line: &str) -> Level {
+    let verb = line.split_whitespace().next().unwrap_or_default();
+    match verb {
+        "Compiling" | "Checking" | "Locking" | "Updating" | "Downloading" | "Downloaded"
+        | "Fresh" | "Adding" | "Blocking" => Level::DEBUG,
+        _ => Level::INFO,
     }
 }
 

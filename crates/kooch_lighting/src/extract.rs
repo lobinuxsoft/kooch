@@ -4,7 +4,6 @@
 use kooch_core::resource::Resources;
 use kooch_ecs::directional_light::DirectionalLight;
 use kooch_ecs::entity::Entity;
-use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_ecs::point_light::PointLight;
 use kooch_ecs::query::Query;
 use kooch_ecs::spot_light::SpotLight;

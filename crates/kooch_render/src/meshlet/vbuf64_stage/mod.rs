@@ -484,7 +484,7 @@ impl Vbuf64Stage {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-        depth_view: &wgpu::TextureView,
+        _depth_view: &wgpu::TextureView,
         depth_sample_view: &wgpu::TextureView,
         color_view: &wgpu::TextureView,
         density_view: &wgpu::TextureView,

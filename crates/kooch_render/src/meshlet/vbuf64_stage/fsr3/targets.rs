@@ -105,10 +105,6 @@ impl Pair {
     pub(super) fn view(&self, index: usize) -> &wgpu::TextureView {
         &self.targets[index].view
     }
-
-    pub(super) fn texture(&self, index: usize) -> &wgpu::Texture {
-        &self.targets[index].texture
-    }
 }
 
 pub(super) struct Targets {

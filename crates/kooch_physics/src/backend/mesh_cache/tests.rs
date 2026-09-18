@@ -1,4 +1,5 @@
 use super::*;
+use kooch_core::Guid;
 
 fn triangle() -> ColliderMesh {
     ColliderMesh {

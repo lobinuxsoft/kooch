@@ -179,7 +179,7 @@ impl MeshletRenderStage {
             };
 
             self.ensure_gpu_mesh(device, guid, mesh);
-            tracing::info!(
+            tracing::debug!(
                 target: "kooch_render::meshlet::sync",
                 guid = %guid,
                 "uploaded meshlet asset to GPU",

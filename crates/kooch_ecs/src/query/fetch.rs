@@ -6,7 +6,7 @@ use crate::component::StorageId;
 use crate::component::registry::ComponentRegistry;
 use crate::component::traits::AnyStorage;
 use crate::entity::Entity;
-use crate::storage::{Column, Table, TableRow};
+use crate::storage::{Table, TableRow};
 
 /// Where an entity's values live, when they live in a table.
 pub type Row<'w> = Option<(&'w Table, TableRow)>;

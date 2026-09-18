@@ -57,7 +57,7 @@ fn spot_view(position: Vec3, direction: Vec3) -> Mat4 {
     } else {
         Vec3::Y
     };
-    Mat4::look_to_rh(position, forward, up)
+    glam::camera::rh::view::look_to_mat4(position, forward, up)
 }
 
 /// Shadow-texel size **per metre of distance from the light**, which is

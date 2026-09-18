@@ -91,7 +91,7 @@ fn an_empty_mesh_is_never_hit() {
 /// projection.
 fn screen() -> Screen {
     let eye = Vec3::new(0.0, 0.0, 4.0);
-    let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y);
     let proj = kooch_render::projection::perspective_infinite_rh_reverse_z(
         60f32.to_radians(),
         800.0 / 600.0,
@@ -182,7 +182,11 @@ fn a_mirrored_ghost_is_not_hit() {
             60f32.to_radians(),
             1.0,
             0.1,
-        ) * Mat4::look_at_rh(Vec3::new(0.0, 0.0, -0.2), Vec3::ZERO, Vec3::Y),
+        ) * glam::camera::rh::view::look_at_mat4(
+            Vec3::new(0.0, 0.0, -0.2),
+            Vec3::ZERO,
+            Vec3::Y,
+        ),
         size: Vec2::splat(600.0),
     };
     assert!(vertex_at(&mesh, screen, Vec2::splat(1166.0254), 20.0).is_none());

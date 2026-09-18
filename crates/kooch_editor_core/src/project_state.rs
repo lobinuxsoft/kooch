@@ -258,7 +258,7 @@ impl ProjectState {
 
     /// Opens a project from the given root directory.
     pub fn open_project(&mut self, root_path: &Path) -> Result<(), crate::project::ProjectError> {
-        let mut manifest = ProjectManifest::load(root_path)?;
+        let manifest = ProjectManifest::load(root_path)?;
         self.editor_config.add_recent(&manifest.name, root_path);
         if let Err(e) = self.editor_config.save() {
             tracing::warn!("failed to save editor config: {e}");

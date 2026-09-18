@@ -116,7 +116,7 @@ fn build_one(resources: &mut Resources, guid: Guid) {
                 waiting
             });
             match published {
-                Some(waiting) => tracing::info!(
+                Some(waiting) => tracing::debug!(
                     target: "kooch_blockmesh::sync",
                     %guid, faces = block_mesh.face_count(), waiting,
                     "built a block's mesh and published it for upload",

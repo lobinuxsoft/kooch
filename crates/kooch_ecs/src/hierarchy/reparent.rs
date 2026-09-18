@@ -5,7 +5,7 @@ use std::any::TypeId;
 use crate::archetype_registry::ArchetypeRegistry;
 use crate::component::ComponentRegistry;
 use crate::entity::Entity;
-use crate::hierarchy::{Children, Parent};
+use crate::hierarchy::Parent;
 use crate::transform::Transform;
 use glam::{Quat, Vec3};
 use kooch_core::resource::Resources;

@@ -7,7 +7,7 @@
 
 use std::hash::{Hash, Hasher};
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use kooch_core::gpu::GpuContext;
 use kooch_render::material::{
     MAX_PARAM_SCALARS, MaterialParams, MaterialPool, MaterialTexturePool, ParamKind, ShaderParam,
@@ -292,8 +292,8 @@ impl ShaderPreview {
         // The camera orbits; the mesh never moves, so the surface's world position is its own.
         let turn = self.angle * std::f32::consts::TAU;
         let eye = Vec3::new(turn.sin() * 2.2, 0.9, turn.cos() * 2.2);
-        let view_proj =
-            Mat4::perspective_rh(0.9, 1.0, 0.05, 20.0) * Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
+        let view_proj = glam::camera::rh::proj::directx::perspective(0.9, 1.0, 0.05, 20.0)
+            * glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y);
         queue.write_buffer(
             &self.camera_buffer,
             0,

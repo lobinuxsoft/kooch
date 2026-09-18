@@ -143,7 +143,7 @@ fn reject_overlay_creates_without_uncaptured_errors() {
         &cull,
         &scene,
         &gpu_pool,
-        Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y),
+        glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y),
         (64, 64),
         RejectReason::Frustum,
         2,

@@ -10,12 +10,11 @@ pub mod pan_zoom;
 
 use std::any::TypeId;
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 
 use kooch_core::resource::Resources;
 use kooch_ecs::EphemeralComponents;
 use kooch_ecs::commands::Commands;
-use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::transform::Transform;
 use kooch_world::focus::StreamingFocus;
@@ -119,7 +118,7 @@ pub(crate) fn find_editor_camera_entity(resources: &Resources) -> Option<kooch_e
 
 /// Computes the initial world `Transform` from the controller's defaults.
 fn initial_transform(controller: &EditorCameraController) -> Transform {
-    let view = Mat4::look_at_rh(DEFAULT_EYE, controller.focus_point, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(DEFAULT_EYE, controller.focus_point, Vec3::Y);
     let world = view.inverse();
     let (_, rotation, translation) = world.to_scale_rotation_translation();
     Transform::new(translation, rotation, Vec3::ONE)

@@ -51,4 +51,4 @@ pub use config::MeshletRenderStageConfig;
 pub use stage::{MeshletRenderStage, ViewId};
 pub use stats::MeshletRenderStats;
 
-pub(crate) use helpers::{create_2d_attachment, depth_sample_view};
+pub(crate) use helpers::create_2d_attachment;

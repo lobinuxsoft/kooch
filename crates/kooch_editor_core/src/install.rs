@@ -207,7 +207,7 @@ pub fn poll_install_system(resources: &mut Resources) {
 
 /// Spawns reader threads that drain the child into the shared buffer.
 fn read_into(child: &mut Child, output: &Arc<Mutex<Vec<String>>>) {
-    let mut drain = |stream: Option<Box<dyn std::io::Read + Send>>| {
+    let drain = |stream: Option<Box<dyn std::io::Read + Send>>| {
         let Some(stream) = stream else { return };
         let out = Arc::clone(output);
         std::thread::spawn(move || {

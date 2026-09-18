@@ -4,8 +4,6 @@
 
 use glam::Vec3;
 
-use kooch_core::Guid;
-
 use crate::backend::{ColliderMesh, ColliderMeshCache, CollisionShape, MIN_EXTENT};
 
 use super::shapes::*;

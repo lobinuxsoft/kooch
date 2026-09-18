@@ -86,7 +86,7 @@ fn add_point(resources: &mut Resources, position: Vec3, range: f32) {
 /// is easiest to reason about.
 fn camera() -> ClusterCamera {
     let eye = Vec3::ZERO;
-    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::NEG_Z, Vec3::Y);
     let proj = kooch_render_projection();
     ClusterCamera::new(eye, view, proj, VIEWPORT)
 }
@@ -374,7 +374,7 @@ fn the_spot_shadows_scene_lights_its_floor() {
         return;
     };
     let eye = Vec3::new(0.0, 4.0, 9.0);
-    let view = Mat4::look_at_rh(eye, Vec3::new(0.0, 0.5, 0.0), Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::new(0.0, 0.5, 0.0), Vec3::Y);
     let cam = ClusterCamera::new(eye, view, kooch_render_projection(), VIEWPORT);
 
     let mut resources = world();

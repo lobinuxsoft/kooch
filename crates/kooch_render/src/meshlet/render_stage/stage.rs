@@ -18,10 +18,8 @@ use super::super::reject_overlay::MeshletRejectOverlay;
 use super::super::scene::MeshletScene;
 use super::super::stage_counters::MeshletStageCounters;
 use super::super::system::MeshletPipeline;
-use super::super::vbuf64_stage::Vbuf64Stage;
 use super::super::vis_buffer::MeshletVisRasterizer;
 use super::config::MeshletRenderStageConfig;
-use crate::hi_z::HiZ;
 use crate::perf::EngineVramTracker;
 
 /// End-to-end meshlet render stage. See module docs for the per-frame flow.

@@ -75,7 +75,7 @@ fn scene_cull_visits_each_instance_once_when_all_in_frustum() {
     let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.0, 0.5, 5.0);
-    let view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, 0.0), Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(cam, Vec3::new(0.0, 0.0, 0.0), Vec3::Y);
     let proj = kooch_render::perspective_rh_reverse_z(80.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let cull_params = CullParams::new(proj * view, cam, meshlets_per_mesh);
     let scene_params = SceneCullParams::new(instances.len() as u32, meshlets_per_mesh);
@@ -153,7 +153,7 @@ fn scene_cull_drops_off_screen_instances() {
     let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.0, 0.5, 5.0);
-    let view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, 0.0), Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(cam, Vec3::new(0.0, 0.0, 0.0), Vec3::Y);
     // Narrow FOV so instance 3 is well outside.
     let proj = kooch_render::perspective_rh_reverse_z(45.0_f32.to_radians(), 1.0, 0.1, 50.0);
     let cull_params = CullParams::new(proj * view, cam, meshlets_per_mesh);
@@ -222,7 +222,7 @@ fn scene_cull_with_zero_instances_is_no_op() {
     let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.0, 0.0, 5.0);
-    let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(cam, Vec3::ZERO, Vec3::Y);
     let proj = kooch_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let cull_params = CullParams::new(proj * view, cam, meshlets_per_mesh);
     let scene_params = SceneCullParams::new(0, meshlets_per_mesh);

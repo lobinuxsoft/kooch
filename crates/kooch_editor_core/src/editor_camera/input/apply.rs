@@ -1,11 +1,8 @@
 //! Resources-side input application.
 
-use std::any::TypeId;
-
 use glam::{Quat, Vec3};
 use kooch_core::resource::Resources;
 use kooch_core::time::Time;
-use kooch_ecs::archetype_registry::ArchetypeRegistry;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::{GlobalTransform, transform_propagation_system};
@@ -14,7 +11,6 @@ use kooch_ecs::transform::Transform;
 use crate::editor_camera::controller::EditorCameraController;
 use crate::editor_camera::find_editor_camera_entity;
 use crate::editor_camera::fly::fly_velocity;
-use crate::editor_camera::markers::EditorCamera;
 use crate::editor_camera::orbit::{apply_yaw_pitch, camera_position, fly_look_pivot_camera};
 use crate::editor_camera::pan_zoom::{apply_zoom, pan_delta};
 

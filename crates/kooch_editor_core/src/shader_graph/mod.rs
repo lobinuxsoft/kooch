@@ -56,6 +56,7 @@ pub(crate) fn extract(source: &str) -> Option<Graph> {
 }
 
 /// Whether `source` was written by the graph tool — what decides if the editor offers to open it.
+#[cfg(test)]
 pub(crate) fn is_generated(source: &str) -> bool {
     source.contains(MARKER)
 }

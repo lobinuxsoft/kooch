@@ -60,7 +60,7 @@ fn indirect_args_instance_count_matches_visible_meshlets_when_all_in_frustum() {
     let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.0, 0.0, 3.0);
-    let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(cam, Vec3::ZERO, Vec3::Y);
     let proj = kooch_render::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let params = CullParams::new(proj * view, cam, gpu_mesh.meshlet_count);
 
@@ -113,7 +113,7 @@ fn indirect_args_instance_count_is_zero_when_camera_faces_away() {
     let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.0, 0.0, 3.0);
-    let view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, 100.0), Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(cam, Vec3::new(0.0, 0.0, 100.0), Vec3::Y);
     let proj = kooch_render::perspective_rh_reverse_z(45.0_f32.to_radians(), 1.0, 0.1, 50.0);
     let params = CullParams::new(proj * view, cam, gpu_mesh.meshlet_count);
 
@@ -152,12 +152,13 @@ fn indirect_args_resets_between_dispatches() {
     let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.0, 0.0, 3.0);
-    let visible_view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
+    let visible_view = glam::camera::rh::view::look_at_mat4(cam, Vec3::ZERO, Vec3::Y);
     let visible_proj =
         kooch_render::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let visible_params = CullParams::new(visible_proj * visible_view, cam, gpu_mesh.meshlet_count);
 
-    let occluded_view = Mat4::look_at_rh(cam, Vec3::new(0.0, 0.0, 100.0), Vec3::Y);
+    let occluded_view =
+        glam::camera::rh::view::look_at_mat4(cam, Vec3::new(0.0, 0.0, 100.0), Vec3::Y);
     let occluded_params =
         CullParams::new(visible_proj * occluded_view, cam, gpu_mesh.meshlet_count);
 

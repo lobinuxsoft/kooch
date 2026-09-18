@@ -71,3 +71,5 @@ pollster.workspace = true
 # Reading back what the GPU scopes reported (#785). Only the test needs
 # to name puffin: the engine reaches it through `kooch_core`.
 puffin.workspace = true
+# Capturing what a test logged, where the log is the only thing that differs.
+tracing-subscriber.workspace = true

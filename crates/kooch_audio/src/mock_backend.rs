@@ -16,10 +16,7 @@ struct MockSound {
 
 #[derive(Clone)]
 struct MockInstance {
-    sound: SoundHandle,
     volume: f32,
-    looping: bool,
-    pitch: f32,
     stopped: bool,
 }
 
@@ -98,10 +95,7 @@ impl AudioBackend for MockAudioBackend {
             return Err(AudioError::SoundNotFound);
         }
         Ok(self.instances.insert(MockInstance {
-            sound,
             volume: params.volume,
-            looping: params.looping,
-            pitch: params.pitch,
             stopped: false,
         }))
     }
