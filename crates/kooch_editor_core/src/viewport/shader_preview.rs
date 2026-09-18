@@ -22,6 +22,10 @@ mod mesh;
 
 use mesh::{PreviewMesh, PreviewVertex, default_primitive, upload};
 
+/// What the preview says for a post-process, which it cannot draw. A note, not a compile error.
+pub(crate) const POST_NOTE: &str =
+    "A post-process is previewed in the viewport. Assign it to a PostProcess component.";
+
 /// What the Shader Graph panel asks of the preview for the next frame.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PreviewRequest {
@@ -414,8 +418,7 @@ impl ShaderPreview {
         // viewport is its preview (#1201). Said plainly rather than as a compile error about a
         // `sample_scene` the preview frame does not have.
         if source.contains("fn post_process(") {
-            self.refusal =
-                Some("A post-process is previewed in the viewport. Assign it to a PostProcess component.".to_owned());
+            self.refusal = Some(POST_NOTE.to_owned());
             self.pipeline = None;
             return false;
         }

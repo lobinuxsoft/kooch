@@ -93,8 +93,8 @@ It runs in the View panel, the Game panel and the game window alike, over the sc
 the gizmos. Without the component, or with it off, the frame costs what it cost before.
 
 In the graph, the **Scene Color** node reads the frame (unwired, at this pixel). It reads black in
-any other kind — only a post-process frame has a scene. The node panel does not preview this kind:
-the viewport is the preview.
+any other kind — only a post-process frame has a scene. The output node has two pins, **color**
+and **alpha**. The node panel does not preview this kind: the viewport is the preview.
 
 `color` is in the same display units as `emissive`: `1.0` is full brightness at any exposure. `alpha`
 is carried for transparent shaders (#452); opaque passes ignore it. An unlit shader assumes no sun,
@@ -225,8 +225,8 @@ The menu groups the nodes the way the panels do:
 - **Pins say what they take.** Each name ends in how many components it reads or gives — `speed (2)`,
   `radius (1)`, `color (4)`; a pin with no number works component by component. Pins and wires are
   coloured the way Unity Shader Graph colours them: **(1)** cyan, **(2)** green, **(3)** yellow,
-  **(4)** pink, any grey. A wire always connects — a number wired into a `(2)` pin fills `x` and
-  leaves `y` at zero.
+  **(4)** pink, any grey. A wire always connects. A single number fills every component, as in Unity and
+  Unreal: `colour × Float` scales all three channels, and a number wired into a `(2)` pin sets both.
 - **Rest the pointer** on a pin for what it is for and what it does unwired, on a node for what the
   node does, or on a node in the Add menu before placing it. Node headers are tinted by category.
 - Nodes lay their fields out top to bottom, under their pins, and a short list of choices — a texture's fallback, a
