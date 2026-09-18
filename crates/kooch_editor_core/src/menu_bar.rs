@@ -69,6 +69,7 @@ fn draw_edit_menu(
 pub(crate) fn draw_menu_bar(
     ui: &mut egui::Ui,
     dock_state: &mut DockState<EditorTab>,
+    windows: &mut crate::os_windows::OsWindows,
     actions: &mut Vec<EditorAction>,
     is_playing: bool,
     remote: Option<ConnectionState>,
@@ -134,9 +135,12 @@ pub(crate) fn draw_menu_bar(
             });
             ui.menu_button("Window", |ui| {
                 for &tab in ALL_TABS {
-                    let is_open = dock_has_tab(dock_state, &tab);
+                    let detached = windows.detached.iter().any(|d| d.tab == tab);
+                    let is_open = detached || dock_has_tab(dock_state, &tab);
                     if ui.selectable_label(is_open, tab.label()).clicked() {
-                        if is_open {
+                        if detached {
+                            crate::os_windows::close(windows, tab);
+                        } else if is_open {
                             dock_state.retain_tabs(|t| *t != tab);
                         } else {
                             dock_state.add_window(vec![tab]);

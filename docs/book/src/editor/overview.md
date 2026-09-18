@@ -62,6 +62,17 @@ and opened.
 | **Console** | Structured logs from the editor *and* the launched project, filterable. Text is selectable and copyable. Cargo's per-crate progress (`Compiling …`) and per-asset build detail sit at DEBUG; warnings, errors and `Finished` stay visible. |
 | **Performance** | Frame timings, and per-stage counters where they exist. |
 
+### A panel on another monitor
+
+Right-click a panel's tab and pick **Open in window**: the panel moves to an OS window of its own,
+which you can drag to another monitor. It draws at that monitor's scale. Closing the window puts the
+panel back in the dock; unticking it in the **Window** menu closes it for good.
+
+Which panels are in windows, and their size, are saved with the layout and come back on the next
+start. So is where each window was — except on **Wayland**, where no application can read or set
+its own window position and the compositor places it. On KDE, a window rule matching the title
+(`Kóoch — Inspector`, and so on) pins a panel to a monitor once and for all.
+
 ## Editing shortcuts
 
 | Chord | What it does |

@@ -113,3 +113,6 @@ pub const LINE_SEGMENT: &str = "\u{e6d2}";
 
 /// Polygon — face selection mode.
 pub const POLYGON: &str = "\u{e6d0}";
+
+/// Arrow-square-out — a panel opened in a window of its own.
+pub const ARROW_SQUARE_OUT: &str = "\u{e5de}";

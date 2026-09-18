@@ -168,6 +168,7 @@ pub(super) fn run_editor_ui(
             draw_menu_bar(
                 ui,
                 &mut overlay.dock_state,
+                &mut overlay.windows,
                 &mut actions,
                 toolbar.is_playing,
                 toolbar.remote,
@@ -240,45 +241,17 @@ pub(super) fn run_editor_ui(
                 }),
                 _ => false,
             };
-            // Opening an asset has to show it. A panel that loaded the
-            // map behind a tab nobody switched to is indistinguishable
-            // from one that did nothing.
-            if open_shader_graph
-                .as_ref()
-                .is_some_and(|open| open.focus_requested)
-            {
-                if !crate::state::dock_has_tab(
-                    &overlay.dock_state,
-                    &crate::state::EditorTab::ShaderGraph,
-                ) {
-                    let surface = overlay
-                        .dock_state
-                        .add_window(vec![crate::state::EditorTab::ShaderGraph]);
-                    // A graph needs room: at egui's default size a window shows three nodes and
-                    // no preview. A share of the screen, so it fits whatever screen it opens on.
-                    let screen = ui.max_rect();
-                    let size = egui::vec2(screen.width() * 0.7, screen.height() * 0.75);
-                    if let Some(window) = overlay.dock_state.get_window_state_mut(surface) {
-                        window
-                            .set_size(size)
-                            .set_position(screen.center() - size / 2.0);
-                    }
-                }
-                actions.push(EditorAction::ShaderGraphFocused);
-            }
-            if open_input_map.is_some_and(|open| open.focus_requested) {
-                if !crate::state::dock_has_tab(
-                    &overlay.dock_state,
-                    &crate::state::EditorTab::InputMap,
-                ) {
-                    overlay
-                        .dock_state
-                        .add_window(vec![crate::state::EditorTab::InputMap]);
-                }
-                actions.push(EditorAction::InputMapFocused);
-            }
+            super::focus::show_opened(
+                ui,
+                &mut overlay.dock_state,
+                &overlay.windows,
+                open_shader_graph.as_deref(),
+                open_input_map,
+                &mut actions,
+            );
 
             let mut tab_viewer = EditorTabViewer {
+                detach: None,
                 editor_camera_rotation,
                 build,
                 build_selection: &mut overlay.build_selection,
@@ -356,6 +329,10 @@ pub(super) fn run_editor_ui(
             DockArea::new(&mut overlay.dock_state)
                 .style(egui_dock::Style::from_egui(ui.style().as_ref()))
                 .show_inside(ui, &mut tab_viewer);
+            crate::os_windows::show(ui.ctx(), &overlay.windows.live, &mut tab_viewer);
+            if let Some(tab) = tab_viewer.detach.take() {
+                crate::os_windows::detach(&mut overlay.dock_state, &mut overlay.windows, tab);
+            }
 
             if !editable {
                 shade_out(ui, dock_rect);

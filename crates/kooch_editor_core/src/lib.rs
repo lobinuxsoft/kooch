@@ -44,6 +44,7 @@ pub mod code_reload;
 pub mod dlss_sdk;
 pub mod install;
 pub mod moved_pump;
+mod os_windows;
 pub mod perf;
 mod picking;
 pub mod play_state;

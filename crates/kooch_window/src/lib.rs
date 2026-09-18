@@ -14,10 +14,11 @@
 //! → WinitApp::window_event(RedrawRequested) drives the frame tick
 //! ```
 //!
-//! # Limitations
-//! - Single window only.
+//! Extra windows (an editor panel torn off onto another monitor) are asked for through
+//! [`ExtraWindows`]; the frame is still driven by the main window alone.
 
 pub mod event;
+mod extra;
 pub mod handle;
 pub mod icon;
 mod mode;
@@ -26,6 +27,7 @@ pub mod title_metrics;
 mod winit_app;
 
 pub use event::{WindowCloseRequested, WindowResized};
+pub use extra::ExtraWindows;
 pub use handle::WindowHandle;
 pub use runner::winit_runner;
 
@@ -104,6 +106,7 @@ impl Plugin for WindowPlugin {
             height: self.height,
         });
 
+        app.insert_resource(ExtraWindows::default());
         app.add_event::<WindowResized>();
         app.add_event::<WindowCloseRequested>();
 

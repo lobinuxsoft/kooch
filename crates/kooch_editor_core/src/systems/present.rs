@@ -32,6 +32,7 @@ pub(crate) fn present_editor_frame(
         pixels_per_point,
     };
 
+    crate::os_windows::apply_textures(&mut overlay.renderer, gpu, &overlay.windows.live);
     for (id, image_delta) in &full_output.textures_delta.set {
         overlay
             .renderer
@@ -124,6 +125,9 @@ pub(crate) fn present_editor_frame(
     if let Some(scopes) = scopes {
         scopes.end_frame(gpu.queue());
     }
+
+    // After the main window, which is the one the frame is paced by.
+    crate::os_windows::paint_all(&mut overlay.renderer, gpu, &overlay.windows.live);
 
     for id in &full_output.textures_delta.free {
         overlay.renderer.free_texture(id);

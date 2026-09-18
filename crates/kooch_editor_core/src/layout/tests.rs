@@ -25,3 +25,26 @@ fn load_layout_returns_none_for_missing_file() {
     // skip — the function is deterministic w.r.t. the current filesystem.
     let _ = load_layout();
 }
+
+/// A layout file from before #1196 is a bare dock, and still loads.
+#[test]
+fn a_bare_dock_still_loads() {
+    let legacy = ron::ser::to_string(&default_dock_state()).unwrap();
+    let layout = EditorLayout::parse(&legacy).expect("the old format parses");
+    assert!(layout.windows.is_empty());
+}
+
+/// Torn-off panels survive a save and a load, with where they were.
+#[test]
+fn detached_panels_round_trip() {
+    let layout = EditorLayout {
+        dock: default_dock_state(),
+        windows: vec![Detached {
+            tab: EditorTab::Inspector,
+            size: [400.0, 700.0],
+            pos: Some([2000, 40]),
+        }],
+    };
+    let parsed = EditorLayout::parse(&ron::ser::to_string(&layout).unwrap()).unwrap();
+    assert_eq!(parsed.windows, layout.windows);
+}

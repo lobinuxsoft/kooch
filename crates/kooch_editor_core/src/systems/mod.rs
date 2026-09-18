@@ -7,7 +7,7 @@ mod project_assets;
 mod remote_sync;
 mod render;
 mod startup;
-mod tab_viewer;
+pub(crate) mod tab_viewer;
 
 pub(crate) use project_assets::{
     LastScannedProject, ensure_main_exists_system, scan_project_assets_system,
