@@ -5,7 +5,6 @@ use kooch_input::{InputBackend, InputSnapshot};
 use kooch_remote::protocol::Method;
 
 use crate::remote_session::RemoteState;
-use crate::state::EditorOverlay;
 
 /// Reads the editor's input and posts it to the host, while playing.
 pub(crate) fn send_input_to_host(resources: &mut Resources) {

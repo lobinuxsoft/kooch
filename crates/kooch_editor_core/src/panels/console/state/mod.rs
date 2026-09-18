@@ -78,6 +78,7 @@ impl ConsoleState {
     }
 
     /// Whether an entry passes, lowercasing the filter as it goes.
+    #[cfg(test)]
     pub(crate) fn shows(&self, entry: &LogEntry) -> bool {
         self.shows_with(entry, &self.filter.to_lowercase())
     }

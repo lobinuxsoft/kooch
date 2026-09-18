@@ -75,7 +75,7 @@ fn rig(device: wgpu::Device, queue: wgpu::Queue, places: &[Vec3]) -> Rig {
 impl Rig {
     fn params(&self, min_pixels: f32) -> (CullParams, SceneCullParams) {
         let cam = Vec3::new(0.0, 0.5, 6.0);
-        let view = Mat4::look_at_rh(cam, Vec3::ZERO, Vec3::Y);
+        let view = glam::camera::rh::view::look_at_mat4(cam, Vec3::ZERO, Vec3::Y);
         let proj = kooch_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 500.0);
         let view_proj = proj * view;
         let scale = kooch_render::meshlet::projection_scale_y(view_proj);

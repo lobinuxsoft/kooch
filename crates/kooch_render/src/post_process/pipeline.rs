@@ -52,7 +52,6 @@ pub(super) struct Uniforms {
 pub(super) struct Parts {
     frame_bgl: wgpu::BindGroupLayout,
     materials_bgl: wgpu::BindGroupLayout,
-    texture_bgl: wgpu::BindGroupLayout,
     layout: wgpu::PipelineLayout,
     sampler: wgpu::Sampler,
     empty_bg: wgpu::BindGroup,
@@ -118,7 +117,6 @@ impl Parts {
         Self {
             frame_bgl,
             materials_bgl,
-            texture_bgl,
             layout,
             sampler,
             empty_bg,

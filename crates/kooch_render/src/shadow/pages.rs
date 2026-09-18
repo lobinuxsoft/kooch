@@ -523,7 +523,7 @@ fn mark_sun_cell(
     wanted: f32,
     eye: Vec3,
 ) {
-    let light_from_world = Mat4::look_to_rh(eye, direction, sun_up(direction));
+    let light_from_world = glam::camera::rh::view::look_to_mat4(eye, direction, sun_up(direction));
     let mut lo = Vec2::splat(f32::MAX);
     let mut hi = Vec2::splat(f32::MIN);
     for corner in cell.corners() {

@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use rapier3d::prelude::{
     ColliderHandle as RapierColliderHandle, ColliderSet, CollisionEvent as RapierCollisionEvent,
-    CollisionEventFlags, ContactPair, EventHandler, RigidBodyHandle, RigidBodySet,
+    ContactPair, EventHandler, RigidBodyHandle, RigidBodySet,
 };
 
 /// One step's reports in rapier handles, translated to [`BodyHandle`](crate::backend::BodyHandle)

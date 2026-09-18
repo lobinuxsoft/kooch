@@ -263,11 +263,6 @@ impl Node {
         }
     }
 
-    /// Whether it produces a value.
-    pub(crate) fn has_output(&self) -> bool {
-        !self.outputs().is_empty()
-    }
-
     /// Its output pins, named, and what each reads of the node's value. Pin 0 is the whole value
     /// wherever the whole means something, so a wire drawn before a node had channels still reads it;
     /// then one pin per channel, as a colour or a vector is taken apart in Unity and Unreal.

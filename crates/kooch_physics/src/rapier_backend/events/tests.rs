@@ -1,4 +1,5 @@
 use super::*;
+use rapier3d::prelude::CollisionEventFlags;
 
 /// Draining has to empty the queue, or a listener reading every frame
 /// sees the same collision forever.

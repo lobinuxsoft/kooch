@@ -199,6 +199,11 @@ impl PostPass {
         // 🔴 Checked before a pipeline is built from it: a broken edit has to read as a message in
         // the panel, never as a wgpu validation panic.
         if let Err(why) = validate_post(&surface.params_wgsl, &surface.source) {
+            // Once per revision: `ensure_pipeline` only rebuilds when the source moved.
+            tracing::error!(
+                target: "kooch_render::material::shader",
+                "post-process shader does not compile — {why}",
+            );
             self.refusal = Some(why);
             return None;
         }

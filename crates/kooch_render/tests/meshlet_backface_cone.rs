@@ -93,7 +93,7 @@ fn meshlet_facing_camera_passes_cone_cull() {
     let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.5, 0.5, 5.0);
-    let view = Mat4::look_at_rh(cam, Vec3::new(0.5, 0.5, 0.0), Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(cam, Vec3::new(0.5, 0.5, 0.0), Vec3::Y);
     let proj = kooch_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let params = CullParams::new(proj * view, cam, 1);
 
@@ -131,7 +131,7 @@ fn meshlet_facing_away_is_culled_by_cone() {
     let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.5, 0.5, -5.0);
-    let view = Mat4::look_at_rh(cam, Vec3::new(0.5, 0.5, 0.0), Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(cam, Vec3::new(0.5, 0.5, 0.0), Vec3::Y);
     let proj = kooch_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let params = CullParams::new(proj * view, cam, 1);
 
@@ -173,7 +173,7 @@ fn cone_cutoff_one_disables_cull_even_when_camera_aligned() {
     let cull_pipelines = MeshletCullPipelines::new(&device);
 
     let cam = Vec3::new(0.5, 0.5, -5.0);
-    let view = Mat4::look_at_rh(cam, Vec3::new(0.5, 0.5, 0.0), Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(cam, Vec3::new(0.5, 0.5, 0.0), Vec3::Y);
     let proj = kooch_render::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let params = CullParams::new(proj * view, cam, 1);
 

@@ -958,7 +958,7 @@ fn apply_viewport_click(
         if let crate::block_edit::ElementClick::Switch(other) =
             crate::block_edit::resolve_click(entity, element, hit, block)
         {
-            if let Some(mut selection) = resources.get_mut::<crate::block_edit::BlockSelection>() {
+            if let Some(selection) = resources.get_mut::<crate::block_edit::BlockSelection>() {
                 selection.clear();
             }
             overlay.selected_entities.clear();

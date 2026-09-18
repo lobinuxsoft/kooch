@@ -31,13 +31,13 @@ pub fn perspective_rh_reverse_z(fovy: f32, aspect: f32, near: f32, far: f32) -> 
         Vec4::new(0.0, 0.0, -1.0, 0.0),
         Vec4::new(0.0, 0.0, 1.0, 1.0),
     );
-    depth_flip * Mat4::perspective_rh(fovy, aspect, near, far)
+    depth_flip * glam::camera::rh::proj::directx::perspective(fovy, aspect, near, far)
 }
 
 /// Right-handed **reversed-Z with no far plane**: near maps to `ndc.z = 1.0` and infinity to `ndc.z
 /// = 0.0`, which it approaches without reaching.
 pub fn perspective_infinite_rh_reverse_z(fovy: f32, aspect: f32, near: f32) -> Mat4 {
-    Mat4::perspective_infinite_reverse_rh(fovy, aspect, near)
+    glam::camera::rh::proj::directx::perspective_infinite_reverse(fovy, aspect, near)
 }
 
 /// A world-space ray: where a screen pixel points once it leaves the camera.

@@ -82,8 +82,13 @@ fn a_zero_width_stays_bounded() {
 #[test]
 fn the_shift_is_the_offset_in_ndc() {
     let size = (640u32, 400u32);
-    let view_proj = Mat4::perspective_rh(1.0, size.0 as f32 / size.1 as f32, 0.1, 100.0)
-        * Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+    let view_proj =
+        glam::camera::rh::proj::directx::perspective(
+            1.0,
+            size.0 as f32 / size.1 as f32,
+            0.1,
+            100.0,
+        ) * glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
     let world = glam::Vec4::new(0.3, -0.7, 0.0, 1.0);
 
     for index in 0..JITTER_BASE_PHASES {
@@ -107,7 +112,7 @@ fn the_shift_is_the_offset_in_ndc() {
 /// the exact signal the resolve accumulates — a TAA that runs, costs and does nothing.
 #[test]
 fn the_unjittered_matrix_is_the_original() {
-    let view_proj = Mat4::perspective_rh(1.0, 1.6, 0.1, 100.0);
+    let view_proj = glam::camera::rh::proj::directx::perspective(1.0, 1.6, 0.1, 100.0);
     for index in 0..JITTER_BASE_PHASES {
         assert_eq!(
             Jitter::at(index, view_proj, (800, 500), JITTER_BASE_PHASES).unjittered,

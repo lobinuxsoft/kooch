@@ -89,15 +89,18 @@ fn debug_is_a_separate_key() {
 /// rather than compose it without `sample_scene` and log an error.
 #[test]
 fn a_post_process_is_skipped() {
+    use tracing_subscriber::layer::SubscriberExt as _;
+
     let cache = ShaderPipelines::new();
     let post = source(
         0,
         "// kind: post_process\nfn post_process(input: SurfaceInput) -> vec4<f32> {\n    return sample_scene(input.uv);\n}",
     );
-    let builds = Cell::new(0);
-    assert_eq!(
-        cache.get(Guid::new_v4(), &post, false, |_| builds.set(1)),
-        None
-    );
-    assert_eq!(builds.get(), 0);
+    let logs = kooch_core::LogBuffer::new();
+    let subscriber = tracing_subscriber::registry().with(logs.layer());
+    let got = tracing::subscriber::with_default(subscriber, || {
+        cache.get(Guid::new_v4(), &post, false, |_| 1)
+    });
+    assert_eq!(got, None);
+    assert!(logs.snapshot().is_empty(), "the surface path tried it");
 }

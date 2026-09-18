@@ -80,7 +80,7 @@ impl Body<'_> {
             .ok_or("a wire points at a node that is gone")?
             .clone()
             .migrated();
-        let mut argument = |body: &mut Self, input: usize| body.input(id, input);
+        let argument = |body: &mut Self, input: usize| body.input(id, input);
         let value = match &node {
             Node::Uv => "vec4<f32>(input.uv, 0.0, 0.0)".to_owned(),
             Node::SceneColor => {

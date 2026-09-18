@@ -69,10 +69,3 @@ fn active_stack(resources: &Resources) -> Vec<Guid> {
     });
     found.unwrap_or_default()
 }
-
-/// Why the post-process shader did not compile, for a panel to show.
-pub(crate) fn refusal(resources: &Resources) -> Option<String> {
-    resources
-        .get::<PostPass>()
-        .and_then(|pass| pass.refusal().map(str::to_owned))
-}

@@ -91,6 +91,7 @@ impl BlockSelection {
         self.elements.clear();
     }
 
+    #[cfg(test)]
     pub(crate) fn holds(&self, entity: Entity, element: u32) -> bool {
         self.entity == Some(entity) && self.elements.contains(&element)
     }
@@ -225,7 +226,7 @@ pub(crate) fn drop_selection_unless_editing(
         true => mode,
         false => ElementMode::Object,
     };
-    if let Some(mut selection) = resources.get_mut::<BlockSelection>() {
+    if let Some(selection) = resources.get_mut::<BlockSelection>() {
         // 🔴 A switch between element modes clears too, not just a
         // switch to Object. Face 3 and edge 3 are both `3`; carrying
         // them across would leave unrelated geometry lit and draggable.
@@ -418,7 +419,7 @@ pub(crate) fn edit_selection(
     // The render mesh and the collider are generated from this, and both are cached under the
     // source's GUID. Forgetting is what makes the next frame rebuild them; without it the block
     // keeps the shape it had when it was first built.
-    if let Some(mut built) = resources.get_mut::<BuiltBlocks>() {
+    if let Some(built) = resources.get_mut::<BuiltBlocks>() {
         built.forget(source);
     }
     true
@@ -426,7 +427,7 @@ pub(crate) fn edit_selection(
 
 /// Tells every consumer of this source that its bytes moved.
 pub(crate) fn announce(resources: &mut Resources, source: kooch_core::Guid) {
-    if let Some(mut reloaded) = resources.get_mut::<kooch_core::asset_loader::ReloadedAssets>() {
+    if let Some(reloaded) = resources.get_mut::<kooch_core::asset_loader::ReloadedAssets>() {
         reloaded.bump(source);
     }
 }
@@ -495,7 +496,7 @@ pub(crate) fn extrude_selection(
     if !set_shape(resources, source, &after) {
         return None;
     }
-    if let Some(mut selection) = resources.get_mut::<BlockSelection>() {
+    if let Some(selection) = resources.get_mut::<BlockSelection>() {
         selection.elements = extruded.faces;
     }
     announce(resources, source);

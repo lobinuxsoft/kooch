@@ -16,7 +16,6 @@ pub use registry::ComponentRegistry;
 pub use storage_id::StorageId;
 pub use traits::Component;
 
-use kooch_core::gpu::GpuContext;
 use kooch_core::resource::Resources;
 
 use crate::allocator::EntityAllocator;

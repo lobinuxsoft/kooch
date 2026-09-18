@@ -4,7 +4,7 @@
 
 use glam::{Vec2, Vec3};
 
-use super::action::{Action, ActionId, ActionMap, ControlType};
+use super::action::{Action, ControlType};
 use super::binding::{Binding, BothHeld, Composite, Group, PartName, VectorMode, groups};
 use super::path::ControlPath;
 use crate::backend::InputBackend;

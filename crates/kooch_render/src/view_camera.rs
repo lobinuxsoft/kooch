@@ -48,7 +48,7 @@ impl ViewCamera {
             Vec3::Y
         };
         Self {
-            world_matrix: Mat4::look_at_rh(eye, target, up).inverse(),
+            world_matrix: glam::camera::rh::view::look_at_mat4(eye, target, up).inverse(),
             ..Default::default()
         }
     }

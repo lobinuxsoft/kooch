@@ -36,7 +36,9 @@ pub(crate) use asset_view::{
     AssetDetail, BakedFrom, IMAGE_TYPE, ImageImportInfo, MaterialShader, MeshImportInfo,
     PrefabComponentView, PrefabDetail, PrefabEntityView, ResolvedComponent,
 };
-pub(crate) use widgets::{AssetCatalogEntry, AssetSource, draw_asset_picker};
+#[cfg(test)]
+pub(crate) use widgets::AssetSource;
+pub(crate) use widgets::{AssetCatalogEntry, draw_asset_picker};
 
 /// A detail snapshot and the asset it was gathered for. The selection can change during the
 /// frame, after the snapshot was taken; drawing it under another asset edits the wrong file (#1189).

@@ -151,7 +151,7 @@ pub fn face_view_proj(position: Vec3, face: usize, near: f32) -> Mat4 {
         1.0,
         near.max(1e-4),
     );
-    projection * Mat4::look_to_rh(position, target, up)
+    projection * glam::camera::rh::view::look_to_mat4(position, target, up)
 }
 
 /// Shadow-texel size **per metre of distance from the light**.

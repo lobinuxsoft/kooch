@@ -12,7 +12,6 @@ use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::mesh_renderer::MeshRenderer;
 use kooch_ecs::reflect::ReflectValue;
-use kooch_physics::components::Collider;
 
 use crate::undo::EditorCommand;
 

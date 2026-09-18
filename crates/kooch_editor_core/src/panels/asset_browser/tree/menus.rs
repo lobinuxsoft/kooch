@@ -57,7 +57,7 @@ pub(super) fn folder_menu(
     // 🔴 Every entry below is disabled outside the tree that would register it. The editor scans
     // `assets/` for assets and `src/` for scripts, so a file created anywhere else is a file
     // nothing reads — no error, no GUID, no compile, just a file.
-    let mut entry = |ui: &mut egui::Ui, label: String, wants: FolderRole| {
+    let entry = |ui: &mut egui::Ui, label: String, wants: FolderRole| {
         let refusal = role.refusal(wants);
         let resp = ui.add_enabled(refusal.is_none(), egui::Button::new(label));
         match refusal {

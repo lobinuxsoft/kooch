@@ -59,7 +59,7 @@ and opened.
 | **Archetypes** | Which combinations of components actually exist, and how many entities are in each. A debugging view of how the ECS stored your scene. |
 | **Asset Browser** | The project's assets and the engine's, as two roots. Right-click a `.scene` to make it the one the project opens with; that scene carries a ▶ in the tree and its name is in the accent colour. |
 | **Input Map** | Edits a `.inputaction` asset: bindings, the five composites, processors. An action is an asset, not an entry in a map — see [Writing a System](../scripting/systems.md). |
-| **Console** | Structured logs from the editor *and* the launched project, filterable. Text is selectable and copyable. |
+| **Console** | Structured logs from the editor *and* the launched project, filterable. Text is selectable and copyable. Cargo's per-crate progress (`Compiling …`) and per-asset build detail sit at DEBUG; warnings, errors and `Finished` stay visible. |
 | **Performance** | Frame timings, and per-stage counters where they exist. |
 
 ## Editing shortcuts

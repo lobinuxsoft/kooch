@@ -88,7 +88,8 @@ pub fn build_cascades(
     } else {
         Vec3::Y
     };
-    let world_from_light = Mat4::look_to_rh(Vec3::ZERO, direction, up).inverse();
+    let world_from_light =
+        glam::camera::rh::view::look_to_mat4(Vec3::ZERO, direction, up).inverse();
     let light_from_world = world_from_light.transpose();
 
     let mut cascades = [Cascade {
@@ -187,7 +188,7 @@ pub fn orthographic_rh_reverse_z(
         glam::Vec4::new(0.0, 0.0, -1.0, 0.0),
         glam::Vec4::new(0.0, 0.0, 1.0, 1.0),
     );
-    depth_flip * Mat4::orthographic_rh(left, right, bottom, top, near, far)
+    depth_flip * glam::camera::rh::proj::directx::orthographic(left, right, bottom, top, near, far)
 }
 
 #[cfg(test)]

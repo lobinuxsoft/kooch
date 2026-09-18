@@ -15,7 +15,7 @@ use crate::controller::CharacterController;
 use crate::facing::Facing;
 use crate::grounded::Grounded;
 use crate::plugin::run::{self, Runs};
-use crate::plugin::sense::{self, Footing};
+use crate::plugin::sense::{self};
 use crate::plugin::{turn, walk};
 use crate::sprint::Sprint;
 use crate::touching::Touching;

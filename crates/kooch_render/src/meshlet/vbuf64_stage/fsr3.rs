@@ -78,11 +78,6 @@ fn source_f16(pass: &str) -> String {
     format!("enable f16;\n{COMMON_SOURCE}\n{pass}")
 }
 
-/// The resolved image, and next frame's history. Same format as the
-/// resolve's, so the tonemap downstream cannot tell which technique
-/// produced what it reads.
-pub const FSR3_OUTPUT_FORMAT: wgpu::TextureFormat = HDR_COLOR_FORMAT;
-
 /// FSR's own workgroup size for every pass in this schedule.
 const GROUP: u32 = 8;
 
@@ -478,12 +473,6 @@ impl Fsr3 {
     /// the pair, which is black rather than undefined.
     pub(super) fn resolved_texture(&self) -> &wgpu::Texture {
         &self.targets.output.texture
-    }
-
-    /// Marks the next frame as having no usable history — a camera cut,
-    /// a teleport, anything that makes reprojection a lie.
-    pub(super) fn reset(&self) {
-        self.state.lock().expect("fsr3 history lock").reset = true;
     }
 
     /// Runs the whole schedule and returns the resolved image.

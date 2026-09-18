@@ -81,7 +81,7 @@ fn midpoint_lies_between() {
 #[test]
 fn xy_unchanged_versus_standard() {
     // The depth flip only touches z; xy must match standard perspective.
-    let std = Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let std = glam::camera::rh::proj::directx::perspective(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let rev = perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
     let p = Vec4::new(1.0, 0.5, -10.0, 1.0);
     let s = std * p;
@@ -96,7 +96,7 @@ fn world_corner_round_trip() {
     // Sanity: a world-space point at the centre of the frustum
     // projects somewhere visible in NDC.
     let proj = perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
-    let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
     let view_proj = proj * view;
     let p = view_proj * Vec4::new(0.0, 0.0, 0.0, 1.0);
     let ndc = p.xyz() / p.w;
@@ -111,7 +111,9 @@ fn world_corner_round_trip() {
 /// Camera at +5Z looking at the origin means forward is -Z.
 #[test]
 fn the_centre_of_the_viewport_looks_where_the_camera_looks() {
-    let camera = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y).inverse();
+    let camera =
+        glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y)
+            .inverse();
     let ray = viewport_cursor_to_ray(
         Vec2::new(400.0, 300.0),
         Vec2::new(800.0, 600.0),
@@ -133,7 +135,9 @@ fn the_centre_of_the_viewport_looks_where_the_camera_looks() {
 /// against forward catches exactly that, which a length check would not.
 #[test]
 fn the_ray_leaves_the_camera_rather_than_entering_it() {
-    let camera = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y).inverse();
+    let camera =
+        glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y)
+            .inverse();
     for cursor in [
         Vec2::new(10.0, 10.0),
         Vec2::new(790.0, 10.0),
@@ -160,7 +164,9 @@ fn the_ray_leaves_the_camera_rather_than_entering_it() {
 /// in a symmetric test.
 #[test]
 fn screen_y_is_flipped_into_world_y() {
-    let camera = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y).inverse();
+    let camera =
+        glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y)
+            .inverse();
     let size = Vec2::new(800.0, 600.0);
     let fov = 60.0_f32.to_radians();
     let above = viewport_cursor_to_ray(Vec2::new(400.0, 100.0), size, camera, fov, 0.1).unwrap();

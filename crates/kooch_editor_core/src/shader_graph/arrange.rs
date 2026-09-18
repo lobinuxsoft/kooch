@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use egui::{Pos2, Vec2};
 use egui_snarl::NodeId;
 
-use super::{Graph, Node};
+use super::Graph;
 
 /// What Godot leaves between nodes, both ways.
 const GAP: Vec2 = Vec2::new(100.0, 100.0);

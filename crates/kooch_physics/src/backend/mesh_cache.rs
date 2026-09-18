@@ -5,7 +5,6 @@
 use std::collections::HashMap;
 
 use glam::Vec3;
-use kooch_core::Guid;
 
 use super::MeshKey;
 

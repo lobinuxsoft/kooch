@@ -28,6 +28,7 @@ pub(crate) trait ReflectAccessor: Send + Sync {
     ) -> Result<(), ReflectError>;
 
     /// Creates a boxed default instance (for spawning).
+    #[cfg(test)]
     fn default_value(&self) -> Box<dyn std::any::Any + Send + Sync>;
 
     /// The field values a freshly-constructed component would have.
@@ -111,6 +112,7 @@ impl<T: Reflect> ReflectAccessor for TypedReflectAccessor<T> {
         component.reflect_set(field, new)
     }
 
+    #[cfg(test)]
     fn default_value(&self) -> Box<dyn std::any::Any + Send + Sync> {
         Box::new(T::reflect_default())
     }

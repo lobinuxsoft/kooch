@@ -343,7 +343,7 @@ impl PageRasterizer {
         // is sized for both halves.
         let buckets = levels + LAMP_CULLS;
 
-        let module = |label: &str, body: &str| {
+        let _module = |label: &str, body: &str| {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(label),
                 source: wgpu::ShaderSource::Wgsl(format!("{TABLE}\n{body}").into()),

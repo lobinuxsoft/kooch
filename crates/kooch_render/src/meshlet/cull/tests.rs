@@ -47,7 +47,7 @@ fn extracted_planes_are_normalised() {
 #[test]
 fn sphere_at_origin_inside_default_frustum() {
     let proj = crate::projection::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
-    let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
     let planes = extract_frustum_planes(proj * view);
 
     // Sphere at world origin, radius 0.5 — should be visible
@@ -58,7 +58,11 @@ fn sphere_at_origin_inside_default_frustum() {
 #[test]
 fn sphere_far_behind_camera_is_culled() {
     let proj = crate::projection::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 100.0);
-    let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::new(0.0, 0.0, 0.0), Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(
+        Vec3::new(0.0, 0.0, 5.0),
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::Y,
+    );
     let planes = extract_frustum_planes(proj * view);
 
     // Sphere far behind the camera — outside near + far + side planes.
@@ -69,7 +73,7 @@ fn sphere_far_behind_camera_is_culled() {
 #[test]
 fn sphere_far_to_the_side_is_culled() {
     let proj = crate::projection::perspective_rh_reverse_z(60.0_f32.to_radians(), 1.0, 0.1, 100.0);
-    let view = Mat4::look_at_rh(Vec3::ZERO, -Vec3::Z, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(Vec3::ZERO, -Vec3::Z, Vec3::Y);
     let planes = extract_frustum_planes(proj * view);
 
     // Sphere very far to the right — outside the right plane.
@@ -176,23 +180,30 @@ fn the_lod_factor_survives_any_camera_orientation() {
     let eye = Vec3::new(3.0, 4.0, 5.0);
 
     let cases: [(&str, Mat4); 6] = [
-        ("level", Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y)),
+        (
+            "level",
+            glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y),
+        ),
         // Rolled 90°: the camera's up is horizontal, so the element
         // the old code read is 0 and the selector shut down entirely.
         (
             "rolled 90°",
-            Mat4::from_rotation_z(FRAC_PI_2) * Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y),
+            Mat4::from_rotation_z(FRAC_PI_2)
+                * glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y),
         ),
-        ("upside down", Mat4::look_at_rh(eye, Vec3::ZERO, -Vec3::Y)),
+        (
+            "upside down",
+            glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, -Vec3::Y),
+        ),
         // Straight down — up ends up horizontal again. This is what
         // orbiting a PointGravity walks through.
         (
             "looking straight down",
-            Mat4::look_at_rh(Vec3::new(0.0, 10.0, 0.0), Vec3::ZERO, Vec3::Z),
+            glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 10.0, 0.0), Vec3::ZERO, Vec3::Z),
         ),
         (
             "looking straight up",
-            Mat4::look_at_rh(Vec3::new(0.0, -10.0, 0.0), Vec3::ZERO, Vec3::Z),
+            glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, -10.0, 0.0), Vec3::ZERO, Vec3::Z),
         ),
         (
             "arbitrary tilt",
@@ -239,6 +250,6 @@ fn a_narrower_field_of_view_raises_the_factor() {
     let wide = crate::projection::perspective_rh_reverse_z(90.0_f32.to_radians(), 1.0, 0.1, 1000.0);
     let narrow =
         crate::projection::perspective_rh_reverse_z(30.0_f32.to_radians(), 1.0, 0.1, 1000.0);
-    let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
     assert!(projection_scale_y(narrow * view) > projection_scale_y(wide * view));
 }

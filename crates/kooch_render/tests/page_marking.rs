@@ -207,7 +207,7 @@ fn run_pool(
     pool: PoolConfig,
 ) -> (PageMarker, MarkCounts) {
     let eye = Vec3::ZERO;
-    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::NEG_Z, Vec3::Y);
     let proj = projection();
     let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
 
@@ -352,7 +352,7 @@ fn a_stopped_pass_reports_nothing() {
     add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
 
     let eye = Vec3::ZERO;
-    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::NEG_Z, Vec3::Y);
     let proj = projection();
     let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
     let mut lights = GpuLights::new(&device);
@@ -463,7 +463,7 @@ fn paint(
     depth: f32,
 ) -> Vec<[f32; 4]> {
     let eye = Vec3::ZERO;
-    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::NEG_Z, Vec3::Y);
     let proj = projection();
     let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
     let mut lights = GpuLights::new(device);
@@ -591,7 +591,7 @@ fn half_density_is_a_quarter_of_the_pages() {
 
     let at = |density| {
         let eye = Vec3::ZERO;
-        let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+        let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::NEG_Z, Vec3::Y);
         let proj = projection();
         let mut lights = GpuLights::new(&device);
         let mut frame = kooch_lighting::LightFrame::extract(&resources);
@@ -828,7 +828,7 @@ fn a_view_clears_only_its_own_pages() {
     add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 40.0);
 
     let eye = Vec3::ZERO;
-    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::NEG_Z, Vec3::Y);
     let proj = projection();
     let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
     let mut lights = GpuLights::new(&device);
@@ -936,7 +936,7 @@ fn run_frames(
     let mut out = Vec::new();
     for index in 0..frames {
         let eye = eye_of(index);
-        let view = Mat4::look_at_rh(eye, eye + Vec3::NEG_Z, Vec3::Y);
+        let view = glam::camera::rh::view::look_at_mat4(eye, eye + Vec3::NEG_Z, Vec3::Y);
         let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
         let mut frame = kooch_lighting::LightFrame::extract(resources);
         lights.update(device, queue, resources, camera, None, &mut frame);
@@ -1178,7 +1178,7 @@ fn a_resident_page_keeps_its_slot() {
     // Two frames, camera and sun still, reading the table after each.
     let mut placements: Vec<std::collections::HashMap<u32, u32>> = Vec::new();
     let eye = Vec3::ZERO;
-    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::NEG_Z, Vec3::Y);
     let proj = projection();
     let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
     let mut lights = GpuLights::new(&device);
@@ -1362,7 +1362,7 @@ fn a_saturated_pool_reseats_on_move() {
         row_cap: u32::MAX,
     };
     let eye = Vec3::ZERO;
-    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::NEG_Z, Vec3::Y);
     let proj = projection();
     let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
     let mut lights = GpuLights::new(&device);
@@ -1434,7 +1434,7 @@ fn the_bias_settles_the_denials() {
         row_cap: u32::MAX,
     };
     let eye = Vec3::ZERO;
-    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::NEG_Z, Vec3::Y);
     let proj = projection();
     let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
     let mut lights = GpuLights::new(&device);
@@ -1564,7 +1564,7 @@ fn a_tiny_light_is_distant() {
 
     let run_gated = |pixels: u32| {
         let eye = Vec3::ZERO;
-        let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+        let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::NEG_Z, Vec3::Y);
         let proj = projection();
         let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
         let mut lights = GpuLights::new(&device);
@@ -1776,7 +1776,7 @@ fn lamps_that_overrun_the_pool_spare_the_sun() {
         add_point(&mut resources, Vec3::new(x, 0.0, -4.0), 12.0);
     }
     let eye = Vec3::ZERO;
-    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::NEG_Z, Vec3::Y);
     let proj = projection();
     let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
     let mut lights = GpuLights::new(&device);
@@ -1899,7 +1899,7 @@ fn the_bias_reaches_its_value_in_one_step() {
         add_point(&mut resources, Vec3::new(x, 0.2, -2.0), 20.0);
     }
     let eye = Vec3::ZERO;
-    let view = Mat4::look_at_rh(eye, Vec3::NEG_Z, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::NEG_Z, Vec3::Y);
     let proj = projection();
     let camera = ClusterCamera::new(eye, view, proj, VIEWPORT);
     let mut lights = GpuLights::new(&device);
