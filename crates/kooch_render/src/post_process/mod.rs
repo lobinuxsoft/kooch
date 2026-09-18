@@ -86,7 +86,7 @@ impl PostPass {
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_SRC,
         );
-        let target = frame.targets.acquire(frame.device, "post_process", desc);
+        let target = frame.targets.acquire("post_process", desc);
         let Some(view) = frame.targets.view(target).cloned() else {
             return false;
         };

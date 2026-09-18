@@ -42,6 +42,9 @@ serde = { workspace = true }
 # Dynamic plugin support (optional)
 libloading = { workspace = true, optional = true }
 kooch_plugin_api = { workspace = true, optional = true }
+# The target and pass vocabulary a plugin shares with the engine (#392). Tiny, and the types the
+# pool hands out are defined there so both halves name one type.
+kooch_plugin_render.workspace = true
 
 # GPU timer scopes (#785). `default-features = false` is not a size
 # tweak: `wgpu-profiler`'s own `puffin` feature depends on puffin

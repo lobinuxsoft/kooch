@@ -6,6 +6,8 @@ use super::any_system::AnySystem;
 pub(super) fn run_gpu_batch(systems: &mut [AnySystem], resources: &mut Resources) {
     use crate::gpu::GpuContext;
 
+    use crate::gpu::TargetPool;
+
     let Some(gpu) = resources.remove::<GpuContext>() else {
         let names: Vec<&str> = systems.iter().map(|s| s.name()).collect();
         tracing::warn!(
@@ -26,6 +28,12 @@ pub(super) fn run_gpu_batch(systems: &mut [AnySystem], resources: &mut Resources
         }
     }
 
+    // The pool a pass draws into. Absent until a renderer built one, and a batch that has to make
+    // its own leaves it behind for the next.
+    let mut targets = resources
+        .remove::<TargetPool>()
+        .unwrap_or_else(|| TargetPool::new(gpu.device()));
+
     // Recording phase — one encoder, and each system opens the passes it needs.
     let mut encoder = gpu
         .device()
@@ -41,13 +49,19 @@ pub(super) fn run_gpu_batch(systems: &mut [AnySystem], resources: &mut Resources
             // What the pass label used to carry: a system may open none, one or several passes, so
             // the name belongs around the recording rather than on any one of them.
             encoder.push_debug_group(gpu_sys.name());
-            gpu_sys.record(&mut encoder);
+            let frame = crate::system::Frame {
+                device: gpu.device(),
+                queue: gpu.queue(),
+                targets: &mut targets,
+            };
+            gpu_sys.record(frame, &mut encoder);
             encoder.pop_debug_group();
         }
     }
 
     gpu.queue().submit(std::iter::once(encoder.finish()));
 
+    resources.insert(targets);
     // Restore GpuContext.
     resources.insert(gpu);
 }

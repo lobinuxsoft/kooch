@@ -11,16 +11,14 @@ mod slots;
 
 use slots::{Fresh, Slots};
 
-pub use slots::{RETIREMENT, TargetDesc};
-
-/// A target held by the pool. Dropping the handle does not release it — [`TargetPool::release`]
-/// does, so releasing stays explicit and a frame cannot lose a target it is still recording with.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct TargetId(u32);
+pub use kooch_plugin_render::Targets;
+pub use slots::{RETIREMENT, TargetDesc, TargetId};
 
 /// Textures and views, reused by descriptor.
-#[derive(Default)]
 pub struct TargetPool {
+    /// Kept so a pass asks for a target with a label and a descriptor and nothing else. A device is
+    /// an `Arc` handle, so this is a refcount.
+    device: wgpu::Device,
     slots: Slots,
     /// Parallel to the slots: SoA rather than a struct per target, and a slot's texture outlives
     /// every release so the retirement has something to keep.
@@ -30,11 +28,21 @@ pub struct TargetPool {
 }
 
 impl TargetPool {
+    pub fn new(device: &wgpu::Device) -> Self {
+        Self {
+            device: device.clone(),
+            slots: Slots::default(),
+            textures: Vec::new(),
+            views: Vec::new(),
+            created: 0,
+        }
+    }
+
     /// A target matching `desc`, reused when the pool has a free one and created otherwise.
-    pub fn acquire(&mut self, device: &wgpu::Device, label: &str, desc: TargetDesc) -> TargetId {
+    pub fn acquire(&mut self, label: &str, desc: TargetDesc) -> TargetId {
         let (index, fresh) = self.slots.claim(desc);
         if fresh == Fresh::Created {
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
                     width: desc.size.0.max(1),
@@ -105,5 +113,21 @@ impl TargetPool {
                 block * desc.size.0.max(1) as u64 * desc.size.1.max(1) as u64
             })
             .sum()
+    }
+}
+
+/// 🔴 The same pool a plugin's pass draws into. The trait is the plugin-facing half, so a pass sees
+/// handles and never the `Vec`s behind them.
+impl Targets for TargetPool {
+    fn acquire(&mut self, label: &str, desc: TargetDesc) -> TargetId {
+        TargetPool::acquire(self, label, desc)
+    }
+
+    fn view(&self, target: TargetId) -> Option<&wgpu::TextureView> {
+        TargetPool::view(self, target)
+    }
+
+    fn release(&mut self, target: TargetId) {
+        TargetPool::release(self, target)
     }
 }

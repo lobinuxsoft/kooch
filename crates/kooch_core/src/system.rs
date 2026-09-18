@@ -103,7 +103,7 @@ where
 ///         self.bind_group = Some(create_bind_group(device, instances));
 ///     }
 ///
-///     fn record(&self, encoder: &mut CommandEncoder) {
+///     fn record(&mut self, _: Frame<'_>, encoder: &mut CommandEncoder) {
 ///         let mut pass = encoder.begin_compute_pass(&Default::default());
 ///         pass.set_pipeline(&self.pipeline);
 ///         pass.set_bind_group(0, self.bind_group.as_ref().unwrap(), &[]);
@@ -114,6 +114,14 @@ where
 ///     fn is_initialized(&self) -> bool { self.initialized }
 /// }
 /// ```
+/// What the frame hands a GPU system while it records: the device and queue it draws with, and the
+/// target pool it asks for somewhere to draw (#392).
+pub struct Frame<'a> {
+    pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
+    pub targets: &'a mut crate::gpu::TargetPool,
+}
+
 pub trait GpuSystem: Send + Sync + 'static {
     /// One-time initialization when GPU is first available.
     ///
@@ -128,7 +136,7 @@ pub trait GpuSystem: Send + Sync + 'static {
     /// 🔴 An encoder, not a pass: a system opens the passes it needs — a compute pass, a render
     /// pass into a target, or several — which is what makes a post-process expressible (#392).
     /// The batch wraps the call in a debug group carrying [`name`](GpuSystem::name).
-    fn record(&self, encoder: &mut wgpu::CommandEncoder);
+    fn record(&mut self, frame: Frame<'_>, encoder: &mut wgpu::CommandEncoder);
 
     /// Returns the system name for debugging and profiling.
     fn name(&self) -> &str;

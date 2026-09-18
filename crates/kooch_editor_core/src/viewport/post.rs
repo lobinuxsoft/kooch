@@ -27,7 +27,9 @@ pub(crate) fn apply(
     let mut pass = resources
         .remove::<PostPass>()
         .unwrap_or_else(|| PostPass::new(gpu.device(), target.format()));
-    let mut pool = resources.remove::<TargetPool>().unwrap_or_default();
+    let mut pool = resources
+        .remove::<TargetPool>()
+        .unwrap_or_else(|| TargetPool::new(gpu.device()));
     let time = resources
         .get::<kooch_core::time::Time>()
         .map(|time| time.elapsed_secs())

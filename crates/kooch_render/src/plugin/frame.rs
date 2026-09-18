@@ -27,11 +27,13 @@ pub(super) fn prepare_frame_system(resources: &mut Resources) {
     };
     let (w, h) = gpu.size();
 
-    let mut pool = resources.remove::<TargetPool>().unwrap_or_default();
+    let mut pool = resources
+        .remove::<TargetPool>()
+        .unwrap_or_else(|| TargetPool::new(gpu.device()));
     let mut depth = resources
         .remove::<GameDepth>()
-        .unwrap_or_else(|| GameDepth::new(gpu.device(), &mut pool, (w, h)));
-    depth.ensure(gpu.device(), &mut pool, (w, h));
+        .unwrap_or_else(|| GameDepth::new(&mut pool, (w, h)));
+    depth.ensure(&mut pool, (w, h));
     resources.insert(depth);
     resources.insert(pool);
 
