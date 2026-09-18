@@ -240,7 +240,9 @@ impl Node {
             Self::Ring => &["uv", "radius", "thickness"],
             Self::Polygon => &["uv", "sides", "radius"],
             Self::Checker => &["uv", "tiles"],
-            Self::ShaderOutput { kind } if kind == "unlit" => &["color", "alpha"],
+            Self::ShaderOutput { kind } if kind == "unlit" || kind == "post_process" => {
+                &["color", "alpha"]
+            }
             Self::Output | Self::ShaderOutput { .. } => {
                 &["base color", "normal", "metallic", "roughness", "emissive"]
             }

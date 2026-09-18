@@ -348,6 +348,34 @@ fn an_old_constant_opens_typed() {
     ));
 }
 
+/// 🔴 A scalar fills every channel: `colour × float` scaled only red while it read `(v, 0, 0, 0)`.
+#[test]
+fn a_scalar_fills_every_channel() {
+    let emitted = |node: Node| {
+        let mut graph = Graph::new();
+        let scalar = graph.insert_node(Pos2::ZERO, node);
+        let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
+        graph.connect(
+            OutPinId {
+                node: scalar,
+                output: 0,
+            },
+            InPinId {
+                node: output,
+                input: 0,
+            },
+        );
+        generate(&graph).unwrap()
+    };
+    assert!(emitted(Node::ConstFloat(0.5)).contains("vec4<f32>(0.5, 0.5, 0.5, 0.5)"));
+    let float = Node::Float {
+        name: "levels".to_owned(),
+        default: 31.0,
+        range: None,
+    };
+    assert!(emitted(float).contains("vec4<f32>(f32(p.levels))"));
+}
+
 /// A constant writes only the components its type has, and an int writes a whole number.
 #[test]
 fn a_constant_writes_its_type() {
@@ -368,7 +396,7 @@ fn a_constant_writes_its_type() {
         generate(&graph).unwrap()
     };
 
-    assert!(emitted(Node::ConstInt(2.6)).contains("vec4<f32>(3.0, 0.0, 0.0, 0.0)"));
+    assert!(emitted(Node::ConstInt(2.6)).contains("vec4<f32>(3.0, 3.0, 3.0, 3.0)"));
     assert!(
         emitted(Node::ConstVector {
             width: 2,

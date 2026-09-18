@@ -48,9 +48,15 @@ pub(super) fn draw_preview(ui: &mut egui::Ui, preview: PreviewView<'_>) {
             // 🔴 A graph is edited node by node, and most of those moments do not compile. The panel
             // says so instead of showing the last shader that did, which would be a lie about what
             // is on the canvas.
-            if let Some(why) = preview.refusal {
-                ui.colored_label(ui.visuals().error_fg_color, "This graph does not compile");
-                ui.label(egui::RichText::new(why).small());
+            match preview.refusal {
+                Some(note) if note == crate::viewport::shader_preview::POST_NOTE => {
+                    ui.label(egui::RichText::new(note).small());
+                }
+                Some(why) => {
+                    ui.colored_label(ui.visuals().error_fg_color, "This graph does not compile");
+                    ui.label(egui::RichText::new(why).small());
+                }
+                None => {}
             }
         });
 

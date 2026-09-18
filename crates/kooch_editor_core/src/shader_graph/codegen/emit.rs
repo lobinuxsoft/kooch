@@ -105,15 +105,17 @@ impl Body<'_> {
                 let param = node.declared().ok_or("a parameter node declares nothing")?;
                 let name = param.name;
                 match param.width {
-                    1 => format!("vec4<f32>(p.{name}, 0.0, 0.0, 0.0)"),
+                    // 🔴 A scalar fills every channel, as in Unity and Unreal: `(v, 0, 0, 0)` made
+                    // `colour × float` zero the green and blue.
+                    1 => format!("vec4<f32>(f32(p.{name}))"),
                     2 => format!("vec4<f32>(p.{name}, 0.0, 0.0)"),
                     3 => format!("vec4<f32>(p.{name}, 0.0)"),
                     _ => format!("p.{name}"),
                 }
             }
             Node::Constant(value) | Node::ConstColor(value) => vec4_literal(*value),
-            Node::ConstFloat(value) => vec4_literal([*value, 0.0, 0.0, 0.0]),
-            Node::ConstInt(value) => vec4_literal([value.round(), 0.0, 0.0, 0.0]),
+            Node::ConstFloat(value) => vec4_literal([*value; 4]),
+            Node::ConstInt(value) => vec4_literal([value.round(); 4]),
             Node::ConstVector { width, value } => {
                 let mut kept = [0.0; 4];
                 let wide = (*width).clamp(2, 4) as usize;
