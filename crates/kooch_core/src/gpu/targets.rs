@@ -12,7 +12,7 @@ mod slots;
 use slots::{Fresh, Slots};
 
 pub use kooch_plugin_render::Targets;
-pub use slots::{RETIREMENT, TargetDesc, TargetId};
+pub use slots::{TargetDesc, TargetId};
 
 /// Textures and views, reused by descriptor.
 pub struct TargetPool {
@@ -20,8 +20,8 @@ pub struct TargetPool {
     /// an `Arc` handle, so this is a refcount.
     device: wgpu::Device,
     slots: Slots,
-    /// Parallel to the slots: SoA rather than a struct per target, and a slot's texture outlives
-    /// every release so the retirement has something to keep.
+    /// Parallel to the slots: SoA rather than a struct per target. A slot's texture outlives every
+    /// release — the pool never destroys one, which is why reuse needs no wait.
     textures: Vec<wgpu::Texture>,
     views: Vec<wgpu::TextureView>,
     created: u32,
@@ -60,12 +60,21 @@ impl TargetPool {
             self.textures.push(texture);
             self.views.push(view);
             self.created += 1;
+            // 🔴 A pool that keeps creating is allocating every frame, and that ran a machine out of
+            // memory before anything said so (#1201). Loud at every doubling from 32 on.
+            if self.created >= 32 && self.created.is_power_of_two() {
+                tracing::error!(
+                    created = self.created,
+                    label,
+                    size = ?desc.size,
+                    "the target pool keeps allocating: a pass is acquiring without releasing"
+                );
+            }
         }
         TargetId(index)
     }
 
-    /// Hands a target back. It waits out [`RETIREMENT`] frames before anything reuses it, which is
-    /// what Mesa radv needs from a texture a bind group may still name.
+    /// Hands a target back. The next request for the same descriptor gets it.
     pub fn release(&mut self, target: TargetId) {
         self.slots.release(target.0);
     }
@@ -80,11 +89,6 @@ impl TargetPool {
 
     pub fn desc(&self, target: TargetId) -> Option<TargetDesc> {
         self.slots.desc(target.0)
-    }
-
-    /// Rotates the retirement ring. Called once per frame, after the last submit.
-    pub fn end_frame(&mut self) {
-        self.slots.end_frame();
     }
 
     /// How many textures the pool holds — what the VRAM it owns is counted from.

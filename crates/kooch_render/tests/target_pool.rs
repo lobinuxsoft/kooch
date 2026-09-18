@@ -3,7 +3,7 @@
 mod common;
 
 use common::try_acquire_device;
-use kooch_core::gpu::{RETIREMENT, TargetDesc, TargetPool};
+use kooch_core::gpu::{TargetDesc, TargetPool};
 
 fn colour(size: (u32, u32)) -> TargetDesc {
     TargetDesc::attachment(size, wgpu::TextureFormat::Rgba8Unorm)
@@ -15,18 +15,15 @@ fn a_view_of_the_same_size_is_reused() {
         eprintln!("no GPU adapter; skipping");
         return;
     };
-    let mut pool = TargetPool::default();
+    let mut pool = TargetPool::new(&device);
 
-    let first = pool.acquire(&device, "first", colour((128, 128)));
-    let second = pool.acquire(&device, "second", colour((128, 128)));
+    let first = pool.acquire("first", colour((128, 128)));
+    let second = pool.acquire("second", colour((128, 128)));
     assert_ne!(first, second, "two targets held at once must not be one");
     assert_eq!(pool.created(), 2);
 
     pool.release(first);
-    for _ in 0..RETIREMENT {
-        pool.end_frame();
-    }
-    let third = pool.acquire(&device, "third", colour((128, 128)));
+    let third = pool.acquire("third", colour((128, 128)));
     assert_eq!(third, first, "the released target came back");
     assert_eq!(pool.created(), 2, "nothing new was allocated");
     assert!(pool.view(third).is_some());
@@ -40,15 +37,12 @@ fn resizing_settles_at_one_target() {
         eprintln!("no GPU adapter; skipping");
         return;
     };
-    let mut pool = TargetPool::default();
+    let mut pool = TargetPool::new(&device);
 
-    let mut held = pool.acquire(&device, "view", colour((256, 256)));
+    let mut held = pool.acquire("view", colour((256, 256)));
     for _ in 0..32 {
         pool.release(held);
-        for _ in 0..RETIREMENT {
-            pool.end_frame();
-        }
-        held = pool.acquire(&device, "view", colour((256, 256)));
+        held = pool.acquire("view", colour((256, 256)));
     }
 
     assert_eq!(pool.len(), 1, "one texture for thirty-two resizes");

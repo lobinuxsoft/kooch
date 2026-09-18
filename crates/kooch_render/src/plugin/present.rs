@@ -65,11 +65,6 @@ pub(super) fn present_frame_system(resources: &mut Resources) {
         &setup,
     );
 
-    // After the frame's last submit: a slot released this frame starts its retirement now.
-    if let Some(pool) = resources.get_mut::<TargetPool>() {
-        pool.end_frame();
-    }
-
     resources.insert(gpu);
     resources.insert(sky_pass);
     resources.insert(depth);
