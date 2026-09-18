@@ -47,6 +47,8 @@ pub enum ReflectValue {
         items: Vec<ReflectValue>,
         element: Box<ReflectValue>,
     },
+    /// A reflected struct nested in a field, by field name, in declaration order (#1209).
+    Struct(Vec<(String, ReflectValue)>),
 }
 
 impl ReflectValue {
@@ -73,6 +75,7 @@ impl ReflectValue {
             Self::AssetRef { .. } => FieldKind::AssetRef,
             Self::EntityRef(_) => FieldKind::EntityRef,
             Self::List { .. } => FieldKind::List,
+            Self::Struct(_) => FieldKind::Nested,
         }
     }
 }
@@ -112,6 +115,16 @@ impl fmt::Display for ReflectValue {
                     write!(f, "{item}")?;
                 }
                 write!(f, "]")
+            }
+            Self::Struct(fields) => {
+                write!(f, "{{")?;
+                for (index, (name, value)) in fields.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{name}: {value}")?;
+                }
+                write!(f, "}}")
             }
         }
     }

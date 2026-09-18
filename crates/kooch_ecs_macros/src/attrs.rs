@@ -64,6 +64,12 @@ pub(crate) fn parse_field_alias(field: &syn::Field) -> Result<Option<String>, To
     parse_field_string(field, "alias")
 }
 
+/// Parses `#[reflect(bare = "...")]` on a struct list: the element field a plain value on disk
+/// fills, so a list that used to hold bare values still loads (#1209).
+pub(crate) fn parse_field_bare(field: &syn::Field) -> Result<Option<String>, TokenStream> {
+    parse_field_string(field, "bare")
+}
+
 /// Parses `#[reflect(requires = ...)]` on an entity-reference field: the component its target must
 /// carry, used to filter and refuse picks.
 pub(crate) fn parse_field_requires(field: &syn::Field) -> Result<Option<String>, TokenStream> {

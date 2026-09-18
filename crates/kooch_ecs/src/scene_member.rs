@@ -37,6 +37,7 @@ static FIELDS: &[FieldMeta] = &[FieldMeta {
     requires: "",
     doc: "The scene this entity was authored in.",
     group: "",
+    fields: &[],
 }];
 
 /// Reflected so a generic pass that rebuilds a world — `WorldSnapshot`, which stop restores from

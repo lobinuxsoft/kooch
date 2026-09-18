@@ -64,7 +64,7 @@ pub use persistent_id::{EntityGuid, PersistentId, PersistentIdAllocator};
 pub use perspective_camera::PerspectiveCamera;
 pub use plugin::EcsPlugin;
 pub use point_light::PointLight;
-pub use post_process::PostProcess;
+pub use post_process::{PostEffect, PostProcess};
 pub use query::{AccessTracker, Query, QueryFilter, With, Without, WorldQuery};
 pub use reflect::{FieldKind, FieldMeta, InspectorVisibility, Reflect, ReflectError, ReflectValue};
 pub use scene::{

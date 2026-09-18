@@ -27,6 +27,8 @@ pub struct PostFrame<'a> {
     pub scene_view: &'a wgpu::TextureView,
     pub size: (u32, u32),
     pub time: f32,
+    /// How much of the effect mixes over what it read, 0..1. Zero is caught before a pass opens.
+    pub weight: f32,
 }
 
 /// One effect of the stack: its pipeline, the shader revision it was built from, and its uniforms.
@@ -72,6 +74,9 @@ impl PostPass {
         materials: &MaterialPipeline,
         material: kooch_core::Guid,
     ) -> bool {
+        if frame.weight <= 0.0 {
+            return false;
+        }
         let Some(slot) = materials.lookup(material) else {
             return false;
         };
@@ -106,6 +111,7 @@ impl PostPass {
                 resolution: [frame.size.0 as f32, frame.size.1 as f32],
                 time: frame.time,
                 material_id: slot,
+                weight: frame.weight,
             },
         );
         let groups = self.parts.bind_groups(

@@ -5,6 +5,7 @@ pub mod asset_registry;
 mod entity_ref;
 mod error;
 mod field;
+mod nested;
 mod trait_def;
 mod value;
 
@@ -15,6 +16,7 @@ pub use error::ReflectError;
 pub use field::{
     FieldChoice, FieldCondition, FieldKind, FieldMeta, FieldRange, InspectorVisibility,
 };
+pub use nested::{list_from, list_value, struct_value};
 pub use trait_def::Reflect;
 pub use value::ReflectValue;
 

@@ -30,6 +30,9 @@ pub(in crate::panels::inspector) struct FieldContext<'a> {
     /// of an unbounded drag — see [`kooch_ecs::reflect::FieldMeta::range`] for why the bound
     /// matters more than the widget.
     pub range: Option<&'static kooch_ecs::reflect::FieldRange>,
+    /// For a list of structs, the element's fields, so each nested value draws with its own range
+    /// and doc (#1209). `&[]` otherwise.
+    pub fields: &'static [kooch_ecs::reflect::FieldMeta],
 }
 
 /// Draws an editable widget for a single reflected value.
@@ -274,6 +277,7 @@ pub(in crate::panels::inspector) fn draw_value_widget(
             draw_entity_picker(ui, *reference, field.entities, field.requires, field_name)
         }
         ReflectValue::List { items, element } => super::list::draw_list(ui, items, element, field),
+        ReflectValue::Struct(members) => super::nested::draw_struct(ui, members, field),
         ReflectValue::Mat4(m) => {
             let (scale, rotation, translation) = m.to_scale_rotation_translation();
             let (ex, ey, ez) = rotation.to_euler(glam::EulerRot::XYZ);

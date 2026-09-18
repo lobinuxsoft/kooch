@@ -28,6 +28,7 @@ pub(crate) fn asset_list(
             requires: "",
             doc: #field_doc,
             group: #field_group,
+            fields: &[],
         }
     };
     let get = quote! {

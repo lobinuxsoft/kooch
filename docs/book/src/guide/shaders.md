@@ -85,10 +85,18 @@ fn post_process(input: SurfaceInput) -> vec4<f32> {
 }
 ```
 
-To see it: put a **Post Process** component on an entity and add a material using this shader to
-its **materials** list. The list is a stack: effects run top to bottom, each reading what the one
-above it produced, and the arrows reorder them. Each effect is one full-screen pass, so on a handheld
-a long stack is budget spent.
+To see it, put a **Post Process** component on an entity and add an effect to its **effects**
+list. The list is a stack: effects run top to bottom, each reading what the one above it produced,
+and the arrows reorder them. Each row has:
+
+- **material**: a material using a `post_process` shader.
+- **enabled**: switches that effect alone off.
+- **weight**: how much of the effect mixes over what it read, from 0 to 1. The engine blends it,
+  as `mix(input, effect, weight)`, so a shader needs nothing to support it.
+
+An effect that is off, at weight 0, or without a material is skipped and costs nothing. Every other
+effect is one full-screen pass, so on a handheld a long stack is budget spent. A scene saved with the
+older `materials` list loads with each material as an effect, on, at full weight.
 It runs in the View panel, the Game panel and the game window alike, over the scene and **under**
 the gizmos. Without the component, or with it off, the frame costs what it cost before.
 
