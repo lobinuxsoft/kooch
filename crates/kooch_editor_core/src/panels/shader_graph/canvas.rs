@@ -85,20 +85,34 @@ pub(super) fn draw(
             Stroke::new(1.0, Color32::from_rgb(r, g, b)),
             egui::StrokeKind::Inside,
         ));
-        let title = ui.painter().layout_no_wrap(
-            group.title.clone(),
-            FontId::proportional(14.0 * scale),
-            Color32::WHITE,
-        );
-        shapes.push(Shape::galley(
-            header.min + Vec2::new(8.0, 5.0) * scale,
-            title,
-            Color32::WHITE,
-        ));
+        let renaming = renaming(ui) == Some(index);
+        if !renaming {
+            let title = ui.painter().layout_no_wrap(
+                group.title.clone(),
+                FontId::proportional(14.0 * scale),
+                Color32::WHITE,
+            );
+            shapes.push(Shape::galley(
+                header.min + Vec2::new(8.0, 5.0) * scale,
+                title,
+                Color32::WHITE,
+            ));
+        }
 
         let moved = ui
-            .interact(header, ui.id().with(("graph_group", index)), Sense::drag())
-            .on_hover_cursor(egui::CursorIcon::Grab);
+            .interact(
+                header,
+                ui.id().with(("graph_group", index)),
+                Sense::click_and_drag(),
+            )
+            .on_hover_cursor(egui::CursorIcon::Grab)
+            .on_hover_text("Double-click to rename · drag to move · right-click for more");
+        if moved.double_clicked() {
+            set_renaming(ui, Some(index));
+        }
+        if renaming {
+            rename_in_place(ui, header, &mut annotations.groups[index].title);
+        }
         if moved.dragged() {
             annotations::move_group(annotations, graph, index, moved.drag_delta() / scale);
             // A group carried over a node must not look like that node being dropped into it.
@@ -234,6 +248,35 @@ fn drop_into_groups(
         if let Some((index, _)) = target {
             annotations.join(index, &[node]);
         }
+    }
+}
+
+/// The group whose title is being edited in place, if any.
+fn renaming(ui: &egui::Ui) -> Option<usize> {
+    ui.ctx()
+        .data(|d| d.get_temp::<Option<usize>>(rename_id()))
+        .flatten()
+}
+
+fn set_renaming(ui: &egui::Ui, index: Option<usize>) {
+    ui.ctx().data_mut(|d| d.insert_temp(rename_id(), index));
+}
+
+fn rename_id() -> egui::Id {
+    egui::Id::new("shader_graph_group_rename")
+}
+
+/// A text field over the title bar. Enter, Escape or a click elsewhere ends it.
+fn rename_in_place(ui: &mut egui::Ui, header: Rect, title: &mut String) {
+    let field = ui.put(
+        header.shrink2(Vec2::new(4.0, 2.0)),
+        egui::TextEdit::singleline(title).font(egui::TextStyle::Body),
+    );
+    if !field.has_focus() && !field.lost_focus() {
+        field.request_focus();
+    }
+    if field.lost_focus() {
+        set_renaming(ui, None);
     }
 }
 

@@ -97,6 +97,10 @@ pub(super) const BINDINGS: &[Binding] = &[
         does: "Move the group's nodes",
     },
     Binding {
+        keys: "Double-click a group's title",
+        does: "Rename it in place",
+    },
+    Binding {
         keys: "Right-click a group's title",
         does: "Rename, recolour or ungroup",
     },

@@ -440,3 +440,31 @@ fn a_dropped_node_joins() {
         harness.annotations.groups
     );
 }
+
+/// Double-clicking a group's title edits it in place; Enter keeps what was typed.
+#[test]
+fn a_group_renames_in_place() {
+    let mut harness = Harness::new();
+    let title = harness.to_screen * (harness.frame().left_top() + Vec2::new(40.0, 8.0));
+    let button = |pressed| egui::Event::PointerButton {
+        pos: title,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    harness.run(vec![egui::Event::PointerMoved(title), button(true)]);
+    harness.run(vec![button(false)]);
+    harness.run(vec![button(true)]);
+    harness.run(vec![button(false)]);
+    harness.run(vec![]);
+    harness.run(vec![egui::Event::Text(" dither".to_owned())]);
+    harness.run(vec![egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }]);
+    harness.run(vec![]);
+    assert_eq!(harness.annotations.groups[0].title, "Group dither");
+}

@@ -15,6 +15,21 @@ The Shader Graph panel (#1211) needs three things the published widget does not 
 None of these can be added from outside the crate: the selection and the node sizes live in private
 types.
 
+## Updating
+
+```sh
+python3 .github/scripts/update_egui_snarl.py 0.12.0 --dry-run   # what would happen
+python3 .github/scripts/update_egui_snarl.py 0.12.0             # do it
+```
+
+The script merges every file three ways: upstream at the version this fork is based on, this fork,
+and upstream at the new version. The changes below carry over on their own. A conflict appears only
+where upstream changed the same lines, and it is left marked in the file. The script also prints
+upstream's dependency tables when they moved. 0.12.0 moves egui to 0.36, so it goes with the
+workspace's egui bump.
+
+A trial run onto 0.12.0 (2026-09-18) merged with no conflicts.
+
 ## Changes
 
 - `Cargo.toml`: a standalone manifest, without the upstream workspace, the demo or `egui-probe`.

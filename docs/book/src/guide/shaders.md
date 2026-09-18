@@ -354,8 +354,8 @@ The **?** button in the toolbar lists every binding.
     never takes it in.
   - Membership is explicit. Drop a dragged node inside a group and it joins; right-click a node and
     choose **Remove from group** to take it out. A node is in one group at most.
-  - Right-click the title to rename the group, recolour it or **Ungroup** it. Ungrouping keeps the
-    nodes.
+  - Double-click the title to rename the group in place. Right-click the title to rename it,
+    recolour it or **Ungroup** it. Ungrouping keeps the nodes.
 - **Notes:** right-click the background, then **Add note**. Drag a note to move it, and right-click
   it to edit its text or delete it.
 
@@ -364,7 +364,8 @@ reads them. A graph without any writes exactly the file it wrote before.
 
 The graph widget is an in-tree fork of egui-snarl (`crates/egui_snarl`). The published crate
 selects with Shift only, cannot have its selection set, and does not expose node sizes.
-`crates/egui_snarl/KOOCH.md` lists every change made to it.
+`crates/egui_snarl/KOOCH.md` lists every change made to it, and
+`.github/scripts/update_egui_snarl.py` moves the fork onto a newer upstream release.
 
 ### What the graph cannot do
 
