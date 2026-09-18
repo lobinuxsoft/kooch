@@ -1408,7 +1408,7 @@ dependencies = [
 
 [[package]]
 name = "example_post_process"
-version = "0.64.0"
+version = "0.65.0"
 dependencies = [
  "kooch_plugin_api",
  "kooch_plugin_render",
@@ -2659,7 +2659,7 @@ version = "0.65.0"
 
 [[package]]
 name = "kooch_plugin_render"
-version = "0.64.0"
+version = "0.65.0"
 dependencies = [
  "kooch_plugin_api",
  "wgpu",
