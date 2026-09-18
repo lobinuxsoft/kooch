@@ -11,7 +11,7 @@ mod pipeline;
 
 use kooch_core::gpu::{TargetDesc, TargetPool};
 
-use crate::material::{MaterialPipeline, SurfaceSource};
+use crate::material::{MaterialPipeline, ShaderKind, SurfaceSource};
 use crate::meshlet::validate_post;
 
 pub use pipeline::PostUniforms;
@@ -192,7 +192,7 @@ impl PostPass {
         device: &wgpu::Device,
         surface: &SurfaceSource,
     ) -> Option<wgpu::RenderPipeline> {
-        if !surface.source.contains("fn post_process(") {
+        if surface.kind != ShaderKind::PostProcess {
             // Not a post-process shader: an ordinary material put in the stack by mistake.
             return None;
         }

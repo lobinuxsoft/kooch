@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use kooch_core::Guid;
 
-use crate::material::SurfaceSource;
+use crate::material::{ShaderKind, SurfaceSource};
 use crate::meshlet::validate_surface;
 
 /// One shading path's custom-shader pipelines, keyed by shader and debug variant.
@@ -36,6 +36,11 @@ impl<P: Clone> ShaderPipelines<P> {
         debug: bool,
         build: impl FnOnce(&SurfaceSource) -> P,
     ) -> Option<P> {
+        // A post-process material is drawn by `PostPass`; composed as a surface it has no
+        // `sample_scene` and would log an error for a shader that is fine.
+        if surface.kind == ShaderKind::PostProcess {
+            return None;
+        }
         let mut built = self.built.lock().unwrap_or_else(|e| e.into_inner());
         let entry = built.entry((guid, debug)).or_insert(Built {
             revision: u64::MAX,

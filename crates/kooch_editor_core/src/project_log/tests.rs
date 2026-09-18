@@ -44,3 +44,11 @@ fn text_lines_are_stripped_of_escapes() {
     assert_eq!(entry.message, "   Compiling kooch_core");
     assert!(entry.is_from_project(), "cargo's output is the project's");
 }
+
+/// A rebuild prints hundreds of `Compiling` lines; the console keeps the ones that say how it went.
+#[test]
+fn cargo_progress_is_debug() {
+    assert_eq!(cargo_level("   Compiling kooch v0.67.1"), Level::DEBUG);
+    assert_eq!(cargo_level("    Finished `dev` profile"), Level::INFO);
+    assert_eq!(cargo_level("warning: unused import"), Level::INFO);
+}

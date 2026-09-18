@@ -234,7 +234,7 @@ impl MeshletCull {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        tracing::info!(
+        tracing::debug!(
             target: "kooch_render::meshlet::cull",
             old_capacity = self.capacity,
             new_capacity,

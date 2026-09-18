@@ -14,6 +14,7 @@ fn source(revision: u64, text: &str) -> SurfaceSource {
         revision,
         params_wgsl: shader.params_wgsl().into(),
         params: shader.params.clone().into(),
+        kind: shader.kind,
         source: shader.source.into(),
     }
 }
@@ -82,4 +83,21 @@ fn debug_is_a_separate_key() {
     cache.get(guid, &surface, false, |_| 1);
     assert_eq!(cache.get(guid, &surface, true, |_| 2), Some(2));
     assert_eq!(cache.len(), 2);
+}
+
+/// 🔴 A post-process material sits in the same pool as the surfaces; the surface path must skip it
+/// rather than compose it without `sample_scene` and log an error.
+#[test]
+fn a_post_process_is_skipped() {
+    let cache = ShaderPipelines::new();
+    let post = source(
+        0,
+        "// kind: post_process\nfn post_process(input: SurfaceInput) -> vec4<f32> {\n    return sample_scene(input.uv);\n}",
+    );
+    let builds = Cell::new(0);
+    assert_eq!(
+        cache.get(Guid::new_v4(), &post, false, |_| builds.set(1)),
+        None
+    );
+    assert_eq!(builds.get(), 0);
 }
