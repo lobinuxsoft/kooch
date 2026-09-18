@@ -8,6 +8,8 @@
 //! material. `kind: post_process` is what puts it here instead of on a mesh.
 
 mod pipeline;
+mod preview;
+mod stack;
 
 use kooch_core::gpu::{TargetDesc, TargetPool};
 
@@ -15,6 +17,8 @@ use crate::material::{MaterialPipeline, ShaderKind, SurfaceSource};
 use crate::meshlet::validate_post;
 
 pub use pipeline::PostUniforms;
+pub use preview::{PostPreview, PreviewMaterials};
+pub use stack::{StackTarget, active_stack, run_stack};
 
 /// What a post-process draw needs from the frame around it.
 pub struct PostFrame<'a> {
@@ -57,6 +61,11 @@ impl PostPass {
             effects: std::collections::HashMap::new(),
             refusal: None,
         }
+    }
+
+    /// The colour format its pipelines are built for.
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.format
     }
 
     /// Why the shader did not compile, if it did not.
@@ -118,8 +127,9 @@ impl PostPass {
             frame.device,
             &effect.uniforms,
             frame.scene_view,
-            materials,
-            slot,
+            materials.pool(),
+            materials.texture_pool(),
+            &materials.slot_texture_refs(slot),
         );
 
         {

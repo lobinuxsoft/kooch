@@ -4,7 +4,8 @@
 //! and the material's textures at 4, so a post-process keeps its parameters and its textures by
 //! landing on the same numbers the scene's shading uses.
 
-use crate::material::{MaterialPipeline, MaterialTexturePool};
+use crate::material::shader::MAX_PARAM_TEXTURES;
+use crate::material::{MaterialPool, MaterialTexturePool, TextureRef};
 use crate::meshlet::compose_post_shader;
 
 /// What the frame tells the shader about itself.
@@ -178,14 +179,16 @@ impl Parts {
         );
     }
 
-    /// The five groups, in the order the pass sets them.
+    /// The five groups, in the order the pass sets them. `pool` and `textures` are the scene's
+    /// materials for the pass, and the graph panel's own for its preview.
     pub(super) fn bind_groups(
         &self,
         device: &wgpu::Device,
         uniforms: &Uniforms,
         scene: &wgpu::TextureView,
-        materials: &MaterialPipeline,
-        slot: u32,
+        pool: &MaterialPool,
+        textures: &MaterialTexturePool,
+        slots: &[TextureRef; MAX_PARAM_TEXTURES as usize],
     ) -> [wgpu::BindGroup; 5] {
         let frame = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("post_process_frame_bg"),
@@ -210,18 +213,16 @@ impl Parts {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: materials.pool().buffer().as_entire_binding(),
+                    resource: pool.buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: materials.pool().values().as_entire_binding(),
+                    resource: pool.values().as_entire_binding(),
                 },
             ],
         });
         // The material's own textures, so a Texture node reads what the Inspector assigned.
-        let textures = materials
-            .texture_pool()
-            .material_bind_group(device, &materials.slot_texture_refs(slot));
+        let textures = textures.material_bind_group(device, slots);
         [
             frame,
             self.empty_bg.clone(),

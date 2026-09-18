@@ -102,7 +102,10 @@ the gizmos. Without the component, or with it off, the frame costs what it cost 
 
 In the graph, the **Scene Color** node reads the frame (unwired, at this pixel). It reads black in
 any other kind — only a post-process frame has a scene. The output node has two pins, **color**
-and **alpha**. The node panel does not preview this kind: the viewport is the preview.
+and **alpha**. The node panel previews this kind over a built-in test image, so an effect reads
+before it is assigned to anything. The test image has a hue sweep across, a brightness ramp down,
+and a checker in one corner: banding and dither show on the gradients, pixelation and blur on the
+checker. The **UV** node is the screen uv here.
 
 `color` is in the same display units as `emissive`: `1.0` is full brightness at any exposure. `alpha`
 is carried for transparent shaders (#452); opaque passes ignore it. An unlit shader assumes no sun,
