@@ -22,6 +22,7 @@ pub(crate) enum DocumentState {
     /// Any asset registered with `register_reflected_asset!`, as the
     /// field values its registration reads.
     AssetFields(Vec<(String, ReflectValue)>),
+    ShaderGraph(crate::shader_graph::Graph),
 }
 
 /// One step: what the document was, and what to call putting it back.
@@ -179,6 +180,10 @@ fn capture(resources: &mut Resources, document: &Document) -> Option<DocumentSta
             (open.path == *path).then(|| DocumentState::InputMap(open.map.clone()))
         }
         Document::Asset(guid) => capture_asset(resources, *guid),
+        Document::ShaderGraph(path) => {
+            let open = resources.get::<crate::state::OpenShaderGraph>()?;
+            (open.path == *path).then(|| DocumentState::ShaderGraph(open.graph.clone()))
+        }
     }
 }
 
@@ -218,6 +223,15 @@ fn restore(resources: &mut Resources, document: &Document, state: DocumentState)
                 && open.path == *path
             {
                 open.map = snapshot;
+            }
+        }
+        (Document::ShaderGraph(path), DocumentState::ShaderGraph(snapshot)) => {
+            if let Some(open) = resources.get_mut::<crate::state::OpenShaderGraph>()
+                && open.path == *path
+            {
+                open.graph = snapshot;
+                // Put back in memory only: the file is still the user's to save.
+                open.dirty = true;
             }
         }
         (Document::Asset(guid), DocumentState::Material(snapshot)) => {

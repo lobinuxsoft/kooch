@@ -10,9 +10,11 @@ use egui_snarl::Snarl;
 mod arrange;
 mod codegen;
 mod nodes;
+mod step;
 
 pub(crate) use arrange::{NODE_SIZE, arrange};
 pub(crate) use codegen::generate;
+pub(crate) use step::change;
 pub(crate) use nodes::{
     BLEND_MODES, Category, NOISE_BASES, NOISE_COLOUR, NOISE_DISTORTION, NOISE_FRACTALS,
     NOISE_PHASE, Node, TEXTURE_FALLBACKS, VORONOI_BORDER, VORONOI_METRICS, Width, palette,
