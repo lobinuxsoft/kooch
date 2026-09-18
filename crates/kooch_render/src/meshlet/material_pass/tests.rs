@@ -237,3 +237,41 @@ fn the_rim_example_validates() {
     )
     .unwrap();
 }
+
+const VIGNETTE: &str = "// kind: post_process
+fn post_process(input: SurfaceInput) -> vec4<f32> {
+    let scene = sample_scene(input.uv);
+    let edge = 1.0 - length(input.uv - vec2<f32>(0.5)) * 1.4;
+    return vec4<f32>(scene.rgb * clamp(edge, 0.0, 1.0), scene.a);
+}";
+
+/// A post-process composes into its own frame, and reads the scene through the frame's sampler.
+#[test]
+fn a_post_process_validates() {
+    let shader = Shader::parse(VIGNETTE).unwrap();
+    assert_eq!(shader.kind, crate::material::ShaderKind::PostProcess);
+    validate_post(&shader.params_wgsl(), &shader.source).unwrap();
+}
+
+/// Its parameters are the material's, as a surface's are.
+#[test]
+fn a_post_process_reads_its_params() {
+    let source = "// kind: post_process
+struct SurfaceParams { strength: f32 } // @range(0, 2)
+fn post_process(input: SurfaceInput) -> vec4<f32> {
+    let p = surface_params(input.material_id);
+    return sample_scene(input.uv) * p.strength;
+}";
+    let shader = Shader::parse(source).unwrap();
+    assert_eq!(shader.params.len(), 1);
+    validate_post(&shader.params_wgsl(), &shader.source).unwrap();
+}
+
+/// The line reported is the file's, not the composed shader's.
+#[test]
+fn a_broken_post_names_its_line() {
+    let broken = "// kind: post_process\nfn post_process(input: SurfaceInput) -> vec4<f32> {\n    let x = ;\n}";
+    let shader = Shader::parse(broken).unwrap();
+    let error = validate_post(&shader.params_wgsl(), &shader.source).unwrap_err();
+    assert!(error.starts_with("line 3: "), "{error}");
+}

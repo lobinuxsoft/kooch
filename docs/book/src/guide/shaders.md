@@ -56,6 +56,7 @@ The `// kind:` line picks what the file defines. With no line, it is a `surface`
 |---|---|---|
 | `surface` | `fn surface(input: SurfaceInput) -> SurfaceOutput` | Inti lights it: lights, shadows, contact march |
 | `unlit` | `fn unlit(input: SurfaceInput) -> UnlitOutput` | Shows `color` as it is, under any light and in shadow |
+| `post_process` | `fn post_process(input: SurfaceInput) -> vec4<f32>` | One full-screen draw over the finished frame; reads it with `sample_scene(uv)` |
 
 ```wgsl
 // kind: unlit
@@ -67,6 +68,30 @@ fn unlit(input: SurfaceInput) -> UnlitOutput {
     return out;
 }
 ```
+
+### Post-process
+
+A `post_process` shader is drawn over what the camera rendered. `input.uv` is the screen in 0..1,
+the world fields are zero, `sample_scene(uv)` is the frame, and `scene_size()` is its size in
+pixels.
+
+```wgsl
+// kind: post_process
+
+fn post_process(input: SurfaceInput) -> vec4<f32> {
+    let scene = sample_scene(input.uv);
+    let edge = 1.0 - length(input.uv - vec2<f32>(0.5)) * 1.4;
+    return vec4<f32>(scene.rgb * clamp(edge, 0.0, 1.0), scene.a);
+}
+```
+
+To see it: put a **Post Process** component on an entity and assign a material using this shader.
+It runs in the View panel, the Game panel and the game window alike, over the scene and **under**
+the gizmos. Without the component, or with it off, the frame costs what it cost before.
+
+In the graph, the **Scene Color** node reads the frame (unwired, at this pixel). It reads black in
+any other kind — only a post-process frame has a scene. The node panel does not preview this kind:
+the viewport is the preview.
 
 `color` is in the same display units as `emissive`: `1.0` is full brightness at any exposure. `alpha`
 is carried for transparent shaders (#452); opaque passes ignore it. An unlit shader assumes no sun,
