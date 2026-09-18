@@ -295,7 +295,8 @@ required-features = ["editor"]
 kooch = {{ path = "{engine_path}" }}
 # Direct dep needed until `Reflect` proc-macro resolves through the facade.
 kooch_ecs = {{ path = "{engine_path}/crates/kooch_ecs" }}
-"#,
+{profile}"#,
+        profile = dev_profile::DEV_PROFILE,
     )
 }
 
@@ -306,6 +307,8 @@ pub fn move_project_to_engine(
     version: &str,
 ) -> Result<(), ProjectError> {
     point_manifest_at_engine(project_root, engine_dir)?;
+    // Moving engines is a full rebuild already, so this is when an older project gains it free.
+    dev_profile::add_dev_profile(project_root)?;
     let mut manifest = ProjectManifest::load(project_root)?;
     if manifest.engine_version != version {
         manifest.engine_version = version.to_owned();
@@ -648,6 +651,8 @@ impl fmt::Display for ProjectError {
 }
 
 impl std::error::Error for ProjectError {}
+
+mod dev_profile;
 
 #[cfg(test)]
 mod gitignore_tests;
