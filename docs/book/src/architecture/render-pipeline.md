@@ -617,6 +617,14 @@ one.
 A post-process asks the pool for somewhere to draw rather than owning a
 texture of its own.
 
+The scene's `PostProcess` stack runs through one function,
+`post_process::run_stack`, called by the editor's viewports and by the
+game window. A swapchain image cannot be sampled, so when a stack is
+active the game window draws the sky and the blit into a pooled target,
+runs the stack over it, and copies the result onto the swapchain. The
+surface is configured with `COPY_DST` wherever the platform offers it.
+Without a stack, the frame goes straight to the swapchain as before.
+
 A plugin draws through the same machinery. `kooch_plugin_render` holds
 the GPU half of the plugin API — a `RenderPass` with `init` and `record`,
 the target pool behind a `Targets` trait, and `engine.add_pass(stage,

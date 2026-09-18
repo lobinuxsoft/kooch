@@ -96,8 +96,12 @@ impl GpuContext {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
+        // COPY_DST where the surface allows it: a post-process draws off-screen and copies its
+        // result in (#1201). Vulkan, DX12 and Metal all offer it.
+        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT
+            | (surface_caps.usages & wgpu::TextureUsages::COPY_DST);
         let surface_config = SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage,
             format,
             width,
             height,
@@ -224,6 +228,14 @@ impl GpuContext {
     #[inline]
     pub fn format(&self) -> TextureFormat {
         self.surface_config.format
+    }
+
+    /// Whether a texture can be copied onto the swapchain image — what the game window's
+    /// post-process needs (#1201).
+    pub fn surface_copyable(&self) -> bool {
+        self.surface_config
+            .usage
+            .contains(wgpu::TextureUsages::COPY_DST)
     }
 
     /// Returns the current surface dimensions as `(width, height)`.

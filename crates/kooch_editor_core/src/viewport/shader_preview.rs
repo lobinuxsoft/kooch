@@ -22,10 +22,6 @@ mod mesh;
 
 use mesh::{PreviewMesh, PreviewVertex, default_primitive, upload};
 
-/// What the preview says for a post-process, which it cannot draw. A note, not a compile error.
-pub(crate) const POST_NOTE: &str =
-    "A post-process is previewed in the viewport. Assign it to a PostProcess component.";
-
 /// What the Shader Graph panel asks of the preview for the next frame.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PreviewRequest {
@@ -94,6 +90,9 @@ pub(crate) struct ShaderPreview {
     /// Why the last build failed, for the panel to show instead of a black square.
     refusal: Option<String>,
     angle: f32,
+    /// A post-process shows over a test image instead of on a primitive (#1201). Built the first
+    /// time one is previewed.
+    post: Option<kooch_render::post_process::PostPreview>,
 }
 
 impl ShaderPreview {
@@ -214,6 +213,7 @@ impl ShaderPreview {
             pipeline: None,
             refusal: None,
             angle: 0.0,
+            post: None,
         }
     }
 
@@ -289,6 +289,10 @@ impl ShaderPreview {
     ) {
         let (device, queue) = (gpu.device(), gpu.queue());
         self.angle = (self.angle + dt / TURN_SECONDS).fract();
+        if source.contains("fn post_process(") {
+            self.render_post(gpu, params_wgsl, source, params, images);
+            return;
+        }
         if !self.ensure_pipeline(device, params_wgsl, source) {
             return;
         }
@@ -324,32 +328,7 @@ impl ShaderPreview {
             }),
         );
 
-        // 🔴 The shader's own starting values, not a material's: a preview shows what the graph
-        // declares, before anybody has assigned anything to it.
-        let mut values = [0.0f32; MAX_PARAM_SCALARS as usize];
-        let mut slots = [TextureRef::default(); 4];
-        for param in params {
-            if param.kind == ParamKind::Texture {
-                // An image that has not reached the pool yet samples the fallback rather than a hole.
-                let guid = images
-                    .iter()
-                    .find(|(name, _)| *name == param.name)
-                    .map(|(_, guid)| *guid)
-                    .filter(|guid| self.textures.contains(*guid));
-                slots[param.offset as usize] = TextureRef {
-                    guid,
-                    fallback: param.texture,
-                };
-                continue;
-            }
-            for component in 0..param.kind.width() {
-                let at = (param.offset + component) as usize;
-                if at < values.len() {
-                    values[at] = param.default[component as usize];
-                }
-            }
-        }
-        self.pool.write_values(queue, 0, &values);
+        let slots = self.write_defaults(queue, params, images);
         let texture_bg = self.textures.material_bind_group(device, &slots);
 
         let Some((_, pipeline)) = self.pipeline.as_ref() else {
@@ -400,6 +379,80 @@ impl ShaderPreview {
         queue.submit(Some(encoder.finish()));
     }
 
+    /// Writes the shader's declared starting values into the preview's material, and returns which
+    /// image each texture parameter samples.
+    fn write_defaults(
+        &mut self,
+        queue: &wgpu::Queue,
+        params: &[ShaderParam],
+        images: &[(String, kooch_core::Guid)],
+    ) -> [TextureRef; 4] {
+        // 🔴 The shader's own starting values, not a material's: a preview shows what the graph
+        // declares, before anybody has assigned anything to it.
+        let mut values = [0.0f32; MAX_PARAM_SCALARS as usize];
+        let mut slots = [TextureRef::default(); 4];
+        for param in params {
+            if param.kind == ParamKind::Texture {
+                // An image that has not reached the pool yet samples the fallback rather than a hole.
+                let guid = images
+                    .iter()
+                    .find(|(name, _)| *name == param.name)
+                    .map(|(_, guid)| *guid)
+                    .filter(|guid| self.textures.contains(*guid));
+                slots[param.offset as usize] = TextureRef {
+                    guid,
+                    fallback: param.texture,
+                };
+                continue;
+            }
+            for component in 0..param.kind.width() {
+                let at = (param.offset + component) as usize;
+                if at < values.len() {
+                    values[at] = param.default[component as usize];
+                }
+            }
+        }
+        self.pool.write_values(queue, 0, &values);
+        slots
+    }
+
+    /// A post-process, drawn over the built-in test image.
+    fn render_post(
+        &mut self,
+        gpu: &GpuContext,
+        params_wgsl: &str,
+        source: &str,
+        params: &[ShaderParam],
+        images: &[(String, kooch_core::Guid)],
+    ) {
+        let (device, queue) = (gpu.device(), gpu.queue());
+        let slots = self.write_defaults(queue, params, images);
+        let post = self.post.get_or_insert_with(|| {
+            kooch_render::post_process::PostPreview::new(device, queue, self.format)
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("shader_preview_post_encoder"),
+        });
+        let drawn = post.render(
+            device,
+            queue,
+            &mut encoder,
+            self.target.view(),
+            self.target.size(),
+            params_wgsl,
+            source,
+            kooch_render::post_process::PreviewMaterials {
+                pool: &self.pool,
+                textures: &self.textures,
+                slots: &slots,
+            },
+            self.angle * TURN_SECONDS,
+        );
+        self.pipeline = None;
+        self.refusal = drawn.err();
+        queue.submit(Some(encoder.finish()));
+    }
+
     /// Builds the pipeline when the shader changed. Returns whether there is one to draw with.
     fn ensure_pipeline(&mut self, device: &wgpu::Device, params_wgsl: &str, source: &str) -> bool {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -412,15 +465,6 @@ impl ShaderPreview {
             .is_some_and(|(built, _)| *built == stamp)
         {
             return true;
-        }
-
-        // A post-process has no primitive to sit on: it is drawn over the whole frame, so the
-        // viewport is its preview (#1201). Said plainly rather than as a compile error about a
-        // `sample_scene` the preview frame does not have.
-        if source.contains("fn post_process(") {
-            self.refusal = Some(POST_NOTE.to_owned());
-            self.pipeline = None;
-            return false;
         }
 
         // 🔴 Checked before it is handed to wgpu: a graph mid-edit produces WGSL that does not

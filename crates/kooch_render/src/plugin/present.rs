@@ -2,7 +2,7 @@
 //! and the present (#392).
 
 use kooch_core::event::{AppExit, Events};
-use kooch_core::gpu::{GpuContext, TargetPool};
+use kooch_core::gpu::{GpuContext, TargetDesc, TargetId, TargetPool};
 use kooch_core::resource::Resources;
 use kooch_core::time::Time;
 use wgpu::{CurrentSurfaceTexture, SurfaceTexture};
@@ -10,6 +10,7 @@ use wgpu::{CurrentSurfaceTexture, SurfaceTexture};
 use super::frame::FrameSetup;
 use super::{GameDepth, SKY_FALLBACK};
 use crate::meshlet::{MeshletBlit, MeshletRenderStage};
+use crate::post_process::{StackTarget, active_stack, run_stack};
 use crate::sky::SkyRenderPass;
 
 pub(super) fn present_frame_system(resources: &mut Resources) {
@@ -142,9 +143,18 @@ fn render_passes(
     frame: SurfaceTexture,
     camera: Option<crate::ViewCamera>,
 ) {
-    let view = frame
+    let surface_view = frame
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
+    // 🔴 A post-process samples what it reads, and a swapchain image cannot be sampled: with a
+    // stack, the frame is drawn off-screen and copied in at the end. Without one, straight in.
+    let stack = active_stack(resources);
+    // The image's own size, not the configured one: a resize can land between the two.
+    let size = (frame.texture.width(), frame.texture.height());
+    let offscreen = offscreen_target(gpu, resources, &stack, size);
+    let view = offscreen
+        .as_ref()
+        .map_or_else(|| surface_view.clone(), |(_, view)| view.clone());
 
     let mut encoder = gpu
         .device()
@@ -205,6 +215,18 @@ fn render_passes(
         }
     }
 
+    if let Some((target, view)) = offscreen {
+        finish_offscreen(
+            gpu,
+            &mut encoder,
+            resources,
+            &stack,
+            target,
+            &view,
+            &frame.texture,
+        );
+    }
+
     // The frame's last encoder, so this is where the timestamps are copied out — including the
     // meshlet stage's, which were written into an encoder submitted before this one and are
     // therefore already resolved on the queue by the time this copy runs.
@@ -221,6 +243,86 @@ fn render_passes(
 
     gpu.queue().submit(Some(encoder.finish()));
     frame.present();
+}
+
+/// A pooled colour target the size and format of the swapchain, when there is a stack to run and
+/// the surface can take the copy back.
+fn offscreen_target(
+    gpu: &GpuContext,
+    resources: &mut Resources,
+    stack: &[(kooch_core::Guid, f32)],
+    size: (u32, u32),
+) -> Option<(TargetId, wgpu::TextureView)> {
+    if stack.is_empty() {
+        return None;
+    }
+    if !gpu.surface_copyable() {
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| {
+            tracing::warn!("the surface cannot be copied into; post-process is off in this window");
+        });
+        return None;
+    }
+    let pool = resources.get_mut::<TargetPool>()?;
+    let desc = TargetDesc::attachment(size, gpu.format()).with_usage(
+        wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST,
+    );
+    let target = pool.acquire("game_post_scene", desc);
+    let view = pool.view(target).cloned()?;
+    Some((target, view))
+}
+
+/// Runs the stack over the off-screen frame, then copies it onto the swapchain image.
+fn finish_offscreen(
+    gpu: &GpuContext,
+    encoder: &mut wgpu::CommandEncoder,
+    resources: &mut Resources,
+    stack: &[(kooch_core::Guid, f32)],
+    target: TargetId,
+    view: &wgpu::TextureView,
+    surface: &wgpu::Texture,
+) {
+    let Some(texture) = resources
+        .get::<TargetPool>()
+        .and_then(|pool| pool.texture(target).cloned())
+    else {
+        return;
+    };
+    let size = (surface.width(), surface.height());
+    let query = resources
+        .get::<kooch_core::gpu::GpuScopes>()
+        .map(|scopes| scopes.begin("post_process", encoder));
+    run_stack(
+        gpu.device(),
+        gpu.queue(),
+        encoder,
+        StackTarget {
+            texture: &texture,
+            view,
+            size,
+            format: gpu.format(),
+        },
+        stack,
+        resources,
+    );
+    encoder.copy_texture_to_texture(
+        texture.as_image_copy(),
+        surface.as_image_copy(),
+        wgpu::Extent3d {
+            width: size.0.max(1),
+            height: size.1.max(1),
+            depth_or_array_layers: 1,
+        },
+    );
+    if let (Some(scopes), Some(query)) = (resources.get::<kooch_core::gpu::GpuScopes>(), query) {
+        scopes.end(encoder, query);
+    }
+    if let Some(pool) = resources.get_mut::<TargetPool>() {
+        pool.release(target);
+    }
 }
 
 fn clear_with_gradient(
