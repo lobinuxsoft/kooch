@@ -91,26 +91,21 @@ pub(super) struct GameDepth {
 }
 
 impl GameDepth {
-    pub(super) fn new(device: &wgpu::Device, pool: &mut TargetPool, size: (u32, u32)) -> Self {
+    pub(super) fn new(pool: &mut TargetPool, size: (u32, u32)) -> Self {
         Self {
-            target: pool.acquire(device, "game_depth_texture", depth_desc(size)),
+            target: pool.acquire("game_depth_texture", depth_desc(size)),
             size,
         }
     }
 
     /// Swaps the target for one of the new size. The old one goes back to the pool, which is what
     /// keeps a run of resizes from allocating a depth texture per resize.
-    pub(super) fn ensure(
-        &mut self,
-        device: &wgpu::Device,
-        pool: &mut TargetPool,
-        size: (u32, u32),
-    ) {
+    pub(super) fn ensure(&mut self, pool: &mut TargetPool, size: (u32, u32)) {
         if size == self.size {
             return;
         }
         pool.release(self.target);
-        self.target = pool.acquire(device, "game_depth_texture", depth_desc(size));
+        self.target = pool.acquire("game_depth_texture", depth_desc(size));
         self.size = size;
     }
 
@@ -138,8 +133,8 @@ fn init_renderers(resources: &mut Resources) {
     let vbuf64 = Vbuf64Support::detect(gpu.device());
     let debug_caps = MeshletDebugCaps::detect(gpu.device());
     let sky_pass = SkyRenderPass::new(gpu.device(), gpu.format(), pipeline_cache);
-    let mut pool = TargetPool::default();
-    let depth = GameDepth::new(gpu.device(), &mut pool, gpu.size());
+    let mut pool = TargetPool::new(gpu.device());
+    let depth = GameDepth::new(&mut pool, gpu.size());
     let meshlet_stage = MeshletRenderStage::new(
         gpu.device(),
         MeshletRenderStageConfig {

@@ -59,6 +59,6 @@ pub mod prelude {
     pub use crate::component::{ComponentSchema, FieldKind, FieldSchema, RegisterError};
     pub use crate::engine_api::{Engine, PluginSystem};
     pub use crate::plugin::KoochPlugin;
-    pub use crate::types::{Stage, pack_entity, unpack_entity};
+    pub use crate::types::{Order, Stage, pack_entity, unpack_entity};
     pub use crate::version::API_VERSION;
 }

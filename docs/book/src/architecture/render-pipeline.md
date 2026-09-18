@@ -615,6 +615,14 @@ size cost one set of targets, and a run of resizes settles back to one.
 A post-process asks the pool for somewhere to draw rather than owning a
 texture of its own.
 
+A plugin draws through the same machinery. `kooch_plugin_render` holds
+the GPU half of the plugin API — a `RenderPass` with `init` and `record`,
+the target pool behind a `Targets` trait, and `engine.add_pass(stage,
+order, pass)`. It is a separate crate so `kooch_plugin_api` keeps costing
+nothing to link: a plugin that only moves entities never compiles wgpu.
+`examples/example_post_process` is the whole thing in one file, ordered
+after the scene and before the present without editing either.
+
 `Order::before` / `Order::after` name a system — the same short name the
 Systems panel shows — because a plugin has no handle to a system the
 engine registered. A name nothing answers to is dropped (the plugin that

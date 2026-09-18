@@ -3,39 +3,7 @@
 //! 🔴 No wgpu here on purpose: the bookkeeping is what has the edge cases, and a test for it must
 //! not need an adapter.
 
-/// What makes two targets interchangeable. Anything a `wgpu::TextureDescriptor` needs that is not
-/// here is the same for every render target the engine allocates.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct TargetDesc {
-    pub size: (u32, u32),
-    pub format: wgpu::TextureFormat,
-    pub usage: wgpu::TextureUsages,
-    pub mips: u32,
-    pub samples: u32,
-}
-
-impl TargetDesc {
-    /// A single-sampled, single-mip colour or depth attachment — what almost every target is.
-    pub fn attachment(size: (u32, u32), format: wgpu::TextureFormat) -> Self {
-        Self {
-            size: (size.0.max(1), size.1.max(1)),
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            mips: 1,
-            samples: 1,
-        }
-    }
-
-    pub fn with_usage(mut self, usage: wgpu::TextureUsages) -> Self {
-        self.usage = usage;
-        self
-    }
-
-    pub fn with_mips(mut self, mips: u32) -> Self {
-        self.mips = mips.max(1);
-        self
-    }
-}
+pub use kooch_plugin_render::{TargetDesc, TargetId};
 
 /// How many frames a released target is kept before it may be handed out again.
 ///

@@ -1407,6 +1407,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "example_post_process"
+version = "0.64.0"
+dependencies = [
+ "kooch_plugin_api",
+ "kooch_plugin_render",
+ "wgpu",
+]
+
+[[package]]
 name = "exmex"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2455,6 +2464,7 @@ dependencies = [
  "inventory",
  "kooch_pack",
  "kooch_plugin_api",
+ "kooch_plugin_render",
  "libloading",
  "pollster",
  "profiling",
@@ -2646,6 +2656,14 @@ dependencies = [
 [[package]]
 name = "kooch_plugin_api"
 version = "0.64.0"
+
+[[package]]
+name = "kooch_plugin_render"
+version = "0.64.0"
+dependencies = [
+ "kooch_plugin_api",
+ "wgpu",
+]
 
 [[package]]
 name = "kooch_remote"

@@ -8,6 +8,8 @@ use crate::resource::Resources;
 use crate::schedule::{Order, Schedule};
 use crate::stage::Stage;
 
+mod pass;
+
 use super::bridges::{ComponentBridge, EntityBridge};
 use super::plugin_data::PluginData;
 
@@ -119,6 +121,38 @@ impl Engine for EngineHost<'_> {
             let mut host = EngineHost::running(resources);
             system(&mut host);
         });
+    }
+
+    fn add_pass_erased(
+        &mut self,
+        stage: PluginStage,
+        order: PluginOrder,
+        erased: Box<dyn std::any::Any + Send + Sync>,
+    ) -> bool {
+        let Some(schedule) = self.schedule.as_mut() else {
+            tracing::error!(
+                "a plugin tried to add a pass outside build(); the schedule is running"
+            );
+            return false;
+        };
+        let Some(pass) = pass::PluginPass::from_erased(erased) else {
+            tracing::error!("a plugin handed over something that is not a render pass");
+            return false;
+        };
+        tracing::info!(
+            pass = crate::system::GpuSystem::name(&pass),
+            stage = ?stage,
+            "plugin render pass registered",
+        );
+        schedule.add_gpu_ordered(
+            map_stage(stage),
+            Order {
+                before: order.before,
+                after: order.after,
+            },
+            pass,
+        );
+        true
     }
 
     fn log(&self, message: &str) {

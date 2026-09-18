@@ -1,0 +1,17 @@
+[package]
+name = "example_post_process"
+description = "Example dynamic plugin that adds a render pass to Kooch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# `dylib` for the same reason `example_plugin` uses it: Rust types cross this boundary.
+[lib]
+crate-type = ["rlib", "dylib"]
+
+[dependencies]
+kooch_plugin_api.workspace = true
+kooch_plugin_render.workspace = true
+wgpu.workspace = true

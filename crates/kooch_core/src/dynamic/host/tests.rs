@@ -166,3 +166,65 @@ fn a_plugin_system_takes_its_place() {
     let names: Vec<&str> = systems.iter().map(|s| s.short_name()).collect();
     assert_eq!(names.first(), Some(&"engine_pass"), "{names:?}");
 }
+
+/// The acceptance of #392, minus the GPU: a plugin's pass lands between two engine systems it only
+/// knows by name, and it lands as a GPU system.
+#[test]
+fn a_plugin_pass_lands_between_them() {
+    use kooch_plugin_render::{PassFrame, RenderEngine, RenderPass};
+
+    struct Scene;
+    impl crate::system::System for Scene {
+        fn run(&mut self, _: &mut Resources) {}
+        fn name(&self) -> &str {
+            "render_meshlets_system"
+        }
+    }
+    struct Present;
+    impl crate::system::System for Present {
+        fn run(&mut self, _: &mut Resources) {}
+        fn name(&self) -> &str {
+            "present_frame_system"
+        }
+    }
+    struct Gradient;
+    impl RenderPass for Gradient {
+        fn name(&self) -> &str {
+            "example_gradient"
+        }
+        fn record(&mut self, _: PassFrame<'_>) {}
+    }
+
+    let mut resources = host_resources();
+    let mut schedule = Schedule::new();
+    schedule.add_cpu_system(Stage::Render, Scene);
+    schedule.add_cpu_system(Stage::Render, Present);
+    {
+        let mut host = EngineHost::building(&mut resources, &mut schedule);
+        assert!(host.add_pass(
+            PluginStage::Render,
+            PluginOrder::after("render_meshlets_system").and_before("present_frame_system"),
+            Gradient,
+        ));
+    }
+
+    let systems = schedule.systems();
+    let names: Vec<&str> = systems.iter().map(|s| s.short_name()).collect();
+    assert_eq!(
+        names,
+        [
+            "render_meshlets_system",
+            "example_gradient",
+            "present_frame_system"
+        ],
+    );
+    assert!(systems[1].gpu, "a pass runs as a GPU system");
+}
+
+/// Registering mid-frame is refused, the same as a system.
+#[test]
+fn a_running_host_refuses_a_pass() {
+    let mut resources = host_resources();
+    let mut host = EngineHost::running(&mut resources);
+    assert!(!host.add_pass_erased(PluginStage::Render, PluginOrder::default(), Box::new(7u32)));
+}

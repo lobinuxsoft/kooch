@@ -31,6 +31,21 @@ pub trait Engine {
         self.add_system(stage, system);
     }
 
+    /// Registers a render pass, erased so this crate names no GPU type. `pass` is a
+    /// `Box<Box<dyn kooch_plugin_render::RenderPass>>`; use `RenderEngine::add_pass` from
+    /// `kooch_plugin_render` rather than calling this (#392).
+    ///
+    /// `false` when the host refused it: outside `build()`, or without a GPU.
+    fn add_pass_erased(
+        &mut self,
+        stage: Stage,
+        order: Order,
+        pass: Box<dyn std::any::Any + Send + Sync>,
+    ) -> bool {
+        let _ = (stage, order, pass);
+        false
+    }
+
     /// Writes a line to the engine's log.
     fn log(&self, message: &str);
 

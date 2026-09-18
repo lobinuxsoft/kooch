@@ -28,7 +28,7 @@ by hand is not derived.
 
 | Layer | Crates | Role |
 |-------|--------|------|
-| **L0 · foundation** | `kooch_plugin_api`, `kooch_ecs_macros`, `kooch_pack` | No internal deps. Type vocabulary, proc-macros, the shipped-asset container. |
+| **L0 · foundation** | `kooch_plugin_api`, `kooch_plugin_render`, `kooch_ecs_macros`, `kooch_pack` | No internal deps except `kooch_plugin_render` → `kooch_plugin_api`. Type vocabulary, proc-macros, the shipped-asset container. |
 | **L1 · core** | `kooch_core` | `App`, `Plugin`, `Schedule`, `Resources`, `GpuContext`, the asset server. |
 | **L2 · primitives** | `kooch_ecs`, `kooch_window`, `kooch_audio` | ECS, windowing, audio. Depend on `kooch_core` only. |
 | **L3 · domain** | `kooch_input`, `kooch_lighting`, `kooch_physics`, `kooch_remote`, `kooch_world` | Built on the ECS. Input actions, lighting data, simulation, remote protocol, scene organisation. |
@@ -64,7 +64,7 @@ flowchart TD
     L3["L3 · domain<br/>kooch_input · kooch_lighting · kooch_physics<br/>kooch_remote · kooch_world"]
     L2["L2 · primitives<br/>kooch_ecs · kooch_window · kooch_audio"]
     L1["L1 · core<br/>kooch_core"]
-    L0["L0 · foundation<br/>kooch_plugin_api · kooch_ecs_macros · kooch_pack"]
+    L0["L0 · foundation<br/>kooch_plugin_api · kooch_plugin_render<br/>kooch_ecs_macros · kooch_pack"]
 
     L8 --> L7
     L7 --> L6
@@ -91,7 +91,8 @@ are omitted).
 | `kooch_ecs_macros` | — |
 | `kooch_pack` | — |
 | `kooch_plugin_api` | — |
-| `kooch_core` | `kooch_pack`, `kooch_plugin_api` |
+| `kooch_plugin_render` | `kooch_plugin_api` (+ wgpu) — the GPU half of the plugin API, linked only by a plugin that draws (#392) |
+| `kooch_core` | `kooch_pack`, `kooch_plugin_api`, `kooch_plugin_render` |
 | `kooch_audio` | `kooch_core` |
 | `kooch_window` | `kooch_core` |
 | `kooch_ecs` | `kooch_core`, `kooch_ecs_macros`, `kooch_plugin_api` |

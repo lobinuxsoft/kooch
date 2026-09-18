@@ -4,6 +4,7 @@ members = [
     "crates/kooch_core",
     "crates/kooch_ecs",
     "crates/kooch_plugin_api",
+    "crates/kooch_plugin_render",
     "crates/kooch_window",
     "crates/kooch_input",
     "crates/kooch_lighting",
@@ -23,6 +24,7 @@ members = [
     "crates/kooch_editor_core",
     "crates/kooch_editor",
     "examples/example_plugin",
+    "examples/example_post_process",
 ]
 
 [workspace.package]
@@ -185,6 +187,7 @@ kooch_remote = { path = "crates/kooch_remote" }
 kooch_editor_core = { path = "crates/kooch_editor_core" }
 kooch_editor = { path = "crates/kooch_editor" }
 kooch_plugin_api = { path = "crates/kooch_plugin_api" }
+kooch_plugin_render = { path = "crates/kooch_plugin_render" }
 
 [package]
 name = "kooch"

@@ -262,7 +262,7 @@ fn gpu_systems_skipped_without_gpu_context() {
     impl GpuSystem for DummyGpu {
         fn init(&mut self, _: &wgpu::Device, _: &wgpu::Queue) {}
         fn prepare(&mut self, _: &wgpu::Device, _: &wgpu::Queue, _: &Resources) {}
-        fn record(&self, _: &mut wgpu::CommandEncoder) {}
+        fn record(&mut self, _: crate::system::Frame<'_>, _: &mut wgpu::CommandEncoder) {}
         fn name(&self) -> &str {
             "DummyGpu"
         }
@@ -289,7 +289,7 @@ fn cpu_systems_still_run_when_gpu_systems_skipped() {
     impl GpuSystem for DummyGpu {
         fn init(&mut self, _: &wgpu::Device, _: &wgpu::Queue) {}
         fn prepare(&mut self, _: &wgpu::Device, _: &wgpu::Queue, _: &Resources) {}
-        fn record(&self, _: &mut wgpu::CommandEncoder) {}
+        fn record(&mut self, _: crate::system::Frame<'_>, _: &mut wgpu::CommandEncoder) {}
         fn name(&self) -> &str {
             "DummyGpu"
         }
