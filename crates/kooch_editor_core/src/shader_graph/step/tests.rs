@@ -29,7 +29,10 @@ fn structure_is_classified() {
     assert_eq!(change(&before, &after), Some(GraphStep::RemoveNodes));
 
     let mut after = before.clone();
-    let wire = (OutPinId { node: a, output: 0 }, InPinId { node: b, input: 0 });
+    let wire = (
+        OutPinId { node: a, output: 0 },
+        InPinId { node: b, input: 0 },
+    );
     after.connect(wire.0, wire.1);
     assert_eq!(change(&before, &after), Some(GraphStep::Connect));
     assert_eq!(change(&after, &before), Some(GraphStep::Disconnect));

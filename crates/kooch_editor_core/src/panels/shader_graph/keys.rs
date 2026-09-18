@@ -1,0 +1,175 @@
+//! The graph's own keys (#1211): clipboard, delete and framing. Undo and redo are the editor's, and
+//! reach the graph through its document history.
+
+use egui::emath::TSTransform;
+use egui::{Id, Key, Pos2, Rect, Vec2};
+
+use crate::shader_graph::clipboard::{self, Clip};
+use crate::shader_graph::{Graph, NODE_SIZE};
+
+/// Where a duplicate lands, from its source: down and right, clear of the original's title.
+const DUPLICATE_OFFSET: Vec2 = Vec2::new(40.0, 60.0);
+
+/// One binding, for the shortcut sheet.
+pub(super) struct Binding {
+    pub(super) keys: &'static str,
+    pub(super) does: &'static str,
+}
+
+/// Every binding the graph answers to, its own and the widget's, in the order the sheet lists them.
+pub(super) const BINDINGS: &[Binding] = &[
+    Binding {
+        keys: "Ctrl+Z",
+        does: "Undo",
+    },
+    Binding {
+        keys: "Ctrl+Y · Ctrl+Shift+Z",
+        does: "Redo",
+    },
+    Binding {
+        keys: "Ctrl+C",
+        does: "Copy the selected nodes, with the wires between them",
+    },
+    Binding {
+        keys: "Ctrl+X",
+        does: "Cut the selected nodes",
+    },
+    Binding {
+        keys: "Ctrl+V",
+        does: "Paste at the pointer",
+    },
+    Binding {
+        keys: "Ctrl+D",
+        does: "Duplicate the selection",
+    },
+    Binding {
+        keys: "Delete · Backspace",
+        does: "Remove the selected nodes",
+    },
+    Binding {
+        keys: "F",
+        does: "Frame the selection (Fit frames everything)",
+    },
+    Binding {
+        keys: "Click a node",
+        does: "Select it",
+    },
+    Binding {
+        keys: "Shift+drag the background",
+        does: "Box-select",
+    },
+    Binding {
+        keys: "Ctrl+Shift+drag the background",
+        does: "Box-deselect",
+    },
+    Binding {
+        keys: "Drag a node",
+        does: "Move the selection",
+    },
+    Binding {
+        keys: "Drag the background",
+        does: "Pan",
+    },
+    Binding {
+        keys: "Scroll",
+        does: "Zoom",
+    },
+    Binding {
+        keys: "Right-click the background",
+        does: "Add a node",
+    },
+    Binding {
+        keys: "Right-click a node",
+        does: "Remove it",
+    },
+];
+
+/// Acts on this frame's keys while the pointer is over the graph and nothing is being typed.
+/// Returns the area F asked to frame, in graph space.
+pub(super) fn handle(
+    ui: &egui::Ui,
+    graph: &mut Graph,
+    snarl_id: Id,
+    panel: Rect,
+    to_screen: TSTransform,
+) -> Option<Rect> {
+    let ctx = ui.ctx();
+    if ctx.text_edit_focused() || !ui.rect_contains_pointer(panel) {
+        return None;
+    }
+    let selected = egui_snarl::ui::get_selected_nodes(snarl_id, ctx);
+    let (command, pressed) = ctx.input(|i| {
+        let pressed = |key| i.key_pressed(key);
+        (
+            i.modifiers.command,
+            [
+                pressed(Key::C),
+                pressed(Key::X),
+                pressed(Key::V),
+                pressed(Key::D),
+                pressed(Key::Delete) || pressed(Key::Backspace),
+                pressed(Key::F),
+            ],
+        )
+    });
+    let [copy, cut, paste, duplicate, delete, frame] = pressed;
+
+    if command && (copy || cut) {
+        if let Some(clip) = clipboard::copy(graph, &selected) {
+            store(ctx, clip);
+        }
+        if cut {
+            clipboard::remove(graph, &selected);
+        }
+    }
+    if command
+        && paste
+        && let Some(clip) = stored(ctx)
+    {
+        let at = ctx
+            .pointer_latest_pos()
+            .map_or(Pos2::ZERO, |pos| to_screen.inverse() * pos);
+        clipboard::paste(graph, &clip, at);
+    }
+    if command
+        && duplicate
+        && let (Some(clip), Some(corner)) = (
+            clipboard::copy(graph, &selected),
+            clipboard::corner(graph, &selected),
+        )
+    {
+        clipboard::paste(graph, &clip, corner + DUPLICATE_OFFSET);
+    }
+    if !command && delete {
+        clipboard::remove(graph, &selected);
+    }
+    if !command && frame {
+        return selection_bounds(graph, &selected);
+    }
+    None
+}
+
+/// Kept in egui's memory: shared by every graph this session opens, and never written to a file.
+fn store(ctx: &egui::Context, clip: Clip) {
+    ctx.data_mut(|d| d.insert_temp(clip_id(), clip));
+}
+
+fn stored(ctx: &egui::Context) -> Option<Clip> {
+    ctx.data(|d| d.get_temp::<Clip>(clip_id()))
+}
+
+fn clip_id() -> Id {
+    Id::new("shader_graph_clipboard")
+}
+
+/// What the selected nodes cover, or `None` with nothing selected.
+fn selection_bounds(graph: &Graph, selected: &[egui_snarl::NodeId]) -> Option<Rect> {
+    let mut bounds = Rect::NOTHING;
+    for &id in selected {
+        if let Some(info) = graph.get_node_info(id) {
+            bounds.extend_with(info.pos);
+            bounds.extend_with(info.pos + NODE_SIZE);
+        }
+    }
+    bounds.is_finite().then(|| bounds.expand(40.0))
+}

@@ -231,7 +231,8 @@ fn a_resting_pointer_explains_pins() {
         .copied()
         .max_by(|a, b| a.y.total_cmp(&b.y))
         .expect("the panner draws its pins");
-    let about = "How far it moves per second: x along U, y along V.";
+    let about = "How far it moves per second: x along U, y along V. Time is already applied — \
+                 wire a speed, not speed × Time.";
 
     run(1.0, vec![egui::Event::PointerMoved(speed)]);
     let moving = run(1.05, vec![]);

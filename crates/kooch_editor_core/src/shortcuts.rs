@@ -41,7 +41,7 @@ impl EditChord {
     pub fn chord(self) -> &'static str {
         match self {
             EditChord::Undo => "Ctrl+Z",
-            EditChord::Redo => "Ctrl+Y",
+            EditChord::Redo => "Ctrl+Y · Ctrl+Shift+Z",
             EditChord::Duplicate => "Ctrl+D",
             EditChord::Copy => "Ctrl+C",
             EditChord::Paste => "Ctrl+V",
@@ -152,12 +152,24 @@ pub(crate) fn gather(
         if !allowed(chord, focused_tab, document, typing) {
             continue;
         }
-        let pressed = ui
-            .ctx()
-            .input(|i| i.modifiers.command && i.key_pressed(chord.key()));
+        let pressed = ui.ctx().input(|i| pressed(chord, i));
         if pressed {
             actions.extend(actions_for(chord, selected, document));
         }
+    }
+}
+
+/// Whether `chord` was pressed this frame. Ctrl+Shift+Z is redo, as in every editor that also takes
+/// Ctrl+Y — so undo has to refuse the shift, or it would fire on the redo chord.
+fn pressed(chord: EditChord, input: &egui::InputState) -> bool {
+    let (command, shift) = (input.modifiers.command, input.modifiers.shift);
+    match chord {
+        EditChord::Undo => command && !shift && input.key_pressed(egui::Key::Z),
+        EditChord::Redo => {
+            command
+                && (input.key_pressed(egui::Key::Y) || (shift && input.key_pressed(egui::Key::Z)))
+        }
+        _ => command && input.key_pressed(chord.key()),
     }
 }
 
