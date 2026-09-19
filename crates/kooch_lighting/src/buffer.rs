@@ -61,7 +61,6 @@ pub struct GpuLights {
 }
 
 impl GpuLights {
-
     /// Points the shadow bindings at the real maps. Idempotent, since it runs per frame on an atlas
     /// allocated once.
     pub fn bind_shadow_maps(

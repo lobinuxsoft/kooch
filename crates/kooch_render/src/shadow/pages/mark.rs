@@ -9,7 +9,12 @@ use kooch_lighting::{CLUSTER_COMMON, GpuLights, PAGE_TABLE};
 use super::pool::{PagePool, PoolConfig, PoolCounts, PoolLife};
 use super::{ClipmapConfig, PageConfig};
 
-const SOURCE: &str = include_str!("../../../shaders/page_mark.wgsl");
+/// Split across files in declaration order; WGSL has no `#include`.
+const SOURCE: &str = concat!(
+    include_str!("../../../shaders/page_mark.wgsl"),
+    include_str!("../../../shaders/page_mark_views.wgsl"),
+    include_str!("../../../shaders/page_mark_froxels.wgsl"),
+);
 const GROUP: u32 = 8;
 /// 0 resident, 1 samples, 2 pairs, 3 mark overflow, 4 unused, 5 pool overflow, 6 unused (was the
 /// hash's probe overflow), 7 reuses, 8 fresh claims, 9 unused (was holes walked), 10 free-list

@@ -371,7 +371,14 @@ fn every_table_reader_agrees_on_the_layout() {
             "page_compact.wgsl",
             include_str!("../../shaders/page_compact.wgsl"),
         ),
-        ("page_mark.wgsl", include_str!("../../shaders/page_mark.wgsl")),
+        (
+            "page_mark.wgsl",
+            concat!(
+                include_str!("../../shaders/page_mark.wgsl"),
+                include_str!("../../shaders/page_mark_views.wgsl"),
+                include_str!("../../shaders/page_mark_froxels.wgsl"),
+            ),
+        ),
     ];
     for (name, source) in readers {
         assert!(

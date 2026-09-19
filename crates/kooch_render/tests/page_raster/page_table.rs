@@ -343,13 +343,24 @@ fn a_lamp_cannot_ask_for_the_suns_finest_levels() {
     for (file, source) in [
         (
             "inti_pbr.wgsl",
-            include_str!("../../../kooch_lighting/shaders/inti_pbr.wgsl"),
+            concat!(
+                include_str!("../../../kooch_lighting/shaders/inti_pbr.wgsl"),
+                include_str!("../../../kooch_lighting/shaders/inti_pages.wgsl"),
+                include_str!("../../../kooch_lighting/shaders/inti_shade.wgsl"),
+            ),
         ),
         (
             "inti_debug.wgsl",
             include_str!("../../../kooch_lighting/shaders/inti_debug.wgsl"),
         ),
-        ("page_mark.wgsl", include_str!("../../shaders/page_mark.wgsl")),
+        (
+            "page_mark.wgsl",
+            concat!(
+                include_str!("../../shaders/page_mark.wgsl"),
+                include_str!("../../shaders/page_mark_views.wgsl"),
+                include_str!("../../shaders/page_mark_froxels.wgsl"),
+            ),
+        ),
     ] {
         assert!(
             source.contains("local_level_floor("),

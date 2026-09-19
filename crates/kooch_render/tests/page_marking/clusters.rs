@@ -5,7 +5,11 @@ use super::*;
 /// The per-pixel path counts into workgroup memory, never into a global counter.
 #[test]
 fn the_hot_path_counts_in_workgroup_memory() {
-    let source = include_str!("../../shaders/page_mark.wgsl");
+    let source = concat!(
+        include_str!("../../shaders/page_mark.wgsl"),
+        include_str!("../../shaders/page_mark_views.wgsl"),
+        include_str!("../../shaders/page_mark_froxels.wgsl"),
+    );
     let (_, body) = source
         .split_once("fn mark_pixel(")
         .expect("page_mark.wgsl has no mark_pixel");
@@ -412,7 +416,11 @@ fn a_halo_asks_for_the_neighbours() {
 /// The dilation direction has to vary per thread.
 #[test]
 fn the_dilation_picks_a_diagonal_per_thread() {
-    let source = include_str!("../../shaders/page_mark.wgsl");
+    let source = concat!(
+        include_str!("../../shaders/page_mark.wgsl"),
+        include_str!("../../shaders/page_mark_views.wgsl"),
+        include_str!("../../shaders/page_mark_froxels.wgsl"),
+    );
     let dense: String = source.chars().filter(|c| !c.is_whitespace()).collect();
 
     assert!(

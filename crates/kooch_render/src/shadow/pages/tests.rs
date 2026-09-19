@@ -378,7 +378,11 @@ fn the_cascades_are_not_drawn_for_a_paged_sun() {
 /// The flag the raster's gate must not borrow.
 #[test]
 fn the_sampling_switch_is_not_the_drawing_switch() {
-    let reader = include_str!("../../../../kooch_lighting/shaders/inti_pbr.wgsl");
+    let reader = concat!(
+        include_str!("../../../../kooch_lighting/shaders/inti_pbr.wgsl"),
+        include_str!("../../../../kooch_lighting/shaders/inti_pages.wgsl"),
+        include_str!("../../../../kooch_lighting/shaders/inti_shade.wgsl"),
+    );
     let branch = reader
         .find("inti_pages.sun.w > 0.5")
         .expect("the page branch is gone from `inti_shadow`");
@@ -401,7 +405,11 @@ fn the_sampling_switch_is_not_the_drawing_switch() {
 /// A lamp's pages are READ, and read without a cube slot.
 #[test]
 fn a_lamp_reads_its_pages_without_a_cube_slot() {
-    let shading = include_str!("../../../../kooch_lighting/shaders/inti_pbr.wgsl");
+    let shading = concat!(
+        include_str!("../../../../kooch_lighting/shaders/inti_pbr.wgsl"),
+        include_str!("../../../../kooch_lighting/shaders/inti_pages.wgsl"),
+        include_str!("../../../../kooch_lighting/shaders/inti_shade.wgsl"),
+    );
 
     for kind in ["INTI_KIND_POINT", "INTI_KIND_SPOT"] {
         // `else if`, so this is the SHADOW branch and not the cone
