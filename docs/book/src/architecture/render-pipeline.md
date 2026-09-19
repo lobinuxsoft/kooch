@@ -411,6 +411,35 @@ becomes.
 
 Then [Inti](./lighting.md) — Cook-Torrance driven by the scene's lights.
 
+### Transparent surfaces (#452)
+
+A `transparent` material's instances are appended after every opaque one. The view's cull is
+handed the opaque count, so they never reach the visibility buffer; the shadow culls — cascades and
+pages — are handed every instance, so they cast a solid shadow (one that follows the alpha is
+#1224). A renderer with `cast_shadows` off carries `INSTANCE_CASTS_NO_SHADOW`, and every shadow
+view's cull (`CullParams::shadow`, and the lamp cull) skips it.
+
+They are drawn on the compute path after the shade (and its upsample) and before the temporal
+resolve, from a packed `(instance, meshlet)` list of each instance's finest meshlets:
+
+1. **Insert** — one raster of both faces for every material. Each fragment builds a 64-bit key,
+   depth above and `(slot, triangle)` below, and offers it to its pixel's four layers with
+   `atomicMax`, carrying the smaller down; what leaves the last layer raises an overflow flag. The
+   opaque depth is tested in the shader: a fragment that writes storage runs before a late depth
+   test would reject it.
+2. **Tail** — a compute zeroes the tail's indirect draws when nothing overflowed. Otherwise each
+   material rasterises again and keeps only fragments behind the fourth layer, into McGuire and
+   Bavoil's weighted blended targets (Hybrid Transparency, Maule et al. 2013).
+3. **Shade** — one compute per material lights the layers whose key names it, with the same
+   `resolve_surface` a visibility-buffer sample uses, and packs colour and coverage back into the
+   layer as four halves.
+4. **Composite** — the layers front to back, then the tail, blended premultiplied over the radiance.
+
+The layers are four `u64` a pixel — 33 MB at 1280×800 — allocated at the first frame with a
+transparent material. The layers need `SHADER_INT64_ATOMIC_ALL_OPS`; without it,
+or when they would not fit one storage binding, a sorted pass draws instead: instances far to near,
+back faces culled, blended as they land.
+
 ### After the shade: rate, history, and the tonemap
 
 Three passes sit between Inti and the sky, and all three exist on the R64

@@ -39,26 +39,36 @@ pub enum ShaderKind {
     /// One full-screen draw over the frame the camera produced: defines
     /// `fn post_process(SurfaceInput) -> vec4<f32>` and reads `sample_scene` (#1201).
     PostProcess,
+    /// A lit surface blended over the opaque scene, sorted back to front: defines
+    /// `fn surface(SurfaceInput) -> SurfaceOutput` and sets its `alpha` (#452).
+    Transparent,
 }
 
 impl ShaderKind {
     /// What a `// kind:` line names, in the order errors list them.
-    pub const NAMES: [&'static str; 3] = ["surface", "unlit", "post_process"];
+    pub const NAMES: [&'static str; 4] = ["surface", "unlit", "post_process", "transparent"];
 
     fn parse(name: &str) -> Option<Self> {
         match name {
             "surface" => Some(Self::Surface),
             "unlit" => Some(Self::Unlit),
             "post_process" => Some(Self::PostProcess),
+            "transparent" => Some(Self::Transparent),
             _ => None,
         }
     }
 
-    /// WGSL the frames read: `SURFACE_UNLIT`, and for an unlit shader the `surface` they call.
+    /// WGSL the frames read: `SURFACE_UNLIT`, `SURFACE_TRANSPARENT`, and for an unlit shader the
+    /// `surface` they call.
     fn glue(self) -> &'static str {
         match self {
             // A post-process has a frame of its own, so it needs no glue at all.
-            Self::Surface | Self::PostProcess => "const SURFACE_UNLIT: bool = false;\n",
+            Self::Surface | Self::PostProcess => {
+                "const SURFACE_UNLIT: bool = false;\nconst SURFACE_TRANSPARENT: bool = false;\n"
+            }
+            Self::Transparent => {
+                "const SURFACE_UNLIT: bool = false;\nconst SURFACE_TRANSPARENT: bool = true;\n"
+            }
             Self::Unlit => UNLIT_GLUE,
         }
     }
@@ -67,12 +77,14 @@ impl ShaderKind {
 /// An unlit colour rides in `emissive`, the one output the frames already add past the light.
 const UNLIT_GLUE: &str = "\
 const SURFACE_UNLIT: bool = true;
+const SURFACE_TRANSPARENT: bool = false;
 fn surface(input: SurfaceInput) -> SurfaceOutput {
     let unlit = unlit(input);
     var out: SurfaceOutput;
     out.normal = normalize(input.world_normal);
     out.roughness = 1.0;
     out.emissive = unlit.color;
+    out.alpha = unlit.alpha;
     return out;
 }
 ";

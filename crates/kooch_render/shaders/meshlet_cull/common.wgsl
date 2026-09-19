@@ -29,7 +29,9 @@ struct CullParams {
     // boundary and inflate the struct to 224 bytes against the host's 208. wgpu reports that as
     // "min_binding_size" and it reads like a binding problem.
     min_screen_pixels: f32,
-    _pad_lod1: u32,
+    // Instances whose `flags` share a bit with this are not this view's: a shadow view skips the
+    // ones that cast no shadow (#452). 0 on the camera's view.
+    skip_flags: u32,
     _pad_lod2: u32,
     // Clip-from-world matrix used by the AABB-vs-frustum test in `atomic.wgsl` (#454.4 follow-up
     // A).
@@ -78,6 +80,10 @@ struct HiZParams {
 }
 @group(1) @binding(0) var<uniform> hi_z_params: HiZParams;
 @group(1) @binding(1) var hi_z_pyramid: texture_2d<f32>;
+
+fn skipped(flags: u32) -> bool {
+    return (flags & params.skip_flags) != 0u;
+}
 
 fn sphere_outside_frustum(center: vec3<f32>, radius: f32) -> bool {
     for (var i = 0u; i < 6u; i = i + 1u) {

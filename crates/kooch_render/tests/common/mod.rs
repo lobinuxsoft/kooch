@@ -95,7 +95,9 @@ pub fn try_acquire_device_r64() -> Option<(wgpu::Device, wgpu::Queue)> {
 
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("kooch_render_test_device_r64"),
-        required_features: required,
+        // What the engine asks for when offered: the transparent layers need it (#452).
+        required_features: required
+            | (adapter.features() & wgpu::Features::SHADER_INT64_ATOMIC_ALL_OPS),
         required_limits: limits,
         memory_hints: wgpu::MemoryHints::default(),
         trace: wgpu::Trace::Off,

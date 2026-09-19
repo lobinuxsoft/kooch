@@ -5,6 +5,9 @@ mod compute_shade;
 mod debug_resolve;
 mod density_clear;
 mod dlss;
+mod forward;
+
+pub(crate) use forward::ForwardList;
 mod fsr3;
 mod jitter;
 mod motion;
@@ -90,6 +93,9 @@ pub struct Vbuf64Stage {
     rasterizer: Vbuf64Rasterizer,
     /// Two-pass material shading (#440) for normal-look modes.
     two_pass: two_pass::MaterialTwoPass,
+    /// Transparent surfaces over the shaded scene (#452). Behind a lock because the frame shades
+    /// through `&self` and the pass grows its list buffer.
+    forward: std::sync::Mutex<forward::ForwardPass>,
     /// The compute alternative to `two_pass` (#824), which shades from a per-tile light list in
     /// workgroup memory. Both are built: the two exist to be captured against each other on the
     /// device, and [`compute_shade::enabled_by_environment`] picks per run.
@@ -174,6 +180,8 @@ impl Vbuf64Stage {
         let density_clear = DensityClear::new(device);
         let rasterizer = Vbuf64Rasterizer::new(device, meshlet_bgl, depth_format, pipeline_cache);
         let two_pass = two_pass::MaterialTwoPass::new(device, meshlet_bgl);
+        let forward =
+            forward::ForwardPass::new(device, depth_format, meshlet_bgl, two_pass.layouts());
         let compute_shade = ComputeShading::new(device, meshlet_bgl);
         let compute_enabled = compute_shade::enabled_by_environment().unwrap_or(false);
         let upsample = ShadingUpsample::new(device, size);
@@ -194,6 +202,7 @@ impl Vbuf64Stage {
             density_clear,
             rasterizer,
             two_pass,
+            forward: std::sync::Mutex::new(forward),
             compute_shade,
             compute_enabled,
             upsample,
@@ -484,7 +493,7 @@ impl Vbuf64Stage {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-        _depth_view: &wgpu::TextureView,
+        depth_view: &wgpu::TextureView,
         depth_sample_view: &wgpu::TextureView,
         color_view: &wgpu::TextureView,
         density_view: &wgpu::TextureView,
@@ -515,6 +524,8 @@ impl Vbuf64Stage {
         // systems have already removed `GpuContext` from `Resources` to get at. `None` in every
         // build and on every adapter that has no DLSS, which is most of them.
         dlss_runtime: Option<&kooch_core::gpu::DlssRuntime>,
+        // #452 — the transparent instances' meshlets, far to near.
+        forward_list: &ForwardList,
     ) -> Option<Deferred> {
         // 🔴 DLSS hands back a command buffer of its own that has to be
         // submitted immediately after this frame's encoder, so it
@@ -662,6 +673,46 @@ impl Vbuf64Stage {
                 if let (Some(scopes), Some(query)) = (scopes, query) {
                     scopes.end(encoder, query);
                 }
+            }
+            if self.compute_enabled {
+                let query = match (scopes, parent) {
+                    (Some(s), Some(p)) => Some(s.begin_child("transparent", encoder, p)),
+                    (Some(s), None) => Some(s.begin("transparent", encoder)),
+                    _ => None,
+                };
+                let frame = forward::ForwardFrame {
+                    device,
+                    queue,
+                    encoder: &mut *encoder,
+                    target: self.tonemap.hdr_view(),
+                    depth: depth_view,
+                    depth_sample: depth_sample_view,
+                    vbuf: &self.vbuf_view,
+                    meshlet_bg,
+                    scene,
+                    materials: pipeline,
+                    lights_bg,
+                    view_proj,
+                    contact,
+                    size: self.size,
+                    mip_bias_scale: self.mip_bias_scale(),
+                    time,
+                };
+                self.forward.lock().unwrap_or_else(|e| e.into_inner()).draw(
+                    frame,
+                    self.two_pass.layouts(),
+                    forward_list,
+                );
+                if let (Some(scopes), Some(query)) = (scopes, query) {
+                    scopes.end(encoder, query);
+                }
+            } else if !forward_list.is_empty() {
+                static WARNED: std::sync::Once = std::sync::Once::new();
+                WARNED.call_once(|| {
+                    tracing::warn!(
+                        "transparent surfaces are drawn on the compute shading path only"
+                    );
+                });
             }
             if self.compute_enabled {
                 // The temporal resolve, between the radiance and the curve (#481). Skipped on the

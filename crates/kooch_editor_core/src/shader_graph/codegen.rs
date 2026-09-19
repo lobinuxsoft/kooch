@@ -22,6 +22,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         .ok_or("the graph has no Output node")?;
     let unlit = kind == "unlit";
     let post = kind == "post_process";
+    let transparent = kind == "transparent";
 
     let wires: HashMap<InPinId, OutPinId> = graph.wires().map(|(from, to)| (to, from)).collect();
     let mut body = Body {
@@ -36,16 +37,19 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     };
     // What an unconnected output falls back to. 🔴 Not zero for the normal: `normalize` of it is
     // NaN, which naga refuses outright.
-    let fallbacks: &[&str] = if unlit || post {
-        &["vec4<f32>(0.0)", "vec4<f32>(1.0)"]
+    let surface: &[&str] = &[
+        "vec4<f32>(0.0)",
+        "vec4<f32>(normalize(input.world_normal), 0.0)",
+        "vec4<f32>(0.0)",
+        "vec4<f32>(0.5)",
+        "vec4<f32>(0.0)",
+    ];
+    let fallbacks: Vec<&str> = if unlit || post {
+        vec!["vec4<f32>(0.0)", "vec4<f32>(1.0)"]
+    } else if transparent {
+        [surface, &["vec4<f32>(1.0)"]].concat()
     } else {
-        &[
-            "vec4<f32>(0.0)",
-            "vec4<f32>(normalize(input.world_normal), 0.0)",
-            "vec4<f32>(0.0)",
-            "vec4<f32>(0.5)",
-            "vec4<f32>(0.0)",
-        ]
+        surface.to_vec()
     };
     let outputs: Vec<String> = fallbacks
         .iter()
@@ -90,6 +94,9 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         let _ = writeln!(source, "    out.metallic = {}.x;", outputs[2]);
         let _ = writeln!(source, "    out.roughness = {}.x;", outputs[3]);
         let _ = writeln!(source, "    out.emissive = {}.rgb;", outputs[4]);
+        if transparent {
+            let _ = writeln!(source, "    out.alpha = {}.x;", outputs[5]);
+        }
     }
     let _ = writeln!(source, "    return out;\n}}");
     finish(source)

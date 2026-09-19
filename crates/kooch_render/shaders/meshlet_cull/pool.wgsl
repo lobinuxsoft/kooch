@@ -51,6 +51,9 @@ fn run_cull_scene_pool(thread_id: u32) {
 
     let inst = instances[instance_id];
     let mesh_desc = pool_mesh_descriptors[inst.mesh_id];
+    if (skipped(inst.flags)) {
+        return;
+    }
 
     if (meshlet_offset >= mesh_desc.meshlet_count) {
         return;

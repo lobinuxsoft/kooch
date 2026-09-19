@@ -47,6 +47,9 @@ struct SurfaceOutput {
     roughness: f32,
     // Radiance added after lighting.
     emissive: vec3<f32>,
+    // Coverage, 0..1. Read only by the transparent kind (#452); opaque passes ignore it. A
+    // `var out: SurfaceOutput` starts it at 0, so a transparent shader has to set it.
+    alpha: f32,
 }
 
 /// What an unlit shader returns: the final colour, in the same units as `emissive`.

@@ -9,6 +9,20 @@ use glam::Mat4;
 pub const LOD_FORCE_NONE: i32 = i32::MIN;
 /// This instance samples shadow maps.
 pub const INSTANCE_RECEIVES_SHADOWS: u32 = 1u32 << 0;
+/// Drawn by the forward pass, blended and sorted, and by no cull (#452). Such instances sit after
+/// every opaque one; see [`opaque_count`].
+pub const INSTANCE_TRANSPARENT: u32 = 1u32 << 1;
+
+/// Left out of every shadow view: its renderer's `cast_shadows` is off.
+pub const INSTANCE_CASTS_NO_SHADOW: u32 = 1u32 << 2;
+
+/// How many instances lead the list before the first transparent one: what every cull is given.
+pub fn opaque_count(instances: &[MeshInstance]) -> usize {
+    instances
+        .iter()
+        .position(|i| i.flags & INSTANCE_TRANSPARENT != 0)
+        .unwrap_or(instances.len())
+}
 
 /// Per-instance scene record consumed by `cs_cull_scene`.
 #[repr(C)]

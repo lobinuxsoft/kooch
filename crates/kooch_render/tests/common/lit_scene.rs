@@ -36,6 +36,8 @@ pub struct Rig {
     pub camera: ViewCamera,
     /// The material every box in the scene renders with.
     pub material: Guid,
+    /// The cube every box in the scene is.
+    pub mesh: Guid,
 }
 
 /// A floor, `lights x lights` point lights above it, and a camera looking down the length of it.
@@ -208,6 +210,7 @@ fn build(lights: u32, wall: bool, caster: bool, mixed: bool) -> Option<Rig> {
         stage,
         camera: ViewCamera::looking_at(Vec3::new(0.0, 2.5, 9.0), Vec3::new(0.0, 0.5, 0.0)),
         material: material_guid,
+        mesh: mesh_guid,
     })
 }
 

@@ -1523,7 +1523,7 @@ impl PageRasterizer {
                     }),
                 );
                 let clip = self.level_clip(level, eye, sun);
-                let params = CullParams::new(
+                let params = CullParams::shadow(
                     clip,
                     eye - sun.normalize_or(Vec3::NEG_Y) * SUN_SPAN,
                     scene_params.meshlets_per_mesh,

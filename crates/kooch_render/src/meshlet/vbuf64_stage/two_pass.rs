@@ -73,6 +73,12 @@ fn build_shading_pipeline(
     })
 }
 
+/// Borrowed from [`MaterialTwoPass`]: the frame and material layouts a pass over the pool shares.
+pub(super) struct SharedLayouts<'a> {
+    pub frame: &'a wgpu::BindGroupLayout,
+    pub materials: &'a wgpu::BindGroupLayout,
+}
+
 pub(super) struct MaterialTwoPass {
     resolve_pipeline: wgpu::RenderPipeline,
     resolve_bgl: wgpu::BindGroupLayout,
@@ -293,7 +299,7 @@ impl MaterialTwoPass {
             shading_pipeline,
             shading_pipeline_debug: std::sync::OnceLock::new(),
             shading_layout,
-            custom: ShaderPipelines::new(),
+            custom: ShaderPipelines::new(super::shader_cache::OPAQUE),
             frame_bgl,
             materials_bgl,
             scene_bgl,
@@ -301,6 +307,14 @@ impl MaterialTwoPass {
             screen_buffer,
             screen_stride,
             contact_buffer,
+        }
+    }
+
+    /// The shading pass's layouts, which the forward pass binds the same way (#452).
+    pub(super) fn layouts(&self) -> SharedLayouts<'_> {
+        SharedLayouts {
+            frame: &self.frame_bgl,
+            materials: &self.materials_bgl,
         }
     }
 

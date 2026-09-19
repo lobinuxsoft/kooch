@@ -13,6 +13,9 @@ struct LampMeshDescriptor {
 
 // Stride 96 B, mirroring the cull side — see `page_expand.wgsl` for
 // the precedent and the warning about a mismatch.
+// `scene::INSTANCE_CASTS_NO_SHADOW`.
+const INSTANCE_CASTS_NO_SHADOW: u32 = 4u;
+
 struct LampMeshInstance {
     transform: mat4x4<f32>,
     mesh_id: u32,
@@ -126,6 +129,10 @@ fn cs_lamp_pairs(
         return;
     }
     let inst = lamp_instances[instance];
+    // A lamp's cull is a shadow view: an instance that casts none is not in it (#452).
+    if (inst.flags & INSTANCE_CASTS_NO_SHADOW) != 0u {
+        return;
+    }
     let bounds = lamp_mesh_bounds[inst.mesh_id];
     let centre = (inst.transform * vec4<f32>(bounds.xyz, 1.0)).xyz;
     let radius = bounds.w * lamp_world_scale(inst.transform);

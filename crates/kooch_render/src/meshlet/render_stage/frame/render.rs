@@ -201,8 +201,21 @@ impl MeshletRenderStage {
                 }
             }
             self.previous_bounds.clone_from(&self.instance_bounds);
+            let pool = self.pipeline.pool();
+            self.forward_list.rebuild(
+                &instances,
+                crate::meshlet::scene::opaque_count(&instances),
+                &self.instance_bounds,
+                cam_pos,
+                &pool.mesh_descriptors,
+                &pool.meshlets,
+            );
         }
 
+        // 🔴 The shadow culls — the cascades', the pages' — see every instance, so transparent ones
+        // cast a solid shadow (#452; by alpha is #1224). The view's cull sees the opaque ones alone:
+        // they lead the buffer, and only the transparent passes draw the rest.
+        let opaque = crate::meshlet::scene::opaque_count(&instances);
         let scene_params = SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
         // Worst case for every cull this frame, the view's and the four
         // cascades': one thread per instance-meshlet pair.
@@ -343,6 +356,10 @@ impl MeshletRenderStage {
         }
 
         let instance_count = instances.len() as u32;
+        let view_params = SceneCullParams {
+            instance_count: opaque as u32,
+            ..scene_params
+        };
 
         // Contact shadows (#735). Built here rather than in each path because both need it and only
         // this function still holds the camera's lens: `near` and `far` are what turn a stored
@@ -408,11 +425,12 @@ impl MeshletRenderStage {
                 unjittered_view_proj,
                 cam_pos,
                 &cull_params,
+                &view_params,
                 &scene_params,
                 &meshlet_bg,
                 &contact,
                 timer_slot,
-                instance_count,
+                opaque as u32,
             );
         }
 
@@ -425,12 +443,12 @@ impl MeshletRenderStage {
             view_proj,
             cam_pos,
             &cull_params,
-            &scene_params,
+            &view_params,
             &meshlet_bg,
             &material_bg,
             &contact,
             timer_slot,
-            instance_count,
+            opaque as u32,
         )
     }
 }

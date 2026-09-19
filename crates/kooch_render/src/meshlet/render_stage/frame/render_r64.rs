@@ -29,6 +29,8 @@ impl MeshletRenderStage {
         cam_pos: Vec3,
         cull_params: &CullParams,
         scene_params: &SceneCullParams,
+        // Every instance, transparent included: what casts into the shadow pages (#452).
+        shadow_params: &SceneCullParams,
         meshlet_bg: &wgpu::BindGroup,
         contact: &crate::contact_shadow::ContactShadowUbo,
         timer_slot: Option<usize>,
@@ -163,7 +165,7 @@ impl MeshletRenderStage {
             view_id,
             unjittered_view_proj,
             cam_pos,
-            scene_params,
+            shadow_params,
             meshlet_bg,
             debug_mode,
         );
@@ -209,6 +211,7 @@ impl MeshletRenderStage {
                 scopes.as_deref(),
                 shade_query.as_ref(),
                 dlss_runtime.as_deref(),
+                &self.forward_list,
             );
             if let (Some(scopes), Some(query)) = (scopes, shade_query) {
                 scopes.end(&mut encoder, query);

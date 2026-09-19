@@ -589,3 +589,19 @@ fn scene_color_reads_only_in_post() {
     let surface = graph_with("surface");
     assert!(!surface.contains("sample_scene("), "{surface}");
 }
+
+/// A transparent output writes its alpha, and an unwired one is solid.
+#[test]
+fn transparent_writes_alpha() {
+    let mut graph = Graph::new();
+    graph.insert_node(
+        egui::pos2(0.0, 0.0),
+        Node::ShaderOutput {
+            kind: "transparent".to_owned(),
+        },
+    );
+    let source = generate(&graph).unwrap();
+    assert!(source.contains("out.alpha = vec4<f32>(1.0).x;"), "{source}");
+    let shader = Shader::parse(&source).unwrap();
+    assert_eq!(shader.kind, kooch_render::material::ShaderKind::Transparent);
+}

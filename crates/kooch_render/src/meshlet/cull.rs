@@ -47,7 +47,10 @@ pub struct CullParams {
     /// Projected radius, in pixels, under which an INSTANCE is rejected before it ever becomes
     /// meshlets (#1002). `0` = off, which is what ships.
     pub min_screen_pixels: f32,
-    pub _pad_lod: [u32; 2],
+    /// Instances whose `flags` share a bit with this are skipped: a shadow view sets
+    /// [`INSTANCE_CASTS_NO_SHADOW`](crate::meshlet::scene::INSTANCE_CASTS_NO_SHADOW) (#452).
+    pub skip_flags: u32,
+    pub _pad_lod: u32,
     pub view_proj: [[f32; 4]; 4],
 }
 
@@ -66,7 +69,8 @@ impl CullParams {
             debug_active: 0,
             lod_orthographic: 0,
             min_screen_pixels: 0.0,
-            _pad_lod: [0; 2],
+            skip_flags: 0,
+            _pad_lod: 0,
             view_proj: view_projection.to_cols_array_2d(),
         }
     }
@@ -110,6 +114,15 @@ impl CullParams {
     }
 
     /// The LOD selector for an orthographic view — a shadow cascade.
+    /// A shadow view's parameters: as [`Self::new`], skipping the instances that cast no shadow
+    /// (#452).
+    pub fn shadow(view_projection: Mat4, camera_position: Vec3, meshlet_count: u32) -> Self {
+        Self {
+            skip_flags: crate::meshlet::scene::INSTANCE_CASTS_NO_SHADOW,
+            ..Self::new(view_projection, camera_position, meshlet_count)
+        }
+    }
+
     pub fn with_orthographic_lod(
         mut self,
         world_height: f32,
