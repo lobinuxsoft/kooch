@@ -1884,8 +1884,8 @@ fn the_counters_carry_the_expansions_cost() {
 fn the_page_passes_are_profiled() {
     for (name, source, wanted) in [
         (
-            "frame/pages.rs",
-            include_str!("../src/meshlet/render_stage/frame/pages.rs"),
+            "frame/pages/record.rs",
+            include_str!("../src/meshlet/render_stage/frame/pages/record.rs"),
             "shadow pages",
         ),
         (
@@ -1935,8 +1935,8 @@ fn the_page_passes_are_profiled() {
     // per frame on the OneXFly that no capture could see.
     for (name, source, wanted) in [
         (
-            "frame/pages.rs",
-            include_str!("../src/meshlet/render_stage/frame/pages.rs"),
+            "frame/pages/record.rs",
+            include_str!("../src/meshlet/render_stage/frame/pages/record.rs"),
             ["shadow pages", "page mark", "page raster"].as_slice(),
         ),
         (
