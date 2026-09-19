@@ -192,6 +192,8 @@ pub struct EditorOverlay {
     pub(crate) winit_state: SharedWinitState,
     pub(crate) renderer: egui_wgpu::Renderer,
     pub(crate) dock_state: DockState<EditorTab>,
+    /// Panels torn off into OS windows of their own (#1196).
+    pub(crate) windows: crate::os_windows::OsWindows,
     /// Which panel the keyboard belongs to.
     pub(crate) focused_tab: Option<EditorTab>,
     /// The Asset Browser's keyboard cursor, and the rows the renderer drew
@@ -239,6 +241,9 @@ pub struct EditorOverlay {
 /// Forwards raw winit events to egui for input processing.
 pub(crate) struct EguiEventHandler {
     pub(crate) winit_state: SharedWinitState,
+    /// The panel windows, which take their own window's events (#1196).
+    pub(crate) live: crate::os_windows::SharedLive,
+    pub(crate) root: winit::window::WindowId,
 }
 
 impl RawEventHandler for EguiEventHandler {
@@ -249,6 +254,23 @@ impl RawEventHandler for EguiEventHandler {
         let Some(event) = event.downcast_ref::<WindowEvent>() else {
             return false;
         };
+        if window.id() != self.root {
+            let mut live = self.live.lock().unwrap();
+            // A window not adopted yet has nothing to take its input: dropped, never given to the
+            // main window's state.
+            let Some(open) = live.iter_mut().find(|l| l.window.id() == window.id()) else {
+                return false;
+            };
+            match event {
+                WindowEvent::CloseRequested => {
+                    open.closing = true;
+                    return true;
+                }
+                WindowEvent::Moved(pos) => open.moved_to = Some([pos.x, pos.y]),
+                _ => {}
+            }
+            return open.state.on_window_event(window, event).consumed;
+        }
         let mut state = self.winit_state.lock().unwrap();
         state.on_window_event(window, event).consumed
     }

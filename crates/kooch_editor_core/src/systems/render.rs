@@ -1,5 +1,6 @@
 //! Editor render system — runs egui UI and presents overlay to the surface.
 
+mod focus;
 mod frame_display;
 mod ui;
 
@@ -313,6 +314,16 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                 .get::<crate::remote_session::RemoteState>()
                 .is_some_and(|s| s.playing),
     };
+
+    if let Some(extra) = resources.get_mut::<kooch_window::ExtraWindows>() {
+        let EditorOverlay {
+            dock_state,
+            windows,
+            ctx,
+            ..
+        } = &mut overlay;
+        crate::os_windows::sync(dock_state, windows, extra, ctx, &gpu);
+    }
 
     let raw_input = {
         let mut state = overlay.winit_state.lock().unwrap();
@@ -836,6 +847,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     stages.present_ms = crate::perf::ms_since(present_start);
 
     resources.insert(gpu);
+    // Once the frame is submitted: a view resized this frame lets go of its old targets here.
+    if let Some(pool) = resources.get_mut::<kooch_core::gpu::TargetPool>() {
+        pool.end_frame();
+    }
     // Read before the overlay goes back, applied after this frame's edits
     // — see `seal_histories`.
     let ended = overlay.ctx.input(|i| i.pointer.any_released());

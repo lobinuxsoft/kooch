@@ -29,6 +29,8 @@ use crate::state::{
 };
 
 pub(crate) struct EditorTabViewer<'a> {
+    /// A tab the user asked to open in its own window (#1196); the dock lets go of it after drawing.
+    pub(crate) detach: Option<EditorTab>,
     /// Which panel the keyboard belongs to, updated here as panels are
     /// drawn. `None` before the user has clicked anything.
     pub(crate) focused_tab: &'a mut Option<EditorTab>,
@@ -418,6 +420,17 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.main_scene,
                 self.actions,
             ),
+        }
+    }
+
+    fn context_menu(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab, _path: egui_dock::NodePath) {
+        if ui
+            .button(format!("{} Open in window", crate::icons::ARROW_SQUARE_OUT))
+            .on_hover_text("Move this panel to a window of its own; closing it docks it back")
+            .clicked()
+        {
+            self.detach = Some(*tab);
+            ui.close();
         }
     }
 

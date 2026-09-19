@@ -22,8 +22,8 @@ pub struct TargetPool {
     slots: Slots,
     /// Parallel to the slots: SoA rather than a struct per target. A slot's texture outlives every
     /// release — the pool never destroys one, which is why reuse needs no wait.
-    textures: Vec<wgpu::Texture>,
-    views: Vec<wgpu::TextureView>,
+    textures: Vec<Option<wgpu::Texture>>,
+    views: Vec<Option<wgpu::TextureView>>,
     created: u32,
 }
 
@@ -57,17 +57,28 @@ impl TargetPool {
                 view_formats: &[],
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            self.textures.push(texture);
-            self.views.push(view);
+            // An evicted slot's index is reused, so a new texture lands where the old one was.
+            match self.textures.get_mut(index as usize) {
+                Some(slot) => {
+                    *slot = Some(texture);
+                    self.views[index as usize] = Some(view);
+                }
+                None => {
+                    self.textures.push(Some(texture));
+                    self.views.push(Some(view));
+                }
+            }
             self.created += 1;
-            // 🔴 A pool that keeps creating is allocating every frame, and that ran a machine out of
-            // memory before anything said so (#1201). Loud at every doubling from 32 on.
-            if self.created >= 32 && self.created.is_power_of_two() {
+            // 🔴 A pool that keeps growing is a pass acquiring without releasing, and that ran a
+            // machine out of memory before anything said so (#1201). Counted live, not created: a
+            // resize creates and evicts, and is not a leak. Loud at every doubling from 32 on.
+            let live = self.len();
+            if live >= 32 && live.is_power_of_two() {
                 tracing::error!(
-                    created = self.created,
+                    live,
                     label,
                     size = ?desc.size,
-                    "the target pool keeps allocating: a pass is acquiring without releasing"
+                    "the target pool keeps growing: a pass is acquiring without releasing"
                 );
             }
         }
@@ -80,11 +91,20 @@ impl TargetPool {
     }
 
     pub fn view(&self, target: TargetId) -> Option<&wgpu::TextureView> {
-        self.views.get(target.0 as usize)
+        self.views.get(target.0 as usize)?.as_ref()
     }
 
     pub fn texture(&self, target: TargetId) -> Option<&wgpu::Texture> {
-        self.textures.get(target.0 as usize)
+        self.textures.get(target.0 as usize)?.as_ref()
+    }
+
+    /// Closes a frame: drops the textures no pass asked for in the last few. Called once a frame by
+    /// whoever presents it.
+    pub fn end_frame(&mut self) {
+        for index in self.slots.end_frame() {
+            self.textures[index as usize] = None;
+            self.views[index as usize] = None;
+        }
     }
 
     pub fn desc(&self, target: TargetId) -> Option<TargetDesc> {
@@ -93,11 +113,11 @@ impl TargetPool {
 
     /// How many textures the pool holds — what the VRAM it owns is counted from.
     pub fn len(&self) -> usize {
-        self.textures.len()
+        self.textures.iter().flatten().count()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.textures.is_empty()
+        self.len() == 0
     }
 
     /// How many textures were ever created. A frame loop that keeps climbing here is allocating

@@ -19,6 +19,7 @@ use kooch_core::time::Time;
 
 use crate::WindowConfig;
 use crate::event::{WindowCloseRequested, WindowResized};
+use crate::extra::ExtraWindows;
 use crate::handle::WindowHandle;
 
 /// The user event a [`FrameWaker`] sends to break the loop out of a sleep.
@@ -131,6 +132,47 @@ impl WinitApp {
         self.app.schedule.run_post_physics(&mut self.app.resources);
     }
 
+    /// Creates the windows systems asked for this frame. A failure is logged and dropped: the
+    /// panel that asked stays where it was.
+    fn create_extra_windows(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(extra) = self.app.resources.get_mut::<ExtraWindows>() else {
+            return;
+        };
+        for (key, attrs) in extra.take_requests() {
+            match event_loop.create_window(attrs) {
+                Ok(window) => extra.push_created(key, Arc::new(window)),
+                Err(err) => tracing::error!("failed to create an extra window: {err}"),
+            }
+        }
+    }
+
+    /// An extra window's event goes to the handlers and never to the engine's own window state:
+    /// closing or resizing one must not close or resize the main window. The frame is still ticked
+    /// by the main window, so anything worth drawing asks it for one.
+    fn extra_window_event(&mut self, id: WindowId, event: &WindowEvent) {
+        let Some(window) = self
+            .app
+            .resources
+            .get_mut::<ExtraWindows>()
+            .and_then(|extra| extra.find(id))
+        else {
+            return;
+        };
+        if let Some(handlers) = self.app.resources.get_mut::<RawEventHandlers>() {
+            handlers.dispatch(&*window, event);
+        }
+        if wants_a_frame(event)
+            || matches!(
+                event,
+                WindowEvent::CloseRequested
+                    | WindowEvent::Resized(_)
+                    | WindowEvent::ScaleFactorChanged { .. }
+            )
+        {
+            self.request_redraw();
+        }
+    }
+
     /// Swaps double buffers for every registered event type — asked, not listed, since a hand-kept
     /// list left new events forever unreadable.
     fn update_events(&mut self) {
@@ -230,9 +272,18 @@ impl ApplicationHandler<WakeUp> for WinitApp {
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
+        window_id: WindowId,
         event: WindowEvent,
     ) {
+        if self
+            .window
+            .as_ref()
+            .is_some_and(|main| main.id() != window_id)
+        {
+            self.extra_window_event(window_id, &event);
+            return;
+        }
+
         // Forward events to registered handlers (e.g., egui overlay,
         // gameplay input), in order, until one consumes the event.
         if let Some(window) = self.window.clone() {
@@ -271,6 +322,7 @@ impl ApplicationHandler<WakeUp> for WinitApp {
 
             WindowEvent::RedrawRequested => {
                 self.tick_frame();
+                self.create_extra_windows(event_loop);
 
                 if self.should_exit() {
                     event_loop.exit();

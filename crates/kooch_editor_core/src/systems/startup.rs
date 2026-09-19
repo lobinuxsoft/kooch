@@ -117,6 +117,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         winit_state: Arc::clone(&winit_state),
         renderer,
         dock_state: crate::state::default_dock_state(),
+        windows: crate::os_windows::OsWindows::default(),
         selected_entities: Vec::new(),
         pinned_gizmos: std::collections::HashSet::new(),
         last_clicked_index: None,
@@ -129,7 +130,13 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         current_folder: None,
     };
 
-    let handler: Box<dyn RawEventHandler> = Box::new(EguiEventHandler { winit_state });
+    let live = std::sync::Arc::clone(&overlay.windows.live);
+    crate::os_windows::install(&overlay.ctx, std::sync::Arc::clone(&live));
+    let handler: Box<dyn RawEventHandler> = Box::new(EguiEventHandler {
+        winit_state,
+        live,
+        root: window.id(),
+    });
     resources.insert(overlay);
     // Today the only handler: the editor builds its own plugin set in `bootstrap.rs` and
     // `InputPlugin` is not in it.

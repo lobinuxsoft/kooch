@@ -48,3 +48,26 @@ fn resizing_settles_at_one_target() {
     assert_eq!(pool.len(), 1, "one texture for thirty-two resizes");
     assert_eq!(pool.bytes(), 256 * 256 * 4);
 }
+
+/// A view dragged through many sizes keeps the targets of the last few, not one per size.
+#[test]
+fn a_dragged_view_frees_old_sizes() {
+    let Some((device, _queue)) = try_acquire_device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut pool = TargetPool::new(&device);
+
+    for width in (256..512).step_by(8) {
+        let held = pool.acquire("view", colour((width, 256)));
+        pool.release(held);
+        pool.end_frame();
+    }
+
+    assert!(pool.len() <= 4, "{} textures for 32 sizes", pool.len());
+    let last = pool.acquire("view", colour((504, 256)));
+    assert!(
+        pool.view(last).is_some(),
+        "the size in use kept its texture"
+    );
+}

@@ -1,11 +1,41 @@
-//! Persists the editor's dock layout between sessions.
+//! Persists the editor's dock layout, and its torn-off panels, between sessions.
 
 use std::path::PathBuf;
 
 use egui_dock::DockState;
 use kooch_core::resource::Resources;
 
+use crate::os_windows::Detached;
 use crate::state::{EditorOverlay, EditorTab};
+
+/// What the layout file holds: the dock, and the panels torn off into windows (#1196).
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct EditorLayout {
+    pub dock: DockState<EditorTab>,
+    #[serde(default)]
+    pub windows: Vec<Detached>,
+}
+
+impl EditorLayout {
+    fn of(overlay: &EditorOverlay) -> Self {
+        Self {
+            dock: overlay.dock_state.clone(),
+            windows: overlay.windows.detached.clone(),
+        }
+    }
+
+    /// 🔴 Also reads the bare dock a layout file held before #1196, so an upgrade keeps it.
+    pub(crate) fn parse(data: &str) -> Result<Self, ron::error::SpannedError> {
+        ron::from_str::<Self>(data).or_else(|err| {
+            ron::from_str::<DockState<EditorTab>>(data)
+                .map(|dock| Self {
+                    dock,
+                    windows: Vec::new(),
+                })
+                .map_err(|_| err)
+        })
+    }
+}
 
 /// Cached serialization of the last layout written to disk. Keeps the
 /// save system from re-writing identical state every frame.
@@ -23,7 +53,7 @@ pub(crate) fn layout_path() -> Option<PathBuf> {
 /// Tries to read and parse the saved layout file. Returns `None` on
 /// missing-file (first run) or any parse error (warns but does not
 /// fail — the caller falls back to the default layout).
-pub(crate) fn load_layout() -> Option<DockState<EditorTab>> {
+pub(crate) fn load_layout() -> Option<EditorLayout> {
     let path = layout_path()?;
     let data = match std::fs::read_to_string(&path) {
         Ok(s) => s,
@@ -37,7 +67,7 @@ pub(crate) fn load_layout() -> Option<DockState<EditorTab>> {
             return None;
         }
     };
-    match ron::from_str::<DockState<EditorTab>>(&data) {
+    match EditorLayout::parse(&data) {
         Ok(state) => {
             tracing::info!("Loaded dock layout from {path:?}");
             Some(state)
@@ -50,7 +80,7 @@ pub(crate) fn load_layout() -> Option<DockState<EditorTab>> {
 }
 
 /// Writes a layout to disk, creating the parent directory if needed.
-pub(crate) fn save_layout(state: &DockState<EditorTab>) -> std::io::Result<()> {
+pub(crate) fn save_layout(state: &EditorLayout) -> std::io::Result<()> {
     let Some(path) = layout_path() else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
@@ -73,7 +103,7 @@ pub(crate) fn load_layout_system(resources: &mut Resources) {
         // Still initialize the cache from the existing default so the
         // first save-system tick doesn't write the default layout.
         if let Some(overlay) = resources.get::<EditorOverlay>()
-            && let Ok(s) = ron::ser::to_string(&overlay.dock_state)
+            && let Ok(s) = ron::ser::to_string(&EditorLayout::of(overlay))
             && let Some(persist) = resources.get_mut::<LayoutPersistence>()
         {
             persist.last_serialized = Some(s);
@@ -81,11 +111,13 @@ pub(crate) fn load_layout_system(resources: &mut Resources) {
         return;
     };
     if let Some(overlay) = resources.get_mut::<EditorOverlay>() {
-        overlay.dock_state = loaded;
+        overlay.dock_state = loaded.dock;
+        overlay.windows.detached = loaded.windows;
+        crate::os_windows::settle(&mut overlay.dock_state, &overlay.windows);
     }
     // Cache the new state so the next save-system tick recognises it.
     if let Some(overlay) = resources.get::<EditorOverlay>()
-        && let Ok(s) = ron::ser::to_string(&overlay.dock_state)
+        && let Ok(s) = ron::ser::to_string(&EditorLayout::of(overlay))
         && let Some(persist) = resources.get_mut::<LayoutPersistence>()
     {
         persist.last_serialized = Some(s);
@@ -98,18 +130,19 @@ pub(crate) fn save_layout_system(resources: &mut Resources) {
     // Phase 1: snapshot the dock state and its serialization in a tight
     // scope so the immutable borrow on Resources is released before the
     // mutable get below.
-    let (dock_state, serialized) = {
+    let (layout, serialized) = {
         let Some(overlay) = resources.get::<EditorOverlay>() else {
             return;
         };
-        let serialized = match ron::ser::to_string(&overlay.dock_state) {
+        let layout = EditorLayout::of(overlay);
+        let serialized = match ron::ser::to_string(&layout) {
             Ok(s) => s,
             Err(e) => {
                 tracing::warn!("Failed to serialize dock layout: {e}");
                 return;
             }
         };
-        (overlay.dock_state.clone(), serialized)
+        (layout, serialized)
     };
 
     // Phase 2: skip the write entirely when the layout is unchanged.
@@ -122,7 +155,7 @@ pub(crate) fn save_layout_system(resources: &mut Resources) {
     }
 
     // Phase 3: persist and update the cache.
-    match save_layout(&dock_state) {
+    match save_layout(&layout) {
         Ok(()) => {
             if let Some(persist) = resources.get_mut::<LayoutPersistence>() {
                 persist.last_serialized = Some(serialized);
