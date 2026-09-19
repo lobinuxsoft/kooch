@@ -38,15 +38,20 @@ fn cut(clip: f32) -> String {
 /// The two sides of the scene's centre, with a pane clipped at `clip` in front of the wall, or none,
 /// on the R64 visibility buffer or the R32 one.
 fn sides(clip: Option<f32>, r32: bool) -> Option<([u8; 3], [u8; 3])> {
+    sides_of(clip.map(cut), r32)
+}
+
+/// The two sides of the scene's centre with a pane of `source` in front of the wall, or none.
+fn sides_of(source: Option<String>, r32: bool) -> Option<([u8; 3], [u8; 3])> {
     let mut r: Rig = match r32 {
         true => rig_r32(2, true)?,
         false => rig(2, true)?,
     };
-    if let Some(clip) = clip {
+    if let Some(source) = source {
         let shader = Guid::new_v4();
         let material = Guid::new_v4();
         let materials = r.resources.get_mut::<MaterialPipeline>().unwrap();
-        let parsed = Shader::parse(&cut(clip)).unwrap();
+        let parsed = Shader::parse(&source).unwrap();
         assert!(parsed.masked());
         materials.add_shader(shader, &parsed);
         let mut look = Material::new([0.0, 0.0, 0.0, 1.0], 0.0, 1.0, 0.0);
@@ -114,6 +119,23 @@ fn a_zero_clip_keeps_everything() {
     assert!(
         kept.0 != scene.0 && kept.1 != scene.1,
         "{kept:?} over {scene:?}"
+    );
+}
+
+/// 🔴 A transparent surface that clips: below the clip nothing is left, not even a faint layer; above
+/// it, it still blends.
+#[test]
+fn a_transparent_clip_cuts() {
+    let Some(scene) = sides(None, false) else {
+        eprintln!("no R64-capable adapter; skipping");
+        return;
+    };
+    let glass = format!("// kind: transparent\n{}", cut(0.5));
+    let (left, right) = sides_of(Some(glass), false).unwrap();
+    let shown = [left == scene.0, right == scene.1];
+    assert!(
+        shown[0] != shown[1],
+        "exactly one side should show the scene: {left:?} {right:?} over {scene:?}"
     );
 }
 

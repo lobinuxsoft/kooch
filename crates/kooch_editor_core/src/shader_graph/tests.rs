@@ -426,7 +426,7 @@ fn transparent_writes_alpha() {
 /// Wiring alpha clip masks the shader and the result compiles; left unwired, it stays opaque.
 #[test]
 fn a_wired_clip_masks() {
-    for kind in ["surface", "unlit"] {
+    for kind in ["surface", "unlit", "transparent"] {
         let mut graph = Graph::new();
         let uv = graph.insert_node(Pos2::ZERO, Node::Uv);
         let output = graph.insert_node(

@@ -22,6 +22,8 @@ fn cs_shade(@builtin(global_invocation_id) id: vec3<u32>) {
         if (instances[visible_meshlets[slot] >> 16u].material_id != screen.material_id) {
             continue;
         }
-        layers[at] = pack_shaded(transparent_lit(slot, key_triangle(key), frag_coord));
+        // A clip only the shared insert let through, when the material's own did not build.
+        let lit = transparent_lit(slot, key_triangle(key), frag_coord);
+        layers[at] = pack_shaded(vec4<f32>(lit.rgb, max(lit.a, 0.0)));
     }
 }

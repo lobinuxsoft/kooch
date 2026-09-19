@@ -51,7 +51,8 @@ fn fs_bake(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     surf.flags = 0u;
     let shaded = surface(surface_input(surf, position.xy));
     if (SURFACE_TRANSPARENT) {
-        return vec4<f32>(clamp(shaded.alpha, 0.0, 1.0));
+        let kept = shaded.alpha >= shaded.alpha_clip;
+        return vec4<f32>(select(0.0, clamp(shaded.alpha, 0.0, 1.0), kept));
     }
     // Masked (#452): the cut itself, which the rasters read with a hard threshold.
     return vec4<f32>(select(0.0, 1.0, shaded.alpha >= shaded.alpha_clip));

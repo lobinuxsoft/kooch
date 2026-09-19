@@ -1,5 +1,6 @@
 // transparent_lit.wgsl — one transparent fragment, reconstructed exactly as a visibility-buffer
-// sample would be and lit by Inti (#452). Linear radiance and coverage.
+// sample would be and lit by Inti (#452). Linear radiance and coverage, or a coverage of -1 where
+// the surface's clip cuts it.
 
 fn transparent_lit(slot: u32, triangle: u32, frag_coord: vec2<f32>) -> vec4<f32> {
     var surf = resolve_surface(slot, triangle, frag_coord);
@@ -8,6 +9,10 @@ fn transparent_lit(slot: u32, triangle: u32, frag_coord: vec2<f32>) -> vec4<f32>
         surf.world_normal = -surf.world_normal;
     }
     let shaded = surface(surface_input(surf, frag_coord));
+    // Below its clip: no coverage, and a negative one tells the raster frames to discard.
+    if (shaded.alpha < shaded.alpha_clip) {
+        return vec4<f32>(0.0, 0.0, 0.0, -1.0);
+    }
     var radiance = vec3<f32>(0.0);
     if (!SURFACE_UNLIT) {
         radiance = inti_shade(

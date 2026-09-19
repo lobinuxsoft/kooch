@@ -249,6 +249,7 @@ impl Node {
                 "roughness",
                 "emissive",
                 "alpha",
+                "alpha clip",
             ],
             Self::Output | Self::ShaderOutput { .. } => &[
                 "base color",

@@ -50,6 +50,8 @@ pub(super) struct LayeredPass {
     composite: wgpu::RenderPipeline,
     args_pipeline: wgpu::ComputePipeline,
     tails: ShaderPipelines<wgpu::RenderPipeline>,
+    /// Inserts of their own, for the materials that clip.
+    clips: ShaderPipelines<wgpu::RenderPipeline>,
     shades: ShaderPipelines<wgpu::ComputePipeline>,
     depth_format: wgpu::TextureFormat,
     targets: Option<Targets>,
@@ -77,6 +79,7 @@ impl LayeredPass {
             composite: pipelines::composite(device, &layouts),
             args_pipeline: pipelines::args(device, &layouts),
             tails: ShaderPipelines::new(&[ShaderKind::Transparent]),
+            clips: ShaderPipelines::new(&[ShaderKind::Transparent]),
             shades: ShaderPipelines::new(&[ShaderKind::Transparent]),
             depth_format,
             targets: None,
@@ -215,7 +218,8 @@ impl LayeredPass {
             stencil_ops: None,
         };
 
-        // 1. Every fragment offered to its pixel's four layers.
+        // 1. Every fragment offered to its pixel's four layers; a clipped material's through its own
+        // insert, run by run.
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("transparent_insert"),
@@ -225,14 +229,35 @@ impl LayeredPass {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.insert);
-            pass.set_bind_group(0, &frame_bg, &[offset(first)]);
             pass.set_bind_group(1, frame.meshlet_bg, &[]);
             pass.set_bind_group(2, &materials_bg, &[]);
             pass.set_bind_group(3, &scene_bg, &[]);
-            pass.set_bind_group(4, &first_textures, &[]);
             pass.set_bind_group(5, frame.lights_bg, &[]);
-            pass.draw(0..MESHLET_TRIANGLES * 3, 0..list.entries.len() as u32);
+            let clipped = |material: u32| {
+                let (guid, surface) = frame.materials.slot_surface(material)?;
+                if !surface.masked {
+                    return None;
+                }
+                self.clips.get(guid, surface, false, |surface| {
+                    pipelines::clip_insert(device, &self.layouts, self.depth_format, surface)
+                })
+            };
+            if list.runs.iter().all(|run| clipped(run.material).is_none()) {
+                pass.set_pipeline(&self.insert);
+                pass.set_bind_group(0, &frame_bg, &[offset(first)]);
+                pass.set_bind_group(4, &first_textures, &[]);
+                pass.draw(0..MESHLET_TRIANGLES * 3, 0..list.entries.len() as u32);
+            } else {
+                for run in &list.runs {
+                    match clipped(run.material) {
+                        Some(pipeline) => pass.set_pipeline(&pipeline),
+                        None => pass.set_pipeline(&self.insert),
+                    }
+                    pass.set_bind_group(0, &frame_bg, &[offset(run.material)]);
+                    pass.set_bind_group(4, &textures(run.material), &[]);
+                    pass.draw(0..MESHLET_TRIANGLES * 3, run.range.clone());
+                }
+            }
         }
 
         // 2. The tail's draws, emptied when no pixel overflowed.

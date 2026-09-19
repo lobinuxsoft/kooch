@@ -476,6 +476,12 @@ draw, and a cut needs the material.
 Shadows reuse the transparent bake: a masked material's layer holds its cut (`alpha >= alpha_clip`)
 and carries a table bit that makes the shadow rasters read it against 0.5 instead of the dither.
 
+A transparent shader that assigns `alpha_clip` gets an insert pipeline of its own
+(`TRANSPARENT_CLIP_INSERT_FRAME`), drawn run by run beside the shared one: its fragment runs the
+surface and drops what falls below the clip before `atomicMax`, so a cut fragment never holds a layer.
+`transparent_lit` answers a coverage of -1 there as well, which the tail and the sorted fallback
+discard.
+
 Planned (#452): an alpha that provably depends on uv and textures only becomes geometry — the mesh
 cut along the contour, opaque, with nothing left to discard.
 

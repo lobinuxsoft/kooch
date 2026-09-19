@@ -60,10 +60,11 @@ pub use material_pass::{
     MATERIAL_PASS_CONTACT_UBO_BINDING, MATERIAL_PASS_INTI_GROUP, MATERIAL_POST_FRAME,
     MATERIAL_PREVIEW_FRAME, MATERIAL_SURFACE_PRELUDE, NEW_SURFACE_SHADER,
     RESOLVE_MATERIAL_DEPTH_SHADER, SHADING_TILE_SIZE, SURFACE_RECONSTRUCT_SHADER,
-    TRANSPARENT_ARGS_SHADER, TRANSPARENT_LAYERS, TRANSPARENT_SHADE_FRAME, TRANSPARENT_TAIL_FRAME,
-    VISIBILITY_BUFFER_RESOLVE_SHADER, compose_material_shader, compose_post_shader,
-    compose_preview_shader, compose_transparent_composite, compose_transparent_insert,
-    shader_scope, validate_post, validate_preview, validate_surface,
+    TRANSPARENT_ARGS_SHADER, TRANSPARENT_CLIP_INSERT_FRAME, TRANSPARENT_LAYERS,
+    TRANSPARENT_SHADE_FRAME, TRANSPARENT_TAIL_FRAME, VISIBILITY_BUFFER_RESOLVE_SHADER,
+    compose_material_shader, compose_post_shader, compose_preview_shader,
+    compose_transparent_composite, compose_transparent_insert, shader_scope, validate_post,
+    validate_preview, validate_surface,
 };
 pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshBounds, MeshDescriptor, MeshHandle};
 pub use reject_overlay::{MeshletRejectOverlay, RejectReason};

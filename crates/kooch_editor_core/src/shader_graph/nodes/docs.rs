@@ -269,7 +269,10 @@ impl Node {
             Self::ShaderOutput { kind } if kind == "unlit" => &[
                 (Three, "The final colour. No light or shadow changes it."),
                 (One, "Opacity, tested against alpha clip. Unwired: 1."),
-                (One, "Cuts the surface where alpha falls below it. Unwired: nothing is cut."),
+                (
+                    One,
+                    "Cuts the surface where alpha falls below it. Unwired: nothing is cut.",
+                ),
             ],
             Self::ShaderOutput { kind } if kind == "transparent" => &[
                 (Three, "The colour of the surface."),
@@ -281,6 +284,10 @@ impl Node {
                     One,
                     "How much it covers what is behind: 0 invisible, 1 solid. Unwired: 1.",
                 ),
+                (
+                    One,
+                    "Cuts away where alpha falls below it; the rest still blends. Unwired: nothing is cut.",
+                ),
             ],
             Self::Output | Self::ShaderOutput { .. } => &[
                 (Three, "The colour of the surface."),
@@ -289,7 +296,10 @@ impl Node {
                 (One, "0 mirror, 1 matte. Unwired: 0.5."),
                 (Three, "Light the surface gives off."),
                 (One, "Opacity, tested against alpha clip. Unwired: 1."),
-                (One, "Cuts the surface where alpha falls below it. Unwired: nothing is cut."),
+                (
+                    One,
+                    "Cuts the surface where alpha falls below it. Unwired: nothing is cut.",
+                ),
             ],
             _ => &[],
         }

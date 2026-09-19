@@ -141,6 +141,11 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 - Back faces are culled as on any surface: a leaf card seen from behind is not drawn.
 - The node panel's preview shows the cut.
 
+A `transparent` shader can clip too: what falls below `alpha_clip` is gone — it takes none of the
+pixel's four layers and is neither lit nor blended — and the rest blends by its `alpha` as before.
+Its shadow drops the cut part and dithers the rest. The transparent output node has the same
+**alpha clip** pin.
+
 ### Post-process
 
 A `post_process` shader is drawn over what the camera rendered. `input.uv` is the screen in 0..1,
