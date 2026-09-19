@@ -86,7 +86,9 @@ impl Vbuf64Stage {
                 density_view,
                 cull,
                 self.size,
+                self.output_size,
                 debug_mode,
+                false,
             );
         } else if let Some(pipeline) = material_pipeline {
             // The label names the path, so the capture answers "which
@@ -170,6 +172,22 @@ impl Vbuf64Stage {
             }
             if let (Some(scopes), Some(query)) = (scopes, query) {
                 scopes.end(encoder, query);
+            }
+            // The fragment path writes the image itself, so its overlay goes on right here.
+            if !self.compute_enabled && overlays(debug_mode) {
+                self.debug_resolve.draw(
+                    device,
+                    queue,
+                    encoder,
+                    &self.vbuf_view,
+                    color_view,
+                    density_view,
+                    cull,
+                    self.size,
+                    self.output_size,
+                    debug_mode,
+                    true,
+                );
             }
             // Its own scope, and a sibling of the shading rather than a child of it: the whole
             // question this issue asks is whether what the reduced rate saves survives what putting
@@ -376,6 +394,21 @@ impl Vbuf64Stage {
                     if let (Some(scopes), Some(query)) = (scopes, query) {
                         scopes.end(encoder, query);
                     }
+                }
+                if overlays(debug_mode) {
+                    self.debug_resolve.draw(
+                        device,
+                        queue,
+                        encoder,
+                        &self.vbuf_view,
+                        color_view,
+                        density_view,
+                        cull,
+                        self.size,
+                        self.output_size,
+                        debug_mode,
+                        true,
+                    );
                 }
                 return dlss_commands
                     .zip(post)

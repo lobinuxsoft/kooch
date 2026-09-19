@@ -89,6 +89,9 @@ pub enum MeshletDebugMode {
     /// Every triangle's edges, read off the visibility buffer: a pixel whose neighbour carries
     /// another `(slot, triangle)` is an edge. Shows the polygon load a mesh actually rasterises.
     Wireframe = 31,
+    /// The same edges, drawn over the shaded frame: what the mesh is, and where it sits on what it
+    /// is drawing.
+    WireframeOver = 32,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -158,6 +161,7 @@ impl MeshletDebugMode {
             Self::LocalPageDepth,
             Self::TextureMipLevel,
             Self::Wireframe,
+            Self::WireframeOver,
             // The Fsr3* views are deliberately NOT offered any more: the upscaler's bring-up is
             // done and they earned their retirement from the dropdown (the user's words: "ya los
             // podemos sacar porque andan bien").
@@ -242,6 +246,7 @@ impl MeshletDebugMode {
             Self::SingleLight => "Single light",
             Self::LightsPerPixel => "Lights per pixel",
             Self::Wireframe => "Wireframe",
+            Self::WireframeOver => "Wireframe over",
             Self::PointShadowFactor => "Point shadow factor",
             Self::PointCubeFaces => "Point cube faces",
             Self::LocalPageFaces => "Lamp shadow pages: faces",
@@ -277,7 +282,15 @@ impl MeshletDebugMode {
     /// True when Inti resolves this mode inside the shading shader, so
     /// nothing temporal downstream should run.
     pub const fn replaces_shading(self) -> bool {
-        self.as_u32() >= Self::Normals.as_u32() && self.fsr3_stage() == 0
+        // The overlay is the production frame with lines on top: everything that resolves or grades
+        // a frame still has to run.
+        !self.overlays() && self.as_u32() >= Self::Normals.as_u32() && self.fsr3_stage() == 0
+    }
+
+    /// True when the mode draws over a finished frame instead of taking its place.
+    #[inline]
+    pub const fn overlays(self) -> bool {
+        matches!(self, Self::WireframeOver)
     }
 
     /// True when the fullscreen debug pass draws it off the visibility buffer alone, instead of the
@@ -298,10 +311,12 @@ impl MeshletDebugMode {
     /// True when the mode hands back colour that is already ready for the screen, so the tonemap
     /// must pass it through untouched.
     pub const fn is_display_referred(self) -> bool {
-        if matches!(
-            self,
-            Self::Fsr3Input | Self::Fsr3Upsample | Self::Fsr3History
-        ) {
+        if self.overlays()
+            || matches!(
+                self,
+                Self::Fsr3Input | Self::Fsr3Upsample | Self::Fsr3History
+            )
+        {
             return false;
         }
         self.as_u32() >= Self::Normals.as_u32()

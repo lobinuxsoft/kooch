@@ -17,7 +17,15 @@ pub(super) fn warn_once_about_transitional_frame(render: (u32, u32), output: (u3
 /// that is already display-referred, and a false-colour legend through a filmic curve is a legend
 /// nobody can read off.
 pub(super) fn is_debug_view(debug_mode: u32) -> bool {
-    debug_mode >= 11
+    debug_mode >= 11 && !overlays(debug_mode)
+}
+
+/// True when the mode draws over the production frame instead of replacing it.
+pub(super) fn overlays(debug_mode: u32) -> bool {
+    crate::meshlet::debug::MeshletDebugMode::all_implemented()
+        .iter()
+        .find(|m| m.as_u32() == debug_mode)
+        .is_some_and(|m| m.overlays())
 }
 
 /// True only for the modes Inti resolves INSIDE the shading shader, so there is no radiance for a

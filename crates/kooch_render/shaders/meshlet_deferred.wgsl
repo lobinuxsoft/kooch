@@ -204,5 +204,9 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
         color = vec4<f32>(rgb, 1.0);
     }
 
+    // Wireframe over (32): the frame it just shaded, with the triangle edges drawn on it.
+    if (screen.debug_mode == 32u && on_edge(vec2<i32>(pixel))) {
+        color = vec4<f32>(0.5, 1.0, 0.6, 1.0);
+    }
     textureStore(color_out, vec2<i32>(i32(pixel.x), i32(pixel.y)), color);
 }

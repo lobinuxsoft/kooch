@@ -13,6 +13,7 @@ use kooch_ecs::commands::Commands;
 use kooch_ecs::hierarchy::global_transform::GlobalTransform;
 use kooch_ecs::mesh_renderer::MeshRenderer;
 use kooch_render::meshlet::{MeshletDebugMode, build_default_meshlets};
+use kooch_render::quality::{TemporalSettings, UpscaleTechnique};
 
 /// A pixel the view drew a line on: the edge colour is the only green one in the plate.
 fn is_line(pixel: &[u8]) -> bool {
@@ -96,6 +97,67 @@ fn the_r32_buffer_draws_lines() {
     let pixels = common::lit_scene::render_any(&mut r);
     let drawn = pixels.chunks_exact(4).filter(|p| is_line(p)).count();
     assert!(drawn > 0, "the R32 path drew no line at all");
+}
+
+/// 🔴 A scaled render used to leave the view in a corner: the buffer is smaller than the image, so
+/// the pass has to stretch what it reads instead of reading one to one.
+#[test]
+fn a_scaled_render_still_covers() {
+    let Some(mut r) = rig(2, true) else {
+        eprintln!("no capable adapter; skipping");
+        return;
+    };
+    r.resources.insert(TemporalSettings {
+        technique: UpscaleTechnique::Sgsr2,
+        render_scale: 50,
+        sharpening: 0,
+    });
+    r.resources.insert(MeshletDebugMode::Wireframe);
+    // The first frame records the scale; the resize is what turns it into a smaller buffer.
+    common::lit_scene::render(&mut r, true);
+    r.stage.resize(&r.device, (SIZE, SIZE));
+    let pixels = common::lit_scene::render(&mut r, true);
+    // A pass that reads the buffer one to one runs off its end past the render width, and every
+    // column beyond it repeats the last texel of its row. Two far-apart columns settle it.
+    let column = |x: u32| -> Vec<[u8; 3]> {
+        (0..SIZE)
+            .map(|y| {
+                let at = ((y * SIZE + x) * 4) as usize;
+                [pixels[at], pixels[at + 1], pixels[at + 2]]
+            })
+            .collect()
+    };
+    assert_ne!(
+        column(SIZE * 3 / 4),
+        column(SIZE - 2),
+        "every column past the render width is the same: the view did not stretch",
+    );
+}
+
+/// 🔴 The overlay is the frame plus lines: what is not a line is exactly what was shaded.
+#[test]
+fn the_overlay_keeps_the_frame() {
+    let Some(mut r) = rig(2, true) else {
+        eprintln!("no capable adapter; skipping");
+        return;
+    };
+    let shaded = common::lit_scene::render(&mut r, true);
+    r.resources.insert(MeshletDebugMode::WireframeOver);
+    let over = common::lit_scene::render(&mut r, true);
+    let mut drawn = 0usize;
+    let mut kept = 0usize;
+    for (was, now) in shaded.chunks_exact(4).zip(over.chunks_exact(4)) {
+        match is_line(now) {
+            true => drawn += 1,
+            false => kept += usize::from(was[..3] == now[..3]),
+        }
+    }
+    assert!(drawn > 0, "the overlay drew no line");
+    let untouched = shaded.len() / 4 - drawn;
+    assert!(
+        kept * 10 > untouched * 9,
+        "{kept} of {untouched} pixels off the lines still show the frame",
+    );
 }
 
 /// The plate is the view's own, not the scene's: nothing of the shading survives it.

@@ -583,6 +583,7 @@ branch on a single `u32`. `Off` is the production path.
 | `LightsPerPixel` | How many lights the pixel actually evaluated. Cost becomes a property of *where the pixel is*, which no pass timing can show — `raster + shade` is one number for the whole screen. 🔴 A flat maximum means the frame is **not clustering**: every light, every pixel |
 | `PointShadowFactor` | One point light's cube map answering for itself — no BRDF, no cosine, no exposure, no second light. Magenta: no casting lamp. Blue: past its `range`. Grey ramp: the factor |
 | `PointCubeFaces` | The cube map itself, six faces in a 3×2 grid (+X, −X, +Y, −Y, +Z, −Z). Dark blue is *nothing recorded*, which is what an occluder culled out of the map looks like |
+| `WireframeOver` | The same edges over the shaded frame, so the mesh is read against what it is drawing. Drawn after the tonemap on the R64 path and inside the shade on the R32 one, and the only debug view that keeps the production frame underneath |
 | `Wireframe` | Every triangle's edges, over a dark plate. A pixel whose right or lower neighbour carries another `(slot, triangle)` is an edge, so it costs two taps on the visibility buffer and no reconstruction. What a LOD or a trimmed mesh (#452) actually rasterises, in the only unit that matters: pixels of line |
 
 The last three exist because *"the shadow is not there"* is four faults
@@ -596,6 +597,11 @@ renderer computed `normal * 0.5 + 0.5` and multiplied by albedo, which is
 why a scene with lights and a scene without them rendered identically.
 It survives as a debug view because it is a genuinely useful look at the
 geometry — it just stopped being what you get by default.
+
+The colorize views (the ids, the heatmaps, the passthrough, the wireframe) draw
+over the window while reading a render-sized visibility buffer, so the pass
+stretches between the two sizes. Reading one to one left them in a corner
+whenever the render scale was under 100%.
 
 The atomic-counter modes need `TEXTURE_ATOMIC`; the editor's dropdown
 hides what the adapter cannot run rather than offering a mode that
