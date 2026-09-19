@@ -103,6 +103,7 @@ smoke or particles get there, and there the difference does not show.
   sorted back to front by their centre instead, with back faces culled — then two crossing panes
   can blend in the wrong order.
 - They draw on the compute shading path, which is the default.
+- The node panel's preview shows a transparent shader over a checker, so its coverage reads.
 
 ### Post-process
 

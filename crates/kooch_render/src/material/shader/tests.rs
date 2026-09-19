@@ -238,4 +238,7 @@ fn the_transparent_kind_is_read() {
     let shader = Shader::parse("// kind: transparent\nfn surface() {}").unwrap();
     assert_eq!(shader.kind, ShaderKind::Transparent);
     assert!(shader.params_wgsl().contains("SURFACE_UNLIT: bool = false"));
+    assert!(shader.params_wgsl().contains("SURFACE_TRANSPARENT: bool = true"));
+    let opaque = Shader::parse("fn surface() {}").unwrap();
+    assert!(opaque.params_wgsl().contains("SURFACE_TRANSPARENT: bool = false"));
 }

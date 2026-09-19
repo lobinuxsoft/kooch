@@ -103,5 +103,15 @@ fn fs_preview(in: VsOut) -> @location(0) vec4<f32> {
     let tint = mix(vec3<f32>(1.0), shaded.base_color, clamp(shaded.metallic, 0.0, 1.0));
 
     let lit = shaded.base_color * (diffuse + fill) + tint * highlight;
-    return vec4<f32>(lit + shaded.emissive, 1.0);
+    return preview_over_checker(lit + shaded.emissive, shaded.alpha, in.clip_position.xy);
+}
+
+// A transparent surface over a checker, so its coverage shows (#452); anything else, as it is.
+fn preview_over_checker(colour: vec3<f32>, alpha: f32, frag_coord: vec2<f32>) -> vec4<f32> {
+    if (!SURFACE_TRANSPARENT) {
+        return vec4<f32>(colour, 1.0);
+    }
+    let square = vec2<u32>(frag_coord / 12.0);
+    let checker = select(0.18, 0.42, ((square.x + square.y) & 1u) == 0u);
+    return vec4<f32>(mix(vec3<f32>(checker), colour, clamp(alpha, 0.0, 1.0)), 1.0);
 }
