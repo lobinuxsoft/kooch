@@ -484,6 +484,7 @@ impl MeshletRenderStage {
             self.lights.light_buffer(),
             &self.moved_casters,
             lod_target,
+            self.shadow_alpha.bind_group(),
             track,
         );
         // Idempotent, and this is the one call site that runs after every possible rebuild of

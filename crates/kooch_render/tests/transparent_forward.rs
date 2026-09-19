@@ -167,32 +167,22 @@ fn the_tail_keeps_deep_layers() {
     assert!(three < two, "a third pane hides nothing: {three} vs {two}");
 }
 
-/// A transparent object casts a solid shadow (#452; by alpha is #1224): a nearly invisible pane
-/// under the blue light takes more blue off the image than its own 5% cover could. Measured: 4.9%
-/// with the shadow, 0.09% without.
-#[test]
-fn glass_casts_a_shadow() {
-    let blue = |with_pane: bool| blue_under_pane(with_pane.then_some(true));
-    let Some(open) = blue(false) else {
-        eprintln!("no R64-capable adapter; skipping");
-        return;
-    };
-    let shaded = blue(true).unwrap();
-    assert!(
-        shaded * 100 < open * 97,
-        "the pane took {open} → {shaded} of the blue light: no shadow",
-    );
-}
-
-/// The blue light the image receives with a nearly invisible pane under the caster: `None` no pane,
-/// `Some(cast)` one whose renderer casts shadows or not.
-fn blue_under_pane(pane: Option<bool>) -> Option<u64> {
+/// The blue light the image receives with a black pane under the caster: `None` no pane,
+/// `Some((alpha, cast))` one of that coverage whose renderer casts shadows or not. `pages` puts
+/// the lights' shadows in the virtual pages instead of the classic maps.
+fn blue_under_pane(pane: Option<(f32, bool)>, pages: bool) -> Option<u64> {
     let mut r = common::lit_scene::rig_with_caster(2)?;
-    if let Some(cast) = pane {
+    if pages {
+        r.resources
+            .get_mut::<kooch_render::shadow::ShadowSettings>()
+            .unwrap()
+            .virtual_pages = true;
+    }
+    if let Some((alpha, cast)) = pane {
         pane_casting(
             &mut r,
             "0.0, 0.0, 0.0",
-            0.05,
+            alpha,
             Mat4::from_translation(Vec3::new(0.0, 1.2, 1.0))
                 * Mat4::from_scale(Vec3::new(2.5, 0.02, 2.5)),
             cast,
@@ -206,17 +196,45 @@ fn blue_under_pane(pane: Option<bool>) -> Option<u64> {
     Some(pixels.chunks_exact(4).map(|p| p[2] as u64).sum::<u64>())
 }
 
+/// How much blue a pane takes off the image, against no pane.
+fn taken(pane: (f32, bool), pages: bool) -> Option<i64> {
+    let open = blue_under_pane(None, pages)? as i64;
+    Some(open - blue_under_pane(Some(pane), pages)? as i64)
+}
+
+/// 🔴 The shadow follows the coverage (#1224): a 30% pane takes a fraction of what a solid one
+/// does, where a solid shadow would take the same. Both kinds of shadow map.
+#[test]
+fn the_shadow_follows_alpha() {
+    for pages in [false, true] {
+        let Some(solid) = taken((1.0, true), pages) else {
+            eprintln!("no R64-capable adapter; skipping");
+            return;
+        };
+        let thin = taken((0.3, true), pages).unwrap();
+        assert!(
+            solid > 0,
+            "pages {pages}: a solid pane casts nothing ({solid})"
+        );
+        assert!(
+            thin * 10 < solid * 6 && thin * 10 > solid,
+            "pages {pages}: a 30% pane took {thin} of the light a solid one took {solid}",
+        );
+    }
+}
+
 /// 🔴 `cast_shadows` off takes the renderer out of every shadow view. It was read by nothing, so
-/// unticking it changed nothing, on opaque and transparent renderers alike.
+/// unticking it changed nothing, on opaque and transparent renderers alike. What is left is the
+/// pane seen directly.
 #[test]
 fn cast_shadows_off_casts_none() {
-    let Some(open) = blue_under_pane(None) else {
+    let Some(casting) = taken((1.0, true), false) else {
         eprintln!("no R64-capable adapter; skipping");
         return;
     };
-    let quiet = blue_under_pane(Some(false)).unwrap();
+    let quiet = taken((1.0, false), false).unwrap();
     assert!(
-        quiet * 1000 > open * 995,
-        "a pane that casts no shadow took {open} → {quiet} of the blue light",
+        quiet * 2 < casting,
+        "a pane that casts no shadow took {quiet} of the light, a casting one {casting}",
     );
 }

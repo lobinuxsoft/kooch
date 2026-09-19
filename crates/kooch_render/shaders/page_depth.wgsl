@@ -61,6 +61,9 @@ struct PageVertex {
     // triangle belongs to the same page, and interpolating it would
     // make the clip test disagree with itself across the primitive.
     @location(0) @interpolate(flat) rect: vec4<f32>,
+    // For a transparent caster's coverage (#1224); read only by the alpha variant.
+    @location(1) uv: vec2<f32>,
+    @location(2) @interpolate(flat) material: u32,
 }
 
 fn fetch_local_vertex_index(byte_offset: u32) -> u32 {
@@ -83,6 +86,8 @@ struct PageGeom {
     /// The tail of a meshlet with fewer triangles than the draw issues
     /// vertices for. Sent outside the volume by both paths.
     dead: bool,
+    uv: vec2<f32>,
+    material: u32,
 }
 
 /// One body, two entry points. Splitting it was the point: the clipped path differs from the
@@ -93,6 +98,8 @@ fn page_geometry(vertex_index: u32, instance_index: u32) -> PageGeom {
     out.local = vec2<f32>(0.0);
     out.w = 1.0;
     out.dead = false;
+    out.uv = vec2<f32>(0.0);
+    out.material = 0u;
     let pair = pairs[instance_index];
     let inst_id = pair.z >> 16u;
     let meshlet_id = pair.z & 0xffffu;
@@ -135,6 +142,8 @@ fn page_geometry(vertex_index: u32, instance_index: u32) -> PageGeom {
     let v = vertices[global_vertex_idx];
     let pos = vec3<f32>(v.position[0], v.position[1], v.position[2]);
     let world = (instances[inst_id].transform * vec4<f32>(pos, 1.0)).xyz;
+    out.uv = vec2<f32>(v.uv[0], v.uv[1]);
+    out.material = instances[inst_id].material_id;
 
     var ndc = vec2<f32>(2.0);
     var depth = 0.0;
@@ -206,6 +215,8 @@ fn vs_page(
     var out: PageVertex;
     out.clip = geom.clip;
     out.rect = geom.rect;
+    out.uv = geom.uv;
+    out.material = geom.material;
     return out;
 }
 

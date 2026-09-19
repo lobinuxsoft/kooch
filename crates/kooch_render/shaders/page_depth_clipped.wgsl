@@ -7,6 +7,9 @@ struct PageVertexClipped {
     // clipper cuts the triangle where they cross zero. `maxClipDistances` is at least 8 wherever
     // the feature exists, so four is never the limit.
     @builtin(clip_distances) planes: array<f32, 4>,
+    // For a transparent caster's coverage (#1224); read only by the alpha variant.
+    @location(1) uv: vec2<f32>,
+    @location(2) @interpolate(flat) material: u32,
 }
 
 @vertex
@@ -17,6 +20,8 @@ fn vs_page_clipped(
     let geom = page_geometry(vertex_index, instance_index);
     var out: PageVertexClipped;
     out.clip = geom.clip;
+    out.uv = geom.uv;
+    out.material = geom.material;
     // 🔴 The page's own clip volume: in-page is `|local| <= w`, so each edge's signed distance is `w
     // ± local`.
     out.planes = array<f32, 4>(

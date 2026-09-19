@@ -68,6 +68,7 @@ pub use scene::{
 };
 pub use stage_counters::{CullStageCounts, MeshletStageCounters};
 pub use system::{MeshletPipeline, instance_at_origin};
+pub(crate) use vbuf64_stage::ShaderPipelines;
 pub use vbuf64_stage::{JITTER_BASE_PHASES, Jitter, ShadingRate, Vbuf64Stage};
 
 /// `KOOCH_COMPUTE_SHADING`, when it says anything. See

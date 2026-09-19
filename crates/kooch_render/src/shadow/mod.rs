@@ -1,5 +1,6 @@
 //! Sun shadows — cascaded shadow maps (#476).
 
+mod alpha;
 mod atlas;
 mod cascades;
 mod cube;
@@ -10,6 +11,7 @@ mod raster;
 mod settings;
 mod spot;
 
+pub use alpha::{ALPHA_LAYERS, ALPHA_SIDE, ShadowAlpha, shadow_alpha_shader};
 pub use atlas::{DEFAULT_CASCADE_SIZE, SHADOW_DEPTH_FORMAT, ShadowAtlas};
 pub use cascades::{
     CASCADE_BLEND_FRACTION, CASCADE_COUNT, Cascade, build_cascades, frustum_corners,

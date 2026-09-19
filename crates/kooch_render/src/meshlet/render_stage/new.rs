@@ -104,6 +104,7 @@ impl MeshletRenderStage {
             render_scale: 100,
             instance_bounds: Vec::new(),
             forward_list: Default::default(),
+            shadow_alpha: crate::shadow::ShadowAlpha::new(device),
             previous_bounds: Vec::new(),
             moved_casters: Vec::new(),
             point_cube_cache: Vec::new(),

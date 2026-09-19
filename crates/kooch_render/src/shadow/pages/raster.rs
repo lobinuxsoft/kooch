@@ -220,6 +220,8 @@ pub struct PageRasterizer {
 
     depth_bgl: wgpu::BindGroupLayout,
     depth: wgpu::RenderPipeline,
+    /// The same, dropping what a transparent caster's coverage does not reach (#1224).
+    depth_alpha: wgpu::RenderPipeline,
     invalidate: wgpu::ComputePipeline,
     invalidate_bgl: wgpu::BindGroupLayout,
     /// One quad per dirty page at far depth, depth test `Always` —
@@ -375,11 +377,10 @@ impl PageRasterizer {
             ""
         };
         let tail = if clipped { DEPTH_CLIPPED } else { "" };
+        let depth_source = format!("{enable}{CLUSTER_COMMON}\n{TABLE}\n{DEPTH}\n{tail}");
         let depth_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("page_depth"),
-            source: wgpu::ShaderSource::Wgsl(
-                format!("{enable}{CLUSTER_COMMON}\n{TABLE}\n{DEPTH}\n{tail}").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(depth_source.as_str().into()),
         });
 
         let compact_bgl = compact_layout(device);
@@ -483,6 +484,13 @@ impl PageRasterizer {
             multiview_mask: None,
             cache: None,
         });
+
+        let depth_alpha = alpha::depth_alpha(
+            device,
+            &depth_source,
+            [&depth_bgl, meshlet_bgl, &storage_bgl],
+            clipped,
+        );
 
         let clear_bgl = clear_layout(device);
         let clear_pipeline_layout =
@@ -630,6 +638,7 @@ impl PageRasterizer {
             expand,
             depth_bgl,
             depth,
+            depth_alpha,
             invalidate,
             invalidate_bgl,
             page_clear,
@@ -1404,6 +1413,8 @@ impl PageRasterizer {
         // and new bounds alike — for the cache's invalidation pass.
         moved: &[[f32; 4]],
         lod_target: f32,
+        // The transparent casters' coverage, when any casts by alpha this frame (#1224).
+        alpha: Option<&wgpu::BindGroup>,
         track: RasterTrack<'_>,
     ) {
         let levels = self.clipmap.levels;
@@ -1656,7 +1667,13 @@ impl PageRasterizer {
             pass.set_pipeline(&self.page_clear);
             pass.set_bind_group(0, &bound.clear, &[layer_offset]);
             pass.draw_indirect(&self.draw_args, 16);
-            pass.set_pipeline(&self.depth);
+            match alpha {
+                Some(alpha) => {
+                    pass.set_pipeline(&self.depth_alpha);
+                    pass.set_bind_group(3, alpha, &[]);
+                }
+                None => pass.set_pipeline(&self.depth),
+            }
             pass.set_bind_group(0, &bound.depth, &[layer_offset]);
             pass.set_bind_group(1, meshlet_bg, &[]);
             pass.set_bind_group(2, &bound.instances, &[]);
@@ -1942,6 +1959,8 @@ impl RasterReadback {
         None
     }
 }
+
+mod alpha;
 
 #[cfg(test)]
 mod tests;
