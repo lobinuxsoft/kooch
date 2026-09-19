@@ -416,7 +416,8 @@ Then [Inti](./lighting.md) — Cook-Torrance driven by the scene's lights.
 A `transparent` material's instances are appended after every opaque one. The view's cull is
 handed the opaque count, so they never reach the visibility buffer; the shadow culls — cascades and
 pages — are handed every instance, so they cast a solid shadow (one that follows the alpha is
-#1224).
+#1224). A renderer with `cast_shadows` off carries `INSTANCE_CASTS_NO_SHADOW`, and every shadow
+view's cull (`CullParams::shadow`, and the lamp cull) skips it.
 
 They are drawn on the compute path after the shade (and its upsample) and before the temporal
 resolve, from a packed `(instance, meshlet)` list of each instance's finest meshlets:

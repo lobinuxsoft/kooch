@@ -186,7 +186,7 @@ fn run_cull_scene_pool_atomic_hi_z(thread_id: u32) {
 
     let inst = instances[instance_id];
     let mesh_desc = pool_mesh_descriptors[inst.mesh_id];
-    if (meshlet_offset >= mesh_desc.meshlet_count) {
+    if (meshlet_offset >= mesh_desc.meshlet_count || skipped(inst.flags)) {
         return;
     }
 

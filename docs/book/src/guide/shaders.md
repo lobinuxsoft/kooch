@@ -96,7 +96,8 @@ each lit from the side you see. Past four, the rest still blend in, without orde
 smoke or particles get there, and there the difference does not show.
 
 - **They cast a solid shadow**, as in Unity's URP: a pane at 30% blocks the light as a wall would.
-  A shadow that follows the alpha is [#1224](https://github.com/lobinuxsoft/kooch/issues/1224).
+  Untick **cast_shadows** on its renderer to cast none. A shadow that follows the alpha is
+  [#1224](https://github.com/lobinuxsoft/kooch/issues/1224).
 - They write no depth: what is behind glass is still what contact shadows and occlusion see.
 - The layers need 64-bit atomics that report what they replaced (Vulkan and DX12 have them; Metal
   does not). Without them, or at resolutions too large for the layers to fit one buffer, objects are

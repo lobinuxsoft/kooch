@@ -68,6 +68,9 @@ fn run_cull_scene(thread_id: u32) {
 
     let inst = instances[instance_id];
     let desc = descriptors[meshlet_idx];
+    if (skipped(inst.flags)) {
+        return;
+    }
 
     // Continuous-LOD selection (#442). For each meshlet: - Roots (parent == 0xFFFFFFFFu) always
     // pass — there is no coarser option to descend from.

@@ -54,7 +54,7 @@ fn cs_cull_instances(
 
     let inst = instances[instance_id];
     let mesh_desc = pool_mesh_descriptors[inst.mesh_id];
-    if mesh_desc.meshlet_count == 0u {
+    if mesh_desc.meshlet_count == 0u || skipped(inst.flags) {
         return;
     }
 

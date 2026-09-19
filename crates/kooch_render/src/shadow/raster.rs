@@ -226,7 +226,7 @@ impl ShadowRasterizer {
             let cull = atlas.cull(i);
             // 🔴 The light's eye, not the origin.
             let params =
-                CullParams::new(cascade.view_proj, cascade.light_eye, max_meshlets_per_mesh)
+                CullParams::shadow(cascade.view_proj, cascade.light_eye, max_meshlets_per_mesh)
                     // The cascade's world height, which under an orthographic projection is the
                     // entire relationship between a simplification error and how much of the shadow
                     // map it covers.
@@ -349,7 +349,7 @@ impl ShadowRasterizer {
             // 🔴 The LOD selector, which `CullParams::new` leaves at a factor of ZERO — and a factor
             // of zero does not mean "no LOD", it means every meshlet's projected error is 0 px, so
             // the selector keeps only roots.
-            let params = CullParams::new(view_proj, spot.eye, max_meshlets_per_mesh).with_lod(
+            let params = CullParams::shadow(view_proj, spot.eye, max_meshlets_per_mesh).with_lod(
                 atlas.cascade_size() as f32,
                 projection_scale_y(view_proj),
                 (lod_target * SHADOW_LOD_RELAXATION).max(0.01),
@@ -461,7 +461,7 @@ impl ShadowRasterizer {
             for (face, view_proj) in light.faces.iter().enumerate() {
                 // Perspective with a real eye, so the LOD selector takes its distance form —
                 // `with_lod`, not the cascades' orthographic one.
-                let params = CullParams::new(*view_proj, light.eye, max_meshlets_per_mesh)
+                let params = CullParams::shadow(*view_proj, light.eye, max_meshlets_per_mesh)
                     .with_lod(
                         cubes.size() as f32,
                         projection_scale_y(*view_proj),

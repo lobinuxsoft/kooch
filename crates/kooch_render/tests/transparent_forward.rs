@@ -37,6 +37,16 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {{
 
 /// Adds a pane of `colour` glass where `matrix` puts the rig's cube.
 fn pane(r: &mut common::lit_scene::Rig, colour: &str, alpha: f32, matrix: Mat4) {
+    pane_casting(r, colour, alpha, matrix, true);
+}
+
+fn pane_casting(
+    r: &mut common::lit_scene::Rig,
+    colour: &str,
+    alpha: f32,
+    matrix: Mat4,
+    cast_shadows: bool,
+) {
     let shader = Guid::new_v4();
     let material = Guid::new_v4();
     let materials = r.resources.get_mut::<MaterialPipeline>().unwrap();
@@ -51,6 +61,7 @@ fn pane(r: &mut common::lit_scene::Rig, colour: &str, alpha: f32, matrix: Mat4) 
             mesh: Some(r.mesh),
             material: Some(material),
             visible: true,
+            cast_shadows,
             ..Default::default()
         })
         .insert(GlobalTransform { matrix });
@@ -161,24 +172,7 @@ fn the_tail_keeps_deep_layers() {
 /// with the shadow, 0.09% without.
 #[test]
 fn glass_casts_a_shadow() {
-    let blue = |with_pane: bool| {
-        let mut r = common::lit_scene::rig_with_caster(2)?;
-        if with_pane {
-            pane(
-                &mut r,
-                "0.0, 0.0, 0.0",
-                0.05,
-                Mat4::from_translation(Vec3::new(0.0, 1.2, 1.0))
-                    * Mat4::from_scale(Vec3::new(2.5, 0.02, 2.5)),
-            );
-        }
-        // Settled, as the shadow tests do: the pages fill over a few frames.
-        let mut pixels = Vec::new();
-        for _ in 0..4 {
-            pixels = common::lit_scene::render(&mut r, true);
-        }
-        Some(pixels.chunks_exact(4).map(|p| p[2] as u64).sum::<u64>())
-    };
+    let blue = |with_pane: bool| blue_under_pane(with_pane.then_some(true));
     let Some(open) = blue(false) else {
         eprintln!("no R64-capable adapter; skipping");
         return;
@@ -187,5 +181,42 @@ fn glass_casts_a_shadow() {
     assert!(
         shaded * 100 < open * 97,
         "the pane took {open} → {shaded} of the blue light: no shadow",
+    );
+}
+
+/// The blue light the image receives with a nearly invisible pane under the caster: `None` no pane,
+/// `Some(cast)` one whose renderer casts shadows or not.
+fn blue_under_pane(pane: Option<bool>) -> Option<u64> {
+    let mut r = common::lit_scene::rig_with_caster(2)?;
+    if let Some(cast) = pane {
+        pane_casting(
+            &mut r,
+            "0.0, 0.0, 0.0",
+            0.05,
+            Mat4::from_translation(Vec3::new(0.0, 1.2, 1.0))
+                * Mat4::from_scale(Vec3::new(2.5, 0.02, 2.5)),
+            cast,
+        );
+    }
+    // Settled, as the shadow tests do: the pages fill over a few frames.
+    let mut pixels = Vec::new();
+    for _ in 0..4 {
+        pixels = common::lit_scene::render(&mut r, true);
+    }
+    Some(pixels.chunks_exact(4).map(|p| p[2] as u64).sum::<u64>())
+}
+
+/// 🔴 `cast_shadows` off takes the renderer out of every shadow view. It was read by nothing, so
+/// unticking it changed nothing, on opaque and transparent renderers alike.
+#[test]
+fn cast_shadows_off_casts_none() {
+    let Some(open) = blue_under_pane(None) else {
+        eprintln!("no R64-capable adapter; skipping");
+        return;
+    };
+    let quiet = blue_under_pane(Some(false)).unwrap();
+    assert!(
+        quiet * 1000 > open * 995,
+        "a pane that casts no shadow took {open} → {quiet} of the blue light",
     );
 }

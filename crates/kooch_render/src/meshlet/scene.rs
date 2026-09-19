@@ -13,6 +13,9 @@ pub const INSTANCE_RECEIVES_SHADOWS: u32 = 1u32 << 0;
 /// every opaque one; see [`opaque_count`].
 pub const INSTANCE_TRANSPARENT: u32 = 1u32 << 1;
 
+/// Left out of every shadow view: its renderer's `cast_shadows` is off.
+pub const INSTANCE_CASTS_NO_SHADOW: u32 = 1u32 << 2;
+
 /// How many instances lead the list before the first transparent one: what every cull is given.
 pub fn opaque_count(instances: &[MeshInstance]) -> usize {
     instances

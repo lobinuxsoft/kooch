@@ -89,7 +89,7 @@ fn lod_pixel_error_world_pool(lod_error: f32, world_center: vec3<f32>, world_sca
 fn lod_group_max_err(instance_id: u32, meshlet_offset: u32) {
     let inst = instances[instance_id];
     let mesh_desc = pool_mesh_descriptors[inst.mesh_id];
-    if (meshlet_offset >= mesh_desc.meshlet_count) {
+    if (meshlet_offset >= mesh_desc.meshlet_count || skipped(inst.flags)) {
         return;
     }
 
@@ -142,7 +142,7 @@ fn cs_lod_compute_group_max_err(
 fn cull_pool_atomic(thread_id: u32, instance_id: u32, meshlet_offset: u32) {
     let inst = instances[instance_id];
     let mesh_desc = pool_mesh_descriptors[inst.mesh_id];
-    if (meshlet_offset >= mesh_desc.meshlet_count) {
+    if (meshlet_offset >= mesh_desc.meshlet_count || skipped(inst.flags)) {
         record_reject(thread_id, REJECT_REASON_SKIPPED);
         return;
     }
