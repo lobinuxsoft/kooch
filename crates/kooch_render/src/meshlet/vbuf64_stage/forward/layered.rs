@@ -256,6 +256,9 @@ impl LayeredPass {
         }
 
         // 3. What lies behind the four, weighted and summed.
+        let indirect_offsets = device
+            .features()
+            .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("transparent_tail"),
@@ -284,7 +287,16 @@ impl LayeredPass {
                 pass.set_pipeline(&pipeline);
                 pass.set_bind_group(0, &frame_bg, &[offset(run.material)]);
                 pass.set_bind_group(4, &textures(run.material), &[]);
-                pass.draw_indirect(&self.args, (index * std::mem::size_of::<DrawArgs>()) as u64);
+                // A device that cannot start an indirect draw past instance 0 draws the run
+                // directly, overflow or not.
+                if indirect_offsets {
+                    pass.draw_indirect(
+                        &self.args,
+                        (index * std::mem::size_of::<DrawArgs>()) as u64,
+                    );
+                } else {
+                    pass.draw(0..MESHLET_TRIANGLES * 3, run.range.clone());
+                }
             }
         }
 

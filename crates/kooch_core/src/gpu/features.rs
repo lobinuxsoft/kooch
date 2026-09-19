@@ -60,6 +60,14 @@ pub(super) fn optional_features(adapter: &Adapter) -> wgpu::Features {
     if adapter.features().contains(wgpu::Features::CLIP_DISTANCES) {
         features |= wgpu::Features::CLIP_DISTANCES;
     }
+    // 🔴 Without it wgpu's indirect validation drops every draw whose `first_instance` is not 0, in
+    // silence: the transparent tail drew only its first material (#452).
+    if adapter
+        .features()
+        .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
+    {
+        features |= wgpu::Features::INDIRECT_FIRST_INSTANCE;
+    }
     if adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY)
         && adapter
             .features()
