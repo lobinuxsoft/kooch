@@ -799,8 +799,7 @@ fn saving_writes_one_scene_and_keeps_its_id() {
     let _ = std::fs::remove_file(&out);
 }
 
-/// A host with no `SceneManager` refuses to save rather than writing the
-/// whole world into the file.
+/// A host with no `SceneManager` refuses to save rather than writing the whole world into the file.
 #[test]
 fn saving_without_a_manager_is_refused() {
     let mut resources = ecs();
@@ -892,9 +891,8 @@ fn the_edited_scene_is_the_one_marked() {
     let mut resources = ecs();
     let mut manager = SceneManager::new();
     let active = manager.active_id().expect("a scene");
-    // A second scene, open but not active. Registered by hand: opening
-    // one additively is not a remote method, and what is under test is
-    // which of the two an edit marks.
+    // A second scene, open but not active. Registered by hand: opening one additively is not a
+    // remote method, and what is under test is which of the two an edit marks.
     let elsewhere = kooch_core::Guid::new_v4();
     assert!(
         !manager.mark_scene_dirty(elsewhere),
@@ -972,9 +970,8 @@ fn a_spawn_lands_in_the_scene_it_names() {
         "a child was authored into a scene its parent is not in",
     );
 
-    // And a parent wins over a scene that disagrees: an entity's scene
-    // IS its parent's, so honouring both would write the child to a file
-    // its parent is not in.
+    // And a parent wins over a scene that disagrees: an entity's scene IS its parent's, so
+    // honouring both would write the child to a file its parent is not in.
     let contested = spawned(&mut resources, Some(active), Some(named));
     assert_eq!(
         home(&resources, contested),

@@ -19,9 +19,8 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     .ok()
 }
 
-/// A pool small enough that the atlas is megabytes rather than a
-/// quarter of a gigabyte: every test here is about arithmetic, not
-/// about capacity.
+/// A pool small enough that the atlas is megabytes rather than a quarter of a gigabyte: every test
+/// here is about arithmetic, not about capacity.
 fn small() -> PoolConfig {
     PoolConfig {
         pages: 64,
@@ -30,8 +29,7 @@ fn small() -> PoolConfig {
     }
 }
 
-/// Cameras the pool is sliced between. Two, because one is the case
-/// that never showed the bug.
+/// Cameras the pool is sliced between. Two, because one is the case that never showed the bug.
 const VIEWS: u32 = 2;
 
 fn rasterizer(device: &wgpu::Device) -> PageRasterizer {
@@ -105,9 +103,8 @@ fn the_lamp_arena_is_sized_by_groups() {
         "the bug this guards needs the over-approximation to exceed a buffer limit; \
          it measured {over_approximation} bytes",
     );
-    // The real group count is the prefix sum, which for a scene of
-    // mostly single-group cubes is nearer the instance count than the
-    // thread count.
+    // The real group count is the prefix sum, which for a scene of mostly single-group cubes is
+    // nearer the instance count than the thread count.
     let real_groups = instances + 24 * 1000;
     assert!(
         real_groups * lamps * 4 < 64 * 1024 * 1024,
@@ -118,9 +115,8 @@ fn the_lamp_arena_is_sized_by_groups() {
 /// The pre-pass's pair list is a PRODUCT — lamps times instances — and a constant cannot hold one.
 #[test]
 fn the_pair_list_outgrows_constants() {
-    // `dense.scene`, measured: 2157 entities and 64 lamps, and the ones
-    // under test carry range 90 over a city this size — so the sphere
-    // test keeps most instances for most lamps.
+    // `dense.scene`, measured: 2157 entities and 64 lamps, and the ones under test carry range 90
+    // over a city this size — so the sphere test keeps most instances for most lamps.
     let instances = 2157u64;
     let lamps = 64u64;
     let old_cap = 16_384u64;
@@ -129,8 +125,7 @@ fn the_pair_list_outgrows_constants() {
         "the bug this guards needs the scene's bound to dwarf the old cap;          it measured {} pairs against {old_cap}",
         instances * lamps,
     );
-    // And the bound the list now grows to still fits a buffer, at the
-    // eight bytes a pair costs.
+    // And the bound the list now grows to still fits a buffer, at the eight bytes a pair costs.
     assert!(
         instances * lamps * 8 < 16 * 1024 * 1024,
         "the bound has to fit comfortably, or growing to it is not the fix",
@@ -243,9 +238,8 @@ fn the_counters_name_every_level() {
     words[2] = 9;
     words[buckets as usize + 1] = 42;
     words[buckets as usize + 2] = 900;
-    // The two rejections sit at the tail, and the point of the pair is
-    // that a reader can tell them apart: a compact scene leaves the
-    // sun's bound nothing to reject while the lamps' still bites.
+    // The two rejections sit at the tail, and the point of the pair is that a reader can tell them
+    // apart: a compact scene leaves the sun's bound nothing to reject while the lamps' still bites.
     words[buckets as usize * 3 + 5] = 11;
     words[buckets as usize * 3 + 6] = 77;
     // The inverted shape's cost, which is a MEASURED number and not the
@@ -276,15 +270,13 @@ fn stride(config: PageConfig, _clipmap: ClipmapConfig) -> u32 {
     (config.local_face_pages() * 6).div_ceil(32) * 32
 }
 
-/// Light slots the address space is laid out for. Mirrors
-/// `padded_lights`: the layout pads so adding a light does not move
-/// every page id.
+/// Light slots the address space is laid out for. Mirrors `padded_lights`: the layout pads so
+/// adding a light does not move every page id.
 fn padded(lights: u32) -> u32 {
     lights.max(1).next_multiple_of(64)
 }
 
-/// Pages one camera addresses: the padded light slots, then the sun's
-/// clipmap at the tail.
+/// Pages one camera addresses: the padded light slots, then the sun's clipmap at the tail.
 fn span(lights: u32) -> u32 {
     let config = PageConfig::default();
     let clipmap = ClipmapConfig::default();
@@ -292,8 +284,7 @@ fn span(lights: u32) -> u32 {
         * 32
 }
 
-/// The virtual page `mark_sun` would write for this camera, level and
-/// cell.
+/// The virtual page `mark_sun` would write for this camera, level and cell.
 fn sun_page(view: u32, level: u32, cell: (u32, u32), lights: u32) -> u32 {
     let config = PageConfig::default();
     let clipmap = ClipmapConfig::default();
@@ -457,9 +448,8 @@ fn a_still_suns_page_caches() {
     };
     let buckets = raster.buckets() as usize;
 
-    // Off the snap grid's own lines: an eye at the origin sits exactly
-    // on a boundary, where the tiniest step flips `floor` — a real
-    // invalidation, not the case under test.
+    // Off the snap grid's own lines: an eye at the origin sits exactly on a boundary, where the
+    // tiniest step flips `floor` — a real invalidation, not the case under test.
     let config = PageConfig::default();
     let width = ClipmapConfig::default().base * 32.0 / config.side(0) as f32;
     let eye = glam::Vec3::new(0.25 * width, 0.0, 0.25 * width);
@@ -533,9 +523,8 @@ fn a_page_compacts_into_the_level_it_came_from() {
     }
     let local = local_page(VIEW, LOCAL_LEVEL, (1, 1), LIGHTS);
     slots[local as usize * cell] = 20 + 1;
-    // 🔴 The other camera's pages, on levels this one also uses. The
-    // dispatch covers only THIS view's span, so they are outside it —
-    // and their listings have to come through untouched.
+    // 🔴 The other camera's pages, on levels this one also uses. The dispatch covers only THIS
+    // view's span, so they are outside it — and their listings have to come through untouched.
     let foreign = [
         sun_page(0, 0, (3, 4), LIGHTS),
         sun_page(0, 5, (7, 8), LIGHTS),
@@ -704,9 +693,8 @@ fn a_page_on_the_far_layer_draws_the_same() {
     lamp_page_holds_its_view(true, split, 20, coarse_level());
 }
 
-/// Three levels above the chain's floor: coarse enough to pair against a
-/// coarse bucket's survivors, fine enough that its cell is a window
-/// rather than the whole face.
+/// Three levels above the chain's floor: coarse enough to pair against a coarse bucket's survivors,
+/// fine enough that its cell is a window rather than the whole face.
 fn coarse_level() -> u32 {
     PageConfig::default().local_floor() + 3
 }
@@ -722,9 +710,8 @@ fn lamp_page_holds_its_view(
         MeshInstance, MeshletCullPipelines, MeshletScene, SceneCullParams, build_default_meshlets,
     };
 
-    // The cull pipeline binds 5 groups and 9 storage buffers, past the
-    // default limits — the shared helper mirrors the production
-    // GpuContext, where this file's own `device()` does not.
+    // The cull pipeline binds 5 groups and 9 storage buffers, past the default limits — the shared
+    // helper mirrors the production GpuContext, where this file's own `device()` does not.
     let Some((device, queue)) = common::try_acquire_device() else {
         eprintln!("no adapter; skipping");
         return;
@@ -803,9 +790,8 @@ fn lamp_page_holds_its_view(
         buffer
     };
 
-    // Plant the lamp's pages: face 3 (-Y, toward the floor). The fine
-    // page is the chain's floor; the coarse one two levels up, whose
-    // octave lands in a coarse clipmap bucket.
+    // Plant the lamp's pages: face 3 (-Y, toward the floor). The fine page is the chain's floor;
+    // the coarse one two levels up, whose octave lands in a coarse clipmap bucket.
     let config = PageConfig::default();
     let fine_level = config.local_floor();
     let fine_side = config.side(fine_level);
@@ -909,9 +895,8 @@ fn lamp_page_holds_its_view(
         survivors(lamp_bucket + 1)
     );
 
-    // What the light sees, by construction: the floor at 4 m stores
-    // `PAGE_NEAR / 4`; the box's lit surfaces sit between 1.75 and
-    // 2.25 m. Reversed depth, so the box is the LARGER value.
+    // What the light sees, by construction: the floor at 4 m stores `PAGE_NEAR / 4`; the box's lit
+    // surfaces sit between 1.75 and 2.25 m. Reversed depth, so the box is the LARGER value.
     let floor_depth = 0.05 / 4.0;
     let page = config.page;
     let read_page =
@@ -1009,9 +994,8 @@ fn lamp_page_holds_its_view(
         floor * 100.0
     );
 
-    // ---- Invalidation: the occluder "moves" — its old bounds arrive
-    // as a moved sphere — and every page its lamp can reach redraws.
-    // Per-light granularity: both pages of lamp 0 come back.
+    // ---- Invalidation: the occluder "moves" — its old bounds arrive as a moved sphere — and every
+    // page its lamp can reach redraws. Per-light granularity: both pages of lamp 0 come back.
     raster.set_frame(1);
     let mut encoder = device.create_command_encoder(&Default::default());
     raster.record(
@@ -1133,17 +1117,15 @@ fn cs_winding() {
     let dir = vec3<f32>(0.0, -1.0, 0.0);
     let basis = sun_basis(dir);
 
-    // A triangle whose normal is +Y — towards the light — wound
-    // counter-clockwise seen from above, which is what a front face is
-    // everywhere else in this engine.
+    // A triangle whose normal is +Y — towards the light — wound counter-clockwise seen from above,
+    // which is what a front face is everywhere else in this engine.
     var tri = array<vec3<f32>, 3>(
         vec3<f32>(0.0, 0.0, 0.0),
         vec3<f32>(1.0, 0.0, 0.0),
         vec3<f32>(0.0, 0.0, -1.0),
     );
 
-    // Eye at the origin: the snap is irrelevant to winding, which is
-    // what this measures.
+    // Eye at the origin: the snap is irrelevant to winding, which is what this measures.
     let rect = sun_page_rect(0u, vec2<u32>(0u, 0u), vec3<f32>(0.0), basis, 64.0, 128u);
     var clip = array<vec2<f32>, 3>();
     for (var i = 0u; i < 3u; i = i + 1u) {
@@ -1265,8 +1247,7 @@ fn cs_slope() {
     out[2] = tilt.x;
     out[3] = tilt.y;
 
-    // Edge-on to the sun, where the ratio diverges and only the clamp
-    // answers.
+    // Edge-on to the sun, where the ratio diverges and only the clamp answers.
     let edge = receiver_slope(vec3<f32>(0.0, 0.0, 1.0), basis, texel, span, 3.0);
     out[4] = edge.x;
     out[5] = edge.y;
@@ -1560,8 +1541,7 @@ fn the_clipmap_grid_does_not_slide_with_the_camera() {
     const BASE: f32 = 1.28;
     const SIDE: u32 = 128;
     const LEVEL: u32 = 3;
-    // One page of level 3, which is what the camera has to stay inside
-    // for the grid to hold still.
+    // One page of level 3, which is what the camera has to stay inside for the grid to hold still.
     let page = BASE * 8.0 / SIDE as f32;
 
     let source = format!(
@@ -1832,9 +1812,8 @@ fn the_counters_carry_the_expansions_cost() {
         return;
     };
     let raster = rasterizer(&device);
-    // Every run is per BUCKET, so the offsets follow the buckets and
-    // not the clipmap's levels — planting at the clipmap's stride lands
-    // the survivors inside the overflow flags.
+    // Every run is per BUCKET, so the offsets follow the buckets and not the clipmap's levels —
+    // planting at the clipmap's stride lands the survivors inside the overflow flags.
     let levels = raster.buckets() as usize;
 
     // The layout has to have room for both runs, or `decode` reads a
@@ -2011,9 +1990,8 @@ fn a_page_asks_for_the_octave_its_texels_are() {
     const LEVELS: usize = 17;
     let out = run_page_table_shader(&device, &queue, OCTAVE, "cs_octave", (LEVELS + 10) * 4);
 
-    // 🔴 The anchor: the sun's level IS its bucket. Everything else
-    // rests on this, because it is what lets a lamp's pages reach the
-    // survivor lists the sun's culls already produce.
+    // 🔴 The anchor: the sun's level IS its bucket. Everything else rests on this, because it is
+    // what lets a lamp's pages reach the survivor lists the sun's culls already produce.
     for level in 0..LEVELS {
         assert_eq!(
             out[level], level as u32,
@@ -2329,17 +2307,15 @@ fn cs_face_local() {
                 vec2<f32>(0.05), vec2<f32>(0.95));
             let dir = face_dir(face, uv);
             let local = face_local(face, dir);
-            // In front of its own face, and the uv it reconstructs is
-            // the uv it was built from.
+            // In front of its own face, and the uv it reconstructs is the uv it was built from.
             if local.z <= 0.0 {
                 wrong_sign = wrong_sign + 1.0;
             }
             let back = local.xy / max(local.z, 1e-6) * 0.5 + vec2<f32>(0.5);
             worst_uv = max(worst_uv, max(abs(back.x - uv.x), abs(back.y - uv.y)));
 
-            // And the OPPOSITE face has to report it behind. Rejecting
-            // that per vertex is the defect; reporting it as negative w
-            // is the fix.
+            // And the OPPOSITE face has to report it behind. Rejecting that per vertex is the
+            // defect; reporting it as negative w is the fix.
             let opposite = select(face - 1u, face + 1u, face % 2u == 0u);
             if face_local(opposite, dir).z > 0.0 {
                 behind_positive = behind_positive + 1.0;
@@ -2438,8 +2414,7 @@ fn the_march_spreads_over_the_suns_disc() {
         "the tolerance has to be measured from the ray's own step, or the march has \
          reacquired the constant it exists to remove",
     );
-    // And the box reader is still reachable, because nothing has
-    // measured what the march costs.
+    // And the box reader is still reachable, because nothing has measured what the march costs.
     assert!(
         shading.contains("inti_pages.layer.z != 0u"),
         "the march has to stay selectable; it replaces the reader every shipped frame goes \
@@ -2510,9 +2485,8 @@ fn both_expansions_emit_the_same_pairs() {
         .collect();
 
     let run = |geometry: bool| -> Vec<[u32; 3]> {
-        // Each run gets its own pool and its own rasteriser: a page
-        // listed once is stamped, and the second run would cache it and
-        // list nothing.
+        // Each run gets its own pool and its own rasteriser: a page listed once is stamped, and the
+        // second run would cache it and list nothing.
         let scene = MeshletScene::new(&device, instances.len() as u32);
         scene.upload_instances(&queue, &instances);
         let scene_params = SceneCullParams::new(instances.len() as u32, meshlets_per_mesh);
@@ -2591,9 +2565,8 @@ fn both_expansions_emit_the_same_pairs() {
             counts[LEVEL as usize] > 0 && counts[buckets + 5 + LEVEL as usize] > 0,
             "the rig planted no pages or the cull kept no survivors at level {LEVEL}",
         );
-        // The descent's own counter says which shape actually ran. A
-        // silent fallback to pairing would make the comparison below
-        // compare the paired shape against itself.
+        // The descent's own counter says which shape actually ran. A silent fallback to pairing
+        // would make the comparison below compare the paired shape against itself.
         let walk = counts[buckets * 3 + 7];
         assert_eq!(
             walk > 0,
@@ -2607,8 +2580,7 @@ fn both_expansions_emit_the_same_pairs() {
             "a descent ran out of stack and dropped a subtree",
         );
         let words = read_words(&device, &queue, raster.pairs_buffer());
-        // The order is whatever the atomics handed out; the SET is the
-        // claim.
+        // The order is whatever the atomics handed out; the SET is the claim.
         let mut pairs: Vec<[u32; 3]> = (0..emitted)
             .map(|i| [words[i * 4], words[i * 4 + 1], words[i * 4 + 2]])
             .collect();
@@ -2698,9 +2670,8 @@ fn a_tap_off_the_page_finds_its_neighbour() {
         body.contains("clamp(raw,"),
         "an absent neighbour has to fall back to the clamp",
     );
-    // And the lamps must NOT re-resolve: their pages are six faces of a
-    // chain, so a step off an edge crosses a face and lands nowhere this
-    // arithmetic can index.
+    // And the lamps must NOT re-resolve: their pages are six faces of a chain, so a step off an
+    // edge crosses a face and lands nowhere this arithmetic can index.
     let sun = source
         .find("fn inti_page_shadow(")
         .expect("the sun's reader is in the shader");

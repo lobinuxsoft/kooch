@@ -192,8 +192,7 @@ fn grounded(resources: &Resources, entity: Entity) -> Grounded {
         .expect("no Grounded")
 }
 
-/// The claim the whole design rests on: the capsule holds a gap and does
-/// not rest on the floor.
+/// The claim the whole design rests on: the capsule holds a gap and does not rest on the floor.
 #[test]
 fn a_character_floats_at_its_ride_height() {
     let mut resources = world();
@@ -223,9 +222,8 @@ fn a_character_floats_at_its_ride_height() {
     assert!(state.normal.y > 0.9, "flat floor: {}", state.normal);
 }
 
-/// It settles instead of oscillating. The landing dips on purpose —
-/// see `it_dips_when_it_lands` — and a spring damped too lightly to
-/// come to rest passes the height check on the frame it crosses.
+/// It settles instead of oscillating. The landing dips on purpose — see `it_dips_when_it_lands` —
+/// and a spring damped too lightly to come to rest passes the height check on the frame it crosses.
 #[test]
 fn a_landing_settles() {
     let mut resources = world();
@@ -291,9 +289,8 @@ fn a_gentle_slope_is_ground() {
     );
 }
 
-/// Past `max_slope` the sweep still finds the surface and the spring
-/// still pushes off it — but it is not ground. Without the distinction a
-/// character can jump off a cliff face forever.
+/// Past `max_slope` the sweep still finds the surface and the spring still pushes off it — but it
+/// is not ground. Without the distinction a character can jump off a cliff face forever.
 #[test]
 fn a_steep_slope_is_not_ground() {
     let state = on_a_ramp(70.0);
@@ -554,9 +551,8 @@ fn on_the_floor(resources: &mut Resources) -> Entity {
     hero
 }
 
-/// Acceptance: it points where it is steered. Without a `Facing` the
-/// controller only ever stood the body up, and a character that walks
-/// sideways for ever is what that looks like.
+/// Acceptance: it points where it is steered. Without a `Facing` the controller only ever stood the
+/// body up, and a character that walks sideways for ever is what that looks like.
 #[test]
 fn it_faces_where_it_walks() {
     let mut resources = world();
@@ -601,8 +597,7 @@ fn a_jump_leaves_the_ground() {
         simulate(&mut resources, 1);
         highest = highest.max(position(&resources, hero).y);
     }
-    // 5 m/s against 9.81 is 1.27 m of arc. Anything under half of that
-    // is the spring winning.
+    // 5 m/s against 9.81 is 1.27 m of arc. Anything under half of that is the spring winning.
     assert!(
         highest - resting > 0.6,
         "jumped {} m from {resting}",
@@ -610,9 +605,8 @@ fn a_jump_leaves_the_ground() {
     );
 }
 
-/// A landing that dips and comes back. At critical damping the body
-/// arrives dead — bottomed and settled agree to seven decimals — which
-/// is correct and reads as a character with no weight.
+/// A landing that dips and comes back. At critical damping the body arrives dead — bottomed and
+/// settled agree to seven decimals — which is correct and reads as a character with no weight.
 #[test]
 fn it_dips_when_it_lands() {
     let mut resources = world();
@@ -690,9 +684,8 @@ fn it_holds_its_top_speed() {
     );
 }
 
-/// Nobody steering is nobody moving. The spring and the lean both act
-/// along the local up, and a stationary character that drifts means one
-/// of them is leaking sideways.
+/// Nobody steering is nobody moving. The spring and the lean both act along the local up, and a
+/// stationary character that drifts means one of them is leaking sideways.
 #[test]
 fn a_standing_character_does_not_drift() {
     let mut resources = world();
@@ -987,9 +980,8 @@ fn against_a_wall(resources: &mut Resources) -> Entity {
         Collider {
             shape: SHAPE_CUBOID,
             half_extents: Vec3::new(2.0, 80.0, 60.0),
-            // Frictionless, so a wall test measures the mechanic rather
-            // than rapier's Coulomb friction — which alone holds a
-            // character pressed into a wall almost still.
+            // Frictionless, so a wall test measures the mechanic rather than rapier's Coulomb
+            // friction — which alone holds a character pressed into a wall almost still.
             friction: 0.0,
             ..Default::default()
         },
@@ -1244,9 +1236,8 @@ fn running(resources: &mut Resources, run: WallRun, speed: f32) -> Entity {
     thrown(resources, run, speed, Vec3::new(0.15, 0.0, 1.0))
 }
 
-/// The same, steering where you say — including nowhere, for a test
-/// about the speed a character *arrives* with rather than the speed air
-/// steering works it up to on the way in.
+/// The same, steering where you say — including nowhere, for a test about the speed a character
+/// *arrives* with rather than the speed air steering works it up to on the way in.
 fn thrown(resources: &mut Resources, run: WallRun, speed: f32, steer: Vec3) -> Entity {
     let hero = against_a_wall(resources);
     insert(resources, hero, run);
@@ -1312,8 +1303,7 @@ fn a_slow_arrival_does_not_run() {
     assert!(!ran(0.5), "and not at a crawl");
 }
 
-/// The clock is what ends it, and the sag before that is what tells the
-/// player it is going to.
+/// The clock is what ends it, and the sag before that is what tells the player it is going to.
 #[test]
 fn the_run_runs_out() {
     let mut resources = world();
@@ -1429,9 +1419,8 @@ fn entry_trace() {
 #[test]
 fn a_run_keeps_the_wall() {
     let mut resources = world();
-    // Steered purely along the wall, which is what a player holds during
-    // a wall run — and the case where a probe aimed where the character
-    // is going stops pointing at the wall at all.
+    // Steered purely along the wall, which is what a player holds during a wall run — and the case
+    // where a probe aimed where the character is going stops pointing at the wall at all.
     let hero = thrown(&mut resources, WallRun::default(), 9.0, Vec3::Z);
     simulate(&mut resources, 10);
 
@@ -1479,9 +1468,8 @@ fn jump_profile() {
     let mut resources = world();
     let hero = on_the_floor(&mut resources);
     let resting = position(&resources, hero).y;
-    // The harness never advances `Time`, so the step is the physics
-    // fallback the systems actually used — `FALLBACK_DT` in
-    // `kooch_physics::plugin::systems`.
+    // The harness never advances `Time`, so the step is the physics fallback the systems actually
+    // used — `FALLBACK_DT` in `kooch_physics::plugin::systems`.
     let dt = 1.0 / 60.0f32;
 
     let body = resources

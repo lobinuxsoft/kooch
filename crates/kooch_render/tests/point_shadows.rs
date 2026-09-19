@@ -25,8 +25,7 @@ const SIZE: u32 = 256;
 /// separate from the object rather than continuous with it.
 const CUBE_CENTRE: Vec3 = Vec3::new(0.0, 1.5, 0.0);
 
-/// Floor well clear of everything. Nothing can shadow it, so it is what
-/// "lit" means in this scene.
+/// Floor well clear of everything. Nothing can shadow it, so it is what "lit" means in this scene.
 const OPEN_FLOOR: Vec3 = Vec3::new(-6.0, 0.0, 5.0);
 
 struct Rig {
@@ -35,9 +34,8 @@ struct Rig {
     resources: Resources,
     stage: MeshletRenderStage,
     camera: ViewCamera,
-    /// So a test can add geometry of its own — the suite's own cube
-    /// stands ON the floor, and a light directly above it hides its
-    /// shadow under it.
+    /// So a test can add geometry of its own — the suite's own cube stands ON the floor, and a
+    /// light directly above it hides its shadow under it.
     mesh: Guid,
     material: Guid,
 }
@@ -131,9 +129,8 @@ fn add_point(resources: &mut Resources, position: Vec3, cast_shadows: bool) {
             // this suite measures darkness, not highlights.
             radius: 0.0,
             cast_shadows,
-            // The cube map alone. A contact shadow would darken the same
-            // floor for a different reason and the suite would stop
-            // being about the cube map.
+            // The cube map alone. A contact shadow would darken the same floor for a different
+            // reason and the suite would stop being about the cube map.
             contact_shadows: false,
         })
         .insert(GlobalTransform {
@@ -196,8 +193,7 @@ fn a_cube_over_a_floor_casts_a_shadow_on_it() {
     );
 }
 
-/// 🔴 The A/B that makes the suite mean something: the same pixel, two
-/// renders, one flag apart.
+/// 🔴 The A/B that makes the suite mean something: the same pixel, two renders, one flag apart.
 #[test]
 fn clearing_cast_shadows_turns_the_shadow_off() {
     let Some(mut casting) = build_rig() else {
@@ -225,9 +221,8 @@ fn clearing_cast_shadows_turns_the_shadow_off() {
 /// 🔴 The one a spot light cannot ask.
 #[test]
 fn the_shadow_falls_away_from_the_light() {
-    // Every position is measured before anything is asserted. Failing on
-    // the first one hides whether the fault is one face or a whole axis,
-    // and those have different causes.
+    // Every position is measured before anything is asserted. Failing on the first one hides
+    // whether the fault is one face or a whole axis, and those have different causes.
     let mut report = Vec::new();
     for light in SWEEP {
         let Some(mut rig) = build_rig() else {
@@ -238,9 +233,8 @@ fn the_shadow_falls_away_from_the_light() {
         let pixels = render(&mut rig);
 
         let away = shadow_centre(light);
-        // The mirror image of that point through the cube: where the
-        // shadow would be if a sign were wrong. It is lit floor, and it
-        // has to stay lit.
+        // The mirror image of that point through the cube: where the shadow would be if a sign were
+        // wrong. It is lit floor, and it has to stay lit.
         let toward = Vec3::new(-away.x, away.y, -away.z);
 
         let shadowed = luminance(&pixels, &rig.camera, away);
@@ -421,9 +415,8 @@ fn a_short_range_lamp_still_casts() {
     commands.apply(&mut rig.resources);
     let pixels = render(&mut rig);
 
-    // Opposite the lamp, just past the cube's edge, and a lit point at
-    // the same distance from the lamp so the two differ by the shadow
-    // and not by falloff.
+    // Opposite the lamp, just past the cube's edge, and a lit point at the same distance from the
+    // lamp so the two differ by the shadow and not by falloff.
     let shadowed = luminance(&pixels, &rig.camera, Vec3::new(-0.9, 0.0, 0.0));
     let lit = luminance(&pixels, &rig.camera, Vec3::new(0.0, 0.0, 1.3));
     // 🔴 A weaker margin than the rest of the suite, and it is the finding rather than a concession.
@@ -600,9 +593,8 @@ fn a_lamp_straight_overhead_casts_down() {
 /// 🔴🔴 The floor must not shadow itself, and this suite never asked.
 #[test]
 fn an_empty_floor_is_not_shadowed_by_itself() {
-    // Well inside the lamp's reach and spread across the boundary where
-    // a cube face hands over to its neighbour — under a lamp `h` up
-    // that is a square of side 2h, and the seam ran along it.
+    // Well inside the lamp's reach and spread across the boundary where a cube face hands over to
+    // its neighbour — under a lamp `h` up that is a square of side 2h, and the seam ran along it.
     const PROBES: [Vec3; 5] = [
         Vec3::new(0.0, 0.0, 0.0),
         Vec3::new(3.0, 0.0, 0.0),
@@ -613,8 +605,7 @@ fn an_empty_floor_is_not_shadowed_by_itself() {
     // A lamp 6 m up hands its -Y face over at +/- 6 m, so the probes at
     // 6.5 sit on the far side of that seam and the ones at 3 do not.
     const LAMP: Vec3 = Vec3::new(0.0, 6.0, 0.0);
-    // Out of frame and out of the lamp's range, so the only geometry
-    // left is the floor itself.
+    // Out of frame and out of the lamp's range, so the only geometry left is the floor itself.
     const AWAY: Vec3 = Vec3::new(100.0, 0.5, 0.0);
 
     let mut readings = Vec::new();

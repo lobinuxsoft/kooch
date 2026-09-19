@@ -75,8 +75,7 @@ fn two_scenes_can_be_open_at_once() {
     );
 }
 
-/// Every entity has to know its home, or saving and closing cannot tell
-/// the two scenes apart.
+/// Every entity has to know its home, or saving and closing cannot tell the two scenes apart.
 #[test]
 fn each_entity_belongs_to_the_scene_that_loaded_it() {
     let first = write_scene("multi_owner_a", &[1]);
@@ -94,9 +93,8 @@ fn each_entity_belongs_to_the_scene_that_loaded_it() {
     assert!(owners.iter().any(|&(_, scene)| scene == second_id));
 }
 
-/// The failure this prevents is duplication: saving one scene while
-/// another is open would write the other's entities into both files, and
-/// the next load would spawn each of them twice.
+/// The failure this prevents is duplication: saving one scene while another is open would write the
+/// other's entities into both files, and the next load would spawn each of them twice.
 #[test]
 fn saving_one_scene_does_not_capture_the_other() {
     use crate::scene::SceneDocument;
@@ -265,8 +263,7 @@ fn saving_a_copy_keeps_the_files_identity() {
     );
 }
 
-/// Dirty is per scene. With two open, saving one must not claim the
-/// other's edits are safe.
+/// Dirty is per scene. With two open, saving one must not claim the other's edits are safe.
 #[test]
 fn dirty_state_is_tracked_per_scene() {
     let first = write_scene("multi_dirty_a", &[1]);
@@ -315,8 +312,7 @@ fn the_active_scene_can_be_switched_but_only_to_an_open_one() {
     );
 }
 
-/// A scene keeps its identity across sessions, or every reference into it
-/// breaks on the next load.
+/// A scene keeps its identity across sessions, or every reference into it breaks on the next load.
 #[test]
 fn a_scene_keeps_its_identity_across_a_save_and_load() {
     let path = write_scene("multi_identity", &[1]);
@@ -339,9 +335,8 @@ fn a_scene_keeps_its_identity_across_a_save_and_load() {
     );
 }
 
-/// A file written before scenes had identity gets one on load, and is
-/// marked dirty so it persists — otherwise it would get a different id
-/// every session and references into it would never resolve.
+/// A file written before scenes had identity gets one on load, and is marked dirty so it persists —
+/// otherwise it would get a different id every session and references into it would never resolve.
 #[test]
 fn a_scene_file_without_an_id_is_marked_dirty_so_the_new_id_persists() {
     let path = tmp_path("multi_legacy");

@@ -5,15 +5,13 @@ use super::*;
 
 use kooch_pack::Pack;
 
-/// The extensions a loader claims, as the real allowlist would hand
-/// them over. The fixtures use these, so the tests exercise the filter
-/// rather than bypassing it.
+/// The extensions a loader claims, as the real allowlist would hand them over. The fixtures use
+/// these, so the tests exercise the filter rather than bypassing it.
 fn known() -> Vec<String> {
     [
         "glb",
-        // The image loader claims it, and a texture is what a material
-        // reaches for — a fixture without it cannot exercise the graph
-        // this file exists to walk.
+        // The image loader claims it, and a texture is what a material reaches for — a fixture
+        // without it cannot exercise the graph this file exists to walk.
         "png",
         "ron",
         "prefab",
@@ -38,8 +36,7 @@ fn write(path: &Path, bytes: &[u8]) {
     std::fs::write(path, bytes).unwrap();
 }
 
-/// Guids the fixtures use, so a scene can name an engine asset the way a
-/// real one does.
+/// Guids the fixtures use, so a scene can name an engine asset the way a real one does.
 const ENGINE_MATERIAL: &str = "11111111-0000-4000-8000-000000000001";
 const ENGINE_CUBE: &str = "22222222-0000-4000-8000-000000000002";
 
@@ -121,9 +118,8 @@ fn a_package_holds_the_game_its_scenes_and_a_pack() {
     );
     assert!(out.dir.join(PACK_FILE).is_file());
     assert_eq!(out.scenes, 1);
-    // 🔴 Inside the pack, not beside it. A scene is the structure of the
-    // whole game, and leaving it in plain RON next to an encrypted pack
-    // protects the textures and publishes the design.
+    // 🔴 Inside the pack, not beside it. A scene is the structure of the whole game, and leaving it
+    // in plain RON next to an encrypted pack protects the textures and publishes the design.
     assert!(
         !out.dir
             .join(kooch_core::scene_paths::DEFAULT_SCENE_REL_PATH)
@@ -168,9 +164,8 @@ fn both_asset_trees_land_in_one_pack() {
     assert_eq!(pack.read("assets/props/rock.glb").unwrap(), b"rock mesh");
 }
 
-/// ⚠️ A scene references assets by GUID and the GUID lives in the
-/// sidecar. A packer that filtered by extension would produce a game that
-/// loads its scene and renders nothing.
+/// ⚠️ A scene references assets by GUID and the GUID lives in the sidecar. A packer that filtered
+/// by extension would produce a game that loads its scene and renders nothing.
 #[test]
 fn meta_sidecars_travel() {
     let dir = tmp("meta");
@@ -198,8 +193,7 @@ fn meta_sidecars_travel() {
     );
 }
 
-/// The engine's `assets/` is 13 MB and most of it is demo models no
-/// shipped game loads.
+/// The engine's `assets/` is 13 MB and most of it is demo models no shipped game loads.
 #[test]
 fn engine_demos_stay_behind() {
     let dir = tmp("demos");
@@ -227,9 +221,8 @@ fn engine_demos_stay_behind() {
     );
 }
 
-/// The project is the author and wins — refusing the build would mean a
-/// name nobody chose could stop a game from being made. But it is
-/// reported, because the engine's version is simply gone.
+/// The project is the author and wins — refusing the build would mean a name nobody chose could
+/// stop a game from being made. But it is reported, because the engine's version is simply gone.
 #[test]
 fn a_project_asset_shadows_the_engines() {
     let dir = tmp("shadow");
@@ -269,9 +262,8 @@ fn packaging_refuses_to_delete_a_project() {
     project(&proj);
     let exe = binary(&dir);
 
-    // 🔴 The first version of the guard asked "does the output contain a
-    // `src`?", which is true of the project root and false of `src`
-    // itself. Every one of these was reachable.
+    // 🔴 The first version of the guard asked "does the output contain a `src`?", which is true of
+    // the project root and false of `src` itself. Every one of these was reachable.
     for target in [
         ".",
         "src",
@@ -324,8 +316,7 @@ fn a_stale_output_is_cleared() {
     assert!(out.binary.is_file());
 }
 
-/// Loose assets, for working out why a build behaves differently from
-/// the editor.
+/// Loose assets, for working out why a build behaves differently from the editor.
 #[test]
 fn unpacked_assets_are_copied_as_files() {
     let dir = tmp("loose");
@@ -527,9 +518,8 @@ fn an_authoring_sidecar_does_not_ship_either() {
     );
 }
 
-/// 🔴 The opposite case, and the one it would be easy to break by
-/// widening the filter: `.rendersettings` is what the project *looks*
-/// like and the renderer reads it at startup.
+/// 🔴 The opposite case, and the one it would be easy to break by widening the filter:
+/// `.rendersettings` is what the project *looks* like and the renderer reads it at startup.
 #[test]
 fn render_settings_still_ship() {
     let dir = tmp("settingsship");
@@ -566,8 +556,7 @@ fn an_engine_asset_the_scene_uses_ships() {
     let (proj, eng) = (dir.join("proj"), dir.join("engine"));
     project(&proj);
     engine(&eng);
-    // Outside `meshes/primitives`, which is exactly where the old list
-    // stopped looking.
+    // Outside `meshes/primitives`, which is exactly where the old list stopped looking.
     write(&eng.join("assets/meshes/suzanne.glb"), b"suzanne");
     write(
         &eng.join("assets/meshes/suzanne.glb.meta"),
@@ -964,8 +953,7 @@ fn a_declared_asset_brings_what_it_references() {
     let (proj, eng) = (dir.join("proj"), dir.join("engine"));
     project(&proj);
     engine(&eng);
-    // An engine material nothing names, pointing at an engine texture
-    // nothing names either.
+    // An engine material nothing names, pointing at an engine texture nothing names either.
     write(
         &eng.join("assets/materials/hidden.ron"),
         format!(r#"(albedo: Some("{ENGINE_TEXTURE}"))"#).as_bytes(),
@@ -1048,9 +1036,8 @@ fn no_two_loaders_claim_one_extension() {
     );
 }
 
-/// Everything a packaged game can be asked to load: the four the asset
-/// plugin registers by hand, plus every type declared with
-/// `register_asset!`.
+/// Everything a packaged game can be asked to load: the four the asset plugin registers by hand,
+/// plus every type declared with `register_asset!`.
 fn every_loader() -> kooch_core::asset_loader::AssetServer {
     let mut server = kooch_core::asset_loader::AssetServer::new();
     server.register_loader::<kooch_render::mesh::Mesh, _>(kooch_render::mesh::GltfMeshLoader);

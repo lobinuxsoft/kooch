@@ -160,9 +160,8 @@ fn set_field_routes_to_the_server() {
     main_loop.join().unwrap();
 }
 
-/// Play is a wire toggle in remote mode: the project runs its own
-/// systems in place, and the editor records that it is playing so
-/// the toolbar and the refresh cadence follow.
+/// Play is a wire toggle in remote mode: the project runs its own systems in place, and the editor
+/// records that it is playing so the toolbar and the refresh cadence follow.
 #[test]
 fn play_toggles_the_remote_gate() {
     let server = RemoteServer::start(&test_socket_name()).expect("bind");
@@ -334,9 +333,8 @@ fn spawn_mesh_builds_the_entity_on_the_project() {
     main_loop.join().unwrap();
 }
 
-/// An unresolvable path is claimed and logged, not passed through to
-/// the local path where it would spawn into the mirror — which the
-/// next refresh would wipe, looking like a flicker.
+/// An unresolvable path is claimed and logged, not passed through to the local path where it would
+/// spawn into the mirror — which the next refresh would wipe, looking like a flicker.
 #[test]
 fn an_unresolvable_mesh_is_still_owned_by_the_remote_sink() {
     let mut editor = editor_with_assets();
@@ -420,9 +418,8 @@ fn spawn_carries_its_extra_components_over_the_wire() {
             )
         });
 
-    // A light with no Transform has no position and no direction, so
-    // this is not a nice-to-have — it is the difference between a light
-    // and an inert entity.
+    // A light with no Transform has no position and no direction, so this is not a nice-to-have —
+    // it is the difference between a light and an inert entity.
     for expected in ["Name", "Transform", "DirectionalLight"] {
         assert!(
             light
@@ -643,9 +640,8 @@ fn duplicate_creates_a_copy_on_the_project() {
     main_loop.join().unwrap();
 }
 
-/// The bug #811 was filed for: with a project open, Ctrl+Z was
-/// discarded on the first line of `dispatch` and the field kept the
-/// value it had just been given.
+/// The bug #811 was filed for: with a project open, Ctrl+Z was discarded on the first line of
+/// `dispatch` and the field kept the value it had just been given.
 #[test]
 fn an_undone_field_goes_back() {
     let transform_ty = std::any::type_name::<Transform>();
@@ -934,8 +930,7 @@ fn a_paste_is_built_and_undone() {
     let source = state.mirror.local_of(snapshot[0].id).expect("mirrored");
     editor.insert(state);
 
-    // What Ctrl+C leaves behind, without going through the panel that
-    // fills it.
+    // What Ctrl+C leaves behind, without going through the panel that fills it.
     let mut clipboard = crate::clipboard::EntityClipboard::default();
     clipboard.set(vec![crate::actions::entity_state::capture(&editor, source)]);
     editor.insert(clipboard);

@@ -152,17 +152,15 @@ fn wait(device: &wgpu::Device) {
     });
 }
 
-/// One run of the pass, returning what came back.
-/// Which marking path `run_pool` builds. The environment switch is an
-/// `OnceLock`, so one process cannot answer both ways; this can.
+/// One run of the pass, returning what came back. Which marking path `run_pool` builds. The
+/// environment switch is an `OnceLock`, so one process cannot answer both ways; this can.
 thread_local! {
     static CLUSTER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// How far a receiver dilates its page request, in pages. Same
     /// reason as `CLUSTER`: `run_pool` builds the marker itself.
     static HALO: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
-    /// The projected radius under which a light joins the distant tier
-    /// (#1009). Zero is the tier off, which is what every other test
-    /// here wants.
+    /// The projected radius under which a light joins the distant tier (#1009). Zero is the tier
+    /// off, which is what every other test here wants.
     static COVERAGE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
@@ -278,8 +276,7 @@ fn the_shader_compiles() {
         eprintln!("no adapter; skipping");
         return;
     };
-    // The pipeline is built here, so a WGSL mistake fails this test
-    // rather than a frame.
+    // The pipeline is built here, so a WGSL mistake fails this test rather than a frame.
     let _ = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
 }
 
@@ -326,9 +323,8 @@ fn a_sun_marks_without_a_grid() {
         eprintln!("no adapter; skipping");
         return;
     };
-    // No local light at all: whatever is marked is the clipmap's, which
-    // is the case the froxel grid cannot answer because a directional
-    // light has no position to cluster.
+    // No local light at all: whatever is marked is the clipmap's, which is the case the froxel grid
+    // cannot answer because a directional light has no position to cluster.
     let resources = world();
     let counts = run(
         &device,
@@ -532,9 +528,8 @@ fn the_view_paints_where_there_is_a_surface() {
         "{lit} of {} pixels painted",
         painted.len()
     );
-    // 🔴 The failure this pins is not "the pass ran" but "anything
-    // reached the screen": the palette has to survive whatever the
-    // target does to it.
+    // 🔴 The failure this pins is not "the pass ran" but "anything reached the screen": the palette
+    // has to survive whatever the target does to it.
     let brightest = painted
         .iter()
         .fold(0.0f32, |acc, p| acc.max(p[0].max(p[1]).max(p[2])));
@@ -663,9 +658,8 @@ fn every_drawable_page_claims_a_slot() {
         Some(Vec3::new(0.3, -1.0, 0.2)),
     );
     assert!(counts.resident > 0, "the frame needs pages");
-    // Two mechanisms counting the same 0->1 transitions: the mark bit's
-    // atomicOr and the allocator's atomicAdd. They agree or one of them
-    // is broken.
+    // Two mechanisms counting the same 0->1 transitions: the mark bit's atomicOr and the
+    // allocator's atomicAdd. They agree or one of them is broken.
     assert_eq!(
         counts.pool.claims, counts.resident,
         "one claim per distinct page"
@@ -781,9 +775,8 @@ fn the_table_holds_every_claim() {
     };
     let mut resources = world();
     add_point(&mut resources, Vec3::new(0.0, 0.0, -10.0), 20.0);
-    // 🔴 A sun, and the point light alongside it. Only the sun's pages
-    // claim a slot, so a scene without one fills no table and this test
-    // would pass by having nothing to check.
+    // 🔴 A sun, and the point light alongside it. Only the sun's pages claim a slot, so a scene
+    // without one fills no table and this test would pass by having nothing to check.
     let (marker, counts) = run_pool(
         &device,
         &queue,
@@ -1022,9 +1015,8 @@ fn a_request_is_answered_once() {
         return;
     };
     let resources = world();
-    // Age 0 evicts everything every frame, so every frame after the
-    // first walks a table made entirely of tombstones. That is the
-    // hostile case on purpose.
+    // Age 0 evicts everything every frame, so every frame after the first walks a table made
+    // entirely of tombstones. That is the hostile case on purpose.
     for max_age in [0u32, 1, 8] {
         let frames = run_frames(
             &device,
@@ -1161,9 +1153,8 @@ fn max_age_decides_whether_a_page_is_kept() {
     }
 }
 
-// `holes_do_not_accumulate` lived here and is retired with the hash it
-// measured: the flat table has no probe runs, so an eviction cannot
-// leave a hole for a lookup to walk. See `page_table.wgsl`.
+// `holes_do_not_accumulate` lived here and is retired with the hash it measured: the flat table has
+// no probe runs, so an eviction cannot leave a hole for a lookup to walk. See `page_table.wgsl`.
 
 /// A page that stays resident keeps the SAME physical slot.
 #[test]
@@ -1279,8 +1270,7 @@ fn a_moving_camera_does_not_exhaust_the_pool() {
 /// decode, so the test can name the rank of every survivor.
 fn entry_rank(config: &PageConfig, clip_levels: u32, within: u32) -> u32 {
     let stride = (config.local_face_pages() * 6).div_ceil(32) * 32;
-    // The tests run well under 64 lights, so the padded slot count is
-    // the first step: 64.
+    // The tests run well under 64 lights, so the padded slot count is the first step: 64.
     let sun_base = 64 * stride;
     if within >= sun_base {
         let cell = config.side(0).pow(2);
@@ -1445,9 +1435,8 @@ fn the_bias_settles_the_denials() {
     let mut marker = PageMarker::new(&device, PageConfig::default(), ClipmapConfig::default());
     marker.set_pool(&device, small);
 
-    // A near surface at four times the screen's density wants more sun
-    // pages than four slots hold; the bias has up to six steps (four
-    // local, two sun) plus the readback lag to settle in.
+    // A near surface at four times the screen's density wants more sun pages than four slots hold;
+    // the bias has up to six steps (four local, two sun) plus the readback lag to settle in.
     let mut series = Vec::new();
     for index in 0..12u32 {
         marker.set_frame(index);
@@ -1827,8 +1816,7 @@ fn lamps_that_overrun_the_pool_spare_the_sun() {
         }
     }
     let last = last.expect("counters came back");
-    // The premise: the cut has to land among the LAMPS, or this proves
-    // nothing about who pays.
+    // The premise: the cut has to land among the LAMPS, or this proves nothing about who pays.
     let sun_levels = ClipmapConfig::default().levels;
     assert!(
         last.pool.denied > 0,

@@ -151,9 +151,8 @@ fn a_point_source_pulls_from_every_direction() {
             now.length() < start.length() - 0.5,
             "a body at {start} did not fall towards the planet; it is at {now}",
         );
-        // Falling *down* rather than *inwards* would show as the +X body
-        // gaining -Y instead of -X. This is the assertion that separates a
-        // field from a world vector.
+        // Falling *down* rather than *inwards* would show as the +X body gaining -Y instead of -X.
+        // This is the assertion that separates a field from a world vector.
         assert!(
             (now - start).normalize().dot(-start.normalize()) > 0.9,
             "a body at {start} moved to {now}, which is not towards the centre",
@@ -161,8 +160,7 @@ fn a_point_source_pulls_from_every_direction() {
     }
 }
 
-/// Acceptance: "a body inside two overlapping sources feels their sum, and
-/// neither one twice."
+/// Acceptance: "a body inside two overlapping sources feels their sum, and neither one twice."
 #[test]
 fn overlapping_sources_sum() {
     fn drift(with_second: bool) -> Vec3 {
@@ -207,8 +205,7 @@ fn overlapping_sources_sum() {
     );
 }
 
-/// The world vector and a source must not both apply, or a planet pulls
-/// diagonally.
+/// The world vector and a source must not both apply, or a planet pulls diagonally.
 #[test]
 fn the_world_vector_is_off_while_a_source_exists() {
     let mut resources = world();
@@ -340,9 +337,8 @@ fn a_body_beyond_every_source_does_not_move() {
     );
 }
 
-/// A cube planet: each face pulls along its own normal, so where a body
-/// falls depends on which face it started over. This is the whole claim,
-/// and it is one a world gravity vector cannot make.
+/// A cube planet: each face pulls along its own normal, so where a body falls depends on which face
+/// it started over. This is the whole claim, and it is one a world gravity vector cannot make.
 #[test]
 fn a_box_source_pulls_towards_the_nearest_face() {
     let mut resources = world();
@@ -527,8 +523,7 @@ fn a_moved_source_wakes_what_it_pulls_on() {
         "it never settled, so the test is moot"
     );
 
-    // Gravity flips upward. A crate that stays asleep through that is a
-    // crate glued to the floor.
+    // Gravity flips upward. A crate that stays asleep through that is a crate glued to the floor.
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
         && let Some(storage) = registry.get_cpu_mut::<GlobalGravity>()
         && let Some(field) = storage.get_mut(planet)
@@ -567,8 +562,7 @@ fn a_plane_catches_a_body_far_aside() {
     );
 }
 
-/// Acceptance for #47: one-sided. A body under the plane is not dragged
-/// back up into it.
+/// Acceptance for #47: one-sided. A body under the plane is not dragged back up into it.
 #[test]
 fn a_plane_ignores_what_is_under_it() {
     let mut resources = world();
@@ -708,8 +702,7 @@ fn scaling_a_source_does_not_resize_it() {
         plugin::gravity_at(&resources, Vec3::new(0.0, height, 0.0)).length()
     }
 
-    // Inside the solid, in the band, and past the fade — the three
-    // answers a box source has.
+    // Inside the solid, in the band, and past the fade — the three answers a box source has.
     for height in [2.0, 20.0, 100.0] {
         assert!(
             (pull_at(1.0, height) - pull_at(8.0, height)).abs() < 1e-4,

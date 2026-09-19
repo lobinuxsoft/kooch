@@ -140,9 +140,8 @@ fn selecting_a_visible_row_leaves_the_list_alone() {
     assert_eq!(offset, None, "row 5 of 0..20 is already on screen");
 }
 
-/// The reason change detection is separate from acting on it: a
-/// group closed by hand, with something selected inside it, must
-/// stay closed. Asking every frame would reopen it every frame.
+/// The reason change detection is separate from acting on it: a group closed by hand, with
+/// something selected inside it, must stay closed. Asking every frame would reopen it every frame.
 #[test]
 fn an_unchanged_selection_asks_for_nothing() {
     let entities: Vec<_> = (0..100).map(|i| entity_info(i, None)).collect();
@@ -157,9 +156,8 @@ fn an_unchanged_selection_asks_for_nothing() {
     });
 }
 
-/// An entity inside a collapsed group has no row at all. Opening the
-/// group gives it one — and the row list, longer now, still places
-/// it by the same multiplication.
+/// An entity inside a collapsed group has no row at all. Opening the group gives it one — and the
+/// row list, longer now, still places it by the same multiplication.
 #[test]
 fn a_selection_inside_a_collapsed_group_is_revealed() {
     let first = kooch_core::Guid::new_v4();
@@ -212,9 +210,8 @@ fn a_single_scene_still_gets_a_root() {
     );
 }
 
-/// Entities belonging to no scene are still reachable, under their own
-/// header — an entity spawned before the first save must not vanish
-/// from the panel that lists the world.
+/// Entities belonging to no scene are still reachable, under their own header — an entity spawned
+/// before the first save must not vanish from the panel that lists the world.
 #[test]
 fn entities_without_a_scene_get_their_own_group() {
     let entities: Vec<_> = (0..10).map(|i| entity_info(i, None)).collect();
@@ -255,9 +252,8 @@ fn a_collapsed_group_contributes_only_its_header() {
     );
 }
 
-/// An entity in a closed scene belongs to that scene, not to nobody.
-/// Deciding group membership after the open check would move it into
-/// "Unsaved" as a side effect of clicking a triangle.
+/// An entity in a closed scene belongs to that scene, not to nobody. Deciding group membership
+/// after the open check would move it into "Unsaved" as a side effect of clicking a triangle.
 #[test]
 fn a_collapsed_scenes_entities_do_not_become_unsaved() {
     let a = kooch_core::Guid::new_v4();
@@ -342,9 +338,8 @@ fn a_row_advances_the_cursor_by_exactly_one_pitch() {
     );
 }
 
-/// The reason rows truncate. A name long enough to wrap would make
-/// its own row taller than the list promised, and every row below it
-/// would be drawn a line further off than the one before.
+/// The reason rows truncate. A name long enough to wrap would make its own row taller than the list
+/// promised, and every row below it would be drawn a line further off than the one before.
 #[test]
 fn a_very_long_name_does_not_make_its_row_taller() {
     let mut long = entity_info(0, None);
@@ -673,8 +668,7 @@ fn a_name_filter_is_case_insensitive() {
     assert_eq!(rows, vec![0]);
 }
 
-/// Two narrowings that widened each other would be a filter nobody
-/// could predict.
+/// Two narrowings that widened each other would be a filter nobody could predict.
 #[test]
 fn both_terms_narrow_together() {
     let scene = kooch_core::Guid::new_v4();
@@ -694,8 +688,7 @@ fn both_terms_narrow_together() {
     assert_eq!(rows, vec![0]);
 }
 
-/// A match hidden under a closed parent is a search that found the thing
-/// and did not show it.
+/// A match hidden under a closed parent is a search that found the thing and did not show it.
 #[test]
 fn a_filter_reaches_into_collapsed_subtrees() {
     let scene = kooch_core::Guid::new_v4();
@@ -718,8 +711,7 @@ fn a_filter_reaches_into_collapsed_subtrees() {
     assert_eq!(rows, vec![1]);
 }
 
-/// An empty panel is indistinguishable from an empty world, so it says
-/// which one it is.
+/// An empty panel is indistinguishable from an empty world, so it says which one it is.
 #[test]
 fn no_match_says_so() {
     let scene = kooch_core::Guid::new_v4();
@@ -772,8 +764,7 @@ fn the_unsaved_group_offers_a_menu() {
         egui::Pos2::ZERO,
         egui::vec2(400.0, 600.0),
     ));
-    // The pseudo-group's own row, which is the first line the panel draws
-    // when no scene is open.
+    // The pseudo-group's own row, which is the first line the panel draws when no scene is open.
     let at = egui::pos2(200.0, 84.0);
 
     let draw = |input: egui::RawInput| {

@@ -123,8 +123,7 @@ fn an_old_project_gains_the_library() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Running it twice must change nothing — it runs on every script
-/// registration, not once.
+/// Running it twice must change nothing — it runs on every script registration, not once.
 #[test]
 fn the_migration_is_idempotent() {
     let dir = std::env::temp_dir().join("kooch_migrate_idempotent_test");
@@ -342,8 +341,7 @@ fn folders_are_emitted_as_nested_modules() {
     );
 }
 
-/// Every block that opens has to close, at any depth, or the
-/// generated file is not even parseable.
+/// Every block that opens has to close, at any depth, or the generated file is not even parseable.
 #[test]
 fn nested_folders_open_and_close_their_blocks() {
     let files = vec![
@@ -511,8 +509,7 @@ fn a_duplicated_registrations_module_is_cleaned_up() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// And the other end: once the `use` is there, rewiring must not put
-/// the module back.
+/// And the other end: once the `use` is there, rewiring must not put the module back.
 #[test]
 fn wiring_does_not_re_add_a_module_that_moved_to_the_library() {
     let dir = std::env::temp_dir().join("kooch_no_readd_test");

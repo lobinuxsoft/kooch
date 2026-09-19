@@ -36,8 +36,7 @@ fn despawn_all_preserves_ephemeral_entities() {
         resources.insert(commands);
     }
 
-    // Loading an empty scene should wipe the persistent entity but
-    // keep the ephemeral one alive.
+    // Loading an empty scene should wipe the persistent entity but keep the ephemeral one alive.
     let empty = SceneDocument {
         id: kooch_core::Guid::new_v4(),
         name: "empty".into(),
@@ -312,8 +311,7 @@ fn unknown_component_survives_a_save_round_trip() {
     );
 }
 
-/// Loading a second scene must not leak the first scene's parked
-/// components onto the new entities.
+/// Loading a second scene must not leak the first scene's parked components onto the new entities.
 #[test]
 fn parked_components_are_cleared_between_loads() {
     use crate::dynamic_components::DynamicComponents;

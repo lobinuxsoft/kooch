@@ -37,9 +37,8 @@ struct Rig {
     stage: MeshletRenderStage,
 }
 
-/// `occluder` places a cube standing on the floor. Without one the floor
-/// is empty, and then **any** darkening in the picture is a defect:
-/// nothing in the scene can shadow anything.
+/// `occluder` places a cube standing on the floor. Without one the floor is empty, and then **any**
+/// darkening in the picture is a defect: nothing in the scene can shadow anything.
 fn build(lights: &[(Vec3, bool)], occluder: bool, compute: bool) -> Option<Rig> {
     build_with(lights, occluder, compute, false)
 }
@@ -191,9 +190,8 @@ fn an_empty_floor_must_be_smooth() {
             return;
         };
         let tag = if compute { "compute" } else { "fragment" };
-        // From high up, so the whole footprint of the -Y face is in
-        // frame: the lamp is 3.477 m up and a 90 deg face covers
-        // +/- 3.477 m of floor, which is where a seam would fall.
+        // From high up, so the whole footprint of the -Y face is in frame: the lamp is 3.477 m up
+        // and a 90 deg face covers +/- 3.477 m of floor, which is where a seam would fall.
         shoot(&mut rig, &format!("seam_{tag}_top.png"), top);
         shoot(
             &mut rig,
@@ -202,17 +200,15 @@ fn an_empty_floor_must_be_smooth() {
         );
     }
 
-    // The control. Same lamp, same floor, `cast_shadows` OFF — no cube
-    // is sampled at all. If the square survives this it is not the cube
-    // map and every word above is wrong.
+    // The control. Same lamp, same floor, `cast_shadows` OFF — no cube is sampled at all. If the
+    // square survives this it is not the cube map and every word above is wrong.
     let Some(mut off) = build(&[(OVERHEAD, false)], false, true) else {
         return;
     };
     shoot(&mut off, "seam_control_no_cube.png", top);
 
-    // And the same lamp at half the height. A 90 deg face covers
-    // +/- h of floor, so if the square is the face footprint its side
-    // must halve with it. Nothing else in the scene scales that way.
+    // And the same lamp at half the height. A 90 deg face covers +/- h of floor, so if the square
+    // is the face footprint its side must halve with it. Nothing else in the scene scales that way.
     let Some(mut low) = build(&[(Vec3::new(0.0, 1.74, 0.0), true)], false, true) else {
         return;
     };
@@ -279,9 +275,8 @@ fn two_cameras_must_agree() {
     shoot(&mut rig, "agree_0_warm.png", Vec3::new(6.0, 5.0, 6.0));
     shoot(&mut rig, "agree_1_far.png", Vec3::new(14.0, 11.0, 14.0));
     shoot(&mut rig, "agree_2_near.png", Vec3::new(3.0, 2.2, 3.0));
-    // Back to the first camera. Same eye as `agree_0_warm`, so the two
-    // must be the same picture — anything else is the cube remembering
-    // who looked at it last.
+    // Back to the first camera. Same eye as `agree_0_warm`, so the two must be the same picture —
+    // anything else is the cube remembering who looked at it last.
     shoot(&mut rig, "agree_3_back.png", Vec3::new(6.0, 5.0, 6.0));
 }
 
@@ -390,9 +385,8 @@ fn two_lamps_while_the_game_camera_turns() {
     }
 }
 
-/// The same turning Game camera, with `contact_shadows` ON — which is
-/// what the owner's lamps carry now, and what every picture in this file
-/// so far was taken without.
+/// The same turning Game camera, with `contact_shadows` ON — which is what the owner's lamps carry
+/// now, and what every picture in this file so far was taken without.
 #[test]
 #[ignore = "writes PNGs to look at; not an assertion"]
 fn two_lamps_with_contact_shadows_on() {
@@ -645,9 +639,8 @@ fn does_the_shadow_close_up_at_a_finer_lod() {
                 target_error_pixels: target,
                 ..Default::default()
             });
-        // Straight down on the lamp's own axis, so the whole silhouette
-        // of the shadow is in frame and a hole in it cannot hide behind
-        // the ball.
+        // Straight down on the lamp's own axis, so the whole silhouette of the shadow is in frame
+        // and a hole in it cannot hide behind the ball.
         let eye = Vec3::new(2.6, 7.0, 4.0);
         let camera = ViewCamera::looking_at(eye, BALL);
         rig.stage
@@ -695,9 +688,8 @@ fn the_point_cube_view() {
     };
     rig.resources
         .insert(kooch_render::meshlet::MeshletDebugMode::PointCubeFaces);
-    // Straight down, so the floor fills the frame: the view is a
-    // SURFACE shader, so it paints only where there is geometry and the
-    // sky leaves its cells blank.
+    // Straight down, so the floor fills the frame: the view is a SURFACE shader, so it paints only
+    // where there is geometry and the sky leaves its cells blank.
     let camera = ViewCamera::looking_at(Vec3::new(0.0, 9.0, 0.2), BALL);
     rig.stage
         .render_with_assets_primary(&rig.device, &rig.queue, &rig.resources, &camera, 1.0);
@@ -739,9 +731,8 @@ fn the_cube_faces_raw() {
         }
         let lo = recorded.iter().copied().fold(f32::INFINITY, f32::min);
         let hi = recorded.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-        // Reversed-Z: the stored value is `near / distance`, so BIGGER
-        // is CLOSER to the lamp. Painted so that closer is darker, the
-        // way an occluder reads to a human.
+        // Reversed-Z: the stored value is `near / distance`, so BIGGER is CLOSER to the lamp.
+        // Painted so that closer is darker, the way an occluder reads to a human.
         let px: Vec<u8> = depth
             .iter()
             .map(|d| {
@@ -873,8 +864,7 @@ fn reported_scene(casting: bool) -> Option<Rig> {
     Some(rig)
 }
 
-/// That scene from its own camera: shaded, then the factor, then the six
-/// faces raw.
+/// That scene from its own camera: shaded, then the factor, then the six faces raw.
 #[test]
 #[ignore = "writes PNGs to look at; not an assertion"]
 fn the_reported_scene() {

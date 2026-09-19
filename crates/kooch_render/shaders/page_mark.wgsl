@@ -7,8 +7,7 @@ struct PageView {
     eye_and_base: vec4<f32>,
     // xyz the sun's direction, w 1 if there is one.
     sun: vec4<f32>,
-    // x page texels, y virtual texels, z levels in a local chain,
-    // w levels in the clipmap.
+    // x page texels, y virtual texels, z levels in a local chain, w levels in the clipmap.
     chain: vec4<u32>,
     // x pages per side at level 0, y pages in one face's whole chain, z the per-light stride in
     // pages, w the light count.
@@ -77,9 +76,8 @@ const RANK_WORDS: u32 = 8360u;
 /// First word of the occupancy bitmap, `OCCUPANCY_WORDS` long.
 const RANK_OCCUPANCY: u32 = 40u;
 const OCCUPANCY_WORDS: u32 = 128u;
-/// Froxels the bitmap can hold. `ClusterSettings::default().total` is
-/// 4096; a grid larger than this simply stops recording occupancy, which
-/// costs the census its meaning and never correctness.
+/// Froxels the bitmap can hold. `ClusterSettings::default().total` is 4096; a grid larger than this
+/// simply stops recording occupancy, which costs the census its meaning and never correctness.
 const OCCUPANCY_MAX: u32 = 4096u;
 /// Two words per froxel — the nearest and furthest view-space depth any sample of it reached, as
 /// ordered bits.
@@ -94,9 +92,8 @@ const RANK_BIAS: u32 = 35u;
 // Frames spent without pressure, also persistent.
 const RANK_PATIENCE: u32 = 36u;
 const PATIENCE_FRAMES: u32 = 16u;
-// Locals give up four levels before the sun gives up one, and the sun
-// stops at two: past that the pool is simply too small for the scene,
-// and the panel says so through the denials that remain.
+// Locals give up four levels before the sun gives up one, and the sun stops at two: past that the
+// pool is simply too small for the scene, and the panel says so through the denials that remain.
 const LOCAL_BIAS_MAX: u32 = 4u;
 const SUN_BIAS_MAX: u32 = 2u;
 
@@ -164,9 +161,8 @@ fn page_alloc() -> u32 {
     let base = alloc_base();
     let slice = pages.pool.w;
 
-    // Pop. `atomicSub` returning the OLD value is what makes the test
-    // and the take one operation: a thread that sees a count of zero or
-    // less pushed it below zero and puts it back.
+    // Pop. `atomicSub` returning the OLD value is what makes the test and the take one operation: a
+    // thread that sees a count of zero or less pushed it below zero and puts it back.
     let taken = atomicSub(&alloc[base + 1u], 1u);
     if taken != 0u && taken <= slice {
         atomicAdd(&counters[20], 1u);
@@ -194,9 +190,8 @@ fn page_release(slot: u32) {
     let slice = pages.pool.w;
     let at = atomicAdd(&alloc[base + 1u], 1u);
     if at >= slice {
-        // The list cannot hold more than the slice does, so this cannot
-        // happen without the slice having been double-freed. Undo and
-        // leak the slot rather than write past the run.
+        // The list cannot hold more than the slice does, so this cannot happen without the slice
+        // having been double-freed. Undo and leak the slot rather than write past the run.
         atomicSub(&alloc[base + 1u], 1u);
         atomicAdd(&counters[10], 1u);
         return;
@@ -272,9 +267,8 @@ fn page_level(distance: f32, wanted: f32) -> u32 {
     return clamp(u32(max(level, 0.0)), base, pages.chain.z - 1u);
 }
 
-// One page of a local light's mip chain.
-// Which page of a local light's chain a point belongs to, WITHOUT
-// marking it. Split for the same reason as `sun_page_for`.
+// One page of a local light's mip chain. Which page of a local light's chain a point belongs to,
+// WITHOUT marking it. Split for the same reason as `sun_page_for`.
 fn local_page_for(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let record = lights[light];
     var offset = world - record.position;
@@ -284,17 +278,15 @@ fn local_page_for(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
     let level = select(page_level(distance, wanted), pages.chain.z - 1u, light_distant(light));
     let side = level_side(level);
 
-    // A spot's one face is aligned with ITS axis, not the world's —
-    // see `spot_local` for the three-way disagreement this rotation
-    // ended.
+    // A spot's one face is aligned with ITS axis, not the world's — see `spot_local` for the
+    // three-way disagreement this rotation ended.
     let spot = record.kind == PAGE_KIND_SPOT;
     if spot {
         offset = spot_local(record.direction, offset);
     }
     let hit = cube_face(offset);
-    // A spot writes one face, like `CensusKind::Spot`. `kind` mirrors
-    // `GpuLight::kind`, and the order there is DIRECTIONAL 0, POINT 1,
-    // SPOT 2 — not the order a reader guesses.
+    // A spot writes one face, like `CensusKind::Spot`. `kind` mirrors `GpuLight::kind`, and the
+    // order there is DIRECTIONAL 0, POINT 1, SPOT 2 — not the order a reader guesses.
     let face = select(u32(hit.w), 0u, spot);
     let cell = vec2<u32>(clamp(hit.xy, vec2<f32>(0.0), vec2<f32>(0.99999)) * f32(side));
 
@@ -517,9 +509,8 @@ fn mark_pixel(id: vec3<u32>) {
         return;
     }
     let froxel = cluster_index(cluster_of_ndc(view, ndc, view_pos.z), view.dimensions);
-    // This froxel holds visible surface. One `atomicOr` per pixel,
-    // and it replaces nothing yet — see `RANK_OCCUPANCY` for what it
-    // is for and why the depth buffer's answer has to be kept.
+    // This froxel holds visible surface. One `atomicOr` per pixel, and it replaces nothing yet —
+    // see `RANK_OCCUPANCY` for what it is for and why the depth buffer's answer has to be kept.
     if froxel < OCCUPANCY_MAX {
         atomicOr(
             &rank_state[rank_base() + RANK_OCCUPANCY + froxel / 32u],
@@ -611,9 +602,8 @@ fn light_distant(light: u32) -> bool {
         || (pages.density.y > 0.0 && coverage_pixels(light) < pages.density.y);
 }
 
-// The world size of one screen pixel at `depth` along the view axis.
-// Mirrors what `mark_pixel` computes for its own sample, so the two
-// cannot answer differently about the same distance.
+// The world size of one screen pixel at `depth` along the view axis. Mirrors what `mark_pixel`
+// computes for its own sample, so the two cannot answer differently about the same distance.
 fn pixel_world(depth: f32) -> f32 {
     let focal = view.clip_from_view[1][1];
     if abs(focal) < 1e-9 {
@@ -678,9 +668,8 @@ fn paint_view(@builtin(global_invocation_id) id: vec3<u32>) {
     // marking never chose — the failure `sun_page_for` was split to end.
     let bias = atomicLoad(&rank_state[rank_base() + RANK_BIAS]);
 
-    // 🔴 One page per pixel, and the sun wins when there is one: a pixel
-    // is lit by many lights, and painting the last one walked would make
-    // the view depend on the light list's order.
+    // 🔴 One page per pixel, and the sun wins when there is one: a pixel is lit by many lights, and
+    // painting the last one walked would make the view depend on the light list's order.
     if pages.sun.w > 0.5 {
         paint_page(
             pixel,
@@ -749,9 +738,8 @@ fn age_view(@builtin(global_invocation_id) id: vec3<u32>) {
     // under it, so a slot in an old entry names a page in a new atlas.
     if pages.life.z == 0u {
         let age = page_age(entry);
-        // Unsigned, so a frame index that ran backwards (a rebuild, a
-        // wrap) reads as enormous and evicts. That is the safe way for
-        // this comparison to be wrong.
+        // Unsigned, so a frame index that ran backwards (a rebuild, a wrap) reads as enormous and
+        // evicts. That is the safe way for this comparison to be wrong.
         if pages.life.x - age <= pages.life.y {
             atomicAdd(&counters[11], 1u);
             return;
@@ -833,8 +821,7 @@ fn preempt_view(@builtin(global_invocation_id) id: vec3<u32>) {
         let rank = entry_rank(within);
         if rank < cutoff { return; }
         if rank == cutoff {
-            // Same take-then-test as `page_alloc`: the old value says
-            // whether the take was funded.
+            // Same take-then-test as `page_alloc`: the old value says whether the take was funded.
             let quota = atomicSub(&rank_state[base + RANK_QUOTA], 1u);
             if quota != 0u && quota <= pages.pool.w { return; }
             atomicAdd(&rank_state[base + RANK_QUOTA], 1u);
@@ -951,9 +938,8 @@ fn bias_view() {
         patience = 0u;
     } else {
         patience = patience + 1u;
-        // ⚠️ Growth is FOUR times a level here, the pessimistic estimate,
-        // for the same reason inverted: an unwind that over-reaches is
-        // the blur coming straight back next frame.
+        // ⚠️ Growth is FOUR times a level here, the pessimistic estimate, for the same reason
+        // inverted: an unwind that over-reaches is the blur coming straight back next frame.
         let others = total - sun_demand;
         var back = 0u;
         for (var k = 1u; k <= sun_bias; k = k + 1u) {
@@ -1004,8 +990,7 @@ fn bias_view() {
 fn count_froxels(@builtin(local_invocation_index) lane: u32) {
     let base = rank_base() + RANK_OCCUPANCY;
     var found = 0u;
-    // 64 lanes over `OCCUPANCY_WORDS`, strided so the loop is the same
-    // length in every lane.
+    // 64 lanes over `OCCUPANCY_WORDS`, strided so the loop is the same length in every lane.
     for (var w = lane; w < OCCUPANCY_WORDS; w = w + MARK_GROUP * MARK_GROUP) {
         found = found + countOneBits(atomicLoad(&rank_state[base + w]));
     }
@@ -1039,9 +1024,8 @@ fn mark_froxels(@builtin(global_invocation_id) gid: vec3<u32>) {
     if froxel >= view.dimensions.w || froxel >= OCCUPANCY_MAX {
         return;
     }
-    // Occupied only. The bitmap is what keeps the depth buffer's free
-    // occlusion culling: a froxel of empty air, or one behind a wall,
-    // has no bit and marks nothing.
+    // Occupied only. The bitmap is what keeps the depth buffer's free occlusion culling: a froxel
+    // of empty air, or one behind a wall, has no bit and marks nothing.
     let bits = atomicLoad(&rank_state[rank_base() + RANK_OCCUPANCY + froxel / 32u]);
     if (bits & (1u << (froxel % 32u))) == 0u {
         return;
@@ -1054,8 +1038,7 @@ fn mark_froxels(@builtin(global_invocation_id) gid: vec3<u32>) {
     // The worst overlap in the frame. See `MarkCounts::peak_lights`.
     atomicMax(&counters[16], count);
 
-    // The grid coordinate back out of the flat index; mirrors
-    // `cluster_index`.
+    // The grid coordinate back out of the flat index; mirrors `cluster_index`.
     let dz = max(view.dimensions.z, 1u);
     let dx = max(view.dimensions.x, 1u);
     let cell = vec3<u32>((froxel / dz) % dx, (froxel / dz) / dx, froxel % dz);
@@ -1081,9 +1064,8 @@ fn mark_froxels(@builtin(global_invocation_id) gid: vec3<u32>) {
     for (var c = 0u; c < 8u; c = c + 1u) {
         corners[c] = froxel_corner(bounds, c, world_from_view);
     }
-    // What a screen pixel covers at this froxel's FAR face — the same
-    // quantity `mark_pixel` computes per sample, evaluated once for the
-    // whole cell and at its coarsest end.
+    // What a screen pixel covers at this froxel's FAR face — the same quantity `mark_pixel`
+    // computes per sample, evaluated once for the whole cell and at its coarsest end.
     let focal = view.clip_from_view[1][1];
     var wanted = 0.0;
     if abs(focal) > 1e-9 {
@@ -1117,9 +1099,8 @@ fn mark_froxels(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         mark_froxel_light(light, corners, wanted);
     }
-    // One thread per FROXEL, thousands rather than millions, so these go
-    // straight to the counters — the workgroup reduction `mark_pixel`
-    // needs buys nothing at this width. See `mark_flush`.
+    // One thread per FROXEL, thousands rather than millions, so these go straight to the counters —
+    // the workgroup reduction `mark_pixel` needs buys nothing at this width. See `mark_flush`.
     if pairs != 0u {
         atomicAdd(&counters[2], pairs);
     }

@@ -57,8 +57,7 @@ fn named(
     );
 }
 
-/// A root with one child, plus an unrelated entity that must not be
-/// dragged in.
+/// A root with one child, plus an unrelated entity that must not be dragged in.
 fn world_with_a_subtree() -> (
     kooch_core::resource::Resources,
     crate::entity::Entity,
@@ -111,8 +110,7 @@ fn a_subtree_takes_the_root_and_its_descendants_and_nothing_else() {
 #[test]
 fn the_prefab_root_carries_no_parent() {
     let (mut resources, root, outsider) = world_with_a_subtree();
-    // Attach the subtree under something outside it first, so there is a
-    // parent that *could* leak.
+    // Attach the subtree under something outside it first, so there is a parent that *could* leak.
     parent_child(&mut resources, outsider, root);
 
     let prefab = SceneDocument::from_ecs_subtree(&mut resources, root);
@@ -218,9 +216,8 @@ fn instancing_rebuilds_the_whole_hierarchy() {
     let spawned_root = crate::scene::sync::instantiate(&prefab, &mut resources, Guid::new_v4())
         .expect("a captured subtree has exactly one root");
 
-    // The copies are found through the links themselves rather than by
-    // name — names are not unique, and resolving by name is the bug this
-    // is checking has not come back.
+    // The copies are found through the links themselves rather than by name — names are not unique,
+    // and resolving by name is the bug this is checking has not come back.
     assert_eq!(name_of(&resources, spawned_root), "Turret");
     assert_ne!(spawned_root, root, "an instance is a copy");
     assert_eq!(
@@ -235,9 +232,8 @@ fn instancing_rebuilds_the_whole_hierarchy() {
         .and_then(|storage| storage.get(spawned_root))
         .map(|children| children.entities.clone())
         .unwrap_or_default();
-    // `Children` is derived by the hierarchy sync system, which does not
-    // run here, so the link is read from the owning side: find the entity
-    // whose `Parent` is the spawned root.
+    // `Children` is derived by the hierarchy sync system, which does not run here, so the link is
+    // read from the owning side: find the entity whose `Parent` is the spawned root.
     let _ = children;
 
     let spawned_child = find_child_of(&resources, spawned_root).expect("Barrel lost its parent");
@@ -366,9 +362,8 @@ fn an_empty_document_has_no_root() {
 
 // -- as_instance_of -----------------------------------------------------
 
-/// The whole reason ids are remapped: stamp the same prefab out twice
-/// without it and both copies claim to be entity 1, so a reference to one
-/// resolves to whichever loaded last.
+/// The whole reason ids are remapped: stamp the same prefab out twice without it and both copies
+/// claim to be entity 1, so a reference to one resolves to whichever loaded last.
 #[test]
 fn two_instances_share_no_identity() {
     let prefab = document(vec![
@@ -399,9 +394,8 @@ fn two_instances_share_no_identity() {
     }
 }
 
-/// A remapped id is worth nothing if the references pointing at it are not
-/// remapped with it — the child would end up parented to whatever else
-/// held its old id.
+/// A remapped id is worth nothing if the references pointing at it are not remapped with it — the
+/// child would end up parented to whatever else held its old id.
 #[test]
 fn a_reference_inside_an_instance_still_points_inside_it() {
     let prefab = document(vec![
@@ -522,9 +516,8 @@ fn instantiating_a_multi_root_document_spawns_nothing() {
 
 // -- the editor's link ---------------------------------------------------
 
-/// `spawn_prefab` is what a game calls, and a game wants entities rather
-/// than a relationship to maintain. The link belongs to the editor's
-/// instancing, which attaches it afterwards.
+/// `spawn_prefab` is what a game calls, and a game wants entities rather than a relationship to
+/// maintain. The link belongs to the editor's instancing, which attaches it afterwards.
 #[test]
 fn instancing_on_its_own_attaches_no_link() {
     let (mut resources, root) = world_with_a_deep_subtree();
@@ -542,9 +535,8 @@ fn instancing_on_its_own_attaches_no_link() {
     );
 }
 
-/// And when the editor does attach it, the instance names the prefab it
-/// came from and starts with nothing overridden — every field still
-/// follows the prefab.
+/// And when the editor does attach it, the instance names the prefab it came from and starts with
+/// nothing overridden — every field still follows the prefab.
 #[test]
 fn an_attached_link_names_its_prefab_and_overrides_nothing() {
     let (mut resources, root) = world_with_a_deep_subtree();
