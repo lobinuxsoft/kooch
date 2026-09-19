@@ -42,22 +42,27 @@ pub struct Rig {
 
 /// A floor, `lights x lights` point lights above it, and a camera looking down the length of it.
 pub fn rig(lights: u32, wall: bool) -> Option<Rig> {
-    build(lights, wall, false, false)
+    build(lights, wall, false, false, false)
+}
+
+/// [`rig`] on the legacy R32 visibility buffer and its Hi-Z two-pass cull.
+pub fn rig_r32(lights: u32, wall: bool) -> Option<Rig> {
+    build(lights, wall, false, false, true)
 }
 
 /// The floor and wall on two materials, and a row of blocks on two more, so most tiles along their
 /// edges hold several materials (#1157).
 pub fn rig_mixed(lights: u32) -> Option<Rig> {
-    build(lights, true, false, true)
+    build(lights, true, false, true, false)
 }
 
 /// The same scene plus **one blue shadow-casting light**, and the shadow atlas switched on so it is
 /// given a slot.
 pub fn rig_with_caster(lights: u32) -> Option<Rig> {
-    build(lights, true, true, false)
+    build(lights, true, true, false, false)
 }
 
-fn build(lights: u32, wall: bool, caster: bool, mixed: bool) -> Option<Rig> {
+fn build(lights: u32, wall: bool, caster: bool, mixed: bool, r32: bool) -> Option<Rig> {
     let (device, queue) = try_acquire_device_r64()?;
 
     let meshlet_mesh = build_default_meshlets(&build_cube_mesh()).expect("build meshlets");
@@ -107,7 +112,10 @@ fn build(lights: u32, wall: bool, caster: bool, mixed: bool) -> Option<Rig> {
             size: (SIZE, SIZE),
             instance_capacity: 16,
             meshlet_capacity: 1024,
-            vbuf64: Vbuf64Support::detect(&device),
+            vbuf64: match r32 {
+                true => Vbuf64Support::from_supported(false),
+                false => Vbuf64Support::detect(&device),
+            },
             // The R64 path asserts the density accumulator exists; the
             // caps default says the device cannot have one.
             debug_caps: MeshletDebugCaps::detect(&device),
@@ -216,6 +224,13 @@ fn build(lights: u32, wall: bool, caster: bool, mixed: bool) -> Option<Rig> {
 
 pub fn render(rig: &mut Rig, compute: bool) -> Vec<u8> {
     render_at(rig, compute, ShadingRate::Full)
+}
+
+/// Renders one frame on whatever path the rig's stage has, and reads the colour target back.
+pub fn render_any(rig: &mut Rig) -> Vec<u8> {
+    rig.stage
+        .render_with_assets_primary(&rig.device, &rig.queue, &rig.resources, &rig.camera, 1.0);
+    read_rgba8(&rig.device, &rig.queue, rig.stage.color_texture())
 }
 
 /// Renders one frame on the chosen path and rate, and reads the colour target back.

@@ -4,8 +4,9 @@ use crate::material::SurfaceSource;
 use crate::meshlet::deferred::HDR_COLOR_FORMAT;
 use crate::meshlet::{
     MATERIAL_PASS_CONTACT_DEPTH_BINDING, MATERIAL_PASS_CONTACT_UBO_BINDING,
-    TRANSPARENT_ARGS_SHADER, TRANSPARENT_SHADE_FRAME, TRANSPARENT_TAIL_FRAME,
-    compose_material_shader, compose_transparent_composite, compose_transparent_insert,
+    TRANSPARENT_ARGS_SHADER, TRANSPARENT_CLIP_INSERT_FRAME, TRANSPARENT_SHADE_FRAME,
+    TRANSPARENT_TAIL_FRAME, compose_material_shader, compose_transparent_composite,
+    compose_transparent_insert,
 };
 
 use super::super::super::{ScreenUbo, VBUF64_FORMAT};
@@ -196,7 +197,32 @@ pub(super) fn insert(
     layouts: &Layouts,
     depth_format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
-    let module = module(device, "transparent_insert", compose_transparent_insert());
+    insert_from(device, layouts, depth_format, compose_transparent_insert())
+}
+
+/// A clipped material's own insert, which runs its surface to drop what falls below the clip.
+pub(super) fn clip_insert(
+    device: &wgpu::Device,
+    layouts: &Layouts,
+    depth_format: wgpu::TextureFormat,
+    surface: &SurfaceSource,
+) -> wgpu::RenderPipeline {
+    let source = compose_material_shader(
+        TRANSPARENT_CLIP_INSERT_FRAME,
+        &surface.params_wgsl,
+        &surface.source,
+        false,
+    );
+    insert_from(device, layouts, depth_format, source)
+}
+
+fn insert_from(
+    device: &wgpu::Device,
+    layouts: &Layouts,
+    depth_format: wgpu::TextureFormat,
+    source: String,
+) -> wgpu::RenderPipeline {
+    let module = module(device, "transparent_insert", source);
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("transparent_insert"),
         layout: Some(&layouts.material),

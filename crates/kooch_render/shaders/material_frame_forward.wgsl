@@ -4,5 +4,9 @@
 
 @fragment
 fn fs_forward(in: ForwardOut) -> @location(0) vec4<f32> {
-    return transparent_lit(in.slot, in.triangle, in.position.xy);
+    let lit = transparent_lit(in.slot, in.triangle, in.position.xy);
+    if (lit.a < 0.0) {
+        discard;
+    }
+    return lit;
 }

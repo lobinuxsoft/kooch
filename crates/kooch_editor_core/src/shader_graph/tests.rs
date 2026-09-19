@@ -423,4 +423,41 @@ fn transparent_writes_alpha() {
     assert_eq!(shader.kind, kooch_render::material::ShaderKind::Transparent);
 }
 
+/// Wiring alpha clip masks the shader and the result compiles; left unwired, it stays opaque.
+#[test]
+fn a_wired_clip_masks() {
+    for kind in ["surface", "unlit", "transparent"] {
+        let mut graph = Graph::new();
+        let uv = graph.insert_node(Pos2::ZERO, Node::Uv);
+        let output = graph.insert_node(
+            Pos2::ZERO,
+            Node::ShaderOutput {
+                kind: kind.to_owned(),
+            },
+        );
+        assert!(!Shader::parse(&generate(&graph).unwrap()).unwrap().masked());
+        let clip = Node::ShaderOutput {
+            kind: kind.to_owned(),
+        }
+        .inputs()
+        .len()
+            - 1;
+        graph.connect(
+            OutPinId {
+                node: uv,
+                output: 0,
+            },
+            InPinId {
+                node: output,
+                input: clip,
+            },
+        );
+        let source = generate(&graph).unwrap();
+        let shader = Shader::parse(&source).unwrap();
+        assert!(shader.masked(), "{source}");
+        kooch_render::meshlet::validate_surface(&shader.params_wgsl(), &shader.source)
+            .unwrap_or_else(|why| panic!("{kind} does not compile: {why}\n{source}"));
+    }
+}
+
 mod typed_params;

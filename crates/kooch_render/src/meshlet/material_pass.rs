@@ -67,10 +67,20 @@ pub fn compose_transparent_insert() -> String {
         SURFACE_RECONSTRUCT_SHADER,
         TRANSPARENT_LAYERS,
         include_str!("../../shaders/transparent_vertex.wgsl"),
+        include_str!("../../shaders/transparent_keeps.wgsl"),
         include_str!("../../shaders/transparent_insert.wgsl"),
     ]
     .join("\n")
 }
+
+/// A clipped transparent material's own insert (#452): its surface drops what falls below the
+/// clip before it takes a layer. Entry points: `vs_forward`, `fs_insert`.
+pub const TRANSPARENT_CLIP_INSERT_FRAME: &str = concat!(
+    include_str!("../../shaders/transparent_layers.wgsl"),
+    include_str!("../../shaders/transparent_vertex.wgsl"),
+    include_str!("../../shaders/transparent_clip.wgsl"),
+    include_str!("../../shaders/transparent_insert.wgsl"),
+);
 
 /// The layers and the tail over the opaque radiance. Entry points: `vs_fullscreen`,
 /// `fs_composite`.
@@ -251,6 +261,47 @@ pub fn validate_surface(params: &str, surface: &str) -> Result<(), String> {
             naga::front::wgsl::parse_str(&expected).map_err(|e| e.message().to_owned())?;
         if module.entry_points.len() != expected.entry_points.len() {
             return Err("a surface shader declares no entry points of its own".to_owned());
+        }
+    }
+    // A masked shader also rasterises (#452), in a frame of its own on either visibility buffer,
+    // or inserts in one when it is transparent.
+    if crate::material::masks(surface) {
+        let composed =
+            compose_material_shader(TRANSPARENT_CLIP_INSERT_FRAME, params, surface, false);
+        let module = naga::front::wgsl::parse_str(&composed)
+            .map_err(|e| format!("{}{}", at(e.location(&composed)), e.message()))?;
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .map_err(|e| {
+            let location = e.spans().next().map(|(span, _)| span.location(&composed));
+            format!("{}{}", at(location), e.as_inner())
+        })?;
+        use crate::meshlet::{MaskedTarget, compose_masked_shader};
+        for target in [MaskedTarget::R64, MaskedTarget::R32] {
+            let before = compose_masked_shader(target, params, "// surface")
+                .lines()
+                .position(|line| line == "// surface")
+                .unwrap_or_default();
+            let composed = compose_masked_shader(target, params, surface);
+            let at = |location: Option<naga::SourceLocation>| {
+                location
+                    .map(|l| format!("line {}: ", (l.line_number as usize).saturating_sub(before)))
+                    .unwrap_or_default()
+            };
+            let module = naga::front::wgsl::parse_str(&composed)
+                .map_err(|e| format!("{}{}", at(e.location(&composed)), e.message()))?;
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .map_err(|e| {
+                let location = e.spans().next().map(|(span, _)| span.location(&composed));
+                format!("{}{}", at(location), e.as_inner())
+            })?;
         }
     }
     Ok(())

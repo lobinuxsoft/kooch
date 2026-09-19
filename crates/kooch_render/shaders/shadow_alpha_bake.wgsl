@@ -1,5 +1,5 @@
-// shadow_alpha_bake.wgsl — one transparent material's coverage over its uv square, for the shadow
-// rasters to read (#1224). The same `surface` the scene runs, asked at uv and time only: a shadow
+// shadow_alpha_bake.wgsl — one transparent or masked material's coverage over its uv square, for
+// the shadow rasters to read (#1224). The same `surface` the scene runs, asked at uv and time only: a shadow
 // has no viewer to be seen from, so the rest of `SurfaceInput` is a plain upward surface.
 
 struct ScreenUniforms {
@@ -50,5 +50,10 @@ fn fs_bake(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     surf.material_id = screen.material_id;
     surf.flags = 0u;
     let shaded = surface(surface_input(surf, position.xy));
-    return vec4<f32>(clamp(shaded.alpha, 0.0, 1.0));
+    if (SURFACE_TRANSPARENT) {
+        let kept = shaded.alpha >= shaded.alpha_clip;
+        return vec4<f32>(select(0.0, clamp(shaded.alpha, 0.0, 1.0), kept));
+    }
+    // Masked (#452): the cut itself, which the rasters read with a hard threshold.
+    return vec4<f32>(select(0.0, 1.0, shaded.alpha >= shaded.alpha_clip));
 }

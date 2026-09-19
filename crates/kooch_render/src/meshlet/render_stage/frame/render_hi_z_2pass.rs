@@ -153,6 +153,29 @@ impl MeshletRenderStage {
                 &mut self.frame_bind_groups[arena_idx],
             );
         }
+        // #452 — each cull's masked survivors, binned before its raster draws them.
+        let materials = resources.get::<crate::material::MaterialPipeline>();
+        if self.masked.any() {
+            let frame = crate::meshlet::MaskedFrame {
+                view_proj,
+                camera_position: cam_pos,
+                size: self.views[view_id].render_size,
+                mip_bias_scale: 1.0,
+                time: resources
+                    .get::<kooch_core::time::Time>()
+                    .map(|t| t.elapsed_secs())
+                    .unwrap_or(0.0),
+            };
+            self.masked.frame(queue, &frame);
+            let view = &mut self.views[view_id];
+            self.masked.bin(
+                device,
+                &mut encoder,
+                &mut view.masked_bins,
+                &view.cull,
+                &self.scene,
+            );
+        }
         // Raster A: clear vbuf + depth, draw pass A's survivors.
         self.rasterizer.render_scene(
             device,
@@ -166,6 +189,11 @@ impl MeshletRenderStage {
             view_proj,
             0,
             /* clear */ true,
+            materials.map(|materials| crate::meshlet::MaskedDraw {
+                raster: &self.masked,
+                bins: &self.views[view_id].masked_bins,
+                materials,
+            }),
         );
         // Stage 0 (Pass A) closes here. `render()`'s prelude already
         // emitted `write_start` which lands on stage 0.
@@ -232,6 +260,16 @@ impl MeshletRenderStage {
                 &mut self.frame_bind_groups[arena_idx],
             );
         }
+        {
+            let view = &mut self.views[view_id];
+            self.masked.bin(
+                device,
+                &mut encoder,
+                &mut view.masked_bins,
+                &view.cull,
+                &self.scene,
+            );
+        }
         // Raster B: load (preserve pass-A vbuf + depth) and draw
         // pass A + B contributions.
         self.rasterizer.render_scene(
@@ -246,6 +284,11 @@ impl MeshletRenderStage {
             view_proj,
             0,
             /* clear */ false,
+            materials.map(|materials| crate::meshlet::MaskedDraw {
+                raster: &self.masked,
+                bins: &self.views[view_id].masked_bins,
+                materials,
+            }),
         );
         if let (Some(scopes), Some(query)) = (scopes, pass_b_query) {
             scopes.end(&mut encoder, query);

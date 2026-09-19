@@ -15,6 +15,7 @@ fn source(revision: u64, text: &str) -> SurfaceSource {
         params_wgsl: shader.params_wgsl().into(),
         params: shader.params.clone().into(),
         kind: shader.kind,
+        masked: shader.masked(),
         source: shader.source.into(),
     }
 }

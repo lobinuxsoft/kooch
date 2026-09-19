@@ -15,6 +15,9 @@ pub const INSTANCE_TRANSPARENT: u32 = 1u32 << 1;
 
 /// Left out of every shadow view: its renderer's `cast_shadows` is off.
 pub const INSTANCE_CASTS_NO_SHADOW: u32 = 1u32 << 2;
+/// Rasterised by its material's masked bin, so the opaque draw leaves it out (#452). Set per frame
+/// by `MaskedRaster::assign`, only once the bin exists.
+pub const INSTANCE_MASKED: u32 = 1u32 << 3;
 
 /// How many instances lead the list before the first transparent one: what every cull is given.
 pub fn opaque_count(instances: &[MeshInstance]) -> usize {

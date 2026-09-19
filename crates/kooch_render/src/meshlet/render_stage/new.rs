@@ -64,6 +64,16 @@ impl MeshletRenderStage {
             DEFAULT_MAX_TRIANGLES as u32,
         ));
 
+        let masked = crate::meshlet::MaskedRaster::new(
+            device,
+            match vbuf64.is_supported() {
+                true => crate::meshlet::MaskedTarget::R64,
+                false => crate::meshlet::MaskedTarget::R32,
+            },
+            cull_pipelines.meshlet_bind_group_layout(),
+            wgpu::TextureFormat::Depth32Float,
+        );
+
         // Reject-reason overlay (#454.4). Same atomic gate as the density texture above — both ride
         // the `MeshletDebugCaps::supports_texture_atomic` baseline split.
         let reject_overlay = if debug_caps.supports_texture_atomic() {
@@ -105,6 +115,7 @@ impl MeshletRenderStage {
             instance_bounds: Vec::new(),
             forward_list: Default::default(),
             shadow_alpha: crate::shadow::ShadowAlpha::new(device),
+            masked,
             previous_bounds: Vec::new(),
             moved_casters: Vec::new(),
             point_cube_cache: Vec::new(),

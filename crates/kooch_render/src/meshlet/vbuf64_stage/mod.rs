@@ -48,12 +48,12 @@ pub(super) use compute_shade::enabled_by_environment as compute_shading_override
 pub(super) use shading_rate::rate_from_environment as shading_rate_override;
 
 /// Storage texture format for the atomic visibility buffer.
-pub(super) const VBUF64_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R64Uint;
+pub(crate) const VBUF64_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R64Uint;
 
 /// Format of the dummy color attachment the R64 raster pipeline declares to satisfy wgpu's
 /// "fragment stage requires ≥ 1 color target" rule. `R8Uint` keeps memory at 1 byte/pixel; the
 /// pipeline's `write_mask` is empty so no fragment writes ever land here.
-pub(super) const DUMMY_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Uint;
+pub(crate) const DUMMY_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Uint;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
@@ -276,13 +276,18 @@ impl Vbuf64Stage {
     }
 
     /// What the uv derivatives are multiplied by before a mip is chosen — `exp2(mip_bias)` (#881).
-    fn mip_bias_scale(&self) -> f32 {
+    pub(crate) fn mip_bias_scale(&self) -> f32 {
         if !self.technique.is_temporal() {
             return 1.0;
         }
         let render = self.size.0.max(1) as f32;
         let output = self.output_size.0.max(1) as f32;
         (render / output) * 0.5
+    }
+
+    /// The size it rasterises at.
+    pub(crate) fn render_size(&self) -> (u32, u32) {
+        self.size
     }
 
     /// Whether this view shades in compute.
@@ -456,6 +461,7 @@ impl Vbuf64Stage {
         scene: &MeshletScene,
         view_proj: glam::Mat4,
         clear_depth: bool,
+        masked: Option<crate::meshlet::MaskedDraw<'_>>,
     ) {
         self.clear.dispatch(
             device,
@@ -483,6 +489,7 @@ impl Vbuf64Stage {
             scene,
             view_proj,
             clear_depth,
+            masked,
         );
     }
 }

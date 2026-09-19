@@ -148,7 +148,7 @@ fn a_custom_surface_validates() {
 
 const UNLIT_RED: &str = "// kind: unlit
 fn unlit(input: SurfaceInput) -> UnlitOutput {
-    return UnlitOutput(vec3<f32>(1.0, 0.0, 0.0), 1.0);
+    return UnlitOutput(vec3<f32>(1.0, 0.0, 0.0), 1.0, 0.0);
 }";
 
 /// An unlit body composes into both frames and the preview.

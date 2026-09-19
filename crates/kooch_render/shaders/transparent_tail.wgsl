@@ -20,6 +20,9 @@ fn fs_tail(in: ForwardOut) -> TailOut {
         discard;
     }
     let lit = transparent_lit(in.slot, in.triangle, in.position.xy);
+    if (lit.a < 0.0) {
+        discard;
+    }
     let world = resolve_surface(in.slot, in.triangle, in.position.xy).world_position;
     let distance = length(inti.camera_position - world);
     // Equation 9 of the paper, in metres: nearer and more opaque weighs more.

@@ -238,7 +238,24 @@ fn the_transparent_kind_is_read() {
     let shader = Shader::parse("// kind: transparent\nfn surface() {}").unwrap();
     assert_eq!(shader.kind, ShaderKind::Transparent);
     assert!(shader.params_wgsl().contains("SURFACE_UNLIT: bool = false"));
-    assert!(shader.params_wgsl().contains("SURFACE_TRANSPARENT: bool = true"));
+    assert!(
+        shader
+            .params_wgsl()
+            .contains("SURFACE_TRANSPARENT: bool = true")
+    );
     let opaque = Shader::parse("fn surface() {}").unwrap();
-    assert!(opaque.params_wgsl().contains("SURFACE_TRANSPARENT: bool = false"));
+    assert!(
+        opaque
+            .params_wgsl()
+            .contains("SURFACE_TRANSPARENT: bool = false")
+    );
+}
+
+/// Assigning `alpha_clip` masks a shader; reading or mentioning it does not.
+#[test]
+fn assigning_alpha_clip_masks() {
+    assert!(masks("    out.alpha_clip = 0.5;"));
+    assert!(!masks("    // out.alpha_clip = 0.5;"));
+    assert!(!masks("    if out.alpha_clip == 0.5 {"));
+    assert!(!masks("    out.alpha = 0.5;"));
 }

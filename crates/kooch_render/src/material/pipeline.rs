@@ -27,6 +27,8 @@ pub struct SurfaceSource {
     pub params_wgsl: std::sync::Arc<str>,
     /// Which pass builds it: a post-process never reaches the surface path.
     pub kind: ShaderKind,
+    /// Assigns `alpha_clip`: rasterised in the masked bin (#452).
+    pub masked: bool,
 }
 
 /// Textures whose `.meta` changed and have to be uploaded again.
@@ -340,6 +342,7 @@ impl MaterialPipeline {
                 params: shader.params.clone().into(),
                 params_wgsl: shader.params_wgsl().into(),
                 kind: shader.kind,
+                masked: shader.masked(),
             },
         );
     }
@@ -400,6 +403,7 @@ impl MaterialPipeline {
                     params: shader.params.clone().into(),
                     params_wgsl: shader.params_wgsl().into(),
                     kind: shader.kind,
+                    masked: shader.masked(),
                 },
             );
         }

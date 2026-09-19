@@ -1,13 +1,13 @@
 // transparent_insert.wgsl — every transparent fragment offered to its pixel's four layers (#452).
-// One pipeline for every material: nothing is shaded here, only kept or pushed out.
+// One pipeline for every material without a clip: nothing is shaded here, only kept or pushed out.
+// A material with one gets its own, whose `transparent_keeps` asks its surface.
 
-@group(0) @binding(4) var depth_prepass_texture: texture_depth_2d;
 @group(0) @binding(5) var<storage, read_write> layers: array<atomic<u64>>;
 @group(0) @binding(6) var<storage, read_write> overflow: array<atomic<u32>>;
 
 @fragment
 fn fs_insert(in: ForwardOut) {
-    if (opaque_covers(in.position)) {
+    if (opaque_covers(in.position) || !transparent_keeps(in)) {
         return;
     }
     let pixel = vec2<u32>(in.position.xy);
