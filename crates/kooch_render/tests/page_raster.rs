@@ -140,7 +140,7 @@ fn the_pair_list_outgrows_constants() {
 /// The per-view clear of `visible_counts` must not reach the lamps' buckets.
 #[test]
 fn the_clear_spares_lamp_buckets() {
-    let source = include_str!("../src/shadow/pages/raster.rs");
+    let source = include_str!("../src/shadow/pages/raster/record.rs");
     assert!(
         !source.contains("clear_buffer(&self.visible_counts, 0, None)"),
         "the per-view clear spans the whole buffer again; it must stop at the sun's levels,          because the lamps' cull runs once a frame and will not refill what a second view wiped"
@@ -1884,13 +1884,13 @@ fn the_counters_carry_the_expansions_cost() {
 fn the_page_passes_are_profiled() {
     for (name, source, wanted) in [
         (
-            "frame/pages.rs",
-            include_str!("../src/meshlet/render_stage/frame/pages.rs"),
+            "frame/pages/record.rs",
+            include_str!("../src/meshlet/render_stage/frame/pages/record.rs"),
             "shadow pages",
         ),
         (
-            "pages/raster.rs",
-            include_str!("../src/shadow/pages/raster.rs"),
+            "pages/raster/record.rs",
+            include_str!("../src/shadow/pages/raster/record.rs"),
             "cull: clipmap levels",
         ),
     ] {
@@ -1902,10 +1902,13 @@ fn the_page_passes_are_profiled() {
 
     // And the two entry points that record the GPU work.
     for (name, source) in [
-        ("pages/mark.rs", include_str!("../src/shadow/pages/mark.rs")),
         (
-            "pages/raster.rs",
-            include_str!("../src/shadow/pages/raster.rs"),
+            "pages/mark/record.rs",
+            include_str!("../src/shadow/pages/mark/record.rs"),
+        ),
+        (
+            "pages/raster/record.rs",
+            include_str!("../src/shadow/pages/raster/record.rs"),
         ),
     ] {
         assert!(
@@ -1918,12 +1921,12 @@ fn the_page_passes_are_profiled() {
     // its `close()` is not a missing timing: wgpu refuses the whole encoder — "a debug group was
     // not popped before the encoder was finished" — and the frame stops being submitted at all.
     {
-        let source = include_str!("../src/shadow/pages/raster.rs");
+        let source = include_str!("../src/shadow/pages/raster/record.rs");
         let opened = source.matches("= nested(track,").count();
         let closed = source.matches("close(track,").count();
         assert_eq!(
             opened, closed,
-            "pages/raster.rs opens {opened} GPU scopes and closes {closed}; an unpopped \
+            "pages/raster/record.rs opens {opened} GPU scopes and closes {closed}; an unpopped \
              debug group makes wgpu reject the encoder and the frame never reaches the queue"
         );
     }
@@ -1932,13 +1935,13 @@ fn the_page_passes_are_profiled() {
     // per frame on the OneXFly that no capture could see.
     for (name, source, wanted) in [
         (
-            "frame/pages.rs",
-            include_str!("../src/meshlet/render_stage/frame/pages.rs"),
+            "frame/pages/record.rs",
+            include_str!("../src/meshlet/render_stage/frame/pages/record.rs"),
             ["shadow pages", "page mark", "page raster"].as_slice(),
         ),
         (
-            "pages/raster.rs",
-            include_str!("../src/shadow/pages/raster.rs"),
+            "pages/raster/record.rs",
+            include_str!("../src/shadow/pages/raster/record.rs"),
             ["page cull", "page expand", "page depth"].as_slice(),
         ),
     ] {
