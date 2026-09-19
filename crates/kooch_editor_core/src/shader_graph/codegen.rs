@@ -44,13 +44,26 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         "vec4<f32>(0.5)",
         "vec4<f32>(0.0)",
     ];
-    let fallbacks: Vec<&str> = if unlit || post {
+    // Alpha, then the clip it is tested against (#452); a transparent output blends instead.
+    let fallbacks: Vec<&str> = if post {
         vec!["vec4<f32>(0.0)", "vec4<f32>(1.0)"]
+    } else if unlit {
+        vec!["vec4<f32>(0.0)", "vec4<f32>(1.0)", "vec4<f32>(0.0)"]
     } else if transparent {
         [surface, &["vec4<f32>(1.0)"]].concat()
     } else {
-        surface.to_vec()
+        [surface, &["vec4<f32>(1.0)", "vec4<f32>(0.0)"]].concat()
     };
+    // Masked only when the clip is wired: an unwired clip would rasterise in the slower bin for
+    // nothing.
+    let clip = (!post && !transparent)
+        .then_some(fallbacks.len() - 1)
+        .filter(|&input| {
+            body.wires.contains_key(&InPinId {
+                node: output,
+                input,
+            })
+        });
     let outputs: Vec<String> = fallbacks
         .iter()
         .enumerate()
@@ -94,9 +107,12 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         let _ = writeln!(source, "    out.metallic = {}.x;", outputs[2]);
         let _ = writeln!(source, "    out.roughness = {}.x;", outputs[3]);
         let _ = writeln!(source, "    out.emissive = {}.rgb;", outputs[4]);
-        if transparent {
+        if transparent || clip.is_some() {
             let _ = writeln!(source, "    out.alpha = {}.x;", outputs[5]);
         }
+    }
+    if let Some(input) = clip {
+        let _ = writeln!(source, "    out.alpha_clip = {}.x;", outputs[input]);
     }
     let _ = writeln!(source, "    return out;\n}}");
     finish(source)
