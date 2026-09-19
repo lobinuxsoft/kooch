@@ -120,7 +120,16 @@ fn the_counter_runs_do_not_overlap() {
 /// Every buffer this pass copies OUT of declares that it can be.
 #[test]
 fn every_copied_buffer_can_be_copied_from() {
-    let source = include_str!("../raster.rs");
+    // The whole module: the copies and the descriptors live in its submodules.
+    let source = [
+        include_str!("../raster.rs"),
+        include_str!("new.rs"),
+        include_str!("state.rs"),
+        include_str!("record.rs"),
+        include_str!("readback.rs"),
+    ]
+    .concat();
+    let source = source.as_str();
     // The buffers this pass copies out of, by the field name the
     // copy uses.
     let mut copied = copied_fields(source);
