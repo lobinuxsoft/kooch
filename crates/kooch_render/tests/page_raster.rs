@@ -1902,7 +1902,10 @@ fn the_page_passes_are_profiled() {
 
     // And the two entry points that record the GPU work.
     for (name, source) in [
-        ("pages/mark.rs", include_str!("../src/shadow/pages/mark.rs")),
+        (
+            "pages/mark/record.rs",
+            include_str!("../src/shadow/pages/mark/record.rs"),
+        ),
         (
             "pages/raster/record.rs",
             include_str!("../src/shadow/pages/raster/record.rs"),
