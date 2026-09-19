@@ -155,3 +155,37 @@ fn the_tail_keeps_deep_layers() {
     let three = wall_through(3).unwrap();
     assert!(three < two, "a third pane hides nothing: {three} vs {two}");
 }
+
+/// A transparent object casts a solid shadow (#452; by alpha is #1224): a nearly invisible pane
+/// under the blue light takes more blue off the image than its own 5% cover could. Measured: 4.9%
+/// with the shadow, 0.09% without.
+#[test]
+fn glass_casts_a_shadow() {
+    let blue = |with_pane: bool| {
+        let mut r = common::lit_scene::rig_with_caster(2)?;
+        if with_pane {
+            pane(
+                &mut r,
+                "0.0, 0.0, 0.0",
+                0.05,
+                Mat4::from_translation(Vec3::new(0.0, 1.2, 1.0))
+                    * Mat4::from_scale(Vec3::new(2.5, 0.02, 2.5)),
+            );
+        }
+        // Settled, as the shadow tests do: the pages fill over a few frames.
+        let mut pixels = Vec::new();
+        for _ in 0..4 {
+            pixels = common::lit_scene::render(&mut r, true);
+        }
+        Some(pixels.chunks_exact(4).map(|p| p[2] as u64).sum::<u64>())
+    };
+    let Some(open) = blue(false) else {
+        eprintln!("no R64-capable adapter; skipping");
+        return;
+    };
+    let shaded = blue(true).unwrap();
+    assert!(
+        shaded * 100 < open * 97,
+        "the pane took {open} → {shaded} of the blue light: no shadow",
+    );
+}

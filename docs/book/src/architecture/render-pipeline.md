@@ -413,9 +413,12 @@ Then [Inti](./lighting.md) — Cook-Torrance driven by the scene's lights.
 
 ### Transparent surfaces (#452)
 
-A `transparent` material's instances are appended after every opaque one, and every cull — the
-view's, the cascades', the pages' — is handed the opaque count, so they never reach the visibility
-buffer and cast no shadow. They are drawn on the compute path after the shade (and its upsample) and before the temporal
+A `transparent` material's instances are appended after every opaque one. The view's cull is
+handed the opaque count, so they never reach the visibility buffer; the shadow culls — cascades and
+pages — are handed every instance, so they cast a solid shadow (one that follows the alpha is
+#1224).
+
+They are drawn on the compute path after the shade (and its upsample) and before the temporal
 resolve, from a packed `(instance, meshlet)` list of each instance's finest meshlets:
 
 1. **Insert** — one raster of both faces for every material. Each fragment builds a 64-bit key,

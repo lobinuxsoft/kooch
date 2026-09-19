@@ -212,11 +212,11 @@ impl MeshletRenderStage {
             );
         }
 
-        // 🔴 Every cull — the view's, the cascades', the pages' — sees the opaque instances alone. The
-        // transparent ones follow them in the same buffer and only the forward pass draws them;
-        // they cast no shadow (#452).
+        // 🔴 The shadow culls — the cascades', the pages' — see every instance, so transparent ones
+        // cast a solid shadow (#452; by alpha is #1224). The view's cull sees the opaque ones alone:
+        // they lead the buffer, and only the transparent passes draw the rest.
         let opaque = crate::meshlet::scene::opaque_count(&instances);
-        let scene_params = SceneCullParams::new(opaque as u32, max_meshlets_per_mesh);
+        let scene_params = SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
         // Worst case for every cull this frame, the view's and the four
         // cascades': one thread per instance-meshlet pair.
         let required_capacity = scene_params
@@ -355,7 +355,11 @@ impl MeshletRenderStage {
             self.gpu_timers.write_start(&mut encoder);
         }
 
-        let instance_count = opaque as u32;
+        let instance_count = instances.len() as u32;
+        let view_params = SceneCullParams {
+            instance_count: opaque as u32,
+            ..scene_params
+        };
 
         // Contact shadows (#735). Built here rather than in each path because both need it and only
         // this function still holds the camera's lens: `near` and `far` are what turn a stored
@@ -421,11 +425,12 @@ impl MeshletRenderStage {
                 unjittered_view_proj,
                 cam_pos,
                 &cull_params,
+                &view_params,
                 &scene_params,
                 &meshlet_bg,
                 &contact,
                 timer_slot,
-                instance_count,
+                opaque as u32,
             );
         }
 
@@ -438,12 +443,12 @@ impl MeshletRenderStage {
             view_proj,
             cam_pos,
             &cull_params,
-            &scene_params,
+            &view_params,
             &meshlet_bg,
             &material_bg,
             &contact,
             timer_slot,
-            instance_count,
+            opaque as u32,
         )
     }
 }
