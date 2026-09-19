@@ -507,3 +507,36 @@ fn a_group_menu_stays_open() {
     harness.run(vec![]);
     assert_eq!(harness.annotations.groups[0].title, "Group dither");
 }
+
+/// A note's text and Delete live in its right-click menu, so the note must see secondary clicks.
+#[test]
+fn a_note_edits_from_its_menu() {
+    let mut harness = Harness::new();
+    harness.annotations.note(Pos2::new(-60.0, 200.0));
+    harness.run(vec![]);
+    let note = harness.to_screen * Pos2::new(-50.0, 205.0);
+    let button = |pos, button, pressed| egui::Event::PointerButton {
+        pos,
+        button,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let secondary = egui::PointerButton::Secondary;
+    harness.run(vec![
+        egui::Event::PointerMoved(note),
+        button(note, secondary, true),
+    ]);
+    harness.run(vec![button(note, secondary, false)]);
+    harness.run(vec![]);
+    let field = note + Vec2::new(40.0, 16.0);
+    let primary = egui::PointerButton::Primary;
+    harness.run(vec![
+        egui::Event::PointerMoved(field),
+        button(field, primary, true),
+    ]);
+    harness.run(vec![button(field, primary, false)]);
+    harness.run(vec![]);
+    harness.run(vec![egui::Event::Text("!".to_owned())]);
+    harness.run(vec![]);
+    assert!(harness.annotations.notes[0].text.contains('!'));
+}
