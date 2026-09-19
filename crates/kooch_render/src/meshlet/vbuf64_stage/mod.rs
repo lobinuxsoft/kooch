@@ -8,6 +8,7 @@ mod dlss;
 mod forward;
 
 pub(crate) use forward::ForwardList;
+pub(crate) use shader_cache::ShaderPipelines;
 mod fsr3;
 mod jitter;
 mod motion;

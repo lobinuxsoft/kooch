@@ -871,6 +871,7 @@ fn lamp_page_holds_its_view(
         &[],
         1.0,
         None,
+        None,
     );
     queue.submit([encoder.finish()]);
 
@@ -982,6 +983,7 @@ fn lamp_page_holds_its_view(
         &[],
         1.0,
         None,
+        None,
     );
     queue.submit([encoder.finish()]);
     let counts = read_words(&device, &queue, raster.counts_buffer());
@@ -1030,6 +1032,7 @@ fn lamp_page_holds_its_view(
         &lights_buffer,
         &[[0.45, 2.0, -0.45, 0.5]],
         1.0,
+        None,
         None,
     );
     queue.submit([encoder.finish()]);
@@ -2573,6 +2576,7 @@ fn both_expansions_emit_the_same_pairs() {
             &lights_buffer,
             &[],
             1.0,
+            None,
             None,
         );
         queue.submit([encoder.finish()]);

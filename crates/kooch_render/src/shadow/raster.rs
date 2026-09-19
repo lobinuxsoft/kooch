@@ -17,6 +17,8 @@ use super::point::{CUBE_FACES, PointShadowDraw};
 const POINT_UBO_BASE: usize = CASCADE_COUNT + kooch_lighting::MAX_SPOT_SHADOWS;
 
 const SHADER_SOURCE: &str = include_str!("../../shaders/shadow_depth.wgsl");
+/// Appended to [`SHADER_SOURCE`] for the transparent casters' variant (#1224).
+const ALPHA_SOURCE: &str = include_str!("../../shaders/shadow_depth_alpha.wgsl");
 
 /// A shadow gets the same geometric budget as the camera.
 const SHADOW_LOD_RELAXATION: f32 = 1.0;
@@ -37,6 +39,10 @@ struct CascadeUbo {
 /// The depth-only pipeline and the per-cascade uniforms.
 pub struct ShadowRasterizer {
     pipeline: wgpu::RenderPipeline,
+    /// The same, dropping what a transparent caster's coverage does not reach (#1224).
+    pipeline_alpha: wgpu::RenderPipeline,
+    /// This frame's coverage, when any transparent material casts by alpha.
+    alpha: Option<wgpu::BindGroup>,
     /// Whether the pipeline clamps depth instead of clipping it. When it
     /// does, a cascade needs no near-plane margin at all.
     unclipped_depth: bool,
@@ -106,40 +112,77 @@ impl ShadowRasterizer {
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("shadow_depth_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_shadow"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            // No fragment stage at all. Depth goes through fixed-function hardware; there is no
-            // invocation to skip and nothing to disable early-Z. See shadow_depth.wgsl for what
-            // that costs (alpha-cut geometry does not cut).
-            fragment: None,
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                // Back-face culling, the same as the main pass.
-                cull_mode: Some(wgpu::Face::Back),
-                unclipped_depth,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: SHADOW_DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                // Reversed-Z, like every other depth test in the engine.
-                depth_compare: Some(wgpu::CompareFunction::Greater),
-                stencil: wgpu::StencilState::default(),
-                // None: the bias lives in the shading pass, in world
-                // space, the way Bevy 0.19 does it. See `DEPTH_BIAS`.
-                bias: DEPTH_BIAS,
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
+        let alpha_bgl = super::ShadowAlpha::bind_group_layout(device);
+        let alpha_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("shadow_depth_alpha_layout"),
+            bind_group_layouts: &[
+                Some(&cascade_bgl),
+                Some(meshlet_bgl),
+                Some(&visible_bgl),
+                Some(&instances_bgl),
+                Some(&alpha_bgl),
+            ],
+            immediate_size: 0,
         });
+        let alpha_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("shadow_depth_alpha_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{SHADER_SOURCE}\n{}\n{ALPHA_SOURCE}",
+                    super::shadow_alpha_shader(4)
+                )
+                .into(),
+            ),
+        });
+        let build =
+            |label, layout: &wgpu::PipelineLayout, module, vertex, fragment: Option<&str>| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(layout),
+                    vertex: wgpu::VertexState {
+                        module,
+                        entry_point: Some(vertex),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    // No fragment stage in the plain pipeline. Depth goes through fixed-function
+                    // hardware; there is no invocation to skip and nothing to disable early-Z.
+                    fragment: fragment.map(|entry| wgpu::FragmentState {
+                        module,
+                        entry_point: Some(entry),
+                        targets: &[],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        // Back-face culling, the same as the main pass.
+                        cull_mode: Some(wgpu::Face::Back),
+                        unclipped_depth,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: SHADOW_DEPTH_FORMAT,
+                        depth_write_enabled: Some(true),
+                        // Reversed-Z, like every other depth test in the engine.
+                        depth_compare: Some(wgpu::CompareFunction::Greater),
+                        stencil: wgpu::StencilState::default(),
+                        // None: the bias lives in the shading pass, in world
+                        // space, the way Bevy 0.19 does it. See `DEPTH_BIAS`.
+                        bias: DEPTH_BIAS,
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            };
+        let pipeline = build("shadow_depth_pipeline", &layout, &shader, "vs_shadow", None);
+        let pipeline_alpha = build(
+            "shadow_depth_alpha_pipeline",
+            &alpha_layout,
+            &alpha_shader,
+            "vs_shadow_alpha",
+            Some("fs_shadow_alpha"),
+        );
 
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
         let cascade_stride = align.max(std::mem::size_of::<CascadeUbo>() as u64);
@@ -155,12 +198,30 @@ impl ShadowRasterizer {
 
         Self {
             pipeline,
+            pipeline_alpha,
+            alpha: None,
             unclipped_depth,
             cascade_bgl,
             visible_bgl,
             instances_bgl,
             cascade_buffer,
             cascade_stride,
+        }
+    }
+
+    /// The coverage this frame's draws read, or `None` for the fragment-less pipeline (#1224).
+    pub fn set_alpha(&mut self, alpha: Option<&wgpu::BindGroup>) {
+        self.alpha = alpha.cloned();
+    }
+
+    /// Sets the pipeline, and the coverage when it is in use.
+    fn bind_pipeline(&self, pass: &mut wgpu::RenderPass<'_>) {
+        match &self.alpha {
+            Some(alpha) => {
+                pass.set_pipeline(&self.pipeline_alpha);
+                pass.set_bind_group(4, alpha, &[]);
+            }
+            None => pass.set_pipeline(&self.pipeline),
         }
     }
 
@@ -276,7 +337,7 @@ impl ShadowRasterizer {
                 multiview_mask: None,
             });
             // No viewport and no scissor: the layer IS the cascade.
-            pass.set_pipeline(&self.pipeline);
+            self.bind_pipeline(&mut pass);
             let offset = (i as u64 * self.cascade_stride) as u32;
             pass.set_bind_group(0, &cascade_bg, &[offset]);
             pass.set_bind_group(1, meshlet_bg, &[]);
@@ -393,7 +454,7 @@ impl ShadowRasterizer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
+            self.bind_pipeline(&mut pass);
             let offset = ((CASCADE_COUNT + slot) as u64 * self.cascade_stride) as u32;
             pass.set_bind_group(0, &cascade_bg, &[offset]);
             pass.set_bind_group(1, meshlet_bg, &[]);
@@ -507,7 +568,7 @@ impl ShadowRasterizer {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                pass.set_pipeline(&self.pipeline);
+                self.bind_pipeline(&mut pass);
                 pass.set_bind_group(0, &cascade_bg, &[self.point_ubo_offset(*slot, face) as u32]);
                 pass.set_bind_group(1, meshlet_bg, &[]);
                 pass.set_bind_group(2, &visible_bg, &[]);

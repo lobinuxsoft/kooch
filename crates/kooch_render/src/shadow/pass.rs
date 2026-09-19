@@ -181,6 +181,11 @@ impl ShadowPass {
         }
     }
 
+    /// The transparent casters' coverage this frame's draws read (#1224).
+    pub fn set_alpha(&mut self, alpha: Option<&wgpu::BindGroup>) {
+        self.rasterizer.set_alpha(alpha);
+    }
+
     /// Records the cull and depth passes for every cascade.
     #[allow(clippy::too_many_arguments)]
     pub fn record(

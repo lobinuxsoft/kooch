@@ -228,6 +228,9 @@ impl MeshletRenderStage {
             self.point_cube_cache[slot] = keys.get(slot).copied();
         }
 
+        if let Some(shadows) = self.shadows.as_mut() {
+            shadows.set_alpha(self.shadow_alpha.bind_group());
+        }
         let (Some(shadows), Some(pool)) = (self.shadows.as_ref(), self.gpu_pool.as_ref()) else {
             return;
         };

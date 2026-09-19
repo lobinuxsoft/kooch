@@ -66,11 +66,14 @@ fn fetch_local_vertex_index(byte_offset: u32) -> u32 {
     return (packed >> (byte_in_word * 8u)) & 0xffu;
 }
 
-@vertex
-fn vs_shadow(
-    @builtin(vertex_index) vertex_index: u32,
-    @builtin(instance_index) instance_index: u32,
-) -> @builtin(position) vec4<f32> {
+/// A caster's corner from the light: where it lands, and what a transparent one's coverage reads.
+struct ShadowCorner {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) @interpolate(flat) material: u32,
+}
+
+fn shadow_corner(vertex_index: u32, instance_index: u32) -> ShadowCorner {
     let packed_visible = visible_meshlets[instance_index];
     let inst_id = packed_visible >> 16u;
     let meshlet_id = packed_visible & 0xffffu;
@@ -79,11 +82,15 @@ fn vs_shadow(
     let triangle_idx = vertex_index / 3u;
     let corner_idx = vertex_index % 3u;
 
+    var out: ShadowCorner;
+    out.uv = vec2<f32>(0.0);
+    out.material = 0u;
     // The draw is indirect with a fixed vertex count per meshlet, so the tail of a meshlet with
     // fewer triangles still runs. Sending those vertices outside the clip volume discards the
     // triangle without a branch anywhere else.
     if (triangle_idx >= desc.triangle_count) {
-        return vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        return out;
     }
 
     let byte_offset = desc.triangle_offset + triangle_idx * 3u + corner_idx;
@@ -93,5 +100,16 @@ fn vs_shadow(
 
     let pos = vec3<f32>(v.position[0], v.position[1], v.position[2]);
     let world_pos = instances[inst_id].transform * vec4<f32>(pos, 1.0);
-    return cascade.view_proj * world_pos;
+    out.clip = cascade.view_proj * world_pos;
+    out.uv = vec2<f32>(v.uv[0], v.uv[1]);
+    out.material = instances[inst_id].material_id;
+    return out;
+}
+
+@vertex
+fn vs_shadow(
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
+) -> @builtin(position) vec4<f32> {
+    return shadow_corner(vertex_index, instance_index).clip;
 }

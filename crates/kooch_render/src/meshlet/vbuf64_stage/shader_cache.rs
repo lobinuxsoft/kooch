@@ -9,7 +9,7 @@ use crate::material::{ShaderKind, SurfaceSource};
 use crate::meshlet::validate_surface;
 
 /// One shading path's custom-shader pipelines, keyed by shader and debug variant.
-pub(super) struct ShaderPipelines<P> {
+pub(crate) struct ShaderPipelines<P> {
     built: Mutex<HashMap<(Guid, bool), Built<P>>>,
     /// The kinds this path draws; any other is someone else's.
     kinds: &'static [ShaderKind],
@@ -27,7 +27,7 @@ struct Built<P> {
 }
 
 impl<P: Clone> ShaderPipelines<P> {
-    pub(super) fn new(kinds: &'static [ShaderKind]) -> Self {
+    pub(crate) fn new(kinds: &'static [ShaderKind]) -> Self {
         Self {
             built: Mutex::new(HashMap::new()),
             kinds,
@@ -36,7 +36,7 @@ impl<P: Clone> ShaderPipelines<P> {
 
     /// The pipeline for `surface`, building it when its revision moved. `None` means the shader
     /// has never compiled and the caller shades with the default.
-    pub(super) fn get(
+    pub(crate) fn get(
         &self,
         guid: Guid,
         surface: &SurfaceSource,

@@ -95,9 +95,11 @@ and the far side of a glass seen through its near side all come out right. Both 
 each lit from the side you see. Past four, the rest still blend in, without order — only dense
 smoke or particles get there, and there the difference does not show.
 
-- **They cast a solid shadow**, as in Unity's URP: a pane at 30% blocks the light as a wall would.
-  Untick **cast_shadows** on its renderer to cast none. A shadow that follows the alpha is
-  [#1224](https://github.com/lobinuxsoft/kooch/issues/1224).
+- **Their shadow follows the alpha**: a pane at 30% blocks about 30% of the light, and a pattern in
+  the alpha shows in the shadow. Untick **cast_shadows** on its renderer to cast none. The alpha is
+  read at the surface's uv and the time only — an alpha that depends on where the surface stands or
+  where it is seen from casts as if it stood flat at the origin. Up to 32 transparent materials a
+  frame shade by alpha; any past that casts solid.
 - They write no depth: what is behind glass is still what contact shadows and occlusion see.
 - The layers need 64-bit atomics that report what they replaced (Vulkan and DX12 have them; Metal
   does not). Without them, or at resolutions too large for the layers to fit one buffer, objects are

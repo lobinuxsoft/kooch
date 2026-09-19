@@ -158,10 +158,24 @@ impl MeshletRenderStage {
             // point-shadow cube cache (#778, #847).
             self.instance_bounds.clear();
             self.instance_bounds.reserve(instances.len());
+            let materials = resources.get::<crate::material::MaterialPipeline>();
+            let frame = resources
+                .get::<kooch_core::time::Time>()
+                .map(|t| t.frame_count());
             for instance in &instances {
                 use std::hash::{Hash, Hasher};
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
                 bytemuck::bytes_of(instance).hash(&mut hasher);
+                // 🔴 A transparent caster whose coverage moves with time is a caster that moved:
+                // its pages and cube faces redraw, or its shadow freezes at the frame they were
+                // cached (#1224).
+                if instance.flags & crate::meshlet::scene::INSTANCE_TRANSPARENT != 0
+                    && materials
+                        .and_then(|m| m.slot_surface(instance.material_id))
+                        .is_some_and(|(_, s)| s.source.contains("input.time"))
+                {
+                    frame.hash(&mut hasher);
+                }
                 let bounds = self
                     .pipeline
                     .pool()
@@ -374,6 +388,21 @@ impl MeshletRenderStage {
                 .unwrap_or_default(),
             self.frames_recorded,
         );
+
+        // Before any shadow raster: the transparent casters' coverage they read (#1224).
+        if let Some(materials) = resources.get::<crate::material::MaterialPipeline>() {
+            let transparent: Vec<u32> = instances[opaque..]
+                .iter()
+                .filter(|i| i.flags & crate::meshlet::scene::INSTANCE_CASTS_NO_SHADOW == 0)
+                .map(|i| i.material_id)
+                .collect();
+            let time = resources
+                .get::<kooch_core::time::Time>()
+                .map(|t| t.elapsed_secs())
+                .unwrap_or_default();
+            self.shadow_alpha
+                .bake(device, queue, &mut encoder, materials, &transparent, time);
+        }
 
         // First in the encoder: every shading pass below samples the atlas this fills. Inside the
         // timer, because a shadow pass that costs four culls and four rasters is part of the frame

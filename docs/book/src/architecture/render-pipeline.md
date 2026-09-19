@@ -415,9 +415,19 @@ Then [Inti](./lighting.md) — Cook-Torrance driven by the scene's lights.
 
 A `transparent` material's instances are appended after every opaque one. The view's cull is
 handed the opaque count, so they never reach the visibility buffer; the shadow culls — cascades and
-pages — are handed every instance, so they cast a solid shadow (one that follows the alpha is
-#1224). A renderer with `cast_shadows` off carries `INSTANCE_CASTS_NO_SHADOW`, and every shadow
-view's cull (`CullParams::shadow`, and the lamp cull) skips it.
+pages — are handed every instance, so they cast. A renderer with `cast_shadows` off carries
+`INSTANCE_CASTS_NO_SHADOW`, and every shadow view's cull (`CullParams::shadow`, and the lamp cull)
+skips it.
+
+Their shadow follows their alpha (#1224) without any shadow raster knowing about materials: each
+frame, before the shadows, `ShadowAlpha` bakes every transparent caster's coverage over its uv
+square into one layer of a 128×128 `R8Unorm` array (32 layers), with a table naming each material
+slot's layer. The shadow rasters — cascades, spot and point faces, the virtual pages — switch to a
+variant whose fragment samples that coverage at the corner's uv and drops the fragment against a
+4×4 Bayer threshold, which the shadow filter averages into partial shadow. Only while a
+transparent material casts: otherwise the classic rasters keep their fragment-less pipeline. A
+caster whose shader reads `input.time` hashes the frame into its instance hash, so its cached
+pages and cube faces redraw instead of freezing.
 
 They are drawn on the compute path after the shade (and its upsample) and before the temporal
 resolve, from a packed `(instance, meshlet)` list of each instance's finest meshlets:
