@@ -116,3 +116,65 @@ fn a_zero_clip_keeps_everything() {
         "{kept:?} over {scene:?}"
     );
 }
+
+/// The blue light the image receives with a black masked pane clipped at `clip` under the caster,
+/// or no pane. `pages` puts the lights' shadows in the virtual pages instead of the classic maps.
+fn blue_under(clip: Option<f32>, pages: bool) -> Option<u64> {
+    let mut r = common::lit_scene::rig_with_caster(2)?;
+    if pages {
+        r.resources
+            .get_mut::<kooch_render::shadow::ShadowSettings>()
+            .unwrap()
+            .virtual_pages = true;
+    }
+    if let Some(clip) = clip {
+        let shader = Guid::new_v4();
+        let material = Guid::new_v4();
+        let materials = r.resources.get_mut::<MaterialPipeline>().unwrap();
+        let source = cut(clip).replace("vec3<f32>(8.0, 0.0, 0.0)", "vec3<f32>(0.0)");
+        materials.add_shader(shader, &Shader::parse(&source).unwrap());
+        let mut look = Material::new([0.0, 0.0, 0.0, 1.0], 0.0, 1.0, 0.0);
+        look.shader = Some(shader);
+        materials.register(&r.queue, material, &look);
+        let mut commands = Commands::new();
+        commands
+            .spawn(&mut r.resources)
+            .insert(MeshRenderer {
+                mesh: Some(r.mesh),
+                material: Some(material),
+                visible: true,
+                ..Default::default()
+            })
+            .insert(GlobalTransform {
+                matrix: Mat4::from_translation(Vec3::new(0.0, 1.2, 1.0))
+                    * Mat4::from_scale(Vec3::new(2.5, 0.02, 2.5)),
+            });
+        commands.apply(&mut r.resources);
+    }
+    // Settled, as the shadow tests do: the pages fill over a few frames.
+    let mut pixels = Vec::new();
+    for _ in 0..4 {
+        pixels = common::lit_scene::render(&mut r, true);
+    }
+    Some(pixels.chunks_exact(4).map(|p| p[2] as u64).sum::<u64>())
+}
+
+/// 🔴 A pane cut in half casts half a shadow, on both kinds of shadow map: solid, it would take as
+/// much light as the whole pane.
+#[test]
+fn the_shadow_is_cut_too() {
+    for pages in [false, true] {
+        let Some(open) = blue_under(None, pages) else {
+            eprintln!("no R64-capable adapter; skipping");
+            return;
+        };
+        let taken = |clip| open as i64 - blue_under(Some(clip), pages).unwrap() as i64;
+        let whole = taken(0.0);
+        let half = taken(0.5);
+        assert!(whole > 0, "pages {pages}: the whole pane casts nothing");
+        assert!(
+            half * 4 > whole && half * 4 < whole * 3,
+            "pages {pages}: half a pane took {half} of the light the whole one took {whole}",
+        );
+    }
+}

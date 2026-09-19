@@ -1,4 +1,4 @@
-//! Transparent casters' coverage for the shadow rasters (#1224).
+//! Transparent and masked casters' coverage for the shadow rasters (#1224, #452).
 //!
 //! 🔴 Baked, not evaluated in the shadow pass: every shadow raster draws all its casters in one
 //! material-less draw, and the page cache keeps what it drew. Each transparent material's alpha is
@@ -13,8 +13,10 @@ use crate::meshlet::{MATERIAL_SURFACE_PRELUDE, ShaderPipelines};
 
 /// Texels a side of one material's coverage.
 pub const ALPHA_SIDE: u32 = 128;
-/// Transparent materials a frame can shade by alpha; past this they cast solid.
+/// Transparent or masked materials a frame can shade by alpha; past this they cast solid.
 pub const ALPHA_LAYERS: u32 = 32;
+/// A layer table entry's mark for a masked material's cut, as `SHADOW_ALPHA_MASKED`.
+const MASKED_LAYER: u32 = 1 << 31;
 /// Material slots the layer table covers, as the material pool holds.
 const MATERIAL_SLOTS: u64 = 256;
 
@@ -187,7 +189,11 @@ impl ShadowAlpha {
             screen: buffer("shadow_alpha_screen", screen_stride * ALPHA_LAYERS as u64),
             screen_stride,
             inti: buffer("shadow_alpha_inti", 16),
-            pipelines: ShaderPipelines::new(&[ShaderKind::Transparent]),
+            pipelines: ShaderPipelines::new(&[
+                ShaderKind::Transparent,
+                ShaderKind::Surface,
+                ShaderKind::Unlit,
+            ]),
             active: false,
         }
     }
@@ -233,8 +239,8 @@ impl ShadowAlpha {
         self.active.then_some(&self.bind_group)
     }
 
-    /// Bakes the coverage of the transparent materials in `slots` and names their layers. Materials
-    /// past [`ALPHA_LAYERS`], or whose shader never compiled, cast solid.
+    /// Bakes the coverage of the transparent and masked materials in `slots` and names their
+    /// layers. Materials past [`ALPHA_LAYERS`], or whose shader never compiled, cast solid.
     pub fn bake(
         &mut self,
         device: &wgpu::Device,
@@ -248,7 +254,7 @@ impl ShadowAlpha {
         let chosen = layers_for(slots, |slot| {
             materials
                 .slot_surface(slot)
-                .is_some_and(|(_, s)| s.kind == ShaderKind::Transparent)
+                .is_some_and(|(_, s)| s.kind == ShaderKind::Transparent || s.masked)
         });
         self.active = false;
         if !chosen.is_empty() {
@@ -334,6 +340,9 @@ impl ShadowAlpha {
                 pass.draw(0..3, 0..1);
                 drop(pass);
                 table[slot as usize] = layer as u32 + 1;
+                if surface.kind != ShaderKind::Transparent {
+                    table[slot as usize] |= MASKED_LAYER;
+                }
                 self.active = true;
             }
         }
