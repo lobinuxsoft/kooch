@@ -1,4 +1,6 @@
-// fsr3_accumulate.wgsl — FSR 3.1's last pass, and the one that makes the image (#481).
+// fsr3_accumulate.wgsl — FSR 3.1's last pass, at OUTPUT resolution (#481): render samples are
+// accumulated straight into the output grid, weighted by their jitter, which is why it needs 16
+// phases and beats a spatial upscaler. Concatenated after `fsr3_common.wgsl`.
 //
 // Transliterated from `ffx_fsr3upscaler_accumulate.h`, `ffx_fsr3upscaler_upsample.h`,
 // `ffx_fsr3upscaler_reproject.h` and `ffx_fsr3upscaler_sample.h` (AMD FSR SDK 2.3.0).
@@ -6,42 +8,11 @@
 //   Copyright (C) 2026 Advanced Micro Devices, Inc.
 //   SPDX-License-Identifier: MIT
 //
-// See NOTICE at the repository root. Concatenated after `fsr3_common.wgsl`.
+// See NOTICE at the repository root.
 //
-// # This runs at OUTPUT resolution, and that is the whole trick
-//
-// Every pass before this one is at render resolution. This one is not: each output pixel asks which
-// render samples land near it, weights them by a Lanczos-2 kernel measured in RENDER pixels, and
-// adds that to a history that already lives at output resolution. The upscaling is not a resample
-// of a finished image — the low-resolution samples are accumulated straight into the
-// high-resolution grid, with their jitter offset as the weight. That is why it needs sixteen phases
-// of jitter and why it beats a spatial upscaler.
-//
-// # Four mechanisms, in the order they run
-//
-// 1. **Reproject** the history with a separable Lanczos-2 over a 4×4,
-//    clamped to its inner 2×2 so the negative lobes cannot ring.
-// 2. **Lock** — a pixel flagged as a thin feature last pass gets a
-//    lifetime, and while it holds, the rectification below is allowed
-//    to be overruled. This is what stops a wire from dissolving.
-// 3. **Upsample** the 3×3 of render samples around the output pixel,
-//    building the YCoCg variance box as it goes.
-// 4. **Rectify** the history against that box — normalise, and if it
-//    lands outside the ellipsoid, pull it back to the surface. Not a
-//    hard clamp: the pull is lerped back by the lock and the luma
-//    instability, which is the part a naive TAA does not have.
-//
-// # Divergences from the original, all forced and all listed
-//
-// - **No `FFX_HALF`.** FSR leans on packed 16-bit math. `SHADER_F16`
-//   exists in wgpu, but naga's `f16` support is not a drop-in for
-//   HLSL's `min16float` semantics, and correctness comes before the
-//   ALU saving. 🔴 This is the first optimisation to try if the pass
-//   measures badly on the handheld.
-// - **No Xbox paired-16-bit path**, which is most of the line count of
-//   the original upsample file and none of its behaviour.
-// - **HDR input is assumed**, because the engine's colour target is
-//   linear `Rgba16Float` and there is no LDR path to select.
+// Order: reproject history (Lanczos-2 on a 4×4, clamped to its inner 2×2), lock thin features,
+// upsample the 3×3 into a YCoCg variance box, rectify history against it. Divergences: no
+// `FFX_HALF` outside the sample loops, no Xbox paired-16 path, HDR input assumed.
 
 @group(0) @binding(1) var input_colour: texture_2d<f32>;
 @group(0) @binding(2) var dilated: texture_2d<f32>;
@@ -68,18 +39,9 @@ const LOCK_MAX: f32 = 2.0;
 /// is a constant here rather than a uniform field nobody writes.
 const VELOCITY_FACTOR: f32 = 1.0;
 
-/// The half twins of the colour helpers.
-///
-/// 🎯 This is FSR's `FFX_HALF` path, and it is the optimisation the technique is built around:
-/// `accumulate` measured 11.982 of the technique's 14.704 ms, and it carries 25 colours through
-/// YCoCg, a tonemap round trip and a variance box for every output pixel. In half that is half the
-/// registers, which on a 10 W part is occupancy, which is latency hiding — the thing a pass doing
-/// thirty texture fetches per pixel is actually short of.
-///
-/// WGSL has no overloading, so these are twins rather than the same name. ⚠️ Only the SAMPLE LOOPS
-/// are half. The rectification and the blend stay f32, because two of their constants
-/// (`FSR3_FP32_MIN` and the 1.193e-7 box floor) are below the smallest normal half and would
-/// quietly become zero.
+/// Half-precision twins of the colour helpers — FSR's `FFX_HALF`: the sample loops are most of
+/// `accumulate` (11.98 of 14.70 ms), and half the registers is occupancy on a 10 W part. Only the
+/// loops: rectification stays f32, as `FSR3_FP32_MIN` and the 1.193e-7 box floor underflow a half.
 fn rgb_to_ycocg_h(rgb: vec3<f16>) -> vec3<f16> {
     return vec3<f16>(
         0.25h * rgb.r + 0.5h * rgb.g + 0.25h * rgb.b,
@@ -371,10 +333,9 @@ fn upsample(c: Common, d_in: Data) -> Data {
     let src_unjittered = (vec2<f32>(src_input_pos) + 0.5) - params.jitter;
     let base_offset = src_unjittered - src_pos;
 
-    // Which side of the output pixel the render grid falls on decides which 3 of the 4 candidate
-    // columns are closest. Flipping the iteration order instead of the offsets keeps the first
-    // sample of the loop the nearest one, which is what the rectification box wants for its initial
-    // sample.
+    // Which side of the output pixel the render grid falls on picks the 3 nearest of 4 columns;
+    // flipping the iteration order rather than the offsets keeps the first sample the nearest one,
+    // which the rectification box wants as its initial sample.
     let flip_col = src_unjittered.x > src_pos.x;
     let flip_row = src_unjittered.y > src_pos.y;
     var offset_tl: vec2<i32>;
@@ -575,18 +536,9 @@ fn accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
     textureStore(new_locks, hr_pos, vec4<f32>(0.0));
 }
 
-/// The staircase, for finding which stage produced a wrong frame.
-///
-/// Selected by the editor's debug dropdown, and the order is the order the data flows: the first
-/// mode that looks wrong is the first stage that IS wrong, and everything after it is downstream of
-/// the same fault.
-///
-/// 🎯 Two kinds of step, and they leave through different doors.
-///
-/// The steps that show a 0..1 QUANTITY bypass the tonemap, so what is returned lands on screen as a
-/// grey ramp of the same number. The three that show RADIANCE keep the ordinary tonemap — exposure
-/// and filmic curve — so they are directly comparable with the real image. Handing radiance to a
-/// bypassed tonemap was the first attempt, and it painted a perfectly good frame black.
+/// Debug stages in data-flow order: the first one that looks wrong is the first stage that is.
+/// A 0..1 quantity bypasses the tonemap as a grey ramp; the three radiance steps keep it, so they
+/// compare with the real image (radiance through the bypass painted a good frame black).
 fn debug_stage(c: Common, d: Data, reprojected: vec3<f32>) -> vec3<f32> {
     switch params.debug {
         // 1 — the HDR frame FSR was handed. Black here means the fault
@@ -626,15 +578,13 @@ fn debug_stage(c: Common, d: Data, reprojected: vec3<f32>) -> vec3<f32> {
                 f32(d.upsampled_weight) / AVERAGE_LANCZOS_WEIGHT_PER_FRAME,
             );
         }
-        // 7 — why is this pixel black. Red is the first-frame branch, green the RAW Lanczos sum
-        // before the epsilon gate, blue the history weight. A black frame with no green anywhere
-        // means the kernel summed to nothing and the accumulation kept a history that was never
-        // written.
+        // 7 — why this pixel is black: red the first-frame branch, green the raw Lanczos sum before
+        // the epsilon gate, blue the history weight. No green anywhere means the kernel summed to
+        // nothing and history that was never written was kept.
         case 7u: {
-            // 🔴 The two INPUTS to the weight, now that the output is known to be zero. Red and
-            // green are how far the render grid sits from this output pixel, in render pixels —
-            // both must stay under 1 or no tap of the 3x3 can land in the kernel's positive lobe.
-            // Blue is the kernel width, halved so that FSR's 1.99 ceiling reads as full.
+            // 🔴 The weight's two inputs, now that it is known to be zero: red and green how far the
+            // render grid sits from this pixel in render pixels (both must stay under 1), blue the kernel
+            // width halved so FSR's 1.99 ceiling reads as full.
             return vec3<f32>(abs(d.base_offset), d.kernel_bias * 0.5);
         }
         default: {
