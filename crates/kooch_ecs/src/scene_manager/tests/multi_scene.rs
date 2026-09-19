@@ -51,8 +51,6 @@ fn members(resources: &Resources) -> Vec<(Entity, Guid)> {
         .unwrap_or_default()
 }
 
-#[path = "multi_scene/open_close.rs"]
-mod open_close;
-#[path = "multi_scene/identity.rs"]
 mod identity;
+mod open_close;
 use super::single_scene;

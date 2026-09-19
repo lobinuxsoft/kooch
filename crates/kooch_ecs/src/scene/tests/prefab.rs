@@ -89,14 +89,10 @@ fn world_with_a_subtree() -> (
     (resources, root, outsider)
 }
 
-#[path = "prefab/subtrees.rs"]
 mod subtrees;
 use super::add_to_archetype;
 use subtrees::world_with_a_deep_subtree;
-#[path = "prefab/roots.rs"]
 mod roots;
 use roots::{described, document, identified, parented_to};
-#[path = "prefab/instances.rs"]
 mod instances;
-#[path = "prefab/references.rs"]
 mod references;
