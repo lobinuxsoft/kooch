@@ -3,9 +3,7 @@
 
 use egui_dock::DockArea;
 
-use kooch_render::meshlet::{
-    MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStats,
-};
+use kooch_render::meshlet::{MeshletDebugCaps, MeshletRenderStats};
 
 use crate::actions::{EditorAction, PendingPrefabOverwrite};
 use crate::editor_camera::EditorCameraController;
@@ -19,6 +17,7 @@ use crate::state::EditorOverlay;
 use crate::systems::tab_viewer::EditorTabViewer;
 
 use super::frame_display::FrameDisplayData;
+use super::lifted::Lifted;
 
 /// Toolbar/menu-bar state gathered before the egui pass: what the undo
 /// stack can offer, and the two modes the toolbar reports on.
@@ -89,28 +88,31 @@ pub(super) fn run_editor_ui(
     open_shader_graph: Option<&mut crate::state::OpenShaderGraph>,
     engine_assets_root: Option<&std::path::Path>,
     project_assets_root: Option<&std::path::Path>,
-    meshlet_debug_mode: &mut MeshletDebugMode,
+    lifted: &mut Lifted,
     meshlet_debug_caps: MeshletDebugCaps,
     single_light_note: Option<&str>,
-    meshlet_lod_settings: &mut MeshletLodSettings,
-    lights_hot: &mut kooch_lighting::LightsHot,
-    cluster_settings: &mut kooch_lighting::ClusterSettings,
-    specular_floor: &mut kooch_lighting::SpecularFloor,
     meshlet_stats: MeshletRenderStats,
     // The Game viewport's own; see `GameViewStats`.
     game_stats: MeshletRenderStats,
     perf_stats: crate::perf::EditorPerfStats,
-    gizmo_visibility: &mut crate::gizmos::GizmoVisibility,
     gizmo_groups: &[crate::gizmos::GizmoGroup],
-    physics_debug: &mut kooch_physics::backend::DebugCategories,
-    hud_visibility: &mut crate::perf::HudVisibility,
     log_buffer: Option<&kooch_core::LogBuffer>,
-    console: &mut crate::panels::console::ConsoleState,
     connect_output: &[String],
     prefab_overwrite: Option<&PendingPrefabOverwrite>,
     build: &crate::panels::build::BuildPanel,
     editor_camera_rotation: Option<glam::Quat>,
 ) -> (egui::FullOutput, Vec<EditorAction>) {
+    let Lifted {
+        debug_mode: meshlet_debug_mode,
+        lod_settings: meshlet_lod_settings,
+        lights_hot,
+        cluster_settings,
+        specular_floor,
+        gizmo_visibility,
+        physics_debug,
+        hud_visibility,
+        console,
+    } = lifted;
     // 🔴 One frame boundary per editor frame, and it has to be exactly here. puffin builds its
     // flamegraph out of the scopes that closed between two `new_frame` calls.
     #[cfg(feature = "profiling")]
