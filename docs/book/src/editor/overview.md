@@ -66,7 +66,7 @@ and opened.
 
 Right-click a panel's tab and pick **Open in window**: the panel moves to an OS window of its own,
 which you can drag to another monitor. It draws at that monitor's scale. Closing the window puts the
-panel back in the dock; unticking it in the **Window** menu closes it for good.
+panel back where it was in the dock, on the same side and at the same size; unticking it in the **Window** menu closes it for good.
 
 Which panels are in windows, and their size, are saved with the layout and come back on the next
 start. So is where each window was — except on **Wayland**, where no application can read or set

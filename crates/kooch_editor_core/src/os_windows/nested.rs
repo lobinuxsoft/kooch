@@ -56,10 +56,14 @@ fn run_nested(ctx: &egui::Context, live: &SharedLive, viewport: ImmediateViewpor
     };
     // 🔴 The callback runs even without a window: egui panics when a renderer never calls it. No
     // lock is held across it — the panel it draws may itself reach for this list.
-    let input = input.unwrap_or_else(|| egui::RawInput {
+    let mut input = input.unwrap_or_else(|| egui::RawInput {
         viewport_id: ids.this,
+        viewports: std::iter::once((ids.this, egui::ViewportInfo::default())).collect(),
         ..Default::default()
     });
+    // 🔴 The main pass's, always: egui rebuilds the font atlas whenever a pass brings a different
+    // one, and the main window then drew its text off an atlas the nested pass had replaced.
+    input.max_texture_side = Some(ctx.input(|i| i.max_texture_side));
     let output = ctx.run_ui(input, |ui| viewport_ui_cb(ui));
     let mut list = live.lock().unwrap();
     if let Some(open) = list.iter_mut().find(|l| viewport_of(l.tab) == ids.this) {

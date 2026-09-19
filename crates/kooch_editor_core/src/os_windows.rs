@@ -5,6 +5,7 @@
 //! drawn inside the same pass, so it keeps the panel state egui holds for it. The windows, their
 //! surfaces and their input are ours to keep — egui only asks for them.
 
+mod home;
 mod nested;
 mod paint;
 
@@ -27,6 +28,9 @@ pub(crate) struct Detached {
     /// Outer position in physical pixels. `None` where the platform does not say — Wayland never
     /// does, and places the window itself.
     pub pos: Option<[i32; 2]>,
+    /// Where it was in the dock, to go back there when its window closes.
+    #[serde(default)]
+    pub home: Option<home::Home>,
 }
 
 /// A torn-off panel's window, as long as it is open.
@@ -77,6 +81,7 @@ pub(crate) fn title_of(tab: EditorTab) -> String {
 
 /// Takes `tab` out of the dock and into a window of its own.
 pub(crate) fn detach(dock: &mut DockState<EditorTab>, windows: &mut OsWindows, tab: EditorTab) {
+    let home = home::home_of(dock, tab);
     if let Some(path) = dock.find_tab(&tab) {
         dock.remove_tab(path);
     }
@@ -85,14 +90,23 @@ pub(crate) fn detach(dock: &mut DockState<EditorTab>, windows: &mut OsWindows, t
             tab,
             size: DEFAULT_SIZE,
             pos: None,
+            home,
         });
     }
 }
 
 /// Puts `tab` back in the dock, and forgets its window.
 pub(crate) fn dock_back(dock: &mut DockState<EditorTab>, windows: &mut OsWindows, tab: EditorTab) {
+    let home = windows
+        .detached
+        .iter()
+        .find(|d| d.tab == tab)
+        .and_then(|d| d.home.clone());
     windows.detached.retain(|d| d.tab != tab);
-    if !crate::state::dock_has_tab(dock, &tab) {
+    if crate::state::dock_has_tab(dock, &tab) {
+        return;
+    }
+    if !home.is_some_and(|home| home::go_home(dock, tab, &home)) {
         dock.push_to_first_leaf(tab);
     }
 }
@@ -220,7 +234,8 @@ fn adopt(
         window.as_ref(),
         Some(window.scale_factor() as f32),
         None,
-        Some(gpu.device().limits().max_texture_dimension_2d as usize),
+        // Overwritten by the main pass's on every nested pass; see `nested::run_nested`.
+        None,
     );
     let mut info = egui::ViewportInfo::default();
     egui_winit::update_viewport_info(&mut info, ctx, &window, true);

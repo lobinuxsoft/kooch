@@ -43,6 +43,7 @@ fn detached_panels_round_trip() {
             tab: EditorTab::Inspector,
             size: [400.0, 700.0],
             pos: Some([2000, 40]),
+            home: None,
         }],
     };
     let parsed = EditorLayout::parse(&ron::ser::to_string(&layout).unwrap()).unwrap();
