@@ -134,3 +134,12 @@ fn a_reshaped_dock_still_takes_it() {
     assert!(crate::state::dock_has_tab(&dock, &EditorTab::World));
     assert!(crate::state::dock_has_tab(&dock, &EditorTab::Console));
 }
+
+/// A panel window never waits on vsync when the platform offers anything else.
+#[test]
+fn a_panel_window_skips_vsync() {
+    use wgpu::PresentMode::*;
+    assert_eq!(present_mode(&[Fifo, Mailbox, Immediate]), Mailbox);
+    assert_eq!(present_mode(&[Fifo, Immediate]), Immediate);
+    assert_eq!(present_mode(&[Fifo]), Fifo);
+}

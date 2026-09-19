@@ -43,6 +43,9 @@ pub(crate) struct Live {
     pub info: egui::ViewportInfo,
     /// Set by the window's close button; the dock takes the panel back on the next frame.
     pub closing: bool,
+    /// Last position the window reported moving to. Asked of no one: on X11 asking is a round
+    /// trip to the server, every frame.
+    pub moved_to: Option<[i32; 2]>,
     /// What the nested pass drew, for the present to put on screen.
     pub output: Option<egui::FullOutput>,
 }
@@ -180,7 +183,9 @@ pub(crate) fn sync(
             if size.width > 0.0 && size.height > 0.0 {
                 detached.size = [size.width, size.height];
             }
-            detached.pos = open.window.outer_position().ok().map(|p| [p.x, p.y]);
+            if open.moved_to.is_some() {
+                detached.pos = open.moved_to;
+            }
         } else if !extra.is_pending(key_of(detached.tab)) {
             extra.request(key_of(detached.tab), attributes(detached));
         }
@@ -201,6 +206,16 @@ fn attributes(detached: &Detached) -> winit::window::WindowAttributes {
     }
 }
 
+/// 🔴 Never FIFO when anything else is on offer: a panel window presents in the same frame as the
+/// main one, and two vsync waits in a row halved the editor's frame rate. It still draws only when
+/// the main window does, so it runs at that window's pace without waiting on its own.
+fn present_mode(offered: &[wgpu::PresentMode]) -> wgpu::PresentMode {
+    [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate]
+        .into_iter()
+        .find(|mode| offered.contains(mode))
+        .unwrap_or(wgpu::PresentMode::Fifo)
+}
+
 /// Gives a new window its surface and its own egui input.
 fn adopt(
     tab: EditorTab,
@@ -218,7 +233,7 @@ fn adopt(
         format: gpu.format(),
         width: size.width.max(1),
         height: size.height.max(1),
-        present_mode: wgpu::PresentMode::AutoVsync,
+        present_mode: present_mode(&caps.present_modes),
         desired_maximum_frame_latency: 2,
         alpha_mode: caps
             .alpha_modes
@@ -237,6 +252,7 @@ fn adopt(
         // Overwritten by the main pass's on every nested pass; see `nested::run_nested`.
         None,
     );
+    let moved_to = window.outer_position().ok().map(|p| [p.x, p.y]);
     let mut info = egui::ViewportInfo::default();
     egui_winit::update_viewport_info(&mut info, ctx, &window, true);
     Ok(Live {
@@ -247,6 +263,7 @@ fn adopt(
         state,
         info,
         closing: false,
+        moved_to,
         output: None,
     })
 }

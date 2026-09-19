@@ -261,9 +261,13 @@ impl RawEventHandler for EguiEventHandler {
             let Some(open) = live.iter_mut().find(|l| l.window.id() == window.id()) else {
                 return false;
             };
-            if matches!(event, WindowEvent::CloseRequested) {
-                open.closing = true;
-                return true;
+            match event {
+                WindowEvent::CloseRequested => {
+                    open.closing = true;
+                    return true;
+                }
+                WindowEvent::Moved(pos) => open.moved_to = Some([pos.x, pos.y]),
+                _ => {}
             }
             return open.state.on_window_event(window, event).consumed;
         }
