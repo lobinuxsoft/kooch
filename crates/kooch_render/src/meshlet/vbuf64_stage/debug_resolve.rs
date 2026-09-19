@@ -9,7 +9,10 @@ use super::{DEFERRED_COLOR_FORMAT, ScreenUbo, VBUF64_FORMAT};
 /// True for debug modes that fully replace shading with a colorized visualization (vs modes that
 /// keep the normal look and only change culling or add the reject overlay).
 pub(super) fn is_colorize_mode(debug_mode: u32) -> bool {
-    matches!(debug_mode, 1 | 2 | 3 | 4 | 7)
+    crate::meshlet::debug::MeshletDebugMode::all_implemented()
+        .iter()
+        .find(|mode| mode.as_u32() == debug_mode)
+        .is_some_and(|mode| mode.colorizes())
 }
 
 pub(super) struct DebugResolve {

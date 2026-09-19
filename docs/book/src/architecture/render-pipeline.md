@@ -583,6 +583,7 @@ branch on a single `u32`. `Off` is the production path.
 | `LightsPerPixel` | How many lights the pixel actually evaluated. Cost becomes a property of *where the pixel is*, which no pass timing can show — `raster + shade` is one number for the whole screen. 🔴 A flat maximum means the frame is **not clustering**: every light, every pixel |
 | `PointShadowFactor` | One point light's cube map answering for itself — no BRDF, no cosine, no exposure, no second light. Magenta: no casting lamp. Blue: past its `range`. Grey ramp: the factor |
 | `PointCubeFaces` | The cube map itself, six faces in a 3×2 grid (+X, −X, +Y, −Y, +Z, −Z). Dark blue is *nothing recorded*, which is what an occluder culled out of the map looks like |
+| `Wireframe` | Every triangle's edges, over a dark plate. A pixel whose right or lower neighbour carries another `(slot, triangle)` is an edge, so it costs two taps on the visibility buffer and no reconstruction. What a LOD or a trimmed mesh (#452) actually rasterises, in the only unit that matters: pixels of line |
 
 The last three exist because *"the shadow is not there"* is four faults
 wearing one pixel — no lamp near this point casts, the point is past the

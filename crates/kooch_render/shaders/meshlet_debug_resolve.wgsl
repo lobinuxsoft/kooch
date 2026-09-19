@@ -46,11 +46,30 @@ fn density_heatmap(t: f32) -> vec3<f32> {
     return vec3<f32>(r, g, b);
 }
 
+// The `(slot, triangle)` the pixel belongs to, or 0 where nothing was rasterised.
+fn triangle_at(pixel: vec2<i32>) -> u32 {
+    let size = vec2<i32>(screen.size);
+    let at = clamp(pixel, vec2<i32>(0), size - vec2<i32>(1));
+    return u32(textureLoad(vbuf64, vec2<u32>(at)).x);
+}
+
+// Whether the pixel sits on a triangle's edge: a neighbour carrying another triangle, or none.
+fn on_edge(pixel: vec2<i32>) -> bool {
+    let mine = triangle_at(pixel);
+    let right = triangle_at(pixel + vec2<i32>(1, 0));
+    let down = triangle_at(pixel + vec2<i32>(0, 1));
+    return mine != right || mine != down;
+}
+
 @fragment
 fn fs_debug(in: FsInput) -> @location(0) vec4<f32> {
     let pixel = vec2<u32>(in.position.xy);
     let packed = textureLoad(vbuf64, pixel).x;
     if (packed == 0lu) {
+        // Wireframe: the edge of a triangle against the background is an edge too.
+        if (screen.debug_mode == 31u && on_edge(vec2<i32>(pixel))) {
+            return vec4<f32>(0.5, 1.0, 0.6, 1.0);
+        }
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
@@ -77,6 +96,10 @@ fn fs_debug(in: FsInput) -> @location(0) vec4<f32> {
         const MAX_OVERDRAW: f32 = 8.0;
         let t = clamp(f32(wins) / MAX_OVERDRAW, 0.0, 1.0);
         rgb = density_heatmap(t);
+    } else if (screen.debug_mode == 31u) {
+        // Wireframe — lines over a dark plate, so the polygon load reads at a glance.
+        let edge = on_edge(vec2<i32>(pixel));
+        rgb = select(vec3<f32>(0.05), vec3<f32>(0.5, 1.0, 0.6), edge);
     } else {
         // CullPassthrough (7) and any other colorize mode routed here:
         // flat green for every vbuf-covered pixel.

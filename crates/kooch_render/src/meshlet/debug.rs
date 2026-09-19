@@ -86,6 +86,9 @@ pub enum MeshletDebugMode {
     /// What one lamp's page ANSWERS at each pixel, before the shading mixes it with ninety-nine
     /// others.
     LocalPageDepth = 30,
+    /// Every triangle's edges, read off the visibility buffer: a pixel whose neighbour carries
+    /// another `(slot, triangle)` is an edge. Shows the polygon load a mesh actually rasterises.
+    Wireframe = 31,
 }
 
 /// Runtime knob for the cull / LOD selector. Lives as a
@@ -154,6 +157,7 @@ impl MeshletDebugMode {
             Self::LocalPageFaces,
             Self::LocalPageDepth,
             Self::TextureMipLevel,
+            Self::Wireframe,
             // The Fsr3* views are deliberately NOT offered any more: the upscaler's bring-up is
             // done and they earned their retirement from the dropdown (the user's words: "ya los
             // podemos sacar porque andan bien").
@@ -237,6 +241,7 @@ impl MeshletDebugMode {
             Self::ContactShadows => "Contact shadows",
             Self::SingleLight => "Single light",
             Self::LightsPerPixel => "Lights per pixel",
+            Self::Wireframe => "Wireframe",
             Self::PointShadowFactor => "Point shadow factor",
             Self::PointCubeFaces => "Point cube faces",
             Self::LocalPageFaces => "Lamp shadow pages: faces",
@@ -273,6 +278,21 @@ impl MeshletDebugMode {
     /// nothing temporal downstream should run.
     pub const fn replaces_shading(self) -> bool {
         self.as_u32() >= Self::Normals.as_u32() && self.fsr3_stage() == 0
+    }
+
+    /// True when the fullscreen debug pass draws it off the visibility buffer alone, instead of the
+    /// shade resolving it.
+    #[inline]
+    pub const fn colorizes(self) -> bool {
+        matches!(
+            self,
+            Self::MeshletIds
+                | Self::InstanceIds
+                | Self::TriangleDensity
+                | Self::Overdraw
+                | Self::CullPassthrough
+                | Self::Wireframe
+        )
     }
 
     /// True when the mode hands back colour that is already ready for the screen, so the tonemap
