@@ -170,7 +170,11 @@ pub(super) fn draw(
         ));
 
         let body = ui
-            .interact(screen, ui.id().with(("graph_note", index)), Sense::drag())
+            .interact(
+                screen,
+                ui.id().with(("graph_note", index)),
+                Sense::click_and_drag(),
+            )
             .on_hover_cursor(egui::CursorIcon::Grab);
         if body.dragged() {
             annotations.notes[index].pos += body.drag_delta() / scale;
