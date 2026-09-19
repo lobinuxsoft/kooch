@@ -8,9 +8,8 @@ const INTI_KIND_DIRECTIONAL: u32 = 0u;
 const INTI_KIND_POINT: u32 = 1u;
 const INTI_KIND_SPOT: u32 = 2u;
 
-// Filament's f32 floor on perceptual roughness. Below it the GGX lobe
-// is a delta function: a punctual light either misses it entirely or
-// lands one blinding pixel on it.
+// Filament's f32 floor on perceptual roughness. Below it the GGX lobe is a delta function: a
+// punctual light either misses it entirely or lands one blinding pixel on it.
 const INTI_MIN_PERCEPTUAL_ROUGHNESS: f32 = 0.089;
 
 // Mirror of `GpuLight` (80 B); field order and padding are load-bearing, and `gpu_light.rs` pins
@@ -34,15 +33,13 @@ struct IntiLight {
     // Per-light opt-in bits, in a pad word, so fifty lights do not pay fifty screen-space marches
     // per pixel.
     flags: u32,
-    // Index into `inti.spot_shadows` for a spot light that casts, or
-    // INTI_NO_SHADOW_SLOT (#777).
+    // Index into `inti.spot_shadows` for a spot light that casts, or INTI_NO_SHADOW_SLOT (#777).
     shadow_slot: u32,
     // Radius of the emitting sphere in world units, 0 for a point.
     // Specular only — see `inti_representative_point`.
     radius: f32,
-    // 🔴 THREE SCALARS, never a vec3: a vec3 aligns to 16 and would
-    // push the struct to 96 while Rust still writes 80. Same trap the
-    // cascade descriptor documents above.
+    // 🔴 THREE SCALARS, never a vec3: a vec3 aligns to 16 and would push the struct to 96 while
+    // Rust still writes 80. Same trap the cascade descriptor documents above.
     _pad0: f32,
     _pad1: f32,
     _pad2: f32,
@@ -51,9 +48,8 @@ struct IntiLight {
 // `IntiLight.shadow_slot` when the light casts no shadow.
 const INTI_NO_SHADOW_SLOT: u32 = 0xffffffffu;
 
-// Bit 0 of `IntiSurface.flags` — this surface samples shadow maps
-// (#804). Mirrors `INSTANCE_RECEIVES_SHADOWS` on the Rust side; the two
-// are one bit in one place and have to agree.
+// Bit 0 of `IntiSurface.flags` — this surface samples shadow maps (#804). Mirrors
+// `INSTANCE_RECEIVES_SHADOWS` on the Rust side; the two are one bit in one place and have to agree.
 const INTI_SURFACE_RECEIVES_SHADOWS: u32 = 1u;
 
 // Bit 0 of `IntiLight.flags` — this light marches for contact shadows.
@@ -64,9 +60,8 @@ const INTI_LIGHT_CONTACT_SHADOWS: u32 = 1u;
 struct IntiCascade {
     // Light-space clip-from-world.
     view_proj: mat4x4<f32>,
-    // Which layer of the shadow array this cascade rendered into.
-    // Was a quadrant transform into a single atlas texture; an array
-    // layer is one binding all the same and leaves the uv untouched.
+    // Which layer of the shadow array this cascade rendered into. Was a quadrant transform into a
+    // single atlas texture; an array layer is one binding all the same and leaves the uv untouched.
     layer: u32,
     // 🔴 Three scalars, never `vec3<u32>`: it aligns to 16 and grows each cascade by 16 B, surfacing
     // only as `min_binding_size` rejecting the pipeline.
@@ -75,9 +70,8 @@ struct IntiCascade {
     _pad_layer2: u32,
     // View-space depth past which the next cascade takes over.
     far_depth: f32,
-    // World units per shadow texel, for the filter radius and the
-    // penumbra estimate. A fixed radius in texels is a different
-    // distance in every cascade.
+    // World units per shadow texel, for the filter radius and the penumbra estimate. A fixed radius
+    // in texels is a different distance in every cascade.
     texel_world_size: f32,
     // World units spanned by [0, 1] depth, turning a depth difference into the metres a penumbra is
     // proportional to.
@@ -85,9 +79,8 @@ struct IntiCascade {
     _pad0: f32,
 }
 
-// Mirror of `kooch_lighting::GpuPointShadow` (#778). Sixteen bytes and
-// no matrix: a cube map is sampled by DIRECTION, so the only transform
-// is the subtraction the shader already does.
+// Mirror of `kooch_lighting::GpuPointShadow` (#778). Sixteen bytes and no matrix: a cube map is
+// sampled by DIRECTION, so the only transform is the subtraction the shader already does.
 struct IntiPointShadow {
     // Near plane of the six faces; with infinite reverse-Z the stored depth is `near / major_axis`,
     // one scalar for Bevy's four terms.
@@ -105,15 +98,13 @@ struct IntiFrame {
     ambient_sky: vec3<f32>,
     light_count: u32,
     ambient_ground: vec3<f32>,
-    // 1 / (2^EV100 * 1.2). Fixed until auto exposure lands (#254).
-    // Without it a 10 000 lux sun clips every channel to white and the
-    // whole model reads as "broken" rather than "unexposed".
+    // 1 / (2^EV100 * 1.2). Fixed until auto exposure lands (#254). Without it a 10 000 lux sun
+    // clips every channel to white and the whole model reads as "broken" rather than "unexposed".
     exposure: f32,
     camera_position: vec3<f32>,
     ambient_intensity: f32,
-    // Unit vector down the view axis. Only the shadow cascades need it,
-    // and they need it to be the axis rather than the radial direction —
-    // see `inti_shade`.
+    // Unit vector down the view axis. Only the shadow cascades need it, and they need it to be the
+    // axis rather than the radial direction — see `inti_shade`.
     camera_forward: vec3<f32>,
     _pad_forward: f32,
     // The four cascades. Fixed-size because the count is baked into the
@@ -133,13 +124,11 @@ struct IntiFrame {
     // it exists to answer whether the cost scales with that count.
     light_limit: u32,
     point_shadows: array<IntiPointShadow, {{INTI_MAX_POINT_SHADOWS}}>,
-    // 0 when no directional light casts, or the atlas has not been
-    // rendered. The dummy 1x1 atlas bound in that case would return
-    // "fully lit" anyway; the flag skips the work.
+    // 0 when no directional light casts, or the atlas has not been rendered. The dummy 1x1 atlas
+    // bound in that case would return "fully lit" anyway; the flag skips the work.
     shadows_enabled: u32,
-    // Fraction of a split distance over which one cascade fades into the
-    // next. Without it the boundary is a visible line where texel
-    // density and filter radius change at once.
+    // Fraction of a split distance over which one cascade fades into the next. Without it the
+    // boundary is a visible line where texel density and filter radius change at once.
     cascade_blend: f32,
     // Tangent of the sun's angular RADIUS: how much wider a shadow gets
     // per metre of gap between blocker and receiver. An angle, not a
@@ -157,12 +146,10 @@ struct IntiFrame {
     cluster_factors: vec4<f32>,
     // How long the index list is, for the loop to clamp against.
     cluster_capacity: u32,
-    // Directional lights, which the grid does not cluster — they reach
-    // every cell. The first entries of the light buffer, walked
-    // linearly.
+    // Directional lights, which the grid does not cluster — they reach every cell. The first
+    // entries of the light buffer, walked linearly.
     directional_count: u32,
-    // 0 when no grid was built this frame: shading falls back to the
-    // linear walk over every light.
+    // 0 when no grid was built this frame: shading falls back to the linear walk over every light.
     clustered: u32,
     // Top of scale for the lights-per-pixel debug view (#817). Read only
     // by `inti_debug.wgsl`; the production pipeline never touches it.
@@ -187,9 +174,8 @@ struct IntiClusterCell {
 }
 
 @group({{INTI_GROUP}}) @binding(0) var<uniform> inti: IntiFrame;
-// Always at least one element: wgpu rejects a zero-sized storage
-// binding, so an unlit scene binds a one-element buffer with
-// `light_count == 0` rather than needing a second pipeline.
+// Always at least one element: wgpu rejects a zero-sized storage binding, so an unlit scene binds a
+// one-element buffer with `light_count == 0` rather than needing a second pipeline.
 @group({{INTI_GROUP}}) @binding(1) var<storage, read> inti_lights: array<IntiLight>;
 
 // Cascaded shadow maps (#476) in Inti's group — the bind-group budget is spent. A comparison
@@ -241,17 +227,15 @@ fn inti_f_schlick_scalar(f0: f32, f90: f32, v_dot_h: f32) -> f32 {
     return f0 + (f90 - f0) * pow(saturate(1.0 - v_dot_h), 5.0);
 }
 
-// f90 derived from f0 rather than assumed to be 1.0. A near-black
-// dielectric with f90 = 1 grows a white rim at grazing angles that no
-// real material has; the 50·0.33 scale is Filament's fit.
+// f90 derived from f0 rather than assumed to be 1.0. A near-black dielectric with f90 = 1 grows a
+// white rim at grazing angles that no real material has; the 50·0.33 scale is Filament's fit.
 fn inti_fresnel(f0: vec3<f32>, v_dot_h: f32) -> vec3<f32> {
     let f90 = saturate(dot(f0, vec3<f32>(50.0 * 0.33)));
     return f0 + (vec3<f32>(f90) - f0) * pow(saturate(1.0 - v_dot_h), 5.0);
 }
 
-// Analytic fit to the split-sum DFG integral (Karis / Lazarov), the
-// same polynomial Bevy falls back to without a DFG LUT. Feeds the
-// multiscatter compensation below. Takes PERCEPTUAL roughness.
+// Analytic fit to the split-sum DFG integral (Karis / Lazarov), the same polynomial Bevy falls back
+// to without a DFG LUT. Feeds the multiscatter compensation below. Takes PERCEPTUAL roughness.
 fn inti_f_ab(perceptual_roughness: f32, n_dot_v: f32) -> vec2<f32> {
     let c0 = vec4<f32>(-1.0, -0.0275, -0.572, 0.022);
     let c1 = vec4<f32>(1.0, 0.0425, 1.04, -0.04);
@@ -260,9 +244,8 @@ fn inti_f_ab(perceptual_roughness: f32, n_dot_v: f32) -> vec2<f32> {
     return max(vec2<f32>(-1.04, 1.04) * a004 + r.zw, vec2<f32>(0.00005));
 }
 
-// Single-scattering GGX loses energy on rough metals — they go grey
-// instead of staying bright. Compensates by the fraction the split-sum
-// integral says went missing.
+// Single-scattering GGX loses energy on rough metals — they go grey instead of staying bright.
+// Compensates by the fraction the split-sum integral says went missing.
 fn inti_specular_multiscatter(
     single_scatter: vec3<f32>,
     f0: vec3<f32>,
@@ -271,9 +254,8 @@ fn inti_specular_multiscatter(
     return single_scatter * (1.0 + f0 * (1.0 / (f_ab.x + f_ab.y) - 1.0));
 }
 
-// Burley / Disney diffuse. Lambert is flat; this one brightens the
-// grazing edge on rough surfaces the way cloth and unfinished wood
-// actually do. `a` unused — Burley takes perceptual roughness.
+// Burley / Disney diffuse. Lambert is flat; this one brightens the grazing edge on rough surfaces
+// the way cloth and unfinished wood actually do. `a` unused — Burley takes perceptual roughness.
 fn inti_fd_burley(
     perceptual_roughness: f32,
     n_dot_v: f32,
@@ -302,9 +284,8 @@ struct IntiSample {
     // Radiometric irradiance arriving perpendicular to the surface,
     // pre-exposure. Zero when the fragment is out of the light's reach.
     irradiance: vec3<f32>,
-    // Surface to light, unnormalised. The representative point (#776)
-    // works in this space, and recomputing it there would be the second
-    // subtraction of the same two vectors.
+    // Surface to light, unnormalised. The representative point (#776) works in this space, and
+    // recomputing it there would be the second subtraction of the same two vectors.
     offset: vec3<f32>,
     // Length of `offset`. Zero for a directional light, which has none.
     distance: f32,
@@ -313,8 +294,7 @@ struct IntiSample {
 fn inti_sample_light(light: IntiLight, world_position: vec3<f32>) -> IntiSample {
     var out: IntiSample;
     if (light.kind == INTI_KIND_DIRECTIONAL) {
-        // Infinitely far away: no falloff, and illuminance in lux IS
-        // the perpendicular irradiance.
+        // Infinitely far away: no falloff, and illuminance in lux IS the perpendicular irradiance.
         out.to_light = -light.direction;
         out.irradiance = light.color * light.intensity;
         out.offset = out.to_light;
@@ -365,9 +345,8 @@ fn inti_ambient(
 
 
 
-// Which cascade covers `view_depth`, and how far into the blend band it
-// is. `x` is the index, `y` is 0 inside the cascade and rises to 1 at
-// its far edge.
+// Which cascade covers `view_depth`, and how far into the blend band it is. `x` is the index, `y`
+// is 0 inside the cascade and rises to 1 at its far edge.
 fn inti_pick_cascade(view_depth: f32) -> vec2<f32> {
     for (var i = 0u; i < 4u; i = i + 1u) {
         let far = inti.cascades[i].far_depth;
@@ -377,9 +356,8 @@ fn inti_pick_cascade(view_depth: f32) -> vec2<f32> {
             return vec2<f32>(f32(i), saturate(blend));
         }
     }
-    // Past the last cascade there is nothing to sample. Reported as
-    // index 4 so the caller returns fully lit rather than clamping to
-    // the last cascade and stretching its shadow to the horizon.
+    // Past the last cascade there is nothing to sample. Reported as index 4 so the caller returns
+    // fully lit rather than clamping to the last cascade and stretching its shadow to the horizon.
     return vec2<f32>(4.0, 0.0);
 }
 
@@ -394,8 +372,7 @@ fn inti_shadow_coords(cascade: IntiCascade, world_position: vec3<f32>) -> vec4<f
     if (any(abs(ndc.xy) > vec2<f32>(1.0)) || ndc.z <= 0.0) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
-    // NDC to uv: x maps directly, y flips because texture space counts
-    // down from the top.
+    // NDC to uv: x maps directly, y flips because texture space counts down from the top.
     let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     return vec4<f32>(uv, ndc.z, 1.0);
 }
@@ -573,1011 +550,3 @@ fn inti_sample_cascade_record(
     return inti_sample_castano(coords.xy, cascade.layer, coords.z, scale, bounds);
 }
 
-/// Where a virtual page lives, or `PAGE_MISS` — one indexed read (#477); the hash walk it replaced
-/// cost 10.4 ms of shading against 0.884 ms for the whole shadow track.
-fn inti_page_lookup(page: u32) -> u32 {
-    if page >= inti_pages.pool.x {
-        return PAGE_MISS;
-    }
-    let stored = inti_page_slots[page * PAGE_CELL];
-    if stored == PAGE_ABSENT {
-        return PAGE_MISS;
-    }
-    // 🔴 Resident is not readable: stamp 0 means no content and the atlas answers lit. A miss lets
-    // the walk climb, as Unreal; an older stamp still reads, and `PAGE_EMPTY` is a true "cleared".
-    if inti_page_slots[page * PAGE_CELL + 3u] == 0u {
-        return PAGE_MISS;
-    }
-    return stored - 1u;
-}
-
-/// Page PCF by hand, since hardware filters cross page edges: taps clamp to the page, weights cross
-/// it. `world.w` is the box width (#941): 1 bilinear, wider a sub-texel box of `(W + 1)²` loads.
-fn inti_page_filter(
-    origin: vec2<f32>,
-    layer: i32,
-    texel: vec2<f32>,
-    receiver: f32,
-    // The receiver's depth gradient per texel (#1017). Zero puts every
-    // tap back on the pixel's own depth, which is what a scalar bias
-    // assumes and what the lamps still pass.
-    slope: vec2<f32>,
-    page_texels: u32,
-    // The page's sun-clipmap cell, so a tap off its edge finds its neighbour; `PAGE_UNLISTED` level
-    // clamps instead (lamps).
-    cell: vec2<u32>,
-    level: u32,
-    side: u32,
-) -> f32 {
-    let width = max(u32(inti_pages.world.w), 1u);
-    let half = f32(width) * 0.5;
-    let last = f32(page_texels) - 1.0;
-    let corner = floor(texel - vec2<f32>(half));
-    let frac = texel - vec2<f32>(half) - corner;
-    var lit = 0.0;
-    for (var y = 0u; y <= width; y = y + 1u) {
-        var wy = 1.0;
-        if y == 0u {
-            wy = 1.0 - frac.y;
-        } else if y == width {
-            wy = frac.y;
-        }
-        for (var x = 0u; x <= width; x = x + 1u) {
-            var wx = 1.0;
-            if x == 0u {
-                wx = 1.0 - frac.x;
-            } else if x == width {
-                wx = frac.x;
-            }
-            // 🔴 A tap leaving the page resolves through the table, as Unreal's
-            // `VirtualToPhysicalTexel` per tap. Clamping read this page near seams and answered lit
-            // — a band along every seam. Absent neighbour: clamp.
-            let raw = corner + vec2<f32>(f32(x), f32(y));
-            let outside = raw.x < 0.0 || raw.y < 0.0 || raw.x > last || raw.y > last;
-            var tap = clamp(raw, vec2<f32>(0.0), vec2<f32>(last));
-            var at = vec2<i32>(origin + tap);
-            var tap_layer = layer;
-            // 🔴 Separate from `tap`, which restarts inside a neighbouring page; the gradient needs
-            // the sample's distance from the pixel, or seams draw a grey line.
-            var reach = tap;
-            if outside && level != PAGE_UNLISTED {
-                // Which page the tap fell into, in whole pages, and the
-                // wrapped cell it lands on — the same toroidal grid
-                // `sun_cell` keys by.
-                let step = vec2<i32>(floor(raw / f32(page_texels)));
-                let wide = i32(side);
-                let neighbour = vec2<u32>(
-                    (vec2<i32>(cell) + step + vec2<i32>(wide, wide)) % vec2<i32>(wide, wide),
-                );
-                let page = inti_pages.views.x * inti_pages.views.y
-                    + inti_pages.space.w * inti_pages.space.x
-                    + level * side * side
-                    + neighbour.y * side
-                    + neighbour.x;
-                let found = inti_page_lookup(page);
-                if found != PAGE_MISS {
-                    let place = page_place(
-                        found,
-                        inti_pages.views.z,
-                        inti_pages.pool.z,
-                        page_texels,
-                    );
-                    tap = raw - vec2<f32>(step) * f32(page_texels);
-                    at = vec2<i32>(vec2<f32>(place.xy) + tap);
-                    tap_layer = i32(place.z);
-                    // The sample really is `raw` texels from the corner
-                    // of the ORIGINAL page, whatever page holds it.
-                    reach = raw;
-                }
-            }
-            let stored = textureLoad(inti_page_atlas, at, tap_layer, 0);
-            // 🔴 The tap's own receiver depth, `dot(slope, k)` along the plane — comparing against
-            // the pixel's makes tilted surfaces self-shadow. See `receiver_slope`.
-            let here = receiver + dot(slope, reach - texel);
-            // Reversed-Z: a LARGER stored depth is closer to the light,
-            // so it is an occluder.
-            let hit = select(1.0, 0.0, stored > here);
-            lit = lit + hit * wx * wy;
-        }
-    }
-    return lit / (f32(width) * f32(width));
-}
-
-/// One probe of the sun's atlas: `x` stored depth, `y` this position's depth in the same encoding,
-/// `z` 1 when a page was found. Shared by the walk and the march.
-fn inti_page_read(p: vec3<f32>, basis: mat3x3<f32>) -> vec3<f32> {
-    let base = inti_pages.world.x;
-    let span = inti_pages.world.y;
-    let side = inti_pages.space.z;
-    let page_texels = inti_pages.pool.w;
-
-    let raw = sun_plane(p, basis) - sun_plane(inti_pages.eye.xyz, basis);
-    let reach = max(abs(raw.x), abs(raw.y)) * 2.0;
-    var level = sun_level(reach, base, side);
-
-    for (; level < inti_pages.chain.x; level = level + 1u) {
-        let along = dot(p - inti_pages.eye.xyz, basis[2])
-            + sun_drift(inti_pages.eye.xyz, basis, base, side, level);
-        let mine = 1.0 - (along + span) / (2.0 * span);
-
-        let cell = sun_cell(p, inti_pages.eye.xyz, basis, base, side, level);
-        let page = inti_pages.views.x * inti_pages.views.y
-            + inti_pages.space.w * inti_pages.space.x
-            + level * side * side
-            + cell.y * side
-            + cell.x;
-        let slot = inti_page_lookup(page);
-        if slot == PAGE_MISS {
-            continue;
-        }
-        let rect = sun_page_rect(level, cell, inti_pages.eye.xyz, basis, base, side);
-        let within = (sun_plane(p, basis) - rect.xy) / rect.z + vec2<f32>(0.5);
-        let place = page_place(slot, inti_pages.views.z, inti_pages.pool.z, page_texels);
-        let texel = clamp(
-            floor(within * f32(page_texels)),
-            vec2<f32>(0.0),
-            vec2<f32>(f32(page_texels) - 1.0),
-        );
-        let at = vec2<i32>(vec2<f32>(place.xy) + texel);
-        let stored = textureLoad(inti_page_atlas, at, i32(place.z), 0);
-        return vec3<f32>(stored, mine, 1.0);
-    }
-    return vec3<f32>(0.0, 0.0, 0.0);
-}
-
-/// Rays over the sun's disc. 🔴 One ray is useless: stepping along the sun's axis stays in the same
-/// texel, so the rays must open across the source's angular size.
-const PAGE_RAYS: u32 = 4u;
-const PAGE_STEPS: u32 = 8u;
-
-/// Occlusion by marching rays across the sun's disc: one tap misses occluders outside its texel.
-/// Tolerance is the ray's own depth change per step — no bias constant, as Unreal.
-fn inti_page_march(
-    world_position: vec3<f32>,
-    normal: vec3<f32>,
-    n_dot_l: f32,
-    jitter: f32,
-) -> f32 {
-    let basis = sun_basis(inti_pages.sun.xyz);
-    let base = inti_pages.world.x;
-    let side = inti_pages.space.z;
-    let page_texels = inti_pages.pool.w;
-    // Along the sun's axis, towards it. `basis[2]` points the way the
-    // light travels, so the ray runs against it.
-    let to_light = -basis[2];
-
-    // 🔴 Ray reach from the level's extent, not the 2000 m orthographic span, whose quadratic steps
-    // put the first sample 60 m away.
-    let raw = sun_plane(world_position, basis) - sun_plane(inti_pages.eye.xyz, basis);
-    let level = sun_level(max(abs(raw.x), abs(raw.y)) * 2.0, base, side);
-    let extent = base * exp2(f32(level));
-    let reach = extent;
-    // One texel of that level — the unit every other bias here is in.
-    let texel_world = extent / f32(side * page_texels);
-
-    // The sun's angular radius, as the tangent of the half-angle. Zero
-    // makes every ray identical and the march degenerate, so it has a
-    // floor: a disc that small is a hard shadow either way.
-    let spread = max(inti.sun_softness, 1e-3);
-
-    // Off the surface by the same texel multiple the box reader uses,
-    // so the first samples do not read the receiver itself.
-    let start = world_position + normal * (texel_world * inti_pages.bias.x)
-        + to_light * inti_pages.bias.y;
-
-    var lit = 0.0;
-    for (var r = 0u; r < PAGE_RAYS; r = r + 1u) {
-        // Golden-angle spiral over the disc, rotated per pixel so the
-        // pattern does not print itself onto flat ground.
-        let t = (f32(r) + 0.5) / f32(PAGE_RAYS);
-        let angle = f32(r) * 2.39996323 + jitter * 6.2831853;
-        let radius = sqrt(t) * spread;
-        let dir = normalize(
-            to_light + basis[0] * (cos(angle) * radius) + basis[1] * (sin(angle) * radius),
-        );
-
-        var blocked = false;
-        var previous = -1.0;
-        for (var i = 1u; i <= PAGE_STEPS; i = i + 1u) {
-            // Quadratic in the step index: dense near the receiver,
-            // where contact shadows live and where a miss is most
-            // visible, sparse further out.
-            let f = f32(i) / f32(PAGE_STEPS);
-            let at = start + dir * (f * f * reach);
-            let read = inti_page_read(at, basis);
-            if read.z == 0.0 {
-                continue;
-            }
-            let reference = read.y;
-            if previous >= 0.0 {
-                // 🔴 Tolerance from the geometry; the 1.05 slack is Unreal's, or precision makes
-                // shadowed regions sparkle.
-                let tolerance = abs(reference - previous) * 1.05;
-                // 🔴 Reversed-Z: blocked when stored depth exceeds the sample's. Inverted, every ray
-                // climbed past its own ground and the frame went uniformly dark.
-                if read.x - reference > tolerance {
-                    blocked = true;
-                    break;
-                }
-            }
-            previous = reference;
-        }
-        if !blocked {
-            lit = lit + 1.0;
-        }
-    }
-    return lit / f32(PAGE_RAYS);
-}
-
-
-/// Sun shadow from the page pool: walks out from the coarsest containing level, since any resident
-/// page holds valid depth. Bias moves the position by texels of the level read — metres would
-/// vanish far, explode near.
-fn inti_page_shadow(
-    world_position: vec3<f32>,
-    normal: vec3<f32>,
-    to_light: vec3<f32>,
-    n_dot_l: f32,
-) -> f32 {
-    // Which reader answers, from `shadow_page_march`. See
-    // `inti_page_march` for what the two ask differently.
-    if inti_pages.layer.z != 0u {
-        return inti_page_march(world_position, normal, n_dot_l, 0.0);
-    }
-    let basis = sun_basis(inti_pages.sun.xyz);
-
-    let base = inti_pages.world.x;
-    let span = inti_pages.world.y;
-    let side = inti_pages.space.z;
-    let page_texels = inti_pages.pool.w;
-
-    // Containment is the level floor, measured before the offset: a one-texel step cannot cross a
-    // page boundary. Mirrors `mark_sun`'s `contain`.
-    let raw = sun_plane(world_position, basis) - sun_plane(inti_pages.eye.xyz, basis);
-    let reach = max(abs(raw.x), abs(raw.y)) * 2.0;
-    var level = sun_level(reach, base, side);
-
-    // 🔴 Jump instead of walk: `cs_lod_offsets` stored how many levels up the first readable page is
-    // (Unreal's `LODOffset`). The loop stays for stale hints.
-    let floor_cell = sun_cell(world_position, inti_pages.eye.xyz, basis, base, side, level);
-    let floor_page = inti_pages.views.x * inti_pages.views.y
-        + inti_pages.space.w * inti_pages.space.x
-        + level * side * side
-        + floor_cell.y * side
-        + floor_cell.x;
-    if floor_page < inti_pages.pool.x {
-        let hint = inti_page_slots[floor_page * PAGE_CELL + PAGE_LOD];
-        if hint != PAGE_NO_LOD && level + hint < inti_pages.chain.x {
-            level = level + hint;
-        }
-    }
-
-    for (; level < inti_pages.chain.x; level = level + 1u) {
-        let extent = base * exp2(f32(level));
-        // Metres per texel at this level — why the offset is computed inside the walk.
-        let texel_world = extent / f32(side * page_texels);
-        // 🔴 Capped: the step is texels, 0.1 mm at level 0 and 5.12 m at 16, so uncapped it reaches
-        // 9.2 m and walks receivers out of their shadow. ⚠️ `bias.z` 0 means no cap.
-        var offset = texel_world * inti_pages.bias.x;
-        if inti_pages.bias.z > 0.0 {
-            offset = min(offset, inti_pages.bias.z);
-        }
-        let sampled = world_position
-            + normal * offset
-            + to_light * inti_pages.bias.y;
-
-        // The plane is ABSOLUTE and the grid is snapped, so a texel's
-        // footprint does not slide with the camera. See `sun_centre`.
-        let centre = sun_centre(inti_pages.eye.xyz, basis, base, side, level);
-        let along = dot(sampled - inti_pages.eye.xyz, basis[2])
-            + sun_drift(inti_pages.eye.xyz, basis, base, side, level);
-        // Reversed-Z along the sun's axis, matching `page_depth.wgsl`.
-        // Nothing is added to it: the offset above already moved the
-        // point towards the light, which is the depth half of the bias.
-        let receiver = 1.0 - (along + span) / (2.0 * span);
-
-        // The same absolute-world key the marking wrote. See `sun_cell`.
-        let cell = sun_cell(sampled, inti_pages.eye.xyz, basis, base, side, level);
-        // 🔴 The view is the key's high part: two viewports are two clipmaps.
-        let page = inti_pages.views.x * inti_pages.views.y
-            + inti_pages.space.w * inti_pages.space.x
-            + level * side * side
-            + cell.y * side
-            + cell.x;
-        let slot = inti_page_lookup(page);
-        if slot == PAGE_MISS {
-            continue;
-        }
-
-        // Where the point sits inside its own page, in texels.
-        let rect = sun_page_rect(level, cell, inti_pages.eye.xyz, basis, base, side);
-        let within = (sun_plane(sampled, basis) - rect.xy) / rect.z + vec2<f32>(0.5);
-        let place = page_place(slot, inti_pages.views.z, inti_pages.pool.z, page_texels);
-        let origin = vec2<f32>(place.xy);
-        let layer = i32(place.z);
-        let texel = within * f32(page_texels);
-
-        // 🔴 The receiver-plane gradient, in the texels of THIS level.
-        // `bias.w` clamps it, and 0 disables the term entirely — which
-        // is the A/B that says whether it is doing anything.
-        let slope = receiver_slope(normal, basis, texel_world, span, inti_pages.bias.w);
-
-        // Bilinear PCF, clamped inside the page — see
-        // `inti_page_filter` for both halves of that sentence.
-        return inti_page_filter(
-            origin,
-            layer,
-            texel,
-            receiver,
-            slope,
-            page_texels,
-            cell,
-            level,
-            side,
-        );
-    }
-    // No page anywhere in the chain. Lit, not shadowed: a point nobody
-    // marked is a point the frame never looked at, and guessing dark
-    // there would put shadow where no data exists.
-    return 1.0;
-}
-/// A local light's shadow from the page pool, so lamps past the cube budget still shadow. Walks
-/// finest first and never lands coarser than marked; a spot writes the one face `mark_local`
-/// assigns.
-fn inti_local_page_shadow(
-    light: u32,
-    is_spot: bool,
-    light_position: vec3<f32>,
-    // The spot's axis; unread for a point. A spot's one face is
-    // aligned with it — see `spot_local`.
-    light_direction: vec3<f32>,
-    world_position: vec3<f32>,
-    normal: vec3<f32>,
-    to_light: vec3<f32>,
-) -> f32 {
-    let side0 = inti_pages.space.z;
-    let page_texels = inti_pages.pool.w;
-    let stride = inti_pages.space.x;
-    let face_pages = inti_pages.space.y;
-    // The chain stops where a whole level is one page. Mirrors
-    // `PageConfig::levels`.
-    let levels = u32(log2(f32(max(side0, 1u)))) + 1u;
-    let view_base = inti_pages.views.x * inti_pages.views.y;
-
-    // 🔴 Starts at the floor, not at zero. The marking cannot pick a
-    // level below it, so the levels under it hold no pages for anybody —
-    // walking them is three table lookups a pixel that can only miss.
-    for (var level = local_level_floor(side0 * page_texels); level < levels; level = level + 1u) {
-        let side = level_side_of(level, side0);
-        let raw = world_position - light_position;
-        let distance = max(length(raw), PAGE_NEAR);
-        // A 90° face covers `2 * distance` across `side * page_texels` texels — the identity
-        // `page_level` inverts.
-        let texel_world = 2.0 * distance / f32(side * page_texels);
-        // 🔴 The point pair: `INTI_POINT_DEPTH_BIAS` is 4× the sun's. Borrowing the sun's printed
-        // the self-shadow square under lamps.
-        let sampled = world_position
-            + normal * (texel_world * INTI_POINT_NORMAL_BIAS)
-            + to_light * INTI_POINT_DEPTH_BIAS;
-
-        var offset = sampled - light_position;
-        if is_spot {
-            offset = spot_local(light_direction, offset);
-        }
-        let hit = cube_face(offset);
-        let face = select(u32(hit.w), 0u, is_spot);
-        let cell = vec2<u32>(
-            clamp(hit.xy, vec2<f32>(0.0), vec2<f32>(0.99999)) * f32(side)
-        );
-        // 🔴 The VIEW is the high part of the key, the same as the sun's:
-        // two viewports are two page sets and a lookup without it finds
-        // whichever camera marked last.
-        let page = view_base
-            + light * stride
-            + face * face_pages
-            + local_level_base(level, side0, page_texels)
-            + cell.y * side
-            + cell.x;
-        let slot = inti_page_lookup(page);
-        if slot == PAGE_MISS {
-            continue;
-        }
-
-        // Major-axis depth, as `page_depth.wgsl` stores `PAGE_NEAR / major`; radial distance drifts
-        // toward face corners by up to 1.73×.
-        let major = max(max(abs(offset.x), abs(offset.y)), abs(offset.z));
-        let receiver = clamp(PAGE_NEAR / max(major, PAGE_NEAR), 0.0, 1.0);
-
-        // Where the point sits inside its own cell, in texels.
-        let step = 1.0 / f32(side);
-        let low = vec2<f32>(cell) * step;
-        let within = (hit.xy - low) / step;
-        let place = page_place(slot, inti_pages.views.z, inti_pages.pool.z, page_texels);
-        let origin = vec2<f32>(place.xy);
-        let layer = i32(place.z);
-        let texel = within * f32(page_texels);
-
-        // No slope yet, deliberately: a perspective page needs a different derivation, and zero is
-        // the old behaviour.
-        let slope = vec2<f32>(0.0);
-
-        // Bilinear PCF clamped in the page (see `inti_page_filter`); lamps clamp because an edge
-        // crosses a face, not a grid step.
-        return inti_page_filter(
-            origin,
-            layer,
-            texel,
-            receiver,
-            slope,
-            page_texels,
-            vec2<u32>(0u),
-            PAGE_UNLISTED,
-            0u,
-        );
-    }
-    // No page anywhere in the chain: lit, for the same reason the sun's
-    // reader is. A point nobody marked is a point the frame never looked
-    // at, and guessing dark there puts shadow where no data exists.
-    return 1.0;
-}
-
-/// Sun occlusion at `world_position`, 1 = lit. Near a cascade split both cascades are sampled and
-/// mixed, or the handover draws a line on the ground.
-fn inti_shadow(
-    world_position: vec3<f32>,
-    normal: vec3<f32>,
-    to_light: vec3<f32>,
-    view_depth: f32,
-    n_dot_l: f32,
-) -> f32 {
-    if (inti.shadows_enabled == 0u) {
-        return 1.0;
-    }
-    // 🔴 Pages replace cascades rather than blending: two techniques disagree at their boundaries
-    // and draw a seam.
-    if (inti_pages.sun.w > 0.5) {
-        return inti_page_shadow(world_position, normal, to_light, n_dot_l);
-    }
-    let picked = inti_pick_cascade(view_depth);
-    let index = u32(picked.x);
-    if (index >= 4u) {
-        return 1.0;
-    }
-
-    var lit = inti_sample_cascade(index, world_position, normal, to_light, n_dot_l);
-    if (picked.y <= 0.0) {
-        return lit;
-    }
-
-    // Inside the overlap band. The last cascade has no successor, so it
-    // fades to lit instead — a gradient into "no shadow data" rather
-    // than an edge at the end of the world.
-    if (index == 3u) {
-        return mix(lit, 1.0, picked.y);
-    }
-    let next = inti_sample_cascade(index + 1u, world_position, normal, to_light, n_dot_l);
-    return mix(lit, next, picked.y);
-}
-
-// Everything about a shaded point independent of the light, built once per pixel — a struct so
-// debug views run the same per-light maths. WGSL inlines it.
-struct IntiSurface {
-    world_position: vec3<f32>,
-    n: vec3<f32>,
-    // Towards the camera.
-    v: vec3<f32>,
-    // The mirror direction; only the representative point (#776) reads it, but it is per pixel.
-    r: vec3<f32>,
-    n_dot_v: f32,
-    diffuse_color: vec3<f32>,
-    f0: vec3<f32>,
-    perceptual: f32,
-    // Linear roughness, `perceptual²`.
-    a: f32,
-    f_ab: vec2<f32>,
-    // Distance along the view axis, which picks a cascade: radial distance makes boundaries spheres
-    // that sweep across the frame.
-    view_depth: f32,
-    // #804 — the instance's bits. Bit 0 is "receives shadows"; when it
-    // is clear, `inti_light_contribution` skips the shadow fetch
-    // outright rather than fetching and multiplying by one.
-    flags: u32,
-}
-
-// `base_color` is linear albedo (sRGB textures are decoded by the
-// sampler; `Material::base_color` is documented linear). `metallic`
-// and `roughness` are the usual perceptual [0,1] scalars.
-fn inti_surface(
-    world_position: vec3<f32>,
-    n: vec3<f32>,
-    base_color: vec3<f32>,
-    metallic: f32,
-    roughness: f32,
-    flags: u32,
-) -> IntiSurface {
-    let v = normalize(inti.camera_position - world_position);
-    let n_dot_v = max(dot(n, v), 1e-4);
-    let perceptual = clamp(roughness, INTI_MIN_PERCEPTUAL_ROUGHNESS, 1.0);
-
-    var surf: IntiSurface;
-    surf.world_position = world_position;
-    surf.n = n;
-    surf.v = v;
-    surf.r = reflect(-v, n);
-    surf.n_dot_v = n_dot_v;
-    // Metals have no diffuse and take F0 from their albedo;
-    // dielectrics reflect a flat 4% and keep all of theirs.
-    surf.diffuse_color = base_color * (1.0 - metallic);
-    surf.f0 = mix(vec3<f32>(0.04), base_color, metallic);
-    surf.perceptual = perceptual;
-    surf.a = perceptual * perceptual;
-    surf.f_ab = inti_f_ab(perceptual, n_dot_v);
-    surf.view_depth = dot(world_position - inti.camera_position, inti.camera_forward);
-    surf.flags = flags;
-    return surf;
-}
-
-// Karis 2013's representative point (s2013_pbs_epic_notes_v2.pdf p14–16): the sphere point nearest
-// the mirror ray in `xyz`, the widened linear roughness in `w`.
-fn inti_representative_point(
-    r: vec3<f32>,
-    a: f32,
-    offset: vec3<f32>,
-    radius: f32,
-    distance: f32,
-) -> vec4<f32> {
-    // 🔴 A fix, not a divide-by-zero guard (bevy#13318): surfaces inside the light's sphere show a
-    // discontinuity without it.
-    let lt_f_dot_r = max(0.0001, dot(offset, r));
-    let center_to_ray = lt_f_dot_r * r - offset;
-    let closest = offset + center_to_ray * saturate(
-        radius * inverseSqrt(dot(center_to_ray, center_to_ray)));
-    // Karis p14. The 2 is hand-tuned against reference renders, not
-    // derived.
-    let a_prime = saturate(a + radius / (2.0 * max(distance, 1e-4)));
-    return vec4<f32>(closest * inverseSqrt(dot(closest, closest)), a_prime);
-}
-
-// Bevy's amendment: lerp original and widened roughness by roughness, or smooth materials read
-// rough and dim. LTC (#779) is the real fix.
-fn inti_specular_fix_remap(a: f32) -> f32 {
-    let inv_a_sq = (1.0 - a) * (1.0 - a);
-    return 1.0 - inv_a_sq * inv_a_sq;
-}
-
-// One light's answer, with enough of the question left attached for the
-// caller to decide which light mattered most (#845).
-struct IntiLit {
-    // What this light adds to the surface point.
-    radiance: vec3<f32>,
-    // The ceiling this light had on this point: irradiance faced head-on,
-    // times the cosine. The same number the range cut and
-    // `specular_floor` already read — a light's weight in one scalar.
-    reach: f32,
-    // Unit vector toward it, which is what a contact march needs.
-    to_light: vec3<f32>,
-}
-
-// What one light adds to one surface point, shadows included. Zero when
-// the surface faces away from it.
-fn inti_light_contribution(
-    surf: IntiSurface,
-    light: IntiLight,
-    // 🔴 The light's buffer index, its identity in page keys — passed in, since `IntiLight`'s pads
-    // are load-bearing.
-    index: u32,
-    frag_coord: vec2<f32>,
-) -> vec3<f32> {
-    return inti_light_lit(surf, light, index, frag_coord, true).radiance;
-}
-
-// The same, with the contact march optional and the light's weight reported. 🔴 `march == false`
-// means not here: the caller marches once, for the highest `reach`.
-fn inti_light_lit(
-    surf: IntiSurface,
-    light: IntiLight,
-    index: u32,
-    frag_coord: vec2<f32>,
-    march: bool,
-) -> IntiLit {
-    let s = inti_sample_light(light, surf.world_position);
-    let n_dot_l = dot(surf.n, s.to_light);
-    let nothing = IntiLit(vec3<f32>(0.0), 0.0, s.to_light);
-    if (n_dot_l <= 0.0) {
-        return nothing;
-    }
-
-    // The most this light can put here. 🔴 Zero is exact past `range` (#835), so return now instead
-    // of multiplying both BRDF layers, the cube and the march by it — the froxel conservatively
-    // admits ~26 of ~40 such lights (#820).
-    let reach = max(max(s.irradiance.x, s.irradiance.y), s.irradiance.z) * n_dot_l;
-    if (reach <= 0.0) {
-        return nothing;
-    }
-
-    // The diffuse layer always answers to the light's centre.
-    let h = normalize(s.to_light + surf.v);
-    let l_dot_h = saturate(dot(s.to_light, h));
-    let diffuse_term = inti_fd_burley(surf.perceptual, surf.n_dot_v, n_dot_l, l_dot_h);
-
-    // The expensive half — GGX, Smith, Schlick, multiscatter, representative point — per light per
-    // pixel with ~15 lights (#820). Under `specular_floor` (#821) a light pays diffuse only; 0.0
-    // always takes it.
-    var specular = vec3<f32>(0.0);
-    var n_dot_l_spec = n_dot_l;
-    // ⚠️ Fresnel at normal incidence stays when specular is skipped: `f` weights diffuse, and
-    // dropping it would brighten the surface.
-    var f = surf.f0;
-    // `reach` is the same value the range cut above already computed —
-    // one light's ceiling on this surface, read twice for two different
-    // questions. This one asks whether the highlight is worth its cost.
-    if (reach >= inti.specular_floor) {
-        var l_spec = s.to_light;
-        var a_spec = surf.a;
-        var l_dot_h_spec = l_dot_h;
-        var h_spec = h;
-        var spec_intensity = 1.0;
-        var solid_angle = 0.0;
-        // Directional lights are excluded by kind: no position, no distance to correct; the sun's
-        // size is a shadow problem (#477).
-        if (light.radius > 0.0 && light.kind != INTI_KIND_DIRECTIONAL) {
-            let rep = inti_representative_point(
-                surf.r, surf.a, s.offset, light.radius, s.distance);
-            l_spec = rep.xyz;
-            h_spec = normalize(l_spec + surf.v);
-            n_dot_l_spec = saturate(dot(surf.n, l_spec));
-            l_dot_h_spec = saturate(dot(l_spec, h_spec));
-            // Spreading energy must not add any. Uses the raw widened roughness while the BRDF gets
-            // the remapped one, as Bevy.
-            let normalization = surf.a / max(rep.w, 1e-4);
-            spec_intensity = normalization * normalization;
-            a_spec = mix(surf.a, rep.w, inti_specular_fix_remap(surf.a));
-            // Sphere visibility: at a grazing angle part of the sphere has
-            // sunk below the horizon and cannot light this point at all.
-            solid_angle = light.radius * light.radius
-                / max(s.distance * s.distance, 1e-8);
-        }
-
-        let n_dot_h = saturate(dot(surf.n, h_spec));
-        let d = inti_d_ggx(a_spec, n_dot_h);
-        let vis = inti_v_smith_correlated(a_spec, surf.n_dot_v, n_dot_l_spec);
-        f = inti_fresnel(surf.f0, l_dot_h_spec);
-        specular = inti_specular_multiscatter(
-            d * vis * f * spec_intensity, surf.f0, surf.f_ab);
-        if (solid_angle > 0.0) {
-            specular *= saturate(n_dot_l_spec / max(n_dot_l_spec + solid_angle, 1e-4));
-        }
-    }
-
-    // Diffuse gets what specular did not reflect; Bevy's forward path skips this, its path tracer
-    // does not.
-    let diffuse = (vec3<f32>(1.0) - f) * surf.diffuse_color * diffuse_term;
-
-    // Each light kind reads its own map: cascades (#476), spot layer (#777), point cube (#778). A
-    // non-receiving surface fetches nothing (#804).
-    var shadow = 1.0;
-    if ((surf.flags & INTI_SURFACE_RECEIVES_SHADOWS) != 0u) {
-        if (light.kind == INTI_KIND_DIRECTIONAL) {
-            shadow = inti_shadow(surf.world_position, surf.n, s.to_light, surf.view_depth, n_dot_l);
-        } else if (light.kind == INTI_KIND_POINT) {
-            // 🔴 Pages are not gated on `shadow_slot`, a cube index capped at 32; page-backed lamps
-            // are keyed by light index.
-            if (inti_pages.sun.w > 0.5) {
-                shadow = inti_local_page_shadow(
-                    index, false, light.position, light.direction,
-                    surf.world_position, surf.n, s.to_light);
-            } else if (light.shadow_slot != INTI_NO_SHADOW_SLOT) {
-                // Six faces of one cube (#778).
-                shadow = inti_point_shadow(
-                    light.shadow_slot, surf.world_position, surf.n, s.to_light, light.position);
-            }
-        } else if (light.kind == INTI_KIND_SPOT) {
-            if (inti_pages.sun.w > 0.5) {
-                // One face, aligned with the spot's own axis.
-                shadow = inti_local_page_shadow(
-                    index, true, light.position, light.direction,
-                    surf.world_position, surf.n, s.to_light);
-            } else if (light.shadow_slot != INTI_NO_SHADOW_SLOT) {
-                // A spot casts into the cascade array (#777); axial distance as Bevy, since radial
-                // would widen the bias at the cone's edge.
-                let axial = dot(light.direction, surf.world_position - light.position);
-                shadow = inti_spot_shadow(
-                    light.shadow_slot, surf.world_position, surf.n, s.to_light, n_dot_l, axial);
-            }
-        }
-
-        // Contact shadows (#735) for any light kind, skipped where the map already shadows: two
-        // occlusions of one occluder darken twice.
-        if (march && (light.flags & INTI_LIGHT_CONTACT_SHADOWS) != 0u && shadow > 0.0) {
-            shadow *= inti_contact_shadow(
-                surf.world_position, surf.n, surf.v, s.to_light, frag_coord);
-        }
-    }
-
-    // 🔴 Cosine per layer, as Bevy: specular has its own N·L, and factoring it out undoes half of
-    // #776 invisibly until a radius is authored.
-    let radiance = (diffuse * n_dot_l + specular * n_dot_l_spec) * s.irradiance * shadow;
-    // Only a light whose own map does not block it may win the one march.
-    let marchable = shadow > 0.0 && (light.flags & INTI_LIGHT_CONTACT_SHADOWS) != 0u;
-    return IntiLit(radiance, select(0.0, reach, marchable), s.to_light);
-}
-
-/// A point light's shadow, one cube (#778). Depth is the largest axis component, not the length —
-/// faces meet at 45°, and length scales the bias by up to √3 at corners.
-fn inti_point_shadow(
-    slot: u32,
-    world_position: vec3<f32>,
-    normal: vec3<f32>,
-    to_light: vec3<f32>,
-    light_position: vec3<f32>,
-) -> f32 {
-    if (slot >= inti.point_shadow_count) {
-        return 1.0;
-    }
-    let record = inti.point_shadows[slot];
-
-    let surface_to_light = light_position - world_position;
-    let abs_to_light = abs(surface_to_light);
-    let distance_to_light =
-        max(abs_to_light.x, max(abs_to_light.y, abs_to_light.z));
-
-    // The same two world-space offsets the cascades and the spots use,
-    // with the texel size resolved to metres by this fragment's own
-    // distance — the record carries an angle, not a length.
-    let texel_world = record.texel_world_size * distance_to_light;
-    let offset_position = world_position
-        + normal * (texel_world * INTI_POINT_NORMAL_BIAS)
-        + to_light * INTI_POINT_DEPTH_BIAS;
-
-    let frag_ls = offset_position - light_position;
-    let abs_ls = abs(frag_ls);
-    let major = max(abs_ls.x, max(abs_ls.y, abs_ls.z));
-    // The whole depth reconstruction under infinite reverse-Z; nearer is greater, as `Greater`
-    // expects.
-    let depth = record.near / max(major, 1e-4);
-
-    // 🔴 Cube maps are left-handed and the engine is not: faces are stored Z-swapped
-    // (`FACE_DIRECTIONS`) and the direction mirrored here. Fixing one half flips shadows.
-    let dir = frag_ls * vec3<f32>(1.0, 1.0, -1.0);
-    return inti_filter_cube(dir, depth, slot, texel_world);
-}
-
-// Branchless orthonormal basis (Duff et al. 2017, Bevy's `orthonormalize`): cube filter taps move
-// across the sampling direction's tangent plane. `z_basis` must be unit.
-fn inti_orthonormalize(z_basis: vec3<f32>) -> mat3x3<f32> {
-    let sign = select(-1.0, 1.0, z_basis.z >= 0.0);
-    let a = -1.0 / (sign + z_basis.z);
-    let b = z_basis.x * z_basis.y * a;
-    return mat3x3<f32>(
-        vec3<f32>(1.0 + sign * z_basis.x * z_basis.x * a, sign * b, -sign * z_basis.x),
-        vec3<f32>(b, sign + z_basis.y * z_basis.y * a, -z_basis.y),
-        z_basis,
-    );
-}
-
-// Cube filter width in texels — Bevy's 0.003 in direction units is about one texel at 1024², but
-// units of texels survive face-size changes. Wider on purpose: 512² faces, and a lamp's shadow
-// should be soft.
-const INTI_POINT_FILTER_TEXELS: f32 = 2.0;
-
-// Eight D3D MSAA positions with Gaussian weights summing to 1. ⚠️ Not Castano: its bilinear
-// nine-from-four trick does not exist for cubemaps.
-fn inti_filter_cube(
-    dir: vec3<f32>,
-    depth: f32,
-    slot: u32,
-    // 🔴 Already metres at this fragment's distance; multiplying by distance again grew the radius
-    // with its square.
-    texel_world: f32,
-) -> f32 {
-    let positions = array<vec2<f32>, 8>(
-        vec2<f32>(0.125, -0.375),
-        vec2<f32>(-0.125, 0.375),
-        vec2<f32>(0.625, 0.125),
-        vec2<f32>(-0.375, -0.625),
-        vec2<f32>(-0.625, 0.625),
-        vec2<f32>(-0.875, -0.125),
-        vec2<f32>(0.375, 0.875),
-        vec2<f32>(0.875, -0.875),
-    );
-    let coeffs = array<f32, 8>(
-        0.157112,
-        0.157112,
-        0.138651,
-        0.130251,
-        0.114946,
-        0.114946,
-        0.107982,
-        0.079001,
-    );
-
-    // The tangent plane scaled so one unit is one texel at this distance, matching the direction
-    // vector's length.
-    let basis = inti_orthonormalize(normalize(dir))
-        * (texel_world * INTI_POINT_FILTER_TEXELS);
-
-    var sum = 0.0;
-    for (var i = 0; i < 8; i = i + 1) {
-        let offset = positions[i].x * basis[0] + positions[i].y * basis[1];
-        sum += coeffs[i] * textureSampleCompareLevel(
-            inti_point_cubes, inti_shadow_sampler, dir + offset, i32(slot), depth);
-    }
-    return sum;
-}
-
-/// A spot light's shadow (#777): one map, no splits, so the cascade path on the spot's record.
-fn inti_spot_shadow(
-    slot: u32,
-    world_position: vec3<f32>,
-    normal: vec3<f32>,
-    to_light: vec3<f32>,
-    n_dot_l: f32,
-    distance_to_light: f32,
-) -> f32 {
-    if (slot >= inti.spot_shadow_count) {
-        return 1.0;
-    }
-    // Normal bias × distance, as Bevy: a perspective texel grows with distance, so no per-scene
-    // tuning.
-    return inti_sample_cascade_record(
-        inti.spot_shadows[slot], world_position, normal, to_light, n_dot_l,
-        max(distance_to_light, 0.0));
-}
-
-// The running sum, plus the strongest light seen so far.
-struct IntiAccum {
-    radiance: vec3<f32>,
-    // That light's own radiance, so the march can be applied to it and
-    // to nothing else.
-    brightest: vec3<f32>,
-    reach: f32,
-    to_light: vec3<f32>,
-}
-
-fn inti_accumulate(acc: IntiAccum, lit: IntiLit) -> IntiAccum {
-    var out = acc;
-    out.radiance += lit.radiance;
-    // Strictly greater, so the first of two equals wins and the choice
-    // does not depend on which order the froxel happened to list them.
-    if (lit.reach > out.reach) {
-        out.brightest = lit.radiance;
-        out.reach = lit.reach;
-        out.to_light = lit.to_light;
-    }
-    return out;
-}
-
-fn inti_merge(a: IntiAccum, b: IntiAccum) -> IntiAccum {
-    var out = a;
-    out.radiance += b.radiance;
-    if (b.reach > out.reach) {
-        out.brightest = b.brightest;
-        out.reach = b.reach;
-        out.to_light = b.to_light;
-    }
-    return out;
-}
-
-/// The whole model for one surface point, as linear HDR radiance; exposure and transfer are
-/// `inti_tonemap`'s, so other passes can read the raw value.
-fn inti_shade(
-    world_position: vec3<f32>,
-    n: vec3<f32>,
-    base_color: vec3<f32>,
-    metallic: f32,
-    roughness: f32,
-    frag_coord: vec2<f32>,
-    // #804 — the instance's bits, straight off `VertexOutput.flags`.
-    flags: u32,
-) -> vec3<f32> {
-    let surf = inti_surface(world_position, n, base_color, metallic, roughness, flags);
-
-    // 🔴 One march per pixel, not per light (#845): 1.7 ms per step on the OneXFly × ~14 lights was
-    // the whole frame. The loop remembers the brightest light and marches for it alone.
-    var acc = IntiAccum(vec3<f32>(0.0), vec3<f32>(0.0), 0.0, vec3<f32>(0.0));
-    let dominant = inti_contact_dominant_only();
-    if (inti.clustered == 0u) {
-        // No grid this frame: every light for every pixel, as before #780 and in headless paths.
-        for (var i = 0u; i < inti.light_count; i = i + 1u) {
-            acc = inti_accumulate(acc, inti_light_lit(
-                surf, inti_lights[i], i, frag_coord, !dominant));
-        }
-    } else {
-        // Directional lights are not in the grid: they reach every cell,
-        // so a cell listing them would say nothing. They are the light
-        // buffer's leading entries — see `ExtractedLights`.
-        for (var i = 0u; i < inti.directional_count; i = i + 1u) {
-            acc = inti_accumulate(acc, inti_light_lit(
-                surf, inti_lights[i], i, frag_coord, !dominant));
-        }
-        acc = inti_merge(acc, inti_clustered_lights(surf, world_position, frag_coord, dominant));
-    }
-
-    var radiance = acc.radiance;
-    if (dominant && acc.reach > 0.0) {
-        // Subtracting what the march removes, rather than re-adding a
-        // shaded copy: the winner's radiance is already inside the sum.
-        let shadow = inti_contact_shadow(
-            surf.world_position, surf.n, surf.v, acc.to_light, frag_coord);
-        radiance -= acc.brightest * (1.0 - shadow);
-    }
-
-    radiance += inti_ambient(n, surf.diffuse_color, surf.f0, surf.f_ab);
-    return radiance;
-}
-
-
-// This fragment's froxel lights only (#780): bounds from the cell, so a distant lamp costs nothing.
-// Points and spots are two consecutive ranges, no type test.
-fn inti_clustered_lights(
-    surf: IntiSurface,
-    world_position: vec3<f32>,
-    frag_coord: vec2<f32>,
-    dominant: bool,
-) -> IntiAccum {
-    let cell = inti_clusters[inti_cluster_of(world_position, frag_coord)];
-    let points_end = cell.offset + cell.point_count;
-    // Reflection probes, irradiance volumes and decals follow the spots
-    // in the same record. Nothing reads them yet; when something does,
-    // it reads its own range and this loop does not change.
-    var spots_end = points_end + cell.spot_count;
-    // `KOOCH_LIGHT_LIMIT`, applied here so both shading paths inherit it.
-    if (inti.light_limit != 0u) {
-        spots_end = min(spots_end, cell.offset + inti.light_limit);
-    }
-
-    // #839: taps are steps × lights; this caps the lights that march (0 = no cap). Past it a light
-    // still shades.
-    let march_cap = inti_contact_max_lights();
-    var marched = 0u;
-
-    var acc = IntiAccum(vec3<f32>(0.0), vec3<f32>(0.0), 0.0, vec3<f32>(0.0));
-    for (var i = cell.offset; i < spots_end; i = i + 1u) {
-        // 🔴 Clamped to the list's length: an overflowed frame points past it, and under-lit beats
-        // an undefined read.
-        if (i >= inti.cluster_capacity) {
-            break;
-        }
-        let index = inti_cluster_indices[i];
-        let march = !dominant && (march_cap == 0u || marched < march_cap);
-        if march && (inti_lights[index].flags & INTI_LIGHT_CONTACT_SHADOWS) != 0u {
-            marched = marched + 1u;
-        }
-        acc = inti_accumulate(acc, inti_light_lit(
-            surf, inti_lights[index], index, frag_coord, march));
-    }
-    return acc;
-}
-
-// The fragment's cell in grid coordinates, split out for #824: a compute tile reduces cells to
-// per-axis min/max, which a linear index cannot.
-fn inti_cluster_cell(world_position: vec3<f32>, frag_coord: vec2<f32>) -> vec3<u32> {
-    let view_z = dot(inti.view_z_row, vec4<f32>(world_position, 1.0));
-    let xy = vec2<u32>(floor(frag_coord * inti.cluster_factors.xy));
-    // Mirrors `cluster_z_slice` and `ClusterGrid::z_slice`; disagreeing reads a cell the grid never
-    // wrote.
-    let slice = log(-view_z) * inti.cluster_factors.z - inti.cluster_factors.w + 1.0;
-    let z = min(u32(max(slice, 0.0)), inti.cluster_dimensions.z - 1u);
-    return clamp(
-        vec3<u32>(xy, z),
-        vec3<u32>(0u),
-        inti.cluster_dimensions.xyz - vec3<u32>(1u));
-}
-
-// That cell's index into `inti_clusters`.
-fn inti_cluster_index(cell: vec3<u32>) -> u32 {
-    return min(
-        (cell.y * inti.cluster_dimensions.x + cell.x) * inti.cluster_dimensions.z + cell.z,
-        inti.cluster_dimensions.w - 1u);
-}
-
-// Which cell of the grid a fragment is in.
-fn inti_cluster_of(world_position: vec3<f32>, frag_coord: vec2<f32>) -> u32 {
-    return inti_cluster_index(inti_cluster_cell(world_position, frag_coord));
-}
-
-// The operator is in `inti_tonemap.wgsl` (`INTI_TONEMAP`), shared with the standalone tonemap pass
-// (#732), which has no `inti` binding.
-fn inti_tonemap(radiance: vec3<f32>) -> vec3<f32> {
-    return inti_tonemap_with(radiance, inti.exposure);
-}

@@ -27,8 +27,13 @@ pub use gpu_light::{
 };
 pub use light_frame::LightFrame;
 
-/// The shading model, as a template. Use [`inti_pbr_shader`].
-const INTI_PBR_TEMPLATE: &str = include_str!("../shaders/inti_pbr.wgsl");
+/// The shading model, as a template split across files in declaration order (WGSL has no
+/// `#include`). Use [`inti_pbr_shader`].
+const INTI_PBR_TEMPLATE: &str = concat!(
+    include_str!("../shaders/inti_pbr.wgsl"),
+    include_str!("../shaders/inti_pages.wgsl"),
+    include_str!("../shaders/inti_shade.wgsl"),
+);
 
 /// Placeholder the template carries where the bind-group index goes.
 const GROUP_PLACEHOLDER: &str = "{{INTI_GROUP}}";

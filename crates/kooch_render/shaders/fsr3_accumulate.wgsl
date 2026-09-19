@@ -1,52 +1,18 @@
-// fsr3_accumulate.wgsl — FSR 3.1's last pass, and the one that makes
-// the image (#481).
+// fsr3_accumulate.wgsl — FSR 3.1's last pass, at OUTPUT resolution (#481): render samples are
+// accumulated straight into the output grid, weighted by their jitter, which is why it needs 16
+// phases and beats a spatial upscaler. Concatenated after `fsr3_common.wgsl`.
 //
-// Transliterated from `ffx_fsr3upscaler_accumulate.h`,
-// `ffx_fsr3upscaler_upsample.h`, `ffx_fsr3upscaler_reproject.h` and
-// `ffx_fsr3upscaler_sample.h` (AMD FSR SDK 2.3.0).
+// Transliterated from `ffx_fsr3upscaler_accumulate.h`, `ffx_fsr3upscaler_upsample.h`,
+// `ffx_fsr3upscaler_reproject.h` and `ffx_fsr3upscaler_sample.h` (AMD FSR SDK 2.3.0).
 //
 //   Copyright (C) 2026 Advanced Micro Devices, Inc.
 //   SPDX-License-Identifier: MIT
 //
-// See NOTICE at the repository root. Concatenated after
-// `fsr3_common.wgsl`.
+// See NOTICE at the repository root.
 //
-// # This runs at OUTPUT resolution, and that is the whole trick
-//
-// Every pass before this one is at render resolution. This one is not:
-// each output pixel asks which render samples land near it, weights
-// them by a Lanczos-2 kernel measured in RENDER pixels, and adds that
-// to a history that already lives at output resolution. The upscaling
-// is not a resample of a finished image — the low-resolution samples
-// are accumulated straight into the high-resolution grid, with their
-// jitter offset as the weight. That is why it needs sixteen phases of
-// jitter and why it beats a spatial upscaler.
-//
-// # Four mechanisms, in the order they run
-//
-// 1. **Reproject** the history with a separable Lanczos-2 over a 4×4,
-//    clamped to its inner 2×2 so the negative lobes cannot ring.
-// 2. **Lock** — a pixel flagged as a thin feature last pass gets a
-//    lifetime, and while it holds, the rectification below is allowed
-//    to be overruled. This is what stops a wire from dissolving.
-// 3. **Upsample** the 3×3 of render samples around the output pixel,
-//    building the YCoCg variance box as it goes.
-// 4. **Rectify** the history against that box — normalise, and if it
-//    lands outside the ellipsoid, pull it back to the surface. Not a
-//    hard clamp: the pull is lerped back by the lock and the luma
-//    instability, which is the part a naive TAA does not have.
-//
-// # Divergences from the original, all forced and all listed
-//
-// - **No `FFX_HALF`.** FSR leans on packed 16-bit math. `SHADER_F16`
-//   exists in wgpu, but naga's `f16` support is not a drop-in for
-//   HLSL's `min16float` semantics, and correctness comes before the
-//   ALU saving. 🔴 This is the first optimisation to try if the pass
-//   measures badly on the handheld.
-// - **No Xbox paired-16-bit path**, which is most of the line count of
-//   the original upsample file and none of its behaviour.
-// - **HDR input is assumed**, because the engine's colour target is
-//   linear `Rgba16Float` and there is no LDR path to select.
+// Order: reproject history (Lanczos-2 on a 4×4, clamped to its inner 2×2), lock thin features,
+// upsample the 3×3 into a YCoCg variance box, rectify history against it. Divergences: no
+// `FFX_HALF` outside the sample loops, no Xbox paired-16 path, HDR input assumed.
 
 @group(0) @binding(1) var input_colour: texture_2d<f32>;
 @group(0) @binding(2) var dilated: texture_2d<f32>;
@@ -54,9 +20,8 @@
 @group(0) @binding(4) var luma_instability: texture_2d<f32>;
 @group(0) @binding(5) var farthest_depth_mip1: texture_2d<f32>;
 @group(0) @binding(6) var history_prev: texture_2d<f32>;
-/// What the tonemap reads. Separate from the history because this
-/// one's alpha is COVERAGE for the blit and the history's is the lock —
-/// see `targets.rs`.
+/// What the tonemap reads. Separate from the history because this one's alpha is COVERAGE for the
+/// blit and the history's is the lock — see `targets.rs`.
 @group(0) @binding(10) var resolved: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(7) var linear_sampler: sampler;
 @group(0) @binding(8) var new_locks: texture_storage_2d<r32float, read_write>;
@@ -69,27 +34,14 @@
 const LOCK_THRESHOLD: f32 = 1.0;
 const LOCK_MAX: f32 = 2.0;
 
-/// How hard velocity is allowed to suppress the accumulated history.
-/// FSR exposes this to the application and defaults it to 1.0; there is
-/// nothing in this engine that would set it yet, so it is a constant
-/// here rather than a uniform field nobody writes.
+/// How hard velocity is allowed to suppress the accumulated history. FSR exposes this to the
+/// application and defaults it to 1.0; there is nothing in this engine that would set it yet, so it
+/// is a constant here rather than a uniform field nobody writes.
 const VELOCITY_FACTOR: f32 = 1.0;
 
-/// The half twins of the colour helpers.
-///
-/// 🎯 This is FSR's `FFX_HALF` path, and it is the optimisation the
-/// technique is built around: `accumulate` measured 11.982 of the
-/// technique's 14.704 ms, and it carries 25 colours through YCoCg, a
-/// tonemap round trip and a variance box for every output pixel. In
-/// half that is half the registers, which on a 10 W part is occupancy,
-/// which is latency hiding — the thing a pass doing thirty texture
-/// fetches per pixel is actually short of.
-///
-/// WGSL has no overloading, so these are twins rather than the same
-/// name. ⚠️ Only the SAMPLE LOOPS are half. The rectification and the
-/// blend stay f32, because two of their constants (`FSR3_FP32_MIN` and
-/// the 1.193e-7 box floor) are below the smallest normal half and would
-/// quietly become zero.
+/// Half-precision twins of the colour helpers — FSR's `FFX_HALF`: the sample loops are most of
+/// `accumulate` (11.98 of 14.70 ms), and half the registers is occupancy on a 10 W part. Only the
+/// loops: rectification stays f32, as `FSR3_FP32_MIN` and the 1.193e-7 box floor underflow a half.
 fn rgb_to_ycocg_h(rgb: vec3<f16>) -> vec3<f16> {
     return vec3<f16>(
         0.25h * rgb.r + 0.5h * rgb.g + 0.25h * rgb.b,
@@ -124,10 +76,9 @@ fn lanczos2(x_in: f32) -> f32 {
     return lanczos2_no_clamp(min(abs(x_in), 2.0));
 }
 
-/// The polynomial FSR uses for the upsample kernel instead of the real
-/// thing: two multiply-adds against a sine, and the difference does not
-/// survive a 16-bit colour target. Takes the SQUARED distance, which is
-/// why the call site never takes a square root.
+/// The polynomial FSR uses for the upsample kernel instead of the real thing: two multiply-adds
+/// against a sine, and the difference does not survive a 16-bit colour target. Takes the SQUARED
+/// distance, which is why the call site never takes a square root.
 fn lanczos2_approx_sq(x2_in: f32) -> f32 {
     let x2 = min(x2_in, 4.0);
     let a = (2.0 / 5.0) * x2 - 1.0;
@@ -135,9 +86,8 @@ fn lanczos2_approx_sq(x2_in: f32) -> f32 {
     return ((25.0 / 16.0) * a * a - (25.0 / 16.0 - 1.0)) * (b * b);
 }
 
-/// The weights come from f32 offsets and the colours are half: the
-/// kernel's shape is geometry and stays exact, the data it carries does
-/// not need to be.
+/// The weights come from f32 offsets and the colours are half: the kernel's shape is geometry and
+/// stays exact, the data it carries does not need to be.
 fn lanczos2_row(c0: vec4<f16>, c1: vec4<f16>, c2: vec4<f16>, c3: vec4<f16>, t: f32) -> vec4<f16> {
     let w0 = lanczos2(-1.0 - t);
     let w1 = lanczos2(-0.0 - t);
@@ -147,10 +97,9 @@ fn lanczos2_row(c0: vec4<f16>, c1: vec4<f16>, c2: vec4<f16>, c3: vec4<f16>, t: f
     return (f16(w0) * c0 + f16(w1) * c1 + f16(w2) * c2 + f16(w3) * c3) * n;
 }
 
-/// Separable Lanczos-2 over the 4×4 around `uv`, then clamped to the
-/// range of the inner 2×2. The clamp is the deringing: Lanczos has
-/// negative lobes, and without it a bright edge grows a dark halo that
-/// the history then remembers forever.
+/// Separable Lanczos-2 over the 4×4 around `uv`, then clamped to the range of the inner 2×2. The
+/// clamp is the deringing: Lanczos has negative lobes, and without it a bright edge grows a dark
+/// halo that the history then remembers forever.
 fn sample_history(uv: vec2<f32>, size: vec2<f32>) -> vec4<f16> {
     var px_sample = uv * size - vec2<f32>(0.5);
     let frac = fract(px_sample);
@@ -189,9 +138,8 @@ fn sample_history(uv: vec2<f32>, size: vec2<f32>) -> vec4<f16> {
 
 // ------------------------------------------------ rectification box
 
-/// The neighbourhood's mean and standard deviation in YCoCg, plus the
-/// hard min/max used for deringing. Accumulated weighted, so a sample
-/// further from the output pixel counts for less.
+/// The neighbourhood's mean and standard deviation in YCoCg, plus the hard min/max used for
+/// deringing. Accumulated weighted, so a sample further from the output pixel counts for less.
 struct RectificationBox {
     centre: vec3<f16>,
     vec: vec3<f16>,
@@ -221,9 +169,8 @@ fn box_add(box_in: RectificationBox, initial: bool, colour: vec3<f16>, weight: f
 
 fn box_finish(box_in: RectificationBox) -> RectificationBox {
     var box = box_in;
-    // ⚠️ FSR compares against FP32_MIN here. That is below the
-    // smallest normal half, so in this path it would be a comparison
-    // against zero — the half floor is the honest substitute.
+    // ⚠️ FSR compares against FP32_MIN here. That is below the smallest normal half, so in this
+    // path it would be a comparison against zero — the half floor is the honest substitute.
     if (abs(box.weight) <= f16(FSR3_FP16_MIN)) {
         box.weight = 1.0h;
     }
@@ -263,14 +210,12 @@ struct Data {
     history_weight: f16,
     lock: f32,
     lock_contribution: f32,
-    /// The Lanczos sum BEFORE the epsilon gate zeroes it, kept only so
-    /// the last debug step can tell "the kernel summed to nothing" apart
-    /// from "the gate threw it away".
+    /// The Lanczos sum BEFORE the epsilon gate zeroes it, kept only so the last debug step can tell
+    /// "the kernel summed to nothing" apart from "the gate threw it away".
     raw_weight: f32,
-    /// The two numbers that decide every tap's weight: where the render
-    /// grid sits relative to this output pixel, and how wide the kernel
-    /// is. Measured rather than reasoned about, because the sum came
-    /// back zero with both of them apparently in range.
+    /// The two numbers that decide every tap's weight: where the render grid sits relative to this
+    /// output pixel, and how wide the kernel is. Measured rather than reasoned about, because the
+    /// sum came back zero with both of them apparently in range.
     base_offset: vec2<f32>,
     kernel_bias: f32,
 }
@@ -325,8 +270,7 @@ fn init_common(hr_pos: vec2<i32>) -> Common {
 fn reproject_history(c: Common, d_in: Data) -> Data {
     var d = d_in;
     let history = sample_history(c.reprojected_hr_uv, params.output_size);
-    // The exposure pair is a host constant, so it folds to one half
-    // multiply rather than two.
+    // The exposure pair is a host constant, so it folds to one half multiply rather than two.
     let rescale = f16(params.delta_pre_exposure * params.exposure);
     d.history_colour = rgb_to_ycocg_h(history.rgb * rescale);
     d.lock = f32(history.w);
@@ -342,9 +286,8 @@ fn update_lock_status(c: Common, d_in: Data) -> Data {
 
     d.lock_contribution = saturate(saturate(d.lock - LOCK_THRESHOLD) * (LOCK_MAX - LOCK_THRESHOLD));
 
-    // ⚠️ `shading_change * 0` is FSR's own, not a transcription slip —
-    // the term was disabled in place rather than deleted, and it is
-    // left visible so the next reader does not "restore" it.
+    // ⚠️ `shading_change * 0` is FSR's own, not a transcription slip — the term was disabled in
+    // place rather than deleted, and it is left visible so the next reader does not "restore" it.
     let intensity = textureLoad(new_locks, c.hr_pos).x * (1.0 - max(c.shading_change * 0.0, c.reactive));
     d.lock = max(0.0, min(d.lock + intensity, LOCK_MAX));
 
@@ -373,9 +316,8 @@ fn base_accumulation_weight(c: Common, d_in: Data) -> Data {
     return d;
 }
 
-/// The kernel narrows as the upscale ratio grows: at 1:1 it may reach
-/// two render pixels, and at a large ratio a wide kernel would blur
-/// what the accumulation is trying to recover.
+/// The kernel narrows as the upscale ratio grows: at 1:1 it may reach two render pixels, and at a
+/// large ratio a wide kernel would blur what the accumulation is trying to recover.
 fn max_kernel_weight() -> f32 {
     let bias = 1.0 + (1.0 / params.downscale.x - 1.0);
     return min(1.99, bias);
@@ -391,11 +333,9 @@ fn upsample(c: Common, d_in: Data) -> Data {
     let src_unjittered = (vec2<f32>(src_input_pos) + 0.5) - params.jitter;
     let base_offset = src_unjittered - src_pos;
 
-    // Which side of the output pixel the render grid falls on decides
-    // which 3 of the 4 candidate columns are closest. Flipping the
-    // iteration order instead of the offsets keeps the first sample of
-    // the loop the nearest one, which is what the rectification box
-    // wants for its initial sample.
+    // Which side of the output pixel the render grid falls on picks the 3 nearest of 4 columns;
+    // flipping the iteration order rather than the offsets keeps the first sample the nearest one,
+    // which the rectification box wants as its initial sample.
     let flip_col = src_unjittered.x > src_pos.x;
     let flip_row = src_unjittered.y > src_pos.y;
     var offset_tl: vec2<i32>;
@@ -420,9 +360,8 @@ fn upsample(c: Common, d_in: Data) -> Data {
         }
     }
 
-    // On the very first frame there is no history to protect, so the
-    // samples are resolved in the compressed range instead — a single
-    // fireball pixel would otherwise set the whole box.
+    // On the very first frame there is no history to protect, so the samples are resolved in the
+    // compressed range instead — a single fireball pixel would otherwise set the whole box.
     if (initial_frame) {
         for (var i = 0; i < 9; i++) {
             samples[i] = rgb_to_ycocg_h(fsr3_tonemap_h(ycocg_to_rgb_h(samples[i])));
@@ -459,9 +398,8 @@ fn upsample(c: Common, d_in: Data) -> Data {
                 d.upsampled_weight += weight;
             }
 
-            // The box uses a gaussian rather than the Lanczos kernel:
-            // it is measuring the neighbourhood's spread, not resampling
-            // it, so it must stay positive.
+            // The box uses a gaussian rather than the Lanczos kernel: it is measuring the
+            // neighbourhood's spread, not resampling it, so it must stay positive.
             const RECTIFICATION_CURVE_BIAS: f32 = -2.3;
             let offset_sq = dot(src_sample_offset, src_sample_offset);
             let box_weight = f16(exp(RECTIFICATION_CURVE_BIAS * offset_sq) * on_screen);
@@ -506,12 +444,10 @@ fn rectify_history(c: Common, d_in: Data) -> Data {
         max(distance_factor, max(accumulation_factor, max(reactive_factor, c.shading_change))),
     );
 
-    // A settled, slow, distant pixel gets a box three sigma wide; a
-    // moving or freshly disoccluded one gets one sigma and is rectified
-    // hard.
+    // A settled, slow, distant pixel gets a box three sigma wide; a moving or freshly disoccluded
+    // one gets one sigma and is rectified hard.
     let box_scale = mix(3.0, 1.0, scale_t);
-    // Luma is stretched because the eye forgives a chroma error and
-    // does not forgive a luma one.
+    // Luma is stretched because the eye forgives a chroma error and does not forgive a luma one.
     let scaled = vec3<f32>(d.box.vec) * vec3<f32>(1.7, 1.0, 1.0) * box_scale;
     let clamped_scaled = max(scaled, vec3<f32>(1.193e-7));
     let centre = vec3<f32>(d.box.centre);
@@ -521,10 +457,9 @@ fn rectify_history(c: Common, d_in: Data) -> Data {
         let clamped = normalize(transformed);
         let final_colour = clamped * scaled + centre;
 
-        // 🎯 The line that separates this from a neighbourhood clamp:
-        // a locked or oscillating pixel is allowed to KEEP its history
-        // even though it fell outside the box, because the box is what
-        // is wrong in those two cases.
+        // 🎯 The line that separates this from a neighbourhood clamp: a locked or oscillating pixel
+        // is allowed to KEEP its history even though it fell outside the box, because the box is
+        // what is wrong in those two cases.
         let contribution =
             max(c.luma_instability, d.lock_contribution) * c.accumulation * (1.0 - c.disocclusion);
         d.history_colour = vec3<f16>(mix(
@@ -548,9 +483,8 @@ fn accumulate_colour(d_in: Data) -> Data {
 
     let alpha = saturate(d.upsampled_weight / d.history_weight);
     d.history_colour = mix(d.history_colour, d.upsampled_colour, vec3<f16>(alpha));
-    // ⚠️ The inverse tonemap divides by `1 - max`. Near white that is a
-    // small number and half has four decimal digits, so this one leaves
-    // the half path deliberately.
+    // ⚠️ The inverse tonemap divides by `1 - max`. Near white that is a small number and half has
+    // four decimal digits, so this one leaves the half path deliberately.
     let linear = fsr3_inverse_tonemap(ycocg_to_rgb(vec3<f32>(d.history_colour)));
     d.history_colour = vec3<f16>(linear);
     return d;
@@ -579,9 +513,8 @@ fn accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
     if (c.existing_sample && !c.new_sample) {
         d = reproject_history(c, d);
     }
-    // Snapshotted here because `accumulate_colour` turns `history_colour`
-    // from YCoCg into the final RGB, and the debug step that wants to
-    // know whether there IS a history has to ask before that.
+    // Snapshotted here because `accumulate_colour` turns `history_colour` from YCoCg into the final
+    // RGB, and the debug step that wants to know whether there IS a history has to ask before that.
     let reprojected = vec3<f32>(d.history_colour);
 
     d = update_lock_status(c, d);
@@ -590,9 +523,8 @@ fn accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
     d = rectify_history(c, d);
     d = accumulate_colour(d);
 
-    // Back to f32 for the store: the target is `rgba16float`, so the
-    // narrowing happens in hardware either way, but the exposure divide
-    // is by a number around 1e-3 and half would lose it.
+    // Back to f32 for the store: the target is `rgba16float`, so the narrowing happens in hardware
+    // either way, but the exposure divide is by a number around 1e-3 and half would lose it.
     var out = max(vec3<f32>(d.history_colour) / params.exposure, vec3<f32>(0.0));
     if (params.debug != 0u) {
         out = debug_stage(c, d, reprojected);
@@ -604,21 +536,9 @@ fn accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
     textureStore(new_locks, hr_pos, vec4<f32>(0.0));
 }
 
-/// The staircase, for finding which stage produced a wrong frame.
-///
-/// Selected by the editor's debug dropdown, and the order is the order
-/// the data flows: the first mode that looks wrong is the first stage
-/// that IS wrong, and everything after it is downstream of the same
-/// fault.
-///
-/// 🎯 Two kinds of step, and they leave through different doors.
-///
-/// The steps that show a 0..1 QUANTITY bypass the tonemap, so what is
-/// returned lands on screen as a grey ramp of the same number. The three
-/// that show RADIANCE keep the ordinary tonemap — exposure and filmic
-/// curve — so they are directly comparable with the real image. Handing
-/// radiance to a bypassed tonemap was the first attempt, and it painted
-/// a perfectly good frame black.
+/// Debug stages in data-flow order: the first one that looks wrong is the first stage that is.
+/// A 0..1 quantity bypasses the tonemap as a grey ramp; the three radiance steps keep it, so they
+/// compare with the real image (radiance through the bypass painted a good frame black).
 fn debug_stage(c: Common, d: Data, reprojected: vec3<f32>) -> vec3<f32> {
     switch params.debug {
         // 1 — the HDR frame FSR was handed. Black here means the fault
@@ -632,9 +552,8 @@ fn debug_stage(c: Common, d: Data, reprojected: vec3<f32>) -> vec3<f32> {
         case 2u: {
             return vec3<f32>(c.motion * 50.0 + 0.5, 0.5);
         }
-        // 3 — red reactive, green disocclusion, blue frames of history
-        // earned. Blue climbs to full over three still frames; staying
-        // black is the accumulation counter never advancing.
+        // 3 — red reactive, green disocclusion, blue frames of history earned. Blue climbs to full
+        // over three still frames; staying black is the accumulation counter never advancing.
         case 3u: {
             return vec3<f32>(c.reactive, c.disocclusion, c.accumulation);
         }
@@ -646,14 +565,12 @@ fn debug_stage(c: Common, d: Data, reprojected: vec3<f32>) -> vec3<f32> {
             return max(ycocg_to_rgb(vec3<f32>(d.upsampled_colour)), vec3<f32>(0.0))
                 / params.exposure;
         }
-        // 5 — the reprojected history alone, before anything this frame
-        // is blended into it. Black here with a settled camera means the
-        // history never survives from one frame to the next.
+        // 5 — the reprojected history alone, before anything this frame is blended into it. Black
+        // here with a settled camera means the history never survives from one frame to the next.
         case 5u: {
             return max(ycocg_to_rgb(vec3<f32>(reprojected)), vec3<f32>(0.0)) / params.exposure;
         }
-        // 6 — red the lock, green the luma instability, blue the
-        // upsample's total weight.
+        // 6 — red the lock, green the luma instability, blue the upsample's total weight.
         case 6u: {
             return vec3<f32>(
                 d.lock / LOCK_MAX,
@@ -661,18 +578,13 @@ fn debug_stage(c: Common, d: Data, reprojected: vec3<f32>) -> vec3<f32> {
                 f32(d.upsampled_weight) / AVERAGE_LANCZOS_WEIGHT_PER_FRAME,
             );
         }
-        // 7 — why is this pixel black. Red is the first-frame branch,
-        // green the RAW Lanczos sum before the epsilon gate, blue the
-        // history weight. A black frame with no green anywhere means the
-        // kernel summed to nothing and the accumulation kept a history
-        // that was never written.
+        // 7 — why this pixel is black: red the first-frame branch, green the raw Lanczos sum before
+        // the epsilon gate, blue the history weight. No green anywhere means the kernel summed to
+        // nothing and history that was never written was kept.
         case 7u: {
-            // 🔴 The two INPUTS to the weight, now that the output is
-            // known to be zero. Red and green are how far the render
-            // grid sits from this output pixel, in render pixels — both
-            // must stay under 1 or no tap of the 3x3 can land in the
-            // kernel's positive lobe. Blue is the kernel width, halved
-            // so that FSR's 1.99 ceiling reads as full.
+            // 🔴 The weight's two inputs, now that it is known to be zero: red and green how far the
+            // render grid sits from this pixel in render pixels (both must stay under 1), blue the kernel
+            // width halved so FSR's 1.99 ceiling reads as full.
             return vec3<f32>(abs(d.base_offset), d.kernel_bias * 0.5);
         }
         default: {

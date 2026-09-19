@@ -88,9 +88,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // `record_cpu_frame_ms` call lives at the end of this function.
     let frame_cpu_start = std::time::Instant::now();
 
-    // The buffer is cloned out first: it is an `Arc` handle, so this is
-    // cheap, and holding a borrow of `Resources` across the poll below
-    // would collide with the mutable one that draining needs.
+    // The buffer is cloned out first: it is an `Arc` handle, so this is cheap, and holding a borrow
+    // of `Resources` across the poll below would collide with the mutable one that draining needs.
     let log_buffer = resources.get::<kooch_core::LogBuffer>().cloned();
 
     let is_playing = if let Some(play_state) = resources.get_mut::<PlayState>() {
@@ -167,17 +166,15 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // so the View dropdown can mutate it directly. Re-inserted before
     // the meshlet stage runs so render_with_assets sees the new value.
     let mut meshlet_debug_mode = resources.remove::<MeshletDebugMode>().unwrap_or_default();
-    // Capability probe (#454) drives the dropdown filter. Default is
-    // conservative — when the resource is missing the filter falls
-    // back to the baseline-safe subset of modes.
+    // Capability probe (#454) drives the dropdown filter. Default is conservative — when the
+    // resource is missing the filter falls back to the baseline-safe subset of modes.
     let meshlet_debug_caps = resources
         .get::<MeshletDebugCaps>()
         .copied()
         .unwrap_or_default();
     let mut meshlet_lod_settings = resources.remove::<MeshletLodSettings>().unwrap_or_default();
-    // The lights-per-pixel view's top of scale (#817). Out of the map
-    // and back like the LOD threshold, so the panel edits the same value
-    // the shading pass will read.
+    // The lights-per-pixel view's top of scale (#817). Out of the map and back like the LOD
+    // threshold, so the panel edits the same value the shading pass will read.
     let mut lights_hot = resources
         .remove::<kooch_lighting::LightsHot>()
         .unwrap_or_default();
@@ -189,9 +186,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut specular_floor = resources
         .remove::<kooch_lighting::SpecularFloor>()
         .unwrap_or_default();
-    // Stats are produced by last frame's viewport render and re-published
-    // as a Resource. Read-only here — copied so we don't keep the borrow
-    // through the egui pass.
+    // Stats are produced by last frame's viewport render and re-published as a Resource. Read-only
+    // here — copied so we don't keep the borrow through the egui pass.
     let meshlet_stats = resources
         .get::<MeshletRenderStats>()
         .copied()
@@ -282,9 +278,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         _ => world_history(resources, &undo_stack),
     };
 
-    // Per frame, not once: it includes whether a scene is dirty, and the
-    // whole point is that the button goes away the moment it would cost
-    // somebody their work.
+    // Per frame, not once: it includes whether a scene is dirty, and the whole point is that the
+    // button goes away the moment it would cost somebody their work.
     let install_blocked = resources
         .get::<crate::preflight::Report>()
         .and_then(|report| crate::install::refusal(resources, report));
@@ -357,9 +352,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         ),
         None => (None, None),
     };
-    // The Asset Browser tree is rooted at the project *crate* root (not
-    // `assets/`) so `src/`, `Cargo.toml`, `scenes/`, … are all browsable
-    // and openable in an external IDE.
+    // The Asset Browser tree is rooted at the project *crate* root (not `assets/`) so `src/`,
+    // `Cargo.toml`, `scenes/`, … are all browsable and openable in an external IDE.
     let project_crate_root = project_state
         .as_ref()
         .and_then(|ps| ps.active_project.as_ref().map(|ap| ap.root_path.clone()));
@@ -396,9 +390,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .cloned()
         .unwrap_or_else(crate::gizmos::GizmoVisibility::new);
     let gizmo_groups = crate::gizmos::groups_from_resources(resources);
-    // Same lift as the gizmo choices: the menu mutates it while the egui
-    // closure holds Resources immutably. The overlay resource owns the
-    // reusable line buffer, so only the switches travel.
+    // Same lift as the gizmo choices: the menu mutates it while the egui closure holds Resources
+    // immutably. The overlay resource owns the reusable line buffer, so only the switches travel.
     let mut physics_debug = resources
         .get::<crate::gizmos::PhysicsDebugOverlay>()
         .map(|overlay| overlay.categories)
@@ -429,9 +422,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // draws and does not read resources — and because the job has to be polled whether or not its
     // tab is even visible (#758).
     let build_panel = {
-        // Two statements, not one: polling takes `resources` mutably and
-        // so does loading the presets, and the first borrow has to end
-        // before the second begins.
+        // Two statements, not one: polling takes `resources` mutably and so does loading the
+        // presets, and the first borrow has to end before the second begins.
         let (status, log) = match resources.get_mut::<crate::build::BuildState>() {
             Some(state) => {
                 state.poll();
@@ -569,9 +561,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     // whatever the dropdown just changed.
     resources.insert(gizmo_visibility);
     resources.insert(console);
-    // What the panel actually drew. Without this the UI writes into a
-    // copy and every metric system keeps paying for a section nobody has
-    // open — the whole point of lifting it.
+    // What the panel actually drew. Without this the UI writes into a copy and every metric system
+    // keeps paying for a section nobody has open — the whole point of lifting it.
     resources.insert(hud_visibility);
 
     // The overlay resource is created on first use rather than at startup:
@@ -653,9 +644,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         crate::block_edit::shape_sync::sync_block_shapes(resources);
     }
 
-    // E with faces selected: pull them out. Before the handle, because
-    // the same key asks for the rotate mode and only one of the two can
-    // be what was meant.
+    // E with faces selected: pull them out. Before the handle, because the same key asks for the
+    // rotate mode and only one of the two can be what was meant.
     if let Some(delta) = viewport_input
         && delta.extrude_pressed
         && overlay.element_mode == crate::block_edit::ElementMode::Face
@@ -839,9 +829,8 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     stages.viewport_ms = crate::perf::ms_since(viewport_start);
 
     let present_start = std::time::Instant::now();
-    // Taken out and put back the way `gpu` is: the frame's resolve and
-    // its boundary need `&mut`, and the viewport passes above only
-    // needed `&`.
+    // Taken out and put back the way `gpu` is: the frame's resolve and its boundary need `&mut`,
+    // and the viewport passes above only needed `&`.
     let mut scopes = resources.remove::<kooch_core::gpu::GpuScopes>();
     let presented = present_editor_frame(&gpu, &mut overlay, &window, full_output, scopes.as_mut());
     if let Some(scopes) = scopes {
@@ -854,8 +843,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     if let Some(pool) = resources.get_mut::<kooch_core::gpu::TargetPool>() {
         pool.end_frame();
     }
-    // Read before the overlay goes back, applied after this frame's edits
-    // — see `seal_histories`.
+    // Read before the overlay goes back, applied after this frame's edits — see `seal_histories`.
     let ended = overlay.ctx.input(|i| i.pointer.any_released());
     resources.insert(dlss);
     resources.insert(overlay);
