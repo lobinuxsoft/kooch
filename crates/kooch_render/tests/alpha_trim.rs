@@ -72,7 +72,7 @@ fn cut(source: &str) -> Option<MeshletMesh> {
     let mut look = Material::new([1.0, 1.0, 1.0, 1.0], 0.0, 1.0, 0.0);
     look.shader = Some(shader);
     let slot = materials.register(&queue, Guid::new_v4(), &look);
-    trim::build(&device, &queue, &materials, slot, &quad())
+    trim::build(&device, &queue, &materials, slot, &quad()).ok()
 }
 
 /// 🔴 The point of the step: the geometry stops at the alpha, and it is plain geometry — nothing in

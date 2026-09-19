@@ -90,17 +90,30 @@ impl AlphaTrim {
     }
 }
 
-/// Bakes `slot`'s cut and cuts `source` against it. `None` when the material cannot be baked, when
-/// the mesh's uv leaves its square, or when nothing survives the cut.
+/// Why a pair stays with its per-pixel cut. Logged, so a scene that expected geometry says what it
+/// got instead.
+#[derive(Clone, Copy, Debug)]
+pub enum NoTrim {
+    /// The material's own shader did not bake: it has no surface, or it never compiled.
+    Bake,
+    /// The cut keeps nothing at all, so there is no mesh to draw.
+    Empty,
+    /// The mesh's uv leaves its square: it tiles the coverage, which was baked once.
+    Tiled,
+    /// The cut mesh does not meshletise.
+    Meshlets,
+}
+
+/// Bakes `slot`'s cut and cuts `source` against it.
 pub fn build(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     materials: &MaterialPipeline,
     slot: u32,
     source: &MeshletMesh,
-) -> Option<MeshletMesh> {
-    let mask = bake::mask(device, queue, materials, slot, TRIM_SIDE)?;
-    let coverage = region::coverage(&mask, TRIM_SIDE)?;
+) -> Result<MeshletMesh, NoTrim> {
+    let mask = bake::mask(device, queue, materials, slot, TRIM_SIDE).ok_or(NoTrim::Bake)?;
+    let coverage = region::coverage(&mask, TRIM_SIDE).ok_or(NoTrim::Empty)?;
     let geometry = cut::mesh(source, &coverage, &mask, TRIM_SIDE)?;
     build_meshlets_lod_chain(
         &geometry,
@@ -109,7 +122,7 @@ pub fn build(
         0.5,
         LodConfig::default(),
     )
-    .ok()
+    .map_err(|_| NoTrim::Meshlets)
 }
 
 #[cfg(test)]

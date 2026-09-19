@@ -30,18 +30,23 @@ impl MeshletRenderStage {
         let Some(source) = source(resources, mesh) else {
             return;
         };
-        let cut = resources.get::<MaterialPipeline>().and_then(|materials| {
-            crate::meshlet::trim::build(device, queue, materials, slot, &source)
-        });
-        let Some(cut) = cut else {
-            tracing::debug!(
-                target: "kooch_render::meshlet::trim",
-                mesh = %mesh,
-                material = %material,
-                "nothing to cut: the pair keeps its masked raster",
-            );
-            self.pipeline.trim.remember(mesh, material, stamp, None);
+        let Some(materials) = resources.get::<MaterialPipeline>() else {
             return;
+        };
+        let cut = crate::meshlet::trim::build(device, queue, materials, slot, &source);
+        let cut = match cut {
+            Ok(cut) => cut,
+            Err(why) => {
+                tracing::info!(
+                    target: "kooch_render::meshlet::trim",
+                    mesh = %mesh,
+                    material = %material,
+                    reason = ?why,
+                    "not cut into geometry: the pair keeps its masked raster",
+                );
+                self.pipeline.trim.remember(mesh, material, stamp, None);
+                return;
+            }
         };
         tracing::info!(
             target: "kooch_render::meshlet::trim",

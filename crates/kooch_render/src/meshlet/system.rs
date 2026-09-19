@@ -103,9 +103,16 @@ impl MeshletPipeline {
             let Some(slot) = materials.lookup(material) else {
                 return;
             };
+            // Transparent is left out on purpose: its cut region would become geometry, but its
+            // shadow dithers by alpha and a trimmed caster casts solid.
+            let cuttable = |surface: &crate::material::SurfaceSource| {
+                surface.masked
+                    && surface.still
+                    && surface.kind != crate::material::ShaderKind::Transparent
+            };
             if !materials
                 .slot_surface(slot)
-                .is_some_and(|(_, surface)| surface.masked && surface.still)
+                .is_some_and(|(_, surface)| cuttable(surface))
             {
                 return;
             }

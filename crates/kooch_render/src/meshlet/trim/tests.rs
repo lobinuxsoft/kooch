@@ -116,7 +116,7 @@ fn signed_area(cut: &Mesh) -> f32 {
 fn a_tiled_uv_is_refused() {
     let mask = left_half();
     let coverage = region::coverage(&mask, TRIM_SIDE).expect("half a square is covered");
-    assert!(cut::mesh(&quad(4.0), &coverage, &mask, TRIM_SIDE).is_none());
+    assert!(cut::mesh(&quad(4.0), &coverage, &mask, TRIM_SIDE).is_err());
 }
 
 /// Nothing covered leaves no triangle, and no mesh to publish.
@@ -131,7 +131,7 @@ fn an_uncovered_quad_is_dropped() {
         }
         mesh
     };
-    assert!(cut::mesh(&right, &coverage, &mask, TRIM_SIDE).is_none());
+    assert!(cut::mesh(&right, &coverage, &mask, TRIM_SIDE).is_err());
 }
 
 /// 🔴 A dragged slider republishes its material every frame; baking each one would read back each

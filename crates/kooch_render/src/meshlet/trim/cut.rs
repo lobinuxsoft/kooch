@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use geo::{Area, BooleanOps, LineString, MultiPolygon, Polygon, TriangulateEarcut};
 use glam::{Vec2, Vec3};
 
+use super::NoTrim;
 use super::region::{Cover, covers};
 use crate::mesh::{Mesh, MeshVertex};
 use crate::meshlet::asset::MeshletMesh;
@@ -17,21 +18,20 @@ const UV_SLACK: f32 = 0.001;
 /// Uv area under which a clipped piece is a sliver the raster would never fill.
 const AREA_FLOOR: f64 = 1e-10;
 
-/// `source`'s full detail cut against `coverage`, or `None` when its uv leaves the square or the cut
-/// leaves no triangle standing.
+/// `source`'s full detail cut against `coverage`.
 pub(super) fn mesh(
     source: &MeshletMesh,
     coverage: &MultiPolygon<f64>,
     mask: &[u8],
     side: u32,
-) -> Option<Mesh> {
-    let triangles = lod0(source)?;
+) -> Result<Mesh, NoTrim> {
+    let triangles = lod0(source).ok_or(NoTrim::Empty)?;
     let outside = source.vertices.iter().any(|vertex| {
         let uv = Vec2::from(vertex.uv);
         uv.min_element() < -UV_SLACK || uv.max_element() > 1.0 + UV_SLACK
     });
     if outside {
-        return None;
+        return Err(NoTrim::Tiled);
     }
     let mut weld = Weld::default();
     for triangle in triangles {
@@ -44,7 +44,10 @@ pub(super) fn mesh(
             Cover::Edge => clip(&corners, &uv, coverage, &mut weld),
         }
     }
-    (weld.indices.len() >= 3).then(|| Mesh::from_arrays(weld.vertices, weld.indices))
+    match weld.indices.len() >= 3 {
+        true => Ok(Mesh::from_arrays(weld.vertices, weld.indices)),
+        false => Err(NoTrim::Empty),
+    }
 }
 
 /// The full-detail triangles as indices into [`MeshletMesh::vertices`]. The coarser levels are
