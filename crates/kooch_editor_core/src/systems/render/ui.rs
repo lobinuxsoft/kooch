@@ -251,6 +251,7 @@ pub(super) fn run_editor_ui(
             );
 
             let mut tab_viewer = EditorTabViewer {
+                game_resolution: &mut overlay.game_resolution,
                 detach: None,
                 editor_camera_rotation,
                 build,

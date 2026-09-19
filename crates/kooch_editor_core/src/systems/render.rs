@@ -315,6 +315,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                 .is_some_and(|s| s.playing),
     };
 
+    if let Some(modes) = resources.get::<kooch_core::window_mode::DisplayModes>() {
+        overlay.game_resolution.sizes = crate::panels::game::display_sizes(modes);
+    }
     if let Some(extra) = resources.get_mut::<kooch_window::ExtraWindows>() {
         let EditorOverlay {
             dock_state,

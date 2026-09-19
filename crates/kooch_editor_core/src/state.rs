@@ -192,6 +192,8 @@ pub struct EditorOverlay {
     pub(crate) winit_state: SharedWinitState,
     pub(crate) renderer: egui_wgpu::Renderer,
     pub(crate) dock_state: DockState<EditorTab>,
+    /// The Game panel's resolution: its own size, or one of the display's.
+    pub(crate) game_resolution: crate::panels::game::GameResolution,
     /// Panels torn off into OS windows of their own (#1196).
     pub(crate) windows: crate::os_windows::OsWindows,
     /// Which panel the keyboard belongs to.

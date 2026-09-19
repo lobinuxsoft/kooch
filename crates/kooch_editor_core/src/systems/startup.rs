@@ -118,6 +118,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         renderer,
         dock_state: crate::state::default_dock_state(),
         windows: crate::os_windows::OsWindows::default(),
+        game_resolution: Default::default(),
         selected_entities: Vec::new(),
         pinned_gizmos: std::collections::HashSet::new(),
         last_clicked_index: None,

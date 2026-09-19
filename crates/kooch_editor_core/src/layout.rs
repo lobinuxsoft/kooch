@@ -14,6 +14,9 @@ pub(crate) struct EditorLayout {
     pub dock: DockState<EditorTab>,
     #[serde(default)]
     pub windows: Vec<Detached>,
+    /// The Game panel's fixed resolution, if it has one.
+    #[serde(default)]
+    pub game_resolution: Option<[u32; 2]>,
 }
 
 impl EditorLayout {
@@ -21,6 +24,7 @@ impl EditorLayout {
         Self {
             dock: overlay.dock_state.clone(),
             windows: overlay.windows.detached.clone(),
+            game_resolution: overlay.game_resolution.choice,
         }
     }
 
@@ -31,6 +35,7 @@ impl EditorLayout {
                 .map(|dock| Self {
                     dock,
                     windows: Vec::new(),
+                    game_resolution: None,
                 })
                 .map_err(|_| err)
         })
@@ -113,6 +118,7 @@ pub(crate) fn load_layout_system(resources: &mut Resources) {
     if let Some(overlay) = resources.get_mut::<EditorOverlay>() {
         overlay.dock_state = loaded.dock;
         overlay.windows.detached = loaded.windows;
+        overlay.game_resolution.choice = loaded.game_resolution;
         crate::os_windows::settle(&mut overlay.dock_state, &overlay.windows);
     }
     // Cache the new state so the next save-system tick recognises it.
