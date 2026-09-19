@@ -270,6 +270,17 @@ impl Node {
                 (Three, "The final colour. No light or shadow changes it."),
                 (One, "Opacity, kept for transparent shaders. Unwired: 1."),
             ],
+            Self::ShaderOutput { kind } if kind == "transparent" => &[
+                (Three, "The colour of the surface."),
+                (Three, "The world-space normal. Unwired: the mesh's."),
+                (One, "0 dielectric, 1 metal."),
+                (One, "0 mirror, 1 matte. Unwired: 0.5."),
+                (Three, "Light the surface gives off."),
+                (
+                    One,
+                    "How much it covers what is behind: 0 invisible, 1 solid. Unwired: 1.",
+                ),
+            ],
             Self::Output | Self::ShaderOutput { .. } => &[
                 (Three, "The colour of the surface."),
                 (Three, "The world-space normal. Unwired: the mesh's."),

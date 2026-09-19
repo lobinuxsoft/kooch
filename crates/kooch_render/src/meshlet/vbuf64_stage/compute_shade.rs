@@ -245,7 +245,7 @@ impl ComputeShading {
             pipeline,
             pipeline_debug: std::sync::OnceLock::new(),
             layout,
-            custom: ShaderPipelines::new(),
+            custom: ShaderPipelines::new(super::shader_cache::OPAQUE),
             bins: TileBins::new(device),
             frame_bgl,
             materials_bgl,

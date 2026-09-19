@@ -11,7 +11,13 @@ use crate::meshlet::validate_surface;
 /// One shading path's custom-shader pipelines, keyed by shader and debug variant.
 pub(super) struct ShaderPipelines<P> {
     built: Mutex<HashMap<(Guid, bool), Built<P>>>,
+    /// The kinds this path draws; any other is someone else's.
+    kinds: &'static [ShaderKind],
 }
+
+/// What the opaque shading paths draw. A post-process is `PostPass`'s and composed as a surface has
+/// no `sample_scene`; a transparent one is the forward pass's (#452).
+pub(super) const OPAQUE: &[ShaderKind] = &[ShaderKind::Surface, ShaderKind::Unlit];
 
 struct Built<P> {
     /// The revision last tried, so a broken edit is reported once rather than every frame.
@@ -21,9 +27,10 @@ struct Built<P> {
 }
 
 impl<P: Clone> ShaderPipelines<P> {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(kinds: &'static [ShaderKind]) -> Self {
         Self {
             built: Mutex::new(HashMap::new()),
+            kinds,
         }
     }
 
@@ -36,9 +43,7 @@ impl<P: Clone> ShaderPipelines<P> {
         debug: bool,
         build: impl FnOnce(&SurfaceSource) -> P,
     ) -> Option<P> {
-        // A post-process material is drawn by `PostPass`; composed as a surface it has no
-        // `sample_scene` and would log an error for a shader that is fine.
-        if surface.kind == ShaderKind::PostProcess {
+        if !self.kinds.contains(&surface.kind) {
             return None;
         }
         let mut built = self.built.lock().unwrap_or_else(|e| e.into_inner());

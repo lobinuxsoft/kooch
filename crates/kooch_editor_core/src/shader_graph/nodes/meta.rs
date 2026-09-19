@@ -243,6 +243,14 @@ impl Node {
             Self::ShaderOutput { kind } if kind == "unlit" || kind == "post_process" => {
                 &["color", "alpha"]
             }
+            Self::ShaderOutput { kind } if kind == "transparent" => &[
+                "base color",
+                "normal",
+                "metallic",
+                "roughness",
+                "emissive",
+                "alpha",
+            ],
             Self::Output | Self::ShaderOutput { .. } => {
                 &["base color", "normal", "metallic", "roughness", "emissive"]
             }

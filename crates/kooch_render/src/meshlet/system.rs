@@ -99,10 +99,8 @@ impl MeshletPipeline {
         let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
         let mut out = Vec::new();
         let mut entities = Vec::new();
-        let mesh_descriptors = &self.pool.mesh_descriptors;
-        // Per-instance prefix sum into `group_max_err`: each instance reserves
-        // `mesh_descriptors[mesh_id].group_count` consecutive slots starting at `running_base`.
-        let mut running_base: u32 = 0;
+        // Kept apart and appended last: a cull is handed the opaque ones alone (#452).
+        let mut transparent = Vec::new();
         query.for_each_entity(|entity, (renderer, transform)| {
             if !renderer.visible {
                 return;
@@ -124,21 +122,41 @@ impl MeshletPipeline {
             } else {
                 instance.lod_force_level = LOD_FORCE_NONE;
             }
-            instance.group_base = running_base;
             // it was written and nothing ever read it: unticking it in the Inspector changed
             // nothing at all. This is the bit that makes the checkbox mean something.
             instance.flags = match renderer.receive_shadows {
                 true => crate::meshlet::scene::INSTANCE_RECEIVES_SHADOWS,
                 false => 0,
             };
-            let group_count = mesh_descriptors
-                .get(mesh_handle.mesh_id as usize)
+            let see_through = material_pipeline
+                .as_deref()
+                .and_then(|mp| mp.slot_surface(material_id))
+                .is_some_and(|(_, s)| s.kind == crate::material::ShaderKind::Transparent);
+            if see_through {
+                instance.flags |= crate::meshlet::scene::INSTANCE_TRANSPARENT;
+                transparent.push((instance, entity));
+            } else {
+                out.push(instance);
+                entities.push(entity);
+            }
+        });
+        for (instance, entity) in transparent {
+            out.push(instance);
+            entities.push(entity);
+        }
+        // Per-instance prefix sum into `group_max_err`, after the reorder: each instance reserves
+        // `mesh_descriptors[mesh_id].group_count` consecutive slots starting at `running_base`.
+        let mut running_base: u32 = 0;
+        for instance in &mut out {
+            instance.group_base = running_base;
+            let group_count = self
+                .pool
+                .mesh_descriptors
+                .get(instance.mesh_id as usize)
                 .map(|d| d.group_count)
                 .unwrap_or(0);
             running_base = running_base.saturating_add(group_count);
-            out.push(instance);
-            entities.push(entity);
-        });
+        }
         (out, entities)
     }
 

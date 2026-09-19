@@ -39,17 +39,21 @@ pub enum ShaderKind {
     /// One full-screen draw over the frame the camera produced: defines
     /// `fn post_process(SurfaceInput) -> vec4<f32>` and reads `sample_scene` (#1201).
     PostProcess,
+    /// A lit surface blended over the opaque scene, sorted back to front: defines
+    /// `fn surface(SurfaceInput) -> SurfaceOutput` and sets its `alpha` (#452).
+    Transparent,
 }
 
 impl ShaderKind {
     /// What a `// kind:` line names, in the order errors list them.
-    pub const NAMES: [&'static str; 3] = ["surface", "unlit", "post_process"];
+    pub const NAMES: [&'static str; 4] = ["surface", "unlit", "post_process", "transparent"];
 
     fn parse(name: &str) -> Option<Self> {
         match name {
             "surface" => Some(Self::Surface),
             "unlit" => Some(Self::Unlit),
             "post_process" => Some(Self::PostProcess),
+            "transparent" => Some(Self::Transparent),
             _ => None,
         }
     }
@@ -58,7 +62,9 @@ impl ShaderKind {
     fn glue(self) -> &'static str {
         match self {
             // A post-process has a frame of its own, so it needs no glue at all.
-            Self::Surface | Self::PostProcess => "const SURFACE_UNLIT: bool = false;\n",
+            Self::Surface | Self::PostProcess | Self::Transparent => {
+                "const SURFACE_UNLIT: bool = false;\n"
+            }
             Self::Unlit => UNLIT_GLUE,
         }
     }
@@ -73,6 +79,7 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
     out.normal = normalize(input.world_normal);
     out.roughness = 1.0;
     out.emissive = unlit.color;
+    out.alpha = unlit.alpha;
     return out;
 }
 ";

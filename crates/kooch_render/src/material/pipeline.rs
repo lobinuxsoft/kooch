@@ -328,6 +328,22 @@ impl MaterialPipeline {
         }
     }
 
+    /// Makes `shader` the surface of every material naming `guid`, without an asset behind it — a
+    /// shader generated at runtime, or a test's. Register the materials after it: their parameters
+    /// are packed against it.
+    pub fn add_shader(&mut self, guid: Guid, shader: &Shader) {
+        self.surfaces.insert(
+            guid,
+            SurfaceSource {
+                revision: 0,
+                source: shader.source.as_str().into(),
+                params: shader.params.clone().into(),
+                params_wgsl: shader.params_wgsl().into(),
+                kind: shader.kind,
+            },
+        );
+    }
+
     /// Loads every shader the materials name and copies a source out whenever its revision moved,
     /// which is what tells the render to rebuild that shader's pipelines.
     fn sync_surfaces(&mut self, snapshots: &[(Guid, Material)], resources: &mut Resources) {

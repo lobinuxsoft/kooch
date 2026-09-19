@@ -57,6 +57,7 @@ The `// kind:` line picks what the file defines. With no line, it is a `surface`
 | `surface` | `fn surface(input: SurfaceInput) -> SurfaceOutput` | Inti lights it: lights, shadows, contact march |
 | `unlit` | `fn unlit(input: SurfaceInput) -> UnlitOutput` | Shows `color` as it is, under any light and in shadow |
 | `post_process` | `fn post_process(input: SurfaceInput) -> vec4<f32>` | One full-screen draw over the finished frame; reads it with `sample_scene(uv)` |
+| `transparent` | `fn surface(input: SurfaceInput) -> SurfaceOutput`, setting `alpha` | Lit like a `surface`, then blended over the opaque scene, far to near |
 
 ```wgsl
 // kind: unlit
@@ -68,6 +69,35 @@ fn unlit(input: SurfaceInput) -> UnlitOutput {
     return out;
 }
 ```
+
+### Transparent
+
+A `transparent` shader is a `surface` that also sets `out.alpha`: 0 lets everything behind through, 1
+covers it. 🔴 `var out: SurfaceOutput` starts `alpha` at 0, so a hand-written transparent shader that
+forgets it is invisible; the graph's output node has an **alpha** pin that is 1 when unwired.
+
+```wgsl
+// kind: transparent
+
+fn surface(input: SurfaceInput) -> SurfaceOutput {
+    var out: SurfaceOutput;
+    out.base_color = vec3<f32>(0.6, 0.8, 1.0);
+    out.normal = normalize(input.world_normal);
+    out.roughness = 0.05;
+    out.alpha = 0.3;
+    return out;
+}
+```
+
+Transparent objects are drawn after the opaque scene, sorted back to front by their bounding centre,
+each blended over what is already there. What that means in practice:
+
+- **Order is per object, not per triangle.** Two panes that cross, or one object inside another,
+  can blend in the wrong order where they overlap.
+- **Back faces are not drawn**, so a closed shape shows its near side only.
+- **They cast no shadow** and write no depth: what is behind glass is still what shadows, contact
+  shadows and occlusion see.
+- They draw on the compute shading path, which is the default.
 
 ### Post-process
 
@@ -108,7 +138,7 @@ and a checker in one corner: banding and dither show on the gradients, pixelatio
 checker. The **UV** node is the screen uv here.
 
 `color` is in the same display units as `emissive`: `1.0` is full brightness at any exposure. `alpha`
-is carried for transparent shaders (#452); opaque passes ignore it. An unlit shader assumes no sun,
+is carried into `SurfaceOutput.alpha`; opaque passes ignore it. An unlit shader assumes no sun,
 which is what a planet's distant impostor or an atmosphere card needs.
 
 ## Parameters
@@ -224,7 +254,7 @@ The menu groups the nodes the way the panels do:
 | **Effects** | Fresnel, Unpack Normal, Desaturate, Blend |
 | **Shapes** | Circle, Rectangle, Ring, Polygon, Checker |
 | **Noise** | Value Noise, Gradient Noise, Simplex Noise (fBm, turbulence, ridged), White Noise, Voronoi |
-| **Output** | Output, with a **kind**: `surface` takes base colour, normal, metallic, roughness, emissive; `unlit` takes color and alpha |
+| **Output** | Output, with a **kind**: `surface` takes base colour, normal, metallic, roughness, emissive; `transparent` the same plus alpha; `unlit` takes color and alpha |
 
 - **Float, Int, Vector 2/3/4 and Color** are the material's parameters — each one member of
   `SurfaceParams`, with its name and starting value, edited in the node the way the material's

@@ -201,9 +201,22 @@ impl MeshletRenderStage {
                 }
             }
             self.previous_bounds.clone_from(&self.instance_bounds);
+            let pool = self.pipeline.pool();
+            self.forward_list.rebuild(
+                &instances,
+                crate::meshlet::scene::opaque_count(&instances),
+                &self.instance_bounds,
+                cam_pos,
+                &pool.mesh_descriptors,
+                &pool.meshlets,
+            );
         }
 
-        let scene_params = SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
+        // 🔴 Every cull — the view's, the cascades', the pages' — sees the opaque instances alone. The
+        // transparent ones follow them in the same buffer and only the forward pass draws them;
+        // they cast no shadow (#452).
+        let opaque = crate::meshlet::scene::opaque_count(&instances);
+        let scene_params = SceneCullParams::new(opaque as u32, max_meshlets_per_mesh);
         // Worst case for every cull this frame, the view's and the four
         // cascades': one thread per instance-meshlet pair.
         let required_capacity = scene_params
@@ -342,7 +355,7 @@ impl MeshletRenderStage {
             self.gpu_timers.write_start(&mut encoder);
         }
 
-        let instance_count = instances.len() as u32;
+        let instance_count = opaque as u32;
 
         // Contact shadows (#735). Built here rather than in each path because both need it and only
         // this function still holds the camera's lens: `near` and `far` are what turn a stored

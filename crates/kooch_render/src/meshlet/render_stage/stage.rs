@@ -60,6 +60,8 @@ pub struct MeshletRenderStage {
     /// (#778). Together they answer "may last frame's six faces stand". One entry per instance this
     /// frame — see [`InstanceBounds`](crate::shadow::InstanceBounds).
     pub(super) instance_bounds: Vec<crate::shadow::InstanceBounds>,
+    /// The transparent instances' meshlets, far to near, for the forward pass (#452).
+    pub(super) forward_list: crate::meshlet::vbuf64_stage::ForwardList,
     /// Last frame's [`Self::instance_bounds`], for the page cache's
     /// movement diff (#477): a caster whose hash changed invalidates
     /// the shadow pages both its old and its new bounds reach.

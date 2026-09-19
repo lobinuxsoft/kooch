@@ -411,6 +411,17 @@ becomes.
 
 Then [Inti](./lighting.md) — Cook-Torrance driven by the scene's lights.
 
+### Transparent surfaces (#452)
+
+A `transparent` material's instances are appended after every opaque one, and every cull — the
+view's, the cascades', the pages' — is handed the opaque count, so they never reach the visibility
+buffer and cast no shadow. The forward pass then draws them on the compute path, after the shade
+(and its upsample) and before the temporal resolve: it rasterises each instance's finest meshlets
+far to near from a packed `(instance, meshlet)` list, tests the raster's depth read-only, and
+reconstructs every fragment with the same `resolve_surface` a visibility-buffer sample uses before
+lighting it with Inti and blending it into the linear radiance. Consecutive instances on one
+material share a draw. The list costs nothing when the scene has no transparent material.
+
 ### After the shade: rate, history, and the tonemap
 
 Three passes sit between Inti and the sky, and all three exist on the R64

@@ -32,6 +32,10 @@ pub const MATERIAL_SURFACE_PRELUDE: &str = include_str!("../../shaders/material_
 /// produced (#1201). Entry points: `vs_fullscreen`, `fs_post`.
 pub const MATERIAL_POST_FRAME: &str = include_str!("../../shaders/material_frame_post.wgsl");
 
+/// The frame a transparent surface runs inside: its meshlets rasterised over the opaque scene and
+/// blended (#452). Entry points: `vs_forward`, `fs_forward`.
+pub const MATERIAL_FORWARD_FRAME: &str = include_str!("../../shaders/material_frame_forward.wgsl");
+
 /// The Shader Graph preview's frame: one primitive, rasterised, lit by a key light of its own.
 /// Entry points: `vs_preview`, `fs_preview`.
 pub const MATERIAL_PREVIEW_FRAME: &str = include_str!("../../shaders/material_frame_preview.wgsl");
@@ -173,7 +177,11 @@ pub fn validate_surface(params: &str, surface: &str) -> Result<(), String> {
     };
     // Bindings are checked when the shader is read; an entry point of its own would fail in wgpu.
     let reference = crate::material::Shader::default_surface();
-    for frame in [MATERIAL_FRAGMENT_FRAME, MATERIAL_COMPUTE_FRAME] {
+    for frame in [
+        MATERIAL_FRAGMENT_FRAME,
+        MATERIAL_COMPUTE_FRAME,
+        MATERIAL_FORWARD_FRAME,
+    ] {
         let composed = compose_material_shader(frame, params, surface, false);
         let module = naga::front::wgsl::parse_str(&composed)
             .map_err(|e| format!("{}{}", at(e.location(&composed)), e.message()))?;

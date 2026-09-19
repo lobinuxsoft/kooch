@@ -209,6 +209,7 @@ impl MeshletRenderStage {
                 scopes.as_deref(),
                 shade_query.as_ref(),
                 dlss_runtime.as_deref(),
+                &self.forward_list,
             );
             if let (Some(scopes), Some(query)) = (scopes, shade_query) {
                 scopes.end(&mut encoder, query);
