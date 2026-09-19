@@ -16,6 +16,8 @@ pub(crate) struct MeshletView {
     /// by every view and live on the stage; what lands in these buffers
     /// depends on this view's camera, so they belong here.
     pub(crate) cull: MeshletCull,
+    /// The cull's masked survivors, per material (#452).
+    pub(crate) masked_bins: crate::meshlet::MaskedBins,
 
     pub(crate) vbuf_texture: wgpu::Texture,
     pub(crate) vbuf_view: wgpu::TextureView,
@@ -124,6 +126,7 @@ impl MeshletView {
 
         Self {
             cull: MeshletCull::new(device, meshlet_capacity, max_triangles_per_meshlet),
+            masked_bins: crate::meshlet::MaskedBins::new(device),
             vbuf_texture,
             vbuf_view,
             depth_texture,

@@ -34,7 +34,7 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 `uv`, the analytical `ddx_uv` / `ddy_uv`, `mip_bias_scale`, `frag_coord`, `camera_position`, `time`
 (seconds since the engine started, for a surface that moves) and `material_id`.
 `SurfaceOutput` is what Inti lights: `base_color`, a world-space `normal`, `metallic`, `roughness`
-and `emissive`.
+and `emissive`, plus `alpha` and `alpha_clip` for the shaders that are see-through (below).
 
 `emissive` is in **display units**: `1.0` shows the colour at full brightness whatever the camera's
 exposure, and above `1.0` it overdrives. The lights are physical, so an emissive added in their units
@@ -107,6 +107,39 @@ smoke or particles get there, and there the difference does not show.
   can blend in the wrong order.
 - They draw on the compute shading path, which is the default.
 - The node panel's preview shows a transparent shader over a checker, so its coverage reads.
+
+### Alpha clip
+
+A `surface` or `unlit` shader that sets `out.alpha_clip` is **masked**: wherever `alpha` falls below
+it, the surface is cut away and what is behind shows, solid everywhere else. Leaves, grass, fences
+and a noise that dissolves an object are this, not `transparent`: nothing blends, so there is no
+order to get wrong, and the cut writes depth like any opaque surface.
+
+```wgsl
+var albedo: texture_2d<f32>;   // @default(white)
+
+fn surface(input: SurfaceInput) -> SurfaceOutput {
+    var out: SurfaceOutput;
+    let leaf = sample_surface(albedo, input, input.uv, vec2<f32>(1.0));
+    out.base_color = leaf.rgb;
+    out.normal = normalize(input.world_normal);
+    out.roughness = 0.8;
+    out.alpha = leaf.a;
+    out.alpha_clip = 0.5;
+    return out;
+}
+```
+
+- `alpha_clip` starts at 0, which cuts nothing: a shader that never sets it is opaque and costs what
+  it always did. In the graph, the output node's **alpha clip** pin makes it masked only once it is
+  wired.
+- The cut is exact per pixel, at the texture's own resolution, and follows `time`, position and
+  view: each masked material rasterises in a pass of its own that runs its `surface` for every
+  fragment. Only masked objects pay for that; up to 32 masked materials a frame, and any past that
+  draws solid.
+- **Their shadow is cut too**, at the surface's uv and the time only, like a transparent one's.
+- Back faces are culled as on any surface: a leaf card seen from behind is not drawn.
+- The node panel's preview shows the cut.
 
 ### Post-process
 

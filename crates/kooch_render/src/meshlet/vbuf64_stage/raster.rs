@@ -204,6 +204,7 @@ impl Vbuf64Rasterizer {
         scene: &MeshletScene,
         view_proj: glam::Mat4,
         clear_depth: bool,
+        masked: Option<crate::meshlet::MaskedDraw<'_>>,
     ) {
         queue.write_buffer(
             &self.camera_buffer,
@@ -297,6 +298,16 @@ impl Vbuf64Rasterizer {
         pass.set_bind_group(4, &vbuf_bg, &[]);
         pass.set_bind_group(5, &density_bg, &[]);
         pass.draw_indirect(cull.indirect_args_buffer(), 0);
+        if let Some(masked) = masked {
+            masked.draw(
+                device,
+                &mut pass,
+                meshlet_bg,
+                cull,
+                scene,
+                Some(vbuf64_view),
+            );
+        }
     }
 }
 

@@ -450,6 +450,35 @@ transparent material. The layers need `SHADER_INT64_ATOMIC_ALL_OPS`; without it,
 or when they would not fit one storage binding, a sorted pass draws instead: instances far to near,
 back faces culled, blended as they land.
 
+The tail's per-material draws start past instance 0, which wgpu's indirect validation drops unless
+`INDIRECT_FIRST_INSTANCE` is enabled; the engine requests it where the adapter has it, and without
+it draws each run directly.
+
+### Masked surfaces (#452)
+
+A shader that assigns `alpha_clip` is masked, and each masked material rasterises in a **bin** of its
+own — Nanite's programmable raster, for the same reason: the opaque raster is one material-less
+draw, and a cut needs the material.
+
+- **Assign** (CPU, per frame, before the instance upload) — `MaskedRaster::assign` gives each
+  masked material whose pipeline compiled a bin, up to 32, writes a material-slot → bin table and
+  sets `INSTANCE_MASKED` on its instances. The opaque rasters (R64 and R32) skip flagged instances
+  in the vertex stage. A material that got no bin is never flagged, so it draws solid rather than
+  vanishing.
+- **Bin** (after every cull, the R32 path's two included) — `masked_bins.wgsl` counts the visible
+  masked meshlets per bin, takes the offsets and indirect args in one thread, and scatters their
+  visible-list slots bin after bin. Strided, so no dispatch passes 65 535 groups.
+- **Draw** (inside the raster pass, after the opaque draw) — one indirect draw per bin, with the
+  bin's material and textures. The fragment rebuilds the pixel with `resolve_surface`, exactly as
+  shading will, runs the material's `surface` and discards below `alpha_clip`; a survivor writes
+  the same `(slot, triangle)` id the opaque raster would. Shading never learns a pixel was masked.
+
+Shadows reuse the transparent bake: a masked material's layer holds its cut (`alpha >= alpha_clip`)
+and carries a table bit that makes the shadow rasters read it against 0.5 instead of the dither.
+
+Planned (#452): an alpha that provably depends on uv and textures only becomes geometry — the mesh
+cut along the contour, opaque, with nothing left to discard.
+
 ### After the shade: rate, history, and the tonemap
 
 Three passes sit between Inti and the sky, and all three exist on the R64

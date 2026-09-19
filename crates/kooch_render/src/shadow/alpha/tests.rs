@@ -43,3 +43,27 @@ fn the_alpha_shaders_compile() {
         .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(&source)));
     }
 }
+
+/// A masked surface's bake compiles: it writes the cut, not the opacity (#452).
+#[test]
+fn a_masked_bake_compiles() {
+    let shader = crate::material::Shader::parse(
+        "fn surface(input: SurfaceInput) -> SurfaceOutput {\n    var out: SurfaceOutput;\n    out.alpha = input.uv.x;\n    out.alpha_clip = 0.5;\n    return out;\n}",
+    )
+    .unwrap();
+    let bake = [
+        MATERIAL_SURFACE_PRELUDE,
+        &shader.params_wgsl(),
+        &shader.source,
+        BAKE_FRAME,
+    ]
+    .join("\n");
+    let module = naga::front::wgsl::parse_str(&bake)
+        .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&bake)));
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&bake)));
+}

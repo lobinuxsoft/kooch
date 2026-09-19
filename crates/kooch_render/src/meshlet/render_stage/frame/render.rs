@@ -143,6 +143,14 @@ impl MeshletRenderStage {
         // Grow to fit rather than abort. A scene is authored, not declared: the count arrives from
         // the ECS walk above, and the construction-time capacity was only ever a starting guess.
         // Before this, the 257th instance panicked — in the editor and in a shipped game alike.
+        // Before the upload: the opaque draws skip what this flags as masked (#452).
+        let mut instances = instances;
+        self.masked.assign(
+            device,
+            queue,
+            resources.get::<crate::material::MaterialPipeline>(),
+            &mut instances,
+        );
         let required = instances.len() as u32;
         self.scene.ensure_capacity(device, required);
         self.instance_capacity = self.scene.capacity();
@@ -166,10 +174,12 @@ impl MeshletRenderStage {
                 use std::hash::{Hash, Hasher};
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
                 bytemuck::bytes_of(instance).hash(&mut hasher);
-                // 🔴 A transparent caster whose coverage moves with time is a caster that moved:
+                // 🔴 A see-through caster whose coverage moves with time is a caster that moved:
                 // its pages and cube faces redraw, or its shadow freezes at the frame they were
                 // cached (#1224).
-                if instance.flags & crate::meshlet::scene::INSTANCE_TRANSPARENT != 0
+                let see_through = crate::meshlet::scene::INSTANCE_TRANSPARENT
+                    | crate::meshlet::scene::INSTANCE_MASKED;
+                if instance.flags & see_through != 0
                     && materials
                         .and_then(|m| m.slot_surface(instance.material_id))
                         .is_some_and(|(_, s)| s.source.contains("input.time"))
@@ -389,19 +399,23 @@ impl MeshletRenderStage {
             self.frames_recorded,
         );
 
-        // Before any shadow raster: the transparent casters' coverage they read (#1224).
+        // Before any shadow raster: the transparent and masked casters' coverage they read (#1224,
+        // #452).
         if let Some(materials) = resources.get::<crate::material::MaterialPipeline>() {
-            let transparent: Vec<u32> = instances[opaque..]
+            use crate::meshlet::scene::{INSTANCE_CASTS_NO_SHADOW, INSTANCE_MASKED};
+            let see_through: Vec<u32> = instances
                 .iter()
-                .filter(|i| i.flags & crate::meshlet::scene::INSTANCE_CASTS_NO_SHADOW == 0)
-                .map(|i| i.material_id)
+                .enumerate()
+                .filter(|(at, i)| *at >= opaque || i.flags & INSTANCE_MASKED != 0)
+                .filter(|(_, i)| i.flags & INSTANCE_CASTS_NO_SHADOW == 0)
+                .map(|(_, i)| i.material_id)
                 .collect();
             let time = resources
                 .get::<kooch_core::time::Time>()
                 .map(|t| t.elapsed_secs())
                 .unwrap_or_default();
             self.shadow_alpha
-                .bake(device, queue, &mut encoder, materials, &transparent, time);
+                .bake(device, queue, &mut encoder, materials, &see_through, time);
         }
 
         // First in the encoder: every shading pass below samples the atlas this fills. Inside the

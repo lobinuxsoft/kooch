@@ -15,7 +15,7 @@ pub use pipeline::{
 };
 pub use shader::{
     MAX_PARAM_SCALARS, MAX_PARAM_TEXTURES, ParamKind, SHADER_EXTENSION, SHADER_TYPE_NAME, Shader,
-    ShaderKind, ShaderLoader, ShaderParam, TextureDefault,
+    ShaderKind, ShaderLoader, ShaderParam, TextureDefault, masks,
 };
 pub use texture_pool::MaterialTexturePool;
 pub use values::{PackedParams, ParamValue, ParamValues, TextureRef, retain_declared};

@@ -25,6 +25,7 @@ impl MeshletVisRasterizer {
         view_proj: glam::Mat4,
         clear_id: u32,
         clear: bool,
+        masked: Option<crate::meshlet::MaskedDraw<'_>>,
     ) {
         queue.write_buffer(
             &self.camera_buffer,
@@ -96,5 +97,8 @@ impl MeshletVisRasterizer {
         pass.set_bind_group(2, &visible_bg, &[]);
         pass.set_bind_group(3, &instances_bg, &[]);
         pass.draw_indirect(cull.indirect_args_buffer(), 0);
+        if let Some(masked) = masked {
+            masked.draw(device, &mut pass, meshlet_bg, cull, scene, None);
+        }
     }
 }

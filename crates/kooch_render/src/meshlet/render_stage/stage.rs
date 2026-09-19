@@ -62,6 +62,8 @@ pub struct MeshletRenderStage {
     pub(super) instance_bounds: Vec<crate::shadow::InstanceBounds>,
     /// Transparent casters' coverage for the shadow rasters (#1224).
     pub(super) shadow_alpha: crate::shadow::ShadowAlpha,
+    /// Masked materials' rasters (#452), shared by every view.
+    pub(super) masked: crate::meshlet::MaskedRaster,
     /// The transparent instances' meshlets, far to near, for the forward pass (#452).
     pub(super) forward_list: crate::meshlet::vbuf64_stage::ForwardList,
     /// Last frame's [`Self::instance_bounds`], for the page cache's

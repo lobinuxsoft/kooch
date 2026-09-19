@@ -85,6 +85,7 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
     out.roughness = 1.0;
     out.emissive = unlit.color;
     out.alpha = unlit.alpha;
+    out.alpha_clip = unlit.alpha_clip;
     return out;
 }
 ";
@@ -125,6 +126,12 @@ impl Shader {
             source: read.source,
             params: read.params,
         })
+    }
+
+    /// Whether it assigns `alpha_clip`, and so rasterises in the masked bin (#452). Comments do not
+    /// count: a shader that only mentions it stays opaque.
+    pub fn masked(&self) -> bool {
+        masks(&self.source)
     }
 
     /// The WGSL the engine composes ahead of the source: the kind's glue, `surface_params` and
@@ -189,3 +196,14 @@ impl std::error::Error for ShaderParseError {}
 
 #[cfg(test)]
 mod tests;
+
+/// Whether `source`'s code, outside comments, assigns an output's `alpha_clip`.
+pub fn masks(source: &str) -> bool {
+    source.lines().any(|line| {
+        let code = line.split("//").next().unwrap_or_default();
+        code.find(".alpha_clip").is_some_and(|at| {
+            let rest = code[at + ".alpha_clip".len()..].trim_start();
+            rest.starts_with('=') && !rest.starts_with("==")
+        })
+    })
+}

@@ -50,6 +50,9 @@ struct SurfaceOutput {
     // Coverage, 0..1. Read only by the transparent kind (#452); opaque passes ignore it. A
     // `var out: SurfaceOutput` starts it at 0, so a transparent shader has to set it.
     alpha: f32,
+    // Discards where `alpha` falls below it (#452). Starts at 0, which keeps every fragment; a
+    // shader that assigns it is masked and rasterises in its own bin.
+    alpha_clip: f32,
 }
 
 /// What an unlit shader returns: the final colour, in the same units as `emissive`.
@@ -57,6 +60,8 @@ struct UnlitOutput {
     color: vec3<f32>,
     // Carried for the transparent kind (#452); opaque passes ignore it.
     alpha: f32,
+    // As `SurfaceOutput.alpha_clip`.
+    alpha_clip: f32,
 }
 
 /// Samples one of the surface's textures at `uv`, with the analytical derivatives scaled by

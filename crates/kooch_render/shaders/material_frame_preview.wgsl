@@ -85,6 +85,10 @@ fn fs_preview(in: VsOut) -> @location(0) vec4<f32> {
 
     let input = surface_input(surf, in.clip_position.xy);
     let shaded = surface(input);
+    // The cut the masked raster makes (#452); a clip of 0 keeps every fragment.
+    if (shaded.alpha < shaded.alpha_clip) {
+        discard;
+    }
     if (SURFACE_UNLIT) {
         return vec4<f32>(shaded.emissive, 1.0);
     }

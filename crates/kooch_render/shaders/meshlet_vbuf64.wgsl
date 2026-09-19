@@ -31,6 +31,9 @@ struct MeshletDescriptor {
     _pad5: u32,
 }
 
+// `INSTANCE_MASKED` in `scene.rs`.
+const INSTANCE_MASKED: u32 = 8u;
+
 struct MeshInstance {
     transform: mat4x4<f32>,
     mesh_id: u32,
@@ -91,7 +94,8 @@ fn vs_vbuf64_scene(
     let corner_idx = vertex_index % 3u;
 
     var out: VsOut;
-    if (triangle_idx >= desc.triangle_count) {
+    // A masked instance draws in its material's bin, where its alpha decides (#452).
+    if (triangle_idx >= desc.triangle_count || (inst.flags & INSTANCE_MASKED) != 0u) {
         // NaN clip position → primitive is culled by the rasterizer.
         // Mirror Bevy's `dummy_vertex` so out-of-range invocations
         // never reach `fs_vbuf64_scene`.
