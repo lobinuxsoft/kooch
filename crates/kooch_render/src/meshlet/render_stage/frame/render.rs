@@ -143,6 +143,14 @@ impl MeshletRenderStage {
         // Grow to fit rather than abort. A scene is authored, not declared: the count arrives from
         // the ECS walk above, and the construction-time capacity was only ever a starting guess.
         // Before this, the 257th instance panicked — in the editor and in a shipped game alike.
+        // Before the upload: the opaque draws skip what this flags as masked (#452).
+        let mut instances = instances;
+        self.masked.assign(
+            device,
+            queue,
+            resources.get::<crate::material::MaterialPipeline>(),
+            &mut instances,
+        );
         let required = instances.len() as u32;
         self.scene.ensure_capacity(device, required);
         self.instance_capacity = self.scene.capacity();

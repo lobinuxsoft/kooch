@@ -253,6 +253,33 @@ pub fn validate_surface(params: &str, surface: &str) -> Result<(), String> {
             return Err("a surface shader declares no entry points of its own".to_owned());
         }
     }
+    // A masked shader also rasterises (#452), in a frame of its own on either visibility buffer.
+    if crate::material::masks(surface) {
+        use crate::meshlet::{MaskedTarget, compose_masked_shader};
+        for target in [MaskedTarget::R64, MaskedTarget::R32] {
+            let before = compose_masked_shader(target, params, "// surface")
+                .lines()
+                .position(|line| line == "// surface")
+                .unwrap_or_default();
+            let composed = compose_masked_shader(target, params, surface);
+            let at = |location: Option<naga::SourceLocation>| {
+                location
+                    .map(|l| format!("line {}: ", (l.line_number as usize).saturating_sub(before)))
+                    .unwrap_or_default()
+            };
+            let module = naga::front::wgsl::parse_str(&composed)
+                .map_err(|e| format!("{}{}", at(e.location(&composed)), e.message()))?;
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .map_err(|e| {
+                let location = e.spans().next().map(|(span, _)| span.location(&composed));
+                format!("{}{}", at(location), e.as_inner())
+            })?;
+        }
+    }
     Ok(())
 }
 

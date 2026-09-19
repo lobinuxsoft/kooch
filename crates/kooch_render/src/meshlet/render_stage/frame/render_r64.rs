@@ -118,6 +118,33 @@ impl MeshletRenderStage {
             self.gpu_timers.write_stage_start(&mut encoder, 1);
         }
         let material_pipeline = resources.get::<crate::material::MaterialPipeline>();
+        // #452 — the masked bins: after the cull that fills them, before the raster that draws
+        // them.
+        if self.masked.any() {
+            let stage = self.views[view_id]
+                .vbuf64_stage
+                .as_ref()
+                .expect("path selected only when vbuf64_stage is Some");
+            let frame = crate::meshlet::MaskedFrame {
+                view_proj,
+                camera_position: cam_pos,
+                size: stage.render_size(),
+                mip_bias_scale: stage.mip_bias_scale(),
+                time: resources
+                    .get::<kooch_core::time::Time>()
+                    .map(|t| t.elapsed_secs())
+                    .unwrap_or(0.0),
+            };
+            self.masked.frame(queue, &frame);
+            let view = &mut self.views[view_id];
+            self.masked.bin(
+                device,
+                &mut encoder,
+                &mut view.masked_bins,
+                &view.cull,
+                &self.scene,
+            );
+        }
         // Hoisted out of the call below: the page-marking debug view
         // needs it too, to divide out what the tonemap multiplies back
         // in (#866).
@@ -149,6 +176,11 @@ impl MeshletRenderStage {
                 &self.scene,
                 view_proj,
                 /* clear_depth */ true,
+                material_pipeline.map(|materials| crate::meshlet::MaskedDraw {
+                    raster: &self.masked,
+                    bins: &self.views[view_id].masked_bins,
+                    materials,
+                }),
             );
         }
         if let (Some(scopes), Some(query)) = (scopes, raster_query) {

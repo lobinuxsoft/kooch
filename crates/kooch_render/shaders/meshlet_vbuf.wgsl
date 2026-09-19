@@ -51,6 +51,9 @@ struct MeshletDescriptor {
 
 // Scene-path bind group — only bound for vs_vbuf_scene / fs_vbuf_scene. Must mirror the cull-side
 // struct (stride 96 B) so `instances[i]` reads from the correct byte offset.
+// `INSTANCE_MASKED` in `scene.rs`.
+const INSTANCE_MASKED: u32 = 8u;
+
 struct MeshInstance {
     transform: mat4x4<f32>,
     mesh_id: u32,
@@ -129,7 +132,8 @@ fn vs_vbuf_scene(
     let corner_idx = vertex_index % 3u;
 
     var out: VsOut;
-    if (triangle_idx >= desc.triangle_count) {
+    // A masked instance draws in its material's bin, where its alpha decides (#452).
+    if (triangle_idx >= desc.triangle_count || (inst.flags & INSTANCE_MASKED) != 0u) {
         out.clip_position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
         out.packed_id = 0u;
         return out;
