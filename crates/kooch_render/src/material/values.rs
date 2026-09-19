@@ -22,7 +22,7 @@ pub enum ParamValue {
 pub type ParamValues = BTreeMap<String, ParamValue>;
 
 /// A texture a slot binds, and what it samples when none is assigned.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TextureRef {
     pub guid: Option<Guid>,
     pub fallback: TextureDefault,

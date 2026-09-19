@@ -41,6 +41,8 @@ metis = { version = "0.2", default-features = false, features = ["vendored"] }
 # the asset uses; both already live in the workspace deps.
 ron.workspace = true
 serde.workspace = true
+geo = "0.33.1"
+contour = "0.13.1"
 
 [features]
 # Forwards `kooch_core`'s GPU timer scopes (#785). Nothing in this

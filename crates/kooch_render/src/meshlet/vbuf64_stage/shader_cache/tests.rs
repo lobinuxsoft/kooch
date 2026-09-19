@@ -16,6 +16,7 @@ fn source(revision: u64, text: &str) -> SurfaceSource {
         params: shader.params.clone().into(),
         kind: shader.kind,
         masked: shader.masked(),
+        still: shader.masks_still(),
         source: shader.source.into(),
     }
 }

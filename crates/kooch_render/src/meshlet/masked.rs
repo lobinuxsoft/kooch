@@ -9,7 +9,9 @@ mod layouts;
 use bytemuck::{Pod, Zeroable, bytes_of};
 
 use crate::material::{MaterialPipeline, ShaderKind};
-use crate::meshlet::scene::{INSTANCE_MASKED, INSTANCE_TRANSPARENT, MeshInstance};
+use crate::meshlet::scene::{
+    INSTANCE_MASKED, INSTANCE_TRANSPARENT, INSTANCE_TRIMMED, MeshInstance,
+};
 use crate::meshlet::{MATERIAL_SURFACE_PRELUDE, SURFACE_RECONSTRUCT_SHADER, ShaderPipelines};
 
 pub use bins::MaskedBins;
@@ -146,8 +148,9 @@ impl MaskedRaster {
         for instance in instances.iter_mut() {
             instance.flags &= !INSTANCE_MASKED;
             let slot = instance.material_id as usize;
-            if instance.flags & INSTANCE_TRANSPARENT != 0 || slot >= MATERIAL_SLOTS || refused[slot]
-            {
+            // A trimmed instance carries the cut in its geometry (#452): it draws opaque.
+            let drawn = INSTANCE_TRANSPARENT | INSTANCE_TRIMMED;
+            if instance.flags & drawn != 0 || slot >= MATERIAL_SLOTS || refused[slot] {
                 continue;
             }
             if table[slot] == 0 {

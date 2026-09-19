@@ -482,8 +482,33 @@ surface and drops what falls below the clip before `atomicMax`, so a cut fragmen
 `transparent_lit` answers a coverage of -1 there as well, which the tail and the sorted fallback
 discard.
 
-Planned (#452): an alpha that provably depends on uv and textures only becomes geometry — the mesh
-cut along the contour, opaque, with nothing left to discard.
+### Static cuts as geometry (#452)
+
+A cut that cannot move is not worth a pass. `Shader::masks_still` answers whether the source
+mentions `input.time`, `input.world_position`, `input.camera_position` or `input.frag_coord`;
+without them the cut is a function of uv and textures alone, and `AlphaTrim` turns it into geometry
+once per (mesh, material, values):
+
+- **Settle** — the pair has to ask with the same `MaterialPipeline::slot_stamp` for 8 frames, so a
+  dragged slider never bakes. One pair a frame, in `sync_assets_to_gpu`, before the generated drain
+  that uploads what it publishes.
+- **Bake** — the shadow bake's own frame (`shadow_alpha_bake.wgsl`, its square now a uniform) over
+  256², read back to the CPU. 🔴 The readback blocks: it belongs to the asset step, and 64 KiB once
+  per pair is what it costs.
+- **Contour** — `contour` (a d3-contour port) walks marching squares at 0.5, `geo` simplifies under
+  half a texel, which is as fine as the bake could see.
+- **Cut** — each LOD 0 triangle is classified against the mask by its uv bounds: all kept, all gone,
+  or clipped against the coverage with `geo`'s boolean ops and triangulated again by earcut. New
+  corners interpolate position and normal across the source triangle; pieces are rewound to the
+  triangle they came from, because earcut hands back its own winding and the raster culls back
+  faces. Bit-equal vertices weld, then `build_meshlets_lod_chain` rebuilds the chain.
+- **Draw** — the cut mesh is published as a `GeneratedMeshes` entry and the scene walk swaps it in
+  for that (mesh, material) pair, with `INSTANCE_TRIMMED` set: `MaskedRaster::assign` leaves it to
+  the opaque draw, and the shadow rasters read its material as `SOLID_CASTER` so the geometry casts
+  its own shape instead of sampling the coverage again.
+
+A pair that cannot be cut — a tiled uv, a mesh generated rather than loaded, an empty cut — is
+remembered as refused and keeps the per-pixel raster. Nothing is ever both skipped and undrawn.
 
 ### After the shade: rate, history, and the tonemap
 

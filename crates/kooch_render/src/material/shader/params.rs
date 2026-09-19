@@ -53,7 +53,7 @@ impl ParamKind {
 }
 
 /// What an unassigned texture parameter samples.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TextureDefault {
     #[default]
     White,

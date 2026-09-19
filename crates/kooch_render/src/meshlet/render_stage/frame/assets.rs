@@ -61,6 +61,10 @@ impl MeshletRenderStage {
         queue: &wgpu::Queue,
         resources: &mut Resources,
     ) {
+        // Before the material sync and the generated drain below: what the trim publishes this call
+        // is uploaded by the same call, so the cut mesh draws on the next frame (#452).
+        self.trim_static_masks(device, queue, resources);
+
         // Material pool sync first: the meshlet scene system reads
         // `MaterialPipeline.lookup_or_fallback` when assembling `MeshInstance.material_id`, so any
         // newly-picked GUID has to be in the registry before the cull dispatch fires.

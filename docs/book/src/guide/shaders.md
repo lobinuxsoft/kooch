@@ -137,6 +137,13 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
   view: each masked material rasterises in a pass of its own that runs its `surface` for every
   fragment. Only masked objects pay for that; up to 32 masked materials a frame, and any past that
   draws solid.
+- **A still cut becomes geometry.** When the shader's code never mentions `input.time`,
+  `input.world_position`, `input.camera_position` or `input.frag_coord`, the engine bakes the cut
+  once and rebuilds the mesh along its contour: the object turns plain opaque, discards nothing,
+  keeps its meshlet LODs and casts a solid shadow of the real shape. It happens by itself, a few
+  frames after the material stops changing, and only for a mesh whose uv stays inside its square —
+  a tiled uv keeps the per-pixel cut. Nothing to author: the log line under
+  `kooch_render::meshlet::trim` says how many triangles it kept.
 - **Their shadow is cut too**, at the surface's uv and the time only, like a transparent one's.
 - Back faces are culled as on any surface: a leaf card seen from behind is not drawn.
 - The node panel's preview shows the cut.
