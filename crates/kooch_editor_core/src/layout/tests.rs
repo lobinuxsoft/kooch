@@ -45,7 +45,9 @@ fn detached_panels_round_trip() {
             pos: Some([2000, 40]),
             home: None,
         }],
+        game_resolution: Some([1280, 720]),
     };
     let parsed = EditorLayout::parse(&ron::ser::to_string(&layout).unwrap()).unwrap();
     assert_eq!(parsed.windows, layout.windows);
+    assert_eq!(parsed.game_resolution, Some([1280, 720]));
 }

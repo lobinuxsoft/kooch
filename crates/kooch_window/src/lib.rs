@@ -118,15 +118,15 @@ impl Plugin for WindowPlugin {
             kooch_core::stage::Stage::Last,
             title_metrics::title_metrics_system,
         );
+        // Published in every host, the editor included: an options menu and the Game view's
+        // resolution dropdown both read the list, and reading it changes nothing.
+        app.add_system(
+            kooch_core::stage::Stage::Last,
+            mode::publish_display_modes_system,
+        );
         // After `apply_render_settings_system` publishes the resource in `Update`, so a change
         // lands the same frame. Not registered in a host that does not own a game's window.
         if self.applies_window_mode {
-            // Published even with no mode requested: an options menu needs the list to draw its
-            // dropdown, at one enumeration.
-            app.add_system(
-                kooch_core::stage::Stage::Last,
-                mode::publish_display_modes_system,
-            );
             app.add_system(
                 kooch_core::stage::Stage::Last,
                 mode::apply_window_mode_system,

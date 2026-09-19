@@ -43,12 +43,12 @@ fn a_tool_window_never_registers_it() {
         app.schedule()
             .system_names(Stage::Last)
             .iter()
-            .filter(|name| name.contains("window_mode") || name.contains("display_modes"))
+            .filter(|name| name.contains("window_mode"))
             .count()
     };
 
-    assert_eq!(named(true), 2, "a game's window follows and enumerates");
-    assert_eq!(named(false), 0, "a tool's window does neither");
+    assert_eq!(named(true), 1, "a game's window follows the setting");
+    assert_eq!(named(false), 0, "a tool's window does not");
 }
 
 /// The default is a game's window: a project that adds the plugin
@@ -56,4 +56,23 @@ fn a_tool_window_never_registers_it() {
 #[test]
 fn the_default_follows_the_setting() {
     assert!(crate::WindowPlugin::default().applies_window_mode);
+}
+
+/// Every host lists the display's modes: the editor's Game view offers them as resolutions.
+#[test]
+fn every_host_lists_modes() {
+    use kooch_core::app::App;
+    use kooch_core::plugin::Plugin;
+    use kooch_core::stage::Stage;
+
+    let mut app = App::new();
+    crate::WindowPlugin {
+        title: "t".to_owned(),
+        width: 1,
+        height: 1,
+        applies_window_mode: false,
+    }
+    .build(&mut app);
+    let names = app.schedule().system_names(Stage::Last);
+    assert!(names.iter().any(|name| name.contains("display_modes")));
 }

@@ -52,7 +52,7 @@ and opened.
 | Panel | What it is for |
 |---|---|
 | **View** | The 3D viewport. Selection, transform gizmos, the physics debug overlay, and the meshlet debug-view dropdown. Owns the editor camera. |
-| **Game** | What the game's own camera sees — no gizmos, no selection outlines. A sibling tab of View, and only rendered while its tab is visible. Play does not switch you here or take the editor camera away; the two views coexist because a frame is a list of views. |
+| **Game** | What the game's own camera sees — no gizmos, no selection outlines. A sibling tab of View, and only rendered while its tab is visible. Play does not switch you here or take the editor camera away; the two views coexist because a frame is a list of views. The dropdown beside **View** sets what it renders at: **Free** is the panel's own size; any of the display's resolutions renders at exactly that size, scaled to fit the panel with its aspect kept (black bars fill the rest). A lower one is also how to make the Game view cheaper while the Edit view renders beside it. |
 | **World** | The entity hierarchy of every loaded scene. Selecting here selects in View. |
 | **Inspector** | The selected entity's components and their fields. Where authoring happens. **Hover a field name** and its doc comment appears as a tooltip — units included, which is how you find out that a directional light's intensity is in lux and a point light's is in lumens. |
 | **Components** | Every component type the engine and your project registered. |

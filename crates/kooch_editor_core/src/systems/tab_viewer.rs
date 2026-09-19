@@ -29,6 +29,8 @@ use crate::state::{
 };
 
 pub(crate) struct EditorTabViewer<'a> {
+    /// What the Game panel renders at, and the display's sizes it offers.
+    pub(crate) game_resolution: &'a mut crate::panels::game::GameResolution,
     /// A tab the user asked to open in its own window (#1196); the dock lets go of it after drawing.
     pub(crate) detach: Option<EditorTab>,
     /// Which panel the keyboard belongs to, updated here as panels are
@@ -247,6 +249,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 ui,
                 self.game_texture_id,
                 self.game_request,
+                self.game_resolution,
                 self.game_has_camera,
                 self.perf_stats,
                 self.game_stats,

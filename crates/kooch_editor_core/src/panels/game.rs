@@ -1,5 +1,9 @@
 //! Game panel — the scene through the gameplay camera.
 
+mod resolution;
+
+pub(crate) use resolution::{GameResolution, sizes as display_sizes};
+
 /// Draws the game image with the perf sidebar over it, or says why
 /// there is nothing to draw.
 #[allow(clippy::too_many_arguments)]
@@ -7,6 +11,7 @@ pub(crate) fn draw_game_content(
     ui: &mut egui::Ui,
     texture_id: egui::TextureId,
     size_request: &mut Option<(u32, u32)>,
+    resolution: &mut GameResolution,
     has_camera: bool,
     perf_stats: crate::perf::EditorPerfStats,
     meshlet_stats: kooch_render::meshlet::MeshletRenderStats,
@@ -25,10 +30,13 @@ pub(crate) fn draw_game_content(
     // fractional-scale desktop using points would render at the wrong
     // resolution and resample.
     let pixels_per_point = ui.ctx().pixels_per_point();
-    let requested = (
-        (available.x * pixels_per_point).round().max(1.0) as u32,
-        (available.y * pixels_per_point).round().max(1.0) as u32,
-    );
+    let requested = match resolution.choice {
+        Some([width, height]) => (width, height),
+        None => (
+            (available.x * pixels_per_point).round().max(1.0) as u32,
+            (available.y * pixels_per_point).round().max(1.0) as u32,
+        ),
+    };
     *size_request = Some(requested);
 
     // The sidebar draws over the image, so the image goes down first —
@@ -46,6 +54,11 @@ pub(crate) fn draw_game_content(
                 .weak(),
             );
         });
+    } else if let Some(size) = resolution.choice {
+        let (panel, _) = ui.allocate_exact_size(available, egui::Sense::hover());
+        ui.painter().rect_filled(panel, 0.0, egui::Color32::BLACK);
+        let image = resolution::fit(panel, size);
+        egui::Image::new((texture_id, image.size())).paint_at(ui, image);
     } else {
         ui.add(egui::Image::new((texture_id, available)));
     }
@@ -54,6 +67,7 @@ pub(crate) fn draw_game_content(
         // Godot's viewport grammar: a View menu in the top-left deciding which overlays draw, and
         // everything it enables STACKING as semi-transparent cards in a right-hand column.
         view_menu(ui, panel_origin, hud_visibility);
+        resolution::picker(ui, panel_origin, resolution);
         overlay_stack(
             ui,
             panel_origin,
