@@ -15,7 +15,7 @@ pub struct Run {
 
 /// The packed `(instance, meshlet)` entries the forward frame reads, far to near, and the runs that
 /// share a pipeline. Kept between frames so the vectors are reused.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ForwardList {
     pub entries: Vec<u32>,
     pub runs: Vec<Run>,

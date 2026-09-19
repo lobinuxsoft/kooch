@@ -275,3 +275,22 @@ fn a_broken_post_names_its_line() {
     let error = validate_post(&shader.params_wgsl(), &shader.source).unwrap_err();
     assert!(error.starts_with("line 3: "), "{error}");
 }
+
+/// The layered transparency shaders that no surface is composed into, checked as naga checks them.
+#[test]
+fn the_layer_passes_compile() {
+    for (name, source) in [
+        ("insert", compose_transparent_insert()),
+        ("composite", compose_transparent_composite()),
+        ("args", TRANSPARENT_ARGS_SHADER.to_owned()),
+    ] {
+        let module = naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(&source)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(&source)));
+    }
+}

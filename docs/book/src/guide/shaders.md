@@ -89,14 +89,18 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 }
 ```
 
-Transparent objects are drawn after the opaque scene, sorted back to front by their bounding centre,
-each blended over what is already there. What that means in practice:
+Transparent objects are drawn after the opaque scene, and put in order **per pixel**: each pixel
+keeps its four nearest transparent surfaces exactly, so panes that cross, an object inside another
+and the far side of a glass seen through its near side all come out right. Both faces are drawn,
+each lit from the side you see. Past four, the rest still blend in, without order — only dense
+smoke or particles get there, and there the difference does not show.
 
-- **Order is per object, not per triangle.** Two panes that cross, or one object inside another,
-  can blend in the wrong order where they overlap.
-- **Back faces are not drawn**, so a closed shape shows its near side only.
-- **They cast no shadow** and write no depth: what is behind glass is still what shadows, contact
-  shadows and occlusion see.
+- **They cast no shadow** yet and write no depth: what is behind glass is still what shadows,
+  contact shadows and occlusion see.
+- The layers need 64-bit atomics that report what they replaced (Vulkan and DX12 have them; Metal
+  does not). Without them, or at resolutions too large for the layers to fit one buffer, objects are
+  sorted back to front by their centre instead, with back faces culled — then two crossing panes
+  can blend in the wrong order.
 - They draw on the compute shading path, which is the default.
 
 ### Post-process

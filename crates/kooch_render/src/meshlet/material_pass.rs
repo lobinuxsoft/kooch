@@ -32,9 +32,58 @@ pub const MATERIAL_SURFACE_PRELUDE: &str = include_str!("../../shaders/material_
 /// produced (#1201). Entry points: `vs_fullscreen`, `fs_post`.
 pub const MATERIAL_POST_FRAME: &str = include_str!("../../shaders/material_frame_post.wgsl");
 
-/// The frame a transparent surface runs inside: its meshlets rasterised over the opaque scene and
-/// blended (#452). Entry points: `vs_forward`, `fs_forward`.
-pub const MATERIAL_FORWARD_FRAME: &str = include_str!("../../shaders/material_frame_forward.wgsl");
+/// The sorted fallback for a transparent surface: its meshlets rasterised far to near and blended
+/// (#452). Entry points: `vs_forward`, `fs_forward`.
+pub const MATERIAL_FORWARD_FRAME: &str = concat!(
+    include_str!("../../shaders/transparent_vertex.wgsl"),
+    include_str!("../../shaders/transparent_lit.wgsl"),
+    include_str!("../../shaders/material_frame_forward.wgsl"),
+);
+
+/// What the layered transparent passes share: the four layers and their packing (#452).
+pub const TRANSPARENT_LAYERS: &str = include_str!("../../shaders/transparent_layers.wgsl");
+
+/// A transparent surface's fragments behind its pixel's four layers, blended without order.
+/// Entry points: `vs_forward`, `fs_tail`.
+pub const TRANSPARENT_TAIL_FRAME: &str = concat!(
+    include_str!("../../shaders/transparent_layers.wgsl"),
+    include_str!("../../shaders/transparent_vertex.wgsl"),
+    include_str!("../../shaders/transparent_lit.wgsl"),
+    include_str!("../../shaders/transparent_tail.wgsl"),
+);
+
+/// A transparent surface's layers, lit in place. Entry point: `cs_shade`.
+pub const TRANSPARENT_SHADE_FRAME: &str = concat!(
+    include_str!("../../shaders/transparent_layers.wgsl"),
+    include_str!("../../shaders/transparent_lit.wgsl"),
+    include_str!("../../shaders/transparent_shade.wgsl"),
+);
+
+/// Every transparent fragment offered to its pixel's layers; one pipeline for every material.
+/// Entry points: `vs_forward`, `fs_insert`.
+pub fn compose_transparent_insert() -> String {
+    [
+        VISIBILITY_BUFFER_RESOLVE_SHADER,
+        SURFACE_RECONSTRUCT_SHADER,
+        TRANSPARENT_LAYERS,
+        include_str!("../../shaders/transparent_vertex.wgsl"),
+        include_str!("../../shaders/transparent_insert.wgsl"),
+    ]
+    .join("\n")
+}
+
+/// The layers and the tail over the opaque radiance. Entry points: `vs_fullscreen`,
+/// `fs_composite`.
+pub fn compose_transparent_composite() -> String {
+    [
+        TRANSPARENT_LAYERS,
+        include_str!("../../shaders/transparent_composite.wgsl"),
+    ]
+    .join("\n")
+}
+
+/// Empties the tail's draws when nothing overflowed. Entry point: `cs_args`.
+pub const TRANSPARENT_ARGS_SHADER: &str = include_str!("../../shaders/transparent_args.wgsl");
 
 /// The Shader Graph preview's frame: one primitive, rasterised, lit by a key light of its own.
 /// Entry points: `vs_preview`, `fs_preview`.
@@ -181,6 +230,8 @@ pub fn validate_surface(params: &str, surface: &str) -> Result<(), String> {
         MATERIAL_FRAGMENT_FRAME,
         MATERIAL_COMPUTE_FRAME,
         MATERIAL_FORWARD_FRAME,
+        TRANSPARENT_TAIL_FRAME,
+        TRANSPARENT_SHADE_FRAME,
     ] {
         let composed = compose_material_shader(frame, params, surface, false);
         let module = naga::front::wgsl::parse_str(&composed)

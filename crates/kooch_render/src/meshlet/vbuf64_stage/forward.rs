@@ -1,10 +1,12 @@
-//! The forward pass: transparent surfaces blended over the opaque scene, far to near (#452).
+//! Transparent surfaces over the opaque scene (#452): in layers where the device allows, sorted far
+//! to near where it does not.
 //!
 //! 🔴 Between the shading and the temporal resolve, on the render-resolution radiance: the glass
 //! is lit in the same units as what it covers and goes through the same upscale and tonemap. It
 //! tests the depth the raster wrote and never writes it, so what is behind glass stays reachable
 //! for the contact march and the Hi-Z.
 
+mod layered;
 mod list;
 
 use bytemuck::bytes_of;
@@ -26,7 +28,7 @@ pub(crate) use list::ForwardList;
 
 /// Triangles a meshlet can hold: its triangle index is 7 bits wherever it is packed. Every draw
 /// instance emits this many, and the vertex shader drops the ones past its own meshlet's count.
-const MESHLET_TRIANGLES: u32 = 128;
+pub(super) const MESHLET_TRIANGLES: u32 = 128;
 
 /// Screen slots, one per material, as the fragment path has.
 const MAX_SLOTS: u64 = 256;
@@ -52,13 +54,9 @@ pub(super) struct ForwardFrame<'a> {
     pub time: f32,
 }
 
-pub(super) struct ForwardPass {
-    pipelines: ShaderPipelines<wgpu::RenderPipeline>,
-    /// The raster's, which this pass tests against.
-    depth_format: wgpu::TextureFormat,
-    /// The two-pass frame's groups, except the scene: its vertex stage reads the list too.
-    layout: wgpu::PipelineLayout,
-    scene_bgl: wgpu::BindGroupLayout,
+/// What every transparent pass reads: the camera, one screen slot per material, the contact march's
+/// settings and the list.
+pub(super) struct Uniforms {
     list: wgpu::Buffer,
     camera: wgpu::Buffer,
     screen: wgpu::Buffer,
@@ -66,8 +64,123 @@ pub(super) struct ForwardPass {
     contact: wgpu::Buffer,
 }
 
+impl Uniforms {
+    fn new(device: &wgpu::Device) -> Self {
+        let uniform = |label, size| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let align = device.limits().min_uniform_buffer_offset_alignment as u64;
+        let screen_stride = align.max(std::mem::size_of::<ScreenUbo>() as u64);
+        Self {
+            list: list_buffer(device, 256),
+            camera: uniform("forward_camera", std::mem::size_of::<CameraUbo>() as u64),
+            screen: uniform("forward_screen", screen_stride * MAX_SLOTS),
+            screen_stride,
+            contact: uniform(
+                "forward_contact",
+                std::mem::size_of::<ContactShadowUbo>() as u64,
+            ),
+        }
+    }
+
+    fn write(&mut self, frame: &ForwardFrame<'_>, list: &ForwardList) {
+        let bytes = (list.entries.len() * 4) as u64;
+        if self.list.size() < bytes {
+            self.list = list_buffer(frame.device, bytes.next_power_of_two());
+        }
+        let queue = frame.queue;
+        queue.write_buffer(&self.list, 0, bytemuck::cast_slice(&list.entries));
+        queue.write_buffer(
+            &self.camera,
+            0,
+            bytes_of(&CameraUbo {
+                view_proj: frame.view_proj.to_cols_array_2d(),
+            }),
+        );
+        queue.write_buffer(&self.contact, 0, bytes_of(frame.contact));
+        for run in &list.runs {
+            queue.write_buffer(
+                &self.screen,
+                run.material as u64 * self.screen_stride,
+                bytes_of(&ScreenUbo {
+                    size: [frame.size.0, frame.size.1],
+                    material_id: run.material,
+                    debug_mode: 0,
+                    shading_rate: 1,
+                    mip_bias_scale: frame.mip_bias_scale,
+                    time: frame.time,
+                    _pad: [0; 1],
+                }),
+            );
+        }
+    }
+}
+
+pub(super) struct ForwardPass {
+    uniforms: Uniforms,
+    layered: Option<layered::LayeredPass>,
+    sorted: SortedPass,
+}
+
 impl ForwardPass {
     pub(super) fn new(
+        device: &wgpu::Device,
+        depth_format: wgpu::TextureFormat,
+        meshlet_bgl: &wgpu::BindGroupLayout,
+        shared: SharedLayouts<'_>,
+    ) -> Self {
+        Self {
+            uniforms: Uniforms::new(device),
+            layered: layered::LayeredPass::new(device, depth_format, meshlet_bgl),
+            sorted: SortedPass::new(device, depth_format, meshlet_bgl, shared),
+        }
+    }
+
+    /// Draws `list` over the frame. Costs nothing when it is empty: no buffer written, no pass.
+    pub(super) fn draw(
+        &mut self,
+        frame: ForwardFrame<'_>,
+        layouts: SharedLayouts<'_>,
+        list: &ForwardList,
+    ) {
+        // A material past the screen slots has nowhere to put its uniforms; it is left out.
+        let mut list = std::borrow::Cow::Borrowed(list);
+        if list.runs.iter().any(|run| run.material as u64 >= MAX_SLOTS) {
+            list.to_mut()
+                .runs
+                .retain(|run| (run.material as u64) < MAX_SLOTS);
+        }
+        if list.runs.is_empty() {
+            return;
+        }
+        self.uniforms.write(&frame, &list);
+        match self.layered.as_mut() {
+            Some(layered) if layered.fits(frame.device, frame.size) => {
+                layered.draw(frame, &self.uniforms, &list)
+            }
+            _ => self.sorted.draw(frame, layouts, &self.uniforms, &list),
+        }
+    }
+}
+
+/// The fallback: each transparent instance far to near, blended as it lands. Two crossing objects,
+/// or a mesh seen through itself, can come out in the wrong order; back faces are culled.
+struct SortedPass {
+    pipelines: ShaderPipelines<wgpu::RenderPipeline>,
+    /// The raster's, which this pass tests against.
+    depth_format: wgpu::TextureFormat,
+    /// The two-pass frame's groups, except the scene: its vertex stage reads the list too.
+    layout: wgpu::PipelineLayout,
+    scene_bgl: wgpu::BindGroupLayout,
+}
+
+impl SortedPass {
+    fn new(
         device: &wgpu::Device,
         depth_format: wgpu::TextureFormat,
         meshlet_bgl: &wgpu::BindGroupLayout,
@@ -101,79 +214,24 @@ impl ForwardPass {
             ],
             immediate_size: 0,
         });
-        let uniform = |label, size| {
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
-        };
-        let align = device.limits().min_uniform_buffer_offset_alignment as u64;
-        let screen_stride = align.max(std::mem::size_of::<ScreenUbo>() as u64);
         Self {
             pipelines: ShaderPipelines::new(&[ShaderKind::Transparent]),
             depth_format,
             layout,
             scene_bgl,
-            list: list_buffer(device, 256),
-            camera: uniform("forward_camera", std::mem::size_of::<CameraUbo>() as u64),
-            screen: uniform("forward_screen", screen_stride * MAX_SLOTS),
-            screen_stride,
-            contact: uniform(
-                "forward_contact",
-                std::mem::size_of::<ContactShadowUbo>() as u64,
-            ),
         }
     }
 
-    /// Draws `list` over the frame. Costs nothing when it is empty: no buffer written, no pass.
-    pub(super) fn draw(
+    fn draw(
         &mut self,
         frame: ForwardFrame<'_>,
         layouts: SharedLayouts<'_>,
+        uniforms: &Uniforms,
         list: &ForwardList,
     ) {
-        if list.is_empty() {
-            return;
-        }
         let ForwardFrame {
-            device,
-            queue,
-            encoder,
-            ..
+            device, encoder, ..
         } = frame;
-        let bytes = (list.entries.len() * 4) as u64;
-        if self.list.size() < bytes {
-            self.list = list_buffer(device, bytes.next_power_of_two());
-        }
-        queue.write_buffer(&self.list, 0, bytemuck::cast_slice(&list.entries));
-        queue.write_buffer(
-            &self.camera,
-            0,
-            bytes_of(&CameraUbo {
-                view_proj: frame.view_proj.to_cols_array_2d(),
-            }),
-        );
-        queue.write_buffer(&self.contact, 0, bytes_of(frame.contact));
-        for run in &list.runs {
-            if (run.material as u64) < MAX_SLOTS {
-                queue.write_buffer(
-                    &self.screen,
-                    run.material as u64 * self.screen_stride,
-                    bytes_of(&ScreenUbo {
-                        size: [frame.size.0, frame.size.1],
-                        material_id: run.material,
-                        debug_mode: 0,
-                        shading_rate: 1,
-                        mip_bias_scale: frame.mip_bias_scale,
-                        time: frame.time,
-                        _pad: [0; 1],
-                    }),
-                );
-            }
-        }
-
         let frame_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("forward_frame_bg"),
             layout: layouts.frame,
@@ -184,19 +242,19 @@ impl ForwardPass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: self.camera.as_entire_binding(),
+                    resource: uniforms.camera.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.screen,
+                        buffer: &uniforms.screen,
                         offset: 0,
                         size: std::num::NonZeroU64::new(std::mem::size_of::<ScreenUbo>() as u64),
                     }),
                 },
                 wgpu::BindGroupEntry {
                     binding: MATERIAL_PASS_CONTACT_UBO_BINDING,
-                    resource: self.contact.as_entire_binding(),
+                    resource: uniforms.contact.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: MATERIAL_PASS_CONTACT_DEPTH_BINDING,
@@ -224,7 +282,7 @@ impl ForwardPass {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.list.as_entire_binding(),
+                    resource: uniforms.list.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -263,9 +321,6 @@ impl ForwardPass {
             let Some((guid, surface)) = frame.materials.slot_surface(run.material) else {
                 continue;
             };
-            if run.material as u64 >= MAX_SLOTS {
-                continue;
-            }
             let Some(pipeline) = self.pipelines.get(guid, surface, false, |surface| {
                 build_pipeline(device, &self.layout, self.depth_format, surface)
             }) else {
@@ -274,7 +329,7 @@ impl ForwardPass {
             let refs = frame.materials.slot_texture_refs(run.material);
             let textures = texture_pool.material_bind_group(device, &refs);
             pass.set_pipeline(&pipeline);
-            let offset = (run.material as u64 * self.screen_stride) as u32;
+            let offset = (run.material as u64 * uniforms.screen_stride) as u32;
             pass.set_bind_group(0, &frame_bg, &[offset]);
             pass.set_bind_group(4, &textures, &[]);
             pass.draw(0..MESHLET_TRIANGLES * 3, run.range.clone());

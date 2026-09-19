@@ -93,6 +93,15 @@ pub(super) fn optional_features(adapter: &Adapter) -> wgpu::Features {
              (coplanar meshlets may z-fight)"
         );
     }
+    // #452 — the transparent layers insert with a 64-bit atomic whose result they read, which the
+    // min/max feature does not allow. Without it, transparency falls back to the sorted pass.
+    if features.contains(vbuf64)
+        && adapter
+            .features()
+            .contains(wgpu::Features::SHADER_INT64_ATOMIC_ALL_OPS)
+    {
+        features |= wgpu::Features::SHADER_INT64_ATOMIC_ALL_OPS;
+    }
     // modes (TriangleDensity, Overdraw, reject overlays). This is broader than the full vbuf64
     // bundle: many baseline adapters (RDNA 2 without INT64 atomic, Adreno X1) expose TEXTURE_ATOMIC
     // standalone.

@@ -415,12 +415,26 @@ Then [Inti](./lighting.md) — Cook-Torrance driven by the scene's lights.
 
 A `transparent` material's instances are appended after every opaque one, and every cull — the
 view's, the cascades', the pages' — is handed the opaque count, so they never reach the visibility
-buffer and cast no shadow. The forward pass then draws them on the compute path, after the shade
-(and its upsample) and before the temporal resolve: it rasterises each instance's finest meshlets
-far to near from a packed `(instance, meshlet)` list, tests the raster's depth read-only, and
-reconstructs every fragment with the same `resolve_surface` a visibility-buffer sample uses before
-lighting it with Inti and blending it into the linear radiance. Consecutive instances on one
-material share a draw. The list costs nothing when the scene has no transparent material.
+buffer and cast no shadow. They are drawn on the compute path after the shade (and its upsample) and before the temporal
+resolve, from a packed `(instance, meshlet)` list of each instance's finest meshlets:
+
+1. **Insert** — one raster of both faces for every material. Each fragment builds a 64-bit key,
+   depth above and `(slot, triangle)` below, and offers it to its pixel's four layers with
+   `atomicMax`, carrying the smaller down; what leaves the last layer raises an overflow flag. The
+   opaque depth is tested in the shader: a fragment that writes storage runs before a late depth
+   test would reject it.
+2. **Tail** — a compute zeroes the tail's indirect draws when nothing overflowed. Otherwise each
+   material rasterises again and keeps only fragments behind the fourth layer, into McGuire and
+   Bavoil's weighted blended targets (Hybrid Transparency, Maule et al. 2013).
+3. **Shade** — one compute per material lights the layers whose key names it, with the same
+   `resolve_surface` a visibility-buffer sample uses, and packs colour and coverage back into the
+   layer as four halves.
+4. **Composite** — the layers front to back, then the tail, blended premultiplied over the radiance.
+
+The layers are four `u64` a pixel — 33 MB at 1280×800 — allocated at the first frame with a
+transparent material. The layers need `SHADER_INT64_ATOMIC_ALL_OPS`; without it,
+or when they would not fit one storage binding, a sorted pass draws instead: instances far to near,
+back faces culled, blended as they land.
 
 ### After the shade: rate, history, and the tonemap
 
