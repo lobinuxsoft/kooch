@@ -19,6 +19,9 @@ pub(crate) struct ShaderPipelines<P> {
 /// no `sample_scene`; a transparent one is the forward pass's (#452).
 pub(super) const OPAQUE: &[ShaderKind] = &[ShaderKind::Surface, ShaderKind::Unlit];
 
+/// What the forward path draws: the two that blend, lit and not (#452).
+pub(crate) const BLENDED: &[ShaderKind] = &[ShaderKind::Transparent, ShaderKind::TransparentUnlit];
+
 struct Built<P> {
     /// The revision last tried, so a broken edit is reported once rather than every frame.
     revision: u64,

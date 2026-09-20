@@ -35,6 +35,56 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {{
     )
 }
 
+/// A grey pane that blends, lit by the scene or carrying its own colour.
+fn tinted(unlit: bool, alpha: f32) -> String {
+    match unlit {
+        true => format!(
+            "// kind: transparent_unlit
+fn unlit(input: SurfaceInput) -> UnlitOutput {{
+    var out: UnlitOutput;
+    out.color = vec3<f32>(0.5);
+    out.alpha = {alpha:?};
+    return out;
+}}
+"
+        ),
+        false => format!(
+            "// kind: transparent
+fn surface(input: SurfaceInput) -> SurfaceOutput {{
+    var out: SurfaceOutput;
+    out.base_color = vec3<f32>(0.5);
+    out.normal = normalize(input.world_normal);
+    out.roughness = 1.0;
+    out.alpha = {alpha:?};
+    return out;
+}}
+"
+        ),
+    }
+}
+
+/// Adds a pane of `source` where `matrix` puts the rig's cube.
+fn pane_of(r: &mut common::lit_scene::Rig, source: &str, matrix: Mat4) {
+    let shader = Guid::new_v4();
+    let material = Guid::new_v4();
+    let materials = r.resources.get_mut::<MaterialPipeline>().unwrap();
+    materials.add_shader(shader, &Shader::parse(source).unwrap());
+    let mut look = Material::new([0.0, 0.0, 0.0, 1.0], 0.0, 1.0, 0.0);
+    look.shader = Some(shader);
+    materials.register(&r.queue, material, &look);
+    let mut commands = Commands::new();
+    commands
+        .spawn(&mut r.resources)
+        .insert(MeshRenderer {
+            mesh: Some(r.mesh),
+            material: Some(material),
+            visible: true,
+            ..Default::default()
+        })
+        .insert(GlobalTransform { matrix });
+    commands.apply(&mut r.resources);
+}
+
 /// Adds a pane of `colour` glass where `matrix` puts the rig's cube.
 fn pane(r: &mut common::lit_scene::Rig, colour: &str, alpha: f32, matrix: Mat4) {
     pane_casting(r, colour, alpha, matrix, true);
@@ -236,5 +286,39 @@ fn cast_shadows_off_casts_none() {
     assert!(
         quiet * 2 < casting,
         "a pane that casts no shadow took {quiet} of the light, a casting one {casting}",
+    );
+}
+
+/// 🔴 The kind the effects wanted (#452): a blended surface no light touches. The same grey, lit and
+/// not, over the same scene — lit, the rig's two lights add to it; unlit, it is the colour it says.
+#[test]
+fn an_unlit_transparent_takes_no_light() {
+    let Some(mut lit) = rig(2, true) else {
+        eprintln!("no R64-capable adapter; skipping");
+        return;
+    };
+    let matrix = Mat4::from_translation(Vec3::new(0.0, 1.2, 4.0))
+        * Mat4::from_scale(Vec3::new(3.0, 3.0, 0.1));
+    pane_of(&mut lit, &tinted(false, 0.9), matrix);
+    let lit = centre(&common::lit_scene::render(&mut lit, true));
+
+    let mut unlit = rig(2, true).unwrap();
+    pane_of(&mut unlit, &tinted(true, 0.9), matrix);
+    let unlit = centre(&common::lit_scene::render(&mut unlit, true));
+
+    // The pane stands away from the rig's lights, so the lit one comes out dark and the unlit one
+    // keeps the grey it declared: what the kind decides is whether the lighting is consulted at all.
+    assert!(
+        unlit.iter().all(|&channel| channel > 150),
+        "the unlit pane is {unlit:?}, not the grey it declared",
+    );
+    let apart: u32 = lit
+        .iter()
+        .zip(unlit)
+        .map(|(&a, b)| u32::from(a.abs_diff(b)))
+        .sum();
+    assert!(
+        apart > 90,
+        "the lit pane {lit:?} and the unlit one {unlit:?} came out the same: the kind changed nothing",
     );
 }

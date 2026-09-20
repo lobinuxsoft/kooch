@@ -205,6 +205,7 @@ impl ShadowAlpha {
             inti: buffer("shadow_alpha_inti", 16),
             pipelines: ShaderPipelines::new(&[
                 ShaderKind::Transparent,
+                ShaderKind::TransparentUnlit,
                 ShaderKind::Surface,
                 ShaderKind::Unlit,
             ]),
@@ -268,7 +269,7 @@ impl ShadowAlpha {
         let chosen = layers_for(slots, |slot| {
             materials
                 .slot_surface(slot)
-                .is_some_and(|(_, s)| s.kind == ShaderKind::Transparent || s.masked)
+                .is_some_and(|(_, s)| s.kind.blends() || s.masked)
         });
         self.active = false;
         if !chosen.is_empty() {
@@ -349,7 +350,7 @@ impl ShadowAlpha {
                 pass.draw(0..3, 0..1);
                 drop(pass);
                 table[slot as usize] = layer as u32 + 1;
-                if surface.kind != ShaderKind::Transparent {
+                if !surface.kind.blends() {
                     table[slot as usize] |= MASKED_LAYER;
                 }
                 self.active = true;

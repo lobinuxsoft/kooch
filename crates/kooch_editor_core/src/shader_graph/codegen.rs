@@ -20,9 +20,10 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         .node_ids()
         .find_map(|(id, node)| Some((id, node.output_kind()?.to_owned())))
         .ok_or("the graph has no Output node")?;
-    let unlit = kind == "unlit";
+    // An unlit transparent is both: the unlit body, blended by its alpha (#452).
+    let unlit = kind == "unlit" || kind == "transparent_unlit";
     let post = kind == "post_process";
-    let transparent = kind == "transparent";
+    let transparent = kind == "transparent" || kind == "transparent_unlit";
 
     let wires: HashMap<InPinId, OutPinId> = graph.wires().map(|(from, to)| (to, from)).collect();
     let mut body = Body {

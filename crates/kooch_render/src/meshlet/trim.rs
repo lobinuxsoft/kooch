@@ -138,7 +138,7 @@ pub fn build(
 ) -> Result<Trimmed, NoTrim> {
     let transparent = materials
         .slot_surface(slot)
-        .is_some_and(|(_, surface)| surface.kind == crate::material::ShaderKind::Transparent);
+        .is_some_and(|(_, surface)| surface.kind.blends());
     let threshold = match transparent {
         true => TRANSPARENT_LEVEL,
         false => 0.5,

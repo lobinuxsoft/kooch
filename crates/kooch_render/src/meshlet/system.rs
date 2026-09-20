@@ -106,8 +106,7 @@ impl MeshletPipeline {
             // Transparent counts too, and gains the most: every fragment it drops is one that never
             // reaches the layers. What it needs is a coverage that cannot move, which `still` is.
             let cuttable = |surface: &crate::material::SurfaceSource| {
-                surface.still
-                    && (surface.masked || surface.kind == crate::material::ShaderKind::Transparent)
+                surface.still && (surface.masked || surface.kind.blends())
             };
             if !materials
                 .slot_surface(slot)
@@ -186,7 +185,7 @@ impl MeshletPipeline {
             let see_through = material_pipeline
                 .as_deref()
                 .and_then(|mp| mp.slot_surface(material_id))
-                .is_some_and(|(_, s)| s.kind == crate::material::ShaderKind::Transparent);
+                .is_some_and(|(_, s)| s.kind.blends());
             if see_through {
                 instance.flags |= crate::meshlet::scene::INSTANCE_TRANSPARENT;
                 transparent.push((instance, entity));

@@ -42,11 +42,20 @@ pub enum ShaderKind {
     /// A lit surface blended over the opaque scene, sorted back to front: defines
     /// `fn surface(SurfaceInput) -> SurfaceOutput` and sets its `alpha` (#452).
     Transparent,
+    /// The same, with no light on it: defines `fn unlit(SurfaceInput) -> UnlitOutput` and blends
+    /// what it returns. Fire, energy, a sprite that carries its own brightness (#452).
+    TransparentUnlit,
 }
 
 impl ShaderKind {
     /// What a `// kind:` line names, in the order errors list them.
-    pub const NAMES: [&'static str; 4] = ["surface", "unlit", "post_process", "transparent"];
+    pub const NAMES: [&'static str; 5] = [
+        "surface",
+        "unlit",
+        "post_process",
+        "transparent",
+        "transparent_unlit",
+    ];
 
     fn parse(name: &str) -> Option<Self> {
         match name {
@@ -54,8 +63,21 @@ impl ShaderKind {
             "unlit" => Some(Self::Unlit),
             "post_process" => Some(Self::PostProcess),
             "transparent" => Some(Self::Transparent),
+            "transparent_unlit" => Some(Self::TransparentUnlit),
             _ => None,
         }
+    }
+
+    /// Whether the forward path draws it, blended, rather than the opaque raster.
+    #[inline]
+    pub const fn blends(self) -> bool {
+        matches!(self, Self::Transparent | Self::TransparentUnlit)
+    }
+
+    /// Whether no light touches it: its shader hands back the colour to show.
+    #[inline]
+    pub const fn unlit(self) -> bool {
+        matches!(self, Self::Unlit | Self::TransparentUnlit)
     }
 
     /// WGSL the frames read: `SURFACE_UNLIT`, `SURFACE_TRANSPARENT`, and for an unlit shader the
@@ -70,9 +92,28 @@ impl ShaderKind {
                 "const SURFACE_UNLIT: bool = false;\nconst SURFACE_TRANSPARENT: bool = true;\n"
             }
             Self::Unlit => UNLIT_GLUE,
+            // The same bridge, with the blend on: `transparent_lit` reads `SURFACE_UNLIT` and skips
+            // Inti, so an unlit transparent is the unlit glue and nothing else.
+            Self::TransparentUnlit => UNLIT_TRANSPARENT_GLUE,
         }
     }
 }
+
+/// [`UNLIT_GLUE`] for a shader that also blends.
+const UNLIT_TRANSPARENT_GLUE: &str = "\
+const SURFACE_UNLIT: bool = true;
+const SURFACE_TRANSPARENT: bool = true;
+fn surface(input: SurfaceInput) -> SurfaceOutput {
+    let unlit = unlit(input);
+    var out: SurfaceOutput;
+    out.normal = normalize(input.world_normal);
+    out.roughness = 1.0;
+    out.emissive = unlit.color;
+    out.alpha = unlit.alpha;
+    out.alpha_clip = unlit.alpha_clip;
+    return out;
+}
+";
 
 /// An unlit colour rides in `emissive`, the one output the frames already add past the light.
 const UNLIT_GLUE: &str = "\
