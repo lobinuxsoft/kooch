@@ -137,3 +137,33 @@ fn a_shadow_keeps_only_its_layers() {
         );
     }
 }
+
+/// 🔴 The author unticks a layer and the shadow has to go with it. Both shadow machines CACHE what
+/// they drew — a cube while its key holds, a page while its generation does — and nothing else
+/// about the frame moved, so a mask changed in place was the one case that kept the old shadow on
+/// screen. Two renders of ONE scene, which is what the Inspector does.
+#[test]
+fn a_mask_changed_in_place_redraws() {
+    for pages in [false, true] {
+        let Some(mut r) = shadowed_rig(pages) else {
+            eprintln!("no R64-capable adapter; skipping");
+            return;
+        };
+        lamp(&mut r, u32::MAX, u32::MAX, true);
+        pane(&mut r, 0b10);
+        let shadowed = blue(&mut r);
+
+        // The same scene, the same rig, one box unticked.
+        {
+            let query = kooch_ecs::query::Query::<&mut PointLight>::new(&r.resources);
+            query.for_each(|light| light.shadow_layers = 0b01);
+        }
+        let ignored = blue(&mut r);
+
+        assert!(
+            ignored > shadowed,
+            "pages {pages}: the shadow survived the mask being unticked — {ignored} against the \
+             {shadowed} it was while shadowing",
+        );
+    }
+}

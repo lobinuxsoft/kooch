@@ -69,6 +69,7 @@ impl PointShadowDraw {
                 self.eye.z.to_bits(),
             ],
             scene,
+            shadow_layers: self.shadow_layers,
         }
     }
 }
@@ -102,6 +103,9 @@ pub struct CubeKey {
     entity: Entity,
     eye: [u32; 3],
     scene: u64,
+    /// 🔴 What casts into this lamp (#1220). A cube is kept while its key holds, and a mask the
+    /// author just changed draws nothing new without it: the old shadow stays on screen.
+    shadow_layers: u32,
 }
 
 /// Which casting point lights get one of the

@@ -104,6 +104,19 @@ impl MeshletRenderStage {
             .light_frame
             .as_ref()
             .map_or(u32::MAX, |(_, frame)| frame.sun_shadow_layers());
+        // 🔴 A page holds what it drew until something moves, and unticking a layer moves nothing:
+        // the pages are given back so the next frame draws them under the new masks (#1220).
+        let masks = shadow_masks(sun_shadow_layers, self.lights.uploaded());
+        if self.page_masks.is_some_and(|before| before != masks) {
+            tracing::info!(
+                target: "kooch_render::shadow",
+                "a light's shadow layers changed; the pages are drawn again",
+            );
+            self.page_masks = Some(masks);
+            self.release_pages(device);
+            return;
+        }
+        self.page_masks = Some(masks);
         let slice = page_view_index(view_id);
         // 🔴 The CPU scopes above are not the instrument this track needed. Every dispatch below
         // runs on the GPU, and the frame encoder carried exactly two GPU scopes — `cull` and
@@ -276,4 +289,15 @@ impl MeshletRenderStage {
             },
         );
     }
+}
+
+/// One number for every shadow mask in the frame: the sun's, and each light's as uploaded.
+fn shadow_masks(sun: u32, lamps: &[kooch_lighting::GpuLight]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    sun.hash(&mut hasher);
+    for lamp in lamps {
+        lamp.shadow_layers.hash(&mut hasher);
+    }
+    hasher.finish()
 }

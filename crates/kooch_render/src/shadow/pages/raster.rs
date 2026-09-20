@@ -316,7 +316,6 @@ struct BoundKeys {
 }
 
 impl PageRasterizer {
-
     /// The depth atlas every resident page is rasterised into: the whole
     /// array, one layer per camera.
     pub fn atlas(&self) -> &wgpu::TextureView {
@@ -515,7 +514,6 @@ fn count_slots(buckets: u32) -> u32 {
 }
 
 impl PageRasterizer {
-
     /// Maps this frame's counters and picks up whatever earlier frames
     /// returned. Call **after** the encoder has been submitted.
     pub fn poll(&mut self) -> Option<RasterCounts> {
@@ -533,19 +531,21 @@ impl PageRasterizer {
 mod alpha;
 
 use super::{lamp_cull, mark, pyramid};
-use geometry::{atlas_texture, level_clip, sun_gens};
 #[cfg(test)]
 use geometry::sun_frame;
-use layouts::{storage_layout, compact_layout, invalidate_layout, clear_layout, expand_layout, depth_layout};
-pub(super) use layouts::{entry, buffer_entry, uniform_entry};
+use geometry::{atlas_texture, level_clip, sun_gens};
+pub(super) use layouts::{buffer_entry, entry, uniform_entry};
+use layouts::{
+    clear_layout, compact_layout, depth_layout, expand_layout, invalidate_layout, storage_layout,
+};
 pub use readback::{RasterReadback, SlotState};
 
-mod new;
 mod geometry;
-mod state;
-mod record;
 mod layouts;
+mod new;
 mod readback;
+mod record;
+mod state;
 
 #[cfg(test)]
 mod tests;

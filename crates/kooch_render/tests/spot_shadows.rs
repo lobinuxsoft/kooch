@@ -110,7 +110,16 @@ fn build_rig() -> Option<Rig> {
 }
 
 /// Adds the spot, pointed at the origin, casting or not.
+/// The same spot, shadowing `shadow_layers` (#1220).
+fn add_spot_shadowing(resources: &mut Resources, shadow_layers: u32) {
+    add_spot_with(resources, true, shadow_layers);
+}
+
 fn add_spot(resources: &mut Resources, cast_shadows: bool) {
+    add_spot_with(resources, cast_shadows, u32::MAX);
+}
+
+fn add_spot_with(resources: &mut Resources, cast_shadows: bool, shadow_layers: u32) {
     let direction = (Vec3::ZERO - SPOT_POSITION).normalize();
     let rotation = Quat::from_rotation_arc(Vec3::NEG_Z, direction);
     let mut commands = Commands::new();
@@ -127,11 +136,12 @@ fn add_spot(resources: &mut Resources, cast_shadows: bool) {
             inner_angle: 25.0,
             outer_angle: 40.0,
             cast_shadows,
+            shadow_layers,
             // The map, alone. A contact shadow would darken the same
             // floor for a completely different reason and this suite
             // would stop being about the shadow map.
             contact_shadows: false,
-                ..Default::default()
+            ..Default::default()
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_translation(SPOT_POSITION) * Mat4::from_quat(rotation),
@@ -231,5 +241,35 @@ fn the_floor_the_spot_reaches_is_unchanged_by_casting() {
         after > before * 0.8,
         "lit floor went from {before:.4} to {after:.4} when casting turned \
          on — the shadow is covering ground the cube does not block",
+    );
+}
+
+/// 🔴 A spot's own mask (#1220), rejected in its map's cull. The scene's cube is in Default, so a
+/// spot that shadows only layer 1 lights it and casts nothing.
+#[test]
+fn a_spot_shadows_only_its_layers() {
+    let Some(mut base) = build_rig() else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+    add_spot(&mut base.resources, false);
+    let open = luminance(&render(&mut base), &base.camera, shadow_centre());
+
+    let casting = |shadow_layers: u32| {
+        let mut r = build_rig().expect("device acquired once already");
+        add_spot_shadowing(&mut r.resources, shadow_layers);
+        luminance(&render(&mut r), &r.camera, shadow_centre())
+    };
+    let shadowed = casting(u32::MAX);
+    let ignored = casting(0b10);
+
+    assert!(
+        shadowed < open * 0.7,
+        "the cube cast nothing at all: {shadowed:.4} against {open:.4}",
+    );
+    assert!(
+        ignored > open * 0.9,
+        "the spot still shadowed a layer it does not name: {ignored:.4} against {open:.4} with \
+         nothing casting",
     );
 }
