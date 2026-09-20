@@ -1,6 +1,8 @@
 //! Inspector panel — component details for selected entities.
 
 mod asset_view;
+#[cfg(test)]
+mod layers_tests;
 mod mass_from_colliders;
 mod nav;
 mod prefab_view;

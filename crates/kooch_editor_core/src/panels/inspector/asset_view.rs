@@ -439,7 +439,7 @@ fn draw_reflected_asset(
 }
 
 /// The project's layer table: one row per bit, named or not. What a mask's checklist reads.
-fn draw_layers(
+pub(super) fn draw_layers(
     ui: &mut egui::Ui,
     guid: Guid,
     names: &kooch_core::layers::LayerNames,
@@ -453,16 +453,32 @@ fn draw_layers(
         .show(ui, |ui| {
             for index in 0..kooch_core::layers::LAYER_COUNT {
                 ui.label(format!("{index}"));
-                let mut name = names.label(index);
+                // 🔴 What is being typed lives in the widget's own memory until the field is let
+                // go. This table is rebuilt from the file every frame, and a buffer rebuilt with it
+                // loses the keystroke that was just typed — the row would never change.
+                let id = ui.make_persistent_id(("layer_name", index));
+                let mut name = ui
+                    .data_mut(|data| data.get_temp::<String>(id))
+                    .unwrap_or_else(|| names.label(index));
                 // Bit 0 is where everything starts, and a project that renames it renames the
                 // default every new renderer lands in — allowed, and worth seeing.
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut name)
-                        .desired_width(f32::INFINITY)
-                        .id_salt(("layer", index)),
+                        .id(id)
+                        .desired_width(f32::INFINITY),
                 );
+                // 🔴 Asked BEFORE the closure: `has_focus` reads the same memory `data_mut`
+                // holds, and asking inside it waits for a lock the asking itself owns.
+                let typing = response.has_focus();
+                ui.data_mut(|data| {
+                    if typing {
+                        data.insert_temp(id, name.clone());
+                    } else {
+                        data.remove_temp::<String>(id);
+                    }
+                });
                 // One write per gesture: the field reports an edit every frame it has focus.
-                if response.lost_focus() || response.changed() && !response.has_focus() {
+                if response.lost_focus() && name != names.label(index) {
                     actions.push(EditorAction::RenameLayer {
                         guid: Some(guid),
                         index,
