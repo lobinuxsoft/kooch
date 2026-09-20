@@ -13,6 +13,7 @@ use kooch_ecs::entity::Entity;
 use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::transform::Transform;
 
+use crate::brain::CameraBrain;
 use crate::target::CameraTarget;
 use crate::virtual_camera::{
     INACTIVE_ALWAYS, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera, seed_reference,
@@ -58,6 +59,7 @@ impl Plugin for CameraComponentsPlugin {
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                 registry.register_cpu_reflected::<VirtualCamera>();
                 registry.register_cpu_reflected::<CameraTarget>();
+                registry.register_cpu_reflected::<CameraBrain>();
             }
         });
     }
@@ -217,6 +219,8 @@ fn camera_pose(resources: &Resources, camera: Entity) -> Option<(Vec3, glam::Qua
 
 #[cfg(test)]
 mod blend_tests;
+#[cfg(test)]
+mod brain_tests;
 
 /// Slerp along the shorter arc: `q` and `-q` are one rotation, and without matching them a 1°
 /// handover can roll 359°.
@@ -376,8 +380,13 @@ fn elect(plan: &[Pose]) -> Option<(Entity, &Pose)> {
         .map(|pose| (pose.entity, pose))
 }
 
-/// The camera the elected vcam drives: the highest-priority active one, the renderer's own rule. A
-/// vcam that is itself a camera drives itself.
+/// The camera the elected vcam drives: the one carrying a live [`CameraBrain`], and nothing else. A
+/// vcam that is itself the only camera-less entity drives itself.
+///
+/// 🔴 Declared, never guessed (#1221). "The highest-priority camera" was the renderer's own rule
+/// while a frame was one camera; with a stack it hands the rig to whatever overlay outranks the
+/// base. A rig that moves a camera nobody pointed it at is worse than one that moves nothing — the
+/// second says so.
 fn rendering_camera(resources: &Resources, winner: Entity) -> Option<Entity> {
     let registry = resources.get::<ComponentRegistry>()?;
     let Some(cameras) = registry.get_cpu::<PerspectiveCamera>() else {
@@ -385,12 +394,28 @@ fn rendering_camera(resources: &Resources, winner: Entity) -> Option<Entity> {
         // there is to move.
         return Some(winner);
     };
-    cameras
+    let brains = registry.get_cpu::<CameraBrain>();
+    let driven = cameras
         .iter()
-        .filter(|(_, cam)| cam.active)
+        .filter(|(entity, cam)| {
+            cam.active
+                && brains
+                    .is_some_and(|brains| brains.get(**entity).is_some_and(|brain| brain.enabled))
+        })
         .min_by_key(|(entity, cam)| (-cam.priority, entity.index()))
-        .map(|(entity, _)| *entity)
-        .or(Some(winner))
+        .map(|(entity, _)| *entity);
+    if driven.is_none() {
+        // Once: this is an authoring mistake, and a rig that says it every frame buries the log it
+        // is trying to be read in.
+        static SAID: std::sync::Once = std::sync::Once::new();
+        SAID.call_once(|| {
+            tracing::warn!(
+                "a virtual camera is live and no camera carries an enabled CameraBrain: \
+                 nothing is being driven. Add Camera Brain to the camera this rig is for."
+            );
+        });
+    }
+    driven
 }
 
 /// Writes the planned poses, skipping the ones that have arrived.

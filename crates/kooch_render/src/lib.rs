@@ -1,5 +1,6 @@
 //! kooch_render — renderers for kooch.
 
+pub mod camera_stack;
 pub mod contact_shadow;
 pub mod hi_z;
 pub mod material;
@@ -22,6 +23,7 @@ pub mod view_camera;
 /// and gives enough precision without stencil (which we don't use).
 pub const VIEWPORT_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+pub use camera_stack::{CameraStack, StackViews};
 pub use contact_shadow::{ContactShadowSettings, ContactShadowUbo, contact_shadow_shader};
 pub use hi_z::HiZ;
 pub use material::{MaterialParams, MaterialPool};

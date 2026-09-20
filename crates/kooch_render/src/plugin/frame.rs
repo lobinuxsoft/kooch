@@ -3,11 +3,9 @@
 
 use kooch_core::gpu::{GpuContext, TargetPool};
 use kooch_core::resource::Resources;
-use kooch_ecs::hierarchy::GlobalTransform;
-use kooch_ecs::perspective_camera::PerspectiveCamera;
-use kooch_ecs::query::Query;
 
 use super::GameDepth;
+use crate::camera_stack::CameraStack;
 use crate::meshlet::MeshletRenderStage;
 
 /// What the rest of the frame reads, resolved once so two systems cannot disagree about the camera
@@ -15,7 +13,9 @@ use crate::meshlet::MeshletRenderStage;
 #[derive(Clone, Default)]
 pub(super) struct FrameSetup {
     pub aspect: f32,
-    pub camera: Option<crate::ViewCamera>,
+    /// The base camera and the overlays over it (#1221), read once: the scene pass and the composite
+    /// walk the same list in the same order.
+    pub stack: CameraStack,
 }
 
 pub(super) fn prepare_frame_system(resources: &mut Resources) {
@@ -45,27 +45,9 @@ pub(super) fn prepare_frame_system(resources: &mut Resources) {
 
     resources.insert(FrameSetup {
         aspect: w as f32 / h.max(1) as f32,
-        camera: active_camera(resources),
+        // Nothing excluded: a game's cameras are all the game's. The editor keeps its own out
+        // where it reads the stack, which is its own panel.
+        stack: CameraStack::read::<()>(resources),
     });
     resources.insert(gpu);
-}
-
-fn active_camera(resources: &Resources) -> Option<crate::ViewCamera> {
-    // Highest-priority active `PerspectiveCamera` wins. Game runtime
-    // ties the same way the editor does: priority is the contract,
-    // not iteration order.
-    let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
-    let mut best: Option<(i32, crate::ViewCamera)> = None;
-    query.for_each(|(cam, gt)| {
-        if !cam.active {
-            return;
-        }
-        if let Some((p, _)) = best
-            && cam.priority <= p
-        {
-            return;
-        }
-        best = Some((cam.priority, crate::ViewCamera::from_components(cam, gt)));
-    });
-    best.map(|(_, camera)| camera)
 }

@@ -33,8 +33,15 @@ struct Blitted {
 
 @fragment
 fn fs_blit(input: VsOut) -> Blitted {
+    let color = textureSample(src_color, src_sampler, input.uv);
+    // 🔴 An empty source pixel leaves the destination alone, depth included (#1221). Writing its
+    // depth anyway would wipe what is under an overlay camera everywhere the overlay drew nothing,
+    // and the blend already contributes no colour there.
+    if (color.a <= 0.0) {
+        discard;
+    }
     var out: Blitted;
-    out.color = textureSample(src_color, src_sampler, input.uv);
+    out.color = color;
     // The stage's depth carried over with its colour. Anything drawn
     // into the destination afterwards — grid, gizmos, transparents —
     // tests against real geometry rather than an empty buffer.

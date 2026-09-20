@@ -3,6 +3,7 @@
 //! Design ported from phantom-camera (MIT), Cinemachine's open equivalent (#671).
 
 pub mod blend;
+pub mod brain;
 pub mod plugin;
 pub mod target;
 pub mod virtual_camera;
@@ -11,6 +12,7 @@ pub use blend::{
     BLEND_CURVE_CHOICES, BLEND_EASE_CHOICES, CURVE_CUBIC, CURVE_EXPO, CURVE_LINEAR, CURVE_QUAD,
     CURVE_SINE, EASE_IN, EASE_IN_OUT, EASE_OUT,
 };
+pub use brain::CameraBrain;
 pub use plugin::{CameraBlend, CameraComponentsPlugin, CameraPlugin, drive_virtual_cameras};
 pub use target::{CameraTarget, weighted_centre};
 pub use virtual_camera::{

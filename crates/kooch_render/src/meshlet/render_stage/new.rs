@@ -453,6 +453,15 @@ impl MeshletRenderStage {
         ))
     }
 
+    /// Drops a view and its attachments. The primary is refused: the single-view accessors read it,
+    /// and a stage without one is not a stage.
+    pub fn remove_view(&mut self, id: ViewId) -> bool {
+        if id == self.primary {
+            return false;
+        }
+        self.views.remove(id).is_some()
+    }
+
     /// Number of live views, primary included.
     pub fn view_count(&self) -> usize {
         self.views.len()

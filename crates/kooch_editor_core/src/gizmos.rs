@@ -461,7 +461,9 @@ pub(crate) fn active_camera(resources: &Resources) -> Option<(PerspectiveCamera,
     let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
     let mut best: Option<(i32, PerspectiveCamera, GlobalTransform)> = None;
     query.for_each(|(cam, gt)| {
-        if !cam.active {
+        // An overlay is not the view the gizmos belong to (#1221): it draws over the base, and a
+        // high-priority one would otherwise hand them its lens.
+        if !cam.active || cam.overlay {
             return;
         }
         let better = match &best {

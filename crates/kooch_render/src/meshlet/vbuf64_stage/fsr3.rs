@@ -40,9 +40,9 @@
 //! ported file and the full text is in `NOTICE`. MIT asks for
 //! attribution and nothing else.
 
-mod targets;
-mod new;
 mod draw;
+mod new;
+mod targets;
 
 #[cfg(test)]
 mod tests;
@@ -273,7 +273,6 @@ pub(super) struct Fsr3 {
 }
 
 impl Fsr3 {
-
     pub(super) fn resize(&mut self, device: &wgpu::Device, render: (u32, u32), output: (u32, u32)) {
         if (render, output) == (self.render_size, self.output_size)
             || render.0 == 0
@@ -297,5 +296,4 @@ impl Fsr3 {
     pub(super) fn resolved_texture(&self) -> &wgpu::Texture {
         &self.targets.output.texture
     }
-
 }

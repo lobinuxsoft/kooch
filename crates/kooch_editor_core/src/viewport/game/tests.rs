@@ -2,6 +2,8 @@ use super::*;
 use kooch_ecs::allocator::EntityAllocator;
 use kooch_ecs::archetype_registry::ArchetypeRegistry;
 use kooch_ecs::component::ComponentRegistry;
+use kooch_ecs::hierarchy::GlobalTransform;
+use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::query::AccessTracker;
 
 /// Two cameras: the editor's at the priority it really ships with,
@@ -82,7 +84,8 @@ fn the_editor_camera_is_never_the_game_camera() {
     // View panel by design, which is exactly why picking "highest
     // priority" here would show the authoring camera.
     let r = world_with_both_cameras(1000, 0);
-    let cam_pos = gameplay_camera(&r)
+    let cam_pos = gameplay_stack(&r)
+        .base
         .expect("a gameplay camera exists")
         .position();
     assert_eq!(cam_pos.x, -7.0, "picked the editor camera");
@@ -94,7 +97,8 @@ fn a_gameplay_camera_at_the_editors_priority_still_wins() {
     // authors a camera at 1000 for its own reasons must not make the
     // Game panel show the editor's view.
     let r = world_with_both_cameras(1000, 1000);
-    let cam_pos = gameplay_camera(&r)
+    let cam_pos = gameplay_stack(&r)
+        .base
         .expect("a gameplay camera exists")
         .position();
     assert_eq!(cam_pos.x, -7.0);
@@ -114,7 +118,7 @@ fn no_gameplay_camera_reports_none() {
             cam.active = false;
         }
     }
-    assert!(gameplay_camera(&r).is_none());
+    assert!(gameplay_stack(&r).base.is_none());
 }
 
 /// The Game viewport publishes its own stats, and the Edit view's render is not the only writer.

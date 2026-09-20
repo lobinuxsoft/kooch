@@ -11,6 +11,8 @@ fn source(position: Vec3, direction: Vec3, outer_angle: f32) -> SpotShadowSource
         direction,
         outer_angle,
         range: 20.0,
+        // Every layer casts into it (#1220): these tests are about the cone's matrices.
+        shadow_layers: u32::MAX,
     }
 }
 

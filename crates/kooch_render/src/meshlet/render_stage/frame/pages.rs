@@ -167,7 +167,6 @@ fn page_settings(resources: &Resources) -> PageSettings {
 }
 
 impl MeshletRenderStage {
-
     /// The settings, with the live camera count folded in.
     fn page_settings_for_views(
         &self,

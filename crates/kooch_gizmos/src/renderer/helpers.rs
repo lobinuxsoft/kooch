@@ -59,7 +59,9 @@ pub(super) fn camera_world_position(resources: &Resources) -> Option<glam::Vec3>
     let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
     let mut best: Option<(i32, Mat4)> = None;
     query.for_each(|(cam, gt)| {
-        if !cam.active {
+        // An overlay is not the view the gizmos belong to (#1221): it draws over the base, and a
+        // high-priority one would otherwise hand them its lens.
+        if !cam.active || cam.overlay {
             return;
         }
         if best.is_none_or(|(priority, _)| cam.priority > priority) {
@@ -74,7 +76,9 @@ pub(super) fn active_camera_view_proj(resources: &Resources, aspect: f32) -> Opt
     let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
     let mut best: Option<(i32, PerspectiveCamera, Mat4)> = None;
     query.for_each(|(cam, gt)| {
-        if !cam.active {
+        // An overlay is not the view the gizmos belong to (#1221): it draws over the base, and a
+        // high-priority one would otherwise hand them its lens.
+        if !cam.active || cam.overlay {
             return;
         }
         let better = match &best {

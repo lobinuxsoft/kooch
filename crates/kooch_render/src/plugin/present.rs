@@ -112,9 +112,8 @@ fn acquire_and_present(
                 meshlet_blit,
                 depth_view,
                 resources,
-                setup.aspect,
+                setup,
                 tex,
-                setup.camera.clone(),
             );
             SurfaceOutcome::Presented
         }
@@ -142,10 +141,10 @@ fn render_passes(
     meshlet_blit: &MeshletBlit,
     depth_view: &wgpu::TextureView,
     resources: &mut Resources,
-    aspect: f32,
+    setup: &FrameSetup,
     frame: SurfaceTexture,
-    camera: Option<crate::ViewCamera>,
 ) {
+    let aspect = setup.aspect;
     let surface_view = frame
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
@@ -171,9 +170,12 @@ fn render_passes(
     let scopes = resources.get::<kooch_core::gpu::GpuScopes>();
     let sky_query = scopes.map(|s| s.begin("sky", &mut encoder));
 
-    let sky_drawn = if let (Some(active_sky), Some(camera)) =
-        (SkyRenderPass::active_sky(resources), camera.as_ref())
-    {
+    // The sky belongs to the base camera: an overlay brings none, which is what keeps the base
+    // visible under it (#1221).
+    let sky_drawn = if let (Some(active_sky), Some(camera)) = (
+        SkyRenderPass::active_sky(resources),
+        setup.stack.base.as_ref(),
+    ) {
         let time_secs = resources
             .get::<Time>()
             .map(|t| t.elapsed_secs())
@@ -213,6 +215,20 @@ fn render_passes(
             &view,
             depth_view,
         );
+        // The overlays over it, lowest priority first: each keeps what it did not draw, so the
+        // stack reads as one image (#1221).
+        let overlays = resources
+            .get::<crate::camera_stack::StackViews>()
+            .map(|views| views.drawn(&setup.stack))
+            .unwrap_or_default();
+        for overlay in overlays {
+            if let (Some(color), Some(depth)) = (
+                meshlet_stage.view_color_view(overlay),
+                meshlet_stage.view_depth_sample(overlay),
+            ) {
+                meshlet_blit.blit(gpu.device(), &mut encoder, color, depth, &view, depth_view);
+            }
+        }
         if let (Some(scopes), Some(query)) = (scopes, blit_query) {
             scopes.end(&mut encoder, query);
         }

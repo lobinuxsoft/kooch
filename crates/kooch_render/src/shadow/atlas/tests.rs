@@ -11,6 +11,8 @@ fn placeholder() -> Cascade {
         far_depth: 0.0,
         texel_world_size: 1.0,
         depth_extent: 1.0,
+        // Every layer casts into it (#1220): these tests are about the atlas, not the masks.
+        shadow_layers: u32::MAX,
     }
 }
 
