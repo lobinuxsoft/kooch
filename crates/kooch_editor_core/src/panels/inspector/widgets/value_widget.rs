@@ -352,6 +352,15 @@ fn draw_ranged(
     // The Inspector's value column is narrow, and a slider given no room collapses into a stub
     // beside its number. Leave the value its width and give the track the rest.
     ui.spacing_mut().slider_width = (ui.available_width() - 72.0).clamp(48.0, 160.0);
+    // 🔴 egui paints the rail with `widgets.inactive.bg_fill`, which on this panel is the panel:
+    // the handle was floating in a gap, and a handle with no track to slide along does not read as
+    // a slider at all. The trailing fill is the other half — where the value sits is readable
+    // without hunting for a small rectangle.
+    let visuals = ui.visuals_mut();
+    visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(64);
+    visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(78);
+    visuals.widgets.active.bg_fill = egui::Color32::from_gray(92);
+    visuals.slider_trailing_fill = true;
     match value {
         ReflectValue::F32(v) => {
             let mut val = *v as f64;
