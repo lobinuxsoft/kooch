@@ -195,6 +195,7 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
                     // two paths dither identically.
                     vec2<f32>(pixel) + vec2<f32>(0.5),
                     surf.flags,
+                    surf.layers,
                 );
                 radiance += m.base_color.rgb * m.metallic_roughness_emissive_pad.z;
                 rgb = inti_tonemap(radiance);

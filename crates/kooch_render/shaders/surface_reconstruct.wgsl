@@ -64,6 +64,8 @@ struct VertexOutput {
     // #804 — the instance's bits, carried through so the shading path
     // can skip a shadow fetch this surface never wanted.
     flags: u32,
+    // #1220 — and its layers, so a light that does not light them is skipped.
+    layers: u32,
 }
 
 struct PartialDerivatives {
@@ -246,5 +248,6 @@ fn resolve_surface(visible_slot: u32, tri_idx: u32, frag_coord: vec2<f32>) -> Ve
     out.world_tangent = world_tangent;
     out.material_id = inst.material_id;
     out.flags = inst.flags;
+    out.layers = inst.layers;
     return out;
 }

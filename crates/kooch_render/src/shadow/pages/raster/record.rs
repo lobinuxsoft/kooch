@@ -22,6 +22,8 @@ impl PageRasterizer {
         view: u32,
         eye: Vec3,
         sun: Vec3,
+        // What casts into the sun (#1220): every clipmap level culls with it.
+        sun_shadow_layers: u32,
         // The lights as uploaded, CPU-side and in buffer order: a
         // lamp's cull needs its position and range HERE, and its slot
         // is its bucket.
@@ -163,7 +165,8 @@ impl PageRasterizer {
                     self.clipmap.extent(level),
                     self.config.virtual_size as f32,
                     lod_target.max(0.01),
-                );
+                )
+                .with_culling_mask(sun_shadow_layers);
                 if self.two_level {
                     self.culls[level as usize].dispatch_scene_pool_atomic_chunked(
                         cull_pipelines,

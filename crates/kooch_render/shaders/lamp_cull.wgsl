@@ -24,7 +24,8 @@ struct LampMeshInstance {
     lod_force_level: i32,
     group_base: u32,
     flags: u32,
-    _pad1: u32,
+    // Which layers the instance is in (#1218). `MeshInstance` in `scene.rs`.
+    layers: u32,
     _pad2: u32,
 }
 
@@ -129,8 +130,9 @@ fn cs_lamp_pairs(
         return;
     }
     let inst = lamp_instances[instance];
-    // A lamp's cull is a shadow view: an instance that casts none is not in it (#452).
-    if (inst.flags & INSTANCE_CASTS_NO_SHADOW) != 0u {
+    // A lamp's cull is a shadow view: an instance that casts none is not in it (#452), and neither
+    // is one on a layer this light does not shadow (#1220).
+    if (inst.flags & INSTANCE_CASTS_NO_SHADOW) != 0u || (inst.layers & light.shadow_layers) == 0u {
         return;
     }
     let bounds = lamp_mesh_bounds[inst.mesh_id];

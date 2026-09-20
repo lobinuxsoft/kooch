@@ -48,6 +48,18 @@ A light with no `GlobalTransform` is **skipped**, not defaulted: it has no
 direction and no position, and putting it at the origin pointing down
 would be an invention that renders.
 
+### Layers (#1220)
+
+A light carries two masks over the project's layer table:
+
+- **`layers`** — what it lights. `inti_light_lit` ANDs it against the instance's own layers, which
+  ride in `IntiSurface` beside its flags, and returns nothing before sampling anything. The froxel
+  lists are untouched: a light stays in the cells it reaches, and the pixel decides.
+- **`shadow_layers`** — what casts into its shadow. That is a cull, not a shade: the light's own
+  shadow views take it as their culling mask, so a caster it ignores never reaches its map.
+
+Both default to every layer, so a light nobody masked behaves exactly as it did.
+
 ## The shading model
 
 Cook-Torrance, ported from Bevy 0.19's `pbr_lighting.wgsl` — read from

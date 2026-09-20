@@ -129,6 +129,27 @@ fn rig_with_floor(floor_receives_shadows: bool) -> Option<Rig> {
     })
 }
 
+/// Adds the sun, casting or not, shadowing `shadow_layers`.
+fn add_sun_shadowing(resources: &mut Resources, cast_shadows: bool, shadow_layers: u32) {
+    let rotation = Quat::from_rotation_arc(Vec3::NEG_Z, SUN.normalize());
+    let mut commands = Commands::new();
+    commands
+        .spawn(resources)
+        .insert(DirectionalLight {
+            active: true,
+            color: Vec3::ONE,
+            intensity: 20_000.0,
+            cast_shadows,
+            contact_shadows: false,
+            shadow_layers,
+            ..Default::default()
+        })
+        .insert(GlobalTransform {
+            matrix: Mat4::from_quat(rotation),
+        });
+    commands.apply(resources);
+}
+
 /// Adds the sun, casting or not.
 fn add_sun(resources: &mut Resources, cast_shadows: bool) {
     let rotation = Quat::from_rotation_arc(Vec3::NEG_Z, SUN.normalize());
@@ -143,6 +164,7 @@ fn add_sun(resources: &mut Resources, cast_shadows: bool) {
             // The march needs a rendered depth buffer; these tests
             // exercise the cascade path with none.
             contact_shadows: false,
+            ..Default::default()
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_quat(rotation),
@@ -504,5 +526,36 @@ fn a_floor_that_receives_no_shadows_has_none() {
         unshadowed > 0.9 * lit,
         "the opted-out floor is {unshadowed:.4} against {lit:.4} for a \
          scene with no shadow at all — something still darkened it",
+    );
+}
+
+/// 🔴 The sun's own mask (#1220): a caster on a layer the sun does not shadow casts nothing. The
+/// cascades are a different cull from a lamp's, and the sun is the light an author reaches for
+/// first. The scene's cube is in Default, so a sun that shadows only layer 1 must ignore it.
+#[test]
+fn the_sun_shadows_only_its_layers() {
+    let Some(mut base) = rig() else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+    add_sun(&mut base.resources, false);
+    let open = luminance(&render(&mut base), &base.camera, shadow_centre());
+
+    let casting = |shadow_layers: u32| {
+        let mut r = rig().expect("device acquired once already");
+        add_sun_shadowing(&mut r.resources, true, shadow_layers);
+        luminance(&render(&mut r), &r.camera, shadow_centre())
+    };
+    let shadowed = casting(u32::MAX);
+    let ignored = casting(0b10);
+
+    assert!(
+        shadowed < open * 0.7,
+        "the cube cast nothing at all: {shadowed:.4} against {open:.4}",
+    );
+    assert!(
+        ignored > open * 0.9,
+        "the sun still shadowed a layer it does not name: {ignored:.4} against {open:.4} with \
+         nothing casting",
     );
 }

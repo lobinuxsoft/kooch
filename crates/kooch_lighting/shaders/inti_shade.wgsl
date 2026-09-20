@@ -20,6 +20,9 @@ struct IntiSurface {
     // is clear, `inti_light_contribution` skips the shadow fetch
     // outright rather than fetching and multiplying by one.
     flags: u32,
+    // #1220 — the instance's layers. A light whose own mask shares no bit with it is skipped before
+    // anything is sampled.
+    layers: u32,
 }
 
 // `base_color` is linear albedo (sRGB textures are decoded by the sampler; `Material::base_color`
@@ -31,6 +34,7 @@ fn inti_surface(
     metallic: f32,
     roughness: f32,
     flags: u32,
+    layers: u32,
 ) -> IntiSurface {
     let v = normalize(inti.camera_position - world_position);
     let n_dot_v = max(dot(n, v), 1e-4);
@@ -51,6 +55,7 @@ fn inti_surface(
     surf.f_ab = inti_f_ab(perceptual, n_dot_v);
     surf.view_depth = dot(world_position - inti.camera_position, inti.camera_forward);
     surf.flags = flags;
+    surf.layers = layers;
     return surf;
 }
 
@@ -115,6 +120,11 @@ fn inti_light_lit(
     frag_coord: vec2<f32>,
     march: bool,
 ) -> IntiLit {
+    // Before anything is sampled (#1220): a light that does not light this surface's layers costs
+    // one AND, not a shadow fetch and a BRDF.
+    if ((light.layers & surf.layers) == 0u) {
+        return IntiLit(vec3<f32>(0.0), 0.0, vec3<f32>(0.0, 1.0, 0.0));
+    }
     let s = inti_sample_light(light, surf.world_position);
     let n_dot_l = dot(surf.n, s.to_light);
     let nothing = IntiLit(vec3<f32>(0.0), 0.0, s.to_light);
@@ -402,8 +412,10 @@ fn inti_shade(
     frag_coord: vec2<f32>,
     // #804 — the instance's bits, straight off `VertexOutput.flags`.
     flags: u32,
+    // #1220 — and its layers, off the same instance.
+    layers: u32,
 ) -> vec3<f32> {
-    let surf = inti_surface(world_position, n, base_color, metallic, roughness, flags);
+    let surf = inti_surface(world_position, n, base_color, metallic, roughness, flags, layers);
 
     // 🔴 One march per pixel, not per light (#845): 1.7 ms per step on the OneXFly × ~14 lights was
     // the whole frame. The loop remembers the brightest light and marches for it alone.

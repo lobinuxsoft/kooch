@@ -50,6 +50,8 @@ pub struct SpotShadowSource {
     /// radians is a hemisphere-wide map.
     pub outer_angle: f32,
     pub range: f32,
+    /// Layers that cast into this light's shadow (#1220): the mask its shadow view culls with.
+    pub shadow_layers: u32,
 }
 
 /// Writes each casting point light's cube slot from `casting`'s ranking — walk order is not slot
@@ -83,6 +85,8 @@ pub struct PointShadowSource {
     /// How much a cube on this light would show this frame ([`point_shadow_importance`]) — derived
     /// from the camera, never stored.
     pub importance: f32,
+    /// Layers that cast into this light's shadow (#1220): the mask its six faces cull with.
+    pub shadow_layers: u32,
 }
 
 /// What a cube on this light would show: `(range / distance)²` clamped at 1, times `intensity`. 🔴

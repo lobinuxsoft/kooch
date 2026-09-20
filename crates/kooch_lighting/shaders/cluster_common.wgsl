@@ -27,8 +27,9 @@ struct ClusterLight {
     shadow_slot: u32,
     radius: f32,
     _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
+    // Layers this light lights, and the layers that cast into its shadow (#1220).
+    layers: u32,
+    shadow_layers: u32,
 }
 
 // Everything the passes need to know about the view and the grid.

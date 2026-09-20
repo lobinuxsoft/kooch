@@ -37,6 +37,10 @@ pub struct MeshletRenderStage {
     pub(super) lights: kooch_lighting::GpuLights,
     /// The light walk of the current frame, and the frame it was taken in.
     pub(super) light_frame: Option<(u64, kooch_lighting::LightFrame)>,
+    /// 🔴 The shadow masks the pages were built under (#1220). A page cache keeps what it drew, and
+    /// a mask the author just unticked moves nothing else in the frame: without this the old shadow
+    /// stays on screen. Rare — an authoring edit — so the machinery is rebuilt rather than diffed.
+    pub(super) page_masks: Option<u64>,
 
     /// The sun's shadow atlas and depth pipeline (#476).
     pub(super) shadows: Option<crate::shadow::ShadowPass>,

@@ -202,6 +202,8 @@ fn lamp_page_holds_its_view(
         0,
         Vec3::new(0.0, 1.0, 8.0),
         Vec3::NEG_Y,
+        // Every layer casts into the sun (#1220).
+        u32::MAX,
         &records,
         &lights_buffer,
         &[],
@@ -313,6 +315,8 @@ fn lamp_page_holds_its_view(
         0,
         Vec3::new(0.0, 1.0, 8.0),
         Vec3::NEG_Y,
+        // Every layer casts into the sun (#1220).
+        u32::MAX,
         &records,
         &lights_buffer,
         &[],
@@ -362,6 +366,8 @@ fn lamp_page_holds_its_view(
         0,
         Vec3::new(0.0, 1.0, 8.0),
         Vec3::NEG_Y,
+        // Every layer casts into the sun (#1220).
+        u32::MAX,
         &records,
         &lights_buffer,
         &[[0.45, 2.0, -0.45, 0.5]],

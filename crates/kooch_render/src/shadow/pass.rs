@@ -104,6 +104,8 @@ impl ShadowPass {
         camera: &ViewCamera,
         aspect: f32,
         sun_direction: Vec3,
+        // What casts into the sun (#1220). Every cascade culls with it.
+        sun_shadow_layers: u32,
         cascades_enabled: bool,
         // Whether the cascade layers are worth filling. Distinct from
         // `cascades_enabled`, which says the frame uniform's sun data is
@@ -124,7 +126,7 @@ impl ShadowPass {
 
         let far = camera.far.min(max_distance.max(camera.near + 1e-3));
         let shadow_view_proj = camera.projection_to(aspect, far) * camera.view();
-        let cascades = build_cascades(
+        let mut cascades = build_cascades(
             shadow_view_proj,
             sun_direction,
             camera.near,
@@ -133,6 +135,9 @@ impl ShadowPass {
             self.atlas.cascade_size(),
             self.rasterizer.near_extension_scale(),
         );
+        for cascade in &mut cascades {
+            cascade.shadow_layers = sun_shadow_layers;
+        }
 
         let texels = self.atlas.cascade_size();
         let draws: Vec<super::SpotShadowDraw> = spots
@@ -141,6 +146,7 @@ impl ShadowPass {
             .map(|(slot, source)| super::SpotShadowDraw {
                 record: super::spot_shadow(source, ShadowAtlas::spot_layer(slot), texels),
                 eye: source.position,
+                shadow_layers: source.shadow_layers,
             })
             .collect();
 

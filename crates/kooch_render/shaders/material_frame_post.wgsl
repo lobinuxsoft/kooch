@@ -44,6 +44,8 @@ struct VertexOutput {
     world_tangent: vec4<f32>,
     material_id: u32,
     flags: u32,
+    // #1220 — a surface with no instance behind it is in every layer.
+    layers: u32,
 }
 
 /// The frame the camera produced, at `uv`. What a post-process is for.
@@ -83,6 +85,7 @@ fn fs_post(in: PostVertex) -> @location(0) vec4<f32> {
     surf.world_tangent = vec4<f32>(1.0, 0.0, 0.0, 1.0);
     surf.material_id = screen.material_id;
     surf.flags = 0u;
+    surf.layers = 0xffffffffu;
 
     let effect = post_process(surface_input(surf, in.position.xy));
     // Blended here rather than in each shader, so every effect has a weight without asking for one.

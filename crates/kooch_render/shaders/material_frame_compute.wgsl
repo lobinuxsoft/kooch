@@ -53,10 +53,12 @@ fn shade_from_tile(
     roughness: f32,
     frag_coord: vec2<f32>,
     flags: u32,
+    // #1220 — the instance's layers, so a light that does not light them is skipped.
+    layers: u32,
     start: u32,
     len: u32,
 ) -> vec3<f32> {
-    let surf = inti_surface(world_position, n, base_color, metallic, roughness, flags);
+    let surf = inti_surface(world_position, n, base_color, metallic, roughness, flags, layers);
 
     // One march per pixel rather than one per light (#845), exactly as
     // `inti_shade` does it — the two walks have to agree or the A/B
@@ -286,13 +288,14 @@ fn cs_shade_tile(
                 let c = (my.x * dims.y + my.y) * dims.z + my.z;
                 radiance = shade_from_tile(
                     surf.world_position, shaded.normal, shaded.base_color, shaded.metallic,
-                    shaded.roughness, frag_coord, surf.flags, tile_cell_start[c], tile_cell_len[c]);
+                    shaded.roughness, frag_coord, surf.flags, surf.layers,
+                    tile_cell_start[c], tile_cell_len[c]);
             } else {
                 // The fallback the caps promise: straight to the storage
                 // buffer, the same call the fragment path makes.
                 radiance = inti_shade(
                     surf.world_position, shaded.normal, shaded.base_color, shaded.metallic,
-                    shaded.roughness, frag_coord, surf.flags);
+                    shaded.roughness, frag_coord, surf.flags, surf.layers);
             }
             // Display units, as the fragment frame explains: 1.0 is full brightness at any exposure.
             radiance += shaded.emissive / max(inti.exposure, 1e-8);

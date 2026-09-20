@@ -295,7 +295,10 @@ impl ShadowRasterizer {
                         atlas.cascade_size() as f32 * cascade.texel_world_size,
                         atlas.cascade_size() as f32,
                         (lod_target * SHADOW_LOD_RELAXATION).max(0.01),
-                    );
+                    )
+                    // What casts into the sun (#1220): rejected here, so a layer the light ignores
+                    // is never rasterised into its map.
+                    .with_culling_mask(cascade.shadow_layers);
             cull.dispatch_scene_pool_atomic(
                 cull_pipelines,
                 device,
@@ -410,11 +413,13 @@ impl ShadowRasterizer {
             // 🔴 The LOD selector, which `CullParams::new` leaves at a factor of ZERO — and a factor
             // of zero does not mean "no LOD", it means every meshlet's projected error is 0 px, so
             // the selector keeps only roots.
-            let params = CullParams::shadow(view_proj, spot.eye, max_meshlets_per_mesh).with_lod(
-                atlas.cascade_size() as f32,
-                projection_scale_y(view_proj),
-                (lod_target * SHADOW_LOD_RELAXATION).max(0.01),
-            );
+            let params = CullParams::shadow(view_proj, spot.eye, max_meshlets_per_mesh)
+                .with_lod(
+                    atlas.cascade_size() as f32,
+                    projection_scale_y(view_proj),
+                    (lod_target * SHADOW_LOD_RELAXATION).max(0.01),
+                )
+                .with_culling_mask(spot.shadow_layers);
             cull.dispatch_scene_pool_atomic(
                 cull_pipelines,
                 device,
@@ -527,7 +532,8 @@ impl ShadowRasterizer {
                         cubes.size() as f32,
                         projection_scale_y(*view_proj),
                         (lod_target * SHADOW_LOD_RELAXATION).max(0.01),
-                    );
+                    )
+                    .with_culling_mask(light.shadow_layers);
                 cubes.cull(face).dispatch_scene_pool_atomic(
                     cull_pipelines,
                     device,

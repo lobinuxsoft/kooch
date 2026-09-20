@@ -18,6 +18,8 @@ use crate::gpu_light::GpuLight;
 pub struct LightFrame {
     lights: ExtractedLights,
     sun: Option<glam::Vec3>,
+    /// The casting sun's own shadow mask (#1220), beside its direction.
+    sun_shadow_layers: u32,
     point_shadows: Vec<PointShadowSource>,
     spot_shadows: Vec<SpotShadowSource>,
 }
@@ -32,6 +34,7 @@ impl LightFrame {
         let mut lights = Vec::new();
         let mut entities = Vec::new();
         let mut sun = None;
+        let mut sun_shadow_layers = u32::MAX;
         let mut point_shadows = Vec::new();
         let mut spot_shadows = Vec::new();
 
@@ -43,6 +46,7 @@ impl LightFrame {
                 // The first casting sun: the atlas holds four cascades of one light.
                 if sun.is_none() && light.cast_shadows {
                     sun = Some(crate::gpu_light::forward(transform.matrix));
+                    sun_shadow_layers = light.shadow_layers;
                 }
                 lights.push(GpuLight::directional(light, transform.matrix));
                 entities.push(entity);
@@ -69,6 +73,7 @@ impl LightFrame {
                         // Filled by `ranked_points`, which is the only
                         // thing that knows where the camera is.
                         importance: 0.0,
+                        shadow_layers: light.shadow_layers,
                     });
                 }
                 lights.push(GpuLight::point(light, transform.matrix));
@@ -94,6 +99,7 @@ impl LightFrame {
                         direction: crate::gpu_light::forward(transform.matrix),
                         outer_angle: light.outer_angle.clamp(0.0, 90.0).to_radians(),
                         range: light.range,
+                        shadow_layers: light.shadow_layers,
                     });
                 }
                 lights.push(gpu);
@@ -108,6 +114,7 @@ impl LightFrame {
                 directional_count,
             },
             sun,
+            sun_shadow_layers,
             point_shadows,
             spot_shadows,
         }
@@ -123,6 +130,12 @@ impl LightFrame {
     #[inline]
     pub fn lights_mut(&mut self) -> &mut ExtractedLights {
         &mut self.lights
+    }
+
+    /// What casts into the sun's shadow (#1220). Every layer when the scene has no casting sun.
+    #[inline]
+    pub fn sun_shadow_layers(&self) -> u32 {
+        self.sun_shadow_layers
     }
 
     /// Where the one shadow-casting sun shines, if the scene has one.

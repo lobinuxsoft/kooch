@@ -93,6 +93,7 @@ impl MeshletRenderStage {
             deferred,
             lights: kooch_lighting::GpuLights::new(device),
             light_frame: None,
+            page_masks: None,
             // Built on the first frame that finds the environment
             // variable set; see the field's doc.
             page_marker: None,

@@ -18,6 +18,8 @@ pub struct SpotShadowDraw {
     /// The light's position — a real eye, unlike a cascade's, which is
     /// a stand-in for a projection that has none.
     pub eye: Vec3,
+    /// Layers that cast into this light (#1220): the mask its map culls with.
+    pub shadow_layers: u32,
 }
 
 /// The record the shading model samples for one spot light.

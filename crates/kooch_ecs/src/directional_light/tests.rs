@@ -23,7 +23,9 @@ fn reflect_fields() {
             "color",
             "intensity",
             "cast_shadows",
-            "contact_shadows"
+            "contact_shadows",
+            "layers",
+            "shadow_layers"
         ]
     );
 }

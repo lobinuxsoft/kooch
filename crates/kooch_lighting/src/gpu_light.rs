@@ -26,7 +26,7 @@ pub const NO_SHADOW_SLOT: u32 = u32::MAX;
 /// One light as the shader reads it, 80 B `std430`, mirroring `IntiLight` byte for byte; the size
 /// test in `gpu_light/tests.rs` stands in for a compiler.
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default, PartialEq, Pod, Zeroable)]
+#[derive(Copy, Clone, Debug, PartialEq, Pod, Zeroable)]
 pub struct GpuLight {
     /// Linear RGB.
     pub color: [f32; 3],
@@ -58,8 +58,36 @@ pub struct GpuLight {
     /// field fitting here is free and the next costs 16 B per light.
     /// ⚠️ Three scalars, never `[f32; 3]`, or WGSL realigns.
     pub _pad0: f32,
-    pub _pad1: f32,
-    pub _pad2: f32,
+    /// Layers this light lights (#1220). A surface sharing no bit with it takes nothing from this
+    /// light — the test is per pixel, in the light loop, and the padding made it free.
+    pub layers: u32,
+    /// Layers that cast into this light's shadow (#1220). Read by the lamp cull, which picks its
+    /// casters on the GPU and has no CPU pass to filter them in.
+    pub shadow_layers: u32,
+}
+
+/// 🔴 Every layer, not zero. A record built by hand — a test fixture, a slot the buffer pads with —
+/// is a light that lights and shadows everything, which is what a light nobody masked means. Zeroed
+/// masks would make every hand-built light invisible and every hand-built lamp cast nothing (#1220).
+impl Default for GpuLight {
+    fn default() -> Self {
+        Self {
+            color: [0.0; 3],
+            intensity: 0.0,
+            position: [0.0; 3],
+            range: 0.0,
+            direction: [0.0; 3],
+            kind: LIGHT_KIND_DIRECTIONAL,
+            spot_scale: 0.0,
+            spot_offset: 0.0,
+            flags: 0,
+            shadow_slot: NO_SHADOW_SLOT,
+            radius: 0.0,
+            _pad0: 0.0,
+            layers: u32::MAX,
+            shadow_layers: u32::MAX,
+        }
+    }
 }
 
 impl GpuLight {
@@ -95,8 +123,8 @@ impl GpuLight {
             // to a nearby sphere, which a sun lacks.
             radius: 0.0,
             _pad0: 0.0,
-            _pad1: 0.0,
-            _pad2: 0.0,
+            layers: light.layers,
+            shadow_layers: light.shadow_layers,
         }
     }
 
@@ -115,8 +143,8 @@ impl GpuLight {
             shadow_slot: NO_SHADOW_SLOT,
             radius: (light.radius * scale).max(0.0),
             _pad0: 0.0,
-            _pad1: 0.0,
-            _pad2: 0.0,
+            layers: light.layers,
+            shadow_layers: light.shadow_layers,
         }
     }
 
@@ -136,8 +164,8 @@ impl GpuLight {
             shadow_slot: NO_SHADOW_SLOT,
             radius: (light.radius * scale).max(0.0),
             _pad0: 0.0,
-            _pad1: 0.0,
-            _pad2: 0.0,
+            layers: light.layers,
+            shadow_layers: light.shadow_layers,
         }
     }
 }

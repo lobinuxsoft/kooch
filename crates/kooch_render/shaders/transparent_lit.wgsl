@@ -17,7 +17,7 @@ fn transparent_lit(slot: u32, triangle: u32, frag_coord: vec2<f32>) -> vec4<f32>
     if (!SURFACE_UNLIT) {
         radiance = inti_shade(
             surf.world_position, shaded.normal, shaded.base_color, shaded.metallic,
-            shaded.roughness, frag_coord, surf.flags);
+            shaded.roughness, frag_coord, surf.flags, surf.layers);
     }
     // Display units, as the other frames: 1.0 is full brightness at any exposure.
     radiance += shaded.emissive / max(inti.exposure, 1e-8);

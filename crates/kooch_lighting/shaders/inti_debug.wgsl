@@ -134,7 +134,7 @@ fn inti_single_light_debug(
     // different question (#804).
     let surf = inti_surface(
         world_position, n, vec3<f32>(1.0), 0.0, INTI_DEBUG_ROUGHNESS,
-        INTI_SURFACE_RECEIVES_SHADOWS);
+        INTI_SURFACE_RECEIVES_SHADOWS, 0xffffffffu);
     let radiance = inti_light_contribution(
         surf, inti_lights[inti.debug_light], inti.debug_light, frag_coord);
     // Tonemapped, not raw: the view answers a question about a frame the

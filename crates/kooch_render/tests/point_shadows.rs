@@ -132,6 +132,7 @@ fn add_point(resources: &mut Resources, position: Vec3, cast_shadows: bool) {
             // The cube map alone. A contact shadow would darken the same floor for a different
             // reason and the suite would stop being about the cube map.
             contact_shadows: false,
+                ..Default::default()
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_translation(position),
