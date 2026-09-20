@@ -1,6 +1,7 @@
-//! The mesh cut against the coverage, triangle by triangle in uv space (#452). What falls outside
-//! the contour is dropped, what straddles it is clipped and triangulated again, and what is whole
-//! keeps the vertices it came with.
+//! The mesh cut against the hull, triangle by triangle in uv space (#452). What falls outside it is
+//! dropped, what straddles it is clipped and triangulated again, and what is whole keeps the
+//! vertices it came with. The hull stands off the coverage, so the material still cuts and blends
+//! per pixel inside — what this saves is the fill of everything the alpha never reached.
 
 use std::collections::HashMap;
 
@@ -8,7 +9,7 @@ use geo::{Area, BooleanOps, LineString, MultiPolygon, Polygon, TriangulateEarcut
 use glam::{Vec2, Vec3};
 
 use super::NoTrim;
-use super::region::{Cover, covers};
+use super::region::{Cover, Hull, covers};
 use crate::mesh::{Mesh, MeshVertex};
 use crate::meshlet::asset::MeshletMesh;
 
@@ -18,13 +19,22 @@ const UV_SLACK: f32 = 0.001;
 /// Uv area under which a clipped piece is a sliver the raster would never fill.
 const AREA_FLOOR: f64 = 1e-10;
 
-/// `source`'s full detail cut against `coverage`.
+/// What a cut mesh is worth: the mesh, and how much of the source's uv it still covers.
+pub(super) struct Cut {
+    pub mesh: Mesh,
+    pub triangles: usize,
+    /// Uv the cut keeps, against the uv the source covered. The fill saved, as a share.
+    pub kept: f32,
+    pub whole: f32,
+}
+
+/// `source`'s full detail cut against `hull`.
 pub(super) fn mesh(
     source: &MeshletMesh,
-    coverage: &MultiPolygon<f64>,
-    mask: &[u8],
+    hull: &Hull,
     side: u32,
-) -> Result<Mesh, NoTrim> {
+    threshold: f64,
+) -> Result<Cut, NoTrim> {
     let triangles = lod0(source).ok_or(NoTrim::Empty)?;
     let outside = source.vertices.iter().any(|vertex| {
         let uv = Vec2::from(vertex.uv);
@@ -34,20 +44,43 @@ pub(super) fn mesh(
         return Err(NoTrim::Tiled);
     }
     let mut weld = Weld::default();
+    let mut whole = 0.0f32;
     for triangle in triangles {
         let corners = triangle.map(|at| source.vertices[at as usize]);
         let uv = corners.map(|corner| Vec2::from(corner.uv));
+        whole += area_of(&uv);
         let (min, max) = (uv[0].min(uv[1]).min(uv[2]), uv[0].max(uv[1]).max(uv[2]));
-        match covers(mask, side, min, max) {
+        // Against the GROWN mask: a triangle inside the hull's margin but past the alpha still has
+        // to be kept, or the cut would take back what the margin exists to leave.
+        match covers(&hull.grown, side, threshold, min, max) {
             Cover::None => {}
             Cover::All => weld.push(corners),
-            Cover::Edge => clip(&corners, &uv, coverage, &mut weld),
+            Cover::Edge => clip(&corners, &uv, &hull.region, &mut weld),
         }
     }
-    match weld.indices.len() >= 3 {
-        true => Ok(Mesh::from_arrays(weld.vertices, weld.indices)),
-        false => Err(NoTrim::Empty),
+    if weld.indices.len() < 3 {
+        return Err(NoTrim::Empty);
     }
+    let kept = weld
+        .indices
+        .chunks_exact(3)
+        .map(|triangle| {
+            let uv =
+                [0, 1, 2].map(|corner| Vec2::from(weld.vertices[triangle[corner] as usize].uv));
+            area_of(&uv)
+        })
+        .sum();
+    Ok(Cut {
+        triangles: weld.indices.len() / 3,
+        mesh: Mesh::from_arrays(weld.vertices, weld.indices),
+        kept,
+        whole,
+    })
+}
+
+/// A triangle's uv area, unsigned.
+fn area_of(uv: &[Vec2; 3]) -> f32 {
+    ((uv[1] - uv[0]).perp_dot(uv[2] - uv[0]) * 0.5).abs()
 }
 
 /// The full-detail triangles as indices into [`MeshletMesh::vertices`]. The coarser levels are

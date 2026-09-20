@@ -103,12 +103,11 @@ impl MeshletPipeline {
             let Some(slot) = materials.lookup(material) else {
                 return;
             };
-            // Transparent is left out on purpose: its cut region would become geometry, but its
-            // shadow dithers by alpha and a trimmed caster casts solid.
+            // Transparent counts too, and gains the most: every fragment it drops is one that never
+            // reaches the layers. What it needs is a coverage that cannot move, which `still` is.
             let cuttable = |surface: &crate::material::SurfaceSource| {
-                surface.masked
-                    && surface.still
-                    && surface.kind != crate::material::ShaderKind::Transparent
+                surface.still
+                    && (surface.masked || surface.kind == crate::material::ShaderKind::Transparent)
             };
             if !materials
                 .slot_surface(slot)
@@ -161,8 +160,9 @@ impl MeshletPipeline {
                 Some(mp) => mp.lookup_or_fallback(renderer.material),
                 None => crate::material::FALLBACK_MATERIAL_ID,
             };
-            // The static cut, already in the geometry (#452). Until one is built the mesh draws as
-            // it was, masked, so a pair that cannot be cut is never left undrawn.
+            // The hull cut around the coverage (#452). Until one is built the mesh draws as it was,
+            // so a pair that cannot be cut is never left undrawn; the material cuts per pixel
+            // either way.
             let cut = renderer
                 .material
                 .and_then(|material| self.trim.mesh_for(guid, material))
@@ -182,9 +182,6 @@ impl MeshletPipeline {
             };
             if !renderer.cast_shadows {
                 instance.flags |= crate::meshlet::scene::INSTANCE_CASTS_NO_SHADOW;
-            }
-            if cut.is_some() {
-                instance.flags |= crate::meshlet::scene::INSTANCE_TRIMMED;
             }
             let see_through = material_pipeline
                 .as_deref()

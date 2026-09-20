@@ -1,5 +1,5 @@
-//! GPU acceptance for the static cut as geometry (#452): a masked material whose alpha reads uv
-//! alone is baked, contoured and cut into a mesh that ends where the alpha does.
+//! GPU acceptance for the coverage hull (#452): a material whose alpha reads uv alone is baked and
+//! the mesh cut down to a few triangles around what it covers, never inside it.
 //!
 //! Run with:
 //!   cargo test -p kooch_render --test alpha_trim
@@ -75,26 +75,31 @@ fn cut(source: &str) -> Option<MeshletMesh> {
     trim::build(&device, &queue, &materials, slot, &quad()).ok()
 }
 
-/// 🔴 The point of the step: the geometry stops at the alpha, and it is plain geometry — nothing in
-/// it depends on the material any more.
+/// 🔴 The point of the step: the mesh stops just short of the alpha and costs a handful of
+/// triangles. Short, not exact — the material still cuts per pixel inside the hull.
 #[test]
-fn a_still_mask_becomes_geometry() {
+fn a_still_coverage_becomes_a_hull() {
     let Some((device, _)) = common::try_acquire_device() else {
         eprintln!("no capable adapter; skipping");
         return;
     };
     drop(device);
     let cut = cut(HALF).expect("half the quad survives its own alpha");
-    assert!(cut.total_triangle_count() >= 2, "{cut:?}");
-    // The alpha rises with uv.x, so what survives a clip of 0.5 is the far half of the quad.
+    assert!(
+        (2..=32).contains(&cut.total_triangle_count()),
+        "a half-covered quad took {} triangles",
+        cut.total_triangle_count(),
+    );
+    // The alpha rises with uv.x, so what survives a clip of 0.5 is the far half of the quad. The
+    // hull starts a margin short of it and never past it: past it would cut a pixel the alpha kept.
     let near = cut
         .vertices
         .iter()
         .map(|vertex| vertex.position[0])
         .fold(f32::MAX, f32::min);
     assert!(
-        (0.45..0.55).contains(&near),
-        "the cut mesh starts at x {near}, not the alpha's half",
+        (0.4..=0.5).contains(&near),
+        "the cut mesh starts at x {near}, which is not just short of the alpha's half",
     );
 }
 

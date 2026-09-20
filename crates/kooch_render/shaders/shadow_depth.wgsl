@@ -1,10 +1,5 @@
 // shadow_depth.wgsl — the meshlet rasteriser, from a light, writing depth and nothing else (#476).
 
-// A caster whose cut is already in its geometry (#452) casts solid: a material past the coverage
-// table never looks one up. `INSTANCE_TRIMMED` in `scene.rs`.
-const INSTANCE_TRIMMED: u32 = 16u;
-const SOLID_CASTER: u32 = 0xffffffffu;
-
 struct CascadeUniforms {
     // Light-space clip-from-world for the cascade being rendered.
     view_proj: mat4x4<f32>,
@@ -107,8 +102,7 @@ fn shadow_corner(vertex_index: u32, instance_index: u32) -> ShadowCorner {
     let world_pos = instances[inst_id].transform * vec4<f32>(pos, 1.0);
     out.clip = cascade.view_proj * world_pos;
     out.uv = vec2<f32>(v.uv[0], v.uv[1]);
-    let trimmed = (instances[inst_id].flags & INSTANCE_TRIMMED) != 0u;
-    out.material = select(instances[inst_id].material_id, SOLID_CASTER, trimmed);
+    out.material = instances[inst_id].material_id;
     return out;
 }
 
