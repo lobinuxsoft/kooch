@@ -70,10 +70,13 @@ pub(in crate::panels::inspector) fn draw_value_widget(
     // A declared interval wins over the free drag for every numeric
     // kind: the bound is what stops a settings file holding a value the
     // engine cannot honour.
+    //
+    // 🔴 Drawn is not changed. Falling through on "no change" drew the slider AND the free drag for
+    // the same field, every frame nobody touched it — two widgets and two numbers in one cell.
     if let Some(range) = range
-        && let Some(new) = draw_ranged(ui, value, range)
+        && let Some(drawn) = draw_ranged(ui, value, range)
     {
-        return Some(new);
+        return drawn;
     }
     match value {
         ReflectValue::F32(v) => {
@@ -131,6 +134,15 @@ pub(in crate::panels::inspector) fn draw_value_widget(
         }
         ReflectValue::Bool(v) => {
             let mut val = *v;
+            // 🔴 An unticked box has to read as a box. On the editor's dark panel the default frame
+            // is the same value as the background, so "off" and "this field has nothing in it" were
+            // the same pixels — and a toggle you cannot see the state of is not a toggle.
+            let visuals = ui.visuals_mut();
+            let frame = egui::Stroke::new(1.0, egui::Color32::from_gray(120));
+            visuals.widgets.inactive.bg_stroke = frame;
+            visuals.widgets.hovered.bg_stroke =
+                egui::Stroke::new(1.0, egui::Color32::from_gray(160));
+            visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(38);
             let resp = ui.checkbox(&mut val, "");
             resp.changed().then_some(ReflectValue::Bool(val))
         }
@@ -329,13 +341,17 @@ pub(in crate::panels::inspector) fn draw_value_widget(
     }
 }
 
-/// A slider over a declared interval, for whichever numeric kind the field holds.
+/// A slider over a declared interval, for whichever numeric kind the field holds. `None` for a kind
+/// with no slider — the outer `Some` is "this drew the field", the inner one is "it changed".
 fn draw_ranged(
     ui: &mut egui::Ui,
     value: &ReflectValue,
     range: &kooch_ecs::reflect::FieldRange,
-) -> Option<ReflectValue> {
+) -> Option<Option<ReflectValue>> {
     let (min, max) = (range.min, range.max);
+    // The Inspector's value column is narrow, and a slider given no room collapses into a stub
+    // beside its number. Leave the value its width and give the track the rest.
+    ui.spacing_mut().slider_width = (ui.available_width() - 72.0).clamp(48.0, 160.0);
     match value {
         ReflectValue::F32(v) => {
             let mut val = *v as f64;
@@ -343,9 +359,11 @@ fn draw_ranged(
             if range.step > 0.0 {
                 slider = slider.step_by(range.step);
             }
-            ui.add(slider)
-                .changed()
-                .then(|| ReflectValue::F32(val as f32))
+            Some(
+                ui.add(slider)
+                    .changed()
+                    .then(|| ReflectValue::F32(val as f32)),
+            )
         }
         ReflectValue::U32(v) => {
             let mut val = *v as f64;
@@ -353,9 +371,11 @@ fn draw_ranged(
             if range.step > 0.0 {
                 slider = slider.step_by(range.step);
             }
-            ui.add(slider)
-                .changed()
-                .then(|| ReflectValue::U32(val.round().max(0.0) as u32))
+            Some(
+                ui.add(slider)
+                    .changed()
+                    .then(|| ReflectValue::U32(val.round().max(0.0) as u32)),
+            )
         }
         _ => None,
     }
