@@ -81,9 +81,11 @@ fn an_unmeasured_shape_is_all_of_it() {
     assert_eq!(depth_of(&registry, sensor, body), f32::INFINITY);
 }
 
-/// The region's own transform counts: a scaled sensor is a bigger region, not a bigger number.
+/// 🔴 Metres, not shape units. A blend distance is a distance in the world, and measuring in the
+/// shape's own space made every scaled region blend that many times too fast — an author had to type
+/// a tenth of what they meant, or a hundredth.
 #[test]
-fn a_scaled_region_scales_with_it() {
+fn a_scaled_region_measures_metres() {
     let collider = Collider {
         radius: 1.0,
         ..Default::default()
@@ -98,8 +100,21 @@ fn a_scaled_region_scales_with_it() {
                 matrix: Mat4::from_scale(Vec3::splat(4.0)),
             },
         );
-    // Three metres out, in a sphere scaled to four: a quarter of the radius in local space.
-    assert_eq!(depth_of(&registry, sensor, body), 0.25);
+    // A unit sphere scaled by four is four metres of radius; three metres out is one metre in.
+    assert_eq!(depth_of(&registry, sensor, body), 1.0);
+}
+
+/// The shape's own centre, which is where the gizmo draws it: a region offset from its entity was
+/// measured from the entity, so half of it read as outside.
+#[test]
+fn an_offset_shape_measures_from_itself() {
+    let collider = Collider {
+        radius: 1.0,
+        center: Vec3::new(5.0, 0.0, 0.0),
+        ..Default::default()
+    };
+    let (registry, sensor, body) = world(SHAPE_SPHERE, collider, Vec3::new(5.0, 0.0, 0.0));
+    assert_eq!(depth_of(&registry, sensor, body), 1.0);
 }
 
 /// 🔴 The editor runs no solver, and the Game panel is where an author looks to see whether a

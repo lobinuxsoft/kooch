@@ -169,20 +169,30 @@ fn depth_of(registry: &ComponentRegistry, sensor: Entity, body: Entity) -> f32 {
         return f32::INFINITY;
     };
     let (scale, rotation, translation) = region.matrix.to_scale_rotation_translation();
-    // The body's origin in the region's own space, undoing the scale so the extents below are the
-    // ones the author typed.
-    let local =
-        (rotation.inverse() * (at.translation() - translation)) / scale.max(Vec3::splat(1e-6));
+    let scale = scale.abs();
+    // 🔴 Metres, not shape units. The blend distance an author types is a distance in the world, so
+    // the extents are scaled up to meet it rather than the position scaled down to meet them: a
+    // sphere of radius 1 scaled by five is five metres of region, and dividing instead made every
+    // blend five times too fast.
+    //
+    // The shape sits at its own centre, which the gizmo also draws at: a region offset from its
+    // entity would otherwise be measured from the entity.
+    let centre = translation + rotation * (collider.center * scale);
+    let local = rotation.inverse() * (at.translation() - centre);
+    // Radius follows the horizontal axes on everything aligned to Y, the same rule the collider
+    // gizmo draws by — what an author sees is what is measured.
+    let flat = collider.radius * scale.x.max(scale.z);
     match collider.shape {
-        SHAPE_SPHERE => collider.radius - local.length(),
+        SHAPE_SPHERE => collider.radius * scale.max_element() - local.length(),
         SHAPE_CUBOID => {
-            let gap = collider.half_extents - local.abs();
+            let gap = collider.half_extents * scale - local.abs();
             gap.x.min(gap.y).min(gap.z)
         }
         SHAPE_CAPSULE => {
             // Distance to the segment down Y, which is the capsule without its caps.
-            let y = local.y.clamp(-collider.half_height, collider.half_height);
-            collider.radius - (local - Vec3::new(0.0, y, 0.0)).length()
+            let half_height = collider.half_height * scale.y;
+            let y = local.y.clamp(-half_height, half_height);
+            flat - (local - Vec3::new(0.0, y, 0.0)).length()
         }
         // A hull, a trimesh, a voxel field: the solver says a body is inside and nothing cheap says
         // how far. All of it, from the moment it arrives.

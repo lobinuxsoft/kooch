@@ -844,7 +844,11 @@ with nobody anywhere.
   The components-only plugin measures it instead: every collider whose groups the region's would
   interact with, tested at its origin. Optimistic by a body's width at the boundary, the same answer
   everywhere else, and never run where a solver exists.
-- **The depth is the blend.** Zero at the surface, all of the volume a `blend_distance` in,
+- **The depth is the blend, in metres.** The extents are scaled up to meet the world rather than
+  the position scaled down to meet the shape: a unit sphere scaled by five is five metres of region,
+  and measuring in shape units made every scaled volume blend that many times too fast. Measured
+  from the shape's own centre, which is where the gizmo draws it.
+- Zero at the surface, all of the volume a `blend_distance` in,
   smoothstepped between. 🔴 It fades **inward**, where Unity's fades outward: the sensor is what says
   a body arrived, so the surface is the first place a weight can be asked for. Fading outward would
   need a second, wider shape nobody authored.
