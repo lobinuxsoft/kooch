@@ -328,7 +328,10 @@ impl MeshletRenderStage {
             // 🔴 Read only by `cs_cull_instances`, so it reaches the main view and NOT the cascades:
             // a shadow cascade is orthographic and its "pixels" are shadow texels, where this
             // number is authored against the screen.
-            .with_min_screen_pixels(lod_settings.min_screen_pixels);
+            .with_min_screen_pixels(lod_settings.min_screen_pixels)
+            // Per view, in the cull itself: the editor's own camera keeps every layer while the
+            // game's keeps what its component says, and neither pays a CPU pass for it (#1219).
+            .with_culling_mask(camera.culling_mask);
 
         // Grow visible_meshlets if the scene now needs more slots
         // than the dispatcher was sized for. Geometric growth absorbs

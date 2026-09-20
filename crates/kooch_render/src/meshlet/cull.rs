@@ -50,7 +50,9 @@ pub struct CullParams {
     /// Instances whose `flags` share a bit with this are skipped: a shadow view sets
     /// [`INSTANCE_CASTS_NO_SHADOW`](crate::meshlet::scene::INSTANCE_CASTS_NO_SHADOW) (#452).
     pub skip_flags: u32,
-    pub _pad_lod: u32,
+    /// Layers this view draws (#1219). An instance is rejected when its own `layers` share no bit
+    /// with it; `u32::MAX` is every layer, which is what a view that was never told draws.
+    pub culling_mask: u32,
     pub view_proj: [[f32; 4]; 4],
 }
 
@@ -70,7 +72,7 @@ impl CullParams {
             lod_orthographic: 0,
             min_screen_pixels: 0.0,
             skip_flags: 0,
-            _pad_lod: 0,
+            culling_mask: u32::MAX,
             view_proj: view_projection.to_cols_array_2d(),
         }
     }
@@ -132,6 +134,12 @@ impl CullParams {
         self.lod_target_error_pixels = lod_target_error_pixels;
         self.lod_error_to_pixel_factor = target_height_texels / world_height.max(1e-6);
         self.lod_orthographic = 1;
+        self
+    }
+
+    /// Draws only the layers in `mask` (#1219). `u32::MAX` draws every layer.
+    pub fn with_culling_mask(mut self, mask: u32) -> Self {
+        self.culling_mask = mask;
         self
     }
 }

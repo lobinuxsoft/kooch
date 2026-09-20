@@ -32,7 +32,8 @@ struct CullParams {
     // Instances whose `flags` share a bit with this are not this view's: a shadow view skips the
     // ones that cast no shadow (#452). 0 on the camera's view.
     skip_flags: u32,
-    _pad_lod2: u32,
+    // Layers this view draws (#1219): an instance sharing no bit with it is not this view's.
+    culling_mask: u32,
     // Clip-from-world matrix used by the AABB-vs-frustum test in `atomic.wgsl` (#454.4 follow-up
     // A).
     view_proj: mat4x4<f32>,
@@ -81,8 +82,10 @@ struct HiZParams {
 @group(1) @binding(0) var<uniform> hi_z_params: HiZParams;
 @group(1) @binding(1) var hi_z_pyramid: texture_2d<f32>;
 
-fn skipped(flags: u32) -> bool {
-    return (flags & params.skip_flags) != 0u;
+// Whether the view draws the instance at all: the flags it refuses — a shadow view skips what casts
+// none (#452) — and the layers it keeps (#1219).
+fn skipped(flags: u32, layers: u32) -> bool {
+    return (flags & params.skip_flags) != 0u || (layers & params.culling_mask) == 0u;
 }
 
 fn sphere_outside_frustum(center: vec3<f32>, radius: f32) -> bool {

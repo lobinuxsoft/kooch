@@ -248,3 +248,76 @@ fn scene_cull_with_zero_instances_is_no_op() {
         "zero instances should produce zero visible meshlets"
     );
 }
+
+/// 🔴 What the mask is for (#1219): the camera keeps the layers it names and nothing else, decided
+/// in the cull rather than by a pass over the instances.
+#[test]
+fn a_camera_keeps_only_its_layers() {
+    let Some((device, queue)) = try_acquire_device() else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+
+    let mesh = build_cube_mesh();
+    let meshlet_mesh = build_default_meshlets(&mesh).expect("build meshlets");
+    let gpu_mesh = meshlet_mesh.upload(&device);
+    let meshlets_per_mesh = gpu_mesh.meshlet_count;
+
+    // Side by side in front of the camera: what separates them is the layer, not the frustum.
+    let layered = |x: f32, layers: u32| {
+        let mut instance = MeshInstance::new(Mat4::from_translation(Vec3::new(x, 0.0, 0.0)), 0, 0);
+        instance.layers = layers;
+        instance
+    };
+    let instances = vec![layered(-0.7, 0b01), layered(0.7, 0b10)];
+
+    let scene = MeshletScene::new(&device, instances.len() as u32);
+    scene.upload_instances(&queue, &instances);
+
+    let total_threads = instances.len() as u32 * meshlets_per_mesh;
+    let cull = MeshletCull::new(&device, total_threads * 2, DEFAULT_MAX_TRIANGLES as u32);
+    let cull_pipelines = MeshletCullPipelines::new(&device);
+
+    let cam = Vec3::new(0.0, 0.5, 5.0);
+    let view = glam::camera::rh::view::look_at_mat4(cam, Vec3::ZERO, Vec3::Y);
+    let proj = kooch_render::perspective_rh_reverse_z(80.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let scene_params = SceneCullParams::new(instances.len() as u32, meshlets_per_mesh);
+
+    let drawn = |mask: u32| {
+        let cull_params =
+            CullParams::new(proj * view, cam, meshlets_per_mesh).with_culling_mask(mask);
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("layer_cull_encoder"),
+        });
+        cull.dispatch_scene(
+            &cull_pipelines,
+            &device,
+            &queue,
+            &mut encoder,
+            &gpu_mesh,
+            &scene,
+            &cull_params,
+            &scene_params,
+        );
+        queue.submit(std::iter::once(encoder.finish()));
+        let count = common::read_u32(&device, &queue, cull.visible_count_buffer(), 0);
+        let visible = read_visible_meshlets(&device, &queue, &cull, count);
+        visible
+            .iter()
+            .map(|packed| decode_scene_visible_id(*packed).0)
+            .collect::<BTreeSet<u32>>()
+    };
+
+    assert_eq!(drawn(0b01), BTreeSet::from([0]), "the first layer alone");
+    assert_eq!(drawn(0b10), BTreeSet::from([1]), "the second layer alone");
+    assert_eq!(drawn(0b11), BTreeSet::from([0, 1]), "both layers");
+    assert!(
+        drawn(0b100).is_empty(),
+        "a layer nothing is in draws nothing"
+    );
+    assert_eq!(
+        drawn(u32::MAX),
+        BTreeSet::from([0, 1]),
+        "a view nobody told draws everything",
+    );
+}
