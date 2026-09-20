@@ -134,6 +134,7 @@ pub(super) fn create_hint(kind: CreateKind) -> &'static str {
         CreateKind::File(NewFileKind::Scene) => "Scene name…",
         CreateKind::File(NewFileKind::InputAction) => "Action name (e.g. Jump)…",
         CreateKind::File(NewFileKind::RenderSettings) => "Settings name (e.g. project)…",
+        CreateKind::File(NewFileKind::Layers) => "Layers name (e.g. project)…",
         CreateKind::File(NewFileKind::BuildPreset) => "Preset name (e.g. Windows release)…",
         CreateKind::File(NewFileKind::BlockMesh) => "Block name (e.g. Wall)…",
         CreateKind::File(NewFileKind::Shader) => "Shader name (e.g. Toon)…",

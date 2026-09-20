@@ -29,6 +29,8 @@ pub(super) fn draw_prefab_inspector(
     entities: &[EntityDisplayInfo],
     reflected_types: &[ReflectedTypeInfo],
     actions: &mut Vec<EditorAction>,
+    // The project's layer names, for any field that masks over them (#1218).
+    layer_labels: &[String],
 ) {
     draw_save_bar(ui, guid, detail, actions);
     ui.separator();
@@ -48,6 +50,7 @@ pub(super) fn draw_prefab_inspector(
             entities,
             reflected_types,
             actions,
+            layer_labels,
         );
     }
 }
@@ -94,6 +97,8 @@ fn draw_entity_section(
     entities: &[EntityDisplayInfo],
     reflected_types: &[ReflectedTypeInfo],
     actions: &mut Vec<EditorAction>,
+    // The project's layer names, for any field that masks over them (#1218).
+    layer_labels: &[String],
 ) {
     let title = match entity.is_root {
         true => format!("{} {}  (root)", icons::PACKAGE, entity.name),
@@ -114,6 +119,7 @@ fn draw_entity_section(
                     asset_catalog,
                     entities,
                     actions,
+                    layer_labels,
                 );
             }
             ui.add_space(4.0);
@@ -132,6 +138,8 @@ fn draw_component_section(
     asset_catalog: &[AssetCatalogEntry],
     entities: &[EntityDisplayInfo],
     actions: &mut Vec<EditorAction>,
+    // The project's layer names, for any field that masks over them (#1218).
+    layer_labels: &[String],
 ) {
     let name = component.short_name.clone();
     // Built the same way the entity inspector builds a section — a bold title beside the same
@@ -188,6 +196,7 @@ fn draw_component_section(
                     RotationContext::local_only(),
                     asset_catalog,
                     entities,
+                    layer_labels,
                 );
                 // A prefab's edits go to its document.
                 for (field, value) in edits {

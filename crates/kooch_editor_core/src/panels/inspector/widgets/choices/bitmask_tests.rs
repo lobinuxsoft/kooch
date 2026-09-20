@@ -1,15 +1,6 @@
 use super::*;
 
-static BITS: &[FieldChoice] = &[
-    FieldChoice {
-        label: "A",
-        value: 1 << 0,
-    },
-    FieldChoice {
-        label: "B",
-        value: 1 << 1,
-    },
-];
+static BITS: &[(&str, i64)] = &[("A", 1 << 0), ("B", 1 << 1)];
 
 /// The widget may only touch the bits it names. A mask authored by hand or by a newer editor has to
 /// survive a visit — silently clearing the high half would be a filtering bug introduced by
@@ -48,4 +39,21 @@ fn the_result_keeps_the_fields_numeric_type() {
 #[test]
 fn a_non_integer_value_is_not_a_bitmask() {
     assert_eq!(reflect_value_as_i64(&ReflectValue::F32(1.0)), None);
+}
+
+/// 🔴 A layer mask is drawn from the project's own names, and one cell per bit means bit `n` is
+/// `1 << n` however the table is filled in: a name out of step would tick the wrong layer.
+#[test]
+fn a_layer_cell_is_its_own_bit() {
+    let names = kooch_core::layers::LayerNames::default();
+    let labels = names.labels();
+    let cells: Vec<(&str, i64)> = labels
+        .iter()
+        .enumerate()
+        .map(|(bit, label)| (label.as_str(), 1i64 << bit))
+        .collect();
+    assert_eq!(cells.len(), kooch_core::layers::LAYER_COUNT);
+    assert_eq!(cells[0], ("Default", 1));
+    assert_eq!(cells[5].1, 1 << 5);
+    assert_eq!(named_mask(&cells), -1i64 as i64 & 0xffff_ffff);
 }

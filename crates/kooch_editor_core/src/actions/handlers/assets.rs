@@ -284,3 +284,45 @@ mod write_guard_tests;
 
 #[cfg(test)]
 mod material_path_tests;
+
+/// Renames one of the project's layers and writes the table back (#1218). The names are not
+/// reflected — a list of strings is not a field grid — so this walks the file itself.
+pub(super) fn handle_rename_layer(
+    resources: &mut Resources,
+    guid: Option<Guid>,
+    index: usize,
+    name: &str,
+) {
+    let Some(guid) = guid else {
+        tracing::warn!("RenameLayer: the project has no .layers file to write");
+        return;
+    };
+    let Some(path) = resources
+        .get::<AssetDatabase>()
+        .and_then(|db| Some(db.entry(guid)?.path.clone()))
+    else {
+        tracing::warn!(guid = %guid, "RenameLayer: no path in AssetDatabase");
+        return;
+    };
+    let mut names = resources
+        .get::<kooch_core::layers::LayerNames>()
+        .cloned()
+        .unwrap_or_default();
+    names.set(index, name);
+    let Ok(text) = ron::ser::to_string_pretty(&names, ron::ser::PrettyConfig::default()) else {
+        tracing::error!("RenameLayer: the table did not serialise");
+        return;
+    };
+    // 🔴 A write that changes nothing is not a write: the field reports an edit every frame it has
+    // focus, and each write round-trips to the running project.
+    if !needs_write(&path, &text) {
+        return;
+    }
+    if let Err(e) = std::fs::write(&path, text) {
+        tracing::error!(path = %path.display(), error = %e, "failed to write the layer names");
+        return;
+    }
+    // Published now rather than next frame, so the checklist under the cursor renames with it.
+    resources.insert(names);
+    super::asset_saved(resources, &path);
+}

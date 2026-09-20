@@ -163,6 +163,9 @@ pub(super) fn apply_non_ecs_action(
         } => {
             handle_edit_asset_field(resources, *guid, field, value.clone(), *commit);
         }
+        EditorAction::RenameLayer { guid, index, name } => {
+            assets::handle_rename_layer(resources, *guid, *index, name);
+        }
         EditorAction::ImportAssets { files, dest } => handle_import_assets(resources, files, dest),
         // ECS actions and Undo/Redo handled by caller.
         _ => {}

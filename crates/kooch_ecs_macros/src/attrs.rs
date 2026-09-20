@@ -176,6 +176,29 @@ pub(crate) fn parse_field_bits(field: &syn::Field) -> Result<Option<syn::Expr>, 
     Ok(None)
 }
 
+/// Parses `#[reflect(layers)]`, which marks an integer field as a mask over the project's layer
+/// names (#1218).
+pub(crate) fn parse_field_layers(field: &syn::Field) -> Result<bool, TokenStream> {
+    for attr in &field.attrs {
+        if !attr.path().is_ident("reflect") {
+            continue;
+        }
+        let nested = match attr
+            .parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
+        {
+            Ok(n) => n,
+            Err(e) => return Err(e.to_compile_error().into()),
+        };
+        if nested
+            .iter()
+            .any(|meta| matches!(meta, Meta::Path(path) if path.is_ident("layers")))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Parses `#[reflect(shown_when = PATH)]`, a `FieldCondition` constant: `Ok(Some(path))`,
 /// `Ok(None)`, or a compile error.
 pub(crate) fn parse_field_shown_when(field: &syn::Field) -> Result<Option<syn::Expr>, TokenStream> {

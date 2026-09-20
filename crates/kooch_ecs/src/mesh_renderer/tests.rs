@@ -41,7 +41,8 @@ fn reflect_fields() {
             "material",
             "visible",
             "cast_shadows",
-            "receive_shadows"
+            "receive_shadows",
+            "layers"
         ],
     );
 }
@@ -115,4 +116,19 @@ fn mesh_field_round_trips_a_guid() {
         ..Default::default()
     };
     assert_eq!(r.mesh, Some(g));
+}
+
+/// 🔴 The Inspector draws a named checklist only for a field the metadata marks, and the names come
+/// from the project's own table (#1218). Unmarked, the mask would be a number nobody can read.
+#[test]
+fn the_layer_mask_is_marked() {
+    use crate::reflect::Reflect;
+    let meta = MeshRenderer::default()
+        .reflect_fields()
+        .iter()
+        .find(|meta| meta.name == "layers")
+        .copied()
+        .expect("the renderer has a layers field");
+    assert!(meta.layers, "the mask is not marked as layers");
+    assert!(meta.bits.is_empty(), "a layer mask names its own bits");
 }

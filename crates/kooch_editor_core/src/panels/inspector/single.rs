@@ -16,7 +16,7 @@ use super::RotationContext;
 use super::rotation::{draw_quat_with_cache, is_transform_rotation};
 use super::widgets::{
     AssetCatalogEntry, FieldContext, bits_for, choices_for, draw_readonly_value, draw_value_widget,
-    fields_for, range_for, requires_for,
+    fields_for, layers_for, range_for, requires_for,
 };
 
 /// Draws an editable name field for the Name component (shown above the component list).
@@ -165,6 +165,8 @@ pub(super) fn draw_reflected_fields(
     rotation_ctx: RotationContext,
     asset_catalog: &[AssetCatalogEntry],
     entities: &[EntityDisplayInfo],
+    // The project's layer names, for any field that masks over them (#1218).
+    layer_labels: &[String],
 ) -> Vec<(String, ReflectValue)> {
     let mut edits = Vec::new();
     // One grid per heading (#830). A single grid for the whole component is what produced the pile
@@ -195,6 +197,8 @@ pub(super) fn draw_reflected_fields(
                             name,
                             choices: choices_for(field_metas, name),
                             bits: bits_for(field_metas, name),
+                            layers: layers_for(field_metas, name),
+                            layer_labels,
                             assets: asset_catalog,
                             entities,
                             requires: requires_for(field_metas, name),

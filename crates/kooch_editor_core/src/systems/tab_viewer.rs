@@ -53,6 +53,8 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Entities whose gizmos stay drawn while something else is selected.
     pub(crate) pinned: &'a mut std::collections::HashSet<Entity>,
     pub(crate) reflected_types: &'a [ReflectedTypeInfo],
+    /// The project's layer names, for the masks the Inspector draws by name (#1218).
+    pub(crate) layer_labels: &'a [String],
     pub(crate) actions: &'a mut Vec<EditorAction>,
     pub(crate) entity_count: usize,
     pub(crate) archetype_count: usize,
@@ -297,6 +299,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.asset_catalog,
                 *self.selected_asset,
                 self.asset_detail,
+                self.layer_labels,
             ),
             EditorTab::ShaderGraph => {
                 let path = self

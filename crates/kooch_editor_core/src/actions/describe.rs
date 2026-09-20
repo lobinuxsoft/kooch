@@ -104,6 +104,7 @@ impl EditorAction {
             | Self::BakeCollider { .. }
             | Self::SetImageImport { .. }
             | Self::EditAssetField { .. }
+            | Self::RenameLayer { .. }
             | Self::ImportAssets { .. }
             | Self::CreateFolder { .. }
             | Self::CreateMaterial { .. }
@@ -201,6 +202,7 @@ impl EditorAction {
             | Self::BakeCollider { .. }
             | Self::SetImageImport { .. }
             | Self::EditAssetField { .. }
+            | Self::RenameLayer { .. }
             | Self::ImportAssets { .. }
             | Self::CreateFolder { .. }
             | Self::CreateMaterial { .. }

@@ -183,6 +183,13 @@ A pair is live only when **each** side's memberships intersect the
 other's filter. Being in a group the other side looks for is not enough
 on its own.
 
+The boxes are named by the **project's layer table** — the same 32 names a
+renderer, a camera or a light masks over. Make one from the Assets panel
+(*New Layers*, saved as `project.layers`) and type into it: every checklist
+in the Inspector renames with it, and a project without one shows
+**Default** and *Layer 1…31*. One table per project; a second file is read
+by nothing and says so in the log.
+
 The two pairs existing separately is the point: a projectile that should
 *detect* a wall without being *stopped* by it shares the wall's
 collision groups and not its solver groups.

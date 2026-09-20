@@ -31,6 +31,7 @@ editing this list.",
             asset_type: "",
             requires: "",
             fields: &[],
+            layers: false,
         }];
         FIELDS
     }

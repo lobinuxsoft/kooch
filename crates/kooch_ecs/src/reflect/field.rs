@@ -36,6 +36,9 @@ pub struct FieldMeta {
     /// For a list of structs, the element's fields, so a nested number keeps its range and doc
     /// (#1209). `&[]` for every other field.
     pub fields: &'static [FieldMeta],
+    /// A mask over the project's own layer names (#1218), from `#[reflect(layers)]`. The inspector
+    /// draws a box per layer, named by the `.layers` table rather than by anything in the code.
+    pub layers: bool,
 }
 
 /// Bounds and granularity for a numeric field — see [`FieldMeta::range`].

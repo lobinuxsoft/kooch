@@ -125,6 +125,13 @@ pub(super) fn draw_choice_dropdown(
 }
 
 /// Looks up the `bits` slice for a field by name.
+/// Whether the field is a mask over the project's layer names (#1218).
+pub(crate) fn layers_for(field_metas: Option<&'static [FieldMeta]>, name: &str) -> bool {
+    field_metas
+        .and_then(|metas| metas.iter().find(|m| m.name == name))
+        .is_some_and(|m| m.layers)
+}
+
 pub(crate) fn bits_for(
     field_metas: Option<&'static [FieldMeta]>,
     name: &str,
@@ -139,7 +146,33 @@ pub(crate) fn bits_for(
 pub(crate) fn draw_bitmask(
     ui: &mut egui::Ui,
     value: &ReflectValue,
-    bits: &'static [FieldChoice],
+    bits: &[FieldChoice],
+    field_name: &str,
+) -> Option<ReflectValue> {
+    let cells: Vec<(&str, i64)> = bits.iter().map(|bit| (bit.label, bit.value)).collect();
+    draw_cells(ui, value, &cells, field_name)
+}
+
+/// The same grid over the project's layer names (#1218), which are owned rather than static: one
+/// cell per bit, named by the `.layers` table.
+pub(crate) fn draw_layer_mask(
+    ui: &mut egui::Ui,
+    value: &ReflectValue,
+    labels: &[String],
+    field_name: &str,
+) -> Option<ReflectValue> {
+    let cells: Vec<(&str, i64)> = labels
+        .iter()
+        .enumerate()
+        .map(|(bit, label)| (label.as_str(), 1i64 << bit))
+        .collect();
+    draw_cells(ui, value, &cells, field_name)
+}
+
+fn draw_cells(
+    ui: &mut egui::Ui,
+    value: &ReflectValue,
+    bits: &[(&str, i64)],
     field_name: &str,
 ) -> Option<ReflectValue> {
     /// Wide enough for two digits, uniform so the grid lines up.
@@ -155,19 +188,19 @@ pub(crate) fn draw_bitmask(
         ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
         for row in bits.chunks(PER_ROW) {
             ui.horizontal(|ui| {
-                for bit in row {
-                    let set = current & bit.value != 0;
+                for &(label, value) in row {
+                    let set = current & value != 0;
                     let response = ui
                         .add(
-                            egui::Button::new(short_label(bit.label))
+                            egui::Button::new(short_label(label))
                                 .min_size(CELL)
                                 .selected(set),
                         )
-                        .on_hover_text(bit.label);
+                        .on_hover_text(label);
                     if response.clicked() {
                         // Toggle: the same click sets and clears, which is
                         // what a toggle in a grid has to do.
-                        next ^= bit.value;
+                        next ^= value;
                     }
                 }
             });
@@ -190,7 +223,7 @@ pub(crate) fn draw_bitmask(
 
 /// What goes on a cell: the trailing number if the label ends in one, so "Group 12" reads as "12"
 /// and the grid stays a grid.
-fn short_label(label: &'static str) -> String {
+fn short_label(label: &str) -> String {
     match label.rsplit(' ').next() {
         Some(tail) if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) => {
             tail.to_owned()
@@ -201,8 +234,8 @@ fn short_label(label: &'static str) -> String {
 
 /// The union of every named bit — everything this widget is allowed to
 /// touch.
-fn named_mask(bits: &'static [FieldChoice]) -> i64 {
-    bits.iter().fold(0, |mask, bit| mask | bit.value)
+fn named_mask(bits: &[(&str, i64)]) -> i64 {
+    bits.iter().fold(0, |mask, &(_, value)| mask | value)
 }
 
 #[cfg(test)]

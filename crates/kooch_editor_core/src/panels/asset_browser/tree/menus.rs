@@ -165,6 +165,16 @@ pub(super) fn folder_menu(
         start(CreateKind::File(NewFileKind::RenderSettings));
         ui.close();
     }
+    // Not gated on there being one already: a second table is caught where it is read, with a line
+    // naming the file that won, rather than by a disabled button nobody can explain.
+    if entry(
+        ui,
+        format!("{} New Layers", icons::STACK),
+        FolderRole::Assets,
+    ) {
+        start(CreateKind::File(NewFileKind::Layers));
+        ui.close();
+    }
     // The synthetic root node has an empty name; it is not itself
     // renamable / deletable (that would target the crate root).
     if !node.name.is_empty() {

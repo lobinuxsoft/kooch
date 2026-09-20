@@ -411,6 +411,15 @@ becomes.
 
 Then [Inti](./lighting.md) — Cook-Torrance driven by the scene's lights.
 
+### Layers (#1218)
+
+Every `MeshRenderer` carries a 32-bit `layers` mask, and the scene walk copies it into
+`MeshInstance.layers` — so the mask is on the GPU, beside the flags, for whatever filters by it to
+read without asking the ECS again. What each bit is called lives in the project's `.layers` file,
+which colliders name their groups from as well: one table, so a bit means the same thing wherever
+it is ticked. Nothing filters by it yet; the camera's culling mask (#1219), lights and shadows
+(#1220) and camera stacking (#1221) are what it was put there for.
+
 ### Transparent surfaces (#452)
 
 Two kinds blend: `transparent`, a lit surface with an `alpha`, and `transparent_unlit`, the same

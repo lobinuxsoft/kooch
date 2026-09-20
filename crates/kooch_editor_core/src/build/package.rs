@@ -403,7 +403,11 @@ fn declared_roots(project_root: &Path, engine_root: Option<&Path>) -> Vec<String
 }
 
 /// Extensions whose bytes cannot name another asset.
-pub(super) const OPAQUE_FORMATS: [&str; 7] = ["png", "jpg", "jpeg", "glb", "gltf", "bin", "kpack"];
+pub(super) const OPAQUE_FORMATS: [&str; 8] = [
+    "png", "jpg", "jpeg", "glb", "gltf", "bin", "kpack",
+    // Names layers, never assets (#1218): reading it would find nothing, once per asset.
+    "layers",
+];
 
 /// The file's text, or `None` when it cannot name anything.
 fn read_if_text(path: &Path) -> Option<String> {

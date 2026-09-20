@@ -22,6 +22,7 @@ pub(crate) fn struct_list(
             kind: ::kooch_ecs::reflect::FieldKind::List,
             choices: &[],
             bits: &[],
+            layers: false,
             range: None,
             shown_when: ::core::option::Option::None,
             asset_type: "",
