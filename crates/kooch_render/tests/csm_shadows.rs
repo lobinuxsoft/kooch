@@ -143,6 +143,7 @@ fn add_sun(resources: &mut Resources, cast_shadows: bool) {
             // The march needs a rendered depth buffer; these tests
             // exercise the cascade path with none.
             contact_shadows: false,
+                ..Default::default()
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_quat(rotation),

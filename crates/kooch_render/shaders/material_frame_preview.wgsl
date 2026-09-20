@@ -41,6 +41,8 @@ struct VertexOutput {
     world_tangent: vec4<f32>,
     material_id: u32,
     flags: u32,
+    // #1220 — a surface with no instance behind it is in every layer.
+    layers: u32,
 }
 
 struct VsIn {
@@ -82,6 +84,7 @@ fn fs_preview(in: VsOut) -> @location(0) vec4<f32> {
     surf.ddy_uv = dpdy(in.uv);
     surf.material_id = screen.material_id;
     surf.flags = 0u;
+    surf.layers = 0xffffffffu;
 
     let input = surface_input(surf, in.clip_position.xy);
     let shaded = surface(input);

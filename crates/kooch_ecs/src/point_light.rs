@@ -25,6 +25,14 @@ pub struct PointLight {
     pub cast_shadows: bool,
     /// Whether this light marches the depth buffer for contact shadows.
     pub contact_shadows: bool,
+    /// Layers this light lights (#1220). A surface sharing no bit with it takes nothing from this
+    /// light, tested per pixel.
+    #[reflect(layers)]
+    pub layers: u32,
+    /// Layers that cast into this light's shadow. Rejected in the shadow view's own cull, so a
+    /// caster left out is never rasterised at all.
+    #[reflect(layers)]
+    pub shadow_layers: u32,
 }
 
 impl Default for PointLight {
@@ -37,6 +45,8 @@ impl Default for PointLight {
             radius: 0.0,
             cast_shadows: true,
             contact_shadows: false,
+            layers: u32::MAX,
+            shadow_layers: u32::MAX,
         }
     }
 }

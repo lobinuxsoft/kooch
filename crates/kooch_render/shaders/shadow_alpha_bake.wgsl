@@ -28,6 +28,8 @@ struct VertexOutput {
     world_tangent: vec4<f32>,
     material_id: u32,
     flags: u32,
+    // #1220 — a surface with no instance behind it is in every layer.
+    layers: u32,
 }
 
 @vertex
@@ -48,6 +50,7 @@ fn fs_bake(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     surf.ddy_uv = vec2<f32>(0.0, 1.0 / screen.side);
     surf.material_id = screen.material_id;
     surf.flags = 0u;
+    surf.layers = 0xffffffffu;
     let shaded = surface(surface_input(surf, position.xy));
     if (SURFACE_TRANSPARENT) {
         let kept = shaded.alpha >= shaded.alpha_clip;

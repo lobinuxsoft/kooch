@@ -444,6 +444,7 @@ fn add_light(resources: &mut Resources, direction: Vec3, intensity: f32) {
             intensity,
             cast_shadows: false,
             contact_shadows: true,
+                ..Default::default()
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_quat(rotation),

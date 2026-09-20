@@ -32,7 +32,9 @@ fn reflect_fields() {
             "range",
             "radius",
             "cast_shadows",
-            "contact_shadows"
+            "contact_shadows",
+            "layers",
+            "shadow_layers"
         ]
     );
 }

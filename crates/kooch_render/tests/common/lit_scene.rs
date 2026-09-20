@@ -182,6 +182,7 @@ fn build(lights: u32, wall: bool, caster: bool, mixed: bool, r32: bool) -> Optio
                     radius: 0.1,
                     cast_shadows: false,
                     contact_shadows: false,
+                    ..Default::default()
                 })
                 .insert(GlobalTransform {
                     matrix: Mat4::from_translation(Vec3::new(x, 1.6, z)),
@@ -204,6 +205,7 @@ fn build(lights: u32, wall: bool, caster: bool, mixed: bool, r32: bool) -> Optio
                 radius: 0.1,
                 cast_shadows: true,
                 contact_shadows: false,
+                ..Default::default()
             })
             .insert(GlobalTransform {
                 matrix: Mat4::from_translation(Vec3::new(0.0, 2.0, 1.0)),

@@ -100,6 +100,10 @@ impl MeshletRenderStage {
         marker.set_halo(settings.halo);
         marker.set_reach(settings.reach);
         let sun = self.light_frame.as_ref().and_then(|(_, frame)| frame.sun());
+        let sun_shadow_layers = self
+            .light_frame
+            .as_ref()
+            .map_or(u32::MAX, |(_, frame)| frame.sun_shadow_layers());
         let slice = page_view_index(view_id);
         // 🔴 The CPU scopes above are not the instrument this track needed. Every dispatch below
         // runs on the GPU, and the frame encoder carried exactly two GPU scopes — `cull` and
@@ -157,6 +161,7 @@ impl MeshletRenderStage {
             settings,
             slice,
             sun,
+            sun_shadow_layers,
             eye,
             scene_params,
             meshlet_bg,
@@ -185,6 +190,8 @@ impl MeshletRenderStage {
         settings: PageSettings,
         slice: u32,
         sun: Option<Vec3>,
+        // What casts into that sun (#1220).
+        sun_shadow_layers: u32,
         eye: Vec3,
         scene_params: &SceneCullParams,
         meshlet_bg: &wgpu::BindGroup,
@@ -248,6 +255,7 @@ impl MeshletRenderStage {
             slice,
             eye,
             sun,
+            sun_shadow_layers,
             self.lights.uploaded(),
             self.lights.light_buffer(),
             &self.moved_casters,

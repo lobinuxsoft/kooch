@@ -428,7 +428,18 @@ editor's View panel keeps every layer while the Game panel keeps what the game's
 layer: what a camera does not draw still casts, because the shadow belongs to the light. A caster
 hidden from one camera and lit by a lamp both cameras see would otherwise lose its shadow in both.
 
-Lights and shadows by layer (#1220) and camera stacking (#1221) are the rest of it.
+A light filters by it twice, because they are two different wishes:
+
+- **`layers` — what it lights.** The test is per pixel, at the top of `inti_light_lit`, where the
+  instance's layers ride in `IntiSurface` beside its flags: one AND before anything is sampled, and
+  the froxel lists stay exactly as they were. A lamp that lights the character and not the floor is
+  this mask.
+- **`shadow_layers` — what casts into it.** Rejected in that light's own cull, so a caster the light
+  ignores is never rasterised into its map at all: `with_culling_mask` on the cascades, the spot
+  maps and the cube faces, and the same test inside `lamp_cull.wgsl` for the virtual pages, which
+  pick their casters on the GPU and have no CPU pass to filter them in.
+
+Camera stacking (#1221) is the rest of it.
 
 ### Transparent surfaces (#452)
 

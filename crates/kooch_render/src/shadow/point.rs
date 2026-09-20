@@ -40,6 +40,8 @@ pub struct PointShadowDraw {
     /// How far this light reaches, so the cache can ask which instances
     /// are inside it (#847).
     pub range: f32,
+    /// Layers that cast into this light (#1220): the mask its faces cull with.
+    pub shadow_layers: u32,
 }
 
 impl PointShadowDraw {
@@ -50,6 +52,7 @@ impl PointShadowDraw {
             eye: position,
             faces: std::array::from_fn(|face| face_view_proj(position, face, POINT_SHADOW_NEAR_Z)),
             range: source.range,
+            shadow_layers: source.shadow_layers,
         }
     }
 

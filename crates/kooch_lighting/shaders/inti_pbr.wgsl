@@ -41,8 +41,10 @@ struct IntiLight {
     // 🔴 THREE SCALARS, never a vec3: a vec3 aligns to 16 and would push the struct to 96 while
     // Rust still writes 80. Same trap the cascade descriptor documents above.
     _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
+    // Layers this light lights (#1220): a surface sharing no bit with it takes nothing from it.
+    layers: u32,
+    // What casts into this light's shadow (#1220). Read by the lamp cull, never by the shade.
+    shadow_layers: u32,
 }
 
 // `IntiLight.shadow_slot` when the light casts no shadow.

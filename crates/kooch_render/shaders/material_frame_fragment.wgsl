@@ -39,7 +39,7 @@ fn fs_material(in: FsInput) -> @location(0) vec4<f32> {
     if (!SURFACE_UNLIT) {
         radiance = inti_shade(
             surf.world_position, shaded.normal, shaded.base_color, shaded.metallic,
-            shaded.roughness, in.position.xy, surf.flags);
+            shaded.roughness, in.position.xy, surf.flags, surf.layers);
     }
     // Emissive is radiance the surface produces rather than reflects, so
     // it joins before tonemapping and ignores every light in the scene.

@@ -55,6 +55,7 @@ impl MeshletRenderStage {
             .copied()
             .unwrap_or_default();
         let sun = lights.sun();
+        let sun_shadow_layers = lights.sun_shadow_layers();
         // Spot lights keep the array alive on their own (#777): a scene lit by a torch and no sun
         // still casts, and releasing the texture because nothing directional casts would have made
         // that scene the one case where shadows silently do not exist.
@@ -172,6 +173,7 @@ impl MeshletRenderStage {
             camera,
             aspect,
             sun,
+            sun_shadow_layers,
             cascades_enabled,
             draw_cascades,
             settings.max_distance,

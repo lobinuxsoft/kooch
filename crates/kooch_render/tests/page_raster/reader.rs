@@ -195,6 +195,8 @@ fn both_expansions_emit_the_same_pairs() {
             0,
             Vec3::new(0.4, 3.0, 0.4),
             Vec3::NEG_Y,
+            // Every layer casts into the sun (#1220).
+            u32::MAX,
             &lamps,
             &lights_buffer,
             &[],

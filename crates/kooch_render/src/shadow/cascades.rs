@@ -27,6 +27,8 @@ pub struct Cascade {
     pub light_eye: Vec3,
     /// World units the `[0,1]` depth range spans.
     pub depth_extent: f32,
+    /// Layers that cast into the sun (#1220). The same on every cascade: they are one light's.
+    pub shadow_layers: u32,
 }
 
 /// Where each cascade hands over to the next.
@@ -97,6 +99,7 @@ pub fn build_cascades(
         far_depth: 0.0,
         texel_world_size: 0.0,
         depth_extent: 0.0,
+        shadow_layers: u32::MAX,
         light_eye: Vec3::ZERO,
     }; CASCADE_COUNT];
 
@@ -162,6 +165,7 @@ pub fn build_cascades(
             far_depth: slice_far,
             texel_world_size,
             depth_extent,
+            shadow_layers: u32::MAX,
             // Far enough back to stand in for a direction in the cull's
             // backface cone test, which measures from a point whatever
             // the projection is.

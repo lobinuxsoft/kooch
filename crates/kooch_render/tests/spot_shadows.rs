@@ -131,6 +131,7 @@ fn add_spot(resources: &mut Resources, cast_shadows: bool) {
             // floor for a completely different reason and this suite
             // would stop being about the shadow map.
             contact_shadows: false,
+                ..Default::default()
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_translation(SPOT_POSITION) * Mat4::from_quat(rotation),

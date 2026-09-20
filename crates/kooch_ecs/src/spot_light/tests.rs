@@ -36,6 +36,8 @@ fn reflect_fields() {
             "outer_angle",
             "cast_shadows",
             "contact_shadows",
+            "layers",
+            "shadow_layers",
         ]
     );
 }
