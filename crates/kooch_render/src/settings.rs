@@ -478,4 +478,3 @@ use choices::*;
 
 #[cfg(test)]
 mod tests;
-

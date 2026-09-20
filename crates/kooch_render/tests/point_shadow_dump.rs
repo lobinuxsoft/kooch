@@ -142,6 +142,8 @@ fn build_with(
                 radius: 0.0,
                 cast_shadows: *cast_shadows,
                 contact_shadows: contact,
+                // Every layer, lit and shadowed (#1220): this dump is about the maps, not the masks.
+                ..Default::default()
             })
             .insert(GlobalTransform {
                 matrix: Mat4::from_translation(*position),

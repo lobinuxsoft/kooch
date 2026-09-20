@@ -439,7 +439,29 @@ A light filters by it twice, because they are two different wishes:
   maps and the cube faces, and the same test inside `lamp_cull.wgsl` for the virtual pages, which
   pick their casters on the GPU and have no CPU pass to filter them in.
 
-Camera stacking (#1221) is the rest of it.
+### Camera stacking (#1221)
+
+A frame is a **list** of cameras, not one. The base — the highest-priority active camera that is not
+an overlay — owns the image: its sky, its clear, its post-process. Every camera with `overlay = true`
+is drawn after it, lowest `priority` first, and the last one is on top.
+
+Each camera of the stack is a **view of its own**: its own colour and depth attachments, its own
+culling mask, its own lens, its own temporal history — which is why an overlay gets a view that lives
+across frames rather than a fresh one per frame, or SGSR2 would never converge. `StackViews` keys
+them by camera entity and frees the view when the camera goes.
+
+Composing is the blit that was already there. The stage leaves alpha at 0 wherever nothing was drawn,
+so an overlay blended over the base keeps the base everywhere it drew nothing — no second sky, no
+clear, no depth test between the two. 🔴 The blit **discards** those empty pixels rather than writing
+them: the blend hides a wrong composite in the colour, but its depth would be wiped, and the grid,
+the gizmos and the transparents drawn afterwards test against that depth.
+
+An overlay with no base composes nothing. There is nothing under it to keep, so it would read as the
+whole image, which is not what it asked for.
+
+What it costs: one scene pass per camera. An overlay is a second cull, a second raster and a second
+shade of whatever its mask keeps — a UI layer of a handful of instances is cheap, a second full scene
+is not.
 
 ### Transparent surfaces (#452)
 

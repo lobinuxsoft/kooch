@@ -199,11 +199,13 @@ fn add_sun(resources: &mut Resources, contact_shadows: bool) {
     commands
         .spawn(resources)
         .insert(DirectionalLight {
+            // Every layer, lit and shadowed (#1220): this test is about contact shadows.
             active: true,
             color: Vec3::ONE,
             intensity: 20_000.0,
             cast_shadows: false,
             contact_shadows,
+            ..Default::default()
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_quat(rotation),
@@ -444,7 +446,7 @@ fn add_light(resources: &mut Resources, direction: Vec3, intensity: f32) {
             intensity,
             cast_shadows: false,
             contact_shadows: true,
-                ..Default::default()
+            ..Default::default()
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_quat(rotation),

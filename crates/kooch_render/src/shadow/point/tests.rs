@@ -25,6 +25,8 @@ fn source(position: Vec3, range: f32) -> PointShadowSource {
         // sort leaves them in the order the test wrote them and these
         // tests keep asking what they asked before hysteresis existed.
         importance: 1.0,
+        // Every layer casts into it (#1220): these tests are about the faces and the ranking.
+        shadow_layers: u32::MAX,
     }
 }
 
@@ -37,6 +39,7 @@ fn lamp(id: u32, importance: f32) -> PointShadowSource {
         range: 5.0,
         intensity: 1.0,
         importance,
+        shadow_layers: u32::MAX,
     }
 }
 
@@ -190,6 +193,7 @@ fn a_grid_of_lamps_fills_every_cube() {
                 range: 4.0,
                 intensity: 1000.0,
                 importance: kooch_lighting::point_shadow_importance(position, 4.0, 1000.0, eye),
+                shadow_layers: u32::MAX,
             }
         })
         .collect();

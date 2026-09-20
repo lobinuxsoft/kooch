@@ -4,10 +4,9 @@
 use kooch_core::gpu::GpuContext;
 use kooch_core::resource::Resources;
 use kooch_core::time::Time;
-use kooch_ecs::hierarchy::GlobalTransform;
-use kooch_ecs::perspective_camera::PerspectiveCamera;
-use kooch_ecs::query::{Query, filter::Without};
+use kooch_ecs::query::filter::Without;
 use kooch_render::SkyRenderPass;
+use kooch_render::camera_stack::{CameraStack, StackViews};
 use kooch_render::meshlet::{MeshletBlit, MeshletRenderStage, ViewId};
 
 /// The Game viewport's own render stats.
@@ -27,6 +26,8 @@ pub(crate) struct GameView {
     /// panel's placeholder text, so an empty Game panel says *why* it is
     /// empty instead of showing black.
     pub has_camera: bool,
+    /// One view per overlay camera (#1221), kept across frames so each keeps its own history.
+    pub stack: StackViews,
 }
 
 impl GameView {
@@ -41,6 +42,7 @@ impl GameView {
             target: ViewportTarget::new(device, egui_renderer, format, size),
             view_id: stage.create_view(device, size),
             has_camera: false,
+            stack: StackViews::default(),
         }
     }
 }
@@ -54,7 +56,8 @@ pub(crate) fn render_game_view(
     blit: &MeshletBlit,
     resources: &mut Resources,
 ) -> bool {
-    let Some(camera) = gameplay_camera(resources) else {
+    let stack = gameplay_stack(resources);
+    let Some(camera) = stack.base else {
         game.has_camera = false;
         return false;
     };
@@ -77,6 +80,18 @@ pub(crate) fn render_game_view(
     );
     // 🔴 Published under its OWN key.
     resources.insert(GameViewStats(stats));
+
+    // Each overlay into its own view, at the panel's size: the Game panel is the preview of the
+    // game, and a stack it did not compose would be the wrong preview (#1221).
+    game.stack.retain(&stack, stage);
+    for (entity, overlay) in &stack.overlays {
+        let view = game
+            .stack
+            .view_for(*entity, stage, gpu.device(), game.target.size());
+        let drawn =
+            stage.render_with_assets(view, gpu.device(), gpu.queue(), resources, overlay, aspect);
+        game.stack.mark(*entity, drawn.instances_uploaded > 0);
+    }
 
     let mut encoder = gpu
         .device()
@@ -124,6 +139,22 @@ pub(crate) fn render_game_view(
         );
     }
 
+    // The overlays over the base, lowest priority first.
+    for view in game.stack.drawn(&stack) {
+        if let (Some(color), Some(depth)) =
+            (stage.view_color_view(view), stage.view_depth_sample(view))
+        {
+            blit.blit(
+                gpu.device(),
+                &mut encoder,
+                color,
+                depth,
+                game.target.view(),
+                game.target.depth_view(),
+            );
+        }
+    }
+
     // The same post-process the View panel runs: a game view without it would be the wrong preview
     // of the game (#1201).
     super::post::apply(gpu, &mut encoder, &game.target, resources);
@@ -132,26 +163,9 @@ pub(crate) fn render_game_view(
     true
 }
 
-/// Highest-priority active camera that is not the editor's.
-fn gameplay_camera(resources: &Resources) -> Option<kooch_render::ViewCamera> {
-    let query =
-        Query::<(&PerspectiveCamera, &GlobalTransform), Without<EditorCamera>>::new(resources);
-    let mut best: Option<(i32, kooch_render::ViewCamera)> = None;
-    query.for_each(|(cam, gt)| {
-        if !cam.active {
-            return;
-        }
-        if let Some((p, _)) = best
-            && cam.priority <= p
-        {
-            return;
-        }
-        best = Some((
-            cam.priority,
-            kooch_render::ViewCamera::from_components(cam, gt),
-        ));
-    });
-    best.map(|(_, camera)| camera)
+/// The game's cameras, the editor's own left out: the View panel is where that one belongs.
+fn gameplay_stack(resources: &Resources) -> CameraStack {
+    CameraStack::read::<Without<EditorCamera>>(resources)
 }
 
 #[cfg(test)]

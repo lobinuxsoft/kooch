@@ -31,6 +31,8 @@ pub(crate) fn render_single_pass(rig: &BenchRig) {
         rig.view_proj,
         0,
         true,
+        // No masked bin: this bench is about the two-pass cull, and a bin would add a draw to it.
+        None,
     );
     rig.deferred.shade_scene(
         &rig.device,
@@ -91,6 +93,8 @@ pub(crate) fn render_two_pass(rig: &mut BenchRig, arena: &mut Vec<wgpu::BindGrou
         rig.view_proj,
         0,
         true,
+        // No masked bin: this bench is about the two-pass cull, and a bin would add a draw to it.
+        None,
     );
     rig.hiz_curr
         .build_from_depth(&rig.device, &mut enc, &rig.depth_sample_view, arena);
@@ -117,6 +121,7 @@ pub(crate) fn render_two_pass(rig: &mut BenchRig, arena: &mut Vec<wgpu::BindGrou
         rig.view_proj,
         0,
         false,
+        None,
     );
     rig.deferred.shade_scene(
         &rig.device,

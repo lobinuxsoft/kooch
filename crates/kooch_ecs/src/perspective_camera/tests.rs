@@ -12,6 +12,8 @@ fn default_values() {
     assert!(cam.active);
     // Every layer: a camera nobody told draws the scene it was pointed at (#1219).
     assert_eq!(cam.culling_mask, u32::MAX);
+    // A camera owns its image until someone says otherwise (#1221).
+    assert!(!cam.overlay);
 }
 
 #[test]
@@ -21,6 +23,15 @@ fn reflect_fields() {
     let names: Vec<&str> = fields.iter().map(|f| f.name).collect();
     assert_eq!(
         names,
-        &["active", "priority", "fov", "near", "far", "clear_color", "culling_mask"]
+        &[
+            "active",
+            "priority",
+            "fov",
+            "near",
+            "far",
+            "clear_color",
+            "culling_mask",
+            "overlay"
+        ]
     );
 }

@@ -27,6 +27,10 @@ pub struct PerspectiveCamera {
     /// the shadows are not filtered by it — those belong to the light.
     #[reflect(layers)]
     pub culling_mask: u32,
+    /// Draws over the base camera instead of owning the image (#1221). An overlay brings no sky and
+    /// no clear: where it drew nothing, the base stays. Its own `priority` orders it against the
+    /// other overlays, and an overlay with no base composes nothing.
+    pub overlay: bool,
 }
 
 impl Default for PerspectiveCamera {
@@ -39,6 +43,7 @@ impl Default for PerspectiveCamera {
             far: 1000.0,
             clear_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
             culling_mask: u32::MAX,
+            overlay: false,
         }
     }
 }

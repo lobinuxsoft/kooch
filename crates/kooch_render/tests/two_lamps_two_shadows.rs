@@ -147,6 +147,8 @@ fn build_with(
                 radius: 0.0,
                 cast_shadows: *cast_shadows,
                 contact_shadows: contact,
+                // Every layer, lit and shadowed (#1220): this test is about two lamps, not masks.
+                ..Default::default()
             })
             .insert(GlobalTransform {
                 matrix: Mat4::from_translation(*position),
