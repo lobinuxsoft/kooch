@@ -814,6 +814,61 @@ runs the stack over it, and copies the result onto the swapchain. The
 surface is configured with `COPY_DST` wherever the platform offers it.
 Without a stack, the frame goes straight to the swapchain as before.
 
+### Volumes (#1222)
+
+What the stack *is* can depend on where something stands. A `PostProcessVolume` contributes its own
+effects while a body is inside it, and the scene's `PostProcess` is the layer underneath — the look
+with nobody anywhere.
+
+- **The shape is the collider**, which must be a sensor. It is already the engine's way of saying
+  "this region", and its interaction groups already say who counts: a volume that only a player
+  triggers is a collision group, not a second filter. Unity reads its volumes' colliders the same
+  way; what neither engine uses is the *event* system for the blend.
+- **A region authors itself.** A volume with a collider needs three things to be heard — a body to
+  exist in the solver, `sensor` to overlap instead of push, `collision_events` to be reported — and
+  every one of them fails *silently* when it is missing. So the physics sync supplies all three from
+  the component being there: an entity with a `PostProcessVolume` and no `PhysicsBody` is authored
+  as a fixed sensor that reports. An entity that already has a body of its own is left alone, which
+  means a solid wall cannot also be a region: give the region its own entity.
+- **A sensor hears everything that moves.** Rapier's default collision pairs leave out
+  `KINEMATIC_FIXED`, so a fixed trigger never heard a kinematic character controller walk through
+  it. Sensors now use every pair; solid contacts keep rapier's, since their events are about being
+  pushed.
+- **The solver is the gate, not the answer.** `SensorOccupancy` holds who is inside which sensor —
+  the frames between the arrival and the departure the solver reports, which is the "stay" nothing
+  else provides — and re-measures how deep each body is once a frame. Only occupied volumes are
+  measured at all; the rest cost a bool.
+- **The editor previews it without a solver.** The editor mirrors a project's components and runs
+  no physics, so nothing would fill the occupancy there and a volume would be dead everywhere except
+  a built game — including the Game panel, which is where an author looks to see whether it works.
+  The components-only plugin measures it instead: every collider whose groups the region's would
+  interact with, tested at its origin. Optimistic by a body's width at the boundary, the same answer
+  everywhere else, and never run where a solver exists.
+- **The depth is the blend, in metres.** The extents are scaled up to meet the world rather than
+  the position scaled down to meet the shape: a unit sphere scaled by five is five metres of region,
+  and measuring in shape units made every scaled volume blend that many times too fast. Measured
+  from the shape's own centre, which is where the gizmo draws it.
+- Zero at the surface, all of the volume a `blend_distance` in,
+  smoothstepped between. 🔴 It fades **inward**, where Unity's fades outward: the sensor is what says
+  a body arrived, so the surface is the first place a weight can be asked for. Fading outward would
+  need a second, wider shape nobody authored.
+- **The fold is Unity's.** Volumes apply in `priority` order, each moving what the ones below left
+  *towards* its own value by its own weight — so a volume can turn an effect **down**, which a max
+  or an add could never do. An effect no volume mentions keeps what the scene gave it.
+- **A region is every collider under it.** The solver already builds a compound body out of a parent
+  and its descendants, so an awkward space is covered with as many shapes as it takes and the
+  deepest answers. Exact inside any one of them, conservative where two meet: overlap them and the
+  seam disappears.
+- Sphere, box and capsule are measured analytically; a **convex hull** by the distance to its
+  nearest face, which is exact and indifferent to where the mesh sits relative to its entity — the
+  reason a hull is the shape for a region nobody centred. The face normals are oriented against the
+  hull's own middle rather than trusting a winding a generated mesh never promised.
+- A trimesh is a shell with no inside to be deep in, a decomposition's seams are not its boundary,
+  and a voxel field would want a distance transform: all of them report "fully inside" from the
+  moment the solver says a body arrived. 🔴 A block's collider is `SHAPE_OWN_MESH`, which resolves
+  to a trimesh — a body entirely inside one touches no triangle, so a block room does not even
+  report an arrival. Cover it with boxes, or give it a hull built from a mesh asset.
+
 A plugin draws through the same machinery. `kooch_plugin_render` holds
 the GPU half of the plugin API — a `RenderPass` with `init` and `record`,
 the target pool behind a `Targets` trait, and `engine.add_pass(stage,

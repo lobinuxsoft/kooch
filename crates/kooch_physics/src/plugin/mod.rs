@@ -3,6 +3,7 @@
 mod compound;
 pub(super) mod events;
 mod joints;
+pub(super) mod sensors;
 mod systems;
 #[cfg(test)]
 mod tests;
@@ -107,6 +108,10 @@ impl Plugin for PhysicsComponentsPlugin {
         // an absent cache and an unfilled one have to behave the same.
         app.insert_resource(ColliderMeshCache::new());
         app.add_system(Stage::Startup, register_components);
+        // Who is inside which region, measured rather than solved: this plugin is what a host
+        // without a solver adds, and a post-process volume has to preview there too (#1222).
+        app.insert_resource(kooch_ecs::sensor_occupancy::SensorOccupancy::default());
+        app.add_system(Stage::PreUpdate, sensors::sensor_occupancy_preview_system);
     }
 
     fn name(&self) -> &str {
@@ -136,6 +141,12 @@ impl Plugin for PhysicsPlugin {
         app.add_system(
             Stage::PostPhysics,
             run_if_playing(events::drain_physics_events),
+        );
+        // After the drain, in the same stage: the arrivals it just published are this frame's.
+        app.insert_resource(kooch_ecs::sensor_occupancy::SensorOccupancy::default());
+        app.add_system(
+            Stage::PostPhysics,
+            run_if_playing(sensors::sensor_occupancy_system),
         );
     }
 

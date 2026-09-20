@@ -11,6 +11,7 @@ mod grounded;
 #[cfg(test)]
 pub(crate) mod harness;
 mod physics_debug;
+mod post_volume;
 pub(crate) mod shape_handles;
 
 pub(crate) use physics_debug::PhysicsDebugOverlay;
@@ -76,6 +77,8 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     // A shaped block's parameters, dragged rather than typed (#1150).
     registry.register::<kooch_blockmesh::BlockShape, shape_handles::ShapeHandleVisualizer>();
     registry.register::<kooch_physics::components::Collider, collider::ColliderVisualizer>();
+    registry
+        .register::<kooch_ecs::post_process_volume::PostProcessVolume, post_volume::PostVolumeVisualizer>();
     // Where the author put the centre of mass. Only the authored one —
     // the solver's own is in the project's process, which is #634.
     registry

@@ -46,8 +46,17 @@ fn with_interaction(builder: ColliderBuilder, interaction: ColliderInteraction) 
         ActiveEvents::CONTACT_FORCE_EVENTS,
         interaction.contact_force_events,
     );
+    // 🔴 A sensor listens to everything that can move (#1222). Rapier's default pairs leave out
+    // KINEMATIC_FIXED, so a fixed trigger never hears a kinematic character controller walk
+    // through it — a checkpoint that works for crates and not for the player. Solid contacts keep
+    // rapier's pairs: their events feed gameplay that is about being pushed.
+    let pairs = match interaction.sensor {
+        true => ActiveCollisionTypes::all(),
+        false => ActiveCollisionTypes::default(),
+    };
     builder
         .sensor(interaction.sensor)
+        .active_collision_types(pairs)
         .active_events(events)
         .contact_force_event_threshold(interaction.contact_force_threshold.max(0.0))
         .collision_groups(groups(interaction.collision_groups))

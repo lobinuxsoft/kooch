@@ -21,6 +21,14 @@ fn reflect_fields() {
     let names: Vec<&str> = fields.iter().map(|f| f.name).collect();
     assert_eq!(
         names,
-        &["active", "priority", "size", "near", "far", "clear_color", "culling_mask"]
+        &[
+            "active",
+            "priority",
+            "size",
+            "near",
+            "far",
+            "clear_color",
+            "culling_mask"
+        ]
     );
 }

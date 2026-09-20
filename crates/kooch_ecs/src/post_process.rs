@@ -13,6 +13,10 @@ use crate::Reflect;
 ///
 /// 🔴 One stack per scene: the effects run over the whole viewport, so the order has to be in one
 /// place to be read at a glance. Without the component, or with it off, the frame is untouched.
+///
+/// This is the layer underneath — the look with nobody anywhere. A
+/// [`PostProcessVolume`](crate::post_process_volume::PostProcessVolume) folds over it where a body
+/// stands inside one (#1222).
 #[derive(Debug, Clone, Reflect)]
 #[reflect(category = "Rendering")]
 pub struct PostProcess {

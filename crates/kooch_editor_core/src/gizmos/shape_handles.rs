@@ -402,10 +402,10 @@ impl Visualizer<BlockShape> for ShapeHandleVisualizer {
 
 mod drag;
 
-pub(crate) use drag::{ShapeHandleState, apply_shape_handles};
+use super::active_camera;
 #[cfg(test)]
 use drag::closest_along;
-use super::active_camera;
+pub(crate) use drag::{ShapeHandleState, apply_shape_handles};
 
 #[cfg(test)]
 mod tests;
