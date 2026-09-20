@@ -6,7 +6,8 @@ struct ScreenUniforms {
     material_id: u32,
     mip_bias_scale: f32,
     time: f32,
-    _pad: u32,
+    // Texels a side of the square being baked: the shadow atlas's, or the geometry trim's (#452).
+    side: f32,
 }
 
 // Only `camera_position` is read by the contract, but the name has to be `inti`.
@@ -29,8 +30,6 @@ struct VertexOutput {
     flags: u32,
 }
 
-const BAKE_SIDE: f32 = 128.0;
-
 @vertex
 fn vs_bake(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<f32> {
     let x = f32((vertex_index & 1u) << 2u) - 1.0;
@@ -44,9 +43,9 @@ fn fs_bake(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     surf.world_position = vec3<f32>(0.0);
     surf.world_normal = vec3<f32>(0.0, 1.0, 0.0);
     surf.world_tangent = vec4<f32>(1.0, 0.0, 0.0, 1.0);
-    surf.uv = position.xy / BAKE_SIDE;
-    surf.ddx_uv = vec2<f32>(1.0 / BAKE_SIDE, 0.0);
-    surf.ddy_uv = vec2<f32>(0.0, 1.0 / BAKE_SIDE);
+    surf.uv = position.xy / screen.side;
+    surf.ddx_uv = vec2<f32>(1.0 / screen.side, 0.0);
+    surf.ddy_uv = vec2<f32>(0.0, 1.0 / screen.side);
     surf.material_id = screen.material_id;
     surf.flags = 0u;
     let shaded = surface(surface_input(surf, position.xy));

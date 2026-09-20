@@ -29,6 +29,8 @@ pub struct SurfaceSource {
     pub kind: ShaderKind,
     /// Assigns `alpha_clip`: rasterised in the masked bin (#452).
     pub masked: bool,
+    /// Masks by uv and textures alone, so the cut can become geometry (#452).
+    pub still: bool,
 }
 
 /// Textures whose `.meta` changed and have to be uploaded again.
@@ -56,6 +58,17 @@ pub const DEFAULT_CAPACITY: u32 = 256;
 /// well-defined slot instead of reading uninitialised memory.
 pub const FALLBACK_MATERIAL_ID: u32 = 0;
 
+/// One number for everything a slot draws with: its parameters, its textures and its shader.
+fn stamp_of(params: &MaterialParams, packed: &PackedParams, shader: Option<Guid>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytemuck::bytes_of(params).hash(&mut hasher);
+    bytemuck::cast_slice::<f32, u8>(&packed.values).hash(&mut hasher);
+    packed.textures.hash(&mut hasher);
+    shader.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Coordinates the GPU material pool with the CPU asset storage.
 pub struct MaterialPipeline {
     pool: MaterialPool,
@@ -68,6 +81,9 @@ pub struct MaterialPipeline {
     slot_textures: Vec<[TextureRef; MAX_PARAM_TEXTURES as usize]>,
     /// Per-slot `.shader`, parallel to `slot_textures`. `None` is the default surface.
     slot_shaders: Vec<Option<Guid>>,
+    /// Per slot, a hash of what it was last registered with. The geometry trim (#452) cuts against
+    /// values, so it has to know when they move.
+    slot_stamps: Vec<u64>,
     /// Every shader a registered material names, as last loaded.
     surfaces: HashMap<Guid, SurfaceSource>,
     /// Index of the next free slot to hand out. Starts at 1 because
@@ -99,6 +115,7 @@ impl MaterialPipeline {
             registry: HashMap::new(),
             slot_textures,
             slot_shaders: vec![None],
+            slot_stamps: vec![0],
             surfaces: HashMap::new(),
             next_slot: 1,
             capacity,
@@ -166,11 +183,13 @@ impl MaterialPipeline {
         let params = material.to_params();
         let packed = self.pack(material);
         let refs = packed.textures;
+        let stamp = stamp_of(&params, &packed, material.shader);
         if let Some(&slot) = self.registry.get(&guid) {
             self.pool.write(queue, slot, &params);
             self.pool.write_values(queue, slot, &packed.values);
             self.slot_textures[slot as usize] = refs;
             self.slot_shaders[slot as usize] = material.shader;
+            self.slot_stamps[slot as usize] = stamp;
             tracing::debug!(
                 target: "kooch_render::material::sync",
                 guid = %guid,
@@ -200,6 +219,7 @@ impl MaterialPipeline {
         );
         self.slot_textures.push(refs);
         self.slot_shaders.push(material.shader);
+        self.slot_stamps.push(stamp);
         tracing::debug!(
             target: "kooch_render::material::sync",
             guid = %guid,
@@ -231,6 +251,12 @@ impl MaterialPipeline {
             .get(slot as usize)
             .copied()
             .unwrap_or(self.slot_textures[0])
+    }
+
+    /// A hash of the values a slot was registered with: the geometry trim (#452) cuts against them
+    /// and rebuilds when they move.
+    pub fn slot_stamp(&self, slot: u32) -> u64 {
+        self.slot_stamps.get(slot as usize).copied().unwrap_or(0)
     }
 
     /// The custom surface a slot shades with, or `None` for the default one — including a slot
@@ -343,6 +369,7 @@ impl MaterialPipeline {
                 params_wgsl: shader.params_wgsl().into(),
                 kind: shader.kind,
                 masked: shader.masked(),
+                still: shader.masks_still(),
             },
         );
     }
@@ -404,6 +431,7 @@ impl MaterialPipeline {
                     params_wgsl: shader.params_wgsl().into(),
                     kind: shader.kind,
                     masked: shader.masked(),
+                    still: shader.masks_still(),
                 },
             );
         }

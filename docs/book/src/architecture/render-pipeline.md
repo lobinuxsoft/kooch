@@ -482,8 +482,33 @@ surface and drops what falls below the clip before `atomicMax`, so a cut fragmen
 `transparent_lit` answers a coverage of -1 there as well, which the tail and the sorted fallback
 discard.
 
-Planned (#452): an alpha that provably depends on uv and textures only becomes geometry — the mesh
-cut along the contour, opaque, with nothing left to discard.
+### Static cuts as geometry (#452)
+
+A cut that cannot move is not worth a pass. `Shader::masks_still` answers whether the source
+mentions `input.time`, `input.world_position`, `input.camera_position` or `input.frag_coord`;
+without them the cut is a function of uv and textures alone, and `AlphaTrim` turns it into geometry
+once per (mesh, material, values):
+
+- **Settle** — the pair has to ask with the same `MaterialPipeline::slot_stamp` for 8 frames, so a
+  dragged slider never bakes. One pair a frame, in `sync_assets_to_gpu`, before the generated drain
+  that uploads what it publishes.
+- **Bake** — the shadow bake's own frame (`shadow_alpha_bake.wgsl`, its square now a uniform) over
+  256², read back to the CPU. 🔴 The readback blocks: it belongs to the asset step, and 64 KiB once
+  per pair is what it costs.
+- **Contour** — `contour` (a d3-contour port) walks marching squares at 0.5, `geo` simplifies under
+  half a texel, which is as fine as the bake could see.
+- **Cut** — each LOD 0 triangle is classified against the mask by its uv bounds: all kept, all gone,
+  or clipped against the coverage with `geo`'s boolean ops and triangulated again by earcut. New
+  corners interpolate position and normal across the source triangle; pieces are rewound to the
+  triangle they came from, because earcut hands back its own winding and the raster culls back
+  faces. Bit-equal vertices weld, then `build_meshlets_lod_chain` rebuilds the chain.
+- **Draw** — the cut mesh is published as a `GeneratedMeshes` entry and the scene walk swaps it in
+  for that (mesh, material) pair, with `INSTANCE_TRIMMED` set: `MaskedRaster::assign` leaves it to
+  the opaque draw, and the shadow rasters read its material as `SOLID_CASTER` so the geometry casts
+  its own shape instead of sampling the coverage again.
+
+A pair that cannot be cut — a tiled uv, a mesh generated rather than loaded, an empty cut — is
+remembered as refused and keeps the per-pixel raster. Nothing is ever both skipped and undrawn.
 
 ### After the shade: rate, history, and the tonemap
 
@@ -558,6 +583,8 @@ branch on a single `u32`. `Off` is the production path.
 | `LightsPerPixel` | How many lights the pixel actually evaluated. Cost becomes a property of *where the pixel is*, which no pass timing can show — `raster + shade` is one number for the whole screen. 🔴 A flat maximum means the frame is **not clustering**: every light, every pixel |
 | `PointShadowFactor` | One point light's cube map answering for itself — no BRDF, no cosine, no exposure, no second light. Magenta: no casting lamp. Blue: past its `range`. Grey ramp: the factor |
 | `PointCubeFaces` | The cube map itself, six faces in a 3×2 grid (+X, −X, +Y, −Y, +Z, −Z). Dark blue is *nothing recorded*, which is what an occluder culled out of the map looks like |
+| `WireframeOver` | The same edges over the shaded frame, so the mesh is read against what it is drawing. Drawn after the tonemap on the R64 path and inside the shade on the R32 one, and the only debug view that keeps the production frame underneath |
+| `Wireframe` | Every triangle's edges, over a dark plate. A pixel whose right or lower neighbour carries another `(slot, triangle)` is an edge, so it costs two taps on the visibility buffer and no reconstruction. What a LOD or a trimmed mesh (#452) actually rasterises, in the only unit that matters: pixels of line |
 
 The last three exist because *"the shadow is not there"* is four faults
 wearing one pixel — no lamp near this point casts, the point is past the
@@ -570,6 +597,11 @@ renderer computed `normal * 0.5 + 0.5` and multiplied by albedo, which is
 why a scene with lights and a scene without them rendered identically.
 It survives as a debug view because it is a genuinely useful look at the
 geometry — it just stopped being what you get by default.
+
+The colorize views (the ids, the heatmaps, the passthrough, the wireframe) draw
+over the window while reading a render-sized visibility buffer, so the pass
+stretches between the two sizes. Reading one to one left them in a corner
+whenever the render scale was under 100%.
 
 The atomic-counter modes need `TEXTURE_ATOMIC`; the editor's dropdown
 hides what the adapter cannot run rather than offering a mode that

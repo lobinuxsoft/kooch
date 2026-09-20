@@ -20,7 +20,8 @@ const MASKED_LAYER: u32 = 1 << 31;
 /// Material slots the layer table covers, as the material pool holds.
 const MATERIAL_SLOTS: u64 = 256;
 
-const BAKE_FRAME: &str = include_str!("../../shaders/shadow_alpha_bake.wgsl");
+/// The bake's own frame, also composed by the geometry trim (#452).
+pub(crate) const BAKE_FRAME: &str = include_str!("../../shaders/shadow_alpha_bake.wgsl");
 const SAMPLE: &str = include_str!("../../shaders/shadow_alpha.wgsl");
 
 /// The sampling half, with its bind group at `group`.
@@ -28,13 +29,26 @@ pub fn shadow_alpha_shader(group: u32) -> String {
     SAMPLE.replace("{{ALPHA_GROUP}}", &group.to_string())
 }
 
+/// What one bake draws: the material, and how wide its square is this time — the shadows take
+/// [`ALPHA_SIDE`], the geometry trim (#452) its own.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct BakeScreen {
+pub(crate) struct BakeScreen {
     material_id: u32,
     mip_bias_scale: f32,
     time: f32,
-    _pad: u32,
+    side: f32,
+}
+
+impl BakeScreen {
+    pub(crate) fn new(material_id: u32, time: f32, side: f32) -> Self {
+        Self {
+            material_id,
+            mip_bias_scale: 1.0,
+            time,
+            side,
+        }
+    }
 }
 
 /// The atlas, the table naming each material's layer, and the passes that fill them.
@@ -304,12 +318,7 @@ impl ShadowAlpha {
                 queue.write_buffer(
                     &self.screen,
                     layer as u64 * self.screen_stride,
-                    bytemuck::bytes_of(&BakeScreen {
-                        material_id: slot,
-                        mip_bias_scale: 1.0,
-                        time,
-                        _pad: 0,
-                    }),
+                    bytemuck::bytes_of(&BakeScreen::new(slot, time, ALPHA_SIDE as f32)),
                 );
                 let textures = materials
                     .texture_pool()

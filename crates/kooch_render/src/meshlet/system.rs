@@ -14,6 +14,7 @@ use kooch_ecs::query::Query;
 use super::asset::MeshletMesh;
 use super::pool::{GlobalMeshPool, MeshHandle};
 use super::scene::{LOD_FORCE_NONE, MeshInstance};
+use super::trim::{AlphaTrim, TrimPair};
 
 /// Owns the CPU-side state that bridges the ECS to the meshlet
 /// pipeline: the global mesh pool + a registry of which assets
@@ -22,6 +23,8 @@ use super::scene::{LOD_FORCE_NONE, MeshInstance};
 pub struct MeshletPipeline {
     pool: GlobalMeshPool,
     registry: HashMap<Guid, MeshHandle>,
+    /// Which masked pairs draw a cut mesh instead of discarding per pixel (#452).
+    pub trim: AlphaTrim,
 }
 
 impl MeshletPipeline {
@@ -80,6 +83,49 @@ impl MeshletPipeline {
         seen.into_iter().collect()
     }
 
+    /// Every visible (mesh, material) whose shader masks by uv alone (#452), each once.
+    pub fn collect_trim_pairs(&self, resources: &Resources) -> Vec<TrimPair> {
+        let Some(materials) = resources.get::<crate::material::MaterialPipeline>() else {
+            return Vec::new();
+        };
+        let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
+        let mut out: Vec<TrimPair> = Vec::new();
+        query.for_each(|(renderer, _)| {
+            let (Some(mesh), Some(material)) = (renderer.mesh, renderer.material) else {
+                return;
+            };
+            let known = out
+                .iter()
+                .any(|pair| pair.mesh == mesh && pair.material == material);
+            if !renderer.visible || known || self.lookup(mesh).is_none() {
+                return;
+            }
+            let Some(slot) = materials.lookup(material) else {
+                return;
+            };
+            // Transparent is left out on purpose: its cut region would become geometry, but its
+            // shadow dithers by alpha and a trimmed caster casts solid.
+            let cuttable = |surface: &crate::material::SurfaceSource| {
+                surface.masked
+                    && surface.still
+                    && surface.kind != crate::material::ShaderKind::Transparent
+            };
+            if !materials
+                .slot_surface(slot)
+                .is_some_and(|(_, surface)| cuttable(surface))
+            {
+                return;
+            }
+            out.push(TrimPair {
+                mesh,
+                material,
+                slot,
+                stamp: materials.slot_stamp(slot),
+            });
+        });
+        out
+    }
+
     /// Walks `Query<&MeshRenderer, &GlobalTransform>` from the ECS world (`resources`) and returns
     /// the per-frame `MeshInstance` slice the scene cull dispatch should consume.
     pub fn collect_scene_instances(&self, resources: &Resources) -> Vec<MeshInstance> {
@@ -115,8 +161,14 @@ impl MeshletPipeline {
                 Some(mp) => mp.lookup_or_fallback(renderer.material),
                 None => crate::material::FALLBACK_MATERIAL_ID,
             };
-            let mut instance =
-                MeshInstance::new(transform.matrix, mesh_handle.mesh_id, material_id);
+            // The static cut, already in the geometry (#452). Until one is built the mesh draws as
+            // it was, masked, so a pair that cannot be cut is never left undrawn.
+            let cut = renderer
+                .material
+                .and_then(|material| self.trim.mesh_for(guid, material))
+                .and_then(|trimmed| self.lookup(trimmed));
+            let mesh_id = cut.unwrap_or(mesh_handle).mesh_id;
+            let mut instance = MeshInstance::new(transform.matrix, mesh_id, material_id);
             if let Some(force_level) = lod_force_lookup.get(&entity).copied() {
                 instance.lod_force_level = force_level as i32;
             } else {
@@ -130,6 +182,9 @@ impl MeshletPipeline {
             };
             if !renderer.cast_shadows {
                 instance.flags |= crate::meshlet::scene::INSTANCE_CASTS_NO_SHADOW;
+            }
+            if cut.is_some() {
+                instance.flags |= crate::meshlet::scene::INSTANCE_TRIMMED;
             }
             let see_through = material_pipeline
                 .as_deref()

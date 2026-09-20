@@ -79,6 +79,16 @@ fn cs_shade(@builtin(global_invocation_id) gid: vec3<u32>) {
     // texture over whatever was rendered before (sky / clear), so
     // pixels untouched by any meshlet must not overwrite it.
     var color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    // Wireframe (31) reads the buffer alone, background included: the silhouette is an edge too.
+    if (screen.debug_mode == 31u) {
+        let edge = on_edge(vec2<i32>(pixel));
+        if (packed != 0u || edge) {
+            let line = select(vec3<f32>(0.05), vec3<f32>(0.5, 1.0, 0.6), edge);
+            color = vec4<f32>(line, 1.0);
+        }
+        textureStore(color_out, vec2<i32>(i32(pixel.x), i32(pixel.y)), color);
+        return;
+    }
     if (packed != 0u) {
         let meshlet_id = (packed >> 7u) - 1u;
         let tri_idx = packed & 0x7Fu;
@@ -101,6 +111,20 @@ fn cs_shade(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(color_out, vec2<i32>(i32(pixel.x), i32(pixel.y)), color);
 }
 
+// The `(slot, triangle)` a pixel belongs to, clamped at the edges of the frame.
+fn triangle_at(pixel: vec2<i32>) -> u32 {
+    let size = vec2<i32>(screen.size);
+    let at = clamp(pixel, vec2<i32>(0), size - vec2<i32>(1));
+    return textureLoad(vis_buffer, vec2<u32>(at), 0).r;
+}
+
+// Whether the pixel sits on a triangle's edge: a neighbour carrying another triangle, or none.
+fn on_edge(pixel: vec2<i32>) -> bool {
+    let mine = triangle_at(pixel);
+    return mine != triangle_at(pixel + vec2<i32>(1, 0))
+        || mine != triangle_at(pixel + vec2<i32>(0, 1));
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= screen.size.x || gid.y >= screen.size.y) {
@@ -110,6 +134,16 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
     let packed = textureLoad(vis_buffer, pixel, 0).r;
 
     var color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    // Wireframe (31) reads the buffer alone, background included: the silhouette is an edge too.
+    if (screen.debug_mode == 31u) {
+        let edge = on_edge(vec2<i32>(pixel));
+        if (packed != 0u || edge) {
+            let line = select(vec3<f32>(0.05), vec3<f32>(0.5, 1.0, 0.6), edge);
+            color = vec4<f32>(line, 1.0);
+        }
+        textureStore(color_out, vec2<i32>(i32(pixel.x), i32(pixel.y)), color);
+        return;
+    }
     if (packed != 0u) {
         let visible_slot = (packed >> 7u) - 1u;
         let tri_idx = packed & 0x7Fu;
@@ -170,5 +204,9 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
         color = vec4<f32>(rgb, 1.0);
     }
 
+    // Wireframe over (32): the frame it just shaded, with the triangle edges drawn on it.
+    if (screen.debug_mode == 32u && on_edge(vec2<i32>(pixel))) {
+        color = vec4<f32>(0.5, 1.0, 0.6, 1.0);
+    }
     textureStore(color_out, vec2<i32>(i32(pixel.x), i32(pixel.y)), color);
 }

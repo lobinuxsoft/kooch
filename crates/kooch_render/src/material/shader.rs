@@ -134,6 +134,11 @@ impl Shader {
         masks(&self.source)
     }
 
+    /// Whether its cut reads uv and textures alone, and so can be baked into geometry (#452).
+    pub fn masks_still(&self) -> bool {
+        masks_still(&self.source)
+    }
+
     /// The WGSL the engine composes ahead of the source: the kind's glue, `surface_params` and
     /// `surface_texture_dims`.
     pub fn params_wgsl(&self) -> String {
@@ -196,6 +201,24 @@ impl std::error::Error for ShaderParseError {}
 
 #[cfg(test)]
 mod tests;
+
+/// What a cut that can be baked never reads: where the surface is, who looks at it, when.
+const MOVING_INPUTS: [&str; 4] = [
+    "input.time",
+    "input.world_position",
+    "input.camera_position",
+    "input.frag_coord",
+];
+
+/// Whether `source` masks by uv and textures alone (#452). Conservative: a mention anywhere refuses,
+/// even where the alpha itself never reads it.
+pub fn masks_still(source: &str) -> bool {
+    masks(source)
+        && !source.lines().any(|line| {
+            let code = line.split("//").next().unwrap_or_default();
+            MOVING_INPUTS.iter().any(|input| code.contains(input))
+        })
+}
 
 /// Whether `source`'s code, outside comments, assigns an output's `alpha_clip`.
 pub fn masks(source: &str) -> bool {

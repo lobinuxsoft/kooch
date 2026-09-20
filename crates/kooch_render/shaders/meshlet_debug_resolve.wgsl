@@ -2,9 +2,15 @@
 // two-pass migration).
 
 struct ScreenUniforms {
+    // The visibility buffer's own size.
     size: vec2<u32>,
-    material_id: u32,
+    // The image this pass covers. Larger than `size` whenever the render is scaled, and the pass
+    // stretches between them — a view that read the buffer one to one filled a corner.
+    output: vec2<u32>,
     debug_mode: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 @group(0) @binding(0) var vbuf64: texture_storage_2d<r64uint, read>;
@@ -46,9 +52,43 @@ fn density_heatmap(t: f32) -> vec3<f32> {
     return vec3<f32>(r, g, b);
 }
 
+// The visibility-buffer texel an output pixel stands over.
+fn vbuf_at(pixel: vec2<i32>) -> vec2<u32> {
+    let scale = vec2<f32>(screen.size) / vec2<f32>(screen.output);
+    let at = vec2<i32>(floor(vec2<f32>(pixel) * scale));
+    return vec2<u32>(clamp(at, vec2<i32>(0), vec2<i32>(screen.size) - vec2<i32>(1)));
+}
+
+// The `(slot, triangle)` the pixel belongs to, or 0 where nothing was rasterised.
+fn triangle_at(pixel: vec2<i32>) -> u32 {
+    return u32(textureLoad(vbuf64, vbuf_at(pixel)).x);
+}
+
+// Whether the pixel sits on a triangle's edge: a neighbour carrying another triangle, or none.
+fn on_edge(pixel: vec2<i32>) -> bool {
+    let mine = triangle_at(pixel);
+    let right = triangle_at(pixel + vec2<i32>(1, 0));
+    let down = triangle_at(pixel + vec2<i32>(0, 1));
+    return mine != right || mine != down;
+}
+
+const WIREFRAME: u32 = 31u;
+const WIREFRAME_OVER: u32 = 32u;
+
 @fragment
 fn fs_debug(in: FsInput) -> @location(0) vec4<f32> {
-    let pixel = vec2<u32>(in.position.xy);
+    let at = vec2<i32>(in.position.xy);
+    let pixel = vbuf_at(at);
+    let wire = screen.debug_mode == WIREFRAME || screen.debug_mode == WIREFRAME_OVER;
+    if (wire) {
+        // The silhouette is an edge as much as any seam between two triangles.
+        if (on_edge(at)) {
+            return vec4<f32>(0.5, 1.0, 0.6, 1.0);
+        }
+        // Over the scene: nothing but the lines. Alone: a dark plate under them.
+        let plate = f32(screen.debug_mode == WIREFRAME);
+        return vec4<f32>(vec3<f32>(0.05) * plate, plate);
+    }
     let packed = textureLoad(vbuf64, pixel).x;
     if (packed == 0lu) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);

@@ -1,6 +1,6 @@
 //! Sun shadows — cascaded shadow maps (#476).
 
-mod alpha;
+pub(crate) mod alpha;
 mod atlas;
 mod cascades;
 mod cube;

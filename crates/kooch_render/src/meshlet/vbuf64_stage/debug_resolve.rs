@@ -4,16 +4,32 @@ use bytemuck::bytes_of;
 
 use crate::meshlet::dispatcher::MeshletCull;
 
-use super::{DEFERRED_COLOR_FORMAT, ScreenUbo, VBUF64_FORMAT};
+use super::{DEFERRED_COLOR_FORMAT, VBUF64_FORMAT};
+
+/// What the pass reads: the visibility buffer's own size, the image it covers, and the view. The
+/// two sizes differ whenever the render is scaled, and the pass stretches between them.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct DebugUbo {
+    size: [u32; 2],
+    output: [u32; 2],
+    debug_mode: u32,
+    _pad: [u32; 3],
+}
 
 /// True for debug modes that fully replace shading with a colorized visualization (vs modes that
 /// keep the normal look and only change culling or add the reject overlay).
 pub(super) fn is_colorize_mode(debug_mode: u32) -> bool {
-    matches!(debug_mode, 1 | 2 | 3 | 4 | 7)
+    crate::meshlet::debug::MeshletDebugMode::all_implemented()
+        .iter()
+        .find(|mode| mode.as_u32() == debug_mode)
+        .is_some_and(|mode| mode.colorizes())
 }
 
 pub(super) struct DebugResolve {
     pipeline: wgpu::RenderPipeline,
+    /// The same pass blended over a finished image, for the views that draw on top of the scene.
+    overlay: wgpu::RenderPipeline,
     bgl: wgpu::BindGroupLayout,
     screen_buffer: wgpu::Buffer,
 }
@@ -46,7 +62,7 @@ impl DebugResolve {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: std::num::NonZeroU64::new(16),
+                        min_binding_size: std::num::NonZeroU64::new(32),
                     },
                     count: None,
                 },
@@ -78,44 +94,52 @@ impl DebugResolve {
             bind_group_layouts: &[Some(&bgl)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("meshlet_debug_resolve_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_fullscreen"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_debug"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: DEFERRED_COLOR_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let build = |label, blend| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_fullscreen"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_debug"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: DEFERRED_COLOR_FORMAT,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let pipeline = build("meshlet_debug_resolve_pipeline", None);
+        let overlay = build(
+            "meshlet_debug_overlay_pipeline",
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+        );
 
         let screen_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_debug_resolve_screen_ubo"),
-            size: std::mem::size_of::<ScreenUbo>() as u64,
+            size: std::mem::size_of::<DebugUbo>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         Self {
             pipeline,
+            overlay,
             bgl,
             screen_buffer,
         }
@@ -134,21 +158,18 @@ impl DebugResolve {
         density_view: &wgpu::TextureView,
         cull: &MeshletCull,
         screen_size: (u32, u32),
+        output_size: (u32, u32),
         debug_mode: u32,
+        over: bool,
     ) {
         queue.write_buffer(
             &self.screen_buffer,
             0,
-            bytes_of(&ScreenUbo {
+            bytes_of(&DebugUbo {
                 size: [screen_size.0, screen_size.1],
-                material_id: 0,
+                output: [output_size.0.max(1), output_size.1.max(1)],
                 debug_mode,
-                shading_rate: 1,
-                // No bias: this pass does not sample material textures.
-                mip_bias_scale: 1.0,
-                // This pass runs no surface body, so nothing here reads the clock.
-                time: 0.0,
-                _pad: [0; 1],
+                _pad: [0; 3],
             }),
         );
 
@@ -182,7 +203,11 @@ impl DebugResolve {
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    // An overlay keeps the image it draws over; a colorize view owns the frame.
+                    load: match over {
+                        true => wgpu::LoadOp::Load,
+                        false => wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    },
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -191,7 +216,10 @@ impl DebugResolve {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(match over {
+            true => &self.overlay,
+            false => &self.pipeline,
+        });
         pass.set_bind_group(0, &bg, &[]);
         pass.draw(0..3, 0..1);
     }
