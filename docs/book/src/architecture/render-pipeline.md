@@ -456,8 +456,18 @@ clear, no depth test between the two. 🔴 The blit **discards** those empty pix
 them: the blend hides a wrong composite in the colour, but its depth would be wiped, and the grid,
 the gizmos and the transparents drawn afterwards test against that depth.
 
+🔴 **Alpha is coverage, not opacity**, and every pass that rewrites colour has to carry it: the
+tonemap, TAA and RCAS already did, SGSR 2 wrote 1.0 and an upscaled overlay composed as an opaque
+black plate with its own objects on it — the base gone. It now takes the coverage from *this* frame's
+input, never from the history, which would ghost a hole into the image.
+
 An overlay with no base composes nothing. There is nothing under it to keep, so it would read as the
 whole image, which is not what it asked for.
+
+A virtual camera drives the camera carrying a [`CameraBrain`], and where a scene names none, the
+highest-priority active camera **that is not an overlay**. "Highest priority" alone was the rule
+while a frame was one camera; with a stack it hands the rig to whatever overlay outranks the base.
+An overlay that wants its own rig — a weapon camera — says so with a brain of its own.
 
 What it costs: one scene pass per camera. An overlay is a second cull, a second raster and a second
 shade of whatever its mask keeps — a UI layer of a handful of instances is cheap, a second full scene

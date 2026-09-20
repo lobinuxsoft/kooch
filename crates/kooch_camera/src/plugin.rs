@@ -13,6 +13,7 @@ use kooch_ecs::entity::Entity;
 use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::transform::Transform;
 
+use crate::brain::CameraBrain;
 use crate::target::CameraTarget;
 use crate::virtual_camera::{
     INACTIVE_ALWAYS, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera, seed_reference,
@@ -58,6 +59,7 @@ impl Plugin for CameraComponentsPlugin {
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                 registry.register_cpu_reflected::<VirtualCamera>();
                 registry.register_cpu_reflected::<CameraTarget>();
+                registry.register_cpu_reflected::<CameraBrain>();
             }
         });
     }
@@ -217,6 +219,8 @@ fn camera_pose(resources: &Resources, camera: Entity) -> Option<(Vec3, glam::Qua
 
 #[cfg(test)]
 mod blend_tests;
+#[cfg(test)]
+mod brain_tests;
 
 /// Slerp along the shorter arc: `q` and `-q` are one rotation, and without matching them a 1°
 /// handover can roll 359°.
@@ -376,8 +380,13 @@ fn elect(plan: &[Pose]) -> Option<(Entity, &Pose)> {
         .map(|pose| (pose.entity, pose))
 }
 
-/// The camera the elected vcam drives: the highest-priority active one, the renderer's own rule. A
-/// vcam that is itself a camera drives itself.
+/// The camera the elected vcam drives: the one carrying a live [`CameraBrain`], and where a scene
+/// names none, the highest-priority active camera that is not an overlay. A vcam that is itself a
+/// camera drives itself.
+///
+/// 🔴 Overlays are out of the fallback (#1221). "Highest priority" was the renderer's own rule
+/// while a frame was one camera; with a stack it hands the rig to whatever overlay outranks the
+/// base, and the base stops following anything.
 fn rendering_camera(resources: &Resources, winner: Entity) -> Option<Entity> {
     let registry = resources.get::<ComponentRegistry>()?;
     let Some(cameras) = registry.get_cpu::<PerspectiveCamera>() else {
@@ -385,9 +394,21 @@ fn rendering_camera(resources: &Resources, winner: Entity) -> Option<Entity> {
         // there is to move.
         return Some(winner);
     };
+    let brains = registry.get_cpu::<CameraBrain>();
+    let named = |entity: &Entity| {
+        brains.is_some_and(|brains| brains.get(*entity).is_some_and(|brain| brain.enabled))
+    };
+    let any_brain = cameras.iter().any(|(entity, _)| named(entity));
     cameras
         .iter()
-        .filter(|(_, cam)| cam.active)
+        .filter(|(entity, cam)| {
+            cam.active
+                && if any_brain {
+                    named(entity)
+                } else {
+                    !cam.overlay
+                }
+        })
         .min_by_key(|(entity, cam)| (-cam.priority, entity.index()))
         .map(|(entity, _)| *entity)
         .or(Some(winner))

@@ -14,6 +14,7 @@ use kooch_ecs::hierarchy::global_transform::GlobalTransform;
 use kooch_ecs::mesh_renderer::MeshRenderer;
 use kooch_render::VIEWPORT_DEPTH_FORMAT;
 use kooch_render::meshlet::{MeshletBlit, ViewId};
+use kooch_render::quality::{ShadingSettings, TemporalSettings, UpscaleTechnique};
 
 /// A block of the rig's own material between the camera and the floor, on `layers`: big enough that
 /// an image missing it is not a matter of a few pixels.
@@ -52,7 +53,30 @@ struct Composed {
 /// Renders `base_mask` into the primary view and `overlay_mask` into a second one, then composes
 /// base-then-overlay the way the frame does.
 fn compose(base_mask: u32, overlay_mask: u32) -> Option<Composed> {
+    composed(base_mask, overlay_mask, None)
+}
+
+/// The same, through `upscale` — which is how a project ships, and where the coverage the composite
+/// reads is easiest to lose.
+fn composed(
+    base_mask: u32,
+    overlay_mask: u32,
+    upscale: Option<TemporalSettings>,
+) -> Option<Composed> {
     let mut r: Rig = rig(2, true)?;
+    if let Some(temporal) = upscale {
+        r.resources.insert(temporal);
+        // What a project publishes, and what a view created mid-session reads: the per-view compute
+        // flag is set from this every frame, and a rig that never published it leaves a late view on
+        // the fragment path.
+        r.resources.insert(ShadingSettings {
+            compute: true,
+            ..Default::default()
+        });
+        // The first frame records the scale; the resize is what turns it into a smaller buffer.
+        common::lit_scene::render(&mut r, true);
+        r.stage.resize(&r.device, (SIZE, SIZE));
+    }
     // The block is on layer 1; the floor, wall and lights are on layer 0.
     block(&mut r, 0b10);
     r.camera.culling_mask = base_mask;
@@ -317,5 +341,43 @@ fn an_empty_overlay_changes_nothing() {
     assert_eq!(
         moved, 0,
         "the overlay wiped the depth of {moved} pixels where it drew nothing",
+    );
+}
+
+/// 🔴 The configuration a project actually ships: SGSR2 at half scale. The upscaler used to write
+/// alpha 1 over the whole image, and an overlay composed from that is an opaque black plate with
+/// its own objects on it — the base gone. Coverage has to survive every pass that rewrites colour.
+#[test]
+fn an_upscaled_overlay_keeps_the_base() {
+    let upscale = TemporalSettings {
+        technique: UpscaleTechnique::Sgsr2,
+        render_scale: 50,
+        sharpening: 50,
+    };
+    let Some(composed) = composed(0b01, 0b10, Some(upscale)) else {
+        eprintln!("no R64-capable adapter; skipping");
+        return;
+    };
+    let lit = composed
+        .base
+        .color
+        .chunks_exact(4)
+        .zip(composed.stacked.color.chunks_exact(4))
+        .filter(|(base, _)| base[0] as u32 + base[1] as u32 + base[2] as u32 > 30);
+    let (kept, shown) = lit.fold((0usize, 0usize), |(kept, shown), (base, stacked)| {
+        (kept + usize::from(base[..3] == stacked[..3]), shown + 1)
+    });
+    assert!(shown > 0, "the base drew nothing to keep");
+    // 🔴 Both halves, or the test is vacuous: an overlay that composed nothing at all would keep
+    // every pixel of the base and prove nothing about coverage.
+    let added = differing(&composed.base.color, &composed.stacked.color);
+    let pixels = composed.base.color.len() / 4;
+    assert!(
+        added * 50 > pixels,
+        "the upscaled overlay changed {added} pixels of {pixels}: it composed nothing",
+    );
+    assert!(
+        kept * 2 > shown,
+        "only {kept} of the base's {shown} lit pixels survived an upscaled overlay",
     );
 }

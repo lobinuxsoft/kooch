@@ -255,7 +255,14 @@ fn fs_upscale(in: Varyings) -> @location(0) vec4<f32> {
     const EPSILON: f32 = 1.192e-07;
     let alpha = clamp(upsampled.w / max(EPSILON, base_alpha + upsampled.w) + params.reset, 0.0, 1.0);
 
+    // 🔴 Alpha is coverage, not opacity — the same contract `rcas.wgsl` and `taa.wgsl` keep, and
+    // what the composite reads to tell a shaded pixel from the background (#1221). Writing 1.0 here
+    // made an upscaled overlay camera paint opaque black over the base. Taken from THIS frame's
+    // input: `upsampled.w` is an accumulation weight, and the history's alpha would ghost a hole.
+    let limit = vec2<i32>(params.render_size) - vec2<i32>(1);
+    let coverage = textureLoad(input_color, clamp(input_pos, vec2<i32>(0), limit), 0).a;
+
     // Back to linear radiance: the tonemap downstream expects it, and so
     // does the next frame reading this as its history.
-    return vec4<f32>(expand(mix(history, upsampled.xyz, alpha)), 1.0);
+    return vec4<f32>(expand(mix(history, upsampled.xyz, alpha)), coverage);
 }
