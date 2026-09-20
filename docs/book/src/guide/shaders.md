@@ -365,6 +365,13 @@ The menu groups the nodes the way the panels do:
   **Around a turn:** `PolarCoordinates` gives the angle on **y**, in 0..1 for a full turn, so a
   noise read through it tiles with `tiling = (0, n)` — the radius stays open and the angle comes
   back to itself after `n` cells. Without it the turn shows a cut where the angle wraps.
+
+  🔴 The tiled axis has to **arrive spanning 0..1**: the period counts cells over that range, so
+  anything upstream that scales it — polar's own *length scale*, a **Tiling** node, a **Multiply** —
+  leaves the period closing somewhere other than the edge, and the seam comes back. Set that scale
+  to 1 and ask for the density with **tiling** instead. And the value the frame reads is the
+  **material's**, not the node's: a parameter node holds the default a new material starts from,
+  while one that already exists keeps what it was registered with until the Inspector changes it.
 - **UV** nodes take a coordinate and give one back, to feed a Texture, a noise or a shape. The four
   distortions work around a **centre** and, left unwired, read the mesh's uv around its middle (0.5):
   - **Polar Coordinates** gives **radius** (distance from the centre × 2 × *radial scale*) and
