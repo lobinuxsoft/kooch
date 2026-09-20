@@ -7,8 +7,9 @@ use kooch_ecs::component::Component;
 /// "which camera is this rig for": a scene with a base camera and an overlay has two, and picking
 /// the highest-priority one is a guess that changes the moment an overlay outranks the base.
 ///
-/// With no brain anywhere the elected vcam falls back to the highest-priority active camera that is
-/// not an overlay, so a scene authored before this keeps moving.
+/// 🔴 Required. A scene where no camera carries an enabled brain is driven by nothing, and the rig
+/// says so once in the log rather than moving a camera nobody pointed it at. Several brains order by
+/// the camera's `priority`.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Camera")]
 pub struct CameraBrain {

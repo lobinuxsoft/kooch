@@ -38,20 +38,16 @@ fn world(cameras: &[(i32, bool, Option<bool>)]) -> (Resources, Vec<Entity>) {
     (resources, entities)
 }
 
-/// 🔴 The bug camera stacking introduced: "highest priority" was the renderer's own rule while a
-/// frame was one camera. An overlay that outranks the base took the rig, and the base stopped
-/// following its target — the game view went black around a character that still moved.
+/// 🔴 Declared, never guessed. Picking the highest-priority camera handed the rig to whatever
+/// overlay outranked the base, and a scene where nobody said which camera the rig is for has no
+/// answer to give — moving one at random is the bug, not the fallback.
 #[test]
-fn an_overlay_never_takes_the_rig() {
+fn a_nameless_scene_drives_nothing() {
     let (resources, cameras) = world(&[(0, false, None), (1, true, None)]);
-    assert_eq!(
-        rendering_camera(&resources, cameras[1]),
-        Some(cameras[0]),
-        "the rig went to the overlay",
-    );
+    assert_eq!(rendering_camera(&resources, cameras[1]), None);
 }
 
-/// What a scene says beats what the priorities imply.
+/// What a scene says is the whole answer, whatever the priorities imply.
 #[test]
 fn a_brain_takes_the_rig() {
     let (resources, cameras) = world(&[(0, false, None), (5, false, Some(true))]);
@@ -61,12 +57,19 @@ fn a_brain_takes_the_rig() {
     assert_eq!(rendering_camera(&resources, cameras[0]), Some(cameras[1]));
 }
 
-/// A brain that is switched off is not one: the camera it sits on is not a candidate, and a scene
-/// whose every brain is off falls back rather than freezing the rig.
+/// Several brains is an ordering question again, and priority is the order.
 #[test]
-fn a_disabled_brain_falls_back() {
+fn the_top_brain_takes_the_rig() {
+    let (resources, cameras) = world(&[(0, false, Some(true)), (5, false, Some(true))]);
+    assert_eq!(rendering_camera(&resources, cameras[0]), Some(cameras[1]));
+}
+
+/// A brain that is switched off is not one, and switching the only one off parks the rig — which is
+/// what an author who unticked it asked for.
+#[test]
+fn a_disabled_brain_drives_nothing() {
     let (resources, cameras) = world(&[(0, false, None), (5, true, Some(false))]);
-    assert_eq!(rendering_camera(&resources, cameras[0]), Some(cameras[0]));
+    assert_eq!(rendering_camera(&resources, cameras[0]), None);
 }
 
 /// An overlay CAN be driven — it just has to say so. A weapon camera with its own rig is the case.

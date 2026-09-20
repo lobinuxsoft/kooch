@@ -464,10 +464,11 @@ input, never from the history, which would ghost a hole into the image.
 An overlay with no base composes nothing. There is nothing under it to keep, so it would read as the
 whole image, which is not what it asked for.
 
-A virtual camera drives the camera carrying a [`CameraBrain`], and where a scene names none, the
-highest-priority active camera **that is not an overlay**. "Highest priority" alone was the rule
-while a frame was one camera; with a stack it hands the rig to whatever overlay outranks the base.
-An overlay that wants its own rig — a weapon camera — says so with a brain of its own.
+A virtual camera drives the camera carrying a `CameraBrain`, and only that one. "The highest-priority
+camera" was the rule while a frame was one camera; with a stack it hands the rig to whatever overlay
+outranks the base. A scene where no camera carries an enabled brain is driven by nothing and says so
+once in the log — a rig that moves a camera nobody pointed it at is the bug, not the fallback. An
+overlay that wants its own rig, a weapon camera, carries its own brain.
 
 What it costs: one scene pass per camera. An overlay is a second cull, a second raster and a second
 shade of whatever its mask keeps — a UI layer of a handful of instances is cheap, a second full scene
