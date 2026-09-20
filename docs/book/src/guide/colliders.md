@@ -183,7 +183,9 @@ A pair is live only when **each** side's memberships intersect the
 other's filter. Being in a group the other side looks for is not enough
 on its own.
 
-The boxes are named by the **project's layer table** — the same 32 names a
+Each mask is a dropdown that says what it holds — a layer's own name while
+it is the only one, *Everything*, *Nothing*, or *Mixed (n)* — and opens the
+full list of names to tick. They are named by the **project's layer table** — the same 32 names a
 renderer, a camera or a light masks over. Make one from the Assets panel
 (*New Layers*, saved as `project.layers`) and type into it: every checklist
 in the Inspector renames with it, and a project without one shows

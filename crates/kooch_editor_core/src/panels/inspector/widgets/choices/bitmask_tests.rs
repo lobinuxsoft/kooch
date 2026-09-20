@@ -41,19 +41,25 @@ fn a_non_integer_value_is_not_a_bitmask() {
     assert_eq!(reflect_value_as_i64(&ReflectValue::F32(1.0)), None);
 }
 
-/// 🔴 A layer mask is drawn from the project's own names, and one cell per bit means bit `n` is
-/// `1 << n` however the table is filled in: a name out of step would tick the wrong layer.
+/// 🔴 What the field says without being opened. A mask nobody can read at a glance is a number,
+/// which is the thing named layers exist to replace.
 #[test]
-fn a_layer_cell_is_its_own_bit() {
-    let names = kooch_core::layers::LayerNames::default();
+fn a_mask_says_what_it_holds() {
+    let mut names = kooch_core::layers::LayerNames::default();
+    names.set(3, "Water");
     let labels = names.labels();
-    let cells: Vec<(&str, i64)> = labels
-        .iter()
-        .enumerate()
-        .map(|(bit, label)| (label.as_str(), 1i64 << bit))
-        .collect();
-    assert_eq!(cells.len(), kooch_core::layers::LAYER_COUNT);
-    assert_eq!(cells[0], ("Default", 1));
-    assert_eq!(cells[5].1, 1 << 5);
-    assert_eq!(named_mask(&cells), -1i64 as i64 & 0xffff_ffff);
+    assert_eq!(summary(0, &labels), "Nothing");
+    assert_eq!(summary(1, &labels), "Default");
+    assert_eq!(summary(1 << 3, &labels), "Water");
+    assert_eq!(summary(0b1001, &labels), "Mixed (2)");
+    assert_eq!(summary(layer_mask(&labels), &labels), "Everything");
+}
+
+/// Bit `n` is `1 << n` however the table is filled in: a name out of step would tick another layer.
+#[test]
+fn every_named_bit_is_its_own() {
+    let labels = kooch_core::layers::LayerNames::default().labels();
+    assert_eq!(labels.len(), kooch_core::layers::LAYER_COUNT);
+    assert_eq!(layer_mask(&labels), 0xffff_ffff);
+    assert_eq!(summary(1 << 5, &labels), "Layer 5");
 }

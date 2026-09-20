@@ -153,20 +153,72 @@ pub(crate) fn draw_bitmask(
     draw_cells(ui, value, &cells, field_name)
 }
 
-/// The same grid over the project's layer names (#1218), which are owned rather than static: one
-/// cell per bit, named by the `.layers` table.
+/// A layer mask (#1218): a summary of what is ticked, and a list of the project's names behind it.
+///
+/// 🔴 Not the grid above: thirty-two cells do not fit the Inspector at any width anyone uses, and
+/// what a mask says has to be readable without opening anything.
 pub(crate) fn draw_layer_mask(
     ui: &mut egui::Ui,
     value: &ReflectValue,
     labels: &[String],
     field_name: &str,
 ) -> Option<ReflectValue> {
-    let cells: Vec<(&str, i64)> = labels
+    /// Past this the list scrolls rather than growing off the screen.
+    const LIST_HEIGHT: f32 = 320.0;
+
+    let current = reflect_value_as_i64(value)?;
+    let mut next = current;
+    let every = layer_mask(labels);
+    egui::ComboBox::from_id_salt(("layers", field_name))
+        .selected_text(summary(current, labels))
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .width(ui.available_width())
+        .show_ui(ui, |ui| {
+            ui.horizontal(|ui| {
+                if ui.small_button("All").clicked() {
+                    next |= every;
+                }
+                if ui.small_button("None").clicked() {
+                    next &= !every;
+                }
+            });
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .max_height(LIST_HEIGHT)
+                .show(ui, |ui| {
+                    for (bit, label) in labels.iter().enumerate() {
+                        let mut on = current & (1i64 << bit) != 0;
+                        if ui.checkbox(&mut on, label).changed() {
+                            next ^= 1i64 << bit;
+                        }
+                    }
+                });
+        });
+
+    (next != current).then(|| reflect_value_from_i64(value, next))?
+}
+
+/// What the mask says at a glance: the layer's own name while it is the only one, and how many
+/// otherwise. A number would be a number.
+fn summary(mask: i64, labels: &[String]) -> String {
+    let every = layer_mask(labels);
+    let ticked: Vec<&String> = labels
         .iter()
         .enumerate()
-        .map(|(bit, label)| (label.as_str(), 1i64 << bit))
+        .filter(|(bit, _)| mask & (1i64 << bit) != 0)
+        .map(|(_, label)| label)
         .collect();
-    draw_cells(ui, value, &cells, field_name)
+    match ticked.len() {
+        0 => "Nothing".to_owned(),
+        1 => ticked[0].clone(),
+        _ if mask & every == every => "Everything".to_owned(),
+        count => format!("Mixed ({count})"),
+    }
+}
+
+/// Every bit the table names — what "All" and "None" are allowed to touch.
+fn layer_mask(labels: &[String]) -> i64 {
+    (0..labels.len()).fold(0, |mask, bit| mask | (1i64 << bit))
 }
 
 fn draw_cells(
