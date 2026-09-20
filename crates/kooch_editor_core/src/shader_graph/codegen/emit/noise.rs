@@ -5,8 +5,8 @@ use egui_snarl::{InPinId, NodeId};
 
 use super::Body;
 use crate::shader_graph::{
-    NOISE_BASES, NOISE_COLOUR, NOISE_DISTORTION, NOISE_FRACTALS, NOISE_PHASE, VORONOI_BORDER,
-    VORONOI_METRICS,
+    NOISE_BASES, NOISE_COLOUR, NOISE_DISTORTION, NOISE_FRACTALS, NOISE_PHASE, NOISE_TILING,
+    VORONOI_BORDER, VORONOI_METRICS, VORONOI_TILING, WHITE_TILING,
 };
 
 /// Where the colour's green and blue are sampled: far enough from the value to look unrelated.
@@ -22,6 +22,28 @@ impl Body<'_> {
         self.wires
             .values()
             .any(|from| from.node == node && from.output == output)
+    }
+
+    /// The period the lattice wraps against, and the coordinate that reads it (#1237). A wired
+    /// tiling sets the cells across the uv square itself, so the noise repeats exactly: a scale that
+    /// disagreed with the period would seam however round the period was.
+    fn tiling(
+        &mut self,
+        id: NodeId,
+        input: usize,
+        uv: &str,
+        scale: &str,
+    ) -> Result<(String, String), String> {
+        if !self.wired_in(id, input) {
+            let at = self.local(&format!("{uv}.xy * {scale}.x"));
+            return Ok((at, "vec2<f32>(0.0)".to_owned()));
+        }
+        let tiling = self.input_or(id, input, "vec4<f32>(0.0)")?;
+        let period = self.local(&format!("round(max({tiling}.xy, vec2<f32>(0.0)))"));
+        let at = self.local(&format!(
+            "{uv}.xy * select(vec2<f32>({scale}.x), {period}, {period} > vec2<f32>(0.5))"
+        ));
+        Ok((at, period))
     }
 
     /// Value in `x`; the colour in `yzw` only when that output is wired.
@@ -44,17 +66,24 @@ impl Body<'_> {
         let octaves = self.input_or(id, 2, "vec4<f32>(1.0)")?;
         let roughness = self.input_or(id, 3, "vec4<f32>(0.5)")?;
         let lacunarity = self.input_or(id, 4, "vec4<f32>(2.0)")?;
-        let mut at = self.local(&format!("{uv}.xy * {scale}.x"));
+        if *basis == "simplex" && self.wired_in(id, NOISE_TILING) {
+            return Err(
+                "a simplex noise cannot tile: its lattice is skewed, so a period repeats in skewed \
+                 space and not in uv. Use value or gradient for a seamless noise"
+                    .to_owned(),
+            );
+        }
+        let (mut at, period) = self.tiling(id, NOISE_TILING, &uv, &scale)?;
         if self.wired_in(id, NOISE_DISTORTION) {
             let amount = self.input_or(id, NOISE_DISTORTION, "vec4<f32>(0.0)")?;
-            at = self.local(&format!("graph_{basis}_warp({at}, {amount}.x)"));
+            at = self.local(&format!("graph_{basis}_warp({at}, {amount}.x, {period})"));
         }
         let phase = if self.wired_in(id, NOISE_PHASE) {
             Some(self.input_or(id, NOISE_PHASE, "vec4<f32>(0.0)")?)
         } else {
             None
         };
-        let controls = format!("{octaves}.x, {roughness}.x, {lacunarity}.x, {mode}.0");
+        let controls = format!("{octaves}.x, {roughness}.x, {lacunarity}.x, {mode}.0, {period}");
         let sample = |point: &str| match &phase {
             Some(phase) => {
                 format!("graph_{basis}_fractal3(vec3<f32>({point}, {phase}.x), {controls})")
@@ -82,9 +111,20 @@ impl Body<'_> {
         let phase = self.input_or(id, 3, "vec4<f32>(0.0)")?;
         let smoothness = self.input_or(id, 4, "vec4<f32>(0.0)")?;
         let edges = self.wired_out(id, VORONOI_BORDER);
+        let (at, period) = self.tiling(id, VORONOI_TILING, &uv, &scale)?;
         Ok(format!(
-            "graph_voronoi({uv}.xy * {scale}.x, clamp({randomness}.x, 0.0, 1.0), {phase}.x, \
-             max({smoothness}.x, 0.0), {metric}, {edges})"
+            "graph_voronoi({at}, clamp({randomness}.x, 0.0, 1.0), {phase}.x, \
+             max({smoothness}.x, 0.0), {metric}, {edges}, {period})"
+        ))
+    }
+
+    /// One hash per cell, the cell wrapped when a period is wired.
+    pub(super) fn white_noise(&mut self, id: NodeId) -> Result<String, String> {
+        let uv = self.input_or(id, 0, "vec4<f32>(0.0)")?;
+        let scale = self.input_or(id, 1, "vec4<f32>(1.0)")?;
+        let (at, period) = self.tiling(id, WHITE_TILING, &uv, &scale)?;
+        Ok(format!(
+            "vec4<f32>(graph_hash(graph_wrap(floor({at}), {period})))"
         ))
     }
 }

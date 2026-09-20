@@ -302,10 +302,7 @@ impl Body<'_> {
             // `octaves` unconnected reads zero, which the helpers take as one: a noise dropped on the
             // canvas is plain noise, and wiring a number in makes it fractal.
             Node::FractalNoise { basis, fractal } => self.fractal_noise(id, basis, fractal)?,
-            Node::WhiteNoise => {
-                let (uv, scale) = (argument(self, 0)?, argument(self, 1)?);
-                format!("vec4<f32>(graph_hash(floor({uv}.xy * {scale}.x)))")
-            }
+            Node::WhiteNoise => self.white_noise(id)?,
             Node::VoronoiNoise { metric } => self.voronoi(id, metric)?,
             Node::Noise | Node::GradientNoise | Node::SimplexNoise | Node::Voronoi => {
                 return Err("an old noise reached emission unmigrated".to_owned());

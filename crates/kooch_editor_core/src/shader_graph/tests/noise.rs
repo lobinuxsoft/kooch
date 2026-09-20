@@ -11,13 +11,18 @@ fn wire(graph: &mut Graph, from: NodeId, output: usize, to: NodeId, input: usize
     graph.connect(OutPinId { node: from, output }, InPinId { node: to, input });
 }
 
-/// Feeds every input of `node` a constant and `outputs` of it into the Surface Output.
+/// Feeds every input of `node` a constant and `outputs` of it into the Surface Output. A simplex's
+/// tiling is left out: it is refused, and that refusal has a test of its own.
 fn wired(node: Node, outputs: &[usize]) -> String {
     let mut graph = Graph::new();
     let inputs = node.inputs().len();
+    let skewed = matches!(&node, Node::FractalNoise { basis, .. } if basis == "simplex");
     let added = graph.insert_node(Pos2::ZERO, node);
     let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
     for input in 0..inputs {
+        if skewed && input == NOISE_TILING {
+            continue;
+        }
         let constant = graph.insert_node(Pos2::ZERO, Node::ConstFloat(0.5 + input as f32));
         wire(&mut graph, constant, 0, added, input);
     }
@@ -69,7 +74,7 @@ fn every_voronoi_output_compiles() {
         let source = wired(node, &[0, 1, VORONOI_BORDER, 3, 4]);
 
         assert!(
-            source.contains(", true)"),
+            source.contains(", true, "),
             "{metric}: the border pass is off"
         );
         compiles(&source, metric);
@@ -123,6 +128,57 @@ fn unwired_noise_controls_cost_nothing() {
         !bare.contains("_warp(l"),
         "an unwired distortion is sampled"
     );
-    assert!(voronoi.contains(", false)"), "the border pass runs unwired");
+    assert!(
+        voronoi.contains(", false, "),
+        "the border pass runs unwired"
+    );
     compiles(&bare, "bare gradient");
+}
+
+/// 🔴 A skewed lattice has no period, so a tiled simplex would seam while claiming not to. The graph
+/// says so instead of emitting a lie.
+#[test]
+fn a_tiled_simplex_is_refused() {
+    let mut graph = Graph::new();
+    let noise = graph.insert_node(
+        Pos2::ZERO,
+        Node::FractalNoise {
+            basis: "simplex".to_owned(),
+            fractal: "fbm".to_owned(),
+        },
+    );
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
+    let tiling = graph.insert_node(Pos2::ZERO, Node::ConstFloat(4.0));
+    wire(&mut graph, noise, 0, output, 0);
+    wire(&mut graph, tiling, 0, noise, NOISE_TILING);
+    let why = generate(&graph).expect_err("a tiled simplex generated");
+    assert!(why.contains("simplex"), "{why}");
+}
+
+/// The wrap reaches every lattice read a tiled noise takes, and costs nothing when no noise tiles.
+#[test]
+fn a_tiled_noise_wraps() {
+    let mut graph = Graph::new();
+    let noise = graph.insert_node(
+        Pos2::ZERO,
+        Node::VoronoiNoise {
+            metric: "euclidean".to_owned(),
+        },
+    );
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
+    let tiling = graph.insert_node(Pos2::ZERO, Node::ConstFloat(4.0));
+    wire(&mut graph, noise, 0, output, 0);
+    let bare = generate(&graph).unwrap();
+    wire(&mut graph, tiling, 0, noise, VORONOI_TILING);
+    let tiled = generate(&graph).unwrap();
+
+    assert!(
+        bare.contains("vec2<f32>(0.0))"),
+        "an untiled noise carries a period:\n{bare}"
+    );
+    assert!(
+        tiled.contains("round(max("),
+        "a tiled noise carries no period:\n{tiled}"
+    );
+    compiles(&tiled, "tiled voronoi");
 }

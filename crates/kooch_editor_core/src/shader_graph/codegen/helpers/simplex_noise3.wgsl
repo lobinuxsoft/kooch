@@ -1,5 +1,7 @@
+// 🔴 `period` is taken for one signature across the bases and ignored: the lattice is skewed, so
+// wrapping a cell repeats in skewed space and not in uv. The graph refuses to tile a simplex.
 // Simplex noise in 3D: space cut into tetrahedra, four lattice points read instead of eight.
-fn graph_simplex_noise3(p: vec3<f32>) -> f32 {
+fn graph_simplex_noise3(p: vec3<f32>, period: vec2<f32>) -> f32 {
     let skew = 1.0 / 3.0;
     let unskew = 1.0 / 6.0;
     let cell = floor(p + dot(p, vec3<f32>(skew)));
@@ -24,14 +26,14 @@ fn graph_simplex_noise3(p: vec3<f32>) -> f32 {
 // Octaves of simplex noise. `mode` 0 sums them (fBm), 1 folds each about its middle (turbulence), 2 turns
 // the fold into sharp crests (ridged). `roughness` is how much each octave keeps of the one before,
 // `lacunarity` how much finer it is. Normalised back to 0..1.
-fn graph_simplex_fractal3(p: vec3<f32>, octaves: f32, roughness: f32, lacunarity: f32, mode: f32) -> f32 {
+fn graph_simplex_fractal3(p: vec3<f32>, octaves: f32, roughness: f32, lacunarity: f32, mode: f32, period: vec2<f32>) -> f32 {
     let count = i32(clamp(round(octaves), 1.0, 8.0));
     var sum = 0.0;
     var weight = 0.0;
     var amplitude = 1.0;
     var at = p;
     for (var i = 0; i < count; i = i + 1) {
-        let n = graph_simplex_noise3(at);
+        let n = graph_simplex_noise3(at, period);
         let folded = abs(n * 2.0 - 1.0);
         let shaped = select(select(n, folded, mode > 0.5), (1.0 - folded) * (1.0 - folded), mode > 1.5);
         sum = sum + amplitude * shaped;

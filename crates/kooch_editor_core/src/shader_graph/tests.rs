@@ -5,6 +5,7 @@ use kooch_render::material::{Shader, ShaderKind};
 use super::*;
 
 mod noise;
+mod seam;
 mod uv;
 
 /// A tint parameter times an albedo texture sampled at the mesh's uv, into base colour.

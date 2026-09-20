@@ -19,8 +19,9 @@ fn graph_voronoi_distance(d: vec2<f32>, metric: i32) -> f32 {
     return select(select(length(d), a.x + a.y, metric == 1), max(a.x, a.y), metric == 2);
 }
 
-fn graph_voronoi_point(cell: vec2<f32>, randomness: f32, phase: f32) -> vec2<f32> {
-    return mix(vec2<f32>(0.5), 0.5 + 0.5 * sin(phase + 6.2831855 * graph_hash2(cell)), randomness);
+fn graph_voronoi_point(cell: vec2<f32>, randomness: f32, phase: f32, period: vec2<f32>) -> vec2<f32> {
+    let at = graph_wrap(cell, period);
+    return mix(vec2<f32>(0.5), 0.5 + 0.5 * sin(phase + 6.2831855 * graph_hash2(at)), randomness);
 }
 
 // How far smoothness 1 blends: past it the 5x5 search is too narrow and the blend tears (measured).
@@ -38,7 +39,7 @@ fn graph_voronoi_blend(distances: ptr<function, array<f32, 25>>, skipped: i32, l
     return least - k * log(max(sum, 1e-6));
 }
 
-fn graph_voronoi(uv: vec2<f32>, randomness: f32, phase: f32, smoothness: f32, metric: i32, edges: bool) -> GraphVoronoi {
+fn graph_voronoi(uv: vec2<f32>, randomness: f32, phase: f32, smoothness: f32, metric: i32, edges: bool, period: vec2<f32>) -> GraphVoronoi {
     let cell = floor(uv);
     let f = fract(uv);
     var out: GraphVoronoi;
@@ -53,7 +54,7 @@ fn graph_voronoi(uv: vec2<f32>, randomness: f32, phase: f32, smoothness: f32, me
     for (var y = -2; y <= 2; y = y + 1) {
         for (var x = -2; x <= 2; x = x + 1) {
             let offset = vec2<f32>(f32(x), f32(y));
-            let point = graph_voronoi_point(cell + offset, randomness, phase);
+            let point = graph_voronoi_point(cell + offset, randomness, phase, period);
             let r = offset + point - f;
             let d = graph_voronoi_distance(r, metric);
             let index = (y + 2) * 5 + x + 2;
@@ -61,7 +62,7 @@ fn graph_voronoi(uv: vec2<f32>, randomness: f32, phase: f32, smoothness: f32, me
             if d < out.f1 {
                 out.f2 = out.f1;
                 out.f1 = d;
-                out.cell = graph_hash(cell + offset);
+                out.cell = graph_hash(graph_wrap(cell + offset, period));
                 out.position = cell + offset + point;
                 nearest = r;
                 nearest_cell = offset;
@@ -77,7 +78,7 @@ fn graph_voronoi(uv: vec2<f32>, randomness: f32, phase: f32, smoothness: f32, me
         for (var y = -2; y <= 2; y = y + 1) {
             for (var x = -2; x <= 2; x = x + 1) {
                 let offset = nearest_cell + vec2<f32>(f32(x), f32(y));
-                let r = offset + graph_voronoi_point(cell + offset, randomness, phase) - f;
+                let r = offset + graph_voronoi_point(cell + offset, randomness, phase, period) - f;
                 let apart = r - nearest;
                 if dot(apart, apart) > 0.00001 {
                     edge = min(edge, dot(0.5 * (nearest + r), normalize(apart)));

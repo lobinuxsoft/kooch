@@ -5,7 +5,7 @@
 //! Prior art: Humus' particle trimming, Unity's tight sprite mesh, and Epic's advice to model
 //! Nanite foliage rather than mask it.
 
-mod bake;
+pub mod bake;
 mod cut;
 mod region;
 

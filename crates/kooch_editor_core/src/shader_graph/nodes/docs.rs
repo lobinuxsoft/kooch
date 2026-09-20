@@ -234,15 +234,30 @@ impl Node {
                         One,
                         "Changes the noise in place: wire Time in to animate it.",
                     ),
+                    (
+                        Two,
+                        "Cells across the uv square, so it repeats with no seam. Not on simplex.",
+                    ),
                 ]
             }
-            Self::WhiteNoise => &[UV_ZERO, (One, "How many cells per unit.")],
+            Self::WhiteNoise => &[
+                UV_ZERO,
+                (One, "How many cells per unit."),
+                (
+                    Two,
+                    "Cells across the uv square, so it repeats with no seam.",
+                ),
+            ],
             Self::VoronoiNoise { .. } | Self::Voronoi => &[
                 UV_ZERO,
                 (One, "How many cells per unit."),
                 (One, "0 a regular grid, 1 fully random. Unwired: 1."),
                 (One, "Moves the points in circles: wire Time in to animate."),
                 (One, "Rounds F1, F2 and the border, 0..1."),
+                (
+                    Two,
+                    "Cells across the uv square, so it repeats with no seam.",
+                ),
             ],
             Self::Circle => &[
                 UV_ZERO,

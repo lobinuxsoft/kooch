@@ -2685,6 +2685,7 @@ dependencies = [
  "kooch_window",
  "kooch_world",
  "log",
+ "pollster",
  "profiling",
  "puffin",
  "puffin_egui",
