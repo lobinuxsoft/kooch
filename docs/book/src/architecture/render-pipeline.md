@@ -824,6 +824,16 @@ with nobody anywhere.
   "this region", and its interaction groups already say who counts: a volume that only a player
   triggers is a collision group, not a second filter. Unity reads its volumes' colliders the same
   way; what neither engine uses is the *event* system for the blend.
+- **A region authors itself.** A volume with a collider needs three things to be heard — a body to
+  exist in the solver, `sensor` to overlap instead of push, `collision_events` to be reported — and
+  every one of them fails *silently* when it is missing. So the physics sync supplies all three from
+  the component being there: an entity with a `PostProcessVolume` and no `PhysicsBody` is authored
+  as a fixed sensor that reports. An entity that already has a body of its own is left alone, which
+  means a solid wall cannot also be a region: give the region its own entity.
+- **A sensor hears everything that moves.** Rapier's default collision pairs leave out
+  `KINEMATIC_FIXED`, so a fixed trigger never heard a kinematic character controller walk through
+  it. Sensors now use every pair; solid contacts keep rapier's, since their events are about being
+  pushed.
 - **The solver is the gate, not the answer.** `SensorOccupancy` holds who is inside which sensor —
   the frames between the arrival and the departure the solver reports, which is the "stay" nothing
   else provides — and re-measures how deep each body is once a frame. Only occupied volumes are
@@ -837,7 +847,8 @@ with nobody anywhere.
   or an add could never do. An effect no volume mentions keeps what the scene gave it.
 - Sphere, box and capsule are measured analytically. A hull or a trimesh has no cheap answer, so it
   reports "fully inside" the moment the solver says a body arrived: the shape still works, it just
-  cuts instead of fading.
+  cuts instead of fading. A block mesh is one of those — blocks already publish their geometry to
+  the collider cache, so a room built out of them is a region, without a fade.
 
 A plugin draws through the same machinery. `kooch_plugin_render` holds
 the GPU half of the plugin API — a `RenderPass` with `init` and `record`,

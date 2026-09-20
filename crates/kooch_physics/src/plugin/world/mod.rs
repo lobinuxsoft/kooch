@@ -137,6 +137,13 @@ impl BodySpec {
     }
 
     /// `true` when the solver — not the author — owns this body's pose.
+    /// Whether this body overlaps rather than pushes — the solver's own answer, not the component's.
+    /// The two differ wherever the sync authors a collider the author did not: a post-process volume
+    /// is a sensor whether or not anyone ticked the box (#1222).
+    pub fn is_sensor(&self) -> bool {
+        self.interaction.sensor
+    }
+
     pub fn is_dynamic(&self) -> bool {
         matches!(self.kind, crate::components::KIND_DYNAMIC)
     }

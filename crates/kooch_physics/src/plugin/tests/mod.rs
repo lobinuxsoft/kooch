@@ -14,6 +14,7 @@ mod material;
 mod play_lifecycle;
 mod shapes;
 mod simulation;
+mod volumes;
 
 use std::any::TypeId;
 

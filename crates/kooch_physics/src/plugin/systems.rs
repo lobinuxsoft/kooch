@@ -17,6 +17,7 @@
 
 use glam::{Quat, Vec3};
 
+use crate::components::KIND_STATIC;
 use kooch_core::resource::Resources;
 use kooch_core::run_state::Playing;
 use kooch_core::time::Time;
@@ -124,11 +125,71 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
         })
         .unwrap_or_default();
 
+    authored.extend(regions(
+        registry, colliders, transforms, slots, meshes, &authored,
+    ));
+
     // Entity order, not hash order: creation order is observable in the solver, and runs would
     // diverge.
     authored.sort_unstable_by_key(|a| (a.entity.index(), a.entity.generation()));
 
     Some(authored)
+}
+
+/// The regions that author themselves (#1222): a [`PostProcessVolume`] with a collider is a fixed
+/// sensor that reports, whatever its collider says and whether or not anyone added a body.
+///
+/// 🔴 A volume is a region, and a region is not a physics decision an author should have to make:
+/// the three boxes it needs ticked — a body to exist in the solver, `sensor` to overlap instead of
+/// push, `collision_events` to be heard — are all of them implied by the component being there, and
+/// every one of them fails **silently** when it is missing.
+fn regions(
+    registry: &ComponentRegistry,
+    colliders: Option<&kooch_ecs::component::ComponentStorage<Collider>>,
+    transforms: Option<&kooch_ecs::component::ComponentStorage<Transform>>,
+    slots: Option<&kooch_ecs::component::ComponentStorage<SolverBody>>,
+    meshes: Option<&ColliderMeshCache>,
+    authored: &[Authored],
+) -> Vec<Authored> {
+    let Some(volumes) = registry.get_cpu::<kooch_ecs::post_process_volume::PostProcessVolume>()
+    else {
+        return Vec::new();
+    };
+    let body = PhysicsBody {
+        kind: KIND_STATIC,
+        ..Default::default()
+    };
+    volumes
+        .iter()
+        .filter(|(entity, volume)| {
+            !volume.global
+                && volume.enabled
+                // Whoever has a body of their own is authored above, with what they asked for.
+                && !authored.iter().any(|already| already.entity == **entity)
+        })
+        .filter_map(|(&entity, _)| {
+            let collider = Collider {
+                sensor: true,
+                collision_events: true,
+                ..*colliders?.get(entity)?
+            };
+            let transform = transforms
+                .and_then(|storage| storage.get(entity))
+                .copied()
+                .unwrap_or_default();
+            let spec = BodySpec::new(&body, &collider, entity, transform.scale, meshes);
+            Some(Authored {
+                entity,
+                claimed: slots
+                    .and_then(|storage| storage.get(entity))
+                    .map(SolverBody::slot),
+                spec,
+                position: transform.position,
+                rotation: transform.rotation,
+                attachments: Vec::new(),
+            })
+        })
+        .collect()
 }
 
 /// Entities carrying a [`SolverBody`] with nothing behind it — their

@@ -14,6 +14,7 @@ use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_ecs::sensor_occupancy::SensorOccupancy;
 
 use crate::components::{Collider, SHAPE_CAPSULE, SHAPE_CUBOID, SHAPE_SPHERE};
+use crate::plugin::world::SolverBody;
 
 use super::events::{CollisionStarted, CollisionStopped};
 
@@ -48,11 +49,19 @@ pub(super) fn sensor_occupancy_system(resources: &mut Resources) {
         resources.insert(inside);
         return;
     };
+    // 🔴 The solver's answer, not the component's. The sync authors colliders nobody typed — a
+    // volume is a sensor whether or not the box is ticked — and asking the component would drop
+    // exactly the overlaps this exists for.
+    let world = resources.get::<crate::plugin::world::PhysicsWorld>();
     let is_sensor = |entity: Entity| {
+        let Some(world) = world else {
+            return false;
+        };
         registry
-            .get_cpu::<Collider>()
-            .and_then(|colliders| colliders.get(entity))
-            .is_some_and(|collider| collider.sensor)
+            .get_cpu::<SolverBody>()
+            .and_then(|slots| slots.get(entity))
+            .and_then(|body| world.spec(body.slot()))
+            .is_some_and(|spec| spec.is_sensor())
     };
     // The report does not say which side is the sensor, and both can be: a pair of sensors
     // overlapping is two regions, each holding the other.
