@@ -3,6 +3,7 @@
 mod compound;
 pub(super) mod events;
 mod joints;
+pub(super) mod sensors;
 mod systems;
 #[cfg(test)]
 mod tests;
@@ -136,6 +137,12 @@ impl Plugin for PhysicsPlugin {
         app.add_system(
             Stage::PostPhysics,
             run_if_playing(events::drain_physics_events),
+        );
+        // After the drain, in the same stage: the arrivals it just published are this frame's.
+        app.insert_resource(kooch_ecs::sensor_occupancy::SensorOccupancy::default());
+        app.add_system(
+            Stage::PostPhysics,
+            run_if_playing(sensors::sensor_occupancy_system),
         );
     }
 

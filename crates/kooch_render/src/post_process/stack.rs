@@ -18,9 +18,20 @@ pub struct StackTarget<'a> {
     pub format: wgpu::TextureFormat,
 }
 
-/// The stack of the first enabled [`PostProcess`] in the scene, with each effect's weight. An
-/// effect that is off, weightless or empty is dropped here, so it costs nothing.
+/// The frame's stack: the scene's [`PostProcess`] with every reached [`PostProcessVolume`] folded
+/// over it in priority order (#1222). An effect that is off, weightless or empty is dropped here,
+/// so it costs nothing.
 pub fn active_stack(resources: &Resources) -> Vec<(Guid, f32)> {
+    let base = scene_stack(resources);
+    let reached = super::volumes::reached(resources);
+    match reached.is_empty() {
+        true => base,
+        false => super::volumes::folded(&base, &reached),
+    }
+}
+
+/// The layer underneath every volume: the look with nobody anywhere.
+fn scene_stack(resources: &Resources) -> Vec<(Guid, f32)> {
     let mut found: Option<Vec<(Guid, f32)>> = None;
     Query::<&PostProcess>::new(resources).for_each(|post| {
         if found.is_none() && post.enabled {

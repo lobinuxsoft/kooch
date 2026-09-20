@@ -62,7 +62,8 @@ fn a_prefab_takes_its_own_identity_not_the_scene_it_came_from() {
 
 /// Three levels, so the test covers a link that is neither to the root nor
 /// from it. Two levels can pass while a deeper chain is silently flattened.
-pub(super) fn world_with_a_deep_subtree() -> (kooch_core::resource::Resources, crate::entity::Entity) {
+pub(super) fn world_with_a_deep_subtree() -> (kooch_core::resource::Resources, crate::entity::Entity)
+{
     let mut resources = setup_resources();
     let (root, child, grandchild) = {
         let mut commands = resources.remove::<Commands>().unwrap();

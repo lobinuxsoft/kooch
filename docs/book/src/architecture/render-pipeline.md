@@ -814,6 +814,31 @@ runs the stack over it, and copies the result onto the swapchain. The
 surface is configured with `COPY_DST` wherever the platform offers it.
 Without a stack, the frame goes straight to the swapchain as before.
 
+### Volumes (#1222)
+
+What the stack *is* can depend on where something stands. A `PostProcessVolume` contributes its own
+effects while a body is inside it, and the scene's `PostProcess` is the layer underneath — the look
+with nobody anywhere.
+
+- **The shape is the collider**, which must be a sensor. It is already the engine's way of saying
+  "this region", and its interaction groups already say who counts: a volume that only a player
+  triggers is a collision group, not a second filter. Unity reads its volumes' colliders the same
+  way; what neither engine uses is the *event* system for the blend.
+- **The solver is the gate, not the answer.** `SensorOccupancy` holds who is inside which sensor —
+  the frames between the arrival and the departure the solver reports, which is the "stay" nothing
+  else provides — and re-measures how deep each body is once a frame. Only occupied volumes are
+  measured at all; the rest cost a bool.
+- **The depth is the blend.** Zero at the surface, all of the volume a `blend_distance` in,
+  smoothstepped between. 🔴 It fades **inward**, where Unity's fades outward: the sensor is what says
+  a body arrived, so the surface is the first place a weight can be asked for. Fading outward would
+  need a second, wider shape nobody authored.
+- **The fold is Unity's.** Volumes apply in `priority` order, each moving what the ones below left
+  *towards* its own value by its own weight — so a volume can turn an effect **down**, which a max
+  or an add could never do. An effect no volume mentions keeps what the scene gave it.
+- Sphere, box and capsule are measured analytically. A hull or a trimesh has no cheap answer, so it
+  reports "fully inside" the moment the solver says a body arrived: the shape still works, it just
+  cuts instead of fading.
+
 A plugin draws through the same machinery. `kooch_plugin_render` holds
 the GPU half of the plugin API — a `RenderPass` with `init` and `record`,
 the target pool behind a `Targets` trait, and `engine.add_pass(stage,

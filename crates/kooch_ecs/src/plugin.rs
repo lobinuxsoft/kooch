@@ -51,6 +51,7 @@ fn register_builtin_components(resources: &mut kooch_core::resource::Resources) 
         registry.register_cpu_reflected::<SkyRenderer>();
         registry.register_cpu_reflected::<MeshRenderer>();
         registry.register_cpu_reflected::<crate::post_process::PostProcess>();
+        registry.register_cpu_reflected::<crate::post_process_volume::PostProcessVolume>();
         // Ordinary scene data despite being an editor concept: the link
         // between an instance and its prefab has to survive closing the
         // editor, so it is written to the scene file like anything else.

@@ -10,6 +10,7 @@
 mod pipeline;
 mod preview;
 mod stack;
+mod volumes;
 
 use kooch_core::gpu::{TargetDesc, TargetPool};
 
