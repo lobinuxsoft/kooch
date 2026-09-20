@@ -1,10 +1,5 @@
 // page_depth.wgsl — rasterising a meshlet into the page it was paired with (#866).
 
-// A caster whose cut is already in its geometry (#452) casts solid: a material past the coverage
-// table never looks one up. `INSTANCE_TRIMMED` in `scene.rs`.
-const INSTANCE_TRIMMED: u32 = 16u;
-const SOLID_CASTER: u32 = 0xffffffffu;
-
 struct MeshVertexStored {
     position: array<f32, 3>,
     normal: array<f32, 3>,
@@ -148,8 +143,7 @@ fn page_geometry(vertex_index: u32, instance_index: u32) -> PageGeom {
     let pos = vec3<f32>(v.position[0], v.position[1], v.position[2]);
     let world = (instances[inst_id].transform * vec4<f32>(pos, 1.0)).xyz;
     out.uv = vec2<f32>(v.uv[0], v.uv[1]);
-    let trimmed = (instances[inst_id].flags & INSTANCE_TRIMMED) != 0u;
-    out.material = select(instances[inst_id].material_id, SOLID_CASTER, trimmed);
+    out.material = instances[inst_id].material_id;
 
     var ndc = vec2<f32>(2.0);
     var depth = 0.0;

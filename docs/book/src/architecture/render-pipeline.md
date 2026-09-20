@@ -482,33 +482,44 @@ surface and drops what falls below the clip before `atomicMax`, so a cut fragmen
 `transparent_lit` answers a coverage of -1 there as well, which the tail and the sorted fallback
 discard.
 
-### Static cuts as geometry (#452)
+### Coverage hulls (#452)
 
-A cut that cannot move is not worth a pass. `Shader::masks_still` answers whether the source
-mentions `input.time`, `input.world_position`, `input.camera_position` or `input.frag_coord`;
-without them the cut is a function of uv and textures alone, and `AlphaTrim` turns it into geometry
-once per (mesh, material, values):
+A cut that cannot move can come out of the mesh instead of out of every pixel — not exactly, but
+generously. `Shader::masks_still` answers whether the source mentions `input.time`,
+`input.world_position`, `input.camera_position` or `input.frag_coord`; without them the coverage is
+a function of uv and textures alone, and `AlphaTrim` shrinks the mesh to a **hull** around it, once
+per (mesh, material, values):
 
 - **Settle** — the pair has to ask with the same `MaterialPipeline::slot_stamp` for 8 frames, so a
   dragged slider never bakes. One pair a frame, in `sync_assets_to_gpu`, before the generated drain
   that uploads what it publishes.
 - **Bake** — the shadow bake's own frame (`shadow_alpha_bake.wgsl`, its square now a uniform) over
   256², read back to the CPU. 🔴 The readback blocks: it belongs to the asset step, and 64 KiB once
-  per pair is what it costs.
-- **Contour** — `contour` (a d3-contour port) walks marching squares at 0.5, `geo` simplifies under
-  half a texel, which is as fine as the bake could see.
-- **Cut** — each LOD 0 triangle is classified against the mask by its uv bounds: all kept, all gone,
-  or clipped against the coverage with `geo`'s boolean ops and triangulated again by earcut. New
+  per pair is what it costs. A masked material bakes its cut, 0 or 1; a transparent one bakes its
+  alpha, and anything above zero counts as covered, because it still blends there.
+- **Hull** — the mask is grown by a margin, `contour` walks marching squares over the grown mask,
+  and `geo` simplifies by no more than that same margin. Douglas-Peucker can only cut back into what
+  the margin added, so **the hull always contains the coverage**. Too many corners for the budget
+  (16): grow the margin and walk it again, up to 16 texels. A disc takes about ten triangles.
+- **Cut** — each LOD 0 triangle is classified against the **grown** mask by its uv bounds: all kept,
+  all gone, or clipped against the hull with `geo`'s boolean ops and triangulated by earcut. New
   corners interpolate position and normal across the source triangle; pieces are rewound to the
   triangle they came from, because earcut hands back its own winding and the raster culls back
   faces. Bit-equal vertices weld, then `build_meshlets_lod_chain` rebuilds the chain.
+- **Budget** — past 32 triangles, or keeping more than 90% of the mesh's uv, the cut is refused: the
+  vertices would cost more than the fill they save.
 - **Draw** — the cut mesh is published as a `GeneratedMeshes` entry and the scene walk swaps it in
-  for that (mesh, material) pair, with `INSTANCE_TRIMMED` set: `MaskedRaster::assign` leaves it to
-  the opaque draw, and the shadow rasters read its material as `SOLID_CASTER` so the geometry casts
-  its own shape instead of sampling the coverage again.
+  for that (mesh, material) pair. Nothing else changes: the material still runs its masked raster or
+  its transparent insert **inside** the hull, and the shadows still read the coverage bake. What the
+  hull saves is the fill of everything the alpha never reached — the empty corners of a leaf card,
+  the space around a sprite, and for a transparent one the fragments that never enter the layers.
 
-A pair that cannot be cut — a tiled uv, a mesh generated rather than loaded, an empty cut — is
-remembered as refused and keeps the per-pixel raster. Nothing is ever both skipped and undrawn.
+Prior art: Humus' particle trimming and Unity's tight sprite mesh, both of which enclose the sprite
+in a handful of corners rather than following its edge. Tracing the alpha exactly buys the same fill
+for a mesh nobody wants to pay for.
+
+A pair that cannot be cut — a tiled uv, a mesh generated rather than loaded, a coverage that fills
+its own square — is remembered as refused and keeps the mesh it was authored with.
 
 ### After the shade: rate, history, and the tonemap
 

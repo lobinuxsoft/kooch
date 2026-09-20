@@ -1,9 +1,13 @@
-//! Static alpha as geometry (#452): a masked material whose cut reads uv and textures only is baked
-//! once over its uv square, contoured, and the mesh is cut against the contour. What is left is
-//! plain opaque geometry — no per-pixel discard, no masked bin, meshlet LODs and a solid shadow.
+//! Static alpha as geometry (#452): a material whose coverage reads uv and textures only is baked
+//! once over its uv square and the mesh is cut down to a **hull** around what it covers.
 //!
-//! Prior art: Humus' particle trimming, Unity's tight sprite mesh, and Epic's advice to model
-//! Nanite foliage rather than mask it.
+//! The hull is deliberately coarse and always wider than the coverage: the material keeps cutting
+//! and blending per pixel inside it, and what the cut saves is the fill of everything the alpha
+//! never reached — the empty corners of a leaf card, the space around a sprite. Tracing the alpha
+//! exactly would buy the same fill for a mesh nobody wants to pay for.
+//!
+//! Prior art: Humus' particle trimming and Unity's tight sprite mesh, both of which cover the
+//! sprite in a handful of corners rather than following its edge.
 
 pub mod bake;
 mod cut;
@@ -17,9 +21,18 @@ use crate::material::MaterialPipeline;
 use crate::meshlet::asset::{DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES, MeshletMesh};
 use crate::meshlet::builder::{LodConfig, build_meshlets_lod_chain};
 
-/// Texels a side of the baked cut. A row of R8 is then 256 bytes, the copy alignment, and the
-/// contour lands within half a texel of the edge the raster would have cut.
+/// Texels a side of the baked coverage. A row of R8 is then 256 bytes, the copy alignment.
 pub const TRIM_SIDE: u32 = 256;
+/// Corners a hull is allowed before it is grown and simplified again.
+const HULL_CORNERS: usize = 16;
+/// Triangles a cut mesh is allowed. Past it the vertices cost more than the fill they save.
+const HULL_TRIANGLES: usize = 32;
+/// Share of the mesh's uv a hull may keep and still be worth cutting. A sprite that fills its own
+/// square has no empty corners to drop, and a cut would be all cost.
+const HULL_SAVING: f32 = 0.9;
+/// What counts as covered for a transparent material: anything its alpha is not zero at, because it
+/// still blends there. A masked one is a cut, and its bake is already 0 or 1.
+const TRANSPARENT_LEVEL: f64 = 1.0 / 255.0;
 /// Frames a pair has to ask for the same trim before it bakes. A dragged slider republishes the
 /// material every frame; without this it would bake, and read back, on each one.
 const SETTLE_FRAMES: u32 = 8;
@@ -90,39 +103,67 @@ impl AlphaTrim {
     }
 }
 
-/// Why a pair stays with its per-pixel cut. Logged, so a scene that expected geometry says what it
-/// got instead.
+/// Why a pair keeps the mesh it was authored with. Logged, so a scene that expected a cut says what
+/// it got instead.
 #[derive(Clone, Copy, Debug)]
 pub enum NoTrim {
     /// The material's own shader did not bake: it has no surface, or it never compiled.
     Bake,
-    /// The cut keeps nothing at all, so there is no mesh to draw.
+    /// Nothing is covered at all, so there is no mesh to draw.
     Empty,
     /// The mesh's uv leaves its square: it tiles the coverage, which was baked once.
     Tiled,
+    /// The hull needs more triangles than it would save fill.
+    Budget,
+    /// The coverage fills the mesh: there are no empty corners to drop.
+    Cheap,
     /// The cut mesh does not meshletise.
     Meshlets,
 }
 
-/// Bakes `slot`'s cut and cuts `source` against it.
+/// A cut mesh and what it is worth: the share of the source's uv the hull still covers, which is the
+/// share of the fill that is left to pay for.
+pub struct Trimmed {
+    pub mesh: MeshletMesh,
+    pub kept: f32,
+}
+
+/// Bakes `slot`'s coverage and cuts `source` down to a hull around it.
 pub fn build(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     materials: &MaterialPipeline,
     slot: u32,
     source: &MeshletMesh,
-) -> Result<MeshletMesh, NoTrim> {
+) -> Result<Trimmed, NoTrim> {
+    let transparent = materials
+        .slot_surface(slot)
+        .is_some_and(|(_, surface)| surface.kind == crate::material::ShaderKind::Transparent);
+    let threshold = match transparent {
+        true => TRANSPARENT_LEVEL,
+        false => 0.5,
+    };
     let mask = bake::mask(device, queue, materials, slot, TRIM_SIDE).ok_or(NoTrim::Bake)?;
-    let coverage = region::coverage(&mask, TRIM_SIDE).ok_or(NoTrim::Empty)?;
-    let geometry = cut::mesh(source, &coverage, &mask, TRIM_SIDE)?;
-    build_meshlets_lod_chain(
-        &geometry,
+    let hull = region::hull(&mask, TRIM_SIDE, threshold, HULL_CORNERS).ok_or(NoTrim::Empty)?;
+    let cut = cut::mesh(source, &hull, TRIM_SIDE, threshold)?;
+    if cut.triangles > HULL_TRIANGLES {
+        return Err(NoTrim::Budget);
+    }
+    if cut.kept > cut.whole * HULL_SAVING {
+        return Err(NoTrim::Cheap);
+    }
+    let mesh = build_meshlets_lod_chain(
+        &cut.mesh,
         DEFAULT_MAX_VERTICES,
         DEFAULT_MAX_TRIANGLES,
         0.5,
         LodConfig::default(),
     )
-    .map_err(|_| NoTrim::Meshlets)
+    .map_err(|_| NoTrim::Meshlets)?;
+    Ok(Trimmed {
+        mesh,
+        kept: cut.kept / cut.whole.max(f32::EPSILON),
+    })
 }
 
 #[cfg(test)]

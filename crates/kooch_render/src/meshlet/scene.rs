@@ -19,10 +19,6 @@ pub const INSTANCE_CASTS_NO_SHADOW: u32 = 1u32 << 2;
 /// by `MaskedRaster::assign`, only once the bin exists.
 pub const INSTANCE_MASKED: u32 = 1u32 << 3;
 
-/// Draws its material's static cut as geometry (#452), so no masked bin and no shadow coverage
-/// lookup touch it. Set by the scene walk once `AlphaTrim` has cut the mesh.
-pub const INSTANCE_TRIMMED: u32 = 1u32 << 4;
-
 /// How many instances lead the list before the first transparent one: what every cull is given.
 pub fn opaque_count(instances: &[MeshInstance]) -> usize {
     instances

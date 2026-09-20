@@ -1,23 +1,43 @@
-//! The cut's CPU half (#452): the contour over a mask, the mesh cut against it, and when a pair is
+//! The cut's CPU half (#452): the hull over a coverage, the mesh cut down to it, and when a pair is
 //! allowed to bake at all.
 
+use geo::{Area, Contains, Coord, Point};
 use glam::Vec2;
 use kooch_core::Guid;
 
-use super::{AlphaTrim, SETTLE_FRAMES, TRIM_SIDE, TrimPair, cut, region};
+use super::{AlphaTrim, HULL_CORNERS, HULL_TRIANGLES, SETTLE_FRAMES, TRIM_SIDE, TrimPair};
+use super::{cut, region};
 use crate::mesh::{Mesh, MeshVertex};
 use crate::meshlet::asset::{DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES, MeshletMesh};
 use crate::meshlet::builder::{LodConfig, build_meshlets_lod_chain};
 
-/// A cut that keeps the uv square's left half, as a bake would leave it.
+/// The cut's own level: its bake is 0 or 1.
+const CLIP: f64 = 0.5;
+
+/// A coverage that keeps the uv square's left half, as a bake would leave it.
 fn left_half() -> Vec<u8> {
+    covered(|x, _| x < TRIM_SIDE / 2)
+}
+
+/// A coverage of every texel `inside` answers for.
+fn covered(inside: impl Fn(u32, u32) -> bool) -> Vec<u8> {
     let mut mask = vec![0u8; (TRIM_SIDE * TRIM_SIDE) as usize];
     for y in 0..TRIM_SIDE {
-        for x in 0..TRIM_SIDE / 2 {
-            mask[(y * TRIM_SIDE + x) as usize] = 255;
+        for x in 0..TRIM_SIDE {
+            if inside(x, y) {
+                mask[(y * TRIM_SIDE + x) as usize] = 255;
+            }
         }
     }
     mask
+}
+
+/// A disc of `radius` in uv around the middle of the square: a sprite with empty corners.
+fn disc(radius: f32) -> Vec<u8> {
+    covered(|x, y| {
+        let at = Vec2::new(x as f32, y as f32) / TRIM_SIDE as f32;
+        at.distance(Vec2::splat(0.5)) < radius
+    })
 }
 
 /// A unit quad on the xy plane, its uv spanning the square, `scale`d in uv.
@@ -46,40 +66,109 @@ fn quad(scale: f32) -> MeshletMesh {
     .expect("a quad meshletises")
 }
 
+/// The quad cut against `mask`'s hull.
+fn cut_quad(mask: &[u8], scale: f32) -> Result<cut::Cut, super::NoTrim> {
+    let hull = region::hull(mask, TRIM_SIDE, CLIP, HULL_CORNERS).expect("something is covered");
+    cut::mesh(&quad(scale), &hull, TRIM_SIDE, CLIP)
+}
+
 #[test]
-fn a_half_mask_contours_half() {
-    let coverage = region::coverage(&left_half(), TRIM_SIDE).expect("half a square is covered");
-    let area = geo::Area::unsigned_area(&coverage);
+fn a_half_mask_hulls_half() {
+    let hull = region::hull(&left_half(), TRIM_SIDE, CLIP, HULL_CORNERS).expect("half is covered");
+    let area = hull.region.unsigned_area();
+    // Half, and a margin's worth over it: the hull stands off the coverage on purpose.
     assert!(
-        (area - 0.5).abs() < 0.01,
-        "half the square is {area}, not 0.5",
+        (0.5..0.6).contains(&area),
+        "half the square hulls to {area}",
     );
 }
 
 #[test]
-fn an_empty_mask_contours_nothing() {
+fn an_empty_mask_hulls_nothing() {
     let mask = vec![0u8; (TRIM_SIDE * TRIM_SIDE) as usize];
-    assert!(region::coverage(&mask, TRIM_SIDE).is_none());
+    assert!(region::hull(&mask, TRIM_SIDE, CLIP, HULL_CORNERS).is_none());
 }
 
-/// 🔴 The point of the whole step: the geometry ends where the alpha does.
+/// 🔴 The invariant the whole step rests on: the material still cuts per pixel inside the hull, so a
+/// hull that misses one covered texel takes a pixel the alpha wanted, and the mesh is simply wrong.
 #[test]
-fn a_cut_quad_loses_half() {
-    let mask = left_half();
-    let coverage = region::coverage(&mask, TRIM_SIDE).expect("half a square is covered");
-    let cut = cut::mesh(&quad(1.0), &coverage, &mask, TRIM_SIDE).expect("half the quad survives");
-    let far = cut
-        .vertices
+fn a_hull_covers_every_texel() {
+    let mask = disc(0.35);
+    let hull = region::hull(&mask, TRIM_SIDE, CLIP, HULL_CORNERS).expect("the disc is covered");
+    for y in 0..TRIM_SIDE {
+        for x in 0..TRIM_SIDE {
+            if mask[(y * TRIM_SIDE + x) as usize] < 128 {
+                continue;
+            }
+            let at = Point::from(Coord {
+                x: (f64::from(x) + 0.5) / f64::from(TRIM_SIDE),
+                y: (f64::from(y) + 0.5) / f64::from(TRIM_SIDE),
+            });
+            assert!(
+                hull.region.contains(&at),
+                "texel {x},{y} is outside the hull"
+            );
+        }
+    }
+}
+
+/// 🔴 A hull, not a tracing: a disc's edge would take hundreds of segments to follow and a handful
+/// to enclose. The corners are what the mesh pays for.
+#[test]
+fn a_hull_stays_coarse() {
+    let hull = region::hull(&disc(0.35), TRIM_SIDE, CLIP, HULL_CORNERS).expect("covered");
+    let corners: usize = hull
+        .region
+        .0
         .iter()
-        .map(|vertex| vertex.uv[0])
-        .fold(0.0f32, f32::max);
-    assert!(far < 0.51, "the cut mesh reaches uv {far}, past the alpha");
-    let area = signed_area(&cut);
-    // Signed, and the source quad winds one way: a flipped piece would cancel instead of add.
+        .map(|polygon| polygon.exterior().0.len())
+        .sum();
     assert!(
-        (area - 0.5).abs() < 0.01,
-        "the cut covers {area} of the quad's uv, not half",
+        corners <= HULL_CORNERS,
+        "the disc took {corners} corners, past the budget",
     );
+}
+
+/// 🔴 What the cut is for: the quad's empty corners go, and what is left is a handful of triangles
+/// rather than a traced outline.
+#[test]
+fn a_cut_disc_drops_the_corners() {
+    let cut = cut_quad(&disc(0.35), 1.0).expect("the disc survives");
+    assert!(
+        cut.triangles <= HULL_TRIANGLES,
+        "{} triangles for a disc",
+        cut.triangles,
+    );
+    // A disc of radius 0.35 covers 0.38 of its square; a hull around it keeps a little more.
+    assert!(
+        (0.38..0.6).contains(&(cut.kept / cut.whole)),
+        "the cut kept {} of {} uv",
+        cut.kept,
+        cut.whole,
+    );
+}
+
+/// A uv that tiles reads a coverage that was never baked, so the mesh keeps its own shape.
+#[test]
+fn a_tiled_uv_is_refused() {
+    assert!(matches!(
+        cut_quad(&left_half(), 4.0),
+        Err(super::NoTrim::Tiled)
+    ));
+}
+
+/// Nothing covered leaves no triangle, and no mesh to publish.
+#[test]
+fn an_uncovered_quad_is_dropped() {
+    let hull = region::hull(&left_half(), TRIM_SIDE, CLIP, HULL_CORNERS).expect("covered");
+    let mut right = quad(1.0);
+    for vertex in &mut right.vertices {
+        vertex.uv[0] = vertex.uv[0] * 0.2 + 0.8;
+    }
+    assert!(matches!(
+        cut::mesh(&right, &hull, TRIM_SIDE, CLIP),
+        Err(super::NoTrim::Empty)
+    ));
 }
 
 /// 🔴 Mirrored uv winds the other way, and earcut hands back its own winding: a cut piece that kept
@@ -87,16 +176,16 @@ fn a_cut_quad_loses_half() {
 #[test]
 fn a_mirrored_uv_keeps_facing() {
     let mask = left_half();
-    let coverage = region::coverage(&mask, TRIM_SIDE).expect("half a square is covered");
+    let hull = region::hull(&mask, TRIM_SIDE, CLIP, HULL_CORNERS).expect("covered");
     let mut mirrored = quad(1.0);
     for vertex in &mut mirrored.vertices {
         vertex.uv[0] = 1.0 - vertex.uv[0];
     }
-    let cut = cut::mesh(&mirrored, &coverage, &mask, TRIM_SIDE).expect("half the quad survives");
+    let cut = cut::mesh(&mirrored, &hull, TRIM_SIDE, CLIP).expect("half the quad survives");
     assert!(
-        signed_area(&cut) < -0.4,
+        signed_area(&cut.mesh) < -0.4,
         "the cut faces the other way: {}",
-        signed_area(&cut),
+        signed_area(&cut.mesh),
     );
 }
 
@@ -109,29 +198,6 @@ fn signed_area(cut: &Mesh) -> f32 {
             (at(1) - at(0)).perp_dot(at(2) - at(0)) * 0.5
         })
         .sum()
-}
-
-/// A uv that tiles reads a coverage that was never baked, so the mesh keeps its masked raster.
-#[test]
-fn a_tiled_uv_is_refused() {
-    let mask = left_half();
-    let coverage = region::coverage(&mask, TRIM_SIDE).expect("half a square is covered");
-    assert!(cut::mesh(&quad(4.0), &coverage, &mask, TRIM_SIDE).is_err());
-}
-
-/// Nothing covered leaves no triangle, and no mesh to publish.
-#[test]
-fn an_uncovered_quad_is_dropped() {
-    let mask = left_half();
-    let coverage = region::coverage(&mask, TRIM_SIDE).expect("half a square is covered");
-    let right = {
-        let mut mesh = quad(1.0);
-        for vertex in &mut mesh.vertices {
-            vertex.uv[0] = vertex.uv[0] * 0.4 + 0.6;
-        }
-        mesh
-    };
-    assert!(cut::mesh(&right, &coverage, &mask, TRIM_SIDE).is_err());
 }
 
 /// 🔴 A dragged slider republishes its material every frame; baking each one would read back each

@@ -53,15 +53,17 @@ impl MeshletRenderStage {
             mesh = %mesh,
             material = %material,
             before = source.total_triangle_count(),
-            after = cut.total_triangle_count(),
-            "masked mesh cut to its alpha; it draws opaque from here",
+            after = cut.mesh.total_triangle_count(),
+            // What is left to rasterise, as a share of what was: the point of the cut in one number.
+            fill = cut.kept,
+            "mesh cut down to a hull around its coverage",
         );
         let guid = Guid::new_v4();
         match resources.get_mut::<GeneratedMeshes>() {
-            Some(generated) => generated.insert(guid, cut),
+            Some(generated) => generated.insert(guid, cut.mesh),
             None => {
                 let mut generated = GeneratedMeshes::new();
-                generated.insert(guid, cut);
+                generated.insert(guid, cut.mesh);
                 resources.insert(generated);
             }
         }
