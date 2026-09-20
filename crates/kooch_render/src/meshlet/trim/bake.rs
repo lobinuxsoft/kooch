@@ -9,8 +9,10 @@ use crate::material::{MaterialPipeline, MaterialTexturePool};
 use crate::meshlet::MATERIAL_SURFACE_PRELUDE;
 use crate::shadow::alpha::{BAKE_FRAME, BakeScreen};
 
-/// `side`² texels of `slot`'s cut: 255 where a fragment survives, 0 where the raster discards it.
-pub(super) fn mask(
+/// `side`² texels of what `slot`'s surface answers over its uv square: a masked material's cut, 255
+/// where a fragment survives and 0 where it is discarded, or a transparent one's own alpha. Public
+/// because a surface asked over its uv, off screen, is the only way to test one by its numbers.
+pub fn mask(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     materials: &MaterialPipeline,

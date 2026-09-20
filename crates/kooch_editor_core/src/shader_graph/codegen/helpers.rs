@@ -37,7 +37,9 @@ pub(super) fn helpers(graph: &Graph) -> String {
         NORMAL_HELPER,
     );
     push(uses(&|n| matches!(n, Node::Blend { .. })), OVERLAY_HELPER);
-    // First, and once however many noises the graph has: they all read it.
+    // First, and once however many noises the graph has: they all read them, and the wrap is called
+    // by the hashes below it (#1237).
+    push(uses(&|n| n.is_noise()), WRAP_HELPER);
     push(uses(&|n| n.is_noise()), HASH_HELPER);
     let bases = [
         ("value", VALUE_NOISE_HELPER, VALUE_NOISE3_HELPER),
@@ -74,6 +76,9 @@ const NORMAL_HELPER: &str = include_str!("helpers/normal.wgsl");
 const OVERLAY_HELPER: &str = include_str!("helpers/overlay.wgsl");
 
 const HASH_HELPER: &str = include_str!("helpers/hash.wgsl");
+
+/// The lattice period every noise wraps against (#1237).
+const WRAP_HELPER: &str = include_str!("helpers/wrap.wgsl");
 
 /// The 3D hash an animated noise walks through.
 const HASH3_HELPER: &str = include_str!("helpers/hash3.wgsl");

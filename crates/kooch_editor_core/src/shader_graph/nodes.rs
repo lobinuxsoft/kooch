@@ -404,6 +404,16 @@ pub(crate) const NOISE_DISTORTION: usize = 5;
 /// A fractal noise's phase pin: wired, the noise is sampled in 3D and changes where it stands.
 pub(crate) const NOISE_PHASE: usize = 6;
 
+/// A fractal noise's tiling pin: wired, the lattice wraps against it and the noise repeats, so a uv
+/// that comes back to itself has no seam (#1237). Last, because pins are wired by index.
+pub(crate) const NOISE_TILING: usize = 7;
+
+/// Voronoi's tiling pin, for the same reason.
+pub(crate) const VORONOI_TILING: usize = 5;
+
+/// White noise's tiling pin.
+pub(crate) const WHITE_TILING: usize = 2;
+
 /// A fractal noise's colour output: three samples, taken only when this pin is wired.
 pub(crate) const NOISE_COLOUR: usize = 1;
 

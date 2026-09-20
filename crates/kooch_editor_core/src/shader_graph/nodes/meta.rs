@@ -228,12 +228,13 @@ impl Node {
                     "lacunarity",
                     "distortion",
                     "phase",
+                    "tiling",
                 ]
             }
             Self::SceneColor => &["uv"],
-            Self::WhiteNoise => &["uv", "scale"],
+            Self::WhiteNoise => &["uv", "scale", "tiling"],
             Self::VoronoiNoise { .. } | Self::Voronoi => {
-                &["uv", "scale", "randomness", "phase", "smoothness"]
+                &["uv", "scale", "randomness", "phase", "smoothness", "tiling"]
             }
             Self::Circle => &["uv", "radius", "softness"],
             Self::Rectangle => &["uv", "size", "softness"],

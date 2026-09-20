@@ -345,6 +345,11 @@ The menu groups the nodes the way the panels do:
     the last; **lacunarity** (2) — how much finer each layer is.
   - **distortion** — warps the coordinate by the noise itself, for marble and smoke.
   - **phase** — wire **Time** in and the noise changes where it stands instead of sliding away.
+  - **tiling** — how many cells fit across the uv square, per axis, so the noise **repeats with no
+    seam**. It takes over from **scale** on the axis it is given (`0` leaves that axis open) and is
+    rounded to whole cells, because half a cell cannot come back to itself. A **simplex** basis
+    refuses it: its lattice is skewed, so a period there repeats in skewed space and not in uv —
+    use value or gradient for anything that has to tile.
   - Outputs: **value** in 0..1, and **color**, three unrelated samples for tinting.
 
   Distortion, phase and color each cost extra samples, paid only while they are wired.
@@ -354,7 +359,19 @@ The menu groups the nodes the way the panels do:
   in and the points circle), and **smoothness** (0..1, rounds F1, F2 and the border alike). Outputs: **F1** the
   distance to the nearest point, **F2** to the second, **border** the true distance to the cell edge
   (a wider search, run only while wired), **cell** a random value per cell, and **position** the
-  nearest point.
+  nearest point. **White Noise** and **Voronoi** take the same **tiling** input as the fractal
+  noises.
+
+  **Around a turn:** `PolarCoordinates` gives the angle on **y**, in 0..1 for a full turn, so a
+  noise read through it tiles with `tiling = (0, n)` — the radius stays open and the angle comes
+  back to itself after `n` cells. Without it the turn shows a cut where the angle wraps.
+
+  🔴 The tiled axis has to **arrive spanning 0..1**: the period counts cells over that range, so
+  anything upstream that scales it — polar's own *length scale*, a **Tiling** node, a **Multiply** —
+  leaves the period closing somewhere other than the edge, and the seam comes back. Set that scale
+  to 1 and ask for the density with **tiling** instead. And the value the frame reads is the
+  **material's**, not the node's: a parameter node holds the default a new material starts from,
+  while one that already exists keeps what it was registered with until the Inspector changes it.
 - **UV** nodes take a coordinate and give one back, to feed a Texture, a noise or a shape. The four
   distortions work around a **centre** and, left unwired, read the mesh's uv around its middle (0.5):
   - **Polar Coordinates** gives **radius** (distance from the centre × 2 × *radial scale*) and
