@@ -121,6 +121,13 @@ pub enum NoTrim {
     Meshlets,
 }
 
+/// A cut mesh and what it is worth: the share of the source's uv the hull still covers, which is the
+/// share of the fill that is left to pay for.
+pub struct Trimmed {
+    pub mesh: MeshletMesh,
+    pub kept: f32,
+}
+
 /// Bakes `slot`'s coverage and cuts `source` down to a hull around it.
 pub fn build(
     device: &wgpu::Device,
@@ -128,7 +135,7 @@ pub fn build(
     materials: &MaterialPipeline,
     slot: u32,
     source: &MeshletMesh,
-) -> Result<MeshletMesh, NoTrim> {
+) -> Result<Trimmed, NoTrim> {
     let transparent = materials
         .slot_surface(slot)
         .is_some_and(|(_, surface)| surface.kind == crate::material::ShaderKind::Transparent);
@@ -145,14 +152,18 @@ pub fn build(
     if cut.kept > cut.whole * HULL_SAVING {
         return Err(NoTrim::Cheap);
     }
-    build_meshlets_lod_chain(
+    let mesh = build_meshlets_lod_chain(
         &cut.mesh,
         DEFAULT_MAX_VERTICES,
         DEFAULT_MAX_TRIANGLES,
         0.5,
         LodConfig::default(),
     )
-    .map_err(|_| NoTrim::Meshlets)
+    .map_err(|_| NoTrim::Meshlets)?;
+    Ok(Trimmed {
+        mesh,
+        kept: cut.kept / cut.whole.max(f32::EPSILON),
+    })
 }
 
 #[cfg(test)]

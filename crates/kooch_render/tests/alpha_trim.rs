@@ -72,7 +72,9 @@ fn cut(source: &str) -> Option<MeshletMesh> {
     let mut look = Material::new([1.0, 1.0, 1.0, 1.0], 0.0, 1.0, 0.0);
     look.shader = Some(shader);
     let slot = materials.register(&queue, Guid::new_v4(), &look);
-    trim::build(&device, &queue, &materials, slot, &quad()).ok()
+    trim::build(&device, &queue, &materials, slot, &quad())
+        .ok()
+        .map(|trimmed| trimmed.mesh)
 }
 
 /// 🔴 The point of the step: the mesh stops just short of the alpha and costs a handful of
