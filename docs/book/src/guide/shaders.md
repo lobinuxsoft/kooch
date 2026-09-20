@@ -153,6 +153,16 @@ pixel's four layers and is neither lit nor blended — and the rest blends by it
 Its shadow drops the cut part and dithers the rest. The transparent output node has the same
 **alpha clip** pin.
 
+### Transparent, with no light on it
+
+`// kind: transparent_unlit` is the blended kind for what carries its own brightness: fire, energy,
+a sprite lit by nobody. It defines `fn unlit(input: SurfaceInput) -> UnlitOutput` exactly as the
+opaque `unlit` kind does — **color**, **alpha** and **alpha clip** — and the forward pass blends
+what it returns without asking Inti for a single light. Its shadow still follows its alpha.
+
+In the graph it is one more entry in the output node's kind dropdown, with the same three pins as
+`unlit`.
+
 ### Post-process
 
 A `post_process` shader is drawn over what the camera rendered. `input.uv` is the screen in 0..1,

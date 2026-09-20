@@ -9,10 +9,11 @@
 mod layered;
 mod list;
 
+use crate::meshlet::vbuf64_stage::shader_cache::BLENDED;
 use bytemuck::bytes_of;
 
 use crate::contact_shadow::ContactShadowUbo;
-use crate::material::{MaterialPipeline, ShaderKind};
+use crate::material::MaterialPipeline;
 use crate::meshlet::deferred::HDR_COLOR_FORMAT;
 use crate::meshlet::scene::MeshletScene;
 use crate::meshlet::{
@@ -215,7 +216,7 @@ impl SortedPass {
             immediate_size: 0,
         });
         Self {
-            pipelines: ShaderPipelines::new(&[ShaderKind::Transparent]),
+            pipelines: ShaderPipelines::new(BLENDED),
             depth_format,
             layout,
             scene_bgl,

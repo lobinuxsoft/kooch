@@ -281,7 +281,7 @@ impl Node {
             ],
             Self::Checker => &[UV_ZERO, (Two, "How many squares: x across, y down.")],
             Self::SceneColor => &[(Two, "Where to read the frame. Unwired: this pixel.")],
-            Self::ShaderOutput { kind } if kind == "unlit" => &[
+            Self::ShaderOutput { kind } if kind == "unlit" || kind == "transparent_unlit" => &[
                 (Three, "The final colour. No light or shadow changes it."),
                 (One, "Opacity, tested against alpha clip. Unwired: 1."),
                 (

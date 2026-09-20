@@ -8,9 +8,8 @@
 
 mod pipelines;
 
+use crate::meshlet::vbuf64_stage::shader_cache::BLENDED;
 use bytemuck::{Pod, Zeroable, bytes_of};
-
-use crate::material::ShaderKind;
 
 use super::super::ScreenUbo;
 use super::super::shader_cache::ShaderPipelines;
@@ -78,9 +77,9 @@ impl LayeredPass {
             insert: pipelines::insert(device, &layouts, depth_format),
             composite: pipelines::composite(device, &layouts),
             args_pipeline: pipelines::args(device, &layouts),
-            tails: ShaderPipelines::new(&[ShaderKind::Transparent]),
-            clips: ShaderPipelines::new(&[ShaderKind::Transparent]),
-            shades: ShaderPipelines::new(&[ShaderKind::Transparent]),
+            tails: ShaderPipelines::new(BLENDED),
+            clips: ShaderPipelines::new(BLENDED),
+            shades: ShaderPipelines::new(BLENDED),
             depth_format,
             targets: None,
             overflow: storage(

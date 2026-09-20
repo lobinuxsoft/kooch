@@ -242,7 +242,9 @@ impl Node {
             Self::Polygon => &["uv", "sides", "radius"],
             Self::Checker => &["uv", "tiles"],
             Self::ShaderOutput { kind } if kind == "post_process" => &["color", "alpha"],
-            Self::ShaderOutput { kind } if kind == "unlit" => &["color", "alpha", "alpha clip"],
+            Self::ShaderOutput { kind } if kind == "unlit" || kind == "transparent_unlit" => {
+                &["color", "alpha", "alpha clip"]
+            }
             Self::ShaderOutput { kind } if kind == "transparent" => &[
                 "base color",
                 "normal",

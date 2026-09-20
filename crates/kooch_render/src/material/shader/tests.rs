@@ -259,3 +259,17 @@ fn assigning_alpha_clip_masks() {
     assert!(!masks("    if out.alpha_clip == 0.5 {"));
     assert!(!masks("    out.alpha = 0.5;"));
 }
+
+/// 🔴 The kind that was missing: both constants on, so the transparent frames draw it and the shade
+/// skips Inti. The unlit body is bridged into a `surface` like any other unlit shader.
+#[test]
+fn an_unlit_transparent_is_both() {
+    let shader = Shader::parse("// kind: transparent_unlit\nfn unlit() {}").unwrap();
+    assert_eq!(shader.kind, ShaderKind::TransparentUnlit);
+    assert!(shader.kind.blends());
+    assert!(shader.kind.unlit());
+    let glue = shader.params_wgsl();
+    assert!(glue.contains("SURFACE_UNLIT: bool = true"), "{glue}");
+    assert!(glue.contains("SURFACE_TRANSPARENT: bool = true"), "{glue}");
+    assert!(glue.contains("fn surface(input: SurfaceInput)"), "{glue}");
+}

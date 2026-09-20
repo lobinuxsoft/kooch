@@ -413,7 +413,13 @@ Then [Inti](./lighting.md) — Cook-Torrance driven by the scene's lights.
 
 ### Transparent surfaces (#452)
 
-A `transparent` material's instances are appended after every opaque one. The view's cull is
+Two kinds blend: `transparent`, a lit surface with an `alpha`, and `transparent_unlit`, the same
+without a single light — fire, energy, a sprite that carries its own brightness. They take the same
+path everywhere; what the kind decides is one const-folded branch in `transparent_lit.wgsl`, where
+`SURFACE_UNLIT` skips Inti. `ShaderKind::blends()` is what every router asks, so a third blended
+kind would be one variant and no new `if`.
+
+A blended material's instances are appended after every opaque one. The view's cull is
 handed the opaque count, so they never reach the visibility buffer; the shadow culls — cascades and
 pages — are handed every instance, so they cast. A renderer with `cast_shadows` off carries
 `INSTANCE_CASTS_NO_SHADOW`, and every shadow view's cull (`CullParams::shadow`, and the lamp cull)
