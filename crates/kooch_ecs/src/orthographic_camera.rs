@@ -23,6 +23,10 @@ pub struct OrthographicCamera {
     pub far: f32,
     /// Clear color RGBA (linear).
     pub clear_color: Vec4,
+    /// Layers this camera draws (#1219). A renderer sharing no bit with it is not culled in, and
+    /// the shadows are not filtered by it — those belong to the light.
+    #[reflect(layers)]
+    pub culling_mask: u32,
 }
 
 impl Default for OrthographicCamera {
@@ -34,6 +38,7 @@ impl Default for OrthographicCamera {
             near: 0.1,
             far: 1000.0,
             clear_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
+            culling_mask: u32::MAX,
         }
     }
 }

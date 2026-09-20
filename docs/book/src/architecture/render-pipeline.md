@@ -417,8 +417,18 @@ Every `MeshRenderer` carries a 32-bit `layers` mask, and the scene walk copies i
 `MeshInstance.layers` — so the mask is on the GPU, beside the flags, for whatever filters by it to
 read without asking the ECS again. What each bit is called lives in the project's `.layers` file,
 which colliders name their groups from as well: one table, so a bit means the same thing wherever
-it is ticked. Nothing filters by it yet; the camera's culling mask (#1219), lights and shadows
-(#1220) and camera stacking (#1221) are what it was put there for.
+it is ticked.
+
+A camera filters by it: `PerspectiveCamera.culling_mask` rides into `CullParams`, and `skipped()` —
+the one place every cull path already asked whether an instance is this view's — rejects what shares
+no bit with it. In the cull, so nothing walks the instances on the CPU, and per view, so the
+editor's View panel keeps every layer while the Game panel keeps what the game's camera says.
+
+🔴 **Shadows are not filtered by it.** A shadow view builds its own `CullParams`, whose mask is every
+layer: what a camera does not draw still casts, because the shadow belongs to the light. A caster
+hidden from one camera and lit by a lamp both cameras see would otherwise lose its shadow in both.
+
+Lights and shadows by layer (#1220) and camera stacking (#1221) are the rest of it.
 
 ### Transparent surfaces (#452)
 

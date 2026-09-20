@@ -10,6 +10,8 @@ fn default_values() {
     assert_eq!(cam.clear_color, Vec4::new(0.0, 0.0, 0.0, 1.0));
     assert_eq!(cam.priority, 0);
     assert!(cam.active);
+    // Every layer: a camera nobody told draws the scene it was pointed at (#1219).
+    assert_eq!(cam.culling_mask, u32::MAX);
 }
 
 #[test]
@@ -19,6 +21,6 @@ fn reflect_fields() {
     let names: Vec<&str> = fields.iter().map(|f| f.name).collect();
     assert_eq!(
         names,
-        &["active", "priority", "fov", "near", "far", "clear_color"]
+        &["active", "priority", "fov", "near", "far", "clear_color", "culling_mask"]
     );
 }

@@ -13,6 +13,9 @@ pub struct ViewCamera {
     pub fov_y_rad: f32,
     pub near: f32,
     pub far: f32,
+    /// Layers this view draws (#1219). `u32::MAX` — every layer — is what a view nobody told draws,
+    /// which is what the editor's own camera wants.
+    pub culling_mask: u32,
 }
 
 impl Default for ViewCamera {
@@ -23,6 +26,7 @@ impl Default for ViewCamera {
             fov_y_rad: std::f32::consts::FRAC_PI_3,
             near: 0.1,
             far: 1000.0,
+            culling_mask: u32::MAX,
         }
     }
 }
@@ -36,6 +40,7 @@ impl ViewCamera {
             fov_y_rad: cam.fov.to_radians().max(1.0_f32.to_radians()),
             near: cam.near.max(0.001),
             far: cam.far.max(cam.near + 0.001),
+            culling_mask: cam.culling_mask,
         }
     }
 

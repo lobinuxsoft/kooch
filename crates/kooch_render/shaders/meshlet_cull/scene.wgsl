@@ -69,7 +69,7 @@ fn run_cull_scene(thread_id: u32) {
 
     let inst = instances[instance_id];
     let desc = descriptors[meshlet_idx];
-    if (skipped(inst.flags)) {
+    if (skipped(inst.flags, inst.layers)) {
         return;
     }
 

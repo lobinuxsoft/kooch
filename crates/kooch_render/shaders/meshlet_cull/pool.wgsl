@@ -51,7 +51,7 @@ fn run_cull_scene_pool(thread_id: u32) {
 
     let inst = instances[instance_id];
     let mesh_desc = pool_mesh_descriptors[inst.mesh_id];
-    if (skipped(inst.flags)) {
+    if (skipped(inst.flags, inst.layers)) {
         return;
     }
 
