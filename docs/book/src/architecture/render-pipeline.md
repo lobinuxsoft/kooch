@@ -855,10 +855,19 @@ with nobody anywhere.
 - **The fold is Unity's.** Volumes apply in `priority` order, each moving what the ones below left
   *towards* its own value by its own weight — so a volume can turn an effect **down**, which a max
   or an add could never do. An effect no volume mentions keeps what the scene gave it.
-- Sphere, box and capsule are measured analytically. A hull or a trimesh has no cheap answer, so it
-  reports "fully inside" the moment the solver says a body arrived: the shape still works, it just
-  cuts instead of fading. A block mesh is one of those — blocks already publish their geometry to
-  the collider cache, so a room built out of them is a region, without a fade.
+- **A region is every collider under it.** The solver already builds a compound body out of a parent
+  and its descendants, so an awkward space is covered with as many shapes as it takes and the
+  deepest answers. Exact inside any one of them, conservative where two meet: overlap them and the
+  seam disappears.
+- Sphere, box and capsule are measured analytically; a **convex hull** by the distance to its
+  nearest face, which is exact and indifferent to where the mesh sits relative to its entity — the
+  reason a hull is the shape for a region nobody centred. The face normals are oriented against the
+  hull's own middle rather than trusting a winding a generated mesh never promised.
+- A trimesh is a shell with no inside to be deep in, a decomposition's seams are not its boundary,
+  and a voxel field would want a distance transform: all of them report "fully inside" from the
+  moment the solver says a body arrived. 🔴 A block's collider is `SHAPE_OWN_MESH`, which resolves
+  to a trimesh — a body entirely inside one touches no triangle, so a block room does not even
+  report an arrival. Cover it with boxes, or give it a hull built from a mesh asset.
 
 A plugin draws through the same machinery. `kooch_plugin_render` holds
 the GPU half of the plugin API — a `RenderPass` with `init` and `record`,

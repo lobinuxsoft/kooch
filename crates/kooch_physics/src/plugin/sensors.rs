@@ -13,7 +13,8 @@ use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_ecs::sensor_occupancy::SensorOccupancy;
 
-use crate::components::{Collider, SHAPE_CAPSULE, SHAPE_CUBOID, SHAPE_SPHERE};
+use crate::backend::{ColliderMeshCache, CollisionShape};
+use crate::components::{Collider, SHAPE_CAPSULE, SHAPE_CONVEX_HULL, SHAPE_CUBOID, SHAPE_SPHERE};
 use crate::plugin::world::SolverBody;
 
 use super::events::{CollisionStarted, CollisionStopped};
@@ -49,6 +50,7 @@ pub(super) fn sensor_occupancy_system(resources: &mut Resources) {
         resources.insert(inside);
         return;
     };
+    let meshes = resources.get::<ColliderMeshCache>();
     // 🔴 The solver's answer, not the component's. The sync authors colliders nobody typed — a
     // volume is a sensor whether or not the box is ticked — and asking the component would drop
     // exactly the overlaps this exists for.
@@ -81,7 +83,7 @@ pub(super) fn sensor_occupancy_system(resources: &mut Resources) {
     let measured: Vec<(Entity, Entity, f32)> = inside
         .iter()
         .map(|occupant| {
-            let depth = depth_of(registry, occupant.sensor, occupant.body);
+            let depth = depth_of(registry, meshes, occupant.sensor, occupant.body);
             (occupant.sensor, occupant.body, depth)
         })
         .collect();
@@ -116,6 +118,7 @@ pub(super) fn sensor_occupancy_preview_system(resources: &mut Resources) {
         resources.insert(inside);
         return;
     };
+    let meshes = resources.get::<ColliderMeshCache>();
     let (Some(volumes), Some(colliders)) = (
         registry.get_cpu::<kooch_ecs::post_process_volume::PostProcessVolume>(),
         registry.get_cpu::<Collider>(),
@@ -143,7 +146,7 @@ pub(super) fn sensor_occupancy_preview_system(resources: &mut Resources) {
             {
                 continue;
             }
-            let depth = depth_of(registry, region, body);
+            let depth = depth_of(registry, meshes, region, body);
             if depth >= 0.0 {
                 inside.enter(region, body, depth);
             }
@@ -155,19 +158,56 @@ pub(super) fn sensor_occupancy_preview_system(resources: &mut Resources) {
 /// How far `body`'s origin sits past `sensor`'s surface, in metres. Negative once it is out — a
 /// departure lands a frame later than the crossing, and a weight read in between must not claim it
 /// is still inside.
-fn depth_of(registry: &ComponentRegistry, sensor: Entity, body: Entity) -> f32 {
-    let Some(collider) = registry
-        .get_cpu::<Collider>()
-        .and_then(|colliders| colliders.get(sensor))
-    else {
-        return f32::INFINITY;
-    };
+///
+/// A region is every collider under it, not one (#1222): the solver already builds a compound body
+/// out of a parent and its descendants, so an author covers an awkward space with as many shapes as
+/// it takes. The deepest answers, which is exact inside any one of them and conservative where two
+/// meet — overlap them and the seam disappears.
+fn depth_of(
+    registry: &ComponentRegistry,
+    meshes: Option<&ColliderMeshCache>,
+    sensor: Entity,
+    body: Entity,
+) -> f32 {
     let transforms = registry.get_cpu::<GlobalTransform>();
-    let Some((region, at)) =
-        transforms.and_then(|transforms| Some((transforms.get(sensor)?, transforms.get(body)?)))
-    else {
+    let Some(at) = transforms.and_then(|transforms| transforms.get(body)) else {
         return f32::INFINITY;
     };
+    let point = at.translation();
+    let mut deepest = f32::NEG_INFINITY;
+    let mut stack = vec![sensor];
+    while let Some(entity) = stack.pop() {
+        if let Some(children) = registry
+            .get_cpu::<kooch_ecs::hierarchy::Children>()
+            .and_then(|storage| storage.get(entity))
+        {
+            stack.extend(children.entities.iter().copied());
+        }
+        let (Some(collider), Some(region)) = (
+            registry
+                .get_cpu::<Collider>()
+                .and_then(|colliders| colliders.get(entity)),
+            transforms.and_then(|transforms| transforms.get(entity)),
+        ) else {
+            continue;
+        };
+        deepest = deepest.max(shape_depth(collider, entity, region, point, meshes));
+    }
+    match deepest.is_finite() || deepest == f32::INFINITY {
+        true => deepest,
+        // Nothing under it carries a shape at all, which the solver would not have reported.
+        false => f32::INFINITY,
+    }
+}
+
+/// How far `point` sits inside one collider, in metres.
+fn shape_depth(
+    collider: &Collider,
+    entity: Entity,
+    region: &GlobalTransform,
+    point: Vec3,
+    meshes: Option<&ColliderMeshCache>,
+) -> f32 {
     let (scale, rotation, translation) = region.matrix.to_scale_rotation_translation();
     let scale = scale.abs();
     // 🔴 Metres, not shape units. The blend distance an author types is a distance in the world, so
@@ -178,7 +218,7 @@ fn depth_of(registry: &ComponentRegistry, sensor: Entity, body: Entity) -> f32 {
     // The shape sits at its own centre, which the gizmo also draws at: a region offset from its
     // entity would otherwise be measured from the entity.
     let centre = translation + rotation * (collider.center * scale);
-    let local = rotation.inverse() * (at.translation() - centre);
+    let local = rotation.inverse() * (point - centre);
     // Radius follows the horizontal axes on everything aligned to Y, the same rule the collider
     // gizmo draws by — what an author sees is what is measured.
     let flat = collider.radius * scale.x.max(scale.z);
@@ -194,10 +234,56 @@ fn depth_of(registry: &ComponentRegistry, sensor: Entity, body: Entity) -> f32 {
             let y = local.y.clamp(-half_height, half_height);
             flat - (local - Vec3::new(0.0, y, 0.0)).length()
         }
-        // A hull, a trimesh, a voxel field: the solver says a body is inside and nothing cheap says
-        // how far. All of it, from the moment it arrives.
+        SHAPE_CONVEX_HULL => hull_depth(collider, entity, scale, local, meshes),
+        // A trimesh is a shell with no inside to be deep in, a decomposition's seams are not its
+        // boundary, a voxel field would want a distance transform. The solver says a body arrived;
+        // all of it, from that moment.
         _ => f32::INFINITY,
     }
+}
+
+/// The distance from `local` to the nearest face of a convex hull — exact, and indifferent to where
+/// the mesh sits relative to its entity, which is the whole reason a block can be a region at all.
+fn hull_depth(
+    collider: &Collider,
+    entity: Entity,
+    scale: Vec3,
+    local: Vec3,
+    meshes: Option<&ColliderMeshCache>,
+) -> f32 {
+    let Some(CollisionShape::ConvexHull { part }) = collider
+        .shape_spec(entity, meshes)
+        .resolve(meshes)
+        .map(|shape| shape.scaled(scale))
+    else {
+        // The mesh has not arrived yet. All of it rather than none: the solver only asks once a
+        // body is really inside, and a region that flickered off while an asset loaded is worse.
+        return f32::INFINITY;
+    };
+    if part.faces.is_empty() || part.points.is_empty() {
+        return f32::INFINITY;
+    }
+    // Oriented against the hull's own middle rather than trusting a winding: a face wound the other
+    // way would read as a plane the whole hull is outside of, and the region would never fire.
+    let middle = part.points.iter().copied().sum::<Vec3>() / part.points.len() as f32;
+    let mut nearest = f32::INFINITY;
+    for face in &part.faces {
+        let (a, b, c) = (
+            part.points[face[0] as usize],
+            part.points[face[1] as usize],
+            part.points[face[2] as usize],
+        );
+        let normal = (b - a).cross(c - a);
+        let Some(normal) = normal.try_normalize() else {
+            continue;
+        };
+        let outward = match normal.dot(a - middle) < 0.0 {
+            true => -normal,
+            false => normal,
+        };
+        nearest = nearest.min(outward.dot(a) - outward.dot(local));
+    }
+    nearest
 }
 
 #[cfg(test)]
