@@ -184,6 +184,7 @@ changes here, except where an override says otherwise.",
                 asset_type: "kooch_ecs::scene::document::SceneDocument",
                 requires: "",
                 fields: &[],
+            layers: false,
             },
             FieldMeta {
                 name: "overrides",
@@ -200,6 +201,7 @@ being saved — that is what makes it an override.",
                 asset_type: "",
                 requires: "",
                 fields: &[],
+            layers: false,
             },
         ];
         FIELDS

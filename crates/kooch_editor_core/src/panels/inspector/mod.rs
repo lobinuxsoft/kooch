@@ -1,6 +1,8 @@
 //! Inspector panel — component details for selected entities.
 
 mod asset_view;
+#[cfg(test)]
+mod layers_tests;
 mod mass_from_colliders;
 mod nav;
 mod prefab_view;
@@ -98,6 +100,8 @@ pub(crate) fn draw_inspector_content(
     asset_catalog: &[AssetCatalogEntry],
     selected_asset: Option<Guid>,
     asset_detail: Option<&AssetSnapshot>,
+    // The project's layer names, for any field that masks over them (#1218).
+    layer_labels: &[String],
 ) {
     if focused {
         nav.handle_keyboard(ui);
@@ -120,6 +124,7 @@ pub(crate) fn draw_inspector_content(
             entities,
             reflected_types,
             actions,
+            layer_labels,
         );
         return;
     }
@@ -144,6 +149,7 @@ pub(crate) fn draw_inspector_content(
             euler_cache,
             rotation_display_mode,
             asset_catalog,
+            layer_labels,
         )
     });
 
@@ -171,6 +177,8 @@ fn draw_inspector_body(
     euler_cache: &mut HashMap<EulerCacheKey, Vec3>,
     rotation_display_mode: &mut RotationDisplayMode,
     asset_catalog: &[AssetCatalogEntry],
+    // The project's layer names, for any field that masks over them (#1218).
+    layer_labels: &[String],
 ) {
     if selected.is_empty() {
         ui.weak("No entity selected");
@@ -185,6 +193,7 @@ fn draw_inspector_body(
             reflected_types,
             actions,
             asset_catalog,
+            layer_labels,
         );
         return;
     }
@@ -379,6 +388,7 @@ fn draw_inspector_body(
                                     rotation_ctx,
                                     asset_catalog,
                                     entities,
+                                    layer_labels,
                                 );
                                 // An entity's edits go to the world.
                                 for (field, value) in edits {

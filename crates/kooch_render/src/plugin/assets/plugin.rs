@@ -250,6 +250,13 @@ impl Plugin for AssetPlugin {
         // Per frame, because the asset is reloaded in place when saved and there is no change
         // signal to subscribe to; it returns early unless a value actually moved.
         app.add_system(Stage::Update, crate::settings::apply_render_settings_system);
+        // The project's layer names, for every mask that reads them (#1218). Same shape and same
+        // reason as the settings above: the file is reloaded in place, and this returns early
+        // unless the table actually moved.
+        app.add_system(
+            Stage::Update,
+            kooch_core::layers::publish_layer_names_system,
+        );
 
         let roots = self.roots.clone();
 

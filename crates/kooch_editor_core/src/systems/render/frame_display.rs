@@ -19,6 +19,8 @@ pub(super) struct FrameDisplayData {
     pub(super) archetypes: Vec<ArchetypeDisplayInfo>,
     pub(super) component_types: Vec<ComponentTypeInfo>,
     pub(super) reflected_types: Vec<ReflectedTypeInfo>,
+    /// The project's layer names, gathered once a frame for every mask the Inspector draws.
+    pub(super) layer_labels: Vec<String>,
     pub(super) entity_count: usize,
     pub(super) archetype_count: usize,
     pub(super) active_archetype_count: usize,
@@ -33,6 +35,7 @@ impl FrameDisplayData {
             archetypes: Vec::new(),
             component_types: Vec::new(),
             reflected_types: Vec::new(),
+            layer_labels: kooch_core::layers::LayerNames::default().labels(),
             entity_count: 0,
             archetype_count: 0,
             active_archetype_count: 0,
@@ -70,6 +73,10 @@ impl FrameDisplayData {
         let t = std::time::Instant::now();
         let component_types = gather_component_types(resources);
         let reflected_types = gather_reflected_types(resources);
+        let layer_labels = resources
+            .get::<kooch_core::layers::LayerNames>()
+            .map(|names| names.labels())
+            .unwrap_or_else(|| kooch_core::layers::LayerNames::default().labels());
         stages.types_ms = ms_since(t);
 
         let entity_count = entities.len();
@@ -85,6 +92,7 @@ impl FrameDisplayData {
                 archetypes,
                 component_types,
                 reflected_types,
+                layer_labels,
                 entity_count,
                 archetype_count,
                 active_archetype_count,

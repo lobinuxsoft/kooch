@@ -8,7 +8,7 @@ mod spec;
 
 pub use groups::{
     COMBINE_AVERAGE, COMBINE_CHOICES, COMBINE_CLAMPED_SUM, COMBINE_MAX, COMBINE_MIN,
-    COMBINE_MULTIPLY, GROUP_BITS,
+    COMBINE_MULTIPLY,
 };
 use shapes::is_own_mesh;
 pub use shapes::{
@@ -106,17 +106,17 @@ pub struct Collider {
     pub contact_force_threshold: f32,
     /// Groups this collider belongs to; a pair needs **both** sides' memberships to meet the
     /// other's filter.
-    #[reflect(bits = GROUP_BITS)]
+    #[reflect(layers)]
     pub collision_memberships: u32,
     /// Which groups this collider will collide with.
-    #[reflect(bits = GROUP_BITS)]
+    #[reflect(layers)]
     pub collision_filter: u32,
     /// Groups it is solved against, of those it collides with — detect a wall without being stopped
     /// by it.
-    #[reflect(bits = GROUP_BITS)]
+    #[reflect(layers)]
     pub solver_memberships: u32,
     /// Which groups this collider will be pushed by.
-    #[reflect(bits = GROUP_BITS)]
+    #[reflect(layers)]
     pub solver_filter: u32,
     /// Shape centre in local space, moving geometry without the body — a feet-pivoted character's
     /// capsule sits half a body up.

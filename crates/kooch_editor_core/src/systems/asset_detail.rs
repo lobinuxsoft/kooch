@@ -29,6 +29,7 @@ pub(crate) fn gather_asset_detail(guid: Guid, resources: &mut Resources) -> Opti
         "kooch_render::meshlet::asset::MeshletMesh" => gather_mesh(guid, resources),
         "kooch_render::texture::asset::Image" => gather_image(guid, resources),
         crate::drag_drop::PREFAB_TYPE_NAME => gather_prefab(guid, resources),
+        kooch_core::layers::LAYERS_TYPE_NAME => gather_layers(guid, resources),
         // Anything without a bespoke view: if the type registered itself as reflected, the
         // Inspector edits it with the same grid components use. Before #744 every type landed on
         // the label below, and a new asset type cost three edits in this crate.
@@ -36,6 +37,16 @@ pub(crate) fn gather_asset_detail(guid: Guid, resources: &mut Resources) -> Opti
             type_name: other.to_owned(),
         })),
     }
+}
+
+/// Reads the project's layer names, which are edited as a table rather than a field grid (#1218).
+fn gather_layers(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
+    let handle = load_handle::<kooch_core::layers::LayerNames>(guid, resources)?;
+    let names = resources
+        .get::<Assets<kooch_core::layers::LayerNames>>()?
+        .get(handle)?
+        .clone();
+    Some(AssetDetail::Layers(names))
 }
 
 /// Reads any asset registered with `register_reflected_asset!`.

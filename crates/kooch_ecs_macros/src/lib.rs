@@ -157,6 +157,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     kind: ::kooch_ecs::reflect::FieldKind::AssetRef,
                     choices: &[],
                     bits: &[],
+                    layers: false,
                     range: None,
                     // An asset picker has no variant to depend on yet.
                     shown_when: ::core::option::Option::None,
@@ -219,6 +220,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     kind: ::kooch_ecs::reflect::FieldKind::EntityRef,
                     choices: &[],
                     bits: &[],
+                    layers: false,
                     range: None,
                     shown_when: #shown_when_expr,
                     asset_type: "",
@@ -273,6 +275,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     kind: ::kooch_ecs::reflect::FieldKind::EntityRef,
                     choices: &[],
                     bits: &[],
+                    layers: false,
                     range: None,
                     shown_when: #shown_when_expr,
                     asset_type: "",
@@ -405,6 +408,10 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             Ok(None) => quote! { &[] },
             Err(e) => return e,
         };
+        let layers_flag = match crate::attrs::parse_field_layers(field) {
+            Ok(flag) => flag,
+            Err(e) => return e,
+        };
         let range_expr = match crate::attrs::parse_field_range(field) {
             Ok(Some(path)) => quote! { Some(&#path) },
             Ok(None) => quote! { None },
@@ -424,6 +431,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 kind: ::kooch_ecs::reflect::FieldKind::#kind_ident,
                 choices: #choices_expr,
                 bits: #bits_expr,
+                layers: #layers_flag,
                 range: #range_expr,
                 shown_when: #shown_when_expr,
                 asset_type: "",

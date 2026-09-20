@@ -270,6 +270,7 @@ pub(super) fn run_editor_ui(
                 component_types: &data.component_types,
                 selected: &mut selected,
                 reflected_types: &data.reflected_types,
+                layer_labels: &data.layer_labels,
                 actions: &mut actions,
                 gizmo_visibility,
                 physics_debug,

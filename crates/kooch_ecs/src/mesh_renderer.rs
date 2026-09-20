@@ -27,6 +27,10 @@ pub struct MeshRenderer {
     pub cast_shadows: bool,
     /// Whether this renderer receives shadows.
     pub receive_shadows: bool,
+    /// Which layers this renderer is in, as a bitmask (#1218). A camera, a light or a shadow view
+    /// keeps only what its own mask meets. Bit 0 — "Default" — is where everything starts.
+    #[reflect(layers)]
+    pub layers: u32,
 }
 
 impl Default for MeshRenderer {
@@ -37,6 +41,7 @@ impl Default for MeshRenderer {
             visible: true,
             cast_shadows: true,
             receive_shadows: true,
+            layers: kooch_core::layers::DEFAULT_LAYER,
         }
     }
 }

@@ -33,6 +33,9 @@ pub(crate) enum AssetDetail {
         fields: Vec<(String, kooch_ecs::reflect::ReflectValue)>,
         field_metas: Option<&'static [kooch_ecs::reflect::FieldMeta]>,
     },
+    /// The project's layer names, edited as a table of 32 rows (#1218). Not reflected: a list of
+    /// strings is not a field grid.
+    Layers(kooch_core::layers::LayerNames),
     /// A typed asset with neither a dedicated view nor reflection.
     Unknown { type_name: String },
 }
@@ -140,6 +143,8 @@ pub(crate) fn draw_asset_inspector(
     entities: &[super::EntityDisplayInfo],
     reflected_types: &[crate::state::ReflectedTypeInfo],
     actions: &mut Vec<EditorAction>,
+    // The project's layer names, for any field that masks over them (#1218).
+    layer_labels: &[String],
 ) {
     ui.label(format!(
         "{} {}  [{}]",
@@ -166,6 +171,7 @@ pub(crate) fn draw_asset_inspector(
                 entities,
                 reflected_types,
                 actions,
+                layer_labels,
             ),
             Some(AssetDetail::Mesh(info)) => draw_mesh_import(ui, entry.guid, info, actions),
             Some(AssetDetail::Image(info)) => draw_image_import(ui, entry.guid, info, actions),
@@ -183,7 +189,9 @@ pub(crate) fn draw_asset_inspector(
                 catalog,
                 entities,
                 actions,
+                layer_labels,
             ),
+            Some(AssetDetail::Layers(names)) => draw_layers(ui, entry.guid, names, actions),
             Some(AssetDetail::Unknown { type_name }) => {
                 ui.weak(format!("No import settings for {type_name}."));
             }
@@ -385,6 +393,8 @@ fn draw_reflected_asset(
     catalog: &[AssetCatalogEntry],
     entities: &[crate::state::EntityDisplayInfo],
     actions: &mut Vec<EditorAction>,
+    // The project's layer names, for any field that masks over them (#1218).
+    layer_labels: &[String],
 ) {
     let short = type_name.rsplit("::").next().unwrap_or(type_name);
     ui.label(short);
@@ -411,6 +421,7 @@ fn draw_reflected_asset(
         super::RotationContext::local_only(),
         catalog,
         entities,
+        layer_labels,
     );
 
     // One write per gesture, not per frame. A slider reports a change every frame it is dragged;
@@ -425,6 +436,58 @@ fn draw_reflected_asset(
             commit,
         });
     }
+}
+
+/// The project's layer table: one row per bit, named or not. What a mask's checklist reads.
+pub(super) fn draw_layers(
+    ui: &mut egui::Ui,
+    guid: Guid,
+    names: &kooch_core::layers::LayerNames,
+    actions: &mut Vec<EditorAction>,
+) {
+    ui.label("Every renderer, camera, light and collider masks over these.");
+    ui.separator();
+    egui::Grid::new("layer_names")
+        .num_columns(2)
+        .spacing([8.0, 4.0])
+        .show(ui, |ui| {
+            for index in 0..kooch_core::layers::LAYER_COUNT {
+                ui.label(format!("{index}"));
+                // 🔴 What is being typed lives in the widget's own memory until the field is let
+                // go. This table is rebuilt from the file every frame, and a buffer rebuilt with it
+                // loses the keystroke that was just typed — the row would never change.
+                let id = ui.make_persistent_id(("layer_name", index));
+                let mut name = ui
+                    .data_mut(|data| data.get_temp::<String>(id))
+                    .unwrap_or_else(|| names.label(index));
+                // Bit 0 is where everything starts, and a project that renames it renames the
+                // default every new renderer lands in — allowed, and worth seeing.
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut name)
+                        .id(id)
+                        .desired_width(f32::INFINITY),
+                );
+                // 🔴 Asked BEFORE the closure: `has_focus` reads the same memory `data_mut`
+                // holds, and asking inside it waits for a lock the asking itself owns.
+                let typing = response.has_focus();
+                ui.data_mut(|data| {
+                    if typing {
+                        data.insert_temp(id, name.clone());
+                    } else {
+                        data.remove_temp::<String>(id);
+                    }
+                });
+                // One write per gesture: the field reports an edit every frame it has focus.
+                if response.lost_focus() && name != names.label(index) {
+                    actions.push(EditorAction::RenameLayer {
+                        guid: Some(guid),
+                        index,
+                        name,
+                    });
+                }
+                ui.end_row();
+            }
+        });
 }
 
 /// Generation no live entity carries, and distinct from the prefab

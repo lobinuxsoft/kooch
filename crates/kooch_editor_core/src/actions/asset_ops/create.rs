@@ -102,6 +102,19 @@ pub(super) fn create_file(resources: &mut Resources, folder: &Path, name: &str, 
             }
             return;
         }
+        NewFileKind::Layers => {
+            // Named after the project, like its settings: one table per project, found by type.
+            let file = unique_target(
+                folder,
+                OsStr::new(&format!("{name}.{}", kooch_core::layers::LAYERS_EXTENSION)),
+            );
+            let names = kooch_core::layers::LayerNames::default();
+            match ron::ser::to_string_pretty(&names, ron::ser::PrettyConfig::default()) {
+                Ok(text) => write_asset(resources, &file, &text, "layer names"),
+                Err(e) => tracing::error!(error = %e, "failed to serialise layer names"),
+            }
+            return;
+        }
         NewFileKind::RenderSettings => {
             // Through the same save-and-register path a material takes, not a bare write:
             // `apply_render_settings_system` finds this by *type*, so a file with no `.meta` is a

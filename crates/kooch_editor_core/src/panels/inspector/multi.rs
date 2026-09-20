@@ -13,7 +13,7 @@ use crate::state::{EntityDisplayInfo, ReflectedTypeInfo};
 
 use super::widgets::{
     AssetCatalogEntry, FieldContext, bits_for, choices_for, draw_readonly_value, draw_value_widget,
-    fields_for, range_for, requires_for,
+    fields_for, layers_for, range_for, requires_for,
 };
 
 /// A field value across multiple selected entities.
@@ -172,6 +172,8 @@ pub(super) fn draw_multi_entity_inspector(
     reflected_types: &[ReflectedTypeInfo],
     actions: &mut Vec<EditorAction>,
     asset_catalog: &[AssetCatalogEntry],
+    // The project's layer names, for any field that masks over them (#1218).
+    layer_labels: &[String],
 ) {
     ui.label(format!("{} entities selected", selected.len()));
     ui.separator();
@@ -275,6 +277,7 @@ pub(super) fn draw_multi_entity_inspector(
                                 actions,
                                 asset_catalog,
                                 entities,
+                                layer_labels,
                             );
                         }
                     } else {
@@ -298,6 +301,8 @@ fn draw_multi_reflected_fields(
     actions: &mut Vec<EditorAction>,
     asset_catalog: &[AssetCatalogEntry],
     entities: &[EntityDisplayInfo],
+    // The project's layer names, for any field that masks over them (#1218).
+    layer_labels: &[String],
 ) {
     egui::Grid::new(format!("multi_fields_{:?}", type_id))
         .num_columns(2)
@@ -310,6 +315,8 @@ fn draw_multi_reflected_fields(
                     name,
                     choices,
                     bits,
+                    layers: layers_for(field_metas, name),
+                    layer_labels,
                     assets: asset_catalog,
                     entities,
                     requires: requires_for(field_metas, name),

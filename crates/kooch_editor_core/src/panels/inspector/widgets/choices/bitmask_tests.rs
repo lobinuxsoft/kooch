@@ -1,15 +1,6 @@
 use super::*;
 
-static BITS: &[FieldChoice] = &[
-    FieldChoice {
-        label: "A",
-        value: 1 << 0,
-    },
-    FieldChoice {
-        label: "B",
-        value: 1 << 1,
-    },
-];
+static BITS: &[(&str, i64)] = &[("A", 1 << 0), ("B", 1 << 1)];
 
 /// The widget may only touch the bits it names. A mask authored by hand or by a newer editor has to
 /// survive a visit — silently clearing the high half would be a filtering bug introduced by
@@ -48,4 +39,27 @@ fn the_result_keeps_the_fields_numeric_type() {
 #[test]
 fn a_non_integer_value_is_not_a_bitmask() {
     assert_eq!(reflect_value_as_i64(&ReflectValue::F32(1.0)), None);
+}
+
+/// 🔴 What the field says without being opened. A mask nobody can read at a glance is a number,
+/// which is the thing named layers exist to replace.
+#[test]
+fn a_mask_says_what_it_holds() {
+    let mut names = kooch_core::layers::LayerNames::default();
+    names.set(3, "Water");
+    let labels = names.labels();
+    assert_eq!(summary(0, &labels), "Nothing");
+    assert_eq!(summary(1, &labels), "Default");
+    assert_eq!(summary(1 << 3, &labels), "Water");
+    assert_eq!(summary(0b1001, &labels), "Mixed (2)");
+    assert_eq!(summary(layer_mask(&labels), &labels), "Everything");
+}
+
+/// Bit `n` is `1 << n` however the table is filled in: a name out of step would tick another layer.
+#[test]
+fn every_named_bit_is_its_own() {
+    let labels = kooch_core::layers::LayerNames::default().labels();
+    assert_eq!(labels.len(), kooch_core::layers::LAYER_COUNT);
+    assert_eq!(layer_mask(&labels), 0xffff_ffff);
+    assert_eq!(summary(1 << 5, &labels), "Layer 5");
 }

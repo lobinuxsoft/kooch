@@ -39,7 +39,9 @@ pub struct MeshInstance {
     pub group_base: u32,
     /// Per-instance bits the shading path reads. See `INSTANCE_RECEIVES_SHADOWS`.
     pub flags: u32,
-    pub _pad1: u32,
+    /// Which layers this instance is in (#1218), from its renderer. A view keeps what its own mask
+    /// meets; everything reads it off the instance buffer rather than asking the ECS again.
+    pub layers: u32,
     pub _pad2: u32,
 }
 
@@ -55,7 +57,7 @@ impl MeshInstance {
             // Receiving shadows is the default, so a mesh nobody
             // thought about looks the way it always has.
             flags: INSTANCE_RECEIVES_SHADOWS,
-            _pad1: 0,
+            layers: kooch_core::layers::DEFAULT_LAYER,
             _pad2: 0,
         }
     }

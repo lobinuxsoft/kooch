@@ -151,3 +151,52 @@ fn invisible_mesh_renderer_is_filtered_at_collect() {
     );
     assert_eq!(referenced[0], guid);
 }
+
+/// 🔴 The mask the whole block rests on (#1218): what the renderer is in is what the instance
+/// carries, or a camera that filters by layer filters by nothing.
+#[test]
+fn an_instance_carries_its_layers() {
+    use kooch_ecs::allocator::EntityAllocator;
+    use kooch_ecs::archetype_registry::ArchetypeRegistry;
+    use kooch_ecs::commands::Commands;
+    use kooch_ecs::component::registry::ComponentRegistry;
+    use kooch_ecs::query::AccessTracker;
+
+    let mut pipeline = MeshletPipeline::new();
+    let mesh = build_default_meshlets(&cube_mesh()).expect("build");
+    let guid = Guid::new_v4();
+    pipeline.register_mesh(guid, &mesh);
+
+    let mut resources = Resources::new();
+    resources.insert(EntityAllocator::new());
+    resources.insert(ComponentRegistry::new());
+    resources.insert(ArchetypeRegistry::new());
+    resources.insert(AccessTracker::new());
+
+    let mut commands = Commands::new();
+    commands
+        .spawn(&mut resources)
+        .insert(MeshRenderer {
+            mesh: Some(guid),
+            visible: true,
+            layers: 0b1010,
+            ..Default::default()
+        })
+        .insert(GlobalTransform {
+            matrix: Mat4::IDENTITY,
+        });
+    commands.apply(&mut resources);
+
+    let instances = pipeline.collect_scene_instances(&resources);
+    assert_eq!(instances.len(), 1);
+    assert_eq!(instances[0].layers, 0b1010);
+}
+
+/// A renderer nobody touched is in the Default layer, so a mask that keeps Default keeps it.
+#[test]
+fn a_new_renderer_is_in_default() {
+    assert_eq!(
+        kooch_ecs::mesh_renderer::MeshRenderer::default().layers,
+        kooch_core::layers::DEFAULT_LAYER,
+    );
+}

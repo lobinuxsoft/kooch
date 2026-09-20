@@ -70,6 +70,7 @@ every reference in the project is concerned.",
             asset_type: "",
             requires: "",
             fields: &[],
+            layers: false,
         }];
         FIELDS
     }

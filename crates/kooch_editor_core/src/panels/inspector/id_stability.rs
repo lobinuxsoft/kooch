@@ -90,6 +90,7 @@ fn draw_repeatedly(
     let mut mode = RotationDisplayMode::Local;
     let complaints = drawing(frames, |ui, _| {
         let mut actions = Vec::new();
+        let labels = kooch_core::layers::LayerNames::default().labels();
         draw_inspector_content(
             ui,
             false,
@@ -103,6 +104,7 @@ fn draw_repeatedly(
             &[],
             None,
             None,
+            &labels,
         );
     });
 
@@ -173,6 +175,7 @@ fn moving_the_selection_keeps_the_widget_ids() {
     let complaints = drawing(4, |ui, frame| {
         let selected = [entities[frame % 2].entity];
         let mut actions = Vec::new();
+        let labels = kooch_core::layers::LayerNames::default().labels();
         draw_inspector_content(
             ui,
             false,
@@ -186,6 +189,7 @@ fn moving_the_selection_keeps_the_widget_ids() {
             &[],
             None,
             None,
+            &labels,
         );
     });
 

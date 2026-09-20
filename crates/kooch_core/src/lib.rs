@@ -62,6 +62,7 @@ pub mod frame_metrics;
 pub mod frame_pacing;
 pub mod gpu;
 pub mod guid;
+pub mod layers;
 pub mod log_console;
 pub mod pipeline_cache;
 pub mod plugin;

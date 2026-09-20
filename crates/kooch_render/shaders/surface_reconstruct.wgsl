@@ -39,7 +39,8 @@ struct MeshInstance {
     // #804 — per-instance bits; bit 0 is "receives shadows". Was
     // `_pad0`, so the 96-byte stride is unchanged.
     flags: u32,
-    _pad1: u32,
+    // Which layers the instance is in (#1218). `MeshInstance` in `scene.rs`.
+    layers: u32,
     _pad2: u32,
 }
 

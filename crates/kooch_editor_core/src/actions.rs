@@ -391,6 +391,13 @@ pub(crate) enum EditorAction {
     /// Install what `preflight` found missing, and restart if this
     /// machine's package manager needs it. See [`crate::install`].
     InstallRequirements,
+    /// Renames one of the project's layers (#1218). `guid` is the `.layers` file, or `None` when
+    /// the project has none yet and one has to be written first.
+    RenameLayer {
+        guid: Option<kooch_core::Guid>,
+        index: usize,
+        name: String,
+    },
 }
 
 /// The kind of file created by [`EditorAction::CreateFile`]. The Rust
@@ -408,6 +415,8 @@ pub(crate) enum NewFileKind {
     BlockMesh,
     /// How the project looks: exposure, ambient, shadows (#744).
     RenderSettings,
+    /// What the project calls its 32 layers, read by renderers and colliders alike (#1218).
+    Layers,
     /// A surface shader, starting as a copy of the engine's PBR one (#1157).
     Shader,
     /// A shader the node graph owns (#1159): an empty graph, and the shader it generates.
@@ -429,7 +438,6 @@ pub(crate) enum SpawnTarget {
 }
 
 /// Prefabs edited in the Inspector whose file is behind the cache.
-
 mod apply;
 mod describe;
 

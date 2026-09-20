@@ -13,7 +13,8 @@ struct MeshInstance {
     lod_force_level: i32,
     group_base: u32,
     flags: u32,
-    _pad1: u32,
+    // Which layers the instance is in (#1218). `MeshInstance` in `scene.rs`.
+    layers: u32,
     _pad2: u32,
 }
 
