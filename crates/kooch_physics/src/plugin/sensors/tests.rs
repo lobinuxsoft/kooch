@@ -101,3 +101,78 @@ fn a_scaled_region_scales_with_it() {
     // Three metres out, in a sphere scaled to four: a quarter of the radius in local space.
     assert_eq!(depth_of(&registry, sensor, body), 0.25);
 }
+
+/// 🔴 The editor runs no solver, and the Game panel is where an author looks to see whether a
+/// region works. Without this, a volume is dead everywhere except a built game.
+#[test]
+fn a_preview_fills_without_a_solver() {
+    use kooch_core::resource::Resources;
+    use kooch_ecs::post_process_volume::PostProcessVolume;
+    use kooch_ecs::sensor_occupancy::SensorOccupancy;
+
+    let collider = Collider {
+        half_extents: Vec3::new(4.0, 4.0, 4.0),
+        ..Default::default()
+    };
+    let (mut registry, region, body) = world(SHAPE_CUBOID, collider, Vec3::new(1.0, 0.0, 0.0));
+    registry.register_cpu_reflected::<PostProcessVolume>();
+    registry
+        .get_cpu_mut::<PostProcessVolume>()
+        .expect("registered")
+        .insert(region, PostProcessVolume::default());
+    // The body needs a collider of its own to be a candidate at all: a region catches colliders.
+    registry
+        .get_cpu_mut::<Collider>()
+        .expect("registered")
+        .insert(body, Collider::default());
+
+    let mut resources = Resources::new();
+    resources.insert(registry);
+    resources.insert(SensorOccupancy::default());
+    super::sensor_occupancy_preview_system(&mut resources);
+
+    let inside = resources.get::<SensorOccupancy>().expect("still there");
+    let depth = inside.depth_in(region).expect("the body is inside");
+    assert!((depth - 3.0).abs() < 0.01, "it measured {depth}");
+}
+
+/// A region is not inside itself, and one region inside another says nothing about where the game
+/// is: both would leave a volume permanently on.
+#[test]
+fn a_preview_ignores_other_regions() {
+    use kooch_core::resource::Resources;
+    use kooch_ecs::post_process_volume::PostProcessVolume;
+    use kooch_ecs::sensor_occupancy::SensorOccupancy;
+
+    let collider = Collider {
+        half_extents: Vec3::splat(4.0),
+        ..Default::default()
+    };
+    let (mut registry, region, other) = world(SHAPE_CUBOID, collider, Vec3::ZERO);
+    registry.register_cpu_reflected::<PostProcessVolume>();
+    registry
+        .get_cpu_mut::<PostProcessVolume>()
+        .expect("registered")
+        .insert(region, PostProcessVolume::default());
+    registry
+        .get_cpu_mut::<Collider>()
+        .expect("registered")
+        .insert(
+            other,
+            Collider {
+                sensor: true,
+                ..Default::default()
+            },
+        );
+
+    let mut resources = Resources::new();
+    resources.insert(registry);
+    resources.insert(SensorOccupancy::default());
+    super::sensor_occupancy_preview_system(&mut resources);
+    assert!(
+        resources
+            .get::<SensorOccupancy>()
+            .expect("still there")
+            .is_empty()
+    );
+}

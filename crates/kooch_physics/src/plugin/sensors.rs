@@ -92,6 +92,66 @@ pub(super) fn sensor_occupancy_system(resources: &mut Resources) {
     resources.insert(inside);
 }
 
+/// The same answer without a solver (#1222). The editor mirrors a project's components and runs no
+/// physics, so nothing fills [`SensorOccupancy`] there — and the Game panel is exactly where an
+/// author looks to see whether a region works.
+///
+/// 🔴 Origins, where the solver overlaps whole shapes: a preview that is a body's width optimistic
+/// at the boundary, and the same answer everywhere else. Registered by the components-only plugin,
+/// so a host with a solver never runs it.
+pub(super) fn sensor_occupancy_preview_system(resources: &mut Resources) {
+    // A host with a solver has the real answer, from whole shapes and with the arrivals the solver
+    // reports. Two producers for one resource would fight every frame.
+    if resources
+        .get::<crate::plugin::world::PhysicsWorld>()
+        .is_some()
+    {
+        return;
+    }
+    let mut inside = resources
+        .remove::<SensorOccupancy>()
+        .unwrap_or_else(SensorOccupancy::default);
+    inside.clear();
+    let Some(registry) = resources.get::<ComponentRegistry>() else {
+        resources.insert(inside);
+        return;
+    };
+    let (Some(volumes), Some(colliders)) = (
+        registry.get_cpu::<kooch_ecs::post_process_volume::PostProcessVolume>(),
+        registry.get_cpu::<Collider>(),
+    ) else {
+        resources.insert(inside);
+        return;
+    };
+    for (&region, volume) in volumes.iter() {
+        let Some(shape) = colliders
+            .get(region)
+            .filter(|_| !volume.global && volume.enabled)
+        else {
+            continue;
+        };
+        for (&body, collider) in colliders.iter() {
+            // A region does not contain itself, and one sensor inside another says nothing about
+            // where the game is.
+            if body == region || collider.sensor {
+                continue;
+            }
+            if !shape
+                .interaction()
+                .collision_groups
+                .interacts_with(collider.interaction().collision_groups)
+            {
+                continue;
+            }
+            let depth = depth_of(registry, region, body);
+            if depth >= 0.0 {
+                inside.enter(region, body, depth);
+            }
+        }
+    }
+    resources.insert(inside);
+}
+
 /// How far `body`'s origin sits past `sensor`'s surface, in metres. Negative once it is out — a
 /// departure lands a frame later than the crossing, and a weight read in between must not claim it
 /// is still inside.

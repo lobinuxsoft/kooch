@@ -838,6 +838,12 @@ with nobody anywhere.
   the frames between the arrival and the departure the solver reports, which is the "stay" nothing
   else provides — and re-measures how deep each body is once a frame. Only occupied volumes are
   measured at all; the rest cost a bool.
+- **The editor previews it without a solver.** The editor mirrors a project's components and runs
+  no physics, so nothing would fill the occupancy there and a volume would be dead everywhere except
+  a built game — including the Game panel, which is where an author looks to see whether it works.
+  The components-only plugin measures it instead: every collider whose groups the region's would
+  interact with, tested at its origin. Optimistic by a body's width at the boundary, the same answer
+  everywhere else, and never run where a solver exists.
 - **The depth is the blend.** Zero at the surface, all of the volume a `blend_distance` in,
   smoothstepped between. 🔴 It fades **inward**, where Unity's fades outward: the sensor is what says
   a body arrived, so the surface is the first place a weight can be asked for. Fading outward would

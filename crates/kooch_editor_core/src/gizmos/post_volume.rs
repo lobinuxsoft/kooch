@@ -17,6 +17,10 @@ use kooch_physics::components::{Collider, SHAPE_CAPSULE, SHAPE_CUBOID};
 /// same region seen twice and not a second object.
 const FULL: Vec3 = Vec3::new(0.25, 0.65, 0.85);
 
+/// The same wire while something is inside it. A region that looks identical whether or not it is
+/// firing is a region an author debugs by guessing.
+const OCCUPIED: Vec3 = Vec3::new(1.0, 0.65, 0.2);
+
 #[derive(Default)]
 pub(crate) struct PostVolumeVisualizer;
 
@@ -46,20 +50,27 @@ impl Visualizer<PostProcessVolume> for PostVolumeVisualizer {
         // In world units, like the blend distance itself: an inset in local space would shrink with
         // the region rather than staying the metre the author typed.
         let inset = volume.blend_distance;
+        let colour = match resources
+            .get::<kooch_ecs::sensor_occupancy::SensorOccupancy>()
+            .and_then(|inside| inside.depth_in(entity))
+        {
+            Some(depth) if depth >= 0.0 => OCCUPIED,
+            _ => FULL,
+        };
         match collider.shape {
             SHAPE_CUBOID => {
                 let half = (collider.half_extents * s - Vec3::splat(inset)).max(Vec3::ZERO);
-                gizmos.wire_obb(centre, basis, half, FULL);
+                gizmos.wire_obb(centre, basis, half, colour);
             }
             SHAPE_CAPSULE => {
                 let radius = (collider.radius * s.x.max(s.z) - inset).max(0.0);
-                gizmos.wire_capsule(centre, basis, radius, collider.half_height * s.y, FULL);
+                gizmos.wire_capsule(centre, basis, radius, collider.half_height * s.y, colour);
             }
             // Sphere for the sphere, and for the shapes with no inner wire worth guessing at: a
             // hull inset by a metre is not a hull scaled by anything.
             _ => {
                 let radius = (collider.radius * s.max_element() - inset).max(0.0);
-                gizmos.wire_sphere(centre, basis, radius, FULL);
+                gizmos.wire_sphere(centre, basis, radius, colour);
             }
         }
     }
