@@ -5,6 +5,7 @@ use glam::Vec3;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 use kooch_ecs::reflect::{FieldChoice, FieldCondition};
+use kooch_ecs::tween::Chase;
 
 /// No follow logic; the pose is whatever else wrote it.
 pub const FOLLOW_NONE: u32 = 0;
@@ -149,10 +150,10 @@ pub struct VirtualCamera {
     pub look_at: u32,
     /// Whether the camera eases towards its pose instead of snapping.
     pub damping: bool,
-    /// Seconds to catch up with the pose, per world axis: after this long the camera is within 1%
-    /// of where it was going, whatever the frame rate. Zero is rigid.
-    #[reflect(shown_when = DAMPING_WHEN)]
-    pub damping_value: Vec3,
+    /// Seconds the camera takes to reach its pose once the target stops, per world axis — exactly,
+    /// a tween that restarts while the target keeps moving. Zero is rigid.
+    #[reflect(shown_when = DAMPING_WHEN, alias = "damping_value")]
+    pub damping_time: Vec3,
     /// Seconds the handover **to** this vcam lasts, exactly; zero cuts. The incoming vcam owns it
     /// because how you arrive matters, not what came before.
     #[reflect(alias = "blend_duration")]
@@ -173,10 +174,10 @@ pub struct VirtualCamera {
     /// One of the `INACTIVE_*` constants.
     #[reflect(choices = INACTIVE_UPDATE_CHOICES)]
     pub inactive_update: u32,
-    /// Seconds to turn into a new orientation, within 1%, so a changing up does not snap the
-    /// horizon. Rotation only; zero is rigid.
-    #[reflect(shown_when = DAMPING_WHEN)]
-    pub rotation_damping_value: f32,
+    /// Seconds to turn into a new orientation, exactly, so a changing up does not snap the horizon.
+    /// Rotation only; zero is rigid.
+    #[reflect(shown_when = DAMPING_WHEN, alias = "rotation_damping_value")]
+    pub rotation_damping_time: f32,
 }
 
 /// The damping values only matter when damping is on.
@@ -198,7 +199,7 @@ impl Default for VirtualCamera {
             pitch: 20.0,
             look_at: LOOK_AT_SIMPLE,
             damping: true,
-            damping_value: Vec3::splat(0.5),
+            damping_time: Vec3::splat(0.5),
             up_mode: UP_WORLD,
             // Long enough to read as a transition, short enough not to
             // feel like the game took the camera away.
@@ -206,7 +207,7 @@ impl Default for VirtualCamera {
             blend_curve: crate::blend::CURVE_SINE,
             blend_ease: crate::blend::EASE_IN_OUT,
             inactive_update: INACTIVE_NEVER,
-            rotation_damping_value: 0.5,
+            rotation_damping_time: 0.5,
         }
     }
 }
@@ -287,51 +288,61 @@ impl VirtualCamera {
         (swung * cos_pitch + up * sin_pitch) * self.distance.max(0.0)
     }
 
-    /// Eases `current` towards `desired` over `dt`, per axis, arriving within 1% after the damping
-    /// time at any frame rate.
-    pub fn damped(&self, current: Vec3, desired: Vec3, dt: f32) -> Vec3 {
+    /// Tweens `current` towards `desired`, per axis, arriving `damping_time` after it stops moving.
+    pub fn damped(&self, damping: &mut Damping, current: Vec3, desired: Vec3, dt: f32) -> Vec3 {
         if !self.damping {
+            damping.position = [
+                Chase::at(desired.x),
+                Chase::at(desired.y),
+                Chase::at(desired.z),
+            ];
             return desired;
         }
+        let [x, y, z] = &mut damping.position;
+        let time = self.damping_time;
         Vec3::new(
-            ease(current.x, desired.x, self.damping_value.x, dt),
-            ease(current.y, desired.y, self.damping_value.y, dt),
-            ease(current.z, desired.z, self.damping_value.z, dt),
+            x.step(current.x, desired.x, dt, time.x),
+            y.step(current.y, desired.y, dt, time.y),
+            z.step(current.z, desired.z, dt, time.z),
         )
     }
 
-    /// Eases an orientation towards `desired` on the same time constant, by `slerp` along the
-    /// shorter arc — components are not axes, and the long way is 359° of roll.
-    pub fn damped_rotation(&self, current: glam::Quat, desired: glam::Quat, dt: f32) -> glam::Quat {
-        if !self.damping {
-            return desired;
-        }
-        let desired = if current.dot(desired) < 0.0 {
-            -desired
-        } else {
-            desired
+    /// Tweens an orientation the same way, along the shorter arc.
+    pub fn damped_rotation(
+        &self,
+        damping: &mut Damping,
+        current: glam::Quat,
+        desired: glam::Quat,
+        dt: f32,
+    ) -> glam::Quat {
+        let time = match self.damping {
+            true => self.rotation_damping_time,
+            false => 0.0,
         };
-        current
-            .slerp(desired, settled(dt, self.rotation_damping_value))
-            .normalize()
+        damping.rotation.step(current, desired, dt, time)
     }
 }
 
-/// One axis of exponential easing. `time <= 0` is rigid.
-fn ease(current: f32, desired: f32, time: f32, dt: f32) -> f32 {
-    current + (desired - current) * settled(dt, time)
+/// A vcam's damping in flight: one tween per world axis and one for the orientation. Carried by the
+/// Host between steps, since a tween is a clock.
+#[derive(Debug, Clone, Copy)]
+pub struct Damping {
+    position: [Chase<f32>; 3],
+    rotation: Chase<glam::Quat>,
 }
 
-/// What's left of a gap after `time` seconds; the rest is too small to see, as in Cinemachine.
-const RESIDUAL: f32 = 0.01;
-
-/// The fraction of a gap to close this step so that after `time` seconds only [`RESIDUAL`] is
-/// left, at any frame rate. `time <= 0` closes it at once.
-pub(crate) fn settled(dt: f32, time: f32) -> f32 {
-    if time <= 0.0 || dt <= 0.0 {
-        return 1.0;
+impl Damping {
+    /// At rest on a pose.
+    pub fn at(position: Vec3, rotation: glam::Quat) -> Self {
+        Self {
+            position: [
+                Chase::at(position.x),
+                Chase::at(position.y),
+                Chase::at(position.z),
+            ],
+            rotation: Chase::at(rotation),
+        }
     }
-    1.0 - RESIDUAL.powf(dt / time)
 }
 
 /// A usable up: world up when handed zero, as `gravity_at` gives where no field reaches, instead of

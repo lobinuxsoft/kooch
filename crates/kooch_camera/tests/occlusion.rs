@@ -143,7 +143,7 @@ fn rig_damped(collision: bool, damping: bool) -> (Resources, Entity, Entity) {
             look_at: LOOK_AT_SIMPLE,
             distance: ARM,
             damping,
-            damping_value: Vec3::splat(0.5),
+            damping_time: Vec3::splat(0.5),
             ..Default::default()
         },
     );

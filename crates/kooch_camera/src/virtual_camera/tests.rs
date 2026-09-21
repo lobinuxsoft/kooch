@@ -138,32 +138,36 @@ fn follow_none_leaves_the_position_alone() {
     assert!(!r.is_inert(), "look-at alone is still work to do");
 }
 
-/// The property that matters: the same elapsed time gives the same
-/// result whatever the step size. A `lerp` with a constant factor
-/// fails this, and that is the bug this replaces.
+fn rest() -> Damping {
+    Damping::at(Vec3::ZERO, glam::Quat::IDENTITY)
+}
+
+/// Steps the position damping towards a still `desired` for `seconds` at `fps`.
+fn damped_for(r: &VirtualCamera, desired: Vec3, fps: f32, seconds: f32) -> Vec3 {
+    let mut damping = rest();
+    let mut at = Vec3::ZERO;
+    for _ in 0..(seconds * fps).round() as usize {
+        at = r.damped(&mut damping, at, desired, 1.0 / fps);
+    }
+    at
+}
+
+/// The damping time is when the camera arrives — exactly, at 30 fps or 144 — and not before.
 #[test]
-fn damping_is_frame_rate_independent() {
-    let mut r = VirtualCamera {
-        damping: true,
-        damping_value: Vec3::splat(0.25),
+fn damping_arrives_on_time() {
+    let r = VirtualCamera {
+        damping_time: Vec3::splat(0.5),
         ..Default::default()
     };
-    r.follow = FOLLOW_SIMPLE;
-
-    let desired = Vec3::new(10.0, 0.0, 0.0);
-    let coarse = r.damped(Vec3::ZERO, desired, 1.0 / 30.0);
-
-    let mut fine = Vec3::ZERO;
-    for _ in 0..2 {
-        fine = r.damped(fine, desired, 1.0 / 60.0);
+    let desired = Vec3::new(10.0, -2.0, 4.0);
+    for fps in [30.0, 60.0, 144.0] {
+        assert_eq!(damped_for(&r, desired, fps, 0.5), desired, "{fps} fps");
+        assert_ne!(
+            damped_for(&r, desired, fps, 0.4),
+            desired,
+            "{fps} fps arrived early"
+        );
     }
-
-    assert!(
-        (coarse.x - fine.x).abs() < 1e-3,
-        "one 30 Hz step gave {} and two 60 Hz steps gave {}",
-        coarse.x,
-        fine.x,
-    );
 }
 
 #[test]
@@ -173,18 +177,21 @@ fn damping_off_snaps_exactly() {
         ..Default::default()
     };
     let desired = Vec3::new(3.0, 4.0, 5.0);
-    assert_eq!(r.damped(Vec3::ZERO, desired, 1.0 / 60.0), desired);
+    assert_eq!(
+        r.damped(&mut rest(), Vec3::ZERO, desired, 1.0 / 60.0),
+        desired
+    );
 }
 
 /// Zero on an axis is rigid on that axis, while its neighbours ease.
 #[test]
-fn a_zero_time_constant_is_rigid_on_that_axis_only() {
+fn a_zero_time_is_rigid_on_that_axis_only() {
     let r = VirtualCamera {
         damping: true,
-        damping_value: Vec3::new(0.0, 0.2, 0.2),
+        damping_time: Vec3::new(0.0, 0.2, 0.2),
         ..Default::default()
     };
-    let got = r.damped(Vec3::ZERO, Vec3::splat(10.0), 1.0 / 60.0);
+    let got = r.damped(&mut rest(), Vec3::ZERO, Vec3::splat(10.0), 1.0 / 60.0);
     assert_eq!(got.x, 10.0, "x should be rigid");
     assert!(got.y < 10.0 && got.y > 0.0, "y should be easing: {}", got.y);
 }
@@ -382,24 +389,25 @@ fn a_zero_up_falls_back_to_world_instead_of_nan() {
 fn rotation_damping_eases_instead_of_snapping() {
     let r = VirtualCamera {
         damping: true,
-        rotation_damping_value: 0.2,
+        rotation_damping_time: 0.2,
         ..Default::default()
     };
     let from = glam::Quat::IDENTITY;
     let to = glam::Quat::from_rotation_z(std::f32::consts::PI * 0.5);
-    let step = r.damped_rotation(from, to, 1.0 / 60.0);
+    let mut damping = rest();
+    let step = r.damped_rotation(&mut damping, from, to, 1.0 / 60.0);
     assert!(step.angle_between(from) > 0.0, "it did not move");
     assert!(
         step.angle_between(to) > 0.0,
         "one 60 Hz step should not arrive",
     );
 
-    // And it does arrive, given enough steps.
-    let mut q = from;
-    for _ in 0..600 {
-        q = r.damped_rotation(q, to, 1.0 / 60.0);
+    // And it arrives when it said: 0.2 s is 12 steps, one taken above.
+    let mut q = step;
+    for _ in 0..11 {
+        q = r.damped_rotation(&mut damping, q, to, 1.0 / 60.0);
     }
-    assert!(q.angle_between(to) < 1e-3, "never converged: {q:?}");
+    assert!(q.angle_between(to) < 1e-4, "not there on time: {q:?}");
 }
 
 /// A quaternion and its negation are the same rotation, so slerping
@@ -408,12 +416,12 @@ fn rotation_damping_eases_instead_of_snapping() {
 fn rotation_damping_takes_the_short_way_round() {
     let r = VirtualCamera {
         damping: true,
-        rotation_damping_value: 0.2,
+        rotation_damping_time: 0.2,
         ..Default::default()
     };
     let from = glam::Quat::IDENTITY;
     let to = -glam::Quat::from_rotation_y(0.2);
-    let step = r.damped_rotation(from, to, 1.0 / 60.0);
+    let step = r.damped_rotation(&mut rest(), from, to, 1.0 / 60.0);
     assert!(
         step.angle_between(from) < 0.2,
         "took the long arc: moved {} rad in one step",
@@ -428,7 +436,10 @@ fn rotation_damping_off_snaps_exactly() {
         ..Default::default()
     };
     let to = glam::Quat::from_rotation_x(0.9);
-    assert_eq!(r.damped_rotation(glam::Quat::IDENTITY, to, 1.0 / 60.0), to);
+    assert_eq!(
+        r.damped_rotation(&mut rest(), glam::Quat::IDENTITY, to, 1.0 / 60.0),
+        to
+    );
 }
 
 #[test]
@@ -546,16 +557,6 @@ fn an_unchanged_up_changes_nothing() {
     assert!((carried - reference).length() < 1e-5);
 }
 
-/// The damping time is when the camera arrives, within 1%, at 30 fps or 144 — not a time constant.
-#[test]
-fn damping_arrives_on_time() {
-    for fps in [30.0_f32, 60.0, 144.0] {
-        let steps = (1.5 * fps).round() as usize;
-        let gap = (0..steps).fold(1.0_f32, |gap, _| gap * (1.0 - settled(1.0 / fps, 1.5)));
-        assert!((gap - 0.01).abs() < 1e-3, "{fps} fps left {gap}");
-    }
-}
-
 /// Scenes saved before the rename keep their blend.
 #[test]
 fn blend_duration_still_loads() {
@@ -563,4 +564,22 @@ fn blend_duration_still_loads() {
     vcam.reflect_set("blend_duration", kooch_ecs::reflect::ReflectValue::F32(0.1))
         .unwrap();
     assert_eq!(vcam.blend_time, 0.1);
+}
+
+/// And so do the damping times.
+#[test]
+fn damping_value_still_loads() {
+    let mut vcam = VirtualCamera::default();
+    vcam.reflect_set(
+        "damping_value",
+        kooch_ecs::reflect::ReflectValue::Vec3(Vec3::splat(0.3)),
+    )
+    .unwrap();
+    vcam.reflect_set(
+        "rotation_damping_value",
+        kooch_ecs::reflect::ReflectValue::F32(0.2),
+    )
+    .unwrap();
+    assert_eq!(vcam.damping_time, Vec3::splat(0.3));
+    assert_eq!(vcam.rotation_damping_time, 0.2);
 }
