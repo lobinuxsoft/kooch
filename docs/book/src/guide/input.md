@@ -51,7 +51,12 @@ to the window instead — motion arrives either way, which is all mouse look rea
 
 ### In the editor
 
-While playing, **click the game image** to hand the cursor to the game. **`Esc`** takes it back, and
-so does stopping or clicking another panel: the editor can always get its cursor back. The editor
+**`Ctrl+P`** plays and stops, from anywhere — the game having the keyboard included. Playing brings
+the **Game** panel to the front with the keyboard and the cursor; stopping brings the **Edit View**
+back. Only the edge moves panels: one you switch to mid-play stays where you put it.
+
+While playing, **`Esc`** gives the cursor back without stopping, and a **click on the game image**
+takes it again. Stopping or clicking another panel frees it too: the editor can always get its
+cursor back. The editor
 applies this to its own window whatever process is running the game, so it works the same locally
 and over a remote session.

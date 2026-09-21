@@ -198,6 +198,9 @@ pub struct EditorOverlay {
     pub(crate) windows: crate::os_windows::OsWindows,
     /// Which panel the keyboard belongs to.
     pub(crate) focused_tab: Option<EditorTab>,
+    /// Whether the last frame was playing, so the panels follow an edge rather than a state and a
+    /// panel picked mid-play stays picked.
+    pub(crate) was_playing: bool,
     /// The Asset Browser's keyboard cursor, and the rows the renderer drew
     /// last frame for it to walk.
     pub(crate) asset_nav: crate::panels::asset_browser::AssetNav,

@@ -176,6 +176,11 @@ pub(crate) fn draw_menu_bar(
                     egui::Button::new(format!("{} Play", icons::PLAY))
                         .min_size(egui::vec2(button_width, 0.0)),
                 )
+                .on_hover_text(format!(
+                    "Play ({}) — the Game panel comes forward with the keyboard and the cursor. \
+                     Esc gives the cursor back.",
+                    crate::shortcuts::PLAY_CHORD
+                ))
                 .clicked()
             {
                 actions.push(EditorAction::Play);
@@ -186,6 +191,10 @@ pub(crate) fn draw_menu_bar(
                     egui::Button::new(format!("{} Stop", icons::STOP))
                         .min_size(egui::vec2(button_width, 0.0)),
                 )
+                .on_hover_text(format!(
+                    "Stop ({}) — the Edit View comes back.",
+                    crate::shortcuts::PLAY_CHORD
+                ))
                 .clicked()
             {
                 actions.push(EditorAction::Stop);
@@ -316,5 +325,5 @@ fn remote_status_look(
 
 mod settings;
 
-pub(crate) use settings::{draw_preflight_window, draw_settings_window};
 use settings::*;
+pub(crate) use settings::{draw_preflight_window, draw_settings_window};
