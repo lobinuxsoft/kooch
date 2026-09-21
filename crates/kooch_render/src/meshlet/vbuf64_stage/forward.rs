@@ -378,7 +378,8 @@ fn build_pipeline(
             targets: &[Some(wgpu::ColorTargetState {
                 format: HDR_COLOR_FORMAT,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::COLOR,
+                // Alpha is coverage, as on the layered path: glass over the sky has to say so.
+                write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: Default::default(),
         }),

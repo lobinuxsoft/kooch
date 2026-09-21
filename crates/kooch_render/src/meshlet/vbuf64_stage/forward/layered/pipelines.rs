@@ -358,7 +358,10 @@ pub(super) fn composite(device: &wgpu::Device, layouts: &Layouts) -> wgpu::Rende
             targets: &[Some(wgpu::ColorTargetState {
                 format: HDR_COLOR_FORMAT,
                 blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::COLOR,
+                // 🔴 Alpha too: it is coverage, and the frame composes the stage over the sky by
+                // it. Masked to colour, glass with nothing opaque behind it kept alpha 0 and the
+                // composite threw it away as empty sky.
+                write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: Default::default(),
         }),

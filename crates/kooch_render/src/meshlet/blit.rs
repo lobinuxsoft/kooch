@@ -86,12 +86,13 @@ impl MeshletBlit {
                 entry_point: Some("fs_blit"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: target_format,
-                    // Premultiplied alpha-aware composite: pixels the
-                    // meshlet stage left untouched (alpha == 0) carry
-                    // the sky / clear that was already in the target.
+                    // 🔴 Premultiplied: the stage's colour already carries its alpha — the
+                    // transparent composite blends that way, so glass over nothing is its colour
+                    // scaled by its coverage. `SrcAlpha` here scaled it a second time. Untouched
+                    // pixels (alpha 0) are discarded in the shader and keep the sky.
                     blend: Some(wgpu::BlendState {
                         color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            src_factor: wgpu::BlendFactor::One,
                             dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
                             operation: wgpu::BlendOperation::Add,
                         },
