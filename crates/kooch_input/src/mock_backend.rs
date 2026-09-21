@@ -16,6 +16,7 @@ pub struct MockInputBackend {
     pressed_mouse: HashSet<MouseButton>,
     mouse_position: Vec2,
     mouse_delta: Vec2,
+    mouse_velocity: Vec2,
     gamepads: HashMap<GamepadId, GamepadState>,
     queued_events: Vec<InputEvent>,
 }
@@ -59,6 +60,11 @@ impl MockInputBackend {
         self.mouse_delta += delta;
         self.queued_events
             .push(InputEvent::MouseMoved { position, delta });
+    }
+
+    /// Sets the raw mouse motion's velocity, in pixels per second, as a real backend derives it.
+    pub fn set_mouse_velocity(&mut self, velocity: Vec2) {
+        self.mouse_velocity = velocity;
     }
 
     pub fn add_gamepad(&mut self, id: GamepadId) {
@@ -137,6 +143,10 @@ impl InputBackend for MockInputBackend {
 
     fn mouse_delta(&self) -> Vec2 {
         self.mouse_delta
+    }
+
+    fn mouse_velocity(&self) -> Vec2 {
+        self.mouse_velocity
     }
 
     fn gamepads(&self) -> Vec<GamepadId> {

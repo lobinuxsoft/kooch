@@ -55,3 +55,45 @@ fn exactly_one_owner_is_representable() {
     assert!(!focus.belongs_to(InputOwner::ViewCamera));
     assert!(!focus.belongs_to(InputOwner::None));
 }
+
+mod cursor {
+    use super::super::cursor_while_playing;
+    use kooch_input::CursorMode::{Captured, Free};
+
+    /// A click on the game image hands the cursor over, and it stays handed over.
+    #[test]
+    fn a_click_captures_and_holds() {
+        assert_eq!(
+            cursor_while_playing(Free, true, true, true, false),
+            Captured
+        );
+        assert_eq!(
+            cursor_while_playing(Captured, true, true, false, false),
+            Captured
+        );
+    }
+
+    /// 🔴 The editor always gets its cursor back: `Esc`, stopping, or another panel taking focus.
+    /// A captured cursor with no way out is an editor you can only kill.
+    #[test]
+    fn every_way_out_frees_it() {
+        assert_eq!(
+            cursor_while_playing(Captured, true, true, false, true),
+            Free
+        );
+        assert_eq!(
+            cursor_while_playing(Captured, false, true, false, false),
+            Free
+        );
+        assert_eq!(
+            cursor_while_playing(Captured, true, false, false, false),
+            Free
+        );
+    }
+
+    /// Not playing, a click on the game image is a click on a picture.
+    #[test]
+    fn a_click_while_stopped_is_nothing() {
+        assert_eq!(cursor_while_playing(Free, false, true, true, false), Free);
+    }
+}

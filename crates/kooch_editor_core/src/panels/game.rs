@@ -5,7 +5,8 @@ mod resolution;
 pub(crate) use resolution::{GameResolution, sizes as display_sizes};
 
 /// Draws the game image with the perf sidebar over it, or says why
-/// there is nothing to draw.
+/// there is nothing to draw. Answers whether the image itself was clicked — the gesture that hands
+/// the cursor to the game (#1266); a click on an overlay card is the card's.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_game_content(
     ui: &mut egui::Ui,
@@ -23,7 +24,7 @@ pub(crate) fn draw_game_content(
     cluster_settings: &mut kooch_lighting::ClusterSettings,
     specular_floor: &mut kooch_lighting::SpecularFloor,
     hud_visibility: &mut crate::perf::HudVisibility,
-) {
+) -> bool {
     let available = ui.available_size();
     let panel_origin = ui.cursor().min;
     // Physical pixels: the offscreen target is sized in them, and on a
@@ -42,6 +43,7 @@ pub(crate) fn draw_game_content(
     // The sidebar draws over the image, so the image goes down first —
     // and it draws even without a camera, because "no camera" is exactly
     // when you want to see that the frame costs nothing.
+    let mut image_rect = None;
     if !has_camera {
         // A black rectangle would read as "the game renders black".
         // Saying which component is missing turns a puzzle into a task.
@@ -59,9 +61,15 @@ pub(crate) fn draw_game_content(
         ui.painter().rect_filled(panel, 0.0, egui::Color32::BLACK);
         let image = resolution::fit(panel, size);
         egui::Image::new((texture_id, image.size())).paint_at(ui, image);
+        image_rect = Some(image);
     } else {
-        ui.add(egui::Image::new((texture_id, available)));
+        image_rect = Some(ui.add(egui::Image::new((texture_id, available))).rect);
     }
+    // Registered before the overlays, so a card drawn on top takes its own clicks.
+    let clicked = image_rect.is_some_and(|rect| {
+        ui.interact(rect, ui.id().with("game_capture"), egui::Sense::click())
+            .clicked()
+    });
 
     if available.x >= 1.0 && available.y >= 1.0 {
         // Godot's viewport grammar: a View menu in the top-left deciding which overlays draw, and
@@ -85,6 +93,7 @@ pub(crate) fn draw_game_content(
             single_light_note,
         );
     }
+    clicked
 }
 
 /// The viewport's View menu — Godot's top-left button. Every overlay

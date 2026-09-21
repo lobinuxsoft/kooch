@@ -149,3 +149,32 @@ fn a_held_key_is_not_idle() {
     source.press_key(KeyCode::KeyW);
     assert!(!InputSnapshot::from_backend(&source).is_idle());
 }
+
+/// 🔴 The velocity crosses the wire and is held until the next snapshot (#1266). The host ticks
+/// faster than the editor sends: a value cleared every host frame would turn the camera in bursts.
+#[test]
+fn mouse_velocity_is_held_between_snapshots() {
+    let mut source = crate::mock_backend::MockInputBackend::new();
+    source.set_mouse_velocity(glam::Vec2::new(300.0, -40.0));
+    let snapshot = InputSnapshot::from_backend(&source);
+    assert!(!snapshot.is_idle(), "a moving mouse is not idle");
+
+    let mut host = RemoteInputBackend::new();
+    host.apply(&snapshot);
+    host.begin_frame();
+    host.begin_frame();
+    assert_eq!(host.mouse_velocity(), glam::Vec2::new(300.0, -40.0));
+}
+
+/// A mouse that stopped has to say so, or the host keeps turning at the last speed forever.
+#[test]
+fn a_stopped_mouse_reaches_the_host() {
+    let mut host = RemoteInputBackend::new();
+    let mut moving = crate::mock_backend::MockInputBackend::new();
+    moving.set_mouse_velocity(glam::Vec2::X * 500.0);
+    host.apply(&InputSnapshot::from_backend(&moving));
+    host.apply(&InputSnapshot::from_backend(
+        &crate::mock_backend::MockInputBackend::new(),
+    ));
+    assert_eq!(host.mouse_velocity(), glam::Vec2::ZERO);
+}

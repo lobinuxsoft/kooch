@@ -393,9 +393,16 @@ pub(super) fn controls_of(device: DeviceClass) -> Vec<ControlPath> {
             .iter()
             .map(|k| ControlPath::Key(*k))
             .collect(),
+        // Motion after the buttons, both in one list: a look binds motion, a fire binds a button,
+        // and the author picks from what the mouse has rather than from a kind of control (#1266).
         DeviceClass::Mouse => kooch_input::ids::MouseButton::ALL
             .iter()
             .map(|b| ControlPath::Mouse(*b))
+            .chain(
+                kooch_input::ids::MouseAxis::ALL
+                    .iter()
+                    .map(|a| ControlPath::MouseMotion(*a)),
+            )
             .collect(),
         // Buttons and axes both, since a binding on a pad can be either
         // and forcing that choice into a third dropdown would be a
@@ -423,5 +430,6 @@ pub(super) fn control_label(path: ControlPath) -> String {
         ControlPath::Mouse(button) => format!("{button:?}"),
         ControlPath::Button(button) => format!("{button:?}"),
         ControlPath::Axis(axis) => format!("{axis:?} (axis)"),
+        ControlPath::MouseMotion(axis) => format!("Motion {axis:?} (axis)"),
     }
 }

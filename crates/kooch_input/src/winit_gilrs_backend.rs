@@ -27,8 +27,20 @@ pub struct WinitGilrsBackend {
     pressed_mouse: HashSet<MouseButton>,
     mouse_position: Vec2,
     mouse_delta: Vec2,
+    /// Raw motion accumulated this frame, from the device rather than the cursor (#1266).
+    mouse_motion: Vec2,
+    /// Last frame's motion as pixels per second.
+    mouse_velocity: Vec2,
+    /// When the previous frame was polled: velocity is motion over the time it took.
+    last_poll: Option<std::time::Instant>,
     gamepads: HashMap<GamepadId, GamepadState>,
     queued_events: Vec<InputEvent>,
+}
+
+/// Motion over the time it took, in pixels per second. A frame shorter than a tenth of a
+/// millisecond is a clock that did not move, not a mouse moving at a million pixels a second.
+pub(crate) fn velocity(motion: Vec2, seconds: f32) -> Vec2 {
+    motion / seconds.max(1e-4)
 }
 
 /// How long startup waits for gamepad enumeration: generous, since working enumeration takes
@@ -116,6 +128,9 @@ impl WinitGilrsBackend {
             pressed_mouse: HashSet::new(),
             mouse_position: Vec2::ZERO,
             mouse_delta: Vec2::ZERO,
+            mouse_motion: Vec2::ZERO,
+            mouse_velocity: Vec2::ZERO,
+            last_poll: None,
             gamepads: HashMap::new(),
             queued_events: Vec::new(),
         }
@@ -260,14 +275,26 @@ impl InputBackend for WinitGilrsBackend {
         }
         self.just_released_keys.clear();
         self.mouse_delta = Vec2::ZERO;
+        self.mouse_motion = Vec2::ZERO;
     }
 
     fn feed_window_event(&mut self, event: &WindowEvent) {
         self.apply_window_event(event);
     }
 
+    fn feed_mouse_motion(&mut self, delta: Vec2) {
+        self.mouse_motion += delta;
+    }
+
     fn poll(&mut self) -> Vec<InputEvent> {
         self.drain_gilrs();
+        let now = std::time::Instant::now();
+        self.mouse_velocity = match self.last_poll {
+            Some(then) => velocity(self.mouse_motion, (now - then).as_secs_f32()),
+            // The first frame has no length to divide by.
+            None => Vec2::ZERO,
+        };
+        self.last_poll = Some(now);
         std::mem::take(&mut self.queued_events)
     }
 
@@ -297,6 +324,10 @@ impl InputBackend for WinitGilrsBackend {
 
     fn mouse_delta(&self) -> Vec2 {
         self.mouse_delta
+    }
+
+    fn mouse_velocity(&self) -> Vec2 {
+        self.mouse_velocity
     }
 
     fn gamepads(&self) -> Vec<GamepadId> {

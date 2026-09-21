@@ -44,3 +44,18 @@ fn a_refusal_is_not_a_silence() {
         _ => panic!("a refusal was read as something else"),
     }
 }
+
+/// Motion over the time it took (#1266): the same hand movement reads the same at any frame rate.
+#[test]
+fn velocity_divides_by_the_frame() {
+    assert_eq!(
+        velocity(glam::Vec2::new(10.0, -5.0), 0.5),
+        glam::Vec2::new(20.0, -10.0)
+    );
+}
+
+/// A clock that did not move is not a mouse moving at infinite speed.
+#[test]
+fn a_zero_frame_is_not_infinite() {
+    assert!(velocity(glam::Vec2::X, 0.0).is_finite());
+}

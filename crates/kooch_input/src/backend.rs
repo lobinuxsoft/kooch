@@ -82,6 +82,14 @@ pub trait InputBackend: Send + Sync + 'static {
     fn mouse_position(&self) -> Vec2;
     /// Cumulative delta since the previous `poll` call.
     fn mouse_delta(&self) -> Vec2;
+    /// Pushes relative mouse motion — the device's own report, which does not stop at the edge of
+    /// the window the way two cursor positions do (#1266). Backends with no mouse ignore it.
+    fn feed_mouse_motion(&mut self, _delta: Vec2) {}
+    /// The mouse's motion over the last frame as a velocity, in pixels per second. Zero where the
+    /// backend has no raw motion: a rate made up from cursor positions would stop at the edge.
+    fn mouse_velocity(&self) -> Vec2 {
+        Vec2::ZERO
+    }
 
     // ─── gamepad ─────────────────────────────────────────────────────
     fn gamepads(&self) -> Vec<GamepadId>;

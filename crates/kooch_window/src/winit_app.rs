@@ -269,6 +269,22 @@ impl ApplicationHandler<WakeUp> for WinitApp {
         self.window = Some(window);
     }
 
+    /// Device events go to the same handlers as window events: raw mouse motion is one, and it is
+    /// the only report of the mouse that neither stops at the window's edge nor freezes when the
+    /// cursor is captured (#1266).
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        if let Some(window) = self.window.clone()
+            && let Some(handlers) = self.app.resources.get_mut::<RawEventHandlers>()
+        {
+            handlers.dispatch(&*window, &event);
+        }
+    }
+
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,

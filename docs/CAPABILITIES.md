@@ -125,6 +125,7 @@ them, the remote protocol mirrored them — and no render crate read one.
 | `.inputaction` assets | `actions/single.rs` | connected | One `Action` per file, composites/processors included. Registers itself at link time. roll-a-ball reads two. |
 | `InputAction` component | `actions/single.rs` | connected | Points at an asset by guid, `enabled` per action. Read by `read_input_actions`. |
 | `LoadedActions` | `actions/single.rs` | connected | guid → action, reloaded when the file changes. What a game's own component reads through, since a component appears once per entity. |
+| Mouse look | `ids.rs` (`MouseAxis`), `actions/path.rs` (`MouseMotion`), `cursor.rs` | connected | #1266. Raw device motion as a velocity (px/s), bindable in any action beside a stick; `CursorMode` captures the cursor, and the editor captures on a click in the Game panel, `Esc` releases. |
 | Input Map panel | `kooch_editor_core/panels/input_map.rs` | connected | Creates and edits a `.inputaction`: bindings, five composites, processors, modes. |
 | Interactive rebind (`BeginRebind`) | `panels/input_map.rs` | **orphan** | The actions exist and nothing emits them: there is no "press any key". The control picker is the only way to bind. |
 | `ActionMap`, `priority` | `actions/action.rs` | **orphan** | Survives only as the shape the panel edits — a `.inputaction` opens as a map of one. `priority` is written and never read: stacking maps that consume what they handle was never built, and with per-action `enabled` the remaining gap is bulk enable/disable for a pause menu. |
