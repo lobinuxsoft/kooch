@@ -82,6 +82,20 @@ fn insert<T: Component>(resources: &mut Resources, entity: Entity, value: T) {
     archetypes.register_entity(entity, next);
 }
 
+/// Takes a component off, archetype included — what the sync reads to retire a body.
+fn remove<T: 'static>(resources: &mut Resources, entity: Entity) {
+    use std::any::TypeId;
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.remove_component(entity, &TypeId::of::<T>());
+    }
+    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
+        && let Some(current) = archetypes.entity_archetype(entity)
+    {
+        let next = archetypes.archetype_after_remove::<T>(current);
+        archetypes.register_entity(entity, next);
+    }
+}
+
 fn position(resources: &Resources, entity: Entity) -> Vec3 {
     resources
         .get::<ComponentRegistry>()
@@ -100,6 +114,11 @@ fn frame(resources: &mut Resources) {
 /// A player-sized body the camera follows, with a body of its own that must never stop the camera,
 /// and a vcam an arm's length behind it. Answers the target and the vcam.
 fn rig(collision: bool) -> (Resources, Entity, Entity) {
+    rig_damped(collision, false)
+}
+
+/// The same, with the rig's own damping on or off.
+fn rig_damped(collision: bool, damping: bool) -> (Resources, Entity, Entity) {
     let mut resources = world();
     let target = spawn(&mut resources);
     insert(&mut resources, target, Transform::from_position(Vec3::ZERO));
@@ -123,7 +142,8 @@ fn rig(collision: bool) -> (Resources, Entity, Entity) {
             follow: FOLLOW_THIRD_PERSON,
             look_at: LOOK_AT_SIMPLE,
             distance: ARM,
-            damping: false,
+            damping,
+            damping_value: Vec3::splat(0.5),
             ..Default::default()
         },
     );
@@ -135,7 +155,7 @@ fn rig(collision: bool) -> (Resources, Entity, Entity) {
 }
 
 /// A 4 m cube halfway along the arm.
-fn wall(resources: &mut Resources, at: Vec3) {
+fn wall(resources: &mut Resources, at: Vec3) -> Entity {
     let wall = spawn(resources);
     insert(resources, wall, Transform::from_position(at));
     insert(
@@ -155,6 +175,7 @@ fn wall(resources: &mut Resources, at: Vec3) {
             ..Default::default()
         },
     );
+    wall
 }
 
 /// 🔴 The point of the issue: a wall between the target and where the rig wants the camera stops
@@ -189,4 +210,39 @@ fn no_collision_goes_through() {
     frame(&mut resources);
     let held = position(&resources, vcam).distance(position(&resources, target));
     assert!((held - ARM).abs() < 0.1, "{held}");
+}
+
+/// 🔴 The return lasts `return_time` with the rig's own damping on. The damping used to continue
+/// from where the wall had put the camera, so the rig itself crept back out at its own pace and the
+/// return's seconds came on top — a 0.35 s return that took over a second.
+#[test]
+fn a_return_takes_its_seconds_with_damping() {
+    let (mut resources, target, vcam) = rig_damped(true, true);
+    // Settle the damped rig at its full arm first.
+    for _ in 0..600 {
+        frame(&mut resources);
+    }
+    let free = position(&resources, vcam) - position(&resources, target);
+    assert!(
+        (free.length() - ARM).abs() < 0.1,
+        "the rig never settled: {}",
+        free.length()
+    );
+
+    let blocker = wall(&mut resources, free.normalize() * 4.0);
+    frame(&mut resources);
+    let pulled = position(&resources, vcam).distance(position(&resources, target));
+    assert!(pulled < 2.0, "{pulled}");
+
+    // The wall leaves; the return has its 0.35 s and a frame of slack, at 60 frames a second.
+    remove::<PhysicsBody>(&mut resources, blocker);
+    remove::<Collider>(&mut resources, blocker);
+    for _ in 0..23 {
+        frame(&mut resources);
+    }
+    let back = position(&resources, vcam).distance(position(&resources, target));
+    assert!(
+        (back - ARM).abs() < 0.1,
+        "0.38 s after the wall left the arm was {back}, not {ARM}"
+    );
 }
