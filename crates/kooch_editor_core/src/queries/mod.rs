@@ -487,7 +487,9 @@ pub(crate) fn gather_component_types(resources: &Resources) -> Vec<ComponentType
 }
 
 /// The connected project's component schema, if there is one.
-fn remote_schema(resources: &Resources) -> Option<&[kooch_remote::protocol::ComponentSchema]> {
+pub(crate) fn remote_schema(
+    resources: &Resources,
+) -> Option<&[kooch_remote::protocol::ComponentSchema]> {
     let state = resources.get::<crate::remote_session::RemoteState>()?;
     if !state.is_connected() {
         return None;
