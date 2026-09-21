@@ -171,6 +171,7 @@ pub(super) fn run_editor_ui(
     let full_output = overlay.ctx.run_ui(raw_input, |ui| {
         if project_loaded {
             play_focus::chord(ui, toolbar.is_playing, &mut actions);
+            crate::shortcuts::save(ui, &mut actions);
             // Before the dock is drawn, so the panel that follows the edge is this frame's.
             *game_clicked |= play_focus::follow(
                 &mut overlay.dock_state,

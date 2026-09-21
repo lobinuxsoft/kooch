@@ -9,6 +9,22 @@ use crate::state::EditorTab;
 /// The chord that toggles Play, as Unity binds it: one chord both ways, so starting and stopping
 /// are the same gesture from wherever the hands are.
 pub(crate) const PLAY_CHORD: &str = "Ctrl+P";
+pub(crate) const SAVE_CHORD: &str = "Ctrl+S";
+pub(crate) const SAVE_AS_CHORD: &str = "Ctrl+Shift+S";
+
+/// Queues a save of the active scene when Ctrl+S — or Ctrl+Shift+S, asking for a file — is
+/// pressed. Heard from every panel: saving is the project's, not the focused panel's.
+pub(crate) fn save(ui: &egui::Ui, actions: &mut Vec<EditorAction>) {
+    if ui.ctx().text_edit_focused() {
+        return;
+    }
+    let chord = ui.input(|i| {
+        (i.modifiers.command && i.key_pressed(egui::Key::S)).then_some(i.modifiers.shift)
+    });
+    if let Some(as_new) = chord {
+        actions.push(EditorAction::SaveScene { as_new });
+    }
+}
 
 /// An editing command with a keyboard chord.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

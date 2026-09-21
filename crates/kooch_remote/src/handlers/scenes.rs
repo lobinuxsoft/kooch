@@ -125,11 +125,18 @@ pub(super) fn save_scene(
         });
     };
     let result = match scene.or_else(|| manager.active_id()) {
-        Some(id) => manager
-            .save_scene_as(id, std::path::PathBuf::from(path), resources)
-            .map_err(|e| RemoteError::SceneError {
-                detail: e.to_string(),
-            }),
+        Some(id) => match manager.save_scene_as(id, std::path::PathBuf::from(path), resources) {
+            Ok(()) => {
+                tracing::info!("scene {id} saved to {path}");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("failed to save scene {id} to {path}: {e}");
+                Err(RemoteError::SceneError {
+                    detail: e.to_string(),
+                })
+            }
+        },
         None => Err(RemoteError::SceneError {
             detail: "no scene is open".into(),
         }),

@@ -27,7 +27,7 @@ impl EditorAction {
             | Self::RemoveComponent { .. }
             | Self::TransformEdit { .. }
             | Self::Reparent { .. }
-            | Self::SaveScene
+            | Self::SaveScene { .. }
             | Self::SavePrefab { .. }
             | Self::InstantiatePrefab { .. }
             | Self::OpenScene { .. }
@@ -146,7 +146,7 @@ impl EditorAction {
             // Persisting the world is not a mutation of it, but it writes a FILE from a world
             // mid-simulation — the ball wherever it happened to roll. That is not the scene the
             // author saved, and it overwrites the one that was.
-            | Self::SaveScene
+            | Self::SaveScene { .. }
             | Self::SavePrefab { .. }
             | Self::SaveOpenScene(_)
             | Self::SaveOpenSceneAs(_)
