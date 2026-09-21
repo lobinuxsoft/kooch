@@ -101,5 +101,85 @@ fn ease_in(t: f32, curve: u32) -> f32 {
     }
 }
 
+/// A value a [`Chase`] moves: blended by progress, and compared to tell a goal that moved.
+pub trait Tweened: Copy {
+    fn mix(from: Self, to: Self, t: f32) -> Self;
+    /// Whether `a` and `b` are different goals, past float noise.
+    fn moved(a: Self, b: Self) -> bool;
+}
+
+/// Below this a goal has not moved: a settled rig's float noise must not restart its tween.
+const STILL: f32 = 1e-5;
+
+impl Tweened for f32 {
+    fn mix(from: Self, to: Self, t: f32) -> Self {
+        from + (to - from) * t
+    }
+    fn moved(a: Self, b: Self) -> bool {
+        (a - b).abs() > STILL
+    }
+}
+
+impl Tweened for glam::Vec3 {
+    fn mix(from: Self, to: Self, t: f32) -> Self {
+        from.lerp(to, t)
+    }
+    fn moved(a: Self, b: Self) -> bool {
+        !a.abs_diff_eq(b, STILL)
+    }
+}
+
+impl Tweened for glam::Quat {
+    /// Along the shorter arc: `q` and `-q` are one rotation, and the long way is 359° of roll.
+    fn mix(from: Self, to: Self, t: f32) -> Self {
+        let to = if from.dot(to) < 0.0 { -to } else { to };
+        from.slerp(to, t).normalize()
+    }
+    /// By components, not the dot product: near 1 an `f32` dot cannot tell a small turn from none.
+    fn moved(a: Self, b: Self) -> bool {
+        !a.abs_diff_eq(b, STILL) && !a.abs_diff_eq(-b, STILL)
+    }
+}
+
+/// A tween towards a goal that may move. A moved goal restarts it from where the value is, so the
+/// value arrives exactly `duration` seconds after the goal stops. Sine ease-out, fixed: an ease-in
+/// barely leaves while the goal keeps moving, and the value would never keep up.
+#[derive(Debug, Clone, Copy)]
+pub struct Chase<T> {
+    from: T,
+    goal: T,
+    elapsed: f32,
+}
+
+impl<T: Tweened> Chase<T> {
+    /// At rest on `at`.
+    pub fn at(at: T) -> Self {
+        Self {
+            from: at,
+            goal: at,
+            elapsed: 0.0,
+        }
+    }
+
+    /// Advances `dt` towards `goal` from `current`, answering the new value. Zero `duration` snaps.
+    pub fn step(&mut self, current: T, goal: T, dt: f32, duration: f32) -> T {
+        if duration <= 0.0 {
+            *self = Self::at(goal);
+            return goal;
+        }
+        if T::moved(goal, self.goal) {
+            *self = Self {
+                from: current,
+                goal,
+                elapsed: 0.0,
+            };
+        }
+        self.elapsed += dt;
+        // A hair of slack so a clock summed in `f32` steps lands on 1 instead of just short of it.
+        let t = eased(self.elapsed / duration + 1e-5, CURVE_SINE, EASE_OUT);
+        T::mix(self.from, self.goal, t)
+    }
+}
+
 #[cfg(test)]
 mod tests;

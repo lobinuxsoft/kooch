@@ -11,6 +11,7 @@ use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::FieldRange;
+use kooch_ecs::tween::Chase;
 
 /// Frames the target of the vcam it sits on. Beside a [`VirtualCamera`]; replaces its position
 /// damping, since the soft zone is the easing.
@@ -31,9 +32,11 @@ pub struct CameraFraming {
     /// zone the camera eases back; never smaller than the dead zone.
     #[reflect(range = ZONE_RANGE)]
     pub soft_zone: Vec2,
-    /// Seconds to close most of the gap while the target is in the soft zone. Zero is rigid.
-    #[reflect(range = TIME_RANGE)]
-    pub soft_time: f32,
+    /// Seconds the camera takes to bring the target back to the dead zone's edge once it stops —
+    /// exactly, a tween that restarts while the target keeps moving. Past the soft zone the camera
+    /// does not wait. Zero is rigid.
+    #[reflect(range = TIME_RANGE, alias = "soft_time")]
+    pub soft_duration: f32,
 }
 
 const SCREEN_RANGE: FieldRange = FieldRange {
@@ -61,7 +64,7 @@ impl Default for CameraFraming {
             screen: Vec2::ZERO,
             dead_zone: Vec2::new(0.1, 0.1),
             soft_zone: Vec2::new(0.6, 0.6),
-            soft_time: 0.3,
+            soft_duration: 0.5,
         }
     }
 }
@@ -92,11 +95,13 @@ impl Lens {
 }
 
 impl CameraFraming {
-    /// Where the rig follows this step: `tracked` moved just enough to bring `target` back towards
-    /// the dead zone, measured on the screen of a camera turned `rotation` at `depth`. Depth itself
-    /// has no zone and is followed at once.
+    /// Where the rig follows this step: `tracked` tweened towards the point that puts `target` on
+    /// the dead zone's edge, then dragged so the target never leaves the soft zone. Measured on the
+    /// screen of a camera turned `rotation` at `depth`. Depth has no zone and is followed at once.
+    #[allow(clippy::too_many_arguments)]
     pub fn follow(
         &self,
+        chase: &mut Chase<Vec3>,
         tracked: Vec3,
         target: Vec3,
         rotation: Quat,
@@ -106,14 +111,19 @@ impl CameraFraming {
     ) -> Vec3 {
         let (right, up, forward) = (rotation * Vec3::X, rotation * Vec3::Y, rotation * -Vec3::Z);
         let span = lens.span(depth);
-        let offset = target - tracked;
-        let on_screen = Vec2::new(offset.dot(right) / span.x, offset.dot(up) / span.y);
-        let soft = self.soft_zone.max(self.dead_zone);
-        let moved = Vec2::new(
-            self.correction(on_screen.x, self.dead_zone.x, soft.x, dt),
-            self.correction(on_screen.y, self.dead_zone.y, soft.y, dt),
-        ) * span;
-        tracked + right * moved.x + up * moved.y + forward * offset.dot(forward)
+        // How far past a zone of `size` the target sits from `point`, in metres on screen.
+        let past = |point: Vec3, size: Vec2| {
+            let offset = target - point;
+            let on_screen = Vec2::new(offset.dot(right) / span.x, offset.dot(up) / span.y);
+            let beyond =
+                |at: f32, size: f32| at.signum() * (at.abs() - size.max(0.0) * 0.5).max(0.0);
+            let excess = Vec2::new(beyond(on_screen.x, size.x), beyond(on_screen.y, size.y)) * span;
+            right * excess.x + up * excess.y
+        };
+        let goal = tracked + past(tracked, self.dead_zone);
+        let point = chase.step(tracked, goal, dt, self.soft_duration);
+        let point = point + past(point, self.soft_zone.max(self.dead_zone));
+        point + forward * (target - point).dot(forward)
     }
 
     /// The point to look at so `tracked` lands on [`screen`](Self::screen).
@@ -121,38 +131,23 @@ impl CameraFraming {
         let shift = self.screen * lens.span(depth);
         tracked - rotation * Vec3::X * shift.x - rotation * Vec3::Y * shift.y
     }
-
-    /// One screen axis: nothing inside the dead zone, the excess past the soft zone at once, and
-    /// the part between eased over `soft_time`.
-    fn correction(&self, offset: f32, dead: f32, soft: f32, dt: f32) -> f32 {
-        let outside = offset.abs() - dead.max(0.0) * 0.5;
-        if outside <= 0.0 {
-            return 0.0;
-        }
-        let hard = (offset.abs() - soft * 0.5).max(0.0);
-        let alpha = match self.soft_time > 0.0 && dt > 0.0 {
-            true => 1.0 - (-dt / self.soft_time).exp(),
-            false => 1.0,
-        };
-        offset.signum() * (hard + (outside - hard) * alpha)
-    }
 }
 
 /// Every framed vcam's tracked point, carried between steps. Rebuilt from the vcams seen each step,
 /// so a despawned one leaves nothing behind.
 #[derive(Debug, Clone, Default)]
 pub struct Tracked {
-    points: HashMap<Entity, Vec3>,
+    points: HashMap<Entity, (Vec3, Chase<Vec3>)>,
 }
 
 impl Tracked {
-    /// Where this vcam's rig was following, or `None` on its first framed step.
-    pub fn of(&self, entity: Entity) -> Option<Vec3> {
+    /// Where this vcam's rig was following and its tween, or `None` on its first framed step.
+    pub fn of(&self, entity: Entity) -> Option<(Vec3, Chase<Vec3>)> {
         self.points.get(&entity).copied()
     }
 
-    pub fn set(&mut self, entity: Entity, point: Vec3) {
-        self.points.insert(entity, point);
+    pub fn set(&mut self, entity: Entity, point: Vec3, chase: Chase<Vec3>) {
+        self.points.insert(entity, (point, chase));
     }
 }
 

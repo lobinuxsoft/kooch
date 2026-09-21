@@ -17,7 +17,15 @@ fn framing() -> CameraFraming {
 
 /// Steps the tracked point once, the camera looking down -Z from 1 m away.
 fn step(framing: &CameraFraming, tracked: Vec3, target: Vec3) -> Vec3 {
-    framing.follow(tracked, target, Quat::IDENTITY, 1.0, lens(), DT)
+    framing.follow(
+        &mut Chase::at(tracked),
+        tracked,
+        target,
+        Quat::IDENTITY,
+        1.0,
+        lens(),
+        DT,
+    )
 }
 
 #[test]
@@ -49,7 +57,7 @@ fn the_soft_edge_is_hard() {
 #[test]
 fn a_rigid_soft_zone_reaches_the_dead_edge() {
     let rigid = CameraFraming {
-        soft_time: 0.0,
+        soft_duration: 0.0,
         ..framing()
     };
     let tracked = step(&rigid, Vec3::ZERO, Vec3::new(0.4, 0.0, 0.0));
@@ -86,4 +94,35 @@ fn the_aim_offsets_the_screen() {
     let aim = right.aim(Vec3::ZERO, Quat::IDENTITY, 1.0, lens());
     // Looking left of the point puts the point right of centre.
     assert!((aim.x + 0.5).abs() < 1e-5, "{aim}");
+}
+
+/// Once the target stops, the soft zone closes in exactly `soft_duration`: at 30 fps or 144.
+#[test]
+fn the_soft_zone_arrives_on_time() {
+    let framing = CameraFraming {
+        soft_duration: 0.5,
+        ..framing()
+    };
+    let target = Vec3::new(0.4, 0.0, 0.0);
+    for fps in [30.0_f32, 60.0, 144.0] {
+        let run = |seconds: f32| {
+            let mut chase = Chase::at(Vec3::ZERO);
+            let mut tracked = Vec3::ZERO;
+            for _ in 0..(seconds * fps).round() as usize {
+                tracked = framing.follow(
+                    &mut chase,
+                    tracked,
+                    target,
+                    Quat::IDENTITY,
+                    1.0,
+                    lens(),
+                    1.0 / fps,
+                );
+            }
+            tracked.x
+        };
+        // On the dead zone's edge: 0.1 of the screen, 0.2 m here, short of the target.
+        assert!((run(0.5) - 0.2).abs() < 1e-5, "{fps} fps: {}", run(0.5));
+        assert!(run(0.4) < 0.2 - 1e-4, "{fps} fps arrived early");
+    }
 }

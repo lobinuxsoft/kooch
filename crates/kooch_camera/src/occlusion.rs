@@ -37,8 +37,8 @@ pub struct CameraCollision {
     pub min_distance: f32,
     /// Seconds the camera takes to get back out once the way clears — exactly that, smooth at both
     /// ends. Pulling in is immediate: a camera that eased into a wall would show the inside of it.
-    #[reflect(range = RETURN_RANGE)]
-    pub return_time: f32,
+    #[reflect(range = RETURN_RANGE, alias = "return_time")]
+    pub return_duration: f32,
     /// The shape of the return — the engine's tween, the same curves a vcam's blend offers.
     #[reflect(choices = kooch_ecs::tween::CURVE_CHOICES)]
     pub return_curve: u32,
@@ -72,7 +72,7 @@ impl Default for CameraCollision {
             groups: u32::MAX,
             radius: 0.2,
             min_distance: 0.5,
-            return_time: 0.35,
+            return_duration: 0.35,
             return_curve: kooch_ecs::tween::CURVE_SINE,
             return_ease: kooch_ecs::tween::EASE_IN_OUT,
         }
@@ -108,23 +108,23 @@ impl Arms {
 
 /// The arm this frame, and the return clock to carry. Shorter than last frame is at once: a camera
 /// that eased into a wall would show its inside. Longer is a tween that lasts **exactly**
-/// `return_time`, from wherever the arm was when the way cleared.
+/// `return_duration`, from wherever the arm was when the way cleared.
 pub(crate) fn arm_length(
     previous: Option<(f32, Option<(f32, f32)>)>,
     clear: f32,
     collision: &CameraCollision,
     dt: f32,
 ) -> (f32, Option<(f32, f32)>) {
-    let return_time = collision.return_time;
+    let return_duration = collision.return_duration;
     let Some((was, returning)) = previous else {
         return (clear, None);
     };
-    if clear <= was || return_time <= 0.0 {
+    if clear <= was || return_duration <= 0.0 {
         return (clear, None);
     }
     let (from, elapsed) = returning.unwrap_or((was, 0.0));
     let elapsed = elapsed + dt;
-    let t = (elapsed / return_time).min(1.0);
+    let t = (elapsed / return_duration).min(1.0);
     let eased = kooch_ecs::tween::eased(t, collision.return_curve, collision.return_ease);
     let length = from + (clear - from) * eased;
     match t >= 1.0 {

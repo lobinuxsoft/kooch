@@ -5,17 +5,17 @@ const FRAME: f32 = 1.0 / 60.0;
 /// A collision returning over `seconds` along the default curve.
 fn over(seconds: f32) -> CameraCollision {
     CameraCollision {
-        return_time: seconds,
+        return_duration: seconds,
         ..Default::default()
     }
 }
 
 /// Runs the arm from `from` towards a clear `to` for `seconds`, as frames would.
-fn returned(from: f32, to: f32, return_time: f32, seconds: f32, dt: f32) -> f32 {
+fn returned(from: f32, to: f32, return_duration: f32, seconds: f32, dt: f32) -> f32 {
     let mut state = (from, None);
     let mut elapsed = 0.0;
     while elapsed + dt * 0.5 < seconds {
-        state = arm_length(Some(state), to, &over(return_time), dt);
+        state = arm_length(Some(state), to, &over(return_duration), dt);
         elapsed += dt;
     }
     state.0
@@ -80,7 +80,7 @@ fn a_wall_mid_return_pulls_in() {
 #[test]
 fn the_return_follows_its_curve() {
     let linear = CameraCollision {
-        return_time: 1.0,
+        return_duration: 1.0,
         return_curve: kooch_ecs::tween::CURVE_LINEAR,
         ..Default::default()
     };

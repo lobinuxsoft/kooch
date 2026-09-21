@@ -18,9 +18,10 @@ use crate::framing::{CameraFraming, Lens, Tracked};
 use crate::occlusion::Arms;
 use crate::target::CameraTarget;
 use crate::virtual_camera::{
-    INACTIVE_ALWAYS, LOOK_AT_SIMPLE, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera,
+    Damping, INACTIVE_ALWAYS, LOOK_AT_SIMPLE, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera,
     seed_reference, transported,
 };
+use kooch_ecs::tween::Chase;
 
 /// Which way is up for a virtual camera, from its `up_mode`. Not the target's rotation: a rolling
 /// ball's up points wherever the last bounce left it.
@@ -144,10 +145,11 @@ impl CameraBlend {
 /// Advances every live virtual camera, then hands the winner's pose to the camera. Keeping vcam
 /// poses separate is what lets a blend interpolate between two.
 pub fn drive_virtual_cameras(resources: &mut Resources) {
-    let (plan, horizons, arms, tracked) = plan_vcam_poses(resources);
+    let (plan, horizons, arms, tracked, dampings) = plan_vcam_poses(resources);
     resources.insert(horizons);
     resources.insert(arms);
     resources.insert(tracked);
+    resources.insert(dampings);
     if plan.is_empty() {
         return;
     }
@@ -291,20 +293,36 @@ fn target_pose(
 /// Works out every vcam's pose without holding a borrow, because writing
 /// a `Transform` needs the storage mutably and reading the target's pose
 /// needs it shared.
-fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames, Arms, Tracked) {
+type Planned = (Vec<Pose>, HorizonFrames, Arms, Tracked, Dampings);
+
+fn plan_vcam_poses(resources: &Resources) -> Planned {
     let carried = resources
         .get::<HorizonFrames>()
         .cloned()
         .unwrap_or_default();
     let carried_arms = resources.get::<Arms>().cloned().unwrap_or_default();
     let carried_tracked = resources.get::<Tracked>().cloned().unwrap_or_default();
+    let carried_dampings = resources.get::<Dampings>().cloned().unwrap_or_default();
+    let mut dampings = Dampings::default();
     let mut arms = Arms::default();
     let mut tracked = Tracked::default();
     let Some(registry) = resources.get::<ComponentRegistry>() else {
-        return (Vec::new(), carried, carried_arms, carried_tracked);
+        return (
+            Vec::new(),
+            carried,
+            carried_arms,
+            carried_tracked,
+            carried_dampings,
+        );
     };
     let Some(vcams) = registry.get_cpu::<VirtualCamera>() else {
-        return (Vec::new(), carried, carried_arms, carried_tracked);
+        return (
+            Vec::new(),
+            carried,
+            carried_arms,
+            carried_tracked,
+            carried_dampings,
+        );
     };
     let framings = registry.get_cpu::<CameraFraming>();
     let lens = lens(resources, registry);
@@ -368,11 +386,21 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames, Arms, Tr
         // framing puts it. A first framed step starts on the target: centred when it goes live.
         let (followed, aim) = match framing {
             Some(framing) => {
-                let from = carried_tracked.of(entity).unwrap_or(target_pos);
+                let (from, mut chase) = carried_tracked
+                    .of(entity)
+                    .unwrap_or((target_pos, Chase::at(target_pos)));
                 let depth = (from - current.position).dot(current.rotation * -Vec3::Z);
                 let depth = if depth > 0.01 { depth } else { vcam.distance };
-                let point = framing.follow(from, target_pos, current.rotation, depth, lens, dt);
-                tracked.set(entity, point);
+                let point = framing.follow(
+                    &mut chase,
+                    from,
+                    target_pos,
+                    current.rotation,
+                    depth,
+                    lens,
+                    dt,
+                );
+                tracked.set(entity, point, chase);
                 (
                     point,
                     Some(framing.aim(point, current.rotation, depth, lens)),
@@ -398,9 +426,14 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames, Arms, Tr
         // damping is the rig's, and a return is the collision's to time. A framed rig is not
         // damped: its soft zone is the easing, and a second one would move the zones off screen.
         let from = carried_arms.free_of(entity).unwrap_or(current.position);
+        let mut damping = carried_dampings
+            .0
+            .get(&entity)
+            .copied()
+            .unwrap_or_else(|| Damping::at(current.position, current.rotation));
         let position = match framing {
             Some(_) => desired_pos,
-            None => vcam.damped(from, desired_pos, dt),
+            None => vcam.damped(&mut damping, from, desired_pos, dt),
         };
         // After the damping, so a wall pulls the camera in at once rather than at the damping's
         // pace (#1251).
@@ -416,7 +449,8 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames, Arms, Tr
         // Damped too, because `up` is not a constant any more: crossing
         // between two gravity fields rotates the whole basis, and
         // snapping that in one frame throws the horizon over.
-        let rotation = vcam.damped_rotation(current.rotation, desired_rot, dt);
+        let rotation = vcam.damped_rotation(&mut damping, current.rotation, desired_rot, dt);
+        dampings.0.insert(entity, damping);
 
         plan.push(Pose {
             entity,
@@ -428,8 +462,13 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames, Arms, Tr
             blend_ease: vcam.blend_ease,
         });
     }
-    (plan, horizons, arms, tracked)
+    (plan, horizons, arms, tracked, dampings)
 }
+
+/// Every vcam's damping tweens, carried between steps and rebuilt from the vcams seen, so a
+/// despawned one leaves nothing behind.
+#[derive(Debug, Clone, Default)]
+pub struct Dampings(std::collections::HashMap<Entity, Damping>);
 
 /// The lens every vcam is seen through: the driven camera's field of view over the last rendered
 /// aspect. A vcam frames one screen, and that is the one.

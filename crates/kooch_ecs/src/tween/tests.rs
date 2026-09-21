@@ -89,3 +89,67 @@ fn linear_is_the_identity() {
         assert!((eased(t, CURVE_LINEAR, EASE_IN) - t).abs() < 1e-6);
     }
 }
+
+/// Steps a chase to a goal that stays put, `steps` times at `dt`.
+fn chased(duration: f32, dt: f32, steps: usize) -> f32 {
+    let mut chase = Chase::at(0.0_f32);
+    let mut value = 0.0;
+    for _ in 0..steps {
+        value = chase.step(value, 10.0, dt, duration);
+    }
+    value
+}
+
+/// The duration is when it arrives — exactly, at 30 fps or 144 — and not a moment before.
+#[test]
+fn a_chase_arrives_on_time() {
+    for fps in [30.0_f32, 60.0, 144.0] {
+        let steps = (0.5 * fps).round() as usize;
+        assert_eq!(chased(0.5, 1.0 / fps, steps), 10.0, "{fps} fps");
+        assert!(
+            chased(0.5, 1.0 / fps, steps - 1) < 10.0,
+            "{fps} fps arrived early"
+        );
+    }
+}
+
+/// A goal that moves restarts the clock from where the value is: arriving is measured from when it
+/// stopped.
+#[test]
+fn a_moved_goal_restarts() {
+    let dt = 1.0 / 60.0;
+    let mut chase = Chase::at(0.0_f32);
+    let mut value = 0.0;
+    for _ in 0..20 {
+        value = chase.step(value, 10.0, dt, 0.5);
+    }
+    let midway = value;
+    for step in 0..30 {
+        value = chase.step(value, 20.0, dt, 0.5);
+        if step < 29 {
+            assert!(value < 20.0, "arrived at step {step}");
+        }
+    }
+    assert!(midway > 0.0 && midway < 10.0);
+    assert_eq!(value, 20.0);
+}
+
+#[test]
+fn a_zero_duration_snaps() {
+    let mut chase = Chase::at(0.0_f32);
+    assert_eq!(chase.step(0.0, 3.0, 1.0 / 60.0, 0.0), 3.0);
+}
+
+/// A goal creeping less than the noise floor each step is still followed: moves are measured from
+/// the goal the tween holds, so they add up until they count.
+#[test]
+fn a_creeping_goal_is_followed() {
+    let mut chase = Chase::at(0.0_f32);
+    let (mut value, mut goal) = (0.0, 0.0);
+    for _ in 0..2000 {
+        goal += 5e-6;
+        value = chase.step(value, goal, 1.0 / 60.0, 0.2);
+    }
+    // Trailing a moving goal by at most its speed times the duration: 3e-4 m/s over 0.2 s.
+    assert!((goal - value).abs() < 6e-5, "left behind: {value} vs {goal}");
+}
