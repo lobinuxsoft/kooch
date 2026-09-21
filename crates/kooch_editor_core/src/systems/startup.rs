@@ -111,6 +111,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         element_mode: crate::block_edit::ElementMode::default(),
         shape_drag_start: None,
         focused_tab: None,
+        was_playing: false,
         asset_nav: Default::default(),
         inspector_nav: Default::default(),
         ctx,

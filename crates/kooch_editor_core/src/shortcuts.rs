@@ -6,6 +6,10 @@ use crate::actions::EditorAction;
 use crate::history::Document;
 use crate::state::EditorTab;
 
+/// The chord that toggles Play, as Unity binds it: one chord both ways, so starting and stopping
+/// are the same gesture from wherever the hands are.
+pub(crate) const PLAY_CHORD: &str = "Ctrl+P";
+
 /// An editing command with a keyboard chord.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum EditChord {

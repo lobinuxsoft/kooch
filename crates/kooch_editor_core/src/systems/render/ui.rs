@@ -18,6 +18,7 @@ use crate::systems::tab_viewer::EditorTabViewer;
 
 use super::frame_display::FrameDisplayData;
 use super::lifted::Lifted;
+use super::play_focus;
 
 /// Toolbar/menu-bar state gathered before the egui pass: what the undo
 /// stack can offer, and the two modes the toolbar reports on.
@@ -169,6 +170,14 @@ pub(super) fn run_editor_ui(
     let mut open_shader_graph = open_shader_graph;
     let full_output = overlay.ctx.run_ui(raw_input, |ui| {
         if project_loaded {
+            play_focus::chord(ui, toolbar.is_playing, &mut actions);
+            // Before the dock is drawn, so the panel that follows the edge is this frame's.
+            *game_clicked |= play_focus::follow(
+                &mut overlay.dock_state,
+                &mut overlay.focused_tab,
+                &mut overlay.was_playing,
+                toolbar.is_playing,
+            );
             draw_menu_bar(
                 ui,
                 &mut overlay.dock_state,
