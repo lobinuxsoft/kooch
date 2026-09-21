@@ -83,12 +83,9 @@ impl Source {
         match &self.kind {
             // No bounds to be outside of.
             Kind::Global(_) => 1.0,
-            // A hard edge, because a point source has no fade band — noted
-            // on `GravityPriority` so an author picks a shape that does.
-            Kind::Point(source) => {
-                let outside = source.range > 0.0 && self.position.distance(point) > source.range;
-                f32::from(!outside)
-            }
+            // Its own fade band: a hard edge when `falloff` is zero, and then a priority takes
+            // over all at once.
+            Kind::Point(source) => source.influence(self.position.distance(point)),
             Kind::Area { settings, local } => settings.influence_at_local(local.local_point(point)),
             // Inside the solid there is no surface to fall towards, and the
             // body is as claimed by this planet as it can be.

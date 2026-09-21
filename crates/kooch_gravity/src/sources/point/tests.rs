@@ -73,3 +73,34 @@ fn a_constant_point_source_does_not_fall_off() {
     let far = source.acceleration_at(Vec3::ZERO, Vec3::new(0.0, 400.0, 0.0));
     assert!((near.length() - far.length()).abs() < 1e-3);
 }
+
+fn fading() -> PointGravity {
+    PointGravity {
+        strength: 10.0,
+        radius: 5.0,
+        range: 10.0,
+        inverse_square: false,
+        falloff: 10.0,
+    }
+}
+
+/// Halfway across the fade is half the pull; past it, nothing.
+#[test]
+fn a_falloff_fades_past_range() {
+    let source = fading();
+    let half = source.acceleration_at(Vec3::ZERO, Vec3::new(15.0, 0.0, 0.0));
+    assert!((half.length() - 5.0).abs() < 1e-4, "{half}");
+    let gone = source.acceleration_at(Vec3::ZERO, Vec3::new(21.0, 0.0, 0.0));
+    assert_eq!(gone, Vec3::ZERO);
+}
+
+/// Zero is the edge it always was: every scene saved before the field existed loads unchanged.
+#[test]
+fn no_falloff_is_a_hard_edge() {
+    let source = PointGravity {
+        falloff: 0.0,
+        ..fading()
+    };
+    assert_eq!(source.influence(10.0), 1.0);
+    assert_eq!(source.influence(10.001), 0.0);
+}

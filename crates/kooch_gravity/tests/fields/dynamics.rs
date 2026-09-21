@@ -297,3 +297,119 @@ fn scaling_a_source_does_not_resize_it() {
         );
     }
 }
+
+/// 🔴 A planet inside a larger field, as roll-a-ball's `character_test` has it: an unbounded floor
+/// field pulling down, and a planet 80 m away. At the same level the two sum, and the floor drags
+/// everything on the planet towards its own down. With a priority, inside the planet's reach only
+/// the planet pulls — and outside it the floor is back, untouched.
+#[test]
+fn a_planet_overrules_the_field_around_it() {
+    let mut resources = world();
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        PlaneGravity {
+            strength: 19.62,
+            ..Default::default()
+        },
+    );
+    let planet = source_at(
+        &mut resources,
+        Transform::from_position(Vec3::new(0.0, 0.0, 80.0)),
+        PointGravity {
+            strength: 19.62,
+            radius: 7.0,
+            range: 25.0,
+            ..Default::default()
+        },
+    );
+
+    // Standing on the planet's side: the floor's pull shows up as a sideways tilt.
+    let side = Vec3::new(7.5, 0.5, 80.0);
+    let summed = plugin::gravity_at(&resources, side);
+    assert!(
+        summed.y < -10.0,
+        "the floor should be adding its down at the same level: {summed}"
+    );
+
+    insert(&mut resources, planet, GravityPriority { level: 1 });
+    let alone = plugin::gravity_at(&resources, side);
+    let towards_centre = (Vec3::new(0.0, 0.0, 80.0) - side).normalize();
+    assert!(
+        alone.normalize().dot(towards_centre) > 0.999,
+        "inside its reach only the planet should pull: {alone}",
+    );
+
+    // Far from the planet the floor is the only field, and the priority changed nothing there.
+    let away = plugin::gravity_at(&resources, Vec3::new(0.0, 1.0, 0.0));
+    assert!(
+        (away - Vec3::new(0.0, -19.62, 0.0)).length() < 1e-3,
+        "{away}"
+    );
+}
+
+/// The same for a room: any source carries a priority, and a bounded one overrules only inside its
+/// own bounds and fade.
+#[test]
+fn a_planet_inside_a_room_wins_inside() {
+    let mut resources = world();
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        AreaGravity {
+            half_extents: Vec3::splat(50.0),
+            falloff: 0.0,
+            ..Default::default()
+        },
+    );
+    let planet = source_at(
+        &mut resources,
+        Transform::from_position(Vec3::new(20.0, 0.0, 0.0)),
+        PointGravity {
+            strength: 9.81,
+            radius: 3.0,
+            range: 10.0,
+            ..Default::default()
+        },
+    );
+    insert(&mut resources, planet, GravityPriority { level: 1 });
+
+    let on_planet = plugin::gravity_at(&resources, Vec3::new(20.0, 3.5, 0.0));
+    assert!(on_planet.y < 0.0 && on_planet.x.abs() < 1e-3, "{on_planet}");
+    let in_room = plugin::gravity_at(&resources, Vec3::new(-20.0, 0.0, 0.0));
+    assert!(
+        (in_room - Vec3::new(0.0, -9.81, 0.0)).length() < 1e-3,
+        "{in_room}"
+    );
+}
+
+/// 🔴 A planet with a priority takes over across its fade, not at a line: crossing its range with a
+/// falloff hands the body from the field to the planet gradually, where a hard edge was a jolt.
+#[test]
+fn a_planets_claim_fades() {
+    let mut resources = world();
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        GlobalGravity::default(),
+    );
+    let planet = source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        PointGravity {
+            strength: 9.81,
+            radius: 5.0,
+            range: 10.0,
+            inverse_square: false,
+            falloff: 10.0,
+        },
+    );
+    insert(&mut resources, planet, GravityPriority { level: 1 });
+
+    // Halfway across the planet's fade, beside it: half the planet and half the world's down.
+    let edge = plugin::gravity_at(&resources, Vec3::new(15.0, 0.0, 0.0));
+    assert!(
+        (edge - Vec3::new(-4.905, -4.905, 0.0)).length() < 1e-3,
+        "half the planet and half the world: {edge}",
+    );
+}

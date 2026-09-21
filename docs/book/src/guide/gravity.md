@@ -203,15 +203,24 @@ reaches each point**. At the room's centre the planet is gone; across the
 room's `falloff` band it comes back gradually. That is what keeps a body
 from snapping direction as it walks out of the door.
 
-So give an overriding zone a soft edge. `AreaGravity`, `BoxGravity` and
-`PlaneGravity` have a `falloff` for exactly this. `PointGravity` claims
-everything inside its `range` and nothing outside, so overriding with one is
-a hard edge — and `GlobalGravity` reaches everywhere at full strength, so
-raising *it* switches off the rest of the scene entirely.
+So give an overriding zone a soft edge. Every bounded source has a `falloff`
+for exactly this — `AreaGravity`, `BoxGravity`, `PlaneGravity`, and
+`PointGravity` past its `range`. Zero is a hard edge, which a priority turns
+into a jolt: the planet takes over all at once. `GlobalGravity` reaches
+everywhere at full strength, so raising *it* switches off the rest of the
+scene entirely.
 
 Sources at the same level sum, as they always did. A source with no
 `GravityPriority` sits at level 0, so adding the component to one entity
 changes nothing about the others.
+
+It works the other way round too, and on **every** kind of source: the
+component goes on whichever entity should win. A planet inside a bigger
+field — a level-wide `PlaneGravity`, a room — is the same move with the
+priority on the planet. Inside its `range` only the planet pulls; outside,
+the field is back exactly as it was. Without it the two sum, and the floor's
+down drags everything on the planet sideways. Nest as deep as you like: each
+level overrules the ones below it only where it reaches.
 
 ## Asking which way is down
 

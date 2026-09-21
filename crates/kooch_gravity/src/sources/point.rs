@@ -59,6 +59,9 @@ use kooch_ecs::component::Component;
 /// r >= R:   v = sqrt( 2 · s·R² · (1/r − 1/range) )
 /// ```
 ///
+/// A `falloff` extends the field past `range`, so escaping costs a little more than the formulas
+/// above: they assume the hard edge that a zero `falloff` is.
+///
 /// Beyond `range`, [`gravity_up`](crate::gravity_up) answers world up and the controls turn
 /// world-relative — keep `range` past anything the player reaches.
 ///
@@ -78,6 +81,10 @@ pub struct PointGravity {
     /// Fall off with the square of distance. Off gives constant strength inside `range`:
     /// unphysical, and often what a walkable planet wants.
     pub inverse_square: bool,
+    /// How far past `range` the field fades to nothing, in metres — the pull and, with a
+    /// [`GravityPriority`](crate::GravityPriority), the claim over lower levels. Zero is a hard edge,
+    /// which a priority turns into a jolt: the planet takes over all at once.
+    pub falloff: f32,
 }
 
 impl Default for PointGravity {
@@ -87,6 +94,7 @@ impl Default for PointGravity {
             radius: 50.0,
             range: 500.0,
             inverse_square: true,
+            falloff: 0.0,
         }
     }
 }
@@ -104,7 +112,8 @@ impl PointGravity {
         let Some(direction) = offset.try_normalize() else {
             return Vec3::ZERO;
         };
-        if self.range > 0.0 && distance > self.range {
+        let reach = self.influence(distance);
+        if reach <= 0.0 {
             return Vec3::ZERO;
         }
 
@@ -114,7 +123,19 @@ impl PointGravity {
             true => self.strength * (self.radius / distance.max(self.radius)).powi(2),
             false => self.strength,
         };
-        direction * magnitude
+        direction * magnitude * reach
+    }
+
+    /// How strongly the field reaches `distance` metres out: 1 inside `range`, fading to 0 across
+    /// `falloff`, 0 beyond. Unlimited when `range` is zero or less.
+    pub fn influence(&self, distance: f32) -> f32 {
+        if self.range <= 0.0 || distance <= self.range {
+            return 1.0;
+        }
+        if self.falloff <= 0.0 {
+            return 0.0;
+        }
+        (1.0 - (distance - self.range) / self.falloff).clamp(0.0, 1.0)
     }
 }
 

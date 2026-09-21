@@ -25,6 +25,11 @@ impl Visualizer<PointGravity> for PointGravityVisualizer {
         // Zero or less is unlimited, and there is no sphere for infinity.
         if field.range > 0.0 {
             gizmos.wire_sphere(origin, basis, field.range, EDGE);
+            // Where the field reaches zero, as the area draws it: a hard edge and a wide fade look
+            // the same without the second shell.
+            if field.falloff > 0.0 {
+                gizmos.wire_sphere(origin, basis, field.range + field.falloff, EDGE);
+            }
         }
 
         // Six arrows pointing *in*. This is the difference between a planet
