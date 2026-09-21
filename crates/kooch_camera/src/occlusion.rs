@@ -39,6 +39,12 @@ pub struct CameraCollision {
     /// ends. Pulling in is immediate: a camera that eased into a wall would show the inside of it.
     #[reflect(range = RETURN_RANGE)]
     pub return_time: f32,
+    /// The shape of the return — the engine's tween, the same curves a vcam's blend offers.
+    #[reflect(choices = kooch_ecs::tween::CURVE_CHOICES)]
+    pub return_curve: u32,
+    /// Which end of the return is slow.
+    #[reflect(choices = kooch_ecs::tween::EASE_CHOICES)]
+    pub return_ease: u32,
 }
 
 const RADIUS_RANGE: FieldRange = FieldRange {
@@ -67,6 +73,8 @@ impl Default for CameraCollision {
             radius: 0.2,
             min_distance: 0.5,
             return_time: 0.35,
+            return_curve: kooch_ecs::tween::CURVE_SINE,
+            return_ease: kooch_ecs::tween::EASE_IN_OUT,
         }
     }
 }
@@ -99,14 +107,15 @@ impl Arms {
 }
 
 /// The arm this frame, and the return clock to carry. Shorter than last frame is at once: a camera
-/// that eased into a wall would show its inside. Longer is a return that lasts **exactly**
-/// `return_time`, smooth at both ends, from wherever the arm was when the way cleared.
+/// that eased into a wall would show its inside. Longer is a tween that lasts **exactly**
+/// `return_time`, from wherever the arm was when the way cleared.
 pub(crate) fn arm_length(
     previous: Option<(f32, Option<(f32, f32)>)>,
     clear: f32,
-    return_time: f32,
+    collision: &CameraCollision,
     dt: f32,
 ) -> (f32, Option<(f32, f32)>) {
+    let return_time = collision.return_time;
     let Some((was, returning)) = previous else {
         return (clear, None);
     };
@@ -116,7 +125,7 @@ pub(crate) fn arm_length(
     let (from, elapsed) = returning.unwrap_or((was, 0.0));
     let elapsed = elapsed + dt;
     let t = (elapsed / return_time).min(1.0);
-    let eased = t * t * (3.0 - 2.0 * t);
+    let eased = kooch_ecs::tween::eased(t, collision.return_curve, collision.return_ease);
     let length = from + (clear - from) * eased;
     match t >= 1.0 {
         true => (clear, None),
@@ -160,7 +169,7 @@ pub(crate) fn held(
         full,
     );
     let previous = carried.0.get(&vcam).map(|arm| (arm.length, arm.returning));
-    let (length, returning) = arm_length(previous, clear, collision.return_time, dt);
+    let (length, returning) = arm_length(previous, clear, &collision, dt);
     let length = length.min(full);
     next.0.insert(
         vcam,
