@@ -69,6 +69,12 @@ def members() -> list[str]:
 
 def bumped(version: str, part: str) -> str:
     major, minor, patch = (int(n) for n in version.split("."))
+    # 🔴 Before 1.0 the minor is the breaking position — Cargo's own rule: `^0.84` takes any 0.84.x
+    # and never 0.85. So a breaking change moves the minor and anything compatible, a feature
+    # included, moves the patch. 1.0 is a decision someone makes with `--set`, never the side
+    # effect of a `!` in a title: that is how the engine reached 1.0.0 twice.
+    if major == 0:
+        part = {"major": "minor", "minor": "patch"}.get(part, part)
     if part == "major":
         return f"{major + 1}.0.0"
     if part == "minor":
@@ -153,6 +159,23 @@ def self_test() -> int:
             failed += 1
             print(f"FAIL {title!r} -> {got}, wanted {want}")
     print(f"{len(cases) - failed}/{len(cases)} decisions correct")
+
+    moves = [
+        # Before 1.0: breaking is the minor, compatible is the patch.
+        ("0.84.2", "major", "0.85.0"),
+        ("0.84.2", "minor", "0.84.3"),
+        ("0.84.2", "patch", "0.84.3"),
+        # From 1.0 on, the usual three.
+        ("1.2.3", "major", "2.0.0"),
+        ("1.2.3", "minor", "1.3.0"),
+        ("1.2.3", "patch", "1.2.4"),
+    ]
+    for version, part, want in moves:
+        got = bumped(version, part)
+        if got != want:
+            failed += 1
+            print(f"FAIL {version} {part} -> {got}, wanted {want}")
+    print(f"{len(moves)} moves checked")
     return 1 if failed else 0
 
 
