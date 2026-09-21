@@ -1,48 +1,96 @@
 use super::*;
 
+const FRAME: f32 = 1.0 / 60.0;
+
+/// A collision returning over `seconds` along the default curve.
+fn over(seconds: f32) -> CameraCollision {
+    CameraCollision {
+        return_time: seconds,
+        ..Default::default()
+    }
+}
+
+/// Runs the arm from `from` towards a clear `to` for `seconds`, as frames would.
+fn returned(from: f32, to: f32, return_time: f32, seconds: f32, dt: f32) -> f32 {
+    let mut state = (from, None);
+    let mut elapsed = 0.0;
+    while elapsed + dt * 0.5 < seconds {
+        state = arm_length(Some(state), to, &over(return_time), dt);
+        elapsed += dt;
+    }
+    state.0
+}
+
 /// 🔴 Pulling in is immediate: a camera that eased into a wall shows the inside of it for as long
 /// as the ease takes.
 #[test]
 fn a_wall_pulls_in_at_once() {
-    assert_eq!(arm_length(Some(5.0), 1.2, 0.35, 1.0 / 60.0), 1.2);
+    assert_eq!(
+        arm_length(Some((5.0, None)), 1.2, &over(0.35), FRAME).0,
+        1.2
+    );
 }
 
-/// Going back out is eased, or walking past a doorway strobes the camera in and out.
+/// 🔴 The return lasts what the field says, not three times it: an exponential covers 63 % of the
+/// way in one time constant and looks like it never quite arrives.
 #[test]
-fn a_clear_way_eases_back_out() {
-    let length = arm_length(Some(1.0), 5.0, 0.35, 1.0 / 60.0);
+fn a_return_takes_its_seconds() {
+    let halfway = returned(1.0, 5.0, 0.5, 0.25, FRAME);
     assert!(
-        length > 1.0 && length < 1.5,
-        "one frame moved it to {length}"
+        (halfway - 3.0).abs() < 0.05,
+        "half the time, half the way: {halfway}"
     );
+    let done = returned(1.0, 5.0, 0.5, 0.5, FRAME);
+    assert_eq!(done, 5.0);
 }
 
 /// A zero return time is a camera that snaps back, which is what an author who typed zero asked for.
 #[test]
 fn a_zero_return_snaps_back() {
-    assert_eq!(arm_length(Some(1.0), 5.0, 0.0, 1.0 / 60.0), 5.0);
+    assert_eq!(arm_length(Some((1.0, None)), 5.0, &over(0.0), FRAME).0, 5.0);
 }
 
-/// The first frame has nothing to ease from.
+/// The first frame has nothing to return from.
 #[test]
 fn a_first_frame_takes_the_clear_length() {
-    assert_eq!(arm_length(None, 3.0, 0.35, 1.0 / 60.0), 3.0);
+    assert_eq!(arm_length(None, 3.0, &over(0.35), FRAME).0, 3.0);
 }
 
-/// The ease is a time constant: the same wall-clock time covers the same share of the way at any
-/// frame rate.
+/// Seconds are seconds at any frame rate.
 #[test]
-fn the_ease_ignores_the_frame_rate() {
-    let mut fast = 1.0;
-    for _ in 0..120 {
-        fast = arm_length(Some(fast), 5.0, 0.35, 1.0 / 120.0);
-    }
-    let mut slow = 1.0;
-    for _ in 0..30 {
-        slow = arm_length(Some(slow), 5.0, 0.35, 1.0 / 30.0);
+fn the_return_ignores_the_frame_rate() {
+    let fast = returned(1.0, 5.0, 0.4, 0.2, 1.0 / 120.0);
+    let slow = returned(1.0, 5.0, 0.4, 0.2, 1.0 / 30.0);
+    assert!(
+        (fast - slow).abs() < 0.05,
+        "{fast} at 120 fps, {slow} at 30"
+    );
+}
+
+/// A wall that comes back mid-return pulls in again at once, and the next return starts over.
+#[test]
+fn a_wall_mid_return_pulls_in() {
+    let (length, returning) = arm_length(Some((2.0, Some((1.0, 0.1)))), 1.5, &over(0.5), FRAME);
+    assert_eq!(length, 1.5);
+    assert!(returning.is_none());
+}
+
+/// The curve is the tween's: a linear return covers a quarter of the way in a quarter of the time,
+/// where the default eases out of the wall and into the full arm.
+#[test]
+fn the_return_follows_its_curve() {
+    let linear = CameraCollision {
+        return_time: 1.0,
+        return_curve: kooch_ecs::tween::CURVE_LINEAR,
+        ..Default::default()
+    };
+    let mut state = (0.0, None);
+    for _ in 0..15 {
+        state = arm_length(Some(state), 4.0, &linear, FRAME);
     }
     assert!(
-        (fast - slow).abs() < 1e-3,
-        "{fast} at 120 fps, {slow} at 30"
+        (state.0 - 1.0).abs() < 0.02,
+        "a quarter of a linear second: {}",
+        state.0
     );
 }

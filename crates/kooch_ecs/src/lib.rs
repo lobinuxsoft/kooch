@@ -40,6 +40,7 @@ pub mod storage;
 // the module would drop `Spin` from every entity that has one, silently.
 pub mod testing;
 pub mod transform;
+pub mod tween;
 pub mod world_snapshot;
 
 pub use allocator::EntityAllocator;

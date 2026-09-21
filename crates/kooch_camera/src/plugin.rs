@@ -14,7 +14,7 @@ use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::transform::Transform;
 
 use crate::brain::CameraBrain;
-use crate::occlusion::ArmLengths;
+use crate::occlusion::Arms;
 use crate::target::CameraTarget;
 use crate::virtual_camera::{
     INACTIVE_ALWAYS, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera, seed_reference,
@@ -286,13 +286,13 @@ fn target_pose(
 /// Works out every vcam's pose without holding a borrow, because writing
 /// a `Transform` needs the storage mutably and reading the target's pose
 /// needs it shared.
-fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames, ArmLengths) {
+fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames, Arms) {
     let carried = resources
         .get::<HorizonFrames>()
         .cloned()
         .unwrap_or_default();
-    let carried_arms = resources.get::<ArmLengths>().cloned().unwrap_or_default();
-    let mut arms = ArmLengths::default();
+    let carried_arms = resources.get::<Arms>().cloned().unwrap_or_default();
+    let mut arms = Arms::default();
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return (Vec::new(), carried, carried_arms);
     };
@@ -360,7 +360,10 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames, ArmLengt
             up,
             reference,
         );
-        let position = vcam.damped(current.position, desired_pos, dt);
+        // From where the rig had the camera before any wall, not from where the wall put it: the
+        // damping is the rig's, and a return is the collision's to time.
+        let from = carried_arms.free_of(entity).unwrap_or(current.position);
+        let position = vcam.damped(from, desired_pos, dt);
         // After the damping, so a wall pulls the camera in at once rather than at the damping's
         // pace (#1251).
         let position = crate::occlusion::held(

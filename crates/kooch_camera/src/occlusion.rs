@@ -35,10 +35,16 @@ pub struct CameraCollision {
     /// a hat, a sword. It is also as close as the camera ever comes.
     #[reflect(range = DISTANCE_RANGE)]
     pub min_distance: f32,
-    /// Seconds to ease back out once the way clears. Pulling in is immediate: a camera that eased
-    /// into a wall would show the inside of it.
+    /// Seconds the camera takes to get back out once the way clears — exactly that, smooth at both
+    /// ends. Pulling in is immediate: a camera that eased into a wall would show the inside of it.
     #[reflect(range = RETURN_RANGE)]
     pub return_time: f32,
+    /// The shape of the return — the engine's tween, the same curves a vcam's blend offers.
+    #[reflect(choices = kooch_ecs::tween::CURVE_CHOICES)]
+    pub return_curve: u32,
+    /// Which end of the return is slow.
+    #[reflect(choices = kooch_ecs::tween::EASE_CHOICES)]
+    pub return_ease: u32,
 }
 
 const RADIUS_RANGE: FieldRange = FieldRange {
@@ -67,29 +73,67 @@ impl Default for CameraCollision {
             radius: 0.2,
             min_distance: 0.5,
             return_time: 0.35,
+            return_curve: kooch_ecs::tween::CURVE_SINE,
+            return_ease: kooch_ecs::tween::EASE_IN_OUT,
         }
     }
 }
 
 impl Component for CameraCollision {}
 
-/// Per vcam, how long its arm was last frame: what easing back out measures from. Runtime state,
-/// rebuilt from the vcams seen each frame.
+/// Per vcam, what the arm carries between frames. Runtime state, rebuilt from the vcams seen each
+/// frame.
 #[derive(Debug, Clone, Default)]
-pub struct ArmLengths(HashMap<Entity, f32>);
+pub struct Arms(HashMap<Entity, Arm>);
 
-/// The arm this frame: the clear length at once when it is shorter than last frame's, eased towards
-/// when it is longer. A time constant, so the feel does not change with frame rate.
-pub(crate) fn arm_length(previous: Option<f32>, clear: f32, return_time: f32, dt: f32) -> f32 {
-    match previous {
-        Some(was) if clear > was && return_time > 0.0 => {
-            was + (clear - was) * (1.0 - (-dt / return_time).exp())
-        }
-        _ => clear,
+#[derive(Debug, Clone, Copy)]
+struct Arm {
+    /// How long the arm was last frame.
+    length: f32,
+    /// Where the rig had the camera before any wall: what its damping continues from. Damping from
+    /// the pulled-in position would have the rig believe the camera was there, and creep it back
+    /// out at the damping's pace on top of the return's.
+    free: Vec3,
+    /// A return in progress: the length it started from, and the seconds it has run.
+    returning: Option<(f32, f32)>,
+}
+
+impl Arms {
+    /// Where the rig's damping continues from for `vcam`: the unobstructed position when a wall has
+    /// been deciding, or `None` for a vcam no collision has touched.
+    pub(crate) fn free_of(&self, vcam: Entity) -> Option<Vec3> {
+        self.0.get(&vcam).map(|arm| arm.free)
     }
 }
 
-/// Where the camera of `vcam` goes this frame: `wanted`, or nearer the target along the same line
+/// The arm this frame, and the return clock to carry. Shorter than last frame is at once: a camera
+/// that eased into a wall would show its inside. Longer is a tween that lasts **exactly**
+/// `return_time`, from wherever the arm was when the way cleared.
+pub(crate) fn arm_length(
+    previous: Option<(f32, Option<(f32, f32)>)>,
+    clear: f32,
+    collision: &CameraCollision,
+    dt: f32,
+) -> (f32, Option<(f32, f32)>) {
+    let return_time = collision.return_time;
+    let Some((was, returning)) = previous else {
+        return (clear, None);
+    };
+    if clear <= was || return_time <= 0.0 {
+        return (clear, None);
+    }
+    let (from, elapsed) = returning.unwrap_or((was, 0.0));
+    let elapsed = elapsed + dt;
+    let t = (elapsed / return_time).min(1.0);
+    let eased = kooch_ecs::tween::eased(t, collision.return_curve, collision.return_ease);
+    let length = from + (clear - from) * eased;
+    match t >= 1.0 {
+        true => (clear, None),
+        false => (length, Some((from, elapsed))),
+    }
+}
+
+/// Where the camera of `vcam` goes this frame: `free`, or nearer the target along the same line
 /// when something is in the way. The line keeps the framing — the camera still looks at the target
 /// from the same side, only closer.
 pub(crate) fn held(
@@ -97,8 +141,8 @@ pub(crate) fn held(
     vcam: Entity,
     target: Vec3,
     target_entity: Option<Entity>,
-    wanted: Vec3,
-    arms: (&ArmLengths, &mut ArmLengths),
+    free: Vec3,
+    arms: (&Arms, &mut Arms),
     dt: f32,
 ) -> Vec3 {
     let (carried, next) = arms;
@@ -109,11 +153,11 @@ pub(crate) fn held(
         .copied()
         .filter(|collision| collision.enabled)
     else {
-        return wanted;
+        return free;
     };
-    let offset = wanted - target;
+    let offset = free - target;
     let Some(direction) = offset.try_normalize() else {
-        return wanted;
+        return free;
     };
     let full = offset.length();
     let clear = clear_length(
@@ -124,14 +168,17 @@ pub(crate) fn held(
         direction,
         full,
     );
-    let length = arm_length(
-        carried.0.get(&vcam).copied(),
-        clear,
-        collision.return_time,
-        dt,
-    )
-    .min(full);
-    next.0.insert(vcam, length);
+    let previous = carried.0.get(&vcam).map(|arm| (arm.length, arm.returning));
+    let (length, returning) = arm_length(previous, clear, &collision, dt);
+    let length = length.min(full);
+    next.0.insert(
+        vcam,
+        Arm {
+            length,
+            free,
+            returning,
+        },
+    );
     target + direction * length
 }
 
