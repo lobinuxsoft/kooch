@@ -242,6 +242,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<crate::install::Installing>()
         .map(crate::install::Installing::progress);
 
+    let game_framing = selected_framing(resources, &taken.overlay.selected_entities);
     let ui_start = std::time::Instant::now();
     let (full_output, mut actions) = run_editor_ui(
         &mut taken.overlay,
@@ -263,6 +264,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                 .unwrap_or_default(),
             game_request: &mut requests.game,
             game_has_camera: taken.game_view.as_ref().is_some_and(|g| g.has_camera),
+            game_framing,
             preview_texture_id: taken
                 .shader_preview
                 .as_ref()
@@ -410,3 +412,19 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
 mod helpers;
 
 use helpers::*;
+
+/// The framing of the one selected vcam, while it is on: the zones are drawn only while authored.
+fn selected_framing(
+    resources: &Resources,
+    selected: &[kooch_ecs::entity::Entity],
+) -> Option<kooch_camera::CameraFraming> {
+    let [entity] = selected else {
+        return None;
+    };
+    resources
+        .get::<kooch_ecs::component::ComponentRegistry>()?
+        .get_cpu::<kooch_camera::CameraFraming>()?
+        .get(*entity)
+        .copied()
+        .filter(|framing| framing.enabled)
+}
