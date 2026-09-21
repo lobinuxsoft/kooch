@@ -31,7 +31,8 @@ pub struct CameraFraming {
     /// zone the camera eases back; never smaller than the dead zone.
     #[reflect(range = ZONE_RANGE)]
     pub soft_zone: Vec2,
-    /// Seconds to close most of the gap while the target is in the soft zone. Zero is rigid.
+    /// Seconds to bring the target back to the dead zone's edge from the soft zone, within 1%. Past
+    /// the soft zone the camera does not wait. Zero is rigid.
     #[reflect(range = TIME_RANGE)]
     pub soft_time: f32,
 }
@@ -61,7 +62,7 @@ impl Default for CameraFraming {
             screen: Vec2::ZERO,
             dead_zone: Vec2::new(0.1, 0.1),
             soft_zone: Vec2::new(0.6, 0.6),
-            soft_time: 0.3,
+            soft_time: 0.5,
         }
     }
 }
@@ -130,10 +131,7 @@ impl CameraFraming {
             return 0.0;
         }
         let hard = (offset.abs() - soft * 0.5).max(0.0);
-        let alpha = match self.soft_time > 0.0 && dt > 0.0 {
-            true => 1.0 - (-dt / self.soft_time).exp(),
-            false => 1.0,
-        };
+        let alpha = crate::virtual_camera::settled(dt, self.soft_time);
         offset.signum() * (hard + (outside - hard) * alpha)
     }
 }

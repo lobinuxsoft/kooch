@@ -545,3 +545,22 @@ fn an_unchanged_up_changes_nothing() {
     let carried = transported(reference, Vec3::Y, Vec3::Y);
     assert!((carried - reference).length() < 1e-5);
 }
+
+/// The damping time is when the camera arrives, within 1%, at 30 fps or 144 — not a time constant.
+#[test]
+fn damping_arrives_on_time() {
+    for fps in [30.0_f32, 60.0, 144.0] {
+        let steps = (1.5 * fps).round() as usize;
+        let gap = (0..steps).fold(1.0_f32, |gap, _| gap * (1.0 - settled(1.0 / fps, 1.5)));
+        assert!((gap - 0.01).abs() < 1e-3, "{fps} fps left {gap}");
+    }
+}
+
+/// Scenes saved before the rename keep their blend.
+#[test]
+fn blend_duration_still_loads() {
+    let mut vcam = VirtualCamera::default();
+    vcam.reflect_set("blend_duration", kooch_ecs::reflect::ReflectValue::F32(0.1))
+        .unwrap();
+    assert_eq!(vcam.blend_time, 0.1);
+}

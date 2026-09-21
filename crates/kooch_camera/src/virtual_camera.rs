@@ -149,13 +149,14 @@ pub struct VirtualCamera {
     pub look_at: u32,
     /// Whether the camera eases towards its pose instead of snapping.
     pub damping: bool,
-    /// Seconds to close most of the gap, per world axis — a time constant, so the feel does not
-    /// change with frame rate. Zero is rigid.
+    /// Seconds to catch up with the pose, per world axis: after this long the camera is within 1%
+    /// of where it was going, whatever the frame rate. Zero is rigid.
     #[reflect(shown_when = DAMPING_WHEN)]
     pub damping_value: Vec3,
-    /// Seconds to take when the camera hands over **to** this vcam; zero cuts. The incoming vcam
-    /// owns it because how you arrive matters, not what came before.
-    pub blend_duration: f32,
+    /// Seconds the handover **to** this vcam lasts, exactly; zero cuts. The incoming vcam owns it
+    /// because how you arrive matters, not what came before.
+    #[reflect(alias = "blend_duration")]
+    pub blend_time: f32,
     /// Shape of the blend, one of the `CURVE_*` constants. Shown even at zero duration:
     /// `shown_when` cannot enumerate every float above zero.
     #[reflect(choices = crate::blend::BLEND_CURVE_CHOICES)]
@@ -172,7 +173,7 @@ pub struct VirtualCamera {
     /// One of the `INACTIVE_*` constants.
     #[reflect(choices = INACTIVE_UPDATE_CHOICES)]
     pub inactive_update: u32,
-    /// Seconds for the camera to settle into a new orientation, so a changing up does not snap the
+    /// Seconds to turn into a new orientation, within 1%, so a changing up does not snap the
     /// horizon. Rotation only; zero is rigid.
     #[reflect(shown_when = DAMPING_WHEN)]
     pub rotation_damping_value: f32,
@@ -197,15 +198,15 @@ impl Default for VirtualCamera {
             pitch: 20.0,
             look_at: LOOK_AT_SIMPLE,
             damping: true,
-            damping_value: Vec3::splat(0.15),
+            damping_value: Vec3::splat(0.5),
             up_mode: UP_WORLD,
             // Long enough to read as a transition, short enough not to
             // feel like the game took the camera away.
-            blend_duration: 0.5,
+            blend_time: 0.5,
             blend_curve: crate::blend::CURVE_SINE,
             blend_ease: crate::blend::EASE_IN_OUT,
             inactive_update: INACTIVE_NEVER,
-            rotation_damping_value: 0.12,
+            rotation_damping_value: 0.5,
         }
     }
 }
@@ -286,8 +287,8 @@ impl VirtualCamera {
         (swung * cos_pitch + up * sin_pitch) * self.distance.max(0.0)
     }
 
-    /// Eases `current` towards `desired` over `dt`, per axis: `1 - e^(-dt/tau)`, which feels the
-    /// same at any frame rate where a plain lerp does not.
+    /// Eases `current` towards `desired` over `dt`, per axis, arriving within 1% after the damping
+    /// time at any frame rate.
     pub fn damped(&self, current: Vec3, desired: Vec3, dt: f32) -> Vec3 {
         if !self.damping {
             return desired;
@@ -302,8 +303,7 @@ impl VirtualCamera {
     /// Eases an orientation towards `desired` on the same time constant, by `slerp` along the
     /// shorter arc — components are not axes, and the long way is 359° of roll.
     pub fn damped_rotation(&self, current: glam::Quat, desired: glam::Quat, dt: f32) -> glam::Quat {
-        let tau = self.rotation_damping_value;
-        if !self.damping || tau <= 0.0 || dt <= 0.0 {
+        if !self.damping {
             return desired;
         }
         let desired = if current.dot(desired) < 0.0 {
@@ -311,18 +311,27 @@ impl VirtualCamera {
         } else {
             desired
         };
-        let alpha = 1.0 - (-dt / tau).exp();
-        current.slerp(desired, alpha).normalize()
+        current
+            .slerp(desired, settled(dt, self.rotation_damping_value))
+            .normalize()
     }
 }
 
-/// One axis of exponential easing. `tau <= 0` is rigid.
-fn ease(current: f32, desired: f32, tau: f32, dt: f32) -> f32 {
-    if tau <= 0.0 || dt <= 0.0 {
-        return desired;
+/// One axis of exponential easing. `time <= 0` is rigid.
+fn ease(current: f32, desired: f32, time: f32, dt: f32) -> f32 {
+    current + (desired - current) * settled(dt, time)
+}
+
+/// What's left of a gap after `time` seconds; the rest is too small to see, as in Cinemachine.
+const RESIDUAL: f32 = 0.01;
+
+/// The fraction of a gap to close this step so that after `time` seconds only [`RESIDUAL`] is
+/// left, at any frame rate. `time <= 0` closes it at once.
+pub(crate) fn settled(dt: f32, time: f32) -> f32 {
+    if time <= 0.0 || dt <= 0.0 {
+        return 1.0;
     }
-    let alpha = 1.0 - (-dt / tau).exp();
-    current + (desired - current) * alpha
+    1.0 - RESIDUAL.powf(dt / time)
 }
 
 /// A usable up: world up when handed zero, as `gravity_at` gives where no field reaches, instead of

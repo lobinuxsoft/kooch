@@ -160,7 +160,7 @@ pub fn drive_virtual_cameras(resources: &mut Resources) {
         return;
     };
     let (target_pos, target_rot) = (pose.position, pose.rotation);
-    let (duration, curve, ease) = (pose.blend_duration, pose.blend_curve, pose.blend_ease);
+    let (duration, curve, ease) = (pose.blend_time, pose.blend_curve, pose.blend_ease);
 
     let dt = fixed_dt(resources);
     let mut blend = resources.get::<CameraBlend>().copied().unwrap_or_default();
@@ -201,7 +201,7 @@ pub fn drive_virtual_cameras(resources: &mut Resources) {
             position,
             rotation,
             priority: 0,
-            blend_duration: 0.0,
+            blend_time: 0.0,
             blend_curve: 0,
             blend_ease: 0,
         }],
@@ -245,7 +245,7 @@ struct Pose {
     priority: i32,
     /// Copied off the vcam so electing one does not need a second lookup
     /// while the component storage is borrowed elsewhere.
-    blend_duration: f32,
+    blend_time: f32,
     blend_curve: u32,
     blend_ease: u32,
 }
@@ -423,7 +423,7 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames, Arms, Tr
             position,
             rotation,
             priority: vcam.priority,
-            blend_duration: vcam.blend_duration,
+            blend_time: vcam.blend_time,
             blend_curve: vcam.blend_curve,
             blend_ease: vcam.blend_ease,
         });
