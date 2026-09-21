@@ -121,8 +121,9 @@ pub mod prelude {
 
     #[cfg(feature = "input")]
     pub use kooch_input::{
-        InputBackend, InputPlugin, KeyCode, MouseButton,
+        CursorMode, InputBackend, InputPlugin, KeyCode, MouseButton,
         backend::{GamepadAxis, GamepadButton, GamepadId},
+        ids::MouseAxis,
     };
     // Actions as data. A game points a component at a `.inputaction` and
     // reads it through `LoadedActions`; nothing in gameplay mentions a
@@ -179,9 +180,9 @@ pub mod prelude {
     // camera work while orbiting a planet.
     #[cfg(feature = "camera")]
     pub use kooch_camera::{
-        CameraPlugin, CameraTarget, FOLLOW_GLUED, FOLLOW_NONE, FOLLOW_SIMPLE, FOLLOW_THIRD_PERSON,
-        LOOK_AT_MIMIC, LOOK_AT_NONE, LOOK_AT_SIMPLE, UP_GRAVITY, UP_TARGET, UP_WORLD,
-        VirtualCamera,
+        CameraBrain, CameraPlugin, CameraTarget, FOLLOW_GLUED, FOLLOW_NONE, FOLLOW_SIMPLE,
+        FOLLOW_THIRD_PERSON, LOOK_AT_MIMIC, LOOK_AT_NONE, LOOK_AT_SIMPLE, UP_GRAVITY, UP_TARGET,
+        UP_WORLD, VirtualCamera,
     };
 
     // Playing a sound is gameplay; the mixer behind it is not.

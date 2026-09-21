@@ -169,6 +169,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         preview: None,
     };
     let mut input_owner = crate::input_focus::InputOwner::default();
+    let mut game_clicked = false;
     let mut viewport_input: Option<ViewportInputDelta> = None;
     let controller_snapshot = resources
         .get::<EditorCameraController>()
@@ -277,6 +278,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                 .and_then(|preview| preview.refusal()),
             preview_request: &mut requests.preview,
             input_owner: &mut input_owner,
+            game_clicked: &mut game_clicked,
             shader_costs: &shader_costs,
             input: &mut viewport_input,
             controller: &controller_snapshot,
@@ -331,6 +333,23 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     if let Some(focus) = resources.get_mut::<crate::input_focus::InputFocus>() {
         focus.set_owner(input_owner);
     }
+    // The editor's own window is the one the mouse is on, so the capture is the editor's to apply,
+    // whatever process is running the game.
+    let cursor = crate::input_focus::cursor_while_playing(
+        resources
+            .get::<kooch_input::CursorMode>()
+            .copied()
+            .unwrap_or_default(),
+        resources
+            .get::<PlayState>()
+            .is_some_and(PlayState::is_playing),
+        input_owner == crate::input_focus::InputOwner::Game,
+        game_clicked,
+        resources
+            .get::<Box<dyn kooch_input::InputBackend>>()
+            .is_some_and(|input| input.just_pressed(kooch_input::ids::KeyCode::Escape)),
+    );
+    resources.insert(cursor);
 
     let driving_camera = drives_camera(viewport_input);
     apply_viewport_edits(resources, &mut taken.overlay, viewport_input, &mut actions);

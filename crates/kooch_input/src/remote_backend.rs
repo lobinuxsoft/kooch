@@ -40,6 +40,11 @@ pub struct InputSnapshot {
     /// cursor from a round trip.
     #[serde(default)]
     pub mouse_delta: [f32; 2],
+    /// The mouse's raw motion as pixels per second (#1266). A rate rather than a delta, because the
+    /// host does not tick with the editor: a delta applied once per host frame is counted twice, or
+    /// not at all, while a velocity is right whenever it is read.
+    #[serde(default)]
+    pub mouse_velocity: [f32; 2],
     /// Connected gamepads and their state.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gamepads: Vec<GamepadSnapshot>,
@@ -116,11 +121,13 @@ impl InputSnapshot {
 
         let position = backend.mouse_position();
         let delta = backend.mouse_delta();
+        let velocity = backend.mouse_velocity();
         Self {
             keys,
             mouse_buttons,
             mouse_position: [position.x, position.y],
             mouse_delta: [delta.x, delta.y],
+            mouse_velocity: [velocity.x, velocity.y],
             gamepads,
         }
     }
@@ -132,6 +139,8 @@ impl InputSnapshot {
         self.keys.is_empty()
             && self.mouse_buttons.is_empty()
             && self.mouse_delta == [0.0, 0.0]
+            // A mouse that stopped has to say so once, or the host keeps turning at the last speed.
+            && self.mouse_velocity == [0.0, 0.0]
             && self.gamepads.iter().all(|pad| {
                 pad.buttons.is_empty() && pad.axes.iter().all(|(_, value)| *value == 0.0)
             })
@@ -147,6 +156,8 @@ pub struct RemoteInputBackend {
     pressed_mouse: HashSet<MouseButton>,
     mouse_position: Vec2,
     mouse_delta: Vec2,
+    /// Held until the next snapshot, like an axis: the host ticks faster than the editor sends.
+    mouse_velocity: Vec2,
     gamepads: HashMap<GamepadId, PadState>,
     /// Applied but not yet handed out by `poll`.
     queued_events: Vec<InputEvent>,
@@ -199,6 +210,7 @@ impl RemoteInputBackend {
         let delta = Vec2::from(snapshot.mouse_delta);
         self.mouse_position = position;
         self.mouse_delta = delta;
+        self.mouse_velocity = Vec2::from(snapshot.mouse_velocity);
         if delta != Vec2::ZERO {
             self.queued_events
                 .push(InputEvent::MouseMoved { position, delta });
@@ -294,6 +306,10 @@ impl InputBackend for RemoteInputBackend {
 
     fn mouse_delta(&self) -> Vec2 {
         self.mouse_delta
+    }
+
+    fn mouse_velocity(&self) -> Vec2 {
+        self.mouse_velocity
     }
 
     fn gamepads(&self) -> Vec<GamepadId> {

@@ -2743,6 +2743,7 @@ dependencies = [
  "glam 0.33.2",
  "kooch_core",
  "kooch_ecs",
+ "kooch_window",
  "ron",
  "serde",
  "serde_json",

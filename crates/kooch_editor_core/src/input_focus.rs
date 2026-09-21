@@ -53,5 +53,25 @@ pub(crate) fn resolve(focused_tab: Option<EditorTab>, text_edit_focused: bool) -
     }
 }
 
+/// The cursor while the editor plays the game (#1266): a click on the game image hands it over,
+/// `Esc` takes it back, and so does anything that ends the game's hold on input — stopping, or
+/// another panel taking focus. The editor must always be able to get its cursor back.
+pub(crate) fn cursor_while_playing(
+    was: kooch_input::CursorMode,
+    playing: bool,
+    game_owns_input: bool,
+    clicked_game: bool,
+    escape: bool,
+) -> kooch_input::CursorMode {
+    use kooch_input::CursorMode;
+    if !playing || !game_owns_input || escape {
+        return CursorMode::Free;
+    }
+    match clicked_game {
+        true => CursorMode::Captured,
+        false => was,
+    }
+}
+
 #[cfg(test)]
 mod tests;

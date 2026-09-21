@@ -66,6 +66,7 @@ pub(super) struct ViewportUi<'a> {
     pub(super) shader_costs: &'a [(String, f32)],
     pub(super) preview_request: &'a mut Option<crate::viewport::PreviewRequest>,
     pub(super) input_owner: &'a mut crate::input_focus::InputOwner,
+    pub(super) game_clicked: &'a mut bool,
 }
 
 /// Runs the egui UI for one frame. Produces the tessellation input and the
@@ -156,6 +157,7 @@ pub(super) fn run_editor_ui(
         preview_refusal,
         preview_request,
         input_owner,
+        game_clicked,
         shader_costs,
     } = viewport;
 
@@ -293,6 +295,7 @@ pub(super) fn run_editor_ui(
                 shader_costs,
                 preview_request,
                 input_owner,
+                game_clicked,
                 viewport_input: input,
                 editor_camera_controller: controller,
                 rotation_euler_cache: &mut overlay.rotation_euler_cache,

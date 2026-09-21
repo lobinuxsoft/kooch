@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{GamepadAxis, GamepadButton, KeyCode, MouseButton};
+use crate::ids::{GamepadAxis, GamepadButton, KeyCode, MouseAxis, MouseButton};
 
 /// A control a binding reads, by kind and not by device; which pad is a control-scheme concern
 /// (#60).
@@ -19,6 +19,10 @@ pub enum ControlPath {
     Button(GamepadButton),
     /// A gamepad axis, on whichever pad is answering.
     Axis(GamepadAxis),
+    /// The mouse's motion along one axis, as a **velocity** in pixels per second (#1266). A rate, as
+    /// a stick is: one action binds both and is read with one formula, and it survives the wire,
+    /// where the editor and the project do not share a frame rate.
+    MouseMotion(MouseAxis),
 }
 
 impl ControlPath {
@@ -36,7 +40,7 @@ impl ControlPath {
     pub fn device(self) -> DeviceClass {
         match self {
             ControlPath::Key(_) => DeviceClass::Keyboard,
-            ControlPath::Mouse(_) => DeviceClass::Mouse,
+            ControlPath::Mouse(_) | ControlPath::MouseMotion(_) => DeviceClass::Mouse,
             ControlPath::Button(_) | ControlPath::Axis(_) => DeviceClass::Gamepad,
         }
     }

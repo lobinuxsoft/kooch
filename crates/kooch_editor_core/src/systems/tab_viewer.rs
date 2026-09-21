@@ -68,6 +68,8 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) game_request: &'a mut Option<(u32, u32)>,
     /// Whether the last frame found a gameplay camera to render.
     pub(crate) game_has_camera: bool,
+    /// Whether the game image was clicked this frame — what captures the cursor (#1266).
+    pub(crate) game_clicked: &'a mut bool,
     /// Set while drawing when Game is the focused tab. Drives whether the project receives input —
     /// a key pressed with the World panel selected is an editor shortcut, not a jump.
     pub(crate) input_owner: &'a mut crate::input_focus::InputOwner,
@@ -247,23 +249,25 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.scenes,
                 self.clipboard_has_entities,
             ),
-            EditorTab::Game => draw_game_content(
-                ui,
-                self.game_texture_id,
-                self.game_request,
-                self.game_resolution,
-                self.game_has_camera,
-                self.perf_stats,
-                self.game_stats,
-                self.meshlet_debug_mode,
-                self.meshlet_debug_caps,
-                self.single_light_note,
-                self.meshlet_lod_settings,
-                self.lights_hot,
-                self.cluster_settings,
-                self.specular_floor,
-                self.hud_visibility,
-            ),
+            EditorTab::Game => {
+                *self.game_clicked |= draw_game_content(
+                    ui,
+                    self.game_texture_id,
+                    self.game_request,
+                    self.game_resolution,
+                    self.game_has_camera,
+                    self.perf_stats,
+                    self.game_stats,
+                    self.meshlet_debug_mode,
+                    self.meshlet_debug_caps,
+                    self.single_light_note,
+                    self.meshlet_lod_settings,
+                    self.lights_hot,
+                    self.cluster_settings,
+                    self.specular_floor,
+                    self.hud_visibility,
+                )
+            }
             EditorTab::View => draw_view_content(
                 ui,
                 *self.input_owner == crate::input_focus::InputOwner::ViewCamera,

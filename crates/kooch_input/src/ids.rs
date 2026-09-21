@@ -116,6 +116,20 @@ mirrored! {
     }
 }
 
+/// An axis of the mouse's **motion** — relative movement, not where the cursor is, so a turn does
+/// not stop at the edge of the window (#1266). Not mirrored: the device reports a pair of numbers,
+/// not an enum to mirror.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum MouseAxis {
+    X,
+    Y,
+}
+
+impl MouseAxis {
+    /// Both, for the binding picker.
+    pub const ALL: &'static [Self] = &[Self::X, Self::Y];
+}
+
 /// Which gamepad, as the engine numbers them — a plain number a remote host can name.
 /// Session-scoped: never written to a file (#55).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

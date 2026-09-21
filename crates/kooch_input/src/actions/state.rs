@@ -8,7 +8,7 @@ use super::action::{Action, ControlType};
 use super::binding::{Binding, BothHeld, Composite, Group, PartName, VectorMode, groups};
 use super::path::ControlPath;
 use crate::backend::InputBackend;
-use crate::ids::GamepadId;
+use crate::ids::{GamepadId, MouseAxis};
 
 /// What one action is worth this frame.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -177,6 +177,14 @@ fn read_control(path: ControlPath, backend: &dyn InputBackend, pad: Option<Gamep
             .map(|pad| backend.is_button_pressed(pad, button) as u8 as f32)
             .unwrap_or(0.0),
         ControlPath::Axis(axis) => pad.map(|pad| backend.axis_value(pad, axis)).unwrap_or(0.0),
+        ControlPath::MouseMotion(axis) => {
+            let velocity = backend.mouse_velocity();
+            match axis {
+                MouseAxis::X => velocity.x,
+                // Screen space counts down; a control counts up, as a stick's Y does.
+                MouseAxis::Y => -velocity.y,
+            }
+        }
     }
 }
 
@@ -185,3 +193,6 @@ mod tests;
 
 #[cfg(test)]
 mod composite_tests;
+
+#[cfg(test)]
+mod look_tests;
