@@ -31,13 +31,17 @@ permissions:
   contents: write
 
 jobs:
+  # 🔴 The body marker, not only the label: `gh pr create --label` opens the PR and labels it in
+  # two requests, so the `opened` run sees no label and bumps anyway. The body arrives with the
+  # event itself.
   bump:
     # A fork's branch is not writable with this token, and a PR labelled
     # `no-version-bump` is an explicit opt-out — for the case where a
     # branch has to sit at a specific version.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      !contains(github.event.pull_request.labels.*.name, 'no-version-bump')
+      !contains(github.event.pull_request.labels.*.name, 'no-version-bump') &&
+      !contains(github.event.pull_request.body, '<!-- no-version-bump -->')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
