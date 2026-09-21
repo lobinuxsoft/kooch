@@ -243,7 +243,7 @@ gizmos = ["dep:kooch_gizmos", "render"]
 input = ["dep:kooch_input", "window"]
 audio = ["dep:kooch_audio"]
 lighting = ["dep:kooch_lighting"]
-physics = ["dep:kooch_physics"]
+physics = ["dep:kooch_physics", "kooch_camera?/physics"]
 # Rapier's world walk, which the editor turns into a viewport overlay and
 # the physics_smoke example prints counts from. Never enabled by a game
 # build — see #558.

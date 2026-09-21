@@ -2573,6 +2573,7 @@ dependencies = [
  "kooch_core",
  "kooch_ecs",
  "kooch_gravity",
+ "kooch_physics",
  "tracing",
 ]
 
