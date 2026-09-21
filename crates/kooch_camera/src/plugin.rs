@@ -15,6 +15,7 @@ use kooch_ecs::transform::Transform;
 
 use crate::brain::CameraBrain;
 use crate::framing::{CameraFraming, Lens, Tracked};
+use crate::lookahead::{CameraLookahead, Lead, Leads};
 use crate::occlusion::Arms;
 use crate::target::CameraTarget;
 use crate::virtual_camera::{
@@ -65,6 +66,7 @@ impl Plugin for CameraComponentsPlugin {
                 registry.register_cpu_reflected::<CameraBrain>();
                 registry.register_cpu_reflected::<crate::occlusion::CameraCollision>();
                 registry.register_cpu_reflected::<crate::framing::CameraFraming>();
+                registry.register_cpu_reflected::<crate::lookahead::CameraLookahead>();
             }
         });
     }
@@ -145,7 +147,8 @@ impl CameraBlend {
 /// Advances every live virtual camera, then hands the winner's pose to the camera. Keeping vcam
 /// poses separate is what lets a blend interpolate between two.
 pub fn drive_virtual_cameras(resources: &mut Resources) {
-    let (plan, horizons, arms, tracked, dampings) = plan_vcam_poses(resources);
+    let (plan, horizons, arms, tracked, dampings, leads) = plan_vcam_poses(resources);
+    resources.insert(leads);
     resources.insert(horizons);
     resources.insert(arms);
     resources.insert(tracked);
@@ -293,7 +296,7 @@ fn target_pose(
 /// Works out every vcam's pose without holding a borrow, because writing
 /// a `Transform` needs the storage mutably and reading the target's pose
 /// needs it shared.
-type Planned = (Vec<Pose>, HorizonFrames, Arms, Tracked, Dampings);
+type Planned = (Vec<Pose>, HorizonFrames, Arms, Tracked, Dampings, Leads);
 
 fn plan_vcam_poses(resources: &Resources) -> Planned {
     let carried = resources
@@ -304,6 +307,8 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
     let carried_tracked = resources.get::<Tracked>().cloned().unwrap_or_default();
     let carried_dampings = resources.get::<Dampings>().cloned().unwrap_or_default();
     let mut dampings = Dampings::default();
+    let carried_leads = resources.get::<Leads>().cloned().unwrap_or_default();
+    let mut leads = Leads::default();
     let mut arms = Arms::default();
     let mut tracked = Tracked::default();
     let Some(registry) = resources.get::<ComponentRegistry>() else {
@@ -313,6 +318,7 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
             carried_arms,
             carried_tracked,
             carried_dampings,
+            carried_leads,
         );
     };
     let Some(vcams) = registry.get_cpu::<VirtualCamera>() else {
@@ -322,9 +328,11 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
             carried_arms,
             carried_tracked,
             carried_dampings,
+            carried_leads,
         );
     };
     let framings = registry.get_cpu::<CameraFraming>();
+    let lookaheads = registry.get_cpu::<CameraLookahead>();
     let lens = lens(resources, registry);
     let cameras = registry.get_cpu::<PerspectiveCamera>();
     let transforms = registry.get_cpu::<Transform>();
@@ -379,6 +387,24 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
         // turn. See `seed_reference`.
         let reference = carried.carry(entity, up);
         horizons.frames.insert(entity, (up, reference));
+        // Everything below frames the led point; only the wall sweep keeps the real target, since
+        // that is what must stay visible.
+        let framed = match lookaheads
+            .and_then(|lookaheads| lookaheads.get(entity))
+            .filter(|lookahead| lookahead.enabled)
+        {
+            Some(lookahead) => {
+                let mut lead = carried_leads
+                    .0
+                    .get(&entity)
+                    .copied()
+                    .unwrap_or_else(|| Lead::at(target_pos));
+                let led = lookahead.led(&mut lead, target_pos, up, dt);
+                leads.0.insert(entity, lead);
+                led
+            }
+            None => target_pos,
+        };
         let framing = framings
             .and_then(|framings| framings.get(entity))
             .filter(|framing| framing.enabled);
@@ -388,25 +414,18 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
             Some(framing) => {
                 let (from, mut chase) = carried_tracked
                     .of(entity)
-                    .unwrap_or((target_pos, Chase::at(target_pos)));
+                    .unwrap_or((framed, Chase::at(framed)));
                 let depth = (from - current.position).dot(current.rotation * -Vec3::Z);
                 let depth = if depth > 0.01 { depth } else { vcam.distance };
-                let point = framing.follow(
-                    &mut chase,
-                    from,
-                    target_pos,
-                    current.rotation,
-                    depth,
-                    lens,
-                    dt,
-                );
+                let point =
+                    framing.follow(&mut chase, from, framed, current.rotation, depth, lens, dt);
                 tracked.set(entity, point, chase);
                 (
                     point,
                     Some(framing.aim(point, current.rotation, depth, lens)),
                 )
             }
-            None => (target_pos, None),
+            None => (framed, None),
         };
         let (desired_pos, desired_rot) = vcam.desired_with(
             followed,
@@ -462,7 +481,7 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
             blend_ease: vcam.blend_ease,
         });
     }
-    (plan, horizons, arms, tracked, dampings)
+    (plan, horizons, arms, tracked, dampings, leads)
 }
 
 /// Every vcam's damping tweens, carried between steps and rebuilt from the vcams seen, so a

@@ -12,6 +12,7 @@ fn world() -> (Resources, Entity, Entity) {
     registry.register_cpu_reflected::<VirtualCamera>();
     registry.register_cpu_reflected::<CameraTarget>();
     registry.register_cpu_reflected::<CameraFraming>();
+    registry.register_cpu_reflected::<CameraLookahead>();
     let (vcam, target) = (allocator.spawn(), allocator.spawn());
     let at = |position| Transform {
         position,
@@ -105,4 +106,34 @@ fn the_screen_offset_turns_it() {
     let forward = rotation * -Vec3::Z;
     // Framed right of centre, so the camera looks left of the target.
     assert!(forward.x < -0.1, "{forward}");
+}
+
+/// With a lookahead and no framing, a running target puts the rig ahead of it (#1253).
+#[test]
+fn a_running_target_is_led() {
+    let (mut resources, vcam, target) = world();
+    let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+    registry
+        .get_cpu_mut::<CameraFraming>()
+        .unwrap()
+        .remove(vcam);
+    registry.get_cpu_mut::<CameraLookahead>().unwrap().insert(
+        vcam,
+        CameraLookahead {
+            smoothing_duration: 0.0,
+            ..Default::default()
+        },
+    );
+    let mut x = 0.0;
+    for _ in 0..60 {
+        x += 6.0 / 60.0;
+        place(&mut resources, target, Vec3::X * x);
+        drive_virtual_cameras(&mut resources);
+    }
+    let (position, _) = pose(&resources, vcam);
+    // `Simple` sits on the led point plus its offset: 0.4 s at 6 m/s ahead.
+    assert!(
+        (position.x - (x + 2.4)).abs() < 1e-3,
+        "{position} for a target at {x}"
+    );
 }

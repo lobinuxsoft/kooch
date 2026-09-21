@@ -5,6 +5,7 @@
 pub mod blend;
 pub mod brain;
 pub mod framing;
+pub mod lookahead;
 pub mod occlusion;
 pub mod plugin;
 pub mod target;
@@ -16,6 +17,7 @@ pub use blend::{
 };
 pub use brain::CameraBrain;
 pub use framing::CameraFraming;
+pub use lookahead::CameraLookahead;
 pub use occlusion::CameraCollision;
 pub use plugin::{CameraBlend, CameraComponentsPlugin, CameraPlugin, drive_virtual_cameras};
 pub use target::{CameraTarget, weighted_centre};
