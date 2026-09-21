@@ -92,8 +92,8 @@ fn digest(sources: &[Source]) -> u64 {
             Kind::Point(point) => {
                 hash.f32(point.strength);
                 hash.f32(point.radius);
-                hash.f32(point.range);
-                hash.u32(point.inverse_square as u32);
+                // Widening the fade reaches bodies the field did not, and they have to wake.
+                hash.f32(point.falloff);
             }
             Kind::Area { settings, local } => {
                 hash.vec3(settings.direction);

@@ -318,8 +318,7 @@ fn a_planet_overrules_the_field_around_it() {
         Transform::from_position(Vec3::new(0.0, 0.0, 80.0)),
         PointGravity {
             strength: 19.62,
-            radius: 7.0,
-            range: 25.0,
+            radius: 25.0,
             ..Default::default()
         },
     );
@@ -367,8 +366,7 @@ fn a_planet_inside_a_room_wins_inside() {
         Transform::from_position(Vec3::new(20.0, 0.0, 0.0)),
         PointGravity {
             strength: 9.81,
-            radius: 3.0,
-            range: 10.0,
+            radius: 10.0,
             ..Default::default()
         },
     );
@@ -398,9 +396,7 @@ fn a_planets_claim_fades() {
         Transform::from_position(Vec3::ZERO),
         PointGravity {
             strength: 9.81,
-            radius: 5.0,
-            range: 10.0,
-            inverse_square: false,
+            radius: 10.0,
             falloff: 10.0,
         },
     );

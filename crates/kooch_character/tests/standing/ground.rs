@@ -144,9 +144,7 @@ fn it_stays_upright_around_a_planet() {
         Transform::from_position(Vec3::ZERO),
         PointGravity {
             strength: 20.0,
-            radius: 20.0,
-            range: 40.0,
-            inverse_square: true,
+            radius: 40.0,
             falloff: 0.0,
         },
     );
