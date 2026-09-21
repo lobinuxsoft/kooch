@@ -3,6 +3,7 @@
 #![allow(dead_code)] // each test binary touches a different subset
 
 /// The lit scene the two shading-path binaries share (#824, #825).
+pub mod composite;
 pub mod lit_scene;
 
 use std::sync::OnceLock;
