@@ -48,7 +48,7 @@ pub(super) fn apply_non_ecs_action(
             );
         }
         EditorAction::CopyEntities(entities) => handle_copy(resources, entities),
-        EditorAction::SaveScene => handle_save_scene(resources),
+        EditorAction::SaveScene { as_new } => handle_save_scene(resources, *as_new),
         // Removing the pending prompt already happened in `apply_actions`;
         // there is nothing left for this to do.
         EditorAction::CancelPrefabOverwrite => {}

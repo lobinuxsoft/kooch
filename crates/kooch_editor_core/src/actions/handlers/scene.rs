@@ -6,12 +6,19 @@ use kooch_core::resource::Resources;
 use crate::undo::UndoStack;
 
 use crate::actions::scene_io::{
-    close_scene, load_scene, open_scene_additive, revert_scene, save_open_scene_as, save_scene_as,
-    scene_dialog, scene_path,
+    close_scene, load_scene, open_scene_additive, picked, revert_scene, save_open_scene_as,
+    save_scene_as, scene_dialog, scene_path,
 };
 
-pub(super) fn handle_save_scene(resources: &mut Resources) {
-    let Some(path) = scene_dialog(resources).save_file() else {
+/// Saves the active scene; with nothing open, the whole world to a file asked for.
+pub(super) fn handle_save_scene(resources: &mut Resources, as_new: bool) {
+    let active = resources
+        .get::<kooch_ecs::SceneManager>()
+        .and_then(|sm| sm.active_id());
+    if let Some(id) = active {
+        return handle_save_open_scene(resources, id, as_new);
+    }
+    let Some(path) = picked(scene_dialog(resources, None).save_file()) else {
         return;
     };
     match save_scene_as(resources, path.clone()) {
@@ -26,16 +33,16 @@ pub(super) fn handle_save_open_scene(
     id: kooch_core::Guid,
     as_new: bool,
 ) {
-    let existing = (!as_new).then(|| scene_path(resources, id)).flatten();
-    let path = match existing {
+    let known = scene_path(resources, id);
+    let path = match known.clone().filter(|_| !as_new) {
         Some(path) => path,
-        None => match scene_dialog(resources).save_file() {
+        None => match picked(scene_dialog(resources, known.as_deref()).save_file()) {
             Some(path) => path,
             None => return,
         },
     };
     match save_open_scene_as(resources, id, path.clone()) {
-        Ok(()) => tracing::info!("scene {id} saved to {}", path.display()),
+        Ok(()) => tracing::info!("scene saved to {}", path.display()),
         Err(e) => tracing::error!("failed to save scene {id}: {e}"),
     }
 }
@@ -63,7 +70,7 @@ pub(super) fn handle_open_scene(
 ) {
     let path = match named {
         Some(path) => path,
-        None => match scene_dialog(resources).pick_file() {
+        None => match scene_dialog(resources, None).pick_file() {
             Some(path) => path,
             None => return,
         },
@@ -97,7 +104,7 @@ pub(super) fn handle_open_scene_additive(
 
     let path = match named {
         Some(path) => path,
-        None => match scene_dialog(resources).pick_file() {
+        None => match scene_dialog(resources, None).pick_file() {
             Some(path) => path,
             None => return,
         },

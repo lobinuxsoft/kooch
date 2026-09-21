@@ -263,8 +263,10 @@ enum Edit<'a> {
         entity: kooch_ecs::entity::Entity,
         transform: kooch_ecs::transform::Transform,
     },
-    /// Write the project's world to a scene file, or replace it from one.
-    SaveScene,
+    /// Write the project's active scene, as `EditorAction::SaveScene`.
+    SaveScene {
+        as_new: bool,
+    },
     /// Move an entity among its siblings on the project.
     MoveEntity {
         entity: kooch_ecs::entity::Entity,
@@ -388,7 +390,7 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
         // Scene I/O belongs to the project: the mirror is a view, and
         // saving it locally would write a partly-parked copy over the
         // project's own scene file.
-        EditorAction::SaveScene => Some(Edit::SaveScene),
+        EditorAction::SaveScene { as_new } => Some(Edit::SaveScene { as_new: *as_new }),
         EditorAction::OpenScene { path } => Some(Edit::LoadScene { path: path.clone() }),
         // Same reason as scene I/O: the world being captured is the project's, and the mirror is a
         // view of it. Writing the mirror would save a partly-parked copy — every component this
@@ -470,7 +472,7 @@ fn named_or_asked(
 ) -> Option<std::path::PathBuf> {
     match path {
         Some(path) => Some(path),
-        None => crate::actions::scene_io::scene_dialog(resources).pick_file(),
+        None => crate::actions::scene_io::scene_dialog(resources, None).pick_file(),
     }
 }
 

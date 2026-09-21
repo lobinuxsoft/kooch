@@ -93,18 +93,37 @@ pub(super) fn scene_path(resources: &Resources, id: kooch_core::Guid) -> Option<
         .clone()
 }
 
-/// Builds the scene file dialog, rooted at the active project's `scenes/` folder when there is one.
-pub(crate) fn scene_dialog(resources: &Resources) -> rfd::FileDialog {
+/// The dialog's answer, saying so when there was none: a save that does nothing in silence reads
+/// as a save that is broken.
+pub(crate) fn picked(path: Option<PathBuf>) -> Option<PathBuf> {
+    if path.is_none() {
+        tracing::info!("no file picked; nothing saved");
+    }
+    path
+}
+
+/// Builds the scene file dialog, opened beside `near` when given, else in the project's scenes.
+pub(crate) fn scene_dialog(resources: &Resources, near: Option<&Path>) -> rfd::FileDialog {
     let mut dialog = rfd::FileDialog::new().add_filter("Scene", &[crate::project::SCENE_EXTENSION]);
-    if let Some(dir) = resources
+    let root = resources
         .get::<crate::project_state::ProjectState>()
-        .and_then(|ps| {
-            ps.active_project
-                .as_ref()
-                .map(|p| p.root_path.join("scenes"))
-        })
-    {
+        .and_then(|ps| ps.active_project.as_ref().map(|p| p.root_path.clone()));
+    if let Some(dir) = dialog_start(near, root.as_deref()) {
         dialog = dialog.set_directory(dir);
     }
     dialog
+}
+
+/// The first folder that exists: the scene's own, then `assets/scenes`, `assets`, the root. A
+/// missing one is not an error to the portal — it silently opens somewhere else.
+pub(crate) fn dialog_start(near: Option<&Path>, root: Option<&Path>) -> Option<PathBuf> {
+    let own = near.and_then(Path::parent).map(Path::to_path_buf);
+    let project = root.into_iter().flat_map(|root| {
+        [
+            root.join("assets/scenes"),
+            root.join("assets"),
+            root.to_path_buf(),
+        ]
+    });
+    own.into_iter().chain(project).find(|dir| dir.is_dir())
 }

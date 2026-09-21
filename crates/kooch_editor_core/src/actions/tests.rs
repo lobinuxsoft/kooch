@@ -5,7 +5,7 @@ use super::*;
 /// — a deleted scene.
 #[test]
 fn saving_needs_a_live_world() {
-    assert!(EditorAction::SaveScene.needs_a_live_world());
+    assert!(EditorAction::SaveScene { as_new: false }.needs_a_live_world());
 }
 
 /// Every escape hatch has to keep working, or a build that never
@@ -68,4 +68,21 @@ fn a_system_toggle_survives_play() {
         action.needs_a_live_world(),
         "before the project connects this would switch off the editor's own systems",
     );
+}
+
+/// A root with no `scenes/` beside it: the dialog used to open there and the portal fell back to
+/// wherever it liked, so saves "did nothing".
+#[test]
+fn the_dialog_opens_in_existing_folders() {
+    use crate::actions::scene_io::dialog_start;
+    let root = std::env::temp_dir().join("kooch_dialog_start");
+    let _ = std::fs::remove_dir_all(&root);
+    let scenes = root.join("assets/scenes");
+    std::fs::create_dir_all(&scenes).unwrap();
+    let own = scenes.join("level.kscene");
+    assert_eq!(dialog_start(Some(&own), Some(&root)), Some(scenes.clone()));
+    assert_eq!(dialog_start(None, Some(&root)), Some(scenes));
+    let gone = root.join("gone/level.kscene");
+    std::fs::remove_dir_all(root.join("assets")).unwrap();
+    assert_eq!(dialog_start(Some(&gone), Some(&root)), Some(root.clone()));
 }

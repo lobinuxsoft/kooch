@@ -174,39 +174,26 @@ pub(super) fn send(
             }
             Ok(())
         }
-        // Both processes see the same filesystem, so the path the user
-        // picks here is meaningful on the project's side of the wire.
-        Edit::SaveScene => match crate::actions::scene_io::scene_dialog(resources).save_file() {
-            // `None` — the active scene. Saving a scene the user picked
-            // out of the panel is #955's own menu item; this is the
-            // File menu, which has never named one.
-            Some(path) => client
-                .save_scene(&path.to_string_lossy(), None)
-                .map_err(map_err),
-            None => Ok(()),
-        },
+        // Both processes see the same filesystem, so a path from the mirrored open set, or one
+        // picked here, is meaningful on the project's side of the wire.
+        Edit::SaveScene { as_new } => {
+            let scenes = session.open_scenes().unwrap_or_default();
+            let active = scenes.iter().find(|s| s.active);
+            save_one(
+                client,
+                resources,
+                active.map(|s| s.id),
+                active.and_then(|s| s.path.as_deref()),
+                as_new,
+            )
+        }
         Edit::SaveOneScene { scene, as_new } => {
-            // The project's own path for that scene, straight off the
-            // mirrored open set. Both processes see the same filesystem,
-            // so it is meaningful on this side of the wire.
-            let known = (!as_new)
-                .then(|| {
-                    session
-                        .open_scenes()
-                        .unwrap_or_default()
-                        .iter()
-                        .find(|s| s.id == scene)
-                        .and_then(|s| s.path.clone())
-                })
-                .flatten();
-            let path = match known {
-                Some(path) => path,
-                None => match crate::actions::scene_io::scene_dialog(resources).save_file() {
-                    Some(path) => path.to_string_lossy().into_owned(),
-                    None => return Ok(()),
-                },
-            };
-            client.save_scene(&path, Some(scene)).map_err(map_err)
+            let scenes = session.open_scenes().unwrap_or_default();
+            let path = scenes
+                .iter()
+                .find(|s| s.id == scene)
+                .and_then(|s| s.path.as_deref());
+            save_one(client, resources, Some(scene), path, as_new)
         }
         Edit::MoveEntity {
             entity,
@@ -312,4 +299,29 @@ pub(super) fn send(
                 .map_err(map_err)
         }
     }
+}
+
+/// Saves one of the project's scenes to its own file, or to one asked for when `as_new` or never
+/// saved. `None` is the project's active scene.
+fn save_one(
+    client: &kooch_remote::RemoteClient,
+    resources: &Resources,
+    scene: Option<kooch_core::Guid>,
+    known: Option<&str>,
+    as_new: bool,
+) -> Result<(), String> {
+    use crate::actions::scene_io::{picked, scene_dialog};
+    let path = match known.filter(|_| !as_new) {
+        Some(path) => path.to_owned(),
+        None => {
+            let dialog = scene_dialog(resources, known.map(std::path::Path::new));
+            match picked(dialog.save_file()) {
+                Some(path) => path.to_string_lossy().into_owned(),
+                None => return Ok(()),
+            }
+        }
+    };
+    client.save_scene(&path, scene).map_err(|e| e.to_string())?;
+    tracing::info!("scene saved to {path}");
+    Ok(())
 }

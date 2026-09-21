@@ -137,7 +137,10 @@ pub(crate) enum EditorAction {
     /// Reverse the last edit **to one document**.
     Undo(crate::history::Document),
     Redo(crate::history::Document),
-    SaveScene,
+    /// Write the active scene: to its own file, or to one asked for when `as_new` or never saved.
+    SaveScene {
+        as_new: bool,
+    },
     /// Replace the world with a scene file.
     OpenScene {
         path: Option<std::path::PathBuf>,

@@ -89,8 +89,16 @@ pub(crate) fn draw_menu_bar(
     egui::Panel::top("editor_menu").show(ui, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
-                if ui.button("Save Scene...").clicked() {
-                    actions.push(EditorAction::SaveScene);
+                let save =
+                    egui::Button::new("Save Scene").shortcut_text(crate::shortcuts::SAVE_CHORD);
+                if ui.add(save).clicked() {
+                    actions.push(EditorAction::SaveScene { as_new: false });
+                    ui.close();
+                }
+                let save_as = egui::Button::new("Save Scene As...")
+                    .shortcut_text(crate::shortcuts::SAVE_AS_CHORD);
+                if ui.add(save_as).clicked() {
+                    actions.push(EditorAction::SaveScene { as_new: true });
                     ui.close();
                 }
                 if ui.button("Open Scene...").clicked() {
