@@ -368,11 +368,11 @@ fn draw_ranged(
             if range.step > 0.0 {
                 slider = slider.step_by(range.step);
             }
-            Some(
-                ui.add(slider)
-                    .changed()
-                    .then(|| ReflectValue::F32(val as f32)),
-            )
+            // Compared in f32: snapping 0.2f32 to a 0.01 step in f64 reads as a change on every
+            // draw, and selecting an entity dirtied its scene.
+            let moved = ui.add(slider).changed();
+            let changed = moved && val as f32 != *v;
+            Some(changed.then(|| ReflectValue::F32(val as f32)))
         }
         ReflectValue::U32(v) => {
             let mut val = *v as f64;
@@ -380,11 +380,10 @@ fn draw_ranged(
             if range.step > 0.0 {
                 slider = slider.step_by(range.step);
             }
-            Some(
-                ui.add(slider)
-                    .changed()
-                    .then(|| ReflectValue::U32(val.round().max(0.0) as u32)),
-            )
+            let moved = ui.add(slider).changed();
+            let snapped = val.round().max(0.0) as u32;
+            let changed = moved && snapped != *v;
+            Some(changed.then_some(ReflectValue::U32(snapped)))
         }
         _ => None,
     }

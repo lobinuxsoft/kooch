@@ -2,6 +2,8 @@
 
 mod asset_view;
 #[cfg(test)]
+mod idle_tests;
+#[cfg(test)]
 mod layers_tests;
 mod mass_from_colliders;
 mod nav;
