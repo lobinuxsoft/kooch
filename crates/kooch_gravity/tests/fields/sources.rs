@@ -15,6 +15,7 @@ fn a_point_source_pulls_from_every_direction() {
             radius: 10.0,
             range: 0.0,
             inverse_square: false,
+            falloff: 0.0,
         },
     );
 

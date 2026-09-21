@@ -132,6 +132,7 @@ fn main() {
                         radius: f32_of(component, "radius"),
                         range: f32_of(component, "range"),
                         inverse_square: bool_of(component, "inverse_square"),
+                        falloff: 0.0,
                     },
                 ),
                 "AreaGravity" => put(

@@ -382,3 +382,34 @@ fn a_planet_inside_a_room_wins_inside() {
         "{in_room}"
     );
 }
+
+/// 🔴 A planet with a priority takes over across its fade, not at a line: crossing its range with a
+/// falloff hands the body from the field to the planet gradually, where a hard edge was a jolt.
+#[test]
+fn a_planets_claim_fades() {
+    let mut resources = world();
+    source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        GlobalGravity::default(),
+    );
+    let planet = source_at(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        PointGravity {
+            strength: 9.81,
+            radius: 5.0,
+            range: 10.0,
+            inverse_square: false,
+            falloff: 10.0,
+        },
+    );
+    insert(&mut resources, planet, GravityPriority { level: 1 });
+
+    // Halfway across the planet's fade, beside it: half the planet and half the world's down.
+    let edge = plugin::gravity_at(&resources, Vec3::new(15.0, 0.0, 0.0));
+    assert!(
+        (edge - Vec3::new(-4.905, -4.905, 0.0)).length() < 1e-3,
+        "half the planet and half the world: {edge}",
+    );
+}

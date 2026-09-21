@@ -147,6 +147,7 @@ fn it_stays_upright_around_a_planet() {
             radius: 20.0,
             range: 40.0,
             inverse_square: true,
+            falloff: 0.0,
         },
     );
 
