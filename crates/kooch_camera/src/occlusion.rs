@@ -36,8 +36,7 @@ pub struct CameraCollision {
     #[reflect(range = DISTANCE_RANGE)]
     pub min_distance: f32,
     /// Seconds the camera takes to get back out once the way clears — exactly that, smooth at both
-    /// ends. Pulling in is immediate: a camera that eased
-    /// into a wall would show the inside of it.
+    /// ends. Pulling in is immediate: a camera that eased into a wall would show the inside of it.
     #[reflect(range = RETURN_RANGE)]
     pub return_time: f32,
 }
