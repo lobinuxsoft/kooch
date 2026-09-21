@@ -7,7 +7,7 @@ use kooch_core::resource::Resources;
 use kooch_ecs::allocator::EntityAllocator;
 use kooch_ecs::component::{Component, ComponentRegistry};
 use kooch_ecs::entity::Entity;
-use kooch_ecs::reflect::ReflectValue;
+use kooch_ecs::reflect::{Reflect as _, ReflectValue};
 use kooch_ecs::scene::{ComponentDescription, SceneDocument};
 use kooch_ecs::transform::Transform;
 use kooch_gravity::{
@@ -53,17 +53,6 @@ fn i32_of(c: &ComponentDescription, key: &str) -> i32 {
         .find(|(name, _)| name == key)
         .and_then(|(_, v)| match v {
             ReflectValue::I32(x) => Some(*x),
-            _ => None,
-        })
-        .unwrap_or_default()
-}
-
-fn bool_of(c: &ComponentDescription, key: &str) -> bool {
-    c.fields
-        .iter()
-        .find(|(name, _)| name == key)
-        .and_then(|(_, v)| match v {
-            ReflectValue::Bool(x) => Some(*x),
             _ => None,
         })
         .unwrap_or_default()
@@ -124,17 +113,15 @@ fn main() {
                         acceleration: vec3_of(component, "acceleration"),
                     },
                 ),
-                "PointGravity" => put(
-                    &mut resources,
-                    entity,
-                    PointGravity {
-                        strength: f32_of(component, "strength"),
-                        radius: f32_of(component, "radius"),
-                        range: f32_of(component, "range"),
-                        inverse_square: bool_of(component, "inverse_square"),
-                        falloff: 0.0,
-                    },
-                ),
+                "PointGravity" => put(&mut resources, entity, {
+                    // Through reflection, so a saved scene reads the way the engine reads it —
+                    // `range` included, which is what an old planet's reach was called.
+                    let mut point = PointGravity::default();
+                    for (name, value) in &component.fields {
+                        let _ = point.reflect_set(name, value.clone());
+                    }
+                    point
+                }),
                 "AreaGravity" => put(
                     &mut resources,
                     entity,

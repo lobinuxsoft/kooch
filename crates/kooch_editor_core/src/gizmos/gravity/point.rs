@@ -17,18 +17,14 @@ impl Visualizer<PointGravity> for PointGravityVisualizer {
         let (_, rotation, origin) = transform.matrix.to_scale_rotation_translation();
         let basis = Mat3::from_quat(rotation);
 
-        // `radius` is where `strength` holds exactly — the one distance in
-        // the component that means something an author can check.
-        if field.radius > 0.0 {
-            gizmos.wire_sphere(origin, basis, field.radius, FIELD);
-        }
         // Zero or less is unlimited, and there is no sphere for infinity.
-        if field.range > 0.0 {
-            gizmos.wire_sphere(origin, basis, field.range, EDGE);
-            // Where the field reaches zero, as the area draws it: a hard edge and a wide fade look
-            // the same without the second shell.
+        if field.radius > 0.0 {
+            // Where the pull is whole.
+            gizmos.wire_sphere(origin, basis, field.radius, FIELD);
+            // Where it reaches zero, as the area draws it: a hard edge and a wide fade look the
+            // same without the second shell.
             if field.falloff > 0.0 {
-                gizmos.wire_sphere(origin, basis, field.range + field.falloff, EDGE);
+                gizmos.wire_sphere(origin, basis, field.radius + field.falloff, EDGE);
             }
         }
 

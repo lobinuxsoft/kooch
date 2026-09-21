@@ -12,9 +12,7 @@ fn a_point_source_pulls_from_every_direction() {
         Transform::default(),
         PointGravity {
             strength: 20.0,
-            radius: 10.0,
-            range: 0.0,
-            inverse_square: false,
+            radius: 0.0,
             falloff: 0.0,
         },
     );
@@ -209,7 +207,7 @@ fn a_body_beyond_every_source_does_not_move() {
         &mut resources,
         Transform::default(),
         PointGravity {
-            range: 10.0,
+            radius: 10.0,
             ..Default::default()
         },
     );

@@ -41,20 +41,19 @@ follows a surface *is* that gradient.
 commands.spawn(&mut resources)
     .insert(Transform::from_position(Vec3::ZERO))
     .insert(PointGravity {
-        // What a body feels standing on the surface.
+        // What a body feels anywhere in reach — the same on the surface as a metre above it, so
+        // the pull does not change under your feet.
         strength: 9.81,
-        // Where the surface is. Quoting the strength at a distance is why
-        // this is authorable — `G·M` is not a number anyone can picture.
+        // How far the pull reaches at full strength. Not the planet's surface: past it, around
+        // everything the player does near the planet. Zero is unlimited.
         radius: 50.0,
-        // Past this the source contributes nothing. Zero is unlimited.
-        range: 500.0,
-        inverse_square: true,
+        // How far past `radius` it fades to nothing, so leaving is not a line.
+        falloff: 10.0,
     });
 ```
 
-`inverse_square: false` gives a field of constant strength inside `range`.
-That is not physical, and it is often what a game wants: a small planet you
-can walk on without the pull changing under your feet.
+The same shape of reach as every other bounded source — whole inside, fading across a band — which
+is what lets a `GravityPriority` take over a planet's surroundings the way it takes over a room.
 
 ## A transform places a field, it does not resize one
 
@@ -80,62 +79,27 @@ what the `gravity_tour` scene does.
 
 A body stays on a curved surface only while gravity covers the centripetal
 acceleration its own speed demands. Past that it does **not** fall off — it
-*orbits*, circling without touching. Leaving for good takes more still, and
-the two are always a factor of √2 apart:
+*orbits*, circling without touching. With `r` the body's centre — the
+planet's surface plus the body's own radius — and `g` the `strength`:
 
 ```
 stays on the ground   v ≤ √(g · r)
-leaves for good       v ≥ √(2 · g · r)
+leaves for good       v ≥ √( g · (2·(radius − r) + falloff) )
 ```
 
-In between, gravity still has it. That is what an orbit is: falling toward
-the planet and missing. The ISS is there at 7.66 km/s, in a field still 90%
-as strong as at the surface.
+Leaving for good is climbing out of the reach: the whole pull out to
+`radius`, half of it across the fade. With a zero `radius` the field has no
+end, and nothing leaves.
 
-| | Earth | a 7 m planet at `strength` 12 |
-|---|---|---|
-| leaves the ground | 7.91 km/s | 9.49 m/s |
-| leaves for good | 11.18 km/s | 12.21 m/s |
+Earth's `√(g·r)` is 7.91 km/s, which is why none of this comes up on a flat
+level: a sprinter is 791× below it. On a seven-metre planet a rolling ball
+is *at* it.
 
-Earth's number is why none of this comes up on a flat level: a sprinter is
-791× below the threshold. On a seven-metre planet a rolling ball is *at* it.
-
-### `range` lowers the escape speed
-
-Past `range` there is no field left to climb against, so leaving costs less
-than the unlimited `√(2·g·r)` — 12.21 m/s instead of 13.42 in the table
-above. Beyond it `gravity_up` answers world up and the controls turn
-world-relative between one step and the next, which reads as the gravity
-breaking. Set `range` past anything the player can reach.
-
-### In `PointGravity`'s own numbers
-
-`strength` (`s`) is quoted at `radius` (`R`), and a body of radius `b`
-standing on the surface has its centre at `r = R + b`. So:
-
-| You know | You want | Formula |
-|---|---|---|
-| `s`, `R` | top speed | `v_max = √( s·R² / (R + b) )` |
-| `R`, `v` | strength | `s = v² · (R + b) / R²` |
-| `s`, `v` | radius | `R = ( v² + √( v⁴ + 4·s·v²·b ) ) / 2s` |
-
-**These assume the body stands outside `radius`.** `strength` is clamped
-inside it — `g = s · (R / max(r, R))²` — so setting `radius` beyond
-anything that walks on the planet gives a flat `g = s` near the surface,
-and the top speed is just `√(s · r)`. That is a legitimate way to author a
-small world: the pull stops changing under your feet.
-
-For a body much smaller than its planet these all collapse to the two worth
-memorising:
-
-```
-v_max ≈ √(s · R)                 R ≈ v² / s
-```
-
-**Speed is squared, radius is not.** Doubling the top speed needs four
-times the planet. At Earth gravity, 8 m/s needs a radius of 7 m and 20 m/s
-needs 41 m. A game about running fast on small worlds is not a game about
-Earth gravity, and no amount of tuning makes it one.
+**Speed is squared, radius is not.** Holding `v` needs `r ≈ v² / g`, so
+doubling the top speed needs four times the planet. At Earth gravity, 8 m/s
+wants a centre 6.5 m out and 20 m/s wants 41 m. A game about running fast on
+small worlds is not a game about Earth gravity, and no amount of tuning
+makes it one.
 
 ### Gravity is not a free knob
 
@@ -146,26 +110,28 @@ come from the same `g`:
 h = (J/m)² / (2·g)
 ```
 
-A 6 N·s jump on a 1 kg body, on a 4 m planet:
+A 6 N·s jump on a 1 kg ball of radius 0.5, on a planet whose surface is 4 m
+out:
 
-| `strength` | `g` at the surface | holds | jumps |
-|---|---|---|---|
-| 9.81 | 7.75 | 5.91 m/s | 2.32 m |
-| 18 | 14.2 | 8.00 m/s | 1.27 m |
-| 25 | 19.8 | 9.43 m/s | 0.91 m |
+| `strength` | holds | jumps |
+|---|---|---|
+| 9.81 | 6.64 m/s | 1.83 m |
+| 18 | 9.00 m/s | 1.00 m |
+| 25 | 10.61 m/s | 0.72 m |
 
-Growing the planet instead keeps both: radius 7 at 9.81 holds 8.01 m/s and
-still jumps 2.11 m.
+Growing the planet instead keeps both: a surface 7 m out at 9.81 holds
+8.58 m/s and still jumps 1.83 m.
 
 ### A recipe
 
 1. **Pick the feel**: what is the body's top speed?
 2. **Pick the look**: how big should the planet be?
-3. **Solve for the third.** If the answer is a `strength` far from 9.81,
-   check the jump height before accepting it.
-4. **Set `range` past the play volume.** Beyond it the field stops and
-   `gravity_up` falls back to world up, so the controls quietly become
-   world-relative — which reads as "the gravity broke".
+3. **Solve for the third** with `v = √(g·r)`. If the answer is a `strength`
+   far from 9.81, check the jump height before accepting it.
+4. **Set `radius` past the play volume around the planet.** Beyond
+   `radius + falloff` the field stops and `gravity_up` falls back to world
+   up, so the controls quietly become world-relative — which reads as "the
+   gravity broke".
 
 None of this applies to `AreaGravity`, `PlaneGravity` or `GlobalGravity`.
 They are uniform: there is no curve to fall off, so any speed stays.
@@ -205,7 +171,7 @@ from snapping direction as it walks out of the door.
 
 So give an overriding zone a soft edge. Every bounded source has a `falloff`
 for exactly this — `AreaGravity`, `BoxGravity`, `PlaneGravity`, and
-`PointGravity` past its `range`. Zero is a hard edge, which a priority turns
+`PointGravity` past its `radius`. Zero is a hard edge, which a priority turns
 into a jolt: the planet takes over all at once. `GlobalGravity` reaches
 everywhere at full strength, so raising *it* switches off the rest of the
 scene entirely.
@@ -217,7 +183,7 @@ changes nothing about the others.
 It works the other way round too, and on **every** kind of source: the
 component goes on whichever entity should win. A planet inside a bigger
 field — a level-wide `PlaneGravity`, a room — is the same move with the
-priority on the planet. Inside its `range` only the planet pulls; outside,
+priority on the planet. Inside its `radius` only the planet pulls; outside,
 the field is back exactly as it was. Without it the two sum, and the floor's
 down drags everything on the planet sideways. Nest as deep as you like: each
 level overrules the ones below it only where it reaches.

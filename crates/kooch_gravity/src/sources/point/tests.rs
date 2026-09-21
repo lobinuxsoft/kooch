@@ -11,25 +11,8 @@ fn a_point_source_pulls_towards_itself() {
     assert!((accel.length() - 9.81).abs() < 1e-3, "{accel}");
 }
 
-/// The strength is quoted at the radius, so that is where it holds
-/// exactly — which is what makes it an authorable number.
-#[test]
-fn the_strength_is_exact_at_the_radius() {
-    let source = PointGravity::default();
-    let at_radius = source.acceleration_at(Vec3::ZERO, Vec3::new(0.0, 50.0, 0.0));
-    assert!((at_radius.length() - 9.81).abs() < 1e-3);
-
-    let further = source.acceleration_at(Vec3::ZERO, Vec3::new(0.0, 100.0, 0.0));
-    assert!(
-        (further.length() - 9.81 / 4.0).abs() < 1e-3,
-        "twice the distance should be a quarter the pull, got {}",
-        further.length(),
-    );
-}
-
-/// Inside the reference radius the pull holds rather than growing.
-/// Unclamped it goes to infinity at the centre, which launches things
-/// out of the world.
+/// Near the centre the pull holds rather than growing: a field that grew towards a point would go
+/// to infinity there and launch things out of the world.
 #[test]
 fn the_pull_does_not_grow_without_bound_near_the_centre() {
     let source = PointGravity::default();
@@ -48,13 +31,14 @@ fn a_body_at_the_centre_is_pulled_nowhere() {
 /// The cutoff is what keeps a galaxy of sources from costing every
 /// body every step.
 #[test]
-fn beyond_the_range_a_source_contributes_nothing() {
+fn beyond_the_reach_a_source_contributes_nothing() {
     let source = PointGravity {
-        range: 100.0,
+        radius: 100.0,
+        falloff: 10.0,
         ..Default::default()
     };
     assert_eq!(
-        source.acceleration_at(Vec3::ZERO, Vec3::new(0.0, 101.0, 0.0)),
+        source.acceleration_at(Vec3::ZERO, Vec3::new(0.0, 111.0, 0.0)),
         Vec3::ZERO,
     );
     assert_ne!(
@@ -63,23 +47,10 @@ fn beyond_the_range_a_source_contributes_nothing() {
     );
 }
 
-#[test]
-fn a_constant_point_source_does_not_fall_off() {
-    let source = PointGravity {
-        inverse_square: false,
-        ..Default::default()
-    };
-    let near = source.acceleration_at(Vec3::ZERO, Vec3::new(0.0, 10.0, 0.0));
-    let far = source.acceleration_at(Vec3::ZERO, Vec3::new(0.0, 400.0, 0.0));
-    assert!((near.length() - far.length()).abs() < 1e-3);
-}
-
 fn fading() -> PointGravity {
     PointGravity {
         strength: 10.0,
-        radius: 5.0,
-        range: 10.0,
-        inverse_square: false,
+        radius: 10.0,
         falloff: 10.0,
     }
 }
@@ -103,4 +74,38 @@ fn no_falloff_is_a_hard_edge() {
     };
     assert_eq!(source.influence(10.0), 1.0);
     assert_eq!(source.influence(10.001), 0.0);
+}
+
+/// 🔴 A planet saved before `range` folded into `radius` keeps its reach. The old file writes the
+/// reference radius first and the reach after it, so reading `range` into `radius` last is what an
+/// old planet ends up with — its 25 m, not its 7.
+#[test]
+fn an_old_planet_keeps_its_reach() {
+    use kooch_ecs::reflect::{Reflect, ReflectValue};
+
+    let mut planet = PointGravity::default();
+    for (name, value) in [
+        ("strength", ReflectValue::F32(19.62)),
+        ("radius", ReflectValue::F32(7.0)),
+        ("range", ReflectValue::F32(25.0)),
+        ("inverse_square", ReflectValue::Bool(true)),
+    ] {
+        let _ = planet.reflect_set(name, value);
+    }
+    assert_eq!(planet.radius, 25.0);
+    assert_eq!(planet.strength, 19.62);
+}
+
+/// Inside the radius the pull is whole, however near the edge — the shape every other bounded
+/// source has.
+#[test]
+fn the_pull_is_whole_inside() {
+    let planet = PointGravity {
+        strength: 10.0,
+        radius: 20.0,
+        falloff: 5.0,
+    };
+    let near = planet.acceleration_at(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0));
+    let edge = planet.acceleration_at(Vec3::ZERO, Vec3::new(19.9, 0.0, 0.0));
+    assert!((near.length() - 10.0).abs() < 1e-4 && (edge.length() - 10.0).abs() < 1e-4);
 }
