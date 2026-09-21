@@ -111,7 +111,7 @@ fn a_vcam_follows_the_entity_tagged_with_its_group() {
         &poses(vec![(subject, at)]),
     );
 
-    assert_eq!(pose.map(|(position, _)| position), Some(at));
+    assert_eq!(pose.map(|(position, _, _)| position), Some(at));
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn two_members_of_a_group_are_followed_at_their_centre() {
     );
 
     assert_eq!(
-        pose.map(|(position, _)| position),
+        pose.map(|(position, _, _)| position),
         Some(Vec3::new(5.0, 0.0, 0.0))
     );
 }
@@ -187,7 +187,7 @@ fn the_heaviest_member_owns_the_orientation() {
         }
     };
 
-    let (_, rotation) =
+    let (_, rotation, _) =
         target_pose(registry.get_cpu::<CameraTarget>(), 0, &pose_of).expect("two members");
 
     assert!(
@@ -212,7 +212,7 @@ fn a_member_with_no_pose_is_skipped_rather_than_fatal() {
     );
 
     assert_eq!(
-        pose.map(|(position, _)| position),
+        pose.map(|(position, _, _)| position),
         Some(at),
         "the member without a pose should be skipped, not void the group"
     );

@@ -14,6 +14,7 @@ use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::transform::Transform;
 
 use crate::brain::CameraBrain;
+use crate::occlusion::ArmLengths;
 use crate::target::CameraTarget;
 use crate::virtual_camera::{
     INACTIVE_ALWAYS, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera, seed_reference,
@@ -60,6 +61,7 @@ impl Plugin for CameraComponentsPlugin {
                 registry.register_cpu_reflected::<VirtualCamera>();
                 registry.register_cpu_reflected::<CameraTarget>();
                 registry.register_cpu_reflected::<CameraBrain>();
+                registry.register_cpu_reflected::<crate::occlusion::CameraCollision>();
             }
         });
     }
@@ -140,8 +142,9 @@ impl CameraBlend {
 /// Advances every live virtual camera, then hands the winner's pose to the camera. Keeping vcam
 /// poses separate is what lets a blend interpolate between two.
 pub fn drive_virtual_cameras(resources: &mut Resources) {
-    let (plan, horizons) = plan_vcam_poses(resources);
+    let (plan, horizons, arms) = plan_vcam_poses(resources);
     resources.insert(horizons);
+    resources.insert(arms);
     if plan.is_empty() {
         return;
     }
@@ -242,16 +245,16 @@ struct Pose {
     blend_ease: u32,
 }
 
-/// A group's weighted centre, and the heaviest member's rotation. Averaging quaternions across
-/// members has no meaning — two characters facing each other would tilt the camera sideways.
+/// A group's weighted centre, and the heaviest member's rotation and entity. Averaging quaternions
+/// across members has no meaning — two characters facing each other would tilt the camera sideways.
 fn target_pose(
     targets: Option<&kooch_ecs::component::ComponentStorage<CameraTarget>>,
     group: u32,
     pose_of: &impl Fn(Entity) -> Option<(Vec3, glam::Quat)>,
-) -> Option<(Vec3, glam::Quat)> {
+) -> Option<(Vec3, glam::Quat, Entity)> {
     let targets = targets?;
     let mut members: Vec<(Vec3, f32)> = Vec::new();
-    let mut heaviest: Option<(f32, glam::Quat, u32)> = None;
+    let mut heaviest: Option<(f32, glam::Quat, Entity)> = None;
 
     for (&entity, target) in targets.iter() {
         if target.group != group {
@@ -266,33 +269,35 @@ fn target_pose(
         // a tie resolved differently each frame reads as jitter.
         let better = match heaviest {
             None => true,
-            Some((weight, _, index)) => {
-                target.weight > weight || (target.weight == weight && entity.index() < index)
+            Some((weight, _, held)) => {
+                target.weight > weight || (target.weight == weight && entity.index() < held.index())
             }
         };
         if better {
-            heaviest = Some((target.weight, rotation, entity.index()));
+            heaviest = Some((target.weight, rotation, entity));
         }
     }
 
     let centre = crate::target::weighted_centre(&members)?;
-    let rotation = heaviest.map(|(_, rotation, _)| rotation)?;
-    Some((centre, rotation))
+    let (_, rotation, entity) = heaviest?;
+    Some((centre, rotation, entity))
 }
 
 /// Works out every vcam's pose without holding a borrow, because writing
 /// a `Transform` needs the storage mutably and reading the target's pose
 /// needs it shared.
-fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames) {
+fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames, ArmLengths) {
     let carried = resources
         .get::<HorizonFrames>()
         .cloned()
         .unwrap_or_default();
+    let carried_arms = resources.get::<ArmLengths>().cloned().unwrap_or_default();
+    let mut arms = ArmLengths::default();
     let Some(registry) = resources.get::<ComponentRegistry>() else {
-        return (Vec::new(), carried);
+        return (Vec::new(), carried, carried_arms);
     };
     let Some(vcams) = registry.get_cpu::<VirtualCamera>() else {
-        return (Vec::new(), carried);
+        return (Vec::new(), carried, carried_arms);
     };
     let cameras = registry.get_cpu::<PerspectiveCamera>();
     let transforms = registry.get_cpu::<Transform>();
@@ -332,7 +337,9 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames) {
 
         // Nothing carries this vcam's tag, or every weight is zero: leave it in place rather than
         // snapping to the origin.
-        let Some((target_pos, target_rot)) = target_pose(targets, vcam.group, &pose_of) else {
+        let Some((target_pos, target_rot, target_entity)) =
+            target_pose(targets, vcam.group, &pose_of)
+        else {
             continue;
         };
         let Some(current) = transforms.and_then(|s| s.get(entity)) else {
@@ -354,6 +361,17 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames) {
             reference,
         );
         let position = vcam.damped(current.position, desired_pos, dt);
+        // After the damping, so a wall pulls the camera in at once rather than at the damping's
+        // pace (#1251).
+        let position = crate::occlusion::held(
+            resources,
+            entity,
+            target_pos,
+            Some(target_entity),
+            position,
+            (&carried_arms, &mut arms),
+            dt,
+        );
         // Damped too, because `up` is not a constant any more: crossing
         // between two gravity fields rotates the whole basis, and
         // snapping that in one frame throws the horizon over.
@@ -369,7 +387,7 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames) {
             blend_ease: vcam.blend_ease,
         });
     }
-    (plan, horizons)
+    (plan, horizons, arms)
 }
 
 /// The virtual camera driving the render camera: highest priority, ties to the lower entity index.

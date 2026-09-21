@@ -197,6 +197,8 @@ mechanics.
 | Capability | Where | Status | Notes |
 |---|---|---|---|
 | `VirtualCamera`, `CameraBlend` | `plugin.rs` | connected | |
+| `CameraBrain` | `brain.rs` | connected | #1246. The camera a rig drives, declared; required. |
+| `CameraCollision` | `occlusion.rs` | connected | #1251. Sweeps a sphere from the target to the camera and stops the arm at the first hit: in at once, back out eased. The target's own body never counts. Needs the engine's `physics` feature; without it, authored and inert. Part of the rig epic #1250. |
 | `CameraTarget` (tag + group) | `target.rs` | connected | Used by roll-a-ball, which lives in its own repo — measure "unused" against games too, not just this workspace. |
 | `HorizonFrames` | `plugin.rs` | connected | Where each vcam measures yaw from, carried between frames and transported onto each new up. Deriving it from `up` alone is impossible without a pole — the hairy ball theorem — and the pole was a 180° flip at one spot on every planet. |
 

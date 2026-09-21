@@ -13,6 +13,9 @@ kooch_ecs.workspace = true
 # Optional: only the `Align to gravity` up mode needs it, and a project
 # with no gravity should not link the solver to move a camera.
 kooch_gravity = { workspace = true, optional = true }
+# Optional too: only a `CameraCollision` casts, and a project with no solver has nothing to cast
+# against.
+kooch_physics = { workspace = true, optional = true }
 glam.workspace = true
 tracing.workspace = true
 
@@ -20,3 +23,6 @@ tracing.workspace = true
 # Lets `VirtualCamera::up_mode` consult the gravity field. Without it that
 # mode falls back to world up.
 gravity = ["dep:kooch_gravity"]
+# Lets a `CameraCollision` keep the camera out of walls. Without it the component is authored and
+# does nothing.
+physics = ["dep:kooch_physics"]
