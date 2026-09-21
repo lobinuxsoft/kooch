@@ -21,6 +21,32 @@ use crate::sprint::Sprint;
 use crate::touching::Touching;
 use crate::walk::Walk;
 
+/// Below this throttle a character is standing still, which is what ends a toggled run.
+const STILL: f32 = 0.05;
+
+/// Advances every sprint one step against whether its character is steered anywhere.
+fn step_sprints(resources: &mut Resources) {
+    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
+        return;
+    };
+    let moving: Vec<(Entity, bool)> = registry
+        .get_cpu::<Facing>()
+        .map(|facings| {
+            facings
+                .iter()
+                .map(|(&entity, facing)| (entity, facing.direction.length() > STILL))
+                .collect()
+        })
+        .unwrap_or_default();
+    let Some(sprints) = registry.get_cpu_mut::<Sprint>() else {
+        return;
+    };
+    for (&entity, sprint) in sprints.iter_mut() {
+        let moving = moving.iter().any(|&(e, m)| e == entity && m);
+        sprint.step(moving);
+    }
+}
+
 /// One character's worth of work, read before the world is borrowed.
 struct Planned {
     entity: Entity,
@@ -54,6 +80,7 @@ const RISING: f32 = 0.5;
 /// Sweeps for ground, holds the body at its ride height, keeps it
 /// upright, and writes [`Grounded`].
 pub fn hold_characters(resources: &mut Resources) {
+    step_sprints(resources);
     let planned = plan(resources);
     if planned.is_empty() {
         return;
