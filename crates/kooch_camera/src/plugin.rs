@@ -14,11 +14,12 @@ use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::transform::Transform;
 
 use crate::brain::CameraBrain;
+use crate::framing::{CameraFraming, Lens, Tracked};
 use crate::occlusion::Arms;
 use crate::target::CameraTarget;
 use crate::virtual_camera::{
-    INACTIVE_ALWAYS, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera, seed_reference,
-    transported,
+    INACTIVE_ALWAYS, LOOK_AT_SIMPLE, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera,
+    seed_reference, transported,
 };
 
 /// Which way is up for a virtual camera, from its `up_mode`. Not the target's rotation: a rolling
@@ -62,6 +63,7 @@ impl Plugin for CameraComponentsPlugin {
                 registry.register_cpu_reflected::<CameraTarget>();
                 registry.register_cpu_reflected::<CameraBrain>();
                 registry.register_cpu_reflected::<crate::occlusion::CameraCollision>();
+                registry.register_cpu_reflected::<crate::framing::CameraFraming>();
             }
         });
     }
@@ -142,9 +144,10 @@ impl CameraBlend {
 /// Advances every live virtual camera, then hands the winner's pose to the camera. Keeping vcam
 /// poses separate is what lets a blend interpolate between two.
 pub fn drive_virtual_cameras(resources: &mut Resources) {
-    let (plan, horizons, arms) = plan_vcam_poses(resources);
+    let (plan, horizons, arms, tracked) = plan_vcam_poses(resources);
     resources.insert(horizons);
     resources.insert(arms);
+    resources.insert(tracked);
     if plan.is_empty() {
         return;
     }
@@ -224,6 +227,8 @@ fn camera_pose(resources: &Resources, camera: Entity) -> Option<(Vec3, glam::Qua
 mod blend_tests;
 #[cfg(test)]
 mod brain_tests;
+#[cfg(test)]
+mod framing_tests;
 
 /// Slerp along the shorter arc: `q` and `-q` are one rotation, and without matching them a 1°
 /// handover can roll 359°.
@@ -286,19 +291,23 @@ fn target_pose(
 /// Works out every vcam's pose without holding a borrow, because writing
 /// a `Transform` needs the storage mutably and reading the target's pose
 /// needs it shared.
-fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames, Arms) {
+fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames, Arms, Tracked) {
     let carried = resources
         .get::<HorizonFrames>()
         .cloned()
         .unwrap_or_default();
     let carried_arms = resources.get::<Arms>().cloned().unwrap_or_default();
+    let carried_tracked = resources.get::<Tracked>().cloned().unwrap_or_default();
     let mut arms = Arms::default();
+    let mut tracked = Tracked::default();
     let Some(registry) = resources.get::<ComponentRegistry>() else {
-        return (Vec::new(), carried, carried_arms);
+        return (Vec::new(), carried, carried_arms, carried_tracked);
     };
     let Some(vcams) = registry.get_cpu::<VirtualCamera>() else {
-        return (Vec::new(), carried, carried_arms);
+        return (Vec::new(), carried, carried_arms, carried_tracked);
     };
+    let framings = registry.get_cpu::<CameraFraming>();
+    let lens = lens(resources, registry);
     let cameras = registry.get_cpu::<PerspectiveCamera>();
     let transforms = registry.get_cpu::<Transform>();
     let globals = registry.get_cpu::<GlobalTransform>();
@@ -352,18 +361,47 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames, Arms) {
         // turn. See `seed_reference`.
         let reference = carried.carry(entity, up);
         horizons.frames.insert(entity, (up, reference));
+        let framing = framings
+            .and_then(|framings| framings.get(entity))
+            .filter(|framing| framing.enabled);
+        // The rig follows the tracked point, not the target, and aims so that point sits where the
+        // framing puts it. A first framed step starts on the target: centred when it goes live.
+        let (followed, aim) = match framing {
+            Some(framing) => {
+                let from = carried_tracked.of(entity).unwrap_or(target_pos);
+                let depth = (from - current.position).dot(current.rotation * -Vec3::Z);
+                let depth = if depth > 0.01 { depth } else { vcam.distance };
+                let point = framing.follow(from, target_pos, current.rotation, depth, lens, dt);
+                tracked.set(entity, point);
+                (
+                    point,
+                    Some(framing.aim(point, current.rotation, depth, lens)),
+                )
+            }
+            None => (target_pos, None),
+        };
         let (desired_pos, desired_rot) = vcam.desired_with(
-            target_pos,
+            followed,
             target_rot,
             current.position,
             current.rotation,
             up,
             reference,
         );
+        let desired_rot = match aim {
+            Some(aim) if vcam.look_at == LOOK_AT_SIMPLE => {
+                crate::virtual_camera::look_at(desired_pos, aim, up, reference)
+            }
+            _ => desired_rot,
+        };
         // From where the rig had the camera before any wall, not from where the wall put it: the
-        // damping is the rig's, and a return is the collision's to time.
+        // damping is the rig's, and a return is the collision's to time. A framed rig is not
+        // damped: its soft zone is the easing, and a second one would move the zones off screen.
         let from = carried_arms.free_of(entity).unwrap_or(current.position);
-        let position = vcam.damped(from, desired_pos, dt);
+        let position = match framing {
+            Some(_) => desired_pos,
+            None => vcam.damped(from, desired_pos, dt),
+        };
         // After the damping, so a wall pulls the camera in at once rather than at the damping's
         // pace (#1251).
         let position = crate::occlusion::held(
@@ -390,7 +428,30 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, HorizonFrames, Arms) {
             blend_ease: vcam.blend_ease,
         });
     }
-    (plan, horizons, arms)
+    (plan, horizons, arms, tracked)
+}
+
+/// The lens every vcam is seen through: the driven camera's field of view over the last rendered
+/// aspect. A vcam frames one screen, and that is the one.
+fn lens(resources: &Resources, registry: &ComponentRegistry) -> Lens {
+    let fov = registry
+        .get_cpu::<PerspectiveCamera>()
+        .and_then(|cameras| {
+            let brains = registry.get_cpu::<CameraBrain>();
+            cameras
+                .iter()
+                .filter(|(entity, cam)| {
+                    cam.active && brains.is_some_and(|brains| brains.get(**entity).is_some())
+                })
+                .min_by_key(|(entity, cam)| (-cam.priority, entity.index()))
+                .map(|(_, cam)| cam.fov)
+        })
+        .unwrap_or(PerspectiveCamera::default().fov);
+    let aspect = resources
+        .get::<kooch_ecs::ViewAspect>()
+        .copied()
+        .unwrap_or_default();
+    Lens::new(fov, aspect.0)
 }
 
 /// The virtual camera driving the render camera: highest priority, ties to the lower entity index.

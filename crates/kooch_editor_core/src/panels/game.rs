@@ -14,6 +14,7 @@ pub(crate) fn draw_game_content(
     size_request: &mut Option<(u32, u32)>,
     resolution: &mut GameResolution,
     has_camera: bool,
+    framing: Option<kooch_camera::CameraFraming>,
     perf_stats: crate::perf::EditorPerfStats,
     meshlet_stats: kooch_render::meshlet::MeshletRenderStats,
     meshlet_debug_mode: &mut kooch_render::meshlet::MeshletDebugMode,
@@ -65,6 +66,9 @@ pub(crate) fn draw_game_content(
     } else {
         image_rect = Some(ui.add(egui::Image::new((texture_id, available))).rect);
     }
+    if let (Some(framing), Some(rect)) = (framing, image_rect) {
+        draw_framing(ui.painter(), rect, &framing);
+    }
     // Registered before the overlays, so a card drawn on top takes its own clicks.
     let clicked = image_rect.is_some_and(|rect| {
         ui.interact(rect, ui.id().with("game_capture"), egui::Sense::click())
@@ -94,6 +98,55 @@ pub(crate) fn draw_game_content(
         );
     }
     clicked
+}
+
+/// A vcam's zones over the image: the soft zone tinted, the dead zone clear, the framing point
+/// marked — Phantom Camera's viewfinder, since the numbers are chosen by looking.
+fn draw_framing(painter: &egui::Painter, image: egui::Rect, framing: &kooch_camera::CameraFraming) {
+    let centre = image.center()
+        + egui::vec2(
+            framing.screen.x * image.width(),
+            -framing.screen.y * image.height(),
+        );
+    let zone = |size: glam::Vec2| {
+        egui::Rect::from_center_size(
+            centre,
+            egui::vec2(size.x * image.width(), size.y * image.height()),
+        )
+        .intersect(image)
+    };
+    let soft = zone(framing.soft_zone.max(framing.dead_zone));
+    let dead = zone(framing.dead_zone);
+    let tint = egui::Color32::from_rgba_unmultiplied(220, 60, 60, 40);
+    // The tint surrounds the dead zone: four bands of the soft zone, so the dead zone stays clear.
+    for band in [
+        egui::Rect::from_min_max(soft.min, egui::pos2(soft.max.x, dead.min.y)),
+        egui::Rect::from_min_max(egui::pos2(soft.min.x, dead.max.y), soft.max),
+        egui::Rect::from_min_max(
+            egui::pos2(soft.min.x, dead.min.y),
+            egui::pos2(dead.min.x, dead.max.y),
+        ),
+        egui::Rect::from_min_max(
+            egui::pos2(dead.max.x, dead.min.y),
+            egui::pos2(soft.max.x, dead.max.y),
+        ),
+    ] {
+        painter.rect_filled(band, 0.0, tint);
+    }
+    let stroke = |colour| egui::Stroke::new(1.0, colour);
+    painter.rect_stroke(
+        soft,
+        0.0,
+        stroke(egui::Color32::from_rgb(220, 60, 60)),
+        egui::StrokeKind::Inside,
+    );
+    painter.rect_stroke(
+        dead,
+        0.0,
+        stroke(egui::Color32::from_rgb(90, 180, 255)),
+        egui::StrokeKind::Inside,
+    );
+    painter.circle_filled(centre, 3.0, egui::Color32::from_rgb(255, 210, 60));
 }
 
 /// The viewport's View menu — Godot's top-left button. Every overlay

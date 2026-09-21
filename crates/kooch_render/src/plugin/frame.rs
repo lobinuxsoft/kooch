@@ -43,8 +43,10 @@ pub(super) fn prepare_frame_system(resources: &mut Resources) {
         resources.insert(stage);
     }
 
+    let aspect = w as f32 / h.max(1) as f32;
+    resources.insert(kooch_ecs::ViewAspect(aspect));
     resources.insert(FrameSetup {
-        aspect: w as f32 / h.max(1) as f32,
+        aspect,
         // Nothing excluded: a game's cameras are all the game's. The editor keeps its own out
         // where it reads the stack, which is its own panel.
         stack: CameraStack::read::<()>(resources),

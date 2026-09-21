@@ -375,7 +375,7 @@ fn flattened(reference: Vec3, up: Vec3) -> Vec3 {
 
 /// A rotation looking from `eye` at `target` with `up` up; identity when they coincide, instead of
 /// a `NaN` pose.
-fn look_at(eye: Vec3, target: Vec3, up: Vec3, reference: Vec3) -> glam::Quat {
+pub(crate) fn look_at(eye: Vec3, target: Vec3, up: Vec3, reference: Vec3) -> glam::Quat {
     let forward = target - eye;
     if forward.length_squared() < 1e-12 {
         return glam::Quat::IDENTITY;

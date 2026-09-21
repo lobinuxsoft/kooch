@@ -50,5 +50,16 @@ impl Default for PerspectiveCamera {
 
 impl Component for PerspectiveCamera {}
 
+/// Width over height of the image the game's cameras last rendered, published by the renderer so
+/// screen-space logic outside it — a camera's framing — measures the same screen.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ViewAspect(pub f32);
+
+impl Default for ViewAspect {
+    fn default() -> Self {
+        Self(16.0 / 9.0)
+    }
+}
+
 #[cfg(test)]
 mod tests;
