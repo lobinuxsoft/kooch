@@ -213,6 +213,14 @@ Sources at the same level sum, as they always did. A source with no
 `GravityPriority` sits at level 0, so adding the component to one entity
 changes nothing about the others.
 
+It works the other way round too, and on **every** kind of source: the
+component goes on whichever entity should win. A planet inside a bigger
+field — a level-wide `PlaneGravity`, a room — is the same move with the
+priority on the planet. Inside its `range` only the planet pulls; outside,
+the field is back exactly as it was. Without it the two sum, and the floor's
+down drags everything on the planet sideways. Nest as deep as you like: each
+level overrules the ones below it only where it reaches.
+
 ## Asking which way is down
 
 ```rust
