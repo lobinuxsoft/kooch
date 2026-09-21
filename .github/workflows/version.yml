@@ -61,6 +61,10 @@ jobs:
           # moves with EVERY change. A number that sits still turns the
           # engine's own drift warning into noise.
           #
+          # Before 1.0 the script shifts them down one, as Cargo reads a 0.x
+          # version: breaking moves the minor, the rest moves the patch. 1.0
+          # itself is set by hand, never reached by a `!`.
+          #
           # 🔴 The rule lives in Python with a self-test beside it, not
           # in a bash conditional here. The bash version matched
           # "BREAKING CHANGE:" anywhere in the body, this workflow's own
